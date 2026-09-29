@@ -251,6 +251,13 @@ if [[ -n "${T_LINKS_ONLY:-}" ]]; then
     exit 0
 fi
 
+# Activate t's live-main guard in this repository only. An existing effective
+# hooks path may be shared with other hooks, so leave the user's choice intact.
+if ! git -C "$T_PRIMARY" config --get core.hooksPath >/dev/null 2>&1; then
+    git -C "$T_PRIMARY" config --local core.hooksPath .githooks
+    echo "Enabled t's repository-local pre-commit guard"
+fi
+
 T_LOCAL_RC="${T_LOCAL_RC:-${XDG_CONFIG_HOME:-$HOME/.config}/t/local.zsh}"
 if [[ ! -e "$T_LOCAL_RC" ]]; then
     mkdir -p "$(dirname "$T_LOCAL_RC")"

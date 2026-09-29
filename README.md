@@ -120,7 +120,9 @@ The canonical clone stays on `main`; develop in a session worktree (`t open t` a
 registering the t repository). From that worktree, `t update --dev` makes its files
 live. Ordinary `t update` switches back without resetting or removing the worktree.
 Dirty or divergent canonical checkouts are refused. Avoid editing canonical main:
-its files are the installed command. A pre-commit hook guards that live checkout.
+its files are the installed command. A full install enables a repository-local
+pre-commit hook to guard that live checkout. If you already set `core.hooksPath`,
+the installer preserves it; include t's guard in that custom hook path yourself.
 
 If a link is broken, invoke the installer directly: `~/code/t/install.sh`. Your
 configuration and agent conversations are not stored in the t checkout.

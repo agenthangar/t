@@ -58,6 +58,17 @@ def test_links_only_is_idempotent_and_does_not_seed_local_config(box):
     assert second.stdout == ""
     assert not (home / ".config/t/local.zsh").exists()
     assert not (home / ".claude/settings.json").exists()
+    assert git("config", "--local", "--get", "core.hooksPath", cwd=checkout, check=False).returncode != 0
+
+
+def test_full_install_enables_local_hook_without_replacing_custom_path(box):
+    checkout, home = box
+    result = run_install(checkout, home)
+    assert result.returncode == 0, result.stderr
+    assert git("config", "--local", "--get", "core.hooksPath", cwd=checkout).stdout.strip() == ".githooks"
+    git("config", "--local", "core.hooksPath", "/tmp/other-hooks", cwd=checkout)
+    assert run_install(checkout, home).returncode == 0
+    assert git("config", "--local", "--get", "core.hooksPath", cwd=checkout).stdout.strip() == "/tmp/other-hooks"
 
 
 def test_running_worktree_installer_selects_canonical_or_dev(box):
