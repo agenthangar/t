@@ -1,0 +1,79 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  shell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq zsh
+      - name: Shell syntax and lint
+        run: |
+          files=(install.sh)
+          for f in bin/* .githooks/* ui/*.sh; do
+            head -1 "$f" | grep -qE '^#!.*\b(bash|sh)$' && files+=("$f")
+          done
+          shellcheck "${files[@]}"
+          for f in t.plugin.zsh zsh/*.zsh; do zsh -n "$f"; done
+  pytest:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Runtime test dependencies
+        run: |
+          if [ "${{ runner.os }}" = Linux ]; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq zsh tmux
+          else
+            command -v tmux >/dev/null || brew install tmux
+          fi
+          python -m pip install -r requirements-dev.txt
+      - run: python -m pytest --cov --cov-report=term-missing --cov-fail-under=97
+  gitleaks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - run: docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:v8.21.2 detect --source=/repo --redact
+  pip-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install pip-audit && pip-audit -r requirements-dev.txt
+  codeql:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: python
+      - uses: github/codeql-action/analyze@v3
+  ci:
+    name: CI
+    if: always()
+    needs: [shell, pytest, gitleaks, pip-audit, codeql]
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          for result in ${{ join(needs.*.result, ' ') }}; do
+            [ "$result" = success ] || { echo "Required job: $result"; exit 1; }
+          done
