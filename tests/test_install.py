@@ -344,7 +344,9 @@ def test_install_then_setup_opens_setup_only_when_there_is_something_to_register
     home = tmp_path / "home"
     (home / "code" / "api" / ".git").mkdir(parents=True)
     monkeypatch.setattr(t_mod, "HOME", str(home))
-    monkeypatch.setattr(t_mod, "ZSHRC_LOCAL", str(home / ".zshrc.local"))       # absent: a fresh box
+    # An installed t may cache its real local config in CONFIG. Select the
+    # sandbox explicitly so the caller's bridge cannot leak into this test.
+    monkeypatch.setenv("T_LOCAL_RC", str(home / "local.zsh"))
     opened = []
     monkeypatch.setattr(t_mod, "cmd_setup", lambda cfg, a: opened.append(a) or 1)  # the user quit it
     cfg = argparse.Namespace(repos={}, worktree_root=str(home / "code" / ".worktrees"))
@@ -358,7 +360,7 @@ def test_install_then_setup_opens_setup_only_when_there_is_something_to_register
     assert "opening t setup" in capsys.readouterr().out
     assert len(opened) == 1 and opened[0].hosts == "mini" and opened[0].dirs == [] and not opened[0].dry_run
     # everything registered → silent, setup never opens
-    (home / ".zshrc.local").write_text('DEV_REPOS[api]="$HOME/code/api"\n')
+    (home / "local.zsh").write_text('DEV_REPOS[api]="$HOME/code/api"\n')
     assert t_mod._install_then_setup(cfg, args, 0) == 0
     assert capsys.readouterr().out == "" and len(opened) == 1
 
