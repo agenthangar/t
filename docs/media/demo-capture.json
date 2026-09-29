@@ -1,0 +1,7 @@
+{
+  "before": "No dev sessions running in demo.  (t ls --all for every repo)",
+  "opened": "Starting dev-demo-1 in ~/worktrees/demo/1 · codex",
+  "response": "• Session ready.",
+  "after": "dev sessions   ● attached · ✓ active context · ↻ still in progress · ✱ claude · ⬡ codex · ◆ cursor   (repo: demo — --all for all)\n\n  STATUS  SESSION WORKING ON\n  ○ ✓ ⬡   demo-1  Reply with exact phrase\n\n  reattach: t open <repo> <slot>",
+  "worktree": "~/worktrees/demo/1"
+}
