@@ -490,6 +490,23 @@ def test_setup_trailer_states_everything_y_does(t_mod):
     assert t_mod._setup_trailer([], trust=False) is None
 
 
+def test_setup_only_promises_auto_trust_when_opted_in(t_mod, tmp_path, monkeypatch):
+    import argparse
+    seen = []
+    monkeypatch.setattr(t_mod, "_setup_trailer", lambda hosts, trust: seen.append(trust))
+    monkeypatch.setattr(t_mod, "_current_local_rc", lambda: str(tmp_path / "absent.local"))
+    cfg = argparse.Namespace(hosts={}, repos={}, worktree_root=str(tmp_path / "worktrees"))
+    args = argparse.Namespace(hosts=None, no_hosts=True, dirs=[str(tmp_path / "missing")], dry_run=False)
+    monkeypatch.delenv("T_AUTO_TRUST", raising=False)
+    monkeypatch.delenv("T_NO_TRUST", raising=False)
+    assert t_mod.cmd_setup(cfg, args) == 1
+    monkeypatch.setenv("T_AUTO_TRUST", "1")
+    assert t_mod.cmd_setup(cfg, args) == 1
+    monkeypatch.setenv("T_NO_TRUST", "1")
+    assert t_mod.cmd_setup(cfg, args) == 1
+    assert seen == [False, True, False]
+
+
 def test_new_plan_trust_step_follows_register(t_mod, tmp_path):
     path = str(tmp_path / "code" / "fresh")
     state = {"exists": False, "nonempty": False, "is_repo": False, "has_commits": False,
