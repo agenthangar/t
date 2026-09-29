@@ -629,6 +629,17 @@ def test_app_plan_server_can_preserve_an_open_preview_url(t_mod, tmp_path):
         assert updated.server_port == port
 
 
+def test_app_plan_loopback_bind_does_not_wait_for_reverse_dns(t_mod, tmp_path, monkeypatch):
+    plan = tmp_path / 'plan.md'
+    plan.write_text('# Plan')
+    def no_dns(_host):
+        raise AssertionError('reverse DNS would delay the daemon readiness line')
+    monkeypatch.setattr(t_mod.socket, 'getfqdn', no_dns)
+    with t_mod._app_plan_server(str(plan), 'token') as server:
+        assert server.server_name == '127.0.0.1'
+        assert server.server_port > 0
+
+
 def test_app_plan_daemon_starts_reuses_and_restarts(t_mod, tmp_path, monkeypatch):
     from urllib.request import urlopen
     plan = tmp_path / 'plan.md'

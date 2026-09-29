@@ -68,6 +68,9 @@ def capture_real():
             else:
                 raise RuntimeError("Codex did not start in the t tmux slot")
 
+            pane = tmux(env, "capture-pane", "-p", "-t", "dev-demo-1")
+            if any(marker in pane for marker in ("Trust all and continue", "Do you trust", "Sign in", "Log in")):
+                raise RuntimeError("Codex is waiting for an interactive trust or login decision in the demo slot")
             tmux(env, "send-keys", "-t", "dev-demo-1", PROMPT, "Enter")
             deadline = time.monotonic() + 90
             while time.monotonic() < deadline:
