@@ -147,6 +147,14 @@ def frame(stage, lines, tick, width=1200, height=676, footer="LOCAL DEMO  ·  AG
         if line.startswith("$ "):
             d.text((83, y), "$", font=font(22, mono=True), fill=AMBER)
             d.text((111, y), line[2:], font=font(22, mono=True), fill=INK)
+        elif "⬡" in line and Path("/System/Library/Fonts/Apple Symbols.ttf").exists():
+            left, right = line[:86].split("⬡", 1)
+            mono = font(18, mono=True)
+            glyph = ImageFont.truetype("/System/Library/Fonts/Apple Symbols.ttf", 22)
+            d.text((83, y), left, font=mono, fill=MUTED)
+            gx = 83 + d.textlength(left, font=mono)
+            d.text((gx, y - 2), "⬡", font=glyph, fill=MUTED)
+            d.text((gx + d.textlength("⬡", font=glyph), y), right, font=mono, fill=MUTED)
         else:
             d.text((83, y), line[:86], font=font(18, mono=True), fill=MUTED)
         y += 35
@@ -161,25 +169,33 @@ def render(outputs, *, real_agent=False):
     opened = next((line for line in outputs["opened"].splitlines() if "Starting dev-demo-1" in line), "")
     opened = re.sub(r" in \S+ \(logging to \S+\)", " in " + outputs["worktree"], opened)
     table = [line for line in outputs["after"].splitlines() if "demo-1" in line or "STATUS" in line]
-    stages = [
-        ("1 / Start from a registered repository", ["$ t ls demo", outputs["before"].splitlines()[0]]),
-        ("2 / Open a new isolated task", ["$ t open demo --new --local", opened]),
-        ("3 / See the live tmux slot", ["$ t ls demo", *table]),
-        ("4 / Jump into its worktree", ["$ t cd demo 1", "$ pwd", outputs["worktree"]]),
-    ]
+    open_command = "t open demo --codex --new --local" if real_agent else "t open demo --new --local"
+    stages = [("1 / Start from a registered repository", ["$ t ls demo", outputs["before"].splitlines()[0]]),
+              ("2 / Open a new isolated task", ["$ " + open_command, opened])]
+    if real_agent:
+        if not outputs.get("response", "").startswith("• Session ready."):
+            raise RuntimeError("Real media needs a verified Codex response")
+        stages.append(("3 / Codex answers in the slot", ["$ " + open_command,
+                                                       "Codex: " + outputs["response"].lstrip("• ")]))
+    stages += [("4 / See the live tmux slot" if real_agent else "3 / See the live tmux slot",
+                ["$ t ls demo", *table]),
+               ("5 / Jump into its worktree" if real_agent else "4 / Jump into its worktree",
+                ["$ t cd demo 1", "$ pwd", outputs["worktree"]])]
     footer = "REAL CODEX SESSION  ·  LOCAL WORKFLOW" if real_agent else "LOCAL DEMO  ·  AGENT PROCESS IS A STUB"
     frames = []
+    frames_per_stage = 36 if real_agent else 20
     for caption, lines in stages:
-        for i in range(20):
-            frames.append(frame(caption, lines, i / 19, footer=footer))
-    gif_frames = [frames[i * 20 + 19].resize((960, 540), Image.Resampling.LANCZOS).quantize(colors=64)
+        for i in range(frames_per_stage):
+            frames.append(frame(caption, lines, i / (frames_per_stage - 1), footer=footer))
+    gif_frames = [frames[i * frames_per_stage + frames_per_stage - 1].resize((960, 540), Image.Resampling.LANCZOS).quantize(colors=64)
                   for i in range(len(stages))]
     gif_frames[0].save(MEDIA / "demo.gif", save_all=True, append_images=gif_frames[1:],
-                       duration=2000, loop=0, optimize=True, disposal=2)
-    poster = frame(stages[2][0], stages[2][1], 1, footer=footer)
+                       duration=3600 if real_agent else 2000, loop=0, optimize=True, disposal=2)
+    poster_stage = 3 if real_agent else 2
+    poster = frame(stages[poster_stage][0], stages[poster_stage][1], 1, footer=footer)
     poster.save(MEDIA / "demo-poster.png", optimize=True)
     social = frame("Open. Find. Resume. Move.",
-                   ["$ t open demo --new", "$ t ls demo", *(table[-1:] or []),
+                   ["$ " + open_command, "$ t ls demo", *(table[-1:] or []),
                     "$ t cd demo 1"], 1, height=628, footer=footer)
     social.save(MEDIA / "social-card.png", optimize=True)
     with tempfile.TemporaryDirectory(prefix="t-media-frames-") as directory:
@@ -187,7 +203,9 @@ def render(outputs, *, real_agent=False):
         for i, image in enumerate(frames):
             image.save(path / f"frame-{i:04d}.png")
         call(["ffmpeg", "-v", "error", "-y", "-framerate", "10", "-i", str(path / "frame-%04d.png"),
-              "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "21", "-movflags", "+faststart",
+              "-c:v", "libx264", "-pix_fmt", "yuv420p", "-b:v", "400k", "-minrate", "400k",
+              "-maxrate", "400k", "-bufsize", "800k", "-x264-params", "nal-hrd=cbr:filler=1",
+              "-movflags", "+faststart",
               str(MEDIA / "demo.mp4")], timeout=60)
 
 

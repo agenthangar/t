@@ -6,28 +6,25 @@ palette (`#141516`, `#1c1d1f`, `#f2a93b`) and system font fallbacks for Space
 Grotesk / IBM Plex Mono. Graphics were drawn in SVG and Pillow; no stock or
 generated artwork is embedded.
 
-Run `python3 scripts/demo/render.py` from a checkout with Git, zsh, tmux, ffmpeg,
-and Pillow available to regenerate the raster and video assets. The script creates
-a disposable repository, local Git origin, home directory, config, and tmux socket;
-it invokes the real `t ls`, `t open --new`, and `t cd` commands. A shell script
-named `claude` stays idle inside the tmux slot. It never invokes an actual model,
-records a conversation, contacts a remote host, or sends data elsewhere. Paths in
-the visual are shortened from the disposable home to `~`; the displayed command
-output is otherwise taken from the captured run. The demo therefore proves the
-local worktree/session flow, while real-agent and cross-host release checks remain
-separate.
+The published media comes from a real authenticated Codex CLI in a disposable
+repository. `scripts/demo/real.py` used the installed `t` command to create an
+isolated Git worktree and tmux slot, sent a harmless prompt asking for “Session
+ready,” verified Codex’s response, checked that `t ls demo` marked the session
+active, and ran `t cd demo 1`. The only retained output is the path-normalized
+[`demo-capture.json`](demo-capture.json); temporary paths, account details, auth
+state, and raw terminal logs are absent from the committed assets. The demo makes
+no remote-handoff claim.
 
-After a tested standalone release is installed on the recording machine, run
-`python3 scripts/demo/real.py --capture-only` to verify a real Codex session. It
-uses the existing Codex login, a disposable local Git repository and tmux socket,
-and a prompt that asks only for “Session ready.” It refuses to replace media unless
-the session starts, answers, appears active in `t ls`, and its worktree resolves.
-Then run `python3 scripts/demo/real.py` to render the real-agent version. Keep the
-stub version as the contributor reproduction path. A separate cross-host smoke
-must validate `t beam` before a remote beat can be added to any video; the local
-recording makes no remote claim.
+Run `python3 scripts/demo/real.py --render-capture` to regenerate all media from
+the verified output without another model request. To capture afresh, use
+`python3 scripts/demo/real.py --capture-only` first; a successful run writes a
+new sanitized capture, then `python3 scripts/demo/real.py` renders it. This path
+requires Git, zsh, tmux, ffmpeg, Pillow, an installed `t`, and a logged-in Codex
+CLI. `python3 scripts/demo/render.py` remains a deterministic contributor demo
+with an explicitly labeled idle agent stub.
 
-The 1200×676 MP4 is silent, eight seconds long, and encoded with H.264; the
-960×540 GIF loops through four readable beats and stays well under 5 MB. The
-1200×628 social card is static. The website uses the MP4 with controls and a
-poster, and does not autoplay it.
+The 1200×676 MP4 is silent, 18 seconds long, H.264 at 10 fps and about 397 Kbps
+(894 KB). It meets [LinkedIn’s current video upload requirements](https://www.linkedin.com/help/linkedin/answer/a7486279)
+for MP4, at least 75 KB, at least 192 Kbps, and 10–60 fps. The 960×540 GIF loops
+through five readable beats in under 200 KB. The 1200×628 social card is static. The
+website uses the MP4 with controls and a poster and does not autoplay it.
