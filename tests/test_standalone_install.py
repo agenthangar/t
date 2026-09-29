@@ -98,6 +98,26 @@ def test_existing_claude_settings_are_merged_without_losing_foreign_keys(box):
     assert settings.read_text() == before
 
 
+def test_explicit_policy_runs_after_fresh_settings_seed(box):
+    checkout, home = box
+    policy = home / "policy"
+    policy.mkdir()
+    (policy / "permissions.allow").write_text("Bash(git status)\n")
+    probe = home / "policy-probe.txt"
+    binary = checkout / "bin/t"
+    binary.write_text("""#!/usr/bin/env python3
+import os
+from pathlib import Path
+settings = Path(os.environ['HOME']) / '.claude/settings.json'
+Path(os.environ['T_POLICY_PROBE']).write_text('present' if settings.is_file() else 'missing')
+""")
+    binary.chmod(0o755)
+    result = run_install(checkout, home, T_PERMISSIONS_DIR=str(policy),
+                         T_NO_PERMISSIONS="", T_POLICY_PROBE=str(probe))
+    assert result.returncode == 0, result.stderr
+    assert probe.read_text() == "present"
+
+
 def test_live_main_hook_blocks_canonical_but_allows_worktree(box):
     checkout, home = box
     hook = checkout / ".githooks/pre-commit"

@@ -2328,7 +2328,8 @@ def cmd_setup(cfg, args):
     if err:
         print(f"t setup: {err}", file=sys.stderr)
         return 1
-    trailer = _setup_trailer(land_hosts, trust=not os.environ.get(_TRUST_NO_ENV))
+    trailer = _setup_trailer(land_hosts, trust=(os.environ.get("T_AUTO_TRUST") == "1"
+                                               and not os.environ.get(_TRUST_NO_ENV)))
 
     # dedup state: union of the live file lines and the (possibly stale) cache
     reg_paths = ({os.path.realpath(_expand_home(v)) for v in f_repos.values()} |

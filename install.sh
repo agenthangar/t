@@ -227,6 +227,13 @@ install_codex_hooks
 install_claude_mcp
 merge_claude_settings
 
+# A full install seeds per-machine settings before applying an explicit policy.
+# Links-only reconciliation preserves its narrow, offline footprint.
+if [[ -z "${T_LINKS_ONLY:-}" ]]; then
+    seed_claude_settings
+    merge_claude_settings
+fi
+
 # Policy is deliberately absent by default. The dotfiles adapter opts in with a
 # directory of user-owned rules, and independent users may do the same explicitly.
 if [[ -n "${T_PERMISSIONS_DIR:-}" && -z "${T_NO_PERMISSIONS:-}" ]]; then
@@ -243,9 +250,6 @@ fi
 if [[ -n "${T_LINKS_ONLY:-}" ]]; then
     exit 0
 fi
-
-seed_claude_settings
-merge_claude_settings
 
 T_LOCAL_RC="${T_LOCAL_RC:-${XDG_CONFIG_HOME:-$HOME/.config}/t/local.zsh}"
 if [[ ! -e "$T_LOCAL_RC" ]]; then
