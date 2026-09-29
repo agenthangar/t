@@ -1,0 +1,292 @@
+# functions below now forward to `t on`.)
+
+# t — Claude session manager: open/list/move tmux'd Claude sessions (gh-style)
+# The single front door (replacing the dev/tpush/tpop/tbeam/tread/tplan/tpaste/
+# tfind/on family). This zsh function is the thin SHIM over the bin/t executable:
+#   • bin-native verbs (ls, read, plan, paste, kill, on, beam orchestration, and the
+#     internal session-rows/land/kill-owner) run straight through via `command t`
+#     (the `command` builtin reaches ~/bin/t past this function, dodging the
+#     name collision — same trick the claude() wrapper uses).
+#   • shell-bound verbs (open/pop/push/resume/find/cd) map to the existing zsh functions,
+#     which ALREADY do the cd + `claude -r` in the current terminal and the tpush
+#     sentinel handoff correctly *because they run in the calling shell* — a bin
+#     subprocess cannot. No resolve protocol is needed: the shim just calls them.
+# `t <verb> -h` always shows the bin's gh-style help (forwarded below). Full per-verb
+# help + the verb list live in bin/t.
+t() {
+  emulate -L zsh
+  # -h/--help anywhere (and the bare `t`) → the bin's gh-style help/usage.
+  local a
+  for a in "$@"; do [[ $a == -h || $a == --help ]] && { command t "$@"; return; }; done
+  local verb="$1"
+  [[ -z $verb ]] && { command t; return; }
+  shift
+  case "$verb" in
+    open)   _t_open "$@" ;;           # → _t_dev (local / -r or auto-detect remote attach / -f / fg adopt)
+    pop)    _t_pop "$@" ;;            # → cd + claude -r in THIS terminal
+    resume) _t_resume "$@" ;;         # → revive a dead slot's chat (rebuilds a reaped worktree; --fg → here)
+    push)   _t_push "$@" ;;           # → sentinel handoff; claude() wrapper spawns post-exit
+    find)   _t_find "$@" ;;           # → rank/pick then cd + claude -r here
+    cd)     _t_cd "$@" ;;             # → cd THIS shell into a slot's worktree
+    beam)   _t_beam_xlate "$@" ;;     # → _t_beam (host moves from --host to a positional)
+    # setup runs in the bin (it only edits ${T_LOCAL_RC}), but on success the
+    # SHELL must reload so the new cd aliases, host shorthand functions, and the
+    # _t_sync_config cache go live at once (precedent: dots reloads every run).
+    # T_SETUP_SHIM tells the bin to skip its "source ~/.zshrc" hint.
+    setup)  T_SETUP_SHIM=1 command t setup "$@" && _t_reload ;;
+    config) _t_install config "$@" ;;
+    # new writes DEV_REPOS too (the repo it just created) → the same reload.
+    new)    T_SETUP_SHIM=1 command t new "$@" && _t_reload ;;
+    # install can END in `t setup` (it opens it when ~/code holds repos DEV_REPOS does
+    # not know yet), so it owes the same reload — but only when that setup actually
+    # wrote: ${T_LOCAL_RC}'s mtime is the evidence, since install's rc says nothing
+    # about it (quitting setup is not an install failure, and most runs never open it).
+    install) _t_install install "$@" ;;
+    update) T_SETUP_SHIM=1 command t update "$@" && _t_reload ;;
+    *)      command t "$verb" "$@" ;; # ls/read/plan/paste/kill/on/session-rows/land/kill-owner/new-land
+  esac
+}
+
+# _t_install <verb> — install/config through the bin, reload iff ${T_LOCAL_RC} changed
+# Compare content too: an editor can save the same size inside one clock tick.
+_t_install() {
+  local before= after= verb="$1"
+  [[ -f ${T_LOCAL_RC} ]] && before=$(<${T_LOCAL_RC})
+  T_SETUP_SHIM=1 command t "$@"
+  local rc=$?
+  [[ -f ${T_LOCAL_RC} ]] && after=$(<${T_LOCAL_RC})
+  if [[ $before != $after && ( $verb != config || $rc == 0 ) ]]; then
+    if [[ $verb == config ]]; then
+      # A removed registration must disappear from this shell as well as the next
+      # one. Rebuild only the known local settings and their generated shortcuts.
+      local key
+      for key in ${(k)DEV_REPOS}; do unalias "$key" 2>/dev/null; done
+      for key in ${(k)REMOTE_HOSTS}; do unfunction "$key" 2>/dev/null; done
+      DEV_REPOS=() DEV_BRANCHES=() REMOTE_HOSTS=() DEV_WORKTREE=() DEV_AGENT=() DEV_MODEL=() DEV_EFFORT=() DEV_FAST=()
+      unset DEV_AGENT_DEFAULT DEV_BRANCH DEV_WORKTREE_ROOT DEV_WORKTREE_DEFAULT TBEAM_HOST MINI_HOST
+    fi
+    _t_reload
+  fi
+  return $rc
+}
+
+# _t_cd — cd the CALLING shell into a dev slot's worktree (gh-grammar `t cd [repo] [slot]`).
+#   t cd <repo> <slot>   → that slot's worktree ($DEV_WORKTREE_ROOT/<basename>/<slot>)
+#   t cd <slot>          → that slot of the repo cwd is in (mirrors t read/paste)
+#   t cd <repo>          → the repo's only worktree; several → fzf pick; none → the repo dir
+#   t cd                 → fzf-pick across every worktree on disk
+# Navigation only: it never creates a worktree (`t open` owns creation) and never
+# touches tmux — a missing slot is an error with the `t open` hint. The picker shows
+# the branch actually checked out in each worktree (worktrees parked on a non-dev/*
+# branch by hand are common), read via git, not derived from the slot name.
+_t_cd() {
+  emulate -L zsh
+  local repo="$1" slot="$2"
+  # slot-only shorthand: `t cd 4` ≡ slot 4 of the repo cwd is in
+  if [[ $repo == <-> && -z $slot ]]; then
+    slot=$repo
+    repo=$(_t_infer_repo "$slot") || {
+      echo "t cd: not inside a DEV_REPOS repo — name one: t cd <repo> $slot" >&2; return 1 }
+  fi
+  if [[ -n $repo && -z ${DEV_REPOS[$repo]:-} ]]; then
+    echo "t cd: unknown repo '$repo' (known: ${(k)DEV_REPOS})" >&2; return 1
+  fi
+  if [[ -n $repo && -n $slot ]]; then
+    local wt; wt=$(_dev_worktree_path "$repo" "$slot")
+    [[ -e $wt/.git ]] || {
+      echo "t cd: no worktree at $wt  ('t open $repo $slot' creates one)" >&2; return 1 }
+    cd "$wt"; return
+  fi
+  # No slot: pick among the worktrees that exist on disk — the named repo's, else all.
+  # Match the rest of the worktree tooling (_dev_worktree_create / _dev_worktree_sweep_run):
+  # require .git so a leftover / hand-made numeric dir under $DEV_WORKTREE_ROOT is not offered.
+  local -a wts
+  if [[ -n $repo ]]; then
+    wts=("$DEV_WORKTREE_ROOT/${DEV_REPOS[$repo]:t}"/<->(N/ne:'[[ -e $REPLY/.git ]]':))
+    (( ${#wts} )) || { cd "${DEV_REPOS[$repo]}"; return }   # none yet → the repo itself
+  else
+    wts=("$DEV_WORKTREE_ROOT"/*/<->(N/ne:'[[ -e $REPLY/.git ]]':))
+    (( ${#wts} )) || {
+      echo "t cd: no worktrees under $DEV_WORKTREE_ROOT ('t open <repo>' creates one)" >&2; return 1 }
+  fi
+  (( ${#wts} == 1 )) && { cd "${wts[1]}"; return }
+  if [[ -t 0 && -t 1 ]] && command -v fzf >/dev/null 2>&1; then
+    local wt br line; local -a rows
+    for wt in "${wts[@]}"; do
+      br=$(git -C "$wt" branch --show-current 2>/dev/null)
+      rows+=("${wt}"$'\t'"${wt#$DEV_WORKTREE_ROOT/}"$'\t'"${br:-?}")
+    done
+    line=$(print -rl -- "${rows[@]}" \
+             | _t_fzf --with-nth=2.. --delimiter='\t' --prompt='t cd > ' --height=40% --reverse) || return 1
+    cd "${line%%$'\t'*}"; return
+  fi
+  local -a short; short=("${wts[@]#$DEV_WORKTREE_ROOT/}")
+  print -rl -- "t cd: several worktrees — name one (t cd <repo> <slot>):" \
+    "${short[@]/#/  }" >&2
+  return 1
+}
+
+# _t_open — map gh-grammar `t open <repo> [slot] [--new|--fg|--remote] [--host H]`
+# onto the existing `dev` grammar: --new→the `new` slot keyword, --fg→-f, --remote→-r;
+# repo/slot/-r/-f pass through (dev parses flags in any position).
+#
+# Remote model (--remote and --host are CONSOLIDATED, two angles on one thing):
+#   --host H names WHICH host; -r/--remote means "remote, pick the host for me".
+#   • -r --new (no --host)  → START a fresh session on the default host (_dev_default_host,
+#                             the first $REMOTE_HOSTS); name one with --host to override.
+#   • --host H [--new]      → start/attach on H (the explicit-host path; -r is redundant
+#                             here and is dropped before forwarding).
+#   • -r (no --new)         → cross-host ATTACH of a live slot (host auto-inferred); handled
+#                             by _t_dev/_dev_remote below, NOT here.
+# The host paths dispatch via _dev_remote_open with the original gh-style args (minus
+# --host / -r), so H's own `t open` re-parses them from ITS $PWD.
+_t_open() {
+  local -a a rest; local arg want_host= host= remote= isnew= local_only=
+  for arg in "$@"; do
+    if [[ -n $want_host ]]; then host=$arg; want_host=; continue; fi
+    case "$arg" in
+      --host)   want_host=1; continue ;;
+      --host=*) host=${arg#--host=}; continue ;;
+    esac
+    rest+=("$arg")
+    case "$arg" in
+      --new|new)         a+=(new); isnew=1 ;;
+      --fg)              a+=(-f) ;;
+      -r|--remote)       remote=1; a+=(-r) ;;
+      -l|--local|--here) local_only=1; a+=(--local) ;;
+      *)                 a+=("$arg") ;;
+    esac
+  done
+  [[ -n $want_host ]] && { echo "t open: --host requires a value" >&2; return 2; }
+
+  # -l/--local/--here and -r/--remote are opposite intents — reject the combination
+  # here too, so the `-r --new` default-host shortcut below cannot silently win over a
+  # user-forced local. (_t_dev re-checks the same for its fall-through path.)
+  if [[ -n $local_only && -n $remote ]]; then
+    echo "t open: --local/--here and -r/--remote are mutually exclusive" >&2
+    return 2
+  fi
+
+  # `-r --new` with no --host: START fresh on the default remote host. (Plain `-r`
+  # with no --new falls through to _t_dev's cross-host ATTACH; --host below wins if set.)
+  if [[ -z $host && -n $remote && -n $isnew ]]; then
+    host=$(_dev_default_host) || {
+      echo "t open -r --new: no remote hosts configured (set REMOTE_HOSTS in ${T_LOCAL_RC})." >&2
+      return 1
+    }
+    echo "(no --host given — starting on $host; pass --host <h> to choose another)"
+  fi
+
+  if [[ -n $host ]]; then
+    # The remote `t open` re-parses these positionals from $host's own $PWD
+    # (login dir, not this laptop's repo tree), so apply _t_dev's repo-aware
+    # rewrite HERE — a lone slot/keyword or bare `t open --host h` would
+    # otherwise hit the wrong repo (or none) on the far side. -r/--remote is
+    # dropped: the host is already chosen, and forwarding it would make the far
+    # side try its OWN remote attach instead of acting locally.
+    local -a flags pos
+    for arg in "${rest[@]}"; do
+      case "$arg" in
+        -r|--remote) ;;
+        -l|--local|--here) ;;   # --host already names the machine; "force local" is moot
+        --*) flags+=("$arg") ;;
+        *)   pos+=("$arg") ;;
+      esac
+    done
+    local p1=${pos[1]:-} p2=${pos[2]:-}
+    if [[ -z ${DEV_REPOS[$p1]:-} && ( $p1 == <-> || $p1 == new || $p1 == fg ) \
+          && ( -z $p2 || $p2 == new || $p2 == fg ) ]]; then
+      p2=$p1; p1=
+    fi
+    [[ -z $p1 ]] && p1=$(_t_infer_repo "$p2")
+    rest=()
+    [[ -n $p1 ]] && rest+=("$p1")
+    [[ -n $p2 ]] && rest+=("$p2")
+    (( ${#pos} > 2 )) && rest+=("${pos[@]:2}")
+    rest+=("${flags[@]}")
+    _dev_remote_open "$host" "${rest[@]}"
+    return
+  fi
+  _t_dev "${a[@]}"
+}
+
+# _t_beam_xlate — map gh-grammar `t beam [repo] [slot] [--host H] [flags]` onto the
+# _t_beam impl's `[repo [slot]] [host]` positional grammar (--host's value moves to the
+# end as the trailing host positional); -f/--fg/-d/-p/-a/-s and --from <h> (the receive
+# flag) pass through unchanged — _t_beam parses --from itself.
+_t_beam_xlate() {
+  local -a a; local arg host want_host=
+  for arg in "$@"; do
+    if [[ -n $want_host ]]; then host=$arg; want_host=; continue; fi
+    case "$arg" in
+      --host) want_host=1 ;;
+      *)      a+=("$arg") ;;
+    esac
+  done
+  _t_beam "${a[@]}" ${host:+"$host"}
+}
+
+# help — show this command list, grouped by purpose
+# Each command's name + description are parsed live from the leading
+# `# name … — description` comment above each ~/.zshrc function and the header
+# line of each ~/bin script, so descriptions stay current as you add commands.
+# Grouping is the `groups` list below; anything not placed there shows under
+# "Other" so it's never hidden — except the few internal/automatic commands in
+# the `_hide` list (a transparent wrapper, a hook, a guard), which are dropped
+# entirely since you never invoke them by hand.
+# (zsh's own help is `run-help` / ESC-h; this doesn't touch it.)
+# --- tab completion for our commands -------------------------------------
+# compinit already ran at the top of this file, so compdef is available here.
+# These helper names start with `_` so the `help` parser above skips them. (csync
+# takes no args, so it needs no completion.)
+#
+# `_t` — subcommand-aware completion for the single `t` command: verbs at position
+# 1; then the per-verb positional (a DEV_REPOS key for repo verbs, a REMOTE_HOSTS
+# key for `on`), and slot/flags after. Pulls live from the ${(k)DEV_REPOS} /
+# ${(k)REMOTE_HOSTS} arrays so it stays current with ${T_LOCAL_RC}.
+_t() {
+  local -a verbs=(update doctor open app ls kill push pop resume beam read plan paste find on cursor setup config new install permissions trust)
+  if (( CURRENT == 2 )); then
+    _describe -t verbs 't verb' verbs
+    return
+  fi
+  case ${words[2]} in
+    app)
+      if [[ ${words[CURRENT-1]} == --url ]]; then _message 'preview URL'
+      elif [[ ${words[CURRENT-1]} == --plan ]]; then _files -g '*.md'
+      elif [[ ${words[CURRENT]} == -* ]]; then _values 'flag' --url --no-preview --plan --no-plan --reuse-window --dry-run -h --help
+      elif (( CURRENT == 3 )); then _values 'repo' ${(k)DEV_REPOS}
+      elif (( CURRENT == 4 )); then _message 'local slot number'
+      else _values 'flag' --url --no-preview --plan --no-plan --reuse-window --dry-run -h --help; fi ;;
+    cursor)
+      if (( CURRENT == 3 )); then _values 'chat / action' ls resume -p --from --host
+      else _values 'flag' --host --from -p --pick -a --attach -h --help; fi ;;
+    open|kill|read|plan|paste|beam|resume)
+      if   (( CURRENT == 3 )); then _values 'repo' ${(k)DEV_REPOS}
+      elif (( CURRENT == 4 )); then _values 'slot' 1 2 3 4 new fg
+      else _values 'flag' --new --fg --remote --codex --claude -y --yes -a --all --host --from -d --detach -p --pick -s --session -h --help; fi ;;
+    on)
+      (( CURRENT == 3 )) && _values 'host' ${(k)REMOTE_HOSTS} || _normal ;;
+    ls)
+      if (( CURRENT == 3 )) && [[ ${words[CURRENT]} != -* ]]; then _values 'repo' ${(k)DEV_REPOS}
+      else _values 'flag' -r --remote -a --all -h --help; fi ;;
+    push)
+      _values 'flag' -p --pick -a --all -h --help ;;
+    find)
+      _values 'flag' -k --keyword -h --help ;;
+    setup)
+      if [[ ${words[CURRENT]} == -* ]]; then _values 'flag' --hosts --no-hosts --dry-run -h --help
+      else _files -/; fi ;;   # scan-dir arguments
+    config)
+      _values 'flag' --show --edit -h --help ;;
+    new)
+      if (( CURRENT == 3 )) && [[ ${words[CURRENT]} != -* ]]; then _message 'repo name'
+      else _values 'flag' --owner --public --private --alias --hosts --no-hosts -y --yes --dry-run -h --help; fi ;;
+    install)
+      if [[ ${words[CURRENT]} == -* ]]; then _values 'flag' --status --update --reinstall --no-login --headless --hosts --no-hosts -y --yes --dry-run -h --help
+      else _values 'agent' claude codex cursor; fi ;;
+    trust)
+      if [[ ${words[CURRENT]} == -* ]]; then _values 'flag' -a --all --status -q --quiet -h --help
+      else _files -/; fi ;;
+  esac
+}

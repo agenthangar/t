@@ -1,0 +1,10 @@
+{
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [ { "type": "command", "command": "$HOME/bin/claude-stamp-tmux" } ] }
+    ]
+  },
+  "permissions": {
+    "allow": [ "mcp__sessions" ]
+  }
+}

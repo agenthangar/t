@@ -1,0 +1,9 @@
+# Copy to ${XDG_CONFIG_HOME:-$HOME/.config}/t/local.zsh.
+# Register local checkouts and optional SSH targets. No dotfiles checkout is needed.
+DEV_REPOS[myproject]="$HOME/code/myproject"
+# REMOTE_HOSTS[build]="user@build.example.com"
+# DEV_AGENT_DEFAULT=codex
+# DEV_MODEL[codex]="gpt-6-sol"
+# DEV_EFFORT[codex]=high
+# DEV_WORKTREE[myproject]=1
+# TBEAM_HOST=build
