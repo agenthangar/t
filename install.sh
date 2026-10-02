@@ -18,10 +18,22 @@ resolve_primary() {
     (cd "$common/.." && pwd -P)
 }
 
-T_PRIMARY="$(resolve_primary || true)"
-if [[ -z "$T_PRIMARY" || ! -d "$T_PRIMARY/.git" ]]; then
-    echo "t install: expected a normal canonical Git checkout with a .git directory" >&2
-    exit 1
+T_RELEASE=0
+# Prefer an explicit release marker, even when the storage directory happens to
+# sit beneath an unrelated Git checkout.
+if [[ -f "$T_SCRIPT_DIR/.t-release-version" ]]; then
+    if [[ ! "$(cat "$T_SCRIPT_DIR/.t-release-version")" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        echo "t install: invalid release version marker" >&2
+        exit 1
+    fi
+    T_PRIMARY="$T_SCRIPT_DIR"
+    T_RELEASE=1
+else
+    T_PRIMARY="$(resolve_primary || true)"
+    if [[ -z "$T_PRIMARY" || ! -d "$T_PRIMARY/.git" ]]; then
+        echo "t install: expected a canonical Git checkout or a versioned t release" >&2
+        exit 1
+    fi
 fi
 
 valid_source() {
@@ -253,7 +265,7 @@ fi
 
 # Activate t's live-main guard in this repository only. An existing effective
 # hooks path may be shared with other hooks, so leave the user's choice intact.
-if ! git -C "$T_PRIMARY" config --get core.hooksPath >/dev/null 2>&1; then
+if [[ "$T_RELEASE" == 0 ]] && ! git -C "$T_PRIMARY" config --get core.hooksPath >/dev/null 2>&1; then
     git -C "$T_PRIMARY" config --local core.hooksPath .githooks
     echo "Enabled t's repository-local pre-commit guard"
 fi

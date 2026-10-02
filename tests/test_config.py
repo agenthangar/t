@@ -127,6 +127,7 @@ def config_cli(t_mod, tmp_path, monkeypatch):
     local = tmp_path / "local"
     local.write_text("# keep me\n")
     monkeypatch.setattr(t_mod, "ZSHRC_LOCAL", str(local))
+    monkeypatch.setenv("T_LOCAL_RC", str(local))
     monkeypatch.setattr(t_mod.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(t_mod.sys.stdout, "isatty", lambda: True)
     monkeypatch.setattr(t_mod, "_config_live_models", lambda agent: [

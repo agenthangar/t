@@ -3703,7 +3703,7 @@ def _install_relink():
         print(f"t install: no installer at {inst}", file=sys.stderr)
         return 1
     env = {**os.environ, "T_LINKS_ONLY": "1"}
-    if live != _t_canonical_root(live):
+    if not _t_release_version(live) and live != _t_canonical_root(live):
         env["T_LINK_DEV"] = "1"
     else:
         env.pop("T_LINK_DEV", None)
@@ -3726,6 +3726,32 @@ def _t_git(repo, *args):
 
 def _t_source_root():
     return os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+
+
+_T_RELEASE_TAG = re.compile(r"v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\Z")
+
+
+def _t_release_version(source):
+    """Version for a validated archive install, or None for a Git checkout."""
+    if os.path.lexists(os.path.join(source, ".git")):
+        return None
+    try:
+        with open(os.path.join(source, ".t-release-version"), encoding="ascii") as fh:
+            version = fh.read().strip()
+        with open(os.path.join(source, ".t-install-version"), encoding="ascii") as fh:
+            capability = fh.read().strip()
+    except (OSError, UnicodeError):
+        return None
+    return version if _T_RELEASE_TAG.fullmatch(version) and capability == "1" else None
+
+
+def _t_version():
+    source = _t_source_root()
+    release = _t_release_version(source)
+    if release:
+        return release
+    sha = _t_git(source, "rev-parse", "--short", "HEAD")
+    return f"{sha} (checkout)" if sha else "unknown"
 
 
 def _t_canonical_root(source):
@@ -3758,6 +3784,22 @@ def _t_relink(root, dev=False):
 
 def cmd_update(cfg, args):
     active = _t_source_root()
+    release = _t_release_version(active)
+    if release:
+        if args.dev:
+            print("t update --dev: this is a release install; install a t Git checkout to select a development worktree", file=sys.stderr)
+            return 1
+        if args.relink:
+            return _t_relink(active)
+        updater = os.path.join(active, "scripts", "install-release.py")
+        if not os.path.isfile(updater):
+            print(f"t update: release updater missing at {updater}", file=sys.stderr)
+            return 1
+        try:
+            return subprocess.run([sys.executable, updater]).returncode
+        except OSError as exc:
+            print(f"t update: could not start release updater: {exc}", file=sys.stderr)
+            return 1
     canonical = _t_canonical_root(active)
     if not canonical:
         print("t update: cannot locate t's canonical Git checkout", file=sys.stderr)
@@ -5542,9 +5584,14 @@ def cmd_doctor(cfg, args):
              "codex_hook_trusted": codex_trusted, "perm_sync": perm_sync,
              "trust_sync": trust_sync}
     live_src = _t_source_root()
-    canonical = _t_canonical_root(live_src)
+    release = _t_release_version(live_src)
+    canonical = None if release else _t_canonical_root(live_src)
     print("  active source  %s" % live_src)
-    print("  canonical      %s" % (canonical or "unavailable"))
+    if release:
+        print("  release        %s" % release)
+        print("  source type    versioned archive")
+    else:
+        print("  canonical      %s" % (canonical or "unavailable"))
     if canonical:
         br = run(["git", "-C", live_src, "rev-parse", "--abbrev-ref", "HEAD"]) or "?"
         head = run(["git", "-C", live_src, "log", "-1", "--format=%h %s"]) or "?"
@@ -5557,7 +5604,7 @@ def cmd_doctor(cfg, args):
             note = "" if fetched else " (as of last fetch — origin unreachable)"
             print("                 vs origin/main: %s%s"
                   % ("up to date" if not facts["behind"] else "behind %d" % facts["behind"], note))
-    else:
+    elif not release:
         print("  git checkout   unavailable")
     links = []
     if live_src:
@@ -7266,13 +7313,14 @@ examples:
   t setup                 onboard this machine: register ~/code repos + ssh hosts
   t install               install + log in the agent CLIs (claude, codex, cursor) here and on every host
   t permissions           compare T_PERMISSIONS_DIR with installed agent settings
-  t update                fast-forward canonical t main and relink it
+  t update                install the latest release, or update a Git checkout
   t new tool-x            wizard: create ~/code/tool-x + github <owner>/tool-x, register it everywhere
 
 agents — what each verb supports per agent (t install --status adds this machine's state):
 """ + "\n".join(_agent_parity_render()) + """
 
 Run `t <verb> -h` for a verb's own flags.""")
+    p.add_argument("--version", action="version", version=f"t {_t_version()}")
     sub = p.add_subparsers(dest="verb", metavar="<verb>")
 
     sp = sub.add_parser("open", help="open or reattach a session in a per-repo tmux slot",
@@ -7582,12 +7630,13 @@ Run `t <verb> -h` for a verb's own flags.""")
     sp.add_argument("--status", action="store_true",
                     help="print each agent's install/login state and the per-agent support matrix")
 
-    sp = sub.add_parser("update", help="update canonical t main and relink the installed command",
-        description="Fetch and fast-forward canonical main, then relink t. From a dev worktree, "
-            "--dev selects that worktree without changing canonical main; --relink repeats "
-            "the current source selection without fetching.")
+    sp = sub.add_parser("update", help="update the installed t release or Git checkout",
+        description="For a versioned release, install the latest published release. For a Git "
+            "checkout, fetch and fast-forward canonical main before relinking. --relink "
+            "repeats the selected source without fetching; --dev selects a t worktree "
+            "from a Git checkout.")
     group = sp.add_mutually_exclusive_group()
-    group.add_argument("--dev", action="store_true", help="select the t session worktree containing $PWD")
+    group.add_argument("--dev", action="store_true", help="select the t session worktree containing $PWD (Git checkout only)")
     group.add_argument("--relink", action="store_true", help="relink the currently selected source")
 
     sp = sub.add_parser("permissions", help="sync an explicitly selected policy into agent configs",
@@ -7616,8 +7665,8 @@ Run `t <verb> -h` for a verb's own flags.""")
     sp.add_argument("-q", "--quiet", action="store_true", help="print only what changed")
 
     sub.add_parser("doctor", help="diagnose this machine's t, tmux, and agent setup",
-        description="Read-only diagnostics for when the tooling misbehaves: the active and "
-            "canonical t checkouts and whether main is behind origin/main, whether every "
+        description="Read-only diagnostics for when the tooling misbehaves: the active t "
+            "release or Git checkout (and whether canonical main is behind origin/main), whether every "
             "install.sh-managed link is in place, tmux server options vs ~/.tmux.conf (mouse, "
             "focus-events, history-limit), which panes capture the mouse themselves (Claude's "
             "fullscreen TUI — the usual answer to 'the scroll wheel does not scroll the "

@@ -1,0 +1,72 @@
+name: Release assets
+on:
+  release:
+    types: [published]
+permissions:
+  contents: read
+jobs:
+  archive:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build tagged runtime archive
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: python3 scripts/build-release.py "$RELEASE_TAG"
+      - name: Verify archive installation in an isolated home
+        run: |
+          python3 - <<'PY'
+          import importlib.util, os, pathlib, tempfile
+          spec = importlib.util.spec_from_file_location('release_installer', 'scripts/install-release.py')
+          installer = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(installer)
+          with tempfile.TemporaryDirectory() as directory:
+              home = pathlib.Path(directory) / 'home'
+              home.mkdir()
+              os.environ.update(HOME=str(home), XDG_CONFIG_HOME=str(home / '.config'),
+                                T_NO_MCP='1', T_NO_CODEX_HOOKS='1', T_NO_PERMISSIONS='1',
+                                T_NO_TRUST='1', TMUX='')
+              root = installer.install(pathlib.Path('dist/t.tar.gz').read_bytes(),
+                                       pathlib.Path('dist/SHA256SUMS').read_bytes(),
+                                       home / '.local/share/t', home)
+              assert (home / 'bin/t').resolve() == root / 'bin/t'
+              assert len([p for _, rel in installer.OWNED_LINKS
+                          if (home / rel).is_symlink()]) == 7
+          PY
+      - name: Verify or upload immutable assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          mkdir -p /tmp/t-published-assets
+          assets="$(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name')"
+          have_archive=0
+          have_checksums=0
+          grep -Fxq t.tar.gz <<< "$assets" && have_archive=1
+          grep -Fxq SHA256SUMS <<< "$assets" && have_checksums=1
+          if [ "$have_archive" != "$have_checksums" ]; then
+            echo "Release has only one of t.tar.gz and SHA256SUMS; refusing an incomplete asset set" >&2
+            exit 1
+          fi
+          if [ "$have_archive" = 0 ]; then
+            gh release upload "$RELEASE_TAG" dist/t.tar.gz dist/SHA256SUMS
+          else
+            gh release download "$RELEASE_TAG" -p t.tar.gz -p SHA256SUMS -D /tmp/t-published-assets
+            (cd /tmp/t-published-assets && sha256sum -c SHA256SUMS)
+            python3 - <<'PY'
+          import gzip
+          from pathlib import Path
+          published = gzip.decompress(Path('/tmp/t-published-assets/t.tar.gz').read_bytes())
+          tagged = gzip.decompress(Path('dist/t.tar.gz').read_bytes())
+          if published != tagged:
+              raise SystemExit('Published archive content differs from the tagged Git tree')
+          PY
+          fi
