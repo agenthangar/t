@@ -143,6 +143,20 @@ def test_checkout_rejects_conflicting_destination_and_alias(t_mod, box, capsys):
     assert not (home / "elsewhere").exists()
 
 
+def test_checkout_rejects_same_basename_as_another_registered_repo(t_mod, box, tmp_path, capsys):
+    cfg, home, local = box
+    other = tmp_path / "first" / "repo"
+    other.mkdir(parents=True)
+    cfg.repos["first"] = str(other)
+    wanted = tmp_path / "second" / "repo"
+    assert t_mod.cmd_checkout(cfg, args(alias="second", path=str(wanted))) == 1
+    assert "worktree slots use repository directory names" in capsys.readouterr().err
+    assert not wanted.exists()
+    assert local.read_text() == "# private settings stay here\n"
+    # A second alias of the SAME checkout remains valid.
+    assert t_mod._repo_basename_conflict(str(other), [str(other)]) is None
+
+
 def test_checkout_custom_path_alias_and_non_main_warning(t_mod, box, tmp_path, capsys):
     cfg, home, local = box
     destination = tmp_path / "different"
@@ -365,3 +379,31 @@ def test_setup_explicit_instructions_seeds_selected_repo(t_mod, box, monkeypatch
     assert t_mod.cmd_setup(cfg, setup_args) == 0
     assert "DEV_REPOS[repo]" in local.read_text()
     assert "Prefer my team's model." in (repo / "AGENTS.md").read_text()
+
+
+def test_setup_rejects_second_repo_with_same_worktree_slot_name(t_mod, box, tmp_path, monkeypatch, capsys):
+    cfg, home, local = box
+    existing = tmp_path / "existing" / "repo"
+    existing.mkdir(parents=True)
+    candidate = home / "code" / "repo"
+    git("init", "-q", "-b", "main", candidate)
+    cfg.repos["existing"] = str(existing)
+    cfg.hosts = {}
+    cfg.worktree_root = str(home / "code" / ".worktrees")
+    monkeypatch.setattr(t_mod, "_parse_ssh_hosts", lambda path: [])
+    monkeypatch.setattr(t_mod.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(t_mod.sys.stdout, "isatty", lambda: True)
+
+    def select_repo(items, taken, trailer):
+        for item in items:
+            if item.get("kind") == "repo" and item.get("t") == "toggle":
+                item["checked"] = True
+        return True
+
+    monkeypatch.setattr(t_mod, "_setup_wizard", select_repo)
+    setup_args = argparse.Namespace(dirs=[str(home / "code")], dry_run=False,
+                                    hosts=None, no_hosts=True, instructions=False,
+                                    no_instructions=True)
+    assert t_mod.cmd_setup(cfg, setup_args) == 1
+    assert "worktree slots would collide" in capsys.readouterr().err
+    assert local.read_text() == "# private settings stay here\n"
