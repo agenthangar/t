@@ -9,6 +9,24 @@ _dev_worktree_path()   { print -r -- "${DEV_WORKTREE_ROOT}/${DEV_REPOS[$1]:t}/$2
 # _dev_worktree_branch <repo> <slot> — the slot's dedicated branch.
 _dev_worktree_branch() { print -r -- "dev/${DEV_REPOS[$1]:t}-$2" }
 
+# A desktop-only Codex slot has no tmux owner. Keep its reservation in the
+# worktree's private Git metadata so commits cannot publish it and sweep cannot
+# mistake a clean, merged branch for an abandoned workspace.
+_dev_app_slot_marker() {
+  local gitdir
+  gitdir=$(git -C "$1" rev-parse --absolute-git-dir 2>/dev/null) || return 1
+  [[ -n $gitdir ]] || return 1
+  print -r -- "$gitdir/t-app-slot"
+}
+_dev_app_slot_reserved() {
+  local marker; marker=$(_dev_app_slot_marker "$1") || return 1
+  [[ -f $marker ]]
+}
+_dev_app_slot_reserve() {
+  local marker; marker=$(_dev_app_slot_marker "$1") || return 1
+  print -r -- 'codex-app' >| "$marker"
+}
+
 # _dev_repo_slots <repo> — every slot NUMBER this repo has any trace of, ascending:
 # a live tmux session (under ANY sibling alias keying the repo's dir — dev-dot-3 and
 # dev-dotfiles-3 are one slot), a worktree dir on disk, or a saved-transcript project
@@ -72,6 +90,10 @@ _dev_worktree_create() {
   local repodir="${DEV_REPOS[$repo]}"
   local wt br; wt="$(_dev_worktree_path "$repo" "$slot")"; br="$(_dev_worktree_branch "$repo" "$slot")"
   if [[ -e "$wt/.git" ]]; then          # already materialized → reuse (idempotent)
+    if _dev_app_slot_reserved "$wt"; then
+      print -u2 -- "t: $repo $slot is reserved for the Codex desktop app; use t open $repo $slot --app"
+      return 1
+    fi
     _dev_worktree_freshen "$repo" "$slot" "$wt" "$br"
     print -r -- "$wt"; return 0
   fi
@@ -135,6 +157,7 @@ _dev_worktree_create() {
 # reuse pays only a tmux probe and a local `git status`.
 _dev_worktree_freshen() {
   local repo="$1" slot="$2" wt="$3" br="$4" repodir="${DEV_REPOS[$1]}"
+  _dev_app_slot_reserved "$wt" && return 0
   local -a livepaths
   livepaths=("${(@f)$(tmux list-sessions -F '#{session_path}' 2>/dev/null)}")
   (( ${livepaths[(Ie)$wt]} )) && return 0
@@ -335,6 +358,7 @@ _dev_beam_land_cwd() {
   # _dev_worktree_create would otherwise resume under the beamed conversation.
   local why= s p
   if [[ -e $cwd/.git ]]; then
+    _dev_app_slot_reserved "$cwd" && why="the Codex desktop app owns this worktree"
     for s in ${(f)"$(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep '^dev-')"}; do
       p=$(tmux display-message -p -t "$s" '#{session_path}' 2>/dev/null)
       [[ -n $p && ${p:A} == ${cwd:A} ]] && { why="$s is live in it"; break }
@@ -590,6 +614,7 @@ _dev_worktree_sweep_run() {
   for wt in $root/*/*(N/); do                       # <basename>/<slot> dirs
     [[ -e "$wt/.git" ]] || continue
     (( ${livepaths[(Ie)$wt]} )) && continue         # live session here → keep
+    _dev_app_slot_reserved "$wt" && continue      # desktop app owns this worktree
     # Unlike the dirty/merged skips below this one is LOGGED: a worktree that is
     # merged, clean, and never reaped is otherwise a silent mystery.
     if _t_tree_is_live "$wt"; then

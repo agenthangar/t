@@ -6292,6 +6292,21 @@ def _app_bundle():
     return None
 
 
+def _app_reserve_worktree(cwd):
+    """Protect a desktop conversation's worktree after its tmux CLI exits."""
+    if not os.path.isfile(os.path.join(cwd, ".git")):
+        return
+    result = _run(["git", "-C", cwd, "rev-parse", "--absolute-git-dir"], timeout=10)
+    if result.returncode or not result.stdout.strip():
+        raise ValueError(f"could not locate Git metadata for the worktree: {cwd}")
+    marker = os.path.join(result.stdout.strip(), "t-app-slot")
+    try:
+        with open(marker, "w", encoding="utf-8") as f:
+            f.write("codex-app\n")
+    except OSError as e:
+        raise ValueError(f"could not reserve the worktree against automatic cleanup: {e}") from e
+
+
 def _app_preview_path(row):
     return os.path.join(_cache_root(), "app-previews", row["sid"] + ".json")
 
@@ -6594,6 +6609,7 @@ def cmd_app(cfg, args):
             # A second browser URL on the SAME thread keeps the web preview too.
             # A raw Markdown OS-open would create a new projectless chat.
             links.append(_app_link(row["sid"], plan_url, "t-plan-" + row["sid"]))
+        _app_reserve_worktree(row["cwd"])
         stopped = _app_stop_cli(row)
         if stopped.returncode:
             raise ValueError(stopped.stderr.strip() or "could not stop the CLI; the app was not opened")
@@ -7771,12 +7787,14 @@ Run `t <verb> -h` for a verb's own flags.""")
             "recorded yet) is opened by that SESSION name, on whichever "
             "machine holds it: one living in a tmux session of its own is attached "
             "in place, a true foreground claude is moved into this terminal. "
-            "`--new` forces a fresh session, `--fg` runs inline without a tmux slot, and "
+            "`--new` forces a fresh session, `--fg` runs inline without a tmux slot, "
+            "`--app` opens an isolated worktree in the macOS Codex desktop app, and "
             "`-r`/`--host` open or attach on a remote host (`-r --new` starts one there).")
     sp.add_argument("repo", nargs="?", help="DEV_REPOS key, or a foreground session id/repo:id from `t ls`")
     sp.add_argument("slot", nargs="?", help="slot number, 'fg' (this repo's foreground sessions), or a session id")
     sp.add_argument("--new", action="store_true", help="force a fresh session")
     sp.add_argument("--fg", action="store_true", help="no tmux: foreground-resume / run inline")
+    sp.add_argument("--app", action="store_true", help="open an isolated worktree in the Codex desktop app on this Mac (no CLI/tmux for a fresh slot)")
     sp.add_argument("-l", "--local", "--here", dest="local", action="store_true", help="force this machine: skip the remote auto-attach probe (combine with --fg for local foreground)")
     sp.add_argument("-r", "--remote", action="store_true", help="remote: attach a live slot on any host; with --new, start one on the default host")
     sp.add_argument("--host", help="which host to open/attach on (sets the host for -r; default for --new: first $REMOTE_HOSTS)")
