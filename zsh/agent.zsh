@@ -122,12 +122,17 @@ _dev_agent_at_welcome() {
 }
 # _dev_agent_pid_above — walk up from this shell to the nearest agent process (the
 # claude or codex whose tool shell we are running in) and print its pid; rc 1 on miss.
+# A Codex app-server is shared by multiple threads: its pid registry entry cannot
+# identify the calling thread, so it must not count as a self-owned conversation.
 # Capped at init. The generalised _tpush_claude_pid (kept below as an alias).
 _dev_agent_pid_above() {
   local pid=$$ comm
   while (( pid > 1 )); do
     comm=$(ps -o comm= -p "$pid" 2>/dev/null) || return 1
-    _dev_agent_is_proc "$comm" && { print -r -- "$pid"; return 0; }
+    if _dev_agent_is_proc "$comm"; then
+      [[ $(_dev_agent_of_comm "$comm") == codex ]] && _dev_agent_is_service "$pid" && return 1
+      print -r -- "$pid"; return 0
+    fi
     pid=$(ps -o ppid= -p "$pid" 2>/dev/null) || return 1
     pid=${pid//[[:space:]]/}
     [[ -n $pid ]] || return 1

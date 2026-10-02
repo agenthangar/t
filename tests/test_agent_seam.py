@@ -1021,6 +1021,23 @@ def test_zsh_self_sid_and_agent(zsh, tmp_path):
     assert r.stdout.splitlines() == [SID, "codex"]
 
 
+def test_zsh_shared_codex_service_cannot_claim_a_calling_thread(zsh, tmp_path):
+    """A shared app-server PID's registry entry belongs to some thread, not necessarily ours."""
+    reg = zsh.home / ".cache" / "claude-sessions"
+    reg.mkdir(parents=True, exist_ok=True)
+    (reg / "4242").write_text(f"{SID}\t{zsh.home}\n")
+    (tmp_path / "ps.txt").write_text("4242 1 codex\n")
+    args = tmp_path / "args.txt"
+    args.write_text("4242 /usr/local/bin/codex app-server --listen stdio\n")
+    r = zsh(
+        'pid=$$; print -r -- "$pid 4242 zsh" >> $FAKE_PS; '
+        '_dev_self_sid; print -r -- "sid_rc=$?"; '
+        '_dev_self_agent; print -r -- "agent_rc=$?"',
+        FAKE_ARGS=str(args),
+    )
+    assert r.stdout.splitlines() == ["sid_rc=1", "agent_rc=1"]
+
+
 def test_zsh_agent_wrap_spawns_the_recorded_agent(zsh, tmp_path):
     # a stub `codex` that writes a SPAWN instruction into the sentinel, the way
     # `t push` does from inside a session; the wrapper must resume it as codex
