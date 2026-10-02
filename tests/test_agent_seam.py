@@ -1566,6 +1566,13 @@ def test_beam_refuses_paginated_codex_rollout_behind_sqlite_checkpoint(zsh, tmp_
     r = zsh(f'_dev_codex_rollout_integrity {SID}; print -r -- "check=$?"')
     assert r.stdout.strip() == "check=0", r.stderr
 
+    with sqlite3.connect(codex_home / "state_5.sqlite") as db:
+        db.execute("drop table threads")
+        db.execute("create table threads (id text, rollout_path text)")
+        db.execute("insert into threads values (?, ?)", (SID, str(rollout)))
+    r = zsh(f'_dev_codex_rollout_integrity {SID}; print -r -- "check=$?"')
+    assert r.stdout.strip() == "check=0", r.stderr  # old Codex schema predates history_mode
+
 
 def test_beam_pull_checks_remote_codex_rollout_before_killing_owner(zsh):
     row = f"{SID}\t/remote/worktree\tapi-3\tdetached\tactive\ttest\tcodex"
