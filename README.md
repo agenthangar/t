@@ -12,6 +12,17 @@ app with the running web preview beside it.
 t manages sessions in tmux and gives each task its own Git worktree. It includes
 Claude Code and Codex session workflows, plus Cursor transfer tools.
 
+<p>
+  <a href="#agents"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/media/logos/claude-dark.svg"><img src="docs/media/logos/claude-light.svg" alt="Claude" width="128" height="28"></picture></a>
+  &nbsp;&nbsp;&nbsp;&nbsp;
+  <a href="#agents"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/media/logos/openai-dark.svg"><img src="docs/media/logos/openai-light.svg" alt="OpenAI" width="105" height="28"></picture></a>
+  &nbsp;&nbsp;&nbsp;&nbsp;
+  <a href="#agents"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/media/logos/cursor-dark.svg"><img src="docs/media/logos/cursor-light.svg" alt="Cursor" width="118" height="28"></picture></a>
+</p>
+
+Supported workflows vary by agent; see the [support matrix](#agents).
+[Logos belong to their respective owners](docs/media/logos/README.md).
+
 [Get started](#install) · [Work from anywhere](#work-from-anywhere) · [Commands](#commands) · [Configuration](#configuration) · [Agent support](#agents) · [Coming soon](#coming-soon) · [AgentHangar](https://agenthangar.ai)
 
 ![A recorded local t workflow: inspect commands and manage a demo repository](docs/media/demo.gif)
