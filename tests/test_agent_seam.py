@@ -17,6 +17,7 @@ import select
 import shlex
 import shutil
 import subprocess
+import sys
 import time
 
 import pytest
@@ -1463,7 +1464,9 @@ def test_remote_desktop_reservation_blocks_local_slot_without_becoming_attachabl
     assert "owner=mini" in r.stdout, r.stdout
     assert "attachable=1" in r.stdout, r.stdout
     assert all(f"{name}=1" in r.stdout for name in ("cli", "foreground", "desktop", "paste", "resume")), r.stdout
-    assert r.stderr.count("reserved by the Codex desktop app on mini") == 4
+    assert r.stderr.count("reserved by the Codex desktop app on mini") == (4 if sys.platform == "darwin" else 3)
+    if sys.platform != "darwin":
+        assert "requires macOS" in r.stderr
     assert "reserved for the Codex desktop app on mini" in r.stderr
     assert not zsh.log.exists() or "new-session" not in zsh.log.read_text()
 
