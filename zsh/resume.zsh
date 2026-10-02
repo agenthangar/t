@@ -1610,15 +1610,23 @@ _tbeam_sync_transcript() {
 _tbeam_pull_transcript() {
   local cwd="$1" host="$2" agent="${3:-claude}" sid="${4:-}"
   if [[ $agent == codex ]]; then
-    # ask the host where the rollout lives (its hook cache / index), then pull it
-    # with the same relative-path rsync the send direction uses
+    # Ask the host where the rollout lives, then mirror its directory locally.
+    # Pull named files without -R: macOS rsync 2.6.9 sends an extra .codex parent
+    # for /./ paths, which modern receivers correctly reject as unrequested.
     local rtx; rtx=$(ssh -o BatchMode=yes "$host" "zsh -lic '_dev_agent_transcript codex ${(q)sid}'" 2>/dev/null | tail -1)
     [[ $rtx == */rollout-*.jsonl ]] || { echo "tbeam: $host has no rollout for ${sid[1,8]}…" >&2; return 1; }
     local rel=${rtx#*/.codex/}
-    mkdir -p "${CODEX_HOME:-$HOME/.codex}"
-    rsync -azR --update -e ssh "$host:.codex/./$rel" "$host:.codex/./${rel%.jsonl}.origin" \
-      "${CODEX_HOME:-$HOME/.codex}/" 2>/dev/null \
-      || rsync -azR --update -e ssh "$host:.codex/./$rel" "${CODEX_HOME:-$HOME/.codex}/"
+    # Only Codex session paths are allowed to choose a local destination. This
+    # also keeps remote shell arguments plain and excludes traversal segments.
+    if [[ ! $rel =~ '^sessions/([A-Za-z0-9_-]+/)*rollout-[A-Za-z0-9._:+-]+\.jsonl$' ]]; then
+      echo "tbeam: $host returned an unsupported rollout path" >&2
+      return 1
+    fi
+    local dst="${CODEX_HOME:-$HOME/.codex}/${rel:h}/"
+    mkdir -p "$dst" || return 1
+    rsync -az --update -e ssh "$host:.codex/$rel" "$host:.codex/${rel%.jsonl}.origin" \
+      "$dst" 2>/dev/null \
+      || rsync -az --update -e ssh "$host:.codex/$rel" "$dst"
     return
   fi
   local enc="${cwd//[^A-Za-z0-9]/-}"                # /a/b → -a-b, Claude's dir scheme (/ AND . → -)
