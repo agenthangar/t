@@ -22,9 +22,14 @@ You need **zsh, Python 3, Git, and tmux**. Install `fzf` for the interactive pic
 The test suite runs on macOS and Linux with Python 3.12. Desktop handoff is macOS-only.
 
 ```sh
-git clone https://github.com/agenthangar/t.git ~/code/t
-~/code/t/install.sh
+curl -fsSL https://raw.githubusercontent.com/agenthangar/t/main/scripts/install-release.py | python3
 ```
+
+This installs the latest tagged release under `~/.local/share/t/releases/` and
+links the command into `~/bin`. No repository checkout or pip packages are needed.
+The installer verifies the release archive's SHA-256 checksum before unpacking it.
+Set `XDG_DATA_HOME` or `T_INSTALL_DIR` to choose another installation location.
+You can also download and inspect the installer before running it with Python 3.
 
 Add these lines to **your own `~/.zshrc`**, then open a new terminal:
 
@@ -71,7 +76,7 @@ Use `t doctor` when something is missing.
 | `t app` | Hand a local Codex conversation to its macOS desktop app |
 | `t on <host> <command>` | Run a command through the host's login zsh |
 | `t kill <repo> <slot>` | Stop the selected slot; scoped process cleanup protects shared infrastructure |
-| `t update` | Fast-forward the canonical t checkout and reload the installed release |
+| `t update` | Install the latest release and reload the shell integration |
 | `t doctor` | Diagnose the independent t installation and optional integrations |
 
 Every command has `-h`. Repo-aware commands infer the repository from your current
@@ -112,11 +117,29 @@ Custom rules and existing explicit choices are preserved. `T_NO_TRUST`,
 ### Updates and development
 
 ```sh
-t update           # released main, including return from a dev checkout
+t --version       # installed release, or developer checkout revision
+t update           # latest tagged release; Git installs update main instead
 t update --relink  # repair links from the selected source, without fetching
 ```
 
-The canonical clone stays on `main`; develop in a session worktree (`t open t` after
+Updates are explicit: run `t update`, or let `dots` run it as part of your dotfiles
+update. There is no background updater. Your configuration and agent conversations
+remain outside the installation. If the command's link is broken, rerun the install
+command above. To install a specific release:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/agenthangar/t/main/scripts/install-release.py | python3 - --version v0.2.0
+```
+
+Contributors can use a Git checkout instead:
+
+```sh
+git clone https://github.com/agenthangar/t.git ~/code/t
+~/code/t/install.sh
+```
+
+For a Git installation, `t update` fetches and fast-forwards `main`. The canonical
+clone stays on `main`; develop in a session worktree (`t open t` after
 registering the t repository). From that worktree, `t update --dev` makes its files
 live. Ordinary `t update` switches back without resetting or removing the worktree.
 Dirty or divergent canonical checkouts are refused. Avoid editing canonical main:
@@ -124,8 +147,7 @@ its files are the installed command. A full install enables a repository-local
 pre-commit hook to guard that live checkout. If you already set `core.hooksPath`,
 the installer preserves it; include t's guard in that custom hook path yourself.
 
-If a link is broken, invoke the installer directly: `~/code/t/install.sh`. Your
-configuration and agent conversations are not stored in the t checkout.
+To repair a Git installation directly, run `~/code/t/install.sh`.
 
 ### Optional integrations
 
@@ -135,7 +157,7 @@ keeps its historical executable name and also supports Codex.
 
 [t's original dotfiles](https://github.com/agenthangar/dotfiles) provide optional
 iCloud transcript sync, clipboard bridging, and personal shell utilities. They are
-not prerequisites. On that installation, `dots --all` updates both repositories and
+not prerequisites. On that installation, `dots --all` updates dotfiles and t, and
 the adapter preserves existing personal permission/trust choices.
 
 ## Agents

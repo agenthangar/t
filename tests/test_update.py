@@ -4,6 +4,7 @@ import argparse
 import os
 import pathlib
 import subprocess
+import pytest
 
 
 def git(repo, *args):
@@ -62,3 +63,91 @@ def test_update_rejects_unrelated_dev_worktree(t_mod, tmp_path, monkeypatch, cap
     monkeypatch.chdir(other)
     assert t_mod.cmd_update(None, argparse.Namespace(dev=True, relink=False)) == 1
     assert "session worktree" in capsys.readouterr().err
+
+
+def _release_tree(tmp_path, version="v1.2.3"):
+    root = tmp_path / "custom" / "releases" / version
+    (root / "scripts").mkdir(parents=True)
+    (root / ".t-release-version").write_text(version + "\n")
+    (root / ".t-install-version").write_text("1\n")
+    (root / "install.sh").write_text(
+        "#!/bin/sh\nprintf '%s,%s\\n' \"$T_LINKS_ONLY\" \"${T_LINK_DEV:-unset}\" >> \"$T_UPDATE_LOG\"\n")
+    (root / "install.sh").chmod(0o755)
+    return root
+
+
+def test_release_marker_and_version(t_mod, tmp_path, monkeypatch, capsys):
+    root = _release_tree(tmp_path)
+    monkeypatch.setattr(t_mod, "_t_source_root", lambda: str(root))
+    assert t_mod._t_release_version(str(root)) == "v1.2.3"
+    with pytest.raises(SystemExit) as error:
+        t_mod.build_parser().parse_args(["--version"])
+    assert error.value.code == 0
+    assert capsys.readouterr().out.strip() == "t v1.2.3"
+    (root / ".t-install-version").write_text("2\n")
+    assert t_mod._t_release_version(str(root)) is None
+    (root / ".t-install-version").write_text("1\n")
+    (root / ".git").mkdir()
+    assert t_mod._t_release_version(str(root)) is None
+
+
+def test_checkout_version_is_short_sha(t_mod, monkeypatch, capsys):
+    monkeypatch.setattr(t_mod, "_t_release_version", lambda root: None)
+    monkeypatch.setattr(t_mod, "_t_git", lambda root, *args: "abc1234")
+    with pytest.raises(SystemExit) as error:
+        t_mod.build_parser().parse_args(["--version"])
+    assert error.value.code == 0
+    assert capsys.readouterr().out.strip() == "t abc1234 (checkout)"
+
+
+def test_release_update_and_relink_route_to_the_right_installer(t_mod, tmp_path, monkeypatch, capsys):
+    root = _release_tree(tmp_path)
+    updater = root / "scripts" / "install-release.py"
+    updater.write_text(
+        "import os, sys\n"
+        "with open(os.environ['T_UPDATE_LOG'], 'a') as file: file.write('release updater\\n')\n"
+        "sys.exit(17)\n")
+    log = tmp_path / "update.log"
+    monkeypatch.setenv("T_UPDATE_LOG", str(log))
+    monkeypatch.setattr(t_mod, "_t_source_root", lambda: str(root))
+    monkeypatch.setattr(t_mod, "_t_canonical_root", lambda source: pytest.fail("release must not inspect Git"))
+    monkeypatch.setenv("T_LINK_DEV", "1")
+    assert t_mod.cmd_update(None, argparse.Namespace(dev=False, relink=False)) == 17
+    assert log.read_text() == "release updater\n"
+    assert t_mod.cmd_update(None, argparse.Namespace(dev=False, relink=True)) == 0
+    assert log.read_text().splitlines()[-1] == "1,unset"
+    assert t_mod._install_relink() == 0
+    assert log.read_text().splitlines()[-1] == "1,unset"
+    assert t_mod.cmd_update(None, argparse.Namespace(dev=True, relink=False)) == 1
+    assert "release install" in capsys.readouterr().err
+    assert log.read_text().splitlines() == ["release updater", "1,unset", "1,unset"]
+
+
+def test_release_update_missing_script_is_actionable(t_mod, tmp_path, monkeypatch, capsys):
+    root = _release_tree(tmp_path)
+    monkeypatch.setattr(t_mod, "_t_source_root", lambda: str(root))
+    assert t_mod.cmd_update(None, argparse.Namespace(dev=False, relink=False)) == 1
+    assert "release updater missing" in capsys.readouterr().err
+
+
+def test_doctor_reports_archive_release_without_checkout_probe(t_mod, tmp_path, monkeypatch, capsys):
+    root = _release_tree(tmp_path)
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(t_mod, "HOME", str(home))
+    monkeypatch.setattr(t_mod, "_t_source_root", lambda: str(root))
+    monkeypatch.setattr(t_mod, "_t_canonical_root", lambda source: pytest.fail("release must not inspect Git"))
+    monkeypatch.setattr(t_mod, "_install_probe", lambda: {
+        name: {"version": None, "logged_in": None} for name in t_mod.INSTALL_AGENTS
+    })
+    monkeypatch.setattr(t_mod.shutil, "which", lambda name: None)
+    def no_checkout_git(args, **kwargs):
+        assert not (args[:2] == ["git", "-C"]), args
+        return subprocess.CompletedProcess(args, 1, "", "")
+    monkeypatch.setattr(t_mod.subprocess, "run", no_checkout_git)
+    cfg = argparse.Namespace(repos={}, worktree_root=str(tmp_path / "worktrees"))
+    assert t_mod.cmd_doctor(cfg, argparse.Namespace()) == 0
+    output = capsys.readouterr().out
+    assert "release        v1.2.3" in output
+    assert "source type    versioned archive" in output
+    assert "git checkout   unavailable" not in output

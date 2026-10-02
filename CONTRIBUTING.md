@@ -15,3 +15,19 @@ sandbox tests. No runtime pip dependencies are installed by install.sh.
 
 Never include private paths, hosts, credentials, or real agent transcripts in issues,
 fixtures, or demo recordings. Use generic, disposable examples.
+
+## Publishing a release
+
+After the release commit has merged and CI passes, build its runtime archive with
+`python3 scripts/build-release.py vX.Y.Z --output /tmp/t-release`. The builder reads
+the committed Git tree, includes the runtime and license files, and produces
+`t.tar.gz` plus `SHA256SUMS`. The archive has no Git history or development checkout.
+
+Create a draft GitHub release at that commit and attach both files before publishing
+it. This keeps the latest-release installer from selecting a release whose assets
+are still being built. The release workflow rebuilds and checks the published
+assets; it does not replace an existing archive with different bytes.
+
+Smoke-test the public installer in an isolated HOME, including `t --version`,
+loading `t.plugin.zsh`, and a repeated `t update`. Use the existing release-installer
+tests for failed downloads, corrupt archives, rollback, and custom install paths.

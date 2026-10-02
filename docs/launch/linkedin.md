@@ -17,7 +17,8 @@ worktree and tmux slot, get a response, list it, then jump into the worktree.”
 > conversation. The README covers the remote workflow as well.
 >
 > `t` supports Claude Code and Codex session workflows, with Cursor tools too.
-> You can now install it without adopting my shell configuration.
+> Install it with one command, without a repository checkout or my dotfiles.
+> Run `t update` to pick up new releases.
 >
 > Code and setup: https://github.com/agenthangar/t
 > More: https://agenthangar.ai

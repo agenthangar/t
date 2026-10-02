@@ -42,7 +42,11 @@ _t_load_plugin() {
   [[ -n ${functions[compdef]-} ]] && compdef _t t
 
   typeset -g _T_LOADED_PLUGIN="$entry"
-  typeset -g _T_LOADED_HEAD="$(git -C "$T_HOME" rev-parse HEAD 2>/dev/null)"
+  if [[ -r $T_HOME/.t-release-version ]]; then
+    typeset -g _T_LOADED_HEAD="$(<$T_HOME/.t-release-version)"
+  else
+    typeset -g _T_LOADED_HEAD="$(git -C "$T_HOME" rev-parse HEAD 2>/dev/null)"
+  fi
 }
 
 # Protect both selected and canonical t code plus an explicit dotfiles live tree.
@@ -51,6 +55,7 @@ _t_tree_is_live() {
   [[ -n $tree && -d $tree ]] || return 1
   [[ ${tree:A} == ${T_HOME:A} ]] && return 0
   [[ -n ${T_DOTFILES_LIVE_TREE:-} && ${tree:A} == ${T_DOTFILES_LIVE_TREE:A} ]] && return 0
+  [[ -r $T_HOME/.t-release-version ]] && return 1
   common=$(git -C "$T_HOME" rev-parse --git-common-dir 2>/dev/null)
   [[ -n $common ]] || return 1
   [[ $common == /* ]] || common="$T_HOME/$common"
@@ -74,7 +79,11 @@ _t_reload_if_moved() {
   [[ -n $bin ]] && root="${bin:A:h:h}"
   plugin="$root/t.plugin.zsh"
   [[ -r $plugin ]] || plugin="$T_HOME/t.plugin.zsh"
-  head=$(git -C "${plugin:h}" rev-parse HEAD 2>/dev/null)
+  if [[ -r ${plugin:h}/.t-release-version ]]; then
+    head="$(<${plugin:h}/.t-release-version)"
+  else
+    head=$(git -C "${plugin:h}" rev-parse HEAD 2>/dev/null)
+  fi
   [[ $plugin == $_T_LOADED_PLUGIN && $head == $_T_LOADED_HEAD ]] && return 0
   _t_reload
 }

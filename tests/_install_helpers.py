@@ -37,9 +37,10 @@ def _seed_worktree(path):
 
 def run_install(cwd, home, **extra_env):
     env = {
-        **{k: v for k, v in os.environ.items() if not k.startswith("COV_CORE_")},
+        **{k: v for k, v in os.environ.items() if not k.startswith(("COV_CORE_", "T_"))},
         "HOME": str(home),
         "XDG_CONFIG_HOME": str(Path(home) / ".config"),
+        "XDG_DATA_HOME": str(Path(home) / ".local" / "share"),
         "T_NO_MCP": "1",  # Never run the developer's actual Claude CLI.
         "T_NO_PERMISSIONS": "1",
         "T_NO_TRUST": "1",
