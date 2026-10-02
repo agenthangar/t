@@ -110,13 +110,22 @@ _t_paste() {
     return
   fi
 
+  if (( ${#REMOTE_HOSTS} )); then
+    local app_owner; app_owner=$(_dev_remote_app_owner "$repo" "$slot")
+    if [[ -n $app_owner ]]; then
+      print -u2 -- "t paste: $repo $slot is reserved by the Codex desktop app on $app_owner; close it there and release the reservation before opening here"
+      return 1
+    fi
+  fi
+
   # new session → bootstrap Claude, wait for it to come up, queue the path, attach
-  echo "Starting $session for the file…"
   local _pdir="${DEV_REPOS[$repo]}" _pskip=
   if _dev_worktree_enabled "$repo"; then
     local _pwt; _pwt="$(_dev_worktree_create "$repo" "$slot")"
-    [[ -n $_pwt ]] && { _pdir="$_pwt"; _pskip=1; }
+    if [[ -n $_pwt ]]; then _pdir="$_pwt"; _pskip=1
+    else _dev_worktree_refuse "$repo" "$slot"; return 1; fi
   fi
+  echo "Starting $session for the file…"
   _dev_new_session "$session" "$_pdir" "$(_dev_branch_for "$repo")" "$_pskip"
 
   # wait (up to ~30s) for Claude's process to take over the pane; if the
@@ -1864,6 +1873,17 @@ _t_dev() {
   local agent
   agent=$(_dev_agent_for "$repo" "$agent_over") || return 1
 
+  # An explicit foreground slot must respect desktop ownership before the
+  # no-tmux branch, which otherwise bypasses the ordinary slot preflight.
+  if [[ -n $no_tmux && $slot == <-> ]] && (( ${#REMOTE_HOSTS} )) \
+     && ! tmux has-session -t "=dev-${repo}-${slot}" 2>/dev/null; then
+    local app_owner; app_owner=$(_dev_remote_app_owner "$repo" "$slot")
+    if [[ -n $app_owner ]]; then
+      print -u2 -- "t open: $repo $slot is reserved by the Codex desktop app on $app_owner; close it there and release the reservation before opening here"
+      return 1
+    fi
+  fi
+
   # -f/--fg (a.k.a. --no-tmux): run claude inline, no tmux. If a SPECIFIC slot is
   # named and it's live, foreground-RESUME that conversation (`claude -r`) — matching
   # what -f means in tbeam / `dev -r`; that's exactly `tpop`, so delegate to it (it
@@ -1885,6 +1905,13 @@ _t_dev() {
       if [[ -z $_wslot || $_wslot == new ]]; then
         _wslot=1
         while ! _dev_slot_fresh "$repo" "$_wslot"; do (( _wslot++ )); done
+      fi
+      if [[ $slot != <-> ]] && (( ${#REMOTE_HOSTS} )); then
+        local app_owner; app_owner=$(_dev_remote_app_owner "$repo" "$_wslot")
+        if [[ -n $app_owner ]]; then
+          print -u2 -- "t open: $repo $_wslot is reserved by the Codex desktop app on $app_owner; close it there and release the reservation before opening here"
+          return 1
+        fi
       fi
       local _wt; _wt="$(_dev_worktree_create "$repo" "$_wslot")"
       if [[ -n $_wt ]]; then dir="$_wt"; skip_prepare=1

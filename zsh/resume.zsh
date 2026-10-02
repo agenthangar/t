@@ -1910,6 +1910,10 @@ _t_beam() {
     sid=${row%%$'\t'*}
     cwd=${${row#*$'\t'}%%$'\t'*}
   fi
+  if _dev_app_slot_reserved "$cwd"; then
+    print -u2 -- "tbeam: $cwd is reserved for the Codex desktop app; close it and release the reservation before moving its conversation"
+    return 1
+  fi
   [[ $sid == "$self_sid" && -n $self_sid ]] && self_move=1
   [[ -n $self_sid ]] && detach=1                    # no TTY in an agent's tool subprocess to ssh -t into
   # Resume-through-sync for the picker is handled on the FAR side: _tbeam_land materializes
