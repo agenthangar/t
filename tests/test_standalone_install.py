@@ -92,6 +92,69 @@ def test_invalid_marker_refuses_before_changing_home(box):
     assert not (home / "bin").exists()
 
 
+def _brew_tree(tmp_path, version, opt):
+    source = tmp_path / "Cellar/t" / version / "libexec"
+    _seed_worktree(source)
+    (source / ".t-release-version").write_text("v" + version + "\n")
+    brew = tmp_path / "bin/brew"
+    brew.parent.mkdir(parents=True, exist_ok=True)
+    brew.write_text("#!/bin/sh\nexit 0\n")
+    brew.chmod(0o755)
+    (source / ".t-homebrew").write_text(json.dumps({
+        "formula": "agenthangar/tap/t", "opt_libexec": str(opt), "brew": str(brew),
+    }))
+    return source
+
+
+def test_homebrew_links_use_stable_opt_path_across_cellar_upgrade(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    opt = tmp_path / "opt/t/libexec"
+    opt.parent.parent.mkdir(parents=True)
+    first = _brew_tree(tmp_path, "0.3.0", opt)
+    opt.parent.symlink_to(first.parent, target_is_directory=True)
+    result = run_install(first, home, T_LINKS_ONLY="1", T_LINK_DEV="1")
+    assert result.returncode == 0, result.stderr
+    links = {
+        "bin/t": "bin/t", "bin/claude-stamp-tmux": "bin/claude-stamp-tmux",
+        "bin/cursor-beam": "bin/cursor-beam",
+        ".claude/commands/tpush.md": "claude/commands/tpush.md",
+        ".claude/commands/tpop.md": "claude/commands/tpop.md",
+        ".codex/prompts/tpush.md": "codex/prompts/tpush.md",
+        ".codex/prompts/tpop.md": "codex/prompts/tpop.md",
+    }
+    for destination, asset in links.items():
+        assert os.readlink(home / destination) == str(opt / asset)
+        assert (home / destination).resolve() == first / asset
+
+    second = _brew_tree(tmp_path, "0.3.1", opt)
+    opt.parent.unlink()
+    opt.parent.symlink_to(second.parent, target_is_directory=True)
+    assert run_install(second, home, T_LINKS_ONLY="1").returncode == 0
+    for destination, asset in links.items():
+        assert os.readlink(home / destination) == str(opt / asset)
+        assert (home / destination).resolve() == second / asset
+
+
+def test_homebrew_marker_rejects_wrong_opt_before_touching_home(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    opt = tmp_path / "opt/t/libexec"
+    opt.parent.parent.mkdir(parents=True)
+    source = _brew_tree(tmp_path, "0.3.0", opt)
+    opt.parent.symlink_to(source.parent, target_is_directory=True)
+    opt.parent.unlink()
+    rejected = run_install(source, home, T_LINKS_ONLY="1", T_LINK_DEV="1")
+    assert rejected.returncode != 0 and "opt path" in rejected.stderr
+    assert not (home / "bin").exists()
+    marker = source / ".t-homebrew"
+    marker.unlink()
+    marker.symlink_to(source / "missing-marker")
+    rejected = run_install(source, home, T_LINKS_ONLY="1")
+    assert rejected.returncode != 0 and "regular file" in rejected.stderr
+    assert not (home / "bin").exists()
+
+
 def test_existing_claude_settings_are_merged_without_losing_foreign_keys(box):
     checkout, home = box
     settings = home / ".claude/settings.json"

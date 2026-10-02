@@ -43,6 +43,7 @@ t() {
     # wrote: ${T_LOCAL_RC}'s mtime is the evidence, since install's rc says nothing
     # about it (quitting setup is not an install failure, and most runs never open it).
     install) _t_install install "$@" ;;
+    integrate) T_SETUP_SHIM=1 command t integrate "$@" && _t_reload ;;
     update) T_SETUP_SHIM=1 command t update "$@" && _t_reload ;;
     *)      command t "$verb" "$@" ;; # ls/read/plan/paste/kill/on/session-rows/land/kill-owner/new-land
   esac
@@ -246,7 +247,7 @@ _t_beam_xlate() {
 # key for `on`), and slot/flags after. Pulls live from the ${(k)DEV_REPOS} /
 # ${(k)REMOTE_HOSTS} arrays so it stays current with ${T_LOCAL_RC}.
 _t() {
-  local -a verbs=(update doctor open app ls kill push pop resume beam read plan paste find on cursor setup config new checkout instructions install permissions trust)
+  local -a verbs=(update integrate doctor open app ls kill push pop resume beam read plan paste find on cursor setup config new checkout instructions install permissions trust)
   if (( CURRENT == 2 )); then
     _describe -t verbs 't verb' verbs
     return
