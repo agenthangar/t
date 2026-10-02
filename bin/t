@@ -4069,6 +4069,32 @@ def _t_release_version(source):
     return version if _T_RELEASE_TAG.fullmatch(version) and capability == "1" else None
 
 
+def _t_homebrew(source):
+    """Validated Homebrew ownership marker, or None for another install type."""
+    marker = os.path.join(source, ".t-homebrew")
+    if not os.path.lexists(marker):
+        return None
+    try:
+        if os.path.islink(marker) or not _t_release_version(source):
+            raise ValueError("expected a regular marker in a versioned release")
+        with open(marker, encoding="utf-8") as file:
+            data = json.load(file)
+        if not isinstance(data, dict) or set(data) != {"formula", "opt_libexec", "brew"}:
+            raise ValueError("expected formula, opt_libexec, and brew")
+        opt, brew = data["opt_libexec"], data["brew"]
+        if data["formula"] != "agenthangar/tap/t":
+            raise ValueError("unexpected formula")
+        if (not isinstance(opt, str) or not os.path.isabs(opt)
+                or os.path.normpath(opt) != opt
+                or os.path.realpath(opt) != os.path.realpath(source)):
+            raise ValueError("opt_libexec does not point to this release")
+        if not isinstance(brew, str) or not os.path.isabs(brew) or not os.access(brew, os.X_OK):
+            raise ValueError("brew executable is missing")
+        return data
+    except (OSError, ValueError, TypeError, UnicodeError) as error:
+        raise ValueError(f"invalid .t-homebrew marker: {error}") from error
+
+
 def _t_version():
     source = _t_source_root()
     release = _t_release_version(source)
@@ -4106,8 +4132,60 @@ def _t_relink(root, dev=False):
     return p.returncode
 
 
+def cmd_integrate(cfg, args):
+    """Explicitly install t's user links and additive agent settings."""
+    active = _t_source_root()
+    try:
+        brew = _t_homebrew(active)
+    except ValueError as error:
+        print(f"t integrate: {error}", file=sys.stderr)
+        return 1
+    source = brew["opt_libexec"] if brew else active
+    installer = os.path.join(source, "install.sh")
+    if not os.path.isfile(installer):
+        print(f"t integrate: installer missing at {installer}", file=sys.stderr)
+        return 1
+    env = os.environ.copy()
+    env.pop("T_LINKS_ONLY", None)
+    if brew or _t_release_version(active) or active == _t_canonical_root(active):
+        env.pop("T_LINK_DEV", None)
+    else:
+        env["T_LINK_DEV"] = "1"
+    try:
+        return subprocess.run([installer], env=env).returncode
+    except OSError as error:
+        print(f"t integrate: could not start installer: {error}", file=sys.stderr)
+        return 1
+
+
 def cmd_update(cfg, args):
     active = _t_source_root()
+    try:
+        brew = _t_homebrew(active)
+    except ValueError as error:
+        print(f"t update: {error}", file=sys.stderr)
+        return 1
+    if brew:
+        if args.dev:
+            print("t update --dev: Homebrew owns this t installation; use a Git checkout for development", file=sys.stderr)
+            return 1
+        opt = brew["opt_libexec"]
+        active_link = os.path.join(HOME, "bin", "t")
+        integrated = (os.path.islink(active_link) and
+                      os.path.realpath(active_link) == os.path.realpath(os.path.join(active, "bin", "t")))
+        if args.relink:
+            return _t_relink(opt)
+        try:
+            upgraded = subprocess.run([brew["brew"], "upgrade", brew["formula"]])
+        except OSError as error:
+            print(f"t update: could not start Homebrew: {error}", file=sys.stderr)
+            return 1
+        if upgraded.returncode:
+            return upgraded.returncode
+        if integrated:
+            return _t_relink(opt)
+        print("t is upgraded in Homebrew. Run `t integrate` when you want to add its user links.")
+        return 0
     release = _t_release_version(active)
     if release:
         if args.dev:
@@ -5909,11 +5987,20 @@ def cmd_doctor(cfg, args):
              "trust_sync": trust_sync}
     live_src = _t_source_root()
     release = _t_release_version(live_src)
+    try:
+        brew = _t_homebrew(live_src)
+        brew_error = None
+    except ValueError as error:
+        brew, brew_error = None, str(error)
     canonical = None if release else _t_canonical_root(live_src)
     print("  active source  %s" % live_src)
     if release:
         print("  release        %s" % release)
-        print("  source type    versioned archive")
+        print("  source type    %s" % ("Homebrew formula" if brew else "versioned archive"))
+        if brew:
+            print("  stable source  %s" % brew["opt_libexec"])
+        elif brew_error:
+            print("  brew marker    %s" % brew_error)
     else:
         print("  canonical      %s" % (canonical or "unavailable"))
     if canonical:
@@ -5939,13 +6026,14 @@ def cmd_doctor(cfg, args):
             pairs = []
         for rel, dst_raw in pairs:
             dst = dst_raw.replace("$HOME", HOME)
-            want = os.path.realpath(os.path.join(live_src, rel))
+            want = os.path.join(brew["opt_libexec"] if brew else live_src, rel)
             if not os.path.lexists(dst):
                 links.append((dst, "missing"))
             elif not os.path.islink(dst):
                 links.append((dst, "not a symlink"))
-            elif os.path.realpath(dst) != want:
-                links.append((dst, "→ %s" % os.path.realpath(dst)))
+            elif (os.readlink(dst) != want if brew else
+                  os.path.realpath(dst) != os.path.realpath(want)):
+                links.append((dst, "→ %s" % os.readlink(dst)))
             else:
                 links.append((dst, "ok"))
         n_ok = sum(1 for _, s in links if s == "ok")
@@ -7637,9 +7725,10 @@ examples:
   t setup                 onboard this machine: register ~/code repos + ssh hosts
   t checkout URL          clone an existing GitHub repo and register it locally
   t instructions          create/edit a reusable AGENTS.md instruction profile
+  t integrate             link t's user-facing command and agent prompts
   t install               install + log in the agent CLIs (claude, codex, cursor) here and on every host
   t permissions           compare T_PERMISSIONS_DIR with installed agent settings
-  t update                install the latest release, or update a Git checkout
+  t update                update through Homebrew, a release, or a Git checkout
   t new tool-x            wizard: create ~/code/tool-x + github <owner>/tool-x, register it everywhere
 
 agents — what each verb supports per agent (t install --status adds this machine's state):
@@ -7991,8 +8080,15 @@ Run `t <verb> -h` for a verb's own flags.""")
     sp.add_argument("--status", action="store_true",
                     help="print each agent's install/login state and the per-agent support matrix")
 
-    sp = sub.add_parser("update", help="update the installed t release or Git checkout",
-        description="For a versioned release, install the latest published release. For a Git "
+    sub.add_parser("integrate", help="link t into this user account and configure additive agent hooks",
+        description="Explicitly link t's command, helper scripts, and agent prompts into this "
+            "user account, then add optional agent hooks. Homebrew itself never changes "
+            "your home directory; run this once after brew install. The installer prints "
+            "the zsh source snippet for your shell configuration.")
+
+    sp = sub.add_parser("update", help="update the installed t via Homebrew, release, or Git checkout",
+        description="For Homebrew, upgrade the formula and keep any existing user links. "
+            "For a versioned release, install the latest published release. For a Git "
             "checkout, fetch and fast-forward canonical main before relinking. --relink "
             "repeats the selected source without fetching; --dev selects a t worktree "
             "from a Git checkout.")
@@ -8079,7 +8175,8 @@ IMPLEMENTED = {
     "land": cmd_land, "kill-owner": cmd_kill_owner, "cursor": cmd_cursor,
     "doctor": cmd_doctor, "mcp": cmd_mcp, "new": cmd_new, "new-land": cmd_new_land,
     "checkout": cmd_checkout, "instructions": cmd_instructions,
-    "install": cmd_install, "permissions": cmd_permissions, "trust": cmd_trust,
+    "install": cmd_install, "integrate": cmd_integrate,
+    "permissions": cmd_permissions, "trust": cmd_trust,
     "app": cmd_app,
     "config": cmd_config,
     "update": cmd_update,

@@ -36,6 +36,42 @@ else
     fi
 fi
 
+T_BREW_OPT=""
+if [[ -e "$T_SCRIPT_DIR/.t-homebrew" || -L "$T_SCRIPT_DIR/.t-homebrew" ]]; then
+    if [[ "$T_RELEASE" != 1 ]]; then
+        echo "t install: Homebrew packages require a versioned release tree" >&2
+        exit 1
+    fi
+    # Keep link text pointed at Homebrew's stable opt path. pwd -P above is
+    # intentional for validation, but its Cellar path is not safe across upgrades.
+    if ! T_BREW_OPT="$(python3 - "$T_SCRIPT_DIR/.t-homebrew" "$T_SCRIPT_DIR" <<'PY'
+import json, os, pathlib, sys
+try:
+    marker_path = pathlib.Path(sys.argv[1])
+    if marker_path.is_symlink():
+        raise ValueError("Homebrew marker must be a regular file")
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    opt = marker["opt_libexec"]
+    brew = marker["brew"]
+    if (not isinstance(marker, dict) or set(marker) != {"formula", "opt_libexec", "brew"}
+            or marker["formula"] != "agenthangar/tap/t"
+            or not isinstance(opt, str) or not os.path.isabs(opt)
+            or os.path.normpath(opt) != opt
+            or not pathlib.Path(opt).is_dir()
+            or pathlib.Path(opt).resolve() != pathlib.Path(sys.argv[2]).resolve()
+            or not isinstance(brew, str) or not os.path.isabs(brew)
+            or not os.access(brew, os.X_OK)):
+        raise ValueError("invalid Homebrew marker or opt path")
+except (OSError, KeyError, TypeError, ValueError, UnicodeError) as error:
+    print("t install: " + str(error), file=sys.stderr)
+    sys.exit(1)
+print(opt)
+PY
+)"; then
+        exit 1
+    fi
+fi
+
 valid_source() {
     local root="$1" asset
     [[ -f "$root/.t-install-version" ]] || return 1
@@ -49,7 +85,9 @@ valid_source() {
     [[ -x "$root/install.sh" && -x "$root/bin/t" ]] || return 1
 }
 
-if [[ -n "${T_LINK_DEV:-}" ]]; then
+if [[ -n "$T_BREW_OPT" ]]; then
+    T_LINK_SRC="$T_BREW_OPT"
+elif [[ -n "${T_LINK_DEV:-}" ]]; then
     T_LINK_SRC="$T_SCRIPT_DIR"
 else
     T_LINK_SRC="$T_PRIMARY"

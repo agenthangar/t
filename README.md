@@ -48,6 +48,21 @@ You need **zsh, Python 3, Git, and tmux**. Install `fzf` for the interactive pic
 `gh` for GitHub integration, and `rsync`/SSH for moving sessions between hosts.
 The test suite runs on macOS and Linux with Python 3.12. Desktop handoff is macOS-only.
 
+With Homebrew:
+
+```sh
+brew install agenthangar/tap/t
+"$(brew --prefix agenthangar/tap/t)/bin/t" integrate
+```
+
+Homebrew installs the formula without changing your home directory. `t integrate`
+explicitly links the command, helper scripts, and agent prompts into your account
+and adds optional agent hooks. The links target Homebrew's stable `opt` path, so
+they keep working when the Cellar version changes. Use the full path above if an
+older `~/bin/t` is already ahead of Homebrew on your PATH.
+
+Or install a versioned release directly:
+
 ```sh
 curl -fsSL https://raw.githubusercontent.com/agenthangar/t/main/scripts/install-release.py | python3
 ```
@@ -66,7 +81,8 @@ source "${${:-$HOME/bin/t}:A:h:h}/t.plugin.zsh"
 ```
 
 The source expression follows the installed executable, including a development
-worktree selected with `t update --dev`. The installer prints it too. t does not
+worktree selected with `t update --dev` or a Homebrew upgrade. `t integrate` prints
+it too. t does not
 replace your shell configuration, tmux settings, SSH config, or global Git defaults.
 
 ```sh
@@ -100,6 +116,7 @@ Use `t doctor` when something is missing.
 | `t checkout <github-url> [alias]` | Clone and register an existing GitHub repository on this machine |
 | `t instructions` | Create/edit a reusable AGENTS.md profile and apply it to registered repos |
 | `t install` | Install/log in agent CLIs; `--status` reports what is present |
+| `t integrate` | Explicitly link t's command and prompts into this account |
 | `t trust` | Explicitly trust selected repositories in installed agents |
 | `t permissions` | Inspect/apply an explicitly configured permission policy |
 | `t mcp` | Serve the sessions MCP tools; `--install` registers the server |

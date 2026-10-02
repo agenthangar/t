@@ -1300,18 +1300,29 @@ def test_zsh_fg_rows_give_idless_siblings_distinct_labels(zsh, tmp_path):
     nothing could name one of them. The pid label makes each row its own handle, in both
     producers (the rendered rows and the pid-keyed rows the verbs match on)."""
     env = _fg_world(zsh, tmp_path, siblings=((4243, "codex"), (4244, "codex")))
-    labels = [l.split("\t")[3] for l in zsh("_dev_fg_pids", **env).stdout.splitlines()]
+    def call(snippet):
+        # The fake process table uses fixed PIDs. A real CI shell can be assigned one
+        # of them, causing _dev_fg_pids to correctly omit that shell's fake row.
+        for _ in range(10):
+            result = zsh(f'print -r -- "__TEST_PID=$$"; {snippet}', **env)
+            assert result.returncode == 0, result.stderr
+            first, *lines = result.stdout.splitlines()
+            if int(first.removeprefix("__TEST_PID=")) not in {4200, 4242, 4243, 4244}:
+                return "\n".join(lines)
+        pytest.fail("could not obtain a shell PID outside the fake process table")
+
+    labels = [l.split("\t")[3] for l in call("_dev_fg_pids").splitlines()]
     assert labels == ["dotfiles-pr136:p4242", "dotfiles-pr136:p4243", "dotfiles-pr136:p4244"]
-    rows = zsh("_dev_fg_rows", **env).stdout.splitlines()
+    rows = call("_dev_fg_rows").splitlines()
     assert sorted(l.split("\t")[2] for l in rows) == labels, rows
     # each label addresses exactly its own row; the bare `p<pid>` too
-    m = lambda h: zsh(f"_dev_fg_match {h}", **env).stdout.splitlines()
+    m = lambda h: call(f"_dev_fg_match {h}").splitlines()
     assert [l.split("\t")[0] for l in m("dotfiles-pr136:p4243")] == ["4243"]
     assert [l.split("\t")[0] for l in m("p4244")] == ["4244"]
     # the old `<repo>:fg` spelling still means "that repo's fg rows" — all three
     assert len(m("dotfiles-pr136:fg")) == 3
-    assert zsh("_dev_fg_handle p4243 && echo yes", **env).stdout.strip() == "yes"
-    assert zsh("_dev_fg_handle 4243 || echo no", **env).stdout.strip() == "no"   # a slot
+    assert call("_dev_fg_handle p4243 && echo yes").strip() == "yes"
+    assert call("_dev_fg_handle 4243 || echo no").strip() == "no"   # a slot
 
 
 def test_zsh_fg_rows_skip_an_agent_nested_under_another(zsh, tmp_path):

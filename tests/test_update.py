@@ -1,6 +1,7 @@
 """Canonical and session-worktree update behavior with disposable Git repositories."""
 
 import argparse
+import json
 import os
 import pathlib
 import subprocess
@@ -76,6 +77,86 @@ def _release_tree(tmp_path, version="v1.2.3"):
     return root
 
 
+def _brew_trees(tmp_path):
+    opt_link = tmp_path / "opt/t"
+    opt_link.parent.mkdir()
+    opt = opt_link / "libexec"
+    brew = tmp_path / "bin/brew"
+    brew.parent.mkdir()
+    brew.write_text("#!/bin/sh\nprintf 'brew %s %s\\n' \"$1\" \"$2\" >> \"$T_UPDATE_LOG\"\n"
+                    "rm \"$T_BREW_OPT_LINK\"\nln -s \"$T_BREW_NEXT\" \"$T_BREW_OPT_LINK\"\n")
+    brew.chmod(0o755)
+    roots = []
+    for version in ("v1.2.3", "v1.2.4"):
+        root = tmp_path / "Cellar/t" / version / "libexec"
+        (root / "bin").mkdir(parents=True)
+        (root / "bin/t").write_text("#!/bin/sh\n")
+        (root / ".t-release-version").write_text(version + "\n")
+        (root / ".t-install-version").write_text("1\n")
+        (root / ".t-homebrew").write_text(json.dumps({
+            "formula": "agenthangar/tap/t", "opt_libexec": str(opt), "brew": str(brew),
+        }))
+        (root / "install.sh").write_text(
+            "#!/bin/sh\nprintf 'relink %s %s\\n' \"${T_LINKS_ONLY:-unset}\" "
+            "\"${T_LINK_DEV:-unset}\" >> \"$T_UPDATE_LOG\"\n")
+        (root / "install.sh").chmod(0o755)
+        roots.append(root)
+    opt_link.symlink_to(roots[0].parent, target_is_directory=True)
+    return roots, opt, opt_link, brew
+
+
+def test_homebrew_update_keeps_integrated_opt_links(t_mod, tmp_path, monkeypatch):
+    roots, opt, opt_link, brew = _brew_trees(tmp_path)
+    home = tmp_path / "home"
+    (home / "bin").mkdir(parents=True)
+    (home / "bin/t").symlink_to(opt / "bin/t")
+    log = tmp_path / "update.log"
+    monkeypatch.setenv("T_UPDATE_LOG", str(log))
+    monkeypatch.setenv("T_BREW_OPT_LINK", str(opt_link))
+    monkeypatch.setenv("T_BREW_NEXT", str(roots[1].parent))
+    monkeypatch.setattr(t_mod, "HOME", str(home))
+    monkeypatch.setattr(t_mod, "_t_source_root", lambda: str(roots[0]))
+    assert t_mod.cmd_update(None, argparse.Namespace(dev=False, relink=False)) == 0
+    assert log.read_text().splitlines() == ["brew upgrade agenthangar/tap/t", "relink 1 unset"]
+    assert os.readlink(home / "bin/t") == str(opt / "bin/t")
+    assert (home / "bin/t").resolve() == roots[1] / "bin/t"
+    monkeypatch.setattr(t_mod, "_t_source_root", lambda: str(roots[1]))
+    assert t_mod.cmd_update(None, argparse.Namespace(dev=False, relink=True)) == 0
+    assert log.read_text().splitlines()[-1] == "relink 1 unset"
+
+
+def test_homebrew_unintegrated_update_does_not_create_links(t_mod, tmp_path, monkeypatch):
+    roots, opt, opt_link, brew = _brew_trees(tmp_path)
+    home = tmp_path / "home"
+    home.mkdir()
+    log = tmp_path / "update.log"
+    monkeypatch.setenv("T_UPDATE_LOG", str(log))
+    monkeypatch.setenv("T_BREW_OPT_LINK", str(opt_link))
+    monkeypatch.setenv("T_BREW_NEXT", str(roots[1].parent))
+    monkeypatch.setattr(t_mod, "HOME", str(home))
+    monkeypatch.setattr(t_mod, "_t_source_root", lambda: str(roots[0]))
+    assert t_mod.cmd_update(None, argparse.Namespace(dev=False, relink=False)) == 0
+    assert log.read_text().splitlines() == ["brew upgrade agenthangar/tap/t"]
+    assert not (home / "bin").exists()
+
+
+def test_homebrew_integrate_is_explicit_and_marker_is_validated(t_mod, tmp_path, monkeypatch, capsys):
+    roots, opt, opt_link, brew = _brew_trees(tmp_path)
+    home = tmp_path / "home"
+    home.mkdir()
+    log = tmp_path / "update.log"
+    monkeypatch.setenv("T_UPDATE_LOG", str(log))
+    monkeypatch.setattr(t_mod, "HOME", str(home))
+    monkeypatch.setattr(t_mod, "_t_source_root", lambda: str(roots[0]))
+    assert t_mod.cmd_integrate(None, argparse.Namespace()) == 0
+    assert log.read_text().splitlines() == ["relink unset unset"]
+    assert t_mod.cmd_update(None, argparse.Namespace(dev=True, relink=False)) == 1
+    assert "Homebrew owns" in capsys.readouterr().err
+    opt_link.unlink()
+    assert t_mod.cmd_integrate(None, argparse.Namespace()) == 1
+    assert "invalid .t-homebrew marker" in capsys.readouterr().err
+
+
 def test_release_marker_and_version(t_mod, tmp_path, monkeypatch, capsys):
     root = _release_tree(tmp_path)
     monkeypatch.setattr(t_mod, "_t_source_root", lambda: str(root))
@@ -121,6 +202,20 @@ def test_release_update_and_relink_route_to_the_right_installer(t_mod, tmp_path,
     assert t_mod.cmd_update(None, argparse.Namespace(dev=True, relink=False)) == 1
     assert "release install" in capsys.readouterr().err
     assert log.read_text().splitlines() == ["release updater", "1,unset", "1,unset"]
+
+
+def test_integrate_runs_full_release_installer(t_mod, tmp_path, monkeypatch):
+    root = _release_tree(tmp_path)
+    (root / "install.sh").write_text(
+        "#!/bin/sh\nprintf '%s,%s\\n' \"${T_LINKS_ONLY:-unset}\" "
+        "\"${T_LINK_DEV:-unset}\" >> \"$T_UPDATE_LOG\"\n")
+    log = tmp_path / "integrate.log"
+    monkeypatch.setenv("T_UPDATE_LOG", str(log))
+    monkeypatch.setenv("T_LINKS_ONLY", "1")
+    monkeypatch.setenv("T_LINK_DEV", "1")
+    monkeypatch.setattr(t_mod, "_t_source_root", lambda: str(root))
+    assert t_mod.cmd_integrate(None, argparse.Namespace()) == 0
+    assert log.read_text().strip() == "unset,unset"
 
 
 def test_release_update_missing_script_is_actionable(t_mod, tmp_path, monkeypatch, capsys):
