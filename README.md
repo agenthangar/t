@@ -25,7 +25,7 @@ Supported workflows vary by agent; see the [support matrix](#agents).
 
 [Get started](#install) · [Work from anywhere](#work-from-anywhere) · [Commands](#commands) · [Configuration](#configuration) · [Agent support](#agents) · [Coming soon](#coming-soon) · [AgentHangar](https://agenthangar.ai)
 
-![A recorded local t workflow: inspect commands and manage a demo repository](docs/media/demo.gif)
+![A rendered 24-second walkthrough of a real Codex thread moving from Mac to mini and back, followed by a desktop open request](docs/media/demo.gif)
 
 The [demo recording](docs/media/README.md) explains exactly what was captured.
 Watch the [MP4](docs/media/demo.mp4) or use the [static poster](docs/media/demo-poster.png).
@@ -238,7 +238,7 @@ remain outside the installation. If the command's link is broken, rerun the inst
 command above. To install a specific release:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/agenthangar/t/main/scripts/install-release.py | python3 - --version v0.2.0
+curl -fsSL https://raw.githubusercontent.com/agenthangar/t/main/scripts/install-release.py | python3 - --version v0.3.1
 ```
 
 Contributors can use a Git checkout instead:
