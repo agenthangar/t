@@ -1141,6 +1141,186 @@ def _confirm(msg):
     return bool(r) and r.lower() in ("y", "yes")
 
 
+_INSTRUCTIONS_BEGIN = "<!-- t instructions: begin -->"
+_INSTRUCTIONS_END = "<!-- t instructions: end -->"
+_INSTRUCTIONS_STARTER = """# Preferred agent workflow
+
+## Model
+Use the model configured for this repository in t when available. Edit this
+section to name a specific model if you prefer one.
+
+## Local preview
+If this repository has a user interface, run it locally and inspect the changed
+screens before finalizing work.
+
+## Pull requests
+Run the relevant checks, open a PR, resolve any conflicts, and enable squash
+auto-merge when the repository permits it. Re-enable auto-merge after updates.
+"""
+
+
+def _instructions_path():
+    return os.path.expanduser(os.environ.get("T_AGENT_INSTRUCTIONS") or os.path.join(
+        os.environ.get("XDG_CONFIG_HOME", os.path.join(HOME, ".config")),
+        "t", "instructions.md"))
+
+
+def _instructions_init():
+    path = _instructions_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        return False
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(_INSTRUCTIONS_STARTER)
+    return True
+
+
+def _instructions_edit():
+    editor = os.environ.get("VISUAL") or os.environ.get("EDITOR") or "vi"
+    try:
+        return subprocess.run([*shlex.split(editor), _instructions_path()]).returncode
+    except (OSError, ValueError) as exc:
+        print(f"t instructions: could not open editor: {exc}", file=sys.stderr)
+        return 1
+
+
+def _instructions_mode(args):
+    if getattr(args, "instructions", False):
+        return "apply"
+    if getattr(args, "no_instructions", False):
+        return "skip"
+    return "ask"
+
+
+def _instructions_template(required=False):
+    path = _instructions_path()
+    try:
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+    except FileNotFoundError:
+        if required:
+            raise ValueError(f"no instruction template at {path}; run `t instructions --init` first")
+        return None
+    if not text.strip() or _INSTRUCTIONS_BEGIN in text or _INSTRUCTIONS_END in text:
+        raise ValueError(f"instruction template at {path} is empty or contains t's managed markers")
+    return text.rstrip("\n") + "\n"
+
+
+def _instructions_merge(original, template):
+    """Replace only t's managed block; refuse ambiguous or damaged markers."""
+    begin, end = _INSTRUCTIONS_BEGIN, _INSTRUCTIONS_END
+    starts, ends = original.count(begin), original.count(end)
+    if (starts, ends) not in ((0, 0), (1, 1)):
+        raise ValueError("AGENTS.md has malformed t instructions markers; repair them first")
+    block = begin + "\n" + template.rstrip("\n") + "\n" + end
+    if not starts:
+        return original + ("\n\n" if original and not original.endswith("\n") else
+                           "\n" if original and not original.endswith("\n\n") else "") + block + "\n"
+    start, stop = original.index(begin), original.index(end) + len(end)
+    if stop <= start or original.index(end) < start:
+        raise ValueError("AGENTS.md has reversed t instructions markers; repair them first")
+    return original[:start] + block + original[stop:]
+
+
+def _instructions_seed(repo, template):
+    """Atomically update AGENTS.md in a repo without following an existing symlink."""
+    target = os.path.join(repo, "AGENTS.md")
+    if os.path.islink(target):
+        raise ValueError("AGENTS.md is a symlink; refusing to follow or replace it")
+    try:
+        fd = os.open(target, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    except FileNotFoundError:
+        original, mode, existed = "", 0o644, False
+    except OSError as exc:
+        raise ValueError(f"cannot read AGENTS.md without following a symlink: {exc}") from exc
+    else:
+        with os.fdopen(fd, encoding="utf-8") as fh:
+            info = os.fstat(fh.fileno())
+            if not stat.S_ISREG(info.st_mode):
+                raise ValueError("AGENTS.md is not a regular file")
+            original, mode, existed = fh.read(), stat.S_IMODE(info.st_mode), True
+    updated = _instructions_merge(original, template)
+    if updated == original:
+        return False
+    tmp = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=repo,
+                                         prefix=".t-agents-", delete=False) as fh:
+            tmp = fh.name
+            fh.write(updated)
+            os.fchmod(fh.fileno(), mode)
+        if existed:
+            try:
+                current_fd = os.open(target, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+                with os.fdopen(current_fd, encoding="utf-8") as current:
+                    if current.read() != original:
+                        raise ValueError("AGENTS.md changed while seeding; retry")
+            except FileNotFoundError as exc:
+                raise ValueError("AGENTS.md changed while seeding; retry") from exc
+        elif os.path.lexists(target):
+            raise ValueError("AGENTS.md appeared while seeding; retry")
+        os.replace(tmp, target)
+    finally:
+        if tmp and os.path.exists(tmp):
+            os.unlink(tmp)
+    return True
+
+
+def _instructions_offer(paths, mode, verb):
+    if mode == "skip" or not paths:
+        return 0
+    interactive = sys.stdin.isatty() and sys.stdout.isatty()
+    try:
+        template = _instructions_template(required=mode == "apply")
+    except (OSError, UnicodeError, ValueError) as exc:
+        print(f"{verb}: {exc}", file=sys.stderr)
+        return 1
+    if template is None:
+        if not interactive or not _confirm(
+                f"Create an editable instruction profile at {_instructions_path()}?"):
+            return 0
+        try:
+            _instructions_init()
+        except OSError as exc:
+            print(f"{verb}: could not create instruction profile: {exc}", file=sys.stderr)
+            return 1
+        print(f"✓ created {_instructions_path()}")
+        if _confirm("Edit the profile now?") and _instructions_edit():
+            return 1
+        try:
+            template = _instructions_template(required=True)
+        except (OSError, UnicodeError, ValueError) as exc:
+            print(f"{verb}: {exc}", file=sys.stderr)
+            return 1
+    if mode == "ask":
+        if not interactive:
+            return 0
+        print(f"instruction profile ({_instructions_path()}):\n{template}", end="")
+        if not _confirm(f"Add preferred instructions to AGENTS.md in {len(paths)} repo(s)?"):
+            return 0
+    for path in paths:
+        try:
+            changed = _instructions_seed(path, template)
+        except (OSError, UnicodeError, ValueError) as exc:
+            print(f"{verb}: {_tilde(path)}/AGENTS.md: {exc}", file=sys.stderr)
+            return 1
+        print(f"{'✓ updated' if changed else '= current'} {_tilde(path)}/AGENTS.md")
+    return 0
+
+
+def _instructions_preflight(mode, verb):
+    if mode != "apply":
+        return True
+    try:
+        _instructions_template(required=True)
+    except (OSError, UnicodeError, ValueError) as exc:
+        print(f"{verb}: {exc}", file=sys.stderr)
+        return False
+    return True
+
+
 def _parse_host_entry(ent, used):
     """Parse a manual 'alias=target' / 'user@host' entry against the aliases
     already in use. Returns (alias, target) or (None, error-message)."""
@@ -2318,6 +2498,9 @@ def cmd_setup(cfg, args):
     """Interactive onboarding (see the section comment above). Phases: stale-entry
     comment-out (the one in-place edit, own confirm) → repo picker → host picker +
     manual loop → TBEAM_HOST offer → summary + single append + cache regen."""
+    instruction_mode = _instructions_mode(args)
+    if not _instructions_preflight(instruction_mode, "t setup"):
+        return 1
     try:
         with open(_current_local_rc(), errors="ignore") as fh:
             local_text = fh.read()
@@ -2384,6 +2567,8 @@ def cmd_setup(cfg, args):
                                time.strftime("%Y-%m-%d")), end="")
             if cands and trailer:
                 print(f"→ {trailer}")
+            if cands and instruction_mode == "apply":
+                print("→ seed selected repos' AGENTS.md from the configured instruction profile")
         if args.dry_run:
             return 0
         print("\nt setup is interactive — run it from a terminal (or use --dry-run)",
@@ -2440,6 +2625,9 @@ def cmd_setup(cfg, args):
         for ln in block.splitlines():
             print(f"  {st.y}{ln}{st.r}" if ln.startswith("#") else f"  {ln}")
     _trust_auto([_expand_home(v) for v in add_repos.values()])
+    if _instructions_offer([_expand_home(v) for v in add_repos.values()],
+                           instruction_mode, "t setup"):
+        return 1
     if add_repos and land_hosts:
         _hosts_land(cfg, add_repos, args.hosts)
     if not os.environ.get("T_SETUP_SHIM"):
@@ -2485,6 +2673,10 @@ def _new_default_owner():
 _NEW_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
 _NEW_SLUG = re.compile(r"^(?:git@github\.com:|ssh://git@github\.com/|https://github\.com/)"
                        r"([^/\s]+)/([^/\s]+?)(?:\.git)?/?$")
+_CHECKOUT_URL = re.compile(
+    r"(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)"
+    r"([A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?)/"
+    r"([A-Za-z0-9][A-Za-z0-9._-]{0,103})/?\Z")
 _NEW_STALE = "invalid choice: 'new-land'"
 _NEW_SENTINEL = "new-land: "
 
@@ -2518,6 +2710,29 @@ def _new_repo_slug(url):
     else None — a non-GitHub origin is one t new cannot wire."""
     m = _NEW_SLUG.match((url or "").strip())
     return f"{m.group(1)}/{m.group(2)}" if m else None
+
+
+def _checkout_repo(url):
+    """A standard github.com clone URL, as (owner, repo), or None."""
+    m = _CHECKOUT_URL.fullmatch(url or "")
+    if not m:
+        return None
+    name = m.group(2)
+    if name.endswith(".git"):
+        name = name[:-4]
+    if _new_validate_name(name):
+        return None
+    return m.group(1), name
+
+
+def _checkout_destination(raw, name):
+    """Safe local path for the existing T_LOCAL_RC double-quoted assignment."""
+    if raw is None:
+        return _new_path(name)
+    path = os.path.abspath(os.path.expanduser(raw))
+    if any(ord(ch) < 32 or ch in '\\"$`!' for ch in path):
+        raise ValueError("--path contains shell syntax; choose a plain directory name")
+    return path
 
 
 def _new_gh_repo_state(rc, out, err):
@@ -2763,7 +2978,7 @@ def _new_land_plan(name, alias, url, path, state, register):
 
     if state["is_repo"]:
         have = _new_repo_slug(state.get("origin_url"))
-        if have and have == want:
+        if have and want and have.casefold() == want.casefold():
             rec("clone", "skip", f"{p} already cloned")
         elif have:
             rec("clone", "error", f"{p} exists with origin {have}, expected {want}")
@@ -3279,6 +3494,127 @@ def cmd_new(cfg, args):
     return _new_walk(steps, answers, pre=f"{st.y}│{st.r}  " if wizard_ran else "", close=wizard_ran)
 
 
+def _new_land_apply(steps, alias, path, tool, verb):
+    """Apply clone/register records shared by local checkout and remote new-land."""
+    for s in steps:
+        if s["do"] != "run":
+            continue
+        if s["step"] == "clone":
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            r = _run(s["cmd"], timeout=600)
+            if r.returncode != 0:
+                tail = [ln.strip() for ln in (r.stderr or "").splitlines() if ln.strip()][-3:]
+                print(f"{verb}: clone failed — {' / '.join(tail) or f'rc {r.returncode}'}",
+                      file=sys.stderr)
+                return 1
+        elif s["step"] == "register":
+            _new_sh_register(alias, path, tool)
+    _trust_auto([path], say=None if verb == "t new-land" else print)
+    return 0
+
+
+def cmd_checkout(cfg, args):
+    """Clone an existing GitHub repo locally and register its t alias."""
+    parsed = _checkout_repo(args.url)
+    if not parsed:
+        print("t checkout: expected a github.com HTTPS or git@github.com owner/repo URL",
+              file=sys.stderr)
+        return 1
+    instruction_mode = _instructions_mode(args)
+    if not _instructions_preflight(instruction_mode, "t checkout"):
+        return 1
+    owner, name = parsed
+    alias = args.alias or name
+    if not _NEW_NAME.fullmatch(alias) or alias.endswith(".git"):
+        print("t checkout: alias must use letters, digits, '.', '_' or '-' and start with a letter or digit",
+              file=sys.stderr)
+        return 1
+    try:
+        path = _checkout_destination(args.path, name)
+    except ValueError as exc:
+        print(f"t checkout: {exc}", file=sys.stderr)
+        return 1
+    try:
+        with open(_current_local_rc(), errors="ignore") as fh:
+            local_text = fh.read()
+    except OSError:
+        local_text = ""
+    f_repos, _, _ = _local_entries(local_text)
+    whence = None if alias in (set(f_repos) | set(cfg.repos)) else _new_sh_whence(alias)
+    register = _new_alias_check(alias, path, f_repos, cfg.repos, whence)
+    state = _new_sh_state(path)
+    steps = _new_land_plan(name, alias, args.url, path, state, register)
+    trust = (_trust_step([path]) if os.path.isdir(path) else "run"
+             if os.environ.get("T_AUTO_TRUST") == "1" and not os.environ.get(_TRUST_NO_ENV)
+             else None)
+    if trust:
+        steps.append({"step": "trust", "do": trust,
+                      "label": f"trust {_tilde(path)} in installed agents (T_AUTO_TRUST=1)",
+                      "cmd": None, "warn": None})
+    errors = [s for s in steps if s["do"] == "error"]
+    if args.dry_run:
+        print(f"t checkout {owner}/{name} → {_tilde(path)} (alias {alias}):")
+        for line in _new_render(steps, Style()):
+            print(f"  {line}")
+        if instruction_mode == "apply":
+            print(f"  + seed {_tilde(path)}/AGENTS.md from {_instructions_path()}")
+    if errors:
+        for s in errors:
+            print(f"t checkout: {s['label']}", file=sys.stderr)
+        return 1
+    if args.dry_run:
+        return 0
+    if _new_land_apply(steps, alias, path, "t checkout", "t checkout"):
+        return 1
+    if _instructions_offer([path], instruction_mode, "t checkout"):
+        return 1
+    if not _new_sh_state(path)["has_origin_main"]:
+        print("⚠ origin/main is missing; t open needs it. Create a main branch on GitHub and fetch origin before opening a session.",
+              file=sys.stderr)
+    print(f"✓ {_new_land_summary(steps)}: {alias} → {_tilde(path)}")
+    if not os.environ.get("T_SETUP_SHIM") and register[0] == "run":
+        print("run `source ~/.zshrc` (or open a new shell) to use the new alias")
+    return 0
+
+
+def cmd_instructions(cfg, args):
+    """Manage the editable profile and apply it to a registered repository."""
+    path = _instructions_path()
+    if args.init:
+        try:
+            created = _instructions_init()
+        except OSError as exc:
+            print(f"t instructions: could not create {path}: {exc}", file=sys.stderr)
+            return 1
+        print(f"{'✓ created' if created else '= already exists'} {path}")
+        print("edit this profile, then run `t instructions <repo> --apply`")
+        return 0
+    if args.edit:
+        try:
+            _instructions_init()
+        except OSError as exc:
+            print(f"t instructions: could not create {path}: {exc}", file=sys.stderr)
+            return 1
+        return _instructions_edit()
+    if args.show:
+        try:
+            template = _instructions_template(required=True)
+        except (OSError, UnicodeError, ValueError) as exc:
+            print(f"t instructions: {exc}", file=sys.stderr)
+            return 1
+        print(template, end="")
+        return 0
+    if not args.repo:
+        print(f"instruction profile: {path}\n"
+              "run `t instructions --init` to create it, or `t instructions <repo> --apply` to seed a repo")
+        return 0
+    repo = cfg.repos.get(args.repo)
+    if not repo or not os.path.isdir(repo):
+        print(f"t instructions: unknown registered repo '{args.repo}'", file=sys.stderr)
+        return 1
+    return _instructions_offer([repo], "apply" if args.apply else "ask", "t instructions")
+
+
 def cmd_new_land(cfg, args):
     """ON the host (over ssh from t new / t setup): clone <url> to ~/code/<name> unless
     it is already that clone, register DEV_REPOS[<alias>] here, print the sentinel
@@ -3302,20 +3638,8 @@ def cmd_new_land(cfg, args):
         for e in errs:
             print(f"t new-land: {e['label']}", file=sys.stderr)
         return 1
-    for s in steps:
-        if s["do"] != "run":
-            continue
-        if s["step"] == "clone":
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            r = _run(s["cmd"], timeout=600)
-            if r.returncode != 0:
-                tail = [ln.strip() for ln in (r.stderr or "").splitlines() if ln.strip()][-3:]
-                print(f"t new-land: clone failed — {' / '.join(tail) or f'rc {r.returncode}'}",
-                      file=sys.stderr)
-                return 1
-        else:
-            _new_sh_register(args.alias, path, "t new")
-    _trust_auto([path], say=None)   # a registered repo is a trusted one, on every host
+    if _new_land_apply(steps, args.alias, path, "t new", "t new-land"):
+        return 1
     print(_NEW_SENTINEL + _new_land_summary(steps))
     return 0
 
@@ -7311,6 +7635,8 @@ examples:
                           ask the sessions MCP by hand (Claude calls it for you)
   t on mini ls            run a command on a remote host
   t setup                 onboard this machine: register ~/code repos + ssh hosts
+  t checkout URL          clone an existing GitHub repo and register it locally
+  t instructions          create/edit a reusable AGENTS.md instruction profile
   t install               install + log in the agent CLIs (claude, codex, cursor) here and on every host
   t permissions           compare T_PERMISSIONS_DIR with installed agent settings
   t update                install the latest release, or update a Git checkout
@@ -7547,7 +7873,8 @@ Run `t <verb> -h` for a verb's own flags.""")
             "Save changes reviews then writes a managed block in T_LOCAL_RC. Removed "
             "hosts stop participating in remote t commands; unregistering repos keeps their files "
             "and sessions. Tool/model/effort/Fast mode defaults apply to fresh tmux and --fg sessions only. "
-            "Open local config in editor covers all custom shell settings (VISUAL/EDITOR, else vi).")
+            "Open local config in editor covers all custom shell settings (VISUAL/EDITOR, else vi). "
+            "For a reusable AGENTS.md profile, run `t instructions --init`.")
     cg = sp.add_mutually_exclusive_group()
     cg.add_argument("--show", action="store_true", help="print current settings without opening the menu")
     cg.add_argument("--edit", action="store_true", help="open T_LOCAL_RC in VISUAL/EDITOR directly")
@@ -7572,6 +7899,9 @@ Run `t <verb> -h` for a verb's own flags.""")
     hg.add_argument("--hosts", metavar="A,B", help="clone + register the picked repos only on these hosts")
     hg.add_argument("--no-hosts", action="store_true",
                     help="skip the clone + register on other hosts (default: every REMOTE_HOSTS host)")
+    ig = sp.add_mutually_exclusive_group()
+    ig.add_argument("--instructions", action="store_true", help="apply the configured AGENTS.md profile to picked repos")
+    ig.add_argument("--no-instructions", action="store_true", help="leave AGENTS.md untouched (default without a terminal)")
 
     sp = sub.add_parser("new", help="create a repo: ~/code/<name> + GitHub, registered here and on every host",
         description="A wizard (the `t setup` style — stepped, inline, nothing created until you "
@@ -7598,6 +7928,37 @@ Run `t <verb> -h` for a verb's own flags.""")
     sp.add_argument("-y", "--yes", action="store_true",
                     help="no wizard, no review: the flags plus defaults, then run")
     sp.add_argument("--dry-run", action="store_true", help="print the steps it would run, change nothing")
+
+    sp = sub.add_parser("checkout", help="clone an existing GitHub repo and register it locally",
+        description="Clone an existing github.com repository to ~/code/<repo> (or --path), "
+            "then register it as DEV_REPOS[<alias>] in T_LOCAL_RC. The alias defaults "
+            "to the repository name. A matching existing clone is reused without a "
+            "fetch, reset, or pull; a conflicting destination or alias is refused. "
+            "This command does not create or edit a GitHub repository and does not "
+            "clone to remote hosts. With T_AUTO_TRUST=1, apply the usual optional "
+            "agent trust sync. t open needs origin/main; a different default branch "
+            "gets a warning after checkout.")
+    sp.add_argument("url", help="GitHub HTTPS or SSH clone URL (owner/repo)")
+    sp.add_argument("alias", nargs="?", help="DEV_REPOS key (default: repository name)")
+    sp.add_argument("--path", metavar="DIR", help="local clone destination (default: ~/code/<repo>)")
+    sp.add_argument("--dry-run", action="store_true", help="show clone and registration steps without changing anything")
+    ig = sp.add_mutually_exclusive_group()
+    ig.add_argument("--instructions", action="store_true", help="apply the configured AGENTS.md profile after checkout")
+    ig.add_argument("--no-instructions", action="store_true", help="leave AGENTS.md untouched")
+
+    sp = sub.add_parser("instructions", help="create or apply a reusable AGENTS.md profile",
+        description="Keep preferred model, local preview, and PR workflow instructions "
+            "in an editable local template. --init creates a starter profile at "
+            "${XDG_CONFIG_HOME:-~/.config}/t/instructions.md (override with "
+            "T_AGENT_INSTRUCTIONS). --apply updates only t's marked block in the "
+            "registered repo's AGENTS.md; unrelated text is preserved. The file is "
+            "never committed or pushed automatically.")
+    sp.add_argument("repo", nargs="?", help="registered DEV_REPOS alias to seed")
+    mode = sp.add_mutually_exclusive_group()
+    mode.add_argument("--init", action="store_true", help="create an editable starter profile if absent")
+    mode.add_argument("--edit", action="store_true", help="edit the profile with VISUAL/EDITOR")
+    mode.add_argument("--show", action="store_true", help="print the current profile")
+    mode.add_argument("--apply", action="store_true", help="apply profile to repo without prompting")
 
     sp = sub.add_parser("install", help="install + log in the agent CLIs (claude, codex, cursor)",
         description="The `t setup`-style checklist for the agent binaries themselves: probes "
@@ -7717,6 +8078,7 @@ IMPLEMENTED = {
     "plan": cmd_plan, "paste": cmd_paste, "kill": cmd_kill, "setup": cmd_setup,
     "land": cmd_land, "kill-owner": cmd_kill_owner, "cursor": cmd_cursor,
     "doctor": cmd_doctor, "mcp": cmd_mcp, "new": cmd_new, "new-land": cmd_new_land,
+    "checkout": cmd_checkout, "instructions": cmd_instructions,
     "install": cmd_install, "permissions": cmd_permissions, "trust": cmd_trust,
     "app": cmd_app,
     "config": cmd_config,
