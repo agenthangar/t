@@ -1439,6 +1439,30 @@ def test_zsh_open_rejects_an_unknown_flag_instead_of_naming_a_slot_after_it(zsh)
     assert "unknown flag" not in r.stderr, r.stderr
 
 
+def test_remote_desktop_reservation_blocks_local_slot_without_becoming_attachable(zsh):
+    """A remote app row has no tmux to attach, yet owns its slot's worktree."""
+    (zsh.home / "code" / "api").mkdir(parents=True)
+    row = "\t".join(["mini", "-", "/Users/other/code/.worktrees/api/3",
+                     "api-3", "app", "none", "(Codex desktop workspace)", "codex"])
+    snippet = (
+        'REMOTE_HOSTS[mini]=unused; DEV_WORKTREE_ROOT=/Users/local/code/.worktrees; '
+        '_dev_homerel() { case $1 in */code/api) print -r -- code/api;; */code/.worktrees) print -r -- code/.worktrees;; esac; }; '
+        f'_dev_rows_all() {{ print -r -- {shlex.quote(row)}; }}; '
+        'print -r -- "owner=$(_dev_remote_app_owner api 3)"; '
+        '_dev_remote_resolve api 3 >/dev/null 2>&1; print -r -- "attachable=$?"; '
+        '_t_dev api 3 --codex; print -r -- "cli=$?"; '
+        '_t_open api 3 --app; print -r -- "desktop=$?"; '
+        '_t_resume api 3; print -r -- "resume=$?"'
+    )
+    r = zsh(snippet)
+    assert "owner=mini" in r.stdout, r.stdout
+    assert "attachable=1" in r.stdout, r.stdout
+    assert "cli=1" in r.stdout and "desktop=1" in r.stdout and "resume=1" in r.stdout, r.stdout
+    assert r.stderr.count("reserved by the Codex desktop app on mini") == 2
+    assert "reserved for the Codex desktop app on mini" in r.stderr
+    assert not zsh.log.exists() or "new-session" not in zsh.log.read_text()
+
+
 def test_zsh_open_fg_attaches_before_it_adopts(zsh, tmp_path):
     """Order matters: `t open` must not stop-and-move a session it could have attached.
     With a tmux session the row is attached; without one the same handle falls through to

@@ -311,6 +311,11 @@ _t_open_app() {
   fi
   if (( ${#REMOTE_HOSTS} )); then
     local remote_owner
+    remote_owner=$(_dev_remote_app_owner "$repo" "$slot")
+    if [[ -n $remote_owner ]]; then
+      print -u2 -- "t open --app: $repo $slot is reserved by the Codex desktop app on $remote_owner; close it there and release the reservation before opening here"
+      return 1
+    fi
     remote_owner=$(_dev_remote_resolve "$repo" "$slot" 2>/dev/null)
     if [[ -n $remote_owner ]]; then
       print -u2 -- "t open --app: $repo $slot is live on ${remote_owner%%$'\t'*}; move it here with t beam before opening the app"

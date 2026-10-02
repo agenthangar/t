@@ -1963,6 +1963,17 @@ _t_dev() {
 
   local session="dev-${repo}-${slot}"
 
+  # Remote Codex desktop workspaces own their numbered slot without tmux. The
+  # attach resolver deliberately excludes them, so check their reservation before
+  # creating a local CLI on the same worktree/branch.
+  if ! tmux has-session -t "=$session" 2>/dev/null && (( ${#REMOTE_HOSTS} )); then
+    local app_owner; app_owner=$(_dev_remote_app_owner "$repo" "$slot")
+    if [[ -n $app_owner ]]; then
+      print -u2 -- "t open: $repo $slot is reserved by the Codex desktop app on $app_owner; close it there and release the reservation before opening here"
+      return 1
+    fi
+  fi
+
   local logdir="$HOME/.tmux-logs"
   local logfile="$logdir/${session}.log"
   mkdir -p "$logdir"

@@ -1,4 +1,21 @@
 # → stderr (stdout is captured).
+# A desktop-only slot has no tmux process to attach, but it still owns its
+# worktree and conversation. Keep this separate from _dev_remote_resolve, whose
+# result is strictly an attachable tmux slot.
+_dev_remote_app_owner() {
+  local repo="$1" slot="$2" dir="${DEV_REPOS[$1]:-}" base wtr
+  [[ -n $dir ]] || return 1
+  base=${dir:t}; wtr=${DEV_WORKTREE_ROOT:-}
+  _dev_rows_all 2>/dev/null | awk -F'\t' \
+    -v d="$(_dev_homerel "$dir")" -v s="$slot" \
+    -v wtr="$(_dev_homerel "$wtr")" -v b="$base" '
+      $1 != "local" && $5 == "app" {
+        c=$3; sub(/^\/(Users|home)\/[^\/]+\//, "", c)
+        n=$4; sub(/^.*-/, "", n)
+        if ((c==d || (wtr != "" && b != "" && index(c, wtr "/" b "/") == 1)) && (s == "" || n == s)) { print $1; exit }
+      }'
+}
+
 _dev_remote_resolve() {
   local repo="$1" slot="$2"
   # _dev_rows_all columns: host(1) sid(2) cwd(3) slot(4) state(5) context(6) summary(7)
