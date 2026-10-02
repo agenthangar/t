@@ -106,6 +106,25 @@ def test_app_bundle_checks_identity_and_both_names(t_mod, monkeypatch):
     assert t_mod._app_bundle() is None
 
 
+def test_app_reserves_git_worktree_in_private_metadata(t_mod, tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
+    (repo / "README.md").write_text("# disposable\n")
+    subprocess.run(["git", "-C", str(repo), "add", "README.md"], check=True)
+    subprocess.run(["git", "-C", str(repo), "-c", "user.name=Test",
+                    "-c", "user.email=test@example.invalid", "commit", "-qm", "start"], check=True)
+    wt = tmp_path / "worktree"
+    subprocess.run(["git", "-C", str(repo), "worktree", "add", "-q", "-b", "dev/repo-1",
+                    str(wt), "main"], check=True)
+    t_mod._app_reserve_worktree(str(wt))
+    gitdir = subprocess.run(["git", "-C", str(wt), "rev-parse", "--absolute-git-dir"],
+                            capture_output=True, text=True, check=True).stdout.strip()
+    assert (tmp_path / "repo" / ".git" / "worktrees" / wt.name / "t-app-slot").read_text() == "codex-app\n"
+    assert str(tmp_path) in gitdir
+    assert not (wt / "t-app-slot").exists(), "the marker must never enter the public commit"
+
+
 @pytest.fixture
 def app_command(t_mod, app_slot, monkeypatch):
     cfg, row = app_slot

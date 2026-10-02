@@ -1,8 +1,25 @@
 # → stderr (stdout is captured).
+# A desktop-only slot has no tmux process to attach, but it still owns its
+# worktree and conversation. Keep this separate from _dev_remote_resolve, whose
+# result is strictly an attachable tmux slot.
+_dev_remote_app_owner() {
+  local repo="$1" slot="$2" dir="${DEV_REPOS[$1]:-}" base wtr
+  [[ -n $dir ]] || return 1
+  base=${dir:t}; wtr=${DEV_WORKTREE_ROOT:-}
+  _dev_rows_all 2>/dev/null | awk -F'\t' \
+    -v d="$(_dev_homerel "$dir")" -v s="$slot" \
+    -v wtr="$(_dev_homerel "$wtr")" -v b="$base" '
+      $1 != "local" && $5 == "app" {
+        c=$3; sub(/^\/(Users|home)\/[^\/]+\//, "", c)
+        n=$4; sub(/^.*-/, "", n)
+        if ((c==d || (wtr != "" && b != "" && index(c, wtr "/" b "/") == 1)) && (s == "" || n == s)) { print $1; exit }
+      }'
+}
+
 _dev_remote_resolve() {
   local repo="$1" slot="$2"
   # _dev_rows_all columns: host(1) sid(2) cwd(3) slot(4) state(5) context(6) summary(7)
-  local rows; rows=$(_dev_rows_all 2>/dev/null | awk -F'\t' '$1 != "local"')
+  local rows; rows=$(_dev_rows_all 2>/dev/null | awk -F'\t' '$1 != "local" && $5 != "app"')
   [[ -n $rows ]] || { echo "dev: no live dev sessions on any remote host (\`dev ls -r\`)." >&2; return 1; }
   # Match on the repo DIRECTORY (field 3 = session cwd), NOT the alias-derived
   # slot label (field 4): the same repo dir can carry different DEV_REPOS aliases
@@ -28,9 +45,9 @@ _dev_remote_resolve() {
   if [[ -z $repo ]]; then
     match=$rows                                                  # bare → all remote
   elif [[ -n $dir && -n $slot ]]; then
-    match=$(print -r -- "$rows" | awk -F'\t' -v d="$(_dev_homerel "$dir")" -v s="$slot" -v wtr="$(_dev_homerel "$wtr")" -v b="$base" '{ c=$3; sub(/^\/(Users|home)\/[^\/]+\//, "", c) } (c==d || (wtr != "" && b != "" && index(c, wtr "/" b "/") == 1)) && $4 !~ /:/ && $4 ~ ("-" s "$")')
+    match=$(print -r -- "$rows" | awk -F'\t' -v d="$(_dev_homerel "$dir")" -v s="$slot" -v wtr="$(_dev_homerel "$wtr")" -v b="$base" '{ c=$3; sub(/^\/(Users|home)\/[^\/]+\//, "", c) } (c==d || (wtr != "" && b != "" && index(c, wtr "/" b "/") == 1)) && $5 != "app" && $4 !~ /:/ && $4 ~ ("-" s "$")')
   elif [[ -n $dir ]]; then
-    match=$(print -r -- "$rows" | awk -F'\t' -v d="$(_dev_homerel "$dir")" -v wtr="$(_dev_homerel "$wtr")" -v b="$base" '{ c=$3; sub(/^\/(Users|home)\/[^\/]+\//, "", c) } (c==d || (wtr != "" && b != "" && index(c, wtr "/" b "/") == 1)) && $4 !~ /:/')
+    match=$(print -r -- "$rows" | awk -F'\t' -v d="$(_dev_homerel "$dir")" -v wtr="$(_dev_homerel "$wtr")" -v b="$base" '{ c=$3; sub(/^\/(Users|home)\/[^\/]+\//, "", c) } (c==d || (wtr != "" && b != "" && index(c, wtr "/" b "/") == 1)) && $5 != "app" && $4 !~ /:/')
   elif [[ -n $slot ]]; then
     match=$(print -r -- "$rows" | awk -F'\t' -v w="${repo}-${slot}" '$4==w')
   else

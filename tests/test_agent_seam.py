@@ -17,6 +17,7 @@ import select
 import shlex
 import shutil
 import subprocess
+import sys
 import time
 
 import pytest
@@ -1437,6 +1438,65 @@ def test_zsh_open_rejects_an_unknown_flag_instead_of_naming_a_slot_after_it(zsh)
     assert not zsh.log.exists() or "new-session" not in zsh.log.read_text()
     r = zsh("_t_dev list --all; echo rc=$?")
     assert "unknown flag" not in r.stderr, r.stderr
+
+
+def test_remote_desktop_reservation_blocks_local_slot_without_becoming_attachable(zsh):
+    """A remote app row has no tmux to attach, yet owns its slot's worktree."""
+    (zsh.home / "code" / "api").mkdir(parents=True)
+    icloud = zsh.home / "Library/Mobile Documents/com~apple~CloudDocs"
+    icloud.mkdir(parents=True)
+    (icloud / "demo.txt").write_text("disposable")
+    row = "\t".join(["mini", "-", "/Users/other/code/.worktrees/api/3",
+                     "api-3", "app", "none", "(Codex desktop workspace)", "codex"])
+    snippet = (
+        'REMOTE_HOSTS[mini]=unused; DEV_WORKTREE_ROOT=/Users/local/code/.worktrees; '
+        '_dev_homerel() { case $1 in */code/api) print -r -- code/api;; */code/.worktrees) print -r -- code/.worktrees;; esac; }; '
+        f'_dev_rows_all() {{ print -r -- {shlex.quote(row)}; }}; '
+        'print -r -- "owner=$(_dev_remote_app_owner api 3)"; '
+        '_dev_remote_resolve api 3 >/dev/null 2>&1; print -r -- "attachable=$?"; '
+        '_t_dev api 3 --codex; print -r -- "cli=$?"; '
+        '_t_dev api 3 --codex -f; print -r -- "foreground=$?"; '
+        '_t_open api 3 --app; print -r -- "desktop=$?"; '
+        '_t_paste -n api 3; print -r -- "paste=$?"; '
+        '_t_resume api 3; print -r -- "resume=$?"'
+    )
+    r = zsh(snippet)
+    assert "owner=mini" in r.stdout, r.stdout
+    assert "attachable=1" in r.stdout, r.stdout
+    assert all(f"{name}=1" in r.stdout for name in ("cli", "foreground", "desktop", "paste", "resume")), r.stdout
+    assert r.stderr.count("reserved by the Codex desktop app on mini") == (4 if sys.platform == "darwin" else 3)
+    if sys.platform != "darwin":
+        assert "requires macOS" in r.stderr
+    assert "reserved for the Codex desktop app on mini" in r.stderr
+    assert not zsh.log.exists() or "new-session" not in zsh.log.read_text()
+
+
+def test_paste_does_not_fall_back_to_shared_tree_when_desktop_worktree_is_reserved(zsh):
+    icloud = zsh.home / "Library/Mobile Documents/com~apple~CloudDocs"
+    icloud.mkdir(parents=True)
+    (icloud / "demo.txt").write_text("disposable")
+    r = zsh(
+        '_dev_worktree_enabled() { return 0; }; '
+        '_dev_worktree_create() { print -u2 -- "reserved desktop worktree"; return 1; }; '
+        '_t_paste -n api 3; print -r -- "paste=$?"'
+    )
+    assert "paste=1" in r.stdout, r.stdout
+    assert "reserved desktop worktree" in r.stderr, r.stderr
+    assert "Starting dev-api-3" not in r.stdout
+    assert not zsh.log.exists() or "new-session" not in zsh.log.read_text()
+
+
+def test_beam_refuses_desktop_owned_codex_thread_before_move(zsh):
+    row = "thread-123\tcodex\t/tmp/desktop-slot"
+    r = zsh(
+        f'_codex_thread_lookup() {{ print -r -- {shlex.quote(row)}; }}; '
+        '_dev_app_slot_reserved() { [[ "$1" == /tmp/desktop-slot ]]; }; '
+        '_tbeam_kill_owner() { print -r -- SHOULD_NOT_KILL; }; '
+        '_t_beam -s thread-123 mini; print -r -- "beam=$?"'
+    )
+    assert "beam=1" in r.stdout, r.stdout
+    assert "reserved for the Codex desktop app" in r.stderr, r.stderr
+    assert "SHOULD_NOT_KILL" not in r.stdout
 
 
 def test_zsh_open_fg_attaches_before_it_adopts(zsh, tmp_path):

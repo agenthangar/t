@@ -252,11 +252,11 @@ _t_resume() {
   # does not redeclare, it PRINTS `x=value` (the `_ok=claw` junk-output bug).
   local -a cands slots tx
   local -a pending _mpaths _mrows _mf _PR_STALE
-  local -A remote_live_host remote_live_alias remote_live_sum remote_live_agent
+  local -A remote_live_host remote_live_alias remote_live_sum remote_live_agent remote_live_state
   local -A meta_title meta_pr live_seen
   local -a sidlive
   local _p _mr _mrest
-  local n wt sid busy rhost _rdir _rbase _rhost _rn _ralias _rsum _rag _ok _stale stale_path agent _ag
+  local n wt sid busy rhost _rdir _rbase _rhost _rn _ralias _rsum _rag _rst _ok _stale stale_path agent _ag
   local txf title when ep org orgf hf skipped=0 hidden_live=0
   local reopened opf opep REPLY
   local _rwtr=${DEV_WORKTREE_ROOT:-}
@@ -279,16 +279,16 @@ _t_resume() {
   done
   for repo in $repos; do
     _rdir=${DEV_REPOS[$repo]}; _rbase=${_rdir:t}
-    remote_live_host=(); remote_live_alias=(); remote_live_sum=(); remote_live_agent=()
+    remote_live_host=(); remote_live_alias=(); remote_live_sum=(); remote_live_agent=(); remote_live_state=()
     if [[ -n $remote_rows ]]; then
-      while IFS=$'\t' read -r _rhost _rn _ralias _rsum _rag; do
-        [[ -n $_rn ]] && { remote_live_host[$_rn]=$_rhost; remote_live_alias[$_rn]=$_ralias; remote_live_sum[$_rn]=$_rsum; remote_live_agent[$_rn]=${_rag:-claude}; }
+      while IFS=$'\t' read -r _rhost _rn _ralias _rst _rsum _rag; do
+        [[ -n $_rn ]] && { remote_live_host[$_rn]=$_rhost; remote_live_alias[$_rn]=$_ralias; remote_live_state[$_rn]=$_rst; remote_live_sum[$_rn]=$_rsum; remote_live_agent[$_rn]=${_rag:-claude}; }
       done < <(print -r -- "$remote_rows" | awk -F'\t' -v d="$(_dev_homerel "$_rdir")" -v wtr="$(_dev_homerel "$_rwtr")" -v b="$_rbase" '
         { c=$3; sub(/^\/(Users|home)\/[^\/]+\//, "", c) }
         (c==d || (wtr != "" && b != "" && index(c, wtr "/" b "/") == 1)) {
           n = $4; sub(/^.*-/, "", n)
           r = $4; sub(/-[^-]+$/, "", r)
-          print $1 "\t" n "\t" r "\t" $7 "\t" $8
+          print $1 "\t" n "\t" r "\t" $5 "\t" $7 "\t" $8
         }')
     fi
     # Which slots to look at. NOT a fixed 1..20 range (which silently capped the
@@ -305,6 +305,16 @@ _t_resume() {
     fi
     for n in $slots; do
       wt=$(_dev_worktree_path "$repo" "$n")
+      if _dev_app_slot_reserved "$wt"; then
+        if [[ -n $slot ]]; then
+          print -u2 -- "t resume: $repo $n is reserved for the Codex desktop app; use t open $repo $n --app"
+          return 1
+        fi
+        live_seen[app/${repo}-$n]=1
+        [[ -n $live_flag ]] || { (( hidden_live++ )); continue; }
+        cands+=(9999999999$'\t'"$repo"$'\t'"$n"$'\t'-$'\t'"$wt"$'\t'"◉ desktop here"$'\t'"(Codex desktop workspace)"$'\t'app:here$'\t'-$'\t'-$'\t'codex)
+        continue
+      fi
       busy=${live[${wt:A}]:-}
       if [[ -n $busy ]]; then
         if [[ -n $slot ]]; then
@@ -325,6 +335,16 @@ _t_resume() {
       # Remote-live: same treatment as local live (see the scan note above).
       rhost=${remote_live_host[$n]:-}
       if [[ -n $rhost ]]; then
+        if [[ ${remote_live_state[$n]} == app ]]; then
+          if [[ -n $slot ]]; then
+            print -u2 -- "t resume: $repo $n is reserved for the Codex desktop app on $rhost; close and release it there before resuming"
+            return 1
+          fi
+          live_seen[app/$rhost/${remote_live_alias[$n]}-$n]=1
+          [[ -n $live_flag ]] || { (( hidden_live++ )); continue; }
+          cands+=(9999999999$'\t'"$repo"$'\t'"$n"$'\t'-$'\t'"$wt"$'\t'"◉ desktop on $rhost"$'\t'"${remote_live_sum[$n]:-(Codex desktop workspace)}"$'\t'"app:$rhost"$'\t'"${remote_live_alias[$n]}"$'\t'-$'\t'codex)
+          continue
+        fi
         if [[ -n $slot ]]; then
           echo "Slot $n is live on $rhost — attaching (resume only revives dead slots)."
           _dev_remote_attach "$rhost"$'\t'"${remote_live_alias[$n]}"$'\t'"$n" ""
@@ -711,6 +731,9 @@ _t_resume() {
     echo "That conversation is live as foreground $lalias — attaching."
     _dev_open_fg "$lalias"
     return
+  elif [[ $loc == app:* ]]; then
+    print -u2 -- "t resume: slot $slot is reserved for the Codex desktop app on ${loc#app:}; close and release it there before resuming"
+    return 1
   elif [[ $loc == here ]]; then
     [[ -n $lalias && $lalias != - ]] && repo=$lalias   # owner under another alias/slot
     echo "Slot $slot is live locally — attaching."
@@ -1886,6 +1909,10 @@ _t_beam() {
     [[ -n $row ]] || return 1
     sid=${row%%$'\t'*}
     cwd=${${row#*$'\t'}%%$'\t'*}
+  fi
+  if _dev_app_slot_reserved "$cwd"; then
+    print -u2 -- "tbeam: $cwd is reserved for the Codex desktop app; close it and release the reservation before moving its conversation"
+    return 1
   fi
   [[ $sid == "$self_sid" && -n $self_sid ]] && self_move=1
   [[ -n $self_sid ]] && detach=1                    # no TTY in an agent's tool subprocess to ssh -t into

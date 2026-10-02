@@ -143,7 +143,7 @@ _t_cd() {
 # The host paths dispatch via _dev_remote_open with the original gh-style args (minus
 # --host / -r), so H's own `t open` re-parses them from ITS $PWD.
 _t_open() {
-  local -a a rest; local arg want_host= host= remote= isnew= local_only=
+  local -a a rest; local arg want_host= host= remote= isnew= local_only= app=
   for arg in "$@"; do
     if [[ -n $want_host ]]; then host=$arg; want_host=; continue; fi
     case "$arg" in
@@ -153,6 +153,7 @@ _t_open() {
     rest+=("$arg")
     case "$arg" in
       --new|new)         a+=(new); isnew=1 ;;
+      --app)             app=1 ;;
       --fg)              a+=(-f) ;;
       -r|--remote)       remote=1; a+=(-r) ;;
       -l|--local|--here) local_only=1; a+=(--local) ;;
@@ -160,6 +161,11 @@ _t_open() {
     esac
   done
   [[ -n $want_host ]] && { echo "t open: --host requires a value" >&2; return 2; }
+
+  if [[ -n $app ]]; then
+    _t_open_app "${rest[@]}" ${host:+--host "$host"}
+    return
+  fi
 
   # -l/--local/--here and -r/--remote are opposite intents — reject the combination
   # here too, so the `-r --new` default-host shortcut below cannot silently win over a
@@ -210,6 +216,129 @@ _t_open() {
     return
   fi
   _t_dev "${a[@]}"
+}
+
+# Open a dedicated t worktree in the Codex desktop app. A running Codex CLI slot
+# uses `t app` so its conversation has only one owner; a new workspace needs no
+# tmux pane or throwaway CLI process.
+_t_open_app() {
+  local repo= slot= arg isnew= claude= host= want_host= inferred=
+  local -a pos
+  for arg in "$@"; do
+    if [[ -n $want_host ]]; then host=$arg; want_host=; continue; fi
+    case "$arg" in
+      --app) ;;
+      --new|new) isnew=1 ;;
+      --codex) ;;
+      --claude) claude=1 ;;
+      --host) want_host=1 ;;
+      --host=*) host=${arg#--host=} ;;
+      --fg|-f|--no-tmux|-r|--remote|-l|--local|--here)
+        print -u2 -- "t open --app: --app opens a local desktop workspace; omit '$arg'"
+        return 2 ;;
+      -*) print -u2 -- "t open --app: unknown flag '$arg'"; return 2 ;;
+      *) pos+=("$arg") ;;
+    esac
+  done
+  [[ -z $want_host && -z $host ]] || {
+    print -u2 -- 't open --app: remote desktop launch is not supported; run this on the Mac that owns the app'
+    return 2
+  }
+  [[ -z $claude ]] || {
+    print -u2 -- 't open --app: --claude conflicts with the Codex desktop app'
+    return 2
+  }
+  [[ $OSTYPE == darwin* ]] || {
+    print -u2 -- 't open --app: the Codex desktop app requires macOS'
+    return 1
+  }
+  (( ${#pos} <= 2 )) || { print -u2 -- 't open --app: expected a repo and optional slot number'; return 2; }
+  repo=${pos[1]:-}; slot=${pos[2]:-}
+  if [[ $repo == <-> && -z $slot ]]; then slot=$repo; repo=; fi
+  [[ -z $repo ]] && inferred=1
+  [[ -n $repo ]] || repo=$(_t_infer_repo "$slot")
+  [[ -n $repo && -n ${DEV_REPOS[$repo]:-} && -d ${DEV_REPOS[$repo]} ]] || {
+    print -u2 -- 't open --app: name a registered repository with an existing checkout'
+    return 1
+  }
+  [[ -z $slot || $slot == <-> ]] || {
+    print -u2 -- 't open --app: slot must be a number'
+    return 2
+  }
+  [[ -z $slot || -z $isnew ]] || {
+    print -u2 -- 't open --app: choose a slot number or --new, not both'
+    return 2
+  }
+  if [[ -n $inferred && -z $slot && -z $isnew ]]; then
+    local row here_slot
+    row=$(_dev_repo_of_dir "$PWD" 2>/dev/null)
+    here_slot=${row#*$'\t'}
+    [[ $row == *$'\t'* && -n $here_slot ]] && slot=$here_slot
+  fi
+  _dev_worktree_enabled "$repo" || {
+    print -u2 -- "t open --app: $repo has worktrees disabled; enable them to isolate the desktop workspace"
+    return 1
+  }
+  command -v codex >/dev/null 2>&1 || {
+    print -u2 -- 't open --app: Codex CLI is missing (run t install codex)'
+    return 1
+  }
+  if [[ -z $slot ]]; then
+    local n=1
+    while ! _dev_slot_fresh "$repo" "$n"; do (( n++ )); done
+    slot=$n
+  fi
+  # Aliases pointing at one canonical checkout share slot ownership. Handoff the
+  # existing owner's session name rather than opening its worktree a second time.
+  if ! tmux has-session -t "=dev-${repo}-${slot}" 2>/dev/null; then
+    local sibling
+    for sibling in ${(k)DEV_REPOS}; do
+      [[ $sibling == $repo || ${DEV_REPOS[$sibling]} != ${DEV_REPOS[$repo]} ]] && continue
+      if tmux has-session -t "=dev-${sibling}-${slot}" 2>/dev/null; then
+        repo=$sibling
+        break
+      fi
+    done
+  fi
+  local session="dev-${repo}-${slot}" dir
+  if tmux has-session -t "=$session" 2>/dev/null; then
+    [[ $(_dev_agent_of_session "$session") == codex ]] || {
+      print -u2 -- "t open --app: $session is running Claude; choose --new or another slot"
+      return 1
+    }
+    command t app "$repo" "$slot"
+    return
+  fi
+  if (( ${#REMOTE_HOSTS} )); then
+    local remote_owner
+    remote_owner=$(_dev_remote_app_owner "$repo" "$slot")
+    if [[ -n $remote_owner ]]; then
+      print -u2 -- "t open --app: $repo $slot is reserved by the Codex desktop app on $remote_owner; close it there and release the reservation before opening here"
+      return 1
+    fi
+    remote_owner=$(_dev_remote_resolve "$repo" "$slot" 2>/dev/null)
+    if [[ -n $remote_owner ]]; then
+      print -u2 -- "t open --app: $repo $slot is live on ${remote_owner%%$'\t'*}; move it here with t beam before opening the app"
+      return 1
+    fi
+  fi
+  dir=$(_dev_worktree_path "$repo" "$slot")
+  if _dev_app_slot_reserved "$dir"; then
+    : # Reopen this desktop workspace; never freshen its branch under the app.
+  else
+    dir=$(_dev_worktree_create "$repo" "$slot")
+  fi
+  [[ -n $dir && -e $dir/.git ]] || { _dev_worktree_refuse "$repo" "$slot"; return 1; }
+  _dev_app_slot_reserve "$dir" || {
+    print -u2 -- "t open --app: could not reserve $dir against automatic cleanup"
+    return 1
+  }
+  print -r -- "Opening $repo $slot in the Codex desktop app: $dir"
+  command codex app "$dir" || {
+    print -u2 -- "t open --app: app launch failed; the worktree remains reserved at $dir for a retry"
+    return 1
+  }
+  print -r -- 'Open request sent to Codex; check the desktop app for the workspace.'
 }
 
 # _t_beam_xlate — map gh-grammar `t beam [repo] [slot] [--host H] [flags]` onto the
@@ -266,7 +395,7 @@ _t() {
     open|kill|read|plan|paste|beam|resume)
       if   (( CURRENT == 3 )); then _values 'repo' ${(k)DEV_REPOS}
       elif (( CURRENT == 4 )); then _values 'slot' 1 2 3 4 new fg
-      else _values 'flag' --new --fg --remote --codex --claude -y --yes -a --all --host --from -d --detach -p --pick -s --session -h --help; fi ;;
+      else _values 'flag' --new --fg --app --remote --codex --claude -y --yes -a --all --host --from -d --detach -p --pick -s --session -h --help; fi ;;
     on)
       (( CURRENT == 3 )) && _values 'host' ${(k)REMOTE_HOSTS} || _normal ;;
     ls)

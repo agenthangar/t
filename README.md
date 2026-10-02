@@ -102,7 +102,7 @@ Use `t doctor` when something is missing.
 
 | Command | Purpose |
 | --- | --- |
-| `t open <repo> [slot]` | Open/reattach an isolated task; `--new` starts another, `--codex` selects Codex |
+| `t open <repo> [slot]` | Open/reattach an isolated task; `--new` starts another, `--codex` selects Codex, `--app` opens the worktree in the Codex desktop app on macOS |
 | `t ls [-r] [-a]` | List sessions, optionally across remote hosts and all repositories |
 | `t cd [repo] [slot]` | Move the current shell into the selected worktree |
 | `t resume` | Find and resume a saved conversation |
@@ -148,6 +148,25 @@ You can later run `t instructions <repo> --apply` for a registered alias. t upda
 only its marked block, preserves the rest of `AGENTS.md`, and refuses malformed
 markers or a symlink. Review the resulting diff and commit it when ready; t never
 commits or pushes these instructions for you.
+
+On macOS, `t open my-project --app` creates a fresh isolated worktree and opens
+that folder in the Codex desktop app without starting a terminal agent. Name a
+slot to reopen its worktree (`t open my-project 3 --app`); if that slot is running
+Codex in tmux, `t` hands the same conversation to the app. `--app` requires a
+worktree-enabled repo and a local Codex installation. It cannot launch a desktop
+workspace on a remote host.
+The desktop slot stays reserved in private Git worktree metadata so automatic
+cleanup and a later terminal launch cannot reuse it while the app may still be
+working. `t ls` shows the reserved desktop slot. After closing its workspace in
+Codex, release the reservation with:
+
+```sh
+t cd my-project 3
+rm "$(git rev-parse --absolute-git-dir)/t-app-slot"
+```
+
+The worktree and any unmerged changes remain; normal cleanup can then reap a
+merged, clean worktree.
 
 ## Configuration
 
