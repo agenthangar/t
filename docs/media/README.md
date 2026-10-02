@@ -12,7 +12,11 @@ not a literal screen recording. Its source is the sanitized
 0.160.0 session in `t` slot 41 answered on a Mac, moved to a configured Mac mini,
 answered there, returned to the Mac with that mini reply visible in the same
 thread, and answered again. Both `t beam` commands exited successfully. Each
-source tmux owner stopped before its destination became the live owner. We
+host used the same Codex 0.160.0 binary with `--no-daemon` through a temporary
+launcher scoped only to the disposable slot; the mini's installed 0.155.1
+remained unchanged. This let the capture exercise `t`'s normal beam and rsync
+paths with a working Codex CLI on each host. Each source tmux owner stopped
+before its destination became the live owner. We
 checked the thread ID on both hosts and verified the rollout files met Codex's
 SQLite projection checkpoints before each transfer. The returned Mac JSONL and
 terminal pane both contained the mini reply. The capture retains short observed

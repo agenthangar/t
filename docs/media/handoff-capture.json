@@ -1,6 +1,7 @@
 {
   "capture_date": "2026-10-02",
   "source": "Disposable t repository slot 41 on a Mac and a configured Mac mini SSH host, Codex CLI 0.160.0",
+  "runtime_note": "Both hosts used Codex 0.160.0 with --no-daemon through a temporary slot-scoped launcher. The mini's installed Codex 0.155.1 was not changed.",
   "normalization": "Only short observed output excerpts are retained. Account identity, absolute home paths, thread UUID, host address, authentication state, and unrelated sessions are omitted.",
   "open_command": "t open t 41 --codex",
   "local_answer": "• Local ready.",
