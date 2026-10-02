@@ -461,6 +461,16 @@ _dev_pull() {
   local agent=${${(ps:\t:)row}[7]:-claude}; _dev_agent_valid "$agent" || agent=claude   # field 7 (a 6-field host = claude)
   [[ -n $sid && $sid != - ]] || { echo "dev: $host/$fslot has no active conversation to pull" >&2; return 1; }
 
+  # Check the source host's durable Codex rollout before stopping its owner.
+  # A newer SQLite projection with a shorter JSONL file cannot be transferred
+  # faithfully; the remote helper names the damaged file and leaves it running.
+  if [[ $agent == codex ]]; then
+    ssh "$target" "TB_SID=${(q)sid} zsh -lic _dev_codex_rollout_integrity" || {
+      echo "tbeam: could not verify $host's Codex rollout; source session was not stopped" >&2
+      return 1
+    }
+  fi
+
   echo "⟳ Pulling ${sid[1,8]}… ($cwd) from $host → here"
   # It's a MOVE: stop the origin copy on <host> FIRST, before snapshotting its
   # worktree + transcript, so a still-live claude there can't keep editing files

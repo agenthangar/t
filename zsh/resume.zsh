@@ -1673,6 +1673,62 @@ _tbeam_kill_owner() {
   return 1
 }
 
+# _dev_codex_rollout_integrity [sid] — a paginated Codex thread's SQLite history
+# is projected from its durable rollout. If the file has since shrunk below the
+# projection checkpoint (for example, a stale cross-host sync replaced it), a beam
+# would move only the stale file and silently lose completed turns. Read both DBs
+# without modifying them; older installs without these tables retain legacy beam.
+_dev_codex_rollout_integrity() {
+  local sid=${1:-${TB_SID:-}}
+  [[ -n $sid ]] || { print -u2 -- 'tbeam: missing Codex thread id for rollout check'; return 1; }
+  python3 - "${CODEX_HOME:-$HOME/.codex}" "$sid" <<'PY'
+import sqlite3
+import sys
+from pathlib import Path
+
+home, sid = Path(sys.argv[1]), sys.argv[2]
+
+
+def read_one(db_path, query):
+    if not db_path.is_file():
+        return None
+    try:
+        with sqlite3.connect(db_path.resolve().as_uri() + '?mode=ro', uri=True, timeout=0.5) as db:
+            return db.execute(query, (sid,)).fetchone()
+    except sqlite3.OperationalError as exc:
+        if 'no such table' in str(exc).lower():
+            return None
+        raise
+
+
+try:
+    thread = read_one(home / 'state_5.sqlite',
+                      'select rollout_path, history_mode from threads where id=?')
+    if thread is None or thread[1] != 'paginated':
+        sys.exit(0)
+    checkpoint = read_one(home / 'thread_history_1.sqlite',
+                          'select next_rollout_byte_offset from thread_history_projection_state where thread_id=?')
+    if checkpoint is None:
+        sys.exit(0)
+    offset = checkpoint[0]
+    if not isinstance(offset, int) or offset < 0:
+        raise ValueError('invalid SQLite rollout checkpoint')
+    if not thread[0]:
+        raise ValueError('missing paginated rollout path')
+    rollout = Path(thread[0])
+    if not rollout.is_absolute():
+        rollout = home / rollout
+    size = rollout.stat().st_size
+    if size < offset:
+        print(f'tbeam: Codex rollout is {size} bytes, behind its SQLite checkpoint at {offset}; '
+              'keep the source here and restore the matching rollout before beaming', file=sys.stderr)
+        sys.exit(1)
+except (OSError, TypeError, ValueError, sqlite3.Error) as exc:
+    print(f'tbeam: could not verify paginated Codex rollout: {exc}', file=sys.stderr)
+    sys.exit(1)
+PY
+}
+
 # _tbeam_land — runs ON the destination host. It's defined in the shared dotfiles
 # (so it exists on every machine); the laptop invokes it over ssh with the work
 # passed in the environment: TB_CWD, TB_SID, TB_MODE (tmux|fg), TB_ATTACH.
@@ -1914,6 +1970,7 @@ _t_beam() {
     print -u2 -- "tbeam: $cwd is reserved for the Codex desktop app; close it and release the reservation before moving its conversation"
     return 1
   fi
+  [[ $agent != codex ]] || _dev_codex_rollout_integrity "$sid" || return 1
   [[ $sid == "$self_sid" && -n $self_sid ]] && self_move=1
   [[ -n $self_sid ]] && detach=1                    # no TTY in an agent's tool subprocess to ssh -t into
   # Resume-through-sync for the picker is handled on the FAR side: _tbeam_land materializes

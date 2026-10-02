@@ -16,6 +16,7 @@ import re
 import select
 import shlex
 import shutil
+import sqlite3
 import subprocess
 import sys
 import time
@@ -1514,6 +1515,73 @@ def test_beam_refuses_desktop_owned_codex_thread_before_move(zsh):
     assert "beam=1" in r.stdout, r.stdout
     assert "reserved for the Codex desktop app" in r.stderr, r.stderr
     assert "SHOULD_NOT_KILL" not in r.stdout
+
+
+def test_beam_refuses_paginated_codex_rollout_behind_sqlite_checkpoint(zsh, tmp_path):
+    codex_home = zsh.home / ".codex"
+    codex_home.mkdir()
+    rollout = codex_home / "rollout.jsonl"
+    rollout.write_bytes(b'{"type":"session_meta"}\n')
+    with sqlite3.connect(codex_home / "state_5.sqlite") as db:
+        db.execute("create table threads (id text, rollout_path text, history_mode text)")
+        db.execute("insert into threads values (?, ?, 'paginated')", (SID, str(rollout)))
+    with sqlite3.connect(codex_home / "thread_history_1.sqlite") as db:
+        db.execute("create table thread_history_projection_state "
+                   "(thread_id text, next_rollout_byte_offset integer)")
+        db.execute("insert into thread_history_projection_state values (?, ?)",
+                   (SID, rollout.stat().st_size + 100))
+
+    r = zsh(f'_dev_codex_rollout_integrity {SID}; print -r -- "check=$?"')
+    assert "check=1" in r.stdout
+    assert "behind its SQLite checkpoint" in r.stderr
+    r = zsh(
+        f'_codex_thread_lookup() {{ print -r -- "{SID}\t{rollout}\t{zsh.home}"; }}; '
+        '_tbeam_kill_owner() { print -r -- SHOULD_NOT_KILL; }; '
+        f'_t_beam -s {SID} mini; print -r -- "beam=$?"'
+    )
+    assert "beam=1" in r.stdout and "SHOULD_NOT_KILL" not in r.stdout
+    assert "behind its SQLite checkpoint" in r.stderr
+
+    with sqlite3.connect(codex_home / "thread_history_1.sqlite") as db:
+        db.execute("update thread_history_projection_state set next_rollout_byte_offset=?",
+                   (rollout.stat().st_size,))
+    r = zsh(f'_dev_codex_rollout_integrity {SID}; print -r -- "check=$?"')
+    assert r.stdout.strip() == "check=0", r.stderr
+
+    with sqlite3.connect(codex_home / "state_5.sqlite") as db:
+        db.execute("update threads set history_mode='paginated'")
+    with sqlite3.connect(codex_home / "thread_history_1.sqlite") as db:
+        db.execute("drop table thread_history_projection_state")
+    r = zsh(f'_dev_codex_rollout_integrity {SID}; print -r -- "check=$?"')
+    assert r.stdout.strip() == "check=0", r.stderr  # older schema has no checkpoint
+
+    with sqlite3.connect(codex_home / "thread_history_1.sqlite") as db:
+        db.execute("create table thread_history_projection_state (thread_id text)")
+        db.execute("insert into thread_history_projection_state values (?)", (SID,))
+    r = zsh(f'_dev_codex_rollout_integrity {SID}; print -r -- "check=$?"')
+    assert "check=1" in r.stdout
+    assert "could not verify paginated Codex rollout" in r.stderr
+    with sqlite3.connect(codex_home / "state_5.sqlite") as db:
+        db.execute("update threads set history_mode='legacy'")
+    r = zsh(f'_dev_codex_rollout_integrity {SID}; print -r -- "check=$?"')
+    assert r.stdout.strip() == "check=0", r.stderr
+
+
+def test_beam_pull_checks_remote_codex_rollout_before_killing_owner(zsh):
+    row = f"{SID}\t/remote/worktree\tapi-3\tdetached\tactive\ttest\tcodex"
+    r = zsh(
+        'rsync() { :; }; '
+        'ssh() { '
+        '  case "$*" in '
+        f'    *_dev_session_rows*) print -r -- "{row}" ;; '
+        '    *_dev_codex_rollout_integrity*) print -u2 -- damaged-rollout; return 1 ;; '
+        '    *_tbeam_kill_owner*) print -r -- SHOULD_NOT_KILL ;; '
+        '  esac; '
+        '}; '
+        '_dev_pull mini target api 3 ""; print -r -- "pull=$?"'
+    )
+    assert "pull=1" in r.stdout and "SHOULD_NOT_KILL" not in r.stdout
+    assert "damaged-rollout" in r.stderr
 
 
 def test_zsh_open_fg_attaches_before_it_adopts(zsh, tmp_path):
