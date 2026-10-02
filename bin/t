@@ -2602,6 +2602,15 @@ def cmd_setup(cfg, args):
 
     add_repos, add_hosts, tbeam_target, stale_ok = _setup_result(items)
     st = Style()
+    registered_paths = [*cfg.repos.values(), *(_expand_home(v) for v in f_repos.values())]
+    for alias, path in add_repos.items():
+        conflict = _repo_basename_conflict(_expand_home(path), registered_paths)
+        if conflict:
+            print(f"t setup: {alias} has the same directory name as {_tilde(conflict)}; "
+                  "t worktree slots would collide — choose a different checkout path",
+                  file=sys.stderr)
+            return 1
+        registered_paths.append(_expand_home(path))
     if stale_ok and stale:
         local_text = _comment_stale(local_text, set(stale))
         with open(_current_local_rc(), "w") as fh:
@@ -2767,6 +2776,17 @@ def _new_whence_kind(text):
     return kind if kind and kind != "none" else None
 
 
+def _repo_basename_conflict(path, registered_paths):
+    """Another repo using this slot-directory name, excluding aliases of one repo."""
+    base = os.path.basename(os.path.normpath(path)).casefold()
+    real = os.path.realpath(path)
+    for other in registered_paths:
+        if (os.path.basename(os.path.normpath(other)).casefold() == base
+                and os.path.realpath(other) != real):
+            return other
+    return None
+
+
 def _new_alias_check(alias, path, f_repos, cfg_repos, whence_kind=None):
     """Decide the register step: ('skip', why) when the alias already maps to this
     path (a path under a SECOND alias is fine — dot + dotfiles is the precedent),
@@ -2782,6 +2802,11 @@ def _new_alias_check(alias, path, f_repos, cfg_repos, whence_kind=None):
         if reg[alias] == real:
             return "skip", f"DEV_REPOS[{alias}] already registered"
         return "error", f"alias '{alias}' already maps to {_tilde(reg[alias])} — pick another alias"
+    conflict = _repo_basename_conflict(path, reg.values())
+    if conflict:
+        return "error", (f"directory name '{os.path.basename(os.path.normpath(path))}' already belongs to "
+                         f"{_tilde(conflict)} — t worktree slots use repository directory names; "
+                         "choose a different destination")
     if whence_kind and alias != "t":
         return "error", (f"'{alias}' is a zsh {whence_kind} — the cd shortcut would shadow it; "
                          "pick another alias")
