@@ -33,10 +33,11 @@ t() {
     # SHELL must reload so the new cd aliases, host shorthand functions, and the
     # _t_sync_config cache go live at once (precedent: dots reloads every run).
     # T_SETUP_SHIM tells the bin to skip its "source ~/.zshrc" hint.
-    setup)  T_SETUP_SHIM=1 command t setup "$@" && _t_reload ;;
+    setup)  _t_install setup "$@" ;;
     config) _t_install config "$@" ;;
     # new writes DEV_REPOS too (the repo it just created) → the same reload.
     new)    T_SETUP_SHIM=1 command t new "$@" && _t_reload ;;
+    checkout) _t_install checkout "$@" ;;
     # install can END in `t setup` (it opens it when ~/code holds repos DEV_REPOS does
     # not know yet), so it owes the same reload — but only when that setup actually
     # wrote: ${T_LOCAL_RC}'s mtime is the evidence, since install's rc says nothing
@@ -245,7 +246,7 @@ _t_beam_xlate() {
 # key for `on`), and slot/flags after. Pulls live from the ${(k)DEV_REPOS} /
 # ${(k)REMOTE_HOSTS} arrays so it stays current with ${T_LOCAL_RC}.
 _t() {
-  local -a verbs=(update doctor open app ls kill push pop resume beam read plan paste find on cursor setup config new install permissions trust)
+  local -a verbs=(update doctor open app ls kill push pop resume beam read plan paste find on cursor setup config new checkout instructions install permissions trust)
   if (( CURRENT == 2 )); then
     _describe -t verbs 't verb' verbs
     return
@@ -275,13 +276,22 @@ _t() {
     find)
       _values 'flag' -k --keyword -h --help ;;
     setup)
-      if [[ ${words[CURRENT]} == -* ]]; then _values 'flag' --hosts --no-hosts --dry-run -h --help
+      if [[ ${words[CURRENT]} == -* ]]; then _values 'flag' --hosts --no-hosts --instructions --no-instructions --dry-run -h --help
       else _files -/; fi ;;   # scan-dir arguments
     config)
       _values 'flag' --show --edit -h --help ;;
     new)
       if (( CURRENT == 3 )) && [[ ${words[CURRENT]} != -* ]]; then _message 'repo name'
       else _values 'flag' --owner --public --private --alias --hosts --no-hosts -y --yes --dry-run -h --help; fi ;;
+    checkout)
+      if [[ ${words[CURRENT-1]} == --path ]]; then _files -/
+      elif [[ ${words[CURRENT]} == -* ]]; then _values 'flag' --path --instructions --no-instructions --dry-run -h --help
+      elif (( CURRENT == 3 )); then _message 'GitHub clone URL'
+      elif (( CURRENT == 4 )); then _message 'local alias'
+      else _values 'flag' --path --instructions --no-instructions --dry-run -h --help; fi ;;
+    instructions)
+      if [[ ${words[CURRENT]} == -* ]]; then _values 'flag' --init --edit --show --apply -h --help
+      else _values 'repo' ${(k)DEV_REPOS}; fi ;;
     install)
       if [[ ${words[CURRENT]} == -* ]]; then _values 'flag' --status --update --reinstall --no-login --headless --hosts --no-hosts -y --yes --dry-run -h --help
       else _values 'agent' claude codex cursor; fi ;;
