@@ -2,18 +2,45 @@
 
 ![t — coding-agent sessions, under control](docs/media/hero.svg)
 
-**Open a task. Keep its work separate. Pick it up anywhere.**
+**A 24/7 coding utility. Take your work with you.**
 
-t manages coding-agent sessions in tmux and gives each task its own Git worktree.
-List your sessions, resume a conversation, or move work to another machine over SSH.
-It includes Claude Code and Codex session workflows, plus Cursor transfer tools.
+Start a task with your coding agent, keep it running on a remote machine, and
+pick it up from your laptop or a phone's SSH terminal. Move between local and
+cloud development, or bring a local Codex conversation into its macOS desktop
+app with the running web preview beside it.
 
-[Get started](#install) · [Commands](#commands) · [Configuration](#configuration) · [Agent support](#agents) · [Coming soon](#coming-soon) · [AgentHangar](https://agenthangar.ai)
+t manages sessions in tmux and gives each task its own Git worktree. It includes
+Claude Code and Codex session workflows, plus Cursor transfer tools.
+
+[Get started](#install) · [Work from anywhere](#work-from-anywhere) · [Commands](#commands) · [Configuration](#configuration) · [Agent support](#agents) · [Coming soon](#coming-soon) · [AgentHangar](https://agenthangar.ai)
 
 ![A recorded local t workflow: inspect commands and manage a demo repository](docs/media/demo.gif)
 
 The [demo recording](docs/media/README.md) explains exactly what was captured.
 Watch the [MP4](docs/media/demo.mp4) or use the [static poster](docs/media/demo-poster.png).
+
+## Work from anywhere
+
+- **Start with your agent.** `t open my-project` gives Claude Code an isolated
+  worktree and tmux session; add `--codex` to use Codex. Detach and come back to
+  the same session whenever you need it.
+- **Move between local and cloud development.**
+  `t beam my-project 1 --host cloud` moves the session to a configured SSH host;
+  `t beam my-project 1 --from cloud` brings it back. Use your own workstation or
+  cloud VM with t and your agent installed.
+- **Take it on the go.** Connect to that host from your phone's SSH terminal.
+  `t ls` shows the sessions, `t read my-project 1 --dump` lets you scroll their
+  output, and `t open my-project 1` reconnects you. A detached session stays
+  available while its host stays awake and reachable.
+- **Move between terminal and desktop.** On macOS, `t app my-project 1` opens
+  the same local Codex conversation in the desktop app, along with its web
+  preview and referenced Markdown plan. The worktree and dev server stay in
+  place. To return, finish the desktop turn, then use `codex resume <thread-id>`
+  from that worktree; use one interface at a time for the conversation.
+
+**Coming soon:** submit work to your agent framework, starting with
+[AgentCore](https://github.com/agenthangar/t/issues/9), and use
+[Teleport for SSH access](https://github.com/agenthangar/t/issues/10).
 
 ## Install
 
@@ -83,6 +110,19 @@ Every command has `-h`. Repo-aware commands infer the repository from your curre
 directory, so `t open 2` and `t cd 2` work inside a registered repository.
 
 ## Configuration
+
+**Your preferences, or shared enterprise defaults.** Choose the agents and models
+that work for you, and use a common open/resume/handoff workflow across supported
+vendors. `t config` sets agent defaults, models, effort, Fast mode, repository
+choices, and hosts. Teams can share those defaults alongside their preferred
+workflows and agent configurations to standardize the parts of their setup that
+matter.
+
+Configure which MCP tools load in each agent's own settings. t preserves those
+settings and provides its own optional sessions MCP server for Claude Code;
+it does not centrally manage other MCP servers. The optional permission policy
+below can also be shared across supported agents. See the [agent matrix](#agents)
+for the capabilities available in each vendor's tool.
 
 The plugin reads `${XDG_CONFIG_HOME:-~/.config}/t/local.zsh`; override its location
 with `T_LOCAL_RC` before sourcing the plugin. Start with [local.zsh.example](local.zsh.example)
