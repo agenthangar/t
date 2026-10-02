@@ -487,14 +487,18 @@ def _render_local(rows, scope, st, has_remote=False):
     print(_header(st, scope))
     print()
     print(f"  {st.y}{'STATUS':<8}{'SESSION':<{name_w}} WORKING ON{st.r}")
-    has_fg = False
+    has_fg = has_app = False
     for r in rows:
         print("  " + _slot_line(r, st, name_w, avail))
         if ":" in r["slot"]:                       # colon marks a foreground row
             has_fg = True
+        if r["state"] == "app" or "Codex desktop workspace" in r["summary"]:
+            has_app = True
     foot = "reattach: t open <repo> <slot>"
     if has_fg:
         foot += " · foreground: t open <its SESSION name>"
+    if has_app:
+        foot += " · desktop: t open <repo> <slot> --app"
     if has_remote:
         foot += " · other machines: t ls -r"
     print()
@@ -510,15 +514,19 @@ def _render_remote(rows, scope, st):
     print(_header(st, scope))
     print()
     print(f"  {st.y}{'STATUS':<8}{'HOST':<{host_w}} {'SESSION':<{name_w}} WORKING ON{st.r}")
-    has_fg = False
+    has_fg = has_app = False
     for r in rows:
         print("  " + _slot_line(r, st, name_w, avail, host_w))
         if ":" in r["slot"]:                       # colon marks a foreground row
             has_fg = True
+        if r["state"] == "app" or "Codex desktop workspace" in r["summary"]:
+            has_app = True
     foot = ("attach (auto-finds its host): t open <repo> <slot> · "
             "pull here: t beam <repo> <slot> --from <host>")
     if has_fg:
         foot += " · foreground: t open <its SESSION name>"
+    if has_app:
+        foot += " · desktop (on its host): t open <repo> <slot> --app"
     print()
     print(f"  {st.y}{foot}{st.r}")
 

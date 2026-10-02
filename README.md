@@ -157,7 +157,16 @@ worktree-enabled repo and a local Codex installation. It cannot launch a desktop
 workspace on a remote host.
 The desktop slot stays reserved in private Git worktree metadata so automatic
 cleanup and a later terminal launch cannot reuse it while the app may still be
-working. Close the app workspace before removing its worktree manually.
+working. `t ls` shows the reserved desktop slot. After closing its workspace in
+Codex, release the reservation with:
+
+```sh
+t cd my-project 3
+rm "$(git rev-parse --absolute-git-dir)/t-app-slot"
+```
+
+The worktree and any unmerged changes remain; normal cleanup can then reap a
+merged, clean worktree.
 
 ## Configuration
 

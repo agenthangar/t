@@ -256,6 +256,7 @@ def test_app_reservation_protects_worktree_from_cli_reuse_and_sweep(tmp_path):
         _dev_branch_merged() {{ return 0; }}
         _dev_worktree_sweep_run
         [[ -e "{wt}/.git" ]]; print -r -- "kept=$?"
+        _dev_session_rows
         ''',
         local_text=f'DEV_REPOS[api]="{repo}"\nDEV_WORKTREE_ROOT="$HOME/worktrees"\n',
         extra_env={"TMUX_TMPDIR": str(tmp_path / "tmux")},
@@ -265,3 +266,4 @@ def test_app_reservation_protects_worktree_from_cli_reuse_and_sweep(tmp_path):
     assert "create=1" in result.stdout
     assert "fresh=1" in result.stdout
     assert "kept=0" in result.stdout
+    assert f"-\t{wt}\tapi-1\tapp\tnone\t(Codex desktop workspace" in result.stdout

@@ -1141,11 +1141,12 @@ _dev_session_rows() {
   # _dev_ps_snapshot); pass 2 prints, after ONE _transcript_meta_batch has read
   # every title at once rather than forking python3 per slot.
   local -a rows rowtx tpaths tx mrows f _PR_STALE
-  local -A title_of pr_of _PR_SPAWNED
+  local -A title_of pr_of _PR_SPAWNED had_path
   local s short sid psid dir state context summary agent i mr mrest REPLY
   _dev_ps_snapshot
   while IFS=$'\t' read -r s dir state; do
     [[ $s == dev-* && -n $dir ]] || continue
+    had_path[$dir]=1
     short="${s#dev-}"
     agent=$(_dev_agent_of_session "$s")
     # Authoritative id (registry-first, stamp validated against the slot's repo) —
@@ -1194,7 +1195,12 @@ _dev_session_rows() {
     f=("${(@ps:\t:)rows[$i]}")
     sid=$f[1]; dir=$f[2]; short=$f[3]; state=$f[4]; context=$f[5]; agent=$f[6]
     case $context in
-      none) summary='(no active session)' ;;
+      none)
+        if _dev_app_slot_reserved "$dir"; then
+          summary='(Codex desktop workspace — reopen with t open --app)'
+        else
+          summary='(no active session)'
+        fi ;;
       idle) summary='(idle — no conversation)' ;;
       *)
         if [[ ${rowtx[$i]} != - ]]; then
@@ -1218,6 +1224,17 @@ _dev_session_rows() {
     # field 7 = agent (claude|codex): trailing, so every front-indexed consumer and a
     # stale host's 6-field parser keep working (bin/t _parse_rows defaults it to claude)
     printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$sid" "$dir" "$short" "$state" "$context" "$summary" "$agent"
+  done
+  # Desktop-only workspaces have no tmux session, but their private Git marker
+  # reserves the slot. Surface them in t ls without claiming an active agent.
+  local wt match app_repo app_slot
+  for wt in $DEV_WORKTREE_ROOT/*/<->(N/); do
+    [[ -e $wt/.git && -z ${had_path[$wt]:-} ]] || continue
+    _dev_app_slot_reserved "$wt" || continue
+    match=$(_dev_repo_of_dir "$wt") || continue
+    app_repo=${match%%$'\t'*}; app_slot=${match#*$'\t'}
+    [[ -n $app_repo && $app_slot == <-> ]] || continue
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' '-' "$wt" "$app_repo-$app_slot" app none '(Codex desktop workspace — reopen with t open --app)' codex
   done
   # plus any FOREGROUND (non-tmux) claudes on this machine, same row format.
   _dev_fg_rows
