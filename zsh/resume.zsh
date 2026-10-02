@@ -1704,7 +1704,10 @@ def read_one(db_path, query):
         with sqlite3.connect(db_path.resolve().as_uri() + '?mode=ro', uri=True, timeout=0.5) as db:
             return db.execute(query, (sid,)).fetchone()
     except sqlite3.OperationalError as exc:
-        if 'no such table' in str(exc).lower():
+        message = str(exc).lower()
+        if 'no such table' in message or (
+            db_path.name == 'state_5.sqlite' and 'no such column: history_mode' in message
+        ):
             return None
         raise
 
