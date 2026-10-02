@@ -77,6 +77,7 @@ t ls               # see your running sessions
 Detach from tmux with `Ctrl-b d`; reattach with `t open my-project 1`.
 Repositories need a fetched `origin/main` for worktree sessions. `t new` can create
 and register a GitHub repository with the expected setup, showing its plan first.
+To use an existing GitHub repository, run `t checkout https://github.com/owner/repo.git`.
 Use `t doctor` when something is missing.
 
 ## Commands
@@ -94,6 +95,8 @@ Use `t doctor` when something is missing.
 | `t plan` / `t paste` | Open a session's plan or pass an attachment to it |
 | `t config` | Configure tools, models, effort, Fast mode, repositories, and hosts |
 | `t setup` / `t new` | Register existing repositories or create one |
+| `t checkout <github-url> [alias]` | Clone and register an existing GitHub repository on this machine |
+| `t instructions` | Create/edit a reusable AGENTS.md profile and apply it to registered repos |
 | `t install` | Install/log in agent CLIs; `--status` reports what is present |
 | `t trust` | Explicitly trust selected repositories in installed agents |
 | `t permissions` | Inspect/apply an explicitly configured permission policy |
@@ -106,6 +109,26 @@ Use `t doctor` when something is missing.
 
 Every command has `-h`. Repo-aware commands infer the repository from your current
 directory, so `t open 2` and `t cd 2` work inside a registered repository.
+
+`t checkout` uses `~/code/<repo>` and the repository name as its alias by default.
+Use `--path DIR` to choose another destination, or `--dry-run` to inspect the plan.
+It accepts GitHub HTTPS and SSH clone URLs. Re-running it preserves a matching
+clone, including uncommitted work; a conflicting destination or alias is refused.
+It registers only on this machine and leaves the GitHub repository and its settings
+unchanged. If the remote has no `main` branch, checkout succeeds with a warning:
+`t open` needs a fetched `origin/main` to create task worktrees.
+
+For preferred agent instructions, run `t instructions --init` to create an editable
+profile at `${XDG_CONFIG_HOME:-~/.config}/t/instructions.md`, then
+`t instructions --edit` to tailor its model, local preview, and pull request sections.
+Set `T_AGENT_INSTRUCTIONS` to use another template file. `t checkout` and `t setup`
+offer to seed `AGENTS.md` from the profile when run interactively; use
+`--instructions` to apply it in a script or `--no-instructions` to skip the offer.
+Noninteractive runs skip seeding unless you explicitly pass `--instructions`.
+You can later run `t instructions <repo> --apply` for a registered alias. t updates
+only its marked block, preserves the rest of `AGENTS.md`, and refuses malformed
+markers or a symlink. Review the resulting diff and commit it when ready; t never
+commits or pushes these instructions for you.
 
 ## Configuration
 
