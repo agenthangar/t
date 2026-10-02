@@ -8,7 +8,7 @@ t manages coding-agent sessions in tmux and gives each task its own Git worktree
 List your sessions, resume a conversation, or move work to another machine over SSH.
 It includes Claude Code and Codex session workflows, plus Cursor transfer tools.
 
-[Get started](#install) · [Commands](#commands) · [Configuration](#configuration) · [Agent support](#agents) · [AgentHangar](https://agenthangar.ai)
+[Get started](#install) · [Commands](#commands) · [Configuration](#configuration) · [Agent support](#agents) · [Coming soon](#coming-soon) · [AgentHangar](https://agenthangar.ai)
 
 ![A recorded local t workflow: inspect commands and manage a demo repository](docs/media/demo.gif)
 
@@ -186,6 +186,13 @@ checked in CI; optional dotfiles integrations are identified explicitly.
   t trust (folder trust · optional auto trust)                ✓ ~/.claude.json projects                  ✓ ~/.codex/config.toml [projects]                              ✓ ~/.cursor/projects/<slug> marker
   nosleep (hold sleep while an agent works)                   ✓ caffeinate child · net bytes             ✓ net bytes                                                    ✓ net bytes
 ```
+
+## Coming soon
+
+These integrations are planned and are not available in the current release:
+
+- **Amazon Bedrock AgentCore support** — [track progress](https://github.com/agenthangar/t/issues/9).
+- **Teleport support for SSH workflows** — [track progress](https://github.com/agenthangar/t/issues/10).
 
 ## Development
 
