@@ -12,7 +12,7 @@ app with the running web preview beside it.
 t manages sessions in tmux and gives each task its own Git worktree. It includes
 Claude Code and Codex session workflows, plus Cursor transfer tools.
 
-[Get started](#install) · [Work from anywhere](#work-from-anywhere) · [Commands](#commands) · [Configuration](#configuration) · [Agent support](#agents) · [AgentHangar](https://agenthangar.ai)
+[Get started](#install) · [Work from anywhere](#work-from-anywhere) · [Commands](#commands) · [Configuration](#configuration) · [Agent support](#agents) · [Coming soon](#coming-soon) · [AgentHangar](https://agenthangar.ai)
 
 ![A recorded local t workflow: inspect commands and manage a demo repository](docs/media/demo.gif)
 
@@ -38,7 +38,9 @@ Watch the [MP4](docs/media/demo.mp4) or use the [static poster](docs/media/demo-
   place. To return, finish the desktop turn, then use `codex resume <thread-id>`
   from that worktree; use one interface at a time for the conversation.
 
-**Coming soon:** submit work to your agent framework, starting with AgentCore.
+**Coming soon:** submit work to your agent framework, starting with
+[AgentCore](https://github.com/agenthangar/t/issues/9), and use
+[Teleport for SSH access](https://github.com/agenthangar/t/issues/10).
 
 ## Install
 
@@ -247,6 +249,13 @@ checked in CI; optional dotfiles integrations are identified explicitly.
   t trust (folder trust · optional auto trust)                ✓ ~/.claude.json projects                  ✓ ~/.codex/config.toml [projects]                              ✓ ~/.cursor/projects/<slug> marker
   nosleep (hold sleep while an agent works)                   ✓ caffeinate child · net bytes             ✓ net bytes                                                    ✓ net bytes
 ```
+
+## Coming soon
+
+These integrations are planned and are not available in the current release:
+
+- **Amazon Bedrock AgentCore support** — [track progress](https://github.com/agenthangar/t/issues/9).
+- **Teleport support for SSH workflows** — [track progress](https://github.com/agenthangar/t/issues/10).
 
 ## Development
 
