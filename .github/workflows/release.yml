@@ -2,6 +2,12 @@ name: Release assets
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to verify
+        required: true
+        type: string
 permissions:
   contents: read
 jobs:
@@ -12,14 +18,14 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.release.tag_name }}
+          ref: ${{ inputs.tag || github.event.release.tag_name }}
           persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
       - name: Build tagged runtime archive
         env:
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_TAG: ${{ inputs.tag || github.event.release.tag_name }}
         run: python3 scripts/build-release.py "$RELEASE_TAG"
       - name: Verify archive installation in an isolated home
         run: |
@@ -38,13 +44,12 @@ jobs:
                                        pathlib.Path('dist/SHA256SUMS').read_bytes(),
                                        home / '.local/share/t', home)
               assert (home / 'bin/t').resolve() == root / 'bin/t'
-              assert len([p for _, rel in installer.OWNED_LINKS
-                          if (home / rel).is_symlink()]) == 7
+              assert all((home / rel).is_symlink() for _, rel in installer.OWNED_LINKS)
           PY
       - name: Verify or upload immutable assets
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_TAG: ${{ inputs.tag || github.event.release.tag_name }}
         run: |
           mkdir -p /tmp/t-published-assets
           assets="$(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name')"
