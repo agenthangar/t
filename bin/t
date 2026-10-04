@@ -462,11 +462,11 @@ def _slot_line(r, st, name_w, avail, host_w=None):
     """ONE row of the slot view: `● ✓     <slot>  <working on>`. `t ls` and every
     slot picker draw their rows through this, so a slot reads the same wherever it is
     offered — the point of a shared view is that you never re-learn a slot's row.
-    state attached → ●, detached → ○, app → ▣, anything else (a dead slot from
+    state attached → ●, detached → ○, app reservation → ◇, anything else (a dead slot from
     _dev_dead_slot_rows) → blank, and its summary carries the
     story instead; context active → ✓. host_w adds the `t ls -r` HOST column. The
     Style is the only colour, so Style(tty=False) yields a label a picker can measure."""
-    amark = {"attached": f"{st.g}●{st.r}", "detached": "○", "app": f"{st.c}▣{st.r}"}.get(r.get("state"), " ")
+    amark = {"attached": f"{st.g}●{st.r}", "detached": "○", "app": f"{st.y}◇{st.r}"}.get(r.get("state"), " ")
     cmark = f"{st.c}✓{st.r}" if r.get("context") == "active" else " "
     # third glyph = the agent's icon (every agent has one — the header legend says which)
     gmark = _agent_glyph(r.get("agent", "claude"))
@@ -477,7 +477,12 @@ def _slot_line(r, st, name_w, avail, host_w=None):
     if host_w is not None:
         cell = "" if r.get("host", "local") == "local" else r["host"]
         host = f"{cell:<{host_w}} "
-    summary = _truncate(r.get("summary") or "", avail)
+    summary = r.get("summary") or ""
+    # The Git marker protects a worktree; it survives closing the app and even
+    # failed handoffs. It cannot establish that a desktop window is open.
+    if r.get("state") == "app":
+        summary = "[app reserved] " + summary
+    summary = _truncate(summary, avail)
     # a merged PR the slot kept working past (zsh _pr_state_tag) stands out of the dim
     # summary — coloured AFTER truncation, so the width math never counts an escape
     summary = _PR_WIP_RE.sub(lambda m: f"{st.r}{st.w}{m.group(0)}{st.r}{st.y}", summary)
@@ -503,7 +508,7 @@ def _render_local(rows, scope, st, has_remote=False):
     if has_fg:
         foot += " · foreground: t open <its SESSION name>"
     if has_app:
-        foot += " · ▣ app: t open <repo> <slot> --app"
+        foot += " · ◇ app reserved: t open <repo> <slot> --app"
     if has_remote:
         foot += " · other machines: t ls -r"
     print()
@@ -531,7 +536,7 @@ def _render_remote(rows, scope, st):
     if has_fg:
         foot += " · foreground: t open <its SESSION name>"
     if has_app:
-        foot += " · ▣ app (on its host): t open <repo> <slot> --app"
+        foot += " · ◇ app reserved (on its host): t open <repo> <slot> --app"
     print()
     print(f"  {st.y}{foot}{st.r}")
 
