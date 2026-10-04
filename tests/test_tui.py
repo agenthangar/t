@@ -62,3 +62,18 @@ def test_review_can_scroll_and_back_out_with_action_still_visible(t_mod):
     for frame in ui.frames:
         assert any('APPLY' in line for line in frame)
         assert sum(t_mod._term_rows(line, 44) for line in frame) <= 20
+
+
+@pytest.mark.parametrize('save_key', ['enter', 'y'])
+def test_config_review_saves_with_enter_or_y(t_mod, monkeypatch, tmp_path, save_key):
+    monkeypatch.setattr(t_mod, 'CONFIG', str(tmp_path / 'config.sh'))
+    # Choose Desktop app, review pending changes, and accept using the real page.
+    ui = make_ui(t_mod, ['j', 'enter', 'j', 'enter', 's', save_key])
+    monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
+    edited = t_mod._config_wizard(t_mod.Config())
+    assert edited.open_mode_default == 'app'
+    assert ui.restored
+    review = [line for frame in ui.frames if any('Review local settings' in line for line in frame)
+              for line in frame]
+    assert any('enter' in line and 'SAVE CHANGES' in line for line in review)
+    assert not any('no binding' in line for line in review)
