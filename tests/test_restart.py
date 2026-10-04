@@ -169,6 +169,14 @@ source {shlex.quote(str(ROOT / "zsh/agent.zsh"))}
 _dev_agent_of_session() {{ print {agent}; }}
 tmux new-session -d -s {session} -c {shlex.quote(str(tmp_path))} 'exec sleep 60' || exit
 tmux set-option -p -t '=dev-api-1:' remain-on-exit on
+fake_pid=$(tmux display-message -p -t '=dev-api-1:' '#{{pane_pid}}')
+# new-session returns before the child execs. The real owner lookup recognizes
+# an agent executable; this fixture must likewise wait for its fake owner.
+for attempt in {{1..100}}; do
+  [[ $(ps -o comm= -p "$fake_pid") == *sleep ]] && break
+  sleep 0.05
+done
+[[ $(ps -o comm= -p "$fake_pid") == *sleep ]] || exit 3
 before=$(tmux display-message -p -t '=dev-api-1:' '#{{pane_id}}')
 _t_restart_slot {session} {shlex.quote(str(tmp_path))} {SID} {agent} restart || exit
 [[ $(tmux display-message -p -t '=dev-api-1:' '#{{pane_id}}') == $before ]] || exit 2
