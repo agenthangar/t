@@ -132,6 +132,7 @@ int main(int argc, char **argv) {
     FILE *f = fopen(getenv("T_APP_TEST_RECORD"), "w");
     if (f) {
         fprintf(f, "%s\n", cwd);
+        fprintf(f, "pid=%d\n", getpid());
         for (int i = 1; i < argc; i++) fprintf(f, "%s\n", argv[i]);
         fclose(f);
     }
@@ -197,7 +198,28 @@ _t_app_pull_slot {session} {shlex.quote(str(worktree))} {SID} {'-' if mode == 'm
 '''
         result = subprocess.run(["zsh", "-f", "-c", script], env=env,
                                 capture_output=True, text=True, timeout=15)
-        assert (result.returncode == 0) is (mode != "failure"), result.stderr
+        if (result.returncode == 0) is (mode == "failure"):
+            launch_path = tmp_path / "launch"
+            launch = launch_path.read_text().splitlines() if launch_path.exists() else []
+            fake_pid = launch[1][4:] if len(launch) > 1 and launch[1].startswith("pid=") else None
+            fake_ps = (subprocess.run(["ps", "-o", "lstart=,comm=", "-p", fake_pid],
+                                      env=env, capture_output=True, text=True).stdout.strip()
+                       if fake_pid else "no fake codex PID recorded")
+            registry = []
+            for entry in sorted((tmp_path / "cache" / "claude-sessions").iterdir()):
+                registry.append((entry.name, entry.stat().st_mtime, entry.read_text()))
+            diagnostic = {
+                "stderr": result.stderr,
+                "launch": launch,
+                "fake_ps": fake_ps,
+                "registry": registry,
+                "panes": run_tmux("list-panes", "-a", "-F",
+                                  "#{session_name} #{pane_id} #{pane_pid} #{pane_current_command} #{pane_dead}",
+                                  check=False).stdout.strip(),
+                "pane_text": run_tmux("capture-pane", "-p", "-t", "=" + session + ":",
+                                      check=False).stdout.strip(),
+            }
+            pytest.fail(f"app pull real tmux {mode}: {diagnostic}")
         assert marker.exists() is (mode == "failure")
         if mode != "failure":
             assert (tmp_path / "launch").exists(), (
@@ -206,7 +228,9 @@ _t_app_pull_slot {session} {shlex.quote(str(worktree))} {SID} {'-' if mode == 'm
                 run_tmux("list-panes", "-s", "-t", "=" + session,
                          "-F", "#{pane_dead} #{pane_current_command} #{pane_pid}").stdout)
             record = (tmp_path / "launch").read_text().splitlines()
-            assert record == [str(worktree), "resume", SID, "--cd", str(worktree)]
+            assert record[0] == str(worktree)
+            assert record[1].startswith("pid=")
+            assert record[2:] == ["resume", SID, "--cd", str(worktree)]
             assert run_tmux("show-environment", "-t", "=" + session,
                             "CLAUDE_RESUME_ID").stdout.strip() == "CLAUDE_RESUME_ID=" + SID
             if mode == "shell":
