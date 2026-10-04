@@ -4305,14 +4305,16 @@ def _t_offer_update(installation=None):
     old = _t_update_label(installation, installation["current"])
     new = _t_update_label(installation, state["latest"])
     print(f"\nA t update is available: {old} → {new}", file=sys.stderr)
-    print("  [u] Update now\n  [l] Later (remind me tomorrow)", file=sys.stderr)
-    print("Choose [l]: ", end="", file=sys.stderr, flush=True)
+    print("  [1] Skip\n  [2] Skip until next version\n  [3] Update now", file=sys.stderr)
+    print("Choose [1]: ", end="", file=sys.stderr, flush=True)
     answer = sys.stdin.readline().strip().lower()
-    if answer not in ("u", "update", "y", "yes", "1"):
+    if answer in ("2", "n", "next", "skip until next version"):
         try:
-            helper["snooze"](installation)
+            helper["skip_version"](installation, state["latest"])
         except (OSError, ValueError):
             pass
+        return 0
+    if answer not in ("3", "u", "update", "y", "yes"):
         return 0
     # The existing updater owns checksum checks, Homebrew, fast-forward safety,
     # links and hooks. Its subprocesses must not prompt recursively.
