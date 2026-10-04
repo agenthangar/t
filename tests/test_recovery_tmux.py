@@ -1,6 +1,7 @@
 """Exercise real menu input and Cursor recovery on disposable tmux servers."""
 
 import json
+import fcntl
 import os
 from pathlib import Path
 import pty
@@ -9,6 +10,8 @@ import shlex
 import shutil
 import subprocess
 import sys
+import struct
+import termios
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -55,8 +58,9 @@ def until(check, timeout=5, detail=lambda: ""):
     pytest.fail("timed out waiting for isolated tmux state: " + detail())
 
 
-@pytest.mark.parametrize("choice", ["q", "r"])
-def test_real_menu_dismiss_or_accept_without_typing_into_agent(terminal, choice):
+@pytest.mark.parametrize("width", [40, 80])
+@pytest.mark.parametrize("choice", ["q", "r", "\r"])
+def test_real_menu_dismiss_or_accept_without_typing_into_agent(terminal, width, choice):
     mod, tmux, command, env, home = terminal
     (home / ".zshrc").write_text(f'''
 _dev_agent_of_session() {{ print codex; }}
@@ -72,6 +76,7 @@ _t_restart_slot() {{ print -r -- "$*" > "$HOME/accepted"; print 'Saved visible d
     target = mod.owner(socket, pane)
     assert target["sid"] == SID
     master, slave = pty.openpty()
+    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, width, 0, 0))
     client = subprocess.Popen(command + ["attach-session", "-t", "=dev-api-1"],
                               env=env, stdin=slave, stdout=slave, stderr=slave, start_new_session=True)
     os.close(slave)
@@ -93,9 +98,9 @@ _t_restart_slot() {{ print -r -- "$*" > "$HOME/accepted"; print 'Saved visible d
             def menu_visible():
                 if select.select([master], [], [], 0.05)[0]:
                     visible.extend(os.read(master, 65536))
-                return b"Save visible draft" in visible
-            until(menu_visible)
-            assert b"Save visible draft" not in os.read(other_master, 65536)
+                return b"CONNECTION FAILED" in visible and b"Save draft and restart" in visible
+            until(menu_visible, detail=lambda: repr(bytes(visible[-1000:])))
+            assert b"Save draft and restart" not in os.read(other_master, 65536)
             os.write(master, choice.encode())
         offers = lambda: list(mod.cache(socket).glob("*.offer"))
         until(lambda: not offers())
@@ -108,11 +113,107 @@ _t_restart_slot() {{ print -r -- "$*" > "$HOME/accepted"; print 'Saved visible d
         assert tmux("display-message", "-p", "-t", "=dev-api-1:", "#{pane_pid}").stdout.strip() == pane["pane_pid"]
     finally:
         client.terminate()
-        client.wait(timeout=5)
+        try:
+            client.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            client.kill()
+            client.wait(timeout=5)
         os.close(master)
         other_client.terminate()
         other_client.wait(timeout=5)
         os.close(other_master)
+
+
+@pytest.mark.parametrize("width", [40, 80])
+def test_real_unverified_notice_is_visible_and_dismissible(terminal, width):
+    mod, tmux, command, env, home = terminal
+    launch = "printf 'Server connection could not be restored\\nunsent draft\\n'; exec sleep 60"
+    assert tmux("new-session", "-d", "-s", "dev-api-1", "-c", str(home), "zsh", "-lc", launch).returncode == 0
+    socket = tmux("display-message", "-p", "-t", "=dev-api-1:", "#{socket_path}").stdout.strip()
+    pane = mod.panes(socket)[0]
+    until(lambda: "unsent draft" in tmux("capture-pane", "-p", "-t", pane["pane"]).stdout)
+    master, slave = pty.openpty()
+    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, width, 0, 0))
+    client = subprocess.Popen(command + ["attach-session", "-t", "=dev-api-1"],
+                              env=env, stdin=slave, stdout=slave, stderr=slave, start_new_session=True)
+    os.close(slave)
+    os.set_blocking(master, False)
+    try:
+        until(lambda: mod.clients(socket, pane["pane"]))
+        assert mod.unverified_notice(socket, pane["pane"])
+        visible = bytearray()
+        def menu_visible():
+            if select.select([master], [], [], 0.05)[0]:
+                visible.extend(os.read(master, 65536))
+            return b"RECOVERY NEEDS ATTENTION" in visible and b"Dismiss" in visible
+        until(menu_visible, detail=lambda: repr(bytes(visible[-1000:])))
+        assert b"unsent draft" in visible
+        visible.clear()
+        os.write(master, b"q")
+        def draft_redrawn():
+            if select.select([master], [], [], 0.05)[0]:
+                visible.extend(os.read(master, 65536))
+            return b"unsent draft" in visible
+        until(draft_redrawn, detail=lambda: repr(bytes(visible[-1000:])))
+        assert not (home / "accepted").exists()
+        assert tmux("display-message", "-p", "-t", "=dev-api-1:", "#{pane_pid}").stdout.strip() == pane["pane_pid"]
+    finally:
+        client.terminate()
+        client.wait(timeout=5)
+        os.close(master)
+
+
+def test_real_verified_offer_follows_dismissed_unverified_notice(terminal, monkeypatch):
+    mod, tmux, command, env, home = terminal
+    (home / ".zshrc").write_text(f'''
+_dev_agent_of_session() {{ print codex; }}
+_dev_session_sid() {{ print {SID}; }}
+_dev_session_claude_pid() {{ tmux display-message -p -t '=dev-api-1:' '#{{pane_pid}}'; }}
+_t_restart_slot() {{ print -r -- "$*" > "$HOME/accepted"; }}
+''')
+    launch = "printf 'Server connection could not be restored\\nunsent draft\\n'; exec sleep 60"
+    assert tmux("new-session", "-d", "-s", "dev-api-1", "-c", str(home), "zsh", "-lc", launch).returncode == 0
+    socket = tmux("display-message", "-p", "-t", "=dev-api-1:", "#{socket_path}").stdout.strip()
+    pane = mod.panes(socket)[0]
+    target = until(lambda: mod.owner(socket, pane))
+    assert tmux("set-environment", "-t", "=dev-api-1", "DEV_AGENT", "codex").returncode == 0
+    master, slave = pty.openpty()
+    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 40, 0, 0))
+    client = subprocess.Popen(command + ["attach-session", "-t", "=dev-api-1"],
+                              env=env, stdin=slave, stdout=slave, stderr=slave, start_new_session=True)
+    os.close(slave)
+    os.set_blocking(master, False)
+    try:
+        until(lambda: mod.clients(socket, pane["pane"]))
+        known_owner = [False]
+        monkeypatch.setattr(mod, "owner", lambda *a, **kw: target if known_owner[0] else {})
+        watcher = mod.Watcher(socket)
+        watcher.poll()
+        watcher.poll()
+        visible = bytearray()
+        def visible_title(title):
+            if select.select([master], [], [], 0.05)[0]:
+                visible.extend(os.read(master, 65536))
+            return title in visible
+        until(lambda: visible_title(b"RECOVERY NEEDS ATTENTION"))
+        visible.clear()
+        known_owner[0] = True
+        watcher.poll()
+        assert not list(mod.cache(socket).glob("*.offer"))
+        os.write(master, b"q")
+        until(lambda: watcher.poll() and visible_title(b"CONNECTION FAILED"),
+              detail=lambda: repr(bytes(visible[-1000:])))
+        os.write(master, b"q")
+        until(lambda: not list(mod.cache(socket).glob("*.offer")))
+        assert not (home / "accepted").exists()
+    finally:
+        client.terminate()
+        try:
+            client.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            client.kill()
+            client.wait(timeout=5)
+        os.close(master)
 
 
 def test_real_cursor_hook_restart_and_changed_chat_refusal(terminal):

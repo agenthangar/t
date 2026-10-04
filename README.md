@@ -155,16 +155,18 @@ resumes in the same pane; worktree edits and dev servers stay in place. Use
 `t open <repo> <slot>` to attach. For a remote slot, use
 `t on <host> t restart <repo> <slot>`.
 
-For sessions opened through `t`, a local monitor automatically offers **Save visible
-draft and restart** or **Dismiss** when a recognized final connection error remains
-visible. The menu appears in the affected tmux pane, including over SSH, and works
-without a model connection. Nothing restarts until you choose it. Offers are bound
+For sessions opened through `t`, a local monitor automatically offers **Save draft
+and restart** or **Dismiss** when a recognized final connection error remains
+visible. A bright, bordered panel appears in the center of the affected terminal,
+including over SSH, and works without a model connection. Press **r** to restart
+or **q** to dismiss; **Enter** defaults to Dismiss. Offers are bound
 to the exact conversation and process; a changed or recovered session is left alone.
 Detached sessions get the offer when you return. Dismissal suppresses repeats until
 the error clears. Authentication and rate-limit errors do not trigger recovery.
-If the monitor cannot verify the conversation, it shows a message asking you to
-copy your draft before quitting and relaunching. It keeps checking and can offer
-recovery once the conversation is verified.
+If the monitor cannot verify the conversation, a panel asks you to copy your draft
+before quitting and relaunching. It stays visible until dismissed. The monitor
+keeps checking and, after dismissal, can offer recovery once the conversation is
+verified.
 
 Codex's **Cannot use the background server / Experimental feature request failed**
 screen, and its startup menu reporting a stopped or unreachable background server,
@@ -174,7 +176,7 @@ launch if startup failed before creating one). It leaves the shared server and
 global settings alone. The failure is checked again before stopping the client.
 
 Codex's **Failed to start turn … invalid cwd: No such file or directory** error
-offers **Save visible draft and restart here**. If the slot's worktree still exists,
+offers **Save draft and restart here**. If the slot's worktree still exists,
 recovery resumes the exact conversation with that directory explicitly selected and
 `--no-daemon`. This also handles a shared daemon rooted in a deleted worktree.
 `t restart <repo> <slot>` recognizes the same error. A missing worktree is refused

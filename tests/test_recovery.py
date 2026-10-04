@@ -174,10 +174,15 @@ def test_offer_never_types_into_agent_and_targets_viewer(recovery, target, monke
     monkeypatch.setattr(recovery, "clients", lambda *a: ["/dev/pts/4"])
     monkeypatch.setattr(recovery, "tmux", lambda *a: events.append(a) or result())
     assert recovery.offer(target, ERROR)
-    assert events[0][1:3] == ("run-shell", "-b")
-    menu = shlex.split(events[0][3])
+    assert events[0][1:3] == ("display-message", "-p")
+    assert events[1][1:3] == ("run-shell", "-b")
+    menu = shlex.split(events[1][3])
     assert menu[3:8] == ["display-menu", "-c", "/dev/pts/4", "-t", "%4"]
-    assert "Save visible draft and restart" in menu
+    assert "t: CONNECTION FAILED" in menu
+    assert "Save draft and restart" in menu
+    assert "-b" in menu and "double" in menu
+    assert "-s" in menu and "-S" in menu and "-H" in menu
+    assert "-C" in menu
     assert not any("send-keys" in e for e in events)
     offers = list(recovery.cache(target["socket"]).glob("*.offer"))
     assert len(offers) == 1 and recovery.read_json(offers[0])["sid"] == SID
@@ -198,8 +203,8 @@ def test_invalid_cwd_offer_and_exact_restart_mode(recovery, target, monkeypatch)
     watcher.poll(); watcher.poll()
     menu_call = next(a for a in calls if a[1] == "run-shell")
     menu = shlex.split(menu_call[3])
-    assert "t: workspace unavailable — recover this conversation?" in menu
-    assert "Save visible draft and restart here" in menu
+    assert "t: WORKSPACE UNAVAILABLE" in menu
+    assert "Save draft and restart here" in menu
     offer = next(recovery.cache(target["socket"]).glob("*.offer"))
     monkeypatch.setattr(recovery, "current", lambda t: True)
     launched = []
@@ -269,30 +274,47 @@ def test_missing_owner_notice_retries_until_attached_then_allows_offer(recovery,
     monkeypatch.setattr(recovery, "tmux", tmux)
     watcher = recovery.Watcher(target["socket"])
     watcher.poll(); watcher.poll(); watcher.poll()
-    assert not [call for call in calls if call[1] == "display-message"]
+    assert not [call for call in calls if call[1] == "run-shell"]
     assert offers == []
 
     viewers[0] = ["/dev/pts/4"]
     watcher.poll(); watcher.poll()
-    notices = [call for call in calls if call[1] == "display-message"]
+    notices = [call for call in calls if call[1] == "run-shell"]
     assert len(notices) == 1
-    assert notices[0][2:8] == ("-d", "10000", "-c", "/dev/pts/4", "-t", target["pane"])
-    assert "cannot verify this conversation" in notices[0][-1]
-    assert "Copy your draft" in notices[0][-1]
+    assert notices[0][2] == "-b"
+    notice_menu = shlex.split(notices[0][3])
+    assert notice_menu[3:8] == ["display-menu", "-c", "/dev/pts/4", "-t", target["pane"]]
+    assert "t: RECOVERY NEEDS ATTENTION" in notice_menu
+    assert "-b" in notice_menu and "double" in notice_menu
+    assert "-C" in notice_menu
+    assert any("cannot verify" in item for item in notice_menu)
+    assert any("Copy your draft" in item for item in notice_menu)
+    assert "Dismiss" in notice_menu
     assert offers == []
     assert not any("send-keys" in call for call in calls)
 
     owner[0] = target
     watcher.poll()
+    assert offers == []  # A visible unverified menu must close before another can open.
+    recovery.notice_path(target["socket"], target["pane"]).unlink()
+    watcher.poll()
     assert offers == [(target, ERROR)]
-    assert len([call for call in calls if call[1] == "display-message"]) == 1
+    assert len([call for call in calls if call[1] == "run-shell"]) == 1
 
     screen[0] = "normal"
     watcher.poll()
     owner[0] = {}
     screen[0] = ERROR
     watcher.poll(); watcher.poll()
-    assert len([call for call in calls if call[1] == "display-message"]) == 2
+    assert len([call for call in calls if call[1] == "run-shell"]) == 2
+
+
+def test_unverified_notice_cleans_marker_if_menu_launch_fails(recovery, target, monkeypatch):
+    monkeypatch.setattr(recovery, "clients", lambda *a: ["/dev/pts/4"])
+    monkeypatch.setattr(recovery, "tmux", lambda _socket, command, *args: result(
+        "80" if command == "display-message" else "", rc=1 if command == "run-shell" else 0))
+    assert not recovery.unverified_notice(target["socket"], target["pane"])
+    assert not recovery.notice_path(target["socket"], target["pane"]).exists()
 
 
 def test_start_and_singleton(recovery, target, monkeypatch):
