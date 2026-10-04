@@ -561,6 +561,8 @@ def cmd_cursor(cfg, args):
     rest = list(args.rest)
     if rest and rest[0] == "ls":
         rest[0] = "--ls"
+    elif rest and rest[0] == "send":
+        rest.pop(0)
     exe = os.path.join(os.path.dirname(os.path.realpath(__file__)), "cursor-beam")
     if not os.path.isfile(exe):
         exe = "cursor-beam"
@@ -1965,9 +1967,6 @@ def _config_editor():
 
 def cmd_repos(cfg, args):
     """List registered checkouts; only the shell plugin can change directory."""
-    if args.action == "ls" and args.repo:
-        print("t repos ls: no repository name needed", file=sys.stderr)
-        return 1
     if args.action == "cd":
         print("t repos cd: run this from a shell with the t plugin loaded", file=sys.stderr)
         return 1
@@ -7818,6 +7817,8 @@ examples:
   t ls -r                 list live sessions across every machine
   t repos ls              list registered repo names and checkout paths
   t repos cd t            enter the registered t checkout (with the zsh plugin)
+  t help repos path        show help for a nested command
+  t cursor                 show Cursor chat commands (ls, resume, send)
   t push                  send the current session to a background tmux slot
   t pop api 3             pull dev-api-3 back to this terminal
   t resume api 3          revive dev-api-3's last conversation after it was closed
@@ -7840,9 +7841,14 @@ examples:
 agents — what each verb supports per agent (t install --status adds this machine's state):
 """ + "\n".join(_agent_parity_render()) + """
 
-Run `t <verb> -h` for a verb's own flags.""")
+Run `t help <verb>` or `t <verb> -h` for a verb's own flags.""")
     p.add_argument("--version", action="version", version=f"t {_t_version()}")
     sub = p.add_subparsers(dest="verb", metavar="<verb>")
+    p._group_parsers = {}
+    help_sp = sub.add_parser("help", help="show help for a command or subcommand",
+        description="Show top-level help, or help for a command or subcommand. "
+            "For example: `t help open` or `t help repos path`.")
+    help_sp.add_argument("command", nargs="*", help="command and optional subcommand")
 
     sp = sub.add_parser("open", help="open or reattach a session in a per-repo tmux slot",
         description="Open or reattach a Claude session in a per-repo tmux slot. Bare `t open` "
@@ -7917,6 +7923,8 @@ Run `t <verb> -h` for a verb's own flags.""")
 
     sp = sub.add_parser("restart", help="restart a stuck CLI in the same slot and conversation",
         description="Recover a local Codex or Claude tmux slot after a connection failure. "
+            "An invalid-cwd failure uses the slot's worktree and an invocation-local "
+            "--no-daemon when the failure identifies the Codex daemon. "
             "Saves pane text (including any visible unsent draft) privately, then sends TERM "
             "to only the agent and waits for it to exit before resuming the exact conversation "
             "in the same pane and worktree. Does not submit the saved draft. Refuses desktop "
@@ -8056,15 +8064,24 @@ Run `t <verb> -h` for a verb's own flags.""")
     sp.add_argument("-k", "--keyword", action="store_true", help="offline keyword ranking (no Sonnet)")
     sp.add_argument("query", nargs="*", help="search terms (omit to browse recent sessions)")
 
-    sp = sub.add_parser("cursor", help="move Cursor CLI (cursor-agent) chats between machines",
-        description="Passthrough to cursor-beam: send/pull/list cursor-agent chats across "
-            "machines, translating the md5-of-cwd workspace hash between differing $HOMEs. "
-            "`t cursor ls` lists local chats (`--host <h>` for a remote's); `t cursor` sends "
-            "the newest chat to $TBEAM_HOST; `t cursor [id] --from <h>` pulls; `t cursor "
-            "resume [id]` resumes one here (cd to its workspace + keychain unlock over ssh). "
-            "Full flag reference: cursor-beam -h. Cursor chats have no dev slot, so the "
-            "other t verbs do not apply to them.")
-    sp.add_argument("rest", nargs=argparse.REMAINDER, help="args forwarded to cursor-beam (ls → --ls)")
+    sp = sub.add_parser("cursor", help="list, resume, or move Cursor CLI chats",
+        description="Manage cursor-agent chats across machines. `t cursor ls` lists chats, "
+            "`t cursor resume [id]` resumes one, and `t cursor send [id]` moves one to a host. "
+            "Legacy `t cursor [id]`, `--ls`, and `--from` forms remain available. "
+            "Cursor chats have no numbered dev slot.")
+    p._group_parsers["cursor"] = sp
+    cursor_sub = sp.add_subparsers(dest="action", metavar="<command>")
+    cursor_ls = cursor_sub.add_parser("ls", help="list local or remote chats")
+    cursor_ls.add_argument("--host", metavar="HOST", help="list chats on this host")
+    cursor_resume = cursor_sub.add_parser("resume", help="resume a chat here or on a host")
+    cursor_resume.add_argument("id", nargs="?", help="chat id or unique prefix; default: newest")
+    cursor_resume.add_argument("--host", metavar="HOST", help="resume on this host")
+    cursor_send = cursor_sub.add_parser("send", help="move a chat to or from a host")
+    cursor_send.add_argument("id", nargs="?", help="chat id or unique prefix; default: newest")
+    cursor_send.add_argument("--host", metavar="HOST", help="send to this host")
+    cursor_send.add_argument("--from", dest="from_host", metavar="HOST", help="pull from this host")
+    cursor_send.add_argument("-p", "--pick", action="store_true", help="pick a chat")
+    cursor_send.add_argument("-a", "--attach", action="store_true", help="resume on the host after sending")
 
     sp = sub.add_parser("on", help="run a command on a remote host (or open a shell)",
         description="Run a command on another machine over ssh, in a login+interactive shell so "
@@ -8074,13 +8091,17 @@ Run `t <verb> -h` for a verb's own flags.""")
     sp.add_argument("host", help="$REMOTE_HOSTS key, or a literal ssh target")
     sp.add_argument("rest", nargs=argparse.REMAINDER, help="command to run (omit for an interactive shell)")
 
-    sp = sub.add_parser("repos", help="list registered repositories or enter a checkout",
-        description="List repository aliases and checkout paths (`t repos ls`, or just `t repos`). "
-            "With the zsh plugin loaded, `t repos cd <alias>` enters the registered checkout "
-            "even when its alias is `t`. `t repos path <alias>` prints its absolute path.")
-    sp.add_argument("action", nargs="?", choices=("ls", "cd", "path"), default="ls",
-                    help="ls (default), cd (shell plugin), or path")
-    sp.add_argument("repo", nargs="?", help="registered repository alias for cd or path")
+    sp = sub.add_parser("repos", help="manage registered repositories",
+        description="List registered repository aliases and checkout paths, enter a checkout "
+            "from the zsh plugin, or print its absolute path. Run `t repos <command> -h` "
+            "for command help.")
+    p._group_parsers["repos"] = sp
+    repos_sub = sp.add_subparsers(dest="action", metavar="<command>")
+    repos_sub.add_parser("ls", help="list registered aliases and checkout paths")
+    repo_cd = repos_sub.add_parser("cd", help="enter a checkout (zsh plugin only)")
+    repo_cd.add_argument("repo", help="registered repository alias")
+    repo_path = repos_sub.add_parser("path", help="print a checkout's absolute path")
+    repo_path.add_argument("repo", help="registered repository alias")
 
     sp = sub.add_parser("config", help="manage local settings: tools, models, effort, Fast mode, repos and hosts",
         description="Arrow-key settings hub for this machine: default tool, plus model, effort and Fast mode submenus; "
@@ -8312,6 +8333,18 @@ IMPLEMENTED = {
 }
 
 
+def _help_parser(parser, words, *, strict=False):
+    """Find a public command's argparse help, without running its handler."""
+    current = parser
+    for word in words:
+        choices = next((a.choices for a in current._actions
+                        if isinstance(a, argparse._SubParsersAction)), None)
+        if choices is None or word not in choices:
+            return None if strict or current is parser else current
+        current = choices[word]
+    return current
+
+
 def main(argv):
     if argv and argv[0] == "__recovery":
         helper = os.path.join(_t_source_root(), "libexec", "t_recovery.py")
@@ -8319,21 +8352,50 @@ def main(argv):
     if len(argv) == 2 and argv[0] == "_app-plan-server":
         _app_plan_serve(_app_plan_path(argv[1]))
         return 0
-    # `cursor` dispatches BEFORE argparse: its args belong to cursor-beam, and
-    # argparse's REMAINDER rejects a LEADING flag (`t cursor --ls` errors before
-    # the remainder engages). Side benefit: `t cursor -h` shows cursor-beam's
-    # own help. The subparser still exists so `t -h` lists the verb.
+    parser = build_parser()
+    if argv and argv[0] == "help":
+        words = argv[1:]
+        if words and words[-1] in ("-h", "--help"):
+            words = words[:-1]
+        if not words:
+            parser.print_help()
+            return 0
+        target = _help_parser(parser, words, strict=True)
+        if target is None:
+            print(f"t help: unknown command: {' '.join(words)}", file=sys.stderr)
+            return 2
+        target.print_help()
+        return 0
+    # `--` ends option parsing. `t on HOST ...` forwards the remainder to a
+    # remote zsh -lic, whose flags belong to that command rather than to t.
+    option_end = argv.index("--") if "--" in argv else len(argv)
+    help_at = next((i for i, a in enumerate(argv[:option_end])
+                    if a in ("-h", "--help")), None)
+    if help_at is not None and not (argv[0] == "on" and help_at > 1):
+        target = _help_parser(parser, argv[:help_at])
+        if target is not None:
+            target.print_help()
+            return 0
+    # Operational `cursor` arguments still belong to cursor-beam. In particular,
+    # `t cursor --ls` must reach it without argparse rejecting the leading flag.
+    # Bare cursor and all help forms were handled above by t's parser.
     if argv and argv[0] == "cursor":
+        if len(argv) == 1:
+            parser._group_parsers["cursor"].print_help()
+            return 0
         return cmd_cursor(Config(), argparse.Namespace(rest=argv[1:]))
     # `todo` is retired and has NO subparser (so `t -h` does not list it); it is
     # answered here for the same REMAINDER reason — a lagging statusline setting
     # still runs `t todo --statusline`, and that must exit 0 with no output.
     if argv and argv[0] == "todo":
         return cmd_todo(Config(), argparse.Namespace(rest=argv[1:]))
-    parser = build_parser()
     args = parser.parse_args(argv)
     if not args.verb:
         parser.print_help()
+        return 0
+    group_parser = parser._group_parsers.get(args.verb)
+    if group_parser is not None and args.action is None:
+        group_parser.print_help()
         return 0
     cfg = Config()
     handler = IMPLEMENTED.get(args.verb)

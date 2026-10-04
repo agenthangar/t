@@ -192,3 +192,66 @@ _dev_agent_new_cmd() {{ print 'codex --model chosen'; }}
     assert mod.panes(socket)[0]['pane'] == pane['pane']
     saved = list((home / 'cache/t/restart').iterdir())
     assert len(saved) == 1 and 'Experimental feature request failed' in saved[0].read_text()
+
+
+def test_real_invalid_cwd_recovery_resumes_exact_thread_without_daemon(terminal):
+    mod, tmux, _, env, home = terminal
+    worktree = home / 'worktree with spaces'
+    worktree.mkdir()
+    (worktree / 'dirty.txt').write_text('uncommitted edits')
+    bins = home / 'bin'
+    bins.mkdir()
+    codex = bins / 'codex'
+    codex.write_text(f'''#!{sys.executable}
+import json, os, pathlib, sys, time
+if '--help' in sys.argv:
+    print('--cd --no-daemon')
+    sys.exit(0)
+pathlib.Path({str(home / 'agent-pid')!r}).write_text(str(os.getpid()))
+if '--no-daemon' in sys.argv:
+    pathlib.Path({str(home / 'resumed.json')!r}).write_text(json.dumps(
+        {{'argv': sys.argv[1:], 'cwd': os.getcwd(), 'pid': os.getpid()}}))
+    print('Resumed without daemon', flush=True)
+else:
+    print({('■ ' + mod.INVALID_CWD)!r}, flush=True)
+time.sleep(60)
+''')
+    codex.chmod(0o755)
+    (home / '.zshrc').write_text(f'''
+export PATH={shlex.quote(str(bins))}:$PATH
+source {shlex.quote(str(REPO_ROOT / 'zsh/resume.zsh'))}
+_dev_agent_of_session() {{ print codex; }}
+_dev_session_sid() {{ print {SID}; }}
+_dev_session_claude_pid() {{ cat "$HOME/agent-pid"; }}
+_dev_app_slot_reserved() {{ return 1; }}
+_dev_agent_resume_cmd() {{ print -r -- "codex resume $2"; }}
+''')
+    daemon = subprocess.Popen(['sleep', '60'], env=env, cwd=home, start_new_session=True)
+    try:
+        assert tmux('new-session', '-d', '-s', 'dev-api-1', '-c', str(worktree),
+                    'zsh', '-lic', 'exec codex resume ' + SID).returncode == 0
+        socket = tmux('display-message', '-p', '-t', '=dev-api-1:', '#{socket_path}').stdout.strip()
+        pane = mod.panes(socket)[0]
+        until(lambda: mod.INVALID_CWD in tmux('capture-pane', '-p', '-J', '-t', pane['pane']).stdout)
+        target = until(lambda: mod.owner(socket, pane))
+        assert target['sid'] == SID and target['cwd'] == str(worktree)
+        old_pid = target['pid']
+        token = 'b' * 32
+        mod.write_json(mod.cache(socket) / (token + '.offer'),
+                       {**target, 'error': mod.INVALID_CWD, 'created': time.time()})
+        assert mod.respond(socket, token, True) == 0
+        resumed = until(lambda: json.loads((home / 'resumed.json').read_text())
+                        if (home / 'resumed.json').exists() else None)
+        assert resumed['argv'] == ['resume', SID, '--cd', str(worktree), '--no-daemon']
+        assert resumed['cwd'] == str(worktree) and str(resumed['pid']) != old_pid
+        assert mod.panes(socket)[0]['pane'] == pane['pane']
+        assert daemon.poll() is None
+        assert (worktree / 'dirty.txt').read_text() == 'uncommitted edits'
+        saved = list((home / 'cache/t/restart').iterdir())
+        assert len(saved) == 1 and mod.INVALID_CWD in saved[0].read_text()
+        old_status = subprocess.run(['ps', '-p', old_pid, '-o', 'stat='],
+                                    capture_output=True, text=True)
+        assert not old_status.stdout.strip() or old_status.stdout.strip().startswith('Z')
+    finally:
+        daemon.terminate()
+        daemon.wait(timeout=5)

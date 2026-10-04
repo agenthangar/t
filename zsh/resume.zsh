@@ -1193,13 +1193,31 @@ _claude_sessions_fzf() {
         --prompt="$fzf_prompt" --height=60% --reverse
 }
 
+# Return success only for the visible, final Codex turn error. A quoted example
+# or unrelated old message must not turn an ordinary restart into a daemon bypass.
+_t_invalid_cwd_screen() {
+  emulate -L zsh
+  local line
+  for line in ${(f)1}; do
+    [[ $line =~ '^[[:space:]]*(■[[:space:]]*)?Failed to start turn: turn/start failed in TUI: turn/start failed: invalid cwd: No such file or directory \(os error 2\) \(code -32600\)[[:space:]]*$' ]] && return 0
+  done
+  return 1
+}
+
+_t_pid_is_zombie() {
+  emulate -L zsh
+  local state
+  state=$(ps -o stat= -p "$1" 2>/dev/null) || return 1
+  [[ $state =~ '^[[:space:]]*Z' ]]
+}
+
 # Explicit recovery of a stuck client. Keep the pane as a worktree reservation,
 # capture unsent visible text before signalling, and never force-respawn a live
 # pane. A per-slot lock prevents two simultaneous restarts from racing.
 _t_restart_slot() {
   emulate -L zsh
   local session="$1" dir="$2" sid="$3" agent="$4" mode="$5" expected_pid="${6:-}"
-  local pane cpid up attempt snapshot old_remain actual_dir launch screen
+  local pane cpid up attempt snapshot old_remain actual_dir launch screen invalid_cwd=0
   local cache="${XDG_CACHE_HOME:-$HOME/.cache}/t/restart" lock
   # Do not reuse a process snapshot captured by another command in this shell.
   local _DEV_PS_AT=0
@@ -1222,6 +1240,9 @@ _t_restart_slot() {
   [[ -z $expected_pid || $cpid == $expected_pid ]] || {
     print -u2 -- 't restart: the agent changed since the recovery offer; nothing was stopped'; return 1
   }
+  if [[ $mode == restart-invalid-cwd ]]; then
+    [[ $agent == codex && -n $sid && -n $expected_pid ]] || return 1
+  fi
   if [[ $mode == restart-no-daemon ]]; then
     [[ $agent == codex && -n $expected_pid ]] || return 1
     # This bypass is invocation-local. Never restart the shared server, which
@@ -1264,12 +1285,35 @@ _t_restart_slot() {
        $(tmux list-panes -s -t "=$session" -F '#{pane_id}') == $pane ]] || {
       print -u2 -- 't restart: the slot changed; nothing was stopped'; return 1
     }
-    if [[ $mode == restart-no-daemon ]]; then
+    if [[ $agent == codex && ( $mode == restart || $mode == restart-invalid-cwd ) ]]; then
+      screen=$(tmux capture-pane -p -J -t "$pane") || return 1
+      _t_invalid_cwd_screen "$screen" && invalid_cwd=1
+      if [[ $mode == restart-invalid-cwd && $invalid_cwd != 1 ]]; then
+        print -u2 -- 't restart: the invalid-cwd failure cleared; nothing was stopped'; return 1
+      fi
+    fi
+    if (( invalid_cwd )); then
+      # The pane's original cwd inode can be stale even though its worktree path
+      # exists again. An explicit cwd also avoids a stale shared daemon cwd.
+      [[ -n $sid && -d $dir ]] || {
+        print -u2 -- 't restart: the thread or worktree is missing; nothing was stopped'; return 1
+      }
+      command codex resume --help 2>/dev/null | command grep -q -- '--no-daemon' || {
+        print -u2 -- 't restart: this Codex version does not support --no-daemon'; return 1
+      }
+      command codex resume --help 2>/dev/null | command grep -q -- '--cd' || {
+        print -u2 -- 't restart: this Codex version does not support --cd'; return 1
+      }
+      launch="$(_dev_agent_resume_cmd "$agent" "$sid") --cd ${(q)dir} --no-daemon"
+    elif [[ $mode == restart-no-daemon ]]; then
       screen=$(tmux capture-pane -p -J -t "$pane") || return 1
       [[ $screen == *'Cannot use the background server'* &&
-         $screen == *'Experimental feature request failed'* &&
          $screen == *'Run without daemon this time'* &&
-         $screen == *'Restart cannot resolve this compatibility check.'* ]] || {
+         ( ( $screen == *'Experimental feature request failed'* &&
+             $screen == *'Restart cannot resolve this compatibility check.'* &&
+             $screen == *'2. Cancel'* ) ||
+           $screen == *'background server is not running'* ||
+           $screen == *'background server socket is stale or unreachable'* ) ]] || {
         print -u2 -- 't restart: the startup failure cleared; nothing was stopped'; return 1
       }
       if [[ -n $sid ]]; then
@@ -1280,14 +1324,33 @@ _t_restart_slot() {
     else
       launch=$(_dev_agent_resume_cmd "$agent" "$sid")
     fi
+    if (( invalid_cwd )); then
+      # Capability checks and capture can race with the client moving on.
+      _DEV_PS_AT=0
+      [[ -d $dir && $(_dev_session_claude_pid "$session") == $cpid &&
+         $(_dev_session_sid "$session" "$dir") == $sid &&
+         $(_dev_agent_of_session "$session") == $agent &&
+         $(tmux display-message -p -t "=$session:" '#{session_path}') == $dir &&
+         $(tmux list-panes -s -t "=$session" -F '#{pane_id}') == $pane ]] || {
+        print -u2 -- 't restart: the slot changed; nothing was stopped'; return 1
+      }
+      screen=$(tmux capture-pane -p -J -t "$pane") || return 1
+      _t_invalid_cwd_screen "$screen" || {
+        print -u2 -- 't restart: the invalid-cwd failure cleared; nothing was stopped'; return 1
+      }
+    fi
     old_remain=$(tmux show-options -A -p -v -t "$pane" remain-on-exit) || return 1
     tmux set-environment -t "=$session" CLAUDE_RESUME_ID "$sid" || return 1
     tmux set-environment -t "=$session" DEV_AGENT "$agent" || return 1
     tmux set-option -p -t "$pane" remain-on-exit on || return 1
     if [[ -n $cpid ]]; then kill -TERM "$cpid" || return 1; fi
     for attempt in {1..200}; do
-      if { [[ -z $cpid ]] || ! kill -0 "$cpid" 2>/dev/null; } &&
-         [[ $(tmux display-message -p -t "$pane" '#{pane_dead}') == 1 ]]; then
+      if [[ $(tmux display-message -p -t "$pane" '#{pane_dead}') == 1 ]] &&
+         { [[ -z $cpid ]] || ! kill -0 "$cpid" 2>/dev/null ||
+           _t_pid_is_zombie "$cpid"; }; then
+        # On Linux an exited pane's child can remain a zombie until reaped;
+        # kill -0 still succeeds, but a verified Z state cannot run an agent.
+        # An unknown or unreadable process state keeps the pane reserved.
         # No -k: tmux must refuse if anything is still running in this pane.
         tmux respawn-pane -t "$pane" -c "$dir" "zsh -lic ${(q)launch}" || return 1
         tmux set-option -p -t "$pane" remain-on-exit "$old_remain"

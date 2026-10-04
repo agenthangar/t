@@ -18,9 +18,10 @@ import uuid
 ROOT = Path(__file__).resolve().parent.parent
 UUID = re.compile(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}\Z")
 BACKGROUND = "Cannot use the background server"
+INVALID_CWD = "Failed to start turn: turn/start failed in TUI: turn/start failed: invalid cwd: No such file or directory (os error 2) (code -32600)"
 # Match final CLI error lines, not generic mentions of errors or retry counters.
 FAILURES = {
-    "codex": re.compile(r"^(?:■\s*)?(?:Server connection could not be restored|Automatic reconnect could not restore this session\.|Reconnect failed — check the endpoint, then relaunch)"),
+    "codex": re.compile(r"^(?:■\s*)?(?P<message>Server connection could not be restored|Automatic reconnect could not restore this session\.|Reconnect failed — check the endpoint, then relaunch|" + re.escape(INVALID_CWD) + r"$)"),
     "claude": re.compile(r"^(?:[⎿✻●]\s*)?API Error:\s*(?:Connection error|Unable to connect|Failed to connect|Network error|Request timed out)(?:[. :]|$)", re.I),
     "cursor": re.compile(r"^(?:[✗×●]\s*)?(?:Connection failed(?: repeatedly)?|Connection error|Unable to connect to the server|The connection failed)(?:[. :]|$)", re.I),
 }
@@ -28,7 +29,9 @@ FAILURES = {
 
 def run(argv):
     try:
-        return subprocess.run(argv, text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=15)
+        # The agent's original worktree may disappear while this monitor runs.
+        return subprocess.run(argv, text=True, capture_output=True, stdin=subprocess.DEVNULL,
+                              timeout=15, cwd="/")
     except (OSError, subprocess.TimeoutExpired) as error:
         return subprocess.CompletedProcess(argv, 1, "", str(error))
 
@@ -80,11 +83,15 @@ def failure(agent, screen):
         visible.append(line.strip())
         match = pattern.match(line.strip())
         if match:
-            return match.group(0)
-    if (agent == "codex" and BACKGROUND in visible and "Experimental feature request failed" in visible
-            and any(re.fullmatch(r"[>›❯]?\s*1\. Run without daemon this time", line) for line in visible)
-            and any("Restart cannot resolve this compatibility check." in line for line in visible)
-            and any(re.fullmatch(r"[>›❯]?\s*2\. Cancel", line) for line in visible)):
+            return match.groupdict().get("message") or match.group(0)
+    unavailable = any(cause in line for line in visible for cause in
+                      ("background server is not running", "background server socket is stale or unreachable"))
+    incompatible = ("Experimental feature request failed" in visible and
+                    any("Restart cannot resolve this compatibility check." in line for line in visible) and
+                    any(re.fullmatch(r"[>›❯]?\s*2\. Cancel", line) for line in visible))
+    if (agent == "codex" and BACKGROUND in visible and (incompatible or unavailable)
+            and any(re.fullmatch(r"[>›❯]?\s*1\. Run without daemon this time", line)
+                    for line in visible)):
         return BACKGROUND
     return ""
 
@@ -107,6 +114,11 @@ def process(pid):
     if result.returncode or len(fields) != 7 or not fields[0].isdigit():
         return {}
     return {"ppid": fields[0], "start": " ".join(fields[1:6]), "args": fields[6]}
+
+
+def zombie(pid):
+    status = run(["ps", "-p", str(pid), "-o", "stat="])
+    return status.returncode == 0 and status.stdout.strip().startswith("Z")
 
 
 def cursor_process(info):
@@ -199,8 +211,12 @@ def offer(target, error):
     dismiss = shlex.join([sys.executable, str(Path(__file__).resolve()), "dismiss", socket, token])
     # One menu, on a client actually viewing this pane. No keystrokes enter the
     # agent and no action runs until the user chooses Restart.
-    title = "t: background server incompatible" if target.get("startup") else "t: connection failed — recover this conversation?"
-    choice = "Run without daemon this time" if target.get("startup") else "Save visible draft and restart"
+    if target.get("startup"):
+        title, choice = "t: background server unavailable", "Run without daemon this time"
+    elif error == INVALID_CWD:
+        title, choice = "t: workspace unavailable — recover this conversation?", "Save visible draft and restart here"
+    else:
+        title, choice = "t: connection failed — recover this conversation?", "Save visible draft and restart"
     menu = ["tmux", "-S", socket, "display-menu", "-c", viewers[0], "-t", target["pane"],
             "-T", title, "-x", "C", "-y", "C",
             choice, "r", "run-shell -b " + shlex.quote(callback),
@@ -244,14 +260,42 @@ class Watcher:
         return bool(rows)
 
 
+def source_version():
+    try:
+        stat = Path(__file__).stat()
+    except OSError:
+        return None
+    if not stat.st_size:
+        return None
+    return stat.st_dev, stat.st_ino, stat.st_mtime_ns, stat.st_size
+
+
 def watch(socket):
+    loaded = source_version()
     with (cache(socket) / "watch.lock").open("w") as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             return 0
         watcher = Watcher(socket)
-        while watcher.poll():
+        while True:
+            # t update replaces this source, but a long-lived Python process
+            # otherwise keeps the old module in memory indefinitely. exec drops
+            # the close-on-exec flock; the replacement reacquires it or exits if
+            # another watcher won the race.
+            updated = source_version()
+            if updated and updated != loaded:
+                # A source file being rewritten may be absent, empty, or only
+                # partly written. Keep the existing monitor until it is valid.
+                try:
+                    compile(Path(__file__).read_bytes(), __file__, "exec")
+                except (OSError, SyntaxError, UnicodeError):
+                    pass
+                else:
+                    if source_version() == updated:
+                        os.execv(sys.executable, [sys.executable, str(Path(__file__)), "watch", socket])
+            if not watcher.poll():
+                break
             time.sleep(3)
     return 0
 
@@ -266,7 +310,7 @@ def start(session):
     env = {key: value for key, value in os.environ.items() if not key.startswith("COV_CORE_")}
     subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "watch", socket],
                      stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                     start_new_session=True, env=env, close_fds=True)
+                     start_new_session=True, env=env, close_fds=True, cwd="/")
     return 0
 
 
@@ -394,7 +438,8 @@ def _cursor_restart(target):
         raise ValueError("could not reserve Cursor's pane")
     os.kill(pid, signal.SIGTERM)
     for _ in range(200):
-        if not process(pid) and tmux(socket, "display-message", "-p", "-t", pane, "#{pane_dead}").stdout.strip() == "1":
+        gone = not process(pid) or zombie(pid)
+        if gone and tmux(socket, "display-message", "-p", "-t", pane, "#{pane_dead}").stdout.strip() == "1":
             launch = "exec cursor-agent --resume=" + shlex.quote(target["sid"])
             result = tmux(socket, "respawn-pane", "-t", pane, "-c", target["cwd"], "zsh", "-lic", launch)
             if result.returncode:
@@ -428,11 +473,13 @@ def respond(socket, token, accept):
             saved = cursor_restart(target)
             message = "Restarted Cursor. Saved visible draft: " + saved
         else:
-            mode = "restart-no-daemon" if target.get("startup") else "restart"
+            mode = ("restart-no-daemon" if target.get("startup") else
+                    "restart-invalid-cwd" if target["error"] == INVALID_CWD else "restart")
             args = ["_t_restart_slot", target["session"], target["cwd"], target["sid"], target["agent"], mode, target["pid"]]
             env = dict(os.environ, TMUX=socket + ",0,0")
             result = subprocess.run(["zsh", "-lic", "setopt no_monitor no_notify; " + shlex.join(args)],
-                                    env=env, text=True, capture_output=True, timeout=30, stdin=subprocess.DEVNULL)
+                                    env=env, text=True, capture_output=True, timeout=30,
+                                    stdin=subprocess.DEVNULL, cwd="/")
             if result.returncode:
                 raise ValueError(result.stderr.strip() or "restart failed")
             message = result.stdout.strip()
