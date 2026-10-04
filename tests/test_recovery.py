@@ -383,6 +383,73 @@ def test_unverified_notice_cleans_marker_if_menu_launch_fails(recovery, target, 
     assert not recovery.notice_path(target["socket"], target["pane"]).exists()
 
 
+@pytest.mark.parametrize("scenario", ["offer", "background", "unverified", "cleared", "missing", "other_client", "failed"])
+def test_reopen_checks_current_failure_and_requesting_viewer(recovery, target, monkeypatch, scenario):
+    monkeypatch.setattr(recovery, "panes", lambda s: [] if scenario == "missing" else [target])
+    monkeypatch.setattr(recovery, "clients", lambda *a: ["first", "requester"])
+    error = "" if scenario == "cleared" else recovery.BACKGROUND if scenario == "background" else recovery.DEAD
+    monkeypatch.setattr(recovery, "pane_failure", lambda *a: error)
+    owners = []
+    def owner(*a, **kw):
+        owners.append(kw)
+        return {} if scenario == "unverified" else target
+    monkeypatch.setattr(recovery, "owner", owner)
+    offers, notices, cleared = [], [], []
+    monkeypatch.setattr(recovery, "offer", lambda *a, **kw: offers.append((a, kw)) or scenario != "failed")
+    monkeypatch.setattr(recovery, "unverified_notice", lambda *a, **kw: notices.append((a, kw)) or True)
+    monkeypatch.setattr(recovery, "clear_hint", lambda *a: cleared.append(a))
+    rc = recovery.reopen(target["socket"], target["pane"], "other" if scenario == "other_client" else "requester")
+    assert rc == (1 if scenario in ("missing", "other_client", "failed") else 0)
+    assert bool(offers) == (scenario in ("offer", "background", "failed"))
+    if offers:
+        assert offers == [((target, error), {"viewer": "requester"})]
+    assert bool(notices) == (scenario == "unverified")
+    if notices:
+        assert notices == [((target["socket"], target["pane"]), {"viewer": "requester"})]
+    assert bool(cleared) == (scenario == "cleared")
+    if scenario == "background":
+        assert owners == [{"startup": True}]
+
+
+def test_explicit_viewer_gets_menu_when_two_clients_share_pane(recovery, target, monkeypatch):
+    monkeypatch.setattr(recovery, "clients", lambda *a: ["first", "requester"])
+    menus = []
+    monkeypatch.setattr(recovery, "recovery_menu", lambda *a, **kw: menus.append(a) or True)
+    assert recovery.offer(target, ERROR, viewer="requester")
+    assert recovery.unverified_notice(target["socket"], target["pane"], viewer="requester")
+    assert all(menu[2] == "requester" for menu in menus)
+    assert not recovery.offer(target, ERROR, viewer="unrelated")
+    assert not recovery.unverified_notice(target["socket"], target["pane"], viewer="unrelated")
+    assert len(menus) == 2
+
+
+@pytest.mark.parametrize("scenario", ["query_failed", "bound", "bind_failed"])
+def test_recovery_shortcut_does_not_replace_user_bindings(recovery, monkeypatch, scenario):
+    bindings = "\n".join(f"bind-key -T prefix {key} display-message mine" for key in ("R", "M-r", "M-R", "F12"))
+    changes = []
+    def tmux(socket, command, *args):
+        if command == "list-keys":
+            return result(bindings if scenario == "bound" and "-N" not in args else "", rc=int(scenario == "query_failed"))
+        changes.append(args)
+        return result(rc=1)
+    monkeypatch.setattr(recovery, "tmux", tmux)
+    assert recovery.recovery_key("socket") == ""
+    assert len(changes) == (4 if scenario == "bind_failed" else 0)
+
+
+def test_hint_cleanup_preserves_user_edits_and_handles_unmanaged_panes(recovery, target, monkeypatch):
+    path = recovery.hint_path(target["socket"], target["pane"])
+    recovery.write_json(path, {"session": target["session"], "pane": target["pane"],
+                              "before": {"status-left": {"value": "original", "local": True}},
+                              "after": {"status-left": "installed hint"}})
+    changes = []
+    monkeypatch.setattr(recovery, "tmux", lambda s, c, *a: result("my later edit") if c == "show-options" else changes.append(a) or result())
+    monkeypatch.setattr(recovery, "panes", lambda s: [])
+    assert not recovery.Watcher(target["socket"]).poll()
+    assert not path.exists()
+    assert changes == []
+
+
 def test_start_and_singleton(recovery, target, monkeypatch):
     assert recovery.start("dev-api-1") == 0
     monkeypatch.delenv("T_RECOVERY_DISABLE")

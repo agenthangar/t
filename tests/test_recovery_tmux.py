@@ -195,6 +195,79 @@ _t_restart_slot() {{ print -r -- "$*" > "$HOME/accepted"; print 'Saved visible d
         os.close(other_master)
 
 
+@pytest.mark.parametrize("custom", [False, True])
+def test_status_shortcut_reopens_dismissed_menu_and_clears_after_recovery(terminal, custom):
+    mod, tmux, command, env, home = terminal
+    (home / ".zshrc").write_text(f'''
+_dev_agent_of_session() {{ print codex; }}
+_dev_session_sid() {{ print {SID}; }}
+_dev_session_claude_pid() {{ tmux display-message -p -t '=dev-api-1:' '#{{pane_pid}}'; }}
+_t_restart_slot() {{ touch "$HOME/accepted"; }}
+''')
+    launch = "printf 'Server connection could not be restored\\n'; exec sleep 60"
+    assert tmux("new-session", "-d", "-s", "dev-api-1", "-c", str(home), "zsh", "-lc", launch).returncode == 0
+    socket = tmux("display-message", "-p", "-t", "=dev-api-1:", "#{socket_path}").stdout.strip()
+    pane = mod.panes(socket)[0]
+    tmux("set-environment", "-t", "=dev-api-1", "DEV_AGENT", "codex")
+    tmux("set-option", "-g", "status-left", "original ")
+    tmux("set-option", "-g", "status-left-length", "10")
+    if custom:
+        tmux("set-option", "-t", "=dev-api-1:", "prefix", "C-a")
+        tmux("set-option", "-t", "=dev-api-1:", "status-left", "custom ")
+        tmux("set-option", "-t", "=dev-api-1:", "status-left-length", "7")
+        tmux("bind-key", "-T", "prefix", "R", "display-message", "my existing binding")
+    master, slave = pty.openpty()
+    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 40, 0, 0))
+    client = subprocess.Popen(command + ["attach-session", "-t", "=dev-api-1"],
+                              env=env, stdin=slave, stdout=slave, stderr=slave, start_new_session=True)
+    os.close(slave)
+    os.set_blocking(master, False)
+    try:
+        until(lambda: mod.clients(socket, pane["pane"]))
+        watcher = mod.Watcher(socket)
+        watcher.poll(); watcher.poll()
+        assert watcher.key == ("M-r" if custom else "R")
+        assert mod.recovery_key(socket) == watcher.key  # Re-exec reuses our binding.
+        hint = "Recovery: Ctrl-a Alt-r" if custom else "Recovery: Ctrl-b R"
+        assert hint in tmux("show-options", "-v", "-t", "=dev-api-1:", "status-left").stdout
+        visible = bytearray()
+        def showing(text):
+            if select.select([master], [], [], 0.05)[0]:
+                visible.extend(os.read(master, 65536))
+            return text in visible
+        until(lambda: showing(b"CONNECTION FAILED"))
+        os.write(master, b"q")
+        until(lambda: not list(mod.cache(socket).glob("*.offer")))
+        visible.clear()
+        until(lambda: showing(hint.encode()))
+        visible.clear()
+        os.write(master, b"\x01\x1br" if custom else b"\x02R")
+        until(lambda: showing(b"CONNECTION FAILED"), detail=lambda: repr(bytes(visible[-1000:])))
+        assert len(list(mod.cache(socket).glob("*.offer"))) == 1
+        assert not (home / "accepted").exists()
+        os.write(master, b"q")
+        until(lambda: not list(mod.cache(socket).glob("*.offer")))
+        # Only the isolated fixture's fake agent is replaced to clear its error.
+        tmux("respawn-pane", "-k", "-t", pane["pane"], "sh", "-c", "printf 'healthy\\n'; exec sleep 60")
+        until(lambda: "healthy" in tmux("capture-pane", "-p", "-t", pane["pane"]).stdout)
+        watcher.poll()
+        assert tmux("show-options", "-A", "-v", "-t", "=dev-api-1:", "status-left").stdout == ("custom \n" if custom else "original \n")
+        assert tmux("show-options", "-A", "-v", "-t", "=dev-api-1:", "status-left-length").stdout.strip() == ("7" if custom else "10")
+        if custom:
+            assert "my existing binding" in tmux("list-keys", "-T", "prefix").stdout
+        else:
+            assert not tmux("show-options", "-q", "-t", "=dev-api-1:", "status-left").stdout
+        assert not mod.hint_path(socket, pane["pane"]).exists()
+    finally:
+        client.terminate()
+        try:
+            client.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            client.kill()
+            client.wait(timeout=5)
+        os.close(master)
+
+
 @pytest.mark.parametrize("width", [40, 80])
 def test_real_unverified_notice_is_visible_and_dismissible(terminal, width):
     mod, tmux, command, env, home = terminal

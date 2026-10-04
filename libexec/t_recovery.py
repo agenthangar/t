@@ -243,10 +243,10 @@ def recovery_menu(socket, pane, viewer, title, lines, actions, cleanup=None):
     return tmux(socket, "run-shell", "-b", command).returncode == 0
 
 
-def offer(target, error):
+def offer(target, error, viewer=None):
     socket = target["socket"]
     viewers = clients(socket, target["pane"])
-    if not viewers:
+    if not viewers or (viewer is not None and viewer not in viewers):
         return False
     token = uuid.uuid4().hex
     path = cache(socket) / (token + ".offer")
@@ -271,7 +271,7 @@ def offer(target, error):
         title, choice = "t: CONNECTION FAILED", "Save draft and restart"
         lines = ["The agent connection has stopped.",
                  "Restart to continue this conversation.", "Your visible draft will be saved first."]
-    shown = recovery_menu(socket, target["pane"], viewers[0], title, lines, [
+    shown = recovery_menu(socket, target["pane"], viewer or viewers[0], title, lines, [
         (choice, "r", "run-shell -b " + shlex.quote(callback)),
         ("Dismiss", "q", "run-shell -b " + shlex.quote(dismiss)),
     ])
@@ -284,13 +284,13 @@ def notice_path(socket, pane):
     return cache(socket) / (pane.replace("%", "pane-") + ".notice")
 
 
-def unverified_notice(socket, pane):
+def unverified_notice(socket, pane, viewer=None):
     viewers = clients(socket, pane)
-    if not viewers:
+    if not viewers or (viewer is not None and viewer not in viewers):
         return False
     path = notice_path(socket, pane)
     write_json(path, {})
-    shown = recovery_menu(socket, pane, viewers[0], "t: RECOVERY NEEDS ATTENTION", [
+    shown = recovery_menu(socket, pane, viewer or viewers[0], "t: RECOVERY NEEDS ATTENTION", [
         "t detected an agent error.",
         "t cannot verify this conversation.",
         "Copy your draft before quitting, then relaunch.",
@@ -300,12 +300,102 @@ def unverified_notice(socket, pane):
     return shown
 
 
+def pane_failure(socket, pane):
+    if pane.get("pane_dead") == "1":
+        return DEAD
+    # Agent stamps are detection hints; owner() verifies them before any offer.
+    if pane["session"].startswith("t-cursor-"):
+        agent = "cursor"
+    else:
+        stamp = tmux(socket, "show-environment", "-t", "=" + pane["session"], "DEV_AGENT")
+        agent = stamp.stdout.strip().removeprefix("DEV_AGENT=")
+    screen = tmux(socket, "capture-pane", "-p", "-J", "-t", pane["pane"])
+    return failure(agent, screen.stdout) if screen.returncode == 0 else ""
+
+
+def recovery_key(socket):
+    """Reserve a free prefix key without replacing the user's bindings."""
+    command = (shlex.join([sys.executable, str(Path(__file__).resolve()), "reopen"])
+               + " #{q:socket_path} #{q:pane_id} #{q:client_name}")
+    bindings = tmux(socket, "list-keys", "-T", "prefix")
+    if bindings.returncode:
+        return ""
+    occupied = set(re.findall(r"-T prefix\s+(\S+)\s", bindings.stdout))
+    notes = tmux(socket, "list-keys", "-N", "-T", "prefix").stdout
+    for key in ("R", "M-r", "M-R", "F12"):
+        if key in occupied and not re.search(r"\s" + re.escape(key) + r"\s+t: reopen recovery$", notes, re.M):
+            continue
+        if tmux(socket, "bind-key", "-N", "t: reopen recovery", "-T", "prefix", key,
+                "run-shell", "-b", command).returncode == 0:
+            return key
+    return ""
+
+
+def hint_path(socket, pane):
+    return cache(socket) / (pane.replace("%", "pane-") + ".status")
+
+
+def status_hint(socket, pane, key):
+    path = hint_path(socket, pane["pane"])
+    if path.exists():
+        return
+    session = "=" + pane["session"] + ":"
+    prefix = tmux(socket, "show-options", "-v", "-A", "-t", session, "prefix").stdout.strip()
+    label = lambda value: value.replace("C-", "Ctrl-").replace("M-", "Alt-")
+    hint = "Recovery: " + label(prefix or "prefix") + " " + label(key) if key else "Recovery needs attention"
+    before = {}
+    for option in ("status-left", "status-left-length"):
+        value = tmux(socket, "show-options", "-A", "-v", "-t", session, option)
+        if value.returncode:
+            return
+        before[option] = {"value": value.stdout.rstrip("\n"),
+                          "local": bool(tmux(socket, "show-options", "-q", "-t", session, option).stdout)}
+    length = before["status-left-length"]["value"]
+    if not length.isdigit():
+        return
+    after = {"status-left": "#[reverse] " + hint + " #[default] " + before["status-left"]["value"],
+             "status-left-length": str(int(length) + len(hint) + 3)}
+    write_json(path, {"session": pane["session"], "pane": pane["pane"], "before": before, "after": after})
+    for option, value in after.items():
+        tmux(socket, "set-option", "-t", session, option, value)
+
+
+def clear_hint(socket, pane):
+    path = hint_path(socket, pane)
+    state = read_json(path)
+    if state:
+        session = "=" + state["session"] + ":"
+        for option, installed in state["after"].items():
+            value = tmux(socket, "show-options", "-A", "-v", "-t", session, option)
+            # A user edit made while the hint was visible takes precedence.
+            if value.returncode == 0 and value.stdout.rstrip("\n") == installed:
+                before = state["before"][option]
+                args = ["-t", session, option, before["value"]] if before["local"] else ["-u", "-t", session, option]
+                tmux(socket, "set-option", *args)
+    path.unlink(missing_ok=True)
+
+
+def reopen(socket, pane_id, viewer):
+    pane = next((row for row in panes(socket) if row["pane"] == pane_id), None)
+    if pane is None or viewer not in clients(socket, pane_id):
+        return 1
+    error = pane_failure(socket, pane)
+    if not error:
+        clear_hint(socket, pane_id)
+        tmux(socket, "display-message", "-c", viewer, "t: this pane no longer needs recovery")
+        return 0
+    target = owner(socket, pane, startup=True) if error == BACKGROUND else owner(socket, pane)
+    shown = offer(target, error, viewer=viewer) if target else unverified_notice(socket, pane_id, viewer=viewer)
+    return 0 if shown else 1
+
+
 class Watcher:
     def __init__(self, socket):
         self.socket = socket
         self.seen = {}
         self.unverified = set()
         self.generations = {}
+        self.key = None
 
     def poll(self):
         for path in cache(self.socket).glob("*.offer"):
@@ -313,6 +403,10 @@ class Watcher:
                 path.unlink(missing_ok=True)
         rows = panes(self.socket)
         active = {row["pane"] for row in rows}
+        for path in cache(self.socket).glob("*.status"):
+            pane_id = read_json(path).get("pane")
+            if pane_id and pane_id not in active:
+                clear_hint(self.socket, pane_id)
         self.seen = {key: value for key, value in self.seen.items() if key in active}
         self.unverified.intersection_update(active)
         self.generations = {key: value for key, value in self.generations.items() if key in active}
@@ -322,19 +416,14 @@ class Watcher:
                 self.seen.pop(pane["pane"], None)
                 self.unverified.discard(pane["pane"])
             self.generations[pane["pane"]] = generation
-            # Agent stamps are only a detection hint; owner() verifies them before
-            # any offer. Cursor owners come from its SessionStart hook.
-            if pane["session"].startswith("t-cursor-"):
-                agent = "cursor"
-            else:
-                stamp = tmux(self.socket, "show-environment", "-t", "=" + pane["session"], "DEV_AGENT")
-                agent = stamp.stdout.strip().removeprefix("DEV_AGENT=")
-            if pane.get("pane_dead") == "1":
-                error = DEAD
-            else:
-                screen = tmux(self.socket, "capture-pane", "-p", "-J", "-t", pane["pane"])
-                error = failure(agent, screen.stdout) if screen.returncode == 0 else ""
+            error = pane_failure(self.socket, pane)
             old_error, offered = self.seen.get(pane["pane"], ("", False))
+            if not error:
+                clear_hint(self.socket, pane["pane"])
+            elif error == old_error:
+                if self.key is None:
+                    self.key = recovery_key(self.socket)
+                status_hint(self.socket, pane, self.key)
             if error != old_error:
                 self.unverified.discard(pane["pane"])
             if error and error == old_error and not offered:
@@ -592,6 +681,8 @@ def main(argv):
             return start(*args)
         if action == "watch":
             return watch(*args)
+        if action == "reopen":
+            return reopen(*args)
         if action == "cursor-hook":
             return cursor_hook(json.load(sys.stdin))
         if action == "cursor-resume":
