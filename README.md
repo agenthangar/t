@@ -117,6 +117,7 @@ Use `t doctor` when something is missing.
 | `t ls [-r] [-a]` | List sessions, optionally across remote hosts and all repositories |
 | `t cd [repo] [slot]` | Move the current shell into the selected worktree |
 | `t resume` | Find and resume a saved conversation |
+| `t restart <repo> <slot>` | Recover a stuck CLI in the same conversation and worktree |
 | `t push` / `t pop` | Move between a foreground agent and a detached tmux session |
 | `t beam <repo> [slot] --host <host>` | Move a session to another host; `--from <host>` pulls it here |
 | `t read <repo> [slot]` | Read the slot's terminal log; `--dump` writes plain scrollable output |
@@ -136,6 +137,17 @@ Use `t doctor` when something is missing.
 | `t kill <repo> <slot>` | Stop the selected slot; scoped process cleanup protects shared infrastructure |
 | `t update` | Install the latest release and reload the shell integration |
 | `t doctor` | Diagnose the independent t installation and optional integrations |
+
+If a CLI cannot reconnect but its tmux slot is still live, run
+`t restart <repo> <slot>` from a separate terminal. `--dry-run` shows the target
+first. Restart saves the pane text, including any visible unsent draft, to a
+private file under `${XDG_CACHE_HOME:-~/.cache}/t/restart/`; it prints that path
+before stopping the client. Only visible draft text can be recovered this way;
+copy any draft that extends beyond the pane before restarting. The saved text is
+not submitted automatically. The old client must exit before the same conversation
+resumes in the same pane; worktree edits and dev servers stay in place. Use
+`t open <repo> <slot>` to attach. For a remote slot, use
+`t on <host> t restart <repo> <slot>`.
 
 Every command has `-h`. Repo-aware commands infer the repository from your current
 directory, so `t open 2` and `t cd 2` work inside a registered repository.

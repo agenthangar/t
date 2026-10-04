@@ -6226,7 +6226,7 @@ def _dev_url(key, cwd):
 
 # ─── desktop handoff ──────────────────────────────────────────────────────────
 
-def _app_select(cfg, rows, repo, slot, cwd):
+def _slot_select(cfg, rows, repo, slot, cwd, verb):
     """Resolve a LOCAL tmux slot without guessing among sibling conversations."""
     implied_repo, implied_slot = cfg.repo_of_dir(cwd)
     if repo and repo.isdigit() and slot is None:
@@ -6235,9 +6235,9 @@ def _app_select(cfg, rows, repo, slot, cwd):
         repo = implied_repo
         slot = slot or implied_slot
     if repo not in cfg.repos:
-        raise ValueError("name a registered repo: t app <repo> <slot>")
+        raise ValueError(f"name a registered repo: t {verb} <repo> <slot>")
     if slot and not slot.isdigit():
-        raise ValueError("slot must be a number: t app <repo> <slot>")
+        raise ValueError(f"slot must be a number: t {verb} <repo> <slot>")
     aliases = {k for k, d in cfg.repos.items() if d == cfg.repos[repo]}
     candidates = []
     for row in rows:
@@ -6250,8 +6250,13 @@ def _app_select(cfg, rows, repo, slot, cwd):
                          "check t ls -r, then t beam <repo> <slot> --here if it is remote")
     if len(candidates) != 1:
         choices = ", ".join(r["slot"] for r in candidates)
-        raise ValueError(f"choose a slot: t app {repo} <slot> ({choices})")
+        raise ValueError(f"choose a slot: t {verb} {repo} <slot> ({choices})")
     row = candidates[0]
+    return row
+
+
+def _app_select(cfg, rows, repo, slot, cwd):
+    row = _slot_select(cfg, rows, repo, slot, cwd, "app")
     if row["agent"] != "codex":
         raise ValueError(f"{row['slot']} runs {row['agent']}; the Codex app can resume "
                          "Codex conversations only (t open <repo> --codex starts one)")
@@ -6260,6 +6265,31 @@ def _app_select(cfg, rows, repo, slot, cwd):
         raise ValueError(f"{row['slot']} has no recorded Codex conversation; "
                          "send a message in the CLI first and check t doctor")
     return row
+
+
+def cmd_restart(cfg, args):
+    try:
+        row = _slot_select(cfg, _parse_rows(zsh_capture("_dev_session_rows")),
+                           args.repo, args.slot, os.getcwd(), "restart")
+        if row["agent"] not in ("codex", "claude") or not re.fullmatch(
+                r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", row["sid"]):
+            raise ValueError("the slot has no verified conversation; check t doctor")
+        if not os.path.isdir(row["cwd"]):
+            raise ValueError(f"the session's worktree is missing: {row['cwd']}")
+        parts = ["_t_restart_slot", "dev-" + row["slot"], row["cwd"], row["sid"],
+                 row["agent"], "dry-run" if args.dry_run else "restart"]
+        result = _run(["zsh", "-lic", ZSH_PRELUDE + shlex.join(parts)], timeout=30)
+        if result.stdout:
+            print(result.stdout, end="")
+        if result.stderr:
+            print(result.stderr, end="", file=sys.stderr)
+        if result.returncode == 0 and not args.dry_run:
+            repo, _, slot = row["slot"].rpartition("-")
+            print(f"Restarted the same conversation. Attach with: t open {repo} {slot}")
+        return result.returncode
+    except ValueError as e:
+        print(f"t restart: {e}", file=sys.stderr)
+        return 1
 
 
 def _app_link(sid, url=None, tab_id=None):
@@ -7858,6 +7888,18 @@ Run `t <verb> -h` for a verb's own flags.""")
     sp.add_argument("-y", "--yes", action="store_true", help="skip the 'Claude is live' confirm")
     sp.add_argument("-r", "--remote", action="store_true", help="kill it on its host instead")
 
+    sp = sub.add_parser("restart", help="restart a stuck CLI in the same slot and conversation",
+        description="Recover a local Codex or Claude tmux slot after a connection failure. "
+            "Saves pane text (including any visible unsent draft) privately, then sends TERM "
+            "to only the agent and waits for it to exit before resuming the exact conversation "
+            "in the same pane and worktree. Does not submit the saved draft. Refuses desktop "
+            "reservations and commands run inside the agent being restarted. Leaves the slot "
+            "detached unless already attached; use t open to attach. For a remote slot, run "
+            "t on <host> t restart <repo> <slot>.")
+    sp.add_argument("repo", nargs="?", help="registered repo; defaults to the cwd repo")
+    sp.add_argument("slot", nargs="?", help="local slot number; required if ambiguous")
+    sp.add_argument("--dry-run", action="store_true", help="validate and show the recovery without stopping anything")
+
     sp = sub.add_parser("push", help="push this session into a detached background tmux slot",
         description="Push the current Claude session into a detached background tmux slot — "
             "frees this terminal while the conversation keeps running. Inside Claude it "
@@ -8228,7 +8270,7 @@ IMPLEMENTED = {
     "checkout": cmd_checkout, "instructions": cmd_instructions,
     "install": cmd_install, "integrate": cmd_integrate,
     "permissions": cmd_permissions, "trust": cmd_trust,
-    "app": cmd_app,
+    "app": cmd_app, "restart": cmd_restart,
     "config": cmd_config,
     "update": cmd_update,
 }

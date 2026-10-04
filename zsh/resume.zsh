@@ -1193,6 +1193,87 @@ _claude_sessions_fzf() {
         --prompt="$fzf_prompt" --height=60% --reverse
 }
 
+# Explicit recovery of a stuck client. Keep the pane as a worktree reservation,
+# capture unsent visible text before signalling, and never force-respawn a live
+# pane. A per-slot lock prevents two simultaneous restarts from racing.
+_t_restart_slot() {
+  emulate -L zsh
+  local session="$1" dir="$2" sid="$3" agent="$4" mode="$5"
+  local pane cpid up attempt snapshot old_remain actual_dir
+  local cache="${XDG_CACHE_HOME:-$HOME/.cache}/t/restart" lock
+  # Do not reuse a process snapshot captured by another command in this shell.
+  local _DEV_PS_AT=0
+  [[ $agent == codex || $agent == claude ]] || return 1
+  [[ -d $dir ]] || { print -u2 -- 't restart: worktree is missing'; return 1; }
+  tmux has-session -t "=$session" 2>/dev/null || return 1
+  actual_dir=$(tmux display-message -p -t "=$session:" '#{session_path}')
+  [[ $actual_dir == $dir && $(_dev_agent_of_session "$session") == $agent &&
+     $(_dev_session_sid "$session" "$dir") == $sid ]] || {
+    print -u2 -- 't restart: the slot changed; inspect it and try again'; return 1
+  }
+  _dev_app_slot_reserved "$dir" && {
+    print -u2 -- 't restart: the desktop app owns this worktree; close and release it first'; return 1
+  }
+  pane=$(tmux display-message -p -t "=$session:" '#{pane_id}') || return 1
+  [[ $(tmux list-panes -s -t "=$session" -F '#{pane_id}') == $pane ]] || {
+    print -u2 -- 't restart: multiple panes in this slot; keep only the agent pane before restarting'; return 1
+  }
+  cpid=$(_dev_session_claude_pid "$session")
+  [[ $cpid == <-> || ( -z $cpid && $(tmux display-message -p -t "$pane" '#{pane_dead}') == 1 ) ]] || {
+    print -u2 -- 't restart: no live agent or exited pane to restart; inspect with t open'; return 1
+  }
+  up=$PPID
+  while [[ -n $up && $up != 0 && $up != 1 ]]; do
+    [[ $up == $cpid ]] && {
+      print -u2 -- 't restart: run from a separate terminal, outside the agent being restarted'; return 1
+    }
+    up=$(ps -o ppid= -p "$up" 2>/dev/null); up=${up//[[:space:]]/}
+  done
+  if [[ $mode == dry-run ]]; then
+    print -r -- "Would save pane text, stop $agent (pid $cpid), and resume $sid in $dir"
+    return 0
+  fi
+  ( umask 077; mkdir -p "$cache" ) || return 1
+  lock="$cache/$session.lock"
+  mkdir "$lock" 2>/dev/null || {
+    print -u2 -r -- "t restart: recovery already locked ($lock); if interrupted, inspect the slot before removing that empty lock directory"
+    return 1
+  }
+  {
+    snapshot=$(mktemp "$cache/$session.XXXXXXXX") || return 1
+    tmux capture-pane -p -J -S - -t "$pane" >| "$snapshot" || return 1
+    print -r -- "Saved pane text (including visible draft): $snapshot"
+    # Capture can take time: revalidate immediately before changing the pane.
+    _DEV_PS_AT=0
+    [[ $(_dev_session_claude_pid "$session") == $cpid &&
+       $(_dev_session_sid "$session" "$dir") == $sid &&
+       $(_dev_agent_of_session "$session") == $agent &&
+       $(tmux display-message -p -t "=$session:" '#{session_path}') == $dir &&
+       $(tmux list-panes -s -t "=$session" -F '#{pane_id}') == $pane ]] || {
+      print -u2 -- 't restart: the slot changed; nothing was stopped'; return 1
+    }
+    old_remain=$(tmux show-options -A -p -v -t "$pane" remain-on-exit) || return 1
+    tmux set-environment -t "=$session" CLAUDE_RESUME_ID "$sid" || return 1
+    tmux set-environment -t "=$session" DEV_AGENT "$agent" || return 1
+    tmux set-option -p -t "$pane" remain-on-exit on || return 1
+    if [[ -n $cpid ]]; then kill -TERM "$cpid" || return 1; fi
+    for attempt in {1..200}; do
+      if { [[ -z $cpid ]] || ! kill -0 "$cpid" 2>/dev/null; } &&
+         [[ $(tmux display-message -p -t "$pane" '#{pane_dead}') == 1 ]]; then
+        # No -k: tmux must refuse if anything is still running in this pane.
+        tmux respawn-pane -t "$pane" -c "$dir" "zsh -lic ${(q)$(_dev_agent_resume_cmd "$agent" "$sid")}" || return 1
+        tmux set-option -p -t "$pane" remain-on-exit "$old_remain"
+        return $?
+      fi
+      sleep 0.05
+    done
+    print -u2 -- 't restart: the old client or its pane has not exited; no second client was started. Inspect with t open.'
+    return 1
+  } always {
+    rmdir "$lock" 2>/dev/null
+  }
+}
+
 # _dev_resume_session <session> <dir> <session-id> — sibling of _dev_new_session:
 # create a detached, logged tmux session in <dir>, but RESUME an existing Claude
 # conversation (claude -r) rather than starting fresh on $DEV_BRANCH. Same name

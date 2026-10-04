@@ -376,7 +376,7 @@ _t_beam_xlate() {
 # key for `on`), and slot/flags after. Pulls live from the ${(k)DEV_REPOS} /
 # ${(k)REMOTE_HOSTS} arrays so it stays current with ${T_LOCAL_RC}.
 _t() {
-  local -a verbs=(update integrate doctor open app ls kill push pop resume beam read plan paste find on cursor setup config new checkout instructions install permissions trust)
+  local -a verbs=(update integrate doctor open app ls restart kill push pop resume beam read plan paste find on cursor setup config new checkout instructions install permissions trust)
   if (( CURRENT == 2 )); then
     _describe -t verbs 't verb' verbs
     return
@@ -389,6 +389,11 @@ _t() {
       elif (( CURRENT == 3 )); then _values 'repo' ${(k)DEV_REPOS}
       elif (( CURRENT == 4 )); then _message 'local slot number'
       else _values 'flag' --url --no-preview --plan --no-plan --reuse-window --dry-run -h --help; fi ;;
+    restart)
+      if [[ ${words[CURRENT]} == -* ]]; then _values 'flag' --dry-run -h --help
+      elif (( CURRENT == 3 )); then _values 'repo' ${(k)DEV_REPOS}
+      elif (( CURRENT == 4 )); then _message 'local slot number'
+      else _values 'flag' --dry-run -h --help; fi ;;
     cursor)
       if (( CURRENT == 3 )); then _values 'chat / action' ls resume -p --from --host
       else _values 'flag' --host --from -p --pick -a --attach -h --help; fi ;;
