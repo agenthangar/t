@@ -67,7 +67,7 @@ _dev_agent_of_session() {
     a=$(_dev_agent_of_comm "$a")
     [[ -n $a ]] && { print -r -- "$a"; return 0; }
   fi
-  a=$(tmux show-environment -t "$s" DEV_AGENT 2>/dev/null | cut -d= -f2)
+  a=$(tmux show-environment -t "=$s" DEV_AGENT 2>/dev/null | cut -d= -f2)
   _dev_agent_valid "$a" || a=claude
   print -r -- "$a"
 }
@@ -113,7 +113,7 @@ _dev_agent_at_welcome() {
   local dir sid
   case "$1" in
     codex)
-      dir=${3:-$(tmux display-message -p -t "$2" '#{session_path}' 2>/dev/null)}
+      dir=${3:-$(tmux display-message -p -t "=$2:" '#{session_path}' 2>/dev/null)}
       sid=$(_dev_session_sid "$2" "$dir")
       [[ -n $sid ]] && return 1
       [[ -z $(_codex_live_transcript "$dir" "$(_dev_session_claude_pid "$2")") ]] ;;

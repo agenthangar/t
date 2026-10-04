@@ -137,7 +137,7 @@ _t_resume() {
   # key one worktree), so a live slot is recognised however it was named.
   local -A live; local s p
   for s in ${(f)"$(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep '^dev-')"}; do
-    p=$(tmux display-message -p -t "$s" '#{session_path}' 2>/dev/null)
+    p=$(tmux display-message -p -t "=$s:" '#{session_path}' 2>/dev/null)
     [[ -n $p ]] && live[${p:A}]=$s
   done
 
@@ -371,10 +371,10 @@ _t_resume() {
       _stale=
       for _ok in ${(k)DEV_REPOS}; do
         [[ ${DEV_REPOS[$_ok]} != $_rdir ]] && continue
-        tmux has-session -t "dev-${_ok}-${n}" 2>/dev/null && { _stale="dev-${_ok}-${n}"; break; }
+        tmux has-session -t "=dev-${_ok}-${n}:" 2>/dev/null && { _stale="dev-${_ok}-${n}"; break; }
       done
       if [[ -n $_stale ]]; then
-        stale_path=$(tmux display-message -p -t "$_stale" '#{session_path}' 2>/dev/null)
+        stale_path=$(tmux display-message -p -t "=$_stale:" '#{session_path}' 2>/dev/null)
         if [[ -n $slot ]]; then
           echo "Slot $n is live ($_stale${stale_path:+ in $stale_path}) — attaching (resume only revives dead slots)."
           _t_dev "$repo" "$n"
@@ -713,7 +713,7 @@ _t_resume() {
         && echo "(tabs need a local Terminal.app/iTerm2 GUI; Terminal.app also needs Accessibility — System Settings → Privacy & Security)" >&2
     fi
     if [[ -z $TMUX && -t 0 && -t 1 ]]; then
-      tmux attach-session -t "dev-${mp_first_repo}-${mp_first_slot}"
+      tmux attach-session -t "=dev-${mp_first_repo}-${mp_first_slot}:"
     else
       _dev_open_tab "t open $mp_first_repo $mp_first_slot" \
         || echo "Attach with: t open $mp_first_repo $mp_first_slot"
@@ -785,7 +785,7 @@ _t_resume() {
   echo "Resuming ${sid:0:8} in $session ($cwd)"
   _dev_resume_session "$session" "$cwd" "$sid" "$agent"
   if [[ -z $TMUX && -t 0 && -t 1 ]]; then
-    tmux attach-session -t "$session"
+    tmux attach-session -t "=$session:"
   else
     echo "Attach with: t open $repo $slot"
   fi
@@ -1223,7 +1223,7 @@ _t_restart_slot() {
   local _DEV_PS_AT=0
   [[ $agent == codex || $agent == claude ]] || return 1
   [[ -d $dir ]] || { print -u2 -- 't restart: worktree is missing'; return 1; }
-  tmux has-session -t "=$session" 2>/dev/null || return 1
+  tmux has-session -t "=$session:" 2>/dev/null || return 1
   actual_dir=$(tmux display-message -p -t "=$session:" '#{session_path}')
   [[ $actual_dir == $dir && $(_dev_agent_of_session "$session") == $agent &&
      $(_dev_session_sid "$session" "$dir") == $sid ]] || {
@@ -1376,16 +1376,16 @@ _dev_resume_session() {
   # No fixed geometry / window-size latest: fit the active client so attaching from
   # a phone doesn't pan a too-wide window (see _dev_new_session for the full why).
   tmux new-session -d -s "$session" -c "$dir"
-  tmux set-option -t "$session" window-size latest 2>/dev/null
-  tmux pipe-pane -t "$session" -o "cat >> $logfile"
+  tmux set-option -t "=$session:" window-size latest 2>/dev/null
+  tmux pipe-pane -t "=$session:" -o "cat >> $logfile"
   # Record the resumed id on the session so `tpop` can pull the exact same
   # conversation back to the foreground (it also falls back to the dir's newest
   # transcript, but this is the precise signal when we know it).
-  tmux set-environment -t "$session" CLAUDE_RESUME_ID "$sid"
-  tmux set-environment -t "$session" DEV_AGENT "$agent"
+  tmux set-environment -t "=$session" CLAUDE_RESUME_ID "$sid"
+  tmux set-environment -t "=$session" DEV_AGENT "$agent"
   # `; exit` so quitting Claude tears the session down rather than leaving an idle
   # shell (see _dev_new_session for the full rationale).
-  tmux send-keys -t "$session" "$(_dev_agent_resume_cmd "$agent" "$sid"); exit" Enter
+  tmux send-keys -t "=$session:" "$(_dev_agent_resume_cmd "$agent" "$sid"); exit" Enter
   _dev_recovery_watch "$session"
 }
 
@@ -1429,14 +1429,14 @@ _dev_slot_for_cwd() {
   # slot is still ours to claim.
   if [[ -n $slot ]]; then
     local existing_path
-    existing_path=$(tmux display-message -p -t "dev-${match}-${slot}" '#{session_path}' 2>/dev/null)
+    existing_path=$(tmux display-message -p -t "=dev-${match}-${slot}:" '#{session_path}' 2>/dev/null)
     [[ -n $existing_path && ${existing_path:A} == ${cwd:A} ]] && return 1
     print -r -- "$match $slot"; return 0
   fi
   # Else next free slot: first dev-<repo>-<n> with no running session (mirrors `dev`).
   local n=1
   while (( n <= 20 )); do
-    tmux has-session -t "dev-${match}-${n}" 2>/dev/null || { print -r -- "$match $n"; return 0; }
+    tmux has-session -t "=dev-${match}-${n}:" 2>/dev/null || { print -r -- "$match $n"; return 0; }
     (( n++ ))
   done
   return 1
@@ -1480,14 +1480,14 @@ _dev_agent_wrap() {
         local -a f=("${(@ps:\t:)rest}")
         target=$f[1]; cwd=$f[2]; sid=$f[3]; sagent=${f[4]:-claude}
         _dev_agent_valid "$sagent" || sagent=claude
-        tmux has-session -t "$target" 2>/dev/null || _dev_resume_session "$target" "$cwd" "$sid" "$sagent"
+        tmux has-session -t "=$target:" 2>/dev/null || _dev_resume_session "$target" "$cwd" "$sid" "$sagent"
         ;;
       ATTACH) target="$rest" ;;
       *)      target="$payload" ;;   # legacy: whole line is a bare session name
     esac
-    if [[ -n "$target" ]] && tmux has-session -t "$target" 2>/dev/null; then
+    if [[ -n "$target" ]] && tmux has-session -t "=$target:" 2>/dev/null; then
       echo "Attaching to backgrounded $target…"
-      exec tmux attach -t "$target"
+      exec tmux attach -t "=$target:"
     fi
   fi
   return $rc
@@ -1549,7 +1549,7 @@ _t_push() {
   # CLAUDE_RESUME_ID on each session, so we match on that.
   local repo slot session existing s
   for s in ${(f)"$(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep '^dev-')"}; do
-    if [[ "$(tmux show-environment -t "$s" CLAUDE_RESUME_ID 2>/dev/null | cut -d= -f2)" == "$sid" ]]; then
+    if [[ "$(tmux show-environment -t "=$s" CLAUDE_RESUME_ID 2>/dev/null | cut -d= -f2)" == "$sid" ]]; then
       existing="$s"; break
     fi
   done
@@ -1581,7 +1581,7 @@ _t_push() {
 
   if [[ -n $existing ]]; then
     echo "This conversation is already backgrounded in $session."
-  elif tmux has-session -t "$session" 2>/dev/null; then
+  elif tmux has-session -t "=$session:" 2>/dev/null; then
     # _dev_slot_for_cwd picks a free slot, so this only trips on a race.
     echo "$session already exists for another session — ${attach_hint#Attach: }"
     return 1
@@ -1597,7 +1597,7 @@ _t_push() {
     # Plain-shell picker mode: we own a real terminal and the picked session
     # isn't live, so spawn (above) + attach straight in. No overlap to worry about.
     echo "$attach_hint"
-    tmux attach-session -t "$session"
+    tmux attach-session -t "=$session:"
   elif [[ -n $CLAUDE_TPUSH_ATTACH ]]; then
     # Inside Claude via the claude() wrapper: can't attach (or safely spawn) from
     # this Bash subprocess, so hand the wrapper the intent. ATTACH for an already
@@ -1665,15 +1665,15 @@ _t_pop() {
       local n=1 a
       while (( n <= 20 )); do
         for a in $_palias; do
-          tmux has-session -t "dev-${a}-${n}" 2>/dev/null && { repo=$a; slot=$n; break 2; }
+          tmux has-session -t "=dev-${a}-${n}:" 2>/dev/null && { repo=$a; slot=$n; break 2; }
         done
         (( n++ ))
       done
-    elif (( ${#_palias} > 1 )) && ! tmux has-session -t "dev-${repo}-${slot}" 2>/dev/null; then
+    elif (( ${#_palias} > 1 )) && ! tmux has-session -t "=dev-${repo}-${slot}:" 2>/dev/null; then
       local a
       for a in $_palias; do
         [[ $a == $repo ]] && continue
-        tmux has-session -t "dev-${a}-${slot}" 2>/dev/null && { repo=$a; break; }
+        tmux has-session -t "=dev-${a}-${slot}:" 2>/dev/null && { repo=$a; break; }
       done
     fi
     session="dev-${repo}-${slot}"
@@ -1682,7 +1682,7 @@ _t_pop() {
     # repo dir from _dev_cwd_repo_dir so a subdir works too, else $PWD itself)
     local s d scope; scope=$(_dev_cwd_repo_dir); scope=${scope:-$PWD}
     for s in ${(f)"$(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep '^dev-')"}; do
-      d=$(tmux display-message -p -t "$s" '#{session_path}')
+      d=$(tmux display-message -p -t "=$s:" '#{session_path}')
       [[ $d == $scope || $d == $scope/* ]] && { session="$s"; break; }
     done
     if [[ -z $session ]]; then
@@ -1695,7 +1695,7 @@ _t_pop() {
     fi
   fi
 
-  if ! tmux has-session -t "$session" 2>/dev/null; then
+  if ! tmux has-session -t "=$session:" 2>/dev/null; then
     # Not live locally — the slot may be on a remote host. Delegate the pop to its host
     # over ssh -t (shared _dev_session_remote_fallback): it un-tmuxes THERE and you drive
     # it through the ssh TTY — the same semantics as a local pop (closing ssh ends the
@@ -1715,9 +1715,9 @@ _t_pop() {
   # slots share one repo dir (it returns whichever sibling wrote last); the hook
   # is what makes targeting a specific slot reliable.
   local dir sid agent
-  dir=$(tmux display-message -p -t "$session" '#{session_path}')
+  dir=$(tmux display-message -p -t "=$session:" '#{session_path}')
   agent=$(_dev_agent_of_session "$session")
-  sid=$(tmux show-environment -t "$session" CLAUDE_RESUME_ID 2>/dev/null | cut -d= -f2)
+  sid=$(tmux show-environment -t "=$session" CLAUDE_RESUME_ID 2>/dev/null | cut -d= -f2)
   [[ -n $sid ]] || sid=$(_dev_agent_newest_sid "$agent" "$dir")   # newest conversation in the dir, per agent
   [[ -n $sid ]] || { echo "Couldn't find a session id for $session ($dir)."; return 1; }
 
@@ -1730,9 +1730,9 @@ _t_pop() {
   # the old claude needs a beat to trap it, flush, and exit — racing it here was
   # the "popped session stops updating" bug.
   local pane_pid cpid
-  pane_pid=$(tmux list-panes -t "$session" -F '#{pane_pid}' 2>/dev/null | head -1)
+  pane_pid=$(tmux list-panes -t "=$session:" -F '#{pane_pid}' 2>/dev/null | head -1)
   [[ -n $pane_pid ]] && cpid=$(pgrep -P "$pane_pid" 2>/dev/null | head -1)   # claude = pane shell's child
-  tmux kill-session -t "$session"
+  tmux kill-session -t "=$session:"
   if [[ -n $cpid ]]; then
     local n=0
     while kill -0 "$cpid" 2>/dev/null && (( n++ < 100 )); do sleep 0.05; done   # wait ≤5s for it to die
@@ -1848,7 +1848,7 @@ _tbeam_kill_owner() {
   for s in ${(f)"$(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep '^dev-')"}; do
     slot_sid=$(_dev_session_sid "$s")
     if [[ "$slot_sid" == "$sid" ]]; then
-      tmux kill-session -t "$s" 2>/dev/null && { print -r -- "$s"; return 0; }
+      tmux kill-session -t "=$s:" 2>/dev/null && { print -r -- "$s"; return 0; }
     fi
   done
   return 1
@@ -1949,7 +1949,7 @@ _tbeam_land() {
   session="dev-${repo}-${slot}"
   _dev_resume_session "$session" "$land" "$TB_SID" "$agent"
   if [[ -n $TB_ATTACH ]]; then
-    exec tmux attach -t "$session"              # drop the ssh caller straight in
+    exec tmux attach -t "=$session:"              # drop the ssh caller straight in
   fi
   print -r -- "$session"                        # last line: caller reads it for the hint
 }
@@ -2103,17 +2103,17 @@ _t_beam() {
     if [[ -z $slot ]]; then                         # first existing slot for repo
       local n=1
       while (( n <= 20 )); do
-        tmux has-session -t "dev-${repo_arg}-${n}" 2>/dev/null && { slot=$n; break; }
+        tmux has-session -t "=dev-${repo_arg}-${n}:" 2>/dev/null && { slot=$n; break; }
         (( n++ ))
       done
     fi
     local session="dev-${repo_arg}-${slot}"
-    tmux has-session -t "$session" 2>/dev/null || { echo "tbeam: no such session: $session" >&2; return 1; }
+    tmux has-session -t "=$session:" 2>/dev/null || { echo "tbeam: no such session: $session" >&2; return 1; }
     # Authoritative id (registry-first, stamp validated against the slot's repo) —
     # must match _tbeam_kill_owner's resolution, or a stale cross-repo stamp on the
     # origin slot would beam transcript X while the slot is actually running Y,
     # leaving the live slot un-killed and two owners on Y after the remote resumes.
-    local dir; dir=$(tmux display-message -p -t "$session" '#{session_path}' 2>/dev/null)
+    local dir; dir=$(tmux display-message -p -t "=$session:" '#{session_path}' 2>/dev/null)
     agent=$(_dev_agent_of_session "$session")
     sid=$(_dev_session_sid "$session" "$dir")
     [[ -n $sid ]] || sid=$(_dev_agent_newest_sid "$agent" "$dir")   # pre-hook fallback: newest conversation in the dir

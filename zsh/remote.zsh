@@ -112,7 +112,7 @@ _dev_local_slot_live() {
   local repo="$1" slot="$2"
   [[ -n $repo ]] || return 1
   if [[ -n $slot && $slot != new && $slot != fg ]]; then
-    tmux has-session -t "dev-${repo}-${slot}" 2>/dev/null
+    tmux has-session -t "=dev-${repo}-${slot}:" 2>/dev/null
   else
     tmux list-sessions -F '#{session_name}' 2>/dev/null | grep -q "^dev-${repo}-"
   fi
@@ -517,7 +517,7 @@ _dev_pull() {
   # If this exact id is already running in a local dev slot, reuse it (one owner).
   local existing s
   for s in ${(f)"$(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep '^dev-')"}; do
-    if [[ "$(tmux show-environment -t "$s" CLAUDE_RESUME_ID 2>/dev/null | cut -d= -f2)" == "$sid" ]]; then
+    if [[ "$(tmux show-environment -t "=$s" CLAUDE_RESUME_ID 2>/dev/null | cut -d= -f2)" == "$sid" ]]; then
       existing="$s"; break
     fi
   done
@@ -526,7 +526,7 @@ _dev_pull() {
     # Landed HERE: clear any stale "<host>: …" title a prior remote attach left set
     # (the OSC stops Terminal auto-titling, and tmux/claude below may not overwrite it).
     _term_title ""
-    [[ -n $existing ]] && { echo "dev: already running locally in $existing — attaching."; tmux attach-session -t "$existing"; return; }
+    [[ -n $existing ]] && { echo "dev: already running locally in $existing — attaching."; tmux attach-session -t "=$existing:"; return; }
     echo "✓ Resuming ${sid[1,8]}… here"
     if [[ $agent == codex ]]; then ( cd "$cwd" && exec codex resume "$sid" ); else ( cd "$cwd" && exec claude -r "$sid" ); fi
     return
@@ -547,7 +547,7 @@ _dev_pull() {
     # stale "<host>: …" a prior remote attach set — tmux (set-titles off) swallows OSC
     # from inside the pane, so this pre-attach write is the title that sticks.
     _term_title "$session"
-    tmux attach-session -t "$session"
+    tmux attach-session -t "=$session:"
   else
     echo "  Attach: tmux attach -t $session"
   fi
@@ -590,13 +590,13 @@ _t_plan() {
       if [[ -z "$slot" ]]; then                    # first existing slot for repo
         local n=1
         while (( n <= 20 )); do
-          tmux has-session -t "dev-${repo}-${n}" 2>/dev/null && { slot=$n; break; }
+          tmux has-session -t "=dev-${repo}-${n}:" 2>/dev/null && { slot=$n; break; }
           (( n++ ))
         done
       fi
       session="dev-${repo}-${slot}"
     fi
-    if ! tmux has-session -t "$session" 2>/dev/null; then
+    if ! tmux has-session -t "=$session:" 2>/dev/null; then
       # Not live here — maybe beamed to / started on another host. Delegate the whole
       # `t plan` over there (shared _dev_session_remote_fallback): the plan .md lives in
       # that host's ~/.claude/plans (csync syncs transcripts, not plan files), so it
@@ -608,9 +608,9 @@ _t_plan() {
       echo "t plan: $session runs codex, which keeps no plan files (~/.claude/plans is Claude's)." >&2
       return 1
     fi
-    sid=$(tmux show-environment -t "$session" CLAUDE_RESUME_ID 2>/dev/null | cut -d= -f2)
+    sid=$(tmux show-environment -t "=$session" CLAUDE_RESUME_ID 2>/dev/null | cut -d= -f2)
     if [[ -z $sid ]]; then
-      local dir; dir=$(tmux display-message -p -t "$session" '#{session_path}')
+      local dir; dir=$(tmux display-message -p -t "=$session:" '#{session_path}')
       local -a tx=( "$HOME/.claude/projects/${dir//[^A-Za-z0-9]/-}"/*.jsonl(Nom[1]) )
       sid=${${tx[1]:t}%.jsonl}
     fi

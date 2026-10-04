@@ -8,7 +8,7 @@ _tpaste_claude_ready() {
   # matching Claude's TUI text, which changes between versions. To gate on the
   # actual prompt instead, swap in a `tmux capture-pane -p` string match.
   local cmd
-  cmd=$(tmux display-message -p -t "$session" '#{pane_current_command}' 2>/dev/null)
+  cmd=$(tmux display-message -p -t "=$session:" '#{pane_current_command}' 2>/dev/null)
   [[ $cmd == node ]] && return 0
   _dev_agent_is_proc "$cmd" && return 0
   return 1
@@ -104,8 +104,8 @@ _t_paste() {
   local session="dev-${repo}-${slot}"
 
   # existing session → Claude is already live, so paste straight in (no attach)
-  if tmux has-session -t "$session" 2>/dev/null; then
-    tmux send-keys -t "$session" "$src"
+  if tmux has-session -t "=$session:" 2>/dev/null; then
+    tmux send-keys -t "=$session:" "$src"
     echo "Pasted path into $session — press Enter in that session to send to Claude."
     return
   fi
@@ -140,9 +140,9 @@ _t_paste() {
   # and keystrokes sent into that gap get dropped
   sleep 1
 
-  tmux send-keys -t "$session" "$src"
+  tmux send-keys -t "=$session:" "$src"
   echo "Queued path in $session — attaching; press Enter to send to Claude."
-  tmux attach-session -t "$session"
+  tmux attach-session -t "=$session:"
 }
 
 # ─── one-shot process/pane snapshot (the scan fast path) ─────────────────────────
@@ -227,7 +227,7 @@ _dev_session_has_claude() {
     done
     return 1
   fi
-  for pane_pid in ${(f)"$(tmux list-panes -t "$s" -F '#{pane_pid}' 2>/dev/null)"}; do
+  for pane_pid in ${(f)"$(tmux list-panes -t "=$s:" -F '#{pane_pid}' 2>/dev/null)"}; do
     comm=$(ps -o comm= -p "$pane_pid" 2>/dev/null)
     _dev_agent_is_proc "$comm" && return 0
     for kid in ${(f)"$(pgrep -P "$pane_pid" 2>/dev/null)"}; do
@@ -262,7 +262,7 @@ _dev_pid_tree_has_claude() {
 # "dev ls says cfp-2 is active but it isn't" false positive — an old-style plain
 # `claude` with no transcript to map, so pane content is the only signal).
 _dev_session_at_welcome() {
-  tmux capture-pane -t "$1" -p 2>/dev/null | grep -q 'Welcome back'
+  tmux capture-pane -t "=$1:" -p 2>/dev/null | grep -q 'Welcome back'
 }
 
 # _dev_session_claude_pid <session> — print the pid of the live `claude` in the
@@ -290,7 +290,7 @@ _dev_session_claude_pid() {
     _DEV_SESS_PID[$s]='-'
     return 1
   fi
-  for pane_pid in ${(f)"$(tmux list-panes -t "$s" -F '#{pane_pid}' 2>/dev/null)"}; do
+  for pane_pid in ${(f)"$(tmux list-panes -t "=$s:" -F '#{pane_pid}' 2>/dev/null)"}; do
     comm=$(ps -o comm= -p "$pane_pid" 2>/dev/null)
     _dev_agent_is_proc "$comm" && { print -r -- "$pane_pid"; return 0; }
     for kid in ${(f)"$(pgrep -P "$pane_pid" 2>/dev/null)"}; do
@@ -554,7 +554,7 @@ _dev_summary_for_pid() {
 _dev_session_sid() {
   setopt local_options null_glob bare_glob_qual
   local session="$1" dir="${2:-}" sid cpid reg line rcwd agent
-  [[ -n $dir ]] || dir=$(tmux display-message -p -t "$session" '#{session_path}' 2>/dev/null)
+  [[ -n $dir ]] || dir=$(tmux display-message -p -t "=$session:" '#{session_path}' 2>/dev/null)
   cpid=$(_dev_session_claude_pid "$session")
   reg="${XDG_CACHE_HOME:-$HOME/.cache}/claude-sessions/$cpid"
   if [[ -n $cpid && -r $reg ]]; then
@@ -562,7 +562,7 @@ _dev_session_sid() {
     [[ -n $sid && $rcwd == $dir ]] && { print -r -- "$sid"; return 0; }
     sid=
   fi
-  sid=$(tmux show-environment -t "$session" CLAUDE_RESUME_ID 2>/dev/null | cut -d= -f2)
+  sid=$(tmux show-environment -t "=$session" CLAUDE_RESUME_ID 2>/dev/null | cut -d= -f2)
   agent=$(_dev_agent_of_session "$session")
   # per agent: claude's transcript must sit in THIS slot's project dir; a codex
   # rollout is date-keyed, so its existence (hook cache / sqlite / glob) is the test
@@ -890,12 +890,12 @@ _dev_attach_fg() {
   if [[ ! -t 1 || -n $CLAUDE_CODE_SESSION_ID ]]; then
     echo "  Attach: tmux attach -t $tsess"       # no TTY, or we are inside an agent
   elif [[ -n $TMUX ]]; then
-    tmux switch-client -t "$tsess"               # tmux refuses a nested attach
+    tmux switch-client -t "=$tsess:"               # tmux refuses a nested attach
   else
     # Title before attaching: tmux (set-titles off) swallows OSC from inside the pane,
     # so this pre-attach write is the one that sticks (same reason as the slot landing).
     _term_title "$tsess"
-    tmux attach-session -t "$tsess"
+    tmux attach-session -t "=$tsess:"
   fi
   return 0
 }
@@ -1041,7 +1041,7 @@ _t_infer_repo() {
   local pat s p
   for pat in $pats; do
     for s in ${(f)"$(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep -- "^dev-.*-${pat}\$")"}; do
-      p=$(tmux display-message -p -t "$s" '#{session_path}' 2>/dev/null)
+      p=$(tmux display-message -p -t "=$s:" '#{session_path}' 2>/dev/null)
       if _dev_dir_in_scope "$p" "$dir"; then           # exact, subdir, or a worktree of the repo
         s=${s#dev-}; print -r -- "${s%-*}"; return 0   # last dash splits off the slot
       fi
@@ -1067,7 +1067,7 @@ _dev_list() {
     local kept=() _s _d
     while IFS= read -r _s; do
       [[ -n $_s ]] || continue
-      _d=$(tmux display-message -p -t "$_s" '#{session_path}' 2>/dev/null)
+      _d=$(tmux display-message -p -t "=$_s:" '#{session_path}' 2>/dev/null)
       _dev_dir_in_scope "$_d" "$scope" && kept+=("$_s")
     done <<< "$names"
     names=${(F)kept}
@@ -1099,8 +1099,8 @@ _dev_list() {
   while IFS= read -r s; do
     [[ -n $s ]] || continue
     short="${s#dev-}"
-    state=$(tmux display-message -p -t "$s" '#{?session_attached,attached,detached}' 2>/dev/null)
-    dir=$(tmux display-message -p -t "$s" '#{session_path}' 2>/dev/null)
+    state=$(tmux display-message -p -t "=$s:" '#{?session_attached,attached,detached}' 2>/dev/null)
+    dir=$(tmux display-message -p -t "=$s:" '#{session_path}' 2>/dev/null)
     if [[ $state == attached ]]; then amark="${g}●${r0}"; else amark='○'; fi
     if ! _dev_session_has_claude "$s"; then
       cmark=' '; summary='(no active session)'
@@ -1392,7 +1392,7 @@ _dev_kill_one() {
   # "command not found". Pinned by test_zshrc_never_declares_a_tied_special_….
   local wt; wt=$(tmux display-message -p -t "=$session:" '#{session_path}' 2>/dev/null)
   local _kerr
-  if _kerr=$(tmux kill-session -t "=$session" 2>&1); then echo "Killed $session"
+  if _kerr=$(tmux kill-session -t "=$session:" 2>&1); then echo "Killed $session"
   else echo "t kill: tmux kill-session $session failed${_kerr:+: $_kerr}" >&2; return 1; fi
   # A slot's dev server is detached from its tmux session and would outlive it,
   # serving the old code on the slot's port. Only a per-session worktree is swept
@@ -1519,7 +1519,7 @@ _dev_kill_fg() {
     fi
     tsess=$(_dev_tmux_session_of_pid "$pid")
     if [[ -n $tsess ]]; then
-      tmux kill-session -t "=$tsess" 2>/dev/null && { echo "Killed $label (tmux session $tsess)"; killed=1; }
+      tmux kill-session -t "=$tsess:" 2>/dev/null && { echo "Killed $label (tmux session $tsess)"; killed=1; }
     else
       kill -TERM "$pid" 2>/dev/null && { echo "Killed $label (foreground pid $pid)"; killed=1; }
     fi
@@ -1562,7 +1562,7 @@ _dev_kill() {
     if [[ -n $slot && $slot != all ]]; then
       for _kk in ${(k)DEV_REPOS}; do
         [[ $_kk == $repo || ${DEV_REPOS[$_kk]} != $_kdir ]] && continue
-        tmux has-session -t "=dev-${_kk}-${slot}" 2>/dev/null && { repo=$_kk; _repos=( $_kk ); break; }
+        tmux has-session -t "=dev-${_kk}-${slot}:" 2>/dev/null && { repo=$_kk; _repos=( $_kk ); break; }
       done
     else
       for _kk in ${(k)DEV_REPOS}; do
@@ -1624,7 +1624,7 @@ _dev_kill() {
   fi
 
   local session="dev-${repo}-${slot}"
-  if ! tmux has-session -t "=$session" 2>/dev/null; then
+  if ! tmux has-session -t "=$session:" 2>/dev/null; then
     # Live on another host? Tear it down there (shared fallback; remote `t kill` still
     # confirms unless -y). Same remote detection pop/plan get; -r forces it explicitly.
     _dev_session_remote_fallback "$session" kill ${force:+-y} && return
@@ -1669,21 +1669,22 @@ _dev_new_session() {
   # overflowed the screen. window-size latest makes the window track whichever
   # client is active, so it fits the phone on attach. (latest is tmux's default,
   # but we set it explicitly so it holds on machines with a different default.)
+  # The trailing colon keeps dots in repo names out of tmux window/pane parsing.
   tmux new-session -d -s "$session" -c "$dir"
-  tmux set-option -t "$session" window-size latest 2>/dev/null
-  tmux pipe-pane -t "$session" -o "cat >> $logfile"
+  tmux set-option -t "=$session:" window-size latest 2>/dev/null
+  tmux pipe-pane -t "=$session:" -o "cat >> $logfile"
   # Which agent occupies the slot, for every later reader (_dev_agent_of_session). Only
   # claude takes a pre-assigned id; a codex slot is stamped by its SessionStart hook once
   # codex has minted one (there is no `codex --session-id`).
-  tmux set-environment -t "$session" DEV_AGENT "$agent"
-  [[ $agent == claude ]] && tmux set-environment -t "$session" CLAUDE_RESUME_ID "$sid"
+  tmux set-environment -t "=$session" DEV_AGENT "$agent"
+  [[ $agent == claude ]] && tmux set-environment -t "=$session" CLAUDE_RESUME_ID "$sid"
   # `; exit` so quitting Claude closes the pane's shell and tears down the
   # (single-window) tmux session instead of leaving an idle prompt behind. Fires
   # on any exit (clean or crash); crash output survives in the pipe-pane logfile
   # (`t read`). `t pop` kill-sessions the slot itself, so the exit is moot there.
   local prep="_dev_repo_prepare ${(q)branch}; "
   [[ -n $skip_prepare ]] && prep=    # worktree mode: <dir> is already on its branch
-  tmux send-keys -t "$session" "${prep}$(_dev_agent_new_cmd "$agent" "$sid"); exit" Enter
+  tmux send-keys -t "=$session:" "${prep}$(_dev_agent_new_cmd "$agent" "$sid"); exit" Enter
   _dev_recovery_watch "$session"
 }
 
@@ -1847,11 +1848,11 @@ _t_dev() {
   # either ssh to a remote slot of the same number or mint a duplicate local
   # `dev-dotfiles-2`, violating the one-live-owner invariant for the slot.
   if [[ -n $slot && $slot != new && $slot != fg && -n ${DEV_REPOS[$repo]:-} ]] \
-     && ! tmux has-session -t "dev-${repo}-${slot}" 2>/dev/null; then
+     && ! tmux has-session -t "=dev-${repo}-${slot}:" 2>/dev/null; then
     local _odir=${DEV_REPOS[$repo]} _ok
     for _ok in ${(k)DEV_REPOS}; do
       [[ $_ok == $repo || ${DEV_REPOS[$_ok]} != $_odir ]] && continue
-      tmux has-session -t "dev-${_ok}-${slot}" 2>/dev/null && { repo=$_ok; break; }
+      tmux has-session -t "=dev-${_ok}-${slot}:" 2>/dev/null && { repo=$_ok; break; }
     done
   fi
 
@@ -1884,7 +1885,7 @@ _t_dev() {
   # An explicit foreground slot must respect desktop ownership before the
   # no-tmux branch, which otherwise bypasses the ordinary slot preflight.
   if [[ -n $no_tmux && $slot == <-> ]] && (( ${#REMOTE_HOSTS} )) \
-     && ! tmux has-session -t "=dev-${repo}-${slot}" 2>/dev/null; then
+     && ! tmux has-session -t "=dev-${repo}-${slot}:" 2>/dev/null; then
     local app_owner; app_owner=$(_dev_remote_app_owner "$repo" "$slot")
     if [[ -n $app_owner ]]; then
       print -u2 -- "t open: $repo $slot is reserved by the Codex desktop app on $app_owner; close it there and release the reservation before opening here"
@@ -1899,7 +1900,7 @@ _t_dev() {
   # `new`, or that slot doesn't exist yet) start a FRESH claude inline after the
   # branch dance — slot is a tmux concept, so the fresh path has none.
   if [[ -n "$no_tmux" ]]; then
-    if [[ -n "$slot" && "$slot" != new ]] && tmux has-session -t "dev-${repo}-${slot}" 2>/dev/null; then
+    if [[ -n "$slot" && "$slot" != new ]] && tmux has-session -t "=dev-${repo}-${slot}:" 2>/dev/null; then
       _t_pop "$repo" "$slot"
       return
     fi
@@ -1971,9 +1972,9 @@ _t_dev() {
     local n=1 free=
     while (( n <= 20 )); do
       local sname="dev-${repo}-${n}"
-      if ! tmux has-session -t "$sname" 2>/dev/null; then
+      if ! tmux has-session -t "=$sname:" 2>/dev/null; then
         [[ -z $free ]] && _dev_slot_fresh "$repo" "$n" && free=$n  # lowest fresh slot → fallback
-      elif ! tmux list-clients -t "$sname" 2>/dev/null | grep -q .; then
+      elif ! tmux list-clients -t "=$sname:" 2>/dev/null | grep -q .; then
         slot=$n; break                                            # existing + unattached → reattach (wins)
       fi
       (( n++ ))
@@ -1985,8 +1986,8 @@ _t_dev() {
         # nothing fresh in 1..20 → keep scanning unbounded, still preferring an
         # existing-but-unattached session above 20 over a fresh slot.
         while ! _dev_slot_fresh "$repo" "$n"; do
-          if tmux has-session -t "dev-${repo}-${n}" 2>/dev/null \
-             && ! tmux list-clients -t "dev-${repo}-${n}" 2>/dev/null | grep -q .; then
+          if tmux has-session -t "=dev-${repo}-${n}:" 2>/dev/null \
+             && ! tmux list-clients -t "=dev-${repo}-${n}:" 2>/dev/null | grep -q .; then
             slot=$n; break
           fi
           (( n++ ))
@@ -2001,7 +2002,7 @@ _t_dev() {
   # Remote Codex desktop workspaces own their numbered slot without tmux. The
   # attach resolver deliberately excludes them, so check their reservation before
   # creating a local CLI on the same worktree/branch.
-  if ! tmux has-session -t "=$session" 2>/dev/null && (( ${#REMOTE_HOSTS} )); then
+  if ! tmux has-session -t "=$session:" 2>/dev/null && (( ${#REMOTE_HOSTS} )); then
     local app_owner; app_owner=$(_dev_remote_app_owner "$repo" "$slot")
     if [[ -n $app_owner ]]; then
       print -u2 -- "t open: $repo $slot is reserved by the Codex desktop app on $app_owner; close it there and release the reservation before opening here"
@@ -2013,7 +2014,7 @@ _t_dev() {
   local logfile="$logdir/${session}.log"
   mkdir -p "$logdir"
 
-  if tmux has-session -t "$session" 2>/dev/null; then
+  if tmux has-session -t "=$session:" 2>/dev/null; then
     local live_agent; live_agent=$(_dev_agent_of_session "$session")
     if [[ -n $agent_over && $agent_over != $live_agent ]]; then
       echo "Reattaching $session (it is live as $live_agent — --$agent_over applies to a fresh slot only)"
@@ -2021,9 +2022,9 @@ _t_dev() {
       echo "Reattaching $session"
     fi
     # resume logging if it stopped (e.g. after server restart)
-    tmux pipe-pane -t "$session" -o "cat >> $logfile"
+    tmux pipe-pane -t "=$session:" -o "cat >> $logfile"
     _dev_recovery_watch "$session"
-    tmux attach-session -t "$session"
+    tmux attach-session -t "=$session:"
   else
     # Worktree mode: this slot gets its OWN worktree on dev/<basename>-<slot> off
     # main, so it shares no tree with siblings. _dev_worktree_create is idempotent —
@@ -2040,7 +2041,7 @@ _t_dev() {
     local agent_note=; [[ $agent != claude ]] && agent_note=" · $agent"
     echo "Starting $session in $dir$agent_note (logging to $logfile)"
     _dev_new_session "$session" "$dir" "$branch" "$skip_prepare" "$agent"
-    tmux attach-session -t "$session"
+    tmux attach-session -t "=$session:"
   fi
 }
 

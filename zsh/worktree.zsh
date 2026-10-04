@@ -210,7 +210,7 @@ _dev_worktree_drop_remote() {
 # there is fresh the moment its tmux name is free.
 _dev_slot_fresh() {
   local repo="$1" n="$2"
-  tmux has-session -t "dev-${repo}-${n}" 2>/dev/null && return 1
+  tmux has-session -t "=dev-${repo}-${n}:" 2>/dev/null && return 1
   _dev_worktree_enabled "$repo" || return 0
   local repodir="${DEV_REPOS[$repo]}" wt br ref
   wt="$(_dev_worktree_path "$repo" "$n")"; br="$(_dev_worktree_branch "$repo" "$n")"
@@ -360,7 +360,7 @@ _dev_beam_land_cwd() {
   if [[ -e $cwd/.git ]]; then
     _dev_app_slot_reserved "$cwd" && why="the Codex desktop app owns this worktree"
     for s in ${(f)"$(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep '^dev-')"}; do
-      p=$(tmux display-message -p -t "$s" '#{session_path}' 2>/dev/null)
+      p=$(tmux display-message -p -t "=$s:" '#{session_path}' 2>/dev/null)
       [[ -n $p && ${p:A} == ${cwd:A} ]] && { why="$s is live in it"; break }
     done
     if [[ -z $why && -n "$(git -C "$cwd" status --porcelain 2>/dev/null)" ]]; then

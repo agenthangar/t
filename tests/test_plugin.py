@@ -3,7 +3,10 @@
 import os
 from pathlib import Path
 import shutil
+import shlex
+import time
 import subprocess
+import uuid
 
 import pytest
 
@@ -267,3 +270,74 @@ def test_app_reservation_protects_worktree_from_cli_reuse_and_sweep(tmp_path):
     assert "fresh=1" in result.stdout
     assert "kept=0" in result.stdout
     assert f"-\t{wt}\tapi-1\tapp\tnone\t(Codex desktop workspace" in result.stdout
+
+
+@pytest.mark.skipif(not shutil.which("tmux") or not shutil.which("zsh"),
+                    reason="tmux and zsh are required")
+@pytest.mark.parametrize("launch", ["new", "resume"])
+def test_dotted_repo_launch_and_reattach_on_isolated_tmux(tmp_path, launch):
+    """Exercise tmux parsing, agent launch, logging, and live-slot ownership."""
+    socket = "t-dotted-" + uuid.uuid4().hex
+    env = {k: v for k, v in os.environ.items() if not k.startswith("COV_CORE_")}
+    home = tmp_path / "home"
+    env.update(HOME=str(home), XDG_CONFIG_HOME=str(home / ".config"),
+               XDG_CACHE_HOME=str(home / ".cache"), XDG_STATE_HOME=str(home / ".local" / "state"))
+    env.pop("TMUX", None)
+    command = [shutil.which("tmux"), "-L", socket, "-f", os.devnull]
+
+    def tmux(*args):
+        return subprocess.run(command + list(args), env=env, capture_output=True,
+                              text=True, timeout=5)
+
+    session = "dev-agenthangar.github.io-4"
+    target = "=" + session + ":"
+    marker = tmp_path / "started"
+    launch_command = f"printf launched > {shlex.quote(str(marker))}; printf 'agent output\\n'; sleep 60"
+    wrapper = f'''tmux() {{
+      if [[ $1 == attach-session ]]; then
+        shift
+        command {shlex.join(command)} has-session "$@"
+        return
+      fi
+      if [[ $1 == new-session ]]; then
+        command {shlex.join(command)} "$@" 'exec zsh -f'
+      else
+        command {shlex.join(command)} "$@"
+      fi
+    }}
+    _dev_agent_check() {{ return 0; }}
+    _dev_agent_new_cmd() {{ print -r -- {shlex.quote(launch_command)}; }}
+    _dev_agent_resume_cmd() {{ print -r -- {shlex.quote(launch_command)}; }}
+    _dev_repo_prepare() {{ :; }}
+    _dev_recovery_watch() {{ :; }}
+    '''
+    launch_code = ('_dev_slot_fresh() { [[ $2 == 4 ]]; }; t open agenthangar.github.io --new --codex' if launch == "new"
+                   else f'_dev_resume_session {session} "$HOME/code/agenthangar.github.io" thread-1 codex')
+    local = ('DEV_REPOS[agenthangar.github.io]="$HOME/code/agenthangar.github.io"\n'
+             'DEV_WORKTREE[agenthangar.github.io]=0\n')
+    try:
+        result = shell(tmp_path, wrapper + 'mkdir -p "$HOME/code/agenthangar.github.io"; ' + launch_code,
+                       local_text=local, extra_env=env)
+        assert result.returncode == 0, result.stderr
+        assert "can't find pane" not in result.stderr
+        deadline = time.monotonic() + 5
+        while not marker.exists() and time.monotonic() < deadline:
+            time.sleep(0.03)
+        assert marker.exists(), result.stderr
+        assert tmux("show-environment", "-t", "=" + session, "DEV_AGENT").stdout.strip() == "DEV_AGENT=codex"
+        assert tmux("display-message", "-p", "-t", target, "#{pane_pipe}").stdout.strip() == "1"
+        assert tmux("show-options", "-w", "-v", "-t", target, "window-size").stdout.strip() == "latest"
+        assert tmux("pipe-pane", "-t", target).returncode == 0
+        result = shell(tmp_path, wrapper + '''t open agenthangar.github.io 4
+                       _dev_slot_fresh agenthangar.github.io 4; print -r -- fresh=$?
+                       _dev_local_slot_live agenthangar.github.io 4; print -r -- live=$?
+                       ''',
+                       local_text=local, extra_env=env)
+        assert result.returncode == 0, result.stderr
+        assert "Reattaching " + session in result.stdout
+        assert "fresh=1" in result.stdout
+        assert "live=0" in result.stdout
+        assert "can't find pane" not in result.stderr
+        assert tmux("display-message", "-p", "-t", target, "#{pane_pipe}").stdout.strip() == "1"
+    finally:
+        tmux("kill-server")
