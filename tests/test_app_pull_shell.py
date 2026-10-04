@@ -182,19 +182,15 @@ int main(int argc, char **argv) {
                         break
                     time.sleep(.02)
         script = f'''
+zmodload zsh/datetime
+source {shlex.quote(str(ROOT / 'zsh/agent.zsh'))}
+source {shlex.quote(str(ROOT / 'zsh/sessions.zsh'))}
 source {shlex.quote(str(ROOT / 'zsh/resume.zsh'))}
 tmux() {{ command {shlex.join(tmux)} "$@"; }}
 _dev_app_slot_marker() {{ print -r -- {shlex.quote(str(marker))}; }}
 _dev_fg_rows() {{ :; }}
 _dev_agent_of_session() {{ print codex; }}
 _dev_session_sid() {{ tmux show-environment -t "=$1" CLAUDE_RESUME_ID 2>/dev/null | cut -d= -f2; }}
-_dev_session_claude_pid() {{
-  local row
-  for row in ${{(f)"$(tmux list-panes -s -t "=$1" -F '#{{pane_pid}} #{{pane_current_command}}' 2>/dev/null)"}}; do
-    [[ $row == *' codex' ]] && {{ print -r -- "${{row%% *}}"; return 0; }}
-  done
-  return 1
-}}
 _dev_recovery_watch() {{ :; }}
 _codex_pane_sid() {{ :; }}
 _t_app_pull_slot {session} {shlex.quote(str(worktree))} {SID} {'-' if mode == 'missing' else SID}
