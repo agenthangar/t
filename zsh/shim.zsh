@@ -421,11 +421,10 @@ _t_open_app() {
     return 1
   }
   print -r -- "Opening $repo $slot in the Codex desktop app: $dir"
-  command codex app "$dir" || {
+  command t _app-workspace "$dir" || {
     print -u2 -- "t open --app: app launch failed; the worktree remains reserved at $dir for a retry"
     return 1
   }
-  print -r -- 'Open request sent to Codex; check the desktop app for the workspace.'
 }
 
 # _t_beam_xlate — map gh-grammar `t beam [repo] [slot] [--host H] [flags]` onto the

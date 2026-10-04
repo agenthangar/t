@@ -1916,3 +1916,20 @@ def test_fast_mode_reaches_new_tmux_and_foreground_launches(zsh, agent, fast, ar
     assert f'DEV_FAST[{agent}]={fast}' in r.stdout
     resume = f'{agent} resume saved-id' if agent == 'codex' else 'claude -r saved-id'
     assert f'send-keys -t =dev-web-9: {resume}; exit Enter' in zsh.log.read_text()
+
+
+@pytest.mark.parametrize('live', [False, True])
+def test_retained_tmux_slot_shows_app_only_after_cli_exits(zsh, live):
+    wt = f'{zsh.home}/code/.worktrees/api/3'
+    r = zsh(f'_dev_session_has_claude() {{ return {0 if live else 1}; }}; '
+            '_dev_session_sid() { print -r -- saved-thread; }; '
+            '_dev_agent_at_welcome() { return 0; }; '
+            '_dev_app_slot_reserved() { return 0; }; '
+            '_dev_agent_transcript() { :; }; '
+            '_dev_fg_rows() { :; }; _pr_state_flush() { :; }; '
+            '_dev_session_rows',
+            FAKE_DEV_AGENT='codex', FAKE_SESSION_ROWS=f'dev-api-3\t{wt}\tdetached')
+    assert r.returncode == 0, r.stderr
+    row = r.stdout.strip().split('\t')
+    assert row[3:5] == (['detached', 'idle'] if live else ['app', 'none'])
+    assert row[-1] == 'codex'
