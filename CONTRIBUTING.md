@@ -16,6 +16,10 @@ sandbox tests. No runtime pip dependencies are installed by install.sh.
 Never include private paths, hosts, credentials, or real agent transcripts in issues,
 fixtures, or demo recordings. Use generic, disposable examples.
 
+Use the [disposable playground](docs/playground.md) to rehearse installation and
+the first session in a clean Linux account. Run `python3 scripts/playground.py smoke`
+for its automated flow.
+
 ## Publishing a release
 
 After the release commit has merged and CI passes, build its runtime archive with

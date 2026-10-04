@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if command -v claude >/dev/null 2>&1; then
+    echo "playground-demo-agent: claude already exists at $(command -v claude)" >&2
+    exit 1
+fi
+
+mkdir -p "$HOME/bin"
+ln -s /opt/playground/fake-claude "$HOME/bin/claude"
+echo 'Enabled the playground Claude stub. It keeps a tmux session open and echoes input.'

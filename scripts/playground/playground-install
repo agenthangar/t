@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+case "${1:-}" in
+    '')
+        "$HOME/code/t/install.sh"
+        ;;
+    --release)
+        shift
+        python3 "$HOME/code/t/scripts/install-release.py" "$@"
+        ;;
+    *)
+        echo 'Usage: playground-install [--release [--version vX.Y.Z]]' >&2
+        exit 2
+        ;;
+esac
+
+if ! grep -Fq 't.plugin.zsh' "$HOME/.zshrc"; then
+    cat >> "$HOME/.zshrc" <<'ZSHRC'
+if [[ -x "$HOME/bin/t" ]]; then
+  source "${${:-$HOME/bin/t}:A:h:h}/t.plugin.zsh"
+fi
+ZSHRC
+fi
+
+echo 'Installed t. Start a new zsh shell to load its plugin.'

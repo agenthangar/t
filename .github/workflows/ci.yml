@@ -15,7 +15,7 @@ jobs:
       - name: Shell syntax and lint
         run: |
           files=(install.sh)
-          for f in bin/* .githooks/* ui/*.sh; do
+          for f in bin/* .githooks/* ui/*.sh scripts/playground/*; do
             head -1 "$f" | grep -qE '^#!.*\b(bash|sh)$' && files+=("$f")
           done
           shellcheck "${files[@]}"
@@ -40,6 +40,13 @@ jobs:
           fi
           python -m pip install -r requirements-dev.txt
       - run: python -m pytest --cov --cov-report=term-missing --cov-fail-under=97
+  playground:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Fresh install and terminal session flow
+        run: python3 scripts/playground.py smoke
   gitleaks:
     runs-on: ubuntu-latest
     steps:
@@ -70,7 +77,7 @@ jobs:
   ci:
     name: CI
     if: always()
-    needs: [shell, pytest, gitleaks, pip-audit, codeql]
+    needs: [shell, pytest, playground, gitleaks, pip-audit, codeql]
     runs-on: ubuntu-latest
     steps:
       - run: |

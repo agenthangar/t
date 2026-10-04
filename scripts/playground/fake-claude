@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${1:-}" == --version ]]; then
+    echo 'playground Claude stub 1.0'
+    exit 0
+fi
+
+case "${1:-}" in
+    auth|status|mcp|login)
+        echo 'Playground Claude stub has no account or authentication.' >&2
+        exit 2
+        ;;
+esac
+
+echo 'Playground Claude stub (no real AI): type quit to exit this session.'
+while IFS= read -r line; do
+    case "$line" in
+        quit|exit) exit 0 ;;
+        *) printf 'stub> %s\n' "$line" ;;
+    esac
+done
