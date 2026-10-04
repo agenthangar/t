@@ -13,6 +13,120 @@ def git(repo, *args):
                           capture_output=True, text=True).stdout.strip()
 
 
+@pytest.fixture
+def local_checkout(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    for key, value in {"HOME": home, "XDG_CONFIG_HOME": home / ".config",
+                       "XDG_CACHE_HOME": home / ".cache",
+                       "XDG_STATE_HOME": home / ".local/state"}.items():
+        monkeypatch.setenv(key, str(value))
+    remote = tmp_path / "remote.git"
+    git(tmp_path, "init", "--bare", "-q", str(remote))
+    main = tmp_path / "local t"
+    git(tmp_path, "clone", "-q", str(remote), str(main))
+    git(main, "config", "user.email", "test@example.invalid")
+    git(main, "config", "user.name", "Tester")
+    git(main, "checkout", "-qb", "main")
+    (main / ".t-install-version").write_text("1\n")
+    (main / "t.plugin.zsh").write_text("# disposable\n")
+    (main / "bin").mkdir()
+    (main / "bin/t").write_text("#!/bin/sh\n")
+    (main / "install.sh").write_text(
+        '#!/bin/sh\n[ "$T_LINKS_ONLY" = 1 ] && [ -z "${T_LINK_DEV:-}" ] || exit 9\n'
+        'mkdir -p "$HOME/bin"\nln -sfn "$(dirname "$0")/bin/t" "$HOME/bin/t"\n')
+    (main / "install.sh").chmod(0o755)
+    git(main, "add", "-A")
+    git(main, "commit", "-qm", "seed")
+    git(main, "push", "-q", "-u", "origin", "main")
+    monkeypatch.chdir(tmp_path)
+    return main, home
+
+
+@pytest.mark.parametrize("source", ["brew", "release"])
+@pytest.mark.parametrize("explicit", [False, True])
+def test_update_local_switches_packaged_install_to_updated_main(
+        t_mod, tmp_path, monkeypatch, local_checkout, source, explicit):
+    main, home = local_checkout
+    active = _brew_trees(tmp_path)[0][0] if source == "brew" else _release_tree(tmp_path)
+    (home / "bin").mkdir()
+    (home / "bin/t").symlink_to(active / "bin/t")
+    monkeypatch.setattr(t_mod, "_t_source_root", lambda: str(active))
+    # A newer remote commit must land before the user links switch sources.
+    other = tmp_path / "other"
+    git(tmp_path, "clone", "-q", "-b", "main", str(tmp_path / "remote.git"), str(other))
+    (other / "new").write_text("merged fix")
+    git(other, "add", "new")
+    git(other, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "fix")
+    git(other, "push", "-q", "origin", "main")
+    cfg = argparse.Namespace(repos={} if explicit else {"t": str(main)})
+    args = t_mod.build_parser().parse_args(["update", "--local"] + ([str(main)] if explicit else []))
+    assert t_mod.cmd_update(cfg, args) == 0
+    assert (main / "new").read_text() == "merged fix"
+    assert (home / "bin/t").resolve() == main / "bin/t"
+    assert active.exists()
+    monkeypatch.setattr(t_mod, "_t_source_root", lambda: str(main))
+    assert t_mod.cmd_update(cfg, t_mod.build_parser().parse_args(["update"])) == 0
+
+
+@pytest.mark.parametrize("kind", ["dirty", "branch", "diverged"])
+def test_update_local_preserves_links_when_checkout_is_unsafe(
+        t_mod, tmp_path, monkeypatch, local_checkout, kind, capsys):
+    main, home = local_checkout
+    active = _release_tree(tmp_path)
+    (home / "bin").mkdir()
+    link = home / "bin/t"
+    link.symlink_to(active / "bin/t")
+    monkeypatch.setattr(t_mod, "_t_source_root", lambda: str(active))
+    if kind == "branch":
+        git(main, "checkout", "-qb", "cursor/feature")
+    else:
+        (main / "scratch").write_text("keep me")
+        if kind == "diverged":
+            git(main, "add", "scratch")
+            git(main, "commit", "-qm", "local")
+            git(main, "checkout", "-qb", "cursor/other", "HEAD~1")
+            (main / "remote").write_text("remote")
+            git(main, "add", "remote")
+            git(main, "commit", "-qm", "remote")
+            git(main, "push", "-q", "origin", "HEAD:main")
+            git(main, "checkout", "-q", "main")
+    args = t_mod.build_parser().parse_args(["update", "--local", str(main)])
+    assert t_mod.cmd_update(None, args) != 0
+    assert os.readlink(link) == str(active / "bin/t")
+    expected = {"dirty": "local changes", "branch": "switch it to main", "diverged": "diverged"}
+    assert expected[kind] in capsys.readouterr().err
+
+
+def test_local_checkout_discovery_and_invalid_explicit_path(t_mod, tmp_path, monkeypatch, local_checkout):
+    main, home = local_checkout
+    dev = tmp_path / "dev"
+    git(main, "worktree", "add", "-qb", "dev/t-1", str(dev))
+    monkeypatch.chdir(dev)
+    assert t_mod._t_local_checkout(None, "", "/missing") == str(main)
+    monkeypatch.chdir(tmp_path)
+    assert t_mod._t_local_checkout(None, "", str(dev)) == str(main)
+    cfg = argparse.Namespace(repos={"t": str(main)})
+    assert t_mod._t_local_checkout(cfg, "", "/missing") == str(main)
+    assert t_mod._t_local_checkout(cfg, str(dev), "/missing") == str(main)
+    invalid = tmp_path / "unrelated"
+    git(tmp_path, "init", "-q", str(invalid))
+    for marker in (None, b"2\n", b"\xff", b"1\n"):
+        if marker is not None:
+            (invalid / ".t-install-version").write_bytes(marker)
+        with pytest.raises(ValueError, match="no valid local t checkout"):
+            t_mod._t_local_checkout(cfg, str(invalid), str(main))
+    with pytest.raises(ValueError, match="--local /path/to/t"):
+        t_mod._t_local_checkout(cfg, str(tmp_path / "missing"), str(main))
+
+
+@pytest.mark.parametrize("flag", ["--dev", "--relink", "--check"])
+def test_local_update_flag_conflicts(t_mod, flag):
+    with pytest.raises(SystemExit) as error:
+        t_mod.build_parser().parse_args(["update", "--local", flag])
+    assert error.value.code == 2
+
+
 def test_update_switches_between_canonical_and_dirty_dev(t_mod, tmp_path, monkeypatch):
     remote = tmp_path / "remote.git"
     subprocess.run(["git", "init", "--bare", "-q", str(remote)], check=True)

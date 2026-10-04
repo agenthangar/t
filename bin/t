@@ -4233,6 +4233,29 @@ def _t_relink(root, dev=False):
     return p.returncode
 
 
+def _t_local_checkout(cfg, path, active):
+    """Resolve an explicit checkout, or discover t without depending on dotfiles."""
+    candidates = ([os.path.expanduser(path)] if path else
+                  [getattr(cfg, "repos", {}).get("t"), os.getcwd(), active])
+    for candidate in candidates:
+        if not candidate:
+            continue
+        root = _t_canonical_root(candidate)
+        if not root:
+            continue
+        try:
+            with open(os.path.join(root, ".t-install-version"), encoding="ascii") as file:
+                valid = file.read().strip() == "1"
+        except (OSError, UnicodeError):
+            continue
+        if (valid and not os.path.lexists(os.path.join(root, ".t-release-version"))
+                and all(os.path.isfile(os.path.join(root, asset))
+                        for asset in ("bin/t", "install.sh", "t.plugin.zsh"))):
+            return root
+    raise ValueError("no valid local t checkout found; use t update --local /path/to/t "
+                     "or register the t repository")
+
+
 def _t_update_installation():
     """Identify only installed sources that the ordinary updater can advance."""
     source = _t_source_root()
@@ -4412,7 +4435,10 @@ def cmd_update(cfg, args):
             print(f"Review: https://github.com/agenthangar/t/compare/{gap['version']}...main")
         return 0
     active = _t_source_root()
+    local = getattr(args, "local", None)
     try:
+        if local is not None:
+            active = _t_local_checkout(cfg, local, active)
         brew = _t_homebrew(active)
     except ValueError as error:
         print(f"t update: {error}", file=sys.stderr)
@@ -4487,7 +4513,10 @@ def cmd_update(cfg, args):
     if merge.returncode:
         print("t update: canonical main diverged; resolve it before relinking", file=sys.stderr)
         return merge.returncode
-    return _t_relink(canonical)
+    result = _t_relink(canonical)
+    if result == 0 and local is not None:
+        print(f"t now uses local checkout {canonical}; future t update calls update its main branch.")
+    return result
 
 
 def _install_walk(steps, close=False):
@@ -8463,11 +8492,14 @@ Run `t help <verb>` or `t <verb> -h` for a verb's own flags.""")
             "For a versioned release, install the latest published release. For a Git "
             "checkout, fetch and fast-forward canonical main before relinking. --relink "
             "repeats the selected source without fetching; --dev selects a t worktree "
-            "from a Git checkout.")
+            "from a Git checkout. --local [PATH] switches any installation to a local "
+            "t checkout, updating canonical main and relinking user commands.")
     group = sp.add_mutually_exclusive_group()
     group.add_argument("--dev", action="store_true", help="select the t session worktree containing $PWD (Git checkout only)")
     group.add_argument("--relink", action="store_true", help="relink the currently selected source")
     group.add_argument("--check", action="store_true", help="check for a newer version without installing it")
+    group.add_argument("--local", nargs="?", const="", metavar="PATH",
+                       help="switch to local canonical main (registered t repo, current checkout, or PATH)")
 
     sp = sub.add_parser("permissions", help="sync an explicitly selected policy into agent configs",
         description="Set T_PERMISSIONS_DIR to a directory containing permissions.allow and "
