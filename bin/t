@@ -75,8 +75,8 @@ ZSH_PRELUDE = "setopt no_monitor no_notify 2>/dev/null; "
 # ─── config ──────────────────────────────────────────────────────────────────
 
 _CFG_LINE = re.compile(
-    r"^(DEV_REPOS|DEV_BRANCHES|REMOTE_HOSTS|DEV_WORKTREE|DEV_AGENT|DEV_MODEL|DEV_EFFORT|DEV_FAST)\[([^\]]+)\]=(.*)$"
-    r"|^(DEV_BRANCH|DEV_WORKTREE_ROOT|DEV_WORKTREE_DEFAULT|DEV_AGENT_DEFAULT|TBEAM_HOST|MINI_HOST|T_LOCAL_RC)=(.*)$")
+    r"^(DEV_REPOS|DEV_BRANCHES|REMOTE_HOSTS|DEV_WORKTREE|DEV_OPEN_MODE|DEV_AGENT|DEV_MODEL|DEV_EFFORT|DEV_FAST)\[([^\]]+)\]=(.*)$"
+    r"|^(DEV_BRANCH|DEV_WORKTREE_ROOT|DEV_WORKTREE_DEFAULT|DEV_AGENT_DEFAULT|TBEAM_HOST|MINI_HOST|DEV_OPEN_MODE_DEFAULT|T_LOCAL_RC)=(.*)$")
 
 
 def _current_local_rc():
@@ -118,6 +118,8 @@ class Config:
         self.worktree = {}   # alias -> opt-out flag (0/no/off → shared-tree)
         self.worktree_root = os.path.join(HOME, "code", ".worktrees")
         self.worktree_default = "1"
+        self.open_mode = {}
+        self.open_mode_default = "cli"
         self.agents = {}     # alias -> claude|codex (DEV_AGENT[alias])
         self.agent_default = "claude"
         self.models = {}     # agent -> model for NEW sessions; empty defers to the CLI
@@ -141,7 +143,7 @@ class Config:
             if m.group(1):
                 arr, key, val = m.group(1), m.group(2), _unquote(m.group(3))
                 {"DEV_REPOS": self.repos, "DEV_BRANCHES": self.branches,
-                 "REMOTE_HOSTS": self.hosts, "DEV_WORKTREE": self.worktree,
+                 "REMOTE_HOSTS": self.hosts, "DEV_WORKTREE": self.worktree, "DEV_OPEN_MODE": self.open_mode,
                  "DEV_AGENT": self.agents, "DEV_MODEL": self.models,
                  "DEV_EFFORT": self.efforts, "DEV_FAST": self.fast}[arr][key] = val
             elif m.group(4) == "DEV_BRANCH":
@@ -150,6 +152,8 @@ class Config:
                 self.worktree_root = _unquote(m.group(5))
             elif m.group(4) == "DEV_WORKTREE_DEFAULT":
                 self.worktree_default = _unquote(m.group(5))
+            elif m.group(4) == "DEV_OPEN_MODE_DEFAULT":
+                self.open_mode_default = _unquote(m.group(5))
             elif m.group(4) == "DEV_AGENT_DEFAULT":
                 self.agent_default = _unquote(m.group(5))
             elif m.group(4) == "TBEAM_HOST":
@@ -1355,10 +1359,11 @@ _EFFORT_ID = re.compile(r"[a-z][a-z0-9_-]*\Z")
 
 
 _CONFIG_ARRAYS = {"DEV_REPOS": "repos", "REMOTE_HOSTS": "hosts", "DEV_BRANCHES": "branches",
-                  "DEV_AGENT": "agents", "DEV_WORKTREE": "worktree", "DEV_MODEL": "models",
+                  "DEV_AGENT": "agents", "DEV_WORKTREE": "worktree", "DEV_OPEN_MODE": "open_mode", "DEV_MODEL": "models",
                   "DEV_EFFORT": "efforts", "DEV_FAST": "fast"}
 _CONFIG_SCALARS = {"DEV_AGENT_DEFAULT": "agent_default", "DEV_BRANCH": "branch",
                    "DEV_WORKTREE_ROOT": "worktree_root", "DEV_WORKTREE_DEFAULT": "worktree_default",
+                   "DEV_OPEN_MODE_DEFAULT": "open_mode_default",
                    "TBEAM_HOST": "beam_host", "MINI_HOST": "mini_host"}
 _CONFIG_ALIAS = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]*\Z")
 
@@ -1400,6 +1405,8 @@ def _config_assignment(key, value):
         raise ValueError("effort must be a level name reported by the tool")
     if key.startswith("DEV_FAST[") and value not in ("", "1", "0"):
         raise ValueError("fast mode must be 1, 0, or empty to inherit")
+    if (key == "DEV_OPEN_MODE_DEFAULT" or key.startswith("DEV_OPEN_MODE[")) and value not in ("cli", "app"):
+        raise ValueError("choose cli or app for opening mode")
     prefix = "export " if key == "TBEAM_HOST" else ""
     return f"{prefix}{key}={shlex.quote(value)}"
 
@@ -1449,8 +1456,21 @@ def _config_remove_host(cfg, alias):
 
 
 def _config_remove_repo(cfg, alias):
-    for attr in ("repos", "agents", "branches", "worktree"):
+    for attr in ("repos", "agents", "branches", "worktree", "open_mode"):
         getattr(cfg, attr).pop(alias, None)
+
+
+def _config_rename_repo(cfg, alias, new_alias):
+    if not _CONFIG_ALIAS.fullmatch(new_alias):
+        raise ValueError("Use letters, numbers, dots, underscores or hyphens for the short name.")
+    if new_alias in ("__add__", "__back__") or (new_alias != alias and new_alias in cfg.repos):
+        raise ValueError("That short name is already in use or reserved.")
+    if new_alias == alias:
+        return
+    for attr in ("repos", "agents", "branches", "worktree", "open_mode"):
+        entries = getattr(cfg, attr)
+        if alias in entries:
+            entries[new_alias] = entries.pop(alias)
 
 
 def _config_read(path):
@@ -1823,21 +1843,30 @@ def _config_repos(ui, cfg):
                 cfg.repos[alias] = repo_path
             continue
         action = ui.pick(f"Repository · {repo}", [
+            ("alias", "Short name"), ("mode", "Opening mode"),
             ("path", "Path"), ("tool", "Tool"), ("branch", "Shared-tree branch"), ("worktree", "Worktrees"),
             ("remove", "Unregister (keep files and sessions)"), ("back", "Back")],
-            values={"path": _tilde(cfg.repos[repo]), "tool": cfg.agents.get(repo) or "inherit default",
+            values={"mode": {"cli": "CLI", "app": "Desktop app (Codex, macOS)"}.get(cfg.open_mode.get(repo), "inherit default"), "alias": repo, "path": _tilde(cfg.repos[repo]), "tool": cfg.agents.get(repo) or "inherit default",
                     "branch": cfg.branches.get(repo) or "inherit default",
                     "worktree": cfg.worktree.get(repo) or "inherit default"}, accents={"remove": "w"})
         if action == "remove":
             _config_remove_repo(cfg, repo)
+        elif action == "alias":
+            value = _config_input(ui, "short name", repo, "alias")
+            if value is not None:
+                try:
+                    _config_rename_repo(cfg, repo, value)
+                except ValueError as exc:
+                    ui.done("invalid", str(exc))
         elif action == "path":
             value = _config_input(ui, "repo path", cfg.repos[repo], "path")
             if value is not None:
                 cfg.repos[repo] = value
-        elif action in ("tool", "worktree", "branch"):
-            attr = {"tool": "agents", "worktree": "worktree", "branch": "branches"}[action]
+        elif action in ("tool", "worktree", "branch", "mode"):
+            attr = {"tool": "agents", "worktree": "worktree", "branch": "branches", "mode": "open_mode"}[action]
             options = [("", "Inherit global default")]
-            options += ([(a, a) for a in AGENTS] if action == "tool" else
+            options += ([("cli", "CLI"), ("app", "Desktop app (Codex, macOS)")] if action == "mode" else
+                        [(a, a) for a in AGENTS] if action == "tool" else
                         [("1", "Enabled"), ("0", "Disabled (shared tree)")] if action == "worktree" else
                         [("custom", "Set branch")])
             value = ui.pick(f"{repo} {action}", options)
@@ -1880,8 +1909,8 @@ def _config_wizard(cfg):
     ui.raw()
     try:
         while True:
-            rows = [("tool", "Default tool")]
-            values = {"tool": edited.agent_default}
+            rows = [("tool", "Default tool"), ("mode", "Default opening mode")]
+            values = {"tool": edited.agent_default, "mode": "Desktop app (Codex, macOS)" if edited.open_mode_default == "app" else "CLI"}
             for a in AGENTS:
                 rows.append((a, f"{a.title()} settings ›"))
                 values[a] = f"{edited.models.get(a) or 'tool default'} · {edited.efforts.get(a) or 'default'} effort"
@@ -1941,6 +1970,11 @@ def _config_wizard(cfg):
                 picked = ui.pick("Default beam host", options, values=edited.hosts)
                 if picked is not None:
                     edited.beam_host = edited.hosts.get(picked, "")
+            elif choice == "mode":
+                picked = ui.pick("Default opening mode", [("cli", "CLI"), ("app", "Desktop app (Codex, macOS)")],
+                                 default=1 if edited.open_mode_default == "app" else 0)
+                if picked is not None:
+                    edited.open_mode_default = picked
             elif choice == "tool":
                 options = [(a, f"{a}" + ("" if shutil.which(a) else f" (install with t install {a})"))
                            for a in AGENTS]
@@ -1994,13 +2028,14 @@ def cmd_config(cfg, args):
         for agent in AGENTS:
             print(f"{agent} effort: {cfg.efforts.get(agent) or 'tool default'}")
             print(f"{agent} Fast mode: " + {"1": "on", "0": "off"}.get(cfg.fast.get(agent), "tool default"))
+        print(f"Default opening mode: {cfg.open_mode_default}")
         print(f"Default beam host: {cfg.beam_host or 'none'}")
         print(f"Worktrees: {cfg.worktree_default} · root: {cfg.worktree_root} · shared-tree branch: {cfg.branch}")
         for alias, target in sorted(cfg.hosts.items()):
             print(f"Host {alias}: {target}")
         for alias, repo_path in sorted(cfg.repos.items()):
             print(f"Repo {alias}: {repo_path} · tool: {cfg.agents.get(alias) or 'inherit'} · "
-                  f"branch: {cfg.branches.get(alias) or 'inherit'} · worktrees: {cfg.worktree.get(alias) or 'inherit'}")
+                  f"opening mode: {cfg.open_mode.get(alias) or 'inherit'} · branch: {cfg.branches.get(alias) or 'inherit'} · worktrees: {cfg.worktree.get(alias) or 'inherit'}")
         return 0
     if not sys.stdin.isatty() or not sys.stdout.isatty():
         print("t config: open this menu in a terminal; t config --show prints current settings",
@@ -7999,6 +8034,7 @@ Run `t help <verb>` or `t <verb> -h` for a verb's own flags.""")
     sp.add_argument("slot", nargs="?", help="slot number, 'fg' (this repo's foreground sessions), or a session id")
     sp.add_argument("--new", action="store_true", help="force a fresh session")
     sp.add_argument("--fg", action="store_true", help="no tmux: foreground-resume / run inline")
+    sp.add_argument("--cli", action="store_true", help="open in the CLI, overriding the configured opening mode")
     sp.add_argument("--app", action="store_true", help="open an isolated worktree in the Codex desktop app on this Mac (no CLI/tmux for a fresh slot)")
     sp.add_argument("-l", "--local", "--here", dest="local", action="store_true", help="force this machine: skip the remote auto-attach probe (combine with --fg for local foreground)")
     sp.add_argument("-r", "--remote", action="store_true", help="remote: attach a live slot on any host; with --new, start one on the default host")

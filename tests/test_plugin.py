@@ -267,3 +267,39 @@ def test_app_reservation_protects_worktree_from_cli_reuse_and_sweep(tmp_path):
     assert "fresh=1" in result.stdout
     assert "kept=0" in result.stdout
     assert f"-\t{wt}\tapi-1\tapp\tnone\t(Codex desktop workspace" in result.stdout
+
+
+@pytest.mark.parametrize("flags,repo_mode,expected", [
+    ("", "", "app api"),
+    ("3", "", "app api 3"),
+    ("--new", "", "app api --new"),
+    ("--cli", "", "cli api"),
+    ("--fg", "", "cli api -f"),
+    ("--claude", "", "cli api --claude"),
+    ("fg", "", "cli api fg"),
+    ("thread-id", "", "cli api thread-id"),
+    ("", "cli", "cli api"),
+    ("--app", "cli", "app api --app"),
+    ("--remote", "", "cli api -r"),
+    ("--host mini", "", "remote mini api --cli"),
+])
+def test_open_mode_defaults_and_explicit_overrides(tmp_path, flags, repo_mode, expected):
+    result = shell(tmp_path,
+        '_t_open_app() { print -r -- "app $*"; }; '
+        '_t_dev() { print -r -- "cli $*"; }; '
+        '_dev_remote_open() { print -r -- "remote $*"; }; '
+        f'_t_open api {flags}',
+        local_text='DEV_REPOS[api]=/code/api\nDEV_OPEN_MODE_DEFAULT=app\n'
+                   + (f'DEV_OPEN_MODE[api]={repo_mode}\n' if repo_mode else ''))
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == expected
+    cache = tmp_path / "home" / ".config" / "t" / "config.sh"
+    assert "DEV_OPEN_MODE_DEFAULT=app" in cache.read_text()
+    if repo_mode:
+        assert f"DEV_OPEN_MODE[api]={repo_mode}" in cache.read_text()
+
+
+def test_open_cli_and_app_conflict(tmp_path):
+    result = shell(tmp_path, '_t_open api --app --cli')
+    assert result.returncode == 2
+    assert "mutually exclusive" in result.stderr
