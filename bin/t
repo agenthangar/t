@@ -4767,7 +4767,7 @@ _AGENT_PARITY = [
      "✓ hooks.json (trust once at startup)", "✗ no hook wired"),
     ("t plan", "✓", "✗ codex keeps no plan files (says so)", "✗"),
     ("/tpush · /tpop slash commands", "✓ ~/.claude/commands", "✓ ~/.codex/prompts", "✗"),
-    ("t find / t mcp (transcript search)", "✓", "✗ claude transcripts only", "✗"),
+    ("t find (transcript search)", "✓", "✗ claude transcripts only", "✗"),
     ("t doctor agent row (version · login · hook)", "✓", "✓", "✓ version · login"),
     ("t permissions (selected policy)", "✓ ~/.claude/settings.json",
      "✓ ~/.codex/rules/t.rules (argv prefixes) · sandbox network on",
@@ -7991,8 +7991,37 @@ def cmd_mcp(cfg, args):
 
 # ─── argument parsing (gh-style) ───────────────────────────────────────────────
 
+class _CommandSubparsers(argparse._SubParsersAction):
+    """Keep public choices separate from the complete dispatch table."""
+
+    def add_parser(self, name, *, hidden=False, **kwargs):
+        if hidden:
+            kwargs.pop("help", None)
+        parser = super().add_parser(name, **kwargs)
+        # argparse initially aliases choices to the dispatch table. Detach it
+        # so usage, errors, and suggestions enumerate only public commands.
+        if self.choices is self._name_parser_map:
+            self.choices = {}
+        if not hidden:
+            for command in (name, *kwargs.get("aliases", ())):
+                self.choices[command] = parser
+        return parser
+
+
+class _CommandParser(argparse.ArgumentParser):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.register("action", "parsers", _CommandSubparsers)
+
+    def _check_value(self, action, value):
+        # Internal commands remain valid inputs, but never suggested choices.
+        if isinstance(action, _CommandSubparsers) and value in action._name_parser_map:
+            return
+        super()._check_value(action, value)
+
+
 def build_parser():
-    p = argparse.ArgumentParser(
+    p = _CommandParser(
         prog="t", description="Claude session manager (open/list/move tmux'd Claude sessions).",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""\
@@ -8019,8 +8048,6 @@ examples:
   t beam api --host mini  send a session to 'mini' and resume it there
   t app api 3             move a Codex slot into the desktop app with its web preview
   t find "auth refactor"  search saved sessions, then resume the pick
-  t mcp --call find_sessions '{"query":"accounts redesign"}'
-                          ask the sessions MCP by hand (Claude calls it for you)
   t on mini ls            run a command on a remote host
   t setup                 onboard this machine: register ~/code repos + ssh hosts
   t checkout URL          clone an existing GitHub repo and register it locally
@@ -8474,27 +8501,27 @@ Run `t help <verb>` or `t <verb> -h` for a verb's own flags.""")
             "output'), and tool versions. Ends with findings + suggested fixes. Run it on "
             "another machine with `t on <host> t doctor`.")
 
-    # machine-readable / internal (hidden-ish; still have -h)
-    sub.add_parser("session-rows", help="machine-readable per-host scan (remote contract)",
+    # Machine-readable / internal: callable, with explicit help, but not advertised.
+    sub.add_parser("session-rows", hidden=True, help="machine-readable per-host scan (remote contract)",
         description="Internal/machine-readable: emit one tab-separated row per live dev slot on "
             "this host. Part of the cross-host remote contract `t ls -r` and `t beam` run over "
             "ssh; not meant to be called directly.")
-    sub.add_parser("land", help="(internal) resume a beamed session on this host",
+    sub.add_parser("land", hidden=True, help="(internal) resume a beamed session on this host",
         description="Internal: resume a just-beamed session on this (the receiving) host, "
             "reading its parameters from TB_* env vars. Invoked over ssh by `t beam`; not for "
             "direct use.")
-    sub.add_parser("kill-owner", help="(internal) stop the local owner of a session id",
+    sub.add_parser("kill-owner", hidden=True, help="(internal) stop the local owner of a session id",
         description="Internal: stop the local live owner (dev slot) of a session id, enforcing "
             "`t beam`'s one-live-owner-per-conversation invariant. Invoked over ssh; not for "
             "direct use.")
-    lp = sub.add_parser("new-land", help="(internal) clone + register a `t new` repo on this host",
+    lp = sub.add_parser("new-land", hidden=True, help="(internal) clone + register a `t new` repo on this host",
         description="Internal: clone <url> to ~/code/<name> (skipped when it already is that "
             "clone) and append DEV_REPOS[<alias>] to this host's T_LOCAL_RC. Invoked over "
             "ssh by `t new` / `t setup`; not for direct use.")
     lp.add_argument("url")
     lp.add_argument("name")
     lp.add_argument("alias")
-    mp = sub.add_parser("mcp", help="(internal) stdio MCP server: which session is working on what",
+    mp = sub.add_parser("mcp", hidden=True, help="(internal) stdio MCP server: which session is working on what",
         description="Internal: the stdio MCP server Claude Code spawns, registered at user "
             "scope as `sessions` by install.sh (or `t mcp --install`). Exposes the live slots, "
             "keyword search over every saved transcript's prompts, and per-session detail, "
@@ -8507,7 +8534,7 @@ Run `t help <verb>` or `t <verb> -h` for a verb's own flags.""")
     mp.add_argument("--call", nargs="+", metavar=("TOOL", "JSON"),
                     help="run one tool by hand and print its result, e.g. "
                          "--call find_sessions '{\"query\":\"accounts redesign\"}'")
-    rp = sub.add_parser("__resolve", help="(internal) resolve a shell action for the t() shim",
+    rp = sub.add_parser("__resolve", hidden=True, help="(internal) resolve a shell action for the t() shim",
         description="Internal: resolve a shell action for the t() zsh shim. Not for direct use.")
     rp.add_argument("rest", nargs=argparse.REMAINDER)
     return p
@@ -8529,10 +8556,10 @@ IMPLEMENTED = {
 
 
 def _help_parser(parser, words, *, strict=False):
-    """Find a public command's argparse help, without running its handler."""
+    """Find explicitly requested command help without running its handler."""
     current = parser
     for word in words:
-        choices = next((a.choices for a in current._actions
+        choices = next((a._name_parser_map for a in current._actions
                         if isinstance(a, argparse._SubParsersAction)), None)
         if choices is None or word not in choices:
             return None if strict or current is parser else current

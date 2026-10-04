@@ -370,7 +370,7 @@ checked in CI; optional dotfiles integrations are identified explicitly.
   SessionStart stamps (registry · opened · origin)            ✓ settings.json hook                       ✓ hooks.json (trust once at startup)                           ✗ no hook wired
   t plan                                                      ✓                                          ✗ codex keeps no plan files (says so)                          ✗
   /tpush · /tpop slash commands                               ✓ ~/.claude/commands                       ✓ ~/.codex/prompts                                             ✗
-  t find / t mcp (transcript search)                          ✓                                          ✗ claude transcripts only                                      ✗
+  t find (transcript search)                                  ✓                                          ✗ claude transcripts only                                      ✗
   t doctor agent row (version · login · hook)                 ✓                                          ✓                                                              ✓ version · login
   t permissions (selected policy)                             ✓ ~/.claude/settings.json                  ✓ ~/.codex/rules/t.rules (argv prefixes) · sandbox network on  ✓ ~/.cursor/cli-config.json (argv + env prefixes)
   default permission mode (opt in with --defaults)            ✓ auto (permissions.defaultMode)           ✓ full access (approval never · danger-full-access)            ✗ left as cursor-agent set it
