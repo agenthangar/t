@@ -121,7 +121,11 @@ codex() {{ print -r -- "$PWD|$*" > "$HOME/resumed"; sleep 60; }}
         assert (home / "dirty.txt").read_text() == "uncommitted edits"
     finally:
         client.terminate()
-        client.wait(timeout=5)
+        try:
+            client.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            client.kill()
+            client.wait(timeout=5)
         os.close(master)
 
 
