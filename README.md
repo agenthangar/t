@@ -190,7 +190,13 @@ or **q** to dismiss; **Enter** defaults to Dismiss. Offers are bound
 to the exact conversation and process or exited pane; a changed or recovered
 session is left alone.
 Detached sessions get the offer when you return. Dismissal suppresses repeats until
-the error clears. Authentication and rate-limit errors do not trigger recovery.
+the error clears. While recovery is needed, the status bar shows a shortcut to
+reopen the menu: normally **Ctrl-b**, then **Shift-r** (uppercase **R**). It uses
+your configured tmux prefix and chooses another key if **R** is already bound;
+follow the shortcut shown in the status bar. Reopening checks the current pane
+again and does not restart anything until you choose **r** in the menu. The hint
+disappears when the failure clears. Authentication and rate-limit errors do not
+trigger recovery.
 If the monitor cannot verify the conversation, a panel asks you to copy your draft
 before quitting and relaunching. It stays visible until dismissed. The monitor
 keeps checking and, after dismissal, can offer recovery once the conversation is
