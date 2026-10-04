@@ -53,6 +53,9 @@ exit 1
 
 TMUX_STUB = r"""#!/bin/bash
 printf '%s\n' "$*" >> "$TMUX_LOG"
+if [[ $1 == display-message && -n ${FAKE_HOOK_TARGET:-} ]]; then
+  printf '%s\t%s\n' "$FAKE_HOOK_TARGET" "${FAKE_HOOK_CWD:-$HOME}"
+fi
 """
 
 LSOF_STUB = r"""#!/bin/bash
@@ -92,6 +95,7 @@ def sandbox(tmp_path):
         "TMUX_LOG": str(tmp_path / "tmux.log"),
     }
     env.pop("TMUX", None)
+    env.pop("TMUX_PANE", None)
     env.pop("CLAUDE_CODE_SESSION_ID", None)
     return home, env
 
@@ -120,10 +124,12 @@ def test_hook_writes_registry_opened_and_origin_stamps(sandbox):
 
 def test_hook_stamps_tmux_when_inside_a_pane(sandbox):
     home, env = sandbox
-    r = run_hook(env, {"session_id": "sid-9", "cwd": str(home)}, TMUX="/tmp/tmux-1/default,1,0")
+    r = run_hook(env, {"session_id": "sid-9", "cwd": str(home)}, TMUX="/tmp/tmux-1/default,1,0",
+                 TMUX_PANE="%7", FAKE_HOOK_TARGET="$3")
     assert r.returncode == 0
     assert pathlib.Path(env["TMUX_LOG"]).read_text().splitlines() == [
-        "set-environment CLAUDE_RESUME_ID sid-9", "set-environment DEV_AGENT claude"]
+        "display-message -p -t %7 #{session_id}\t#{session_path}",
+        "set-environment -t $3 CLAUDE_RESUME_ID sid-9", "set-environment -t $3 DEV_AGENT claude"]
 
 
 def test_hook_codex_by_ancestry_records_rollout_and_origin_beside_it(sandbox, tmp_path):
@@ -135,7 +141,8 @@ def test_hook_codex_by_ancestry_records_rollout_and_origin_beside_it(sandbox, tm
     tx = roll / "rollout-2026-09-09T10-00-00-thr_1.jsonl"
     tx.write_text("{}\n")
     r = run_hook(env, {"session_id": "thr_1", "cwd": str(home), "transcript_path": str(tx)},
-                 TMUX="/tmp/tmux-1/default,1,0")
+                 TMUX="/tmp/tmux-1/default,1,0",
+                 TMUX_PANE="%7", FAKE_HOOK_TARGET="$3")
     assert r.returncode == 0, r.stderr
     reg = home / ".cache" / "claude-sessions"
     assert (reg / str(os.getpid())).read_text() == f"thr_1\t{home}\n"     # registry: same 2 fields
@@ -143,7 +150,23 @@ def test_hook_codex_by_ancestry_records_rollout_and_origin_beside_it(sandbox, tm
     assert (roll / "rollout-2026-09-09T10-00-00-thr_1.origin").exists()   # origin beside the rollout
     assert not (home / ".claude").exists()                                # no claude project dir touched
     assert pathlib.Path(env["TMUX_LOG"]).read_text().splitlines() == [
-        "set-environment CLAUDE_RESUME_ID thr_1", "set-environment DEV_AGENT codex"]
+        "display-message -p -t %7 #{session_id}\t#{session_path}",
+        "set-environment -t $3 CLAUDE_RESUME_ID thr_1", "set-environment -t $3 DEV_AGENT codex"]
+
+
+@pytest.mark.parametrize("pane,target,cwd", [
+    ("", "$3", None), ("%7", "", None), ("%7", "$3", "/another/worktree"),
+])
+def test_hook_codex_does_not_stamp_an_unverified_pane(sandbox, pane, target, cwd):
+    home, env = sandbox
+    r = subprocess.run([str(HOOK), "--agent", "codex"], input=json.dumps(
+        {"session_id": "other-thread", "cwd": str(home)}),
+        env={**env, "TMUX": "x", "TMUX_PANE": pane, "FAKE_HOOK_TARGET": target,
+             "FAKE_HOOK_CWD": cwd or str(home)}, capture_output=True, text=True)
+    assert r.returncode == 0 and not r.stderr
+    log = pathlib.Path(env["TMUX_LOG"])
+    assert not log.exists() or "set-environment" not in log.read_text()
+    assert (home / ".cache" / "claude-sessions" / "opened" / "other-thread").exists()
 
 
 def test_hook_agent_flag_overrides_the_ancestry_guess(sandbox):
@@ -151,12 +174,12 @@ def test_hook_agent_flag_overrides_the_ancestry_guess(sandbox):
     # ancestor reads as claude (the fixture) but the registration says codex: the
     # registration wins for the stamps; the registry entry still keys on the found pid
     r = subprocess.run([str(HOOK), "--agent", "codex"], input=json.dumps(
-        {"session_id": "t2", "cwd": str(home)}), env={**env, "TMUX": "x"},
+        {"session_id": "t2", "cwd": str(home)}), env={**env, "TMUX": "x", "TMUX_PANE": "%7", "FAKE_HOOK_TARGET": "$3"},
         capture_output=True, text=True)
     assert r.returncode == 0
     assert (home / ".cache" / "claude-sessions" / str(os.getpid())).exists()
     assert not (home / ".cache" / "claude-sessions" / "rollouts").exists()   # no transcript_path → nothing to record
-    assert "set-environment DEV_AGENT codex" in pathlib.Path(env["TMUX_LOG"]).read_text()
+    assert "set-environment -t $3 DEV_AGENT codex" in pathlib.Path(env["TMUX_LOG"]).read_text()
 
 
 def test_hook_falls_back_to_the_session_env_var(sandbox):
@@ -432,7 +455,7 @@ def test_zsh_agent_at_welcome(zsh):
                FAKE_DEV_AGENT="codex").stdout.strip() == "rc=0"
     _codex_home(zsh, [(SID, "/work", "prompt", 100, 0, None)])
     assert zsh("_dev_agent_at_welcome codex s; echo rc=$?", FAKE_RESUME_ID=SID, FAKE_DEV_AGENT="codex",
-               FAKE_PANE="OpenAI Codex (v0.154.0)").stdout.strip() == "rc=1"
+               FAKE_SESSION_PATH="/work", FAKE_PANE="OpenAI Codex (v0.154.0)").stdout.strip() == "rc=1"
 
 
 def test_zsh_new_session_stamps_the_agent_and_launch_line(zsh):
@@ -670,6 +693,72 @@ def test_zsh_codex_unstamped_rows_use_recent_conversation_evidence(zsh, scenario
     assert row == ["-", wt, "api-3", "attached", "active" if active else "idle",
                    "Configure default tool" if active else "(idle — no conversation)", "codex"]
     assert not any("set-environment" in line for line in zsh.log.read_text().splitlines())
+
+
+@pytest.mark.parametrize("store", ["index", "cache", "glob"])
+@pytest.mark.parametrize("same_cwd", [False, True])
+def test_zsh_codex_stamp_is_scoped_to_its_worktree(zsh, store, same_cwd):
+    """A stale stamp must not copy a sibling's targeting id, context, title or PR."""
+    wt = f"{zsh.home}/code/.worktrees/dotfiles/1"
+    other = f"{zsh.home}/code/.worktrees/t/2"
+    paths = _codex_home(zsh, [(SID, wt if same_cwd else other,
+                             "prompt", 100, 0, "Enable app push and pull")], scan_cwd=True)
+    if store != "index":
+        (zsh.home / ".codex" / "state_5.sqlite").unlink()
+    if store == "cache":
+        cache = zsh.home / ".cache" / "claude-sessions" / "rollouts"
+        cache.mkdir(parents=True)
+        (cache / SID).write_text(str(paths[SID]) + "\n")
+    r = zsh('_dev_session_claude_pid() { print 4242; }; '
+            '_dev_session_has_claude() { return 0; }; '
+            '_dev_fg_rows() { :; }; _pr_state_tag() { REPLY=" · #42 merged"; }; '
+            '_pr_state_flush() { :; }; _dev_session_rows',
+            FAKE_DEV_AGENT="codex", FAKE_RESUME_ID=SID,
+            FAKE_SESSION_ROWS=f"dev-dotfiles-1\t{wt}\tdetached")
+    assert r.returncode == 0 and not r.stderr, r.stderr
+    row = r.stdout.strip().split("\t")
+    if same_cwd:
+        assert row[0] == SID and row[4] == "active"
+        assert row[5].endswith(" · #42 merged")
+    else:
+        assert row == ["-", wt, "dotfiles-1", "detached", "idle",
+                       "(idle — no conversation)", "codex"]
+
+
+@pytest.mark.parametrize("scenario,valid", [
+    ("resumed_here", True), ("resumed_elsewhere", False), ("unknown_index", True),
+    ("broken_index", True), ("bad_json", False), ("wrong_id", False),
+    ("wrong_type", False), ("missing_rollout", False), ("missing_cwd", False),
+])
+def test_zsh_codex_stamp_cwd_validation_uses_current_index_or_metadata(zsh, scenario, valid):
+    wt = f"{zsh.home}/code/.worktrees/api/3"
+    paths = _codex_home(zsh, [(SID, wt, "prompt", 100, 0, None)], scan_cwd=True)
+    tx = paths[SID]
+    db = zsh.home / ".codex" / "state_5.sqlite"
+    if scenario == "resumed_here":
+        tx.write_text(tx.read_text().replace(wt, "/original/worktree"))
+    elif scenario == "resumed_elsewhere":
+        with sqlite3.connect(db) as c:
+            c.execute("update threads set cwd='/other/worktree'")
+        c.close()
+    elif scenario == "unknown_index":
+        with sqlite3.connect(db) as c:
+            c.execute("delete from threads")
+        c.close()
+    else:
+        db.write_text("not sqlite")
+        if scenario == "bad_json":
+            tx.write_text("not json\n")
+        elif scenario == "wrong_id":
+            tx.write_text(tx.read_text().replace(SID, "another-thread"))
+        elif scenario == "wrong_type":
+            tx.write_text(tx.read_text().replace('"session_meta"', '"event_msg"'))
+        elif scenario == "missing_rollout":
+            tx.unlink()
+    r = zsh(f'_codex_sid_in_cwd {SID} {shlex.quote(wt if scenario != "missing_cwd" else "")} '
+            f'{shlex.quote(str(tx))}; echo rc=$?')
+    assert r.stdout.strip() == ("rc=0" if valid else "rc=1")
+    assert not r.stderr
 
 
 def test_zsh_codex_registry_alone_marks_a_conversation_active(zsh):

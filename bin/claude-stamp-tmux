@@ -116,8 +116,17 @@ else
   [[ -d $proj ]] && hostname -s > "$proj/$sid.origin" 2>/dev/null || true
 fi
 
-# shellcheck disable=SC2015  # best-effort stamp; never fail the hook
-[[ -n ${TMUX:-} ]] && tmux set-environment CLAUDE_RESUME_ID "$sid" 2>/dev/null || true
-# shellcheck disable=SC2015
-[[ -n ${TMUX:-} ]] && tmux set-environment DEV_AGENT "$agent" 2>/dev/null || true
+# Resolve the inherited pane explicitly: tmux's default target may be another
+# client's active session. A shared Codex app-server can also inherit a pane from
+# an unrelated workspace; never stamp that pane with another worktree's thread.
+if [[ -n ${TMUX:-} && -n ${TMUX_PANE:-} ]]; then
+  target="" pane_cwd=""
+  IFS=$'\t' read -r target pane_cwd < <(
+    tmux display-message -p -t "$TMUX_PANE" $'#{session_id}\t#{session_path}' 2>/dev/null
+  ) || true
+  if [[ $target == \$* && ( $agent != codex || $pane_cwd == "$cwd" ) ]]; then
+    tmux set-environment -t "$target" CLAUDE_RESUME_ID "$sid" 2>/dev/null || true
+    tmux set-environment -t "$target" DEV_AGENT "$agent" 2>/dev/null || true
+  fi
+fi
 exit 0
