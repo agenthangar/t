@@ -71,8 +71,12 @@ def run_shim(tmp_path, command, *, prompt_rc=0, interactive=True, extra_env=None
                         output.extend(os.read(master, 4096))
                     except OSError:
                         break
-            if proc.poll() is None:
+            # PTY EOF may precede the child's exit status by a moment.
+            try:
+                proc.wait(timeout=max(0, deadline - time.monotonic()))
+            except subprocess.TimeoutExpired:
                 proc.kill()
+                proc.wait(timeout=2)
                 raise AssertionError(f"zsh timed out: {output!r}")
             assert proc.returncode == 0, output.decode(errors="replace")
         finally:
