@@ -75,3 +75,17 @@ jobs:
               raise SystemExit('Published archive content differs from the tagged Git tree')
           PY
           fi
+
+      - name: Get tap dispatch token
+        id: tap
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.T_FORMULA_APP_CLIENT_ID }}
+          private-key: ${{ secrets.T_FORMULA_APP_PRIVATE_KEY }}
+          owner: agenthangar
+          repositories: homebrew-tap
+          permission-contents: write
+      - name: Trigger tap formula update
+        env:
+          GH_TOKEN: ${{ steps.tap.outputs.token }}
+        run: gh api --method POST repos/agenthangar/homebrew-tap/dispatches -f event_type=t-release
