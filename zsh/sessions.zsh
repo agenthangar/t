@@ -546,14 +546,15 @@ _dev_summary_for_pid() {
 #      (pid -> "sid\tcwd", written by claude-stamp-tmux). This is ground truth for
 #      the live process and BEATS the stamp when they disagree. Guarded by a
 #      cwd == dir check so a recycled pid's stale entry is ignored.
-#   2. The tmux stamp — but only if its transcript lives in THIS slot's own project
-#      dir; a stamp pointing at another repo's transcript is stale and is dropped.
+#   2. The tmux stamp — only if its transcript belongs to THIS slot's cwd: Claude's
+#      project directory or Codex's index/rollout metadata. Cross-worktree stamps
+#      are stale and dropped, even if their transcripts still exist.
 #   3. For an unstamped live Codex, its pane title + current status footer matched
 #      to a unique named thread in this cwd, with validated rollout metadata.
 # Prints the id, or nothing (display callers may use a recency fallback).
 _dev_session_sid() {
   setopt local_options null_glob bare_glob_qual
-  local session="$1" dir="${2:-}" sid cpid reg line rcwd agent
+  local session="$1" dir="${2:-}" sid cpid reg line rcwd agent tx
   [[ -n $dir ]] || dir=$(tmux display-message -p -t "=$session:" '#{session_path}' 2>/dev/null)
   cpid=$(_dev_session_claude_pid "$session")
   reg="${XDG_CACHE_HOME:-$HOME/.cache}/claude-sessions/$cpid"
@@ -564,9 +565,10 @@ _dev_session_sid() {
   fi
   sid=$(tmux show-environment -t "=$session" CLAUDE_RESUME_ID 2>/dev/null | cut -d= -f2)
   agent=$(_dev_agent_of_session "$session")
-  # per agent: claude's transcript must sit in THIS slot's project dir; a codex
-  # rollout is date-keyed, so its existence (hook cache / sqlite / glob) is the test
-  if [[ -n $sid ]] && _dev_agent_transcript "$agent" "$sid" "$dir" >/dev/null; then
+  # Claude's path is cwd-keyed; Codex needs an explicit cwd check because its
+  # date-keyed rollout can exist even when the stamp belongs to another worktree.
+  if [[ -n $sid ]] && tx=$(_dev_agent_transcript "$agent" "$sid" "$dir") &&
+      { [[ $agent != codex ]] || _codex_sid_in_cwd "$sid" "$dir" "$tx"; }; then
     print -r -- "$sid"
   elif [[ $agent == codex ]]; then
     _codex_pane_sid "$session" "$dir" "$cpid"

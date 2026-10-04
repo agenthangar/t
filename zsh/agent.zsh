@@ -304,6 +304,34 @@ _dev_agent_transcript() {
   [[ -n ${tx[1]} && -f ${tx[1]} ]] && { print -r -- "${tx[1]}"; return 0; }   # -f: a literal path has no glob to null
   return 1
 }
+# Validate a saved Codex stamp against this worktree. The index tracks the latest
+# resume cwd; only fall back to session_meta when the thread is not indexed here.
+# Transcript existence alone is insufficient: rollouts are stored across all repos.
+_codex_sid_in_cwd() {
+  local sid="$1" cwd="$2" tx="$3"
+  [[ -n $cwd && -f $tx ]] || return 1
+  python3 - "$(_codex_db)" "$sid" "$cwd" "$tx" <<'PYCODE' 2>/dev/null
+import json, sqlite3, sys
+row = None
+try:
+    with sqlite3.connect('file:%s?mode=ro' % sys.argv[1], uri=True, timeout=0.5) as c:
+        row = c.execute("select cwd from threads where id=?", (sys.argv[2],)).fetchone()
+except sqlite3.Error:
+    pass
+if row is not None:
+    sys.exit(0 if row[0] == sys.argv[3] else 1)
+try:
+    with open(sys.argv[4]) as f:
+        record = json.loads(f.readline())
+    payload = record.get('payload') or {}
+    valid = (record.get('type') == 'session_meta' and
+             payload.get('id') == sys.argv[2] and payload.get('cwd') == sys.argv[3])
+except (OSError, ValueError, AttributeError):
+    valid = False
+sys.exit(0 if valid else 1)
+PYCODE
+}
+
 # _codex_rollout_scan <cwd> — rollouts whose session_meta says <cwd>, newest first,
 # from the date tree itself: the index only learns a rollout when codex next touches
 # it (verified: a copied-in rollout is resumable and gets indexed ON resume), so a
