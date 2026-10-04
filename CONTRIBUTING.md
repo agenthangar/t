@@ -1,7 +1,7 @@
 # Contributing
 
 Bug reports and focused improvements are welcome. Include your OS, zsh/Python/tmux
-versions, `t doctor` output with private paths removed, and a minimal reproduction.
+versions, `t system diagnose` output with private paths removed, and a minimal reproduction.
 Discuss larger changes in an issue before building them.
 
 By opening a pull request you accept the [Contributor License Agreement](CLA.md)
@@ -13,9 +13,9 @@ run `python3 -m pytest --cov --cov-fail-under=97`. Lint Bash with shellcheck and
 validate every changed zsh file with `zsh -n`. Keep new behavior covered by meaningful
 sandbox tests. No runtime pip dependencies are installed by install.sh.
 
-After merging a change to `main`, run `t update --local .` from the repository or
+After merging a change to `main`, run `t system update --local .` from the repository or
 its session worktree to install canonical main locally. If your installed version
-does not yet support `--local`, use `./bin/t update --local .` once to bootstrap.
+does not yet support this syntax, use `./bin/t system update --local .` once to bootstrap.
 Verify `t --version` matches the canonical main revision before finishing.
 
 Never include private paths, hosts, credentials, or real agent transcripts in issues,
@@ -38,5 +38,5 @@ are still being built. The release workflow rebuilds and checks the published
 assets; it does not replace an existing archive with different bytes.
 
 Smoke-test the public installer in an isolated HOME, including `t --version`,
-loading `t.plugin.zsh`, and a repeated `t update`. Use the existing release-installer
+loading `t.plugin.zsh`, and a repeated `t system update`. Use the existing release-installer
 tests for failed downloads, corrupt archives, rollback, and custom install paths.

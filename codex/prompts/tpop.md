@@ -1,5 +1,5 @@
 ---
-description: Pull this tmux'd Codex session back to a foreground terminal (t pop)
+description: Pull this tmux'd Codex session back to a foreground terminal (t session pop)
 ---
 
 The user wants to move this session **out of tmux** and back into a normal
@@ -17,12 +17,12 @@ terminal — the foreground resume has to happen in a shell the user controls. S
    plain terminal** (not inside this tmux session):
 
    ```
-   t pop <session-name>
+   t session pop <session-name>
    ```
 
    Fill in `<session-name>` from `tmux display-message -p '#S'` (for example
-   `t pop dev-api-3`). `t pop` kills the tmux slot and resumes this exact thread
-   in that terminal's foreground with `codex resume`.
+   `t session pop dev-api-3`). `t session pop` kills the tmux slot and resumes
+   this exact thread in that terminal's foreground with `codex resume`.
 3. Explain that once they run it, this in-tmux instance is terminated and the
    conversation continues in their foreground terminal.
 

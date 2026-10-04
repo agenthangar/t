@@ -324,7 +324,7 @@ if [[ -L "$HOME/bin/t" ]]; then
   unset _t_source
 fi
 SNIPPET
-printf '\nRun t setup in a new zsh shell.\n'
+printf '\nRun t config setup in a new zsh shell.\n'
 for tool in git python3 zsh tmux; do
     command -v "$tool" >/dev/null 2>&1 || echo "Missing dependency: $tool" >&2
 done

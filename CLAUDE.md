@@ -14,7 +14,7 @@ must keep its name; tests import it with SourceFileLoader.
   Python and cursor-beam. Never execute that data bridge in Python.
 - Remote helpers run through `zsh -lic`; each host loads the plugin from its own rc.
 - t.plugin.zsh follows the installed bin source on reload. Canonical main and active
-  dev source are separate; t update resolves canonical through git common-dir.
+  dev source are separate; t system update resolves canonical through git common-dir.
 - One live owner per conversation. Transfer transcript files and origin stamps;
   do not copy agent credential stores or a live Codex SQLite database.
 - Worktree creation failure aborts rather than falling back to a shared tree.

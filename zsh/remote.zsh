@@ -149,7 +149,7 @@ _dev_remote() {
   if ! res=$(_dev_remote_resolve "$repo" "$slot"); then
     # Nothing live to attach. `-r` is attach-only; starting one is `-r --new`.
     local dh; dh=$(_dev_default_host) \
-      && echo "  to START one remotely: t open ${repo:-<repo>}${slot:+ $slot} -r --new   (on $dh; --host <h> to choose)" >&2
+      && echo "  to START one remotely: t session open ${repo:-<repo>}${slot:+ $slot} -r --new   (on $dh; --host <h> to choose)" >&2
     return 1
   fi
   _dev_remote_attach "$res" "$fg"
@@ -167,7 +167,7 @@ _dev_remote_attach() {
 
   if [[ ! -t 1 ]]; then
     echo "dev: attaching to a remote session needs a terminal." >&2
-    echo "  From a terminal: t open $prepo $pslot   (it attaches on $host; \`t beam $prepo $pslot --from $host\` pulls it here)" >&2
+    echo "  From a terminal: t session open $prepo $pslot   (it attaches on $host; \`t session move $prepo $pslot --from $host\` pulls it here)" >&2
     return 1
   fi
   echo "→ Attaching $host:dev-${prepo}-${pslot} (stays on $host; Ctrl-b d to detach)"
@@ -231,7 +231,7 @@ _dev_remote_delegate() {
   local host=${res%%$'\t'*} prepo=${${res#*$'\t'}%%$'\t'*} pslot=${res##*$'\t'}
   local target="${REMOTE_HOSTS[$host]:-$host}"
   if [[ ! -t 1 ]]; then
-    echo "t $verb: dev-${prepo}-${pslot} is live on $host — run it from a terminal (or \`t beam $prepo $pslot --from $host\` to pull it here)." >&2
+    echo "t $verb: dev-${prepo}-${pslot} is live on $host — run it from a terminal (or \`t session move $prepo $pslot --from $host\` to pull it here)." >&2
     return 0
   fi
   local rcmd="T_UPDATE_PROMPTED=\$\$ t $verb ${(q)prepo} ${(q)pslot}"; local a
@@ -332,13 +332,13 @@ _dev_remote_fg_open() {
     sel=$(print -r -- "$rows" | _t_fzf --with-nth=2,1,3 --delimiter=$'\t' --prompt="t open > ") || return 0
   else
     echo "t open: '$handle' matches foreground sessions on several hosts — name one:" >&2
-    print -r -- "$rows" | awk -F'\t' '{printf "  t open %s   (on %s — %s)\n", $2, $1, $3}' >&2
+    print -r -- "$rows" | awk -F'\t' '{printf "  t session open %s   (on %s — %s)\n", $2, $1, $3}' >&2
     return 0
   fi
   local host=${sel%%$'\t'*} label
   label=$(print -r -- "$sel" | awk -F'\t' '{print $2}')
   local target="${REMOTE_HOSTS[$host]:-$host}"
-  [[ -t 1 ]] || { echo "t open: '$label' is on $host — attach it with: t on $host t open $label" >&2; return 1; }
+  [[ -t 1 ]] || { echo "t open: '$label' is on $host — attach it with: t host run $host t session open $label" >&2; return 1; }
   local rcmd="T_UPDATE_PROMPTED=\$\$ t open ${(q)label}"
   echo "→ Attaching foreground '$label' on $host"
   _term_title "$host: $label"
@@ -585,7 +585,7 @@ _t_plan() {
       # (`t plan 4` ≡ `t plan <cwd-repo> 4` — see _t_infer_repo).
       if [[ "$repo" == <-> && -z "$slot" ]]; then
         slot=$repo
-        repo=$(_t_infer_repo "$slot") || { echo "Not inside a DEV_REPOS dir — name the repo (t plan <repo> $slot)." >&2; return 1; }
+        repo=$(_t_infer_repo "$slot") || { echo "Not inside a DEV_REPOS dir — name the repo (t session view-plan <repo> $slot)." >&2; return 1; }
       fi
       if [[ -z "$slot" ]]; then                    # first existing slot for repo
         local n=1

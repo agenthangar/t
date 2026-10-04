@@ -352,7 +352,7 @@ def test_zsh_t_install_reloads_only_when_the_chained_setup_wrote(zsh, tmp_path):
 def test_zsh_group_help_never_navigates_or_moves_chat(zsh):
     path = f"{REPO_ROOT / 'bin'}:{os.environ.get('PATH', '')}"
     for command, expected in (("t repos cd api --help", "usage: t repos cd"),
-                              ("t cursor", "usage: t cursor"),
+                              ("t cursor", "USAGE\n  t cursor"),
                               ("t cursor resume --help", "usage: t cursor resume"),
                               ("t help repos path", "usage: t repos path")):
         r = zsh(f'old=$PWD; {command}; echo "same=$([[ $PWD == $old ]] && echo yes)"', PATH=path)
@@ -410,7 +410,7 @@ def test_zsh_agent_glyphs_match_bin_t(zsh, t_mod):
 
 def test_zsh_agent_check_points_at_t_install(zsh):
     r = zsh("_dev_agent_check definitely-not-a-binary; echo rc=$?")
-    assert "rc=1" in r.stdout and "t install definitely-not-a-binary" in r.stderr
+    assert "rc=1" in r.stdout and "t agent install definitely-not-a-binary" in r.stderr
     assert zsh("_dev_agent_check zsh; echo rc=$?").stdout.strip() == "rc=0"
 
 
@@ -1469,8 +1469,8 @@ def test_zsh_attach_fg_disambiguates_several_tmux_rows(zsh, tmp_path):
     # no picker: the handles, not a guess
     r = zsh("_dev_attach_fg api; echo rc=$?", **env)
     assert "rc=0" in r.stdout and "attach-session" not in zsh.log.read_text(), r.stdout
-    assert "t open api:aaaa1111   (tmux pr-api-1)" in r.stderr, r.stderr
-    assert "t open api:bbbb2222   (tmux pr-api-2)" in r.stderr, r.stderr
+    assert "t session open api:aaaa1111   (tmux pr-api-1)" in r.stderr, r.stderr
+    assert "t session open api:bbbb2222   (tmux pr-api-2)" in r.stderr, r.stderr
     # with fzf: the label is what the row DISPLAYS, so a pick can be typed by handle
     log = tmp_path / "fzf.log"
     r = zsh("_dev_attach_fg api", _tty=True, FZF_LOG=str(log), FZF_PICK="api:bbbb2222", **env)
@@ -1690,7 +1690,7 @@ def test_zsh_open_fg_names_each_of_several_idless_remote_rows(zsh, tmp_path):
     fake = '_dev_rows_all() { print -r -- "$FAKE_ROWS" }; '
     r = zsh(fake + "_dev_remote_fg_open ff", **env)                 # no tty: the handles
     for pid in (101, 202, 303):
-        assert f"t open ff:p{pid}   (on mini" in r.stderr, r.stderr
+        assert f"t session open ff:p{pid}   (on mini" in r.stderr, r.stderr
     assert not log.exists()
     r = zsh(fake + "_dev_remote_fg_open ff:p202; echo rc=$?", _tty=True, **env)
     assert "rc=0" in r.stdout, r.stdout

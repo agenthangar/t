@@ -77,7 +77,7 @@ _t_resume() {
       --days=*)    days=${a#--days=} ;;
       --host)      _expect_host=1 ;;
       --host=*)    on_host=${a#--host=} ;;
-      -*)          echo "t resume: unknown flag: $a (t resume -h for flags)" >&2; return 1 ;;
+      -*)          echo "t resume: unknown flag: $a (t session resume -h for flags)" >&2; return 1 ;;
       *)           pos+=("$a") ;;
     esac
   done
@@ -103,7 +103,7 @@ _t_resume() {
     all_mode=1
   elif [[ "$repo" == <-> && -z "$slot" ]]; then
     slot=$repo
-    repo=$(_t_infer_repo "$slot") || { echo "Not inside a DEV_REPOS dir — name the repo (t resume <repo> $slot)." >&2; return 1; }
+    repo=$(_t_infer_repo "$slot") || { echo "Not inside a DEV_REPOS dir — name the repo (t session resume <repo> $slot)." >&2; return 1; }
   elif [[ -z "$repo" ]]; then
     repo=$(_t_infer_repo) || all_mode=1
   fi
@@ -127,7 +127,7 @@ _t_resume() {
   else
     [[ -n ${DEV_REPOS[$repo]:-} ]] || { echo "Unknown repo: $repo (configured: ${(k)DEV_REPOS})" >&2; return 1; }
     if ! _dev_worktree_enabled "$repo"; then
-      echo "t resume: $repo opts out of worktree-per-session, so its slots share one project dir and a slot's last conversation is ambiguous — pick one with \`t push -p\` instead." >&2
+      echo "t resume: $repo opts out of worktree-per-session, so its slots share one project dir and a slot's last conversation is ambiguous — pick one with \`t session push -p\` instead." >&2
       return 1
     fi
     repos=($repo)
@@ -307,7 +307,7 @@ _t_resume() {
       wt=$(_dev_worktree_path "$repo" "$n")
       if _dev_app_slot_reserved "$wt"; then
         if [[ -n $slot ]]; then
-          print -u2 -- "t resume: $repo $n is reserved for the Codex desktop app; use t open $repo $n --app"
+          print -u2 -- "t resume: $repo $n is reserved for the Codex desktop app; use t session open $repo $n --app"
           return 1
         fi
         live_seen[app/${repo}-$n]=1
@@ -501,8 +501,8 @@ _t_resume() {
   # strictly fire-and-forget — the render above already used the cache and is done.
   _pr_state_flush
 
-  (( skipped )) && echo "(${skipped} older conversation(s) outside the last ${days}d hidden — t resume --days all shows them)" >&2
-  (( hidden_live )) && echo "(${hidden_live} live slot(s) hidden — t resume --live lists them; t open attaches one)" >&2
+  (( skipped )) && echo "(${skipped} older conversation(s) outside the last ${days}d hidden — t session resume --days all shows them)" >&2
+  (( hidden_live )) && echo "(${hidden_live} live slot(s) hidden — t session resume --live lists them; t session open attaches one)" >&2
 
   # ONE global newest-first order by session time (the leading epoch field),
   # never grouped by repo — the loop above emits repo-by-repo, so without this
@@ -515,13 +515,13 @@ _t_resume() {
   if (( ! $#cands )); then
     if [[ -n $slot ]]; then
       echo "No saved conversation for $repo slot $slot (nothing recorded in its worktree)." >&2
-      echo "Fresh session: t open $repo $slot · full picker: t push -p" >&2
+      echo "Fresh session: t session open $repo $slot · full picker: t session push -p" >&2
     elif [[ -n $all_mode ]]; then
       echo "Nothing to resume — no dead slot in any worktree repo has a saved conversation." >&2
-      echo "Fresh session: t open <repo> · full picker: t push -p" >&2
+      echo "Fresh session: t session open <repo> · full picker: t session push -p" >&2
     else
       echo "Nothing to resume for $repo — no dead slot has a saved conversation." >&2
-      echo "Fresh session: t open $repo · full picker: t push -p" >&2
+      echo "Fresh session: t session open $repo · full picker: t session push -p" >&2
     fi
     return 1
   fi
@@ -612,9 +612,9 @@ _t_resume() {
     echo "  $legend" >&2
   else
     if [[ -n $all_mode ]]; then
-      echo "Several resumable conversations — name one (t resume <repo> <slot>):" >&2
+      echo "Several resumable conversations — name one (t session resume <repo> <slot>):" >&2
     else
-      echo "Several resumable conversations for $repo — name one (t resume $repo <slot>):" >&2
+      echo "Several resumable conversations for $repo — name one (t session resume $repo <slot>):" >&2
     fi
     for c in "${(@)cands}"; do echo "  ${c##*$'\t'}" >&2; done
     echo "  $legend" >&2
@@ -641,18 +641,18 @@ _t_resume() {
       f=("${(@ps:\t:)pick}")
       repo=$f[1]; slot=$f[2]; sid=$f[3]; wt=$f[4]; mp_loc="${f[7]:-}"; mp_agent="${f[10]:-claude}"
       if [[ $mp_loc == fg:* ]]; then
-        echo "· $repo: that conversation is live as foreground ${f[8]} — attach with: t open ${f[8]}"
+        echo "· $repo: that conversation is live as foreground ${f[8]} — attach with: t session open ${f[8]}"
         continue
       elif [[ $mp_loc == here ]]; then
         [[ -n ${f[8]:-} && $f[8] != - ]] && repo=$f[8]
-        echo "· $repo $slot is already live here — attach with: t open $repo $slot"
+        echo "· $repo $slot is already live here — attach with: t session open $repo $slot"
         continue
       elif [[ -n $mp_loc && $mp_loc != - ]]; then
-        echo "· $repo $slot is live on $mp_loc — attach with: t open $repo $slot"
+        echo "· $repo $slot is live on $mp_loc — attach with: t session open $repo $slot"
         continue
       fi
       if [[ -n ${mp_taken[$repo/$slot]:-} ]]; then
-        echo "· ${sid:0:8}: $repo slot $slot already revived by an earlier mark — skipped (t resume $repo $slot swaps it)." >&2
+        echo "· ${sid:0:8}: $repo slot $slot already revived by an earlier mark — skipped (t session resume $repo $slot swaps it)." >&2
         continue
       fi
       if [[ -n $on_host ]]; then
@@ -689,11 +689,11 @@ _t_resume() {
     if [[ -n $on_host ]]; then
       # Remote landings: the rest are one `t open` away (it auto-finds the host);
       # the first attaches in place over ssh when there is a terminal to do it in.
-      (( $#mp_rest )) && echo "Also landed on $on_host — attach with: ${(j: · :)${mp_rest/#/t open }}"
+      (( $#mp_rest )) && echo "Also landed on $on_host — attach with: ${(j: · :)${mp_rest/#/t session open }}"
       if [[ -t 0 && -t 1 ]]; then
         ssh -t "${REMOTE_HOSTS[$on_host]:-$on_host}" "zsh -lic ${(q):-tmux attach -t $mp_first_session}"
       else
-        echo "Attach with: t open ${${mp_first_session#dev-}%-*} ${mp_first_session##*-}"
+        echo "Attach with: t session open ${${mp_first_session#dev-}%-*} ${mp_first_session##*-}"
       fi
       return
     fi
@@ -716,7 +716,7 @@ _t_resume() {
       tmux attach-session -t "=dev-${mp_first_repo}-${mp_first_slot}:"
     else
       _dev_open_tab "t open $mp_first_repo $mp_first_slot" \
-        || echo "Attach with: t open $mp_first_repo $mp_first_slot"
+        || echo "Attach with: t session open $mp_first_repo $mp_first_slot"
     fi
     return
   fi
@@ -758,7 +758,7 @@ _t_resume() {
       echo "t resume --host: landing on $on_host failed: ${landed:-no output}" >&2
       return 1
     }
-    echo "Landed in $landed on $on_host — attach with: t open ${${landed#dev-}%-*} ${landed##*-}"
+    echo "Landed in $landed on $on_host — attach with: t session open ${${landed#dev-}%-*} ${landed##*-}"
     return 0
   fi
 
@@ -773,7 +773,7 @@ _t_resume() {
 
   if [[ -n $no_tmux ]]; then
     if [[ -n $TMUX && -n $CLAUDE_CODE_SESSION_ID ]]; then
-      echo "Run t resume --fg from a plain shell — it resumes the session in the foreground." >&2
+      echo "Run t session resume --fg from a plain shell — it resumes the session in the foreground." >&2
       return 1
     fi
     cd "$cwd" || return 1
@@ -787,7 +787,7 @@ _t_resume() {
   if [[ -z $TMUX && -t 0 && -t 1 ]]; then
     tmux attach-session -t "=$session:"
   else
-    echo "Attach with: t open $repo $slot"
+    echo "Attach with: t session open $repo $slot"
   fi
 }
 
@@ -1260,7 +1260,7 @@ _t_restart_slot() {
     }
   fi
   [[ $cpid == <-> || ( -z $cpid && $(tmux display-message -p -t "$pane" '#{pane_dead}') == 1 ) ]] || {
-    print -u2 -- 't restart: no live agent or exited pane to restart; inspect with t open'; return 1
+    print -u2 -- 't restart: no live agent or exited pane to restart; inspect with t session open'; return 1
   }
   up=$PPID
   while [[ -n $up && $up != 0 && $up != 1 ]]; do
@@ -1372,7 +1372,7 @@ _t_restart_slot() {
       fi
       sleep 0.05
     done
-    print -u2 -- 't restart: the old client or its pane has not exited; no second client was started. Inspect with t open.'
+    print -u2 -- 't restart: the old client or its pane has not exited; no second client was started. Inspect with t session open.'
     return 1
   } always {
     rmdir "$lock" 2>/dev/null
@@ -1661,7 +1661,7 @@ _t_pop() {
     # (`t pop 4` ≡ `t pop <cwd-repo> 4` — see _t_infer_repo).
     if [[ "$repo" == <-> && -z "$slot" ]]; then
       slot=$repo
-      repo=$(_t_infer_repo "$slot") || { echo "Not inside a DEV_REPOS dir — name the repo (t pop <repo> $slot)."; return 1; }
+      repo=$(_t_infer_repo "$slot") || { echo "Not inside a DEV_REPOS dir — name the repo (t session pop <repo> $slot)."; return 1; }
     fi
     # Same-dir sibling aliases (see _dev_kill): a `dev-dot-2` answers `t pop
     # dotfiles 2` when `dot` and `dotfiles` both key ~/code/dotfiles. Without this
@@ -2043,7 +2043,7 @@ _t_beam() {
     # session's name would be a coincidence, not evidence.
     if [[ $repo_arg == <-> && -z $slot_arg ]]; then slot_arg=$repo_arg; repo_arg=$(_t_infer_repo); fi
     [[ -z $repo_arg ]] && repo_arg=$(_t_infer_repo)
-    [[ -n $repo_arg ]] || { echo "tbeam: --from needs a <repo> to pull (e.g. t beam dot 1 --from $from_host)" >&2; return 1; }
+    [[ -n $repo_arg ]] || { echo "tbeam: --from needs a <repo> to pull (e.g. t session move dot 1 --from $from_host)" >&2; return 1; }
     [[ -n $CLAUDE_CODE_SESSION_ID ]] && fg=
     local target="${REMOTE_HOSTS[$from_host]:-$from_host}"
     _dev_pull "$from_host" "$target" "$repo_arg" "$slot_arg" "$fg"
@@ -2081,7 +2081,7 @@ _t_beam() {
     # Repo-aware: a lone numeric first positional is a SLOT of the repo $PWD is in
     # (`t beam 4` ≡ `t beam <cwd-repo> 4`, optional host after — see _t_infer_repo).
     slot_arg=${pos[1]}
-    repo_arg=$(_t_infer_repo "$slot_arg") || { echo "tbeam: not inside a DEV_REPOS dir — name the repo (t beam <repo> ${pos[1]})" >&2; return 1; }
+    repo_arg=$(_t_infer_repo "$slot_arg") || { echo "tbeam: not inside a DEV_REPOS dir — name the repo (t session move <repo> ${pos[1]})" >&2; return 1; }
     host=${pos[2]}
   else
     host=${pos[1]}
@@ -2250,7 +2250,7 @@ _t_beam() {
   local rest=${session#dev-} repo slot
   slot=${rest##*-}; repo=${rest%-*}
   if [[ -n "${DEV_REPOS[$repo]}" ]]; then
-    echo "  Attach: t open $repo $slot    (or pull it back: t beam $repo $slot --from $host)"
+    echo "  Attach: t session open $repo $slot    (or pull it back: t session move $repo $slot --from $host)"
   else
     echo "  Attach: ssh $host -t \"zsh -lic 'tmux attach -t $session'\""
   fi

@@ -39,6 +39,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import textwrap
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import TCPServer
@@ -4355,7 +4356,8 @@ def _t_auto_update(argv):
               "beam", "read", "plan", "paste", "find", "cursor", "repos", "config",
               "setup", "new", "checkout", "instructions", "install", "integrate",
               "permissions", "trust", "doctor"}
-    if (not argv or argv[0] not in public or not _t_update_interactive()
+    operation = _canonical_argv(argv)
+    if (not operation or operation[0] not in public or not _t_update_interactive()
             or any(flag in argv for flag in ("--dry-run", "--json", "--dump", "--statusline"))):
         return None
     installation = _t_update_installation()
@@ -4787,20 +4789,20 @@ def _install_then_setup(cfg, args, rc, chain=True):
 
 _AGENT_PARITY = [
     ("surface", "claude", "codex", "cursor"),
-    ("t install (install · login · update · reinstall)", "✓", "✓", "✓"),
-    ("dev slots: t open / ls / kill / read / paste", "✓", "✓ t open --codex · DEV_AGENT", "✗ no slot — t cursor ls"),
-    ("t push / t pop", "✓", "✓", "✗ no slot"),
-    ("t resume (dead slots)", "✓", "✓ (its sqlite thread index)", "→ t cursor resume"),
-    ("t beam / --from (move a session)", "✓", "✓ (rollout + .origin)", "→ t cursor [id] --host / --from"),
-    ("t app (desktop + browser preview)", "✗ Codex conversations only", "✓ local macOS slot → same thread", "✗"),
+    ("t agent install (login · update · reinstall)", "✓", "✓", "✓"),
+    ("dev slots: t session open / list / close / read / paste", "✓", "✓ t session open --codex · DEV_AGENT", "✗ no slot — t cursor list"),
+    ("t session push / pop", "✓", "✓", "✗ no slot"),
+    ("t session resume (dead slots)", "✓", "✓ (its sqlite thread index)", "→ t cursor resume"),
+    ("t session move / --from", "✓", "✓ (rollout + .origin)", "→ t cursor send [id] --host / --from"),
+    ("t session open-app (desktop + browser preview)", "✗ Codex conversations only", "✓ local macOS slot → same thread", "✗"),
     ("csync (iCloud union of transcripts)", "✓ projects + plans", "✓ codex-sessions", "✓ cursor-chats"),
     ("SessionStart stamps (registry · opened · origin)", "✓ settings.json hook",
      "✓ hooks.json (trust once at startup)", "✗ no hook wired"),
-    ("t plan", "✓", "✗ codex keeps no plan files (says so)", "✗"),
+    ("t session view-plan", "✓", "✗ codex keeps no plan files (says so)", "✗"),
     ("/tpush · /tpop slash commands", "✓ ~/.claude/commands", "✓ ~/.codex/prompts", "✗"),
-    ("t find (transcript search)", "✓", "✗ claude transcripts only", "✗"),
-    ("t doctor agent row (version · login · hook)", "✓", "✓", "✓ version · login"),
-    ("t permissions (selected policy)", "✓ ~/.claude/settings.json",
+    ("t session search (transcript search)", "✓", "✗ claude transcripts only", "✗"),
+    ("t system diagnose agent row (version · login · hook)", "✓", "✓", "✓ version · login"),
+    ("t policy check (selected policy)", "✓ ~/.claude/settings.json",
      "✓ ~/.codex/rules/t.rules (argv prefixes) · sandbox network on",
      "✓ ~/.cursor/cli-config.json (argv + env prefixes)"),
     ("default permission mode (opt in with --defaults)", "✓ auto (permissions.defaultMode)",
@@ -4808,7 +4810,7 @@ _AGENT_PARITY = [
     ("default subagent model (seeded when the config names none)",
      "✓ sonnet (env.CLAUDE_CODE_SUBAGENT_MODEL)", "✓ gpt-6-sol ([agents] default_subagent_model)",
      "✗ not seeded"),
-    ("t trust (folder trust · optional auto trust)", "✓ ~/.claude.json projects",
+    ("t agent trust (folder trust · optional auto trust)", "✓ ~/.claude.json projects",
      "✓ ~/.codex/config.toml [projects]", "✓ ~/.cursor/projects/<slug> marker"),
     ("nosleep (hold sleep while an agent works)", "✓ caffeinate child · net bytes", "✓ net bytes", "✓ net bytes"),
 ]
@@ -8022,6 +8024,203 @@ def cmd_mcp(cfg, args):
 
 # ─── argument parsing (gh-style) ───────────────────────────────────────────────
 
+# Public command vocabulary. Values are the established parser spellings and any
+# mode flag required by an existing handler. Keep this table in sync with the
+# shell-bound dispatch in zsh/; the Python parser remains the source of flag
+# definitions for both public commands and compatibility aliases.
+COMMAND_GROUPS = {
+    "session": {
+        "open": ("open",), "list": ("ls",), "close": ("kill",),
+        "restart": ("restart",), "push": ("push",), "pop": ("pop",),
+        "resume": ("resume",), "cd": ("cd",), "move": ("beam",),
+        "read": ("read",), "view-plan": ("plan",), "paste": ("paste",),
+        "search": ("find",), "open-app": ("app",),
+    },
+    "repo": {
+        "list": ("repos", "ls"), "cd": ("repos", "cd"),
+        "locate": ("repos", "path"), "create": ("new",),
+        "clone": ("checkout",),
+    },
+    "cursor": {"list": ("cursor", "ls"), "resume": ("cursor", "resume"),
+               "send": ("cursor", "send")},
+    "host": {"run": ("on",)},
+    "config": {"open": ("config",), "show": ("config", "--show"),
+               "edit": ("config", "--edit"), "setup": ("setup",)},
+    "profile": {"init": ("instructions", "--init"),
+                "edit": ("instructions", "--edit"),
+                "show": ("instructions", "--show"),
+                "apply": ("instructions", "--apply")},
+    "policy": {"check": ("permissions",), "show": ("permissions", "--show"),
+               "apply": ("permissions", "--apply")},
+    "agent": {"install": ("install",), "status": ("install", "--status"),
+              "trust": ("trust",)},
+    "system": {"integrate": ("integrate",), "update": ("update",),
+               "diagnose": ("doctor",)},
+}
+
+GROUP_DESCRIPTIONS = {
+    "session": "Open, find, and move work sessions",
+    "repo": "List and manage repositories",
+    "cursor": "List, resume, and send Cursor chats",
+    "host": "Run a command on another machine",
+    "config": "Manage local settings",
+    "profile": "Manage reusable AGENTS.md instructions",
+    "policy": "Inspect and apply agent permissions",
+    "agent": "Install and configure agent CLIs",
+    "system": "Integrate, update, and diagnose t",
+}
+
+
+def _canonical_argv(argv):
+    """Translate a public noun/action pair; leave payload arguments untouched."""
+    if len(argv) < 2 or argv[0] not in COMMAND_GROUPS:
+        return argv
+    prefix = COMMAND_GROUPS[argv[0]].get(argv[1])
+    return [*prefix, *argv[2:]] if prefix else argv
+
+
+def _canonical_error(argv):
+    """Validate the public action boundary before legacy argparse sees it."""
+    if len(argv) < 2 or argv[0] not in COMMAND_GROUPS:
+        return None
+    group, action = argv[:2]
+    if action not in COMMAND_GROUPS[group]:
+        if group == "cursor" or (group == "config" and action.startswith("-")):
+            return None  # Cursor IDs/flags and config mode flags are legacy input.
+        return f"t {group}: unknown action {action!r}; choose from {', '.join(COMMAND_GROUPS[group])}"
+    if group == "profile" and action == "apply" and (len(argv) < 3 or argv[2].startswith("-")):
+        return "t profile apply: a registered repository is required"
+    mode_flags = {"config": {"--show", "--edit"},
+                  "profile": {"--init", "--edit", "--show", "--apply"},
+                  "policy": {"--show", "--apply"}}
+    if group == "agent" and action in ("install", "status"):
+        mode_flags["agent"] = {"--status"}
+    payload = argv[2:argv.index("--")] if "--" in argv[2:] else argv[2:]
+    conflict = mode_flags.get(group, set()).intersection(payload)
+    if conflict:
+        return f"t {group} {action}: mode flags belong to the action name: {', '.join(sorted(conflict))}"
+    return None
+
+
+def _root_help():
+    help_text = """USAGE
+  t <noun> <verb> [arguments] [flags]
+
+WORK
+  session   Open, find, and move work sessions
+  repo      List and manage repositories
+  cursor    List, resume, and send Cursor chats
+  host      Run a command on another machine
+
+CONFIGURATION
+  config    Manage local settings
+  profile   Manage reusable AGENTS.md instructions
+  policy    Inspect and apply agent permissions
+
+TOOLS
+  agent     Install and configure agent CLIs
+  system    Integrate, update, and diagnose t
+
+FLAGS
+  -h, --help     Show help
+  --version      Show version
+
+EXAMPLES
+  t session open api       Open or reattach an api session
+  t session list --remote  List sessions across machines
+  t repo list              List registered repositories
+
+LEARN MORE
+  t help <noun> [verb]      Show command details
+  t help agents            Show agent support
+  t help aliases           Show compatibility aliases
+"""
+    return _wrap_help(help_text)
+
+
+def _wrap_help(body):
+    width = max(24, shutil.get_terminal_size(fallback=(80, 24)).columns)
+    if width >= 75:
+        return body
+    lines = []
+    for line in body.splitlines():
+        if len(line) <= width:
+            lines.append(line)
+        else:
+            row = re.match(r"^(  \S(?:.*?\S)?)( {2,})(\S.*)$", line)
+            if row:
+                label, gap, description = row.groups()
+                column = len(label) + len(gap)
+                if width - column >= 18:
+                    lines.append(textwrap.fill(description, width=width,
+                                               initial_indent=label + gap,
+                                               subsequent_indent=" " * column,
+                                               break_long_words=False))
+                else:
+                    lines.append(label)
+                    lines.append(textwrap.fill(description, width=width,
+                                               initial_indent="    ", subsequent_indent="    ",
+                                               break_long_words=False))
+            else:
+                indent = "  " if line.startswith("  ") else ""
+                lines.append(textwrap.fill(line.strip(), width=width, initial_indent=indent,
+                                           subsequent_indent=indent, break_long_words=False))
+    return "\n".join(lines) + "\n"
+
+
+def _group_help(group):
+    width = max(map(len, COMMAND_GROUPS[group]))
+    rows = [f"  {action:<{width}}  { _command_description(group, action)}"
+            for action in COMMAND_GROUPS[group]]
+    return _wrap_help(f"USAGE\n  t {group} <verb> [arguments] [flags]\n\n"
+            f"{GROUP_DESCRIPTIONS[group]}.\n\nCOMMANDS\n" + "\n".join(rows) +
+            f"\n\nRun `t help {group} <verb>` for flags and arguments.\n")
+
+
+def _command_description(group, action):
+    descriptions = {
+        "session": {"open": "Open or reattach a session", "list": "List live sessions",
+                    "close": "Close a session", "restart": "Restart a stuck agent",
+                    "push": "Background this session", "pop": "Return a session to this terminal",
+                    "resume": "Revive a saved conversation", "cd": "Enter a slot worktree",
+                    "move": "Move a session between machines", "read": "Read slot output",
+                    "view-plan": "Show a Claude session plan", "paste": "Paste a recent file path",
+                    "search": "Search and resume a saved conversation",
+                    "open-app": "Hand off a Codex slot to the desktop app"},
+        "repo": {"list": "List registered repositories", "cd": "Enter a checkout",
+                 "locate": "Print a checkout path", "create": "Create a GitHub repository",
+                 "clone": "Clone and register a repository"},
+        "cursor": {"list": "List chats", "resume": "Resume a chat", "send": "Move a chat"},
+        "host": {"run": "Run a remote command or shell"},
+        "config": {"open": "Open the settings menu", "show": "Print current settings",
+                   "edit": "Edit local configuration", "setup": "Register repos and hosts"},
+        "profile": {"init": "Create an instruction profile", "edit": "Edit the profile",
+                    "show": "Print the profile", "apply": "Apply it to a repository"},
+        "policy": {"check": "Check pending changes", "show": "Show translated rules",
+                   "apply": "Apply permission rules"},
+        "agent": {"install": "Install and log in agent CLIs", "status": "Show agent state",
+                  "trust": "Trust a folder in installed agents"},
+        "system": {"integrate": "Link t and its hooks", "update": "Update t",
+                   "diagnose": "Diagnose the local setup"},
+    }
+    return descriptions[group][action]
+
+
+def _aliases_help():
+    rows = []
+    for group, actions in COMMAND_GROUPS.items():
+        for action, legacy in actions.items():
+            old = " ".join(legacy)
+            if old != f"{group} {action}":
+                rows.append(f"  t {old:<25} t {group} {action}")
+    rows.extend((
+        "  t cursor [id]               t cursor send [id]",
+        "  t cursor --ls               t cursor list",
+        "  t cursor [id] --from HOST   t cursor send [id] --from HOST",
+        "  t instructions REPO --apply  t profile apply REPO",
+    ))
+    return "COMPATIBILITY ALIASES\n" + "\n".join(rows) + "\n\nLegacy flags remain available.\n"
+
 class _CommandSubparsers(argparse._SubParsersAction):
     """Keep public choices separate from the complete dispatch table."""
 
@@ -8050,69 +8249,40 @@ class _CommandParser(argparse.ArgumentParser):
             return
         super()._check_value(action, value)
 
+    def parse_args(self, args=None, namespace=None):
+        if self.prog == "t" and args is not None:
+            args = _canonical_argv(list(args))
+        return super().parse_args(args, namespace)
+
+    def format_help(self):
+        return _root_help() if self.prog == "t" else super().format_help()
+
+    def format_usage(self):
+        return "usage: t <noun> <verb> [arguments] [flags]\n" if self.prog == "t" else super().format_usage()
+
 
 def build_parser():
-    p = _CommandParser(
-        prog="t", description="Claude session manager (open/list/move tmux'd Claude sessions).",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""\
-examples:
-  t open api              open/reattach the next free api slot
-  t open api 3 --new      force a fresh session in api slot 3
-  t open api --codex      a fresh slot running Codex CLI instead of Claude (DEV_AGENT[api]=codex makes it the default)
-  t open                  open/reattach in the repo cwd is in
-  t paste 4               slot-only args mean the cwd repo (all verbs)
-  t open ff -r --new      start a fresh session on the default remote host
-  t open ff --host mini   start/attach a session on 'mini' (a specific remote host)
-  t open a4aa5f6a         open a foreground (:fg) session by id from t ls (any machine)
-  t open ff:p4242         open an fg row with no session id by its pid label (as t ls shows it)
-  t ls                    list this repo's live sessions
-  t ls -r                 list live sessions across every machine
-  t repos ls              list registered repo names and checkout paths
-  t repos cd t            enter the registered t checkout (with the zsh plugin)
-  t help repos path        show help for a nested command
-  t cursor                 show Cursor chat commands (ls, resume, send)
-  t push                  send the current session to a background tmux slot
-  t pop api 3             pull dev-api-3 back to this terminal
-  t resume api 3          revive dev-api-3's last conversation after it was closed
-  t cd ff 5               cd this shell into ff's slot-5 worktree (bare t cd: picker)
-  t beam api --host mini  send a session to 'mini' and resume it there
-  t app api 3             move a Codex slot into the desktop app with its web preview
-  t find "auth refactor"  search saved sessions, then resume the pick
-  t on mini ls            run a command on a remote host
-  t setup                 onboard this machine: register ~/code repos + ssh hosts
-  t checkout URL          clone an existing GitHub repo and register it locally
-  t instructions          create/edit a reusable AGENTS.md instruction profile
-  t integrate             link t's user-facing command and agent prompts
-  t install               install + log in the agent CLIs (claude, codex, cursor) here and on every host
-  t permissions           compare T_PERMISSIONS_DIR with installed agent settings
-  t update                update through Homebrew, a release, or a Git checkout
-  t new tool-x            wizard: create ~/code/tool-x + github <owner>/tool-x, register it everywhere
-
-agents — what each verb supports per agent (t install --status adds this machine's state):
-""" + "\n".join(_agent_parity_render()) + """
-
-Run `t help <verb>` or `t <verb> -h` for a verb's own flags.""")
+    p = _CommandParser(prog="t", description="Manage work sessions, repositories, and agent tools.")
     p.add_argument("--version", action="version", version=f"t {_t_version()}")
     sub = p.add_subparsers(dest="verb", metavar="<verb>")
     p._group_parsers = {}
     help_sp = sub.add_parser("help", help="show help for a command or subcommand",
         description="Show top-level help, or help for a command or subcommand. "
-            "For example: `t help open` or `t help repos path`.")
+            "For example: `t help session open` or `t help repo locate`.")
     help_sp.add_argument("command", nargs="*", help="command and optional subcommand")
 
     sp = sub.add_parser("open", help="open or reattach a session in a per-repo tmux slot",
-        description="Open or reattach a Claude session in a per-repo tmux slot. Bare `t open` "
-            "(or a lone slot like `t open 3`) targets the repo your cwd is in. A slot that is "
+        description="Open or reattach a Claude session in a per-repo tmux slot. Bare `t session open` "
+            "(or a lone slot like `t session open 3`) targets the repo your cwd is in. A slot that is "
             "live only on another host is attached in place automatically — no flag needed. "
-            "A foreground row from `t ls` (`<repo>:<id>`, or `<repo>:p<pid>` when no session id is "
+            "A foreground row from `t session list` (`<repo>:<id>`, or `<repo>:p<pid>` when no session id is "
             "recorded yet) is opened by that SESSION name, on whichever "
             "machine holds it: one living in a tmux session of its own is attached "
             "in place, a true foreground claude is moved into this terminal. "
             "`--new` forces a fresh session, `--fg` runs inline without a tmux slot, "
             "`--app` opens an isolated worktree in the macOS Codex desktop app, and "
             "`-r`/`--host` open or attach on a remote host (`-r --new` starts one there).")
-    sp.add_argument("repo", nargs="?", help="DEV_REPOS key, or a foreground session id/repo:id from `t ls`")
+    sp.add_argument("repo", nargs="?", help="DEV_REPOS key, or a foreground session id/repo:id from `t session list`")
     sp.add_argument("slot", nargs="?", help="slot number, 'fg' (this repo's foreground sessions), or a session id")
     sp.add_argument("--new", action="store_true", help="force a fresh session")
     sp.add_argument("--fg", action="store_true", help="no tmux: foreground-resume / run inline")
@@ -8131,9 +8301,9 @@ Run `t help <verb>` or `t <verb> -h` for a verb's own flags.""")
             "plan in separate built-in browser tabs. "
             "Use Annotation mode there to leave comments. The tmux slot stays reserved, "
             "and the worktree and dev server keep running. A lone number means the "
-            "cwd repo; bare `t app` uses the cwd worktree's slot, or the repo's only slot. "
+            "cwd repo; bare `t session open-app` uses the cwd worktree's slot, or the repo's only slot. "
             "Several slots require an explicit number. Claude conversations cannot be "
-            "converted. Remote slots must be brought here first with `t beam … --here`. "
+            "converted. Remote slots must be brought here first with `t session move … --here`. "
             "Creates a new window automatically using the app's New Window menu; "
             "macOS Accessibility access for your terminal is required. --reuse-window "
             "uses the existing window instead. "
@@ -8153,19 +8323,19 @@ Run `t help <verb>` or `t <verb> -h` for a verb's own flags.""")
     sp = sub.add_parser("ls", help="list dev sessions (attached + active context)",
         description="List live Claude dev sessions: whether each is attached, and whether it "
             "has an active conversation loaded (vs. parked on the startup splash). Scoped to the "
-            "repo your cwd is in by default (`t ls <repo>` scopes to a named repo from anywhere); "
+            "repo your cwd is in by default (`t session list <repo>` scopes to a named repo from anywhere); "
             "`-a` widens to every repo, and `-r` spans every "
             "$REMOTE_HOSTS machine in one table with a HOST column. Read-only — attach with "
-            "`t open`, move with `t beam`.")
+            "`t session open`, move with `t session move`.")
     sp.add_argument("repo", nargs="?", help="scope to this repo from any directory (default: the repo cwd is in)")
     sp.add_argument("-r", "--remote", action="store_true", help="span every $REMOTE_HOSTS host")
     sp.add_argument("-a", "--all", action="store_true", help="every repo (not just the current)")
 
     sp = sub.add_parser("kill", help="tear down a session",
         description="Tear down a dev session (kill its tmux slot). Names default to the cwd "
-            "repo, so `t kill 3` kills this repo's slot 3 and `t kill all` kills every slot for "
-            "it. A foreground / :fg row from `t ls` (a bare `claude`, or one in a tmux "
-            "session of its own) is killed by its shown SESSION name — `t kill ff:p4242` or `t kill "
+            "repo, so `t session close 3` kills this repo's slot 3 and `t session close all` kills every slot for "
+            "it. A foreground / :fg row from `t session list` (a bare `claude`, or one in a tmux "
+            "session of its own) is killed by its shown SESSION name — `t session close ff:p4242` or `t session close "
             "<short-id>` — since it is not a dev slot. Confirms first while a Claude is live "
             "unless `-y`; `-r` kills it on its remote host instead.")
     sp.add_argument("repo", nargs="?", help="DEV_REPOS key (or a foreground row's SESSION name); defaults to the repo your cwd is in")
@@ -8181,8 +8351,8 @@ Run `t help <verb>` or `t <verb> -h` for a verb's own flags.""")
             "to only the agent and waits for it to exit before resuming the exact conversation "
             "in the same pane and worktree. Does not submit the saved draft. Refuses desktop "
             "reservations and commands run inside the agent being restarted. Leaves the slot "
-            "detached unless already attached; use t open to attach. For a remote slot, run "
-            "t on <host> t restart <repo> <slot>.")
+            "detached unless already attached; use t session open to attach. For a remote slot, run "
+            "t host run <host> t session restart <repo> <slot>.")
     sp.add_argument("repo", nargs="?", help="registered repo; defaults to the cwd repo")
     sp.add_argument("slot", nargs="?", help="local slot number; required if ambiguous")
     sp.add_argument("--dry-run", action="store_true", help="validate and show the recovery without stopping anything")
@@ -8192,33 +8362,33 @@ Run `t help <verb>` or `t <verb> -h` for a verb's own flags.""")
             "frees this terminal while the conversation keeps running. Inside Claude it "
             "backgrounds THIS chat (and exits it for you); from a plain shell it fzf-picks a "
             "session (scoped to the cwd repo, `-a` for every project). Bring it back with "
-            "`t pop`. Inverse of `t pop`.")
+            "`t session pop`. Inverse of `t session pop`.")
     sp.add_argument("-p", "--pick", action="store_true", help="force the picker")
     sp.add_argument("-a", "--all", action="store_true", help="picker across every project")
 
     sp = sub.add_parser("pop", help="pull a tmux'd session back to the foreground",
         description="Pull a backgrounded (tmux'd) session back into THIS terminal and resume it "
-            "in the foreground. Names default to the cwd repo, so `t pop` picks this repo's slot "
-            "and `t pop api 3` pulls dev-api-3. Inverse of `t push`.")
+            "in the foreground. Names default to the cwd repo, so `t session pop` picks this repo's slot "
+            "and `t session pop api 3` pulls dev-api-3. Inverse of `t session push`.")
     sp.add_argument("repo", nargs="?", help="DEV_REPOS key; defaults to the repo your cwd is in")
     sp.add_argument("slot", nargs="?", help="slot number; a lone slot implies the cwd repo")
 
     sp = sub.add_parser("resume", help="revive a dead slot's saved conversation",
-        description="Revive a DEAD dev slot's conversation (`t open` on a dead slot "
+        description="Revive a DEAD dev slot's conversation (`t session open` on a dead slot "
             "deliberately starts fresh — this brings the chat back). Offers EVERY conversation "
             "saved in the slot's own per-session worktree (one global newest-first list by "
             "session time — never grouped by repo; live rows on top when shown; conversationless stubs "
             "skipped), rebuilding a reaped worktree from its branch first, then resumes the pick "
             "in a fresh dev slot and attaches. Names default to "
-            "the cwd repo; outside any repo dir a bare `t resume` scans every worktree repo. "
+            "the cwd repo; outside any repo dir a bare `t session resume` scans every worktree repo. "
             "One candidate is taken, several fzf-pick (an explicit slot with no TTY takes the "
             "newest). The picker MULTI-SELECTS: space-mark several rows with a ✓ (tab works "
             "too) and every marked dead "
             "slot revives into its own detached dev slot — the first attaches, the rest open "
-            "in NEW terminal tabs (Terminal.app/iTerm2; `t open` hints when tabs are "
+            "in NEW terminal tabs (Terminal.app/iTerm2; `t session open` hints when tabs are "
             "impossible — ssh, unrecognized terminal, no Accessibility; --fg takes a single "
             "pick only). "
-            "LIVE slots are hidden by default (a stderr count names them — `t open` is "
+            "LIVE slots are hidden by default (a stderr count names them — `t session open` is "
             "the verb for a running slot); -l/--live lists them as labeled rows — "
             "'● active' / '● on <host>' — and picking one ATTACHES in place (locally or on "
             "its host) instead of resuming; naming a live slot explicitly always attaches. "
@@ -8226,10 +8396,10 @@ Run `t help <verb>` or `t <verb> -h` for a verb's own flags.""")
             "a foreground session) is shown as a row pointing at that owner — never resumed "
             "a second time. --host H revives the pick on H instead of here. "
             "Worktree-per-session repos only (a shared tree's transcripts are "
-            "ambiguous per-slot — use `t push -p` there). Agents: a claude conversation "
+            "ambiguous per-slot — use `t session push -p` there). Agents: a claude conversation "
             "and a codex thread are offered alike — every row carries its agent's icon and name "
             f"({_agent_legend()}) — each revived by its own binary; a cursor chat has no dev slot "
-            "— `t cursor ls` / `t cursor resume <id>`.")
+            "— `t cursor list` / `t cursor resume <id>`.")
     sp.add_argument("repo", nargs="?", help="DEV_REPOS key; defaults to the repo your cwd is in")
     sp.add_argument("slot", nargs="?", help="slot number; a lone slot implies the cwd repo")
     sp.add_argument("-f", "--fg", action="store_true", help="resume inline in THIS terminal (no tmux slot)")
@@ -8242,16 +8412,16 @@ Run `t help <verb>` or `t <verb> -h` for a verb's own flags.""")
     sp.add_argument("--days", metavar="N", default="30",
         help="recency window for conversations (default 30; 'all' for everything)")
     sp.add_argument("--host", metavar="H",
-        help="revive the pick ON host H instead of here (the `t beam` send: worktree edits "
+        help="revive the pick ON host H instead of here (the `t session move` send: worktree edits "
              "pushed, transcript rsync'd, landed in a dev slot there and attached)")
 
     sp = sub.add_parser("cd", help="cd this shell into a dev slot's worktree",
         description="cd the calling shell into a dev slot's worktree "
-            "($DEV_WORKTREE_ROOT/<repo>/<slot>). Names default to the cwd repo, so `t cd 3` "
+            "($DEV_WORKTREE_ROOT/<repo>/<slot>). Names default to the cwd repo, so `t session cd 3` "
             "jumps to this repo's slot 3. With no slot: the repo's only worktree, an fzf pick "
             "when there are several (showing each worktree's checked-out branch), or the "
-            "canonical repo dir when it has none. Bare `t cd` picks across every worktree. "
-            "Navigation only — it never creates a worktree (`t open` does) and never touches "
+            "canonical repo dir when it has none. Bare `t session cd` picks across every worktree. "
+            "Navigation only — it never creates a worktree (`t session open` does) and never touches "
             "tmux.")
     sp.add_argument("repo", nargs="?", help="DEV_REPOS key; defaults to the repo your cwd is in")
     sp.add_argument("slot", nargs="?", help="slot number; a lone slot implies the cwd repo")
@@ -8289,7 +8459,7 @@ Run `t help <verb>` or `t <verb> -h` for a verb's own flags.""")
 
     sp = sub.add_parser("plan", help="render the plan a session wrote",
         description="Render the plan a Claude session last wrote (the ExitPlanMode markdown). "
-            "Resolves the session like `t pop` — `t plan api 1`, a full dev-<repo>-<slot> name, "
+            "Resolves the session like `t session pop` — `t session view-plan api 1`, a full dev-<repo>-<slot> name, "
             "or inside Claude the current session — then displays it word-wrapped for narrow "
             "(phone) terminals. `-a` fzf-picks across every project. A remote slot renders on "
             "its host, where the plan file lives.")
@@ -8317,9 +8487,8 @@ Run `t help <verb>` or `t <verb> -h` for a verb's own flags.""")
     sp.add_argument("query", nargs="*", help="search terms (omit to browse recent sessions)")
 
     sp = sub.add_parser("cursor", help="list, resume, or move Cursor CLI chats",
-        description="Manage cursor-agent chats across machines. `t cursor ls` lists chats, "
+        description="Manage cursor-agent chats across machines. `t cursor list` lists chats, "
             "`t cursor resume [id]` resumes one, and `t cursor send [id]` moves one to a host. "
-            "Legacy `t cursor [id]`, `--ls`, and `--from` forms remain available. "
             "Cursor chats have no numbered dev slot.")
     p._group_parsers["cursor"] = sp
     cursor_sub = sp.add_subparsers(dest="action", metavar="<command>")
@@ -8337,7 +8506,7 @@ Run `t help <verb>` or `t <verb> -h` for a verb's own flags.""")
 
     sp = sub.add_parser("on", help="run a command on a remote host (or open a shell)",
         description="Run a command on another machine over ssh, in a login+interactive shell so "
-            "the dev tooling and Homebrew are on PATH (e.g. `t on mini t ls`). With no command, "
+            "the dev tooling and Homebrew are on PATH (e.g. `t host run mini t session list`). With no command, "
             "opens an interactive shell there. Hosts come from $REMOTE_HOSTS; an unknown name is "
             "used as a literal ssh target.")
     sp.add_argument("host", help="$REMOTE_HOSTS key, or a literal ssh target")
@@ -8364,7 +8533,7 @@ Run `t help <verb>` or `t <verb> -h` for a verb's own flags.""")
             "hosts stop participating in remote t commands; unregistering repos keeps their files "
             "and sessions. Tool/model/effort/Fast mode defaults apply to fresh tmux and --fg sessions only. "
             "Open local config in editor covers all custom shell settings (VISUAL/EDITOR, else vi). "
-            "For a reusable AGENTS.md profile, run `t instructions --init`.")
+            "For a reusable AGENTS.md profile, run `t profile init`.")
     cg = sp.add_mutually_exclusive_group()
     cg.add_argument("--show", action="store_true", help="print current settings without opening the menu")
     cg.add_argument("--edit", action="store_true", help="open T_LOCAL_RC in VISUAL/EDITOR directly")
@@ -8394,9 +8563,9 @@ Run `t help <verb>` or `t <verb> -h` for a verb's own flags.""")
     ig.add_argument("--no-instructions", action="store_true", help="leave AGENTS.md untouched (default without a terminal)")
 
     sp = sub.add_parser("new", help="create a repo: ~/code/<name> + GitHub, registered here and on every host",
-        description="A wizard (the `t setup` style — stepped, inline, nothing created until you "
-            "confirm) that makes a brand-new repo wired for `t open`: git init ~/code/<name> on "
-            "main with an empty initial commit (the path is fixed — t beam / t open -r need the "
+        description="A wizard (the `t config setup` style — stepped, inline, nothing created until you "
+            "confirm) that makes a brand-new repo wired for `t session open`: git init ~/code/<name> on "
+            "main with an empty initial commit (the path is fixed — t session move / t session open -r need the "
             "same path on every host); a GitHub repo <owner>/<name> pushed as origin, the owner "
             "picked from your user + orgs (default: authenticated user), private unless you say public, "
             "set squash-only + auto-merge + delete-branch-on-merge (what `gh pr merge --auto "
@@ -8426,7 +8595,7 @@ Run `t help <verb>` or `t <verb> -h` for a verb's own flags.""")
             "fetch, reset, or pull; a conflicting destination or alias is refused. "
             "This command does not create or edit a GitHub repository and does not "
             "clone to remote hosts. With T_AUTO_TRUST=1, apply the usual optional "
-            "agent trust sync. t open needs origin/main; a different default branch "
+            "agent trust sync. t session open needs origin/main; a different default branch "
             "gets a warning after checkout.")
     sp.add_argument("url", help="GitHub HTTPS or SSH clone URL (owner/repo)")
     sp.add_argument("alias", nargs="?", help="DEV_REPOS key (default: repository name)")
@@ -8451,7 +8620,7 @@ Run `t help <verb>` or `t <verb> -h` for a verb's own flags.""")
     mode.add_argument("--apply", action="store_true", help="apply profile to repo without prompting")
 
     sp = sub.add_parser("install", help="install + log in the agent CLIs (claude, codex, cursor)",
-        description="The `t setup`-style checklist for the agent binaries themselves: probes "
+        description="The `t config setup`-style checklist for the agent binaries themselves: probes "
             "which of Claude Code, Codex CLI and the Cursor CLI are installed and logged in "
             "here, then offers the rest on ONE list — installed and logged-in entries locked "
             "under a ✓, the missing ones pre-marked — with the vendors' install one-liners and "
@@ -8463,7 +8632,7 @@ Run `t help <verb>` or `t <verb> -h` for a verb's own flags.""")
             "--reinstall pre-marks. A run that changes anything ends by syncing each "
             "installed agent (hooks and any explicitly selected policy or auto trust), "
             "and when ~/code holds git repos DEV_REPOS does not "
-            "know yet, `t setup` opens next (under -y it is only named).")
+            "know yet, `t config setup` opens next (under -y it is only named).")
     sp.add_argument("agents", nargs="*", metavar="agent",
                     help=f"pre-mark only these ({', '.join(INSTALL_AGENTS)}); default: every missing one")
     sp.add_argument("-y", "--yes", action="store_true", help="no list, no review: run the marks as they stand")
@@ -8533,25 +8702,25 @@ Run `t help <verb>` or `t <verb> -h` for a verb's own flags.""")
             "focus-events, history-limit), which panes capture the mouse themselves (Claude's "
             "fullscreen TUI — the usual answer to 'the scroll wheel does not scroll the "
             "output'), and tool versions. Ends with findings + suggested fixes. Run it on "
-            "another machine with `t on <host> t doctor`.")
+            "another machine with `t host run <host> t system diagnose`.")
 
     # Machine-readable / internal: callable, with explicit help, but not advertised.
     sub.add_parser("session-rows", hidden=True, help="machine-readable per-host scan (remote contract)",
         description="Internal/machine-readable: emit one tab-separated row per live dev slot on "
-            "this host. Part of the cross-host remote contract `t ls -r` and `t beam` run over "
+            "this host. Part of the cross-host remote contract `t session list -r` and `t session move` run over "
             "ssh; not meant to be called directly.")
     sub.add_parser("land", hidden=True, help="(internal) resume a beamed session on this host",
         description="Internal: resume a just-beamed session on this (the receiving) host, "
-            "reading its parameters from TB_* env vars. Invoked over ssh by `t beam`; not for "
+            "reading its parameters from TB_* env vars. Invoked over ssh by `t session move`; not for "
             "direct use.")
     sub.add_parser("kill-owner", hidden=True, help="(internal) stop the local owner of a session id",
         description="Internal: stop the local live owner (dev slot) of a session id, enforcing "
-            "`t beam`'s one-live-owner-per-conversation invariant. Invoked over ssh; not for "
+            "`t session move`'s one-live-owner-per-conversation invariant. Invoked over ssh; not for "
             "direct use.")
-    lp = sub.add_parser("new-land", hidden=True, help="(internal) clone + register a `t new` repo on this host",
+    lp = sub.add_parser("new-land", hidden=True, help="(internal) clone + register a `t repo create` repo on this host",
         description="Internal: clone <url> to ~/code/<name> (skipped when it already is that "
             "clone) and append DEV_REPOS[<alias>] to this host's T_LOCAL_RC. Invoked over "
-            "ssh by `t new` / `t setup`; not for direct use.")
+            "ssh by `t repo create` / `t config setup`; not for direct use.")
     lp.add_argument("url")
     lp.add_argument("name")
     lp.add_argument("alias")
@@ -8601,6 +8770,46 @@ def _help_parser(parser, words, *, strict=False):
     return current
 
 
+def _print_command_help(target, words, canonical):
+    """Show existing detailed flag help under the requested public spelling."""
+    if words and words[0] in COMMAND_GROUPS and len(words) >= 2:
+        words = words[:2]
+    elif words and words[0] in ("repos", "cursor") and len(words) >= 2:
+        words = words[:2]
+    elif words:
+        words = words[:1]
+    if len(words) == 2 and words[0] in COMMAND_GROUPS:
+        group, action = words
+        mode_actions = {
+            "config": {"open", "show", "edit"},
+            "profile": {"init", "edit", "show", "apply"},
+            "policy": {"check", "show", "apply"},
+            "agent": {"status"},
+        }
+        if action in mode_actions.get(group, set()):
+            args = " <repo>" if (group, action) == ("profile", "apply") else ""
+            flags = " [--defaults]" if group == "policy" and action in ("check", "apply") else ""
+            print(f"usage: t {group} {action}{args}{flags} [-h]\n\n"
+                  f"{_command_description(group, action)}.\n\n"
+                  "options:\n  -h, --help  show this help message and exit" +
+                  ("\n  --defaults  seed agent defaults where absent" if flags else ""))
+            return
+    if words == canonical:
+        target.print_help()
+        return
+    if words == ["agent", "install"]:
+        target = copy.deepcopy(target)
+        status = target._option_string_actions.pop("--status")
+        target._actions.remove(status)
+        target._optionals._group_actions.remove(status)
+    old_prog = target.prog
+    try:
+        target.prog = "t " + " ".join(words)
+        target.print_help()
+    finally:
+        target.prog = old_prog
+
+
 def main(argv):
     if argv == ["__update-prompt"]:
         return _t_offer_update()
@@ -8617,29 +8826,65 @@ def main(argv):
         _app_plan_serve(_app_plan_path(argv[1]))
         return 0
     parser = build_parser()
+    if not argv or argv in (["-h"], ["--help"]):
+        print(_root_help(), end="")
+        return 0
     if argv and argv[0] == "help":
         words = argv[1:]
         if words and words[-1] in ("-h", "--help"):
             words = words[:-1]
         if not words:
-            parser.print_help()
+            print(_root_help(), end="")
             return 0
-        target = _help_parser(parser, words, strict=True)
+        if words == ["agents"]:
+            print("AGENT SUPPORT\n" + "\n".join(_agent_parity_render()))
+            return 0
+        if words == ["aliases"]:
+            print(_aliases_help(), end="")
+            return 0
+        if len(words) == 1 and words[0] in COMMAND_GROUPS:
+            print(_group_help(words[0]), end="")
+            return 0
+        canonical = [word for word in _canonical_argv(words) if not word.startswith("-")]
+        target = _help_parser(parser, canonical, strict=True)
         if target is None:
             print(f"t help: unknown command: {' '.join(words)}", file=sys.stderr)
             return 2
-        target.print_help()
+        _print_command_help(target, words, canonical)
         return 0
+    if len(argv) == 1 and argv[0] in COMMAND_GROUPS and argv[0] != "config":
+        print(_group_help(argv[0]), end="")
+        return 0
+    if (len(argv) == 2 and argv[0] in COMMAND_GROUPS
+            and argv[1] in ("-h", "--help")):
+        print(_group_help(argv[0]), end="")
+        return 0
+    original_argv = argv
     # `--` ends option parsing. `t on HOST ...` forwards the remainder to a
     # remote zsh -lic, whose flags belong to that command rather than to t.
     option_end = argv.index("--") if "--" in argv else len(argv)
     help_at = next((i for i, a in enumerate(argv[:option_end])
                     if a in ("-h", "--help")), None)
-    if help_at is not None and not (argv[0] == "on" and help_at > 1):
-        target = _help_parser(parser, argv[:help_at])
+    if help_at is not None and not (argv[0] == "on" and help_at > 1) and not (
+            argv[:2] == ["host", "run"] and help_at > 2):
+        words = argv[:help_at]
+        canonical = [word for word in _canonical_argv(words) if not word.startswith("-")]
+        target = _help_parser(parser, canonical)
         if target is not None:
-            target.print_help()
+            _print_command_help(target, words, canonical)
             return 0
+    error = _canonical_error(argv)
+    if error:
+        print(error, file=sys.stderr)
+        return 2
+    top_commands = next(a._name_parser_map for a in parser._actions
+                        if isinstance(a, argparse._SubParsersAction))
+    if (argv[0] not in top_commands and argv[0] not in COMMAND_GROUPS
+            and argv[0] != "todo" and not argv[0].startswith("-")):
+        print(f"t: unknown command {argv[0]!r}; choose from "
+              f"{', '.join(COMMAND_GROUPS)}", file=sys.stderr)
+        return 2
+    argv = _canonical_argv(argv)
     # Operational `cursor` arguments still belong to cursor-beam. In particular,
     # `t cursor --ls` must reach it without argparse rejecting the leading flag.
     # Bare cursor and all help forms were handled above by t's parser.
@@ -8647,7 +8892,7 @@ def main(argv):
         if len(argv) == 1:
             parser._group_parsers["cursor"].print_help()
             return 0
-        update_result = _t_auto_update(argv)
+        update_result = _t_auto_update(original_argv)
         if update_result is not None:
             return update_result
         return cmd_cursor(Config(), argparse.Namespace(rest=argv[1:]))
@@ -8657,6 +8902,8 @@ def main(argv):
     if argv and argv[0] == "todo":
         return cmd_todo(Config(), argparse.Namespace(rest=argv[1:]))
     args = parser.parse_args(argv)
+    if args.verb == "on":
+        args.rest = argv[2:]
     if not args.verb:
         parser.print_help()
         return 0
@@ -8664,7 +8911,7 @@ def main(argv):
     if group_parser is not None and args.action is None:
         group_parser.print_help()
         return 0
-    update_result = _t_auto_update(argv)
+    update_result = _t_auto_update(original_argv)
     if update_result is not None:
         return update_result
     cfg = Config()

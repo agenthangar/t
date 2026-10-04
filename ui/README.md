@@ -5,7 +5,7 @@ scrolling reach every menu. Keep command-specific decisions out of the renderer.
 
 | Surface | Shared implementation | Consumers |
 | --- | --- | --- |
-| Inline wizards | `Style` and `_RailUI` in `bin/t` | `t config`, `t setup`, `t install`, `t new` |
+| Inline wizards | `Style` and `_RailUI` in `bin/t` | `t config open`, `t config setup`, `t agent install`, `t repo create` |
 | Searchable lists | `_t_fzf` in `ui/fzf.sh` | Session, worktree, paste, search, beam, and Cursor chat pickers |
 
 ## Visual rules
