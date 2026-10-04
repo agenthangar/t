@@ -1198,8 +1198,8 @@ _claude_sessions_fzf() {
 # pane. A per-slot lock prevents two simultaneous restarts from racing.
 _t_restart_slot() {
   emulate -L zsh
-  local session="$1" dir="$2" sid="$3" agent="$4" mode="$5"
-  local pane cpid up attempt snapshot old_remain actual_dir
+  local session="$1" dir="$2" sid="$3" agent="$4" mode="$5" expected_pid="${6:-}"
+  local pane cpid up attempt snapshot old_remain actual_dir launch screen
   local cache="${XDG_CACHE_HOME:-$HOME/.cache}/t/restart" lock
   # Do not reuse a process snapshot captured by another command in this shell.
   local _DEV_PS_AT=0
@@ -1219,6 +1219,18 @@ _t_restart_slot() {
     print -u2 -- 't restart: multiple panes in this slot; keep only the agent pane before restarting'; return 1
   }
   cpid=$(_dev_session_claude_pid "$session")
+  [[ -z $expected_pid || $cpid == $expected_pid ]] || {
+    print -u2 -- 't restart: the agent changed since the recovery offer; nothing was stopped'; return 1
+  }
+  if [[ $mode == restart-no-daemon ]]; then
+    [[ $agent == codex && -n $expected_pid ]] || return 1
+    # This bypass is invocation-local. Never restart the shared server, which
+    # may own other sessions, or change the user's daemon configuration.
+    [[ -n $sid ]] || _dev_agent_at_welcome "$agent" "$session" "$dir" || return 1
+    command codex --help 2>/dev/null | command grep -q -- '--no-daemon' || {
+      print -u2 -- 't restart: this Codex version does not support --no-daemon'; return 1
+    }
+  fi
   [[ $cpid == <-> || ( -z $cpid && $(tmux display-message -p -t "$pane" '#{pane_dead}') == 1 ) ]] || {
     print -u2 -- 't restart: no live agent or exited pane to restart; inspect with t open'; return 1
   }
@@ -1252,6 +1264,22 @@ _t_restart_slot() {
        $(tmux list-panes -s -t "=$session" -F '#{pane_id}') == $pane ]] || {
       print -u2 -- 't restart: the slot changed; nothing was stopped'; return 1
     }
+    if [[ $mode == restart-no-daemon ]]; then
+      screen=$(tmux capture-pane -p -J -t "$pane") || return 1
+      [[ $screen == *'Cannot use the background server'* &&
+         $screen == *'Experimental feature request failed'* &&
+         $screen == *'Run without daemon this time'* &&
+         $screen == *'Restart cannot resolve this compatibility check.'* ]] || {
+        print -u2 -- 't restart: the startup failure cleared; nothing was stopped'; return 1
+      }
+      if [[ -n $sid ]]; then
+        launch="$(_dev_agent_resume_cmd "$agent" "$sid") --no-daemon"
+      else
+        launch="$(_dev_agent_new_cmd "$agent") --no-daemon"
+      fi
+    else
+      launch=$(_dev_agent_resume_cmd "$agent" "$sid")
+    fi
     old_remain=$(tmux show-options -A -p -v -t "$pane" remain-on-exit) || return 1
     tmux set-environment -t "=$session" CLAUDE_RESUME_ID "$sid" || return 1
     tmux set-environment -t "=$session" DEV_AGENT "$agent" || return 1
@@ -1261,7 +1289,7 @@ _t_restart_slot() {
       if { [[ -z $cpid ]] || ! kill -0 "$cpid" 2>/dev/null; } &&
          [[ $(tmux display-message -p -t "$pane" '#{pane_dead}') == 1 ]]; then
         # No -k: tmux must refuse if anything is still running in this pane.
-        tmux respawn-pane -t "$pane" -c "$dir" "zsh -lic ${(q)$(_dev_agent_resume_cmd "$agent" "$sid")}" || return 1
+        tmux respawn-pane -t "$pane" -c "$dir" "zsh -lic ${(q)launch}" || return 1
         tmux set-option -p -t "$pane" remain-on-exit "$old_remain"
         return $?
       fi
@@ -1295,6 +1323,7 @@ _dev_resume_session() {
   # `; exit` so quitting Claude tears the session down rather than leaving an idle
   # shell (see _dev_new_session for the full rationale).
   tmux send-keys -t "$session" "$(_dev_agent_resume_cmd "$agent" "$sid"); exit" Enter
+  _dev_recovery_watch "$session"
 }
 
 # _dev_slot_for_cwd <cwd> — map a transcript's working dir to a dev session slot.

@@ -36,3 +36,9 @@ def load_script(path, mod_name):
 @pytest.fixture(scope="session")
 def t_mod():
     return load_script(BIN / "t", "t_bin")
+
+
+@pytest.fixture(autouse=True)
+def disable_recovery_watchers(monkeypatch):
+    """Session tests must never start a watcher against the developer's tmux."""
+    monkeypatch.setenv("T_RECOVERY_DISABLE", "1")

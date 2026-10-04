@@ -554,7 +554,7 @@ def cmd_kill_owner(cfg, args):
 
 def cmd_cursor(cfg, args):
     """Passthrough to bin/cursor-beam, the cursor-agent chat mover — cursor chats
-    have no dev slot/tmux, so the whole t machinery does not apply; this verb just
+    have their own tmux recovery sessions rather than numbered dev slots; this verb
     gives them the same front door. `t cursor ls` sugar maps to `cursor-beam --ls`;
     everything else forwards verbatim. Resolved as a sibling of the real bin/t
     (works from a repo checkout before install.sh links it), else from PATH."""
@@ -8313,6 +8313,9 @@ IMPLEMENTED = {
 
 
 def main(argv):
+    if argv and argv[0] == "__recovery":
+        helper = os.path.join(_t_source_root(), "libexec", "t_recovery.py")
+        os.execv(sys.executable, [sys.executable, helper, *argv[1:]])
     if len(argv) == 2 and argv[0] == "_app-plan-server":
         _app_plan_serve(_app_plan_path(argv[1]))
         return 0
