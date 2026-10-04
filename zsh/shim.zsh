@@ -219,7 +219,7 @@ _t_open() {
   [[ -n $want_host ]] && { echo "t open: --host requires a value" >&2; return 2; }
   [[ -n $app && -n $cli ]] && { echo "t open: --app and --cli are mutually exclusive" >&2; return 2; }
 
-  # Explicit CLI/remote intents take precedence over the local opening default.
+  # Explicit CLI/remote intents take precedence over reservations and defaults.
   if [[ -z $app && -z $cli && -z $cli_intent && -z $host && -z $remote ]]; then
     for arg in "${rest[@]}"; do
       [[ $arg == -* ]] || mode_pos+=("$arg")
@@ -228,8 +228,22 @@ _t_open() {
     # Foreground selectors and conversation IDs continue through CLI routing.
     if [[ ( -n ${DEV_REPOS[$mode_repo]:-} || -z $mode_repo || $mode_repo == <-> || $mode_repo == new ) &&
           ( -z $mode_slot || $mode_slot == <-> || $mode_slot == new ) ]]; then
-      [[ -n ${DEV_REPOS[$mode_repo]:-} ]] || mode_repo=$(_t_infer_repo "$mode_repo")
-      [[ ${DEV_OPEN_MODE[$mode_repo]:-$DEV_OPEN_MODE_DEFAULT} == app ]] && app=1
+      if [[ -z ${DEV_REPOS[$mode_repo]:-} ]]; then
+        [[ $mode_repo == <-> && -z $mode_slot ]] && mode_slot=$mode_repo
+        mode_repo=$(_t_infer_repo "$mode_repo")
+        if [[ -z $mode_slot && -z $isnew ]]; then
+          local mode_row; mode_row=$(_dev_repo_of_dir "$PWD" 2>/dev/null)
+          [[ $mode_row == *$'\t'* ]] && mode_slot=${mode_row#*$'\t'}
+        fi
+      fi
+      # A desktop reservation is the slot's owner, even when new slots default
+      # to CLI. Reuse the app path so reopening never freshens its worktree.
+      if [[ -n ${DEV_REPOS[$mode_repo]:-} && $mode_slot == <-> && -z $isnew ]] &&
+          _dev_app_slot_reserved "$(_dev_worktree_path "$mode_repo" "$mode_slot")"; then
+        app=1
+      elif [[ ${DEV_OPEN_MODE[$mode_repo]:-$DEV_OPEN_MODE_DEFAULT} == app ]]; then
+        app=1
+      fi
     fi
   fi
 

@@ -219,7 +219,8 @@ commits or pushes these instructions for you.
 
 On macOS, `t open my-project --app` creates a fresh isolated worktree and opens
 that folder in the Codex desktop app without starting a terminal agent. Name a
-slot to reopen its worktree (`t open my-project 3 --app`); if that slot is running
+slot to reopen its worktree (`t open my-project 3` automatically uses the app
+when the slot is reserved for it). With `--app`, if that slot is running
 Codex in tmux, `t` hands the same conversation to the app. `--app` requires a
 worktree-enabled repo and a local Codex installation. It cannot launch a desktop
 workspace on a remote host.
