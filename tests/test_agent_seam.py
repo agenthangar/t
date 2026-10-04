@@ -349,6 +349,19 @@ def test_zsh_t_install_reloads_only_when_the_chained_setup_wrote(zsh, tmp_path):
     assert "shim=" in zsh("t install -h").stdout
 
 
+def test_zsh_group_help_never_navigates_or_moves_chat(zsh):
+    path = f"{REPO_ROOT / 'bin'}:{os.environ.get('PATH', '')}"
+    for command, expected in (("t repos cd api --help", "usage: t repos cd"),
+                              ("t cursor", "usage: t cursor"),
+                              ("t cursor resume --help", "usage: t cursor resume"),
+                              ("t help repos path", "usage: t repos path")):
+        r = zsh(f'old=$PWD; {command}; echo "same=$([[ $PWD == $old ]] && echo yes)"', PATH=path)
+        assert r.returncode == 0, r.stderr
+        assert expected in r.stdout
+        assert "same=yes" in r.stdout
+    assert not zsh.log.exists()
+
+
 def test_zsh_agent_for_precedence(zsh):
     assert zsh("_dev_agent_for api").stdout.strip() == "codex"          # DEV_AGENT[api]
     assert zsh("_dev_agent_for api claude").stdout.strip() == "claude"  # --claude wins

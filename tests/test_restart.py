@@ -204,7 +204,8 @@ tmux show-options -p -v -t '=dev-api-1:' remain-on-exit
         subprocess.run(tmux + ["kill-server"], capture_output=True)
 
 
-@pytest.mark.parametrize('scenario', ['fresh', 'resume', 'changed_pid', 'cleared', 'unsupported', 'not_fresh'])
+@pytest.mark.parametrize('scenario', ['fresh', 'resume', 'not_running', 'stale_socket',
+                                      'changed_pid', 'cleared', 'unsupported', 'not_fresh'])
 def test_restart_background_failure_uses_invocation_local_fallback(tmp_path, scenario):
     bins = tmp_path / 'bin'
     bins.mkdir()
@@ -231,9 +232,9 @@ tmux() {{
     capture-pane)
       [[ $scenario == cleared ]] && {{ print 'ready'; return; }}
       print -r -- 'Cannot use the background server
-Experimental feature request failed
+{'background server is not running' if scenario == 'not_running' else 'background server socket is stale or unreachable' if scenario == 'stale_socket' else 'Experimental feature request failed'}
 1. Run without daemon this time
-Restart cannot resolve this compatibility check.
+{"" if scenario in ('not_running', 'stale_socket') else 'Restart cannot resolve this compatibility check.'}
 2. Cancel' ;;
   esac
   return 0
@@ -250,13 +251,75 @@ kill() {{ print -r -- "signal $*" >> "$log"; [[ $1 == -TERM ]]; }}
 _t_restart_slot dev-api-1 "$dir" {shlex.quote(sid)} codex restart-no-daemon {'88888' if scenario == 'changed_pid' else '99999'}
 '''
     completed = run_shell(tmp_path, code)
-    assert (completed.returncode == 0) == (scenario in ('fresh', 'resume')), completed.stderr
+    assert (completed.returncode == 0) == (scenario in ('fresh', 'resume', 'not_running', 'stale_socket')), completed.stderr
     actions = (tmp_path / 'actions').read_text()
-    if scenario in ('fresh', 'resume'):
+    if scenario in ('fresh', 'resume', 'not_running', 'stale_socket'):
         assert actions.index('capture-pane') < actions.index('signal -TERM') < actions.index('respawn-pane')
         launch = next(line for line in actions.splitlines() if line.startswith('respawn-pane'))
         assert '--no-daemon' in launch and '-k' not in launch
         assert (SID in launch) == (scenario == 'resume')
-        assert ('chosen' in launch) == (scenario == 'fresh')
+        assert ('chosen' in launch) == (scenario in ('fresh', 'not_running', 'stale_socket'))
+    else:
+        assert 'signal' not in actions and 'respawn-pane' not in actions
+
+
+@pytest.mark.skipif(not shutil.which('zsh'), reason='zsh required')
+@pytest.mark.parametrize('scenario', ['manual', 'monitored', 'cleared', 'missing_sid',
+                                      'unsupported', 'changed_pid'])
+def test_restart_invalid_cwd_resumes_exact_thread_in_existing_worktree(tmp_path, scenario):
+    bins = tmp_path / 'bin'
+    bins.mkdir()
+    codex = bins / 'codex'
+    codex.write_text('#!/bin/sh\necho ' +
+                     ('--no-daemon' if scenario == 'unsupported' else '--no-daemon --cd') + '\n')
+    codex.chmod(0o755)
+    worktree = tmp_path / 'worktrees' / 'api' / '1'
+    worktree.mkdir(parents=True)
+    sid = '' if scenario == 'missing_sid' else SID
+    mode = 'restart' if scenario == 'manual' else 'restart-invalid-cwd'
+    expected_pid = '88888' if scenario == 'changed_pid' else '99999'
+    code = f'''
+export PATH={shlex.quote(str(bins))}:$PATH
+scenario={scenario}
+dir={shlex.quote(str(worktree))}
+log={shlex.quote(str(tmp_path / 'actions'))}
+tmux() {{
+  print -r -- "$*" >> "$log"
+  case $1 in
+    display-message)
+      case ${{@: -1}} in
+        *session_path*) print -r -- "$dir" ;;
+        *pane_id*) print '%1' ;;
+        *pane_dead*) print 1 ;;
+      esac ;;
+    list-panes) print '%1' ;;
+    show-options) print off ;;
+    capture-pane)
+      [[ $scenario == cleared ]] && {{ print 'ready'; return; }}
+      print -r -- '■ Failed to start turn: turn/start failed in TUI: turn/start failed: invalid cwd: No such file or directory (os error 2) (code -32600)'
+      ;;
+  esac
+  return 0
+}}
+_dev_agent_of_session() {{ print codex; }}
+_dev_session_sid() {{ print -r -- {shlex.quote(sid)}; }}
+_dev_app_slot_reserved() {{ return 1; }}
+_dev_session_claude_pid() {{ print 99999; }}
+_dev_agent_resume_cmd() {{ print -r -- "codex resume $2 -c feature_setting=preserved"; }}
+ps() {{ print 1; }}
+kill() {{ print -r -- "signal $*" >> "$log"; [[ $1 == -TERM ]]; }}
+_t_restart_slot dev-api-1 "$dir" {shlex.quote(sid)} codex {mode} {expected_pid}
+'''
+    completed = run_shell(tmp_path, code)
+    assert (completed.returncode == 0) == (scenario in ('manual', 'monitored')), completed.stderr
+    actions = (tmp_path / 'actions').read_text()
+    if scenario in ('manual', 'monitored'):
+        assert actions.index('capture-pane') < actions.index('signal -TERM') < actions.index('respawn-pane')
+        launch = next(line for line in actions.splitlines() if line.startswith('respawn-pane'))
+        assert 'codex' in launch and 'resume' in launch and SID in launch
+        assert launch.index(SID) < launch.index('feature_setting=preserved') < launch.index('--cd') < launch.index('--no-daemon')
+        assert str(worktree) in launch
+        assert '-k' not in launch
+        assert worktree.is_dir()
     else:
         assert 'signal' not in actions and 'respawn-pane' not in actions

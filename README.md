@@ -118,7 +118,9 @@ Use `t doctor` when something is missing.
 | --- | --- |
 | `t open <repo> [slot]` | Open/reattach an isolated task; `--new` starts another, `--codex` selects Codex, `--app` opens the worktree in the Codex desktop app on macOS |
 | `t ls [-r] [-a]` | List sessions, optionally across remote hosts and all repositories |
-| `t repos ls` / `t repos cd <repo>` | List registered names and paths; enter a checkout from the shell, including a repo named `t` |
+| `t repos ls` / `t repos path <repo>` / `t repos cd <repo>` | List registered names and paths; print or enter a checkout from the shell, including a repo named `t` (`t repos` shows command help) |
+| `t help [command [subcommand]]` | Show top-level, command, or subcommand help without running it (`-h` / `--help` also work) |
+| `t cursor ls` / `t cursor resume [id]` / `t cursor send [id]` | List, resume, or move Cursor CLI chats (`t cursor` shows command help) |
 | `t cd [repo] [slot]` | Move the current shell into the selected worktree |
 | `t resume` | Find and resume a saved conversation |
 | `t restart <repo> <slot>` | Recover a stuck CLI in the same conversation and worktree |
@@ -162,10 +164,18 @@ Detached sessions get the offer when you return. Dismissal suppresses repeats un
 the error clears. Authentication and rate-limit errors do not trigger recovery.
 
 Codex's **Cannot use the background server / Experimental feature request failed**
-screen gets a separate **Run without daemon this time** offer. It relaunches only
+screen, and its startup menu reporting a stopped or unreachable background server,
+get a separate **Run without daemon this time** offer. It relaunches only
 that client with `--no-daemon`, retaining its exact conversation (or a verified fresh
 launch if startup failed before creating one). It leaves the shared server and
 global settings alone. The failure is checked again before stopping the client.
+
+Codex's **Failed to start turn … invalid cwd: No such file or directory** error
+offers **Save visible draft and restart here**. If the slot's worktree still exists,
+recovery resumes the exact conversation with that directory explicitly selected and
+`--no-daemon`. This also handles a shared daemon rooted in a deleted worktree.
+`t restart <repo> <slot>` recognizes the same error. A missing worktree is refused
+without recreating or resetting it.
 
 Codex and Claude use their existing `t open` slots. `t cursor resume <chat-id>` now
 opens or attaches a dedicated Cursor tmux session with the same recovery menu. On
@@ -175,6 +185,7 @@ use chat IDs rather than numbered dev slots. The monitor starts when a managed s
 is opened/resumed and exits when no managed sessions remain; it needs no service
 manager. Export `T_RECOVERY_DISABLE=1` before opening sessions to disable automatic
 monitor startup. Native desktop apps and CLIs launched outside `t` are not monitored.
+The monitor runs from a stable directory and reloads its code after an update.
 Before opening another Cursor chat, `t` requires existing Cursor CLIs to have verified
 current chat IDs; close an untracked CLI first to avoid duplicate conversation owners.
 

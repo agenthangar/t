@@ -11,7 +11,7 @@
 #     which ALREADY do the cd + `claude -r` in the current terminal and the tpush
 #     sentinel handoff correctly *because they run in the calling shell* — a bin
 #     subprocess cannot. No resolve protocol is needed: the shim just calls them.
-# `t <verb> -h` always shows the bin's gh-style help (forwarded below). Full per-verb
+# `t help <verb>` and `t <verb> -h` show the bin's gh-style help. Full per-verb
 # help + the verb list live in bin/t.
 t() {
   emulate -L zsh
@@ -403,12 +403,17 @@ _t_beam_xlate() {
 # key for `on`), and slot/flags after. Pulls live from the ${(k)DEV_REPOS} /
 # ${(k)REMOTE_HOSTS} arrays so it stays current with ${T_LOCAL_RC}.
 _t() {
-  local -a verbs=(update integrate doctor open app ls repos restart kill push pop resume beam read plan paste find on cursor setup config new checkout instructions install permissions trust)
+  local -a verbs=(help update integrate doctor open app ls repos restart kill push pop resume beam read plan paste find on cursor setup config new checkout instructions install permissions trust)
   if (( CURRENT == 2 )); then
     _describe -t verbs 't verb' verbs
     return
   fi
   case ${words[2]} in
+    help)
+      if (( CURRENT == 3 )); then _describe -t verbs 't command' verbs
+      elif (( CURRENT == 4 )) && [[ ${words[3]} == repos ]]; then _values 'repo command' ls cd path
+      elif (( CURRENT == 4 )) && [[ ${words[3]} == cursor ]]; then _values 'cursor command' ls resume send
+      fi ;;
     repos)
       if (( CURRENT == 3 )); then _values 'action' ls cd path
       elif (( CURRENT == 4 )) && [[ ${words[3]} == cd || ${words[3]} == path ]]; then _values 'repo' ${(k)DEV_REPOS}
@@ -426,7 +431,7 @@ _t() {
       elif (( CURRENT == 4 )); then _message 'local slot number'
       else _values 'flag' --dry-run -h --help; fi ;;
     cursor)
-      if (( CURRENT == 3 )); then _values 'chat / action' ls resume -p --from --host
+      if (( CURRENT == 3 )); then _values 'chat / action' ls resume send -p --from --host
       else _values 'flag' --host --from -p --pick -a --attach -h --help; fi ;;
     open|kill|read|plan|paste|beam|resume)
       if   (( CURRENT == 3 )); then _values 'repo' ${(k)DEV_REPOS}

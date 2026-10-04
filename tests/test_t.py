@@ -2137,3 +2137,81 @@ def test_repos_lists_short_names_and_paths(t_mod, capsys):
     assert capsys.readouterr().out == "/code/t\n"
     assert t_mod.cmd_repos(cfg, t_mod.build_parser().parse_args(["repos", "path", "missing"])) == 1
     assert "unknown repo" in capsys.readouterr().err
+
+
+def test_repos_group_help_and_command_usage(t_mod, capsys):
+    assert t_mod.main(["repos"]) == 0
+    help_text = capsys.readouterr().out
+    assert "usage: t repos [-h] <command> ..." in help_text
+    assert "ls" in help_text and "cd" in help_text and "path" in help_text
+
+    parser = t_mod.build_parser()
+    with pytest.raises(SystemExit) as exc:
+        parser.parse_args(["repos", "path"])
+    assert exc.value.code == 2
+    assert "repo" in capsys.readouterr().err
+
+    with pytest.raises(SystemExit) as exc:
+        parser.parse_args(["repos", "ls", "extra"])
+    assert exc.value.code == 2
+    assert "unrecognized arguments: extra" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("verb", [
+    "open", "app", "ls", "kill", "restart", "push", "pop", "resume", "cd",
+    "beam", "read", "plan", "paste", "find", "on", "repos", "cursor",
+    "config", "setup", "new", "checkout", "instructions", "install",
+    "integrate", "update", "permissions", "trust", "doctor",
+])
+@pytest.mark.parametrize("flag", ["-h", "--help"])
+def test_public_help_skips_config_and_handlers(t_mod, monkeypatch, capsys, verb, flag):
+    def forbidden():
+        pytest.fail("help must not load config or run a command")
+    monkeypatch.setattr(t_mod, "Config", forbidden)
+    assert t_mod.main([verb, flag]) == 0
+    assert "usage: t " in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("argv,usage", [
+    (["help"], "usage: t "),
+    (["help", "open"], "usage: t open "),
+    (["help", "repos"], "usage: t repos "),
+    (["help", "repos", "path"], "usage: t repos path "),
+    (["help", "cursor", "resume"], "usage: t cursor resume "),
+    (["repos", "cd", "t", "--help"], "usage: t repos cd "),
+    (["cursor", "resume", "abc", "-h"], "usage: t cursor resume "),
+    (["on", "--help"], "usage: t on "),
+    (["cursor"], "usage: t cursor "),
+])
+def test_help_routes_without_side_effects(t_mod, monkeypatch, capsys, argv, usage):
+    monkeypatch.setattr(t_mod, "Config", lambda: pytest.fail("help loaded config"))
+    assert t_mod.main(argv) == 0
+    assert usage in capsys.readouterr().out
+
+
+def test_cursor_explicit_send_preserves_legacy_forwarding(t_mod, monkeypatch):
+    calls = []
+    monkeypatch.setattr(t_mod.os, "execvp", lambda exe, argv: calls.append((exe, argv)))
+    args = type("Args", (), {"rest": ["send", "abc", "--host", "mini"]})()
+    t_mod.cmd_cursor(None, args)
+    assert calls[0][1][-3:] == ["abc", "--host", "mini"]
+    args.rest = ["--from", "mini"]
+    t_mod.cmd_cursor(None, args)
+    assert calls[1][1][-2:] == ["--from", "mini"]
+
+
+def test_on_forwards_remote_help_argument(t_mod, monkeypatch):
+    seen = []
+    monkeypatch.setattr(t_mod, "Config", lambda: object())
+    monkeypatch.setitem(t_mod.IMPLEMENTED, "on", lambda cfg, args: seen.append(args.rest) or 0)
+    assert t_mod.main(["on", "mini", "echo", "--help"]) == 0
+    assert t_mod.main(["on", "mini", "--help"]) == 0
+    assert seen == [["echo", "--help"], ["--help"]]
+
+
+def test_double_dash_preserves_literal_help_argument(t_mod, monkeypatch):
+    seen = []
+    monkeypatch.setattr(t_mod, "Config", lambda: object())
+    monkeypatch.setitem(t_mod.IMPLEMENTED, "repos", lambda cfg, args: seen.append(args.repo) or 0)
+    assert t_mod.main(["repos", "path", "--", "--help"]) == 0
+    assert seen == ["--help"]

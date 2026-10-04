@@ -13,6 +13,8 @@ from conftest import load_script, REPO_ROOT
 
 SID = "01234567-89ab-cdef-0123-456789abcdef"
 ERROR = "Server connection could not be restored"
+INVALID_CWD = ("Failed to start turn: turn/start failed in TUI: turn/start failed: "
+               "invalid cwd: No such file or directory (os error 2) (code -32600)")
 
 
 def result(stdout="", rc=0, stderr=""):
@@ -42,6 +44,11 @@ def target():
     ("codex", "■ Automatic reconnect could not restore this session. Copy your draft.", True),
     ("codex", "• Reconnecting... 1/5", False),
     ("codex", '> "Server connection could not be restored"', False),
+    ("codex", "■ " + INVALID_CWD, True),
+    ("codex", "■ " + INVALID_CWD + " and another error", False),
+    ("codex", "> " + INVALID_CWD, False),
+    ("codex", "```text\n" + INVALID_CWD + "\n```", False),
+    ("codex", INVALID_CWD.replace("invalid cwd", "invalid request"), False),
     ("claude", "⎿ API Error: Connection error.", True),
     ("claude", "API Error: Request timed out", True),
     ("claude", "API Error: 429 rate limited", False),
@@ -54,6 +61,10 @@ def target():
 ])
 def test_failure_recognizes_only_final_error_lines(recovery, agent, screen, expected):
     assert bool(recovery.failure(agent, screen)) == expected
+
+
+def test_invalid_cwd_failure_has_stable_discriminator(recovery):
+    assert recovery.failure("codex", "■ " + INVALID_CWD) == recovery.INVALID_CWD
 
 
 def test_private_state_and_invalid_json(recovery, monkeypatch):
@@ -169,6 +180,33 @@ def test_offer_never_types_into_agent_and_targets_viewer(recovery, target, monke
     assert not list(recovery.cache(target["socket"]).glob("*.offer"))
 
 
+def test_invalid_cwd_offer_and_exact_restart_mode(recovery, target, monkeypatch):
+    monkeypatch.setattr(recovery, "panes", lambda s: [target])
+    monkeypatch.setattr(recovery, "owner", lambda *a: target)
+    monkeypatch.setattr(recovery, "clients", lambda *a: ["/dev/pts/4"])
+    calls = []
+    monkeypatch.setattr(recovery, "tmux", lambda *a: calls.append(a) or result(
+        "DEV_AGENT=codex" if a[1] == "show-environment" else "■ " + INVALID_CWD))
+    watcher = recovery.Watcher(target["socket"])
+    watcher.poll(); watcher.poll()
+    menu_call = next(a for a in calls if a[1] == "run-shell")
+    menu = shlex.split(menu_call[3])
+    assert "t: workspace unavailable — recover this conversation?" in menu
+    assert "Save visible draft and restart here" in menu
+    offer = next(recovery.cache(target["socket"]).glob("*.offer"))
+    monkeypatch.setattr(recovery, "current", lambda t: True)
+    launched = []
+    def execute(argv, **kw):
+        launched.append((argv, kw))
+        return result("Saved draft")
+    monkeypatch.setattr(recovery.subprocess, "run", execute)
+    assert recovery.respond(target["socket"], offer.stem, True) == 0
+    assert shlex.split(launched[0][0][-1].split("; ", 1)[1]) == [
+        "_t_restart_slot", target["session"], target["cwd"], SID, "codex",
+        "restart-invalid-cwd", target["pid"]]
+    assert launched[0][1]["cwd"] == "/"
+
+
 def test_watcher_waits_for_stable_error_and_offers_once(recovery, target, monkeypatch):
     monkeypatch.setattr(recovery, "panes", lambda s: [target])
     screen = ["normal"]
@@ -220,6 +258,34 @@ def test_start_and_singleton(recovery, target, monkeypatch):
     with (recovery.cache(target["socket"]) / "watch.lock").open("w") as lock:
         recovery.fcntl.flock(lock, recovery.fcntl.LOCK_EX)
         assert recovery.watch(target["socket"]) == 0
+
+
+def test_watcher_reexecs_after_source_update(recovery, target, monkeypatch):
+    versions = iter([(1,), None, (1,), (2,), (2,)])
+    monkeypatch.setattr(recovery, "source_version", lambda: next(versions))
+    monkeypatch.setattr(recovery.Watcher, "poll", lambda self: True)
+    monkeypatch.setattr(recovery.time, "sleep", lambda t: None)
+    calls = []
+    def reexec(binary, argv):
+        calls.append((binary, argv))
+        raise SystemExit(0)
+    monkeypatch.setattr(recovery.os, "execv", reexec)
+    with pytest.raises(SystemExit):
+        recovery.watch(target["socket"])
+    assert calls == [(recovery.sys.executable,
+                      [recovery.sys.executable, str(Path(recovery.__file__)), "watch", target["socket"]])]
+    with (recovery.cache(target["socket"]) / "watch.lock").open("w") as lock:
+        recovery.fcntl.flock(lock, recovery.fcntl.LOCK_EX | recovery.fcntl.LOCK_NB)
+
+
+def test_source_version_ignores_missing_and_empty_file(recovery, tmp_path, monkeypatch):
+    source = tmp_path / "temporarily-unavailable.py"
+    monkeypatch.setattr(recovery, "__file__", str(source))
+    assert recovery.source_version() is None
+    source.touch()
+    assert recovery.source_version() is None
+    source.write_text("pass\n")
+    assert recovery.source_version()
 
 
 def make_offer(recovery, target):
@@ -409,6 +475,12 @@ Restart with these settings (disabled) Restart cannot resolve this compatibility
 > 2. Cancel
 '''
 
+UNAVAILABLE = '''Cannot use the background server
+background server is not running
+> 1. Run without daemon this time
+2. Restart with these settings
+'''
+
 
 @pytest.mark.parametrize('args,expected', [
     ('/usr/bin/codex', True),
@@ -426,6 +498,10 @@ def test_startup_fresh_launch_is_proven(recovery, args, expected):
 
 def test_startup_detection_owner_and_callback(recovery, target, monkeypatch):
     assert recovery.failure('codex', STARTUP) == recovery.BACKGROUND
+    assert recovery.failure('codex', UNAVAILABLE) == recovery.BACKGROUND
+    assert recovery.failure('codex', UNAVAILABLE.replace('background server is not running',
+                                                        'background server socket is stale or unreachable')) == recovery.BACKGROUND
+    assert recovery.failure('codex', UNAVAILABLE.replace('Run without daemon this time', 'Restart now')) == ''
     assert recovery.failure('claude', STARTUP) == ''
     assert recovery.failure('codex', '```\n' + STARTUP + '```') == ''
     assert recovery.failure('codex', '> ' + STARTUP) == ''
