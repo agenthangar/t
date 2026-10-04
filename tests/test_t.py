@@ -2273,3 +2273,11 @@ def test_nested_hidden_commands_and_aliases(t_mod, capsys):
     with pytest.raises(SystemExit):
         parser.parse_args(["public", "choice", "maybe"])
     assert "choose from yes, no)" in capsys.readouterr().err.replace("'", "")
+
+
+def test_slot_line_marks_app_even_when_summary_is_truncated(t_mod):
+    row = dict(slot='web-3', state='app', context='none', agent='codex',
+               summary='Review the web session')
+    line = t_mod._slot_line(row, t_mod.Style(tty=False), 7, 5)
+    assert line.startswith('▣   ' + t_mod._agent_glyph('codex'))
+    assert 'web-3' in line
