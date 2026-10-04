@@ -1204,6 +1204,13 @@ _t_invalid_cwd_screen() {
   return 1
 }
 
+_t_pid_is_zombie() {
+  emulate -L zsh
+  local state
+  state=$(ps -o stat= -p "$1" 2>/dev/null) || return 1
+  [[ $state =~ '^[[:space:]]*Z' ]]
+}
+
 # Explicit recovery of a stuck client. Keep the pane as a worktree reservation,
 # capture unsent visible text before signalling, and never force-respawn a live
 # pane. A per-slot lock prevents two simultaneous restarts from racing.
@@ -1338,8 +1345,12 @@ _t_restart_slot() {
     tmux set-option -p -t "$pane" remain-on-exit on || return 1
     if [[ -n $cpid ]]; then kill -TERM "$cpid" || return 1; fi
     for attempt in {1..200}; do
-      if { [[ -z $cpid ]] || ! kill -0 "$cpid" 2>/dev/null; } &&
-         [[ $(tmux display-message -p -t "$pane" '#{pane_dead}') == 1 ]]; then
+      if [[ $(tmux display-message -p -t "$pane" '#{pane_dead}') == 1 ]] &&
+         { [[ -z $cpid ]] || ! kill -0 "$cpid" 2>/dev/null ||
+           _t_pid_is_zombie "$cpid"; }; then
+        # On Linux an exited pane's child can remain a zombie until reaped;
+        # kill -0 still succeeds, but a verified Z state cannot run an agent.
+        # An unknown or unreadable process state keeps the pane reserved.
         # No -k: tmux must refuse if anything is still running in this pane.
         tmux respawn-pane -t "$pane" -c "$dir" "zsh -lic ${(q)launch}" || return 1
         tmux set-option -p -t "$pane" remain-on-exit "$old_remain"

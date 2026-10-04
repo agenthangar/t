@@ -80,7 +80,8 @@ def run_shell(tmp_path, code):
 @pytest.mark.skipif(not shutil.which("zsh"), reason="zsh required")
 @pytest.mark.parametrize("scenario", ["normal", "dry", "missing", "changed", "desktop", "no_pid", "self",
                                       "capture_failed", "race", "still_running", "pane_alive", "respawn_failed",
-                                      "locked", "term_failed", "multiple_panes", "stopped_dead"])
+                                      "locked", "term_failed", "multiple_panes", "stopped_dead",
+                                      "zombie", "unknown_state", "stat_failed"])
 def test_restart_shell_safety(tmp_path, scenario):
     log = tmp_path / "actions"
     lock = tmp_path / "cache/t/restart/dev-api-1.lock"
@@ -116,11 +117,19 @@ _dev_session_claude_pid() {{
   [[ $scenario == self ]] && print $PPID || print 99999
 }}
 _dev_agent_resume_cmd() {{ print -r -- "codex resume $2"; }}
-ps() {{ print 1; }}
+ps() {{
+  if [[ $* == '-o stat= -p 99999' ]]; then
+    [[ $scenario == stat_failed ]] && {{ print Zs; return 1; }}
+    [[ $scenario == zombie ]] && print Zs || print '?'
+  else
+    print 1
+  fi
+}}
 kill() {{
   print -r -- "signal $*" >> "$log"
   [[ $1 == -TERM ]] && {{ [[ $scenario != term_failed ]]; return; }}
-  [[ $scenario == still_running ]]
+  [[ $scenario == still_running || $scenario == zombie ||
+     $scenario == unknown_state || $scenario == stat_failed ]]
 }}
 sleep() {{ :; }}
 _t_restart_slot dev-api-1 "$dir" {SID} codex restart
@@ -128,9 +137,10 @@ _t_restart_slot dev-api-1 "$dir" {SID} codex restart
     if scenario == "dry":
         code = code.rsplit("_t_restart_slot", 1)[0] + f'_t_restart_slot dev-api-1 "$dir" {SID} codex dry-run\n'
     result = run_shell(tmp_path, code)
-    assert (result.returncode == 0) == (scenario in ("normal", "dry", "stopped_dead")), result.stderr
+    assert (result.returncode == 0) == (scenario in ("normal", "dry", "stopped_dead", "zombie")), result.stderr
     actions = log.read_text() if log.exists() else ""
-    if scenario in ("normal", "still_running", "pane_alive", "respawn_failed", "term_failed"):
+    if scenario in ("normal", "still_running", "pane_alive", "respawn_failed", "term_failed",
+                    "zombie", "unknown_state", "stat_failed"):
         assert actions.index("capture-pane") < actions.index("signal -TERM")
         assert "Saved pane text" in result.stdout
         saved = [p for p in lock.parent.iterdir() if p.is_file()]
@@ -139,7 +149,7 @@ _t_restart_slot dev-api-1 "$dir" {SID} codex restart
         assert saved[0].stat().st_mode & 0o777 == 0o600
     else:
         assert "signal" not in actions
-    assert ("respawn-pane" in actions) == (scenario in ("normal", "respawn_failed", "stopped_dead"))
+    assert ("respawn-pane" in actions) == (scenario in ("normal", "respawn_failed", "stopped_dead", "zombie"))
     assert "respawn-pane -k" not in actions
     assert lock.exists() == (scenario == "locked")
 

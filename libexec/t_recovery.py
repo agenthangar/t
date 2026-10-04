@@ -116,6 +116,11 @@ def process(pid):
     return {"ppid": fields[0], "start": " ".join(fields[1:6]), "args": fields[6]}
 
 
+def zombie(pid):
+    status = run(["ps", "-p", str(pid), "-o", "stat="])
+    return status.returncode == 0 and status.stdout.strip().startswith("Z")
+
+
 def cursor_process(info):
     args = info.get("args", "")
     return any(".app/Contents/" not in token and re.search(r"(?:^|/)cursor-agent(?:/|$)", token)
@@ -433,7 +438,8 @@ def _cursor_restart(target):
         raise ValueError("could not reserve Cursor's pane")
     os.kill(pid, signal.SIGTERM)
     for _ in range(200):
-        if not process(pid) and tmux(socket, "display-message", "-p", "-t", pane, "#{pane_dead}").stdout.strip() == "1":
+        gone = not process(pid) or zombie(pid)
+        if gone and tmux(socket, "display-message", "-p", "-t", pane, "#{pane_dead}").stdout.strip() == "1":
             launch = "exec cursor-agent --resume=" + shlex.quote(target["sid"])
             result = tmux(socket, "respawn-pane", "-t", pane, "-c", target["cwd"], "zsh", "-lic", launch)
             if result.returncode:

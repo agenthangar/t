@@ -120,6 +120,13 @@ def test_process_parsing_and_ancestry(recovery, monkeypatch):
     assert not recovery.descendant(42, 40)
 
 
+def test_zombie_status_requires_ps_confirmation(recovery, monkeypatch):
+    for status, expected in ((result("Zs"), True), (result("S+"), False),
+                             (result("Zs", rc=1), False)):
+        monkeypatch.setattr(recovery, "run", lambda a: status)
+        assert recovery.zombie(42) == expected
+
+
 @pytest.mark.parametrize("args,expected", [
     ("/home/me/.local/bin/cursor-agent --resume=x", True),
     ("node /home/me/.local/share/cursor-agent/versions/v/index.js", True),
@@ -400,12 +407,13 @@ def test_cursor_resume_has_one_owner(recovery, target, tmp_path, monkeypatch, sc
         recovery.cursor_resume(sid, cwd)
 
 
-@pytest.mark.parametrize("scenario", ["normal", "changed", "self", "capture", "option", "reserve", "launch", "alive"])
+@pytest.mark.parametrize("scenario", ["normal", "changed", "self", "capture", "option", "reserve", "launch", "alive", "zombie"])
 def test_cursor_restart_preserves_draft_and_waits(recovery, target, monkeypatch, scenario):
     target["agent"] = "cursor"
     monkeypatch.setattr(recovery, "current", lambda t: scenario != "changed")
     monkeypatch.setattr(recovery, "descendant", lambda *a: scenario == "self")
-    monkeypatch.setattr(recovery, "process", lambda p: {"start": "alive"} if scenario == "alive" else {})
+    monkeypatch.setattr(recovery, "process", lambda p: {"start": "alive"} if scenario in ("alive", "zombie") else {})
+    monkeypatch.setattr(recovery, "run", lambda a: result("Zs" if scenario == "zombie" else "S+"))
     monkeypatch.setattr(recovery.time, "sleep", lambda t: None)
     calls, signals = [], []
     def command(socket, cmd, *args):
@@ -422,15 +430,15 @@ def test_cursor_restart_preserves_draft_and_waits(recovery, target, monkeypatch,
         return result("1")
     monkeypatch.setattr(recovery, "tmux", command)
     monkeypatch.setattr(recovery.os, "kill", lambda *a: signals.append(a))
-    if scenario == "normal":
+    if scenario in ("normal", "zombie"):
         saved = Path(recovery.cursor_restart(target))
         assert saved.read_text() == "unsent draft"
         assert saved.stat().st_mode & 0o777 == 0o600
     else:
         with pytest.raises(ValueError):
             recovery.cursor_restart(target)
-    assert bool(signals) == (scenario in ("normal", "launch", "alive"))
-    assert ("respawn-pane" in calls) == (scenario in ("normal", "launch"))
+    assert bool(signals) == (scenario in ("normal", "launch", "alive", "zombie"))
+    assert ("respawn-pane" in calls) == (scenario in ("normal", "launch", "zombie"))
 
 
 def test_main_dispatch(recovery, monkeypatch):
