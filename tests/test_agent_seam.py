@@ -1659,7 +1659,7 @@ def test_zsh_open_fg_forwards_the_rows_own_label_to_the_host_that_has_it(zsh, tm
     r = zsh(snippet, _tty=True, **env)
     assert "rc=0" in r.stdout, r.stdout
     assert "Attaching foreground 'ff:p4242' on mini" in r.stdout, r.stdout
-    assert log.read_text().splitlines() == ["-t me@mini zsh -lic 't open ff:p4242'"], log.read_text()
+    assert log.read_text().splitlines() == ["-t me@mini zsh -lic 'T_UPDATE_PROMPTED=$$ t open ff:p4242'"], log.read_text()
 
 
 def test_zsh_open_fg_names_each_of_several_idless_remote_rows(zsh, tmp_path):
@@ -1684,7 +1684,45 @@ def test_zsh_open_fg_names_each_of_several_idless_remote_rows(zsh, tmp_path):
     assert not log.exists()
     r = zsh(fake + "_dev_remote_fg_open ff:p202; echo rc=$?", _tty=True, **env)
     assert "rc=0" in r.stdout, r.stdout
-    assert log.read_text().splitlines() == ["-t me@mini zsh -lic 't open ff:p202'"]
+    assert log.read_text().splitlines() == ["-t me@mini zsh -lic 'T_UPDATE_PROMPTED=$$ t open ff:p202'"]
+
+
+def test_remote_t_delegations_suppress_a_second_update_prompt(zsh, tmp_path):
+    """A login shell on the remote host must execute the delegated command directly."""
+    stub = tmp_path / "stubbin" / "ssh"
+    stub.write_text(SSH_STUB)
+    stub.chmod(0o755)
+    (zsh.home / ".zshrc.local").write_text(
+        'DEV_REPOS[api]="$HOME/code/api"\nREMOTE_HOSTS[mini]=me@mini\n')
+    rows = "\n".join((
+        "\t".join(["mini", "sid", f"{zsh.home}/code/api", "api-3", "detached", "active", "test"]),
+        "\t".join(["mini", "-", f"{zsh.home}/code/api", "api:fg", "attached", "unknown", "test"]),
+    ))
+    log = tmp_path / "ssh.log"
+    snippet = (
+        '_dev_rows_all() { print -r -- "$FAKE_ROWS"; }; '
+        '_dev_remote_resolve() { print -r -- $\'mini\\tapi\\t3\'; }; '
+        '_dev_local_slot_live() { return 1; }; '
+        '_dev_remote_attach $\'mini\\tapi\\t3\' ""; '
+        '_dev_remote_open mini api 3 --fg; '
+        '_dev_remote_delegate api 3 plan --raw; '
+        '_dev_remote_fg_kill api:fg 1; '
+        '_dev_remote_fg_open api:fg; '
+        '_dev_remote_kill api all 1; '
+        '_dev_remote_kill api 3 1'
+    )
+    result = zsh(snippet, _tty=True, SSH_LOG=str(log), FAKE_ROWS=rows)
+    assert result.returncode == 0, result.stderr
+    assert "→ mini: t open api 3 --fg" in result.stdout
+    assert log.read_text().splitlines() == [
+        "-t me@mini zsh -lic 'T_UPDATE_PROMPTED=$$ t open api 3'",
+        "-t me@mini zsh -lic 'T_UPDATE_PROMPTED=$$ t open api 3 --fg'",
+        "-t me@mini zsh -lic 'T_UPDATE_PROMPTED=$$ t plan api 3 --raw'",
+        "-t me@mini zsh -lic 'T_UPDATE_PROMPTED=$$ t kill api:fg -y'",
+        "-t me@mini zsh -lic 'T_UPDATE_PROMPTED=$$ t open api:fg'",
+        "-t me@mini zsh -lic 'T_UPDATE_PROMPTED=$$ t kill api all -y'",
+        "-t me@mini zsh -lic 'T_UPDATE_PROMPTED=$$ t kill api 3 -y'",
+    ]
 
 
 def test_zsh_open_fg_skips_the_remote_probe_when_a_local_row_matched(zsh, tmp_path):

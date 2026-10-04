@@ -171,6 +171,7 @@ def test_build_archive_is_deterministic_and_runtime_only(tmp_path):
     with tarfile.open(one, "r:gz") as tar:
         names = {member.name for member in tar}
     assert "t/LICENSE" in names
+    assert "t/libexec/t_updates.py" in names
     assert "t/libexec/vendor/mistune/LICENSE" in names
     assert "t/.t-release-version" in names
     assert "t/private.txt" not in names

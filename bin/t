@@ -589,7 +589,9 @@ def cmd_on(cfg, args):
         os.execvp("ssh", ["ssh", "-t", target])
     host = args.host
     target = cfg.hosts.get(host, host)
-    inner = " ".join(shlex.quote(a) for a in args.rest)
+    # `ssh -t` gives the remote command a TTY. Mark only that remote shell's
+    # process as already prompted; its tmux panes may inherit the variable.
+    inner = "T_UPDATE_PROMPTED=$$ " + " ".join(shlex.quote(a) for a in args.rest)
     _set_term_title(f"{host}: {' '.join(args.rest)}")
     os.execvp("ssh", ["ssh", "-t", target, f"zsh -lic {shlex.quote(inner)}"])
 
@@ -3970,7 +3972,7 @@ def _install_ssh_argv(target, agents, no_login=False, update=False, reinstall=Fa
         words.append("--update")
     if reinstall:
         words.append("--reinstall")
-    inner = " ".join(shlex.quote(w) for w in words)
+    inner = "T_UPDATE_PROMPTED=$$ " + " ".join(shlex.quote(w) for w in words)
     return ["ssh", "-t", "-o", "ConnectTimeout=5", target, f"zsh -lic {shlex.quote(inner)}"]
 
 
@@ -4189,6 +4191,121 @@ def _t_relink(root, dev=False):
     return p.returncode
 
 
+def _t_update_installation():
+    """Identify only installed sources that the ordinary updater can advance."""
+    source = _t_source_root()
+    try:
+        brew = _t_homebrew(source)
+    except ValueError:
+        return None
+    version = _t_release_version(source)
+    if brew:
+        return {"kind": "brew", "source": brew["opt_libexec"], "current": version,
+                "brew": brew["brew"], "formula": brew["formula"]}
+    if version:
+        return {"kind": "release", "source": source, "current": version}
+    if (source != _t_canonical_root(source)
+            or _t_git(source, "branch", "--show-current") != "main"
+            or _t_git(source, "status", "--porcelain") != ""):
+        return None
+    current = _t_git(source, "rev-parse", "HEAD")
+    remote = _t_git(source, "remote", "get-url", "origin")
+    if not current or not remote:
+        return None
+    return {"kind": "git", "source": source, "current": current, "remote": remote}
+
+
+def _t_updates():
+    return runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_updates.py"))
+
+
+def _t_update_interactive():
+    return (not any(os.environ.get(key) for key in
+                    ("T_NO_UPDATE_CHECK", "CI", "CLAUDECODE", "CODEX_THREAD_ID"))
+            # A tmux server may inherit this variable and keep it indefinitely.
+            # Only this invocation or its calling shell may suppress a prompt.
+            and os.environ.get("T_UPDATE_PROMPTED") not in (str(os.getpid()), str(os.getppid()))
+            and all(stream.isatty() for stream in (sys.stdin, sys.stdout, sys.stderr)))
+
+
+def _t_update_label(installation, version):
+    return version[:7] if installation["kind"] == "git" else version
+
+
+def _t_offer_update(installation=None):
+    """Shell protocol: 0 continues, 10 reloads after updating, 11 aborts."""
+    if not _t_update_interactive():
+        return 0
+    installation = installation or _t_update_installation()
+    if not installation:
+        return 0
+    try:
+        helper = _t_updates()
+        helper["schedule"](installation, os.path.join(_t_source_root(), "bin", "t"))
+        state = helper["cached"](installation)
+    except (OSError, ValueError):
+        return 0  # An unavailable checker must never block normal commands.
+    if not state.get("available"):
+        return 0
+    old = _t_update_label(installation, installation["current"])
+    new = _t_update_label(installation, state["latest"])
+    print(f"\nA t update is available: {old} → {new}", file=sys.stderr)
+    print("  [u] Update now\n  [l] Later (remind me tomorrow)", file=sys.stderr)
+    print("Choose [l]: ", end="", file=sys.stderr, flush=True)
+    answer = sys.stdin.readline().strip().lower()
+    if answer not in ("u", "update", "y", "yes", "1"):
+        try:
+            helper["snooze"](installation)
+        except (OSError, ValueError):
+            pass
+        return 0
+    # The existing updater owns checksum checks, Homebrew, fast-forward safety,
+    # links and hooks. Its subprocesses must not prompt recursively.
+    os.environ["T_UPDATE_PROMPTED"] = str(os.getpid())
+    if cmd_update(None, argparse.Namespace(dev=False, relink=False, check=False)):
+        print("t update failed; your original command was not run. Retry it when ready.", file=sys.stderr)
+        return 11
+    print("t updated. Continuing your command.\n", file=sys.stderr)
+    return 10
+
+
+def _t_auto_update(argv):
+    """Return None to continue, or replace this process with the updated CLI."""
+    public = {"open", "app", "ls", "kill", "restart", "push", "pop", "resume", "cd",
+              "beam", "read", "plan", "paste", "find", "cursor", "repos", "config",
+              "setup", "new", "checkout", "instructions", "install", "integrate",
+              "permissions", "trust", "doctor"}
+    if (not argv or argv[0] not in public or not _t_update_interactive()
+            or any(flag in argv for flag in ("--dry-run", "--json", "--dump", "--statusline"))):
+        return None
+    installation = _t_update_installation()
+    if not installation:
+        return None
+    # Release updates replace the HOME/bin link; Homebrew keeps its opt link.
+    executable = (os.path.join(HOME, "bin", "t") if installation["kind"] == "release"
+                  else os.path.join(installation["source"], "bin", "t"))
+    result = _t_offer_update(installation)
+    os.environ["T_UPDATE_PROMPTED"] = str(os.getpid())
+    if result == 11:
+        return 1
+    if result == 10:
+        try:
+            os.execv(sys.executable, [sys.executable, executable, *argv])
+        except OSError as error:
+            print(f"t updated, but could not continue the command: {error}", file=sys.stderr)
+            return 1
+        return 0
+    return None
+
+
+def _t_check_update(force=False):
+    installation = _t_update_installation()
+    if not installation:
+        return None, None
+    state = _t_updates()["check"](installation, force=force)
+    return installation, state
+
+
 def cmd_integrate(cfg, args):
     """Explicitly install t's user links and additive agent settings."""
     active = _t_source_root()
@@ -4216,6 +4333,23 @@ def cmd_integrate(cfg, args):
 
 
 def cmd_update(cfg, args):
+    if getattr(args, "check", False):
+        try:
+            installation, state = _t_check_update(force=True)
+        except (OSError, ValueError):
+            installation, state = None, None
+        if not installation:
+            print("t update --check: requires a release, Homebrew install, or clean canonical main checkout", file=sys.stderr)
+            return 1
+        if state.get("error") or not state.get("checked"):
+            print("t update: could not check for updates; try again when connected", file=sys.stderr)
+            return 1
+        if state.get("available"):
+            print(f"t update available: {_t_update_label(installation, installation['current'])} → "
+                  f"{_t_update_label(installation, state['latest'])}; run t update to install")
+        else:
+            print(f"t is up to date ({_t_update_label(installation, installation['current'])})")
+        return 0
     active = _t_source_root()
     try:
         brew = _t_homebrew(active)
@@ -8244,6 +8378,7 @@ Run `t help <verb>` or `t <verb> -h` for a verb's own flags.""")
     group = sp.add_mutually_exclusive_group()
     group.add_argument("--dev", action="store_true", help="select the t session worktree containing $PWD (Git checkout only)")
     group.add_argument("--relink", action="store_true", help="relink the currently selected source")
+    group.add_argument("--check", action="store_true", help="check for a newer version without installing it")
 
     sp = sub.add_parser("permissions", help="sync an explicitly selected policy into agent configs",
         description="Set T_PERMISSIONS_DIR to a directory containing permissions.allow and "
@@ -8346,6 +8481,14 @@ def _help_parser(parser, words, *, strict=False):
 
 
 def main(argv):
+    if argv == ["__update-prompt"]:
+        return _t_offer_update()
+    if argv == ["__update-check"]:
+        try:
+            _t_check_update()
+        except (OSError, ValueError):
+            pass
+        return 0
     if argv and argv[0] == "__recovery":
         helper = os.path.join(_t_source_root(), "libexec", "t_recovery.py")
         os.execv(sys.executable, [sys.executable, helper, *argv[1:]])
@@ -8383,6 +8526,9 @@ def main(argv):
         if len(argv) == 1:
             parser._group_parsers["cursor"].print_help()
             return 0
+        update_result = _t_auto_update(argv)
+        if update_result is not None:
+            return update_result
         return cmd_cursor(Config(), argparse.Namespace(rest=argv[1:]))
     # `todo` is retired and has NO subparser (so `t -h` does not list it); it is
     # answered here for the same REMAINDER reason — a lagging statusline setting
@@ -8397,6 +8543,9 @@ def main(argv):
     if group_parser is not None and args.action is None:
         group_parser.print_help()
         return 0
+    update_result = _t_auto_update(argv)
+    if update_result is not None:
+        return update_result
     cfg = Config()
     handler = IMPLEMENTED.get(args.verb)
     if handler:

@@ -214,7 +214,7 @@ def test_install_plan_hosts_get_the_same_verb_over_ssh(t_mod):
 def test_install_ssh_argv_quotes_two_layers(t_mod):
     argv = t_mod._install_ssh_argv("me@mini", ["codex", "cursor"], no_login=True)
     assert argv[0] == "ssh" and "-t" in argv
-    assert argv[-1] == "zsh -lic 't install codex cursor -y --no-hosts --no-login'"
+    assert argv[-1] == "zsh -lic 'T_UPDATE_PROMPTED=$$ t install codex cursor -y --no-hosts --no-login'"
 
 
 def test_install_host_outcome_and_line(t_mod):
@@ -319,7 +319,7 @@ def test_install_plan_sync_only_when_a_local_step_runs(t_mod):
 
 def test_install_ssh_argv_carries_reinstall(t_mod):
     argv = t_mod._install_ssh_argv("me@mini", ["codex"], reinstall=True)
-    assert argv[-1] == "zsh -lic 't install codex -y --no-hosts --reinstall'"
+    assert argv[-1] == "zsh -lic 'T_UPDATE_PROMPTED=$$ t install codex -y --no-hosts --reinstall'"
 
 
 # ─── the t setup chain ─────────────────────────────────────────────────────────
