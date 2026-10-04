@@ -392,10 +392,12 @@ def test_readme_parity_matrix_matches_bin_t(t_mod):
     assert text[fence:end].rstrip("\n") == "\n".join(t_mod._agent_parity_render())
 
 
-def test_parity_matrix_is_in_the_help_epilog(t_mod):
-    epilog = t_mod.build_parser().epilog
+def test_parity_matrix_is_available_in_its_help_topic(t_mod, capsys):
+    assert t_mod.main(["help", "agents"]) == 0
+    help_text = capsys.readouterr().out
     for ln in t_mod._agent_parity_render():
-        assert ln in epilog
+        assert ln in help_text
+    assert "surface" not in t_mod.build_parser().format_help()
 
 
 # ─── codex hook state + doctor findings ────────────────────────────────────────

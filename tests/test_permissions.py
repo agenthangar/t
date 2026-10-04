@@ -522,7 +522,7 @@ def test_doctor_warns_on_pending_permission_sync(t_mod):
 
 def test_parity_matrix_has_the_permissions_row(t_mod):
     rows = [r[0] for r in t_mod._AGENT_PARITY]
-    assert any(r.startswith("t permissions (") for r in rows)
+    assert any(r.startswith("t policy check (") for r in rows)
     assert "permissions" in t_mod.IMPLEMENTED
 
 

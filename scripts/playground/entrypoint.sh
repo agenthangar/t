@@ -51,13 +51,13 @@ case "${1:-fresh}" in
     fresh)
         shift || true
         echo 'Playground ready. t is uninstalled.'
-        echo 'Run playground-install; exec zsh -l; then t setup and t open playground.'
+        echo 'Run playground-install; exec zsh -l; then t config setup and t session open playground.'
         exec zsh -l "$@"
         ;;
     installed)
         shift
         playground-install
-        echo 'Playground ready. t is installed; run t setup to register repositories.'
+        echo 'Playground ready. t is installed; run t config setup to register repositories.'
         exec zsh -l "$@"
         ;;
     smoke)

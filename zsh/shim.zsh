@@ -15,22 +15,75 @@
 # help + the verb list live in bin/t.
 t() {
   emulate -L zsh
-  # -h/--help anywhere (and the bare `t`) → the bin's gh-style help/usage.
-  local a machine_output=
+  # Help belongs to the executable, including nested command help. A remote
+  # command's own --help is data and must pass through unchanged.
+  local a machine_output= help_requested= help_boundary= verb="$1" action="$2"
   for a in "$@"; do
-    [[ $a == -h || $a == --help ]] && { command t "$@"; return; }
+    [[ $a == -- ]] && help_boundary=1
+    [[ -z $help_boundary && ( $a == -h || $a == --help ) ]] && help_requested=1
     case $a in --dry-run|--json|--dump|--statusline) machine_output=1 ;; esac
   done
-  local verb="$1"
+  [[ $verb == host && $action == run ]] && help_requested=
+  [[ -n $help_requested ]] && { command t "$@"; return; }
   [[ -z $verb ]] && { command t; return; }
+  # Only commands that enter a checkout, launch a foreground session, or edit
+  # shell settings need local dispatch. The executable owns all other groups.
+  local shell_verb=$verb
+  local -a shell_args=("${@:2}")
+  if [[ $verb == session ]]; then
+    shell_verb=
+    case $action in
+      open) shell_verb=open ;;
+      pop) shell_verb=pop ;;
+      push) shell_verb=push ;;
+      resume) shell_verb=resume ;;
+      cd) shell_verb=cd ;;
+      move) shell_verb=beam ;;
+      search) shell_verb=find ;;
+      *) shell_verb= ;;
+    esac
+    [[ -n $shell_verb ]] && shell_args=("${@:3}")
+  elif [[ $verb == repo ]]; then
+    shell_verb=
+    case $action in
+      cd) shell_verb=repos_cd ;;
+      create) shell_verb=new ;;
+      clone) shell_verb=checkout ;;
+    esac
+    [[ -n $shell_verb ]] && shell_args=("${@:3}")
+  elif [[ $verb == config && -n $action ]]; then
+    shell_verb=
+    case $action in
+      open|show|edit) shell_verb=config; shell_args=("${@:3}") ;;
+      setup) shell_verb=setup; shell_args=("${@:3}") ;;
+      -*) shell_verb=config ;;
+    esac
+  elif [[ $verb == agent ]]; then
+    shell_verb=
+    [[ $action == install ]] && { shell_verb=install; shell_args=("${@:3}"); }
+  elif [[ $verb == system ]]; then
+    shell_verb=
+    case $action in
+      integrate|update) shell_verb=$action; shell_args=("${@:3}") ;;
+    esac
+  elif [[ $verb == host || $verb == profile || $verb == policy || $verb == cursor ]]; then
+    shell_verb=
+  fi
+  # Bare groups are help-only. In particular, `t config` keeps its old menu.
+  [[ $verb == session || $verb == repo || $verb == cursor || $verb == host ||
+     $verb == profile || $verb == policy || $verb == agent || $verb == system ||
+     ( $verb == config && -n $action ) ]] && [[ -z $shell_verb ]] && {
+    command t "$@"; return
+  }
   # Shell-bound commands must run in this process. Check before dispatch so a
   # successful update can reload their definitions before using them. The bin
   # checks its own commands; prompting here for those would ask twice.
   local check_update=
-  case "$verb" in
+  case "$shell_verb" in
     open|pop|push|resume|find|cd|beam|setup|config|new|checkout|install|integrate)
       check_update=1 ;;
-    repos) [[ ${2:-} == cd ]] && check_update=1 ;;
+    repos_cd) check_update=1 ;;
+    repos) [[ ${shell_args[1]} == cd ]] && check_update=1 ;;
   esac
   if [[ -n $check_update && -z $machine_output && -o interactive && -t 0 && -t 1 && -t 2 \
         && -z ${CI:-} && -z ${CLAUDECODE:-} && -z ${CODEX_THREAD_ID:-} \
@@ -46,22 +99,21 @@ t() {
     # but has a different PID, so its next interactive command can check again.
     local -x T_UPDATE_PROMPTED=$$
   fi
-  shift
-  case "$verb" in
-    open)   _t_open "$@" ;;           # → _t_dev (local / -r or auto-detect remote attach / -f / fg adopt)
-    pop)    _t_pop "$@" ;;            # → cd + claude -r in THIS terminal
-    resume) _t_resume "$@" ;;         # → revive a dead slot's chat (rebuilds a reaped worktree; --fg → here)
-    push)   _t_push "$@" ;;           # → sentinel handoff; claude() wrapper spawns post-exit
-    find)   _t_find "$@" ;;           # → rank/pick then cd + claude -r here
-    cd)     _t_cd "$@" ;;             # → cd THIS shell into a slot's worktree
+  case "$shell_verb" in
+    open)   _t_open "${shell_args[@]}" ;;           # → _t_dev (local / -r or auto-detect remote attach / -f / fg adopt)
+    pop)    _t_pop "${shell_args[@]}" ;;            # → cd + claude -r in THIS terminal
+    resume) _t_resume "${shell_args[@]}" ;;         # → revive a dead slot's chat (rebuilds a reaped worktree; --fg → here)
+    push)   _t_push "${shell_args[@]}" ;;           # → sentinel handoff; claude() wrapper spawns post-exit
+    find)   _t_find "${shell_args[@]}" ;;           # → rank/pick then cd + claude -r here
+    cd)     _t_cd "${shell_args[@]}" ;;             # → cd THIS shell into a slot's worktree
     repos)
-      if [[ $1 == cd ]]; then
-        shift
-        _t_repos_cd "$@"
+      if [[ ${shell_args[1]} == cd ]]; then
+        _t_repos_cd "${shell_args[@]:1}"
       else
-        command t repos "$@"
+        command t "$@"
       fi ;;
-    beam)   _t_beam_xlate "$@" ;;     # → _t_beam (host moves from --host to a positional)
+    repos_cd) _t_repos_cd "${shell_args[@]}" ;;
+    beam)   _t_beam_xlate "${shell_args[@]}" ;;     # → _t_beam (host moves from --host to a positional)
     # setup runs in the bin (it only edits ${T_LOCAL_RC}), but on success the
     # SHELL must reload so the new cd aliases, host shorthand functions, and the
     # _t_sync_config cache go live at once (precedent: dots reloads every run).
@@ -69,16 +121,16 @@ t() {
     setup)  _t_install setup "$@" ;;
     config) _t_install config "$@" ;;
     # new writes DEV_REPOS too (the repo it just created) → the same reload.
-    new)    T_SETUP_SHIM=1 command t new "$@" && _t_reload ;;
+    new)    T_SETUP_SHIM=1 command t "$@" && _t_reload ;;
     checkout) _t_install checkout "$@" ;;
     # install can END in `t setup` (it opens it when ~/code holds repos DEV_REPOS does
     # not know yet), so it owes the same reload — but only when that setup actually
     # wrote: ${T_LOCAL_RC}'s mtime is the evidence, since install's rc says nothing
     # about it (quitting setup is not an install failure, and most runs never open it).
     install) _t_install install "$@" ;;
-    integrate) T_SETUP_SHIM=1 command t integrate "$@" && _t_reload ;;
-    update) T_SETUP_SHIM=1 command t update "$@" && _t_reload ;;
-    *)      command t "$verb" "$@" ;; # ls/read/plan/paste/kill/on/session-rows/land/kill-owner/new-land
+    integrate) T_SETUP_SHIM=1 command t "$@" && _t_reload ;;
+    update) T_SETUP_SHIM=1 command t "$@" && _t_reload ;;
+    *)      command t "$@" ;; # bin-owned canonical and legacy commands
   esac
 }
 
@@ -102,10 +154,11 @@ _t_repos_cd() {
   builtin cd -- "$dir"
 }
 
-# _t_install <verb> — install/config through the bin, reload iff ${T_LOCAL_RC} changed
+# _t_install <reload-kind> <command...> — reload iff ${T_LOCAL_RC} changed.
 # Compare content too: an editor can save the same size inside one clock tick.
 _t_install() {
   local before= after= verb="$1"
+  shift
   [[ -f ${T_LOCAL_RC} ]] && before=$(<${T_LOCAL_RC})
   T_SETUP_SHIM=1 command t "$@"
   local rc=$?
@@ -462,71 +515,148 @@ _t_beam_xlate() {
 # key for `on`), and slot/flags after. Pulls live from the ${(k)DEV_REPOS} /
 # ${(k)REMOTE_HOSTS} arrays so it stays current with ${T_LOCAL_RC}.
 _t() {
-  local -a verbs=(help update integrate doctor open app ls repos restart kill push pop resume beam read plan paste find on cursor setup config new checkout instructions install permissions trust)
+  local -a nouns=(session repo cursor host config profile policy agent system help)
   if (( CURRENT == 2 )); then
-    _describe -t verbs 't verb' verbs
+    _describe -t nouns 't command group' nouns
     return
   fi
-  case ${words[2]} in
-    help)
-      if (( CURRENT == 3 )); then _describe -t verbs 't command' verbs
-      elif (( CURRENT == 4 )) && [[ ${words[3]} == repos ]]; then _values 'repo command' ls cd path
-      elif (( CURRENT == 4 )) && [[ ${words[3]} == cursor ]]; then _values 'cursor command' ls resume send
-      fi ;;
+  local group=${words[2]} action=${words[3]} first=4
+  if [[ $group == help ]]; then
+    if (( CURRENT == 3 )); then
+      local -a topics=($nouns agents aliases)
+      _describe -t topics 't help topic' topics
+      return
+    fi
+    group=${words[3]} action=${words[4]} first=5
+  fi
+  local -a actions
+  case $group in
+    session) actions=(open list close restart push pop resume cd move read view-plan paste search open-app) ;;
+    repo) actions=(list cd locate create clone) ;;
+    cursor) actions=(list resume send) ;;
+    host) actions=(run) ;;
+    config) actions=(open show edit setup) ;;
+    profile) actions=(init edit show apply) ;;
+    policy) actions=(check show apply) ;;
+    agent) actions=(install status trust) ;;
+    system) actions=(integrate update diagnose) ;;
+  esac
+  if (( ${#actions} )) && (( CURRENT == first - 1 )); then
+    if [[ $group == config && ${words[CURRENT]} == -* ]]; then
+      _values 'legacy flag' --show --edit -h --help
+      return
+    fi
+    _describe -t actions 't action' actions
+    return
+  fi
+  # Old spellings remain usable once typed, but are not offered at top level.
+  case $group in
+    open|ls|kill|restart|push|pop|resume|cd|beam|read|plan|paste|find|app)
+      action=$group; group=session; first=3 ;;
     repos)
-      if (( CURRENT == 3 )); then _values 'action' ls cd path
-      elif (( CURRENT == 4 )) && [[ ${words[3]} == cd || ${words[3]} == path ]]; then _values 'repo' ${(k)DEV_REPOS}
+      group=repo; first=4
+      [[ $action == ls ]] && action=list
+      [[ $action == path ]] && action=locate
+      (( CURRENT == 3 )) && { _values 'action' ls cd path; return; } ;;
+    new) group=repo; action=create; first=3 ;;
+    checkout) group=repo; action=clone; first=3 ;;
+    on) group=host; action=run; first=3 ;;
+    setup) group=config; action=setup; first=3 ;;
+    instructions) group=profile; action=apply; first=3 ;;
+    permissions) group=policy; action=check; first=3 ;;
+    install|trust) action=$group; group=agent; first=3 ;;
+    integrate|update|doctor) action=$group; [[ $action == doctor ]] && action=diagnose; group=system; first=3 ;;
+  esac
+  if [[ $group == session && $first == 3 ]]; then
+    case $action in
+      ls) action=list ;; kill) action=close ;; beam) action=move ;;
+      plan) action=view-plan ;; find) action=search ;; app) action=open-app ;;
+    esac
+  fi
+  case "$group/$action" in
+    repo/list|repo/cd|repo/locate)
+      if (( CURRENT == first )) && [[ $action == cd || $action == locate ]]; then _values 'repo' ${(k)DEV_REPOS}
       else _values 'flag' -h --help; fi ;;
-    app)
+    session/open-app)
       if [[ ${words[CURRENT-1]} == --url ]]; then _message 'preview URL'
       elif [[ ${words[CURRENT-1]} == --plan ]]; then _files -g '*.md'
       elif [[ ${words[CURRENT]} == -* ]]; then _values 'flag' --url --no-preview --plan --no-plan --reuse-window --dry-run -h --help
-      elif (( CURRENT == 3 )); then _values 'repo' ${(k)DEV_REPOS}
-      elif (( CURRENT == 4 )); then _message 'local slot number'
+      elif (( CURRENT == first )); then _values 'repo' ${(k)DEV_REPOS}
+      elif (( CURRENT == first + 1 )); then _message 'local slot number'
       else _values 'flag' --url --no-preview --plan --no-plan --reuse-window --dry-run -h --help; fi ;;
-    restart)
+    session/restart)
       if [[ ${words[CURRENT]} == -* ]]; then _values 'flag' --dry-run -h --help
-      elif (( CURRENT == 3 )); then _values 'repo' ${(k)DEV_REPOS}
-      elif (( CURRENT == 4 )); then _message 'local slot number'
+      elif (( CURRENT == first )); then _values 'repo' ${(k)DEV_REPOS}
+      elif (( CURRENT == first + 1 )); then _message 'local slot number'
       else _values 'flag' --dry-run -h --help; fi ;;
-    cursor)
-      if (( CURRENT == 3 )); then _values 'chat / action' ls resume send -p --from --host
-      else _values 'flag' --host --from -p --pick -a --attach -h --help; fi ;;
-    open|kill|read|plan|paste|beam|resume)
-      if   (( CURRENT == 3 )); then _values 'repo' ${(k)DEV_REPOS}
-      elif (( CURRENT == 4 )); then _values 'slot' 1 2 3 4 new fg
-      else _values 'flag' --new --fg --app --cli --remote --codex --claude -y --yes -a --all --host --from -d --detach -p --pick -s --session -h --help; fi ;;
-    on)
-      (( CURRENT == 3 )) && _values 'host' ${(k)REMOTE_HOSTS} || _normal ;;
-    ls)
-      if (( CURRENT == 3 )) && [[ ${words[CURRENT]} != -* ]]; then _values 'repo' ${(k)DEV_REPOS}
+    cursor/list|cursor/resume|cursor/send)
+      if [[ ${words[CURRENT-1]} == --host || ${words[CURRENT-1]} == --from ]]; then
+        _values 'host' ${(k)REMOTE_HOSTS}
+      elif [[ $group/$action == cursor/list ]]; then
+        _values 'flag' --host -h --help
+      elif [[ $group/$action == cursor/resume ]]; then
+        (( CURRENT == first )) && [[ ${words[CURRENT]} != -* ]] && _message 'chat id or unique prefix' || _values 'flag' --host -h --help
+      else
+        (( CURRENT == first )) && [[ ${words[CURRENT]} != -* ]] && _message 'chat id or unique prefix' || _values 'flag' --host --from -p --pick -a --attach -h --help
+      fi ;;
+    session/open|session/close|session/read|session/view-plan|session/paste|session/move|session/resume|session/cd|session/pop)
+      if [[ ${words[CURRENT-1]} == --host || ${words[CURRENT-1]} == --from ]]; then
+        _values 'host' ${(k)REMOTE_HOSTS}
+      elif [[ ${words[CURRENT-1]} == --url ]]; then _message 'preview URL'
+      elif [[ ${words[CURRENT-1]} == --plan ]]; then _files -g '*.md'
+      elif [[ ${words[CURRENT]} == -* ]] || (( CURRENT > first + 1 )); then
+        local -a flags=(-h --help)
+        case $action in
+          open) flags+=(--new --fg --app --cli -l --local --here -r --remote --host --codex --claude -y --yes) ;;
+          close) flags+=(-y --yes -r --remote) ;;
+          read) flags+=(-d --dump -n --tail) ;;
+          view-plan) flags+=(-a --all) ;;
+          paste) flags+=(-p --pick -n --newest) ;;
+          move) flags+=(--host --from --here --fg -d --detach -p --pick -a --all -s --session) ;;
+          resume) flags+=(-f --fg -a --all -l --live -r --remote --days --host) ;;
+        esac
+        _values 'flag' "${flags[@]}"
+      elif (( CURRENT == first )); then _values 'repo' ${(k)DEV_REPOS}
+      else _values 'slot' 1 2 3 4; fi ;;
+    host/run)
+      (( CURRENT == first )) && _values 'host' ${(k)REMOTE_HOSTS} || _normal ;;
+    session/list)
+      if (( CURRENT == first )) && [[ ${words[CURRENT]} != -* ]]; then _values 'repo' ${(k)DEV_REPOS}
       else _values 'flag' -r --remote -a --all -h --help; fi ;;
-    push)
+    session/push)
       _values 'flag' -p --pick -a --all -h --help ;;
-    find)
+    session/search)
       _values 'flag' -k --keyword -h --help ;;
-    setup)
+    config/setup)
       if [[ ${words[CURRENT]} == -* ]]; then _values 'flag' --hosts --no-hosts --instructions --no-instructions --dry-run -h --help
       else _files -/; fi ;;   # scan-dir arguments
-    config)
-      _values 'flag' --show --edit -h --help ;;
-    new)
-      if (( CURRENT == 3 )) && [[ ${words[CURRENT]} != -* ]]; then _message 'repo name'
+    config/*)
+      _values 'flag' -h --help ;;
+    repo/create)
+      if (( CURRENT == first )) && [[ ${words[CURRENT]} != -* ]]; then _message 'repo name'
       else _values 'flag' --owner --public --private --alias --hosts --no-hosts -y --yes --dry-run -h --help; fi ;;
-    checkout)
+    repo/clone)
       if [[ ${words[CURRENT-1]} == --path ]]; then _files -/
       elif [[ ${words[CURRENT]} == -* ]]; then _values 'flag' --path --instructions --no-instructions --dry-run -h --help
-      elif (( CURRENT == 3 )); then _message 'GitHub clone URL'
-      elif (( CURRENT == 4 )); then _message 'local alias'
+      elif (( CURRENT == first )); then _message 'GitHub clone URL'
+      elif (( CURRENT == first + 1 )); then _message 'local alias'
       else _values 'flag' --path --instructions --no-instructions --dry-run -h --help; fi ;;
-    instructions)
-      if [[ ${words[CURRENT]} == -* ]]; then _values 'flag' --init --edit --show --apply -h --help
+    profile/init|profile/edit|profile/show)
+      _values 'flag' -h --help ;;
+    profile/apply)
+      if [[ ${words[CURRENT]} == -* ]]; then _values 'flag' -h --help
       else _values 'repo' ${(k)DEV_REPOS}; fi ;;
-    install)
-      if [[ ${words[CURRENT]} == -* ]]; then _values 'flag' --status --update --reinstall --no-login --headless --hosts --no-hosts -y --yes --dry-run -h --help
+    agent/install)
+      if [[ ${words[CURRENT]} == -* ]]; then _values 'flag' --update --reinstall --no-login --headless --hosts --no-hosts -y --yes --dry-run -h --help
       else _values 'agent' claude codex cursor; fi ;;
-    trust)
+    agent/trust)
       if [[ ${words[CURRENT]} == -* ]]; then _values 'flag' -a --all --status -q --quiet -h --help
       else _files -/; fi ;;
+    policy/check|policy/apply)
+      _values 'flag' --defaults -h --help ;;
+    policy/show|agent/status|system/integrate|system/diagnose)
+      _values 'flag' -h --help ;;
+    system/update)
+      _values 'flag' --dev --local --relink --check -h --help ;;
   esac
 }

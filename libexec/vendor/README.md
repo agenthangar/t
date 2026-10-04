@@ -1,7 +1,7 @@
 # Bundled Markdown parser
 
 `mistune/` contains Mistune 3.3.4's parser, HTML renderer, and the plugins used by
-`t app` plan previews. Upstream: https://github.com/lepture/mistune. Its BSD 3-Clause
+`t session open-app` plan previews. Upstream: https://github.com/lepture/mistune. Its BSD 3-Clause
 license is retained in `mistune/LICENSE`.
 
 Source: the PyPI `mistune-3.3.4-py3-none-any.whl` release, SHA-256

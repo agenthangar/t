@@ -91,7 +91,7 @@ _dev_worktree_create() {
   local wt br; wt="$(_dev_worktree_path "$repo" "$slot")"; br="$(_dev_worktree_branch "$repo" "$slot")"
   if [[ -e "$wt/.git" ]]; then          # already materialized → reuse (idempotent)
     if _dev_app_slot_reserved "$wt"; then
-      print -u2 -- "t: $repo $slot is reserved for the Codex desktop app; use t open $repo $slot --app"
+      print -u2 -- "t: $repo $slot is reserved for the Codex desktop app; use t session open $repo $slot --app"
       return 1
     fi
     _dev_worktree_freshen "$repo" "$slot" "$wt" "$br"
@@ -383,7 +383,7 @@ _dev_beam_land_cwd() {
   # fresh slot would resume the conversation over none of its code. Bail with a revive
   # hint (the origin copy is already stopped) rather than land something misleading.
   if ! git -C "$repodir" show-ref --verify --quiet "refs/remotes/origin/$br"; then
-    print -r -- "tbeam: slot $slot is taken here ($why) and origin has no $br to reland from (worktree push failed?) — the work is still on the origin machine; revive it there${ohost:+: t on $ohost t resume $repo $slot}" >&2
+    print -r -- "tbeam: slot $slot is taken here ($why) and origin has no $br to reland from (worktree push failed?) — the work is still on the origin machine; revive it there${ohost:+: t host run $ohost t session resume $repo $slot}" >&2
     return 1
   fi
   local n=1 nbr nwt
@@ -453,7 +453,7 @@ _dev_repo_prepare() {
     # in its SLOT number, so ${here:t} would suggest `t open 1`).
     local _r _alias; _r=$(_dev_repo_of_dir "$here" 2>/dev/null); _alias=${_r%%$'\t'*}
     echo "↷ branch sync skipped — $here contains active shell code; its updater owns the branch."
-    echo "  develop in a per-session worktree instead${_alias:+: t open $_alias}"
+    echo "  develop in a per-session worktree instead${_alias:+: t session open $_alias}"
     return 0
   fi
   git fetch -q origin 2>/dev/null

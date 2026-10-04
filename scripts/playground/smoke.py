@@ -90,13 +90,13 @@ def main():
     shell_config = (home / ".zshrc").read_text()
     run("playground-install")
     assert (home / ".zshrc").read_text() == shell_config
-    run("zsh", "-lic", "t --version && t update --relink && t update")
+    run("zsh", "-lic", "t --version && t system update --relink && t system update")
     assert (home / "bin/t").resolve() == home / "code/t/bin/t"
     guard = run("git", "-C", str(home / "code/t"), "commit", "--allow-empty", "-m", "blocked", check=False)
     assert guard.returncode != 0 and "live t checkout" in guard.stderr
     print("PASS: install, repeated install, login-shell loading, update, and live-main guard", flush=True)
 
-    with Terminal('t setup "$HOME/code/playground" --no-hosts --no-instructions') as terminal:
+    with Terminal('t config setup "$HOME/code/playground" --no-hosts --no-instructions') as terminal:
         terminal.expect("REVIEW CHANGES")
         terminal.send(b" \r")
         terminal.expect("APPLY CHANGES")
@@ -104,11 +104,11 @@ def main():
         terminal.finish()
     registered = run("zsh", "-lic", 'print -r -- "${DEV_REPOS[playground]}"').stdout.strip()
     assert registered == str(home / "code/playground"), registered
-    print("PASS: interactive t setup registers the sample repository", flush=True)
+    print("PASS: interactive t config setup registers the sample repository", flush=True)
 
     run("playground-demo-agent")
     try:
-        with Terminal("t open playground 1") as terminal:
+        with Terminal("t session open playground 1") as terminal:
             terminal.expect("Playground Claude stub")
             pane_pid = run("tmux", "display-message", "-p", "-t", "=dev-playground-1", "#{pane_pid}").stdout
             terminal.send(b"\x02d")
@@ -118,18 +118,19 @@ def main():
         assert run("git", "-C", str(worktree), "branch", "--show-current").stdout.strip() == "dev/playground-1"
         (worktree / "smoke.txt").write_text("Keep this work across reattachment.\n")
         assert run("git", "-C", str(home / "code/playground"), "status", "--porcelain").stdout == ""
-        print("PASS: t open creates an isolated worktree and a live tmux session", flush=True)
+        print("PASS: t session open creates an isolated worktree and a live tmux session", flush=True)
 
-        with Terminal("t open playground 1") as terminal:
+        with Terminal("t session open playground 1") as terminal:
             terminal.expect("Playground Claude stub")
             assert run("tmux", "display-message", "-p", "-t", "=dev-playground-1", "#{pane_pid}").stdout == pane_pid
             assert run("tmux", "list-sessions", "-F", "#{session_name}").stdout.strip() == "dev-playground-1"
             terminal.send(b"\x02d")
             terminal.finish()
         assert (worktree / "smoke.txt").read_text() == "Keep this work across reattachment.\n"
-        assert "playground" in run("zsh", "-lic", "t ls").stdout
-        assert "Playground Claude stub" in run("zsh", "-lic", "t read playground 1 --dump").stdout
-        run("zsh", "-lic", "t kill playground 1 --yes")
+        assert "playground" in run("zsh", "-lic", "t session list").stdout
+        assert "playground" in run("zsh", "-lic", "t ls").stdout  # compatibility alias
+        assert "Playground Claude stub" in run("zsh", "-lic", "t session read playground 1 --dump").stdout
+        run("zsh", "-lic", "t session close playground 1 --yes")
         assert run("tmux", "has-session", "-t", "=dev-playground-1", check=False).returncode != 0
         assert (worktree / "smoke.txt").is_file()
         print("PASS: detach, reattach one owner, list, read, and kill preserve work", flush=True)

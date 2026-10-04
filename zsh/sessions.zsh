@@ -785,7 +785,7 @@ _dev_adopt_fg() {
   local arg="$1" rows
   # all foreground rows (the colon in the slot label marks fg; tmux slots use a dash)
   rows=$(_dev_fg_rows 2>/dev/null | awk -F'\t' '$3 ~ /:/')
-  [[ -n $rows ]] || { echo "t open: no foreground claude running (see \`t ls\`)." >&2; return 1; }
+  [[ -n $rows ]] || { echo "t open: no foreground claude running (see \`t session list\`)." >&2; return 1; }
   local resumable; resumable=$(print -r -- "$rows" | awk -F'\t' '$1!="-"')
   # An id-less row (label `<repo>:p<pid>`) named exactly: say why it cannot be moved, not
   # "no match" — it is right there in `t ls`. It has no tmux either (_dev_attach_fg tried).
@@ -804,7 +804,7 @@ _dev_adopt_fg() {
       local idpart="${arg##*:}"
       sel=$(print -r -- "$resumable" | awk -F'\t' -v p="$idpart" 'index($1,p)==1')
     fi
-    [[ -n $sel ]] || { echo "t open: no foreground session matching '$arg' (see \`t ls\`)." >&2; return 1; }
+    [[ -n $sel ]] || { echo "t open: no foreground session matching '$arg' (see \`t session list\`)." >&2; return 1; }
     resumable=$sel
   else
     # Repo-aware: no-arg adoption prefers this repo's foreground claudes (row cwd in
@@ -820,7 +820,7 @@ _dev_adopt_fg() {
   if (( ${#lines} == 1 )); then
     IFS=$'\t' read -r sid cwd _ _ _ _ agent <<< "${lines[1]}"
   else
-    [[ -t 0 && -t 1 ]] || { echo "t open: several foreground sessions — name one (\`t open <id>\`) or pick from a terminal:" >&2; print -r -- "$resumable" | awk -F'\t' '{printf "  %s  %s\n",$3,$6}' >&2; return 1; }
+    [[ -t 0 && -t 1 ]] || { echo "t open: several foreground sessions — name one (\`t session open <id>\`) or pick from a terminal:" >&2; print -r -- "$resumable" | awk -F'\t' '{printf "  %s  %s\n",$3,$6}' >&2; return 1; }
     local pick
     pick=$(print -r -- "$resumable" | awk -F'\t' '{printf "%s\t%s\t%s\n", $1, $3, $6}' \
              | _t_fzf --with-nth=2.. --delimiter='\t' --prompt="t open > ") || return 1
@@ -881,7 +881,7 @@ _dev_attach_fg() {
     sel=$(print -rl -- "${att[@]}" | _t_fzf --with-nth=5 --delimiter=$'\t' --prompt="t open > ") || return 0
   else
     echo "t open: several tmux'd sessions match '$handle' — name one:" >&2
-    print -rl -- "${att[@]}" | awk -F'\t' '{printf "  t open %s   (tmux %s)\n", $5, $1}' >&2
+    print -rl -- "${att[@]}" | awk -F'\t' '{printf "  t session open %s   (tmux %s)\n", $5, $1}' >&2
     return 0
   fi
   tsess=${sel%%$'\t'*}
@@ -1608,7 +1608,7 @@ _dev_kill() {
     fi
     echo "No sessions for '$repo' here."
     [[ -z $slot || $slot == all ]] && (( ${#REMOTE_HOSTS} )) && \
-      echo "(check other hosts: \`t ls -r\`; kill there with \`t kill -r $repo${slot:+ $slot}\`)"
+      echo "(check other hosts: \`t session list -r\`; kill there with \`t session close -r $repo${slot:+ $slot}\`)"
     return 1
   fi
 
