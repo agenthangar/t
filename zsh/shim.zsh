@@ -16,10 +16,36 @@
 t() {
   emulate -L zsh
   # -h/--help anywhere (and the bare `t`) → the bin's gh-style help/usage.
-  local a
-  for a in "$@"; do [[ $a == -h || $a == --help ]] && { command t "$@"; return; }; done
+  local a machine_output=
+  for a in "$@"; do
+    [[ $a == -h || $a == --help ]] && { command t "$@"; return; }
+    case $a in --dry-run|--json|--dump|--statusline) machine_output=1 ;; esac
+  done
   local verb="$1"
   [[ -z $verb ]] && { command t; return; }
+  # Shell-bound commands must run in this process. Check before dispatch so a
+  # successful update can reload their definitions before using them. The bin
+  # checks its own commands; prompting here for those would ask twice.
+  local check_update=
+  case "$verb" in
+    open|pop|push|resume|find|cd|beam|setup|config|new|checkout|install|integrate)
+      check_update=1 ;;
+    repos) [[ ${2:-} == cd ]] && check_update=1 ;;
+  esac
+  if [[ -n $check_update && -z $machine_output && -o interactive && -t 0 && -t 1 && -t 2 \
+        && -z ${CI:-} && -z ${CLAUDECODE:-} && -z ${CODEX_THREAD_ID:-} \
+        && -z ${T_NO_UPDATE_CHECK:-} && ${T_UPDATE_PROMPTED:-} != $$ ]]; then
+    command t __update-prompt
+    local update_rc=$?
+    case $update_rc in
+      0) ;;
+      10) _t_reload || return $? ;;
+      *) return $update_rc ;;
+    esac
+    # Suppress nested t calls in this shell. A child shell inherits the marker
+    # but has a different PID, so its next interactive command can check again.
+    local -x T_UPDATE_PROMPTED=$$
+  fi
   shift
   case "$verb" in
     open)   _t_open "$@" ;;           # → _t_dev (local / -r or auto-detect remote attach / -f / fg adopt)

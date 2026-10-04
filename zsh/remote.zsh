@@ -85,7 +85,7 @@ _dev_remote_resolve() {
 # process name AND arguments" appends the ssh argv REGARDLESS of this OSC. The robust
 # defense is therefore the ssh-call quoting itself: every remote `ssh -t … zsh -lic
 # ${(qq)rcmd}` uses (qq) (single-quote), NOT (q) (backslash) — so even when the argv
-# leaks into the title it reads `zsh -lic 't open ff 1'`, not the ugly `t\ open\ ff\ 1`.
+# leaks into the title it reads one quoted command rather than escaped spaces.
 _term_title() { [[ -t 1 ]] && printf '\e]0;%s\a' "$1" }
 
 # _term_reset_mouse — disable every terminal mouse-tracking + bracketed-paste mode.
@@ -171,7 +171,9 @@ _dev_remote_attach() {
     return 1
   fi
   echo "→ Attaching $host:dev-${prepo}-${pslot} (stays on $host; Ctrl-b d to detach)"
-  local rcmd="t open ${(q)prepo} ${(q)pslot}"
+  # Let the remote login shell expand $$ so this delegated command is marked as
+  # already checked there. Later commands in that shell can still check updates.
+  local rcmd="T_UPDATE_PROMPTED=\$\$ t open ${(q)prepo} ${(q)pslot}"
   [[ -n $fg ]] && rcmd+=" --fg"
   _term_title "$host: $prepo $pslot"
   local rc=0
@@ -194,9 +196,9 @@ _dev_remote_open() {
     echo "t open --host: starting a session on $host needs a terminal." >&2
     return 1
   fi
-  local rcmd="t open"; local a
+  local rcmd="T_UPDATE_PROMPTED=\$\$ t open"; local a
   for a in "$@"; do rcmd+=" ${(q)a}"; done
-  echo "→ $host: $rcmd (stays on $host; Ctrl-b d to detach)"
+  echo "→ $host: ${rcmd#T_UPDATE_PROMPTED=\$\$ } (stays on $host; Ctrl-b d to detach)"
   _term_title "$host: open ${(j: :)@}"
   local rc=0
   ssh -t "$target" "zsh -lic ${(qq)rcmd}" || rc=$?
@@ -232,7 +234,7 @@ _dev_remote_delegate() {
     echo "t $verb: dev-${prepo}-${pslot} is live on $host — run it from a terminal (or \`t beam $prepo $pslot --from $host\` to pull it here)." >&2
     return 0
   fi
-  local rcmd="t $verb ${(q)prepo} ${(q)pslot}"; local a
+  local rcmd="T_UPDATE_PROMPTED=\$\$ t $verb ${(q)prepo} ${(q)pslot}"; local a
   for a in "$@"; do rcmd+=" ${(q)a}"; done
   echo "→ $host:dev-${prepo}-${pslot}" >&2
   _term_title "$host: $verb $prepo $pslot"
@@ -284,7 +286,7 @@ _dev_remote_fg_kill() {
   local host rtarget rcmd rc=0
   for host in ${(f)hosts}; do
     rtarget="${REMOTE_HOSTS[$host]:-$host}"
-    rcmd="t kill ${(q)handle}"
+    rcmd="T_UPDATE_PROMPTED=\$\$ t kill ${(q)handle}"
     [[ -n $force ]] && rcmd+=" -y"
     echo "→ Killing foreground '$handle' on $host"
     _term_title "$host: kill $handle"
@@ -337,7 +339,7 @@ _dev_remote_fg_open() {
   label=$(print -r -- "$sel" | awk -F'\t' '{print $2}')
   local target="${REMOTE_HOSTS[$host]:-$host}"
   [[ -t 1 ]] || { echo "t open: '$label' is on $host — attach it with: t on $host t open $label" >&2; return 1; }
-  local rcmd="t open ${(q)label}"
+  local rcmd="T_UPDATE_PROMPTED=\$\$ t open ${(q)label}"
   echo "→ Attaching foreground '$label' on $host"
   _term_title "$host: $label"
   ssh -t "$target" "zsh -lic ${(qq)rcmd}"
@@ -397,7 +399,7 @@ _dev_remote_kill() {
       h=${pair%%$'\t'*}
       ralias=${pair#*$'\t'}
       rtarget="${REMOTE_HOSTS[$h]:-$h}"
-      rcmd="t kill ${(q)ralias} all"
+      rcmd="T_UPDATE_PROMPTED=\$\$ t kill ${(q)ralias} all"
       [[ -n $force ]] && rcmd+=" -y"
       echo "→ Killing all dev-${ralias}-* on $h"
       _term_title "$h: kill $ralias all"
@@ -424,7 +426,7 @@ _dev_remote_kill() {
   local host=${res%%$'\t'*} prepo=${${res#*$'\t'}%%$'\t'*} pslot=${res##*$'\t'}
   local target="${REMOTE_HOSTS[$host]:-$host}"
   echo "→ Killing $host:dev-${prepo}-${pslot}"
-  local rcmd="t kill ${(q)prepo} ${(q)pslot}"
+  local rcmd="T_UPDATE_PROMPTED=\$\$ t kill ${(q)prepo} ${(q)pslot}"
   [[ -n $force ]] && rcmd+=" -y"
   _term_title "$host: kill $prepo $pslot"
   local rc=0

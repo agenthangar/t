@@ -280,14 +280,24 @@ Custom rules and existing explicit choices are preserved. `T_NO_TRUST`,
 
 ```sh
 t --version       # installed release, or developer checkout revision
+t update --check   # check now for a newer release
 t update           # latest tagged release; Git installs update main instead
 t update --relink  # repair links from the selected source, without fetching
 ```
 
-Updates are explicit: run `t update`, or let `dots` run it as part of your dotfiles
-update. There is no background updater. Your configuration and agent conversations
-remain outside the installation. If the command's link is broken, rerun the install
-command above. To install a specific release:
+When you use `t` interactively, it checks for a newer version in the background
+about once a day (retrying sooner after a failed check). A later command offers
+**Update now** or **Later** if a newer version is available. Update now runs
+`t update`, reloads the shell integration when needed, and continues with your
+command. Later postpones the prompt for 24 hours. The check never installs anything
+by itself; `t update --check` runs a check immediately, and `T_NO_UPDATE_CHECK=1`
+disables the interactive checks and prompts.
+Developer worktrees, scripts, help, and internal commands do not prompt.
+
+You can still run `t update` directly or let `dots` run it as part of your dotfiles
+update. Your configuration and agent conversations remain outside the installation.
+If the command's link is broken, rerun the install command above. To install a
+specific release:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/agenthangar/t/main/scripts/install-release.py | python3 - --version v0.3.1
