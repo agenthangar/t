@@ -119,6 +119,9 @@ def test_app_pull_real_tmux_launch(tmp_path, mode):
     marker.write_text("codex-app\n")
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
+    # Ubuntu's global zshrc can prompt about the runner's shared completion
+    # directories before reading this isolated home's zshrc.
+    (tmp_path / ".zshenv").write_text("skip_global_compinit=1\n")
     (tmp_path / ".zshrc").write_text("export PATH=" + shlex.quote(str(fake_bin)) + ":$PATH\n")
     source = tmp_path / "codex.c"
     source.write_text(r'''
