@@ -214,6 +214,50 @@ tmux show-options -p -v -t '=dev-api-1:' remain-on-exit
         subprocess.run(tmux + ["kill-server"], capture_output=True)
 
 
+@pytest.mark.parametrize("scenario", ["dead", "live_owner", "alive", "replaced", "race"])
+def test_restart_dead_offer_revalidates_pane_without_signalling(tmp_path, scenario):
+    code = f'''
+scenario={scenario}
+dir={shlex.quote(str(tmp_path))}
+log="$dir/actions"
+tmux() {{
+  print -r -- "$*" >> "$log"
+  case $1 in
+    display-message)
+      case ${{@: -1}} in
+        *session_path*) print -r -- "$dir" ;;
+        *pane_dead_time*)
+          if [[ $scenario == replaced || ( $scenario == race && -e "$dir/captured" ) ]]; then
+            print '%1 88888 456 1'
+          else
+            print '%1 99999 123 1'
+          fi ;;
+        *pane_id*) print '%1' ;;
+        *pane_dead*) [[ $scenario == alive ]] && print 0 || print 1 ;;
+      esac ;;
+    list-panes) print '%1' ;;
+    capture-pane) touch "$dir/captured"; print 'unsent draft' ;;
+    show-options) print on ;;
+  esac
+  return 0
+}}
+_dev_agent_of_session() {{ print codex; }}
+_dev_session_sid() {{ print {SID}; }}
+_dev_app_slot_reserved() {{ return 1; }}
+_dev_session_claude_pid() {{ [[ $scenario == live_owner ]] && print 88888; }}
+_dev_agent_resume_cmd() {{ print -r -- "codex resume $2"; }}
+ps() {{ print 1; }}
+kill() {{ print -r -- "signal $*" >> "$log"; return 1; }}
+_t_restart_slot dev-api-1 "$dir" {SID} codex restart-dead '' '%1 99999 123 1'
+'''
+    completed = run_shell(tmp_path, code)
+    assert (completed.returncode == 0) == (scenario == "dead"), completed.stderr
+    actions = (tmp_path / "actions").read_text()
+    assert "signal" not in actions
+    assert ("respawn-pane" in actions) == (scenario == "dead")
+    assert "respawn-pane -k" not in actions
+
+
 @pytest.mark.parametrize('scenario', ['fresh', 'resume', 'not_running', 'stale_socket',
                                       'changed_pid', 'cleared', 'unsupported', 'not_fresh'])
 def test_restart_background_failure_uses_invocation_local_fallback(tmp_path, scenario):

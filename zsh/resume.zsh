@@ -1216,7 +1216,7 @@ _t_pid_is_zombie() {
 # pane. A per-slot lock prevents two simultaneous restarts from racing.
 _t_restart_slot() {
   emulate -L zsh
-  local session="$1" dir="$2" sid="$3" agent="$4" mode="$5" expected_pid="${6:-}"
+  local session="$1" dir="$2" sid="$3" agent="$4" mode="$5" expected_pid="${6:-}" expected_dead="${7:-}"
   local pane cpid up attempt snapshot old_remain actual_dir launch screen invalid_cwd=0
   local cache="${XDG_CACHE_HOME:-$HOME/.cache}/t/restart" lock
   # Do not reuse a process snapshot captured by another command in this shell.
@@ -1240,6 +1240,13 @@ _t_restart_slot() {
   [[ -z $expected_pid || $cpid == $expected_pid ]] || {
     print -u2 -- 't restart: the agent changed since the recovery offer; nothing was stopped'; return 1
   }
+  if [[ $mode == restart-dead ]]; then
+    [[ -z $cpid && -n $sid && -n $expected_dead &&
+       $(tmux display-message -p -t "$pane" '#{pane_dead}') == 1 &&
+       $(tmux display-message -p -t "$pane" '#{pane_id} #{pane_pid} #{pane_dead_time} #{pane_dead}') == $expected_dead ]] || {
+      print -u2 -- 't restart: the exited pane changed; nothing was stopped'; return 1
+    }
+  fi
   if [[ $mode == restart-invalid-cwd ]]; then
     [[ $agent == codex && -n $sid && -n $expected_pid ]] || return 1
   fi
@@ -1337,6 +1344,13 @@ _t_restart_slot() {
       screen=$(tmux capture-pane -p -J -t "$pane") || return 1
       _t_invalid_cwd_screen "$screen" || {
         print -u2 -- 't restart: the invalid-cwd failure cleared; nothing was stopped'; return 1
+      }
+    fi
+    if [[ $mode == restart-dead ]]; then
+      _DEV_PS_AT=0
+      [[ -z $(_dev_session_claude_pid "$session") &&
+         $(tmux display-message -p -t "$pane" '#{pane_id} #{pane_pid} #{pane_dead_time} #{pane_dead}') == $expected_dead ]] || {
+        print -u2 -- 't restart: the exited pane changed; nothing was stopped'; return 1
       }
     fi
     old_remain=$(tmux show-options -A -p -v -t "$pane" remain-on-exit) || return 1

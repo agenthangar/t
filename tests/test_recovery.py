@@ -96,10 +96,11 @@ def test_run_errors_and_normal(recovery, monkeypatch):
 
 def test_panes_and_clients(recovery, monkeypatch):
     monkeypatch.setattr(recovery, "tmux", lambda *a: result(
-        "dev-api-1\t%1\t11\t/tmp/api\nother\t%2\t12\t/tmp/no\n"
-        "dev-split-1\t%3\t13\t/tmp/split\ndev-split-1\t%4\t14\t/tmp/split\n"
-        "t-cursor-chat\t%5\t15\t/tmp/cursor\nbad\n"))
+        "dev-api-1\t%1\t11\t/tmp/api\t1\t123\nother\t%2\t12\t/tmp/no\t0\t\n"
+        "dev-split-1\t%3\t13\t/tmp/split\t0\t\ndev-split-1\t%4\t14\t/tmp/split\t0\t\n"
+        "t-cursor-chat\t%5\t15\t/tmp/cursor\t0\t\nbad\n"))
     assert [p["pane"] for p in recovery.panes("socket")] == ["%1", "%5"]
+    assert recovery.panes("socket")[0]["pane_dead_time"] == "123"
     monkeypatch.setattr(recovery, "tmux", lambda *a: result("client1\t%1\nclient2\t%2\nbad\n"))
     assert recovery.clients("socket", "%2") == ["client2"]
 
@@ -165,6 +166,71 @@ def test_cursor_owner_requires_current_hook_and_process(recovery, target, monkey
     assert recovery.owner(target["socket"], pane) == target
     monkeypatch.setattr(recovery, "descendant", lambda *a: False)
     assert recovery.owner(target["socket"], pane) == {}
+
+
+@pytest.mark.parametrize("problem", [None, "sid", "pid", "time", "cursor"])
+def test_dead_owner_requires_exact_thread_and_no_live_process(recovery, target, monkeypatch, problem):
+    target.update(pid="", start="", pane_dead="1", pane_dead_time="123")
+    if problem == "sid":
+        target["sid"] = ""
+    elif problem == "pid":
+        target["pid"] = "42"
+    elif problem == "time":
+        target["pane_dead_time"] = ""
+    elif problem == "cursor":
+        target.update(agent="cursor", session="t-cursor-" + SID)
+    pane = {key: target[key] for key in ("session", "pane", "pane_pid", "cwd", "pane_dead", "pane_dead_time")}
+    monkeypatch.setattr(recovery, "run", lambda a: result(f'{target["agent"]}\t{target["sid"]}\t{target["pid"]}\n'))
+    actual = recovery.owner(target["socket"], pane)
+    assert actual == ({} if problem else target)
+    if not problem:
+        monkeypatch.setattr(recovery, "panes", lambda s: [pane])
+        assert recovery.current(target)
+        for key, value in (("pane_pid", "99"), ("pane_dead_time", "456"), ("pane_dead", "0")):
+            original = pane[key]
+            pane[key] = value
+            assert not recovery.current(target)
+            pane[key] = original
+
+
+def test_dead_pane_offered_without_error_text_and_after_next_exit(recovery, target, monkeypatch):
+    target.update(pid="", start="", pane_dead="1", pane_dead_time="123")
+    monkeypatch.setattr(recovery, "panes", lambda s: [target])
+    monkeypatch.setattr(recovery, "owner", lambda *a: target)
+    viewers = [[]]
+    monkeypatch.setattr(recovery, "clients", lambda *a: viewers[0])
+    calls = []
+    def tmux(socket, command, *args):
+        calls.append((command, *args))
+        assert command != "capture-pane"  # Death is tmux state, not displayed text.
+        return result("DEV_AGENT=codex" if command == "show-environment" else "80")
+    monkeypatch.setattr(recovery, "tmux", tmux)
+    watcher = recovery.Watcher(target["socket"])
+    watcher.poll(); watcher.poll()
+    assert not list(recovery.cache(target["socket"]).glob("*.offer"))
+    viewers[0] = ["client"]
+    watcher.poll(); watcher.poll()
+    offers = list(recovery.cache(target["socket"]).glob("*.offer"))
+    assert len(offers) == 1
+    assert recovery.read_json(offers[0])["error"] == recovery.DEAD
+    assert any("t: AGENT EXITED" in call[-1] for call in calls if call[0] == "run-shell")
+    assert recovery.respond(target["socket"], offers[0].stem, False) == 0
+    watcher.poll()
+    assert not list(recovery.cache(target["socket"]).glob("*.offer"))
+    target.update(pane_pid="99", pane_dead_time="456")
+    watcher.poll(); watcher.poll()
+    assert len(list(recovery.cache(target["socket"]).glob("*.offer"))) == 1
+
+
+def test_dead_pane_without_verified_thread_shows_attention(recovery, target, monkeypatch):
+    target.update(pane_dead="1", pane_dead_time="123")
+    monkeypatch.setattr(recovery, "panes", lambda s: [target])
+    monkeypatch.setattr(recovery, "owner", lambda *a: {})
+    notices = []
+    monkeypatch.setattr(recovery, "unverified_notice", lambda *a: notices.append(a) or True)
+    watcher = recovery.Watcher(target["socket"])
+    watcher.poll(); watcher.poll(); watcher.poll()
+    assert notices == [(target["socket"], target["pane"])]
 
 
 def test_offer_never_types_into_agent_and_targets_viewer(recovery, target, monkeypatch):

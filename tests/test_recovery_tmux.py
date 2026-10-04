@@ -58,6 +58,73 @@ def until(check, timeout=5, detail=lambda: ""):
     pytest.fail("timed out waiting for isolated tmux state: " + detail())
 
 
+@pytest.mark.parametrize("choice", ["q", "r"])
+def test_real_dead_pane_menu_resumes_exact_thread(terminal, choice):
+    mod, tmux, command, env, home = terminal
+    (home / "dirty.txt").write_text("uncommitted edits")
+    (home / ".zshrc").write_text(f'''
+source {shlex.quote(str(REPO_ROOT / 'zsh/resume.zsh'))}
+_dev_agent_of_session() {{ print codex; }}
+_dev_session_sid() {{ print {SID}; }}
+_dev_session_claude_pid() {{
+  [[ $(tmux display-message -p -t '=dev-api-1:' '#{{pane_dead}}') == 0 ]] || return 1
+  tmux display-message -p -t '=dev-api-1:' '#{{pane_pid}}'
+}}
+_dev_app_slot_reserved() {{ return 1; }}
+_dev_agent_resume_cmd() {{ print -r -- "codex resume $2"; }}
+codex() {{ print -r -- "$PWD|$*" > "$HOME/resumed"; sleep 60; }}
+''')
+    launch = "printf 'Working...\\nunsent draft\\n'; while [[ ! -e $HOME/exit-now ]]; do sleep 0.03; done; exit 143"
+    assert tmux("new-session", "-d", "-s", "dev-api-1", "-c", str(home), "zsh", "-lc", launch).returncode == 0
+    assert tmux("set-option", "-p", "-t", "=dev-api-1:", "remain-on-exit", "on").returncode == 0
+    (home / "exit-now").touch()
+    until(lambda: tmux("display-message", "-p", "-t", "=dev-api-1:", "#{pane_dead_status}").stdout.strip() == "143")
+    socket = tmux("display-message", "-p", "-t", "=dev-api-1:", "#{socket_path}").stdout.strip()
+    pane = mod.panes(socket)[0]
+    assert pane["pane_dead"] == "1"
+    target = mod.owner(socket, pane)
+    assert target["pid"] == ""
+    watcher = mod.Watcher(socket)  # The monitor may first see an already-dead pane.
+    watcher.poll(); watcher.poll()
+    assert not list(mod.cache(socket).glob("*.offer"))
+    master, slave = pty.openpty()
+    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
+    client = subprocess.Popen(command + ["attach-session", "-t", "=dev-api-1"],
+                              env=env, stdin=slave, stdout=slave, stderr=slave, start_new_session=True)
+    os.close(slave)
+    os.set_blocking(master, False)
+    try:
+        until(lambda: mod.clients(socket, pane["pane"]))
+        watcher.poll()
+        visible = bytearray()
+        def menu_visible():
+            if select.select([master], [], [], 0.05)[0]:
+                visible.extend(os.read(master, 65536))
+            return b"AGENT EXITED" in visible and b"Save draft and restart" in visible
+        until(menu_visible, detail=lambda: repr(bytes(visible[-1000:])))
+        os.write(master, choice.encode())
+        until(lambda: not list(mod.cache(socket).glob("*.offer")))
+        if choice == "r":
+            until(lambda: (home / "resumed").exists(), detail=lambda: tmux("capture-pane", "-p", "-t", pane["pane"]).stdout)
+            assert (home / "resumed").read_text().strip() == f"{home}|resume {SID}"
+            assert not mod.current(target)  # The old death is stale.
+            saved = list((home / "cache/t/restart").iterdir())
+            assert len(saved) == 1 and "unsent draft" in saved[0].read_text()
+            assert saved[0].stat().st_mode & 0o777 == 0o600
+            assert mod.panes(socket)[0]["pane_pid"] != pane["pane_pid"]
+        else:
+            assert not (home / "resumed").exists()
+            assert mod.panes(socket)[0]["pane_dead"] == "1"
+            watcher.poll()
+            assert not list(mod.cache(socket).glob("*.offer"))
+        assert mod.panes(socket)[0]["pane"] == pane["pane"]
+        assert (home / "dirty.txt").read_text() == "uncommitted edits"
+    finally:
+        client.terminate()
+        client.wait(timeout=5)
+        os.close(master)
+
+
 @pytest.mark.parametrize("width", [40, 80])
 @pytest.mark.parametrize("choice", ["q", "r", "\r"])
 def test_real_menu_dismiss_or_accept_without_typing_into_agent(terminal, width, choice):
