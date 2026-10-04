@@ -43,11 +43,13 @@ Watch the [MP4](docs/media/demo.mp4) or use the [static poster](docs/media/demo-
   `t session list` shows the sessions, `t session read my-project 1 --dump`
   lets you scroll their output, and `t session open my-project 1` reconnects
   you. A detached session stays available while its host stays awake and reachable.
-- **Move between terminal and desktop.** On macOS, `t session open-app my-project 1` opens
+- **Move between terminal and desktop.** On macOS, `t app push my-project 1` opens
   the same local Codex conversation in the desktop app, along with its web
   preview and referenced Markdown plan. The worktree and dev server stay in
-  place. To return, finish the desktop turn, then use `codex resume <thread-id>`
-  from that worktree; use one interface at a time for the conversation.
+  place. To return, finish the desktop turn, quit the desktop app, and run
+  `t app pull my-project 1`. It resumes the same conversation in tmux; attach
+  with `t session open my-project 1 --cli`. The original `t app my-project 1` shorthand
+  still pushes into the app.
 
 **Coming soon:** submit work to your agent framework, starting with
 [AgentCore](https://github.com/agenthangar/t/issues/9), and use
@@ -131,7 +133,7 @@ continues to open its interactive menu.
 | `t session cd [repo] [slot]` / `t session read <repo> [slot]` | Enter a worktree or read its terminal log (`--dump` writes plain output) |
 | `t session move <repo> [slot] --host <host>` | Move a session to a host; `--from <host>` pulls it here |
 | `t session view-plan` / `t session paste` | View a Claude session plan or pass an attachment |
-| `t session open-app <repo> [slot]` | Hand an existing local Codex CLI conversation to its macOS desktop app and stop the CLI |
+| `t session open-app [push\|pull] [repo] [slot]` | Move a local Codex conversation into its macOS desktop app or back into CLI; `t app` is the short form |
 | `t repo list` / `t repo locate <repo>` / `t repo cd <repo>` | List names and paths, print a checkout path, or enter it in the shell |
 | `t repo create` / `t repo clone <github-url> [alias]` | Create a repository or clone and register an existing one |
 | `t cursor list` / `t cursor resume [id]` / `t cursor send [id]` | List, resume, or move Cursor CLI chats |
@@ -265,16 +267,22 @@ cleanup and a later terminal launch cannot reuse it while the app may still be
 working. `t session list` marks reserved desktop slots with `◇` and
 `[app reserved]`, including slots handed off from tmux. This is a cleanup
 reservation, not a live window indicator; `t` cannot currently confirm whether
-the desktop workspace is open. After closing its workspace in Codex, release the
-reservation with:
+the desktop workspace is open. To continue in the CLI, finish the desktop turn,
+quit the app, and pull the slot:
 
 ```sh
-t session cd my-project 3
-rm "$(git rev-parse --absolute-git-dir)/t-app-slot"
+t app pull my-project 3
+t session open my-project 3 --cli
 ```
 
-The worktree and any unmerged changes remain; normal cleanup can then reap a
-merged, clean worktree.
+Pull preserves the worktree, changes, dev server, and thread history. For a
+worktree started with `t session open --app`, it selects the only saved conversation;
+if several chats share the worktree, choose `--thread <id>`. A previously pushed
+slot defaults to its handed-off thread. `--dry-run` previews either direction.
+Pull refuses while the desktop app or its backend is running, or while the
+selected thread has an active turn in the shared daemon. It never quits the app
+or stops that daemon. The reservation is released only after the CLI is verified
+live; a failed handoff keeps the worktree protected.
 
 ## Configuration
 
