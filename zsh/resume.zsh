@@ -1379,6 +1379,201 @@ _t_restart_slot() {
   }
 }
 
+# Independent proof that this live Codex PID owns the requested thread. A tmux
+# CLAUDE_RESUME_ID stamp is intentionally insufficient: we write it before launch.
+_t_app_pull_ui_ready() {
+  local session="$1" dir="$2" sid="$3" pid="$4" db args pane_text
+  db=$(_codex_db); [[ -r $db ]] || return 1
+  args=$(ps -ww -o args= -p "$pid" 2>/dev/null) || return 1
+  pane_text=$(tmux capture-pane -p -t "=$session:" 2>/dev/null) || return 1
+  LC_ALL=C python3 - "$db" "$dir" "$sid" "$args" "$pane_text" <<'PY' 2>/dev/null
+import json, os, re, sqlite3, sys
+
+try:
+    db, cwd, sid, args, pane = sys.argv[1:]
+    # The process walker has already identified this PID as Codex. Its own argv,
+    # rather than a prewritten tmux stamp, binds the live process to the thread.
+    prefix, sep, tail = args.partition(' resume ')
+    if (not sep or not re.fullmatch(r'codex(?:-(?:aarch64|x86_64)-[\w.-]+)?',
+                                     os.path.basename(prefix)) or
+            tail != f'{sid} --cd {cwd}'):
+        sys.exit(1)
+    # The default empty composer shows that the interactive TUI is drawn; exact
+    # resume argv and rollout metadata supply the thread identity. An error
+    # screen mentioning Codex lacks this anchored input prompt.
+    if not any(re.fullmatch(r'\s*[›»]\s+Ask Codex to do anything\s*', line)
+               for line in pane.splitlines()[-12:]):
+        sys.exit(1)
+    c = sqlite3.connect('file:%s?mode=ro' % db, uri=True, timeout=0.5)
+    rows = c.execute('select rollout_path from threads where id=? and cwd=? '
+                     'and archived=0 and trim(first_user_message)<>\'\' '
+                     'and instr(source, \'"subagent"\')=0', (sid, cwd)).fetchall()
+    if len(rows) != 1:
+        sys.exit(1)
+    with open(rows[0][0]) as f:
+        meta = json.loads(f.readline())
+    payload = meta.get('payload', {})
+    if (meta.get('type') != 'session_meta' or payload.get('id') != sid or
+            payload.get('cwd') != cwd or payload.get('source') not in ('cli', 'vscode') or
+            payload.get('thread_source') == 'subagent'):
+        sys.exit(1)
+except (OSError, ValueError, TypeError, AttributeError, sqlite3.Error):
+    sys.exit(1)
+PY
+}
+
+_t_app_pull_ready() {
+  local session="$1" dir="$2" sid="$3" pid="$4" reg line reg_sid reg_cwd started
+  [[ $pid == <-> ]] || return 1
+  reg="${XDG_CACHE_HOME:-$HOME/.cache}/claude-sessions/$pid"
+  if [[ -r $reg ]]; then
+    line="$(<"$reg")"
+    reg_sid=${line%%$'\t'*}; reg_cwd=${line#*$'\t'}
+    if [[ $reg_sid == $sid && $reg_cwd == $dir ]]; then
+      started=$(LC_ALL=C ps -o lstart= -p "$pid" 2>/dev/null)
+      if [[ -n $started ]] && LC_ALL=C python3 - "$reg" "$started" <<'PY' 2>/dev/null; then
+import datetime, os, sys
+try:
+    born = datetime.datetime.strptime(sys.argv[2].strip(), '%a %b %d %H:%M:%S %Y').timestamp()
+    sys.exit(0 if os.stat(sys.argv[1]).st_mtime >= born else 1)
+except (OSError, ValueError):
+    sys.exit(1)
+PY
+        return 0
+      fi
+    fi
+  fi
+  [[ $(_codex_pane_sid "$session" "$dir" "$pid" 2>/dev/null) == $sid ]] ||
+    _t_app_pull_ui_ready "$session" "$dir" "$sid" "$pid"
+}
+
+# Return a desktop-reserved Codex worktree to its original tmux slot. The caller
+# serializes handoffs for this worktree and has already stopped the desktop app.
+# expected_sid is '-' for a desktop-only row with no prior tmux session.
+_t_app_pull_slot() {
+  emulate -L zsh
+  local session="$1" dir="$2" sid="$3" expected_sid="$4"
+  local marker actual actual_sid pane panes owner owner_dir pid attempt found=0 launch
+  local -a owners
+  [[ $session == dev-* && -n $dir && -d $dir && -n $sid && $sid != - && -n $expected_sid ]] || {
+    print -u2 -- 't app pull: invalid slot, worktree, or thread'; return 1
+  }
+  [[ $sid =~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' &&
+     ( $expected_sid == - || $expected_sid =~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' ) ]] || {
+    print -u2 -- 't app pull: invalid thread identifier'; return 1
+  }
+  marker=$(_dev_app_slot_marker "$dir") && [[ -f $marker ]] || {
+    print -u2 -- 't app pull: this worktree has no desktop reservation'; return 1
+  }
+  command -v codex >/dev/null 2>&1 || { print -u2 -- 't app pull: codex is unavailable'; return 1; }
+  launch="exec codex resume ${(q)sid} --cd ${(q)dir}"
+  local fg_sid fg_rest fg_cwd
+  while IFS=$'\t' read -r fg_sid fg_rest; do
+    fg_cwd=${fg_rest%%$'\t'*}
+    if [[ $fg_sid == $sid || ( -n $fg_cwd && ${fg_cwd:A} == ${dir:A} ) ]]; then
+      print -u2 -- 't app pull: a foreground CLI already owns this thread or worktree'
+      return 1
+    fi
+  done < <(_dev_fg_rows 2>/dev/null)
+  # Check every alias, including sessions whose names differ from the selected
+  # slot. A second owner of the same cwd must never be silently ignored.
+  while IFS=$'\t' read -r owner owner_dir; do
+    [[ -n $owner && -n $owner_dir ]] || continue
+    [[ ${owner_dir:A} == ${dir:A} ]] && owners+=("$owner")
+    if [[ $owner != $session ]]; then
+      local _DEV_PS_AT=0
+      pid=$(_dev_session_claude_pid "$owner")
+      if [[ -n $pid && $(_dev_session_sid "$owner" "$owner_dir") == $sid ]]; then
+        print -u2 -- 't app pull: this thread is already live in another tmux session'
+        return 1
+      fi
+    fi
+  done < <(tmux list-sessions -F '#{session_name}'$'\t''#{session_path}' 2>/dev/null)
+  (( $#owners <= 1 )) || { print -u2 -- 't app pull: multiple tmux sessions own this worktree'; return 1; }
+  if (( $#owners )); then
+    [[ $owners[1] == $session ]] || { print -u2 -- 't app pull: another tmux session owns this worktree'; return 1; }
+    tmux has-session -t "=$session:" 2>/dev/null || return 1
+    actual=$(tmux display-message -p -t "=$session:" '#{session_path}') || return 1
+    [[ ${actual:A} == ${dir:A} ]] || { print -u2 -- 't app pull: slot directory changed'; return 1; }
+    actual_sid=$(_dev_session_sid "$session" "$dir")
+    [[ $(_dev_agent_of_session "$session") == codex &&
+       ( $actual_sid == $expected_sid || ( $expected_sid == - && -z $actual_sid ) ) ]] || {
+      print -u2 -- 't app pull: slot agent or thread changed'; return 1
+    }
+    local _DEV_PS_AT=0
+    pid=$(_dev_session_claude_pid "$session")
+    if [[ -n $pid ]]; then
+      if _t_app_pull_ready "$session" "$dir" "$sid" "$pid"; then
+        rm -- "$marker" || return 1
+        tmux set-option -t "=$session:" window-size latest 2>/dev/null
+        _dev_recovery_watch "$session"
+        return 0
+      fi
+      print -u2 -- 't app pull: an unverified CLI already owns this slot'
+      return 1
+    fi
+    panes=$(tmux list-panes -s -t "=$session" -F '#{pane_id}') || return 1
+    [[ -n $panes && $panes != *$'\n'* ]] || {
+      print -u2 -- 't app pull: slot has multiple panes'; return 1
+    }
+    pane=${panes%%$'\n'*}
+    tmux set-environment -t "=$session" CLAUDE_RESUME_ID "$sid" || return 1
+    tmux set-environment -t "=$session" DEV_AGENT codex || return 1
+    if [[ $(tmux display-message -p -t "$pane" '#{pane_dead}') == 1 ]]; then
+      tmux set-option -p -t "$pane" remain-on-exit on || return 1
+      tmux respawn-pane -t "$pane" -c "$dir" "zsh -lic ${(q)launch}" || return 1
+    else
+      # Keep the idle shell intact. A new window gives the CLI an independent
+      # process tree, without injecting keystrokes into an interactive shell.
+      launch="tmux set-option -p -t \"\$TMUX_PANE\" remain-on-exit on; $launch"
+      tmux new-window -t "=$session:" -c "$dir" "zsh -lic ${(q)launch}" || return 1
+    fi
+  else
+    tmux has-session -t "=$session:" 2>/dev/null && {
+      print -u2 -- 't app pull: slot name is occupied elsewhere'; return 1
+    }
+    # The pane enables remain-on-exit before exec, including a fast Codex
+    # startup failure. No default shell or personal tmux configuration is used.
+    launch="tmux set-option -p -t \"\$TMUX_PANE\" remain-on-exit on; $launch"
+    tmux new-session -d -s "$session" -c "$dir" \
+      -e "CLAUDE_RESUME_ID=$sid" -e 'DEV_AGENT=codex' \
+      "zsh -lic ${(q)launch}" || return 1
+  fi
+  # A stamp alone is not success. Wait for a real Codex process in this exact
+  # slot and for the thread resolver to agree before releasing the reservation.
+  # Process scans can be slow on a busy host; include their time in the bound.
+  zmodload zsh/datetime
+  local -F deadline=$(( EPOCHREALTIME + 5 ))
+  for attempt in {1..100}; do
+    (( EPOCHREALTIME < deadline )) || break
+    local _DEV_PS_AT=0
+    pid=$(_dev_session_claude_pid "$session")
+    if [[ -n $pid && $(_dev_agent_of_session "$session") == codex &&
+          $(tmux display-message -p -t "=$session:" '#{session_path}' 2>/dev/null) == $dir ]] &&
+       _t_app_pull_ready "$session" "$dir" "$sid" "$pid"; then
+      found=1; break
+    fi
+    sleep 0.05
+  done
+  (( found )) || {
+    local short=${session#dev-}
+    print -u2 -- "t app pull: CLI thread could not be verified; worktree remains reserved. Attach with t open ${short%-*} ${short##*-} --cli, then retry t app pull"
+    return 1
+  }
+  # A process observed for one snapshot may be a client that failed instantly.
+  sleep 0.1
+  local _DEV_PS_AT=0
+  [[ $(_dev_session_claude_pid "$session") == $pid ]] &&
+    _t_app_pull_ready "$session" "$dir" "$sid" "$pid" || {
+    print -u2 -- 't app pull: Codex exited during startup; the worktree remains reserved'
+    return 1
+  }
+  tmux set-option -t "=$session:" window-size latest 2>/dev/null
+  rm -- "$marker" || { print -u2 -- 't app pull: CLI started but reservation could not be released'; return 1; }
+  _dev_recovery_watch "$session"
+  return 0
+}
+
 # _dev_resume_session <session> <dir> <session-id> — sibling of _dev_new_session:
 # create a detached, logged tmux session in <dir>, but RESUME an existing Claude
 # conversation (claude -r) rather than starting fresh on $DEV_BRANCH. Same name

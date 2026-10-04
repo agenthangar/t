@@ -116,6 +116,26 @@ def test_completion_exposes_groups_and_group_actions(tmp_path):
 
 
 @pytest.mark.skipif(not shutil.which("zsh"), reason="zsh is required")
+def test_app_completion_tracks_direction_and_arguments(tmp_path):
+    result = shell(tmp_path, '''
+        DEV_REPOS=(api /tmp/api)
+        _values() { print -r -- "values:${(j:,:)argv[2,-1]}"; }
+        _message() { print -r -- "message:$1"; }
+        local -a words
+        words=(t app '') CURRENT=3; _t
+        words=(t app push '') CURRENT=4; _t
+        words=(t session open-app pull api '') CURRENT=6; _t
+        words=(t app pull api 3 --) CURRENT=6; _t
+        words=(t session open-app pull api 3 --thread '') CURRENT=8; _t
+    ''')
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == [
+        "values:push,pull,api", "values:api", "message:local slot number",
+        "values:--thread,--dry-run,-h,--help", "message:saved conversation ID",
+    ]
+
+
+@pytest.mark.skipif(not shutil.which("zsh"), reason="zsh is required")
 def test_shell_dispatch_matches_python_command_registry(tmp_path, t_mod):
     # These actions are handled in the caller's shell or must reload it after
     # running the binary. Compare both public and compatibility spellings with

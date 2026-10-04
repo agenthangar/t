@@ -21,7 +21,7 @@
 import argparse
 import calendar
 import copy
-from contextlib import closing
+import fcntl
 import glob
 import hashlib
 import html
@@ -43,6 +43,7 @@ import sys
 import tempfile
 import textwrap
 import time
+from contextlib import closing, contextmanager
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import TCPServer
 from urllib.parse import quote, urlencode, urlsplit
@@ -6616,6 +6617,99 @@ def _app_select(cfg, rows, repo, slot, cwd):
     return row
 
 
+def _app_target(args):
+    """Keep the original positional form as shorthand for app push."""
+    words = [word for word in (args.repo, args.slot, args.app_slot) if word is not None]
+    direction = words.pop(0) if words and words[0] in ("push", "pull") else "push"
+    if len(words) > 2:
+        raise ValueError("usage: t app [push|pull] [repo] [slot]")
+    return direction, *(words + [None] * (2 - len(words)))
+
+
+def _app_pull_select(cfg, rows, repo, slot, cwd, thread=None):
+    row = _slot_select(cfg, rows, repo, slot, cwd, "app pull")
+    if row["agent"] != "codex":
+        raise ValueError(f"{row['slot']} runs {row['agent']}; only Codex conversations can be pulled")
+    # The database is read through the existing seam. Exact cwd, non-subagent,
+    # non-archived candidates avoid a stale tmux stamp or a sibling's transcript.
+    candidates = {}
+    raw = zsh_capture(shlex.join(["_codex_threads_for_cwd", row["cwd"]]))
+    for line in raw.splitlines():
+        fields = line.split("\t")
+        if (len(fields) >= 3 and fields[2] == row["cwd"] and os.path.isfile(fields[1])
+                and re.fullmatch(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", fields[0])):
+            candidates[fields[0]] = fields[1]
+    sid = thread or (row["sid"] if row["sid"] != "-" else None)
+    if sid is None and len(candidates) == 1:
+        sid = next(iter(candidates))
+    if sid not in candidates:
+        if sid:
+            raise ValueError(f"thread {sid} is not a saved Codex conversation in {row['cwd']}")
+        if candidates:
+            raise ValueError("several conversations belong to this worktree; choose --thread <id>: "
+                             + ", ".join(candidates))
+        raise ValueError("no saved Codex conversation in this worktree; send a message in the app first")
+    return dict(row, sid=sid, expected_sid=row["sid"])
+
+
+@contextmanager
+def _app_handoff_lock(row):
+    """Serialize push and pull for a worktree, including sibling repo aliases."""
+    root = os.path.join(_cache_root(), "app-handoffs")
+    try:
+        os.makedirs(root, mode=0o700, exist_ok=True)
+        key = hashlib.sha256(os.path.realpath(row["cwd"]).encode()).hexdigest()
+        fh = open(os.path.join(root, key + ".lock"), "a")
+    except OSError as e:
+        raise ValueError(f"could not lock the app handoff: {e}") from e
+    with fh:
+        try:
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as e:
+            raise ValueError("another app handoff is in progress for this worktree") from e
+        except OSError as e:
+            raise ValueError(f"could not lock the app handoff: {e}") from e
+        yield
+
+
+def _app_assert_released(row, bundle):
+    helper = os.path.join(_t_source_root(), "libexec", "t_app_handoff.py")
+    try:
+        runpy.run_path(helper)["assert_released"](bundle, row["sid"], row["cwd"], _run)
+    except OSError as e:
+        raise ValueError(f"could not check desktop ownership: {e}") from e
+
+
+def _app_pull_cli(row):
+    parts = ["_t_app_pull_slot", "dev-" + row["slot"], row["cwd"], row["sid"], row["expected_sid"]]
+    return _run(["zsh", "-lic", ZSH_PRELUDE + shlex.join(parts)], timeout=30)
+
+
+def cmd_app_pull(cfg, args, repo, slot):
+    if args.url or args.no_preview or args.plan or args.no_plan or args.reuse_window:
+        raise ValueError("preview, plan, and window options apply only to t app push")
+    row = _app_pull_select(cfg, _parse_rows(zsh_capture("_dev_session_rows")),
+                           repo, slot, os.getcwd(), args.thread)
+    if not os.path.isdir(row["cwd"]):
+        raise ValueError(f"the session's worktree is missing: {row['cwd']}")
+    print(f"{row['slot']} → Codex CLI · thread {row['sid']}")
+    if args.dry_run:
+        print("Would verify the desktop has exited, resume this conversation in tmux, "
+              "and release its desktop reservation; the worktree and dev server stay in place.")
+        return 0
+    if sys.platform != "darwin":
+        raise ValueError("desktop handoff currently requires macOS; run t app pull on your desktop")
+    with _app_handoff_lock(row):
+        _app_assert_released(row, _app_bundle())
+        _trust_auto([row["cwd"]])
+        result = _app_pull_cli(row)
+        if result.returncode:
+            raise ValueError(result.stderr.strip() or "could not resume the CLI; desktop reservation retained")
+    repo, _, slot = row["slot"].rpartition("-")
+    print(f"Resumed the same conversation in tmux. Attach with: t open {repo} {slot} --cli")
+    return 0
+
+
 def cmd_restart(cfg, args):
     try:
         row = _slot_select(cfg, _parse_rows(zsh_capture("_dev_session_rows")),
@@ -6978,12 +7072,17 @@ def cmd_app_workspace(cwd):
 
 def cmd_app(cfg, args):
     try:
+        direction, repo, slot = _app_target(args)
+        if direction == "pull":
+            return cmd_app_pull(cfg, args, repo, slot)
+        if args.thread:
+            raise ValueError("--thread applies only to t app pull")
         # Validate explicit URLs before scanning or changing any session.
         if args.url is not None:
             _app_link("", args.url)
         plan = _app_plan_path(args.plan) if args.plan else None
         row = _app_select(cfg, _parse_rows(zsh_capture("_dev_session_rows")),
-                          args.repo, args.slot, os.getcwd())
+                          repo, slot, os.getcwd())
         if not os.path.isdir(row["cwd"]):
             raise ValueError(f"the session's worktree is missing: {row['cwd']}")
         if not args.no_plan and plan is None:
@@ -7007,36 +7106,37 @@ def cmd_app(cfg, args):
         bundle = _app_bundle()
         if not bundle:
             raise ValueError("install the Codex desktop app in /Applications or ~/Applications first")
-        _trust_auto([row["cwd"]])
-        # A new PROCESS is not a new WINDOW. Invoke the native New Window action
-        # and retain the verified new window before stopping the slot's CLI.
-        window = None if args.reuse_window else _app_new_window(bundle)
-        links = [link]
-        if plan:
+        with _app_handoff_lock(row):
+            _trust_auto([row["cwd"]])
+            # A new PROCESS is not a new WINDOW. Invoke the native New Window action
+            # and retain the verified new window before stopping the slot's CLI.
+            window = None if args.reuse_window else _app_new_window(bundle)
+            links = [link]
+            if plan:
+                try:
+                    plan_url = _app_plan_start(plan)
+                except OSError as e:
+                    raise ValueError(f"could not start plan preview: {e}") from e
+                # A second browser URL on the SAME thread keeps the web preview too.
+                # A raw Markdown OS-open would create a new projectless chat.
+                links.append(_app_link(row["sid"], plan_url, "t-plan-" + row["sid"]))
+            _app_reserve_worktree(row["cwd"])
+            stopped = _app_stop_cli(row)
+            if stopped.returncode:
+                raise ValueError(stopped.stderr.strip() or "could not stop the CLI; the app was not opened")
             try:
-                plan_url = _app_plan_start(plan)
-            except OSError as e:
-                raise ValueError(f"could not start plan preview: {e}") from e
-            # A second browser URL on the SAME thread keeps the web preview too.
-            # A raw Markdown OS-open would create a new projectless chat.
-            links.append(_app_link(row["sid"], plan_url, "t-plan-" + row["sid"]))
-        _app_reserve_worktree(row["cwd"])
-        stopped = _app_stop_cli(row)
-        if stopped.returncode:
-            raise ValueError(stopped.stderr.strip() or "could not stop the CLI; the app was not opened")
-        try:
-            if window:
-                window.focus()
-            result = _run(["open", "-a", bundle, *links], timeout=15)
-            if result.returncode:
-                raise ValueError("could not open the app: " + result.stderr.strip())
-        except ValueError as e:
-            recovery = shlex.join(["codex", "resume", row["sid"]])
-            raise ValueError(f"{e}. To resume in a terminal: cd {shlex.quote(row['cwd'])} && {recovery}") from e
-        if url:
-            _app_remember_preview(row, url)
-        if plan:
-            _index_save(_app_plan_cache(row), {"cwd": row["cwd"], "path": plan})
+                if window:
+                    window.focus()
+                result = _run(["open", "-a", bundle, *links], timeout=15)
+                if result.returncode:
+                    raise ValueError("could not open the app: " + result.stderr.strip())
+            except ValueError as e:
+                recovery = shlex.join(["codex", "resume", row["sid"]])
+                raise ValueError(f"{e}. To resume in a terminal: cd {shlex.quote(row['cwd'])} && {recovery}") from e
+            if url:
+                _app_remember_preview(row, url)
+            if plan:
+                _index_save(_app_plan_cache(row), {"cwd": row["cwd"], "path": plan})
         print(("New app window created. " if window else "") +
               "Open request sent to macOS; app delivery is not confirmed. "
               "Tmux keeps this worktree slot reserved.")
@@ -8309,7 +8409,7 @@ def _command_description(group, action):
                     "move": "Move a session between machines", "read": "Read slot output",
                     "view-plan": "Show a Claude session plan", "paste": "Paste a recent file path",
                     "search": "Search and resume a saved conversation",
-                    "open-app": "Hand off a Codex slot to the desktop app"},
+                    "open-app": "Move a Codex slot between CLI and desktop"},
         "repo": {"list": "List registered repositories", "cd": "Enter a checkout",
                  "locate": "Print a checkout path", "create": "Create a GitHub repository",
                  "clone": "Clone and register a repository"},
@@ -8418,7 +8518,7 @@ def build_parser():
     ag.add_argument("--codex", action="store_true", help="run OpenAI Codex CLI in a FRESH slot (default: DEV_AGENT[repo] / DEV_AGENT_DEFAULT, claude)")
     ag.add_argument("--claude", action="store_true", help="run Claude Code in a fresh slot even if the repo defaults to codex")
 
-    sp = sub.add_parser("app", help="move a local Codex slot into the desktop app with its preview",
+    sp = sub.add_parser("app", help="push a local Codex conversation into the app or pull it back to CLI",
         description="Stop a local slot's Codex CLI and open the SAME conversation in the "
             "Codex desktop app on macOS, with its running web preview and referenced Markdown "
             "plan in separate built-in browser tabs. "
@@ -8431,9 +8531,16 @@ def build_parser():
             "macOS Accessibility access for your terminal is required. --reuse-window "
             "uses the existing window instead. "
             "The browser deep link requires a recent desktop app. Run from a separate "
-            "terminal if the command would stop the agent executing it.")
-    sp.add_argument("repo", nargs="?", help="DEV_REPOS key; defaults to the cwd repo")
-    sp.add_argument("slot", nargs="?", help="local slot number")
+            "terminal if the command would stop the agent executing it. "
+            "`t app push [repo] [slot]` is the explicit form of `t app [repo] [slot]`. "
+            "To return, finish the desktop turn, quit the desktop app, and run "
+            "`t app pull [repo] [slot]`. Pull resumes the saved conversation in tmux "
+            "and releases the desktop reservation only after verifying the CLI is live. "
+            "App-created worktrees are supported; choose --thread ID when several chats share one.")
+    sp.add_argument("repo", nargs="?", metavar="push|pull|repo", help="direction or DEV_REPOS key (default: push, cwd repo)")
+    sp.add_argument("slot", nargs="?", metavar="repo|slot", help="repo key or local slot number")
+    sp.add_argument("app_slot", nargs="?", metavar="slot", help="local slot number with an explicit direction")
+    sp.add_argument("--thread", metavar="ID", help="saved conversation to pull from this worktree (default: handed-off thread, or its only conversation)")
     preview = sp.add_mutually_exclusive_group()
     preview.add_argument("--url", help="preview page to open and remember for this thread (default: remembered URL, then slot's live dev URL)")
     preview.add_argument("--no-preview", action="store_true", help="skip the web preview (plans still open unless --no-plan)")
@@ -8441,7 +8548,7 @@ def build_parser():
     plan.add_argument("--plan", metavar="PATH", help="Markdown plan to open (default: last plan referenced in the session, then remembered choice)")
     plan.add_argument("--no-plan", action="store_true", help="skip opening a plan")
     sp.add_argument("--reuse-window", action="store_true", help="use the existing app window instead of automatically creating a new one")
-    sp.add_argument("--dry-run", action="store_true", help="show the handoff link without stopping or opening anything")
+    sp.add_argument("--dry-run", action="store_true", help="show the proposed handoff without stopping or opening anything")
 
     sp = sub.add_parser("ls", help="list dev sessions (attached + active context)",
         description="List live Claude dev sessions: whether each is attached, and whether it "
