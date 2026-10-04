@@ -153,6 +153,10 @@ def test_restart_real_tmux_preserves_pane_thread_and_worktree(tmp_path, agent):
     thread_log = tmp_path / "resumed"
     # The replacement uses a login shell with an isolated home. This function
     # stands in for the agent, recording the actual argv and cwd of the launch.
+    # Ubuntu's global zshrc runs compinit before this home's zshrc. CI's shared
+    # completion directories can trigger an interactive permissions prompt;
+    # completion setup is unrelated to the login-shell contract under test.
+    (tmp_path / ".zshenv").write_text("skip_global_compinit=1\n")
     (tmp_path / ".zshrc").write_text(f'{agent}() {{ print -r -- "$PWD|$*" > {shlex.quote(str(thread_log))}; sleep 30; }}\n')
     dirty = tmp_path / "uncommitted.txt"
     dirty.write_text("keep my changes\n")
