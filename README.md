@@ -162,6 +162,9 @@ without a model connection. Nothing restarts until you choose it. Offers are bou
 to the exact conversation and process; a changed or recovered session is left alone.
 Detached sessions get the offer when you return. Dismissal suppresses repeats until
 the error clears. Authentication and rate-limit errors do not trigger recovery.
+If the monitor cannot verify the conversation, it shows a message asking you to
+copy your draft before quitting and relaunching. It keeps checking and can offer
+recovery once the conversation is verified.
 
 Codex's **Cannot use the background server / Experimental feature request failed**
 screen, and its startup menu reporting a stopped or unreachable background server,

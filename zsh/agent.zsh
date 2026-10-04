@@ -237,13 +237,17 @@ try:
     name, sep, folder = pane_title.rpartition(' | ')
     if not sep or not name or folder != os.path.basename(cwd):
         sys.exit(0)
-    # Only the last status line counts; a title in earlier output is not evidence.
+    # The optional profile field may be absent. Identify status lines by their
+    # workspace field so the three-part shortcut help below them is not mistaken
+    # for a footer. Only the last status line counts, even if it is incomplete or
+    # points elsewhere: a title in earlier output is not current evidence.
     footers = [parts for line in pane.splitlines()
-               if len(parts := line.strip().split(' · ')) >= 4]
+               if len(parts := line.strip().split(' · ')) >= 2
+               and parts[1].startswith(('/', '~/'))]
     if not footers:
         sys.exit(0)
     footer = footers[-1]
-    if len(footer) < 4 or os.path.expanduser(footer[1]) != cwd or footer[2] != name:
+    if len(footer) < 3 or os.path.expanduser(footer[1]) != cwd or footer[2] != name:
         sys.exit(0)
     c = sqlite3.connect('file:%s?mode=ro' % db, uri=True, timeout=0.5)
     rows = c.execute("select id,rollout_path,updated_at,archived,first_user_message from threads "

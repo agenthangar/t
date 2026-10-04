@@ -229,10 +229,21 @@ def offer(target, error):
     return result.returncode == 0
 
 
+def unverified_notice(socket, pane):
+    viewers = clients(socket, pane)
+    if not viewers:
+        return False
+    message = ("t detected a failure but cannot verify this conversation. "
+               "Copy your draft before quitting, then relaunch.")
+    return tmux(socket, "display-message", "-d", "10000", "-c", viewers[0],
+                "-t", pane, message).returncode == 0
+
+
 class Watcher:
     def __init__(self, socket):
         self.socket = socket
         self.seen = {}
+        self.unverified = set()
 
     def poll(self):
         for path in cache(self.socket).glob("*.offer"):
@@ -241,6 +252,7 @@ class Watcher:
         rows = panes(self.socket)
         active = {row["pane"] for row in rows}
         self.seen = {key: value for key, value in self.seen.items() if key in active}
+        self.unverified.intersection_update(active)
         for pane in rows:
             # Agent stamps are only a detection hint; owner() verifies them before
             # any offer. Cursor owners come from its SessionStart hook.
@@ -252,10 +264,14 @@ class Watcher:
             screen = tmux(self.socket, "capture-pane", "-p", "-J", "-t", pane["pane"])
             error = failure(agent, screen.stdout) if screen.returncode == 0 else ""
             old_error, offered = self.seen.get(pane["pane"], ("", False))
+            if error != old_error:
+                self.unverified.discard(pane["pane"])
             if error and error == old_error and not offered:
                 target = owner(self.socket, pane, startup=True) if error == BACKGROUND else owner(self.socket, pane)
                 if target:
                     offered = offer(target, error)
+                elif pane["pane"] not in self.unverified and unverified_notice(self.socket, pane["pane"]):
+                    self.unverified.add(pane["pane"])
             self.seen[pane["pane"]] = (error, offered if error == old_error else False)
         return bool(rows)
 
