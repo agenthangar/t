@@ -95,6 +95,7 @@ _dev_worktree_create() {
       return 1
     fi
     _dev_worktree_freshen "$repo" "$slot" "$wt" "$br"
+    _dev_auto_trust "$wt"
     print -r -- "$wt"; return 0
   fi
   # A dir with NO .git here is debris, never a worktree: the sweep removed the tree but
@@ -141,6 +142,7 @@ _dev_worktree_create() {
     *)      git -C "$repodir" worktree add -q -b "$br" "$wt" origin/main 2>/dev/null ;;  # fresh off main
   esac
   [[ -e "$wt/.git" ]] || return 1
+  _dev_auto_trust "$wt"
   print -r -- "$wt"
 }
 

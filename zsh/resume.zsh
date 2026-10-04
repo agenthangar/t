@@ -1385,6 +1385,7 @@ _t_restart_slot() {
 # + log path convention so dev/tread/tpaste treat it like any dev session.
 _dev_resume_session() {
   local session="$1" dir="$2" sid="$3" agent="${4:-claude}"
+  _dev_auto_trust "$dir"
   local logfile="$HOME/.tmux-logs/${session}.log"
   mkdir -p "$HOME/.tmux-logs"
   # No fixed geometry / window-size latest: fit the active client so attaching from
@@ -1481,6 +1482,7 @@ codex()  { _dev_agent_wrap codex "$@" }
 # claude, so the two never disagree about who resumes what.
 _dev_agent_wrap() {
   local agent="$1"; shift
+  _dev_auto_trust "$PWD"
   local sentinel="${TMPDIR:-/tmp}/claude-tpush-attach.$$"
   rm -f "$sentinel"
   CLAUDE_TPUSH_ATTACH="$sentinel" command "$agent" "$@"

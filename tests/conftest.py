@@ -42,3 +42,12 @@ def t_mod():
 def disable_recovery_watchers(monkeypatch):
     """Session tests must never start a watcher against the developer's tmux."""
     monkeypatch.setenv("T_RECOVERY_DISABLE", "1")
+
+
+@pytest.fixture(autouse=True)
+def isolate_automatic_trust(monkeypatch):
+    """Auto-trust tests opt in explicitly; inherited personal settings must not write
+    developer agent stores during unrelated desktop handoff tests.
+    """
+    for name in ('T_AUTO_TRUST', 'CODEX_HOME', 'CLAUDE_CONFIG_DIR'):
+        monkeypatch.delenv(name, raising=False)

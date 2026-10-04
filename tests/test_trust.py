@@ -6,6 +6,7 @@ doctor finding, the plan steps `t setup` / `t new` grew, and install.sh links-on
 to end with the REAL bin/t (the permissions-test shape)."""
 
 import argparse
+from contextlib import closing
 import json
 import os
 import pathlib
@@ -106,9 +107,9 @@ def test_records_dedupe_and_mark_cursor_only_trees(t_mod, tmp_path):
         (real(str(repo)), real(str(repo)), False),
         (real(str(repo)), real(str(wt)), False),
         (real(str(root)), real(str(root)), True)]
-    # claude/codex: the canonical repo only; cursor: + the linked tree + the root
+    # claude/codex: canonical repo + linked tree; cursor: also the root
     canon = {os.path.realpath(p) for p in t_mod._trust_agent_paths(recs, "claude")}
-    assert canon == {os.path.realpath(str(repo))}
+    assert canon == {os.path.realpath(str(repo)), os.path.realpath(str(wt))}
     assert {os.path.realpath(p) for p in t_mod._trust_agent_paths(recs, "codex")} == canon
     cur = {os.path.realpath(p) for p in t_mod._trust_agent_paths(recs, "cursor")}
     assert cur == {os.path.realpath(str(repo)), os.path.realpath(str(wt)), os.path.realpath(str(root))}
@@ -411,9 +412,9 @@ def test_cmd_trust_bare_trusts_the_repo_you_are_in(t_mod, tmp_path, monkeypatch,
     assert out.count("trusted ") >= 3 and "NOT trusted" not in out
     keys = {os.path.realpath(k) for k, v in json.loads((home / ".claude.json").read_text())["projects"].items()
             if v.get("hasTrustDialogAccepted")}
-    assert keys == {os.path.realpath(str(repo))}                           # the CANONICAL repo, not the worktree
+    assert keys == {os.path.realpath(str(repo)), os.path.realpath(str(wt))}                           # canonical repo AND worktree
     toml = (home / ".codex" / "config.toml").read_text()
-    assert "api\"]\ntrust_level = \"trusted\"" in toml and ".worktrees" not in toml
+    assert "api\"]\ntrust_level = \"trusted\"" in toml and ".worktrees" in toml
     # cursor needs the worktree too (it is not under its canonical repo)
     slugs = {p.name for p in (home / ".cursor" / "projects").iterdir()}
     assert any(s.endswith("worktrees-api-2") for s in slugs) and any(s.endswith("code-api") for s in slugs)
@@ -581,3 +582,110 @@ def test_install_sh_runs_trust_in_the_links_only_path():
     text = (REPO_ROOT / "install.sh").read_text()
     call = text.index("trust --all -q")
     assert text.index('if [[ "${T_AUTO_TRUST:-}" == 1') < call < text.index('if [[ -n "${T_LINKS_ONLY:-}" ]]; then')
+
+
+def test_codex_denial_is_reported_and_not_bypassed_by_worktree(t_mod, tmp_path):
+    p = tmp_path / 'config.toml'
+    p.write_text('[projects."/code/api"]\ntrust_level = "untrusted"\n[other]\nvalue = 1\n')
+    paths = ['/code/api', '/code/.worktrees/api/1', '/code/other']
+    rep = t_mod._trust_codex_sync(str(p), paths, apply=True,
+                                parents={paths[1]: paths[0]})
+    assert rep['blocked'] == paths[:2] and rep['add'] == paths[2:]
+    assert paths[1] not in p.read_text()
+    assert 'trust_level = "untrusted"' in p.read_text()
+    rep.update(want=3)
+    assert t_mod._trust_short('codex', rep) == 'codex 1/3'
+    assert 'explicitly untrusted' in t_mod._trust_line('codex', rep)
+    rep = t_mod._trust_codex_sync(str(p), paths[:2], parents={paths[1]: paths[0]})
+    assert 'explicitly untrusted' in t_mod._trust_line('codex', rep, quiet=True)
+    p.write_text('[projects."bad\\q"]\n')
+    assert t_mod._trust_codex_sync(str(p), paths)['state'] is None
+
+
+def _editor_db(path, value=None):
+    import sqlite3
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with closing(sqlite3.connect(path)) as db, db:
+        db.execute('CREATE TABLE ItemTable (key TEXT UNIQUE, value TEXT)')
+        db.execute('INSERT INTO ItemTable VALUES (?, ?)', ('unrelated', 'keep'))
+        if value is not None:
+            db.execute('INSERT INTO ItemTable VALUES (?, ?)', ('content.trust.model.key', value))
+    return path
+
+
+def test_editor_trust_merge_is_scoped_readonly_and_idempotent(t_mod, tmp_path):
+    import sqlite3
+    p = _editor_db(tmp_path / 'editor #1' / 'state.vscdb', json.dumps({'extra': 1, 'uriTrustInfo': [
+        {'uri': {'scheme': 'file', 'path': '/code/old'}, 'trusted': True},
+        {'uri': {'scheme': 'vscode-remote', 'path': '/code/new'}, 'trusted': True}]}))
+    paths = ['/code/old/sub', '/code/new', '/code/older']
+    rep = t_mod._trust_editor_sync(str(p), paths)
+    assert rep == {'state': 'pending', 'add': paths[1:]}
+    with closing(sqlite3.connect(p)) as db, db:
+        assert len(json.loads(db.execute('SELECT value FROM ItemTable WHERE key=?', ('content.trust.model.key',)).fetchone()[0])['uriTrustInfo']) == 2
+    assert t_mod._trust_editor_sync(str(p), paths, True)['state'] == 'applied'
+    assert t_mod._trust_editor_sync(str(p), paths) == {'state': 'synced', 'add': []}
+    with closing(sqlite3.connect(p)) as db, db:
+        assert db.execute('SELECT value FROM ItemTable WHERE key=?', ('unrelated',)).fetchone()[0] == 'keep'
+        data = json.loads(db.execute('SELECT value FROM ItemTable WHERE key=?', ('content.trust.model.key',)).fetchone()[0])
+    assert data['extra'] == 1 and len(data['uriTrustInfo']) == 4
+    assert 'restart the app' in t_mod._trust_line('vscode', {'state': 'applied', 'add': ['/code/new']})
+
+
+@pytest.mark.parametrize('value', ['bad', '[]', '{}', '{"uriTrustInfo": [1]}', '{"uriTrustInfo": [{"uri": {"path": 42}}]}'])
+def test_editor_foreign_data_is_left_alone(t_mod, tmp_path, value):
+    p = _editor_db(tmp_path / 'state.vscdb', value)
+    before = p.read_bytes()
+    assert t_mod._trust_editor_sync(str(p), ['/code/new'], True)['state'] is None
+    assert p.read_bytes() == before
+
+
+def test_editor_missing_empty_and_invalid_db(t_mod, tmp_path):
+    p = tmp_path / 'missing'
+    assert t_mod._trust_editor_sync(str(p), ['/code/new'], True)['state'] is None
+    assert not p.exists()
+    p = _editor_db(tmp_path / 'empty')
+    assert t_mod._trust_editor_sync(str(p), ['/code/new'], True)['state'] == 'applied'
+    p = tmp_path / 'invalid'
+    p.write_text('not sqlite')
+    assert t_mod._trust_editor_sync(str(p), ['/code/new'], True)['state'] is None
+
+
+@pytest.mark.parametrize('platform', ['darwin', 'linux', 'win32'])
+def test_editor_targets_and_combined_sync(t_mod, tmp_path, monkeypatch, platform):
+    home = _home(tmp_path)
+    monkeypatch.setattr(t_mod.sys, 'platform', platform)
+    monkeypatch.setenv('XDG_CONFIG_HOME', str(home / '.config'))
+    monkeypatch.setenv('APPDATA', str(home / 'AppData'))
+    base = home / ('Library/Application Support' if platform == 'darwin' else 'AppData' if platform == 'win32' else '.config')
+    _editor_db(base / 'Cursor/User/globalStorage/state.vscdb')
+    _editor_db(base / 'Code/User/globalStorage/state.vscdb')
+    repo = _repo(tmp_path / 'code/api')
+    reps = t_mod._trust_sync(str(home), t_mod._trust_records([str(repo)]), True, NONE)
+    assert set(reps) == {'claude', 'codex', 'cursor', 'cursor-desktop', 'vscode'}
+    assert reps['vscode']['state'] == 'applied'
+    assert reps['cursor-desktop']['have'] == []
+
+
+def test_all_includes_existing_worktrees_but_not_debris(t_mod, tmp_path):
+    repo = _repo(tmp_path / 'code/api')
+    root = tmp_path / 'code/.worktrees'
+    wt = root / 'api/3'
+    git('worktree', 'add', '-q', '-b', 'dev/api-3', str(wt), cwd=repo)
+    (root / 'api/debris').mkdir()
+    cfg = argparse.Namespace(repos={'api': str(repo)}, worktree_root=str(root))
+    assert t_mod._trust_all_dirs(cfg) == ([str(repo), str(wt)], [str(root)])
+
+
+def test_custom_agent_homes(t_mod, tmp_path, monkeypatch):
+    home = tmp_path / 'home'
+    home.mkdir()
+    codex = tmp_path / 'custom-codex'
+    codex.mkdir()
+    (codex / 'config.toml').write_text('')
+    claude = tmp_path / 'custom-claude'
+    claude.mkdir()
+    (claude / '.claude.json').write_text('{}')
+    monkeypatch.setenv('CODEX_HOME', str(codex))
+    monkeypatch.setenv('CLAUDE_CONFIG_DIR', str(claude))
+    assert t_mod._trust_targets(str(home), NONE) == {'claude': str(claude / '.claude.json'), 'codex': str(codex / 'config.toml')}

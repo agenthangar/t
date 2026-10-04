@@ -1933,3 +1933,37 @@ def test_retained_tmux_slot_shows_app_only_after_cli_exits(zsh, live):
     row = r.stdout.strip().split('\t')
     assert row[3:5] == (['detached', 'idle'] if live else ['app', 'none'])
     assert row[-1] == 'codex'
+
+
+@pytest.mark.parametrize('agent', ['claude', 'codex'])
+def test_terminal_wrapper_seeds_trust_before_cli_start(zsh, tmp_path, agent):
+    repo = zsh.home / 'code/api'
+    repo.mkdir(parents=True)
+    subprocess.run(['git', 'init', '-q', str(repo)], check=True)
+    (zsh.home / '.claude.json').write_text('{"projects": {}}')
+    (zsh.home / '.codex').mkdir()
+    (zsh.home / '.codex/config.toml').write_text('')
+    executable = tmp_path / 'stubbin' / agent
+    executable.write_text('''#!/usr/bin/env python3
+import json, os
+from pathlib import Path
+home = Path(os.environ['HOME'])
+assert json.loads((home / '.claude.json').read_text())['projects'][os.getcwd()]['hasTrustDialogAccepted']
+assert 'trust_level = "trusted"' in (home / '.codex/config.toml').read_text()
+print('TRUSTED BEFORE TUI START')
+''')
+    executable.chmod(0o755)
+    (tmp_path / 'stubbin/t').symlink_to(REPO_ROOT / 'bin/t')
+    r = zsh(f'cd {shlex.quote(str(repo))}; {agent}', T_AUTO_TRUST='1')
+    assert r.returncode == 0, r.stderr
+    assert 'TRUSTED BEFORE TUI START' in r.stdout
+
+
+def test_shell_auto_trust_is_opt_in_and_keeps_stdout_clean(zsh, tmp_path):
+    script = tmp_path / 'stubbin/t'
+    script.write_text('#!/bin/sh\necho "trust call: $*"\n')
+    script.chmod(0o755)
+    assert 'trust call' not in zsh('_dev_auto_trust "$HOME"').stdout
+    assert 'trust call' not in zsh('_dev_auto_trust "$HOME"', T_AUTO_TRUST='1', T_NO_TRUST='1').stderr
+    r = zsh('_dev_auto_trust "$HOME"', T_AUTO_TRUST='1')
+    assert r.stdout == '' and 'trust call: trust -q ' in r.stderr
