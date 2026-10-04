@@ -247,6 +247,54 @@ def test_watcher_cursor_and_missing_owner(recovery, target, monkeypatch):
     assert watcher.seen[target["pane"]] == ("Connection failed", False)
 
 
+def test_missing_owner_notice_retries_until_attached_then_allows_offer(recovery, target, monkeypatch):
+    monkeypatch.setattr(recovery, "panes", lambda s: [target])
+    screen = [ERROR]
+    viewers = [[]]
+    owner = [{}]
+    calls = []
+    offers = []
+    monkeypatch.setattr(recovery, "clients", lambda *a: viewers[0])
+    monkeypatch.setattr(recovery, "owner", lambda *a: owner[0])
+    monkeypatch.setattr(recovery, "offer", lambda *a: offers.append(a) or True)
+
+    def tmux(socket, command, *args):
+        calls.append((socket, command, *args))
+        if command == "show-environment":
+            return result("DEV_AGENT=codex")
+        if command == "capture-pane":
+            return result(screen[0])
+        return result()
+
+    monkeypatch.setattr(recovery, "tmux", tmux)
+    watcher = recovery.Watcher(target["socket"])
+    watcher.poll(); watcher.poll(); watcher.poll()
+    assert not [call for call in calls if call[1] == "display-message"]
+    assert offers == []
+
+    viewers[0] = ["/dev/pts/4"]
+    watcher.poll(); watcher.poll()
+    notices = [call for call in calls if call[1] == "display-message"]
+    assert len(notices) == 1
+    assert notices[0][2:8] == ("-d", "10000", "-c", "/dev/pts/4", "-t", target["pane"])
+    assert "cannot verify this conversation" in notices[0][-1]
+    assert "Copy your draft" in notices[0][-1]
+    assert offers == []
+    assert not any("send-keys" in call for call in calls)
+
+    owner[0] = target
+    watcher.poll()
+    assert offers == [(target, ERROR)]
+    assert len([call for call in calls if call[1] == "display-message"]) == 1
+
+    screen[0] = "normal"
+    watcher.poll()
+    owner[0] = {}
+    screen[0] = ERROR
+    watcher.poll(); watcher.poll()
+    assert len([call for call in calls if call[1] == "display-message"]) == 2
+
+
 def test_start_and_singleton(recovery, target, monkeypatch):
     assert recovery.start("dev-api-1") == 0
     monkeypatch.delenv("T_RECOVERY_DISABLE")

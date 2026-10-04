@@ -682,6 +682,7 @@ def test_zsh_codex_registry_alone_marks_a_conversation_active(zsh):
     assert r.stdout.strip() == "rc=1"
 
 
+@pytest.mark.parametrize("profile", ["", " · Main [default]"])
 @pytest.mark.parametrize("scenario,expected", [
     ("current", True), ("resumed", True), ("other_thread", True),
     ("duplicate_name", False), ("stale", False), ("wrong_cwd", False),
@@ -689,9 +690,11 @@ def test_zsh_codex_registry_alone_marks_a_conversation_active(zsh):
     ("missing_start", False), ("missing_rollout", False), ("bad_rollout", False),
     ("wrong_rollout", False), ("broken_index", False), ("missing_title", False),
     ("wrong_title", False), ("old_screen_text", False), ("welcome", False),
+    ("old_profile_footer", False), ("later_wrong_title", False),
+    ("incomplete_footer", False), ("absolute_cwd", True),
     ("wrong_pane_directory", False), ("not_codex", False),
 ])
-def test_zsh_codex_recovers_unstamped_conversation_from_live_pane(zsh, scenario, expected):
+def test_zsh_codex_recovers_unstamped_conversation_from_live_pane(zsh, scenario, expected, profile):
     """A named live Codex pane can identify its thread even when the shared server
     never ran the hook in the CLI's ancestry. Recency alone is insufficient."""
     import sqlite3
@@ -724,11 +727,18 @@ def test_zsh_codex_recovers_unstamped_conversation_from_live_pane(zsh, scenario,
     pane_title = title + (" | 30" if scenario == "wrong_pane_directory" else " | 3")
     if scenario in ("wrong_title", "missing_title"):
         pane_title = "Another task | 3" if scenario == "wrong_title" else ""
-    footer = f"  GPT-6 · {wt.replace(str(zsh.home), '~')} · {title} · Main [default]"
+    shown_cwd = wt if scenario == "absolute_cwd" else wt.replace(str(zsh.home), '~')
+    footer = f"  GPT-6 · {shown_cwd} · {title}{profile}"
     pane = ("Completed the plan.\n\n» Ask Codex to do anything\n\n" + footer +
             "\n  ctrl+c copy · enter copy & follow · esc clear")
     if scenario == "old_screen_text":
-        pane = footer + "\n» Ask Codex to do anything\n  GPT-6 · ~/elsewhere · New task · Main"
+        pane = footer + f"\n» Ask Codex to do anything\n  GPT-6 · ~/elsewhere · New task{profile}"
+    if scenario == "old_profile_footer":
+        pane = footer + " · Main\n» Ask Codex to do anything\n  GPT-6 · ~/elsewhere · New task"
+    if scenario == "later_wrong_title":
+        pane = footer + f"\n  GPT-6 · {shown_cwd} · New task{profile}"
+    if scenario == "incomplete_footer":
+        pane = footer + f"\n  GPT-6 · {shown_cwd}"
     if scenario == "welcome":
         pane = "OpenAI Codex (v0.158.0)"
     r = zsh(f'_dev_session_claude_pid() {{ print 4242; }}; '
