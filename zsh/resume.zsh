@@ -1499,7 +1499,11 @@ _t_app_pull_slot() {
   fi
   # A stamp alone is not success. Wait for a real Codex process in this exact
   # slot and for the thread resolver to agree before releasing the reservation.
+  # Process scans can be slow on a busy host; include their time in the bound.
+  zmodload zsh/datetime
+  local -F deadline=$(( EPOCHREALTIME + 5 ))
   for attempt in {1..100}; do
+    (( EPOCHREALTIME < deadline )) || break
     local _DEV_PS_AT=0
     pid=$(_dev_session_claude_pid "$session")
     if [[ -n $pid && $(_dev_agent_of_session "$session") == codex &&
