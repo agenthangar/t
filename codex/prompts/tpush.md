@@ -1,16 +1,17 @@
 ---
-description: Push this Codex session into a detached background tmux slot (t push)
+description: Push this Codex session into a detached background tmux slot (t session push)
 ---
 
 Push the **current** Codex session into a detached tmux slot so it keeps running
-in the background and can be managed with the `t` tooling (`t open`, `t ls`,
-`t pop`). This is the CLI `t push` command, run on your behalf.
+in the background and can be managed with the `t` tooling (`t session open`,
+`t session list`, `t session pop`). This is the CLI `t session push` command, run
+on your behalf.
 
 Do this:
 
-1. Run `t push` with the shell tool. It finds this session on its own: the
+1. Run `t session push` with the shell tool. It finds this session on its own: the
    dotfiles SessionStart hook recorded this codex process's thread id, and
-   `t push` walks up from its shell to that process. It picks a
+   `t session push` walks up from its shell to that process. It picks a
    `dev-<repo>-<slot>` name, writes the wrapper's resume sentinel, and then
    **signals this foreground `codex` to exit** — you do NOT need to tell the user
    to quit. On that exit the `codex()` shell wrapper spawns the detached
@@ -18,12 +19,12 @@ Do this:
    happens *before* any spawn, so there is never more than one live process on
    the thread. Expect the shell call to be cut off mid-run — that is this codex
    being terminated on purpose, not an error.
-2. If `t push` instead printed a fallback hint (it could not locate the process,
-   or the hook never stamped this thread — `t doctor` says whether the hook is
-   trusted), relay that hint and the attach command it printed (for example
-   `t open api 3`).
+2. If `t session push` instead printed a fallback hint (it could not locate the
+   process, or the hook never stamped this thread — `t system diagnose` says
+   whether the hook is trusted), relay that hint and the attach command it
+   printed (for example `t session open api 3`).
 
 Notes:
-- If `t push` says "Already inside tmux", this session is already backgrounded —
+- If `t session push` says "Already inside tmux", this session is already backgrounded —
   tell the user that and stop (no auto-exit happens in that case).
-- To pull it back to a normal terminal later, that is `/tpop` (or `t pop`).
+- To pull it back to a normal terminal later, that is `/tpop` (or `t session pop`).

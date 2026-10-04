@@ -74,7 +74,7 @@ _dev_agent_of_session() {
 # _dev_agent_check <agent> — the binary is here, or say how to get it.
 _dev_agent_check() {
   command -v "$1" >/dev/null 2>&1 && return 0
-  print -u2 -r -- "t: '$1' is not installed here — run: t install $1"
+  print -u2 -r -- "t: '$1' is not installed here — run: t agent install $1"
   return 1
 }
 # _dev_agent_new_cmd <agent> [sid] — the pane command for a FRESH slot.

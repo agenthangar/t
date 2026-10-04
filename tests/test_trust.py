@@ -523,7 +523,7 @@ def test_new_plan_trust_step_follows_register(t_mod, tmp_path):
 
 def test_parity_matrix_has_the_trust_and_mode_rows(t_mod):
     rows = [r[0] for r in t_mod._AGENT_PARITY]
-    assert any(r.startswith("t trust") for r in rows)
+    assert any(r.startswith("t agent trust") for r in rows)
     assert any(r.startswith("default permission mode") for r in rows)
     assert "trust" in t_mod.IMPLEMENTED
     args = t_mod.build_parser().parse_args(["trust", "--all", "-q"])

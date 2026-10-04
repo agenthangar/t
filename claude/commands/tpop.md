@@ -17,12 +17,12 @@ terminal — the foreground resume has to happen in a shell the user controls. S
    plain terminal** (not inside this tmux session):
 
    ```
-   t pop <session-name>
+   t session pop <session-name>
    ```
 
    Fill in `<session-name>` with the value from `tmux display-message -p '#S'`
-   (e.g. `t pop dev-api-3`). `t pop` kills the tmux session and resumes this exact
-   conversation in that terminal's foreground.
+   (e.g. `t session pop dev-api-3`). `t session pop` kills the tmux session and
+   resumes this exact conversation in that terminal's foreground.
 3. Explain that once they run it, this in-tmux instance will be terminated and
    the conversation continues in their foreground terminal.
 

@@ -2169,11 +2169,11 @@ def test_public_help_skips_config_and_handlers(t_mod, monkeypatch, capsys, verb,
         pytest.fail("help must not load config or run a command")
     monkeypatch.setattr(t_mod, "Config", forbidden)
     assert t_mod.main([verb, flag]) == 0
-    assert "usage: t " in capsys.readouterr().out
+    assert "t " in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("argv,usage", [
-    (["help"], "usage: t "),
+    (["help"], "USAGE\n  t <noun> <verb>"),
     (["help", "open"], "usage: t open "),
     (["help", "repos"], "usage: t repos "),
     (["help", "repos", "path"], "usage: t repos path "),
@@ -2181,7 +2181,7 @@ def test_public_help_skips_config_and_handlers(t_mod, monkeypatch, capsys, verb,
     (["repos", "cd", "t", "--help"], "usage: t repos cd "),
     (["cursor", "resume", "abc", "-h"], "usage: t cursor resume "),
     (["on", "--help"], "usage: t on "),
-    (["cursor"], "usage: t cursor "),
+    (["cursor"], "USAGE\n  t cursor <verb>"),
 ])
 def test_help_routes_without_side_effects(t_mod, monkeypatch, capsys, argv, usage):
     monkeypatch.setattr(t_mod, "Config", lambda: pytest.fail("help loaded config"))
@@ -2223,10 +2223,12 @@ _INTERNAL_COMMANDS = ("session-rows", "land", "kill-owner", "new-land", "mcp", "
 @pytest.mark.parametrize("argv", [[], ["help"], ["-h"], ["--help"], ["version"], ["--bad-option"]])
 def test_command_discovery_only_advertises_public_verbs(t_mod, capsys, monkeypatch, argv):
     monkeypatch.setattr(t_mod, "Config", lambda: pytest.fail("discovery loaded config"))
-    if argv in (["version"], ["--bad-option"]):
+    if argv == ["--bad-option"]:
         with pytest.raises(SystemExit) as exc:
             t_mod.main(argv)
         assert exc.value.code == 2
+    elif argv == ["version"]:
+        assert t_mod.main(argv) == 2
     else:
         assert t_mod.main(argv) == 0
     captured = capsys.readouterr()
@@ -2234,11 +2236,11 @@ def test_command_discovery_only_advertises_public_verbs(t_mod, capsys, monkeypat
     for command in _INTERNAL_COMMANDS:
         assert command not in output
     if argv == ["version"]:
-        assert "invalid choice: 'version'" in output
-        choices = output.split("choose from ", 1)[1].replace("'", "")
-        assert "open," in choices and "doctor)" in choices
+        assert "unknown command 'version'" in output
+        choices = output.split("choose from ", 1)[1]
+        assert "session," in choices and "system" in choices
     elif argv != ["--bad-option"]:
-        assert "t open" in output and "t update" in output
+        assert "session" in output and "system" in output
 
 
 @pytest.mark.parametrize("command", _INTERNAL_COMMANDS)
