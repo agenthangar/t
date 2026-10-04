@@ -2127,3 +2127,13 @@ def test_ls_parser_accepts_optional_repo(t_mod):
     assert (a.repo, a.remote, a.all) == ("dot", True, False)
     a = p.parse_args(["ls", "-a"])
     assert (a.repo, a.all) == (None, True)
+
+
+def test_repos_lists_short_names_and_paths(t_mod, capsys):
+    cfg = type("Cfg", (), {"repos": {"t": "/code/t", "api": "/code/my-api"}})()
+    assert t_mod.cmd_repos(cfg, t_mod.build_parser().parse_args(["repos", "ls"])) == 0
+    assert capsys.readouterr().out.splitlines() == ["api  /code/my-api", "t    /code/t"]
+    assert t_mod.cmd_repos(cfg, t_mod.build_parser().parse_args(["repos", "path", "t"])) == 0
+    assert capsys.readouterr().out == "/code/t\n"
+    assert t_mod.cmd_repos(cfg, t_mod.build_parser().parse_args(["repos", "path", "missing"])) == 1
+    assert "unknown repo" in capsys.readouterr().err

@@ -118,6 +118,7 @@ Use `t doctor` when something is missing.
 | --- | --- |
 | `t open <repo> [slot]` | Open/reattach an isolated task; `--new` starts another, `--codex` selects Codex, `--app` opens the worktree in the Codex desktop app on macOS |
 | `t ls [-r] [-a]` | List sessions, optionally across remote hosts and all repositories |
+| `t repos ls` / `t repos cd <repo>` | List registered names and paths; enter a checkout from the shell, including a repo named `t` |
 | `t cd [repo] [slot]` | Move the current shell into the selected worktree |
 | `t resume` | Find and resume a saved conversation |
 | `t restart <repo> <slot>` | Recover a stuck CLI in the same conversation and worktree |

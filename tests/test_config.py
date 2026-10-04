@@ -198,6 +198,19 @@ def test_config_show_and_non_tty_never_write(t_mod, config_cli, monkeypatch, cap
     assert local.read_text() == "# keep me\n"
 
 
+def test_config_main_menu_shows_repo_aliases(t_mod, config_cli, monkeypatch):
+    cfg, _ = config_cli
+    cfg.repos = {"t": "/code/t", "api": "/code/my-api"}
+    ui = Menu(["cancel"])
+    def pick(label, rows, **kwargs):
+        assert label == "Local settings"
+        assert kwargs["values"]["repos"] == "api, t"
+        return "cancel"
+    ui.pick = pick
+    monkeypatch.setattr(t_mod, "_RailUI", lambda: ui)
+    assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == 0
+
+
 def test_config_menu_interrupt_restores_terminal(t_mod, config_cli, monkeypatch):
     cfg, local = config_cli
     ui = Menu([])

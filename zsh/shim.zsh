@@ -28,6 +28,13 @@ t() {
     push)   _t_push "$@" ;;           # → sentinel handoff; claude() wrapper spawns post-exit
     find)   _t_find "$@" ;;           # → rank/pick then cd + claude -r here
     cd)     _t_cd "$@" ;;             # → cd THIS shell into a slot's worktree
+    repos)
+      if [[ $1 == cd ]]; then
+        shift
+        _t_repos_cd "$@"
+      else
+        command t repos "$@"
+      fi ;;
     beam)   _t_beam_xlate "$@" ;;     # → _t_beam (host moves from --host to a positional)
     # setup runs in the bin (it only edits ${T_LOCAL_RC}), but on success the
     # SHELL must reload so the new cd aliases, host shorthand functions, and the
@@ -47,6 +54,26 @@ t() {
     update) T_SETUP_SHIM=1 command t update "$@" && _t_reload ;;
     *)      command t "$verb" "$@" ;; # ls/read/plan/paste/kill/on/session-rows/land/kill-owner/new-land
   esac
+}
+
+# Enter a registered checkout, including aliases such as `t` that cannot be
+# generated as shell shortcuts because they name the command itself.
+_t_repos_cd() {
+  emulate -L zsh
+  if (( $# != 1 )); then
+    print -u2 -- 'usage: t repos cd <repo>'
+    return 2
+  fi
+  local repo=$1 dir=${DEV_REPOS[$1]-}
+  if [[ -z $dir ]]; then
+    print -u2 -- "t repos cd: unknown repo '$repo' (known: ${(j:, :)${(ok)DEV_REPOS}})"
+    return 1
+  fi
+  if [[ ! -d $dir ]]; then
+    print -u2 -- "t repos cd: checkout does not exist: $dir"
+    return 1
+  fi
+  builtin cd -- "$dir"
 }
 
 # _t_install <verb> — install/config through the bin, reload iff ${T_LOCAL_RC} changed
@@ -376,12 +403,16 @@ _t_beam_xlate() {
 # key for `on`), and slot/flags after. Pulls live from the ${(k)DEV_REPOS} /
 # ${(k)REMOTE_HOSTS} arrays so it stays current with ${T_LOCAL_RC}.
 _t() {
-  local -a verbs=(update integrate doctor open app ls restart kill push pop resume beam read plan paste find on cursor setup config new checkout instructions install permissions trust)
+  local -a verbs=(update integrate doctor open app ls repos restart kill push pop resume beam read plan paste find on cursor setup config new checkout instructions install permissions trust)
   if (( CURRENT == 2 )); then
     _describe -t verbs 't verb' verbs
     return
   fi
   case ${words[2]} in
+    repos)
+      if (( CURRENT == 3 )); then _values 'action' ls cd path
+      elif (( CURRENT == 4 )) && [[ ${words[3]} == cd || ${words[3]} == path ]]; then _values 'repo' ${(k)DEV_REPOS}
+      else _values 'flag' -h --help; fi ;;
     app)
       if [[ ${words[CURRENT-1]} == --url ]]; then _message 'preview URL'
       elif [[ ${words[CURRENT-1]} == --plan ]]; then _files -g '*.md'

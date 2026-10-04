@@ -462,6 +462,17 @@ def test_zsh_sync_config_emits_the_agent_keys(zsh):
     assert "DEV_EFFORT[claude]=max" in lines
 
 
+def test_zsh_repos_cd_enters_checkout_named_t(zsh):
+    checkout = zsh.home / "code" / "t"
+    checkout.mkdir(parents=True)
+    local = zsh.home / ".zshrc.local"
+    local.write_text(local.read_text() + 'DEV_REPOS[t]="$HOME/code/t"\n')
+    r = zsh('t repos cd t; pwd; t repos cd missing; echo status=$?')
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.splitlines() == [str(checkout), "status=1"]
+    assert "unknown repo 'missing'" in r.stderr
+
+
 def test_zsh_model_defaults_reach_new_tmux_sessions_and_not_resumes(zsh):
     r = zsh("DEV_MODEL[claude]=sonnet; DEV_MODEL[codex]=local/model; "
             "DEV_EFFORT[claude]=max; DEV_EFFORT[codex]=ultra; "
