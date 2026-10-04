@@ -13,6 +13,11 @@ run `python3 -m pytest --cov --cov-fail-under=97`. Lint Bash with shellcheck and
 validate every changed zsh file with `zsh -n`. Keep new behavior covered by meaningful
 sandbox tests. No runtime pip dependencies are installed by install.sh.
 
+After merging a change to `main`, run `t update --local .` from the repository or
+its session worktree to install canonical main locally. If your installed version
+does not yet support `--local`, use `./bin/t update --local .` once to bootstrap.
+Verify `t --version` matches the canonical main revision before finishing.
+
 Never include private paths, hosts, credentials, or real agent transcripts in issues,
 fixtures, or demo recordings. Use generic, disposable examples.
 

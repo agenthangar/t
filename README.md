@@ -298,6 +298,8 @@ t --version       # installed release, or developer checkout revision
 t update --check   # check now for a newer release
 t update           # latest tagged release; Git installs update main instead
 t update --relink  # repair links from the selected source, without fetching
+t update --local   # switch to the registered/local t checkout and update main
+t update --local ~/code/t  # select a checkout explicitly, including from Homebrew
 ```
 
 When you use `t` interactively, it checks for a newer version in the background
@@ -326,7 +328,15 @@ specific release:
 curl -fsSL https://raw.githubusercontent.com/agenthangar/t/main/scripts/install-release.py | python3 - --version v0.3.1
 ```
 
-Contributors can use a Git checkout instead:
+To use merged changes before the next release, `t update --local [PATH]` switches
+your user links from Homebrew or a release to a local Git checkout. Without a
+path, it looks for the registered `t` repository, then the current checkout,
+then the active Git installation. It fetches and fast-forwards canonical `main`
+before relinking; a worktree path resolves to its canonical checkout. Future
+`t update` calls continue updating that checkout. Homebrew's package is left
+installed; run its `t integrate` command to switch your user links back.
+
+Contributors can also install a Git checkout directly:
 
 ```sh
 git clone https://github.com/agenthangar/t.git ~/code/t
