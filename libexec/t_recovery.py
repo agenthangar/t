@@ -12,6 +12,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import textwrap
 import time
 import uuid
 
@@ -199,6 +200,34 @@ def clients(socket, pane):
             if len(fields := line.split("\t")) == 2 and fields[1] == pane]
 
 
+def recovery_menu(socket, pane, viewer, title, lines, actions, cleanup=None):
+    """A prominent, client-scoped panel that also fits a narrow SSH terminal."""
+    size = tmux(socket, "display-message", "-p", "-c", viewer, "#{client_width}")
+    columns = int(size.stdout.strip()) if size.stdout.strip().isdigit() else 80
+    width = max(20, min(58, columns - 6))
+    items = [("-#[nodim]" + " " * width, "", "")]
+    for line in lines:
+        for part in textwrap.wrap(line, width=width - 4):
+            items.append(("-#[nodim]  " + part.ljust(width - 4) + "  ", "", ""))
+    items.append(("-#[nodim]" + " " * width, "", ""))
+    # Last action is Dismiss. An incidental Enter must not restart the agent.
+    selected = len(items) + len(actions) - 1
+    for label, key, command in actions:
+        items.append((textwrap.shorten(label, width=width - 6, placeholder="…"), key, command))
+    menu = ["tmux", "-S", socket, "display-menu", "-c", viewer, "-t", pane,
+            "-T", title, "-x", "C", "-y", "C", "-b", "double",
+            "-s", "fg=colour234,bg=colour230",
+            "-S", "fg=colour214,bg=colour230,bold",
+            "-H", "fg=colour232,bg=colour214,bold", "-C", str(selected), "--"]
+    for item in items:
+        menu.extend(item)
+    # tmux owns the input wait so an unanswered panel never stalls the monitor.
+    command = shlex.join(menu)
+    if cleanup is not None:
+        command += "; " + shlex.join(["rm", "-f", "--", str(cleanup)])
+    return tmux(socket, "run-shell", "-b", command).returncode == 0
+
+
 def offer(target, error):
     socket = target["socket"]
     viewers = clients(socket, target["pane"])
@@ -212,31 +241,44 @@ def offer(target, error):
     # One menu, on a client actually viewing this pane. No keystrokes enter the
     # agent and no action runs until the user chooses Restart.
     if target.get("startup"):
-        title, choice = "t: background server unavailable", "Run without daemon this time"
+        title, choice = "t: SERVER UNAVAILABLE", "Run without daemon this time"
+        lines = ["The background server is unavailable.",
+                 "Continue with a standalone client for this session."]
     elif error == INVALID_CWD:
-        title, choice = "t: workspace unavailable — recover this conversation?", "Save visible draft and restart here"
+        title, choice = "t: WORKSPACE UNAVAILABLE", "Save draft and restart here"
+        lines = ["The agent cannot access its workspace.",
+                 "Restart this conversation in its worktree.", "Your visible draft will be saved first."]
     else:
-        title, choice = "t: connection failed — recover this conversation?", "Save visible draft and restart"
-    menu = ["tmux", "-S", socket, "display-menu", "-c", viewers[0], "-t", target["pane"],
-            "-T", title, "-x", "C", "-y", "C",
-            choice, "r", "run-shell -b " + shlex.quote(callback),
-            "Dismiss", "q", "run-shell -b " + shlex.quote(dismiss)]
-    # display-menu waits for input. Let tmux own that wait so one unanswered
-    # offer neither stalls other panes nor hits our subprocess timeout.
-    result = tmux(socket, "run-shell", "-b", shlex.join(menu))
-    if result.returncode:
+        title, choice = "t: CONNECTION FAILED", "Save draft and restart"
+        lines = ["The agent connection has stopped.",
+                 "Restart to continue this conversation.", "Your visible draft will be saved first."]
+    shown = recovery_menu(socket, target["pane"], viewers[0], title, lines, [
+        (choice, "r", "run-shell -b " + shlex.quote(callback)),
+        ("Dismiss", "q", "run-shell -b " + shlex.quote(dismiss)),
+    ])
+    if not shown:
         path.unlink(missing_ok=True)
-    return result.returncode == 0
+    return shown
+
+
+def notice_path(socket, pane):
+    return cache(socket) / (pane.replace("%", "pane-") + ".notice")
 
 
 def unverified_notice(socket, pane):
     viewers = clients(socket, pane)
     if not viewers:
         return False
-    message = ("t detected a failure but cannot verify this conversation. "
-               "Copy your draft before quitting, then relaunch.")
-    return tmux(socket, "display-message", "-d", "10000", "-c", viewers[0],
-                "-t", pane, message).returncode == 0
+    path = notice_path(socket, pane)
+    write_json(path, {})
+    shown = recovery_menu(socket, pane, viewers[0], "t: RECOVERY NEEDS ATTENTION", [
+        "t detected an agent error.",
+        "t cannot verify this conversation.",
+        "Copy your draft before quitting, then relaunch.",
+    ], [("Dismiss", "q", "")], cleanup=path)
+    if not shown:
+        path.unlink(missing_ok=True)
+    return shown
 
 
 class Watcher:
@@ -269,7 +311,10 @@ class Watcher:
             if error and error == old_error and not offered:
                 target = owner(self.socket, pane, startup=True) if error == BACKGROUND else owner(self.socket, pane)
                 if target:
-                    offered = offer(target, error)
+                    # tmux will not open a second menu over the notice. Wait for
+                    # its close callback, including Escape, then offer recovery.
+                    if pane["pane"] not in self.unverified or not notice_path(self.socket, pane["pane"]).exists():
+                        offered = offer(target, error)
                 elif pane["pane"] not in self.unverified and unverified_notice(self.socket, pane["pane"]):
                     self.unverified.add(pane["pane"])
             self.seen[pane["pane"]] = (error, offered if error == old_error else False)
