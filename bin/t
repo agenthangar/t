@@ -4288,6 +4288,19 @@ def _t_offer_update(installation=None):
     except (OSError, ValueError):
         return 0  # An unavailable checker must never block normal commands.
     if not state.get("available"):
+        gap = state.get("unreleased")
+        if gap:
+            print(f"\nHomebrew release needed: main has {gap['count']} commit(s) "
+                  f"not included in {gap['version']}.", file=sys.stderr)
+            print("  [v] View changes\n  [l] Later (remind me tomorrow)", file=sys.stderr)
+            print("Choose [l]: ", end="", file=sys.stderr, flush=True)
+            if sys.stdin.readline().strip().lower() in ("v", "view"):
+                print(f"https://github.com/agenthangar/t/compare/{gap['version']}...main", file=sys.stderr)
+                print("Publish a new GitHub release from main; the release workflow updates the Homebrew tap.", file=sys.stderr)
+            try:
+                helper["snooze"](installation)
+            except (OSError, ValueError):
+                pass
         return 0
     old = _t_update_label(installation, installation["current"])
     new = _t_update_label(installation, state["latest"])
@@ -4391,6 +4404,10 @@ def cmd_update(cfg, args):
                   f"{_t_update_label(installation, state['latest'])}; run t update to install")
         else:
             print(f"t is up to date ({_t_update_label(installation, installation['current'])})")
+        if state.get("unreleased"):
+            gap = state["unreleased"]
+            print(f"Homebrew release needed: main has {gap['count']} commit(s) not included in {gap['version']}.")
+            print(f"Review: https://github.com/agenthangar/t/compare/{gap['version']}...main")
         return 0
     active = _t_source_root()
     try:

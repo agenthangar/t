@@ -303,6 +303,12 @@ by itself; `t update --check` runs a check immediately, and `T_NO_UPDATE_CHECK=1
 disables the interactive checks and prompts.
 Developer worktrees, scripts, help, and internal commands do not prompt.
 
+The clean main checkout of `agenthangar/t` also checks the version in the Homebrew
+tap. When main has newer commits, a **Homebrew release needed** reminder offers
+**View changes** or **Later** (24 hours). `t update --check` reports this immediately.
+Publishing a GitHub release triggers the workflow that updates the tap; the
+reminder compares against the tap's actual version until that update completes.
+
 You can still run `t update` directly or let `dots` run it as part of your dotfiles
 update. Your configuration and agent conversations remain outside the installation.
 If the command's link is broken, rerun the install command above. To install a

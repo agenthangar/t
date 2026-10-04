@@ -385,3 +385,75 @@ def test_snooze_does_not_wait_for_busy_checker(tmp_path, monkeypatch):
     updates.snooze(installation)
     assert modes == [updates.fcntl.LOCK_EX | updates.fcntl.LOCK_NB]
     assert updates.cached(installation)["available"] is True
+
+
+def gap_responses(monkeypatch, formula, comparison):
+    calls = []
+    replies = iter([formula, comparison])
+    class Reply:
+        def __init__(self, data):
+            self.data = data
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+        def read(self, size):
+            return self.data
+    def urlopen(request, **kwargs):
+        calls.append(request.full_url)
+        return Reply(next(replies))
+    monkeypatch.setattr(updates.urllib.request, "urlopen", urlopen)
+    return calls
+
+
+@pytest.mark.parametrize("formula,comparison,expected", [
+    (b'url "https://github.com/agenthangar/t/releases/download/v0.4.0/t.tar.gz"',
+     b'{"status":"ahead","ahead_by":3}', {"version": "v0.4.0", "count": 3}),
+    (b'x' * 65537, b'', None),
+    (b'url "https://example.com/v0.4.0/t.tar.gz"', b'', None),
+    (b'url "https://github.com/agenthangar/t/releases/download/v01.4.0/t.tar.gz"', b'', None),
+    (b'url "https://github.com/agenthangar/t/releases/download/v0.4.0/t.tar.gz"', b'x' * 65537, None),
+    (b'url "https://github.com/agenthangar/t/releases/download/v0.4.0/t.tar.gz"', b'[]', None),
+    (b'url "https://github.com/agenthangar/t/releases/download/v0.4.0/t.tar.gz"',
+     b'{"status":"identical","ahead_by":0}', None),
+    (b'url "https://github.com/agenthangar/t/releases/download/v0.4.0/t.tar.gz"',
+     b'{"status":"diverged","ahead_by":3}', None),
+    (b'url "https://github.com/agenthangar/t/releases/download/v0.4.0/t.tar.gz"',
+     b'{"status":"ahead","ahead_by":true}', None),
+])
+def test_homebrew_gap_reads_actual_tap_version(monkeypatch, formula, comparison, expected):
+    calls = gap_responses(monkeypatch, formula, comparison)
+    identity = {"kind": "git", "remote": "git@github.com:agenthangar/t.git"}
+    assert updates._homebrew_gap(identity) == expected
+    assert calls[0] == updates.TAP_FORMULA
+    if expected:
+        assert calls[1].endswith('/compare/v0.4.0...main?per_page=1&page=2')
+
+
+def test_unreleased_state_cache_snooze_and_network_failure(checkout, monkeypatch):
+    installation = dict(checkout, remote="https://github.com/agenthangar/t.git")
+    monkeypatch.setattr(updates, "_git", lambda identity: "")
+    monkeypatch.setattr(updates, "_git_offer_safe", lambda identity: True)
+    gap = {"version": "v0.4.0", "count": 3}
+    monkeypatch.setattr(updates, "_homebrew_gap", lambda identity: gap)
+    assert updates.check(installation, force=True)["unreleased"] == gap
+    assert updates.cached(installation)["unreleased"] == gap
+    updates.snooze(installation)
+    assert "unreleased" not in updates.cached(installation)
+    assert updates.check(installation)["unreleased"] == gap
+    path = updates._cache_path(updates._identity(installation))
+    data = json.loads(path.read_text())
+    data["unreleased"]["version"] = "bad\nversion"
+    path.write_text(json.dumps(data))
+    assert updates._read(path, updates._identity(installation)) == {}
+    def fail(identity):
+        raise OSError("network unavailable")
+    monkeypatch.setattr(updates, "_homebrew_gap", fail)
+    state = updates.check(installation, force=True)
+    assert state["checked"] and not state["error"] and "unreleased" not in state
+
+
+def test_homebrew_gap_skips_other_installations(checkout, monkeypatch):
+    monkeypatch.setattr(updates.urllib.request, "urlopen", lambda *a, **k: pytest.fail("no network"))
+    assert updates._homebrew_gap(checkout) is None
+    assert updates._homebrew_gap({"kind": "brew"}) is None
