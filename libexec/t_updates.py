@@ -23,6 +23,43 @@ RETRY = 60 * 60
 SEMVER = re.compile(r"v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)\Z")
 SHA = re.compile(r"[0-9a-f]{40,64}\Z")
 API = "https://api.github.com/repos/agenthangar/t/releases/latest"
+TAP_FORMULA = "https://raw.githubusercontent.com/agenthangar/homebrew-tap/main/Formula/t.rb"
+PROJECT_REMOTES = {"https://github.com/agenthangar/t", "https://github.com/agenthangar/t.git",
+                   "git@github.com:agenthangar/t.git", "ssh://git@github.com/agenthangar/t.git"}
+
+
+def _valid_gap(gap):
+    return (isinstance(gap, dict) and isinstance(gap.get("version"), str)
+            and bool(SEMVER.fullmatch(gap["version"])) and type(gap.get("count")) is int
+            and 0 < gap["count"] <= 1000000)
+
+
+def _homebrew_gap(identity):
+    """Compare main with the actual tap version, only for this project's checkout."""
+    if identity["kind"] != "git" or identity["remote"] not in PROJECT_REMOTES:
+        return None
+    request = urllib.request.Request(TAP_FORMULA, headers={"User-Agent": "t-update-check"})
+    with urllib.request.urlopen(request, timeout=8) as response:
+        formula = response.read(65537)
+    if len(formula) > 65536:
+        return None
+    match = re.search(rb'url "https://github.com/agenthangar/t/releases/download/(v[0-9.]+)/t\.tar\.gz"', formula)
+    if not match:
+        return None
+    version = match[1].decode("ascii")
+    if not SEMVER.fullmatch(version):
+        return None
+    url = f"https://api.github.com/repos/agenthangar/t/compare/{version}...main?per_page=1&page=2"
+    request = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json", "User-Agent": "t-update-check"})
+    with urllib.request.urlopen(request, timeout=8) as response:
+        payload = response.read(65537)
+    if len(payload) > 65536:
+        return None
+    data = json.loads(payload)
+    if not isinstance(data, dict) or data.get("status") != "ahead":
+        return None
+    gap = {"version": version, "count": data.get("ahead_by")}
+    return gap if _valid_gap(gap) else None
 
 
 def _identity(installation):
@@ -79,6 +116,8 @@ def _read(path, identity):
     if not all(math.isfinite(data[key]) for key in ("checked_at", "expires_at")) or not math.isfinite(data.get("snoozed_until", 0)):
         return {}
     if type(data.get("pending", False)) is not bool or type(data.get("error", False)) is not bool:
+        return {}
+    if data.get("unreleased") is not None and not _valid_gap(data["unreleased"]):
         return {}
     latest = data["latest"]
     if data["available"] and (not latest or data.get("pending") or data.get("error")):
@@ -197,6 +236,11 @@ def _state(installation, respect_snooze):
     if data.get("expires_at", 0) > now and (not respect_snooze or data.get("snoozed_until", 0) <= now) and data.get("available"):
         if identity["kind"] != "git" or _git_offer_safe(identity):
             state.update(available=True, latest=data["latest"])
+    if (identity["kind"] == "git" and identity["remote"] in PROJECT_REMOTES
+            and data.get("expires_at", 0) > now and data.get("unreleased")
+            and (not respect_snooze or data.get("snoozed_until", 0) <= now)
+            and _git_offer_safe(identity)):
+        state["unreleased"] = data["unreleased"]
     return state
 
 
@@ -241,11 +285,17 @@ def check(installation, force=False):
                 latest = {"git": _git, "release": _release, "brew": _brew}[identity["kind"]](identity)
             except (OSError, ValueError, TimeoutError, subprocess.SubprocessError, json.JSONDecodeError):
                 latest = None
+            gap = None
+            if latest is not None:
+                try:
+                    gap = _homebrew_gap(identity)
+                except (OSError, ValueError, TimeoutError):
+                    pass  # Tap/network failure must not hide an ordinary update.
             data = {"identity": identity, "checked_at": now,
                     "expires_at": now + (INTERVAL if latest is not None else RETRY),
                     "available": bool(latest), "latest": latest or "",
                     "snoozed_until": prior.get("snoozed_until", 0), "error": latest is None,
-                    "pending": False}
+                    "pending": False, "unreleased": gap}
             _write(path, data)
     except OSError:
         pass

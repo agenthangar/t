@@ -230,3 +230,25 @@ def test_main_stops_dispatch_when_updater_takes_over(t_mod, monkeypatch, argv):
     monkeypatch.setattr(t_mod, "_t_auto_update", lambda words: 1)
     monkeypatch.setattr(t_mod, "Config", lambda: pytest.fail("must stop dispatch"))
     assert t_mod.main(argv) == 1
+
+
+@pytest.mark.parametrize("answer", ["\n", "l\n", "v\n", "view\n"])
+def test_homebrew_release_reminder_can_review_or_snooze(t_mod, terminal, offer, answer):
+    installation, calls, helper = offer
+    installation["kind"] = "git"
+    helper["cached"] = lambda source: {"available": False, "unreleased": {"version": "v0.4.0", "count": 3}}
+    terminal[0].write(answer)
+    terminal[0].seek(0)
+    assert t_mod._t_offer_update() == 0
+    output = terminal[2].getvalue()
+    assert "Homebrew release needed" in output and "3 commit(s)" in output
+    assert "compare/v0.4.0...main" in output if answer.startswith("v") else "compare/" not in output
+    assert ("later", installation) in calls
+    assert not any(call[0] == "update" for call in calls)
+
+
+def test_homebrew_release_reminder_snooze_failure_is_quiet(t_mod, terminal, offer):
+    helper = offer[2]
+    helper["cached"] = lambda source: {"available": False, "unreleased": {"version": "v0.4.0", "count": 1}}
+    helper["snooze"] = fail
+    assert t_mod._t_offer_update() == 0
