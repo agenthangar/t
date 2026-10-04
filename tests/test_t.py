@@ -2235,7 +2235,8 @@ def test_command_discovery_only_advertises_public_verbs(t_mod, capsys, monkeypat
         assert command not in output
     if argv == ["version"]:
         assert "invalid choice: 'version'" in output
-        assert "'open'" in output and "'doctor'" in output
+        choices = output.split("choose from ", 1)[1].replace("'", "")
+        assert "open," in choices and "doctor)" in choices
     elif argv != ["--bad-option"]:
         assert "t open" in output and "t update" in output
 
@@ -2266,9 +2267,9 @@ def test_nested_hidden_commands_and_aliases(t_mod, capsys):
     with pytest.raises(SystemExit):
         parser.parse_args(["public", "typo"])
     error = capsys.readouterr().err
-    assert "secret" not in error and "'s'" not in error
-    assert "'visible'" in error
+    assert "secret" not in error
+    assert "choose from visible)" in error.replace("'", "")
     nested.add_parser("choice").add_argument("mode", choices=["yes", "no"])
     with pytest.raises(SystemExit):
         parser.parse_args(["public", "choice", "maybe"])
-    assert "'yes', 'no'" in capsys.readouterr().err
+    assert "choose from yes, no)" in capsys.readouterr().err.replace("'", "")
