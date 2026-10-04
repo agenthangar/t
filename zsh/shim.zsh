@@ -196,7 +196,7 @@ _t_cd() {
 # The host paths dispatch via _dev_remote_open with the original gh-style args (minus
 # --host / -r), so H's own `t open` re-parses them from ITS $PWD.
 _t_open() {
-  local -a a rest; local arg want_host= host= remote= isnew= local_only= app=
+  local -a a rest mode_pos; local arg want_host= host= remote= isnew= local_only= app= cli= cli_intent=
   for arg in "$@"; do
     if [[ -n $want_host ]]; then host=$arg; want_host=; continue; fi
     case "$arg" in
@@ -207,13 +207,31 @@ _t_open() {
     case "$arg" in
       --new|new)         a+=(new); isnew=1 ;;
       --app)             app=1 ;;
-      --fg)              a+=(-f) ;;
+      --cli)             cli=1 ;;
+      --fg)              cli_intent=1; a+=(-f) ;;
+      --claude)          cli_intent=1; a+=("$arg") ;;
       -r|--remote)       remote=1; a+=(-r) ;;
       -l|--local|--here) local_only=1; a+=(--local) ;;
-      *)                 a+=("$arg") ;;
+      --codex)           a+=("$arg") ;;
+      *)                 a+=("$arg"); [[ $arg == -* ]] && cli_intent=1 ;;
     esac
   done
   [[ -n $want_host ]] && { echo "t open: --host requires a value" >&2; return 2; }
+  [[ -n $app && -n $cli ]] && { echo "t open: --app and --cli are mutually exclusive" >&2; return 2; }
+
+  # Explicit CLI/remote intents take precedence over the local opening default.
+  if [[ -z $app && -z $cli && -z $cli_intent && -z $host && -z $remote ]]; then
+    for arg in "${rest[@]}"; do
+      [[ $arg == -* ]] || mode_pos+=("$arg")
+    done
+    local mode_repo=${mode_pos[1]:-} mode_slot=${mode_pos[2]:-}
+    # Foreground selectors and conversation IDs continue through CLI routing.
+    if [[ ( -n ${DEV_REPOS[$mode_repo]:-} || -z $mode_repo || $mode_repo == <-> || $mode_repo == new ) &&
+          ( -z $mode_slot || $mode_slot == <-> || $mode_slot == new ) ]]; then
+      [[ -n ${DEV_REPOS[$mode_repo]:-} ]] || mode_repo=$(_t_infer_repo "$mode_repo")
+      [[ ${DEV_OPEN_MODE[$mode_repo]:-$DEV_OPEN_MODE_DEFAULT} == app ]] && app=1
+    fi
+  fi
 
   if [[ -n $app ]]; then
     _t_open_app "${rest[@]}" ${host:+--host "$host"}
@@ -265,6 +283,8 @@ _t_open() {
     [[ -n $p2 ]] && rest+=("$p2")
     (( ${#pos} > 2 )) && rest+=("${pos[@]:2}")
     rest+=("${flags[@]}")
+    # A remote open remains a CLI operation even when that host prefers its app.
+    (( ${flags[(Ie)--cli]} )) || rest+=(--cli)
     _dev_remote_open "$host" "${rest[@]}"
     return
   fi
@@ -462,7 +482,7 @@ _t() {
     open|kill|read|plan|paste|beam|resume)
       if   (( CURRENT == 3 )); then _values 'repo' ${(k)DEV_REPOS}
       elif (( CURRENT == 4 )); then _values 'slot' 1 2 3 4 new fg
-      else _values 'flag' --new --fg --app --remote --codex --claude -y --yes -a --all --host --from -d --detach -p --pick -s --session -h --help; fi ;;
+      else _values 'flag' --new --fg --app --cli --remote --codex --claude -y --yes -a --all --host --from -d --detach -p --pick -s --session -h --help; fi ;;
     on)
       (( CURRENT == 3 )) && _values 'host' ${(k)REMOTE_HOSTS} || _normal ;;
     ls)

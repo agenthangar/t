@@ -240,6 +240,15 @@ choices, and hosts. Teams can share those defaults alongside their preferred
 workflows and agent configurations to standardize the parts of their setup that
 matter.
 
+To change a repository alias, open `t config` → Repositories → select the
+repository → Short name, then Save changes. Its tool, branch, and worktree
+overrides move to the new name.
+
+Choose Default opening mode in `t config` for CLI or Desktop app (Codex on
+macOS). Each repository also has an Opening mode override. `t open --cli` and
+`t open --app` override that choice for one command; foreground and remote opens
+use the CLI.
+
 Configure which MCP tools load in each agent's own settings. t preserves those
 settings and provides its own optional sessions MCP server for Claude Code;
 it does not centrally manage other MCP servers. The optional permission policy

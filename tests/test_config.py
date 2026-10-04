@@ -324,6 +324,60 @@ def test_config_worktree_defaults_and_beam_clear(t_mod, config_cli, monkeypatch,
     assert "unset TBEAM_HOST" in text
 
 
+def test_config_repo_short_name_saves_overrides_and_reloads(t_mod, config_cli, monkeypatch):
+    cfg, local = config_cli
+    cfg.repos = {"long-name": "/code/site"}
+    cfg.agents = {"long-name": "codex"}
+    cfg.branches = {"long-name": "main"}
+    cfg.worktree = {"long-name": "0"}
+    cfg.open_mode = {"long-name": "app"}
+    before = t_mod._config_state(cfg)
+    ui = Menu(["repos", "long-name", "alias", "__back__", "save"], ["site"])
+    original_pick = ui.pick
+    def pick(label, rows, **kwargs):
+        if label == "Repository · long-name":
+            assert dict(rows)["alias"] == "Short name"
+            assert kwargs["values"]["alias"] == "long-name"
+        return original_pick(label, rows, **kwargs)
+    ui.pick = pick
+    monkeypatch.setattr(t_mod, "_RailUI", lambda: ui)
+    assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == 0
+    # Saving is an overlay: the old registration must stay removed on reload.
+    saved = local.read_text()
+    assert "DEV_OPEN_MODE[site]=app" in saved
+    assert "unset 'DEV_OPEN_MODE[long-name]'" in saved
+    local.write_text(t_mod._config_text("", before) + saved)
+    output = t_mod.subprocess.check_output([
+        "zsh", "-f", "-c",
+        'typeset -A DEV_REPOS DEV_AGENT DEV_BRANCHES DEV_WORKTREE DEV_OPEN_MODE DEV_MODEL DEV_EFFORT DEV_FAST; '
+        'source "$1"; print -r -- "${(kv)DEV_REPOS}"; print -r -- "${(kv)DEV_AGENT}"; '
+        'print -r -- "${(kv)DEV_BRANCHES}"; print -r -- "${(kv)DEV_WORKTREE}"',
+        "test-config", str(local)], text=True, env={"HOME": str(local.parent), "XDG_CONFIG_HOME": str(local.parent)})
+    assert output.splitlines() == ["site /code/site", "site codex", "site main", "site 0"]
+
+
+@pytest.mark.parametrize("new_alias", ["taken", "__add__", "__back__", "bad name", "$(bad)"])
+def test_config_repo_rename_rejects_invalid_names_without_changes(t_mod, config_cli, new_alias):
+    cfg, _ = config_cli
+    cfg.repos = {"site": "/code/site", "taken": "/code/other"}
+    before = t_mod._config_state(cfg)
+    with pytest.raises(ValueError):
+        t_mod._config_rename_repo(cfg, "site", new_alias)
+    assert t_mod._config_state(cfg) == before
+
+
+@pytest.mark.parametrize("new_alias", ["", "site", "taken", "__add__", "bad name", "web"])
+def test_config_repo_short_name_cancel_discards_changes(t_mod, config_cli, monkeypatch, new_alias):
+    cfg, local = config_cli
+    cfg.repos = {"site": "/code/site", "taken": "/code/other"}
+    before = t_mod._config_state(cfg)
+    ui = Menu(["repos", "site", "alias", "__back__", "cancel", "discard"], [new_alias])
+    monkeypatch.setattr(t_mod, "_RailUI", lambda: ui)
+    assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == 0
+    assert t_mod._config_state(cfg) == before
+    assert local.read_text() == "# keep me\n"
+
+
 def test_config_review_can_back_out_or_cancel(t_mod, config_cli, monkeypatch):
     cfg, local = config_cli
     ui = Menu(["tool", "codex", "save", "save", "cancel", "discard"], pages=["n", "q"])
@@ -441,3 +495,21 @@ def test_unsupported_model_does_not_offer_fast_and_switching_disables_it(t_mod, 
     monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
     assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == 0
     assert 'DEV_FAST[claude]=0' in local.read_text()
+
+
+def test_config_opening_mode_global_and_repo_defaults(t_mod, config_cli, monkeypatch):
+    cfg, local = config_cli
+    cfg.repos = {"site": "/code/site"}
+    ui = Menu(["mode", "app", "repos", "site", "mode", "cli", "__back__", "save"])
+    monkeypatch.setattr(t_mod, "_RailUI", lambda: ui)
+    assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == 0
+    monkeypatch.setattr(t_mod, "CONFIG", str(local))
+    reloaded = t_mod.Config()
+    assert reloaded.open_mode_default == "app"
+    assert reloaded.open_mode == {"site": "cli"}
+    t_mod._config_remove_repo(reloaded, "site")
+    assert reloaded.open_mode == {}
+    with pytest.raises(ValueError, match="choose cli or app"):
+        t_mod._config_assignment("DEV_OPEN_MODE_DEFAULT", "other")
+    with pytest.raises(ValueError, match="choose cli or app"):
+        t_mod._config_assignment("DEV_OPEN_MODE[site]", "other")
