@@ -93,7 +93,11 @@ def test_release_prompt_updates_then_reexecs_original_argv(tmp_path):
                     sent = True
             if proc.poll() is not None:
                 break
-        if proc.poll() is None:
+        # PTY EOF can arrive just before the child is reaped. Allow it to exit
+        # within the original deadline instead of treating that race as a hang.
+        try:
+            proc.wait(timeout=max(0, deadline - time.monotonic()))
+        except subprocess.TimeoutExpired:
             proc.kill()
             proc.wait(timeout=2)
             raise AssertionError("t timed out: " + output.decode(errors="replace"))

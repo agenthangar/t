@@ -439,30 +439,30 @@ def test_zsh_new_session_stamps_the_agent_and_launch_line(zsh):
     r = zsh("_dev_new_session dev-api-3 $HOME/code/api dev/x 1 codex")
     assert r.returncode == 0, r.stderr
     log = zsh.log.read_text().splitlines()
-    assert "set-environment -t dev-api-3 DEV_AGENT codex" in log
+    assert "set-environment -t =dev-api-3 DEV_AGENT codex" in log
     assert not any("CLAUDE_RESUME_ID" in ln for ln in log)          # codex mints its own id
-    assert "send-keys -t dev-api-3 codex; exit Enter" in log
+    assert "send-keys -t =dev-api-3: codex; exit Enter" in log
     zsh.log.write_text("")
     r = zsh("_dev_new_session dev-api-4 $HOME/code/api dev/x 1 claude")
     log = zsh.log.read_text().splitlines()
-    assert "set-environment -t dev-api-4 DEV_AGENT claude" in log
-    assert "set-environment -t dev-api-4 CLAUDE_RESUME_ID 0f0e0d0c-0b0a-0908-0706-050403020100" in log
-    assert "send-keys -t dev-api-4 claude --session-id 0f0e0d0c-0b0a-0908-0706-050403020100; exit Enter" in log
+    assert "set-environment -t =dev-api-4 DEV_AGENT claude" in log
+    assert "set-environment -t =dev-api-4 CLAUDE_RESUME_ID 0f0e0d0c-0b0a-0908-0706-050403020100" in log
+    assert "send-keys -t =dev-api-4: claude --session-id 0f0e0d0c-0b0a-0908-0706-050403020100; exit Enter" in log
     zsh.log.write_text("")
     # the default (4 args, every pre-seam caller) is claude
     zsh("_dev_new_session dev-api-5 $HOME/code/api dev/x 1")
-    assert "set-environment -t dev-api-5 DEV_AGENT claude" in zsh.log.read_text()
+    assert "set-environment -t =dev-api-5 DEV_AGENT claude" in zsh.log.read_text()
 
 
 def test_zsh_resume_session_uses_the_agent_resume_line(zsh):
     zsh("_dev_resume_session dev-api-7 $HOME/code/api thr_9 codex")
     log = zsh.log.read_text().splitlines()
-    assert "set-environment -t dev-api-7 CLAUDE_RESUME_ID thr_9" in log
-    assert "set-environment -t dev-api-7 DEV_AGENT codex" in log
-    assert "send-keys -t dev-api-7 codex resume thr_9; exit Enter" in log
+    assert "set-environment -t =dev-api-7 CLAUDE_RESUME_ID thr_9" in log
+    assert "set-environment -t =dev-api-7 DEV_AGENT codex" in log
+    assert "send-keys -t =dev-api-7: codex resume thr_9; exit Enter" in log
     zsh.log.write_text("")
     zsh("_dev_resume_session dev-api-8 $HOME/code/api sid-1")
-    assert "send-keys -t dev-api-8 claude -r sid-1; exit Enter" in zsh.log.read_text()
+    assert "send-keys -t =dev-api-8: claude -r sid-1; exit Enter" in zsh.log.read_text()
 
 
 def test_zsh_sync_config_emits_the_agent_keys(zsh):
@@ -494,9 +494,9 @@ def test_zsh_model_defaults_reach_new_tmux_sessions_and_not_resumes(zsh):
             "_dev_resume_session dev-api-5 $HOME/code/api thread-id codex")
     assert r.returncode == 0, r.stderr
     lines = zsh.log.read_text().splitlines()
-    assert "send-keys -t dev-api-3 codex --model local/model -c model_reasoning_effort=ultra; exit Enter" in lines
+    assert "send-keys -t =dev-api-3: codex --model local/model -c model_reasoning_effort=ultra; exit Enter" in lines
     assert any("claude --session-id " in line and " --model sonnet --effort max; exit Enter" in line for line in lines)
-    assert "send-keys -t dev-api-5 codex resume thread-id; exit Enter" in lines
+    assert "send-keys -t =dev-api-5: codex resume thread-id; exit Enter" in lines
 
 
 @pytest.mark.parametrize("agent", ["claude", "codex"])
@@ -1071,14 +1071,14 @@ def test_zsh_agent_wrap_spawns_the_recorded_agent(zsh, tmp_path):
     stub.chmod(0o755)
     r = zsh("codex; echo rc=$?")
     log = zsh.log.read_text().splitlines()
-    assert "send-keys -t dev-api-3 codex resume thr_7; exit Enter" in log
-    assert "set-environment -t dev-api-3 DEV_AGENT codex" in log
+    assert "send-keys -t =dev-api-3: codex resume thr_7; exit Enter" in log
+    assert "set-environment -t =dev-api-3 DEV_AGENT codex" in log
     # a payload WITHOUT the agent field (an older t push) resumes as claude
     stub.write_text('#!/bin/bash\nprintf "SPAWN\\tdev-api-4\\t%s\\t%s\\n" "$HOME/code/.worktrees/api/4" "sid-9" > "$CLAUDE_TPUSH_ATTACH"\n')
     zsh.log.write_text("")
     zsh("codex")
     log = zsh.log.read_text().splitlines()
-    assert "send-keys -t dev-api-4 claude -r sid-9; exit Enter" in log
+    assert "send-keys -t =dev-api-4: claude -r sid-9; exit Enter" in log
 
 
 def test_zsh_repo_slots_sees_codex_only_slots(zsh):
@@ -1166,7 +1166,7 @@ def test_zsh_kill_one_runs_tmux_kill_session(zsh):
     assert r.returncode == 0, r.stderr
     assert "command not found" not in r.stderr
     assert "Killed dev-api-3" in r.stdout
-    assert "kill-session -t =dev-api-3" in zsh.log.read_text().splitlines()
+    assert "kill-session -t =dev-api-3:" in zsh.log.read_text().splitlines()
 
 
 def test_rooted_cleanup_preserves_agent_trees_and_launchers(zsh, tmp_path):
@@ -1427,7 +1427,7 @@ def test_zsh_attach_fg_attaches_a_non_dev_tmux_session_in_place(zsh, tmp_path):
     r = zsh("_dev_attach_fg dotfiles-pr136; echo rc=$?", _tty=True, **env)
     assert "rc=0" in r.stdout, r.stdout
     assert "Attaching dotfiles-pr136:p4242 in place (tmux session pr-dotfiles-136)" in r.stdout
-    assert "attach-session -t pr-dotfiles-136" in zsh.log.read_text().splitlines()
+    assert "attach-session -t =pr-dotfiles-136:" in zsh.log.read_text().splitlines()
 
 
 def test_zsh_attach_fg_rc_tells_the_caller_which_way_to_fall_through(zsh, tmp_path):
@@ -1466,7 +1466,7 @@ def test_zsh_attach_fg_disambiguates_several_tmux_rows(zsh, tmp_path):
     r = zsh("_dev_attach_fg api", _tty=True, FZF_LOG=str(log), FZF_PICK="api:bbbb2222", **env)
     assert log.read_text().splitlines() == ["api:aaaa1111", "api:bbbb2222"], log.read_text()
     assert "Attaching api:bbbb2222 in place (tmux session pr-api-2)" in r.stdout, r.stdout
-    assert "attach-session -t pr-api-2" in zsh.log.read_text().splitlines()
+    assert "attach-session -t =pr-api-2:" in zsh.log.read_text().splitlines()
 
 
 def test_zsh_open_rejects_an_unknown_flag_instead_of_naming_a_slot_after_it(zsh):
@@ -1622,7 +1622,7 @@ def test_zsh_open_fg_attaches_before_it_adopts(zsh, tmp_path):
     env = _fg_world(zsh, tmp_path, panes={4200: "pr-dotfiles-136"})
     r = zsh("_dev_open_fg dotfiles-pr136; echo rc=$?", _tty=True, **env)
     assert "rc=0" in r.stdout and "Attaching dotfiles-pr136:p4242 in place" in r.stdout, r.stdout
-    assert "attach-session -t pr-dotfiles-136" in zsh.log.read_text().splitlines()
+    assert "attach-session -t =pr-dotfiles-136:" in zsh.log.read_text().splitlines()
     del env["FAKE_PANES"]
     r = zsh("_dev_open_fg dotfiles-pr136; echo rc=$?", **env)
     assert "Attaching" not in r.stdout, r.stdout
@@ -1818,15 +1818,15 @@ def test_zsh_resume_pick_revives_the_row_with_its_own_agent(zsh, tmp_path):
     r = zsh("_t_resume api; echo rc=$?", _tty=True, FZF_LOG=str(log), FZF_PICK="word OK")
     assert "rc=0" in r.stdout and f"Resuming {SID[:8]} in dev-api-3 ({wt3})" in r.stdout, r.stdout
     tlog = zsh.log.read_text().splitlines()
-    assert f"send-keys -t dev-api-3 codex resume {SID}; exit Enter" in tlog
-    assert "set-environment -t dev-api-3 DEV_AGENT codex" in tlog
-    assert "attach-session -t dev-api-3" in tlog
+    assert f"send-keys -t =dev-api-3: codex resume {SID}; exit Enter" in tlog
+    assert "set-environment -t =dev-api-3 DEV_AGENT codex" in tlog
+    assert "attach-session -t =dev-api-3:" in tlog
     zsh.log.write_text("")
     r = zsh("_t_resume api 3; echo rc=$?", _tty=True, FZF_LOG=str(log), FZF_PICK="login bug")
     assert "rc=0" in r.stdout, r.stdout
     tlog = zsh.log.read_text().splitlines()
-    assert "send-keys -t dev-api-3 claude -r c1; exit Enter" in tlog
-    assert "set-environment -t dev-api-3 DEV_AGENT claude" in tlog
+    assert "send-keys -t =dev-api-3: claude -r c1; exit Enter" in tlog
+    assert "set-environment -t =dev-api-3 DEV_AGENT claude" in tlog
 
 
 def _resume_stubs(tmp_path, **extra):
@@ -1905,4 +1905,4 @@ def test_fast_mode_reaches_new_tmux_and_foreground_launches(zsh, agent, fast, ar
     assert r.stdout.count('ARG\n' + args) == 2, r.stdout
     assert f'DEV_FAST[{agent}]={fast}' in r.stdout
     resume = f'{agent} resume saved-id' if agent == 'codex' else 'claude -r saved-id'
-    assert f'send-keys -t dev-web-9 {resume}; exit Enter' in zsh.log.read_text()
+    assert f'send-keys -t =dev-web-9: {resume}; exit Enter' in zsh.log.read_text()

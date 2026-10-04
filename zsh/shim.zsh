@@ -363,18 +363,18 @@ _t_open_app() {
   fi
   # Aliases pointing at one canonical checkout share slot ownership. Handoff the
   # existing owner's session name rather than opening its worktree a second time.
-  if ! tmux has-session -t "=dev-${repo}-${slot}" 2>/dev/null; then
+  if ! tmux has-session -t "=dev-${repo}-${slot}:" 2>/dev/null; then
     local sibling
     for sibling in ${(k)DEV_REPOS}; do
       [[ $sibling == $repo || ${DEV_REPOS[$sibling]} != ${DEV_REPOS[$repo]} ]] && continue
-      if tmux has-session -t "=dev-${sibling}-${slot}" 2>/dev/null; then
+      if tmux has-session -t "=dev-${sibling}-${slot}:" 2>/dev/null; then
         repo=$sibling
         break
       fi
     done
   fi
   local session="dev-${repo}-${slot}" dir
-  if tmux has-session -t "=$session" 2>/dev/null; then
+  if tmux has-session -t "=$session:" 2>/dev/null; then
     [[ $(_dev_agent_of_session "$session") == codex ]] || {
       print -u2 -- "t open --app: $session is running Claude; choose --new or another slot"
       return 1
