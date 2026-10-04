@@ -718,3 +718,29 @@ def test_app_plan_serve_expires_after_idle_hour(t_mod, monkeypatch, capsys):
     monkeypatch.setattr(t_mod.sys, 'stdout', output)
     t_mod._app_plan_serve('/tmp/plan.md')
     assert json.loads(output.getvalue())['url'].startswith('http://127.0.0.1:12345/')
+
+
+def test_workspace_launch_creates_and_focuses_window_before_open(t_mod, tmp_path, monkeypatch):
+    (tmp_path / '.git').mkdir()
+    monkeypatch.setattr(t_mod.sys, 'platform', 'darwin')
+    monkeypatch.setattr(t_mod, '_app_bundle', lambda: '/Applications/ChatGPT.app')
+    events = []
+    class Window:
+        def focus(self):
+            events.append('focus')
+    def create(bundle):
+        events.append('create')
+        return Window()
+    monkeypatch.setattr(t_mod, '_app_new_window', create)
+    def run(argv, **kw):
+        events.append(argv)
+        return subprocess.CompletedProcess(argv, 0, '', '')
+    monkeypatch.setattr(t_mod, '_run', run)
+    assert t_mod.cmd_app_workspace(str(tmp_path)) == 0
+    assert events == ['create', 'focus', ['codex', 'app', str(tmp_path)]]
+    def failed(bundle):
+        raise ValueError('New Window failed')
+    monkeypatch.setattr(t_mod, '_app_new_window', failed)
+    events.clear()
+    assert t_mod.cmd_app_workspace(str(tmp_path)) == 1
+    assert events == []

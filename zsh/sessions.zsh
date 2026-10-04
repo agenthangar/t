@@ -1170,6 +1170,12 @@ _dev_session_rows() {
     tx=()
     if ! _dev_session_has_claude "$s"; then
       context=none
+      # A retained tmux pane reserves the slot after desktop handoff. Its
+      # attachment status describes the shell, not the conversation owner.
+      if [[ $agent == codex ]] && _dev_app_slot_reserved "$dir"; then
+        state=app
+        [[ $sid != - ]] && tx=( "$(_dev_agent_transcript codex "$sid" "$dir" 2>/dev/null)" )
+      fi
     elif _dev_agent_at_welcome "$agent" "$s" "$dir"; then
       context=idle
     else
@@ -1206,7 +1212,7 @@ _dev_session_rows() {
     case $context in
       none)
         if _dev_app_slot_reserved "$dir"; then
-          summary='(Codex desktop workspace — reopen with t open --app)'
+          summary=${title_of[${rowtx[$i]}]:-'(Codex desktop workspace — reopen with t open --app)'}
         else
           summary='(no active session)'
         fi ;;

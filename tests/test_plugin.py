@@ -150,6 +150,9 @@ def test_live_tree_guard_protects_canonical_and_selected_code(tmp_path):
 def test_open_app_creates_worktree_without_starting_tmux_or_cli(tmp_path, reopen):
     bins = tmp_path / "stubbin"
     bins.mkdir()
+    launcher = bins / "t"
+    launcher.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$CODEX_LOG"\nprintf "Open request sent\\n"\n')
+    launcher.chmod(0o755)
     codex = bins / "codex"
     codex.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$CODEX_LOG"\n')
     codex.chmod(0o755)
@@ -166,14 +169,14 @@ def test_open_app_creates_worktree_without_starting_tmux_or_cli(tmp_path, reopen
         _dev_worktree_create() {{ local wt="$HOME/worktrees/api/$2"; mkdir -p "$wt/.git"; print -r -- "$wt"; }}
         _dev_app_slot_marker() {{ print -r -- "$1/.git/t-app-slot"; }}
         {'_dev_worktree_create() { print -u2 -- "unexpected worktree creation"; return 1; };' if reopen else ''}
-        t open api {'1' if reopen else '--app'}
+        t open api {'1' if reopen else '--new --app'}
         ''',
         local_text='DEV_REPOS[api]="$HOME/code/api"\nDEV_WORKTREE_ROOT="$HOME/worktrees"\nDEV_OPEN_MODE_DEFAULT=cli\n',
         extra_env={"PATH": f"{bins}:{os.environ['PATH']}", "CODEX_LOG": str(log),
                    "TMUX_TMPDIR": str(tmp_path / "tmux")},
     )
     assert result.returncode == 0, result.stderr
-    assert log.read_text().strip() == f"app {tmp_path}/home/worktrees/api/1"
+    assert log.read_text().strip() == f"_app-workspace {tmp_path}/home/worktrees/api/1"
     assert (tmp_path / "home" / "worktrees" / "api" / "1" / ".git" / "t-app-slot").read_text().strip() == "codex-app"
     assert "Open request sent" in result.stdout
     assert "unexpected worktree creation" not in result.stderr

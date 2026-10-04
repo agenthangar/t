@@ -245,17 +245,20 @@ only its marked block, preserves the rest of `AGENTS.md`, and refuses malformed
 markers or a symlink. Review the resulting diff and commit it when ready; t never
 commits or pushes these instructions for you.
 
-On macOS, `t session open my-project --app` creates a fresh isolated worktree and opens
-that folder in the Codex desktop app without starting a terminal agent. Name a
-slot to reopen its worktree (`t session open my-project 3` automatically uses the
-app when the slot is reserved for it). With `--app`, if that slot is running
+On macOS, `t session open my-project --app` creates a fresh isolated worktree and
+opens that folder in a new Codex desktop app window without starting a terminal
+agent. Name a slot to reopen its worktree (`t session open my-project 3`
+automatically uses the app when the slot is reserved for it). With `--app`, if
+that slot is running
 Codex in tmux, `t` hands the same conversation to the app. `--app` requires a
-worktree-enabled repo and a local Codex installation. It cannot launch a desktop
-workspace on a remote host.
+worktree-enabled repo, a local Codex installation, and Accessibility access for
+the terminal running `t` to invoke the app’s New Window menu. It cannot launch a
+desktop workspace on a remote host.
 The desktop slot stays reserved in private Git worktree metadata so automatic
 cleanup and a later terminal launch cannot reuse it while the app may still be
-working. `t session list` shows the reserved desktop slot. After closing its workspace in
-Codex, release the reservation with:
+working. `t session list` marks reserved desktop slots with `▣` (app), including
+slots handed off from tmux. After closing its workspace in Codex, release the
+reservation with:
 
 ```sh
 t session cd my-project 3
