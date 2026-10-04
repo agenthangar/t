@@ -275,7 +275,8 @@ def test_app_reservation_protects_worktree_from_cli_reuse_and_sweep(tmp_path):
 @pytest.mark.skipif(not shutil.which("tmux") or not shutil.which("zsh"),
                     reason="tmux and zsh are required")
 @pytest.mark.parametrize("launch", ["new", "resume"])
-def test_dotted_repo_launch_and_reattach_on_isolated_tmux(tmp_path, launch):
+@pytest.mark.parametrize("repo", ["api", "agenthangar.github.io"])
+def test_repo_launch_and_reattach_on_isolated_tmux(tmp_path, launch, repo):
     """Exercise tmux parsing, agent launch, logging, and live-slot ownership."""
     socket = "t-dotted-" + uuid.uuid4().hex
     env = {k: v for k, v in os.environ.items() if not k.startswith("COV_CORE_")}
@@ -289,7 +290,7 @@ def test_dotted_repo_launch_and_reattach_on_isolated_tmux(tmp_path, launch):
         return subprocess.run(command + list(args), env=env, capture_output=True,
                               text=True, timeout=5)
 
-    session = "dev-agenthangar.github.io-4"
+    session = f"dev-{repo}-4"
     target = "=" + session + ":"
     marker = tmp_path / "started"
     launch_command = f"printf launched > {shlex.quote(str(marker))}; printf 'agent output\\n'; sleep 60"
@@ -311,12 +312,22 @@ def test_dotted_repo_launch_and_reattach_on_isolated_tmux(tmp_path, launch):
     _dev_repo_prepare() {{ :; }}
     _dev_recovery_watch() {{ :; }}
     '''
-    launch_code = ('_dev_slot_fresh() { [[ $2 == 4 ]]; }; t open agenthangar.github.io --new --codex' if launch == "new"
-                   else f'_dev_resume_session {session} "$HOME/code/agenthangar.github.io" thread-1 codex')
-    local = ('DEV_REPOS[agenthangar.github.io]="$HOME/code/agenthangar.github.io"\n'
-             'DEV_WORKTREE[agenthangar.github.io]=0\n')
+    launch_code = (f'_dev_slot_fresh() {{ [[ $2 == 4 ]]; }}; t open {repo} --new --codex' if launch == "new"
+                   else f'_dev_resume_session {session} "$HOME/code/{repo}" thread-1 codex')
+    local = (f'DEV_REPOS[{repo}]="$HOME/code/{repo}"\n'
+             f'DEV_WORKTREE[{repo}]=0\n')
     try:
-        result = shell(tmp_path, wrapper + 'mkdir -p "$HOME/code/agenthangar.github.io"; ' + launch_code,
+        if "." in repo:
+            # Older tmux replaces dots with underscores at creation, so it
+            # cannot exercise the literal dotted-name parsing regression.
+            home.mkdir(parents=True, exist_ok=True)
+            probe = tmux("new-session", "-d", "-s", session, "sleep", "60")
+            assert probe.returncode == 0, probe.stderr
+            actual = tmux("list-sessions", "-F", "#{session_name}").stdout.strip()
+            tmux("kill-server")
+            if actual != session:
+                pytest.skip("this tmux rewrites dots in session names")
+        result = shell(tmp_path, wrapper + f'mkdir -p "$HOME/code/{repo}"; ' + launch_code,
                        local_text=local, extra_env=env)
         assert result.returncode == 0, result.stderr
         assert "can't find pane" not in result.stderr
@@ -328,9 +339,9 @@ def test_dotted_repo_launch_and_reattach_on_isolated_tmux(tmp_path, launch):
         assert tmux("display-message", "-p", "-t", target, "#{pane_pipe}").stdout.strip() == "1"
         assert tmux("show-options", "-w", "-v", "-t", target, "window-size").stdout.strip() == "latest"
         assert tmux("pipe-pane", "-t", target).returncode == 0
-        result = shell(tmp_path, wrapper + '''t open agenthangar.github.io 4
-                       _dev_slot_fresh agenthangar.github.io 4; print -r -- fresh=$?
-                       _dev_local_slot_live agenthangar.github.io 4; print -r -- live=$?
+        result = shell(tmp_path, wrapper + f'''t open {repo} 4
+                       _dev_slot_fresh {repo} 4; print -r -- fresh=$?
+                       _dev_local_slot_live {repo} 4; print -r -- live=$?
                        ''',
                        local_text=local, extra_env=env)
         assert result.returncode == 0, result.stderr
