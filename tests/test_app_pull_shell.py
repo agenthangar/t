@@ -105,7 +105,7 @@ _t_app_pull_slot dev-repo-1 {shlex.quote(str(worktree))} {SID} {expected}
     assert marker.exists() is (not ok and case != "no_marker")
 
 
-@pytest.mark.parametrize("mode", ["missing", "dead", "shell", "failure"])
+@pytest.mark.parametrize("mode", ["missing", "dead", "shell", "no_registry", "failure"])
 def test_app_pull_real_tmux_launch(tmp_path, mode):
     """Exercise tmux's actual command parsing, pane lifetime, and window selection."""
     if not all(shutil.which(name) for name in ("tmux", "zsh", "cc")):
@@ -140,6 +140,12 @@ int main(int argc, char **argv) {
         fclose(f);
     }
     if (getenv("T_APP_TEST_FAIL")) { sleep(8); return 1; }
+    if (getenv("T_APP_TEST_NO_HOOK")) {
+        puts("» Ask Codex to do anything");
+        fflush(stdout);
+        sleep(15);
+        return 0;
+    }
     char registry[4096];
     snprintf(registry, sizeof registry, "%s/claude-sessions/%d", getenv("XDG_CACHE_HOME"), getpid());
     f = fopen(registry, "w");
@@ -157,12 +163,29 @@ int main(int argc, char **argv) {
                XDG_CACHE_HOME=str(tmp_path / "cache"),
                XDG_CONFIG_HOME=str(tmp_path / "config"),
                XDG_STATE_HOME=str(tmp_path / "state"),
+               CODEX_HOME=str(tmp_path / "codex-home"),
                T_APP_TEST_RECORD=str(tmp_path / "launch"),
                TERM="xterm-256color", T_RECOVERY_DISABLE="1",
                PATH=str(fake_bin) + os.pathsep + os.environ["PATH"])
     (tmp_path / "cache" / "claude-sessions").mkdir(parents=True)
     if mode == "failure":
         env["T_APP_TEST_FAIL"] = "1"
+    if mode == "no_registry":
+        import json
+        import sqlite3
+
+        env["T_APP_TEST_NO_HOOK"] = "1"
+        codex_home = tmp_path / "codex-home"
+        codex_home.mkdir()
+        rollout = codex_home / "rollout.jsonl"
+        rollout.write_text(json.dumps({"type": "session_meta", "payload": {
+            "id": SID, "cwd": str(worktree), "source": "cli"}}) + "\n")
+        with sqlite3.connect(codex_home / "state_5.sqlite") as conn:
+            conn.execute("create table threads (id text, rollout_path text, cwd text, "
+                         "archived integer, first_user_message text, source text, "
+                         "name text, updated_at integer)")
+            conn.execute("insert into threads values (?,?,?,?,?,?,?,?)",
+                         (SID, str(rollout), str(worktree), 0, "prior user prompt", "cli", None, 1))
     session = "dev-test-1"
 
     def run_tmux(*args, check=True):
@@ -170,7 +193,7 @@ int main(int argc, char **argv) {
                               text=True, check=check)
 
     try:
-        if mode != "missing":
+        if mode not in ("missing", "no_registry"):
             run_tmux("new-session", "-d", "-s", session, "-c", str(worktree), "sleep 30")
             run_tmux("set-environment", "-t", "=" + session, "CLAUDE_RESUME_ID", SID)
             run_tmux("set-environment", "-t", "=" + session, "DEV_AGENT", "codex")
@@ -197,7 +220,7 @@ _dev_agent_of_session() {{ print codex; }}
 _dev_session_sid() {{ tmux show-environment -t "=$1" CLAUDE_RESUME_ID 2>/dev/null | cut -d= -f2; }}
 _dev_recovery_watch() {{ :; }}
 _codex_pane_sid() {{ :; }}
-_t_app_pull_slot {session} {shlex.quote(str(worktree))} {SID} {'-' if mode == 'missing' else SID}
+_t_app_pull_slot {session} {shlex.quote(str(worktree))} {SID} {'-' if mode in ('missing', 'no_registry') else SID}
 '''
         result = subprocess.run(["zsh", "-f", "-c", script], env=env,
                                 capture_output=True, text=True, timeout=15)
@@ -224,6 +247,8 @@ _t_app_pull_slot {session} {shlex.quote(str(worktree))} {SID} {'-' if mode == 'm
             }
             pytest.fail(f"app pull real tmux {mode}: {diagnostic}")
         assert marker.exists() is (mode == "failure")
+        if mode == "no_registry":
+            assert not list((tmp_path / "cache" / "claude-sessions").iterdir())
         if mode != "failure":
             assert (tmp_path / "launch").exists(), (
                 run_tmux("capture-pane", "-p", "-t", "=" + session + ":").stdout,
@@ -276,6 +301,55 @@ def test_app_pull_readiness_requires_fresh_pid_proof(tmp_path, case, ready):
 source {shlex.quote(str(ROOT / 'zsh/resume.zsh'))}
 ps() {{ print -r -- {shlex.quote(start)}; }}
 _codex_pane_sid() {{ [[ {shlex.quote(case)} == stale_with_pane ]] && print -r -- {SID}; }}
+_t_app_pull_ready dev-test-1 {shlex.quote(str(worktree))} {SID} 12345
+'''
+    env = {"HOME": str(tmp_path), "XDG_CACHE_HOME": str(tmp_path / "cache"),
+           "XDG_STATE_HOME": str(tmp_path / "state"), "PATH": os.environ["PATH"]}
+    result = subprocess.run(["zsh", "-f", "-c", script], env=env,
+                            capture_output=True, text=True, timeout=10)
+    assert (result.returncode == 0) is ready, result.stderr
+
+
+@pytest.mark.parametrize("case,ready", [
+    ("unnamed_old_thread", True),
+    ("wrong_sid", False),
+    ("wrong_cwd", False),
+    ("error_screen", False),
+    ("error_mentions_prompt", False),
+    ("wrong_rollout", False),
+])
+def test_app_pull_hook_free_ready_needs_exact_process_thread_and_loaded_ui(tmp_path, case, ready):
+    """An idle resumed thread need not update SQLite or have a hook or a name."""
+    import json
+    import sqlite3
+
+    if not shutil.which("zsh"):
+        pytest.skip("zsh required")
+    worktree = tmp_path / "work tree"
+    worktree.mkdir()
+    rollout = tmp_path / "rollout.jsonl"
+    rollout.write_text(json.dumps({"type": "session_meta", "payload": {
+        "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" if case == "wrong_rollout" else SID,
+        "cwd": str(worktree), "source": "cli"}}) + "\n")
+    db = tmp_path / "state_5.sqlite"
+    with sqlite3.connect(db) as conn:
+        conn.execute("create table threads (id text, rollout_path text, cwd text, "
+                     "archived integer, first_user_message text, source text, "
+                     "name text, updated_at integer)")
+        conn.execute("insert into threads values (?,?,?,?,?,?,?,?)",
+                     (SID, str(rollout), str(worktree), 0, "prior user prompt", "cli",
+                      None, 1))  # Older than the current process, and unnamed.
+    asked_sid = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" if case == "wrong_sid" else SID
+    asked_cwd = "/wrong/worktree" if case == "wrong_cwd" else str(worktree)
+    pane = ("Codex startup failed" if case == "error_screen" else
+            "Error: Ask Codex to do anything after restarting" if case == "error_mentions_prompt"
+            else "» Ask Codex to do anything")
+    script = f'''
+source {shlex.quote(str(ROOT / 'zsh/resume.zsh'))}
+_codex_db() {{ print -r -- {shlex.quote(str(db))}; }}
+_codex_pane_sid() {{ :; }}
+ps() {{ print -r -- {shlex.quote('codex resume ' + asked_sid + ' --cd ' + asked_cwd)}; }}
+tmux() {{ [[ $1 == capture-pane ]] && print -r -- {shlex.quote(pane)}; }}
 _t_app_pull_ready dev-test-1 {shlex.quote(str(worktree))} {SID} 12345
 '''
     env = {"HOME": str(tmp_path), "XDG_CACHE_HOME": str(tmp_path / "cache"),

@@ -1381,6 +1381,47 @@ _t_restart_slot() {
 
 # Independent proof that this live Codex PID owns the requested thread. A tmux
 # CLAUDE_RESUME_ID stamp is intentionally insufficient: we write it before launch.
+_t_app_pull_ui_ready() {
+  local session="$1" dir="$2" sid="$3" pid="$4" db args pane_text
+  db=$(_codex_db); [[ -r $db ]] || return 1
+  args=$(ps -ww -o args= -p "$pid" 2>/dev/null) || return 1
+  pane_text=$(tmux capture-pane -p -t "=$session:" 2>/dev/null) || return 1
+  LC_ALL=C python3 - "$db" "$dir" "$sid" "$args" "$pane_text" <<'PY' 2>/dev/null
+import json, os, re, sqlite3, sys
+
+try:
+    db, cwd, sid, args, pane = sys.argv[1:]
+    # The process walker has already identified this PID as Codex. Its own argv,
+    # rather than a prewritten tmux stamp, binds the live process to the thread.
+    prefix, sep, tail = args.partition(' resume ')
+    if (not sep or not re.fullmatch(r'codex(?:-(?:aarch64|x86_64)-[\w.-]+)?',
+                                     os.path.basename(prefix)) or
+            tail != f'{sid} --cd {cwd}'):
+        sys.exit(1)
+    # The default empty composer shows that the interactive TUI is drawn; exact
+    # resume argv and rollout metadata supply the thread identity. An error
+    # screen mentioning Codex lacks this anchored input prompt.
+    if not any(re.fullmatch(r'\s*[›»]\s+Ask Codex to do anything\s*', line)
+               for line in pane.splitlines()[-12:]):
+        sys.exit(1)
+    c = sqlite3.connect('file:%s?mode=ro' % db, uri=True, timeout=0.5)
+    rows = c.execute('select rollout_path from threads where id=? and cwd=? '
+                     'and archived=0 and trim(first_user_message)<>\'\' '
+                     'and instr(source, \'"subagent"\')=0', (sid, cwd)).fetchall()
+    if len(rows) != 1:
+        sys.exit(1)
+    with open(rows[0][0]) as f:
+        meta = json.loads(f.readline())
+    payload = meta.get('payload', {})
+    if (meta.get('type') != 'session_meta' or payload.get('id') != sid or
+            payload.get('cwd') != cwd or payload.get('source') not in ('cli', 'vscode') or
+            payload.get('thread_source') == 'subagent'):
+        sys.exit(1)
+except (OSError, ValueError, TypeError, AttributeError, sqlite3.Error):
+    sys.exit(1)
+PY
+}
+
 _t_app_pull_ready() {
   local session="$1" dir="$2" sid="$3" pid="$4" reg line reg_sid reg_cwd started
   [[ $pid == <-> ]] || return 1
@@ -1402,7 +1443,8 @@ PY
       fi
     fi
   fi
-  [[ $(_codex_pane_sid "$session" "$dir" "$pid" 2>/dev/null) == $sid ]]
+  [[ $(_codex_pane_sid "$session" "$dir" "$pid" 2>/dev/null) == $sid ]] ||
+    _t_app_pull_ui_ready "$session" "$dir" "$sid" "$pid"
 }
 
 # Return a desktop-reserved Codex worktree to its original tmux slot. The caller
