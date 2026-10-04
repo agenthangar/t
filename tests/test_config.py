@@ -300,8 +300,8 @@ def test_config_repos_edit_overrides_unregister_and_add(t_mod, config_cli, monke
     cfg.agents = {"retired": "codex"}
     cfg.branches = {"retired": "main"}
     cfg.worktree = {"retired": "0"}
-    ui = Menu(["repos", "api", "tool", "codex", "api", "worktree", "0",
-               "api", "branch", "custom", "api", "path", "retired", "remove",
+    ui = Menu(["repos", "api", "tool", "codex", "worktree", "0",
+               "branch", "custom", "path", "back", "retired", "remove",
                "__add__", "__back__", "save"], ["dev/custom", str(tmp_path / "new api"), "web", "/code/web"])
     monkeypatch.setattr(t_mod, "_RailUI", lambda: ui)
     assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == 0
@@ -332,16 +332,21 @@ def test_config_repo_short_name_saves_overrides_and_reloads(t_mod, config_cli, m
     cfg.worktree = {"long-name": "0"}
     cfg.open_mode = {"long-name": "app"}
     before = t_mod._config_state(cfg)
-    ui = Menu(["repos", "long-name", "alias", "__back__", "save"], ["site"])
+    ui = Menu(["repos", "long-name", "alias", "mode", "app", "back", "__back__", "save"], ["site"])
     original_pick = ui.pick
+    labels = []
     def pick(label, rows, **kwargs):
+        labels.append(label)
         if label == "Repository · long-name":
             assert dict(rows)["alias"] == "Short name"
             assert kwargs["values"]["alias"] == "long-name"
+        if label == "Repository · site":
+            assert kwargs["values"]["alias"] == "site"
         return original_pick(label, rows, **kwargs)
     ui.pick = pick
     monkeypatch.setattr(t_mod, "_RailUI", lambda: ui)
     assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == 0
+    assert labels[labels.index("Repository · long-name") + 1] == "Repository · site"
     # Saving is an overlay: the old registration must stay removed on reload.
     saved = local.read_text()
     assert "DEV_OPEN_MODE[site]=app" in saved
@@ -371,7 +376,7 @@ def test_config_repo_short_name_cancel_discards_changes(t_mod, config_cli, monke
     cfg, local = config_cli
     cfg.repos = {"site": "/code/site", "taken": "/code/other"}
     before = t_mod._config_state(cfg)
-    ui = Menu(["repos", "site", "alias", "__back__", "cancel", "discard"], [new_alias])
+    ui = Menu(["repos", "site", "alias", "back", "__back__", "cancel", "discard"], [new_alias])
     monkeypatch.setattr(t_mod, "_RailUI", lambda: ui)
     assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == 0
     assert t_mod._config_state(cfg) == before
@@ -500,7 +505,7 @@ def test_unsupported_model_does_not_offer_fast_and_switching_disables_it(t_mod, 
 def test_config_opening_mode_global_and_repo_defaults(t_mod, config_cli, monkeypatch):
     cfg, local = config_cli
     cfg.repos = {"site": "/code/site"}
-    ui = Menu(["mode", "app", "repos", "site", "mode", "cli", "__back__", "save"])
+    ui = Menu(["mode", "app", "repos", "site", "mode", "cli", "back", "__back__", "save"])
     monkeypatch.setattr(t_mod, "_RailUI", lambda: ui)
     assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == 0
     monkeypatch.setattr(t_mod, "CONFIG", str(local))
