@@ -150,6 +150,31 @@ resumes in the same pane; worktree edits and dev servers stay in place. Use
 `t open <repo> <slot>` to attach. For a remote slot, use
 `t on <host> t restart <repo> <slot>`.
 
+For sessions opened through `t`, a local monitor automatically offers **Save visible
+draft and restart** or **Dismiss** when a recognized final connection error remains
+visible. The menu appears in the affected tmux pane, including over SSH, and works
+without a model connection. Nothing restarts until you choose it. Offers are bound
+to the exact conversation and process; a changed or recovered session is left alone.
+Detached sessions get the offer when you return. Dismissal suppresses repeats until
+the error clears. Authentication and rate-limit errors do not trigger recovery.
+
+Codex's **Cannot use the background server / Experimental feature request failed**
+screen gets a separate **Run without daemon this time** offer. It relaunches only
+that client with `--no-daemon`, retaining its exact conversation (or a verified fresh
+launch if startup failed before creating one). It leaves the shared server and
+global settings alone. The failure is checked again before stopping the client.
+
+Codex and Claude use their existing `t open` slots. `t cursor resume <chat-id>` now
+opens or attaches a dedicated Cursor tmux session with the same recovery menu. On
+first use, it adds a `sessionStart` entry to Cursor's `~/.cursor/hooks.json`, preserving
+other hooks, to track the current chat even after `/new` or `/resume`. Cursor sessions
+use chat IDs rather than numbered dev slots. The monitor starts when a managed session
+is opened/resumed and exits when no managed sessions remain; it needs no service
+manager. Export `T_RECOVERY_DISABLE=1` before opening sessions to disable automatic
+monitor startup. Native desktop apps and CLIs launched outside `t` are not monitored.
+Before opening another Cursor chat, `t` requires existing Cursor CLIs to have verified
+current chat IDs; close an untracked CLI first to avoid duplicate conversation owners.
+
 Every command has `-h`. Repo-aware commands infer the repository from your current
 directory, so `t open 2` and `t cd 2` work inside a registered repository.
 

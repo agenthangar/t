@@ -258,7 +258,9 @@ if (( do_resume )); then
   if [[ -n "${SSH_CONNECTION:-}${SSH_TTY:-}" ]] && command -v security >/dev/null 2>&1; then
     security unlock-keychain || echo "⚠ keychain unlock failed — cursor-agent may refuse to start" >&2
   fi
-  exec cursor-agent --resume="$id"
+  # A dedicated pane lets t offer recovery even while Cursor is disconnected.
+  # The SessionStart hook records the CURRENT chat if /new or /resume changes it.
+  exec t __recovery cursor-resume "$id" "$PWD"
 fi
 
 # ---- pull (--from) ----

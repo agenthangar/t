@@ -1634,6 +1634,13 @@ _dev_kill() {
   _dev_kill_one "$session" "$force"
 }
 
+# The supervisor is independent of the agent, so a disconnected client cannot
+# disable its recovery menu. It exits when no managed sessions remain.
+_dev_recovery_watch() {
+  [[ -z ${T_RECOVERY_DISABLE:-} ]] || return 0
+  command t __recovery start "$1" >/dev/null 2>&1 || true
+}
+
 # _dev_new_session <session> <dir> [branch] [skip_prepare] — create a detached tmux
 # session in <dir>, start logging, and launch Claude on <branch> (default $DEV_BRANCH).
 # Callers pass the repo's resolved branch (see _dev_branch_for) since the repo
@@ -1677,6 +1684,7 @@ _dev_new_session() {
   local prep="_dev_repo_prepare ${(q)branch}; "
   [[ -n $skip_prepare ]] && prep=    # worktree mode: <dir> is already on its branch
   tmux send-keys -t "$session" "${prep}$(_dev_agent_new_cmd "$agent" "$sid"); exit" Enter
+  _dev_recovery_watch "$session"
 }
 
 # _t_dev — the engine behind `t open`: open/reattach a Claude Code tmux session, local or on
@@ -2014,6 +2022,7 @@ _t_dev() {
     fi
     # resume logging if it stopped (e.g. after server restart)
     tmux pipe-pane -t "$session" -o "cat >> $logfile"
+    _dev_recovery_watch "$session"
     tmux attach-session -t "$session"
   else
     # Worktree mode: this slot gets its OWN worktree on dev/<basename>-<slot> off

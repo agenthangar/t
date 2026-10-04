@@ -202,3 +202,61 @@ tmux show-options -p -v -t '=dev-api-1:' remain-on-exit
         assert dirty.read_text() == "keep my changes\n"
     finally:
         subprocess.run(tmux + ["kill-server"], capture_output=True)
+
+
+@pytest.mark.parametrize('scenario', ['fresh', 'resume', 'changed_pid', 'cleared', 'unsupported', 'not_fresh'])
+def test_restart_background_failure_uses_invocation_local_fallback(tmp_path, scenario):
+    bins = tmp_path / 'bin'
+    bins.mkdir()
+    codex = bins / 'codex'
+    codex.write_text('#!/bin/sh\necho ' + ('unsupported' if scenario == 'unsupported' else '--no-daemon') + '\n')
+    codex.chmod(0o755)
+    sid = SID if scenario == 'resume' else ''
+    code = f'''
+export PATH={shlex.quote(str(bins))}:$PATH
+scenario={scenario}
+dir={shlex.quote(str(tmp_path))}
+log="$dir/actions"
+tmux() {{
+  print -r -- "$*" >> "$log"
+  case $1 in
+    display-message)
+      case ${{@: -1}} in
+        *session_path*) print -r -- "$dir" ;;
+        *pane_id*) print '%1' ;;
+        *pane_dead*) print 1 ;;
+      esac ;;
+    list-panes) print '%1' ;;
+    show-options) print off ;;
+    capture-pane)
+      [[ $scenario == cleared ]] && {{ print 'ready'; return; }}
+      print -r -- 'Cannot use the background server
+Experimental feature request failed
+1. Run without daemon this time
+Restart cannot resolve this compatibility check.
+2. Cancel' ;;
+  esac
+  return 0
+}}
+_dev_agent_of_session() {{ print codex; }}
+_dev_session_sid() {{ print -r -- {shlex.quote(sid)}; }}
+_dev_app_slot_reserved() {{ return 1; }}
+_dev_session_claude_pid() {{ print 99999; }}
+_dev_agent_at_welcome() {{ [[ $scenario != not_fresh ]]; }}
+_dev_agent_resume_cmd() {{ print -r -- "codex resume $2"; }}
+_dev_agent_new_cmd() {{ print -r -- 'codex --model chosen -c model_reasoning_effort=high'; }}
+ps() {{ print 1; }}
+kill() {{ print -r -- "signal $*" >> "$log"; [[ $1 == -TERM ]]; }}
+_t_restart_slot dev-api-1 "$dir" {shlex.quote(sid)} codex restart-no-daemon {'88888' if scenario == 'changed_pid' else '99999'}
+'''
+    completed = run_shell(tmp_path, code)
+    assert (completed.returncode == 0) == (scenario in ('fresh', 'resume')), completed.stderr
+    actions = (tmp_path / 'actions').read_text()
+    if scenario in ('fresh', 'resume'):
+        assert actions.index('capture-pane') < actions.index('signal -TERM') < actions.index('respawn-pane')
+        launch = next(line for line in actions.splitlines() if line.startswith('respawn-pane'))
+        assert '--no-daemon' in launch and '-k' not in launch
+        assert (SID in launch) == (scenario == 'resume')
+        assert ('chosen' in launch) == (scenario == 'fresh')
+    else:
+        assert 'signal' not in actions and 'respawn-pane' not in actions
