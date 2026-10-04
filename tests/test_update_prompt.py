@@ -38,6 +38,7 @@ def offer(t_mod, tmp_path, terminal, monkeypatch):
         "schedule": lambda source, executable: calls.append(("schedule", executable)),
         "cached": lambda source: {"available": True, "latest": "v1.2.4"},
         "snooze": lambda source: calls.append(("later", source)),
+        "skip_version": lambda source, version: calls.append(("skip-version", source, version)),
     }
     monkeypatch.setattr(t_mod, "_t_source_root", lambda: installation["source"])
     monkeypatch.setattr(t_mod, "_t_update_installation", lambda: installation)
@@ -110,18 +111,28 @@ def test_redirected_streams_never_prompt(t_mod, terminal, monkeypatch, stream):
     assert not t_mod._t_update_interactive()
 
 
-@pytest.mark.parametrize("answer", ["\n", "l\n", "later\n", "unexpected\n", ""])
-def test_later_and_eof_snooze_without_installing(t_mod, terminal, offer, answer):
+@pytest.mark.parametrize("answer", ["\n", "1\n", "s\n", "skip\n", "unexpected\n", ""])
+def test_skip_and_eof_do_not_install_or_suppress_future_offers(t_mod, terminal, offer, answer):
     installation, calls, helper = offer
     terminal[0].write(answer)
     terminal[0].seek(0)
     assert t_mod._t_offer_update() == 0
-    assert calls == [("schedule", str(Path(installation["source"]) / "bin/t")), ("later", installation)]
+    assert calls == [("schedule", str(Path(installation["source"]) / "bin/t"))]
     assert "v1.2.3 → v1.2.4" in terminal[2].getvalue()
-    assert "Update now" in terminal[2].getvalue()
+    assert "[1] Skip\n  [2] Skip until next version\n  [3] Update now" in terminal[2].getvalue()
+    assert "Choose [1]:" in terminal[2].getvalue()
 
 
-@pytest.mark.parametrize("answer", ["u\n", "YES\n", "1\n"])
+@pytest.mark.parametrize("answer", ["2\n", "n\n", "next\n"])
+def test_skip_until_next_version_records_offered_version(t_mod, terminal, offer, answer):
+    terminal[0].write(answer)
+    terminal[0].seek(0)
+    assert t_mod._t_offer_update() == 0
+    assert offer[1][-1] == ("skip-version", offer[0], "v1.2.4")
+    assert not any(call[0] == "update" for call in offer[1])
+
+
+@pytest.mark.parametrize("answer", ["u\n", "YES\n", "3\n"])
 def test_update_now_uses_existing_updater(t_mod, terminal, offer, answer):
     terminal[0].write(answer)
     terminal[0].seek(0)
@@ -148,7 +159,9 @@ def test_checker_failures_do_not_block_commands(t_mod, terminal, offer, monkeypa
     offer[2]["cached"] = lambda source: {"available": False}
     assert t_mod._t_offer_update() == 0
     offer[2]["cached"] = lambda source: {"available": True, "latest": "v1.2.4"}
-    offer[2]["snooze"] = fail
+    terminal[0].write("2\n")
+    terminal[0].seek(0)
+    offer[2]["skip_version"] = fail
     assert t_mod._t_offer_update() == 0
     monkeypatch.setattr(t_mod, "_t_update_installation", lambda: None)
     assert t_mod._t_offer_update() == 0
@@ -184,9 +197,9 @@ def test_reexec_failure_is_actionable(t_mod, terminal, offer, monkeypatch):
     assert "could not continue" in terminal[2].getvalue()
 
 
-def test_normal_command_continues_after_later(t_mod, terminal, offer):
+def test_normal_command_continues_after_skip(t_mod, terminal, offer):
     assert t_mod._t_auto_update(["ls"]) is None
-    assert offer[1][-1][0] == "later"
+    assert offer[1][-1][0] == "schedule"
 
 
 def test_manual_check_uses_packaged_helper_without_installing(t_mod, tmp_path, monkeypatch, capsys):

@@ -98,6 +98,74 @@ def test_release_cache_snooze_and_stale_identity(tmp_path, monkeypatch):
     assert path.parent.stat().st_mode & 0o077 == 0
 
 
+def test_skip_version_survives_refresh_and_new_release_reoffers(tmp_path, monkeypatch):
+    installation = {"kind": "release", "source": str(tmp_path / "release"), "current": "v1.2.3"}
+    latest = ["v1.2.4"]
+    monkeypatch.setattr(updates, "_release", lambda identity: latest[0])
+    assert updates.check(installation)["latest"] == "v1.2.4"
+    updates.skip_version(installation, "v1.2.4")
+    assert not updates.cached(installation)["available"]
+    assert updates.check(installation, force=True)["available"]  # Explicit checks still report it.
+    assert not updates.cached(installation)["available"]
+    latest[0] = "v1.2.5"
+    assert updates.check(installation, force=True)["latest"] == "v1.2.5"
+    assert updates.cached(installation)["available"]
+    updates.skip_version(installation, "v1.2.4")  # Stale prompt cannot hide a new version.
+    assert updates.cached(installation)["available"]
+    updates.skip_version(installation, "v1.2.5")
+    updates.skip_version(installation, "v1.2.4")  # Nor undo a newer prompt's choice.
+    assert not updates.cached(installation)["available"]
+
+
+def test_skip_version_survives_pending_cache_refresh(tmp_path, monkeypatch):
+    installation = {"kind": "release", "source": str(tmp_path / "release"), "current": "v1.2.3"}
+    monkeypatch.setattr(updates, "_release", lambda identity: "v1.2.4")
+    updates.check(installation)
+    updates.skip_version(installation, "v1.2.4")
+    path = updates._cache_path(updates._identity(installation))
+    data = json.loads(path.read_text())
+    data["expires_at"] = 0
+    path.write_text(json.dumps(data))
+    monkeypatch.setattr(updates.subprocess, "Popen", lambda *a, **kw: None)
+    updates.schedule(installation, "/tmp/fake-t")
+    assert updates.check(installation, force=True)["available"]
+    assert not updates.cached(installation)["available"]
+
+
+def test_skip_git_target_uses_full_commit_and_new_target_reoffers(checkout, monkeypatch):
+    targets = ["a" * 40, "b" * 40]
+    monkeypatch.setattr(updates, "_git", lambda identity: targets[0])
+    monkeypatch.setattr(updates, "_git_offer_safe", lambda identity: True)
+    updates.check(checkout)
+    updates.skip_version(checkout, targets[0])
+    assert not updates.cached(checkout)["available"]
+    assert updates.check(checkout, force=True)["available"]
+    monkeypatch.setattr(updates, "_git", lambda identity: targets[1])
+    updates.check(checkout, force=True)
+    assert updates.cached(checkout)["latest"] == targets[1]
+
+
+def test_skip_choice_does_not_wait_for_busy_checker(tmp_path, monkeypatch):
+    installation = {"kind": "release", "source": str(tmp_path / "release"), "current": "v1.2.3"}
+    monkeypatch.setattr(updates, "_release", lambda identity: "v1.2.4")
+    updates.check(installation)
+    monkeypatch.setattr(updates.fcntl, "flock", lambda *a: pytest.fail("must not wait for checker lock"))
+    updates.skip_version(installation, "v1.2.4")
+    assert not updates.cached(installation)["available"]
+
+
+def test_invalid_skip_sidecar_never_hides_release(tmp_path, monkeypatch):
+    installation = {"kind": "release", "source": str(tmp_path / "release"), "current": "v1.2.3"}
+    monkeypatch.setattr(updates, "_release", lambda identity: "v1.2.4")
+    updates.check(installation)
+    path = updates._skip_path(updates._identity(installation))
+    for value in ({"identity": False, "version": "v1.2.4"},
+                  {"identity": updates._identity(installation), "version": "v1.2.4-beta"},
+                  {"identity": updates._identity(installation), "version": 42}):
+        path.write_text(json.dumps(value))
+        assert updates.cached(installation)["available"]
+
+
 def test_release_network_payload_is_bounded_and_stable(tmp_path, monkeypatch):
     installation = {"kind": "release", "source": str(tmp_path), "current": "v1.2.3"}
     class Reply:
@@ -451,6 +519,19 @@ def test_unreleased_state_cache_snooze_and_network_failure(checkout, monkeypatch
     monkeypatch.setattr(updates, "_homebrew_gap", fail)
     state = updates.check(installation, force=True)
     assert state["checked"] and not state["error"] and "unreleased" not in state
+
+
+def test_skipped_git_update_does_not_turn_into_homebrew_reminder(checkout, monkeypatch):
+    installation = dict(checkout, remote="https://github.com/agenthangar/t.git")
+    target = "a" * 40
+    monkeypatch.setattr(updates, "_git", lambda identity: target)
+    monkeypatch.setattr(updates, "_git_offer_safe", lambda identity: True)
+    monkeypatch.setattr(updates, "_homebrew_gap", lambda identity: {"version": "v0.4.0", "count": 3})
+    updates.check(installation)
+    updates.skip_version(installation, target)
+    state = updates.cached(installation)
+    assert not state["available"]
+    assert "unreleased" not in state
 
 
 def test_homebrew_gap_skips_other_installations(checkout, monkeypatch):
