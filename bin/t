@@ -8408,7 +8408,7 @@ def _command_description(group, action):
                     "move": "Move a session between machines", "read": "Read slot output",
                     "view-plan": "Show a Claude session plan", "paste": "Paste a recent file path",
                     "search": "Search and resume a saved conversation",
-                    "open-app": "Hand off a Codex slot to the desktop app"},
+                    "open-app": "Move a Codex slot between CLI and desktop"},
         "repo": {"list": "List registered repositories", "cd": "Enter a checkout",
                  "locate": "Print a checkout path", "create": "Create a GitHub repository",
                  "clone": "Clone and register a repository"},

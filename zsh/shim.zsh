@@ -579,12 +579,21 @@ _t() {
       if (( CURRENT == first )) && [[ $action == cd || $action == locate ]]; then _values 'repo' ${(k)DEV_REPOS}
       else _values 'flag' -h --help; fi ;;
     session/open-app)
+      local -a app_flags=(--url --no-preview --plan --no-plan --reuse-window --dry-run -h --help)
+      local app_direction=${words[first]}
+      [[ $app_direction == pull ]] && app_flags=(--thread --dry-run -h --help)
+      if [[ $app_direction == push || $app_direction == pull ]] && (( CURRENT > first )); then
+        (( first++ ))
+      fi
       if [[ ${words[CURRENT-1]} == --url ]]; then _message 'preview URL'
       elif [[ ${words[CURRENT-1]} == --plan ]]; then _files -g '*.md'
-      elif [[ ${words[CURRENT]} == -* ]]; then _values 'flag' --url --no-preview --plan --no-plan --reuse-window --dry-run -h --help
-      elif (( CURRENT == first )); then _values 'repo' ${(k)DEV_REPOS}
+      elif [[ ${words[CURRENT-1]} == --thread ]]; then _message 'saved conversation ID'
+      elif [[ ${words[CURRENT]} == -* ]]; then _values 'flag' $app_flags
+      elif (( CURRENT == first )); then
+        if [[ $app_direction == push || $app_direction == pull ]]; then _values 'repo' ${(k)DEV_REPOS}
+        else _values 'direction or repo' push pull ${(k)DEV_REPOS}; fi
       elif (( CURRENT == first + 1 )); then _message 'local slot number'
-      else _values 'flag' --url --no-preview --plan --no-plan --reuse-window --dry-run -h --help; fi ;;
+      else _values 'flag' $app_flags; fi ;;
     session/restart)
       if [[ ${words[CURRENT]} == -* ]]; then _values 'flag' --dry-run -h --help
       elif (( CURRENT == first )); then _values 'repo' ${(k)DEV_REPOS}

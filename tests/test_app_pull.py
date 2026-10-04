@@ -11,6 +11,7 @@ from test_app import SID, app_slot, app_command
 OTHER = "11234567-89ab-cdef-0123-456789abcdef"
 
 
+@pytest.mark.parametrize("prefix", [["app"], ["session", "open-app"]])
 @pytest.mark.parametrize("words,expected", [
     ([], ("push", None, None)), (["13"], ("push", "13", None)),
     (["api", "13"], ("push", "api", "13")),
@@ -18,8 +19,8 @@ OTHER = "11234567-89ab-cdef-0123-456789abcdef"
     (["pull"], ("pull", None, None)), (["pull", "13"], ("pull", "13", None)),
     (["pull", "api", "13"], ("pull", "api", "13")),
 ])
-def test_app_direction(t_mod, words, expected):
-    args = t_mod.build_parser().parse_args(["app", *words])
+def test_app_direction(t_mod, prefix, words, expected):
+    args = t_mod.build_parser().parse_args([*prefix, *words])
     assert t_mod._app_target(args) == expected
 
 
