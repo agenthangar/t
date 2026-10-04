@@ -301,9 +301,11 @@ t update --relink  # repair links from the selected source, without fetching
 
 When you use `t` interactively, it checks for a newer version in the background
 about once a day (retrying sooner after a failed check). A later command offers
-**Update now** or **Later** if a newer version is available. Update now runs
-`t update`, reloads the shell integration when needed, and continues with your
-command. Later postpones the prompt for 24 hours. The check never installs anything
+**Skip**, **Skip until next version**, or **Update now** if a newer version is
+available. Skip continues the command and may prompt again later. Skip until next
+version hides that specific release or Git commit until a newer one is found.
+Update now runs `t update`, reloads the shell integration when needed, and
+continues with your command. The check never installs anything
 by itself; `t update --check` runs a check immediately, and `T_NO_UPDATE_CHECK=1`
 disables the interactive checks and prompts.
 Developer worktrees, scripts, help, and internal commands do not prompt.

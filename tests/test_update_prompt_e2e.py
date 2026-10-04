@@ -88,8 +88,8 @@ def test_release_prompt_updates_then_reexecs_original_argv(tmp_path):
                 if not chunk:
                     break
                 output.extend(chunk)
-                if not sent and b"Choose [l]:" in output:
-                    os.write(master, b"u\n")
+                if not sent and b"Choose [1]:" in output:
+                    os.write(master, b"3\n")
                     sent = True
             if proc.poll() is not None:
                 break

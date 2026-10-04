@@ -98,6 +98,29 @@ def _cache_path(identity):
     return Path(base) / "t" / "updates" / (digest + ".json")
 
 
+def _skip_path(identity):
+    # Keep the prompt choice outside the checker cache so a slow refresh cannot
+    # block it or overwrite it when the cache is replaced.
+    return _cache_path(identity).with_suffix(".skip.json")
+
+
+def _skipped_version(identity):
+    path = _skip_path(identity)
+    try:
+        if path.is_symlink() or path.stat().st_size > 8192:
+            return ""
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, UnicodeError):
+        return ""
+    if not isinstance(data, dict) or data.get("identity") != identity:
+        return ""
+    version = data.get("version")
+    if not isinstance(version, str):
+        return ""
+    valid = SHA if identity["kind"] == "git" else SEMVER
+    return version if valid.fullmatch(version) else ""
+
+
 def _read(path, identity):
     try:
         if path.is_symlink() or path.stat().st_size > 8192:
@@ -230,14 +253,18 @@ def _state(installation, respect_snooze):
     if identity is None:
         return state
     data = _read(_cache_path(identity), identity)
+    skipped = _skipped_version(identity) if respect_snooze else ""
     now = time.time()
     if data and data.get("expires_at", 0) > now and not data.get("pending"):
         state.update(checked=True, error=bool(data.get("error")))
-    if data.get("expires_at", 0) > now and (not respect_snooze or data.get("snoozed_until", 0) <= now) and data.get("available"):
+    if (data.get("expires_at", 0) > now and data.get("available")
+            and (not respect_snooze or (data.get("snoozed_until", 0) <= now
+                                        and skipped != data["latest"]))):
         if identity["kind"] != "git" or _git_offer_safe(identity):
             state.update(available=True, latest=data["latest"])
     if (identity["kind"] == "git" and identity["remote"] in PROJECT_REMOTES
             and data.get("expires_at", 0) > now and data.get("unreleased")
+            and not data.get("available")
             and (not respect_snooze or data.get("snoozed_until", 0) <= now)
             and _git_offer_safe(identity)):
         state["unreleased"] = data["unreleased"]
@@ -317,6 +344,24 @@ def snooze(installation, seconds=INTERVAL):
                         "available": False, "latest": ""}
             data["snoozed_until"] = time.time() + max(0, seconds)
             _write(path, data)
+    except OSError:
+        pass
+
+
+def skip_version(installation, version):
+    """Hide one offered version until discovery finds a different target."""
+    identity = _identity(installation)
+    if identity is None or not isinstance(version, str) or not (
+            SHA.fullmatch(version) if identity["kind"] == "git" else SEMVER.fullmatch(version)):
+        return
+    # A prompt can stay open across a refresh. Its old choice must not replace
+    # a skip for the version that discovery now offers.
+    latest = _read(_cache_path(identity), identity).get("latest")
+    if latest and latest != version:
+        return
+    path = _skip_path(identity)
+    try:
+        _write(path, {"identity": identity, "version": version})
     except OSError:
         pass
 
