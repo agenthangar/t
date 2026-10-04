@@ -164,6 +164,7 @@ _dev_app_slot_reserved() {{ return 1; }}
 source {shlex.quote(str(ROOT / "zsh/agent.zsh"))}
 _dev_agent_of_session() {{ print {agent}; }}
 tmux new-session -d -s {session} -c {shlex.quote(str(tmp_path))} 'exec sleep 60' || exit
+tmux set-option -p -t '=dev-api-1:' remain-on-exit on
 before=$(tmux display-message -p -t '=dev-api-1:' '#{{pane_id}}')
 _t_restart_slot {session} {shlex.quote(str(tmp_path))} {SID} {agent} restart || exit
 [[ $(tmux display-message -p -t '=dev-api-1:' '#{{pane_id}}') == $before ]] || exit 2
@@ -172,7 +173,7 @@ tmux show-options -p -v -t '=dev-api-1:' remain-on-exit
     try:
         result = run_shell(tmp_path, code)
         assert result.returncode == 0, result.stderr
-        assert result.stdout.endswith("off\n")
+        assert result.stdout.endswith("on\n")
         deadline = time.monotonic() + 5
         while not thread_log.exists() and time.monotonic() < deadline:
             time.sleep(0.05)
