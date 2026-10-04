@@ -2215,3 +2215,61 @@ def test_double_dash_preserves_literal_help_argument(t_mod, monkeypatch):
     monkeypatch.setitem(t_mod.IMPLEMENTED, "repos", lambda cfg, args: seen.append(args.repo) or 0)
     assert t_mod.main(["repos", "path", "--", "--help"]) == 0
     assert seen == ["--help"]
+
+
+_INTERNAL_COMMANDS = ("session-rows", "land", "kill-owner", "new-land", "mcp", "__resolve")
+
+
+@pytest.mark.parametrize("argv", [[], ["help"], ["-h"], ["--help"], ["version"], ["--bad-option"]])
+def test_command_discovery_only_advertises_public_verbs(t_mod, capsys, monkeypatch, argv):
+    monkeypatch.setattr(t_mod, "Config", lambda: pytest.fail("discovery loaded config"))
+    if argv in (["version"], ["--bad-option"]):
+        with pytest.raises(SystemExit) as exc:
+            t_mod.main(argv)
+        assert exc.value.code == 2
+    else:
+        assert t_mod.main(argv) == 0
+    captured = capsys.readouterr()
+    output = captured.out + captured.err
+    for command in _INTERNAL_COMMANDS:
+        assert command not in output
+    if argv == ["version"]:
+        assert "invalid choice: 'version'" in output
+        choices = output.split("choose from ", 1)[1].replace("'", "")
+        assert "open," in choices and "doctor)" in choices
+    elif argv != ["--bad-option"]:
+        assert "t open" in output and "t update" in output
+
+
+@pytest.mark.parametrize("command", _INTERNAL_COMMANDS)
+def test_internal_commands_keep_parsing_and_explicit_help(t_mod, capsys, monkeypatch, command):
+    monkeypatch.setattr(t_mod, "Config", lambda: pytest.fail("help loaded config"))
+    rest = ["url", "name", "alias"] if command == "new-land" else []
+    assert t_mod.build_parser().parse_args([command, *rest]).verb == command
+    for argv in (["help", command], [command, "--help"]):
+        assert t_mod.main(argv) == 0
+        assert f"usage: t {command} " in capsys.readouterr().out
+
+
+def test_nested_hidden_commands_and_aliases(t_mod, capsys):
+    parser = t_mod._CommandParser(prog="test")
+    sub = parser.add_subparsers(dest="command")
+    public = sub.add_parser("public", aliases=["p"], help="public command")
+    nested = public.add_subparsers(dest="action")
+    nested.add_parser("visible", help="visible action")
+    nested.add_parser("secret", aliases=["s"], hidden=True, help="private action")
+    sub.add_parser("internal", aliases=["i"], hidden=True, help="private command")
+    assert parser.parse_args(["i"]).command == "i"
+    assert parser.parse_args(["p", "s"]).action == "s"
+    assert "internal" not in parser.format_help()
+    assert "secret" not in public.format_help()
+    assert "visible" in public.format_help()
+    with pytest.raises(SystemExit):
+        parser.parse_args(["public", "typo"])
+    error = capsys.readouterr().err
+    assert "secret" not in error
+    assert "choose from visible)" in error.replace("'", "")
+    nested.add_parser("choice").add_argument("mode", choices=["yes", "no"])
+    with pytest.raises(SystemExit):
+        parser.parse_args(["public", "choice", "maybe"])
+    assert "choose from yes, no)" in capsys.readouterr().err.replace("'", "")
