@@ -399,3 +399,9 @@ _dev_self_sid() {
 # (${DEV_REPOS[repo]:t}), not the alias, so they are identical on every host (a dir is
 # `dot` here and `dotfiles` there, but its basename `dotfiles` is stable) — which keeps
 # cross-host resolution (tbeam, _dev_remote_resolve) coherent.
+# Sync trust before launching either a terminal agent or desktop workspace.
+# Keep stdout free for callers that return a worktree path or other protocol data.
+_dev_auto_trust() {
+  [[ ${T_AUTO_TRUST:-} == 1 && -z ${T_NO_TRUST:-} && -d $1 ]] || return 0
+  command t trust -q "$1" >&2
+}

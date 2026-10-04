@@ -469,6 +469,7 @@ _t_open_app() {
     dir=$(_dev_worktree_create "$repo" "$slot")
   fi
   [[ -n $dir && -e $dir/.git ]] || { _dev_worktree_refuse "$repo" "$slot"; return 1; }
+  _dev_auto_trust "$dir"
   _dev_app_slot_reserve "$dir" || {
     print -u2 -- "t open --app: could not reserve $dir against automatic cleanup"
     return 1

@@ -66,6 +66,7 @@ _t_sync_config() {
     for k in ${(k)DEV_FAST};      do print -r -- "DEV_FAST[$k]=${(q)DEV_FAST[$k]}"; done
     for k in ${(k)DEV_OPEN_MODE}; do print -r -- "DEV_OPEN_MODE[$k]=${(q)DEV_OPEN_MODE[$k]}"; done
     print -r -- "DEV_OPEN_MODE_DEFAULT=${(q)DEV_OPEN_MODE_DEFAULT}"
+    print -r -- "T_AUTO_TRUST=${(q)${T_AUTO_TRUST:-0}}"
     print -r -- "DEV_AGENT_DEFAULT=${(q)DEV_AGENT_DEFAULT}"
     print -r -- "TBEAM_HOST=${(q)TBEAM_HOST}"
     print -r -- "MINI_HOST=${(q)MINI_HOST}"

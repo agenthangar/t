@@ -1666,6 +1666,7 @@ _dev_recovery_watch() {
 # keep the transcript filename glob (`<sid>.jsonl`) matching.
 _dev_new_session() {
   local session="$1" dir="$2" branch="${3:-$DEV_BRANCH}" skip_prepare="${4:-}" agent="${5:-claude}"
+  _dev_auto_trust "$dir"
   local logfile="$HOME/.tmux-logs/${session}.log"
   local sid; sid="$(uuidgen | tr 'A-Z' 'a-z')"
   mkdir -p "$HOME/.tmux-logs"
@@ -1933,6 +1934,7 @@ _t_dev() {
       else _dev_worktree_refuse "$repo" "$_wslot"; return 1; fi
     fi
     _dev_agent_check "$agent" || return 1
+    _dev_auto_trust "$dir"
     echo "Starting $agent in $dir (no tmux)"
     cd "$dir" || return 1
     [[ -n $skip_prepare ]] || _dev_repo_prepare "$branch"

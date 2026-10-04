@@ -314,6 +314,16 @@ Installing t preserves existing agent choices. Automatic folder trust and the
 maintainer's personal permission defaults are not enabled for a standalone install.
 Use `t agent trust <dir>` to make a deliberate folder-trust change. To opt into automatic
 trust for registered repositories, set `export T_AUTO_TRUST=1` in your local config.
+The `t config` TUI shows **Automatic folder trust** and lets you enable or disable it.
+Trust is synced when creating/reusing worktrees, starting or resuming terminal
+sessions, and opening Codex desktop workspaces. Claude Code desktop and Codex
+share their CLI trust stores; both canonical repositories and individual worktrees
+are registered. `t trust --all` also includes existing session worktrees.
+Cursor desktop and VS Code use a separate workspace trust database, which is
+updated when present; restart those apps after syncing to load the saved trust.
+`t trust --status --all` reports the saved trust state. Explicit Codex `untrusted`
+entries remain untrusted, including their linked worktrees. Claude desktop can
+still ask for confirmation when opening a folder through a deep link.
 
 To use your own permission rules, point `T_PERMISSIONS_DIR` at a directory containing
 `permissions.allow` and `permissions.retire`, inspect `t policy check`, then apply

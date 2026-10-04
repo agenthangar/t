@@ -518,3 +518,26 @@ def test_config_opening_mode_global_and_repo_defaults(t_mod, config_cli, monkeyp
         t_mod._config_assignment("DEV_OPEN_MODE_DEFAULT", "other")
     with pytest.raises(ValueError, match="choose cli or app"):
         t_mod._config_assignment("DEV_OPEN_MODE[site]", "other")
+
+
+def test_config_tui_enables_and_displays_automatic_trust(t_mod, tmp_path, monkeypatch, config_cli):
+    cfg, local = config_cli
+    cfg.auto_trust = '0'
+    seen = []
+    class TrustMenu(Menu):
+        def pick(self, label, rows, default=0, **kwargs):
+            if 'trust' in (kwargs.get('values') or {}):
+                seen.append(kwargs['values']['trust'])
+            return super().pick(label, rows, default, **kwargs)
+    menu = TrustMenu(['trust', '1', 'save'])
+    monkeypatch.setattr(t_mod, '_RailUI', lambda: menu)
+    assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == 0
+    assert 'export T_AUTO_TRUST=1' in local.read_text()
+    assert [v.split()[0] for v in seen] == ['disabled', 'enabled']
+    assert t_mod._config_assignment('T_AUTO_TRUST', '0') == 'export T_AUTO_TRUST=0'
+    with pytest.raises(ValueError, match='automatic trust'):
+        t_mod._config_assignment('T_AUTO_TRUST', 'yes')
+    bridge = tmp_path / 'bridge'
+    bridge.write_text('T_AUTO_TRUST=1\n')
+    monkeypatch.setattr(t_mod, 'CONFIG', str(bridge))
+    assert t_mod.Config().auto_trust == '1'

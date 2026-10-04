@@ -21,6 +21,7 @@
 import argparse
 import calendar
 import copy
+from contextlib import closing
 import glob
 import hashlib
 import html
@@ -35,6 +36,7 @@ import shlex
 import shutil
 import signal
 import socket
+import sqlite3
 import stat
 import subprocess
 import sys
@@ -43,7 +45,7 @@ import textwrap
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import TCPServer
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import quote, urlencode, urlsplit
 from urllib.request import Request, urlopen
 
 HOME = os.path.expanduser("~")
@@ -77,7 +79,7 @@ ZSH_PRELUDE = "setopt no_monitor no_notify 2>/dev/null; "
 
 _CFG_LINE = re.compile(
     r"^(DEV_REPOS|DEV_BRANCHES|REMOTE_HOSTS|DEV_WORKTREE|DEV_OPEN_MODE|DEV_AGENT|DEV_MODEL|DEV_EFFORT|DEV_FAST)\[([^\]]+)\]=(.*)$"
-    r"|^(DEV_BRANCH|DEV_WORKTREE_ROOT|DEV_WORKTREE_DEFAULT|DEV_AGENT_DEFAULT|TBEAM_HOST|MINI_HOST|DEV_OPEN_MODE_DEFAULT|T_LOCAL_RC)=(.*)$")
+    r"|^(DEV_BRANCH|DEV_WORKTREE_ROOT|DEV_WORKTREE_DEFAULT|DEV_AGENT_DEFAULT|TBEAM_HOST|MINI_HOST|DEV_OPEN_MODE_DEFAULT|T_AUTO_TRUST|T_LOCAL_RC)=(.*)$")
 
 
 def _current_local_rc():
@@ -123,6 +125,7 @@ class Config:
         self.open_mode_default = "cli"
         self.agents = {}     # alias -> claude|codex (DEV_AGENT[alias])
         self.agent_default = "claude"
+        self.auto_trust = os.environ.get("T_AUTO_TRUST", "0")
         self.models = {}     # agent -> model for NEW sessions; empty defers to the CLI
         self.efforts = {}    # agent -> reasoning effort for NEW sessions
         self.fast = {}       # agent -> 1/0 fast mode; empty inherits the CLI setting
@@ -157,6 +160,8 @@ class Config:
                 self.open_mode_default = _unquote(m.group(5))
             elif m.group(4) == "DEV_AGENT_DEFAULT":
                 self.agent_default = _unquote(m.group(5))
+            elif m.group(4) == "T_AUTO_TRUST":
+                self.auto_trust = _unquote(m.group(5))
             elif m.group(4) == "TBEAM_HOST":
                 self.beam_host = _unquote(m.group(5))
             elif m.group(4) == "MINI_HOST":
@@ -1363,6 +1368,7 @@ _CONFIG_ARRAYS = {"DEV_REPOS": "repos", "REMOTE_HOSTS": "hosts", "DEV_BRANCHES":
                   "DEV_AGENT": "agents", "DEV_WORKTREE": "worktree", "DEV_OPEN_MODE": "open_mode", "DEV_MODEL": "models",
                   "DEV_EFFORT": "efforts", "DEV_FAST": "fast"}
 _CONFIG_SCALARS = {"DEV_AGENT_DEFAULT": "agent_default", "DEV_BRANCH": "branch",
+                   "T_AUTO_TRUST": "auto_trust",
                    "DEV_WORKTREE_ROOT": "worktree_root", "DEV_WORKTREE_DEFAULT": "worktree_default",
                    "DEV_OPEN_MODE_DEFAULT": "open_mode_default",
                    "TBEAM_HOST": "beam_host", "MINI_HOST": "mini_host"}
@@ -1408,7 +1414,9 @@ def _config_assignment(key, value):
         raise ValueError("fast mode must be 1, 0, or empty to inherit")
     if (key == "DEV_OPEN_MODE_DEFAULT" or key.startswith("DEV_OPEN_MODE[")) and value not in ("cli", "app"):
         raise ValueError("choose cli or app for opening mode")
-    prefix = "export " if key == "TBEAM_HOST" else ""
+    if key == "T_AUTO_TRUST" and value not in ("1", "0"):
+        raise ValueError("automatic trust must be 1 or 0")
+    prefix = "export " if key in ("TBEAM_HOST", "T_AUTO_TRUST") else ""
     return f"{prefix}{key}={shlex.quote(value)}"
 
 
@@ -1917,8 +1925,9 @@ def _config_wizard(cfg):
     ui.raw()
     try:
         while True:
-            rows = [("tool", "Default tool"), ("mode", "Default opening mode")]
+            rows = [("tool", "Default tool"), ("mode", "Default opening mode"), ("trust", "Automatic folder trust")]
             values = {"tool": edited.agent_default, "mode": "Desktop app (Codex, macOS)" if edited.open_mode_default == "app" else "CLI"}
+            values["trust"] = ("enabled" if edited.auto_trust == "1" else "disabled") + (" (T_NO_TRUST overrides)" if os.environ.get(_TRUST_NO_ENV) else "")
             for a in AGENTS:
                 rows.append((a, f"{a.title()} settings ›"))
                 values[a] = f"{edited.models.get(a) or 'tool default'} · {edited.efforts.get(a) or 'default'} effort"
@@ -1983,6 +1992,11 @@ def _config_wizard(cfg):
                                  default=1 if edited.open_mode_default == "app" else 0)
                 if picked is not None:
                     edited.open_mode_default = picked
+            elif choice == "trust":
+                picked = ui.pick("Trust folders before terminal/desktop launches", [("1", "Enabled"), ("0", "Disabled")],
+                                 default=0 if edited.auto_trust == "1" else 1)
+                if picked is not None:
+                    edited.auto_trust = picked
             elif choice == "tool":
                 options = [(a, f"{a}" + ("" if shutil.which(a) else f" (install with t install {a})"))
                            for a in AGENTS]
@@ -5634,8 +5648,9 @@ def cmd_permissions(cfg, args):
 #
 # Each agent asks "do you trust this folder?" once per folder and remembers the answer
 # in its own place; `t trust` writes that answer for all of them, and every REGISTERED
-# repo (DEV_REPOS) is trusted by default — `dots` runs `t trust --all`, and t setup /
-# t new / t install trust what they just registered. Where each one keeps it, all read
+# repo (DEV_REPOS) can be trusted automatically with T_AUTO_TRUST=1; setup, new,
+# install and terminal/desktop launch paths sync what they register or open.
+# Where each one keeps it, all read
 # off the binaries and verified (claude 2.1.274 · codex 0.154 · cursor 2026.09.15):
 #
 #   claude  ~/.claude.json  projects["<dir>"].hasTrustDialogAccepted = true — the key
@@ -5651,14 +5666,15 @@ def cmd_permissions(cfg, args):
 #           not sit under its canonical repo — gets a marker of its own, and --all adds
 #           one for $DEV_WORKTREE_ROOT, covering every session worktree at once.
 #
-# So the unit is the canonical repo: one entry per repo covers every per-session
-# worktree in claude and codex. Same write contract as the permission sync — add-only
+# Register canonical repos AND exact worktree paths for desktop checks.
+# CLI and desktop trust share these stores; editor desktop trust is separate.
+# Same write contract as the permission sync — add-only
 # (an explicit codex `untrusted`, or any other key, is never touched), tmp + os.replace,
 # silent unless something changed, an unreadable or foreign-shaped file left alone, an
 # agent gated on the config its own first run creates. ~/.claude.json is the one file
 # here that carries a login and that a LIVE claude rewrites constantly, so its write
 # goes through the same `<file>.lock` directory lock Claude takes (proper-lockfile: a
-# mkdir) and re-reads under it, and the tmp file is born 0600. DOTFILES_NO_TRUST=1
+# mkdir) and re-reads under it, and the tmp file is born 0600. T_NO_TRUST=1
 # opts a machine out of the automatic paths; `t trust` by hand always works.
 
 _TRUST_CLAUDE = ".claude.json"
@@ -5714,9 +5730,8 @@ def _trust_too_wide(path, home):
 
 
 def _trust_records(dirs, extra_trees=()):
-    """[{dir, repo, tree}] — repo: what claude + codex key on (the canonical root, else
-    the dir itself); tree: the checkout the dir is in, which cursor needs as well when
-    it is a linked worktree. extra_trees: cursor-only parents ($DEV_WORKTREE_ROOT).
+    """[{dir, repo, tree}] — repo: canonical root, else the dir itself;
+    tree: actual checkout, also registered for desktop trust checks. extra_trees: cursor-only parents ($DEV_WORKTREE_ROOT).
     Deduped by repo+tree, order kept."""
     out, seen = [], set()
     for d in dirs:
@@ -5747,7 +5762,7 @@ def _trust_agent_paths(recs, agent):
         if agent == "cursor":
             want = [r["repo"]] + ([r["tree"]] if r["tree"] != r["repo"] else [])
         else:
-            want = [] if r["cursor_only"] else [r["repo"]]
+            want = [] if r["cursor_only"] else list(dict.fromkeys([r["repo"], r["tree"]]))
         for w in want:
             paths += [p for p in _trust_spellings(w) if p not in paths]
     return paths
@@ -5882,7 +5897,7 @@ def _trust_codex_plan(text, paths):
     return body, added
 
 
-def _trust_codex_sync(path, paths, apply=False):
+def _trust_codex_sync(path, paths, apply=False, parents=None):
     rep = {"state": None, "add": []}
     try:
         with open(path, encoding="utf-8") as fh:
@@ -5891,10 +5906,27 @@ def _trust_codex_sync(path, paths, apply=False):
         have = ""
     except (OSError, UnicodeDecodeError):
         return rep
-    want, added = _trust_codex_plan(have, paths)
+    # Never grant a linked tree trust that bypasses a canonical repo's denial.
+    denied = set()
+    current = None
+    for line in have.splitlines():
+        header = _TRUST_CODEX_HEADER.match(line)
+        if header:
+            try:
+                current = json.loads('"%s"' % header.group(1)) if header.group(1) is not None else header.group(2)
+            except ValueError:
+                return rep
+        elif line.lstrip().startswith("["):
+            current = None
+        elif current and re.match(r'''\s*trust_level\s*=\s*["']untrusted["']''', line):
+            denied.update(_trust_spellings(current))
+    blocked = [p for p in paths if p in denied or (parents or {}).get(p) in denied]
+    want, added = _trust_codex_plan(have, [p for p in paths if p not in blocked])
     if want is None or not _perm_toml_ok(want):
         return rep
     rep.update(state="pending" if added else "synced", add=added)
+    if blocked:
+        rep["blocked"] = blocked
     if added and apply:
         _perm_write(path, want)
         rep["state"] = "applied"
@@ -5943,10 +5975,12 @@ def _trust_targets(home, which=shutil.which):
     ~/.claude.json its first run writes, codex on the binary or a REAL codex home,
     cursor on the config cursor-agent writes at its first run."""
     t = {}
-    if os.path.exists(os.path.join(home, _TRUST_CLAUDE)):
-        t["claude"] = os.path.join(home, _TRUST_CLAUDE)
-    if "codex" in _perm_targets(home, which):
-        t["codex"] = os.path.join(home, _PERM_CODEX_CONFIG)
+    claude = os.path.join(os.environ.get("CLAUDE_CONFIG_DIR") or home, _TRUST_CLAUDE)
+    if os.path.exists(claude):
+        t["claude"] = claude
+    codex = os.path.join(os.environ.get("CODEX_HOME") or os.path.join(home, ".codex"), "config.toml")
+    if "codex" in _perm_targets(home, which) or os.path.isfile(codex):
+        t["codex"] = codex
     if os.path.exists(os.path.join(home, _TRUST_CURSOR_GATE)):
         t["cursor"] = os.path.join(home, _TRUST_CURSOR_DIR)
     return t
@@ -5967,14 +6001,64 @@ def _trust_sync(home, recs, apply=False, which=shutil.which):
         elif agent == "claude":
             rep = _trust_claude_sync(path, paths, apply)
         elif agent == "codex":
-            rep = _trust_codex_sync(path, paths, apply)
+            parents = {p: os.path.realpath(r["repo"]) for r in recs if not r["cursor_only"]
+                       for p in _trust_spellings(r["tree"])}
+            rep = _trust_codex_sync(path, paths, apply, parents)
         else:
             rep = _trust_cursor_sync(path, paths, home, apply)
         known = rep["state"] in ("synced", "pending", "applied")
         rep.update(path=path, want=len(paths),
-                   have=[p for p in paths if p not in rep["add"]] if known else [])
+                   have=[p for p in paths if p not in rep["add"] and p not in rep.get("blocked", [])] if known else [])
+        out[agent] = rep
+    for agent, path in _trust_editor_targets(home).items():
+        paths = _trust_agent_paths(recs, "cursor")
+        rep = _trust_editor_sync(path, paths, apply)
+        rep.update(path=path, want=len(paths),
+                   have=[p for p in paths if p not in rep["add"]] if rep["state"] else [])
         out[agent] = rep
     return out
+
+
+def _trust_editor_targets(home):
+    """Only existing standard Cursor/VS Code desktop stores; never create an app DB."""
+    base = (os.path.join(home, "Library", "Application Support") if sys.platform == "darwin"
+            else os.environ.get("APPDATA", "") if sys.platform == "win32"
+            else os.environ.get("XDG_CONFIG_HOME") or os.path.join(home, ".config"))
+    return {name: path for name, app in (("cursor-desktop", "Cursor"), ("vscode", "Code"))
+            for path in [os.path.join(base, app, "User", "globalStorage", "state.vscdb")]
+            if os.path.isfile(path)}
+
+
+def _trust_editor_sync(path, paths, apply=False):
+    """Merge VS Code's content.trust.model.key (also used by Cursor), transactionally.
+
+    Running editors cache this value: reload/restart the app after syncing trust.
+    Keep every unrelated DB row and URI entry, including remote workspaces.
+    """
+    rep = {"state": None, "add": []}
+    try:
+        with closing(sqlite3.connect("file:" + quote(os.path.abspath(path), safe="/") + "?mode=rw",
+                                     uri=True, timeout=1)) as db, db:
+            db.execute("BEGIN IMMEDIATE" if apply else "BEGIN")
+            row = db.execute("SELECT value FROM ItemTable WHERE key=?", ("content.trust.model.key",)).fetchone()
+            data = json.loads(row[0]) if row else {"uriTrustInfo": []}
+            entries = data.get("uriTrustInfo") if isinstance(data, dict) else None
+            if (not isinstance(entries, list)
+                    or any(not isinstance(e, dict) or not isinstance(e.get("uri"), dict) for e in entries)
+                    or any(not isinstance(e["uri"].get("path", ""), str) for e in entries)):
+                return rep
+            covered = [e["uri"].get("path", "") for e in entries if e.get("trusted") is True
+                       and e["uri"].get("scheme") == "file" and not e["uri"].get("authority")]
+            added = [p for p in paths if not any(p == c or p.startswith(c.rstrip("/") + "/") for c in covered if c)]
+            rep.update(state="pending" if added else "synced", add=added)
+            if apply and added:
+                entries.extend({"uri": {"scheme": "file", "path": p}, "trusted": True} for p in added)
+                db.execute("INSERT OR REPLACE INTO ItemTable (key, value) VALUES (?, ?)",
+                           ("content.trust.model.key", json.dumps(data)))
+                rep["state"] = "applied"
+    except (sqlite3.Error, ValueError, OSError):
+        return {"state": None, "add": []}
+    return rep
 
 
 def _trust_line(agent, rep, quiet=False):
@@ -5986,6 +6070,8 @@ def _trust_line(agent, rep, quiet=False):
     have = ", ".join(_tilde(p) for p in rep.get("have") or [])
     if st == "applied":
         text = "trusted %s" % names + (" · already: %s" % have if have else "")
+    elif rep.get("blocked"):
+        text = "explicitly untrusted: " + ", ".join(_tilde(p) for p in rep["blocked"])
     elif quiet:
         return None
     elif st == "absent":
@@ -6000,7 +6086,11 @@ def _trust_line(agent, rep, quiet=False):
         text = "already trusted" + (": %s" % have if have else "")
     else:
         text = "NOT trusted: %s — t trust" % names + (" · already: %s" % have if have else "")
-    return "%s %-7s %s" % (_agent_glyph(agent), agent, text)
+    if rep.get("blocked") and st == "applied":
+        text += " · explicitly untrusted: " + ", ".join(_tilde(p) for p in rep["blocked"])
+    if agent in ("cursor-desktop", "vscode") and st == "applied":
+        text += " (restart the app to load trust)"
+    return "%s %-7s %s" % ("▣" if agent in ("cursor-desktop", "vscode") else _agent_glyph(agent), agent, text)
 
 
 def _trust_short(agent, rep):
@@ -6012,13 +6102,17 @@ def _trust_short(agent, rep):
         return "%s no config yet" % agent
     if st is None or st == "busy":
         return "%s config unreadable" % agent
-    return "%s %d/%d" % (agent, rep["want"] - (len(rep["add"]) if st == "pending" else 0), rep["want"])
+    return "%s %d/%d" % (agent, rep["want"] - (len(rep["add"]) if st == "pending" else 0) - len(rep.get("blocked", [])), rep["want"])
 
 
 def _trust_all_dirs(cfg):
     """(dirs, extra_trees) for --all: every registered repo whose dir exists, plus the
     session-worktree root for cursor's parent walk."""
     dirs = [d for d in dict.fromkeys(cfg.repos.values()) if os.path.isdir(d)]
+    for repo in list(dirs):
+        for tree in glob.glob(os.path.join(cfg.worktree_root, os.path.basename(repo), "*")):
+            if os.path.exists(os.path.join(tree, ".git")) and tree not in dirs:
+                dirs.append(tree)
     extra = [cfg.worktree_root] if os.path.isdir(cfg.worktree_root) else []
     return dirs, extra
 
@@ -6026,7 +6120,7 @@ def _trust_all_dirs(cfg):
 def _trust_auto(dirs, extra_trees=(), say=print):
     """The automatic path (t setup / t new / new-land after registering): trust, say
     only what changed (say=None: nothing — new-land's stdout is a parsed sentinel).
-    DOTFILES_NO_TRUST=1 turns it off."""
+    T_NO_TRUST=1 turns it off."""
     if os.environ.get(_TRUST_NO_ENV) or os.environ.get("T_AUTO_TRUST") != "1" or not dirs:
         return
     for agent, rep in _trust_sync(HOME, _trust_records(dirs, extra_trees), apply=True).items():
@@ -6068,10 +6162,10 @@ def cmd_trust(cfg, args):
         return 1
     reps = _trust_sync(HOME, recs, apply=not args.status)
     if not args.quiet:
-        what = ("%d registered repo(s)" % len(dirs) if args.all
+        what = ("%d registered repo(s)" % len({r["repo"] for r in recs if not r["cursor_only"]}) if args.all
                 else ", ".join(_tilde(r["repo"]) for r in recs))
         print("trust — %s%s" % (what, " (status only)" if args.status else ""))
-    for agent in INSTALL_AGENTS:
+    for agent in reps:
         line = _trust_line(agent, reps[agent], quiet=args.quiet)
         if line:
             print(("trust: " if args.quiet else "  ") + line)
@@ -6258,8 +6352,8 @@ def cmd_doctor(cfg, args):
     trust_dirs, trust_extra = _trust_all_dirs(cfg)
     trust_sync = _trust_sync(HOME, _trust_records(trust_dirs, trust_extra)) if trust_dirs else None
     if trust_sync:
-        print("  trust       %s (%d registered repos — t trust --all)"
-              % (" · ".join(_trust_short(a, trust_sync[a]) for a in INSTALL_AGENTS), len(trust_dirs)))
+        print("  trust       %s (%d repos/worktrees — t trust --all)"
+              % (" · ".join(_trust_short(a, r) for a, r in trust_sync.items()), len(trust_dirs)))
 
     # t: show active and canonical sources independently.
     section("t installation")
@@ -6864,6 +6958,7 @@ def cmd_app_workspace(cwd):
         bundle = _app_bundle()
         if not bundle:
             raise ValueError("install the Codex desktop app first")
+        _trust_auto([cwd])
         window = _app_new_window(bundle)
         window.focus()
         result = _run(["codex", "app", cwd], timeout=30)
@@ -6907,6 +7002,7 @@ def cmd_app(cfg, args):
         bundle = _app_bundle()
         if not bundle:
             raise ValueError("install the Codex desktop app in /Applications or ~/Applications first")
+        _trust_auto([row["cwd"]])
         # A new PROCESS is not a new WINDOW. Invoke the native New Window action
         # and retain the verified new window before stopping the slot's CLI.
         window = None if args.reuse_window else _app_new_window(bundle)
@@ -8708,8 +8804,10 @@ def build_parser():
             "~/.codex/config.toml ([projects.\"dir\"] trust_level), and cursor-agent's "
             "~/.cursor/projects/<slug>/.workspace-trusted marker. Bare: the repo $PWD is in "
             "(a per-session worktree resolves to its canonical repo, which is what claude "
-            "and codex key on — one entry covers every worktree). Use --all for every registered "
-            "repo. Set T_AUTO_TRUST=1 to trust repos automatically during setup/new/install. "
+            "and codex key on; the worktree is also registered for desktop checks). Use --all for every registered "
+            "repo and its existing session worktrees. Set T_AUTO_TRUST=1 to sync trust before "
+            "terminal/desktop launches and during setup/new/install. Cursor desktop and VS Code "
+            "stores are updated when present (restart the editor afterward). "
             "Add-only — an explicit codex `untrusted` is never flipped — "
             "and $HOME or anything above it is refused.")
     sp.add_argument("dirs", nargs="*", metavar="dir", help="folders to trust (default: the current one)")
