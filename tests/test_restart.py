@@ -158,7 +158,6 @@ def test_restart_real_tmux_preserves_pane_thread_and_worktree(tmp_path, agent):
     dirty.write_text("keep my changes\n")
     code = f'''
 tmux() {{ command {shlex.join(tmux)} "$@"; }}
-_dev_agent_of_session() {{ print {agent}; }}
 _dev_session_sid() {{ print {SID}; }}
 _dev_session_claude_pid() {{ tmux display-message -p -t '=dev-api-1:' '#{{pane_pid}}'; }}
 _dev_app_slot_reserved() {{ return 1; }}
@@ -177,6 +176,10 @@ tmux show-options -p -v -t '=dev-api-1:' remain-on-exit
         deadline = time.monotonic() + 5
         while not thread_log.exists() and time.monotonic() < deadline:
             time.sleep(0.05)
+        if not thread_log.exists():
+            pane = subprocess.run(tmux + ["capture-pane", "-p", "-t", "=dev-api-1:"],
+                                  capture_output=True, text=True)
+            pytest.fail(f"replacement agent did not start: {pane.stdout}{pane.stderr}")
         resume_arg = "resume" if agent == "codex" else "-r"
         assert thread_log.read_text().strip() == f"{tmp_path}|{resume_arg} {SID}"
         assert dirty.read_text() == "keep my changes\n"
