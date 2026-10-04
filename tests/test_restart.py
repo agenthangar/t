@@ -178,7 +178,11 @@ for attempt in {{1..100}}; do
 done
 [[ $(ps -o comm= -p "$fake_pid") == *sleep ]] || exit 3
 before=$(tmux display-message -p -t '=dev-api-1:' '#{{pane_id}}')
-_t_restart_slot {session} {shlex.quote(str(tmp_path))} {SID} {agent} restart || exit
+_t_restart_slot {session} {shlex.quote(str(tmp_path))} {SID} {agent} restart || {{
+  ps -o pid,ppid,stat,comm -p "$fake_pid" >&2
+  tmux display-message -p -t '=dev-api-1:' '#{{pane_pid}} dead=#{{pane_dead}} exit=#{{pane_dead_status}}' >&2
+  exit 1
+}}
 [[ $(tmux display-message -p -t '=dev-api-1:' '#{{pane_id}}') == $before ]] || exit 2
 tmux show-options -p -v -t '=dev-api-1:' remain-on-exit
 '''
