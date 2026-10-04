@@ -1824,14 +1824,17 @@ def _config_hosts(ui, cfg):
 
 
 def _config_repos(ui, cfg):
+    repo = None
     while True:
-        rows = [(r, r) for r in sorted(cfg.repos)]
-        rows += [("__add__", "+ Register repo"), ("__back__", "Back")]
-        repo = ui.pick("Repositories", rows, values={r: _tilde(p) for r, p in cfg.repos.items()},
-                       accents={"__add__": "g"})
-        if repo in (None, "__back__"):
-            return
+        if repo is None:
+            rows = [(r, r) for r in sorted(cfg.repos)]
+            rows += [("__add__", "+ Register repo"), ("__back__", "Back")]
+            repo = ui.pick("Repositories", rows, values={r: _tilde(p) for r, p in cfg.repos.items()},
+                           accents={"__add__": "g"})
+            if repo in (None, "__back__"):
+                return
         if repo == "__add__":
+            repo = None
             alias = _config_input(ui, "repo alias", kind="alias")
             if alias is None:
                 continue
@@ -1849,13 +1852,17 @@ def _config_repos(ui, cfg):
             values={"mode": {"cli": "CLI", "app": "Desktop app (Codex, macOS)"}.get(cfg.open_mode.get(repo), "inherit default"), "alias": repo, "path": _tilde(cfg.repos[repo]), "tool": cfg.agents.get(repo) or "inherit default",
                     "branch": cfg.branches.get(repo) or "inherit default",
                     "worktree": cfg.worktree.get(repo) or "inherit default"}, accents={"remove": "w"})
-        if action == "remove":
+        if action in (None, "back"):
+            repo = None
+        elif action == "remove":
             _config_remove_repo(cfg, repo)
+            repo = None
         elif action == "alias":
             value = _config_input(ui, "short name", repo, "alias")
             if value is not None:
                 try:
                     _config_rename_repo(cfg, repo, value)
+                    repo = value
                 except ValueError as exc:
                     ui.done("invalid", str(exc))
         elif action == "path":
@@ -1953,9 +1960,9 @@ def _config_wizard(cfg):
                     ui.done("invalid", str(exc))
                     continue
                 if changes:
-                    answer = ui.page("Review local settings", lines, ("y", "n", "q", "esc", "abort"),
-                                     keys="n / esc / q back", primary=("y", "SAVE CHANGES", f"{pending} pending"))
-                    if answer != "y":
+                    answer = ui.page("Review local settings", lines, ("enter", "y", "n", "q", "esc", "abort"),
+                                     keys="y save · n / esc / q back", primary=("enter", "SAVE CHANGES", f"{pending} pending"))
+                    if answer not in ("enter", "y"):
                         continue
                 return edited
             if choice == "hosts":
