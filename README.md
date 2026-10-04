@@ -59,6 +59,9 @@ You need **zsh, Python 3, Git, and tmux**. Install `fzf` for the interactive pic
 `gh` for GitHub integration, and `rsync`/SSH for moving sessions between hosts.
 The test suite runs on macOS and Linux with Python 3.12. Desktop handoff is macOS-only.
 
+To try a fresh install and worktree session in a disposable Docker container, see
+the [playground guide](docs/playground.md).
+
 With Homebrew:
 
 ```sh
