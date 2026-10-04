@@ -2277,14 +2277,13 @@ def test_nested_hidden_commands_and_aliases(t_mod, capsys):
     assert "choose from yes, no)" in capsys.readouterr().err.replace("'", "")
 
 
-def test_slot_line_marks_reservation_without_claiming_an_open_app(t_mod):
-    row = dict(slot='web-3', state='app', context='none', agent='codex',
+@pytest.mark.parametrize('context,marks', [('active', '● ✓ ▣'), ('none', '○   ▣')])
+def test_desktop_has_its_own_icon_and_normal_activity_columns(t_mod, context, marks):
+    row = dict(slot='web-3', state='app', context=context, agent='codex',
                summary='Review the web session')
-    line = t_mod._slot_line(row, t_mod.Style(tty=False), 7, 5)
-    assert line.startswith('◇   ' + t_mod._agent_glyph('codex'))
-    assert 'web-3' in line
-
     for host_w in (None, 4):
-        full = t_mod._slot_line(dict(row, host='mini'), t_mod.Style(tty=False), 7, 80, host_w)
-        assert '[app reserved] Review the web session' in full
-        assert '▣' not in full
+        for width in (5, 80):
+            line = t_mod._slot_line(dict(row, host='mini'), t_mod.Style(tty=False), 7, width, host_w)
+            assert line.startswith(marks)
+            assert '[app reserved]' not in line
+            assert 'web-3' in line

@@ -1144,6 +1144,12 @@ _dev_list() {
 # and re-rendered. This is the per-host scan behind `dev ls -r`: live dev slots are
 # what genuinely differ machine-to-machine (transcripts already converge via csync),
 # so the cross-host view lists these, not transcripts.
+# Loaded desktop conversations, read without starting or contacting an app-server.
+_dev_desktop_threads() {
+  [[ $OSTYPE == darwin* && -r ${CODEX_HOME:-$HOME/.codex}/state_5.sqlite ]] || return 0
+  python3 "$T_HOME/libexec/t_desktop.py" 2>/dev/null
+}
+
 _dev_session_rows() {
   setopt local_options null_glob bare_glob_qual
   # Two passes, because the expensive part is per-transcript and batches. Pass 1
@@ -1152,9 +1158,16 @@ _dev_session_rows() {
   # _dev_ps_snapshot); pass 2 prints, after ONE _transcript_meta_batch has read
   # every title at once rather than forking python3 per slot.
   local -a rows rowtx tpaths tx mrows f _PR_STALE
-  local -A title_of pr_of _PR_SPAWNED had_path
+  local -A title_of pr_of _PR_SPAWNED had_path desktop_sid desktop_title desktop_ambiguous
   local s short sid psid dir state context summary agent i mr mrest REPLY
   _dev_ps_snapshot
+  while IFS=$'\t' read -r sid dir summary; do
+    [[ -n $sid && -n $dir ]] || continue
+    if [[ -n ${desktop_sid[$dir]:-} ]]; then desktop_ambiguous[$dir]=1; fi
+    desktop_sid[$dir]=$sid; desktop_title[$dir]=$summary
+  done < <(_dev_desktop_threads)
+  # Several desktop conversations may share a folder; never guess the slot owner.
+  for dir in ${(k)desktop_ambiguous}; do unset "desktop_sid[$dir]"; done
   while IFS=$'\t' read -r s dir state; do
     [[ $s == dev-* && -n $dir ]] || continue
     had_path[$dir]=1
@@ -1174,8 +1187,11 @@ _dev_session_rows() {
       context=none
       # A retained tmux pane reserves the slot after desktop handoff. Its
       # attachment status describes the shell, not the conversation owner.
-      if [[ $agent == codex ]] && _dev_app_slot_reserved "$dir"; then
+      if [[ $agent == codex ]] && { [[ -n ${desktop_sid[$dir]:-} ]] || _dev_app_slot_reserved "$dir"; }; then
         state=app
+        if [[ -n ${desktop_sid[$dir]:-} ]]; then
+          sid=${desktop_sid[$dir]}; context=active
+        fi
         [[ $sid != - ]] && tx=( "$(_dev_agent_transcript codex "$sid" "$dir" 2>/dev/null)" )
       fi
     elif _dev_agent_at_welcome "$agent" "$s" "$dir"; then
@@ -1226,6 +1242,7 @@ _dev_session_rows() {
           psid=$sid; [[ $psid == - ]] && psid=
           summary=$(_dev_session_summary "dev-$short" "$dir" "$psid")
         fi
+        [[ $state == app && -n ${desktop_title[$dir]:-} ]] && summary=${desktop_title[$dir]}
         [[ -n $summary ]] || summary="(untitled $agent session)"
         # " · #N <state>" for the session's PR — the same tag `t resume` renders,
         # from the same cache, so a slot whose PR has landed says so where you
@@ -1247,11 +1264,13 @@ _dev_session_rows() {
   local wt match app_repo app_slot
   for wt in $DEV_WORKTREE_ROOT/*/<->(N/); do
     [[ -e $wt/.git && -z ${had_path[$wt]:-} ]] || continue
-    _dev_app_slot_reserved "$wt" || continue
+    [[ -n ${desktop_sid[$wt]:-} ]] || _dev_app_slot_reserved "$wt" || continue
     match=$(_dev_repo_of_dir "$wt") || continue
     app_repo=${match%%$'\t'*}; app_slot=${match#*$'\t'}
     [[ -n $app_repo && $app_slot == <-> ]] || continue
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' '-' "$wt" "$app_repo-$app_slot" app none '(Codex desktop workspace — reopen with t open --app)' codex
+    sid=${desktop_sid[$wt]:--}; context=none; summary='(Codex desktop workspace — reopen with t open --app)'
+    if [[ $sid != - ]]; then context=active; summary=${desktop_title[$wt]}; fi
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$sid" "$wt" "$app_repo-$app_slot" app "$context" "$summary" codex
   done
   # plus any FOREGROUND (non-tmux) claudes on this machine, same row format.
   _dev_fg_rows
