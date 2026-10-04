@@ -264,10 +264,12 @@ the terminal running `t` to invoke the app’s New Window menu. It cannot launch
 desktop workspace on a remote host.
 The desktop slot stays reserved in private Git worktree metadata so automatic
 cleanup and a later terminal launch cannot reuse it while the app may still be
-working. `t session list` marks reserved desktop slots with `◇` and
-`[app reserved]`, including slots handed off from tmux. This is a cleanup
-reservation, not a live window indicator; `t` cannot currently confirm whether
-the desktop workspace is open. To continue in the CLI, finish the desktop turn,
+working. `t session list` uses `▣` for Codex desktop sessions, alongside the same
+status columns as terminal sessions: `● ✓` for a loaded conversation and `○` for
+inactive. On macOS, live desktop context is verified from rollout files held open
+by the desktop backend; a saved reservation alone stays inactive. Loaded context
+can remain in the backend after a window closes, and does not mean a turn is
+currently generating. To continue in the CLI, finish the desktop turn,
 quit the app, and pull the slot:
 
 ```sh

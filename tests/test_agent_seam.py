@@ -2056,3 +2056,44 @@ def test_shell_auto_trust_is_opt_in_and_keeps_stdout_clean(zsh, tmp_path):
     assert 'trust call' not in zsh('_dev_auto_trust "$HOME"', T_AUTO_TRUST='1', T_NO_TRUST='1').stderr
     r = zsh('_dev_auto_trust "$HOME"', T_AUTO_TRUST='1')
     assert r.stdout == '' and 'trust call: trust -q ' in r.stderr
+
+
+@pytest.mark.parametrize('desktop_live,cli_live', [(False, False), (True, False), (True, True)])
+def test_desktop_context_uses_live_evidence_independently_of_reservation(zsh, desktop_live, cli_live):
+    wt = f'{zsh.home}/code/.worktrees/api/3'
+    evidence = f'print -r -- "{SID}\t{wt}\tDesktop title"' if desktop_live else ':'
+    r = zsh(f'_dev_desktop_threads() {{ {evidence}; }}; '
+            f'_dev_session_has_claude() {{ return {0 if cli_live else 1}; }}; '
+            f'_dev_session_sid() {{ print -r -- {SID}; }}; '
+            '_dev_agent_at_welcome() { return 0; }; '
+            '_dev_app_slot_reserved() { return 0; }; '
+            '_dev_agent_transcript() { :; }; _dev_session_summary() { :; }; '
+            '_dev_fg_rows() { :; }; _pr_state_flush() { :; }; '
+            '_dev_session_rows', FAKE_DEV_AGENT='codex',
+            FAKE_SESSION_ROWS=f'dev-api-3\t{wt}\tdetached')
+    assert r.returncode == 0, r.stderr
+    row = r.stdout.strip().split('\t')
+    assert row[3:5] == (['detached', 'idle'] if cli_live else ['app', 'active' if desktop_live else 'none'])
+    if desktop_live and not cli_live:
+        assert row[5] == 'Desktop title'
+
+
+@pytest.mark.parametrize('live,reserved,ambiguous', [(True, False, False), (False, True, False), (True, True, True)])
+def test_desktop_only_slot_rows_and_ambiguous_context(zsh, live, reserved, ambiguous):
+    wt = zsh.home / 'worktrees/api/3'
+    (wt / '.git').mkdir(parents=True)
+    evidence = f'print -r -- "{SID}\t{wt}\tDesktop title"' if live else ':'
+    if ambiguous:
+        evidence += f'; print -r -- "aaaaaaaa-0000-0000-0000-000000000002\t{wt}\tOther title"'
+    r = zsh(f'DEV_WORKTREE_ROOT="$HOME/worktrees"; '
+            f'_dev_desktop_threads() {{ {evidence}; }}; '
+            f'_dev_app_slot_reserved() {{ return {0 if reserved else 1}; }}; '
+            '_dev_repo_of_dir() { print -r -- "api\t3"; }; '
+            '_dev_fg_rows() { :; }; _pr_state_flush() { :; }; '
+            '_dev_session_rows', FAKE_SESSION_ROWS='')
+    assert r.returncode == 0, r.stderr
+    row = r.stdout.strip().split('\t')
+    active = live and not ambiguous
+    assert row[:5] == [SID if active else '-', str(wt), 'api-3', 'app', 'active' if active else 'none']
+    if active:
+        assert row[5] == 'Desktop title'
