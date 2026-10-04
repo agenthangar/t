@@ -157,10 +157,14 @@ resumes in the same pane; worktree edits and dev servers stay in place. Use
 
 For sessions opened through `t`, a local monitor automatically offers **Save draft
 and restart** or **Dismiss** when a recognized final connection error remains
-visible. A bright, bordered panel appears in the center of the affected terminal,
+visible, or when tmux reports that the agent pane has exited (even if the screen
+still shows work in progress). An exited Codex or Claude pane offers to resume its
+verified conversation; an unverified pane shows the attention panel below.
+A bright, bordered panel appears in the center of the affected terminal,
 including over SSH, and works without a model connection. Press **r** to restart
 or **q** to dismiss; **Enter** defaults to Dismiss. Offers are bound
-to the exact conversation and process; a changed or recovered session is left alone.
+to the exact conversation and process or exited pane; a changed or recovered
+session is left alone.
 Detached sessions get the offer when you return. Dismissal suppresses repeats until
 the error clears. Authentication and rate-limit errors do not trigger recovery.
 If the monitor cannot verify the conversation, a panel asks you to copy your draft

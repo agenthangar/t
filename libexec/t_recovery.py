@@ -19,6 +19,7 @@ import uuid
 ROOT = Path(__file__).resolve().parent.parent
 UUID = re.compile(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}\Z")
 BACKGROUND = "Cannot use the background server"
+DEAD = "Agent pane has exited"
 INVALID_CWD = "Failed to start turn: turn/start failed in TUI: turn/start failed: invalid cwd: No such file or directory (os error 2) (code -32600)"
 # Match final CLI error lines, not generic mentions of errors or retry counters.
 FAILURES = {
@@ -98,12 +99,13 @@ def failure(agent, screen):
 
 
 def panes(socket):
-    result = tmux(socket, "list-panes", "-a", "-F", "#{session_name}\t#{pane_id}\t#{pane_pid}\t#{session_path}")
+    keys = ("session", "pane", "pane_pid", "cwd", "pane_dead", "pane_dead_time")
+    result = tmux(socket, "list-panes", "-a", "-F", "#{session_name}\t#{pane_id}\t#{pane_pid}\t#{session_path}\t#{pane_dead}\t#{pane_dead_time}")
     groups = {}
     for line in result.stdout.splitlines():
         fields = line.split("\t")
-        if len(fields) == 4 and fields[0].startswith(("dev-", "t-cursor-")):
-            groups.setdefault(fields[0], []).append(dict(zip(("session", "pane", "pane_pid", "cwd"), fields)))
+        if len(fields) == len(keys) and fields[0].startswith(("dev-", "t-cursor-")):
+            groups.setdefault(fields[0], []).append(dict(zip(keys, fields)))
     return [rows[0] for rows in groups.values() if len(rows) == 1]
 
 
@@ -141,6 +143,10 @@ def descendant(pid, parent):
 
 def owner(socket, pane, startup=False):
     if pane["session"].startswith("t-cursor-"):
+        # Cursor's legacy hook record is not bound to a pane incarnation. A
+        # dead Cursor pane gets the attention notice until that can be proven.
+        if pane.get("pane_dead") == "1":
+            return {}
         result = read_json(cache(socket) / (pane["pane"].replace("%", "pane-") + ".json"))
         info = process(result.get("pid", ""))
         if (not UUID.fullmatch(result.get("sid", "")) or result.get("cwd") != pane["cwd"]
@@ -153,10 +159,18 @@ def owner(socket, pane, startup=False):
         snippet = 'setopt no_monitor no_notify; s=%s; d=%s; print -r -- "$(_dev_agent_of_session "$s")"$\'\\t\'"$(_dev_session_sid "$s" "$d")"$\'\\t\'"$(_dev_session_claude_pid "$s")"' % (
             shlex.quote(pane["session"]), shlex.quote(pane["cwd"]))
         result = run(["zsh", "-lic", "export TMUX=" + shlex.quote(socket + ",0,0") + "; " + snippet])
-        fields = result.stdout.strip().split("\t")
+        fields = result.stdout.rstrip("\r\n").split("\t")
         if result.returncode or len(fields) != 3 or fields[0] not in ("codex", "claude"):
             return {}
         result = dict(zip(("agent", "sid", "pid"), fields))
+        if pane.get("pane_dead") == "1":
+            # The shared resolver validates the exact thread's transcript even
+            # after its process exits. Never guess by transcript recency, and
+            # never treat an unresolved live process as an exited owner.
+            if (result["pid"] or not UUID.fullmatch(result["sid"])
+                    or not pane.get("pane_dead_time", "").isdigit()):
+                return {}
+            return {**result, **pane, "socket": socket, "start": ""}
         info = process(result["pid"])
         result["start"] = info.get("start", "")
         if not UUID.fullmatch(result["sid"]):
@@ -189,7 +203,8 @@ def current(target):
     for pane in panes(target["socket"]):
         if pane["pane"] == target["pane"]:
             actual = owner(target["socket"], pane, startup=True) if target.get("startup") else owner(target["socket"], pane)
-            keys = ("agent", "sid", "pid", "start", "session", "pane", "cwd")
+            keys = ("agent", "sid", "pid", "start", "session", "pane", "cwd",
+                    "pane_pid", "pane_dead", "pane_dead_time")
             return all(actual.get(key) == target.get(key) for key in keys)
     return False
 
@@ -240,7 +255,11 @@ def offer(target, error):
     dismiss = shlex.join([sys.executable, str(Path(__file__).resolve()), "dismiss", socket, token])
     # One menu, on a client actually viewing this pane. No keystrokes enter the
     # agent and no action runs until the user chooses Restart.
-    if target.get("startup"):
+    if error == DEAD:
+        title, choice = "t: AGENT EXITED", "Save draft and restart"
+        lines = ["The agent's terminal process has exited.",
+                 "Restart to continue this conversation.", "Your visible draft will be saved first."]
+    elif target.get("startup"):
         title, choice = "t: SERVER UNAVAILABLE", "Run without daemon this time"
         lines = ["The background server is unavailable.",
                  "Continue with a standalone client for this session."]
@@ -286,6 +305,7 @@ class Watcher:
         self.socket = socket
         self.seen = {}
         self.unverified = set()
+        self.generations = {}
 
     def poll(self):
         for path in cache(self.socket).glob("*.offer"):
@@ -295,7 +315,13 @@ class Watcher:
         active = {row["pane"] for row in rows}
         self.seen = {key: value for key, value in self.seen.items() if key in active}
         self.unverified.intersection_update(active)
+        self.generations = {key: value for key, value in self.generations.items() if key in active}
         for pane in rows:
+            generation = (pane["pane_pid"], pane.get("pane_dead_time", ""))
+            if self.generations.get(pane["pane"]) != generation:
+                self.seen.pop(pane["pane"], None)
+                self.unverified.discard(pane["pane"])
+            self.generations[pane["pane"]] = generation
             # Agent stamps are only a detection hint; owner() verifies them before
             # any offer. Cursor owners come from its SessionStart hook.
             if pane["session"].startswith("t-cursor-"):
@@ -303,8 +329,11 @@ class Watcher:
             else:
                 stamp = tmux(self.socket, "show-environment", "-t", "=" + pane["session"], "DEV_AGENT")
                 agent = stamp.stdout.strip().removeprefix("DEV_AGENT=")
-            screen = tmux(self.socket, "capture-pane", "-p", "-J", "-t", pane["pane"])
-            error = failure(agent, screen.stdout) if screen.returncode == 0 else ""
+            if pane.get("pane_dead") == "1":
+                error = DEAD
+            else:
+                screen = tmux(self.socket, "capture-pane", "-p", "-J", "-t", pane["pane"])
+                error = failure(agent, screen.stdout) if screen.returncode == 0 else ""
             old_error, offered = self.seen.get(pane["pane"], ("", False))
             if error != old_error:
                 self.unverified.discard(pane["pane"])
@@ -527,16 +556,20 @@ def respond(socket, token, accept):
     try:
         if target.get("socket") != socket or time.time() - target.get("created", 0) > 300 or not current(target):
             raise ValueError("the recovery offer expired or the conversation changed")
-        screen = tmux(socket, "capture-pane", "-p", "-J", "-t", target["pane"])
-        if failure(target["agent"], screen.stdout) != target["error"]:
-            raise ValueError("the connection failure is no longer visible")
+        if target["error"] != DEAD:
+            screen = tmux(socket, "capture-pane", "-p", "-J", "-t", target["pane"])
+            if failure(target["agent"], screen.stdout) != target["error"]:
+                raise ValueError("the connection failure is no longer visible")
         if target["agent"] == "cursor":
             saved = cursor_restart(target)
             message = "Restarted Cursor. Saved visible draft: " + saved
         else:
-            mode = ("restart-no-daemon" if target.get("startup") else
+            mode = ("restart-dead" if target["error"] == DEAD else
+                    "restart-no-daemon" if target.get("startup") else
                     "restart-invalid-cwd" if target["error"] == INVALID_CWD else "restart")
             args = ["_t_restart_slot", target["session"], target["cwd"], target["sid"], target["agent"], mode, target["pid"]]
+            if mode == "restart-dead":
+                args.append(" ".join(target[key] for key in ("pane", "pane_pid", "pane_dead_time", "pane_dead")))
             env = dict(os.environ, TMUX=socket + ",0,0")
             result = subprocess.run(["zsh", "-lic", "setopt no_monitor no_notify; " + shlex.join(args)],
                                     env=env, text=True, capture_output=True, timeout=30,
