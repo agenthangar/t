@@ -6701,6 +6701,7 @@ def cmd_app_pull(cfg, args, repo, slot):
         raise ValueError("desktop handoff currently requires macOS; run t app pull on your desktop")
     with _app_handoff_lock(row):
         _app_assert_released(row, _app_bundle())
+        _trust_auto([row["cwd"]])
         result = _app_pull_cli(row)
         if result.returncode:
             raise ValueError(result.stderr.strip() or "could not resume the CLI; desktop reservation retained")

@@ -141,12 +141,13 @@ def test_pull_command_orders_release_before_resume(t_mod, pull_store, monkeypatc
         events.append("resume")
         return subprocess.CompletedProcess([], int(scenario == "launch_failed"), "", "failed; reservation retained")
     monkeypatch.setattr(t_mod, "_app_assert_released", release)
+    monkeypatch.setattr(t_mod, "_trust_auto", lambda dirs: events.append("trust"))
     monkeypatch.setattr(t_mod, "_app_pull_cli", resume)
     if scenario == "missing_worktree":
         os.rmdir(row["cwd"])
     args = t_mod.build_parser().parse_args(["app", "pull", "api", "13", *(["--dry-run"] if scenario == "dry" else [])])
     assert t_mod.cmd_app(cfg, args) == (0 if scenario in ("success", "dry") else 1)
-    assert events == (["release", "resume"] if scenario in ("success", "launch_failed") else ["release"] if scenario == "running_app" else [])
+    assert events == (["release", "trust", "resume"] if scenario in ("success", "launch_failed") else ["release"] if scenario == "running_app" else [])
     output = capsys.readouterr()
     if scenario == "success":
         assert "t open api 13 --cli" in output.out
