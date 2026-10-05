@@ -709,13 +709,18 @@ def main(argv):
         if action == "watch":
             return watch(*args)
         if action == "reopen":
-            return reopen(*args)
+            # These are tmux UI callbacks, not shell-facing success codes.
+            # run-shell opens a pane-wide view-mode buffer on nonzero exit,
+            # obscuring the agent even when refusal was already shown via -c.
+            reopen(*args)
+            return 0
         if action == "cursor-hook":
             return cursor_hook(json.load(sys.stdin))
         if action == "cursor-resume":
             return cursor_resume(*args)
         if action in ("accept", "dismiss"):
-            return respond(*args[:2], action == "accept", *args[2:])
+            respond(*args[:2], action == "accept", *args[2:])
+            return 0  # Includes callbacks from old menus whose offer is gone.
         raise ValueError("unknown recovery action")
     except (OSError, ValueError, TypeError) as error:
         print("t recovery: " + str(error), file=sys.stderr)
