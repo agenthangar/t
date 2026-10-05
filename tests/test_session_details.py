@@ -98,3 +98,26 @@ def test_corrupt_index_and_control_characters(details):
     row='saved\t/wt/3\tweb-3\tapp\tnone\tTitle\x1b[31m\tcodex'
     (codex/'state_5.sqlite').write_bytes(b'bad')
     assert '\x1b' not in m['enrich']([row],home,codex)[0]
+
+
+@pytest.mark.parametrize('sid', ['saved', '-'])
+def test_display_transcript_model_overrides_stale_index_without_changing_identity(details, tmp_path, sid):
+    m, home, codex = details
+    transcript = tmp_path / 'current.jsonl'
+    transcript.write_text(json.dumps({'type': 'turn_context', 'payload': {'model': 'changed-model'}}) + '\n')
+    row = f'{sid}\t/wt/3\tweb-3\tattached\tactive\tCurrent task\tcodex'
+    assert m['enrich']([row + '\t' + str(transcript)], home, codex) == [row + '\tchanged-model']
+    transcript.unlink()
+    assert m['enrich']([row + '\t' + str(transcript)], home, codex) == [row + ('\tmodel-test' if sid == 'saved' else '\t-')]
+
+
+def test_unknown_cli_model_can_use_index_of_verified_display_rollout(details, tmp_path):
+    m, home, codex = details
+    transcript = tmp_path / 'current.jsonl'
+    transcript.write_text('large tool output without a recent model record\n')
+    with sqlite3.connect(codex / 'state_5.sqlite') as db:
+        db.execute('update threads set rollout_path=? where id=?', (str(transcript), 'saved'))
+    db.close()
+    row = '-\t/wt/3\tweb-3\tattached\tactive\tCurrent task\tcodex'
+    assert m['enrich']([row + '\t' + str(transcript)], home, codex) == [row + '\tmodel-test']
+    assert m['enrich']([row + '\t/other-rollout'], home, codex) == [row + '\t-']

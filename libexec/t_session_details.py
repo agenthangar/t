@@ -53,6 +53,9 @@ def enrich(lines, home, codex_home):
                 continue
             sid, cwd, slot, state, context, summary, agent = row[:7]
             model = '-'
+            # Optional private input from the row producer, using the exact same
+            # verified transcript as its title. This is not an ownership claim.
+            display_transcript = row[7] if len(row) > 7 and row[7] != '-' else None
             if agent == 'codex':
                 record = None
                 if {'id', 'cwd', 'name', 'title', 'source', 'archived', 'updated_at', 'rollout_path'} <= columns:
@@ -65,6 +68,9 @@ def enrich(lines, home, codex_home):
                     if sid != '-':
                         query += ' and id=?'
                         args.append(sid)
+                    elif display_transcript:
+                        query += ' and rollout_path=?'
+                        args.append(display_transcript)
                     elif state != 'app':
                         query += ' and 0'  # Unknown live CLI ids must not borrow old context.
                     try:
@@ -81,6 +87,10 @@ def enrich(lines, home, codex_home):
             elif agent == 'claude' and sid != '-':
                 encoded = re.sub(r'[^A-Za-z0-9]', '-', cwd)
                 model = transcript_model(Path(home) / '.claude/projects' / encoded / (sid + '.jsonl'))
+            if display_transcript:
+                recorded = transcript_model(display_transcript)
+                if recorded != '-':
+                    model = recorded
             # Models and titles are metadata, never terminal control sequences.
             clean = lambda value: ' '.join(re.sub(r'[\x00-\x1f\x7f-\x9f]', ' ', str(value)).split())
             row[5] = clean(summary)

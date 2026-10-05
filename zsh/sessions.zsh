@@ -356,6 +356,7 @@ CACHE = os.path.join(os.environ.get('XDG_CACHE_HOME') or os.path.expanduser('~/.
                      'claude-sessions', 'meta')
 PR = re.compile(r'github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/pull/[0-9]+')
 SOFT = (ValueError, AttributeError, TypeError, KeyError)
+VERSION = 2  # Rescan old caches: arbitrary tool-output links were treated as PRs.
 
 
 def load(key):
@@ -402,6 +403,35 @@ def codex_names(db, paths):
     return out
 
 
+def message_pr(st, line, codex=False):
+    """Only conversational text can identify a PR; never tool/search payloads."""
+    if 'github.com/' not in line:
+        return
+    try:
+        rec = json.loads(line)
+        if codex:
+            msg = rec.get('payload', {})
+            if rec.get('type') != 'response_item' or msg.get('type') != 'message':
+                return
+        else:
+            if rec.get('type') not in ('user', 'assistant'):
+                return
+            msg = rec.get('message', {})
+        if codex and msg.get('role') not in ('user', 'assistant'):
+            return
+        content = msg.get('content', [])
+        txt = content if isinstance(content, str) else ' '.join(
+            x.get('text', '') for x in content if isinstance(x, dict)
+            and x.get('type') in ('text', 'input_text', 'output_text'))
+        if txt.startswith(('<', '# AGENTS.md instructions')):
+            return
+        hits = PR.findall(txt)
+        if hits:
+            st['pr'] = hits[-1]
+    except SOFT:
+        pass
+
+
 def scan_codex(st, text):
     # A codex rollout: `response_item` records whose payload is a user `message`
     # carry the prompts as content [{type: input_text, text}]; the first line is
@@ -419,8 +449,7 @@ def scan_codex(st, text):
                     if txt and not txt.startswith('<') and not txt.startswith('# AGENTS.md instructions'):
                         st['msg'] = txt
             except SOFT: pass
-        hits = PR.findall(line)
-        if hits: st['pr'] = hits[-1]
+        message_pr(st, line, codex=True)
 
 
 def scan(st, text):
@@ -449,8 +478,7 @@ def scan(st, text):
                 txt = txt.strip()
                 if txt and not txt.startswith('<'): st['msg'] = txt
             except SOFT: pass
-        hits = PR.findall(line)                         # LAST PR URL in the session
-        if hits: st['pr'] = hits[-1]
+        message_pr(st, line)
 
 
 db, paths = sys.argv[1], sys.argv[2:]
@@ -466,8 +494,8 @@ for path in paths:
         continue
     key = hashlib.sha1(path.encode('utf-8', 'surrogateescape')).hexdigest()[:20]
     st = load(key)
-    if not st or st.get('ino') != info.st_ino or st.get('off', 0) > info.st_size:
-        st = {'ino': info.st_ino, 'off': 0, 'ct': None, 'at': None, 'msg': None, 'pr': None, 'fmt': None}
+    if not st or st.get('version') != VERSION or st.get('ino') != info.st_ino or st.get('off', 0) > info.st_size:
+        st = {'version': VERSION, 'ino': info.st_ino, 'off': 0, 'ct': None, 'at': None, 'msg': None, 'pr': None, 'fmt': None}
     if st['off'] < info.st_size:
         data = b''
         try:
@@ -542,21 +570,26 @@ _dev_summary_for_pid() {
 # variable that outlives the claude that set it, so a slot whose pane is reused by a
 # different conversation keeps the *predecessor's* id — even a cross-repo one (the
 # "dot-3 shows an amex/financial-forecast title" bug). So resolve in order:
-#   1. The SessionStart registry entry for the claude ACTUALLY running in the pane
+#   1. Verified CURRENT Codex pane identity (title + footer + index + rollout).
+#      Codex can switch conversations without changing pid or refreshing stamps.
+#   2. The SessionStart registry entry for the claude ACTUALLY running in the pane
 #      (pid -> "sid\tcwd", written by claude-stamp-tmux). This is ground truth for
 #      the live process and BEATS the stamp when they disagree. Guarded by a
 #      cwd == dir check so a recycled pid's stale entry is ignored.
-#   2. The tmux stamp — only if its transcript belongs to THIS slot's cwd: Claude's
+#   3. The tmux stamp — only if its transcript belongs to THIS slot's cwd: Claude's
 #      project directory or Codex's index/rollout metadata. Cross-worktree stamps
 #      are stale and dropped, even if their transcripts still exist.
-#   3. For an unstamped live Codex, its pane title + current status footer matched
-#      to a unique named thread in this cwd, with validated rollout metadata.
 # Prints the id, or nothing (display callers may use a recency fallback).
 _dev_session_sid() {
   setopt local_options null_glob bare_glob_qual
   local session="$1" dir="${2:-}" sid cpid reg line rcwd agent tx
   [[ -n $dir ]] || dir=$(tmux display-message -p -t "=$session:" '#{session_path}' 2>/dev/null)
   cpid=$(_dev_session_claude_pid "$session")
+  agent=$(_dev_agent_of_session "$session")
+  if [[ $agent == codex ]]; then
+    sid=$(_codex_pane_sid "$session" "$dir" "$cpid")
+    [[ -n $sid ]] && { print -r -- "$sid"; return 0; }
+  fi
   reg="${XDG_CACHE_HOME:-$HOME/.cache}/claude-sessions/$cpid"
   if [[ -n $cpid && -r $reg ]]; then
     line="$(<"$reg")"; sid="${line%%$'\t'*}"; rcwd="${line#*$'\t'}"
@@ -564,21 +597,18 @@ _dev_session_sid() {
     sid=
   fi
   sid=$(tmux show-environment -t "=$session" CLAUDE_RESUME_ID 2>/dev/null | cut -d= -f2)
-  agent=$(_dev_agent_of_session "$session")
   # Claude's path is cwd-keyed; Codex needs an explicit cwd check because its
   # date-keyed rollout can exist even when the stamp belongs to another worktree.
   if [[ -n $sid ]] && tx=$(_dev_agent_transcript "$agent" "$sid" "$dir") &&
       { [[ $agent != codex ]] || _codex_sid_in_cwd "$sid" "$dir" "$tx"; }; then
     print -r -- "$sid"
-  elif [[ $agent == codex ]]; then
-    _codex_pane_sid "$session" "$dir" "$cpid"
   fi
   return 0
 }
 
 # _dev_session_summary <session> <dir> — one-line "what it's working on" for a dev
 # session: the title of its Claude transcript, resolved by the AUTHORITATIVE id
-# (_dev_session_sid — registry-first, stamp validated against the slot's repo). When
+# (_dev_session_sid — current pane, registry, then cwd-validated stamp). When
 # that yields nothing (truly pre-hook session, or only a stale cross-repo stamp) it
 # defers to _dev_summary_for_pid (birthtime match on the LIVE claude). None → "".
 _dev_session_summary() {
@@ -1154,7 +1184,7 @@ _dev_session_rows() {
   # Rich display rows opt into a trailing model field. Ownership consumers keep
   # the established seven-field contract and its authoritative targeting ids.
   if [[ ${1:-} == --details ]]; then
-    _dev_session_rows | python3 "$T_HOME/libexec/t_session_details.py"
+    _dev_session_rows --transcripts | python3 "$T_HOME/libexec/t_session_details.py"
     return
   fi
   setopt local_options null_glob bare_glob_qual
@@ -1179,7 +1209,7 @@ _dev_session_rows() {
     had_path[$dir]=1
     short="${s#dev-}"
     agent=$(_dev_agent_of_session "$s")
-    # Authoritative id (registry-first, stamp validated against the slot's repo) —
+    # Authoritative id (current pane, registry, then cwd-validated stamp) —
     # not the raw CLAUDE_RESUME_ID stamp, which a reused slot can carry stale from a
     # prior (even cross-repo) occupant; this is the targeting id callers act on.
     sid=$(_dev_session_sid "$s" "$dir")
@@ -1263,7 +1293,11 @@ _dev_session_rows() {
     esac
     # field 7 = agent (claude|codex): trailing, so every front-indexed consumer and a
     # stale host's 6-field parser keep working (bin/t _parse_rows defaults it to claude)
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$sid" "$dir" "$short" "$state" "$context" "$summary" "$agent"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s' "$sid" "$dir" "$short" "$state" "$context" "$summary" "$agent"
+    # Private enrichment input: retain the display transcript already validated
+    # above, including the unknown-id fallback. Never export it as a targeting id.
+    [[ ${1:-} == --transcripts ]] && printf '\t%s' "${rowtx[$i]}"
+    printf '\n'
   done
   # Desktop-only workspaces have no tmux session, but their private Git marker
   # reserves the slot. Surface them in t ls without claiming an active agent.
