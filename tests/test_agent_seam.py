@@ -334,6 +334,7 @@ def zsh(tmp_path):
     def call(snippet, _tty=False, **extra):
         env = {"HOME": str(home), "XDG_CACHE_HOME": str(home / ".cache"), "T_LOCAL_RC": str(home / ".zshrc.local"),
                "PATH": f"{bins}:{os.environ.get('PATH', '')}", "TERM": "dumb",
+               "TMUX_TMPDIR": os.environ.get("TMUX_TMPDIR", "/tmp"), "T_RECOVERY_DISABLE": "1",
                "TMUX_LOG": str(log), "FAKE_PS": str(tmp_path / "ps.txt"), **extra}
         argv = ["zsh", "-c", f"source {ZSHRC} >/dev/null 2>&1; {snippet}"]
         if not _tty:
