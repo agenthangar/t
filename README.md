@@ -240,6 +240,11 @@ recovery resumes the exact conversation with that directory explicitly selected 
 `t session restart <repo> <slot>` recognizes the same error. A missing worktree is refused
 without recreating or resetting it.
 
+Automatic worktree cleanup keeps directories still used by an agent, shared server,
+updater, or their helpers, even after the tmux session closes. Deleting a daemon's
+working directory can break its next restart and disconnect other sessions. Cleanup
+retries after those processes exit; an incomplete process check also keeps the directory.
+
 Codex and Claude use their existing `t session open` slots. `t cursor resume <chat-id>` now
 opens or attaches a dedicated Cursor tmux session with the same recovery menu. On
 first use, it adds a `sessionStart` entry to Cursor's `~/.cursor/hooks.json`, preserving
