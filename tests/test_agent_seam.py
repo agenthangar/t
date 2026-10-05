@@ -1339,6 +1339,67 @@ def test_rooted_cleanup_rejects_empty_and_root_paths(zsh):
     assert r.stdout.splitlines() == ["empty=1", "root=1"]
 
 
+@pytest.mark.parametrize("debris", [False, True])
+@pytest.mark.parametrize("owner", ["daemon", "helper", "launcher", "unknown", "ps_failure", "cwd_failure"])
+def test_sweep_preserves_detached_agent_cwd_until_exit(zsh, tmp_path, debris, owner):
+    """Real cwd discovery and Git removal, with only disposable process identities.
+
+    Keeping the daemon alive is insufficient: deleting its cwd breaks its next
+    launch/update. There is deliberately no tmux reservation for this process.
+    """
+    repo = zsh.home / "code/api"
+    repo.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
+    subprocess.run(["git", "-C", str(repo), "-c", "user.name=Test", "-c",
+                    "user.email=test@example.invalid", "commit", "--allow-empty", "-qm", "start"], check=True)
+    root = zsh.home / "code/.worktrees"
+    wt = root / "api" / ("3.debris-123" if debris else "3")
+    wt.parent.mkdir(parents=True)
+    if debris:
+        wt.mkdir()
+    else:
+        subprocess.run(["git", "-C", str(repo), "worktree", "add", "-q", "-b",
+                        "dev/api-3", str(wt), "main"], check=True)
+    # Use the real lsof on macOS and /proc on Linux. No developer tmux is queried.
+    lsof = shutil.which("lsof")
+    if lsof:
+        (tmp_path / "stubbin/lsof").write_text(f'#!/bin/sh\nexec {shlex.quote(lsof)} "$@"\n')
+    elif sys.platform == "darwin":
+        pytest.skip("lsof is required for cwd discovery")
+    nested = wt / "nested"
+    nested.mkdir()
+    proc = subprocess.Popen(["sleep", "300"], cwd=nested)
+    table = {"daemon": f"{proc.pid} 1 codex\n",
+             "helper": f"{proc.pid} 999999 node\n999999 1 codex\n",
+             "launcher": f"{proc.pid} 1 node\n999999 {proc.pid} codex\n",
+             "unknown": "1 0 init\n", "ps_failure": "", "cwd_failure": ""}[owner]
+    ps = tmp_path / "stubbin/ps"
+    ps.write_text("#!/bin/sh\nexit 1\n" if owner == "ps_failure" else
+                  "#!/bin/sh\ncat <<'TABLE'\n" + table + "TABLE\n")
+    code = f'''DEV_WORKTREE_ROOT={shlex.quote(str(root))}
+        _dev_branch_merged() {{ return 0; }}
+        _dev_worktree_sweep_run
+    '''
+    try:
+        result = zsh(("_dev_cwd_pids() { return 1; }; " if owner == "cwd_failure" else "") + code)
+        assert result.returncode == 0, result.stderr
+        assert wt.exists(), (result.stdout, result.stderr)
+        assert proc.poll() is None
+        assert "keeping" in result.stdout
+        proc.terminate()
+        proc.wait(timeout=5)
+        if owner == "ps_failure":
+            ps.write_text("#!/bin/sh\nprintf '1 0 init\\n'\n")
+        nested.rmdir()  # Leave a clean tree eligible for normal removal.
+        result = zsh(code)
+        assert result.returncode == 0, result.stderr
+        assert not wt.exists(), (result.stdout, result.stderr)
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+        proc.wait(timeout=5)
+
+
 def test_kill_isolated_tmux_keeps_siblings_and_shared_daemon(zsh, tmp_path):
     """Use real tmux and real signals, strictly on this test's disposable processes.
 
