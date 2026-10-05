@@ -114,6 +114,7 @@ codex() {{ print -r -- "$PWD|$*" > "$HOME/resumed"; sleep 60; }}
             until(lambda: (home / "resumed").exists(), detail=lambda: tmux("capture-pane", "-p", "-t", pane["pane"]).stdout)
             assert (home / "resumed").read_text().strip() == f"{home}|resume {SID} --no-daemon"
             assert not mod.current(target)  # The old death is stale.
+            until(lambda: not (home / "cache/t/restart/dev-api-1.lock").exists())
             saved = list((home / "cache/t/restart").iterdir())
             assert len(saved) == 1 and "unsent draft" in saved[0].read_text()
             assert saved[0].stat().st_mode & 0o777 == 0o600
