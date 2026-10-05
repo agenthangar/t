@@ -716,6 +716,17 @@ def test_main_dispatch(recovery, monkeypatch):
     assert recovery.main([]) == 1
 
 
+def test_ui_callback_refusals_do_not_return_tmux_error_status(recovery, monkeypatch):
+    monkeypatch.setattr(recovery, "respond", lambda *a, **kw: 1)
+    monkeypatch.setattr(recovery, "reopen", lambda *a: 1)
+    for action in ("accept", "dismiss"):
+        assert recovery.main([action, "socket", "token"]) == 0
+    assert recovery.main(["accept", "socket", "token", "%1", "viewer"]) == 0
+    assert recovery.main(["reopen", "socket", "%1", "viewer"]) == 0
+    monkeypatch.setattr(recovery, "start", lambda *a: 1)
+    assert recovery.main(["start", "session"]) == 1
+
+
 def test_cursor_restart_serializes_recovery(recovery, target):
     path = recovery.cache(target["socket"]) / "pane-4.restart.lock"
     with path.open("w") as lock:

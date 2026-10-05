@@ -114,6 +114,7 @@ codex() {{ print -r -- "$PWD|$*" > "$HOME/resumed"; sleep 60; }}
             until(lambda: (home / "resumed").exists(), detail=lambda: tmux("capture-pane", "-p", "-t", pane["pane"]).stdout)
             assert (home / "resumed").read_text().strip() == f"{home}|resume {SID} --no-daemon"
             assert not mod.current(target)  # The old death is stale.
+            until(lambda: not (home / "cache/t/restart/dev-api-1.lock").exists())
             saved = list((home / "cache/t/restart").iterdir())
             assert len(saved) == 1 and "unsent draft" in saved[0].read_text()
             assert saved[0].stat().st_mode & 0o777 == 0o600
@@ -201,6 +202,9 @@ _t_restart_slot() {{ print -r -- "$*" > "$HOME/accepted"; {restart_result}; }}
             assert message not in other_output
         else:
             assert not (home / "accepted").exists()
+        until(lambda: 't_recovery.py accept' not in tmux("show-messages", "-J").stdout)
+        for session in ("dev-api-1", "unrelated"):
+            assert tmux("display-message", "-p", "-t", "=" + session + ":", "#{pane_in_mode}").stdout.strip() == "0"
         # Menu keystrokes never reach the client process, which remains untouched.
         assert tmux("display-message", "-p", "-t", "=dev-api-1:", "#{pane_pid}").stdout.strip() == pane["pane_pid"]
     finally:
@@ -214,6 +218,20 @@ _t_restart_slot() {{ print -r -- "$*" > "$HOME/accepted"; {restart_result}; }}
         other_client.terminate()
         other_client.wait(timeout=5)
         os.close(other_master)
+
+
+@pytest.mark.parametrize("action", ["accept", "dismiss", "reopen"])
+def test_obsolete_callback_never_covers_agent_with_tmux_output(terminal, action):
+    mod, tmux, _, _, home = terminal
+    assert tmux("new-session", "-d", "-s", "dev-api-1", "-c", str(home), "sleep", "60").returncode == 0
+    socket = tmux("display-message", "-p", "-t", "=dev-api-1:", "#{socket_path}").stdout.strip()
+    pane = mod.panes(socket)[0]
+    # Older menus carry no pane/viewer arguments, and can outlive their offer.
+    args = [socket, "f" * 32] if action != "reopen" else [socket, "%99999", "absent"]
+    callback = shlex.join([sys.executable, str(Path(mod.__file__)), action, *args])
+    assert tmux("run-shell", "-t", pane["pane"], callback).returncode == 0
+    assert tmux("display-message", "-p", "-t", pane["pane"], "#{pane_in_mode}").stdout.strip() == "0"
+    assert mod.panes(socket)[0]["pane_pid"] == pane["pane_pid"]
 
 
 @pytest.mark.parametrize("custom", [False, True])
