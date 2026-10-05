@@ -74,8 +74,6 @@ def test_app_creates_a_real_window_and_preserves_the_existing_session(t_mod, tmp
         def launch(argv, **kwargs):
             if argv[0] == "ps":
                 return run(argv, **kwargs)
-            if argv[:2] == ["codex", "app"]:
-                return run(["open", "-g", "-a", str(bundle), scheme + "://workspace/" + argv[2]], **kwargs)
             # The production command is exercised, but ALL URLs are translated
             # to our disposable scheme before anything reaches LaunchServices.
             assert argv[0] == "open" and str(bundle) in argv
@@ -126,7 +124,7 @@ def test_app_creates_a_real_window_and_preserves_the_existing_session(t_mod, tmp
         # Fresh t open --new --app workspaces use the same native window action.
         (tmp_path / ".git").mkdir()
         assert t_mod.cmd_app_workspace(str(tmp_path)) == 0
-        workspace_link = scheme + "://workspace/" + str(tmp_path)
+        workspace_link = t_mod._app_workspace_link(str(tmp_path)).replace("codex://", scheme + "://", 1)
         workspace = wait_for(lambda rows: len(rows) == 1 and rows[0]["current"] == workspace_link)[0]
         assert workspace["newWindowActions"] == 3
         assert len(workspace["windows"]) == 4

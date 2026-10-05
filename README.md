@@ -283,8 +283,8 @@ markers or a symlink. Review the resulting diff and commit it when ready; t neve
 commits or pushes these instructions for you.
 
 On macOS, `t session open my-project --app` creates a fresh isolated worktree and
-opens that folder in a new Codex desktop app window without starting a terminal
-agent. Name a slot to reopen its worktree (`t session open my-project 3`
+opens that folder in a new desktop app window with Codex mode explicitly selected,
+without starting a terminal agent. Name a slot to reopen its worktree (`t session open my-project 3`
 automatically uses the app when the slot is reserved for it). With `--app`, if
 that slot is running
 Codex in tmux, `t` hands the same conversation to the app. `--app` requires a
