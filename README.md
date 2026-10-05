@@ -198,6 +198,9 @@ not submitted automatically. The old client must exit before the same conversati
 resumes in the same pane; worktree edits and dev servers stay in place. Use
 `t session open <repo> <slot>` to attach. For a remote slot, use
 `t hosts run <host> t session restart <repo> <slot>`.
+Every Codex recovery resumes with `--no-daemon` so relaunching one conversation
+does not reconnect through the shared server used by other windows. Recovery
+refuses to stop an `app-server` process or proceed without `--no-daemon` support.
 
 For sessions opened through `t`, a local monitor automatically offers **Save draft
 and restart** or **Dismiss** when a recognized final connection error remains
@@ -208,7 +211,10 @@ A bright, bordered panel appears in the center of the affected terminal,
 including over SSH, and works without a model connection. Press **r** to restart
 or **q** to dismiss; **Enter** defaults to Dismiss. Offers are bound
 to the exact conversation and process or exited pane; a changed or recovered
-session is left alone.
+session is left alone. Completion and error messages stay in the window that
+opened recovery, and are skipped if that window has left the affected pane.
+An open recovery menu does not expire while waiting for your choice; Restart
+always rechecks the conversation and process before acting.
 Detached sessions get the offer when you return. Dismissal suppresses repeats until
 the error clears. While recovery is needed, the status bar shows a shortcut to
 reopen the menu: normally **Ctrl-b**, then **Shift-r** (uppercase **R**). It uses
@@ -235,6 +241,11 @@ recovery resumes the exact conversation with that directory explicitly selected 
 `--no-daemon`. This also handles a shared daemon rooted in a deleted worktree.
 `t session restart <repo> <slot>` recognizes the same error. A missing worktree is refused
 without recreating or resetting it.
+
+Automatic worktree cleanup keeps directories still used by an agent, shared server,
+updater, or their helpers, even after the tmux session closes. Deleting a daemon's
+working directory can break its next restart and disconnect other sessions. Cleanup
+retries after those processes exit; an incomplete process check also keeps the directory.
 
 Codex and Claude use their existing `t session open` slots. `t cursor resume <chat-id>` now
 opens or attaches a dedicated Cursor tmux session with the same recovery menu. On

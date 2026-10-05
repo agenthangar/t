@@ -1214,6 +1214,17 @@ _t_pid_is_zombie() {
 # Explicit recovery of a stuck client. Keep the pane as a worktree reservation,
 # capture unsent visible text before signalling, and never force-respawn a live
 # pane. A per-slot lock prevents two simultaneous restarts from racing.
+_t_restart_client_only() {
+  local cmdline
+  cmdline=$(ps -ww -o args= -p "$1" 2>/dev/null) || {
+    print -u2 -- 't restart: cannot verify the client process; nothing was stopped'; return 1
+  }
+  local -a words; read -r -A words <<< "$cmdline"
+  if (( ${words[(Ie)app-server]} )); then
+    print -u2 -- 't restart: refusing to stop a shared app-server; nothing was stopped'; return 1
+  fi
+}
+
 _t_restart_slot() {
   emulate -L zsh
   local session="$1" dir="$2" sid="$3" agent="$4" mode="$5" expected_pid="${6:-}" expected_dead="${7:-}"
@@ -1237,6 +1248,7 @@ _t_restart_slot() {
     print -u2 -- 't restart: multiple panes in this slot; keep only the agent pane before restarting'; return 1
   }
   cpid=$(_dev_session_claude_pid "$session")
+  if [[ -n $cpid ]]; then _t_restart_client_only "$cpid" || return 1; fi
   [[ -z $expected_pid || $cpid == $expected_pid ]] || {
     print -u2 -- 't restart: the agent changed since the recovery offer; nothing was stopped'; return 1
   }
@@ -1330,6 +1342,14 @@ _t_restart_slot() {
       fi
     else
       launch=$(_dev_agent_resume_cmd "$agent" "$sid")
+      if [[ $agent == codex ]]; then
+        # Reconnecting through the shared daemon can disturb other windows.
+        # Every recovery must be invocation-local, including exited panes.
+        command codex resume --help 2>/dev/null | command grep -q -- '--no-daemon' || {
+          print -u2 -- 't restart: this Codex version does not support --no-daemon; nothing was stopped'; return 1
+        }
+        launch+=' --no-daemon'
+      fi
     fi
     if (( invalid_cwd )); then
       # Capability checks and capture can race with the client moving on.
@@ -1353,6 +1373,7 @@ _t_restart_slot() {
         print -u2 -- 't restart: the exited pane changed; nothing was stopped'; return 1
       }
     fi
+    if [[ -n $cpid ]]; then _t_restart_client_only "$cpid" || return 1; fi
     old_remain=$(tmux show-options -A -p -v -t "$pane" remain-on-exit) || return 1
     tmux set-environment -t "=$session" CLAUDE_RESUME_ID "$sid" || return 1
     tmux set-environment -t "=$session" DEV_AGENT "$agent" || return 1

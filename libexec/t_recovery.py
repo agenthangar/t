@@ -172,6 +172,8 @@ def owner(socket, pane, startup=False):
                 return {}
             return {**result, **pane, "socket": socket, "start": ""}
         info = process(result["pid"])
+        if "app-server" in info.get("args", "").split():
+            return {}  # Shared infrastructure is never a recoverable client.
         result["start"] = info.get("start", "")
         if not UUID.fullmatch(result["sid"]):
             # Startup can fail before SessionStart assigns a thread. Only a
@@ -215,7 +217,7 @@ def clients(socket, pane):
             if len(fields := line.split("\t")) == 2 and fields[1] == pane]
 
 
-def recovery_menu(socket, pane, viewer, title, lines, actions, cleanup=None):
+def recovery_menu(socket, pane, viewer, title, lines, actions, cleanup=None, closed=None):
     """A prominent, client-scoped panel that also fits a narrow SSH terminal."""
     size = tmux(socket, "display-message", "-p", "-c", viewer, "#{client_width}")
     columns = int(size.stdout.strip()) if size.stdout.strip().isdigit() else 80
@@ -240,6 +242,8 @@ def recovery_menu(socket, pane, viewer, title, lines, actions, cleanup=None):
     command = shlex.join(menu)
     if cleanup is not None:
         command += "; " + shlex.join(["rm", "-f", "--", str(cleanup)])
+    if closed is not None:
+        command += "; " + shlex.join(["touch", "--", str(closed)])
     return tmux(socket, "run-shell", "-b", command).returncode == 0
 
 
@@ -248,10 +252,12 @@ def offer(target, error, viewer=None):
     viewers = clients(socket, target["pane"])
     if not viewers or (viewer is not None and viewer not in viewers):
         return False
+    viewer = viewer or viewers[0]
     token = uuid.uuid4().hex
     path = cache(socket) / (token + ".offer")
-    write_json(path, {**target, "error": error, "created": time.time()})
-    callback = shlex.join([sys.executable, str(Path(__file__).resolve()), "accept", socket, token])
+    write_json(path, {**target, "viewer": viewer, "error": error, "created": time.time()})
+    callback = shlex.join([sys.executable, str(Path(__file__).resolve()), "accept", socket, token,
+                          target["pane"], viewer])
     dismiss = shlex.join([sys.executable, str(Path(__file__).resolve()), "dismiss", socket, token])
     # One menu, on a client actually viewing this pane. No keystrokes enter the
     # agent and no action runs until the user chooses Restart.
@@ -271,10 +277,10 @@ def offer(target, error, viewer=None):
         title, choice = "t: CONNECTION FAILED", "Save draft and restart"
         lines = ["The agent connection has stopped.",
                  "Restart to continue this conversation.", "Your visible draft will be saved first."]
-    shown = recovery_menu(socket, target["pane"], viewer or viewers[0], title, lines, [
+    shown = recovery_menu(socket, target["pane"], viewer, title, lines, [
         (choice, "r", "run-shell -b " + shlex.quote(callback)),
         ("Dismiss", "q", "run-shell -b " + shlex.quote(dismiss)),
-    ])
+    ], closed=path.with_suffix(".closed"))
     if not shown:
         path.unlink(missing_ok=True)
     return shown
@@ -398,11 +404,18 @@ class Watcher:
         self.key = None
 
     def poll(self):
-        for path in cache(self.socket).glob("*.offer"):
-            if time.time() - read_json(path).get("created", 0) > 300:
-                path.unlink(missing_ok=True)
         rows = panes(self.socket)
         active = {row["pane"] for row in rows}
+        # A visible menu can wait indefinitely. Its single-use offer is checked
+        # against the exact live owner on acceptance, not expired while on screen.
+        # Allow async menu callbacks time to claim it after the menu closes.
+        for closed in cache(self.socket).glob("*.closed"):
+            if time.time() - closed.stat().st_mtime > 300:
+                closed.with_suffix(".offer").unlink(missing_ok=True)
+                closed.unlink(missing_ok=True)
+        for path in cache(self.socket).glob("*.offer"):
+            if read_json(path).get("pane") not in active:
+                path.unlink(missing_ok=True)
         for path in cache(self.socket).glob("*.status"):
             pane_id = read_json(path).get("pane")
             if pane_id and pane_id not in active:
@@ -629,7 +642,18 @@ def _cursor_restart(target):
     raise ValueError("the old Cursor client has not exited; no second client was started")
 
 
-def respond(socket, token, accept):
+def response_message(socket, target, message):
+    # -t supplies format context, not the recipient of display-message. Without
+    # -c tmux may interrupt an unrelated terminal (and consume its next key).
+    # Never fall back to another client if the original viewer left this pane,
+    # or if this offer predates the recorded viewer.
+    viewer = target.get("viewer")
+    if viewer and viewer in clients(socket, target["pane"]):
+        tmux(socket, "display-message", "-d", "10000", "-c", viewer,
+             "-t", target["pane"], message)
+
+
+def respond(socket, token, accept, pane=None, viewer=None):
     if not re.fullmatch(r"[0-9a-f]{32}", token):
         return 1
     path = cache(socket) / (token + ".offer")
@@ -637,14 +661,17 @@ def respond(socket, token, accept):
     try:
         os.rename(path, claimed)  # A menu response is single-use, across clients.
     except FileNotFoundError:
+        if accept and pane and viewer:
+            response_message(socket, {"pane": pane, "viewer": viewer},
+                             "t recovery: this menu is no longer available; reopen recovery using the status shortcut")
         return 1
     target = read_json(claimed)
     claimed.unlink(missing_ok=True)
     if not accept:
         return 0
     try:
-        if target.get("socket") != socket or time.time() - target.get("created", 0) > 300 or not current(target):
-            raise ValueError("the recovery offer expired or the conversation changed")
+        if target.get("socket") != socket or not current(target):
+            raise ValueError("the conversation changed; reopen recovery using the status shortcut")
         if target["error"] != DEAD:
             screen = tmux(socket, "capture-pane", "-p", "-J", "-t", target["pane"])
             if failure(target["agent"], screen.stdout) != target["error"]:
@@ -668,9 +695,9 @@ def respond(socket, token, accept):
             message = result.stdout.strip()
     except (ValueError, OSError, subprocess.TimeoutExpired) as error:
         message = "t recovery: " + str(error)
-        tmux(socket, "display-message", "-d", "10000", "-t", target.get("pane", ""), message)
+        response_message(socket, target, message)
         return 1
-    tmux(socket, "display-message", "-d", "10000", "-t", target["pane"], message)
+    response_message(socket, target, message)
     return 0
 
 
@@ -688,7 +715,7 @@ def main(argv):
         if action == "cursor-resume":
             return cursor_resume(*args)
         if action in ("accept", "dismiss"):
-            return respond(*args, accept=action == "accept")
+            return respond(*args[:2], action == "accept", *args[2:])
         raise ValueError("unknown recovery action")
     except (OSError, ValueError, TypeError) as error:
         print("t recovery: " + str(error), file=sys.stderr)

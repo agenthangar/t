@@ -485,7 +485,7 @@ _dev_repo_prepare() {
 # One lsof and one ps snapshot on macOS, /proc on Linux — never a per-pid ps fork.
 _dev_cwd_pids() {
   [[ -n $1 ]] || return 1
-  local dir="${1:A}" pid cwd line
+  local dir="${1:A}" pid cwd line listing
   [[ $dir != / ]] || return 1
   if [[ -d /proc ]]; then
     for pid in /proc/<->(N:t); do
@@ -493,7 +493,8 @@ _dev_cwd_pids() {
       [[ $cwd == $dir || $cwd == $dir/* ]] && print -r -- "$pid"
     done
   else
-    for line in "${(@f)$(lsof -a -d cwd -Fpn 2>/dev/null)}"; do   # p<pid> / fcwd / n<path>
+    listing=$(lsof -a -d cwd -Fpn 2>/dev/null) || return 1
+    for line in "${(@f)listing}"; do   # p<pid> / fcwd / n<path>
       case $line in
         p*) pid=${line#p} ;;
         n*) cwd=${line#n}; [[ $cwd == $dir || $cwd == $dir/* ]] && print -r -- "$pid" ;;
@@ -504,7 +505,9 @@ _dev_cwd_pids() {
 }
 
 _dev_procs_rooted_in() {
-  local pid ppid comm line up
+  # The protected view is also a deletion veto: preserving a process while
+  # deleting its cwd strands shared daemons and their detached update loops.
+  local view="${2:-stoppable}" pid ppid comm line up keep cwd_pids
   local -A parents names roots protected seen
   local snapshot
   # An unreadable table is not permission to signal processes by cwd alone.
@@ -527,20 +530,40 @@ _dev_procs_rooted_in() {
       up=${parents[$up]:-}
     done
   done
-  for pid in $(_dev_cwd_pids "$1"); do
+  cwd_pids=$(_dev_cwd_pids "$1") || return 1
+  for pid in ${(f)cwd_pids}; do
     [[ $pid == <-> ]] && (( pid > 1 )) || continue
-    [[ -n ${names[$pid]} && -z ${protected[$pid]} ]] || continue
+    if [[ -z ${names[$pid]} ]]; then
+      # The process appeared after ps, or could not be inspected. Never signal
+      # it, and do not delete its cwd on the strength of an incomplete snapshot.
+      [[ $view == protected ]] && print -r -- "$pid"
+      continue
+    fi
+    keep=${protected[$pid]:-0}
     comm=${names[$pid]}
-    case $comm in zsh|bash|sh|fish|dash|tmux|login|-*) continue ;; esac
     up=$pid; seen=()
     while [[ $up == <-> ]] && (( up > 1 )); do
       [[ -n ${roots[$up]} || -n ${seen[$up]} ]] && break
       seen[$up]=1
       up=${parents[$up]:-}
     done
-    [[ $up == <-> && ( -n ${roots[$up]} || -n ${seen[$up]} ) ]] && continue
+    [[ $up == <-> && ( -n ${roots[$up]} || -n ${seen[$up]} ) ]] && keep=1
+    if [[ $view == protected ]]; then
+      (( keep )) && print -r -- "$pid"
+      continue
+    fi
+    (( keep )) && continue
+    case $comm in zsh|bash|sh|fish|dash|tmux|login|-*) continue ;; esac
     print -r -- "$pid"
   done
+  return 0
+}
+
+_dev_worktree_process_busy() {
+  local pids
+  # Inspection failure is uncertainty, not permission to remove the directory.
+  pids=$(_dev_procs_rooted_in "$1" protected) || return 0
+  [[ -n $pids ]]
 }
 
 # _dev_stop_rooted <dir> [why] — SIGTERM unprotected leftover processes in <dir>
@@ -555,9 +578,10 @@ _dev_stop_rooted() {
 }
 
 # Worktree sweep — reap per-session worktrees whose work has landed. A slot's worktree
-# + branch (dev/<basename>-<slot>) are removed only when ALL THREE hold: the tmux session
-# is dead (matched by session_path, never by name — dodges alias drift), the branch is
-# merged to main, AND the working tree is clean. The clean gate exists because a merged
+# + branch (dev/<basename>-<slot>) are removed only when the tmux session is dead
+# (matched by session_path, never by name — dodges alias drift), no agent infrastructure
+# still uses the directory, the branch is merged to main, AND the working tree is clean.
+# The clean gate exists because a merged
 # TIP says nothing about the WORKING TREE: after a PR merges, the slot lives on and the
 # next feature accumulates as uncommitted edits on the same branch (tip still == the
 # merged PR head) — a reboot then kills every tmux session, the sweep sees dead+merged,
@@ -635,6 +659,10 @@ _dev_worktree_sweep_run() {
     # state, not an anomaly worth a log line every pass. Unreadable status counts dirty.
     dirt=$(git -C "$wt" status --porcelain 2>/dev/null) || dirt='?'
     [[ -z $dirt ]] || continue
+    if _dev_worktree_process_busy "$wt"; then
+      print -r -- "[$(strftime '%F %T' $EPOCHSECONDS 2>/dev/null)] sweep: keeping $wt — agent infrastructure may still use this directory"
+      continue
+    fi
     print -r -- "[$(strftime '%F %T' $EPOCHSECONDS 2>/dev/null)] sweep: $wt (branch $br merged)"
     # The slot's dev server first: left running it serves stale code on the slot's
     # port and rewrites .vite/deps into the path we are about to remove.
@@ -647,6 +675,10 @@ _dev_worktree_sweep_run() {
   # still rooted there had recreated it. Nothing tracked can live in it (the remove
   # above already cleared the tree), so once its processes are stopped it is cache.
   for wt in $root/*/*.debris-<->(N/); do
+    if _dev_worktree_process_busy "$wt"; then
+      print -r -- "[$(strftime '%F %T' $EPOCHSECONDS 2>/dev/null)] sweep: keeping $wt — agent infrastructure may still use this directory"
+      continue
+    fi
     print -r -- "[$(strftime '%F %T' $EPOCHSECONDS 2>/dev/null)] sweep: debris $wt"
     _dev_stop_rooted "$wt" "debris"
     rm -rf "$wt" 2>/dev/null
