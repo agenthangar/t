@@ -172,6 +172,8 @@ def owner(socket, pane, startup=False):
                 return {}
             return {**result, **pane, "socket": socket, "start": ""}
         info = process(result["pid"])
+        if "app-server" in info.get("args", "").split():
+            return {}  # Shared infrastructure is never a recoverable client.
         result["start"] = info.get("start", "")
         if not UUID.fullmatch(result["sid"]):
             # Startup can fail before SessionStart assigns a thread. Only a
@@ -248,9 +250,10 @@ def offer(target, error, viewer=None):
     viewers = clients(socket, target["pane"])
     if not viewers or (viewer is not None and viewer not in viewers):
         return False
+    viewer = viewer or viewers[0]
     token = uuid.uuid4().hex
     path = cache(socket) / (token + ".offer")
-    write_json(path, {**target, "error": error, "created": time.time()})
+    write_json(path, {**target, "viewer": viewer, "error": error, "created": time.time()})
     callback = shlex.join([sys.executable, str(Path(__file__).resolve()), "accept", socket, token])
     dismiss = shlex.join([sys.executable, str(Path(__file__).resolve()), "dismiss", socket, token])
     # One menu, on a client actually viewing this pane. No keystrokes enter the
@@ -271,7 +274,7 @@ def offer(target, error, viewer=None):
         title, choice = "t: CONNECTION FAILED", "Save draft and restart"
         lines = ["The agent connection has stopped.",
                  "Restart to continue this conversation.", "Your visible draft will be saved first."]
-    shown = recovery_menu(socket, target["pane"], viewer or viewers[0], title, lines, [
+    shown = recovery_menu(socket, target["pane"], viewer, title, lines, [
         (choice, "r", "run-shell -b " + shlex.quote(callback)),
         ("Dismiss", "q", "run-shell -b " + shlex.quote(dismiss)),
     ])
@@ -629,6 +632,17 @@ def _cursor_restart(target):
     raise ValueError("the old Cursor client has not exited; no second client was started")
 
 
+def response_message(socket, target, message):
+    # -t supplies format context, not the recipient of display-message. Without
+    # -c tmux may interrupt an unrelated terminal (and consume its next key).
+    # Never fall back to another client if the original viewer left this pane,
+    # or if this offer predates the recorded viewer.
+    viewer = target.get("viewer")
+    if viewer and viewer in clients(socket, target["pane"]):
+        tmux(socket, "display-message", "-d", "10000", "-c", viewer,
+             "-t", target["pane"], message)
+
+
 def respond(socket, token, accept):
     if not re.fullmatch(r"[0-9a-f]{32}", token):
         return 1
@@ -668,9 +682,9 @@ def respond(socket, token, accept):
             message = result.stdout.strip()
     except (ValueError, OSError, subprocess.TimeoutExpired) as error:
         message = "t recovery: " + str(error)
-        tmux(socket, "display-message", "-d", "10000", "-t", target.get("pane", ""), message)
+        response_message(socket, target, message)
         return 1
-    tmux(socket, "display-message", "-d", "10000", "-t", target["pane"], message)
+    response_message(socket, target, message)
     return 0
 
 

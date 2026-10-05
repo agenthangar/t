@@ -198,6 +198,9 @@ not submitted automatically. The old client must exit before the same conversati
 resumes in the same pane; worktree edits and dev servers stay in place. Use
 `t session open <repo> <slot>` to attach. For a remote slot, use
 `t hosts run <host> t session restart <repo> <slot>`.
+Every Codex recovery resumes with `--no-daemon` so relaunching one conversation
+does not reconnect through the shared server used by other windows. Recovery
+refuses to stop an `app-server` process or proceed without `--no-daemon` support.
 
 For sessions opened through `t`, a local monitor automatically offers **Save draft
 and restart** or **Dismiss** when a recognized final connection error remains
@@ -208,7 +211,8 @@ A bright, bordered panel appears in the center of the affected terminal,
 including over SSH, and works without a model connection. Press **r** to restart
 or **q** to dismiss; **Enter** defaults to Dismiss. Offers are bound
 to the exact conversation and process or exited pane; a changed or recovered
-session is left alone.
+session is left alone. Completion and error messages stay in the window that
+opened recovery, and are skipped if that window has left the affected pane.
 Detached sessions get the offer when you return. Dismissal suppresses repeats until
 the error clears. While recovery is needed, the status bar shows a shortcut to
 reopen the menu: normally **Ctrl-b**, then **Shift-r** (uppercase **R**). It uses

@@ -156,6 +156,14 @@ def test_owner_and_revalidation(recovery, target, monkeypatch):
     assert recovery.owner(target["socket"], pane) == {}
 
 
+@pytest.mark.parametrize("args", ["codex app-server --listen unix:// --managed-daemon",
+                                 "codex app-server daemon pid-update-loop"])
+def test_recovery_never_offers_to_restart_shared_server(recovery, target, monkeypatch, args):
+    monkeypatch.setattr(recovery, "run", lambda a: result(f"codex\t{SID}\t42\n"))
+    monkeypatch.setattr(recovery, "process", lambda p: {"start": target["start"], "args": args})
+    assert recovery.owner(target["socket"], target) == {}
+
+
 def test_cursor_owner_requires_current_hook_and_process(recovery, target, monkeypatch):
     target.update(session="t-cursor-" + SID, agent="cursor")
     pane = {k: target[k] for k in ("session", "pane", "pane_pid", "cwd")}
@@ -252,6 +260,7 @@ def test_offer_never_types_into_agent_and_targets_viewer(recovery, target, monke
     assert not any("send-keys" in e for e in events)
     offers = list(recovery.cache(target["socket"]).glob("*.offer"))
     assert len(offers) == 1 and recovery.read_json(offers[0])["sid"] == SID
+    assert recovery.read_json(offers[0])["viewer"] == "/dev/pts/4"
     offers[0].unlink()
     monkeypatch.setattr(recovery, "tmux", lambda *a: result(rc=1))
     assert not recovery.offer(target, ERROR)
@@ -507,6 +516,8 @@ def make_offer(recovery, target):
 
 @pytest.mark.parametrize("scenario", ["accept", "dismiss", "changed", "cleared", "expired", "failure", "timeout", "cursor"])
 def test_menu_response_is_single_use_and_revalidates(recovery, target, monkeypatch, scenario):
+    target["viewer"] = "/dev/pts/4"
+    monkeypatch.setattr(recovery, "clients", lambda *a: [target["viewer"], "/dev/pts/5"])
     if scenario == "cursor":
         target["agent"] = "cursor"
     token = make_offer(recovery, target)
@@ -529,8 +540,23 @@ def test_menu_response_is_single_use_and_revalidates(recovery, target, monkeypat
     rc = recovery.respond(target["socket"], token, scenario != "dismiss")
     assert (rc == 0) == (scenario in ("accept", "dismiss", "cursor"))
     assert bool(launches) == (scenario in ("accept", "failure", "timeout", "cursor"))
+    messages = [e for e in events if e[1] == "display-message"]
+    assert len(messages) == (scenario != "dismiss")
+    if messages:
+        assert messages[0][2:8] == ("-d", "10000", "-c", target["viewer"], "-t", target["pane"])
     assert recovery.respond(target["socket"], token, True) == 1
     assert recovery.respond(target["socket"], "../other", True) == 1
+
+
+@pytest.mark.parametrize("viewer", [None, "/dev/pts/detached", "/dev/pts/switched"])
+def test_response_never_falls_back_to_another_window(recovery, target, monkeypatch, viewer):
+    if viewer:
+        target["viewer"] = viewer
+    monkeypatch.setattr(recovery, "clients", lambda socket, pane: ["/dev/pts/other"])
+    events = []
+    monkeypatch.setattr(recovery, "tmux", lambda *a: events.append(a) or result())
+    recovery.response_message(target["socket"], target, "Saved draft")
+    assert not events
 
 
 def test_cursor_hook_tracks_exact_live_owner(recovery, target, monkeypatch):

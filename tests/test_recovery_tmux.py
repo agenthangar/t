@@ -61,8 +61,14 @@ def until(check, timeout=5, detail=lambda: ""):
 @pytest.mark.parametrize("choice", ["q", "r"])
 def test_real_dead_pane_menu_resumes_exact_thread(terminal, choice):
     mod, tmux, command, env, home = terminal
+    bins = home / "bin"
+    bins.mkdir()
+    help_command = bins / "codex"
+    help_command.write_text('#!/bin/sh\necho --no-daemon\n')
+    help_command.chmod(0o755)
     (home / "dirty.txt").write_text("uncommitted edits")
     (home / ".zshrc").write_text(f'''
+export PATH={shlex.quote(str(bins))}:$PATH
 source {shlex.quote(str(REPO_ROOT / 'zsh/resume.zsh'))}
 _dev_agent_of_session() {{ print codex; }}
 _dev_session_sid() {{ print {SID}; }}
@@ -106,7 +112,7 @@ codex() {{ print -r -- "$PWD|$*" > "$HOME/resumed"; sleep 60; }}
         until(lambda: not list(mod.cache(socket).glob("*.offer")))
         if choice == "r":
             until(lambda: (home / "resumed").exists(), detail=lambda: tmux("capture-pane", "-p", "-t", pane["pane"]).stdout)
-            assert (home / "resumed").read_text().strip() == f"{home}|resume {SID}"
+            assert (home / "resumed").read_text().strip() == f"{home}|resume {SID} --no-daemon"
             assert not mod.current(target)  # The old death is stale.
             saved = list((home / "cache/t/restart").iterdir())
             assert len(saved) == 1 and "unsent draft" in saved[0].read_text()
@@ -130,14 +136,15 @@ codex() {{ print -r -- "$PWD|$*" > "$HOME/resumed"; sleep 60; }}
 
 
 @pytest.mark.parametrize("width", [40, 80])
-@pytest.mark.parametrize("choice", ["q", "r", "\r"])
-def test_real_menu_dismiss_or_accept_without_typing_into_agent(terminal, width, choice):
+@pytest.mark.parametrize("choice,restart_fails", [("q", False), ("r", False), ("\r", False), ("r", True)])
+def test_real_menu_dismiss_or_accept_without_typing_into_agent(terminal, width, choice, restart_fails):
     mod, tmux, command, env, home = terminal
+    restart_result = "print -u2 'restart refused'; return 1" if restart_fails else "print 'Saved visible draft'"
     (home / ".zshrc").write_text(f'''
 _dev_agent_of_session() {{ print codex; }}
 _dev_session_sid() {{ print {SID}; }}
 _dev_session_claude_pid() {{ tmux display-message -p -t '=dev-api-1:' '#{{pane_pid}}'; }}
-_t_restart_slot() {{ print -r -- "$*" > "$HOME/accepted"; print 'Saved visible draft'; }}
+_t_restart_slot() {{ print -r -- "$*" > "$HOME/accepted"; {restart_result}; }}
 ''')
     launch = "printf 'Server connection could not be restored\\n'; exec sleep 60"
     assert tmux("new-session", "-d", "-s", "dev-api-1", "-c", str(home), "zsh", "-lc", launch).returncode == 0
@@ -178,6 +185,16 @@ _t_restart_slot() {{ print -r -- "$*" > "$HOME/accepted"; print 'Saved visible d
         if choice == "r":
             until(lambda: (home / "accepted").exists(), detail=lambda: os.read(master, 65536).decode(errors="replace"))
             assert (home / "accepted").read_text().split() == ["dev-api-1", str(home), SID, "codex", "restart", target["pid"]]
+            message = b"t recovery: restart refused" if restart_fails else b"Saved visible draft"
+            def result_visible():
+                if select.select([master], [], [], 0.05)[0]:
+                    visible.extend(os.read(master, 65536))
+                return message in visible
+            until(result_visible, detail=lambda: repr(bytes(visible[-1000:])))
+            other_output = bytearray()
+            while select.select([other_master], [], [], 0.05)[0]:
+                other_output.extend(os.read(other_master, 65536))
+            assert message not in other_output
         else:
             assert not (home / "accepted").exists()
         # Menu keystrokes never reach the client process, which remains untouched.
@@ -439,8 +456,10 @@ _dev_agent_new_cmd() {{ print 'codex --model chosen'; }}
     assert len(saved) == 1 and 'Experimental feature request failed' in saved[0].read_text()
 
 
-def test_real_invalid_cwd_recovery_resumes_exact_thread_without_daemon(terminal):
+@pytest.mark.parametrize("error", ["invalid_cwd", "connection"])
+def test_real_recovery_resumes_exact_thread_without_daemon(terminal, error):
     mod, tmux, _, env, home = terminal
+    error = mod.INVALID_CWD if error == "invalid_cwd" else "Server connection could not be restored"
     worktree = home / 'worktree with spaces'
     worktree.mkdir()
     (worktree / 'dirty.txt').write_text('uncommitted edits')
@@ -458,7 +477,7 @@ if '--no-daemon' in sys.argv:
         {{'argv': sys.argv[1:], 'cwd': os.getcwd(), 'pid': os.getpid()}}))
     print('Resumed without daemon', flush=True)
 else:
-    print({('■ ' + mod.INVALID_CWD)!r}, flush=True)
+    print({('■ ' + error)!r}, flush=True)
 time.sleep(60)
 ''')
     codex.chmod(0o755)
@@ -477,23 +496,30 @@ _dev_agent_resume_cmd() {{ print -r -- "codex resume $2"; }}
                     'zsh', '-lic', 'exec codex resume ' + SID).returncode == 0
         socket = tmux('display-message', '-p', '-t', '=dev-api-1:', '#{socket_path}').stdout.strip()
         pane = mod.panes(socket)[0]
-        until(lambda: mod.INVALID_CWD in tmux('capture-pane', '-p', '-J', '-t', pane['pane']).stdout)
+        assert tmux('new-session', '-d', '-s', 'dev-api-2', '-c', str(home),
+                    'sh', '-c', "printf 'Other conversation connected\\n'; exec sleep 60").returncode == 0
+        peer = next(p for p in mod.panes(socket) if p['session'] == 'dev-api-2')
+        until(lambda: 'Other conversation connected' in tmux('capture-pane', '-p', '-t', peer['pane']).stdout)
+        until(lambda: error in tmux('capture-pane', '-p', '-J', '-t', pane['pane']).stdout)
         target = until(lambda: mod.owner(socket, pane))
         assert target['sid'] == SID and target['cwd'] == str(worktree)
         old_pid = target['pid']
         token = 'b' * 32
         mod.write_json(mod.cache(socket) / (token + '.offer'),
-                       {**target, 'error': mod.INVALID_CWD, 'created': time.time()})
+                       {**target, 'error': error, 'created': time.time()})
         assert mod.respond(socket, token, True) == 0
         resumed = until(lambda: json.loads((home / 'resumed.json').read_text())
                         if (home / 'resumed.json').exists() else None)
-        assert resumed['argv'] == ['resume', SID, '--cd', str(worktree), '--no-daemon']
+        cd_args = ['--cd', str(worktree)] if error == mod.INVALID_CWD else []
+        assert resumed['argv'] == ['resume', SID, *cd_args, '--no-daemon']
         assert resumed['cwd'] == str(worktree) and str(resumed['pid']) != old_pid
         assert mod.panes(socket)[0]['pane'] == pane['pane']
         assert daemon.poll() is None
+        assert next(p for p in mod.panes(socket) if p['pane'] == peer['pane']) == peer
+        assert 'Other conversation connected' in tmux('capture-pane', '-p', '-t', peer['pane']).stdout
         assert (worktree / 'dirty.txt').read_text() == 'uncommitted edits'
         saved = list((home / 'cache/t/restart').iterdir())
-        assert len(saved) == 1 and mod.INVALID_CWD in saved[0].read_text()
+        assert len(saved) == 1 and error in saved[0].read_text()
         old_status = subprocess.run(['ps', '-p', old_pid, '-o', 'stat='],
                                     capture_output=True, text=True)
         assert not old_status.stdout.strip() or old_status.stdout.strip().startswith('Z')

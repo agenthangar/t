@@ -67,8 +67,14 @@ def test_restart_preflight_and_failure(t_mod, restart_slot, monkeypatch, capsys,
 
 
 def run_shell(tmp_path, code):
+    bins = tmp_path / "restart-help"
+    bins.mkdir(exist_ok=True)
+    codex = bins / "codex"
+    codex.write_text('#!/bin/sh\n[ "$1 $2" = "resume --help" ] && echo --no-daemon\n')
+    codex.chmod(0o755)
     env = {k: v for k, v in os.environ.items() if not k.startswith("COV_CORE_")}
     env.update(HOME=str(tmp_path), ZDOTDIR=str(tmp_path),
+               PATH=str(bins) + os.pathsep + env["PATH"],
                XDG_CACHE_HOME=str(tmp_path / "cache"),
                XDG_CONFIG_HOME=str(tmp_path / "config"),
                XDG_STATE_HOME=str(tmp_path / "state"))
@@ -81,7 +87,8 @@ def run_shell(tmp_path, code):
 @pytest.mark.parametrize("scenario", ["normal", "dry", "missing", "changed", "desktop", "no_pid", "self",
                                       "capture_failed", "race", "still_running", "pane_alive", "respawn_failed",
                                       "locked", "term_failed", "multiple_panes", "stopped_dead",
-                                      "zombie", "unknown_state", "stat_failed"])
+                                      "zombie", "unknown_state", "stat_failed", "shared_server",
+                                      "shared_server_race", "unreadable_process", "unsupported"])
 def test_restart_shell_safety(tmp_path, scenario):
     log = tmp_path / "actions"
     lock = tmp_path / "cache/t/restart/dev-api-1.lock"
@@ -118,7 +125,14 @@ _dev_session_claude_pid() {{
 }}
 _dev_agent_resume_cmd() {{ print -r -- "codex resume $2"; }}
 ps() {{
-  if [[ $* == '-o stat= -p 99999' ]]; then
+  if [[ $* == '-ww -o args= -p '* ]]; then
+    [[ $scenario == unreadable_process ]] && return 1
+    if [[ $scenario == shared_server || ( $scenario == shared_server_race && -e "$log" && $(<"$log") == *capture-pane* ) ]]; then
+      print 'codex app-server --listen unix:// --managed-daemon'
+    else
+      print 'codex resume {SID}'
+    fi
+  elif [[ $* == '-o stat= -p 99999' ]]; then
     [[ $scenario == stat_failed ]] && {{ print Zs; return 1; }}
     [[ $scenario == zombie ]] && print Zs || print '?'
   else
@@ -132,6 +146,7 @@ kill() {{
      $scenario == unknown_state || $scenario == stat_failed ]]
 }}
 sleep() {{ :; }}
+[[ $scenario == unsupported ]] && print '#!/bin/sh\nexit 0' > "$HOME/restart-help/codex"
 _t_restart_slot dev-api-1 "$dir" {SID} codex restart
 '''
     if scenario == "dry":
@@ -151,6 +166,8 @@ _t_restart_slot dev-api-1 "$dir" {SID} codex restart
         assert "signal" not in actions
     assert ("respawn-pane" in actions) == (scenario in ("normal", "respawn_failed", "stopped_dead", "zombie"))
     assert "respawn-pane -k" not in actions
+    if "respawn-pane" in actions:
+        assert "--no-daemon" in actions
     assert lock.exists() == (scenario == "locked")
 
 
@@ -208,7 +225,8 @@ tmux show-options -p -v -t '=dev-api-1:' remain-on-exit
                                   capture_output=True, text=True)
             pytest.fail(f"replacement agent did not start: {pane.stdout}{pane.stderr}")
         resume_arg = "resume" if agent == "codex" else "-r"
-        assert thread_log.read_text().strip() == f"{tmp_path}|{resume_arg} {SID}"
+        suffix = " --no-daemon" if agent == "codex" else ""
+        assert thread_log.read_text().strip() == f"{tmp_path}|{resume_arg} {SID}{suffix}"
         assert dirty.read_text() == "keep my changes\n"
     finally:
         subprocess.run(tmux + ["kill-server"], capture_output=True)
