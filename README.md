@@ -213,6 +213,8 @@ or **q** to dismiss; **Enter** defaults to Dismiss. Offers are bound
 to the exact conversation and process or exited pane; a changed or recovered
 session is left alone. Completion and error messages stay in the window that
 opened recovery, and are skipped if that window has left the affected pane.
+An open recovery menu does not expire while waiting for your choice; Restart
+always rechecks the conversation and process before acting.
 Detached sessions get the offer when you return. Dismissal suppresses repeats until
 the error clears. While recovery is needed, the status bar shows a shortcut to
 reopen the menu: normally **Ctrl-b**, then **Shift-r** (uppercase **R**). It uses
