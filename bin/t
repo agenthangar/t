@@ -1472,6 +1472,97 @@ def _config_remove_host(cfg, alias):
         cfg.mini_host = ""
 
 
+def _host_refresh_config():
+    """Read local settings through the bundled bridge, without personal dotfiles."""
+    script = os.path.join(_t_source_root(), "zsh", "config.zsh")
+    snippet = f"export T_LOCAL_RC={shlex.quote(_current_local_rc())}; source {shlex.quote(script)}"
+    result = _run(["zsh", "-f", "-c", snippet], timeout=10)
+    if result.returncode:
+        raise ValueError("could not load local host settings: " + result.stderr.strip())
+
+
+def _host_change(cfg, action, alias=None, target=None, default=False, clear=False):
+    """Validate and apply one host edit; callers persist its config diff atomically."""
+    if action == "default" and clear:
+        cfg.beam_host = ""
+        return
+    if not _CONFIG_ALIAS.fullmatch(alias or "") or alias in ("__add__", "__back__"):
+        raise ValueError("use letters, numbers, dots, underscores or hyphens for the host alias")
+    if action == "add" and alias in cfg.hosts:
+        raise ValueError(f"host {alias!r} already exists; use `t host edit {alias} <target>`")
+    if action != "add" and alias not in cfg.hosts:
+        raise ValueError(f"unknown host {alias!r}; run `t hosts` to list registered hosts")
+    if action in ("add", "edit"):
+        if not _BARE_HOST.fullmatch(target or "") or target.startswith("-"):
+            raise ValueError("use an SSH config name, address or user@host for the target; configure ports in ~/.ssh/config")
+        old = cfg.hosts.get(alias)
+        cfg.hosts[alias] = target
+        if old and cfg.beam_host == old:
+            cfg.beam_host = target
+        if old and cfg.mini_host == old:
+            cfg.mini_host = target
+        if default:
+            cfg.beam_host = target
+    elif action == "remove":
+        _config_remove_host(cfg, alias)
+    elif action == "default":
+        cfg.beam_host = cfg.hosts[alias]
+
+
+def cmd_hosts(cfg, args):
+    action = args.action
+    try:
+        _host_refresh_config()
+        cfg = Config()
+        if action == "list":
+            if getattr(args, "json", False):
+                print(json.dumps({"hosts": cfg.hosts, "default": cfg.beam_host or None}, sort_keys=True))
+            elif not cfg.hosts:
+                print("No remote hosts registered. Add one with `t host add <alias> <user@host>`.")
+            else:
+                width = max(5, max(map(len, cfg.hosts)))
+                print(f"{'ALIAS':<{width}}  SSH TARGET")
+                for alias, target in sorted(cfg.hosts.items()):
+                    suffix = "  (default for session move)" if cfg.beam_host in (alias, target) else ""
+                    print(f"{alias:<{width}}  {target}{suffix}")
+            return 0
+        alias = getattr(args, "alias", None)
+        if action == "show":
+            if alias not in cfg.hosts:
+                raise ValueError(f"unknown host {alias!r}; run `t hosts` to list registered hosts")
+            print(f"Host: {alias}\nSSH target: {cfg.hosts[alias]}")
+            print("Default for session move: " + ("yes" if cfg.beam_host in (alias, cfg.hosts[alias]) else "no"))
+            return 0
+        if action == "default" and alias is None and not args.clear:
+            if cfg.beam_host:
+                aliases = [h for h, target in sorted(cfg.hosts.items()) if cfg.beam_host in (h, target)]
+                print(f"{', '.join(aliases) or '(unregistered)'}  {cfg.beam_host}")
+            else:
+                print("No default for session move. Set one with `t host default <alias>`.")
+            return 0
+        path = _current_local_rc()
+        before = _config_read(path)
+        initial = _config_state(cfg)
+        _host_change(cfg, action, alias, getattr(args, "target", None),
+                     getattr(args, "default", False), getattr(args, "clear", False))
+        changes = _config_diff(initial, _config_state(cfg))
+        if not changes:
+            print("Hosts unchanged — nothing written")
+            return 0
+        _config_write(path, before, _config_text(before, changes, initial))
+        _host_refresh_config()
+    except (OSError, ValueError) as exc:
+        print(f"t host {action}: {exc}", file=sys.stderr)
+        return 1
+    if action == "remove":
+        print(f"Removed host {alias}. Remote files and sessions are kept.")
+    elif action == "default":
+        print(f"Default for session move: {cfg.beam_host or 'none'}")
+    else:
+        print(f"{'Added' if action == 'add' else 'Updated'} host {alias}: {cfg.hosts[alias]}")
+    return 0
+
+
 def _config_remove_repo(cfg, alias):
     for attr in ("repos", "agents", "branches", "worktree", "open_mode"):
         getattr(cfg, attr).pop(alias, None)
@@ -8268,7 +8359,10 @@ COMMAND_GROUPS = {
     },
     "cursor": {"list": ("cursor", "ls"), "resume": ("cursor", "resume"),
                "send": ("cursor", "send")},
-    "host": {"run": ("on",)},
+    "host": {"list": ("hosts", "list"), "show": ("hosts", "show"),
+             "add": ("hosts", "add"), "edit": ("hosts", "edit"),
+             "remove": ("hosts", "remove"), "default": ("hosts", "default"),
+             "run": ("on",)},
     "config": {"open": ("config",), "show": ("config", "--show"),
                "edit": ("config", "--edit"), "setup": ("setup",)},
     "profile": {"init": ("instructions", "--init"),
@@ -8287,7 +8381,7 @@ GROUP_DESCRIPTIONS = {
     "session": "Open, find, and move work sessions",
     "repo": "List and manage repositories",
     "cursor": "List, resume, and send Cursor chats",
-    "host": "Run a command on another machine",
+    "host": "Manage remote SSH hosts and run commands on them",
     "config": "Manage local settings",
     "profile": "Manage reusable AGENTS.md instructions",
     "policy": "Inspect and apply agent permissions",
@@ -8296,8 +8390,25 @@ GROUP_DESCRIPTIONS = {
 }
 
 
+def _host_alias_argv(argv):
+    """Accept the natural plural and removal synonyms at the command boundary."""
+    argv = list(argv)
+    start = 1 if argv and argv[0] == "help" else 0
+    if len(argv) <= start or argv[start] not in ("host", "hosts"):
+        return argv
+    plural = argv[start] == "hosts"
+    argv[start] = "host"
+    if plural and start == 0 and (len(argv) == 1 or (
+            argv[1].startswith("-") and argv[1] not in ("-h", "--help"))):
+        argv.insert(1, "list")
+    if len(argv) > start + 1 and argv[start + 1] in ("delete", "rm"):
+        argv[start + 1] = "remove"
+    return argv
+
+
 def _canonical_argv(argv):
     """Translate a public noun/action pair; leave payload arguments untouched."""
+    argv = _host_alias_argv(argv)
     if len(argv) < 2 or argv[0] not in COMMAND_GROUPS:
         return argv
     prefix = COMMAND_GROUPS[argv[0]].get(argv[1])
@@ -8335,7 +8446,7 @@ WORK
   session   Open, find, and move work sessions
   repo      List and manage repositories
   cursor    List, resume, and send Cursor chats
-  host      Run a command on another machine
+  host      Manage remote SSH hosts and run commands
 
 CONFIGURATION
   config    Manage local settings
@@ -8354,6 +8465,7 @@ EXAMPLES
   t session open api       Open or reattach an api session
   t session list --remote  List sessions across machines
   t repo list              List registered repositories
+  t hosts                  List registered SSH hosts
 
 LEARN MORE
   t help <noun> [verb]      Show command details
@@ -8397,9 +8509,18 @@ def _group_help(group):
     width = max(map(len, COMMAND_GROUPS[group]))
     rows = [f"  {action:<{width}}  { _command_description(group, action)}"
             for action in COMMAND_GROUPS[group]]
+    extra = ("\nA host is an SSH-accessible machine registered with a short alias.\n"
+             "Targets can be SSH config names, addresses, or user@host.\n"
+             "`t hosts` lists hosts; `t hosts <verb>` also works.\n"
+             "`delete` and `rm` are aliases for `remove`.\n\nEXAMPLES\n"
+             "  t host add mini chris@mini.local\n"
+             "  t host edit mini chris@new-mini.local\n"
+             "  t host default mini\n"
+             "  t host run mini t session list\n"
+             "  t host remove mini\n" if group == "host" else "")
     return _wrap_help(f"USAGE\n  t {group} <verb> [arguments] [flags]\n\n"
             f"{GROUP_DESCRIPTIONS[group]}.\n\nCOMMANDS\n" + "\n".join(rows) +
-            f"\n\nRun `t help {group} <verb>` for flags and arguments.\n")
+            f"\n{extra}\nRun `t help {group} <verb>` for flags and arguments.\n")
 
 
 def _command_description(group, action):
@@ -8416,7 +8537,11 @@ def _command_description(group, action):
                  "locate": "Print a checkout path", "create": "Create a GitHub repository",
                  "clone": "Clone and register a repository"},
         "cursor": {"list": "List chats", "resume": "Resume a chat", "send": "Move a chat"},
-        "host": {"run": "Run a remote command or shell"},
+        "host": {"list": "List registered SSH hosts", "show": "Show a host's target and defaults",
+                 "add": "Register a remote SSH host", "edit": "Change a host's SSH target",
+                 "remove": "Unregister a host (delete / rm also work)",
+                 "default": "Show, set, or clear the session move default",
+                 "run": "Run a remote command or shell"},
         "config": {"open": "Open the settings menu", "show": "Print current settings",
                    "edit": "Edit local configuration", "setup": "Register repos and hosts"},
         "profile": {"init": "Create an instruction profile", "edit": "Edit the profile",
@@ -8439,6 +8564,9 @@ def _aliases_help():
             if old != f"{group} {action}":
                 rows.append(f"  t {old:<25} t {group} {action}")
     rows.extend((
+        "  t hosts                     t host list",
+        "  t hosts <verb>              t host <verb>",
+        "  t host delete / rm <alias>  t host remove <alias>",
         "  t cursor [id]               t cursor send [id]",
         "  t cursor --ls               t cursor list",
         "  t cursor [id] --from HOST   t cursor send [id] --from HOST",
@@ -8769,6 +8897,35 @@ REMOTE SESSIONS
     sp.add_argument("host", help="$REMOTE_HOSTS key, or a literal ssh target")
     sp.add_argument("rest", nargs=argparse.REMAINDER, help="command to run (omit for an interactive shell)")
 
+    sp = sub.add_parser("hosts", hidden=True, description="Manage registered remote SSH hosts.")
+    p._group_parsers["hosts"] = sp
+    host_sub = sp.add_subparsers(dest="action", metavar="<command>")
+    host_list = host_sub.add_parser("list", description="List the registered aliases and SSH targets. "
+        "The default marker identifies the destination for `t session move`. `t hosts` is shorthand.")
+    host_list.add_argument("--json", action="store_true", help="print hosts and the session move default as JSON")
+    host_show = host_sub.add_parser("show", description="Show a registered host's SSH target and whether "
+        "it is the default destination for `t session move`.")
+    host_show.add_argument("alias", help="registered host alias")
+    for action in ("add", "edit"):
+        hp = host_sub.add_parser(action, description=(
+            "Register a remote machine under a short alias." if action == "add" else
+            "Change the SSH target of an existing host, updating defaults that use its old target.") +
+            " The target can be a name from ~/.ssh/config, an address, or user@host. "
+            "Configure SSH keys, ports and jump hosts in ~/.ssh/config. "
+            "This saves local settings; it does not connect or install t on the remote machine.")
+        hp.add_argument("alias", help="short host alias (letters, numbers, dots, underscores or hyphens)")
+        hp.add_argument("target", help="SSH config name, address, or user@host")
+        hp.add_argument("--default", action="store_true", help="use this host as the default destination for t session move")
+    host_remove = host_sub.add_parser("remove", description="Remove a local host registration and clear "
+        "defaults that refer to it. Remote files, sessions, and ~/.ssh/config are kept. "
+        "`t host delete` and `t host rm` are aliases for this command.")
+    host_remove.add_argument("alias", help="registered host alias to remove")
+    host_default = host_sub.add_parser("default", description="Show the default destination for `t session move`, "
+        "set it to a registered host, or clear it with --clear. Other remote commands retain their own host selection.")
+    hd = host_default.add_mutually_exclusive_group()
+    hd.add_argument("alias", nargs="?", help="registered host alias to use as the default")
+    hd.add_argument("--clear", action="store_true", help="clear the default destination")
+
     sp = sub.add_parser("repos", help="manage registered repositories",
         description="List registered repository aliases and checkout paths, enter a checkout "
             "from the zsh plugin, or print its absolute path. Run `t repos <command> -h` "
@@ -9013,6 +9170,7 @@ IMPLEMENTED = {
     "app": cmd_app, "restart": cmd_restart,
     "config": cmd_config,
     "repos": cmd_repos,
+    "hosts": cmd_hosts,
     "update": cmd_update,
 }
 
@@ -9075,6 +9233,7 @@ def _print_command_help(target, words, canonical, *, detailed=False):
 
 
 def main(argv):
+    argv = _host_alias_argv(argv)
     if argv == ["__update-prompt"]:
         return _t_offer_update()
     if argv == ["__update-check"]:
