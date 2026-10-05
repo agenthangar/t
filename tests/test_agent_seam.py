@@ -2097,3 +2097,33 @@ def test_desktop_only_slot_rows_and_ambiguous_context(zsh, live, reserved, ambig
     assert row[:5] == [SID if active else '-', str(wt), 'api-3', 'app', 'active' if active else 'none']
     if active:
         assert row[5] == 'Desktop title'
+
+
+def test_rich_session_rows_keep_targeting_and_activity_while_recovering_context(zsh):
+    wt = f'{zsh.home}/code/.worktrees/api/3'
+    _codex_home(zsh, [(SID, wt, 'Fix the queue', 200, 0, 'Investigate cache invalidation')])
+    r = zsh(f'_dev_session_sid() {{ print -r -- {SID}; }}; '
+            '_dev_session_has_claude() { return 1; }; '
+            '_dev_app_slot_reserved() { return 0; }; _dev_desktop_threads() { :; }; '
+            '_dev_agent_transcript() { :; }; _dev_fg_rows() { :; }; _pr_state_flush() { :; }; '
+            '_dev_session_rows --details', FAKE_DEV_AGENT='codex',
+            FAKE_SESSION_ROWS=f'dev-api-3\t{wt}\tdetached')
+    assert r.returncode == 0, r.stderr
+    fields = r.stdout.strip().split('\t')
+    assert fields[:5] == [SID, wt, 'api-3', 'app', 'none']
+    assert fields[5:] == ['Investigate cache invalidation', 'codex', '-']
+
+
+def test_remote_rich_scan_preserves_login_shell_contract(zsh):
+    row = f'{SID}\t/wt/3\tapi-3\tapp\tnone\tTask context\tcodex\tmodel-test'
+    log = zsh.home/'ssh-args'
+    r = zsh(f'REMOTE_HOSTS[mini]=example; '
+            f'_dev_session_rows() {{ print -r -- {shlex.quote(row)}; }}; '
+            f'ssh() {{ print -r -- "$*" > {shlex.quote(str(log))}; print -r -- {shlex.quote(row)}; }}; '
+            '_dev_rows_all --details')
+    assert r.returncode == 0, r.stderr
+    assert set(r.stdout.splitlines()) == {'local\t'+row, 'mini\t'+row}
+    command = log.read_text()
+    assert 'zsh -lic' in command and '--details' in command
+    # The remote login shell receives the whole scan command as one argument.
+    assert shlex.split(command)[-3:] == ['zsh', '-lic', '_dev_session_rows --details']

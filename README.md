@@ -264,9 +264,11 @@ the terminal running `t` to invoke the app’s New Window menu. It cannot launch
 desktop workspace on a remote host.
 The desktop slot stays reserved in private Git worktree metadata so automatic
 cleanup and a later terminal launch cannot reuse it while the app may still be
-working. `t session list` uses `▣` for Codex desktop sessions, alongside the same
-status columns as terminal sessions: `● ✓` for a loaded conversation and `○` for
-inactive. On macOS, live desktop context is verified from rollout files held open
+working. `t session list` has separate status, UI, model, session, and context
+columns. UI shows `▣ desktop` or `› cli`; model keeps the agent icon and the last
+recorded model name (`-` when unavailable). Inactive desktop slots show their
+last recorded conversation title. Status uses `● ✓` for a loaded conversation
+and `○` for inactive. On macOS, live desktop context is verified from rollout files held open
 by the desktop backend; a saved reservation alone stays inactive. Loaded context
 can remain in the backend after a window closes, and does not mean a turn is
 currently generating. To continue in the CLI, finish the desktop turn,
