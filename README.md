@@ -138,6 +138,19 @@ continues to open its interactive menu.
 | `t repo create` / `t repo clone <github-url> [alias]` | Create a repository or clone and register an existing one |
 | `t cursor list` / `t cursor resume [id]` / `t cursor send [id]` | List, resume, or move Cursor CLI chats |
 | `t host run <host> <command>` | Run a command through the host's login zsh |
+| `t hosts` / `t host list [--json]` | List registered SSH host aliases and targets |
+| `t host show <alias>` | Show a host's target and defaults |
+| `t host add <alias> <target> [--default]` | Register an SSH config name, address, or user@host |
+| `t host edit <alias> <target> [--default]` | Change a registered host's target |
+| `t host remove <alias>` | Unregister a host and clear its defaults; `delete` and `rm` also work |
+| `t host default [alias] [--clear]` | Show, set, or clear the default destination for session moves |
+
+`host` is the command group for remote machines, following the singular names
+`session` and `repo`. `t hosts` lists machines, and `t hosts <verb>` also works.
+For example, `t host add mini chris@mini.local --default` registers `mini` and
+makes it the default destination for `t session move`. Configure SSH keys,
+ports, and jump hosts in `~/.ssh/config`; registering a host saves local
+settings without connecting to it or installing software there.
 
 ### Configuration and tools
 
