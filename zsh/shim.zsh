@@ -18,6 +18,7 @@ t() {
   # Help belongs to the executable, including nested command help. A remote
   # command's own --help is data and must pass through unchanged.
   local a machine_output= help_requested= help_boundary= verb="$1" action="$2"
+  [[ $verb == hosts ]] && { verb=host; action=${action:-list}; }
   for a in "$@"; do
     [[ $a == -- ]] && help_boundary=1
     [[ -z $help_boundary && ( $a == -h || $a == --help ) ]] && help_requested=1
@@ -66,7 +67,13 @@ t() {
     case $action in
       integrate|update) shell_verb=$action; shell_args=("${@:3}") ;;
     esac
-  elif [[ $verb == host || $verb == profile || $verb == policy || $verb == cursor ]]; then
+  elif [[ $verb == host ]]; then
+    shell_verb=
+    case $action in
+      add|edit|remove|delete|rm) shell_verb=host_config ;;
+      default) [[ -n $3 ]] && shell_verb=host_config ;;
+    esac
+  elif [[ $verb == profile || $verb == policy || $verb == cursor ]]; then
     shell_verb=
   fi
   # Bare groups are help-only. In particular, `t config` keeps its old menu.
@@ -80,7 +87,7 @@ t() {
   # checks its own commands; prompting here for those would ask twice.
   local check_update=
   case "$shell_verb" in
-    open|pop|push|resume|find|cd|beam|setup|config|new|checkout|install|integrate)
+    open|pop|push|resume|find|cd|beam|setup|config|host_config|new|checkout|install|integrate)
       check_update=1 ;;
     repos_cd) check_update=1 ;;
     repos) [[ ${shell_args[1]} == cd ]] && check_update=1 ;;
@@ -120,6 +127,7 @@ t() {
     # T_SETUP_SHIM tells the bin to skip its "source ~/.zshrc" hint.
     setup)  _t_install setup "$@" ;;
     config) _t_install config "$@" ;;
+    host_config) _t_install hosts "$@" ;;
     # new writes DEV_REPOS too (the repo it just created) → the same reload.
     new)    T_SETUP_SHIM=1 command t "$@" && _t_reload ;;
     checkout) _t_install checkout "$@" ;;
@@ -522,6 +530,7 @@ _t() {
     return
   fi
   local group=${words[2]} action=${words[3]} first=4
+  [[ $group == hosts ]] && group=host
   if [[ $group == help ]]; then
     if (( CURRENT == 3 )); then
       local -a topics=($nouns agents aliases)
@@ -529,19 +538,21 @@ _t() {
       return
     fi
     group=${words[3]} action=${words[4]} first=5
+    [[ $group == hosts ]] && group=host
   fi
   local -a actions
   case $group in
     session) actions=(open list close restart push pop resume cd move read view-plan paste search open-app) ;;
     repo) actions=(list cd locate create clone) ;;
     cursor) actions=(list resume send) ;;
-    host) actions=(run) ;;
+    host) actions=(list show add edit remove default run) ;;
     config) actions=(open show edit setup) ;;
     profile) actions=(init edit show apply) ;;
     policy) actions=(check show apply) ;;
     agent) actions=(install status trust) ;;
     system) actions=(integrate update diagnose) ;;
   esac
+  [[ $group == host && ( $action == delete || $action == rm ) ]] && action=remove
   if (( ${#actions} )) && (( CURRENT == first - 1 )); then
     if [[ $group == config && ${words[CURRENT]} == -* ]]; then
       _values 'legacy flag' --show --edit -h --help
@@ -630,6 +641,21 @@ _t() {
       else _values 'slot' 1 2 3 4; fi ;;
     host/run)
       (( CURRENT == first )) && _values 'host' ${(k)REMOTE_HOSTS} || _normal ;;
+    host/show|host/remove|host/default|host/edit)
+      if (( CURRENT == first )) && [[ ${words[CURRENT]} != -* ]]; then
+        _values 'host' ${(k)REMOTE_HOSTS}
+      elif [[ $group/$action == host/edit && $CURRENT == $(( first + 1 )) && ${words[CURRENT]} != -* ]]; then
+        _message 'SSH config name, address or user@host'
+      elif [[ $action == default ]]; then _values 'flag' --clear -h --help
+      elif [[ $action == edit ]]; then _values 'flag' --default -h --help
+      else _values 'flag' -h --help; fi ;;
+    host/add)
+      if [[ ${words[CURRENT]} == -* ]]; then _values 'flag' --default -h --help
+      elif (( CURRENT == first )); then _message 'new host alias'
+      elif (( CURRENT == first + 1 )); then _message 'SSH config name, address or user@host'
+      else _values 'flag' --default -h --help; fi ;;
+    host/list)
+      _values 'flag' --json -h --help ;;
     session/list)
       if (( CURRENT == first )) && [[ ${words[CURRENT]} != -* ]]; then _values 'repo' ${(k)DEV_REPOS}
       else _values 'flag' -r --remote -a --all -h --help; fi ;;

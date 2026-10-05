@@ -5,6 +5,7 @@ from pathlib import Path
 import shlex
 import shutil
 import subprocess
+import sys
 
 import pytest
 
@@ -26,6 +27,9 @@ def shell(tmp_path, code, *, bin_text=None):
            "PATH": f"{bindir}:{os.environ['PATH']}",
            "T_NO_UPDATE_CHECK": "1"}
     env.pop("T_LOCAL_RC", None)
+    for key in tuple(env):
+        if key.startswith("COV_CORE_"):
+            env.pop(key)
     return subprocess.run(
         ["zsh", "-f", "-c", f'source "{ROOT / "t.plugin.zsh"}"; {code}'],
         env=env, capture_output=True, text=True, timeout=20,
@@ -93,6 +97,53 @@ if [ "$1" = config ]; then printf 'changed\\n' >> "$T_LOCAL_RC"; fi
         "bin:<config><--edit>", "reloaded",
         "bin:<config><edit>", "reloaded",
         "bin:<config><show><--edit>", "reloaded",
+    ]
+
+
+@pytest.mark.skipif(not shutil.which("zsh"), reason="zsh is required")
+def test_host_management_reloads_targets_defaults_and_shortcuts(tmp_path):
+    result = shell(tmp_path, '''
+        t hosts add lab user@old --default
+        print -r -- "added:$REMOTE_HOSTS[lab]:$TBEAM_HOST:${+functions[lab]}"
+        t host edit lab user@new
+        print -r -- "edited:$REMOTE_HOSTS[lab]:$TBEAM_HOST"
+        t hosts default --clear
+        print -r -- "cleared:${TBEAM_HOST:-none}"
+        t host default lab
+        t hosts rm lab
+        print -r -- "removed:${#REMOTE_HOSTS}:${TBEAM_HOST:-none}:${+functions[lab]}"
+        personal() { print -r -- personal-function; }
+        t host add personal user@personal
+        t host remove personal
+        personal
+    ''', bin_text=f"#!/bin/sh\nexec {shlex.quote(sys.executable)} {shlex.quote(str(ROOT / 'bin/t'))} \"$@\"\n")
+    assert result.returncode == 0, result.stderr
+    assert "added:user@old:user@old:1" in result.stdout
+    assert "edited:user@new:user@new" in result.stdout
+    assert "cleared:none" in result.stdout
+    assert "removed:0:none:0" in result.stdout
+    assert result.stdout.splitlines()[-1] == "personal-function"
+
+
+@pytest.mark.skipif(not shutil.which("zsh"), reason="zsh is required")
+def test_host_completion_covers_plural_aliases_targets_and_flags(tmp_path):
+    result = shell(tmp_path, '''
+        REMOTE_HOSTS=(lab user@lab)
+        _values() { print -r -- "values:${(j:,:)argv[2,-1]}"; }
+        _message() { print -r -- "message:$1"; }
+        local -a words
+        words=(t hosts rm '') CURRENT=4; _t
+        words=(t host edit lab '') CURRENT=5; _t
+        words=(t host add '') CURRENT=4; _t
+        words=(t host add lab user@lab --) CURRENT=6; _t
+        words=(t host default --) CURRENT=4; _t
+        words=(t hosts list --) CURRENT=4; _t
+    ''')
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == [
+        "values:lab", "message:SSH config name, address or user@host",
+        "message:new host alias", "values:--default,-h,--help",
+        "values:--clear,-h,--help", "values:--json,-h,--help",
     ]
 
 
