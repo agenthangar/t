@@ -47,7 +47,7 @@ def test_root_and_group_help_wrap_at_narrow_width(t_mod, monkeypatch):
     assert max(map(len, t_mod._group_help("session").splitlines())) <= 40
 
 
-@pytest.mark.parametrize("group", ["session", "repo", "cursor", "profile", "policy", "agent", "system"])
+@pytest.mark.parametrize("group", ["session", "repo", "cursor", "hosts", "profile", "policy", "agent", "system"])
 def test_bare_group_and_group_help_have_no_side_effects(t_mod, monkeypatch, capsys, group):
     monkeypatch.setattr(t_mod, "Config", lambda: pytest.fail("help loaded config"))
     assert t_mod.main([group]) == 0
