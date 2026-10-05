@@ -1491,7 +1491,7 @@ def _host_change(cfg, action, alias=None, target=None, default=False, clear=Fals
     if action == "add" and alias in cfg.hosts:
         raise ValueError(f"host {alias!r} already exists; use `t hosts edit {alias} <target>`")
     if action != "add" and alias not in cfg.hosts:
-        raise ValueError(f"unknown host {alias!r}; run `t hosts` to list registered hosts")
+        raise ValueError(f"unknown host {alias!r}; run `t hosts list` to list registered hosts")
     if action in ("add", "edit"):
         if not _BARE_HOST.fullmatch(target or "") or target.startswith("-"):
             raise ValueError("use an SSH config name, address or user@host for the target; configure ports in ~/.ssh/config")
@@ -1529,7 +1529,7 @@ def cmd_hosts(cfg, args):
         alias = getattr(args, "alias", None)
         if action == "show":
             if alias not in cfg.hosts:
-                raise ValueError(f"unknown host {alias!r}; run `t hosts` to list registered hosts")
+                raise ValueError(f"unknown host {alias!r}; run `t hosts list` to list registered hosts")
             print(f"Host: {alias}\nSSH target: {cfg.hosts[alias]}")
             print("Default for session move: " + ("yes" if cfg.beam_host in (alias, cfg.hosts[alias]) else "no"))
             return 0
@@ -8402,13 +8402,13 @@ GROUP_DESCRIPTIONS = {
 
 
 def _hosts_argv(argv):
-    """Default bare hosts to listing and accept removal synonyms."""
+    """Accept the JSON listing shorthand and removal synonyms."""
     argv = list(argv)
     start = 1 if argv and argv[0] == "help" else 0
     if len(argv) <= start or argv[start] != "hosts":
         return argv
-    if start == 0 and (len(argv) == 1 or (
-            argv[1].startswith("-") and argv[1] not in ("-h", "--help"))):
+    if start == 0 and len(argv) > 1 and (
+            argv[1].startswith("-") and argv[1] not in ("-h", "--help")):
         argv.insert(1, "list")
     if len(argv) > start + 1 and argv[start + 1] in ("delete", "rm"):
         argv[start + 1] = "remove"
@@ -8474,7 +8474,7 @@ EXAMPLES
   t session open api       Open or reattach an api session
   t session list --remote  List sessions across machines
   t repo list              List registered repositories
-  t hosts                  List registered SSH hosts
+  t hosts list             List registered SSH hosts
 
 LEARN MORE
   t help <noun> [verb]      Show command details
@@ -8520,7 +8520,7 @@ def _group_help(group):
             for action in COMMAND_GROUPS[group]]
     extra = ("\nA host is an SSH-accessible machine registered with a short alias.\n"
              "Targets can be SSH config names, addresses, or user@host.\n"
-             "Run `t hosts` or `t hosts list` to list registered machines.\n"
+             "Run `t hosts list` to list registered machines.\n"
              "`delete` and `rm` are aliases for `remove`.\n\nEXAMPLES\n"
              "  t hosts add mini chris@mini.local\n"
              "  t hosts edit mini chris@new-mini.local\n"
@@ -8573,7 +8573,7 @@ def _aliases_help():
             if old != f"{group} {action}":
                 rows.append(f"  t {old:<25} t {group} {action}")
     rows.extend((
-        "  t hosts                     t hosts list",
+        "  t hosts --json              t hosts list --json",
         "  t hosts delete / rm <alias>  t hosts remove <alias>",
         "  t cursor [id]               t cursor send [id]",
         "  t cursor --ls               t cursor list",
@@ -8909,7 +8909,7 @@ REMOTE SESSIONS
     p._group_parsers["hosts"] = sp
     host_sub = sp.add_subparsers(dest="action", metavar="<command>")
     host_list = host_sub.add_parser("list", description="List the registered aliases and SSH targets. "
-        "The default marker identifies the destination for `t session move`. `t hosts` is shorthand.")
+        "The default marker identifies the destination for `t session move`.")
     host_list.add_argument("--json", action="store_true", help="print hosts and the session move default as JSON")
     host_show = host_sub.add_parser("show", description="Show a registered host's SSH target and whether "
         "it is the default destination for `t session move`.")

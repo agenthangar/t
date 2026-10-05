@@ -18,7 +18,6 @@ t() {
   # Help belongs to the executable, including nested command help. A remote
   # command's own --help is data and must pass through unchanged.
   local a machine_output= help_requested= help_boundary= verb="$1" action="$2"
-  [[ $verb == hosts ]] && action=${action:-list}
   for a in "$@"; do
     [[ $a == -- ]] && help_boundary=1
     [[ -z $help_boundary && ( $a == -h || $a == --help ) ]] && help_requested=1
@@ -76,8 +75,7 @@ t() {
   elif [[ $verb == profile || $verb == policy || $verb == cursor ]]; then
     shell_verb=
   fi
-  # Forward bin-owned groups, including the bare hosts listing. Bare config
-  # keeps its settings menu.
+  # Forward bin-owned groups and their help. Bare config keeps its settings menu.
   [[ $verb == session || $verb == repo || $verb == cursor || $verb == hosts ||
      $verb == profile || $verb == policy || $verb == agent || $verb == system ||
      ( $verb == config && -n $action ) ]] && [[ -z $shell_verb ]] && {
