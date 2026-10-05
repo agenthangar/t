@@ -33,13 +33,13 @@ def host_cli(tmp_path):
 
 def test_host_lifecycle_without_dotfiles(host_cli):
     run, local, home = host_cli
-    assert "No remote hosts" in run("hosts").stdout
+    assert "No remote hosts" in run("hosts", "list").stdout
     assert not local.exists()
     assert run("hosts", "--json").stdout == '{"default": null, "hosts": {}}\n'
     assert run("hosts", "add", "mini", "chris@mini.local", "--default").returncode == 0
     assert json.loads(run("hosts", "list", "--json").stdout) == {
         "hosts": {"mini": "chris@mini.local"}, "default": "chris@mini.local"}
-    assert "default for session move" in run("hosts").stdout
+    assert "default for session move" in run("hosts", "list").stdout
     shown = run("hosts", "show", "mini")
     assert shown.returncode == 0 and "SSH target: chris@mini.local" in shown.stdout
     assert "Default for session move: yes" in shown.stdout
@@ -106,7 +106,7 @@ def test_default_rejects_alias_with_clear(host_cli):
 
 
 @pytest.mark.parametrize("words", [
-    ("hosts", "-h"), ("help", "hosts"), ("help", "hosts", "delete"),
+    ("hosts",), ("hosts", "-h"), ("help", "hosts"), ("help", "hosts", "delete"),
     ("hosts", "rm", "--help"),
 ])
 def test_host_alias_help_has_no_side_effects(t_mod, monkeypatch, capsys, words):
@@ -123,14 +123,13 @@ def test_singular_host_is_not_a_command(t_mod, monkeypatch, capsys, words):
     assert "unknown command" in capsys.readouterr().err
 
 
-def test_bare_hosts_dispatches_the_list_action(t_mod, monkeypatch):
+def test_explicit_hosts_list_dispatches_the_list_action(t_mod, monkeypatch):
     seen = []
     monkeypatch.setattr(t_mod, "Config", lambda: object())
     monkeypatch.setattr(t_mod, "_t_auto_update", lambda argv: None)
     monkeypatch.setitem(t_mod.IMPLEMENTED, "hosts", lambda cfg, args: seen.append(args.action) or 0)
-    assert t_mod.main(["hosts"]) == 0
     assert t_mod.main(["hosts", "list"]) == 0
-    assert seen == ["list", "list"]
+    assert seen == ["list"]
 
 
 def test_host_change_updates_defaults_and_rejects_option_targets(t_mod):

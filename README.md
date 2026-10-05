@@ -143,15 +143,16 @@ behavior. Start a fresh Codex session in the current repo with
 | `t repo create` / `t repo clone <github-url> [alias]` | Create a repository or clone and register an existing one |
 | `t cursor list` / `t cursor resume [id]` / `t cursor send [id]` | List, resume, or move Cursor CLI chats |
 | `t hosts run <host> <command>` | Run a command through the host's login zsh |
-| `t hosts` / `t hosts list [--json]` | List registered SSH host aliases and targets |
+| `t hosts` | Show host-management commands and examples |
+| `t hosts list [--json]` | List registered SSH host aliases and targets |
 | `t hosts show <alias>` | Show a host's target and defaults |
 | `t hosts add <alias> <target> [--default]` | Register an SSH config name, address, or user@host |
 | `t hosts edit <alias> <target> [--default]` | Change a registered host's target |
 | `t hosts remove <alias>` | Unregister a host and clear its defaults; `delete` and `rm` also work |
 | `t hosts default [alias] [--clear]` | Show, set, or clear the default destination for session moves |
 
-`hosts` manages remote machines. Run `t hosts` to list machines and
-`t hosts <verb>` to manage them or run remote commands.
+`hosts` manages remote machines. Run `t hosts` to see its commands,
+`t hosts list` to list machines, and `t hosts <verb>` to manage them or run remote commands.
 For example, `t hosts add mini chris@mini.local --default` registers `mini` and
 makes it the default destination for `t session move`. Configure SSH keys,
 ports, and jump hosts in `~/.ssh/config`; registering a host saves local
