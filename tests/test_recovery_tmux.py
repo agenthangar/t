@@ -179,6 +179,10 @@ _t_restart_slot() {{ print -r -- "$*" > "$HOME/accepted"; {restart_result}; }}
                 return b"CONNECTION FAILED" in visible and b"Save draft and restart" in visible
             until(menu_visible, detail=lambda: repr(bytes(visible[-1000:])))
             assert b"Save draft and restart" not in os.read(other_master, 65536)
+            offer = next(mod.cache(socket).glob("*.offer"))
+            mod.write_json(offer, {**mod.read_json(offer), "created": time.time() - 3600})
+            mod.Watcher(socket).poll()
+            assert offer.exists()  # A menu left open must not silently expire.
             os.write(master, choice.encode())
         offers = lambda: list(mod.cache(socket).glob("*.offer"))
         until(lambda: not offers())
