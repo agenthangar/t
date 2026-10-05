@@ -421,8 +421,7 @@ def test_snooze_without_prior_cache(tmp_path):
     installation = {"kind": "release", "source": str(tmp_path), "current": "v1.2.3"}
     updates.snooze(installation)
     assert updates.cached(installation)["available"] is False
-    data = updates._read(updates._cache_path(updates._identity(installation)), updates._identity(installation))
-    assert data["snoozed_until"] > updates.time.time()
+    assert updates._snoozed_until(updates._identity(installation)) > updates.time.time()
 
 
 @pytest.mark.parametrize("change", [
@@ -445,14 +444,94 @@ def test_snooze_does_not_wait_for_busy_checker(tmp_path, monkeypatch):
     installation = {"kind": "release", "source": str(tmp_path), "current": "v1.2.3"}
     monkeypatch.setattr(updates, "_release", lambda identity: "v1.2.4")
     assert updates.check(installation)["available"] is True
-    modes = []
-    def busy(lock, mode):
-        modes.append(mode)
-        raise BlockingIOError("checker holds lock")
-    monkeypatch.setattr(updates.fcntl, "flock", busy)
+    # Snooze while discovery holds the real lock, then let it replace the cache.
+    def refresh(identity):
+        updates.snooze(installation)
+        assert not updates.cached(installation)["available"]
+        return "v1.2.4"
+    monkeypatch.setattr(updates, "_release", refresh)
+    assert updates.check(installation, force=True)["available"] is True
+    assert not updates.cached(installation)["available"]
+
+
+def test_homebrew_snooze_survives_main_update_and_pending_refresh(tmp_path, monkeypatch):
+    installation = {"kind": "git", "source": str(tmp_path), "current": "a" * 40,
+                    "remote": "https://github.com/agenthangar/t.git"}
+    now = [1000]
+    monkeypatch.setattr(updates.time, "time", lambda: now[0])
+    monkeypatch.setattr(updates, "_git", lambda identity: "")
+    monkeypatch.setattr(updates, "_git_offer_safe", lambda identity: True)
+    gap = {"version": "v0.4.2", "count": 11}
+    monkeypatch.setattr(updates, "_homebrew_gap", lambda identity: gap)
+    monkeypatch.setattr(updates.subprocess, "Popen", lambda *a, **kw: None)
+    updates.check(installation)
+    assert updates.cached(installation)["unreleased"] == gap
     updates.snooze(installation)
-    assert modes == [updates.fcntl.LOCK_EX | updates.fcntl.LOCK_NB]
-    assert updates.cached(installation)["available"] is True
+    installation["current"] = "b" * 40
+    gap["count"] = 12
+    now[0] += 60
+    updates.schedule(installation, "/tmp/fake-t")
+    assert updates.check(installation)["unreleased"] == gap
+    assert "unreleased" not in updates.cached(installation)
+    now[0] = 1000 + updates.INTERVAL - 1
+    assert "unreleased" not in updates.cached(installation)
+    now[0] += 1
+    assert updates.cached(installation)["unreleased"] == gap
+
+
+def test_snooze_is_scoped_to_installation(tmp_path):
+    installation = {"kind": "git", "source": str(tmp_path), "current": "a" * 40,
+                    "remote": "https://github.com/agenthangar/t.git"}
+    updates.snooze(installation)
+    assert updates._snoozed_until(updates._identity(dict(installation, current="b" * 40))) > 0
+    for change in ({"remote": "https://example.com/t.git"}, {"source": str(tmp_path / "other")},
+                   {"kind": "release", "current": "v0.4.2"}):
+        assert updates._snoozed_until(updates._identity(dict(installation, **change))) == 0
+
+
+@pytest.mark.parametrize("value", [None, "tomorrow", True, float("nan"), float("inf")])
+def test_invalid_snooze_timestamp_never_hides_offer(tmp_path, monkeypatch, value):
+    installation = {"kind": "release", "source": str(tmp_path), "current": "v1.2.3"}
+    monkeypatch.setattr(updates, "_release", lambda identity: "v1.2.4")
+    updates.check(installation)
+    updates.snooze(installation)
+    path = updates._cache_path(updates._identity(installation)).with_suffix(".snooze.json")
+    data = json.loads(path.read_text())
+    data["snoozed_until"] = value
+    path.write_text(json.dumps(data))
+    assert updates.cached(installation)["available"]
+
+
+@pytest.mark.parametrize("contents", ["[]", "{", "x" * 8193, '\ufffd'])
+def test_invalid_snooze_file_is_ignored(tmp_path, contents):
+    installation = {"kind": "release", "source": str(tmp_path), "current": "v1.2.3"}
+    updates.snooze(installation)
+    identity = updates._identity(installation)
+    path = updates._cache_path(identity).with_suffix(".snooze.json")
+    path.write_text(contents)
+    assert updates._snoozed_until(identity) == 0
+
+
+def test_snooze_symlink_is_ignored(tmp_path):
+    installation = {"kind": "release", "source": str(tmp_path), "current": "v1.2.3"}
+    updates.snooze(installation)
+    identity = updates._identity(installation)
+    path = updates._cache_path(identity).with_suffix(".snooze.json")
+    target = path.with_suffix(".saved")
+    path.rename(target)
+    path.symlink_to(target)
+    assert updates._snoozed_until(identity) == 0
+
+
+def test_legacy_cache_snooze_still_hides_offer(tmp_path, monkeypatch):
+    installation = {"kind": "release", "source": str(tmp_path), "current": "v1.2.3"}
+    monkeypatch.setattr(updates, "_release", lambda identity: "v1.2.4")
+    updates.check(installation)
+    path = updates._cache_path(updates._identity(installation))
+    data = json.loads(path.read_text())
+    data["snoozed_until"] = updates.time.time() + 60
+    path.write_text(json.dumps(data))
+    assert not updates.cached(installation)["available"]
 
 
 def gap_responses(monkeypatch, formula, comparison):

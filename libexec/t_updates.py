@@ -104,6 +104,25 @@ def _skip_path(identity):
     return _cache_path(identity).with_suffix(".skip.json")
 
 
+def _snooze_identity(identity):
+    # A timed choice belongs to this installation, even after main advances.
+    return {key: value for key, value in identity.items() if key != "current"}
+
+
+def _snoozed_until(identity):
+    path = _cache_path(identity).with_suffix(".snooze.json")
+    try:
+        if path.is_symlink() or path.stat().st_size > 8192:
+            return 0
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, UnicodeError):
+        return 0
+    if not isinstance(data, dict) or data.get("identity") != _snooze_identity(identity):
+        return 0
+    until = data.get("snoozed_until")
+    return until if type(until) in (int, float) and math.isfinite(until) else 0
+
+
 def _skipped_version(identity):
     path = _skip_path(identity)
     try:
@@ -254,18 +273,19 @@ def _state(installation, respect_snooze):
         return state
     data = _read(_cache_path(identity), identity)
     skipped = _skipped_version(identity) if respect_snooze else ""
+    snoozed_until = max(data.get("snoozed_until", 0), _snoozed_until(identity)) if respect_snooze else 0
     now = time.time()
     if data and data.get("expires_at", 0) > now and not data.get("pending"):
         state.update(checked=True, error=bool(data.get("error")))
     if (data.get("expires_at", 0) > now and data.get("available")
-            and (not respect_snooze or (data.get("snoozed_until", 0) <= now
+            and (not respect_snooze or (snoozed_until <= now
                                         and skipped != data["latest"]))):
         if identity["kind"] != "git" or _git_offer_safe(identity):
             state.update(available=True, latest=data["latest"])
     if (identity["kind"] == "git" and identity["remote"] in PROJECT_REMOTES
             and data.get("expires_at", 0) > now and data.get("unreleased")
             and not data.get("available")
-            and (not respect_snooze or data.get("snoozed_until", 0) <= now)
+            and (not respect_snooze or snoozed_until <= now)
             and _git_offer_safe(identity)):
         state["unreleased"] = data["unreleased"]
     return state
@@ -330,20 +350,14 @@ def check(installation, force=False):
 
 
 def snooze(installation, seconds=INTERVAL):
+    """Save a timed choice without waiting for or being replaced by discovery."""
     identity = _identity(installation)
     if identity is None:
         return
-    path = _cache_path(identity)
+    path = _cache_path(identity).with_suffix(".snooze.json")
     try:
-        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        with open(path.with_suffix(".lock"), "a+b") as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            data = _read(path, identity)
-            if not data:
-                data = {"identity": identity, "checked_at": 0, "expires_at": 0,
-                        "available": False, "latest": ""}
-            data["snoozed_until"] = time.time() + max(0, seconds)
-            _write(path, data)
+        _write(path, {"identity": _snooze_identity(identity),
+                      "snoozed_until": time.time() + max(0, seconds)})
     except OSError:
         pass
 
