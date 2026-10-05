@@ -7140,6 +7140,16 @@ def _app_new_window(bundle):
         raise ValueError(f"could not load the native window helper: {e}") from e
 
 
+def _app_workspace_link(cwd):
+    """Explicit mode + project route verified in desktop 26.928.20755's parser.
+
+    A workspace-only `codex app PATH` request leaves the mode unspecified in
+    the combined ChatGPT/Codex app. New Window can therefore remain plain chat.
+    Like _app_link, this is an app-version-dependent deep-link contract.
+    """
+    return "codex://threads/new?" + urlencode({"mode": "codex", "path": os.path.abspath(cwd)})
+
+
 def cmd_app_workspace(cwd):
     """Open an isolated workspace through the same native window path as t app."""
     try:
@@ -7153,10 +7163,11 @@ def cmd_app_workspace(cwd):
         _trust_auto([cwd])
         window = _app_new_window(bundle)
         window.focus()
-        result = _run(["codex", "app", cwd], timeout=30)
+        result = _run(["open", "-a", bundle, _app_workspace_link(cwd)], timeout=30)
         if result.returncode:
             raise ValueError(result.stderr.strip() or "app launch failed")
-        print("New app window created. Open request sent to Codex; check the desktop app for the workspace.")
+        print("New app window created. Codex-mode workspace request sent to macOS; "
+              "app delivery is not confirmed. Workspace: " + cwd)
         return 0
     except ValueError as e:
         print(f"t open --app: {e}", file=sys.stderr)
