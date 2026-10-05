@@ -194,7 +194,7 @@ _codex_thread_lookup()   { _codex_threads sid "$1" }
 # fired SessionStart. Require one nonempty, non-subagent thread in this exact cwd
 # updated during this process's lifetime. Old conversations in a reused slot and
 # ambiguous candidates must not turn a fresh welcome screen into an active row.
-# This is evidence for a title/context, NOT an authoritative pid→sid mapping: never
+# This is evidence for display metadata, NOT an authoritative pid→sid mapping: never
 # use it in _dev_session_sid or stamp it into tmux (beam/app act on those ids).
 _codex_live_transcript() {
   local db start
@@ -237,6 +237,9 @@ try:
     name, sep, folder = pane_title.rpartition(' | ')
     if not sep or not name or folder != os.path.basename(cwd):
         sys.exit(0)
+    # Codex decorates the title while working or requesting input. These are
+    # transient UI prefixes, absent from both the thread name and status footer.
+    name = re.sub(r'^(?:[\u2800-\u28ff] |\[ [.!] \] Action Required \| )', '', name)
     # The optional profile field may be absent. Identify status lines by their
     # workspace field so the three-part shortcut help below them is not mistaken
     # for a footer. Only the last status line counts, even if it is incomplete or

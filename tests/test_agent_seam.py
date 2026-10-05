@@ -2127,3 +2127,86 @@ def test_remote_rich_scan_preserves_login_shell_contract(zsh):
     assert 'zsh -lic' in command and '--details' in command
     # The remote login shell receives the whole scan command as one argument.
     assert shlex.split(command)[-3:] == ['zsh', '-lic', '_dev_session_rows --details']
+
+
+@pytest.mark.parametrize("prefix", ["", "⠏ ", "[ . ] Action Required | ", "[ ! ] Action Required | "])
+@pytest.mark.parametrize("stamp", ["tmux", "registry", "both"])
+def test_current_codex_pane_beats_previous_conversation_in_same_slot(zsh, stamp, prefix):
+    wt = f"{zsh.home}/code/.worktrees/api/3"
+    old = "aaaaaaaa-0000-0000-0000-000000000002"
+    started = "Mon Sep 28 12:00:00 2026"
+    epoch = int(time.mktime(time.strptime(started, "%a %b %d %H:%M:%S %Y")))
+    _codex_home(zsh, [(old, wt, "old prompt", epoch + 1, 0, "Previous task"),
+                      (SID, wt, "new prompt", epoch + 10, 0, "Current task")], scan_cwd=True)
+    if stamp in ("registry", "both"):
+        reg = zsh.home / ".cache/claude-sessions"
+        reg.mkdir(parents=True)
+        (reg / "4242").write_text(f"{old}\t{wt}\n")
+    r = zsh(f'_dev_session_claude_pid() {{ print 4242; }}; _dev_session_sid dev-api-3 {wt}',
+            FAKE_START=started, FAKE_DEV_AGENT="codex",
+            FAKE_RESUME_ID=old if stamp in ("tmux", "both") else "",
+            FAKE_PANE_TITLE=prefix + "Current task | 3", FAKE_PANE=f"GPT-6 · {wt} · Current task")
+    assert r.returncode == 0 and not r.stderr
+    assert r.stdout.strip() == SID
+
+
+@pytest.mark.parametrize("agent", ["claude", "codex"])
+def test_session_pr_ignores_links_inside_tool_results_and_arguments(zsh, agent):
+    path = zsh.home / "conversation.jsonl"
+    if agent == "claude":
+        records = [
+            {"type": "assistant", "message": {"content": [{"type": "text", "text": "Opened https://github.com/acme/api/pull/42"}]}},
+            {"type": "user", "message": {"content": [{"type": "tool_result", "content": "Search result https://github.com/acme/api/pull/502"}]}},
+            {"type": "assistant", "message": {"content": [{"type": "tool_use", "input": {"command": "fetch https://github.com/acme/api/pull/503"}}]}},
+        ]
+    else:
+        records = [
+            {"type": "session_meta", "payload": {}},
+            {"type": "response_item", "payload": {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "Opened https://github.com/acme/api/pull/42"}]}},
+            {"type": "response_item", "payload": {"type": "function_call_output", "output": "Search result https://github.com/acme/api/pull/502"}},
+            {"type": "response_item", "payload": {"type": "function_call", "arguments": "fetch https://github.com/acme/api/pull/503"}},
+        ]
+    path.write_text(json.dumps(records[0]) + "\n")
+    zsh(f"_transcript_meta_batch {path}")  # exercise incremental cached scans too
+    with path.open("a") as f:
+        for record in records[1:]:
+            f.write(json.dumps(record) + "\n")
+    r = zsh(f"_transcript_meta_batch {path}")
+    assert r.stdout.rstrip("\n").split("\t")[2] == "github.com/acme/api/pull/42"
+
+
+def test_unstamped_codex_model_uses_the_same_verified_transcript_as_title(zsh):
+    wt = f"{zsh.home}/code/.worktrees/api/3"
+    started = "Mon Sep 28 12:00:00 2026"
+    epoch = int(time.mktime(time.strptime(started, "%a %b %d %H:%M:%S %Y")))
+    paths = _codex_home(zsh, [(SID, wt, "prompt", epoch + 10, 0, "Current task")])
+    with paths[SID].open("a") as f:
+        f.write(json.dumps({"type": "turn_context", "payload": {"model": "actual-model"}}) + "\n")
+    r = zsh('_dev_session_claude_pid() { print 4242; }; '
+            '_dev_session_has_claude() { return 0; }; '
+            '_dev_fg_rows() { :; }; _pr_state_tag() { REPLY=; }; _pr_state_flush() { :; }; '
+            '_dev_session_rows --details', FAKE_START=started,
+            FAKE_DEV_AGENT="codex", FAKE_SESSION_ROWS=f"dev-api-3\t{wt}\tattached",
+            FAKE_PANE="OpenAI Codex (v0.158.0)")
+    assert r.returncode == 0 and not r.stderr, r.stderr
+    assert r.stdout.strip().split("\t") == ["-", wt, "api-3", "attached", "active", "Current task", "codex", "actual-model"]
+
+
+@pytest.mark.parametrize("old_cache", [False, True])
+def test_tool_search_link_alone_never_becomes_a_session_pr(zsh, old_cache):
+    import hashlib
+    path = zsh.home / "conversation.jsonl"
+    path.write_text(json.dumps({"type": "user", "message": {"content": [
+        {"type": "tool_result", "content": "https://github.com/acme/api/pull/502"}
+    ]}}) + "\n")
+    if old_cache:
+        cache = zsh.home / ".cache/claude-sessions/meta"
+        cache.mkdir(parents=True)
+        key = hashlib.sha1(str(path).encode()).hexdigest()[:20]
+        (cache / key).write_text(json.dumps({
+            "ino": path.stat().st_ino, "off": path.stat().st_size,
+            "ct": None, "at": None, "msg": None, "fmt": "claude",
+            "pr": "github.com/acme/api/pull/502",
+        }))
+    r = zsh(f"_transcript_meta_batch {path}")
+    assert r.stdout == f"{path}\t\t\n"
