@@ -1151,6 +1151,12 @@ _dev_desktop_threads() {
 }
 
 _dev_session_rows() {
+  # Rich display rows opt into a trailing model field. Ownership consumers keep
+  # the established seven-field contract and its authoritative targeting ids.
+  if [[ ${1:-} == --details ]]; then
+    _dev_session_rows | python3 "$T_HOME/libexec/t_session_details.py"
+    return
+  fi
   setopt local_options null_glob bare_glob_qual
   # Two passes, because the expensive part is per-transcript and batches. Pass 1
   # asks tmux and the process table (ONE list-sessions carrying name+path+attached,
@@ -1300,10 +1306,13 @@ _dev_rows_all() {
   # subshell callers below already run job-control-off, so they never warn either.
   setopt local_options no_monitor no_notify
   local tmpd; tmpd=$(mktemp -d) || return 1
-  _dev_session_rows > "$tmpd/.local" 2>/dev/null &
+  _dev_session_rows "$@" > "$tmpd/.local" 2>/dev/null &
+  local scan=_dev_session_rows remote_scan
+  [[ ${1:-} == --details ]] && scan+=' --details'
+  remote_scan="zsh -lic ${(q)scan}"
   local h
   for h in ${(k)REMOTE_HOSTS}; do
-    ( ssh -o ConnectTimeout=3 -o BatchMode=yes "${REMOTE_HOSTS[$h]}" 'zsh -lic _dev_session_rows' \
+    ( ssh -o ConnectTimeout=3 -o BatchMode=yes "${REMOTE_HOSTS[$h]}" "$remote_scan" \
         > "$tmpd/$h" 2>/dev/null
       print -r -- $? > "$tmpd/$h.rc" ) &
   done

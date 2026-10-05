@@ -356,8 +356,11 @@ def _parse_rows(text, host_prefixed=False):
         # field 7 (8 host-prefixed) = agent, trailing so a host on older dotfiles that
         # still emits six fields parses as claude
         agent = extra[0] if extra and extra[0] in AGENTS else "claude"
-        rows.append(dict(host=host, sid=sid, cwd=cwd, slot=slot,
-                         state=state, context=context, summary=summary, agent=agent))
+        row = dict(host=host, sid=sid, cwd=cwd, slot=slot,
+                   state=state, context=context, summary=summary, agent=agent)
+        if len(extra) > 1:
+            row["model"] = extra[1]
+        rows.append(row)
     return rows
 
 
@@ -442,14 +445,14 @@ def cmd_ls(cfg, args):
         return 1
     st = Style()
     if args.remote:
-        rows = _scope_filter(_parse_rows(zsh_capture("_dev_rows_all"), host_prefixed=True), scope, wt_scope)
+        rows = _scope_filter(_parse_rows(zsh_capture("_dev_rows_all --details"), host_prefixed=True), scope, wt_scope)
         if not rows:
             where = f" in {os.path.basename(scope)} (t ls -r --all for every repo)," if scope else ""
             print(f"No dev sessions running{where} on this machine or any reachable host.")
             return 0
         _render_remote(rows, scope, st)
     else:
-        rows = _scope_filter(_parse_rows(zsh_capture("_dev_session_rows")), scope, wt_scope)
+        rows = _scope_filter(_parse_rows(zsh_capture("_dev_session_rows --details")), scope, wt_scope)
         if not rows:
             where = f" in {os.path.basename(scope)}" if scope else ""
             hints = ([f"t ls --all for every repo"] if scope else []) + \
@@ -464,18 +467,18 @@ def cmd_ls(cfg, args):
 _PR_WIP_RE = re.compile(r"#\d+ merged, still in progress")
 
 
-def _slot_line(r, st, name_w, avail, host_w=None):
-    """ONE row of the slot view: `● ✓     <slot>  <working on>`. `t ls` and every
-    slot picker draw their rows through this, so a slot reads the same wherever it is
-    offered — the point of a shared view is that you never re-learn a slot's row.
-    state attached → ●, detached → ○, app → ●/○ with a separate desktop icon, anything else (a dead slot from
-    _dev_dead_slot_rows) → blank, and its summary carries the
-    story instead; context active → ✓. host_w adds the `t ls -r` HOST column. The
-    Style is the only colour, so Style(tty=False) yields a label a picker can measure."""
+def _slot_line(r, st, name_w, avail, host_w=None, model_w=7):
+    """Shared row: status, interface, recorded model, optional host, slot, context.
+
+    Desktop and CLI share status marks. The interface never replaces the agent
+    icon, and model_w includes that icon plus the recorded model name.
+    """
     amark = {"attached": f"{st.g}●{st.r}", "detached": "○", "app": f"{st.g}●{st.r}" if r.get("context") == "active" else "○"}.get(r.get("state"), " ")
     cmark = f"{st.c}✓{st.r}" if r.get("context") == "active" else " "
-    # third glyph = the agent's icon (every agent has one — the header legend says which)
-    gmark = "▣" if r.get("state") == "app" else _agent_glyph(r.get("agent", "claude"))
+    # Interface and agent/model are independent columns; a desktop keeps Codex's icon.
+    gmark = _agent_glyph(r.get("agent", "claude"))
+    interface = "▣ desktop" if r.get("state") == "app" else "› cli"
+    model = _truncate(str(r.get("model") or "-"), model_w - 2)
     # Use the spare status column: the mark survives a narrow/truncated summary,
     # and remains visible without colour (including slot pickers and remote rows).
     wmark = f"{st.w}↻{st.r}" if _PR_WIP_RE.search(r.get("summary") or "") else " "
@@ -488,20 +491,22 @@ def _slot_line(r, st, name_w, avail, host_w=None):
     # a merged PR the slot kept working past (zsh _pr_state_tag) stands out of the dim
     # summary — coloured AFTER truncation, so the width math never counts an escape
     summary = _PR_WIP_RE.sub(lambda m: f"{st.r}{st.w}{m.group(0)}{st.r}{st.y}", summary)
-    return f"{amark} {cmark} {gmark} {wmark} {host}{r['slot']:<{name_w}} {st.y}{summary}{st.r}"
+    return (f"{amark} {cmark} {wmark}  {interface:<9} {gmark} {model:<{model_w - 2}} "
+            f"{host}{r['slot']:<{name_w}} {st.y}{summary}{st.r}")
 
 
 def _render_local(rows, scope, st, has_remote=False):
     name_w = max([7] + [len(r["slot"]) for r in rows])
-    avail = _columns() - 11 - name_w
+    model_w = min(28, max([7] + [len(str(r.get("model") or "-")) + 2 for r in rows]))
+    avail = _columns() - 21 - model_w - name_w
     if avail < 12:
-        avail = 80 - 11 - name_w
+        avail = 80 - 21 - model_w - name_w
     print(_header(st, scope))
     print()
-    print(f"  {st.y}{'STATUS':<8}{'SESSION':<{name_w}} WORKING ON{st.r}")
+    print(f"  {st.y}{'STATUS':<7}{'UI':<10}{'MODEL':<{model_w}} {'SESSION':<{name_w}} WORKING ON{st.r}")
     has_fg = has_app = False
     for r in rows:
-        print("  " + _slot_line(r, st, name_w, avail))
+        print("  " + _slot_line(r, st, name_w, avail, model_w=model_w))
         if ":" in r["slot"]:                       # colon marks a foreground row
             has_fg = True
         if r["state"] == "app" or "Codex desktop workspace" in r["summary"]:
@@ -520,15 +525,16 @@ def _render_local(rows, scope, st, has_remote=False):
 def _render_remote(rows, scope, st):
     host_w = max([4] + [len(r["host"]) for r in rows if r["host"] != "local"])
     name_w = max([7] + [len(r["slot"]) for r in rows])
-    avail = _columns() - 12 - host_w - name_w
+    model_w = min(28, max([7] + [len(str(r.get("model") or "-")) + 2 for r in rows]))
+    avail = _columns() - 22 - model_w - host_w - name_w
     if avail < 12:
-        avail = 80 - 12 - host_w - name_w
+        avail = 80 - 22 - model_w - host_w - name_w
     print(_header(st, scope))
     print()
-    print(f"  {st.y}{'STATUS':<8}{'HOST':<{host_w}} {'SESSION':<{name_w}} WORKING ON{st.r}")
+    print(f"  {st.y}{'STATUS':<7}{'UI':<10}{'MODEL':<{model_w}} {'HOST':<{host_w}} {'SESSION':<{name_w}} WORKING ON{st.r}")
     has_fg = has_app = False
     for r in rows:
-        print("  " + _slot_line(r, st, name_w, avail, host_w))
+        print("  " + _slot_line(r, st, name_w, avail, host_w, model_w=model_w))
         if ":" in r["slot"]:                       # colon marks a foreground row
             has_fg = True
         if r["state"] == "app" or "Codex desktop workspace" in r["summary"]:

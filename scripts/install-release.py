@@ -35,7 +35,7 @@ REQUIRED = (
     ".t-install-version", ".t-release-version", "install.sh", "t.plugin.zsh",
     "local.zsh.example", "bin/t", "bin/claude-stamp-tmux", "bin/cursor-beam",
     "LICENSE", "README.md", "ui/fzf.sh", "libexec/t_app_window.py",
-    "libexec/t_desktop.py", "libexec/t_markdown.py", "libexec/t_recovery.py", "libexec/vendor/mistune/LICENSE",
+    "libexec/t_desktop.py", "libexec/t_session_details.py", "libexec/t_markdown.py", "libexec/t_recovery.py", "libexec/vendor/mistune/LICENSE",
     "zsh/config.zsh", "zsh/agent.zsh", "zsh/worktree.zsh",
     "zsh/sessions.zsh", "zsh/remote.zsh", "zsh/resume.zsh", "zsh/shim.zsh",
     "claude/settings.json.example", "claude/commands/tpush.md",

@@ -950,29 +950,29 @@ def test_dev_url_ignores_a_non_numeric_trailing_segment(t_mod, monkeypatch, tmp_
 def test_slot_line_marks_and_columns(t_mod):
     st = t_mod.Style(tty=False)
     row = {"host": "local", "slot": "ff-3", "state": "attached", "context": "active", "summary": "x"}
-    assert t_mod._slot_line(row, st, 7, 20) == "● ✓ ✱   ff-3    x"
+    assert t_mod._slot_line(row, st, 7, 20) == "● ✓    › cli     ✱ -     ff-3    x"
     row = dict(row, state="detached", context="idle")
-    assert t_mod._slot_line(row, st, 7, 20) == "○   ✱   ff-3    x"
+    assert t_mod._slot_line(row, st, 7, 20) == "○      › cli     ✱ -     ff-3    x"
     # a dead slot has no state marks — its summary carries the story — and is truncated to avail
     row = dict(row, state="dead", context="none", summary="a" * 30)
     line = t_mod._slot_line(row, st, 7, 20)
-    assert line.startswith("    ✱   ff-3    ") and line.endswith("…")
-    assert len(line) == 8 + 7 + 1 + 20
+    assert line.startswith("       › cli     ✱ -     ff-3    ") and line.endswith("…")
+    assert len(line) == 25 + 7 + 1 + 20
     # the t ls -r HOST column; a local row leaves it blank
-    assert t_mod._slot_line(dict(row, host="mini"), st, 7, 20, host_w=4).startswith("    ✱   mini ff-3")
-    assert t_mod._slot_line(dict(row, host="local"), st, 7, 20, host_w=4).startswith("    ✱   " + " " * 5 + "ff-3")
+    assert t_mod._slot_line(dict(row, host="mini"), st, 7, 20, host_w=4).startswith("       › cli     ✱ -     mini ff-3")
+    assert t_mod._slot_line(dict(row, host="local"), st, 7, 20, host_w=4).startswith("       › cli     ✱ -     " + " " * 5 + "ff-3")
 
 
 def test_slot_line_agent_glyph_keeps_the_status_width(t_mod):
     st = t_mod.Style(tty=False)
     row = {"host": "local", "slot": "ff-3", "state": "attached", "context": "active", "summary": "x"}
     lines = {a: t_mod._slot_line(dict(row, agent=a), st, 7, 20) for a in t_mod._INSTALL_AGENTS}
-    assert lines["claude"] == "● ✓ ✱   ff-3    x"       # every agent has its icon, claude too
-    assert lines["codex"] == "● ✓ ⬡   ff-3    x"        # third glyph, same 8-column budget
-    assert lines["cursor"] == "● ✓ ◆   ff-3    x"
+    assert lines["claude"] == "● ✓    › cli     ✱ -     ff-3    x"       # every agent has its icon, claude too
+    assert lines["codex"] == "● ✓    › cli     ⬡ -     ff-3    x"        # own agent glyph after the interface column
+    assert lines["cursor"] == "● ✓    › cli     ◆ -     ff-3    x"
     assert len({len(v) for v in lines.values()}) == 1
     assert t_mod._slot_line(row, st, 7, 20) == lines["claude"]   # no agent key at all = claude
-    assert t_mod._slot_line(dict(row, agent="gpt"), st, 7, 20) == "● ✓ ?   ff-3    x"
+    assert t_mod._slot_line(dict(row, agent="gpt"), st, 7, 20) == "● ✓    › cli     ? -     ff-3    x"
 
 
 def test_slot_line_highlights_a_merged_pr_still_in_progress(t_mod):
@@ -980,17 +980,17 @@ def test_slot_line_highlights_a_merged_pr_still_in_progress(t_mod):
     row = {"slot": "ff-20", "state": "detached", "context": "active",
            "summary": "search cleanup · #580 merged, still in progress"}
     line = t_mod._slot_line(row, st, 7, 80)
-    assert line.startswith(f"○ {st.c}✓{st.r} ✱ {st.w}↻{st.r} ")
+    assert line.startswith(f"○ {st.c}✓{st.r} {st.w}↻{st.r}  › cli     ✱ -     ")
     assert f"{st.w}#580 merged, still in progress{st.r}" in line
     plain = t_mod._slot_line(dict(row, summary="search cleanup · #580 merged"), st, 7, 80)
     assert st.w not in plain
     assert t_mod._vis_len(line) == len(t_mod._slot_line(row, t_mod.Style(tty=False), 7, 80))
     # The icon does not depend on the text fitting, and does not shift the columns.
     narrow = t_mod._slot_line(row, t_mod.Style(tty=False), 7, 12)
-    assert narrow == "○ ✓ ✱ ↻ ff-20   search clea…"
-    assert len(narrow) == 8 + 7 + 1 + 12
+    assert narrow == "○ ✓ ↻  › cli     ✱ -     ff-20   search clea…"
+    assert len(narrow) == 25 + 7 + 1 + 12
     remote = t_mod._slot_line(dict(row, host="mini"), t_mod.Style(tty=False), 7, 12, host_w=4)
-    assert remote.startswith("○ ✓ ✱ ↻ mini ff-20")
+    assert remote.startswith("○ ✓ ↻  › cli     ✱ -     mini ff-20")
 
 
 def test_header_lists_every_agent_always(t_mod):
@@ -2277,7 +2277,7 @@ def test_nested_hidden_commands_and_aliases(t_mod, capsys):
     assert "choose from yes, no)" in capsys.readouterr().err.replace("'", "")
 
 
-@pytest.mark.parametrize('context,marks', [('active', '● ✓ ▣'), ('none', '○   ▣')])
+@pytest.mark.parametrize('context,marks', [('active', '● ✓    ▣ desktop ⬡'), ('none', '○      ▣ desktop ⬡')])
 def test_desktop_has_its_own_icon_and_normal_activity_columns(t_mod, context, marks):
     row = dict(slot='web-3', state='app', context=context, agent='codex',
                summary='Review the web session')
@@ -2287,3 +2287,25 @@ def test_desktop_has_its_own_icon_and_normal_activity_columns(t_mod, context, ma
             assert line.startswith(marks)
             assert '[app reserved]' not in line
             assert 'web-3' in line
+
+
+def test_parse_rows_model_extension_keeps_legacy_contract(t_mod):
+    row = 'sid\t/wt/3\tweb-3\tapp\tnone\tInvestigate cache invalidation\tcodex\tmodel-test'
+    local = t_mod._parse_rows(row)[0]
+    remote = t_mod._parse_rows('mini\t'+row, host_prefixed=True)[0]
+    assert local['model'] == remote['model'] == 'model-test'
+    assert remote['host'] == 'mini' and remote['agent'] == 'codex'
+    assert 'model' not in t_mod._parse_rows(row.rsplit('\t',1)[0])[0]
+
+
+@pytest.mark.parametrize('remote', [False, True])
+def test_list_columns_align_interface_model_and_context(t_mod, capsys, remote):
+    row = dict(host='mini' if remote else 'local', sid='saved', cwd='/wt/3', slot='web-3',
+               state='app', context='none', agent='codex', model='model-test', summary='Investigate cache invalidation')
+    (t_mod._render_remote if remote else t_mod._render_local)([row], '', t_mod.Style(tty=False))
+    lines = capsys.readouterr().out.splitlines()
+    header = next(x for x in lines if 'STATUS' in x)
+    body = next(x for x in lines if 'web-3' in x)
+    for heading, content in [('UI','▣ desktop'),('MODEL','⬡ model-test'),('SESSION','web-3'),('WORKING ON','Investigate')]:
+        assert header.index(heading) == body.index(content)
+    assert 'Codex desktop workspace' not in body
