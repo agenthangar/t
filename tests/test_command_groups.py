@@ -13,6 +13,8 @@ def test_registry_covers_the_public_groups(t_mod):
 
 @pytest.mark.parametrize("argv,legacy", [
     (["session", "list", "-a"], ["ls", "-a"]),
+    (["session", "open", "api", "2", "--codex", "--host", "mini"],
+     ["open", "api", "2", "--codex", "--host", "mini"]),
     (["session", "open-app", "api", "3"], ["app", "api", "3"]),
     (["repo", "locate", "api"], ["repos", "path", "api"]),
     (["repo", "create", "name", "--dry-run"], ["new", "name", "--dry-run"]),
@@ -138,7 +140,38 @@ def test_every_advertised_action_has_side_effect_free_help(t_mod, monkeypatch, c
             expected = capsys.readouterr().out
             assert f"usage: t {group} {action}" in expected
             assert t_mod.main([group, action, "--help"]) == 0
-            assert capsys.readouterr().out == expected
+            concise = capsys.readouterr().out
+            if (group, action) == ("session", "open"):
+                assert "REMOTE SESSIONS" in expected
+                assert "REMOTE SESSIONS" not in concise
+            else:
+                assert concise == expected
+
+
+@pytest.mark.parametrize("words", [["open"], ["session", "open"]])
+@pytest.mark.parametrize("width", [40, 80])
+def test_open_help_is_concise_with_discoverable_details(t_mod, monkeypatch, capsys, words, width):
+    monkeypatch.setattr(t_mod, "Config", lambda: pytest.fail("help loaded configuration"))
+    monkeypatch.setattr(t_mod, "_t_auto_update", lambda argv: pytest.fail("help checked updates"))
+    monkeypatch.setattr(t_mod.shutil, "get_terminal_size",
+                        lambda fallback=(80, 24): t_mod.os.terminal_size((width, 24)))
+    monkeypatch.setenv("COLUMNS", str(width))
+    assert t_mod.main([*words, "--help"]) == 0
+    concise = capsys.readouterr().out
+    assert len(concise.split()) < 200
+    assert max(map(len, concise.splitlines())) <= width
+    assert "agent (fresh slots):" in concise and "location:" in concise
+    assert "--codex --new" in concise and "t help open" in concise
+    for flag in ("--new", "--fg", "--cli", "--app", "--codex", "--claude",
+                 "--local", "--here", "--remote", "--host", "--help"):
+        assert flag in concise
+    assert t_mod.main(["help", *words]) == 0
+    detailed = capsys.readouterr().out
+    assert len(detailed) > len(concise)
+    assert all(section in detailed for section in (
+        "SESSION TARGETS", "OPENING DEFAULTS", "REMOTE SESSIONS"))
+    assert "DEV_AGENT_DEFAULT" in detailed and "<repo>:p<pid>" in detailed
+    assert max(map(len, detailed.splitlines())) <= width
 
 
 def test_leaf_help_does_not_turn_supplied_arguments_into_usage(t_mod, capsys):

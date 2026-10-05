@@ -121,6 +121,11 @@ Run `t` or `t help` for a short overview, then `t help <noun>` or
 The older spellings still work; `t help aliases` lists them. Bare `t config`
 continues to open its interactive menu.
 
+For opening sessions, `t session open --help` shows a concise reference with
+examples; `t help session open` adds session targeting, defaults, and remote
+behavior. Start a fresh Codex session in the current repo with
+`t open --codex --new` (`codex` without `--` is a repository name).
+
 ### Work
 
 | Command | Purpose |

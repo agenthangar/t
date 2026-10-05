@@ -82,6 +82,42 @@ def test_grouped_bin_commands_and_help_keep_exact_arguments(tmp_path):
 
 
 @pytest.mark.skipif(not shutil.which("zsh"), reason="zsh is required")
+@pytest.mark.parametrize("command", ["t open", "t session open"])
+@pytest.mark.parametrize("repo,hint", [
+    ("codex", "t open --codex --new"),
+    ("claude", "t open --claude --new"),
+    ("missing", "t repo list"),
+    ("", "t open <repo>"),
+])
+def test_invalid_open_prints_actionable_error_instead_of_help(tmp_path, command, repo, hint):
+    result = shell(tmp_path, f'''
+        DEV_REPOS=()
+        _t_infer_repo() {{ return 1; }}
+        {command} {repo} --new
+    ''')
+    assert result.returncode == 1
+    assert result.stdout == ""
+    assert hint in result.stderr
+    assert "t open --help" in result.stderr
+    assert len(result.stderr.splitlines()) == 3
+    assert ("unknown repository" if repo else "not inside a registered repository") in result.stderr
+
+
+@pytest.mark.skipif(not shutil.which("zsh"), reason="zsh is required")
+def test_registered_repo_named_codex_still_opens(tmp_path):
+    result = shell(tmp_path, '''
+        DEV_REPOS=(codex "$HOME/code/codex")
+        _dev_branch_for() { print -r -- main; }
+        t open codex --new --cli
+    ''')
+    # It reaches the checkout check, rather than treating a registered name as
+    # an agent selector or starting a session against the developer's tmux.
+    assert result.returncode == 1
+    assert "Repo dir not found:" in result.stdout
+    assert "unknown repository" not in result.stderr
+
+
+@pytest.mark.skipif(not shutil.which("zsh"), reason="zsh is required")
 def test_legacy_and_grouped_config_edits_reload_the_caller(tmp_path):
     result = shell(tmp_path, '''
         _t_reload() { print -r -- reloaded; }

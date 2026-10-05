@@ -8593,6 +8593,7 @@ class _CommandSubparsers(argparse._SubParsersAction):
 
 class _CommandParser(argparse.ArgumentParser):
     def __init__(self, *args, **kwargs):
+        self.help_details = kwargs.pop("help_details", None)
         super().__init__(*args, **kwargs)
         self.register("action", "parsers", _CommandSubparsers)
 
@@ -8608,7 +8609,10 @@ class _CommandParser(argparse.ArgumentParser):
         return super().parse_args(args, namespace)
 
     def format_help(self):
-        return _root_help() if self.prog == "t" else super().format_help()
+        if self.prog == "t":
+            return _root_help()
+        body = super().format_help()
+        return _wrap_help(body) if self.help_details else body
 
     def format_usage(self):
         return "usage: t <noun> <verb> [arguments] [flags]\n" if self.prog == "t" else super().format_usage()
@@ -8624,29 +8628,50 @@ def build_parser():
             "For example: `t help session open` or `t help repo locate`.")
     help_sp.add_argument("command", nargs="*", help="command and optional subcommand")
 
-    sp = sub.add_parser("open", help="open or reattach a session in a per-repo tmux slot",
-        description="Open or reattach a Claude session in a per-repo tmux slot. Bare `t session open` "
-            "(or a lone slot like `t session open 3`) targets the repo your cwd is in. A slot that is "
-            "live only on another host is attached in place automatically — no flag needed. "
-            "A foreground row from `t session list` (`<repo>:<id>`, or `<repo>:p<pid>` when no session id is "
-            "recorded yet) is opened by that SESSION name, on whichever "
-            "machine holds it: one living in a tmux session of its own is attached "
-            "in place, a true foreground claude is moved into this terminal. "
-            "`--new` forces a fresh session, `--fg` runs inline without a tmux slot, "
-            "`--app` opens an isolated worktree in the macOS Codex desktop app, and "
-            "`-r`/`--host` open or attach on a remote host (`-r --new` starts one there).")
-    sp.add_argument("repo", nargs="?", help="DEV_REPOS key, or a foreground session id/repo:id from `t session list`")
-    sp.add_argument("slot", nargs="?", help="slot number, 'fg' (this repo's foreground sessions), or a session id")
-    sp.add_argument("--new", action="store_true", help="force a fresh session")
-    sp.add_argument("--fg", action="store_true", help="no tmux: foreground-resume / run inline")
-    sp.add_argument("--cli", action="store_true", help="open in the CLI, overriding the configured opening mode")
-    sp.add_argument("--app", action="store_true", help="open an isolated worktree in the Codex desktop app on this Mac (no CLI/tmux for a fresh slot)")
-    sp.add_argument("-l", "--local", "--here", dest="local", action="store_true", help="force this machine: skip the remote auto-attach probe (combine with --fg for local foreground)")
-    sp.add_argument("-r", "--remote", action="store_true", help="remote: attach a live slot on any host; with --new, start one on the default host")
-    sp.add_argument("--host", help="which host to open/attach on (sets the host for -r; default for --new: first $REMOTE_HOSTS)")
-    ag = sp.add_mutually_exclusive_group()
-    ag.add_argument("--codex", action="store_true", help="run OpenAI Codex CLI in a FRESH slot (default: DEV_AGENT[repo] / DEV_AGENT_DEFAULT, claude)")
-    ag.add_argument("--claude", action="store_true", help="run Claude Code in a fresh slot even if the repo defaults to codex")
+    sp = sub.add_parser("open", help="open or reattach a session",
+        usage="%(prog)s [repo] [slot] [flags]",
+        description="Open or reattach a session. Defaults to the current repository.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""examples:
+  %(prog)s                     Continue in the current repo
+  %(prog)s --codex --new        Start a new Codex session
+  %(prog)s api 2               Attach to api's slot 2
+
+Run `t help open` for session targeting, defaults, and remote details.""",
+        help_details="""SESSION TARGETS
+  A lone slot number targets the current repo: t open 3.
+  Use a SESSION name from `t session list` to open a foreground session:
+  <repo>:<id>, <repo>:p<pid>, or a session ID. A session in tmux attaches
+  in place; a foreground Claude session moves into this terminal.
+  Use `t open <repo> fg` to select that repo's foreground sessions.
+
+OPENING DEFAULTS
+  The configured opening mode chooses CLI or app; --cli and --app override
+  it. The CLI uses an isolated worktree and tmux; --fg runs inline.
+  --app opens an isolated worktree in the macOS Codex desktop app.
+  --codex and --claude select the agent for a fresh slot. Otherwise,
+  DEV_AGENT[repo] overrides DEV_AGENT_DEFAULT (fallback: claude).
+
+REMOTE SESSIONS
+  A slot live only on another host attaches there automatically.
+  --local (also --here) skips that lookup; combine with --fg to run here.
+  --remote attaches to a live remote slot; add --new to start one on the
+  default host (the alphabetically first REMOTE_HOSTS key).
+  --host HOST chooses a host explicitly, for either opening or attaching.""")
+    sp._positionals.title = "arguments"
+    sp.add_argument("repo", nargs="?", help="repository or session (default: current repo)")
+    sp.add_argument("slot", nargs="?", help="slot number, session ID, or 'fg'")
+    sp.add_argument("--new", action="store_true", help="start a fresh session")
+    sp.add_argument("--fg", action="store_true", help="run in this terminal, without tmux")
+    sp.add_argument("--cli", action="store_true", help="open in the CLI")
+    sp.add_argument("--app", action="store_true", help="open in the Codex desktop app (macOS)")
+    ag = sp.add_argument_group("agent (fresh slots)").add_mutually_exclusive_group()
+    ag.add_argument("--codex", action="store_true", help="use Codex")
+    ag.add_argument("--claude", action="store_true", help="use Claude Code")
+    location = sp.add_argument_group("location")
+    location.add_argument("-l", "--local", "--here", dest="local", action="store_true", help="use this machine only")
+    location.add_argument("-r", "--remote", action="store_true", help="attach remotely; --new starts a session")
+    location.add_argument("--host", help="open or attach on this host")
 
     sp = sub.add_parser("app", help="push a local Codex conversation into the app or pull it back to CLI",
         description="Stop a local slot's Codex CLI and open the SAME conversation in the "
@@ -9162,8 +9187,13 @@ def _help_parser(parser, words, *, strict=False):
     return current
 
 
-def _print_command_help(target, words, canonical):
-    """Show existing detailed flag help under the requested public spelling."""
+def _print_command_help(target, words, canonical, *, detailed=False):
+    """Show command help under the requested spelling, with optional details."""
+    if detailed and target.help_details:
+        target = copy.deepcopy(target)
+        # The concise epilog ends with the link to this detailed page.
+        examples = target.epilog.rsplit("\n\n", 1)[0]
+        target.epilog = examples + "\n\n" + target.help_details
     if words and words[0] in COMMAND_GROUPS and len(words) >= 2:
         words = words[:2]
     elif words and words[0] in ("repos", "cursor") and len(words) >= 2:
@@ -9245,7 +9275,7 @@ def main(argv):
         if target is None:
             print(f"t help: unknown command: {' '.join(words)}", file=sys.stderr)
             return 2
-        _print_command_help(target, words, canonical)
+        _print_command_help(target, words, canonical, detailed=True)
         return 0
     if len(argv) == 1 and argv[0] in COMMAND_GROUPS and argv[0] != "config":
         print(_group_help(argv[0]), end="")
