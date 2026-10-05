@@ -1849,9 +1849,18 @@ _t_dev() {
   # repo→path map: see the global DEV_REPOS (defined near the cd shortcuts)
 
   if [[ -z "$repo" || -z "${DEV_REPOS[$repo]}" ]]; then
-    # Styled gh-style (piped through _help_style), but the Repos: section is built
-    # from the ACTUAL ${(k)DEV_REPOS} — the dynamic bit static help can't show.
-    command t open -h
+    if [[ -n $repo ]]; then
+      print -u2 -r -- "t open: unknown repository '$repo'."
+      if [[ $repo == codex || $repo == claude ]]; then
+        print -u2 -r -- "  Select the agent with --$repo: t open --$repo --new"
+      else
+        print -u2 -- '  Run `t repo list` to see registered repositories.'
+      fi
+    else
+      print -u2 -- 't open: not inside a registered repository.'
+      print -u2 -- '  Choose one with `t open <repo>`; list them with `t repo list`.'
+    fi
+    print -u2 -- '  Run `t open --help` for usage.'
     return 1
   fi
 
