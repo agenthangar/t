@@ -338,7 +338,7 @@ _dev_remote_fg_open() {
   local host=${sel%%$'\t'*} label
   label=$(print -r -- "$sel" | awk -F'\t' '{print $2}')
   local target="${REMOTE_HOSTS[$host]:-$host}"
-  [[ -t 1 ]] || { echo "t open: '$label' is on $host — attach it with: t host run $host t session open $label" >&2; return 1; }
+  [[ -t 1 ]] || { echo "t open: '$label' is on $host — attach it with: t hosts run $host t session open $label" >&2; return 1; }
   local rcmd="T_UPDATE_PROMPTED=\$\$ t open ${(q)label}"
   echo "→ Attaching foreground '$label' on $host"
   _term_title "$host: $label"

@@ -1489,7 +1489,7 @@ def _host_change(cfg, action, alias=None, target=None, default=False, clear=Fals
     if not _CONFIG_ALIAS.fullmatch(alias or "") or alias in ("__add__", "__back__"):
         raise ValueError("use letters, numbers, dots, underscores or hyphens for the host alias")
     if action == "add" and alias in cfg.hosts:
-        raise ValueError(f"host {alias!r} already exists; use `t host edit {alias} <target>`")
+        raise ValueError(f"host {alias!r} already exists; use `t hosts edit {alias} <target>`")
     if action != "add" and alias not in cfg.hosts:
         raise ValueError(f"unknown host {alias!r}; run `t hosts` to list registered hosts")
     if action in ("add", "edit"):
@@ -1518,7 +1518,7 @@ def cmd_hosts(cfg, args):
             if getattr(args, "json", False):
                 print(json.dumps({"hosts": cfg.hosts, "default": cfg.beam_host or None}, sort_keys=True))
             elif not cfg.hosts:
-                print("No remote hosts registered. Add one with `t host add <alias> <user@host>`.")
+                print("No remote hosts registered. Add one with `t hosts add <alias> <user@host>`.")
             else:
                 width = max(5, max(map(len, cfg.hosts)))
                 print(f"{'ALIAS':<{width}}  SSH TARGET")
@@ -1538,7 +1538,7 @@ def cmd_hosts(cfg, args):
                 aliases = [h for h, target in sorted(cfg.hosts.items()) if cfg.beam_host in (h, target)]
                 print(f"{', '.join(aliases) or '(unregistered)'}  {cfg.beam_host}")
             else:
-                print("No default for session move. Set one with `t host default <alias>`.")
+                print("No default for session move. Set one with `t hosts default <alias>`.")
             return 0
         path = _current_local_rc()
         before = _config_read(path)
@@ -1552,7 +1552,7 @@ def cmd_hosts(cfg, args):
         _config_write(path, before, _config_text(before, changes, initial))
         _host_refresh_config()
     except (OSError, ValueError) as exc:
-        print(f"t host {action}: {exc}", file=sys.stderr)
+        print(f"t hosts {action}: {exc}", file=sys.stderr)
         return 1
     if action == "remove":
         print(f"Removed host {alias}. Remote files and sessions are kept.")
@@ -8359,7 +8359,7 @@ COMMAND_GROUPS = {
     },
     "cursor": {"list": ("cursor", "ls"), "resume": ("cursor", "resume"),
                "send": ("cursor", "send")},
-    "host": {"list": ("hosts", "list"), "show": ("hosts", "show"),
+    "hosts": {"list": ("hosts", "list"), "show": ("hosts", "show"),
              "add": ("hosts", "add"), "edit": ("hosts", "edit"),
              "remove": ("hosts", "remove"), "default": ("hosts", "default"),
              "run": ("on",)},
@@ -8381,7 +8381,7 @@ GROUP_DESCRIPTIONS = {
     "session": "Open, find, and move work sessions",
     "repo": "List and manage repositories",
     "cursor": "List, resume, and send Cursor chats",
-    "host": "Manage remote SSH hosts and run commands on them",
+    "hosts": "Manage remote SSH hosts and run commands on them",
     "config": "Manage local settings",
     "profile": "Manage reusable AGENTS.md instructions",
     "policy": "Inspect and apply agent permissions",
@@ -8390,15 +8390,13 @@ GROUP_DESCRIPTIONS = {
 }
 
 
-def _host_alias_argv(argv):
-    """Accept the natural plural and removal synonyms at the command boundary."""
+def _hosts_argv(argv):
+    """Default bare hosts to listing and accept removal synonyms."""
     argv = list(argv)
     start = 1 if argv and argv[0] == "help" else 0
-    if len(argv) <= start or argv[start] not in ("host", "hosts"):
+    if len(argv) <= start or argv[start] != "hosts":
         return argv
-    plural = argv[start] == "hosts"
-    argv[start] = "host"
-    if plural and start == 0 and (len(argv) == 1 or (
+    if start == 0 and (len(argv) == 1 or (
             argv[1].startswith("-") and argv[1] not in ("-h", "--help"))):
         argv.insert(1, "list")
     if len(argv) > start + 1 and argv[start + 1] in ("delete", "rm"):
@@ -8408,7 +8406,7 @@ def _host_alias_argv(argv):
 
 def _canonical_argv(argv):
     """Translate a public noun/action pair; leave payload arguments untouched."""
-    argv = _host_alias_argv(argv)
+    argv = _hosts_argv(argv)
     if len(argv) < 2 or argv[0] not in COMMAND_GROUPS:
         return argv
     prefix = COMMAND_GROUPS[argv[0]].get(argv[1])
@@ -8446,7 +8444,7 @@ WORK
   session   Open, find, and move work sessions
   repo      List and manage repositories
   cursor    List, resume, and send Cursor chats
-  host      Manage remote SSH hosts and run commands
+  hosts     Manage remote SSH hosts and run commands
 
 CONFIGURATION
   config    Manage local settings
@@ -8511,13 +8509,13 @@ def _group_help(group):
             for action in COMMAND_GROUPS[group]]
     extra = ("\nA host is an SSH-accessible machine registered with a short alias.\n"
              "Targets can be SSH config names, addresses, or user@host.\n"
-             "`t hosts` lists hosts; `t hosts <verb>` also works.\n"
+             "Run `t hosts` or `t hosts list` to list registered machines.\n"
              "`delete` and `rm` are aliases for `remove`.\n\nEXAMPLES\n"
-             "  t host add mini chris@mini.local\n"
-             "  t host edit mini chris@new-mini.local\n"
-             "  t host default mini\n"
-             "  t host run mini t session list\n"
-             "  t host remove mini\n" if group == "host" else "")
+             "  t hosts add mini chris@mini.local\n"
+             "  t hosts edit mini chris@new-mini.local\n"
+             "  t hosts default mini\n"
+             "  t hosts run mini t session list\n"
+             "  t hosts remove mini\n" if group == "hosts" else "")
     return _wrap_help(f"USAGE\n  t {group} <verb> [arguments] [flags]\n\n"
             f"{GROUP_DESCRIPTIONS[group]}.\n\nCOMMANDS\n" + "\n".join(rows) +
             f"\n{extra}\nRun `t help {group} <verb>` for flags and arguments.\n")
@@ -8537,7 +8535,7 @@ def _command_description(group, action):
                  "locate": "Print a checkout path", "create": "Create a GitHub repository",
                  "clone": "Clone and register a repository"},
         "cursor": {"list": "List chats", "resume": "Resume a chat", "send": "Move a chat"},
-        "host": {"list": "List registered SSH hosts", "show": "Show a host's target and defaults",
+        "hosts": {"list": "List registered SSH hosts", "show": "Show a host's target and defaults",
                  "add": "Register a remote SSH host", "edit": "Change a host's SSH target",
                  "remove": "Unregister a host (delete / rm also work)",
                  "default": "Show, set, or clear the session move default",
@@ -8564,9 +8562,8 @@ def _aliases_help():
             if old != f"{group} {action}":
                 rows.append(f"  t {old:<25} t {group} {action}")
     rows.extend((
-        "  t hosts                     t host list",
-        "  t hosts <verb>              t host <verb>",
-        "  t host delete / rm <alias>  t host remove <alias>",
+        "  t hosts                     t hosts list",
+        "  t hosts delete / rm <alias>  t hosts remove <alias>",
         "  t cursor [id]               t cursor send [id]",
         "  t cursor --ls               t cursor list",
         "  t cursor [id] --from HOST   t cursor send [id] --from HOST",
@@ -8737,7 +8734,7 @@ REMOTE SESSIONS
             "in the same pane and worktree. Does not submit the saved draft. Refuses desktop "
             "reservations and commands run inside the agent being restarted. Leaves the slot "
             "detached unless already attached; use t session open to attach. For a remote slot, run "
-            "t host run <host> t session restart <repo> <slot>.")
+            "t hosts run <host> t session restart <repo> <slot>.")
     sp.add_argument("repo", nargs="?", help="registered repo; defaults to the cwd repo")
     sp.add_argument("slot", nargs="?", help="local slot number; required if ambiguous")
     sp.add_argument("--dry-run", action="store_true", help="validate and show the recovery without stopping anything")
@@ -8891,13 +8888,13 @@ REMOTE SESSIONS
 
     sp = sub.add_parser("on", help="run a command on a remote host (or open a shell)",
         description="Run a command on another machine over ssh, in a login+interactive shell so "
-            "the dev tooling and Homebrew are on PATH (e.g. `t host run mini t session list`). With no command, "
+            "the dev tooling and Homebrew are on PATH (e.g. `t hosts run mini t session list`). With no command, "
             "opens an interactive shell there. Hosts come from $REMOTE_HOSTS; an unknown name is "
             "used as a literal ssh target.")
     sp.add_argument("host", help="$REMOTE_HOSTS key, or a literal ssh target")
     sp.add_argument("rest", nargs=argparse.REMAINDER, help="command to run (omit for an interactive shell)")
 
-    sp = sub.add_parser("hosts", hidden=True, description="Manage registered remote SSH hosts.")
+    sp = sub.add_parser("hosts", help="manage remote SSH hosts", description="Manage registered remote SSH hosts.")
     p._group_parsers["hosts"] = sp
     host_sub = sp.add_subparsers(dest="action", metavar="<command>")
     host_list = host_sub.add_parser("list", description="List the registered aliases and SSH targets. "
@@ -8918,7 +8915,7 @@ REMOTE SESSIONS
         hp.add_argument("--default", action="store_true", help="use this host as the default destination for t session move")
     host_remove = host_sub.add_parser("remove", description="Remove a local host registration and clear "
         "defaults that refer to it. Remote files, sessions, and ~/.ssh/config are kept. "
-        "`t host delete` and `t host rm` are aliases for this command.")
+        "`t hosts delete` and `t hosts rm` are aliases for this command.")
     host_remove.add_argument("alias", help="registered host alias to remove")
     host_default = host_sub.add_parser("default", description="Show the default destination for `t session move`, "
         "set it to a registered host, or clear it with --clear. Other remote commands retain their own host selection.")
@@ -9118,7 +9115,7 @@ REMOTE SESSIONS
             "focus-events, history-limit), which panes capture the mouse themselves (Claude's "
             "fullscreen TUI — the usual answer to 'the scroll wheel does not scroll the "
             "output'), and tool versions. Ends with findings + suggested fixes. Run it on "
-            "another machine with `t host run <host> t system diagnose`.")
+            "another machine with `t hosts run <host> t system diagnose`.")
 
     # Machine-readable / internal: callable, with explicit help, but not advertised.
     sub.add_parser("session-rows", hidden=True, help="machine-readable per-host scan (remote contract)",
@@ -9233,7 +9230,7 @@ def _print_command_help(target, words, canonical, *, detailed=False):
 
 
 def main(argv):
-    argv = _host_alias_argv(argv)
+    argv = _hosts_argv(argv)
     if argv == ["__update-prompt"]:
         return _t_offer_update()
     if argv == ["__update-check"]:
@@ -9291,7 +9288,7 @@ def main(argv):
     help_at = next((i for i, a in enumerate(argv[:option_end])
                     if a in ("-h", "--help")), None)
     if help_at is not None and not (argv[0] == "on" and help_at > 1) and not (
-            argv[:2] == ["host", "run"] and help_at > 2):
+            argv[:2] == ["hosts", "run"] and help_at > 2):
         words = argv[:help_at]
         canonical = [word for word in _canonical_argv(words) if not word.startswith("-")]
         target = _help_parser(parser, canonical)

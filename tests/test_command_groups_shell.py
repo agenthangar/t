@@ -66,7 +66,7 @@ def test_grouped_bin_commands_and_help_keep_exact_arguments(tmp_path):
         _t_open() { print -r -- "BAD SHELL DISPATCH"; }
         t session read api 4
         t repo locate api
-        t host run mini -- echo --help
+        t hosts run mini -- echo --help
         t session open --help
         t session
         t repo
@@ -75,7 +75,7 @@ def test_grouped_bin_commands_and_help_keep_exact_arguments(tmp_path):
     assert result.stdout.splitlines() == [
         "bin:<session><read><api><4>",
         "bin:<repo><locate><api>",
-        "bin:<host><run><mini><--><echo><--help>",
+        "bin:<hosts><run><mini><--><echo><--help>",
         "bin:<session><open><--help>",
         "bin:<session>", "bin:<repo>",
     ]
@@ -141,16 +141,16 @@ def test_host_management_reloads_targets_defaults_and_shortcuts(tmp_path):
     result = shell(tmp_path, '''
         t hosts add lab user@old --default
         print -r -- "added:$REMOTE_HOSTS[lab]:$TBEAM_HOST:${+functions[lab]}"
-        t host edit lab user@new
+        t hosts edit lab user@new
         print -r -- "edited:$REMOTE_HOSTS[lab]:$TBEAM_HOST"
         t hosts default --clear
         print -r -- "cleared:${TBEAM_HOST:-none}"
-        t host default lab
+        t hosts default lab
         t hosts rm lab
         print -r -- "removed:${#REMOTE_HOSTS}:${TBEAM_HOST:-none}:${+functions[lab]}"
         personal() { print -r -- personal-function; }
-        t host add personal user@personal
-        t host remove personal
+        t hosts add personal user@personal
+        t hosts remove personal
         personal
     ''', bin_text=f"#!/bin/sh\nexec {shlex.quote(sys.executable)} {shlex.quote(str(ROOT / 'bin/t'))} \"$@\"\n")
     assert result.returncode == 0, result.stderr
@@ -169,17 +169,19 @@ def test_host_completion_covers_plural_aliases_targets_and_flags(tmp_path):
         _message() { print -r -- "message:$1"; }
         local -a words
         words=(t hosts rm '') CURRENT=4; _t
-        words=(t host edit lab '') CURRENT=5; _t
-        words=(t host add '') CURRENT=4; _t
-        words=(t host add lab user@lab --) CURRENT=6; _t
-        words=(t host default --) CURRENT=4; _t
+        words=(t hosts edit lab '') CURRENT=5; _t
+        words=(t hosts add '') CURRENT=4; _t
+        words=(t hosts add lab user@lab --) CURRENT=6; _t
+        words=(t hosts default --) CURRENT=4; _t
         words=(t hosts list --) CURRENT=4; _t
+        words=(t hosts --) CURRENT=3; _t
     ''')
     assert result.returncode == 0, result.stderr
     assert result.stdout.splitlines() == [
         "values:lab", "message:SSH config name, address or user@host",
         "message:new host alias", "values:--default,-h,--help",
         "values:--clear,-h,--help", "values:--json,-h,--help",
+        "values:--json,-h,--help",
     ]
 
 
@@ -192,14 +194,14 @@ def test_completion_exposes_groups_and_group_actions(tmp_path):
         words=(t '') CURRENT=2; _t
         words=(t session '') CURRENT=3; _t
         words=(t repo '') CURRENT=3; _t
-        words=(t host run '') CURRENT=4; _t
+        words=(t hosts run '') CURRENT=4; _t
     ''')
     assert result.returncode == 0, result.stderr
     lines = result.stdout.splitlines()
     assert lines[:3] == ["describe:nouns", "describe:actions", "describe:actions"]
     assert lines[3].startswith("values:")
     source = (ROOT / "zsh" / "shim.zsh").read_text()
-    assert "local -a nouns=(session repo cursor host config profile policy agent system help)" in source
+    assert "local -a nouns=(session repo cursor hosts config profile policy agent system help)" in source
 
 
 @pytest.mark.skipif(not shutil.which("zsh"), reason="zsh is required")
