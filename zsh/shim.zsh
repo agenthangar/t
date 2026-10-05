@@ -371,7 +371,7 @@ _t_open() {
 # uses `t app` so its conversation has only one owner; a new workspace needs no
 # tmux pane or throwaway CLI process.
 _t_open_app() {
-  local repo= slot= arg isnew= claude= host= want_host= inferred=
+  local repo= slot= arg isnew= claude= host= want_host= inferred= reopen=
   local -a pos
   for arg in "$@"; do
     if [[ -n $want_host ]]; then host=$arg; want_host=; continue; fi
@@ -473,7 +473,32 @@ _t_open_app() {
   fi
   dir=$(_dev_worktree_path "$repo" "$slot")
   if _dev_app_slot_reserved "$dir"; then
-    : # Reopen this desktop workspace; never freshen its branch under the app.
+    reopen=1 # Preserve its branch and reopen the saved conversation.
+    # A foreground CLI can own a reserved workspace without a tmux slot. Do not
+    # load that conversation a second time in the app. Shared backends are not
+    # CLI owners; their cwd can belong to an unrelated conversation.
+    local pid workspace_pids
+    workspace_pids=$(_dev_cwd_pids "$dir") || {
+      print -u2 -- 't open --app: could not check workspace processes; retry before reopening'
+      return 1
+    }
+    _DEV_PS_AT=0
+    _dev_ps_snapshot || {
+      print -u2 -- 't open --app: could not check terminal agents; retry before reopening'
+      return 1
+    }
+    for pid in ${(f)workspace_pids}; do
+      [[ -n ${_DEV_PS_COMM[$pid]:-} ]] || {
+        kill -0 "$pid" 2>/dev/null || continue # The cwd probe itself may have exited.
+        print -u2 -- 't open --app: workspace processes changed; retry before reopening'
+        return 1
+      }
+      [[ -n ${_DEV_PS_APP[$pid]:-} ]] && continue
+      _dev_agent_is_proc "${_DEV_PS_COMM[$pid]:-}" || continue
+      _dev_agent_is_service "$pid" && continue
+      print -u2 -- "t open --app: a terminal agent still owns this workspace (pid $pid); exit it before reopening in the app"
+      return 1
+    done
   else
     dir=$(_dev_worktree_create "$repo" "$slot")
   fi
@@ -484,7 +509,7 @@ _t_open_app() {
     return 1
   }
   print -r -- "Opening $repo $slot in the Codex desktop app: $dir"
-  command t _app-workspace "$dir" || {
+  command t _app-workspace "$dir" ${reopen:+--reopen} || {
     print -u2 -- "t open --app: app launch failed; the worktree remains reserved at $dir for a retry"
     return 1
   }

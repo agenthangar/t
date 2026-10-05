@@ -168,6 +168,8 @@ def test_open_app_creates_worktree_without_starting_tmux_or_cli(tmp_path, reopen
         _dev_slot_fresh() {{ [[ $2 == 1 ]] }}
         _dev_worktree_create() {{ local wt="$HOME/worktrees/api/$2"; mkdir -p "$wt/.git"; print -r -- "$wt"; }}
         _dev_app_slot_marker() {{ print -r -- "$1/.git/t-app-slot"; }}
+        _dev_ps_snapshot() {{ :; }}
+        _dev_cwd_pids() {{ :; }}
         {'_dev_worktree_create() { print -u2 -- "unexpected worktree creation"; return 1; };' if reopen else ''}
         t open api {'1' if reopen else '--new --app'}
         ''',
@@ -176,7 +178,7 @@ def test_open_app_creates_worktree_without_starting_tmux_or_cli(tmp_path, reopen
                    "TMUX_TMPDIR": str(tmp_path / "tmux")},
     )
     assert result.returncode == 0, result.stderr
-    assert log.read_text().strip() == f"_app-workspace {tmp_path}/home/worktrees/api/1"
+    assert log.read_text().strip() == f"_app-workspace {tmp_path}/home/worktrees/api/1" + (' --reopen' if reopen else '')
     assert (tmp_path / "home" / "worktrees" / "api" / "1" / ".git" / "t-app-slot").read_text().strip() == "codex-app"
     assert "Open request sent" in result.stdout
     assert "unexpected worktree creation" not in result.stderr
@@ -190,6 +192,56 @@ def test_open_app_rejects_conflicting_flags_before_worktree_changes(tmp_path):
                        local_text='DEV_REPOS[api]="$HOME/code/api"\n')
         assert result.returncode != 0, (flags, result.stdout, result.stderr)
         assert "t open --app:" in result.stderr
+
+
+@pytest.mark.skipif(not shutil.which('zsh') or os.uname().sysname != 'Darwin',
+                    reason='Codex desktop launch requires macOS and zsh')
+@pytest.mark.parametrize('owner,allowed', [
+    ('codex', False), ('claude', False), ('unknown', False),
+    ('ps_failed', False), ('cwd_failed', False), ('exited', True),
+    ('desktop', True), ('shared', True), ('server', True),
+])
+def test_open_app_rechecks_terminal_ownership_before_reopening(tmp_path, owner, allowed):
+    bins = tmp_path / 'stubbin'
+    bins.mkdir()
+    log = tmp_path / 'launch.log'
+    for name, body in {
+        'codex': '#!/bin/sh\nexit 0\n',
+        'tmux': '#!/bin/sh\nexit 1\n',
+        't': '#!/bin/sh\nprintf "%s\\n" "$*" >> "$APP_LOG"\n',
+        'ps': '#!/bin/sh\nprintf "codex app-server --managed-daemon\\n"\n' if owner == 'shared'
+              else '#!/bin/sh\nprintf "codex resume example\\n"\n',
+    }.items():
+        stub = bins / name
+        stub.write_text(body)
+        stub.chmod(0o755)
+    metadata = tmp_path / 'home/worktrees/api/1/.git'
+    metadata.mkdir(parents=True)
+    (metadata / 't-app-slot').write_text('codex-app\n')
+    comm = 'node' if owner == 'server' else 'claude' if owner == 'claude' else 'codex'
+    result = shell(tmp_path, f'''
+        mkdir -p "$HOME/code/api"
+        _dev_worktree_create() {{ print -u2 -- 'unexpected worktree creation'; return 1; }}
+        _dev_app_slot_marker() {{ print -r -- "$1/.git/t-app-slot"; }}
+        _dev_ps_snapshot() {{
+          _DEV_PS_COMM=(); _DEV_PS_APP=()
+          {'_DEV_PS_COMM[4242]=' + comm if owner not in ('unknown', 'exited') else ':'}
+          {'_DEV_PS_APP[4242]=1' if owner == 'desktop' else ':'}
+          return {1 if owner == 'ps_failed' else 0}
+        }}
+        _dev_cwd_pids() {{ print -r -- 4242; return {1 if owner == 'cwd_failed' else 0}; }}
+        kill() {{ [[ $1 == -0 ]] || return 1; return {1 if owner == 'exited' else 0}; }}
+        t open api 1
+        ''', local_text='DEV_REPOS[api]="$HOME/code/api"\nDEV_WORKTREE_ROOT="$HOME/worktrees"\n',
+        extra_env={'PATH': f"{bins}:{os.environ['PATH']}", 'APP_LOG': str(log),
+                   'TMUX_TMPDIR': str(tmp_path / 'tmux')})
+    assert (result.returncode == 0) == allowed, result.stderr
+    assert (metadata / 't-app-slot').read_text() == 'codex-app\n'
+    if allowed:
+        assert log.read_text().strip() == f'_app-workspace {metadata.parent} --reopen'
+    else:
+        assert not log.exists()
+        assert 't open --app:' in result.stderr
 
 
 @pytest.mark.skipif(not shutil.which("zsh") or os.uname().sysname != "Darwin",

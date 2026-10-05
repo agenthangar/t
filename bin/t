@@ -7150,7 +7150,33 @@ def _app_workspace_link(cwd):
     return "codex://threads/new?" + urlencode({"mode": "codex", "path": os.path.abspath(cwd)})
 
 
-def cmd_app_workspace(cwd):
+def _app_workspace_thread(cwd):
+    """Resolve a reserved workspace's only saved conversation, without guessing."""
+    db = os.path.join(os.environ.get("CODEX_HOME") or os.path.join(HOME, ".codex"), "state_5.sqlite")
+    if not os.path.exists(db):
+        return None
+    try:
+        with closing(sqlite3.connect("file:" + quote(os.path.abspath(db), safe="/") + "?mode=ro",
+                                     uri=True, timeout=.5)) as connection:
+            rows = connection.execute(
+                "select id, rollout_path from threads where cwd=? and archived=0 "
+                "and instr(source, '\"subagent\"')=0", (cwd,)).fetchall()
+    except sqlite3.Error as e:
+        raise ValueError(f"could not read saved Codex conversations; retry before reopening: {e}") from e
+    if not rows:
+        return None
+    if len(rows) != 1:
+        raise ValueError("several saved conversations belong to this worktree; "
+                         "select the intended conversation in the desktop app")
+    sid, rollout = rows[0]
+    if (not isinstance(sid, str) or not re.fullmatch(
+            r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", sid)
+            or not isinstance(rollout, str) or not os.path.isfile(rollout)):
+        raise ValueError("the saved Codex conversation is unavailable; no new conversation was opened")
+    return sid
+
+
+def cmd_app_workspace(cwd, reopen=False):
     """Open an isolated workspace through the same native window path as t app."""
     try:
         if sys.platform != "darwin":
@@ -7160,13 +7186,16 @@ def cmd_app_workspace(cwd):
         bundle = _app_bundle()
         if not bundle:
             raise ValueError("install the Codex desktop app first")
+        sid = _app_workspace_thread(cwd) if reopen else None
+        link = _app_link(sid) if sid else _app_workspace_link(cwd)
         _trust_auto([cwd])
         window = _app_new_window(bundle)
         window.focus()
-        result = _run(["open", "-a", bundle, _app_workspace_link(cwd)], timeout=30)
+        result = _run(["open", "-a", bundle, link], timeout=30)
         if result.returncode:
             raise ValueError(result.stderr.strip() or "app launch failed")
-        print("New app window created. Codex-mode workspace request sent to macOS; "
+        target = f"Saved conversation {sid}" if sid else "Codex-mode workspace"
+        print(f"New app window created. {target} request sent to macOS; "
               "app delivery is not confirmed. Workspace: " + cwd)
         return 0
     except ValueError as e:
@@ -9253,8 +9282,8 @@ def main(argv):
     if argv and argv[0] == "__recovery":
         helper = os.path.join(_t_source_root(), "libexec", "t_recovery.py")
         os.execv(sys.executable, [sys.executable, helper, *argv[1:]])
-    if len(argv) == 2 and argv[0] == "_app-workspace":
-        return cmd_app_workspace(argv[1])
+    if (len(argv) == 2 or len(argv) == 3 and argv[2] == "--reopen") and argv[0] == "_app-workspace":
+        return cmd_app_workspace(argv[1], reopen=len(argv) == 3)
     if len(argv) == 2 and argv[0] == "_app-plan-server":
         _app_plan_serve(_app_plan_path(argv[1]))
         return 0
