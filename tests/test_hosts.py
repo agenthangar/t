@@ -37,17 +37,17 @@ def test_host_lifecycle_without_dotfiles(host_cli):
     assert not local.exists()
     assert run("hosts", "--json").stdout == '{"default": null, "hosts": {}}\n'
     assert run("hosts", "add", "mini", "chris@mini.local", "--default").returncode == 0
-    assert json.loads(run("host", "list", "--json").stdout) == {
+    assert json.loads(run("hosts", "list", "--json").stdout) == {
         "hosts": {"mini": "chris@mini.local"}, "default": "chris@mini.local"}
     assert "default for session move" in run("hosts").stdout
-    shown = run("host", "show", "mini")
+    shown = run("hosts", "show", "mini")
     assert shown.returncode == 0 and "SSH target: chris@mini.local" in shown.stdout
     assert "Default for session move: yes" in shown.stdout
-    assert run("host", "edit", "mini", "studio").returncode == 0
-    assert run("host", "default").stdout == "mini  studio\n"
-    assert run("host", "default", "--clear").returncode == 0
+    assert run("hosts", "edit", "mini", "studio").returncode == 0
+    assert run("hosts", "default").stdout == "mini  studio\n"
+    assert run("hosts", "default", "--clear").returncode == 0
     assert "No default" in run("hosts", "default").stdout
-    assert run("host", "default", "mini").returncode == 0
+    assert run("hosts", "default", "mini").returncode == 0
     assert run("hosts", "delete", "mini").returncode == 0
     assert json.loads(run("hosts", "--json").stdout) == {"hosts": {}, "default": None}
     assert "unset 'REMOTE_HOSTS[mini]'" in local.read_text()
@@ -62,11 +62,11 @@ def test_host_edits_preserve_shell_ssh_and_other_settings(host_cli):
     ssh = home / ".ssh/config"
     ssh.parent.mkdir()
     ssh.write_text("Host lab\n  HostName lab.example\n  Port 2222\n")
-    assert run("host", "edit", "old", "new.local").returncode == 0
+    assert run("hosts", "edit", "old", "new.local").returncode == 0
     assert local.read_text().startswith(original)
     assert "MINI_HOST=new.local" in local.read_text()
-    assert run("host", "add", "lab", "lab").returncode == 0
-    assert run("host", "rm", "old").returncode == 0
+    assert run("hosts", "add", "lab", "lab").returncode == 0
+    assert run("hosts", "rm", "old").returncode == 0
     assert "unset MINI_HOST" in local.read_text()
     assert json.loads(run("hosts", "--json").stdout)["hosts"] == {"lab": "lab"}
     assert ssh.read_text() == "Host lab\n  HostName lab.example\n  Port 2222\n"
@@ -83,25 +83,25 @@ def test_host_edits_preserve_shell_ssh_and_other_settings(host_cli):
 ])
 def test_invalid_hosts_never_write(host_cli, words):
     run, local, _ = host_cli
-    result = run("host", *words)
+    result = run("hosts", *words)
     assert result.returncode == 1, result.stderr
-    assert "t host" in result.stderr and not local.exists()
+    assert "t hosts" in result.stderr and not local.exists()
 
 
 def test_duplicate_and_unchanged_hosts(host_cli):
     run, local, _ = host_cli
-    assert run("host", "add", "lab", "lab.local").returncode == 0
+    assert run("hosts", "add", "lab", "lab.local").returncode == 0
     before = local.read_bytes()
-    assert run("host", "add", "lab", "other.local").returncode == 1
+    assert run("hosts", "add", "lab", "other.local").returncode == 1
     assert local.read_bytes() == before
-    result = run("host", "edit", "lab", "lab.local")
+    result = run("hosts", "edit", "lab", "lab.local")
     assert result.returncode == 0 and "unchanged" in result.stdout
     assert local.read_bytes() == before
 
 
 def test_default_rejects_alias_with_clear(host_cli):
     run, local, _ = host_cli
-    assert run("host", "default", "lab", "--clear").returncode == 2
+    assert run("hosts", "default", "lab", "--clear").returncode == 2
     assert not local.exists()
 
 
@@ -113,7 +113,24 @@ def test_host_alias_help_has_no_side_effects(t_mod, monkeypatch, capsys, words):
     monkeypatch.setattr(t_mod, "Config", lambda: pytest.fail("help loaded config"))
     monkeypatch.setattr(t_mod, "_t_auto_update", lambda argv: pytest.fail("help checked updates"))
     assert t_mod.main(list(words)) == 0
-    assert "t host" in capsys.readouterr().out
+    assert "t hosts" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("words", [("host",), ("host", "list"), ("host", "--help"), ("help", "host")])
+def test_singular_host_is_not_a_command(t_mod, monkeypatch, capsys, words):
+    monkeypatch.setattr(t_mod, "Config", lambda: pytest.fail("unknown command loaded config"))
+    assert t_mod.main(list(words)) == 2
+    assert "unknown command" in capsys.readouterr().err
+
+
+def test_bare_hosts_dispatches_the_list_action(t_mod, monkeypatch):
+    seen = []
+    monkeypatch.setattr(t_mod, "Config", lambda: object())
+    monkeypatch.setattr(t_mod, "_t_auto_update", lambda argv: None)
+    monkeypatch.setitem(t_mod.IMPLEMENTED, "hosts", lambda cfg, args: seen.append(args.action) or 0)
+    assert t_mod.main(["hosts"]) == 0
+    assert t_mod.main(["hosts", "list"]) == 0
+    assert seen == ["list", "list"]
 
 
 def test_host_change_updates_defaults_and_rejects_option_targets(t_mod):

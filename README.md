@@ -142,17 +142,17 @@ behavior. Start a fresh Codex session in the current repo with
 | `t repo list` / `t repo locate <repo>` / `t repo cd <repo>` | List names and paths, print a checkout path, or enter it in the shell |
 | `t repo create` / `t repo clone <github-url> [alias]` | Create a repository or clone and register an existing one |
 | `t cursor list` / `t cursor resume [id]` / `t cursor send [id]` | List, resume, or move Cursor CLI chats |
-| `t host run <host> <command>` | Run a command through the host's login zsh |
-| `t hosts` / `t host list [--json]` | List registered SSH host aliases and targets |
-| `t host show <alias>` | Show a host's target and defaults |
-| `t host add <alias> <target> [--default]` | Register an SSH config name, address, or user@host |
-| `t host edit <alias> <target> [--default]` | Change a registered host's target |
-| `t host remove <alias>` | Unregister a host and clear its defaults; `delete` and `rm` also work |
-| `t host default [alias] [--clear]` | Show, set, or clear the default destination for session moves |
+| `t hosts run <host> <command>` | Run a command through the host's login zsh |
+| `t hosts` / `t hosts list [--json]` | List registered SSH host aliases and targets |
+| `t hosts show <alias>` | Show a host's target and defaults |
+| `t hosts add <alias> <target> [--default]` | Register an SSH config name, address, or user@host |
+| `t hosts edit <alias> <target> [--default]` | Change a registered host's target |
+| `t hosts remove <alias>` | Unregister a host and clear its defaults; `delete` and `rm` also work |
+| `t hosts default [alias] [--clear]` | Show, set, or clear the default destination for session moves |
 
-`host` is the command group for remote machines, following the singular names
-`session` and `repo`. `t hosts` lists machines, and `t hosts <verb>` also works.
-For example, `t host add mini chris@mini.local --default` registers `mini` and
+`hosts` manages remote machines. Run `t hosts` to list machines and
+`t hosts <verb>` to manage them or run remote commands.
+For example, `t hosts add mini chris@mini.local --default` registers `mini` and
 makes it the default destination for `t session move`. Configure SSH keys,
 ports, and jump hosts in `~/.ssh/config`; registering a host saves local
 settings without connecting to it or installing software there.
@@ -197,7 +197,7 @@ copy any draft that extends beyond the pane before restarting. The saved text is
 not submitted automatically. The old client must exit before the same conversation
 resumes in the same pane; worktree edits and dev servers stay in place. Use
 `t session open <repo> <slot>` to attach. For a remote slot, use
-`t host run <host> t session restart <repo> <slot>`.
+`t hosts run <host> t session restart <repo> <slot>`.
 
 For sessions opened through `t`, a local monitor automatically offers **Save draft
 and restart** or **Dismiss** when a recognized final connection error remains

@@ -5,7 +5,7 @@ import pytest
 
 def test_registry_covers_the_public_groups(t_mod):
     assert tuple(t_mod.COMMAND_GROUPS) == (
-        "session", "repo", "cursor", "host", "config", "profile", "policy", "agent", "system")
+        "session", "repo", "cursor", "hosts", "config", "profile", "policy", "agent", "system")
     for group, actions in t_mod.COMMAND_GROUPS.items():
         for action, legacy in actions.items():
             assert t_mod._canonical_argv([group, action, "payload"]) == [*legacy, "payload"]
@@ -47,7 +47,7 @@ def test_root_and_group_help_wrap_at_narrow_width(t_mod, monkeypatch):
     assert max(map(len, t_mod._group_help("session").splitlines())) <= 40
 
 
-@pytest.mark.parametrize("group", ["session", "repo", "cursor", "host", "profile", "policy", "agent", "system"])
+@pytest.mark.parametrize("group", ["session", "repo", "cursor", "profile", "policy", "agent", "system"])
 def test_bare_group_and_group_help_have_no_side_effects(t_mod, monkeypatch, capsys, group):
     monkeypatch.setattr(t_mod, "Config", lambda: pytest.fail("help loaded config"))
     assert t_mod.main([group]) == 0
@@ -86,8 +86,8 @@ def test_host_run_forwards_literal_help_and_option_separator(t_mod, monkeypatch)
     monkeypatch.setattr(t_mod, "Config", lambda: object())
     monkeypatch.setitem(t_mod.IMPLEMENTED, "on", lambda cfg, args: seen.append(args.rest) or 0)
     monkeypatch.setattr(t_mod, "_t_auto_update", lambda argv: None)
-    assert t_mod.main(["host", "run", "mini", "echo", "--help"]) == 0
-    assert t_mod.main(["host", "run", "mini", "--", "--help"]) == 0
+    assert t_mod.main(["hosts", "run", "mini", "echo", "--help"]) == 0
+    assert t_mod.main(["hosts", "run", "mini", "--", "--help"]) == 0
     assert seen == [["echo", "--help"], ["--", "--help"]]
 
 

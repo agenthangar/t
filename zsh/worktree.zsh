@@ -385,7 +385,7 @@ _dev_beam_land_cwd() {
   # fresh slot would resume the conversation over none of its code. Bail with a revive
   # hint (the origin copy is already stopped) rather than land something misleading.
   if ! git -C "$repodir" show-ref --verify --quiet "refs/remotes/origin/$br"; then
-    print -r -- "tbeam: slot $slot is taken here ($why) and origin has no $br to reland from (worktree push failed?) — the work is still on the origin machine; revive it there${ohost:+: t host run $ohost t session resume $repo $slot}" >&2
+    print -r -- "tbeam: slot $slot is taken here ($why) and origin has no $br to reland from (worktree push failed?) — the work is still on the origin machine; revive it there${ohost:+: t hosts run $ohost t session resume $repo $slot}" >&2
     return 1
   fi
   local n=1 nbr nwt
