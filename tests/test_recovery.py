@@ -514,18 +514,18 @@ def make_offer(recovery, target):
     return token
 
 
-@pytest.mark.parametrize("scenario", ["accept", "dismiss", "changed", "cleared", "expired", "failure", "timeout", "cursor"])
+@pytest.mark.parametrize("scenario", ["accept", "dismiss", "changed", "cleared", "old_offer", "old_changed", "failure", "timeout", "cursor"])
 def test_menu_response_is_single_use_and_revalidates(recovery, target, monkeypatch, scenario):
     target["viewer"] = "/dev/pts/4"
     monkeypatch.setattr(recovery, "clients", lambda *a: [target["viewer"], "/dev/pts/5"])
     if scenario == "cursor":
         target["agent"] = "cursor"
     token = make_offer(recovery, target)
-    monkeypatch.setattr(recovery, "current", lambda t: scenario != "changed")
+    monkeypatch.setattr(recovery, "current", lambda t: scenario not in ("changed", "old_changed"))
     monkeypatch.setattr(recovery, "failure", lambda *a: "" if scenario == "cleared" else ERROR)
     events = []
     monkeypatch.setattr(recovery, "tmux", lambda *a: events.append(a) or result(ERROR))
-    if scenario == "expired":
+    if scenario in ("old_offer", "old_changed"):
         now = recovery.time.time()
         monkeypatch.setattr(recovery.time, "time", lambda: now + 301)
     launches = []
@@ -538,8 +538,8 @@ def test_menu_response_is_single_use_and_revalidates(recovery, target, monkeypat
     monkeypatch.setattr(recovery.subprocess, "run", execute)
     monkeypatch.setattr(recovery, "cursor_restart", lambda t: launches.append(t) or "/private/draft")
     rc = recovery.respond(target["socket"], token, scenario != "dismiss")
-    assert (rc == 0) == (scenario in ("accept", "dismiss", "cursor"))
-    assert bool(launches) == (scenario in ("accept", "failure", "timeout", "cursor"))
+    assert (rc == 0) == (scenario in ("accept", "dismiss", "cursor", "old_offer"))
+    assert bool(launches) == (scenario in ("accept", "failure", "timeout", "cursor", "old_offer"))
     messages = [e for e in events if e[1] == "display-message"]
     assert len(messages) == (scenario != "dismiss")
     if messages:
@@ -557,6 +557,38 @@ def test_response_never_falls_back_to_another_window(recovery, target, monkeypat
     monkeypatch.setattr(recovery, "tmux", lambda *a: events.append(a) or result())
     recovery.response_message(target["socket"], target, "Saved draft")
     assert not events
+
+
+def test_missing_offer_reports_to_original_viewer(recovery, target, monkeypatch):
+    messages = []
+    monkeypatch.setattr(recovery, "response_message", lambda *a: messages.append(a))
+    assert recovery.respond(target["socket"], "a" * 32, True, target["pane"], "viewer") == 1
+    assert messages[0][1] == {"pane": target["pane"], "viewer": "viewer"}
+    assert "reopen recovery" in messages[0][2]
+
+
+def test_offer_cleanup_waits_for_menu_close_and_callback_grace(recovery, target, monkeypatch):
+    token = make_offer(recovery, target)
+    path = recovery.cache(target["socket"]) / (token + ".offer")
+    monkeypatch.setattr(recovery, "panes", lambda s: [target])
+    monkeypatch.setattr(recovery, "pane_failure", lambda *a: "")
+    watcher = recovery.Watcher(target["socket"])
+    now = recovery.time.time()
+    monkeypatch.setattr(recovery.time, "time", lambda: now + 3600)
+    watcher.poll()
+    assert path.exists()  # The open menu remains actionable however old it is.
+    closed = path.with_suffix(".closed")
+    closed.touch()
+    os.utime(closed, (now + 3600, now + 3600))
+    watcher.poll()
+    assert path.exists()  # An async accept callback may still be starting.
+    monkeypatch.setattr(recovery.time, "time", lambda: now + 3901)
+    watcher.poll()
+    assert not path.exists() and not closed.exists()
+    make_offer(recovery, target)
+    monkeypatch.setattr(recovery, "panes", lambda s: [])
+    watcher.poll()
+    assert not path.exists()
 
 
 def test_cursor_hook_tracks_exact_live_owner(recovery, target, monkeypatch):
