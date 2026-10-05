@@ -737,10 +737,30 @@ def test_workspace_launch_creates_and_focuses_window_before_open(t_mod, tmp_path
         return subprocess.CompletedProcess(argv, 0, '', '')
     monkeypatch.setattr(t_mod, '_run', run)
     assert t_mod.cmd_app_workspace(str(tmp_path)) == 0
-    assert events == ['create', 'focus', ['codex', 'app', str(tmp_path)]]
+    assert events == ['create', 'focus', ['open', '-a', '/Applications/ChatGPT.app',
+                                        t_mod._app_workspace_link(str(tmp_path))]]
     def failed(bundle):
         raise ValueError('New Window failed')
     monkeypatch.setattr(t_mod, '_app_new_window', failed)
     events.clear()
     assert t_mod.cmd_app_workspace(str(tmp_path)) == 1
     assert events == []
+
+
+def test_workspace_link_selects_codex_and_preserves_exact_path(t_mod, tmp_path):
+    cwd = str(tmp_path / 'work tree & #? + café' / '3')
+    link = urlsplit(t_mod._app_workspace_link(cwd))
+    assert (link.scheme, link.netloc, link.path, link.fragment) == ('codex', 'threads', '/new', '')
+    assert parse_qs(link.query) == {'mode': ['codex'], 'path': [cwd]}
+
+
+def test_workspace_launch_reports_failed_delivery(t_mod, tmp_path, monkeypatch, capsys):
+    (tmp_path / '.git').mkdir()
+    monkeypatch.setattr(t_mod.sys, 'platform', 'darwin')
+    monkeypatch.setattr(t_mod, '_app_bundle', lambda: '/Applications/ChatGPT.app')
+    monkeypatch.setattr(t_mod, '_app_new_window', lambda bundle: type('Window', (), {'focus': lambda self: None})())
+    monkeypatch.setattr(t_mod, '_run', lambda *a, **kw: subprocess.CompletedProcess([], 1, '', 'delivery failed'))
+    assert t_mod.cmd_app_workspace(str(tmp_path)) == 1
+    output = capsys.readouterr()
+    assert 'delivery failed' in output.err
+    assert 'request sent' not in output.out
