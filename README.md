@@ -374,7 +374,8 @@ Developer worktrees, scripts, help, and internal commands do not prompt.
 
 The clean main checkout of `agenthangar/t` also checks the version in the Homebrew
 tap. When main has newer commits, a **Homebrew release needed** reminder offers
-**View changes** or **Later** (24 hours). `t system update --check` reports this immediately.
+**View changes** or **Later** (24 hours, including across updates to main and
+background checks). `t system update --check` reports this immediately.
 Publishing a GitHub release triggers the workflow that updates the tap; the
 reminder compares against the tap's actual version until that update completes.
 
