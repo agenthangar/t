@@ -6,9 +6,11 @@ import os
 import plistlib
 import shlex
 import shutil
+import sqlite3
 import subprocess
 import time
 import uuid
+from contextlib import closing
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
@@ -764,3 +766,91 @@ def test_workspace_launch_reports_failed_delivery(t_mod, tmp_path, monkeypatch, 
     output = capsys.readouterr()
     assert 'delivery failed' in output.err
     assert 'request sent' not in output.out
+
+
+@pytest.fixture
+def workspace_store(t_mod, tmp_path, monkeypatch):
+    home = tmp_path / 'codex home #?'
+    home.mkdir()
+    monkeypatch.setenv('CODEX_HOME', str(home))
+    monkeypatch.setattr(t_mod, 'HOME', str(tmp_path))
+    cwd = str(tmp_path / 'work tree #? + café')
+    os.makedirs(os.path.join(cwd, '.git'))
+    rollout = home / 'rollout.jsonl'
+    rollout.write_text('{}\n')
+    db = home / 'state_5.sqlite'
+    with closing(sqlite3.connect(db)) as connection, connection:
+        connection.execute('create table threads (id, rollout_path, cwd, archived, source)')
+        connection.execute('insert into threads values (?,?,?,?,?)', (SID, str(rollout), cwd, 0, 'cli'))
+    return db, cwd, rollout
+
+
+def test_workspace_reopens_only_its_saved_parent_conversation(t_mod, workspace_store):
+    db, cwd, rollout = workspace_store
+    with closing(sqlite3.connect(db)) as connection, connection:
+        connection.executemany('insert into threads values (?,?,?,?,?)', [
+            ('archived', str(rollout), cwd, 1, 'cli'),
+            ('helper', str(rollout), cwd, 0, '{"subagent":{}}'),
+            ('sibling', str(rollout), cwd + '/sibling', 0, 'cli'),
+        ])
+    assert t_mod._app_workspace_thread(cwd) == SID
+    assert t_mod._app_workspace_thread(cwd + '/empty') is None
+
+
+@pytest.mark.parametrize('problem', ['ambiguous', 'missing_rollout', 'invalid_sid', 'null_rollout', 'corrupt'])
+def test_workspace_refuses_uncertain_saved_conversations(t_mod, workspace_store, problem):
+    db, cwd, rollout = workspace_store
+    with closing(sqlite3.connect(db)) as connection, connection:
+        if problem == 'ambiguous':
+            connection.execute('insert into threads select * from threads')
+        elif problem == 'invalid_sid':
+            connection.execute('update threads set id=?', ('new?prompt=oops',))
+        elif problem == 'null_rollout':
+            connection.execute('update threads set rollout_path=NULL')
+    if problem == 'missing_rollout':
+        rollout.unlink()
+    if problem == 'corrupt':
+        db.write_text('not a database')
+    with pytest.raises(ValueError):
+        t_mod._app_workspace_thread(cwd)
+
+
+def test_workspace_without_codex_history_does_not_create_a_database(t_mod, tmp_path, monkeypatch):
+    monkeypatch.setattr(t_mod, 'HOME', str(tmp_path))
+    assert t_mod._app_workspace_thread(str(tmp_path)) is None
+    assert not (tmp_path / '.codex').exists()
+
+
+@pytest.mark.parametrize('history,reopen', [('saved', True), ('empty', True), ('ambiguous', True), ('saved', False)])
+def test_workspace_launch_uses_saved_thread_only_for_reopen(
+        t_mod, workspace_store, monkeypatch, capsys, history, reopen):
+    db, cwd, _ = workspace_store
+    with closing(sqlite3.connect(db)) as connection, connection:
+        if history == 'empty':
+            connection.execute('delete from threads')
+        elif history == 'ambiguous':
+            connection.execute('insert into threads select * from threads')
+    monkeypatch.setattr(t_mod.sys, 'platform', 'darwin')
+    monkeypatch.setattr(t_mod, '_app_bundle', lambda: '/Applications/ChatGPT.app')
+    events = []
+    class Window:
+        def focus(self):
+            events.append('focus')
+    def create(bundle):
+        events.append('create')
+        return Window()
+    monkeypatch.setattr(t_mod, '_app_new_window', create)
+    monkeypatch.setattr(t_mod, '_trust_auto', lambda paths: events.append('trust'))
+    monkeypatch.setattr(t_mod, '_run', lambda argv, **kw:
+                        events.append(argv) or subprocess.CompletedProcess(argv, 0, '', ''))
+    assert t_mod.cmd_app_workspace(cwd, reopen=reopen) == (1 if history == 'ambiguous' else 0)
+    output = capsys.readouterr()
+    if history == 'ambiguous':
+        assert events == []
+        assert 'several saved conversations' in output.err
+    else:
+        saved = history == 'saved' and reopen
+        link = t_mod._app_link(SID) if saved else t_mod._app_workspace_link(cwd)
+        assert events == ['trust', 'create', 'focus', ['open', '-a', '/Applications/ChatGPT.app', link]]
+        assert ('Saved conversation ' + SID if saved else 'Codex-mode workspace') in output.out
+        assert 'app delivery is not confirmed' in output.out

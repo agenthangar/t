@@ -6,10 +6,12 @@ import os
 from pathlib import Path
 import plistlib
 import shutil
+import sqlite3
 import subprocess
 import sys
 import time
 import uuid
+from contextlib import closing
 
 import pytest
 
@@ -130,6 +132,25 @@ def test_app_creates_a_real_window_and_preserves_the_existing_session(t_mod, tmp
         assert len(workspace["windows"]) == 4
         assert workspace["windows"][:3] == reused["windows"]
         assert workspace["windows"][3]["urls"] == [workspace_link]
+
+        # Reopening a reserved workspace routes its saved thread to the new
+        # native window, instead of opening another blank workspace/chat.
+        codex_home = tmp_path / 'codex-home'
+        codex_home.mkdir()
+        monkeypatch.setenv('CODEX_HOME', str(codex_home))
+        rollout = codex_home / 'rollout.jsonl'
+        rollout.write_text('{}\n')
+        with closing(sqlite3.connect(codex_home / 'state_5.sqlite')) as connection, connection:
+            connection.execute('create table threads (id, rollout_path, cwd, archived, source)')
+            connection.execute('insert into threads values (?,?,?,?,?)',
+                               (sid, str(rollout), str(tmp_path), 0, 'cli'))
+        assert t_mod.cmd_app_workspace(str(tmp_path), reopen=True) == 0
+        saved_link = t_mod._app_link(sid).replace('codex://', scheme + '://', 1)
+        reopened = wait_for(lambda rows: len(rows) == 1 and rows[0]['current'] == saved_link)[0]
+        assert reopened['newWindowActions'] == 4
+        assert len(reopened['windows']) == 5
+        assert reopened['windows'][:4] == workspace['windows']
+        assert reopened['windows'][4]['urls'] == [saved_link]
     finally:
         for row in states():
             # Kill only test receivers still running this exact disposable binary.

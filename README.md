@@ -285,8 +285,11 @@ commits or pushes these instructions for you.
 
 On macOS, `t session open my-project --app` creates a fresh isolated worktree and
 opens that folder in a new desktop app window with Codex mode explicitly selected,
-without starting a terminal agent. Name a slot to reopen its worktree (`t session open my-project 3`
-automatically uses the app when the slot is reserved for it). With `--app`, if
+without starting a terminal agent. Name a reserved slot to reopen its saved
+conversation (`t session open my-project 3` automatically uses the app). A slot
+without a saved conversation opens its workspace in Codex mode; when several
+conversations share the worktree, select the intended one in the desktop app.
+Exit any foreground terminal agent in that workspace before reopening. With `--app`, if
 that slot is running
 Codex in tmux, `t` hands the same conversation to the app. `--app` requires a
 worktree-enabled repo, a local Codex installation, and Accessibility access for
