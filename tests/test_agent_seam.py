@@ -251,7 +251,14 @@ case "$1" in
   capture-pane)     [[ -n "${FAKE_PANE:-}" ]] && printf '%s\n' "$FAKE_PANE" ;;
   has-session)      [[ -n "${FAKE_HAS_SESSION:-}" ]] || exit 1 ;;
   list-sessions)
-    if [[ -n "${FAKE_SESSION_ROWS:-}" ]]; then printf '%s\n' "$FAKE_SESSION_ROWS"
+    if [[ -n "${FAKE_SESSION_ROWS:-}" ]]; then
+      if [[ "$*" == *'#{session_name}|#{?session_attached,attached,detached}|#{session_path}'* ]]; then
+        while IFS=$'\t' read -r name path state; do
+          [[ -n "$name" ]] && printf '%s|%s|%s\n' "$name" "$state" "$path"
+        done <<< "$FAKE_SESSION_ROWS"
+      else
+        printf '%s\n' "$FAKE_SESSION_ROWS"
+      fi
     elif [[ -n "${FAKE_SESSIONS:-}" ]]; then printf '%s\n' $FAKE_SESSIONS; fi ;;
   display-message)
     [[ -n "${FAKE_SESSION_PATH:-}" && "$*" == *session_path* ]] && echo "$FAKE_SESSION_PATH"
@@ -2105,6 +2112,49 @@ def test_retained_tmux_slot_shows_app_only_after_cli_exits(zsh, live):
     row = r.stdout.strip().split('\t')
     assert row[3:5] == (['detached', 'idle'] if live else ['app', 'none'])
     assert row[-1] == 'codex'
+
+
+def test_retained_dead_tmux_pane_lists_reserved_desktop_slot(zsh, tmp_path):
+    """Read actual tmux 3.7c formatting, including a pipe in the final cwd field."""
+    binary = shutil.which("tmux")
+    if not binary:
+        pytest.skip("tmux required")
+    import uuid
+    # macOS Unix socket paths are short; keep the random socket under /tmp.
+    socket = pathlib.Path("/tmp") / ("t-list-" + uuid.uuid4().hex[:12] + ".sock")
+    wrapper = tmp_path / "stubbin" / "tmux"
+    wrapper.write_text("#!/bin/sh\nexec " + shlex.quote(binary) + " -S "
+                       + shlex.quote(str(socket)) + " -f /dev/null \"$@\"\n")
+    wrapper.chmod(0o755)
+    wt = tmp_path / "work|tree"
+    wt.mkdir()
+    env = {"HOME": str(zsh.home), "PATH": str(wrapper.parent) + os.pathsep + os.environ["PATH"],
+           "TERM": "xterm-256color", "LANG": "C", "LC_ALL": "C"}
+    tmux = [str(wrapper)]
+    def run(*args):
+        result = subprocess.run(tmux + list(args), env=env, capture_output=True, text=True)
+        assert result.returncode == 0, result.stderr
+        return result
+    try:
+        run("new-session", "-d", "-s", "dev-api-3", "-c", str(wt), "sleep 30")
+        pane = run("display-message", "-p", "-t", "=dev-api-3:", "#{pane_id}").stdout.strip()
+        run("set-option", "-p", "-t", pane, "remain-on-exit", "on")
+        run("respawn-pane", "-k", "-t", pane, "false")
+        r = zsh('_dev_agent_of_session() { print codex; }; '
+                f'_dev_session_sid() {{ print {SID}; }}; '
+                '_dev_session_has_claude() { return 1; }; '
+                '_dev_desktop_threads() { :; }; '
+                '_dev_app_slot_reserved() { return 0; }; '
+                '_dev_agent_transcript() { :; }; '
+                '_dev_fg_rows() { :; }; _pr_state_flush() { :; }; '
+                '_dev_session_rows', LANG="C", LC_ALL="C")
+        assert r.returncode == 0, r.stderr
+        rows = [line.split("\t") for line in r.stdout.splitlines()]
+        assert len(rows) == 1, r.stdout
+        assert rows[0][:5] == [SID, str(wt), "api-3", "app", "none"]
+        assert rows[0][-1] == "codex"
+    finally:
+        subprocess.run(tmux + ["kill-server"], env=env, capture_output=True)
 
 
 @pytest.mark.parametrize('agent', ['claude', 'codex'])

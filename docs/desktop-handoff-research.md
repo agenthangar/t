@@ -16,6 +16,8 @@ T_POC_CODEX_BIN="$(command -v codex)" python3 scripts/poc_desktop_shared_backend
 python3 scripts/poc_desktop_writer_probe.py --codex "$(command -v codex)"
 python3 scripts/poc_desktop_handoff.py --codex "$(command -v codex)"
 python3 scripts/poc_desktop_handoff.py --codex "$(command -v codex)" --history-version 0.158.0
+python3 scripts/poc_cli_to_desktop.py --codex "$(command -v codex)" --shared-backend
+python3 scripts/poc_cli_to_desktop.py --codex "$(command -v codex)" --shared-backend --production-wait
 ```
 
 The results were consistent across both versions:
@@ -67,6 +69,24 @@ field, so the probe sets that one synthetic index field before running the
 production selection and UI checks. For the older-history variant, it seeds a
 synthetic 0.158.0 rollout with a user message and resumes it through the current
 app-server before archive. No model inference is requested.
+
+For the reverse CLI-to-desktop direction, a separate disposable probe compared
+an inline CLI with an explicit shared Unix app-server on Codex 0.160.1. Killing
+an inline CLI released its writer lock immediately, and another backend resumed
+the same thread. With the shared server, the server held the lock after the CLI
+frontend exited with SIGTERM or a normal Ctrl-D. A separate backend received
+`already has an active writer` until the server automatically unloaded the
+thread about 60 seconds after frontend exit. A plain `codex archive ID` could
+not override that ownership. Calling `thread/archive` on the owning shared
+backend released only the selected thread; another loaded thread stayed active,
+and an independent backend could unarchive and resume the saved ID. The
+explicit Unix server reproduces the ownership lifecycle but is not the app's
+private stdio backend or a direct test of Codex's installed daemon launcher.
+In the same 0.160.1 shared-backend fixture, production
+`preflight_cli_release` established the selected writer-lock contract before
+stopping the CLI. Production `wait_cli_released` waited about 60 seconds for that
+lock to clear, then an independent backend resumed the same saved ID. The
+unrelated control thread remained loaded throughout the wait.
 
 Official reference: [Codex app-server protocol](https://learn.chatgpt.com/docs/app-server)
 documents per-connection unsubscribe, its 30-minute unload grace, archive,

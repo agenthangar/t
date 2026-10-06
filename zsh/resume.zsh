@@ -1658,6 +1658,135 @@ _t_app_pull_slot() {
   return 0
 }
 
+# Release one desktop reservation after the selected conversation has been
+# unloaded. The Python caller resolves the exact saved thread and serializes
+# handoffs; recheck it here immediately before changing tmux or the marker.
+# Archive in the owning desktop app is required while its private backend holds
+# the writer lock. This helper never signals the app or edits its history.
+_t_app_close_verify() {
+  local dir="$1" sid="$2" codex_home="$3" rollout="$4" archived="$5"
+  python3 - "$T_HOME/libexec/t_app_handoff.py" "$dir" "$sid" "$codex_home" "$rollout" "$archived" <<'PY'
+import os, runpy, sqlite3, subprocess, sys
+from pathlib import Path
+
+helper, cwd, sid, home, rollout, archived = sys.argv[1:]
+def run(argv, **kwargs):
+    return subprocess.run(argv, capture_output=True, text=True, **kwargs)
+try:
+    mod = runpy.run_path(helper)
+    if not mod['_safe_archive_hint'](cwd, run):
+        raise ValueError('this is not a reserved t worktree safe to close')
+    if sid == '-':
+        mod['assert_workspace_released'](home, cwd,
+                                         retry='Retry t kill after Codex releases this worktree.')
+    else:
+        db = Path(home) / 'state_5.sqlite'
+        with sqlite3.connect(db.as_uri() + '?mode=ro', uri=True, timeout=0.5) as conn:
+            rows = conn.execute('select cwd,rollout_path,archived from threads where id=?',
+                                (sid,)).fetchall()
+        if (len(rows) != 1 or not isinstance(rows[0][0], str)
+                or not isinstance(rows[0][1], str)
+                or os.path.realpath(rows[0][0]) != os.path.realpath(cwd)
+                or os.path.realpath(rows[0][1]) != os.path.realpath(rollout)
+                or rows[0][2] != int(archived)):
+            raise ValueError('the selected saved conversation changed during close')
+        mod['assert_released'](None, sid, cwd, run, codex_home=home,
+                               rollout=rollout, archived=archived == '1',
+                               retry='Retry t kill after the conversation is released.')
+    mod['assert_desktop_view_released'](
+        None, run, archived=archived == '1', empty=sid == '-',
+        retry='Retry t kill after closing or archiving the desktop view.')
+except (OSError, ValueError, sqlite3.Error) as exc:
+    message = str(exc)
+    if ('selected Codex conversation is still loaded' in message
+            or 'no verifiable writer lock contract' in message):
+        message = ('the selected chat is still loaded. Finish its turn and Archive it '
+                   'in Codex, then retry t kill; the worktree remains reserved')
+    print('t kill: ' + message, file=sys.stderr)
+    sys.exit(1)
+PY
+}
+
+_t_app_close_slot() {
+  emulate -L zsh
+  local session="$1" dir="$2" sid="$3" codex_home="$4" rollout="$5" archived="$6"
+  local alias_key slot expected marker actual stamp owner owner_dir pid pids comm
+  [[ $session == dev-*-<-> && -d $dir && $dir == /*
+     && $codex_home == /* &&
+     ( ( $sid == - && $rollout == - && $archived == 0 ) ||
+       ( $sid =~ '^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$'
+         && $rollout == /* && $archived == (0|1) ) ) ]] || {
+    print -u2 -- 't kill: invalid desktop slot or saved conversation'; return 1
+  }
+  alias_key=${${session#dev-}%-*}; slot=${session##*-}
+  [[ -n ${DEV_REPOS[$alias_key]:-} && -n $DEV_WORKTREE_ROOT ]] || {
+    print -u2 -- 't kill: the desktop slot is not registered here'; return 1
+  }
+  expected=$(_dev_worktree_path "$alias_key" "$slot")
+  [[ ${expected:A} == ${dir:A} ]] || {
+    print -u2 -- 't kill: the desktop worktree changed'; return 1
+  }
+  marker=$(_dev_app_slot_marker "$dir") || return 1
+  [[ -f $marker && ! -L $marker && $(<"$marker") == codex-app ]] || {
+    print -u2 -- 't kill: the desktop reservation changed'; return 1
+  }
+  # A live CLI may have taken this path under any registered alias, not just
+  # the selected session name. A second parked session also makes ownership
+  # ambiguous, so leave both untouched.
+  while IFS='|' read -r owner owner_dir; do
+    [[ -n $owner && $owner_dir == /* && ${owner_dir:A} == ${dir:A} ]] || continue
+    if _dev_session_has_claude "$owner"; then
+      print -u2 -- 't kill: a CLI is still running in this worktree'; return 1
+    fi
+    if [[ $owner != $session ]]; then
+      print -u2 -- 't kill: another tmux session reserves this worktree'; return 1
+    fi
+  done < <(tmux list-sessions -F '#{session_name}|#{session_path}' 2>/dev/null)
+  if tmux has-session -t "=$session:" 2>/dev/null; then
+    actual=$(tmux display-message -p -t "=$session:" '#{session_path}') || return 1
+    [[ ${actual:A} == ${dir:A} ]] || {
+      print -u2 -- 't kill: the parked slot changed directory'; return 1
+    }
+    stamp=$(tmux show-environment -t "=$session" CLAUDE_RESUME_ID 2>/dev/null)
+    [[ $stamp == "CLAUDE_RESUME_ID=$sid" || ( $sid == - && -z $stamp ) ]] || {
+      print -u2 -- 't kill: the parked slot names another conversation'; return 1
+    }
+  fi
+  # An independent foreground CLI can use the same worktree without tmux.
+  pids=$(_dev_cwd_pids "$dir") || {
+    print -u2 -- 't kill: could not inspect worktree processes'; return 1
+  }
+  for pid in ${(f)pids}; do
+    comm=$(ps -o comm= -p "$pid" 2>/dev/null) || {
+      print -u2 -- 't kill: a worktree process could not be identified'; return 1
+    }
+    if _dev_agent_is_proc "$comm" && ! _dev_agent_is_service "$pid"; then
+      print -u2 -- 't kill: a foreground CLI is still running in this worktree'; return 1
+    fi
+  done
+  _t_app_close_verify "$dir" "$sid" "$codex_home" "$rollout" "$archived" || return 1
+  if tmux has-session -t "=$session:" 2>/dev/null; then
+    tmux kill-session -t "=$session:" || {
+      print -u2 -- 't kill: could not close the parked tmux slot'; return 1
+    }
+  fi
+  _dev_stop_rooted "$dir" || {
+    print -u2 -- 't kill: could not stop leftover worktree processes'; return 1
+  }
+  # Recheck after tmux/process cleanup: another writer may have claimed this
+  # thread in the meantime. The marker is the final mutation.
+  _t_app_close_verify "$dir" "$sid" "$codex_home" "$rollout" "$archived" || return 1
+  [[ -f $marker && ! -L $marker && $(<"$marker") == codex-app ]] || {
+    print -u2 -- 't kill: desktop reservation changed during close'; return 1
+  }
+  rm -- "$marker" || return 1
+  if [[ $sid == - ]]; then
+    print -r -- "Closed empty desktop slot $session."
+  else
+    print -r -- "Closed desktop slot $session; saved conversation $sid remains available."
+  fi
+}
+
 # _dev_resume_session <session> <dir> <session-id> — sibling of _dev_new_session:
 # create a detached, logged tmux session in <dir>, but RESUME an existing Claude
 # conversation (claude -r) rather than starting fresh on $DEV_BRANCH. Same name

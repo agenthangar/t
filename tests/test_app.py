@@ -128,10 +128,18 @@ def test_app_reserves_git_worktree_in_private_metadata(t_mod, tmp_path):
 
 
 @pytest.fixture
-def app_command(t_mod, app_slot, monkeypatch):
+def app_command(t_mod, app_slot, monkeypatch, tmp_path):
     cfg, row = app_slot
+    home = tmp_path / "codex"
+    (home / "thread-writer-locks").mkdir(parents=True)
+    rollout = home / "rollout.jsonl"
+    rollout.write_text(json.dumps({"type": "session_meta", "payload": {
+        "id": SID, "cwd": row["cwd"], "cli_version": "0.160.1"}}) + "\n")
+    row.update(rollout=str(rollout), codex_home=str(home), archived=False, expected_sid=SID)
     text = "\t".join(row[k] for k in ("sid", "cwd", "slot", "state", "context", "summary", "agent"))
-    monkeypatch.setattr(t_mod, "zsh_capture", lambda snippet: text)
+    saved = "\t".join([SID, str(rollout), row["cwd"], "Fixture", "1", "0", str(home)])
+    monkeypatch.setattr(t_mod, "zsh_capture", lambda snippet:
+                        saved if snippet.startswith("_codex_threads_for_cwd ") else text)
     monkeypatch.setattr(t_mod.sys, "platform", "darwin")
     monkeypatch.setattr(t_mod, "_app_bundle", lambda: "/Applications/ChatGPT.app")
     class Window:
@@ -152,6 +160,77 @@ def app_command(t_mod, app_slot, monkeypatch):
         args = t_mod.build_parser().parse_args(["app", "api", "13", *flags])
         return t_mod.cmd_app(cfg, args)
     return call, events, row
+
+
+def test_app_waits_for_backend_release_before_open(t_mod, app_command, monkeypatch):
+    """The frontend exiting cannot authorize opening while its backend owns it."""
+    call, events, row = app_command
+    check = t_mod._app_cli_release
+    def release(selected, contract=None):
+        if contract is None:
+            return check(selected)
+        assert events == [("stop", row)]
+        events.append(("release", row))
+    monkeypatch.setattr(t_mod, "_app_cli_release", release)
+    assert call() == 0
+    assert [event[0] for event in events] == ["stop", "release", "open"]
+
+
+@pytest.mark.parametrize("stage", ["preflight", "wait"])
+def test_app_unverified_release_never_opens(t_mod, app_command, monkeypatch, capsys, stage):
+    call, events, _ = app_command
+    def release(row, contract=None):
+        if stage == "preflight" or contract is not None:
+            raise ValueError("writer still held; Retry: t open api 13 --app")
+        return "modern"
+    monkeypatch.setattr(t_mod, "_app_cli_release", release)
+    assert call() == 1
+    assert [event[0] for event in events] == ([] if stage == "preflight" else ["stop"])
+    output = capsys.readouterr()
+    assert "Retry: t open api 13 --app" in output.err
+    if stage == "wait":
+        assert "history and worktree remain reserved" in output.err
+    assert "Open request sent" not in output.out
+
+
+@pytest.mark.parametrize("destination", ["selected", "other_thread", "other_cwd", "absent", "missing_helper"])
+def test_app_release_reopens_only_verified_desktop_owner(t_mod, app_slot, monkeypatch, capsys, destination):
+    _, row = app_slot
+    row.update(codex_home="/isolated/codex", rollout="/isolated/rollout")
+    calls = []
+    def wait(sid, cwd, **options):
+        calls.append((sid, cwd, options))
+        options["on_wait"]()
+    loaded = [(SID, row["cwd"], "Fixture")]
+    if destination == "other_thread":
+        loaded = [("another", row["cwd"], "Fixture")]
+    elif destination == "other_cwd":
+        loaded = [(SID, "/another", "Fixture")]
+    elif destination == "absent":
+        loaded = []
+    def helper(path):
+        if destination == "missing_helper":
+            raise OSError("missing helper")
+        return {"wait_cli_released": wait, "_lock_held": lambda path: True,
+                "loaded_threads": lambda home, require_writer: loaded if require_writer else []}
+    monkeypatch.setattr(t_mod.runpy, "run_path", helper)
+    if destination == "missing_helper":
+        with pytest.raises(ValueError, match="could not check Codex"):
+            t_mod._app_cli_release(row, "modern")
+        return
+    t_mod._app_cli_release(row, "modern")
+    assert bool(calls) == (destination != "selected")
+    if calls:
+        assert calls[0][2]["retry"] == "Retry: t open api 13 --app"
+        assert "75 seconds" in capsys.readouterr().out
+
+
+def test_app_does_not_stop_cli_for_archived_thread(t_mod, app_command, monkeypatch, capsys):
+    call, events, row = app_command
+    monkeypatch.setattr(t_mod, "_app_saved_thread", lambda selected: dict(row, archived=True))
+    assert call() == 1
+    assert not events
+    assert "archived" in capsys.readouterr().err
 
 
 def test_app_command_stops_before_opening_same_thread(t_mod, app_command):

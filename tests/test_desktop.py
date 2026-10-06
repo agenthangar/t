@@ -50,6 +50,46 @@ def test_live_desktop_loaded_context_then_close(desktop):
     assert m['loaded_threads'](home, run) == []
 
 
+def test_reopen_requires_rollout_and_writer_lock_on_same_desktop_backend(desktop):
+    m, home, state, run, _, contents = desktop
+    lock_dir = home / 'thread-writer-locks'
+    lock_dir.mkdir()
+    lock = lock_dir / (SID + '.lock')
+    lock.touch()
+    rollout = home / ('rollout-' + SID + '.jsonl')
+    state['files'] = f'p11\nn{rollout}\nn{lock}\n'
+    assert m['loaded_threads'](home, run, require_writer=True) == [
+        (SID, '/worktree/3', 'A desktop conversation')]
+
+    # Each file is open, but by a different verified desktop backend.
+    state['ps'] += f'12 10 {contents}/Resources/codex\n'
+    state['files'] = f'p11\nn{rollout}\np12\nn{lock}\n'
+    assert m['loaded_threads'](home, run, require_writer=True) == []
+    assert m['loaded_threads'](home, run) == [
+        (SID, '/worktree/3', 'A desktop conversation')]
+
+    state['files'] = f'p11\nn{rollout}\nn{lock}\n'
+    lock.unlink()
+    assert m['loaded_threads'](home, run, require_writer=True) == []
+
+
+def test_reopen_rejects_symlinked_or_other_thread_lock(desktop):
+    m, home, state, run, _, _ = desktop
+    lock_dir = home / 'thread-writer-locks'
+    lock_dir.mkdir()
+    lock = lock_dir / (SID + '.lock')
+    other = lock_dir / 'other.lock'
+    other.touch()
+    lock.symlink_to(other)
+    rollout = home / ('rollout-' + SID + '.jsonl')
+    state['files'] = f'p11\nn{rollout}\nn{lock}\n'
+    assert m['loaded_threads'](home, run, require_writer=True) == []
+    lock.unlink()
+    lock.touch()
+    state['files'] = f'p11\nn{rollout}\nn{other}\n'
+    assert m['loaded_threads'](home, run, require_writer=True) == []
+
+
 @pytest.mark.parametrize('change', ['dead', 'reparented', 'wrong_owner', 'malformed', 'nonrollout', 'cli', 'nested', 'not_app', 'bad_plist', 'missing_plist', 'failed', 'timeout', 'missing_tool', 'bad_db'])
 def test_unverified_ownership_never_marks_active(desktop, change):
     m, home, state, run, _, contents = desktop

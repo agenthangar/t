@@ -1207,8 +1207,10 @@ _dev_session_rows() {
   done < <(_dev_desktop_threads)
   # Several desktop conversations may share a folder; never guess the slot owner.
   for dir in ${(k)desktop_ambiguous}; do unset "desktop_sid[$dir]"; done
-  while IFS=$'\t' read -r s dir state; do
-    [[ $s == dev-* && -n $dir ]] || continue
+  # tmux replaces literal tabs in -F with `_` on macOS 3.7c. Keep the
+  # variable-length path last so read retains any `|` in a worktree name.
+  while IFS='|' read -r s state dir; do
+    [[ $s == dev-* && $state == (attached|detached) && $dir == /* ]] || continue
     had_path[$dir]=1
     short="${s#dev-}"
     agent=$(_dev_agent_of_session "$s")
@@ -1253,7 +1255,7 @@ _dev_session_rows() {
     rows+=("$sid"$'\t'"$dir"$'\t'"$short"$'\t'"$state"$'\t'"$context"$'\t'"$agent")
     if [[ -n ${tx[1]:-} ]]; then rowtx+=("${tx[1]}"); tpaths+=("${tx[1]}")
     else rowtx+=('-'); fi
-  done < <(tmux list-sessions -F "#{session_name}"$'\t'"#{session_path}"$'\t'"#{?session_attached,attached,detached}" 2>/dev/null | sort)
+  done < <(tmux list-sessions -F '#{session_name}|#{?session_attached,attached,detached}|#{session_path}' 2>/dev/null | sort)
 
   (( $#tpaths )) && mrows=("${(@f)$(_transcript_meta_batch "${(@)tpaths}")}")
   for mr in "${(@)mrows}"; do
@@ -1651,15 +1653,14 @@ _dev_kill() {
   fi
 
   # Desktop slots reserve a worktree without necessarily having a tmux session.
-  # A parked tmux shell may also carry the old slot name after an app handoff.
-  # Neither is a Codex process for `tmux kill-session` to close. Check the marker
-  # before the remote/no-session fallbacks, but let a real terminal agent win if
-  # it has already reclaimed this slot under any sibling alias.
+  # Close a released desktop slot through the exact-thread verifier rather than
+  # treating a parked pane as a CLI to kill. A live terminal agent still wins.
   if [[ $slot == <-> && -n ${DEV_REPOS[$repo]:-} && -n $DEV_WORKTREE_ROOT ]]; then
     local desktop_wt desktop_session desktop_cli=
     desktop_wt=$(_dev_worktree_path "$repo" "$slot")
     if _dev_app_slot_reserved "$desktop_wt"; then
-      for _kk in $_repos; do
+      for _kk in ${(k)DEV_REPOS}; do
+        [[ ${DEV_REPOS[$_kk]} == ${DEV_REPOS[$repo]} ]] || continue
         desktop_session="dev-${_kk}-${slot}"
         if tmux has-session -t "=$desktop_session:" 2>/dev/null \
              && _dev_session_has_claude "$desktop_session"; then
@@ -1668,9 +1669,8 @@ _dev_kill() {
         fi
       done
       if [[ -z $desktop_cli ]]; then
-        print -u2 -- "t kill: $repo $slot is a Codex desktop conversation; there is no terminal session to kill."
-        print -u2 -- "  To transfer it to the CLI, run t open ${(q)repo} ${(q)slot} --cli for safe handoff instructions."
-        return 1
+        command t _app-close "$repo" "$slot"
+        return $?
       fi
     fi
   fi
@@ -1680,22 +1680,31 @@ _dev_kill() {
   local -a sessions
   sessions=( ${(f)"$(tmux list-sessions -F '#{session_name}' 2>/dev/null \
     | grep -E "^dev-(${(j:|:)_repos})-[0-9]+\$" | sort -t- -k3 -n)"} )
-
-  if (( ! ${#sessions} )); then
-    # A bare `t kill <repo>` or `t kill <repo> all` should describe app-only
-    # slots as such instead of claiming the repo has no sessions at all.
-    if [[ -n ${DEV_REPOS[$repo]:-} && -n $DEV_WORKTREE_ROOT ]]; then
-      local desktop_path desktop_slot desktop_found=
-      for desktop_path in "${DEV_WORKTREE_ROOT}/${DEV_REPOS[$repo]:t}"/*(N/); do
-        desktop_slot=${desktop_path:t}
-        [[ $desktop_slot == <-> ]] || continue
-        _dev_app_slot_reserved "$desktop_path" || continue
-        print -u2 -- "t kill: $repo $desktop_slot is a Codex desktop conversation; there is no terminal session to kill."
-        print -u2 -- "  To transfer it to the CLI, run t open ${(q)repo} ${(q)desktop_slot} --cli for safe handoff instructions."
-        desktop_found=1
+  local -a desktop_slots
+  local -A desktop_slot_map
+  local desktop_path desktop_slot desktop_live
+  if [[ -n ${DEV_REPOS[$repo]:-} && -n $DEV_WORKTREE_ROOT ]]; then
+    for desktop_path in "${DEV_WORKTREE_ROOT}/${DEV_REPOS[$repo]:t}"/*(N/); do
+      desktop_slot=${desktop_path:t}
+      [[ $desktop_slot == <-> ]] || continue
+      _dev_app_slot_reserved "$desktop_path" || continue
+      desktop_live=
+      for _kk in ${(k)DEV_REPOS}; do
+        [[ ${DEV_REPOS[$_kk]} == ${DEV_REPOS[$repo]} ]] || continue
+        desktop_session="dev-${_kk}-${desktop_slot}"
+        if tmux has-session -t "=$desktop_session:" 2>/dev/null \
+             && _dev_session_has_claude "$desktop_session"; then
+          desktop_live=1; break
+        fi
       done
-      [[ -z $desktop_found ]] || return 1
-    fi
+      if [[ -z $desktop_live ]]; then
+        desktop_slots+=( "$desktop_slot" )
+        desktop_slot_map[$desktop_slot]=1
+      fi
+    done
+  fi
+
+  if (( ! ${#sessions} && ! ${#desktop_slots} )); then
     # None live HERE. If a specific slot was named and it is live on another host, tear
     # it down there over ssh -t (the remote `t kill` still prompts unless -y); -r forces
     # this explicitly. With no slot, never auto-pick a kill target — just point at where
@@ -1720,9 +1729,15 @@ _dev_kill() {
 
   # `all` — kill every slot for the repo (explicit opt-in to a mass kill).
   if [[ "$slot" == all ]]; then
-    local s
-    for s in $sessions; do _dev_kill_one "$s" "$force"; done
-    return
+    local s close_rc=0
+    for s in $sessions; do
+      [[ -n ${desktop_slot_map[${s##*-}]:-} ]] && continue
+      _dev_kill_one "$s" "$force" || close_rc=1
+    done
+    for desktop_slot in $desktop_slots; do
+      command t _app-close "$repo" "$desktop_slot" || close_rc=1
+    done
+    return $close_rc
   fi
 
   # no slot — refuse to guess; show what's there so the user can pick one.
@@ -1730,8 +1745,10 @@ _dev_kill() {
     echo "Specify a slot to kill (or 'all'). Sessions for '$repo':"
     local s
     for s in $sessions; do
+      [[ -n ${desktop_slot_map[${s##*-}]:-} ]] && continue
       if _dev_session_has_claude "$s"; then echo "  $s  ✓ ($(_dev_agent_of_session "$s") live)"; else echo "  $s"; fi
     done
+    for desktop_slot in $desktop_slots; do echo "  $repo $desktop_slot  ▣ desktop"; done
     return 1
   fi
 
