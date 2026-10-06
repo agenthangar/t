@@ -46,9 +46,10 @@ Watch the [MP4](docs/media/demo.mp4) or use the [static poster](docs/media/demo-
 - **Move between terminal and desktop.** On macOS, `t session open my-project 1 --app` opens
   the same local Codex conversation in the desktop app, along with its web
   preview and referenced Markdown plan. The worktree and dev server stay in
-  place. To return, finish the desktop turn, quit the desktop app, and run
-  `t session open my-project 1 --cli`. It resumes the same conversation and attaches
-  automatically. The `t app` commands remain available for scripts and advanced options.
+  place. To return, run `t session open my-project 1 --cli`. If Codex still has that
+  conversation loaded, follow the command's release instructions and retry;
+  other desktop chats can stay open. It resumes the same conversation and
+  attaches automatically. The `t app` commands remain available for scripts and advanced options.
 
 **Coming soon:** submit work to your agent framework, starting with
 [AgentCore](https://github.com/agenthangar/t/issues/9), and use
@@ -291,9 +292,10 @@ conversations share the worktree, select the intended one in the desktop app.
 Exit any foreground terminal agent in that workspace before reopening. With `--app`, if
 that slot is running
 Codex in tmux, `t` hands the same conversation to the app. `--app` requires a
-worktree-enabled repo, a local Codex installation, and Accessibility access for
-the terminal running `t` to invoke the app’s New Window menu. It cannot launch a
-desktop workspace on a remote host.
+worktree-enabled repo and a local Codex installation. Creating a new window also
+requires Accessibility access for the terminal running `t` to invoke the app’s
+New Window menu. Reopening a saved conversation uses its native link directly
+and does not require Accessibility. It cannot launch a desktop workspace on a remote host.
 The desktop slot stays reserved in private Git worktree metadata so automatic
 cleanup and a later terminal launch cannot reuse it while the app may still be
 working. `t session list` has separate status, UI, model, session, and context
@@ -303,27 +305,33 @@ last recorded conversation title. Status uses `● ✓` for a loaded conversatio
 and `○` for inactive. On macOS, live desktop context is verified from rollout files held open
 by the desktop backend; a saved reservation alone stays inactive. Loaded context
 can remain in the backend after a window closes, and does not mean a turn is
-currently generating. To continue in the CLI, finish the desktop turn and
-quit the Codex desktop app on the Mac running that session. On the same Mac, run:
+currently generating. To continue in the CLI, run this on the Mac running the
+desktop session:
 
 ```sh
 t session open my-project 3 --cli
 ```
 
-`open --cli` verifies desktop release, resumes the same conversation, and attaches.
+`open --cli` checks whether that exact conversation is still loaded. If it is,
+finish its turn and follow the command's release instructions, then retry. For
+a `t` worktree, releasing the selected chat in Codex can leave other chats and
+the app open; the command restores an archived conversation on the next try.
+Codex-managed worktrees need different handling because archiving can also
+queue worktree cleanup, so follow the command's guidance for that workspace.
+Once released, `open --cli` resumes the same conversation and attaches.
 Opening a desktop slot without `--cli` continues in the app. The handoff preserves
 the worktree, changes, dev server, and thread history. For a
 worktree started with `t session open --app`, it selects the only saved conversation;
 if several chats share the worktree, use `t app pull my-project 3 --thread <id>`
 to select one, then open it. A previously pushed slot defaults to its handed-off
 thread. `t app pull` resumes without attaching; `--dry-run` previews either direction.
-Pull refuses while the desktop app is open, or while the
-selected thread has an active turn in the shared daemon. It never quits the app
-or stops that daemon. Leftover computer-use, code-mode, and Electron helpers do
-not count as the desktop app. A remaining backend must verify the exact thread;
-an unverifiable backend reports its PID without asking you to quit an app that
-has already exited. The reservation is released only after the CLI is verified
-live; a failed handoff keeps the worktree protected.
+Pull checks Codex's per-conversation writer lock and refuses if another loaded
+conversation shares the worktree. It resumes with `--no-daemon`, so an unrelated
+background server cannot stall the transfer. It never quits the app or stops
+its backend. Codex versions without a verifiable writer lock use conservative
+release checks. The reservation is released only after the exact CLI process
+owns the conversation's lock and its resumed thread is verified; a failed
+handoff keeps the worktree protected.
 
 ## Configuration
 

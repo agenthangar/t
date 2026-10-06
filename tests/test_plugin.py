@@ -334,7 +334,7 @@ def test_app_reservation_protects_worktree_from_cli_reuse_and_sweep(tmp_path):
     assert "fresh=1" in result.stdout
     assert "kept=0" in result.stdout
     assert f"-\t{wt}\tapi-1\tapp\tnone\t(Codex desktop workspace" in result.stdout
-    assert "finish the turn and quit the Codex desktop app on this Mac first" in result.stderr
+    assert "follow its release instructions" in result.stderr
     assert "t open api 1 --cli" in result.stderr
     assert "t app pull" not in result.stderr
     assert "t open api 1 --app" in result.stderr

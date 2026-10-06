@@ -163,7 +163,7 @@ def test_open_help_is_concise_with_discoverable_details(t_mod, monkeypatch, caps
     assert "agent (fresh slots):" in concise and "location:" in concise
     assert "--codex --new" in concise and "t help open" in concise
     normalized = " ".join(concise.split())
-    assert "quit the Codex desktop app on that Mac" in normalized
+    assert "Follow its release instructions if the desktop conversation is still loaded" in normalized
     assert "t app pull" not in normalized
     assert "resumes the same conversation and attaches automatically" in normalized
     assert "t " + " ".join(words) + " api 2 --cli" in normalized
