@@ -11,17 +11,17 @@ import time
 _RETRY = "Finish the turn, quit the Codex desktop app, then retry t app pull."
 
 
-def _processes(run):
+def _processes(run, retry):
     result = run(["ps", "-ww", "-x", "-o", "pid=,command="], timeout=5)
     if result.returncode:
-        raise ValueError("could not inspect desktop and app-server processes; " + _RETRY)
+        raise ValueError("could not inspect desktop and app-server processes; " + retry)
     processes = []
     for line in result.stdout.splitlines():
         fields = line.strip().split(None, 1)
         if len(fields) == 2 and fields[0].isdigit():
             processes.append((int(fields[0]), fields[1]))
         elif line.strip():
-            raise ValueError("could not parse the process list; " + _RETRY)
+            raise ValueError("could not parse the process list; " + retry)
     return processes
 
 
@@ -111,17 +111,17 @@ def _thread_status(sid, cwd):
         process.stdout.close()
 
 
-def assert_released(bundle, sid, cwd, run):
+def assert_released(bundle, sid, cwd, run, *, retry=_RETRY):
     """Raise unless no desktop owner remains and any shared daemon reports idle."""
-    app, daemon = _owners(bundle, _processes(run))
+    app, daemon = _owners(bundle, _processes(run, retry))
     if app:
-        raise ValueError("the Codex desktop app is still running. " + _RETRY)
+        raise ValueError("the Codex desktop app is still running. " + retry)
     if daemon:
         try:
             _thread_status(sid, cwd)
         except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
-            raise ValueError(f"could not verify that the desktop thread is released: {exc}. {_RETRY}") from exc
+            raise ValueError(f"could not verify that the desktop thread is released: {exc}. {retry}") from exc
     # Recheck the GUI after the RPC: a launch during the probe must block the pull.
-    app, _ = _owners(bundle, _processes(run))
+    app, _ = _owners(bundle, _processes(run, retry))
     if app:
-        raise ValueError("the Codex desktop app opened during the status check. " + _RETRY)
+        raise ValueError("the Codex desktop app opened during the status check. " + retry)

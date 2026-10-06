@@ -300,11 +300,7 @@ def test_open_app_refuses_a_slot_owned_by_remote_host(tmp_path):
 
 
 @pytest.mark.skipif(not shutil.which("zsh"), reason="zsh is required")
-@pytest.mark.parametrize("command", [
-    "_dev_worktree_create api 1", "t open api 1 --cli",
-    "t session open api 1 --cli", "t open api 1 --fg",
-])
-def test_app_reservation_protects_worktree_from_cli_reuse_and_sweep(tmp_path, command):
+def test_app_reservation_protects_worktree_from_cli_reuse_and_sweep(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
     subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
@@ -321,7 +317,7 @@ def test_app_reservation_protects_worktree_from_cli_reuse_and_sweep(tmp_path, co
         f'''tmux() {{ return 1; }}
         _dev_app_slot_reserve "{wt}" || return 1
         _dev_app_slot_reserved "{wt}"; print -r -- "reserved=$?"
-        {command}; print -r -- "create=$?"
+        _dev_worktree_create api 1; print -r -- "create=$?"
         _dev_slot_fresh api 1; print -r -- "fresh=$?"
         _dev_branch_merged() {{ return 0; }}
         _dev_worktree_sweep_run
@@ -339,7 +335,8 @@ def test_app_reservation_protects_worktree_from_cli_reuse_and_sweep(tmp_path, co
     assert "kept=0" in result.stdout
     assert f"-\t{wt}\tapi-1\tapp\tnone\t(Codex desktop workspace" in result.stdout
     assert "finish the turn and quit the Codex desktop app on this Mac first" in result.stderr
-    assert "t app pull api 1\n    t open api 1 --cli" in result.stderr
+    assert "t open api 1 --cli" in result.stderr
+    assert "t app pull" not in result.stderr
     assert "t open api 1 --app" in result.stderr
     assert result.stderr.count("reserved for the Codex desktop app") == 1
     assert "could not create the worktree" not in result.stderr

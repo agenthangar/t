@@ -94,7 +94,6 @@ _dev_worktree_create() {
       print -u2 -- "t: $repo $slot is reserved for the Codex desktop app."
       print -u2 -- '  To continue in the CLI, finish the turn and quit the Codex desktop app on this Mac first.'
       print -u2 -- '  Then run:'
-      print -u2 -- "    t app pull ${(q)repo} ${(q)slot}"
       print -u2 -- "    t open ${(q)repo} ${(q)slot} --cli"
       print -u2 -- "  To reopen in the app: t open ${(q)repo} ${(q)slot} --app"
       return 1
