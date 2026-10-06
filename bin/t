@@ -43,7 +43,7 @@ import sys
 import tempfile
 import textwrap
 import time
-from contextlib import closing, contextmanager
+from contextlib import closing, contextmanager, redirect_stdout
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import TCPServer
 from urllib.parse import quote, urlencode, urlsplit
@@ -522,7 +522,7 @@ def _render_local(rows, scope, st, has_remote=False):
     print(f"  {st.y}{foot}{st.r}")
     if has_app:
         print(f"  {st.y}desktop → CLI: finish the turn and quit the Codex app, then run "
-              f"t app pull <repo> <slot>{st.r}")
+              f"t open <repo> <slot> --cli{st.r}")
 
 
 def _render_remote(rows, scope, st):
@@ -6745,7 +6745,10 @@ def _app_pull_select(cfg, rows, repo, slot, cwd, thread=None):
         if sid:
             raise ValueError(f"thread {sid} is not a saved Codex conversation in {row['cwd']}")
         if candidates:
-            raise ValueError("several conversations belong to this worktree; choose --thread <id>: "
+            target_repo, _, target_slot = row["slot"].rpartition("-")
+            command = shlex.join(["t", "app", "pull", target_repo, target_slot])
+            raise ValueError("several conversations belong to this worktree; choose with "
+                             f"{command} --thread <id>: "
                              + ", ".join(candidates))
         raise ValueError("no saved Codex conversation in this worktree; send a message in the app first")
     return dict(row, sid=sid, expected_sid=row["sid"])
@@ -6771,10 +6774,11 @@ def _app_handoff_lock(row):
         yield
 
 
-def _app_assert_released(row, bundle):
+def _app_assert_released(row, bundle, *, retry=None):
     helper = os.path.join(_t_source_root(), "libexec", "t_app_handoff.py")
     try:
-        runpy.run_path(helper)["assert_released"](bundle, row["sid"], row["cwd"], _run)
+        options = {} if retry is None else {"retry": retry}
+        runpy.run_path(helper)["assert_released"](bundle, row["sid"], row["cwd"], _run, **options)
     except OSError as e:
         raise ValueError(f"could not check desktop ownership: {e}") from e
 
@@ -6784,29 +6788,51 @@ def _app_pull_cli(row):
     return _run(["zsh", "-lic", ZSH_PRELUDE + shlex.join(parts)], timeout=30)
 
 
-def cmd_app_pull(cfg, args, repo, slot):
-    if args.url or args.no_preview or args.plan or args.no_plan or args.reuse_window:
-        raise ValueError("preview, plan, and window options apply only to t app push")
+def _app_pull(cfg, repo, slot, *, thread=None, dry_run=False, retry=None):
+    """Return the verified CLI owner after the shared desktop handoff checks."""
     row = _app_pull_select(cfg, _parse_rows(zsh_capture("_dev_session_rows")),
-                           repo, slot, os.getcwd(), args.thread)
+                           repo, slot, os.getcwd(), thread)
     if not os.path.isdir(row["cwd"]):
         raise ValueError(f"the session's worktree is missing: {row['cwd']}")
     print(f"{row['slot']} → Codex CLI · thread {row['sid']}")
-    if args.dry_run:
+    if dry_run:
         print("Would verify the desktop has exited, resume this conversation in tmux, "
               "and release its desktop reservation; the worktree and dev server stay in place.")
-        return 0
+        return row
     if sys.platform != "darwin":
-        raise ValueError("desktop handoff currently requires macOS; run t app pull on your desktop")
+        raise ValueError("desktop handoff requires macOS; run t open <repo> <slot> --cli on the Mac with the desktop session")
     with _app_handoff_lock(row):
-        _app_assert_released(row, _app_bundle())
+        _app_assert_released(row, _app_bundle(), retry=retry)
         _trust_auto([row["cwd"]])
         result = _app_pull_cli(row)
         if result.returncode:
             raise ValueError(result.stderr.strip() or "could not resume the CLI; desktop reservation retained")
+    return row
+
+
+def cmd_app_pull(cfg, args, repo, slot):
+    if args.url or args.no_preview or args.plan or args.no_plan or args.reuse_window:
+        raise ValueError("preview, plan, and window options apply only to t app push")
+    row = _app_pull(cfg, repo, slot, thread=args.thread, dry_run=args.dry_run)
+    if args.dry_run:
+        return 0
     repo, _, slot = row["slot"].rpartition("-")
     print(f"Resumed the same conversation in tmux. Attach with: t open {repo} {slot} --cli")
     return 0
+
+
+def cmd_app_open_cli(cfg, repo, slot):
+    """Private shell bridge: stdout is only the exact session to attach."""
+    retry = ("Finish the turn and quit the Codex desktop app on this Mac, then retry: "
+             + shlex.join(["t", "open", repo, slot, "--cli"]))
+    try:
+        with redirect_stdout(sys.stderr):
+            row = _app_pull(cfg, repo, slot, retry=retry)
+        print("dev-" + row["slot"])
+        return 0
+    except ValueError as e:
+        print(f"t open: {e}", file=sys.stderr)
+        return 1
 
 
 def cmd_restart(cfg, args):
@@ -8682,8 +8708,8 @@ def build_parser():
 
 desktop → CLI:
   Finish the turn and quit the Codex desktop app on that Mac, then run:
-  t app pull api 2
   %(prog)s api 2 --cli
+  This resumes the same conversation and attaches automatically.
 
 Run `t help open` for session targeting, defaults, and remote details.""",
         help_details="""SESSION TARGETS
@@ -8701,10 +8727,11 @@ OPENING DEFAULTS
   DEV_AGENT[repo] overrides DEV_AGENT_DEFAULT (fallback: claude).
 
 DESKTOP TO CLI
-  --cli selects the interface; it does not release desktop ownership.
   On the Mac running the desktop session, finish the turn and quit the
-  Codex desktop app. Run `t app pull <repo> <slot>` to resume the same
-  conversation in tmux, then `t open <repo> <slot> --cli` to attach.
+  Codex desktop app, then run `t open <repo> <slot> --cli`. It verifies
+  that the desktop has released the conversation, resumes it in tmux,
+  and attaches. A failed handoff keeps the desktop reservation intact.
+  Without --cli, opening a desktop slot continues in the app.
 
 REMOTE SESSIONS
   A slot live only on another host attaches there automatically.
@@ -8717,7 +8744,7 @@ REMOTE SESSIONS
     sp.add_argument("slot", nargs="?", help="slot number, session ID, or 'fg'")
     sp.add_argument("--new", action="store_true", help="start a fresh session")
     sp.add_argument("--fg", action="store_true", help="run in this terminal, without tmux")
-    sp.add_argument("--cli", action="store_true", help="open in the CLI (desktop slots: see below)")
+    sp.add_argument("--cli", action="store_true", help="open in the CLI; resume desktop conversations")
     sp.add_argument("--app", action="store_true", help="open in the Codex desktop app (macOS)")
     ag = sp.add_argument_group("agent (fresh slots)").add_mutually_exclusive_group()
     ag.add_argument("--codex", action="store_true", help="use Codex")
@@ -8729,8 +8756,9 @@ REMOTE SESSIONS
 
     sp = sub.add_parser("app", help="push a local Codex conversation into the app or pull it back to CLI",
         description="Move the same local Codex conversation between desktop and CLI. "
+            "Usually, use `t open <repo> <slot> --app` or `--cli`; open handles the handoff. "
             "To return to the CLI: finish the turn and quit the Codex desktop app on that Mac, "
-            "then run `t app pull <repo> <slot>` followed by `t open <repo> <slot> --cli`. "
+            "then run `t open <repo> <slot> --cli`. "
             "To move into the app, `t app [push] [repo] [slot]` stops the slot's CLI "
             "and opens the SAME conversation in the "
             "Codex desktop app on macOS, with its running web preview and referenced Markdown "
@@ -8746,6 +8774,7 @@ REMOTE SESSIONS
             "The browser deep link requires a recent desktop app. Run from a separate "
             "terminal if the command would stop the agent executing it. "
             "`t app push [repo] [slot]` is the explicit form of `t app [repo] [slot]`. "
+            "`t app pull [repo] [slot]` resumes without attaching, for scripts or advanced selection. "
             "Pull resumes the saved conversation in tmux "
             "and releases the desktop reservation only after verifying the CLI is live. "
             "App-created worktrees are supported; choose --thread ID when several chats share one.")
@@ -9304,6 +9333,8 @@ def main(argv):
         os.execv(sys.executable, [sys.executable, helper, *argv[1:]])
     if (len(argv) == 2 or len(argv) == 3 and argv[2] == "--reopen") and argv[0] == "_app-workspace":
         return cmd_app_workspace(argv[1], reopen=len(argv) == 3)
+    if len(argv) == 3 and argv[0] == "_app-open-cli":
+        return cmd_app_open_cli(Config(), argv[1], argv[2])
     if len(argv) == 2 and argv[0] == "_app-plan-server":
         _app_plan_serve(_app_plan_path(argv[1]))
         return 0

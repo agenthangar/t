@@ -118,6 +118,70 @@ def test_registered_repo_named_codex_still_opens(tmp_path):
 
 
 @pytest.mark.skipif(not shutil.which("zsh"), reason="zsh is required")
+@pytest.mark.parametrize("command,placeholder,case", [
+    ("t open api 3 --cli", False, "success"),
+    ("t open api 3 --cli", True, "success"),
+    ("t session open api 3 --cli", False, "success"),
+    ("t open alias 3 --cli", False, "success"),
+    ("t open 3 --cli", False, "success"),
+    ("t open --cli", False, "success"),
+    ("t open api 3 --fg", False, "success"),
+    *[("t open api 3 --cli", placeholder, case)
+      for placeholder in (False, True)
+      for case in ("blocked", "malformed", "wrong_repo", "cli_exited")],
+])
+def test_open_hands_desktop_slot_to_cli_before_attaching(tmp_path, monkeypatch,
+                                                       command, placeholder, case):
+    home = tmp_path / "home"
+    (home / "code" / "api").mkdir(parents=True)
+    marker = home / "app-slot"
+    marker.write_text("codex-app\n")
+    monkeypatch.setenv("TMUX_TMPDIR", str(tmp_path / "tmux"))
+    monkeypatch.delenv("TMUX", raising=False)
+    result = shell(tmp_path, f'''
+        DEV_REPOS=(api "$HOME/code/api" alias "$HOME/code/api")
+        DEV_WORKTREE_ROOT="$HOME/worktrees"
+        _dev_branch_for() {{ print main; }}
+        _t_infer_repo() {{ print api; }}
+        _dev_repo_of_dir() {{ print -r -- $'api\\t3'; }}
+        _dev_app_slot_marker() {{ print -r -- "$HOME/app-slot"; }}
+        _dev_worktree_create() {{ print BAD-create >> "$HOME/actions"; return 99; }}
+        _dev_worktree_freshen() {{ print BAD-freshen >> "$HOME/actions"; return 99; }}
+        _dev_new_session() {{ print BAD-launch >> "$HOME/actions"; return 99; }}
+        _dev_agent_check() {{ print BAD-agent >> "$HOME/actions"; return 99; }}
+        _t_pop() {{ print -r -- "pop:$1" >> "$HOME/actions"; }}
+        tmux() {{
+          case $1 in
+            has-session) [[ {int(placeholder)} == 1 && $3 == '=dev-api-3:' ]] ;;
+            attach-session)
+              print -r -- "attach:$3" >> "$HOME/actions"
+              return {19 if case == 'cli_exited' else 0} ;;
+            *) print -r -- "BAD-tmux:$*" >> "$HOME/actions"; return 99 ;;
+          esac
+        }}
+        {command}
+    ''', bin_text=f'''#!/bin/sh
+printf '%s\\n' "$*" >> "$HOME/bridge-calls"
+[ "$1" = _app-open-cli ] || exit 98
+case {shlex.quote(case)} in
+  blocked) printf '%s\\n' 't open: quit Codex and retry t open api 3 --cli' >&2; exit 7 ;;
+  malformed) printf '%s\\n' 'unexpected output'; exit 0 ;;
+  wrong_repo) printf '%s\\n' dev-other-3; exit 0 ;;
+esac
+rm "$HOME/app-slot"
+printf '%s\\n' dev-api-3
+''')
+    assert result.returncode == {"success": 0, "blocked": 7, "malformed": 1, "wrong_repo": 1, "cli_exited": 19}[case], result.stderr
+    repo = "alias" if " alias " in command else "api"
+    assert (home / "bridge-calls").read_text() == f"_app-open-cli {repo} 3\n"
+    actions = (home / "actions").read_text() if (home / "actions").exists() else ""
+    expected = "pop:dev-api-3\n" if "--fg" in command else "attach:=dev-api-3:\n"
+    assert actions == (expected if case in ("success", "cli_exited") else "")
+    assert marker.exists() is (case in ("blocked", "malformed", "wrong_repo"))
+    assert "could not create the worktree" not in result.stderr
+
+
+@pytest.mark.skipif(not shutil.which("zsh"), reason="zsh is required")
 def test_legacy_and_grouped_config_edits_reload_the_caller(tmp_path):
     result = shell(tmp_path, '''
         _t_reload() { print -r -- reloaded; }

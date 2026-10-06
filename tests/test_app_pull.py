@@ -36,7 +36,7 @@ def test_app_help_explains_how_to_return_to_cli(t_mod, monkeypatch, capsys, pref
     assert t_mod.main([*prefix, "--help"]) == 0
     output = " ".join(capsys.readouterr().out.split())
     assert "finish the turn and quit the Codex desktop app on that Mac" in output
-    assert "t app pull <repo> <slot>" in output
+    assert "open handles the handoff" in output
     assert "t open <repo> <slot> --cli" in output
 
 
@@ -71,7 +71,7 @@ def test_pull_ambiguity_and_explicit_thread(t_mod, pull_store):
     cfg, row, records, rollout = pull_store
     records.append(f"{OTHER}\t{rollout}\t{row['cwd']}")
     app = dict(row, sid="-", state="app")
-    with pytest.raises(ValueError, match="choose --thread"):
+    with pytest.raises(ValueError, match="t app pull api 13 --thread"):
         t_mod._app_pull_select(cfg, [app], "api", "13", "/")
     assert t_mod._app_pull_select(cfg, [app], "api", "13", "/", OTHER)["sid"] == OTHER
     assert t_mod._app_pull_select(cfg, [row], "api", "13", "/")["sid"] == SID
@@ -134,27 +134,35 @@ def test_pull_release_helper(t_mod, app_slot, monkeypatch):
     calls = []
     def load(path):
         assert path.endswith("/libexec/t_app_handoff.py")
-        return {"assert_released": lambda *args: calls.append(args)}
+        return {"assert_released": lambda *args, **kwargs: calls.append((args, kwargs))}
     monkeypatch.setattr(t_mod.runpy, "run_path", load)
     t_mod._app_assert_released(row, "test.app")
-    assert calls == [("test.app", SID, row["cwd"], t_mod._run)]
+    assert calls == [(("test.app", SID, row["cwd"], t_mod._run), {})]
+    t_mod._app_assert_released(row, "test.app", retry="Retry t open api 13 --cli")
+    assert calls[-1][1] == {"retry": "Retry t open api 13 --cli"}
     monkeypatch.setattr(t_mod.runpy, "run_path", lambda path: (_ for _ in ()).throw(OSError("missing")))
     with pytest.raises(ValueError, match="desktop ownership"):
         t_mod._app_assert_released(row, None)
 
 
-@pytest.mark.parametrize("scenario", ["success", "dry", "running_app", "launch_failed", "linux", "missing_worktree"])
-def test_pull_command_orders_release_before_resume(t_mod, pull_store, monkeypatch, capsys, scenario):
+@pytest.mark.parametrize("opening,scenario", [
+    (opening, scenario)
+    for opening in (False, True)
+    for scenario in ("success", "dry", "running_app", "launch_failed", "linux", "missing_worktree")
+    if not (opening and scenario == "dry")
+])
+def test_pull_command_orders_release_before_resume(t_mod, pull_store, monkeypatch, capsys, scenario, opening):
     cfg, row, records, _ = pull_store
     rows = "\t".join(row[k] for k in ("sid", "cwd", "slot", "state", "context", "summary", "agent"))
     monkeypatch.setattr(t_mod, "zsh_capture", lambda cmd: rows if cmd == "_dev_session_rows" else "\n".join(records))
     monkeypatch.setattr(t_mod.sys, "platform", "linux" if scenario == "linux" else "darwin")
     monkeypatch.setattr(t_mod, "_app_bundle", lambda: "test.app")
     events = []
-    def release(selected, bundle):
+    def release(selected, bundle, *, retry=None):
         events.append("release")
+        assert (retry is not None) is opening
         if scenario == "running_app":
-            raise ValueError("quit the desktop app first")
+            raise ValueError(retry or "quit the desktop app first")
     def resume(selected):
         assert selected["sid"] == SID
         events.append("resume")
@@ -165,10 +173,20 @@ def test_pull_command_orders_release_before_resume(t_mod, pull_store, monkeypatc
     if scenario == "missing_worktree":
         os.rmdir(row["cwd"])
     args = t_mod.build_parser().parse_args(["app", "pull", "api", "13", *(["--dry-run"] if scenario == "dry" else [])])
-    assert t_mod.cmd_app(cfg, args) == (0 if scenario in ("success", "dry") else 1)
+    if opening:
+        monkeypatch.setattr(t_mod, "Config", lambda: cfg)
+        assert t_mod.main(["_app-open-cli", "a", "13"]) == (0 if scenario in ("success", "dry") else 1)
+    else:
+        assert t_mod.cmd_app(cfg, args) == (0 if scenario in ("success", "dry") else 1)
     assert events == (["release", "trust", "resume"] if scenario in ("success", "launch_failed") else ["release"] if scenario == "running_app" else [])
     output = capsys.readouterr()
-    if scenario == "success":
+    if opening:
+        assert output.out == ("dev-api-13\n" if scenario == "success" else "")
+        if scenario == "running_app":
+            assert "quit the Codex desktop app on this Mac" in output.err
+            assert "retry: t open a 13 --cli" in output.err
+            assert "t app pull" not in output.err
+    elif scenario == "success":
         assert "t open api 13 --cli" in output.out
 
 

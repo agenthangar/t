@@ -90,6 +90,21 @@ def test_missing_bundle_still_detects_historical_app_names(handoff, monkeypatch)
         handoff.assert_released(None, SID, "/tmp/worktree", run)
 
 
+@pytest.mark.parametrize("table,returncode", [
+    ("88 /Applications/Codex.app/Contents/MacOS/Codex Codex", 0),
+    ("bad process line", 0),
+    ("", 1),
+])
+def test_open_retry_stays_with_the_command_user_ran(handoff, table, returncode):
+    retry = "Finish the turn and quit the Codex desktop app on this Mac, then retry: t open api 13 --cli"
+    def run(argv, **kwargs):
+        return subprocess.CompletedProcess(argv, returncode, table, "")
+    with pytest.raises(ValueError) as error:
+        handoff.assert_released(None, SID, "/tmp/worktree", run, retry=retry)
+    assert str(error.value).endswith(retry)
+    assert "t app pull" not in str(error.value)
+
+
 def test_no_gui_or_daemon_is_released(handoff, tmp_path, monkeypatch):
     run, calls = process_table("42 /usr/bin/python3 python3 unrelated.py")
     monkeypatch.setattr(handoff, "_thread_status", lambda *args: pytest.fail("must not connect"))

@@ -1578,7 +1578,7 @@ _t_app_pull_slot() {
   done
   (( found )) || {
     local short=${session#dev-}
-    print -u2 -- "t app pull: CLI thread could not be verified; worktree remains reserved. Attach with t open ${short%-*} ${short##*-} --cli, then retry t app pull"
+    print -u2 -- "t app pull: CLI thread could not be verified; worktree remains reserved. Inspect startup with tmux attach-session -t ${(q)session}, then retry t open ${short%-*} ${short##*-} --cli"
     return 1
   }
   # A process observed for one snapshot may be a client that failed instantly.

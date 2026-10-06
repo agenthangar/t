@@ -1936,6 +1936,26 @@ _t_dev() {
     done
   fi
 
+  # An explicit CLI open of a local desktop slot transfers its saved conversation
+  # before attaching, even when an old tmux placeholder already exists. The
+  # handoff verifies desktop release and CLI startup; failure must never fall
+  # through to starting a fresh conversation or freshening this worktree.
+  if [[ $slot == <-> ]] && _dev_app_slot_reserved "$(_dev_worktree_path "$repo" "$slot")"; then
+    local app_session app_repo
+    app_session=$(command t _app-open-cli "$repo" "$slot") || return $?
+    app_repo=${${app_session#dev-}%-*}
+    [[ $app_session == dev-*-${slot} && $app_session != *$'\n'* &&
+       ${DEV_REPOS[$app_repo]:-} == $dir ]] || {
+      print -u2 -- 't open: desktop handoff returned no verified CLI session'; return 1
+    }
+    if [[ -n $no_tmux ]]; then
+      _t_pop "$app_session"
+    else
+      tmux attach-session -t "=$app_session:"
+    fi
+    return
+  fi
+
   # Remote-aware open (auto half): <repo> is a valid key now (cwd-defaulted if bare) and
   # fg adoption already returned, so a slot that is NOT live HERE but IS live on a
   # $REMOTE_HOSTS host gets attached IN PLACE there (host inferred) — a live LOCAL slot
