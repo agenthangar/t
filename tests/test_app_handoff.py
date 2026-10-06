@@ -42,6 +42,8 @@ with open(os.environ['T_TEST_RPC_LOG'], 'a') as log:
             result = {}
         elif request.get('method') == 'initialized':
             continue
+        elif request.get('method') == 'server/diagnostics':
+            result = {'process': {'id': int(os.environ.get('T_TEST_SERVER_PID', '44'))}}
         elif request.get('method') == 'thread/read':
             result = {'thread': {'id': os.environ['T_TEST_SID'],
                                  'cwd': os.environ['T_TEST_CWD'],
@@ -73,12 +75,12 @@ def process_table(*entries):
     return run, calls
 
 
-def test_refuses_gui_and_bundled_backend_without_rpc(handoff, tmp_path, monkeypatch):
-    bundle = tmp_path / "ChatGPT.app"
-    backend = bundle / "Contents" / "Resources" / "codex"
-    run, calls = process_table(f"123 {backend} {backend} app-server")
+def test_refuses_actual_gui_without_rpc(handoff, tmp_path, monkeypatch):
+    bundle = tmp_path / "Custom Folder" / "ChatGPT.app"
+    frontend = bundle / "Contents" / "MacOS" / "ChatGPT"
+    run, calls = process_table(f"123 {frontend}")
     monkeypatch.setattr(handoff, "_thread_status", lambda *args: pytest.fail("must not connect"))
-    with pytest.raises(ValueError, match="quit the Codex desktop app"):
+    with pytest.raises(ValueError, match=r"still running \(PID 123\).*quit the Codex desktop app.*Cmd-Q"):
         handoff.assert_released(str(bundle), SID, str(tmp_path), run)
     assert len(calls) == 1
 
@@ -96,7 +98,7 @@ def test_missing_bundle_still_detects_historical_app_names(handoff, monkeypatch)
     ("", 1),
 ])
 def test_open_retry_stays_with_the_command_user_ran(handoff, table, returncode):
-    retry = "Finish the turn and quit the Codex desktop app on this Mac, then retry: t open api 13 --cli"
+    retry = "Retry: t open api 13 --cli"
     def run(argv, **kwargs):
         return subprocess.CompletedProcess(argv, returncode, table, "")
     with pytest.raises(ValueError) as error:
@@ -112,12 +114,41 @@ def test_no_gui_or_daemon_is_released(handoff, tmp_path, monkeypatch):
     assert len(calls) == 2
 
 
+@pytest.mark.parametrize("command", [
+    "/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node bridge.js",
+    "/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node_repl",
+    "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex-code-mode-host",
+    "/Applications/Codex.app/Contents/Frameworks/Codex Helper.app/Contents/MacOS/Codex Helper",
+    "/usr/bin/open /Applications/Codex.app/Contents/MacOS/Codex",
+    "/usr/bin/python3 inspect.py /Applications/Codex.app/Contents/Resources/codex app-server",
+    "/opt/bin/codex-code-mode-host app-server",
+    "/opt/bin/codex app-server pid-update-loop --pid 44",
+    "/opt/bin/codex app-server proxy",
+    "/opt/bin/codex app-server generate-ts --out /tmp/protocol",
+    "/opt/bin/codex app-server daemon status",
+])
+def test_lingering_helpers_are_not_desktop_owners(handoff, monkeypatch, command):
+    run, _ = process_table("123 " + command)
+    monkeypatch.setattr(handoff, "_thread_status", lambda *args: pytest.fail("must not connect"))
+    handoff.assert_released(None, SID, "/tmp/worktree", run)
+
+
+@pytest.mark.parametrize("executable", ["codex", "codex-cli/bin/codex"])
+def test_bundled_backend_is_checked_after_gui_quits(handoff, tmp_path, monkeypatch, executable):
+    bundle = tmp_path / "Custom Folder" / "ChatGPT.app"
+    run, _ = process_table(f"123 {bundle}/Contents/Resources/{executable} app-server --listen unix://")
+    checked = []
+    monkeypatch.setattr(handoff, "_thread_status", lambda *args: checked.append(args))
+    handoff.assert_released(str(bundle), SID, str(tmp_path), run)
+    assert checked == [(SID, str(tmp_path), [123])]
+
+
 def test_daemon_with_global_cli_options_is_checked(handoff, monkeypatch):
     checked = []
-    run, _ = process_table('44 /opt/bin/codex --config profile=work app-server --listen unix://')
+    run, _ = process_table('44 /opt/bin/codex --profile proxy app-server --listen unix://')
     monkeypatch.setattr(handoff, "_thread_status", lambda *args: checked.append(args))
     handoff.assert_released(None, SID, "/worktree", run)
-    assert checked == [(SID, "/worktree")]
+    assert checked == [(SID, "/worktree", [44])]
 
 
 @pytest.mark.parametrize("status,allowed", [
@@ -135,8 +166,20 @@ def test_shared_daemon_requires_exact_idle_thread(handoff, fake_proxy, tmp_path,
         with pytest.raises(ValueError, match="still active or its status is unknown"):
             handoff.assert_released(str(tmp_path / "ChatGPT.app"), SID, cwd, run)
     requests = [json.loads(line) for line in fake_proxy.read_text().splitlines()]
-    assert [request["method"] for request in requests] == ["initialize", "initialized", "thread/read"]
-    assert requests[2]["params"] == {"threadId": SID, "includeTurns": False}
+    assert [request["method"] for request in requests] == [
+        "initialize", "initialized", "server/diagnostics", "thread/read"]
+    assert requests[3]["params"] == {"threadId": SID, "includeTurns": False}
+
+
+@pytest.mark.parametrize("pids", [[45], [44, 45]])
+def test_proxy_cannot_clear_another_backend(handoff, fake_proxy, tmp_path, pids):
+    run, _ = process_table(*(f"{pid} /opt/bin/codex app-server" for pid in pids))
+    with pytest.raises(ValueError, match="could not verify every running Codex backend") as error:
+        handoff.assert_released(None, SID, str(tmp_path / "worktree"), run)
+    assert "the Codex desktop app is closed" in str(error.value)
+    assert "quit" not in str(error.value)
+    requests = [json.loads(line) for line in fake_proxy.read_text().splitlines()]
+    assert requests[-1]["method"] == "server/diagnostics"
 
 
 @pytest.mark.parametrize("wrong", ["sid", "cwd"])
@@ -166,6 +209,35 @@ def test_gui_reopening_during_probe_blocks_pull(handoff, tmp_path, monkeypatch):
         return subprocess.CompletedProcess(argv, 0, line, "")
     with pytest.raises(ValueError, match="opened during the status check"):
         handoff.assert_released(str(bundle), SID, str(tmp_path), run)
+
+
+@pytest.mark.parametrize("remaining,expected", [
+    ("", None),
+    ("44 /opt/bin/codex app-server", "app is closed"),
+    ("9 /Applications/ChatGPT.app/Contents/MacOS/ChatGPT", "reopened"),
+])
+def test_backend_exiting_during_failed_probe_is_rechecked(handoff, monkeypatch, remaining, expected):
+    scans = iter(["44 /opt/bin/codex app-server", remaining, remaining])
+    def run(argv, **kwargs):
+        return subprocess.CompletedProcess(argv, 0, next(scans), "")
+    def probe(*args):
+        raise OSError("control socket closed")
+    monkeypatch.setattr(handoff, "_thread_status", probe)
+    if expected:
+        with pytest.raises(ValueError, match=expected) as error:
+            handoff.assert_released(None, SID, "/worktree", run, retry="Retry: t open api 13 --cli")
+        assert "control socket closed" in str(error.value) or expected == "reopened"
+        assert str(error.value).endswith("Retry: t open api 13 --cli")
+    else:
+        handoff.assert_released(None, SID, "/worktree", run)
+
+
+def test_background_server_starting_during_probe_blocks_pull(handoff):
+    scans = iter(["", "44 /opt/bin/codex app-server"])
+    def run(argv, **kwargs):
+        return subprocess.CompletedProcess(argv, 0, next(scans), "")
+    with pytest.raises(ValueError, match="background server started"):
+        handoff.assert_released(None, SID, "/worktree", run)
 
 
 def test_process_scan_failure_is_closed(handoff, tmp_path):
@@ -217,6 +289,6 @@ def test_proxy_cleanup_reaps_child_that_ignores_terminate(handoff, monkeypatch):
     process = Process()
     monkeypatch.setattr(handoff.subprocess, "Popen", lambda *args, **kwargs: process)
     monkeypatch.setattr(handoff, "_read_response", lambda *args: ({}, b""))
-    with pytest.raises(ValueError, match="different thread"):
-        handoff._thread_status(SID, "/tmp/worktree")
+    with pytest.raises(ValueError, match="could not verify every"):
+        handoff._thread_status(SID, "/tmp/worktree", [44])
     assert process.killed

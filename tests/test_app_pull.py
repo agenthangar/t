@@ -162,7 +162,7 @@ def test_pull_command_orders_release_before_resume(t_mod, pull_store, monkeypatc
         events.append("release")
         assert (retry is not None) is opening
         if scenario == "running_app":
-            raise ValueError(retry or "quit the desktop app first")
+            raise ValueError("quit the Codex desktop app on this Mac. " + (retry or "Retry t app pull"))
     def resume(selected):
         assert selected["sid"] == SID
         events.append("resume")
@@ -184,7 +184,7 @@ def test_pull_command_orders_release_before_resume(t_mod, pull_store, monkeypatc
         assert output.out == ("dev-api-13\n" if scenario == "success" else "")
         if scenario == "running_app":
             assert "quit the Codex desktop app on this Mac" in output.err
-            assert "retry: t open a 13 --cli" in output.err
+            assert "Retry: t open a 13 --cli" in output.err
             assert "t app pull" not in output.err
     elif scenario == "success":
         assert "t open api 13 --cli" in output.out
