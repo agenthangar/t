@@ -291,7 +291,11 @@ without a saved conversation opens its workspace in Codex mode; when several
 conversations share the worktree, select the intended one in the desktop app.
 Exit any foreground terminal agent in that workspace before reopening. With `--app`, if
 that slot is running
-Codex in tmux, `t` hands the same conversation to the app. `--app` requires a
+Codex in tmux, `t` hands the same conversation to the app. It waits for that
+conversation's backend to release ownership before opening it; a shared Codex
+backend can take about a minute after the CLI exits. The command shows progress
+and keeps the slot reserved if release cannot be verified within 75 seconds.
+`--app` requires a
 worktree-enabled repo and a local Codex installation. Creating a new window also
 requires Accessibility access for the terminal running `t` to invoke the app’s
 New Window menu. Reopening a saved conversation uses its native link directly
@@ -332,6 +336,14 @@ its backend. Codex versions without a verifiable writer lock use conservative
 release checks. The reservation is released only after the exact CLI process
 owns the conversation's lock and its resumed thread is verified; a failed
 handoff keeps the worktree protected.
+
+To close a desktop slot, run `t kill my-project 3` (or `t session close my-project 3`). It stops that
+slot's parked terminal and dev server and releases its reservation while
+preserving the saved conversation and worktree. Archive that chat in Codex
+before closing its slot while the app is running; finish or stop any active
+turn first. Other chats and the app can stay open. If the chat remains
+unarchived, close Codex before retrying. An empty desktop workspace can be
+closed after Codex exits and no conversation or writer is present in its worktree.
 
 ## Configuration
 

@@ -1,4 +1,4 @@
-"""Verify per-conversation Codex ownership before desktop-to-CLI handoff."""
+"""Verify per-conversation Codex ownership during CLI/desktop handoffs."""
 
 import fcntl
 import glob
@@ -311,6 +311,120 @@ def assert_released(bundle, sid, cwd, run, *, codex_home=None, rollout=None,
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise ValueError("could not verify the selected Codex rollout or writer lock: "
                          + str(exc) + ". " + retry) from exc
+
+
+def preflight_cli_release(sid, cwd, *, codex_home, rollout):
+    """Validate an exact CLI-to-app handoff before stopping its CLI frontend.
+
+    A shared app-server may own the writer lock instead of the CLI PID. A
+    positive held lock also establishes the contract for histories whose first
+    metadata line predates the writer-lock implementation.
+    """
+    if not _UUID.fullmatch(sid):
+        raise ValueError("the selected Codex thread id is invalid")
+    try:
+        version = _verify_rollout(rollout, sid, cwd)
+        folder = _lock_dir(codex_home)
+        if folder is None:
+            raise ValueError("the selected Codex conversation has no verifiable writer-lock directory")
+        held = _lock_held(os.path.join(folder, sid + ".lock"))
+        contract = "modern" if version is not None and version >= (0, 159, 0) else None
+        if contract is None and held is True:
+            contract = "held"
+        if contract is None:
+            raise ValueError("the selected Codex conversation has no verifiable writer-lock contract")
+        other = _other_cwd_owner(folder, sid, cwd, codex_home)
+        if other:
+            raise ValueError("another Codex conversation in this worktree is still loaded "
+                             f"({other})")
+        return contract
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError("could not verify the selected Codex conversation before stopping "
+                         f"its CLI: {exc}") from exc
+
+
+def wait_cli_released(sid, cwd, *, codex_home, rollout, contract=None,
+                      timeout=75, interval=0.2, on_wait=None,
+                      retry="Retry: t open <repo> <slot> --app."):
+    """Wait for this thread's writer to unload, without affecting other threads.
+
+    `contract` must come from preflight_cli_release before the CLI is stopped;
+    this matters for old saved metadata once Codex removes the target lock.
+    """
+    if not _UUID.fullmatch(sid):
+        raise ValueError("the selected Codex thread id is invalid. " + retry)
+    if contract not in ("modern", "held"):
+        raise ValueError("the CLI release was not verified before stopping it. " + retry)
+    if timeout <= 0 or interval <= 0:
+        raise ValueError("the CLI release wait duration is invalid")
+    try:
+        _verify_rollout(rollout, sid, cwd)
+        folder = _lock_dir(codex_home)
+        if folder is None:
+            raise ValueError("the Codex writer-lock directory disappeared. " + retry)
+        target = os.path.join(folder, sid + ".lock")
+        deadline = time.monotonic() + timeout
+        announced = False
+        while True:
+            other = _other_cwd_owner(folder, sid, cwd, codex_home)
+            if other:
+                raise ValueError("another Codex conversation in this worktree is still loaded "
+                                 f"({other}). " + retry)
+            if _lock_held(target) is not True:
+                return
+            if not announced and on_wait is not None:
+                on_wait()
+                announced = True
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise ValueError("the selected Codex conversation is still loaded after "
+                                 f"waiting {timeout:g}s for its CLI backend to release it. "
+                                 + retry)
+            time.sleep(min(interval, remaining))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError("could not verify the selected Codex conversation was released: "
+                         + str(exc) + ". " + retry) from exc
+
+
+def assert_workspace_released(codex_home, cwd, *, retry="Retry: t kill <repo> <slot>."):
+    """A blank desktop workspace has no saved thread and no live writer in its cwd."""
+    try:
+        folder = _lock_dir(codex_home)
+        if folder is None:
+            raise ValueError("the Codex writer-lock directory is unavailable. " + retry)
+        db = os.path.join(codex_home, "state_5.sqlite")
+        if not stat.S_ISREG(os.lstat(db).st_mode):
+            raise ValueError("the Codex conversation index is unavailable. " + retry)
+        uri = "file:" + quote(db, safe="/") + "?mode=ro"
+        with closing(sqlite3.connect(uri, uri=True, timeout=0.5)) as connection:
+            rows = connection.execute("select cwd from threads").fetchall()
+        if any(isinstance(row[0], str) and os.path.realpath(row[0]) == os.path.realpath(cwd)
+               for row in rows):
+            raise ValueError("this desktop workspace has a saved Codex conversation "
+                             "that could not be selected. " + retry)
+        other = _other_cwd_owner(folder, "00000000-0000-0000-0000-000000000000",
+                                 cwd, codex_home)
+        if other:
+            raise ValueError("a Codex conversation in this worktree is still loaded "
+                             f"({other}). " + retry)
+    except (OSError, sqlite3.Error) as exc:
+        raise ValueError("could not verify the empty desktop workspace: "
+                         + str(exc) + ". " + retry) from exc
+
+
+def assert_desktop_view_released(bundle, run, *, archived=False, empty=False,
+                                 retry="Retry: t kill <repo> <slot>."):
+    """A free writer is insufficient if an unarchived desktop tab can reopen."""
+    if archived:
+        return
+    frontends, _ = _owners(bundle, _processes(run, retry))
+    if not frontends:
+        return
+    if empty:
+        raise ValueError("Cannot verify this empty workspace was closed while Codex "
+                         "is running; close Codex and retry. " + retry)
+    raise ValueError("Stop or finish the turn, then Archive this chat in Codex; "
+                     "the app and other chats can stay open. " + retry)
 
 
 def unarchive_thread(sid, cwd, *, codex_home, rollout):

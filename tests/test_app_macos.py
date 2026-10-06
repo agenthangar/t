@@ -63,6 +63,8 @@ def test_app_creates_a_real_window_and_preserves_the_existing_session(t_mod, tmp
         row = dict(host="local", sid=sid, cwd=str(tmp_path), slot="api-13",
                    state="detached", context="active", agent="codex", summary="Handoff")
         monkeypatch.setattr(t_mod, "_app_select", lambda *args: row)
+        monkeypatch.setattr(t_mod, "_app_saved_thread", lambda *args: dict(row, archived=False))
+        monkeypatch.setattr(t_mod, "_app_cli_release", lambda *args: "modern")
         monkeypatch.setattr(t_mod, "zsh_capture", lambda *args: "")
         monkeypatch.setattr(t_mod, "_app_bundle", lambda: str(bundle))
         stopped = []

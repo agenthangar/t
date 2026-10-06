@@ -10,6 +10,7 @@ from pathlib import Path
 import plistlib
 import re
 import sqlite3
+import stat
 import subprocess
 import sys
 
@@ -45,7 +46,7 @@ def backends(rows):
     return found
 
 
-def loaded_threads(home, run=subprocess.run):
+def loaded_threads(home, run=subprocess.run, *, require_writer=False):
     try:
         before = processes(run)
         pids = backends(before)
@@ -58,12 +59,13 @@ def loaded_threads(home, run=subprocess.run):
         after = processes(run)
         valid = {pid for pid in pids if after.get(pid) == before[pid]
                  and after.get(before[pid][0]) == before.get(before[pid][0])}
-        opened, owner = set(), None
+        opened, owner = {}, None
         for line in files.stdout.splitlines():
             if line.startswith('p'):
                 owner = int(line[1:]) if line[1:].isdigit() else None
-            elif line.startswith('n') and owner in valid and '/rollout-' in line:
-                opened.add(os.path.realpath(line[1:]))
+            elif (line.startswith('n') and owner in valid
+                  and ('/rollout-' in line or '/thread-writer-locks/' in line)):
+                opened.setdefault(owner, set()).add(os.path.realpath(line[1:]))
         if not opened:
             return []
         db = sqlite3.connect((Path(home) / 'state_5.sqlite').resolve().as_uri() + '?mode=ro',
@@ -73,10 +75,29 @@ def loaded_threads(home, run=subprocess.run):
                               "from threads where archived=0 and instr(source, '\"subagent\"')=0").fetchall()
         finally:
             db.close()
-        return [(sid, cwd, title or '(untitled Codex session)') for sid, cwd, title, rollout in rows
-                if isinstance(sid, str) and re.fullmatch(r'[\da-fA-F]{8}(?:-[\da-fA-F]{4}){3}-[\da-fA-F]{12}', sid)
-                and isinstance(cwd, str) and os.path.isabs(cwd)
-                and isinstance(rollout, str) and os.path.realpath(rollout) in opened]
+        found = []
+        for sid, cwd, title, rollout in rows:
+            if (not isinstance(sid, str) or not re.fullmatch(
+                    r'[\da-fA-F]{8}(?:-[\da-fA-F]{4}){3}-[\da-fA-F]{12}', sid)
+                    or not isinstance(cwd, str) or not os.path.isabs(cwd)
+                    or not isinstance(rollout, str)):
+                continue
+            rollout_path = os.path.realpath(rollout)
+            if require_writer:
+                lock = Path(home) / 'thread-writer-locks' / (sid + '.lock')
+                try:
+                    if not stat.S_ISREG(os.lstat(lock).st_mode):
+                        continue
+                except OSError:
+                    continue
+                lock_path = os.path.realpath(lock)
+                if not any(rollout_path in paths and lock_path in paths
+                           for paths in opened.values()):
+                    continue
+            elif not any(rollout_path in paths for paths in opened.values()):
+                continue
+            found.append((sid, cwd, title or '(untitled Codex session)'))
+        return found
     except (OSError, ValueError, sqlite3.Error, subprocess.TimeoutExpired):
         return []
 
