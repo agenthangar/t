@@ -133,8 +133,8 @@ def test_app_creates_a_real_window_and_preserves_the_existing_session(t_mod, tmp
         assert workspace["windows"][:3] == reused["windows"]
         assert workspace["windows"][3]["urls"] == [workspace_link]
 
-        # Reopening a reserved workspace routes its saved thread to the new
-        # native window, instead of opening another blank workspace/chat.
+        # Reopening a saved thread uses its native route without creating a
+        # window or depending on Accessibility again.
         codex_home = tmp_path / 'codex-home'
         codex_home.mkdir()
         monkeypatch.setenv('CODEX_HOME', str(codex_home))
@@ -147,10 +147,10 @@ def test_app_creates_a_real_window_and_preserves_the_existing_session(t_mod, tmp
         assert t_mod.cmd_app_workspace(str(tmp_path), reopen=True) == 0
         saved_link = t_mod._app_link(sid).replace('codex://', scheme + '://', 1)
         reopened = wait_for(lambda rows: len(rows) == 1 and rows[0]['current'] == saved_link)[0]
-        assert reopened['newWindowActions'] == 4
-        assert len(reopened['windows']) == 5
-        assert reopened['windows'][:4] == workspace['windows']
-        assert reopened['windows'][4]['urls'] == [saved_link]
+        assert reopened['newWindowActions'] == 3
+        assert len(reopened['windows']) == 4
+        assert reopened['windows'][:3] == workspace['windows'][:3]
+        assert reopened['windows'][3]['urls'] == [workspace_link, saved_link]
     finally:
         for row in states():
             # Kill only test receivers still running this exact disposable binary.

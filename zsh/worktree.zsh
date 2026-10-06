@@ -92,8 +92,7 @@ _dev_worktree_create() {
   if [[ -e "$wt/.git" ]]; then          # already materialized → reuse (idempotent)
     if _dev_app_slot_reserved "$wt"; then
       print -u2 -- "t: $repo $slot is reserved for the Codex desktop app."
-      print -u2 -- '  To continue in the CLI, finish the turn and quit the Codex desktop app on this Mac first.'
-      print -u2 -- '  Then run:'
+      print -u2 -- '  To continue in the CLI, run this on the Mac with the conversation and follow its release instructions:'
       print -u2 -- "    t open ${(q)repo} ${(q)slot} --cli"
       print -u2 -- "  To reopen in the app: t open ${(q)repo} ${(q)slot} --app"
       return 1

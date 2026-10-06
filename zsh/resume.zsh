@@ -1403,8 +1403,8 @@ _t_restart_slot() {
 # Independent proof that this live Codex PID owns the requested thread. A tmux
 # CLAUDE_RESUME_ID stamp is intentionally insufficient: we write it before launch.
 _t_app_pull_ui_ready() {
-  local session="$1" dir="$2" sid="$3" pid="$4" db args pane_text
-  db=$(_codex_db); [[ -r $db ]] || return 1
+  local session="$1" dir="$2" sid="$3" pid="$4" codex_home="${5:-${CODEX_HOME:-$HOME/.codex}}" db args pane_text
+  db="$codex_home/state_5.sqlite"; [[ -r $db ]] || return 1
   args=$(ps -ww -o args= -p "$pid" 2>/dev/null) || return 1
   pane_text=$(tmux capture-pane -p -t "=$session:" 2>/dev/null) || return 1
   LC_ALL=C python3 - "$db" "$dir" "$sid" "$args" "$pane_text" <<'PY' 2>/dev/null
@@ -1417,7 +1417,7 @@ try:
     prefix, sep, tail = args.partition(' resume ')
     if (not sep or not re.fullmatch(r'codex(?:-(?:aarch64|x86_64)-[\w.-]+)?',
                                      os.path.basename(prefix)) or
-            tail != f'{sid} --cd {cwd}'):
+            tail != f'{sid} --cd {cwd} --no-daemon'):
         sys.exit(1)
     # The default empty composer shows that the interactive TUI is drawn; exact
     # resume argv and rollout metadata supply the thread identity. An error
@@ -1443,9 +1443,46 @@ except (OSError, ValueError, TypeError, AttributeError, sqlite3.Error):
 PY
 }
 
+_t_app_pull_lock_owned() {
+  local pid="$1" sid="$2" codex_home="$3"
+  [[ $pid == <-> && -n $sid && -n $codex_home ]] || return 1
+  LC_ALL=C python3 - "$pid" "$sid" "$codex_home" <<'PY' 2>/dev/null
+import errno, fcntl, os, stat, subprocess, sys
+
+try:
+    pid, sid, home = sys.argv[1:]
+    path = os.path.join(home, 'thread-writer-locks', sid + '.lock')
+    fd = os.open(path, os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0))
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            sys.exit(1)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as error:
+            if error.errno not in (errno.EAGAIN, errno.EACCES):
+                raise
+        else:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            sys.exit(1)  # No process currently owns the writer lock.
+    finally:
+        os.close(fd)
+    listed = subprocess.run(['lsof', '-a', '-p', pid, '-Fn', '--', path],
+                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                            text=True, timeout=2, check=False)
+    if listed.returncode or not any(
+            line.startswith('n') and os.path.realpath(line[1:]) == os.path.realpath(path)
+            for line in listed.stdout.splitlines()):
+        sys.exit(1)
+except (OSError, ValueError, subprocess.TimeoutExpired):
+    sys.exit(1)
+PY
+}
+
 _t_app_pull_ready() {
-  local session="$1" dir="$2" sid="$3" pid="$4" reg line reg_sid reg_cwd started
+  local session="$1" dir="$2" sid="$3" pid="$4" codex_home="${5:-${CODEX_HOME:-$HOME/.codex}}"
+  local reg line reg_sid reg_cwd started
   [[ $pid == <-> ]] || return 1
+  _t_app_pull_lock_owned "$pid" "$sid" "$codex_home" || return 1
   reg="${XDG_CACHE_HOME:-$HOME/.cache}/claude-sessions/$pid"
   if [[ -r $reg ]]; then
     line="$(<"$reg")"
@@ -1465,15 +1502,30 @@ PY
     fi
   fi
   [[ $(_codex_pane_sid "$session" "$dir" "$pid" 2>/dev/null) == $sid ]] ||
-    _t_app_pull_ui_ready "$session" "$dir" "$sid" "$pid"
+    _t_app_pull_ui_ready "$session" "$dir" "$sid" "$pid" "$codex_home"
+}
+
+# Read-only ownership probe used before retrying a handoff interrupted after
+# CLI launch. Output is a PID only when this exact session owns the thread.
+_t_app_pull_owner() {
+  emulate -L zsh
+  local session="$1" dir="$2" sid="$3" codex_home="${4:-${CODEX_HOME:-$HOME/.codex}}"
+  local actual pid
+  tmux has-session -t "=$session:" 2>/dev/null || return 1
+  actual=$(tmux display-message -p -t "=$session:" '#{session_path}' 2>/dev/null) || return 1
+  [[ -n $actual && ${actual:A} == ${dir:A} && $(_dev_agent_of_session "$session") == codex ]] || return 1
+  local _DEV_PS_AT=0
+  pid=$(_dev_session_claude_pid "$session")
+  [[ -n $pid ]] && _t_app_pull_ready "$session" "$dir" "$sid" "$pid" "$codex_home" || return 1
+  print -r -- "$pid"
 }
 
 # Return a desktop-reserved Codex worktree to its original tmux slot. The caller
-# serializes handoffs for this worktree and has already stopped the desktop app.
+# serializes handoffs and has verified that this exact thread was released.
 # expected_sid is '-' for a desktop-only row with no prior tmux session.
 _t_app_pull_slot() {
   emulate -L zsh
-  local session="$1" dir="$2" sid="$3" expected_sid="$4"
+  local session="$1" dir="$2" sid="$3" expected_sid="$4" codex_home="${5:-${CODEX_HOME:-$HOME/.codex}}"
   local marker actual actual_sid pane panes owner owner_dir pid attempt found=0 launch
   local -a owners
   [[ $session == dev-* && -n $dir && -d $dir && -n $sid && $sid != - && -n $expected_sid ]] || {
@@ -1487,7 +1539,10 @@ _t_app_pull_slot() {
     print -u2 -- 't app pull: this worktree has no desktop reservation'; return 1
   }
   command -v codex >/dev/null 2>&1 || { print -u2 -- 't app pull: codex is unavailable'; return 1; }
-  launch="exec codex resume ${(q)sid} --cd ${(q)dir}"
+  [[ $codex_home == /* && -d $codex_home ]] || {
+    print -u2 -- 't app pull: the selected Codex home is unavailable'; return 1
+  }
+  launch="export CODEX_HOME=${(q)codex_home}; exec codex resume ${(q)sid} --cd ${(q)dir} --no-daemon"
   local fg_sid fg_rest fg_cwd
   while IFS=$'\t' read -r fg_sid fg_rest; do
     fg_cwd=${fg_rest%%$'\t'*}
@@ -1498,7 +1553,9 @@ _t_app_pull_slot() {
   done < <(_dev_fg_rows 2>/dev/null)
   # Check every alias, including sessions whose names differ from the selected
   # slot. A second owner of the same cwd must never be silently ignored.
-  while IFS=$'\t' read -r owner owner_dir; do
+  # tmux 3.7c replaces literal tabs in -F with `_`; a printable separator
+  # preserves the complete path in the final read field, including any `|`.
+  while IFS='|' read -r owner owner_dir; do
     [[ -n $owner && -n $owner_dir ]] || continue
     [[ ${owner_dir:A} == ${dir:A} ]] && owners+=("$owner")
     if [[ $owner != $session ]]; then
@@ -1509,7 +1566,7 @@ _t_app_pull_slot() {
         return 1
       fi
     fi
-  done < <(tmux list-sessions -F '#{session_name}'$'\t''#{session_path}' 2>/dev/null)
+  done < <(tmux list-sessions -F '#{session_name}|#{session_path}' 2>/dev/null)
   (( $#owners <= 1 )) || { print -u2 -- 't app pull: multiple tmux sessions own this worktree'; return 1; }
   if (( $#owners )); then
     [[ $owners[1] == $session ]] || { print -u2 -- 't app pull: another tmux session owns this worktree'; return 1; }
@@ -1524,7 +1581,7 @@ _t_app_pull_slot() {
     local _DEV_PS_AT=0
     pid=$(_dev_session_claude_pid "$session")
     if [[ -n $pid ]]; then
-      if _t_app_pull_ready "$session" "$dir" "$sid" "$pid"; then
+      if _t_app_pull_ready "$session" "$dir" "$sid" "$pid" "$codex_home"; then
         rm -- "$marker" || return 1
         tmux set-option -t "=$session:" window-size latest 2>/dev/null
         _dev_recovery_watch "$session"
@@ -1538,6 +1595,9 @@ _t_app_pull_slot() {
       print -u2 -- 't app pull: slot has multiple panes'; return 1
     }
     pane=${panes%%$'\n'*}
+    command codex resume --help 2>/dev/null | command grep -q -- '--no-daemon' || {
+      print -u2 -- 't app pull: this Codex version does not support --no-daemon; upgrade Codex and retry'; return 1
+    }
     tmux set-environment -t "=$session" CLAUDE_RESUME_ID "$sid" || return 1
     tmux set-environment -t "=$session" DEV_AGENT codex || return 1
     if [[ $(tmux display-message -p -t "$pane" '#{pane_dead}') == 1 ]]; then
@@ -1552,6 +1612,9 @@ _t_app_pull_slot() {
   else
     tmux has-session -t "=$session:" 2>/dev/null && {
       print -u2 -- 't app pull: slot name is occupied elsewhere'; return 1
+    }
+    command codex resume --help 2>/dev/null | command grep -q -- '--no-daemon' || {
+      print -u2 -- 't app pull: this Codex version does not support --no-daemon; upgrade Codex and retry'; return 1
     }
     # The pane enables remain-on-exit before exec, including a fast Codex
     # startup failure. No default shell or personal tmux configuration is used.
@@ -1571,7 +1634,7 @@ _t_app_pull_slot() {
     pid=$(_dev_session_claude_pid "$session")
     if [[ -n $pid && $(_dev_agent_of_session "$session") == codex &&
           $(tmux display-message -p -t "=$session:" '#{session_path}' 2>/dev/null) == $dir ]] &&
-       _t_app_pull_ready "$session" "$dir" "$sid" "$pid"; then
+       _t_app_pull_ready "$session" "$dir" "$sid" "$pid" "$codex_home"; then
       found=1; break
     fi
     sleep 0.05
@@ -1585,7 +1648,7 @@ _t_app_pull_slot() {
   sleep 0.1
   local _DEV_PS_AT=0
   [[ $(_dev_session_claude_pid "$session") == $pid ]] &&
-    _t_app_pull_ready "$session" "$dir" "$sid" "$pid" || {
+    _t_app_pull_ready "$session" "$dir" "$sid" "$pid" "$codex_home" || {
     print -u2 -- 't app pull: Codex exited during startup; the worktree remains reserved'
     return 1
   }

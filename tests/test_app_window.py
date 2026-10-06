@@ -1,8 +1,10 @@
 """Window handoff state machine; the native macOS test covers the AX bridge."""
 
 from pathlib import Path
+import ctypes
 import runpy
 import subprocess
+from types import SimpleNamespace
 
 import pytest
 
@@ -114,6 +116,48 @@ def test_disabled_menu_does_not_press_anything(window_module, monkeypatch):
     with pytest.raises(ValueError, match="enabled New Window"):
         create("/Applications/Test.app", successful_run, api)
     assert api.actions == []
+
+
+def test_invalid_ax_menu_element_restarts_from_fresh_tree(window_module):
+    api = FakeAccessibility()
+    original_read = api.read
+    seen = []
+    def stale_once(element, attribute):
+        if (element, attribute) == ("menu", "AXTitle"):
+            seen.append(1)
+            if len(seen) == 1:
+                raise window_module["StaleElement"]("AXTitle element changed (-25202)")
+        return original_read(element, attribute)
+    api.read = stale_once
+    window = window_module["new_window"]("/Applications/Test.app", successful_run, api)
+    assert window.element == "new"
+    assert len(seen) == 2
+    assert api.actions == [("menu", "AXPress"), ("new", "AXRaise")]
+
+
+def test_persistently_invalid_menu_ref_never_presses(window_module, monkeypatch):
+    api = FakeAccessibility()
+    original_read = api.read
+    def invalid(element, attribute):
+        if (element, attribute) == ("menu", "AXTitle"):
+            raise window_module["StaleElement"]("AXTitle element changed (-25202)")
+        return original_read(element, attribute)
+    api.read = invalid
+    create = window_module["new_window"]
+    wait = window_module["wait_for"]
+    monkeypatch.setitem(create.__globals__, "wait_for", lambda probe, message, **kw: wait(probe, message, timeout=0))
+    with pytest.raises(ValueError, match="enabled New Window"):
+        create("/Applications/Test.app", successful_run, api)
+    assert api.actions == []
+
+
+def test_ax_invalid_element_error_has_a_specific_retry_type(window_module):
+    api = window_module["Accessibility"].__new__(window_module["Accessibility"])
+    api.ax = SimpleNamespace(AXUIElementCopyAttributeValue=lambda *args: -25202)
+    api.cf = SimpleNamespace(CFRelease=lambda *args: None)
+    api._string = lambda _: ctypes.c_void_p(1)
+    with pytest.raises(window_module["StaleElement"], match="AXTitle.*-25202"):
+        api.read(SimpleNamespace(ref=1), "AXTitle")
 
 
 @pytest.mark.parametrize("closed", ["new", "old"])

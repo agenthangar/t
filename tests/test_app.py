@@ -851,6 +851,23 @@ def test_workspace_launch_uses_saved_thread_only_for_reopen(
     else:
         saved = history == 'saved' and reopen
         link = t_mod._app_link(SID) if saved else t_mod._app_workspace_link(cwd)
-        assert events == ['trust', 'create', 'focus', ['open', '-a', '/Applications/ChatGPT.app', link]]
+        assert events == ['trust', *([] if saved else ['create', 'focus']),
+                          ['open', '-a', '/Applications/ChatGPT.app', link]]
         assert ('Saved conversation ' + SID if saved else 'Codex-mode workspace') in output.out
         assert 'app delivery is not confirmed' in output.out
+
+
+def test_saved_workspace_reopen_does_not_need_accessibility(t_mod, workspace_store, monkeypatch, capsys):
+    _, cwd, _ = workspace_store
+    monkeypatch.setattr(t_mod.sys, 'platform', 'darwin')
+    monkeypatch.setattr(t_mod, '_app_bundle', lambda: '/Applications/ChatGPT.app')
+    monkeypatch.setattr(t_mod, '_trust_auto', lambda paths: None)
+    def unavailable(bundle):
+        pytest.fail('reopening a saved conversation must not use Accessibility')
+    monkeypatch.setattr(t_mod, '_app_new_window', unavailable)
+    opened = []
+    monkeypatch.setattr(t_mod, '_run', lambda argv, **kw:
+                        opened.append(argv) or subprocess.CompletedProcess(argv, 0, '', ''))
+    assert t_mod.cmd_app_workspace(cwd, reopen=True) == 0
+    assert opened == [['open', '-a', '/Applications/ChatGPT.app', t_mod._app_link(SID)]]
+    assert 'New app window created' not in capsys.readouterr().out

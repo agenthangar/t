@@ -446,6 +446,27 @@ def test_zsh_agent_of_session_reads_the_stamp_when_no_process(zsh):
     assert zsh("_dev_agent_of_session dev-api-3").stdout.strip() == "claude"
 
 
+def test_session_pid_snapshot_uses_tmux_printable_separator(zsh, tmp_path):
+    """tmux 3.7c renders a tab in -F as `_`; the pane map must survive that."""
+    ps = tmp_path / "stubbin" / "ps"
+    ps.write_text(PS_STUB.replace(
+        '[[ "$2" == pid,comm ]] && awk \'{print $1, $3}\' "$FAKE_PS"',
+        '[[ "$2" == pid,comm ]] && awk \'{print $1, $3}\' "$FAKE_PS"\n'
+        '  [[ "$2" == pid=,ppid=,comm= ]] && cat "$FAKE_PS"',
+    ))
+    (tmp_path / "ps.txt").write_text(
+        "4241 1 zsh\n"
+        "4242 4241 /Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/../CodexCLI.app/Contents/MacOS/codex\n"
+    )
+    r = zsh("_dev_ps_snapshot; [[ -z ${_DEV_PANE_PIDS[dev-api-4]:-} ]] || return 91; "
+            "print -r -- pane=${_DEV_PANE_PIDS[dev-api-3]}; "
+            "_dev_session_claude_pid dev-api-3",
+            FAKE_PANES="dev-api-3|4241\ndev-api-4|not-a-pid")
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.splitlines() == ["pane= 4241", "4242"]
+    assert "list-panes -a -F #{session_name}|#{pane_pid}" in zsh.log.read_text()
+
+
 def test_zsh_agent_at_welcome(zsh):
     # A Codex banner can remain visible after a real exchange; validate the stamp
     # against its transcript, rather than trusting either the banner or a stale id.

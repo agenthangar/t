@@ -177,10 +177,13 @@ _dev_ps_snapshot() {
     _DEV_PS_PPID[$pid]=$ppid
     _DEV_PS_KIDS[$ppid]="${_DEV_PS_KIDS[$ppid]:-} $pid"
   done < <(ps -Axo pid=,ppid=,comm= 2>/dev/null)
-  while IFS=$'\t' read -r sname pid; do
-    [[ -n $sname ]] || continue
+  # tmux sanitizes a literal tab in -F to `_` on macOS (tmux 3.7c), so use a
+  # printable separator. Without this the pane map is empty and a live Codex
+  # child is invisible to the session PID resolver.
+  while IFS='|' read -r sname pid; do
+    [[ -n $sname && $pid == <-> ]] || continue
     _DEV_PANE_PIDS[$sname]="${_DEV_PANE_PIDS[$sname]:-} $pid"
-  done < <(tmux list-panes -a -F "#{session_name}"$'\t'"#{pane_pid}" 2>/dev/null)
+  done < <(tmux list-panes -a -F '#{session_name}|#{pane_pid}' 2>/dev/null)
   (( ${#_DEV_PS_COMM} )) && _DEV_PS_AT=$EPOCHREALTIME
 }
 # _dev_snap_ok — true when the snapshot can answer session→pid questions.
@@ -1647,6 +1650,31 @@ _dev_kill() {
     return 1
   fi
 
+  # Desktop slots reserve a worktree without necessarily having a tmux session.
+  # A parked tmux shell may also carry the old slot name after an app handoff.
+  # Neither is a Codex process for `tmux kill-session` to close. Check the marker
+  # before the remote/no-session fallbacks, but let a real terminal agent win if
+  # it has already reclaimed this slot under any sibling alias.
+  if [[ $slot == <-> && -n ${DEV_REPOS[$repo]:-} && -n $DEV_WORKTREE_ROOT ]]; then
+    local desktop_wt desktop_session desktop_cli=
+    desktop_wt=$(_dev_worktree_path "$repo" "$slot")
+    if _dev_app_slot_reserved "$desktop_wt"; then
+      for _kk in $_repos; do
+        desktop_session="dev-${_kk}-${slot}"
+        if tmux has-session -t "=$desktop_session:" 2>/dev/null \
+             && _dev_session_has_claude "$desktop_session"; then
+          desktop_cli=1
+          break
+        fi
+      done
+      if [[ -z $desktop_cli ]]; then
+        print -u2 -- "t kill: $repo $slot is a Codex desktop conversation; there is no terminal session to kill."
+        print -u2 -- "  To transfer it to the CLI, run t open ${(q)repo} ${(q)slot} --cli for safe handoff instructions."
+        return 1
+      fi
+    fi
+  fi
+
   # collect this repo's live sessions by name (dev-<repo>-<N>), numerically sorted.
   # For `all`/no-slot, $_repos is the union of sibling aliases sharing this dir.
   local -a sessions
@@ -1654,6 +1682,20 @@ _dev_kill() {
     | grep -E "^dev-(${(j:|:)_repos})-[0-9]+\$" | sort -t- -k3 -n)"} )
 
   if (( ! ${#sessions} )); then
+    # A bare `t kill <repo>` or `t kill <repo> all` should describe app-only
+    # slots as such instead of claiming the repo has no sessions at all.
+    if [[ -n ${DEV_REPOS[$repo]:-} && -n $DEV_WORKTREE_ROOT ]]; then
+      local desktop_path desktop_slot desktop_found=
+      for desktop_path in "${DEV_WORKTREE_ROOT}/${DEV_REPOS[$repo]:t}"/*(N/); do
+        desktop_slot=${desktop_path:t}
+        [[ $desktop_slot == <-> ]] || continue
+        _dev_app_slot_reserved "$desktop_path" || continue
+        print -u2 -- "t kill: $repo $desktop_slot is a Codex desktop conversation; there is no terminal session to kill."
+        print -u2 -- "  To transfer it to the CLI, run t open ${(q)repo} ${(q)desktop_slot} --cli for safe handoff instructions."
+        desktop_found=1
+      done
+      [[ -z $desktop_found ]] || return 1
+    fi
     # None live HERE. If a specific slot was named and it is live on another host, tear
     # it down there over ssh -t (the remote `t kill` still prompts unless -y); -r forces
     # this explicitly. With no slot, never auto-pick a kill target — just point at where

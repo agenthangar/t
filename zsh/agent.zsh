@@ -156,17 +156,22 @@ _dev_agent_pid_above() {
 _codex_db() { print -r -- "${CODEX_HOME:-$HOME/.codex}/state_5.sqlite" }
 # _codex_threads <where> <arg> — rows `sid\tpath\tcwd\ttitle\tupdated_at` newest first;
 # <where> is cwd | prefix | sid. Internal; the wrappers below name the intent.
+# cwd --include-archived also returns archived (0/1) and the Codex home used for
+# this read, so a desktop handoff can target the same store after login-shell init.
 _codex_threads() {
   local db; db=$(_codex_db)
   [[ -r $db ]] || return 0
-  python3 - "$db" "$1" "$2" <<'PY' 2>/dev/null
-import sqlite3, sys
-db, mode, arg = sys.argv[1:4]
+  python3 - "$db" "$1" "$2" "$3" <<'PY' 2>/dev/null
+import os, sqlite3, sys
+db, mode, arg, option = sys.argv[1:5]
+include_archived = mode == 'cwd' and option == '--include-archived'
 try:
     c = sqlite3.connect('file:%s?mode=ro' % db, uri=True, timeout=0.5)
     c.execute('pragma busy_timeout=500')
-    q = ("select id, rollout_path, cwd, coalesce(nullif(name,''), title, ''), updated_at "
-         "from threads where archived=0 and ")
+    columns = ("id, rollout_path, cwd, coalesce(nullif(name,''), title, ''), updated_at"
+               + (", archived" if include_archived else ""))
+    q = ("select " + columns + " from threads where "
+         + ("" if include_archived else "archived=0 and "))
     # A subagent thread (source = '{"subagent": {"thread_spawn": {"parent_thread_id": …}}}',
     # title '') is a helper the parent spawned — codex's `<sid>/subagents/` — not a
     # conversation: it copies the parent's brief as its first prompt, so listed as one it
@@ -182,11 +187,13 @@ try:
 except Exception:
     rows = []
 for r in rows:
+    if include_archived:
+        r = (*r, os.path.dirname(os.path.abspath(db)))
     sys.stdout.write('\t'.join(str(x if x is not None else '').replace('\t', ' ').replace('\n', ' ') for x in r) + '\n')
 PY
 }
 # _codex_threads_for_cwd <cwd> — the codex conversations recorded in <cwd>, newest first.
-_codex_threads_for_cwd() { _codex_threads cwd "$1" }
+_codex_threads_for_cwd() { _codex_threads cwd "$1" "$2" }
 # _codex_thread_lookup <sid> — one row for a thread id (empty if unknown).
 _codex_thread_lookup()   { _codex_threads sid "$1" }
 

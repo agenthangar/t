@@ -508,7 +508,7 @@ _t_open_app() {
   }
   print -r -- "Opening $repo $slot in the Codex desktop app: $dir"
   command t _app-workspace "$dir" ${reopen:+--reopen} || {
-    print -u2 -- "t open --app: app launch failed; the worktree remains reserved at $dir for a retry"
+    print -u2 -- "t open --app: could not confirm the app open request; the worktree remains reserved at $dir for a retry"
     return 1
   }
 }

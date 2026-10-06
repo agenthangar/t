@@ -9,6 +9,10 @@ import os
 import time
 
 
+class StaleElement(ValueError):
+    """An AX reference disappeared while the app rebuilt its menu tree."""
+
+
 class Element:
     def __init__(self, api, ref):
         self.api, self.ref = api, ref
@@ -82,6 +86,8 @@ class Accessibility:
         key, value = self._string(attribute), ctypes.c_void_p()
         try:
             error = self.ax.AXUIElementCopyAttributeValue(element.ref, key, ctypes.byref(value))
+            if error == -25202:  # kAXErrorInvalidUIElement; fetch a fresh AX tree
+                raise StaleElement(f"the app's {attribute} element changed (Accessibility error {error})")
             if error in (-25204, -25205, -25212):  # not ready, unsupported, no value
                 return None
             if error:
@@ -162,17 +168,22 @@ def new_window(bundle, run, api=None):
     application = api.application(pid)
 
     def find_menu():
-        bar = api.read(application, "AXMenuBar")
-        if bar is None:
+        try:
+            bar = api.read(application, "AXMenuBar")
+            if bar is None:
+                return None
+            # Only native menu descendants; never search or click conversation content.
+            pending = [(bar, 0)]
+            while pending:
+                element, depth = pending.pop()
+                if api.read(element, "AXTitle") == "New Window" and api.read(element, "AXRole") == "AXMenuItem":
+                    return element if api.read(element, "AXEnabled") else None
+                if depth < 4:
+                    pending.extend((child, depth + 1) for child in api.read(element, "AXChildren") or [])
+        except StaleElement:
+            # Electron can replace a menu item between AXChildren and AXTitle.
+            # Retry from AXMenuBar, rather than acting on another menu element.
             return None
-        # Only native menu descendants; never search or click conversation content.
-        pending = [(bar, 0)]
-        while pending:
-            element, depth = pending.pop()
-            if api.read(element, "AXTitle") == "New Window" and api.read(element, "AXRole") == "AXMenuItem":
-                return element if api.read(element, "AXEnabled") else None
-            if depth < 4:
-                pending.extend((child, depth + 1) for child in api.read(element, "AXChildren") or [])
         return None
 
     menu = wait_for(find_menu, "could not find an enabled New Window menu item in the desktop app")
