@@ -114,9 +114,9 @@ def run(binary: Path, history_version: str | None = None) -> dict:
         command(["git", "worktree", "add", "-q", "-b", "dev/poc-1", str(worktree)],
                 env, root / "repo")
         with (codex_home / "config.toml").open("a") as config_file:
-            for trusted in {str(root / "repo"), os.path.realpath(root / "repo"),
-                            str(worktree), os.path.realpath(worktree)}:
-                config_file.write("\n[projects." + json.dumps(trusted) + "]\n"
+            for workspace_path in {str(root / "repo"), os.path.realpath(root / "repo"),
+                                   str(worktree), os.path.realpath(worktree)}:
+                config_file.write("\n[projects." + json.dumps(workspace_path) + "]\n"
                                   'trust_level = "trusted"\n')
         gitdir = command(["git", "-C", str(worktree), "rev-parse", "--absolute-git-dir"],
                          env, worktree).stdout.strip()
