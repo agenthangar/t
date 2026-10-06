@@ -317,9 +317,12 @@ worktree started with `t session open --app`, it selects the only saved conversa
 if several chats share the worktree, use `t app pull my-project 3 --thread <id>`
 to select one, then open it. A previously pushed slot defaults to its handed-off
 thread. `t app pull` resumes without attaching; `--dry-run` previews either direction.
-Pull refuses while the desktop app or its backend is running, or while the
+Pull refuses while the desktop app is open, or while the
 selected thread has an active turn in the shared daemon. It never quits the app
-or stops that daemon. The reservation is released only after the CLI is verified
+or stops that daemon. Leftover computer-use, code-mode, and Electron helpers do
+not count as the desktop app. A remaining backend must verify the exact thread;
+an unverifiable backend reports its PID without asking you to quit an app that
+has already exited. The reservation is released only after the CLI is verified
 live; a failed handoff keeps the worktree protected.
 
 ## Configuration

@@ -6823,8 +6823,7 @@ def cmd_app_pull(cfg, args, repo, slot):
 
 def cmd_app_open_cli(cfg, repo, slot):
     """Private shell bridge: stdout is only the exact session to attach."""
-    retry = ("Finish the turn and quit the Codex desktop app on this Mac, then retry: "
-             + shlex.join(["t", "open", repo, slot, "--cli"]))
+    retry = "Retry: " + shlex.join(["t", "open", repo, slot, "--cli"])
     try:
         with redirect_stdout(sys.stderr):
             row = _app_pull(cfg, repo, slot, retry=retry)
