@@ -304,15 +304,17 @@ last recorded conversation title. Status uses `● ✓` for a loaded conversatio
 and `○` for inactive. On macOS, live desktop context is verified from rollout files held open
 by the desktop backend; a saved reservation alone stays inactive. Loaded context
 can remain in the backend after a window closes, and does not mean a turn is
-currently generating. To continue in the CLI, finish the desktop turn,
-quit the app, and pull the slot:
+currently generating. To continue in the CLI, finish the desktop turn and
+quit the Codex desktop app on the Mac running that session. On the same Mac,
+pull the slot and attach:
 
 ```sh
 t app pull my-project 3
 t session open my-project 3 --cli
 ```
 
-Pull preserves the worktree, changes, dev server, and thread history. For a
+`--cli` alone does not release desktop ownership. Pull preserves the worktree,
+changes, dev server, and thread history. For a
 worktree started with `t session open --app`, it selects the only saved conversation;
 if several chats share the worktree, choose `--thread <id>`. A previously pushed
 slot defaults to its handed-off thread. `--dry-run` previews either direction.

@@ -162,6 +162,10 @@ def test_open_help_is_concise_with_discoverable_details(t_mod, monkeypatch, caps
     assert max(map(len, concise.splitlines())) <= width
     assert "agent (fresh slots):" in concise and "location:" in concise
     assert "--codex --new" in concise and "t help open" in concise
+    normalized = " ".join(concise.split())
+    assert "quit the Codex desktop app on that Mac" in normalized
+    assert "t app pull api 2" in normalized
+    assert "t " + " ".join(words) + " api 2 --cli" in normalized
     for flag in ("--new", "--fg", "--cli", "--app", "--codex", "--claude",
                  "--local", "--here", "--remote", "--host", "--help"):
         assert flag in concise
@@ -169,7 +173,7 @@ def test_open_help_is_concise_with_discoverable_details(t_mod, monkeypatch, caps
     detailed = capsys.readouterr().out
     assert len(detailed) > len(concise)
     assert all(section in detailed for section in (
-        "SESSION TARGETS", "OPENING DEFAULTS", "REMOTE SESSIONS"))
+        "SESSION TARGETS", "OPENING DEFAULTS", "DESKTOP TO CLI", "REMOTE SESSIONS"))
     assert "DEV_AGENT_DEFAULT" in detailed and "<repo>:p<pid>" in detailed
     assert max(map(len, detailed.splitlines())) <= width
 
