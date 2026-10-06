@@ -91,7 +91,12 @@ _dev_worktree_create() {
   local wt br; wt="$(_dev_worktree_path "$repo" "$slot")"; br="$(_dev_worktree_branch "$repo" "$slot")"
   if [[ -e "$wt/.git" ]]; then          # already materialized → reuse (idempotent)
     if _dev_app_slot_reserved "$wt"; then
-      print -u2 -- "t: $repo $slot is reserved for the Codex desktop app; use t session open $repo $slot --app"
+      print -u2 -- "t: $repo $slot is reserved for the Codex desktop app."
+      print -u2 -- '  To continue in the CLI, finish the turn and quit the Codex desktop app on this Mac first.'
+      print -u2 -- '  Then run:'
+      print -u2 -- "    t app pull ${(q)repo} ${(q)slot}"
+      print -u2 -- "    t open ${(q)repo} ${(q)slot} --cli"
+      print -u2 -- "  To reopen in the app: t open ${(q)repo} ${(q)slot} --app"
       return 1
     fi
     _dev_worktree_freshen "$repo" "$slot" "$wt" "$br"
@@ -231,6 +236,9 @@ _dev_slot_fresh() {
 # before anyone noticed (ff-12, ff-15). Failing loudly is cheaper than that.
 _dev_worktree_refuse() {
   local repo="$1" slot="$2" repodir="${DEV_REPOS[$1]}"
+  # Creation already explained how to release a desktop reservation. The
+  # worktree exists; prune/add and disabling worktrees cannot fix ownership.
+  _dev_app_slot_reserved "$(_dev_worktree_path "$repo" "$slot")" && return 0
   print -r -- "✗ could not create the worktree for $repo $slot — refusing to start in the shared tree $repodir" >&2
   print -r -- "  try: git -C $repodir worktree prune; git -C $repodir worktree add $(_dev_worktree_path "$repo" "$slot") -b $(_dev_worktree_branch "$repo" "$slot") origin/main" >&2
   print -r -- "  (DEV_WORKTREE[$repo]=0 in ${T_LOCAL_RC} opts this repo out of worktrees entirely)" >&2

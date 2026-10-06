@@ -2309,3 +2309,6 @@ def test_list_columns_align_interface_model_and_context(t_mod, capsys, remote):
     for heading, content in [('UI','▣ desktop'),('MODEL','⬡ model-test'),('SESSION','web-3'),('WORKING ON','Investigate')]:
         assert header.index(heading) == body.index(content)
     assert 'Codex desktop workspace' not in body
+    if not remote:
+        assert 'finish the turn and quit the Codex app' in lines[-1]
+        assert 't app pull <repo> <slot>' in lines[-1]

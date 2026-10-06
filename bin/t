@@ -520,6 +520,9 @@ def _render_local(rows, scope, st, has_remote=False):
         foot += " · other machines: t ls -r"
     print()
     print(f"  {st.y}{foot}{st.r}")
+    if has_app:
+        print(f"  {st.y}desktop → CLI: finish the turn and quit the Codex app, then run "
+              f"t app pull <repo> <slot>{st.r}")
 
 
 def _render_remote(rows, scope, st):
@@ -6678,7 +6681,10 @@ def _slot_select(cfg, rows, repo, slot, cwd, verb):
         repo = implied_repo
         slot = slot or implied_slot
     if repo not in cfg.repos:
-        raise ValueError(f"name a registered repo: t {verb} <repo> <slot>")
+        usage = ("t app [push|pull] <repo> <slot>\n"
+                 "  push: CLI → desktop; pull: desktop → CLI. Run `t help app` for steps."
+                 if verb == "app" else f"t {verb} <repo> <slot>")
+        raise ValueError(f"name a registered repo: {usage}")
     if slot and not slot.isdigit():
         raise ValueError(f"slot must be a number: t {verb} <repo> <slot>")
     aliases = {k for k, d in cfg.repos.items() if d == cfg.repos[repo]}
@@ -8674,6 +8680,11 @@ def build_parser():
   %(prog)s --codex --new        Start a new Codex session
   %(prog)s api 2               Attach to api's slot 2
 
+desktop → CLI:
+  Finish the turn and quit the Codex desktop app on that Mac, then run:
+  t app pull api 2
+  %(prog)s api 2 --cli
+
 Run `t help open` for session targeting, defaults, and remote details.""",
         help_details="""SESSION TARGETS
   A lone slot number targets the current repo: t open 3.
@@ -8689,6 +8700,12 @@ OPENING DEFAULTS
   --codex and --claude select the agent for a fresh slot. Otherwise,
   DEV_AGENT[repo] overrides DEV_AGENT_DEFAULT (fallback: claude).
 
+DESKTOP TO CLI
+  --cli selects the interface; it does not release desktop ownership.
+  On the Mac running the desktop session, finish the turn and quit the
+  Codex desktop app. Run `t app pull <repo> <slot>` to resume the same
+  conversation in tmux, then `t open <repo> <slot> --cli` to attach.
+
 REMOTE SESSIONS
   A slot live only on another host attaches there automatically.
   --local (also --here) skips that lookup; combine with --fg to run here.
@@ -8700,7 +8717,7 @@ REMOTE SESSIONS
     sp.add_argument("slot", nargs="?", help="slot number, session ID, or 'fg'")
     sp.add_argument("--new", action="store_true", help="start a fresh session")
     sp.add_argument("--fg", action="store_true", help="run in this terminal, without tmux")
-    sp.add_argument("--cli", action="store_true", help="open in the CLI")
+    sp.add_argument("--cli", action="store_true", help="open in the CLI (desktop slots: see below)")
     sp.add_argument("--app", action="store_true", help="open in the Codex desktop app (macOS)")
     ag = sp.add_argument_group("agent (fresh slots)").add_mutually_exclusive_group()
     ag.add_argument("--codex", action="store_true", help="use Codex")
@@ -8711,7 +8728,11 @@ REMOTE SESSIONS
     location.add_argument("--host", help="open or attach on this host")
 
     sp = sub.add_parser("app", help="push a local Codex conversation into the app or pull it back to CLI",
-        description="Stop a local slot's Codex CLI and open the SAME conversation in the "
+        description="Move the same local Codex conversation between desktop and CLI. "
+            "To return to the CLI: finish the turn and quit the Codex desktop app on that Mac, "
+            "then run `t app pull <repo> <slot>` followed by `t open <repo> <slot> --cli`. "
+            "To move into the app, `t app [push] [repo] [slot]` stops the slot's CLI "
+            "and opens the SAME conversation in the "
             "Codex desktop app on macOS, with its running web preview and referenced Markdown "
             "plan in separate built-in browser tabs. "
             "Use Annotation mode there to leave comments. The tmux slot stays reserved, "
@@ -8725,8 +8746,7 @@ REMOTE SESSIONS
             "The browser deep link requires a recent desktop app. Run from a separate "
             "terminal if the command would stop the agent executing it. "
             "`t app push [repo] [slot]` is the explicit form of `t app [repo] [slot]`. "
-            "To return, finish the desktop turn, quit the desktop app, and run "
-            "`t app pull [repo] [slot]`. Pull resumes the saved conversation in tmux "
+            "Pull resumes the saved conversation in tmux "
             "and releases the desktop reservation only after verifying the CLI is live. "
             "App-created worktrees are supported; choose --thread ID when several chats share one.")
     sp.add_argument("repo", nargs="?", metavar="push|pull|repo", help="direction or DEV_REPOS key (default: push, cwd repo)")

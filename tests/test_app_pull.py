@@ -30,6 +30,25 @@ def test_app_invalid_target(t_mod):
         t_mod._app_target(args)
 
 
+@pytest.mark.parametrize("prefix", [["app"], ["session", "open-app"]])
+def test_app_help_explains_how_to_return_to_cli(t_mod, monkeypatch, capsys, prefix):
+    monkeypatch.setattr(t_mod, "Config", lambda: pytest.fail("help loaded configuration"))
+    assert t_mod.main([*prefix, "--help"]) == 0
+    output = " ".join(capsys.readouterr().out.split())
+    assert "finish the turn and quit the Codex desktop app on that Mac" in output
+    assert "t app pull <repo> <slot>" in output
+    assert "t open <repo> <slot> --cli" in output
+
+
+def test_app_without_repository_exposes_both_directions(t_mod, app_slot):
+    cfg, row = app_slot
+    with pytest.raises(ValueError) as error:
+        t_mod._app_select(cfg, [row], None, None, "/unrelated")
+    assert "t app [push|pull] <repo> <slot>" in str(error.value)
+    assert "pull: desktop → CLI" in str(error.value)
+    assert "t help app" in str(error.value)
+
+
 @pytest.fixture
 def pull_store(t_mod, app_slot, monkeypatch, tmp_path):
     cfg, row = app_slot
