@@ -597,9 +597,9 @@ _t_resume() {
     # down the list). The cost: a literal space no longer types into the filter
     # query — acceptable because fzf's fuzzy match crosses word gaps ("fixbug"
     # still matches "fix bug").
-    pick=$(print -rl -- "${(@)cands}" | _t_fzf --multi --marker='✓' --bind 'space:toggle+down' \
+    pick=$(print -rl -- "${(@)cands}" | _t_fzf_sessions "$legend" \
       --delimiter=$'\t' --with-nth=-1 --no-hscroll \
-      --header="${legend}   ·   space marks ✓ — every mark revives, first attaches" --prompt="$fprompt") || return 1
+      --prompt="$fprompt") || return 1
     [[ -n $pick ]] || return 1
   elif [[ -n $slot ]] && { pick=; for c in "${(@)cands}"; do
          f=("${(@ps:\t:)c}"); [[ $f[7] == - ]] && { pick=$c; break; }; done; [[ -n $pick ]]; }; then

@@ -17,9 +17,9 @@ _dev_remote_app_owner() {
 }
 
 _dev_remote_resolve() {
-  local repo="$1" slot="$2"
+  local repo="$1" slot="$2" multi="${3:-}"
   # _dev_rows_all columns: host(1) sid(2) cwd(3) slot(4) state(5) context(6) summary(7)
-  local rows; rows=$(_dev_rows_all 2>/dev/null | awk -F'\t' '$1 != "local" && $5 != "app"')
+  local rows; rows=$(_dev_rows_all 2>/dev/null | awk -F'\t' '$1 != "local" && $5 != "app" && $4 !~ /:/')
   [[ -n $rows ]] || { echo "dev: no live dev sessions on any remote host (\`dev ls -r\`)." >&2; return 1; }
   # Match on the repo DIRECTORY (field 3 = session cwd), NOT the alias-derived
   # slot label (field 4): the same repo dir can carry different DEV_REPOS aliases
@@ -60,14 +60,22 @@ _dev_remote_resolve() {
   if (( n == 1 )); then
     host=${match%%$'\t'*}
     hostslot=$(print -r -- "$match" | awk -F'\t' '{print $4}')
-  elif [[ -t 1 ]] && command -v fzf >/dev/null 2>&1; then
+  # stdout is captured by callers; stdin still identifies the calling terminal.
+  elif [[ -t 0 ]] && command -v fzf >/dev/null 2>&1; then
     local picked
+    local -a picker=(_t_fzf)
+    [[ -n $multi ]] && picker=(_t_fzf_sessions 'Live remote sessions · Esc cancel')
     picked=$(print -r -- "$match" | awk -F'\t' '{printf "%s\t%s\t%s/%-12s %s\n", $1, $4, $1, $4, $7}' \
-          | _t_fzf --delimiter=$'\t' --with-nth=3 --no-hscroll \
-                --prompt="dev -r ${repo:-pick} > " --height=40% --reverse) || return 1
-    [[ -n $picked ]] || return 1
-    host=${picked%%$'\t'*}
-    hostslot=${${picked#*$'\t'}%%$'\t'*}
+          | "${picker[@]}" --delimiter=$'\t' --with-nth=3 --no-hscroll \
+                --prompt="t open remote ${repo:-pick} > " --height=60% --reverse) || return 130
+    [[ -n $picked ]] || return 130
+    local pick
+    for pick in "${(@f)picked}"; do
+      host=${pick%%$'\t'*}
+      hostslot=${${pick#*$'\t'}%%$'\t'*}
+      printf '%s\t%s\t%s\n' "$host" "${hostslot%-*}" "${hostslot##*-}"
+    done
+    return 0
   else
     echo "dev: '$repo${slot:+ $slot}' is live in more than one place (install fzf or name a slot):" >&2
     print -r -- "$match" | awk -F'\t' '{printf "  %s  %s  %s\n", $1, $4, $7}' >&2
@@ -145,14 +153,52 @@ _dev_remote() {
   if [[ -z ${DEV_REPOS[$repo]:-} && -z $slot && $repo == <-> ]]; then
     local inferred; inferred=$(_t_infer_repo "$repo") && { slot=$repo; repo=$inferred; }
   fi
-  local res
-  if ! res=$(_dev_remote_resolve "$repo" "$slot"); then
+  local res resolve_rc
+  local multi=multi; [[ -n $fg ]] && multi=
+  res=$(_dev_remote_resolve "$repo" "$slot" "$multi"); resolve_rc=$?
+  (( resolve_rc == 130 )) && return 1
+  if (( resolve_rc != 0 )); then
     # Nothing live to attach. `-r` is attach-only; starting one is `-r --new`.
     local dh; dh=$(_dev_default_host) \
       && echo "  to START one remotely: t session open ${repo:-<repo>}${slot:+ $slot} -r --new   (on $dh; --host <h> to choose)" >&2
     return 1
   fi
-  _dev_remote_attach "$res" "$fg"
+  _dev_open_picks "$res" "$fg"
+}
+
+# Open resolved host/repo/slot rows without ever resuming another owner. Launch
+# extra tabs before the first blocking attach; preserve the exact selected host.
+_dev_open_picks() {
+  local -a picks fields
+  picks=("${(@f)1}")
+  local fg="${2:-}" pick cmd i=0
+  if (( $#picks > 1 )) && [[ -n $fg ]]; then
+    print -u2 -- 't open --fg opens ONE session inline — select a single row.'
+    return 1
+  fi
+  for pick in "${picks[@]}"; do
+    (( ++i ))
+    fields=("${(@ps:\t:)pick}")
+    cmd="t open ${(q)fields[2]} ${(q)fields[3]} --cli"
+    if [[ $fields[1] == local ]]; then
+      cmd+=' --local'
+    else
+      cmd+=" --host ${(q)fields[1]}"
+    fi
+    if (( i > 1 )); then
+      _dev_open_tab "$cmd" || print -r -- "Attach with: $cmd"
+    fi
+  done
+  fields=("${(@ps:\t:)picks[1]}")
+  if [[ $fields[1] == local ]]; then
+    if [[ -n $TMUX ]]; then
+      tmux switch-client -t "=dev-${fields[2]}-${fields[3]}:"
+    else
+      _t_dev "$fields[2]" "$fields[3]" --local
+    fi
+  else
+    _dev_remote_attach "$picks[1]" "$fg"
+  fi
 }
 
 # _dev_remote_attach <res> <fg> — ATTACH IN PLACE on an already-resolved remote slot

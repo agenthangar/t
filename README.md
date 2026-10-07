@@ -109,6 +109,14 @@ t session list             # see your running sessions
 ```
 
 Detach from tmux with `Ctrl-b d`; reattach with `t session open my-project 1`.
+
+To open several sessions, run `t open my-project` for live CLI slots or
+`t resume my-project` for saved conversations. In either picker, **Space/Tab
+selects ✓ and Enter opens the selection**. The first opens here; the others open
+in terminal tabs, with attach commands shown when tabs are unavailable. Remote
+slot pickers support the same controls. An explicit slot (including one inferred
+from your current worktree) keeps its direct target; `--fg` opens one session.
+
 Repositories need a fetched `origin/main` for worktree sessions. `t repo create` can create
 and register a GitHub repository with the expected setup, showing its plan first.
 To use an existing GitHub repository, run `t repo clone https://github.com/owner/repo.git`.

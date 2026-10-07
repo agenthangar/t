@@ -2015,6 +2015,29 @@ _t_dev() {
     return
   fi
 
+  # Offer live local slots before the automatic reattach/fresh fallback. Explicit
+  # slots, worktree-inferred slots, --new and foreground opens keep their targeting.
+  if [[ -z $slot && -z $no_tmux && -t 0 && -t 1 ]] && command -v fzf >/dev/null 2>&1; then
+    local open_sid open_cwd open_label open_state open_ctx open_title open_agent open_pick
+    local -a open_rows open_fields open_picks
+    while IFS=$'\t' read -r open_sid open_cwd open_label open_state open_ctx open_title open_agent; do
+      [[ $open_label != *:* && $open_label == *-<-> && $open_state != app ]] || continue
+      _dev_dir_in_scope "$open_cwd" "$dir" || continue
+      open_rows+=("local"$'\t'"${open_label%-*}"$'\t'"${open_label##*-}"$'\t'"$open_label  ${open_agent:-claude}  $open_title")
+    done < <(_dev_session_rows 2>/dev/null)
+    if (( $#open_rows > 1 )); then
+      open_pick=$(print -rl -- "${open_rows[@]}" | _t_fzf_sessions 'Live sessions · Esc cancel' \
+        --delimiter=$'\t' --with-nth=-1 --no-hscroll --prompt="t open $repo > ") || return 1
+      [[ -n $open_pick ]] || return 1
+      for open_pick in "${(@f)open_pick}"; do
+        open_fields=("${(@ps:\t:)open_pick}")
+        open_picks+=("${open_fields[1]}"$'\t'"${open_fields[2]}"$'\t'"${open_fields[3]}")
+      done
+      _dev_open_picks "${(F)open_picks}"
+      return
+    fi
+  fi
+
   # Remote-aware open (auto half): <repo> is a valid key now (cwd-defaulted if bare) and
   # fg adoption already returned, so a slot that is NOT live HERE but IS live on a
   # $REMOTE_HOSTS host gets attached IN PLACE there (host inferred) — a live LOCAL slot
@@ -2025,10 +2048,11 @@ _t_dev() {
   # is live only on another host is NOT attached — a fresh local slot is opened
   # instead (combine with --fg for a local foreground resume / inline claude).
   if (( ${#REMOTE_HOSTS} )) && [[ -z $no_tmux && -z $local_only && $slot != new ]] && ! _dev_local_slot_live "$repo" "$slot"; then
-    local res; res=$(_dev_remote_resolve "$repo" "$slot" 2>/dev/null)   # quiet probe
+    local res resolve_rc; res=$(_dev_remote_resolve "$repo" "$slot" multi 2>/dev/null); resolve_rc=$?
+    (( resolve_rc == 130 )) && return 1   # cancellation must not start a fresh slot
     if [[ -n $res ]]; then
       echo "(not live here — attaching on ${res%%$'\t'*}; Ctrl-b d to detach)"
-      _dev_remote_attach "$res" "$no_tmux"
+      _dev_open_picks "$res" "$no_tmux"
       return
     fi
     # nothing live remotely either → fall through to the local path (fresh start)
@@ -2205,12 +2229,13 @@ _t_dev() {
   fi
 }
 
-# _dev_remote_resolve <repo> <slot> — resolve a live REMOTE dev slot to one
-# "<host>\t<repo>\t<slot>" line on stdout (host AUTO-INFERRED). Scans every
+# _dev_remote_resolve <repo> <slot> [multi] — resolve live REMOTE dev slots to
+# "<host>\t<repo>\t<slot>" lines on stdout (host AUTO-INFERRED). Scans every
 # $REMOTE_HOSTS host (via _dev_rows_all, minus local) for the live candidates:
 # `<repo> <slot>` → just that slot; `<repo>` (no slot) → every slot of that repo;
 # empty → every remote slot. One candidate → it; several → **fzf-pick** (host/slot +
 # summary; needs a TTY+fzf, else it lists them and returns 1); none → return 1 with a
 # `dev ls -r` hint. The chosen slot name "<repo>-<num>" is split on the LAST dash
 # (repos like `dotfiles` have none) so the repo+slot come back fully resolved. Shared
-# by `t open` (explicit -r and the auto-detect attach) and `dev -r kill`. Diagnostics
+# by `t open` (opts into multi) and `dev -r kill` (single target). Cancellation
+# returns 130 so an automatic open probe cannot fall through to fresh creation. Diagnostics
