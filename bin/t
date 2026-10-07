@@ -8842,6 +8842,10 @@ def build_parser():
   %(prog)s --codex --new        Start a new Codex session
   %(prog)s api 2               Attach to api's slot 2
 
+select several sessions:
+  In the CLI picker, Space/Tab selects ✓; Enter opens your selection.
+  The first opens here; others open in terminal tabs (or show attach commands).
+
 desktop → CLI:
   %(prog)s api 2 --cli
   Follow its release instructions if the desktop conversation is still loaded.
@@ -8854,6 +8858,9 @@ Run `t help open` for session targeting, defaults, and remote details.""",
   <repo>:<id>, <repo>:p<pid>, or a session ID. A session in tmux attaches
   in place; a foreground Claude session moves into this terminal.
   Use `t open <repo> fg` to select that repo's foreground sessions.
+  With several live CLI slots, Space/Tab selects multiple rows; Enter opens
+  them. Explicit slots and opens from a slot worktree keep their target.
+  Remote slot pickers support the same selection; --fg opens one session.
 
 OPENING DEFAULTS
   The configured opening mode chooses CLI or app; --cli and --app override

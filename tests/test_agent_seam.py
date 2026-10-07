@@ -1986,7 +1986,10 @@ def test_zsh_resume_picker_shows_the_display_column_for_every_row(zsh, tmp_path)
     assert all(row.startswith(" 3  ") or row.startswith(" 4  ") for row in rows)
     assert {row[4:12] for row in rows} == {"✱ claude", "⬡ codex "}
     # the fzf header spells the full legend — every supported tool, not just the ones on screen
-    assert (tmp_path / "fzf.log.header").read_text().startswith("✱ claude · ⬡ codex · ◆ cursor")
+    header = (tmp_path / "fzf.log.header").read_text().splitlines()
+    assert header[0] == "MULTI-SELECT · Space/Tab mark ✓"
+    assert header[1] == "Enter opens: here + extra tabs"
+    assert header[2].startswith("✱ claude · ⬡ codex · ◆ cursor")
 
 
 def test_zsh_resume_pick_revives_the_row_with_its_own_agent(zsh, tmp_path):
@@ -2343,3 +2346,113 @@ def test_tool_search_link_alone_never_becomes_a_session_pr(zsh, old_cache):
         }))
     r = zsh(f"_transcript_meta_batch {path}")
     assert r.stdout == f"{path}\t\t\n"
+
+
+@pytest.mark.parametrize("tabs", [True, False])
+def test_open_local_multi_picker(zsh, tmp_path, tabs):
+    """A batch opens extra slots before attaching, keeping aliases and local scope."""
+    (zsh.home / "code/api").mkdir(parents=True)
+    stub = tmp_path / "stubbin/fzf"
+    stub.write_text("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$FZF_LOG\"\ncat\n")
+    stub.chmod(0o755)
+    log = tmp_path / "fzf.args"
+    snippet = r'''
+      DEV_REPOS[alias]=$DEV_REPOS[api]
+      _dev_session_rows() {
+        printf 'sid1\t%s\tapi-2\tdetached\tactive\tFirst task\tcodex\n' "$HOME/code/api"
+        printf 'sid2\t%s\talias-4\tattached\tactive\tSecond task\tclaude\n' "$HOME/code/api"
+        printf 'sid3\t%s\tweb-3\tdetached\tactive\tOther repo\tcodex\n' "$HOME/code/web"
+      }
+      _dev_open_tab() { print -r -- "TAB $*"; TAB_RESULT; }
+      _t_dev api
+      print -r -- "rc=$?"
+    '''.replace("TAB_RESULT", "return 0" if tabs else "return 1")
+    result = zsh(snippet, _tty=True, FZF_LOG=str(log), FAKE_HAS_SESSION="1")
+    assert "rc=0" in result.stdout, result.stdout
+    assert "TAB t open alias 4 --cli --local" in result.stdout
+    assert ("Attach with: t open alias 4 --cli --local" in result.stdout) == (not tabs)
+    calls = zsh.log.read_text()
+    assert "attach-session -t =dev-api-2:" in calls
+    assert "new-session" not in calls and "dev-web-3" not in calls
+    args = log.read_text()
+    assert "--multi" in args and "space:toggle+down" in args
+    assert "MULTI-SELECT · Space/Tab mark ✓\nEnter opens: here + extra tabs" in args
+
+
+def test_open_picker_cancel_does_not_create_session(zsh, tmp_path):
+    (zsh.home / "code/api").mkdir(parents=True)
+    stub = tmp_path / "stubbin/fzf"
+    stub.write_text("#!/bin/sh\nexit 130\n")
+    stub.chmod(0o755)
+    result = zsh(r'''
+      _dev_session_rows() {
+        printf 'sid\t%s\tapi-2\tdetached\tactive\tFirst\tcodex\n' "$HOME/code/api"
+        printf 'sid\t%s\tapi-4\tdetached\tactive\tSecond\tcodex\n' "$HOME/code/api"
+      }
+      _t_dev api; print -r -- "rc=$?"
+    ''', _tty=True)
+    assert "rc=1" in result.stdout, result.stdout
+    calls = zsh.log.read_text() if zsh.log.exists() else ""
+    assert "new-session" not in calls and "attach-session" not in calls
+
+
+def test_open_remote_multi_picker_preserves_hosts(zsh, tmp_path):
+    stub = tmp_path / "stubbin/fzf"
+    stub.write_text("#!/bin/sh\ncat\n")
+    stub.chmod(0o755)
+    result = zsh(r'''
+      _dev_rows_all() {
+        printf 'mini\tsid1\t%s\tapi-2\tdetached\tactive\tFirst\n' "$HOME/code/api"
+        printf 'studio\tsid2\t%s\tother-4\tdetached\tactive\tSecond\n' "$HOME/code/api"
+      }
+      _dev_open_tab() { print -r -- "TAB $*"; }
+      _dev_remote_attach() { print -r -- "ATTACH $1"; }
+      _dev_remote api
+      print -r -- "rc=$?"
+    ''', _tty=True)
+    assert "rc=0" in result.stdout, result.stdout
+    assert "TAB t open other 4 --cli --host studio" in result.stdout
+    assert "ATTACH mini\tapi\t2" in result.stdout
+    assert result.stdout.index("TAB") < result.stdout.index("ATTACH")
+
+
+def test_open_multi_inside_tmux_switches_first(zsh):
+    result = zsh(r'''
+      _dev_open_tab() { return 1; }
+      _dev_open_picks $'local\tapi\t2\nlocal\tapi\t4'
+    ''', TMUX="isolated-stub")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Attach with: t open api 4 --cli --local" in result.stdout
+    assert "switch-client -t =dev-api-2:" in zsh.log.read_text()
+    assert "attach-session" not in zsh.log.read_text()
+
+
+def test_open_auto_remote_cancel_does_not_start_locally(zsh, tmp_path):
+    (zsh.home / "code/api").mkdir(parents=True)
+    stub = tmp_path / "stubbin/fzf"
+    stub.write_text("#!/bin/sh\nexit 130\n")
+    stub.chmod(0o755)
+    result = zsh(r'''
+      REMOTE_HOSTS[mini]=mini
+      _dev_session_rows() { :; }
+      _dev_local_slot_live() { return 1; }
+      _dev_rows_all() {
+        printf 'mini\tsid1\t%s\tapi-2\tdetached\tactive\tFirst\n' "$HOME/code/api"
+        printf 'mini\tsid2\t%s\tapi-4\tdetached\tactive\tSecond\n' "$HOME/code/api"
+      }
+      _t_dev api; print -r -- "rc=$?"
+    ''', _tty=True)
+    assert "rc=1" in result.stdout, result.stdout
+    calls = zsh.log.read_text() if zsh.log.exists() else ""
+    assert "new-session" not in calls and "attach-session" not in calls
+
+
+def test_open_multi_foreground_refused_before_opening(zsh):
+    result = zsh(r'''
+      _dev_open_tab() { print UNEXPECTED_TAB; }
+      _dev_remote_attach() { print UNEXPECTED_ATTACH; }
+      _dev_open_picks $'mini\tapi\t2\nmini\tapi\t4' 1
+      print -r -- "rc=$?"
+    ''')
+    assert "rc=1" in result.stdout and "ONE session" in result.stderr
+    assert "UNEXPECTED" not in result.stdout
