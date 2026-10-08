@@ -64,24 +64,73 @@ References inspected for the draft:
 - [Codex auth storage source](https://github.com/openai/codex/blob/main/codex-rs/login/src/auth/storage.rs) and [token source](https://github.com/openai/codex/blob/main/codex-rs/login/src/token_data.rs): cache structure and JWT expiration.
 - [Cursor authentication](https://cursor.com/docs/cli/reference/authentication): status/login and `NO_OPEN_BROWSER`; current docs use the `agent` spelling, while `t` retains its existing `cursor-agent` binary contract.
 
-## Acceptance still required before merging
+## Automated acceptance runner
 
-Automated tests use synthetic credentials and fake executables. They demonstrate
-planning, subprocess orchestration, and redaction; they do not prove live renewal.
-On an authorized disposable Linux account with supported vendor CLIs and test
-accounts, and on macOS for native credential-store behavior:
+Run the opt-in runner from this branch on the machine with the vendor CLIs and
+accounts you want to verify. Prefer a dedicated OS test user with a clean vendor
+configuration, particularly on macOS where Keychain is per-user. Existing vendor
+accounts are sufficient; separate paid subscriptions are not inherently required.
+The runner uses that user's existing credential stores and never copies them.
 
-1. Record CLI versions, confirm status/login commands (including the installed
-   Cursor binary name), and compare reported state to the vendor CLI.
-2. Exercise logged-out, healthy, and naturally expiring file-backed authentication.
-   Verify the detected deadline corresponds to the active credential. Check
-   automatic refresh behavior and whether explicit login actually renews the login.
-3. Verify unknown-expiry behavior for macOS Keychain/other credential stores and
-   API-key configurations, with no spurious file-derived expiry claims.
-4. Run an authorized browser login and the supported headless flows; verify
-   cancellation, status after success, and a real vendor request after renewal.
-5. Ignore a deliberately failing installed tool and confirm other selected tools
-   still work without invoking it.
+```sh
+# Unattended status, dry-run plan, and ignore checks; no sign-ins or model requests.
+python3 scripts/login-acceptance.py --report /tmp/login-inspect.json
 
-Do not paste tokens, account identifiers, or real authentication output into the
-PR. Record only versions, sanitized outcomes, and which cases were exercised.
+# Authorize real browser sign-ins, then one small model request per tool.
+# Run in your terminal and complete the vendors' browser/MFA prompts.
+python3 scripts/login-acceptance.py --login --request --report /tmp/login-browser.json
+
+# Exercise the supported headless sign-in paths separately.
+python3 scripts/login-acceptance.py --login --headless --request --report /tmp/login-headless.json
+
+# Recheck one already-authorized account without starting a new login.
+python3 scripts/login-acceptance.py --agents codex --request --report /tmp/login-codex.json
+```
+
+Each report path must be new. Reports have mode 0600 and contain only revision,
+platform, normalized versions, status categories, expiry buckets, and fixed check
+results. Raw vendor output, account identifiers, credential contents, and private
+paths are never included. Vendor login prompts are displayed directly in your
+terminal and are not recorded by the runner. Do not record or upload that terminal.
+
+`--login` explicitly authorizes re-login of the selected accounts and requires a
+terminal; it invokes this checkout's `t login TOOL --force -y`, then checks status.
+`--request` separately authorizes a small real model request, which may consume
+paid quota. Requests run in an empty temporary working directory; Claude disables
+built-in/MCP tools, Codex uses a read-only sandbox and ignores user configuration,
+and Cursor uses ask mode with its sandbox enabled. No permission-bypass flags are
+used. Older CLIs that reject these flags fail the request check instead of silently
+weakening it. Do not use a test account configuration with unrelated hooks or MCP
+integrations. The vendor may still store its own runtime state outside the temporary
+working directory. Reference: [Claude flags](https://code.claude.com/docs/en/cli-reference)
+and [Cursor parameters](https://cursor.com/docs/cli/reference/parameters).
+
+Exit status is 0 when the requested automated checks pass, 1 for a failed check,
+2 for missing prerequisites/invalid invocation, or 130 for interruption. A status-only
+run can pass while login/request checks are explicitly skipped. **Exit 0 never means
+full live acceptance:** every report keeps `acceptance_complete: false` and lists the
+remaining observations. A later cached deadline after login is evidence of changed
+metadata, not proof that the previous login was unusable or that refresh failed.
+
+Normal PR CI exercises this runner with fake executables and synthetic accounts;
+it does not run the opt-in commands against real accounts. Live reports must be
+produced on authorized machines. No credentials belong in GitHub Actions secrets
+for this PR, and a credential-bearing runner must not execute arbitrary PR code.
+
+### Remaining live observations
+
+The runner automates command execution, state comparisons, ignore checks, post-login
+status, and optional real requests. It cannot manufacture natural expiry or approve
+OAuth/MFA on your behalf. Before merging:
+
+1. Run on Linux and macOS, including native credential stores. Confirm installed CLI
+   versions and the expected Cursor executable (`cursor-agent`).
+2. Run browser and headless login/request checks after reviewing the checkout.
+3. Observe naturally expiring file-backed authentication and vendor automatic refresh.
+   Verify that the cached deadline corresponds to the active credential. Do not alter
+   real tokens or the system clock to simulate this; synthetic boundary tests run in CI.
+4. Observe vendor cancellation once; automated tests cover t's cancellation handling.
+5. Review the reports' skipped/blocked checks and unsupported expiry cases. A logged-in
+   status alone does not prove a usable request or successful renewal.
+
+Only share the sanitized JSON reports, never real vendor authentication output.
