@@ -15,7 +15,7 @@ jobs:
       - name: Shell syntax and lint
         run: |
           files=(install.sh)
-          for f in bin/* .githooks/* ui/*.sh scripts/playground/*; do
+          for f in bin/* .githooks/* ui/*.sh scripts/playground/* scripts/agentcore-test-runtime/*.sh; do
             head -1 "$f" | grep -qE '^#!.*\b(bash|sh)$' && files+=("$f")
           done
           shellcheck "${files[@]}"
