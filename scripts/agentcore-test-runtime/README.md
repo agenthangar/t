@@ -172,10 +172,13 @@ T_AGENTCORE_APPROVE_CLEANUP=review01 \
   bash scripts/agentcore-test-runtime/cleanup.sh /tmp/t-agentcore-review01 sandbox
 ```
 
-Cleanup rechecks account identity; deletes only the recorded runtime; waits until
+Cleanup rechecks account identity and requires the validated stack creation ARN;
+deletes only the recorded runtime; waits until
 AWS reports it absent; removes its recorded workload identity if still present;
 deletes matching runtime log groups; removes only `agent.zip`; then deletes and
-waits for the bootstrap stack, which removes the execution role and bucket.
+waits for that exact bootstrap stack ARN, which removes the execution role and
+bucket. A missing, malformed, or foreign stack creation receipt stops cleanup
+before any resource deletion; a stack name alone is never sufficient.
 `cleanup.complete` is written only after those steps succeed. No recursive S3
 removal, general log-group purge, role enumeration, or shared identity-directory
 deletion is used. A full bucket causes stack deletion to fail instead of deleting

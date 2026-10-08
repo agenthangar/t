@@ -104,7 +104,12 @@ with open(os.environ['FIXTURE_AWS_LOG'],'a') as f: f.write(json.dumps([service,o
 account='111122223333'; region='us-east-1'; stack='t-agentcore-test-trial123'; rid='t_accept_trial123-ABCDEFGHIJ'
 if op=='get-caller-identity':
  print(os.environ.get('FIXTURE_ACCOUNT',account)); sys.exit()
-if op=='describe-stacks':
+if op=='create-stack':
+ result={'StackId':f'arn:aws:cloudformation:{region}:{account}:stack/{stack}/test'}
+elif op=='delete-stack':
+ assert a[a.index('--stack-name')+1] == f'arn:aws:cloudformation:{region}:{account}:stack/{stack}/test'
+ result={}
+elif op=='describe-stacks':
  result={'Stacks':[{'StackId':f'arn:aws:cloudformation:{region}:{account}:stack/{stack}/test', 'StackStatus':'CREATE_COMPLETE', 'Outputs':[
  {'OutputKey':'Bucket','OutputValue':stack+'-codebucket-abc'}, {'OutputKey':'RoleArn','OutputValue':f'arn:aws:iam::{account}:role/{stack}-ExecutionRole-abc'}]}]}
 elif op=='create-agent-runtime':
@@ -168,6 +173,7 @@ def test_wrong_account_and_corrupt_bundle_never_mutate(prepared, fake_aws, monke
 
 def test_ambiguous_runtime_creation_blocks_cleanup(prepared, fake_aws, monkeypatch):
     monkeypatch.setenv('T_AGENTCORE_APPROVE_CLEANUP', NAME)
+    (prepared / 'stack-create.json').write_text(json.dumps({'StackId':f'arn:aws:cloudformation:{REGION}:{ACCOUNT}:stack/t-agentcore-test-{NAME}/test'}))
     (prepared / 'runtime-create.started').touch()
     assert operate('cleanup', prepared).returncode != 0
     assert json.loads(fake_aws.read_text().strip()) == ['sts','get-caller-identity']
@@ -177,3 +183,21 @@ def test_runtime_receipts_cannot_target_other_resources(prepared):
     rid='other-ABCDEFGHIJ'
     (prepared / 'runtime-create.json').write_text(json.dumps({'agentRuntimeId':rid,'agentRuntimeArn':'wrong'}))
     with pytest.raises(ValueError): module('render').render('runtime-id',prepared)
+
+
+@pytest.mark.parametrize('receipt', [None, '', '{}', '{"StackId":"arn:aws:cloudformation:us-east-1:111122223333:stack/unrelated/test"}'])
+def test_missing_or_foreign_stack_receipt_blocks_cleanup(prepared, fake_aws, monkeypatch, receipt):
+    monkeypatch.setenv('T_AGENTCORE_APPROVE_CLEANUP', NAME)
+    if receipt is not None:
+        (prepared / 'stack-create.json').write_text(receipt)
+    assert operate('cleanup', prepared).returncode != 0
+    assert json.loads(fake_aws.read_text().strip()) == ['sts', 'get-caller-identity']
+    assert not (prepared / 'cleanup.complete').exists()
+
+
+def test_partial_bootstrap_cleanup_uses_recorded_stack_arn(prepared, fake_aws, monkeypatch):
+    monkeypatch.setenv('T_AGENTCORE_APPROVE_CLEANUP', NAME)
+    (prepared / 'stack-create.json').write_text(json.dumps({'StackId':f'arn:aws:cloudformation:{REGION}:{ACCOUNT}:stack/t-agentcore-test-{NAME}/test'}))
+    assert (result := operate('cleanup', prepared)).returncode == 0, result.stderr
+    assert [json.loads(x) for x in fake_aws.read_text().splitlines()] == [
+        ['sts', 'get-caller-identity'], ['cloudformation', 'delete-stack'], ['cloudformation', 'wait']]

@@ -14,8 +14,9 @@ verify_account
 aws_cli cloudformation create-stack --stack-name "$stack" \
   --template-body "file://$bundle/bootstrap.json" --capabilities CAPABILITY_IAM \
   --tags Key=Purpose,Value=t-agentcore-acceptance > "$bundle/stack-create.json"
-aws_cli cloudformation wait stack-create-complete --stack-name "$stack"
-aws_cli cloudformation describe-stacks --stack-name "$stack" > "$bundle/stack.json"
+stack_id=$(python3 "$script_dir/render.py" stack-id "$bundle")
+aws_cli cloudformation wait stack-create-complete --stack-name "$stack_id"
+aws_cli cloudformation describe-stacks --stack-name "$stack_id" > "$bundle/stack.json"
 python3 "$script_dir/render.py" runtime "$bundle"
 bucket=$(stack_output Bucket)
 aws_cli s3api put-object --bucket "$bucket" --key agent.zip --body "$bundle/agent.zip" \

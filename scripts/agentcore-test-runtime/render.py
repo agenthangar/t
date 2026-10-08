@@ -26,10 +26,17 @@ def render(action, root):
         raise ValueError('bundle hash changed; regenerate and review it')
     if action == 'verify':
         return ''
+    if action in ('stack-id', 'runtime', 'stack'):
+        stack_id = read(root, 'stack-create.json')['StackId']
+        expected = f"arn:aws:cloudformation:{m['region']}:{m['account']}:stack/{m['stack']}/"
+        if not re.fullmatch(re.escape(expected) + r'[A-Za-z0-9-]+', stack_id):
+            raise ValueError('unexpected stack creation receipt')
+        if action == 'stack-id':
+            return stack_id
     if action in ('runtime', 'stack'):
         stack = read(root, 'stack.json')['Stacks'][0]
         expected = f"arn:aws:cloudformation:{m['region']}:{m['account']}:stack/{m['stack']}/"
-        if not stack['StackId'].startswith(expected) or stack['StackStatus'] != 'CREATE_COMPLETE':
+        if stack['StackId'] != stack_id or stack['StackStatus'] != 'CREATE_COMPLETE':
             raise ValueError('unexpected stack account, region, name, or status')
         outputs = {x['OutputKey']: x['OutputValue'] for x in stack['Outputs']}
         if not outputs['RoleArn'].startswith(f"arn:aws:iam::{m['account']}:role/{m['stack']}-ExecutionRole-"):

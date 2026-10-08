@@ -9,6 +9,8 @@ source "$script_dir/common.sh" "$@"
 }
 python3 "$script_dir/render.py" verify-manifest "$bundle"
 verify_account
+# Never delete a name that could belong to a pre-existing or replacement stack.
+stack_id=$(python3 "$script_dir/render.py" stack-id "$bundle")
 if [[ -e $bundle/runtime-create.started ]]; then
   # A failed/ambiguous create with no valid receipt must be reconciled, not ignored.
   runtime_id=$(python3 "$script_dir/render.py" runtime-id "$bundle")
@@ -50,7 +52,7 @@ if [[ -e $bundle/stack.json ]]; then
   bucket=$(python3 "$script_dir/render.py" stack "$bundle")
   aws_cli s3api delete-object --bucket "$bucket" --key agent.zip --expected-bucket-owner "$account" > "$bundle/object-delete.json"
 fi
-aws_cli cloudformation delete-stack --stack-name "$stack"
-aws_cli cloudformation wait stack-delete-complete --stack-name "$stack"
+aws_cli cloudformation delete-stack --stack-name "$stack_id"
+aws_cli cloudformation wait stack-delete-complete --stack-name "$stack_id"
 : > "$bundle/cleanup.complete"
 echo 'Recorded runtime, identity, logs, artifact, and bootstrap stack cleanup completed. Keep local receipts.'
