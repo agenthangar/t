@@ -548,7 +548,7 @@ _t_beam_xlate() {
 # key for `on`), and slot/flags after. Pulls live from the ${(k)DEV_REPOS} /
 # ${(k)REMOTE_HOSTS} arrays so it stays current with ${T_LOCAL_RC}.
 _t() {
-  local -a nouns=(session repo cursor hosts config profile policy agent system help)
+  local -a nouns=(session repo cursor hosts config profile policy agent system login help)
   if (( CURRENT == 2 )); then
     _describe -t nouns 't command group' nouns
     return
@@ -571,7 +571,7 @@ _t() {
     config) actions=(open show edit setup) ;;
     profile) actions=(init edit show apply) ;;
     policy) actions=(check show apply) ;;
-    agent) actions=(install status trust) ;;
+    agent) actions=(login install status trust) ;;
     system) actions=(integrate update diagnose) ;;
   esac
   [[ $group == hosts && ( $action == delete || $action == rm ) ]] && action=remove
@@ -602,7 +602,7 @@ _t() {
     setup) group=config; action=setup; first=3 ;;
     instructions) group=profile; action=apply; first=3 ;;
     permissions) group=policy; action=check; first=3 ;;
-    install|trust) action=$group; group=agent; first=3 ;;
+    login|install|trust) action=$group; group=agent; first=3 ;;
     integrate|update|doctor) action=$group; [[ $action == doctor ]] && action=diagnose; group=system; first=3 ;;
   esac
   if [[ $group == session && $first == 3 ]]; then
@@ -708,6 +708,9 @@ _t() {
     profile/apply)
       if [[ ${words[CURRENT]} == -* ]]; then _values 'flag' -h --help
       else _values 'repo' ${(k)DEV_REPOS}; fi ;;
+    agent/login)
+      if [[ ${words[CURRENT]} == -* ]]; then _values 'flag' --ignore --within-hours --force --headless -y --yes --dry-run --status -h --help
+      else _values 'agent' claude codex cursor; fi ;;
     agent/install)
       if [[ ${words[CURRENT]} == -* ]]; then _values 'flag' --update --reinstall --no-login --headless --hosts --no-hosts -y --yes --dry-run -h --help
       else _values 'agent' claude codex cursor; fi ;;

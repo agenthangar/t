@@ -174,6 +174,7 @@ settings without connecting to it or installing software there.
 | `t config setup` | Register repositories and optional SSH hosts |
 | `t profile init` / `t profile edit` / `t profile show` / `t profile apply <repo>` | Manage a reusable AGENTS.md profile |
 | `t policy check` / `t policy show` / `t policy apply` | Inspect or apply an explicitly configured permission policy |
+| `t login` / `t agent login` | Review and run logins for logged-out or expiring tools; see [login behavior](docs/login.md) |
 | `t agent install` / `t agent status` / `t agent trust <dir>` | Install agents, inspect their status, or trust a folder |
 | `t system integrate` / `t system update` / `t system diagnose` | Link t into this account, update it, or diagnose the installation |
 | `t help [noun [verb]]` / `t help agents` / `t help aliases` | Read command help, agent support, and compatibility aliases |
