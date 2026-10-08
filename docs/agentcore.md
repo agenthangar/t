@@ -114,3 +114,7 @@ Record CLI version, platform, revision, and sanitized results without credential
 or transcripts. No live deployment, account access, or billable invocation was
 performed during this implementation. Automated contract tests do not establish
 that a particular runtime, role policy, or agent payload works in AWS.
+
+A [disposable test runtime proposal](../scripts/agentcore-test-runtime/README.md)
+provides a model-free target, offline packaging, guarded deployment and cleanup,
+and a bounded live acceptance sequence. It requires separate AWS/IAM/cost approval.
