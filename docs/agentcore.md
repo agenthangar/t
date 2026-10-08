@@ -1,7 +1,6 @@
-# AgentCore work submission (draft)
+# AgentCore work submission
 
-This integration is pending live acceptance for [#9](https://github.com/agenthangar/t/issues/9).
-It is not advertised as shipped. The initial workflow submits JSON to an existing
+The supported workflow submits JSON to an existing
 Amazon Bedrock AgentCore Runtime using IAM authentication and AWS CLI v2.
 `t` does not deploy an agent, create AWS credentials, change IAM permissions, or
 install runtime Python dependencies.
@@ -97,7 +96,7 @@ manual resubmission. The session ID is not an idempotency token for invocations.
 Exit codes: 0 for successful transport, 2 for invalid input/missing prerequisites,
 1 for request/local I/O failures, and 130 for interruption.
 
-## Validation before shipping
+## Validation and remaining live checks
 
 `tests/test_agentcore.py` exercises the actual `bin/t` entrypoint with disposable
 fake AWS executables, invoke/continuation/stop, payload transport, output safety,
@@ -107,10 +106,11 @@ configuration. Linux CI requires that contract test. It checks request headers,
 SigV4 transport, JSON payloads, session continuity, and streamed response files;
 it never connects to AWS. The fixture does not emulate runtime behavior.
 
-Before this draft is ready to merge, an authorized operator must run the documented
-example against a deployed sandbox runtime, verify the agent's response and session
-continuity, stop it, and verify termination in AWS. Also verify rejected permissions
-and runtime errors without exposing credentials or transcripts. Record CLI version,
-platform, revision, and sanitized results. No live deployment or account access has
-been exercised by this draft. Update the README to supported only after that
-acceptance evidence exists and the integration is ready to ship.
+The integration is covered by automated tests; live AWS behavior remains unverified.
+An authorized operator can validate the documented example against a deployed
+sandbox runtime: verify the response and session continuity, stop it, and verify
+termination in AWS. Rejected permissions and runtime errors also need live checks.
+Record CLI version, platform, revision, and sanitized results without credentials
+or transcripts. No live deployment, account access, or billable invocation was
+performed during this implementation. Automated contract tests do not establish
+that a particular runtime, role policy, or agent payload works in AWS.

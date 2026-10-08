@@ -51,9 +51,13 @@ Watch the [MP4](docs/media/demo.mp4) or use the [static poster](docs/media/demo-
   other desktop chats can stay open. It resumes the same conversation and
   attaches automatically. The `t app` commands remain available for scripts and advanced options.
 
-**Coming soon:** submit work to your agent framework, starting with
-[AgentCore](https://github.com/agenthangar/t/issues/9), and use
-[Teleport for SSH access](https://github.com/agenthangar/t/issues/10).
+- **Submit to an existing AgentCore runtime.** `t agentcore invoke` submits JSON
+  using your existing AWS CLI profile; continue with the same session ID and use
+  `t agentcore stop` to terminate it. See the [supported workflow](docs/agentcore.md)
+  for setup and limitations. Automated tests cover the CLI contract; live AWS
+  behavior remains unverified.
+
+**Coming soon:** [Teleport for SSH access](https://github.com/agenthangar/t/issues/10).
 
 ## Install
 
@@ -174,6 +178,7 @@ settings without connecting to it or installing software there.
 | `t config setup` | Register repositories and optional SSH hosts |
 | `t profile init` / `t profile edit` / `t profile show` / `t profile apply <repo>` | Manage a reusable AGENTS.md profile |
 | `t policy check` / `t policy show` / `t policy apply` | Inspect or apply an explicitly configured permission policy |
+| `t login` / `t agent login` | Review and run logins for logged-out or expiring tools; see [login behavior](docs/login.md) |
 | `t agent install` / `t agent status` / `t agent trust <dir>` | Install agents, inspect their status, or trust a folder |
 | `t system integrate` / `t system update` / `t system diagnose` | Link t into this account, update it, or diagnose the installation |
 | `t help [noun [verb]]` / `t help agents` / `t help aliases` | Read command help, agent support, and compatibility aliases |
@@ -523,7 +528,6 @@ checked in CI; optional dotfiles integrations are identified explicitly.
 
 These integrations are planned and are not available in the current release:
 
-- **Amazon Bedrock AgentCore support** — [track progress](https://github.com/agenthangar/t/issues/9); [draft workflow and acceptance](docs/agentcore.md).
 - **Teleport support for SSH workflows** — [track progress](https://github.com/agenthangar/t/issues/10).
 
 ## Development

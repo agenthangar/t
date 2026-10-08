@@ -19,6 +19,7 @@
 # for the data and renders in Python. Reimplementing ps-tree walking buys nothing.
 
 import argparse
+import base64
 import calendar
 import copy
 import fcntl
@@ -26,6 +27,7 @@ import glob
 import hashlib
 import html
 import json
+import math
 import os
 import plistlib
 import re
@@ -4046,6 +4048,181 @@ def _install_probe(agents=INSTALL_AGENTS):
         out[a] = {"bin": exe, "path": os.path.realpath(exe), "version": ver or "?",
                   "logged_in": _install_status_ok(a, s.returncode, s.stdout + s.stderr)}
     return out
+
+
+
+# Login expiry is advisory: these are cached access-token deadlines, not proof
+# that refresh will fail. Never print/cache credential contents or refresh tokens.
+def _login_timestamp(value, divisor=1):
+    if type(value) not in (int, float):
+        return None
+    try:
+        result = value / divisor
+        return result if math.isfinite(result) and result > 0 else None
+    except OverflowError:
+        return None
+
+
+def _login_cached_expiry(agent, home, env):
+    """Best-effort file metadata only; keychains and opaque tokens stay unknown."""
+    try:
+        if agent == "claude":
+            # macOS normally uses Keychain; a leftover file may be stale.
+            if sys.platform == "darwin" or any(env.get(k) for k in (
+                    "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN",
+                    "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY")):
+                return None
+            root = env.get("CLAUDE_CONFIG_DIR") or os.path.join(home, ".claude")
+            with open(os.path.join(root, ".credentials.json"), encoding="utf-8") as file:
+                data = json.load(file)
+            return _login_timestamp(data["claudeAiOauth"]["expiresAt"], 1000)
+        if agent != "codex" or env.get("OPENAI_API_KEY") or env.get("CODEX_API_KEY"):
+            return None
+        root = env.get("CODEX_HOME") or os.path.join(home, ".codex")
+        config = os.path.join(root, "config.toml")
+        if os.path.exists(config):
+            # Parse the real config, never guess at TOML or an alternate store.
+            import tomllib
+            with open(config, "rb") as file:
+                settings = tomllib.load(file)
+            if settings.get("cli_auth_credentials_store", "file") != "file":
+                return None
+        with open(os.path.join(root, "auth.json"), encoding="utf-8") as file:
+            data = json.load(file)
+        if data.get("OPENAI_API_KEY") or data.get("auth_mode") not in (None, "chatgpt"):
+            return None
+        token = data["tokens"]["access_token"]
+        pieces = token.split(".")
+        if len(pieces) != 3:
+            return None
+        payload = json.loads(base64.urlsafe_b64decode(pieces[1] + "=" * (-len(pieces[1]) % 4)))
+        return _login_timestamp(payload.get("exp"))
+    except (OSError, ValueError, TypeError, KeyError, AttributeError, ImportError):
+        return None
+
+
+def _login_state(agent, rc, out):
+    """Do not mistake a crashed/timed-out CLI for a logged-out account."""
+    text = _ANSI_RE.sub("", out or "")
+    if rc not in (0, 1):
+        return "error"
+    if rc == 0 and _install_status_ok(agent, rc, text):
+        return "logged-in"
+    if agent == "claude":
+        try:
+            if json.loads(text).get("loggedIn") is False:
+                return "logged-out"
+        except (ValueError, AttributeError):
+            pass
+    if re.search(r"not (logged in|authenticated|signed in)", text, re.I):
+        return "logged-out"
+    return "error"
+
+
+def _login_cache_matches(agent, output):
+    """Only inspect OAuth cache when status identifies that authentication source."""
+    if agent == "codex":
+        return bool(re.search(r"logged in using ChatGPT", output, re.I))
+    if agent == "claude":
+        try:
+            return json.loads(output).get("authMethod") == "claude.ai"
+        except (ValueError, AttributeError):
+            return False
+    return False
+
+
+def _login_probe(agent):
+    spec = _INSTALL_AGENTS[agent]
+    exe = shutil.which(spec["bin"]) or os.path.join(HOME, ".local", "bin", spec["bin"])
+    if not os.path.isfile(exe):
+        return {"state": "missing", "bin": None, "expires": None}
+    result = _run([exe, *spec["status"][1:]], timeout=30)
+    state = _login_state(agent, result.returncode, result.stdout + result.stderr)
+    expiry = None
+    if state == "logged-in" and _login_cache_matches(agent, _ANSI_RE.sub("", result.stdout + result.stderr)):
+        expiry = _login_cached_expiry(agent, HOME, os.environ)
+    return {"state": state, "bin": exe, "expires": expiry}
+
+
+def _login_decision(probe, now, within_hours, force=False):
+    state, expiry = probe["state"], probe.get("expires")
+    if state == "missing":
+        return False, "not installed"
+    if force:
+        return True, "login explicitly requested (--force)"
+    if state == "error":
+        return False, "status unavailable; use --ignore or explicitly --force"
+    if state == "logged-out":
+        return True, "logged out"
+    if expiry is None:
+        return False, "logged in; expiry unknown (use --force to sign in again)"
+    if expiry <= now + within_hours * 3600:
+        return True, "cached access token expired or expires within %g hours; automatic refresh may still work" % within_hours
+    return False, "logged in; cached access token expires beyond %g hours" % within_hours
+
+
+def _login_hours(value):
+    try:
+        hours = float(value)
+        if math.isfinite(hours) and 0 <= hours <= 8760:
+            return hours
+    except ValueError:
+        pass
+    raise argparse.ArgumentTypeError("use a finite number of hours from 0 to 8760")
+
+
+def cmd_login(cfg, args):
+    if args.force and not args.agents:
+        print("t login: --force requires named agents", file=sys.stderr)
+        return 2
+    headless = _install_headless(os.environ, args.headless)
+    planned, failed = [], False
+    for agent in dict.fromkeys(args.agents or INSTALL_AGENTS):
+        if agent in args.ignore:
+            print(f"{agent}: ignored for this invocation")
+            continue
+        probe = _login_probe(agent)
+        run, reason = _login_decision(probe, time.time(), args.within_hours, args.force)
+        print(f"{agent}: {reason}")
+        if not run:
+            failed |= probe["state"] == "error" or (probe["state"] == "missing" and bool(args.agents))
+            continue
+        cmd = list(_install_login_cmd(agent, headless))
+        # Use the same discovered binary for probe and login, including ~/.local/bin.
+        cmd[2 if cmd[0] == "env" else 0] = probe["bin"]
+        print("  + " + shlex.join(cmd))
+        planned.append((agent, cmd))
+    if args.dry_run or args.status or not planned:
+        return int(failed)
+    if not args.yes:
+        if not sys.stdin.isatty():
+            print("t login: use --dry-run to inspect or -y to run the displayed logins", file=sys.stderr)
+            return 2
+        try:
+            if input("Run these login commands? [y/N] ").strip().lower() not in ("y", "yes"):
+                return int(failed)
+        except (EOFError, KeyboardInterrupt):
+            return 130
+    for agent, cmd in planned:
+        try:
+            result = subprocess.run(cmd)
+        except KeyboardInterrupt:
+            return 130
+        except OSError:
+            print(f"{agent}: could not start login", file=sys.stderr)
+            failed = True
+            continue
+        if result.returncode != 0:
+            print(f"{agent}: login failed (exit {result.returncode})", file=sys.stderr)
+            failed = True
+            continue
+        # A successful child exit alone is not evidence of an authenticated account.
+        if _login_probe(agent)["state"] != "logged-in":
+            print(f"{agent}: login exited successfully, but status is not logged in", file=sys.stderr)
+            failed = True
+        else:
+            print(f"{agent}: login completed; status reports logged in")
+    return int(failed)
 
 
 def _install_items(probed, want, hosts, update=False, no_login=False, reinstall=False):
@@ -8585,7 +8762,7 @@ COMMAND_GROUPS = {
                 "apply": ("instructions", "--apply")},
     "policy": {"check": ("permissions",), "show": ("permissions", "--show"),
                "apply": ("permissions", "--apply")},
-    "agent": {"install": ("install",), "status": ("install", "--status"),
+    "agent": {"login": ("login",), "install": ("install",), "status": ("install", "--status"),
               "trust": ("trust",)},
     "system": {"integrate": ("integrate",), "update": ("update",),
                "diagnose": ("doctor",)},
@@ -8668,6 +8845,7 @@ CONFIGURATION
   policy    Inspect and apply agent permissions
 
 TOOLS
+  login     Log in logged-out or expiring agent tools
   agent     Install and configure agent CLIs
   system    Integrate, update, and diagnose t
 
@@ -8763,7 +8941,7 @@ def _command_description(group, action):
                     "show": "Print the profile", "apply": "Apply it to a repository"},
         "policy": {"check": "Check pending changes", "show": "Show translated rules",
                    "apply": "Apply permission rules"},
-        "agent": {"install": "Install and log in agent CLIs", "status": "Show agent state",
+        "agent": {"login": "Log in logged-out or expiring agents", "install": "Install and log in agent CLIs", "status": "Show agent state",
                   "trust": "Trust a folder in installed agents"},
         "system": {"integrate": "Link t and its hooks", "update": "Update t",
                    "diagnose": "Diagnose the local setup"},
@@ -9299,6 +9477,22 @@ REMOTE SESSIONS
     mode.add_argument("--show", action="store_true", help="print the current profile")
     mode.add_argument("--apply", action="store_true", help="apply profile to repo without prompting")
 
+    sp = sub.add_parser("login", help="log in logged-out or expiring agent tools",
+        description="Review local agent logins. Cached access-token expiry is an advisory hint; "
+            "vendor automatic refresh may still work. Missing expiry stays unknown. "
+            "Ignored tools are not probed. No tools are installed and no remote hosts are changed.")
+    sp.add_argument("agents", nargs="*", metavar="AGENT", choices=INSTALL_AGENTS,
+                    help="claude, codex, cursor (default: all installed tools)")
+    sp.add_argument("--ignore", action="append", default=[], choices=INSTALL_AGENTS,
+                    help="skip this tool without probing it; repeatable, invocation only")
+    sp.add_argument("--within-hours", type=_login_hours, default=24,
+                    help="warn at this many hours before cached token expiry (default: 24)")
+    sp.add_argument("--force", action="store_true", help="log in named agents even with unknown or healthy status")
+    sp.add_argument("--headless", action="store_true", help="use vendor headless login (automatic over SSH)")
+    sp.add_argument("-y", "--yes", action="store_true", help="run the displayed logins without confirmation")
+    sp.add_argument("--dry-run", action="store_true", help="probe and display the plan without signing in")
+    sp.add_argument("--status", action="store_true", help="probe and display the plan without signing in")
+
     sp = sub.add_parser("install", help="install + log in the agent CLIs (claude, codex, cursor)",
         description="The `t config setup`-style checklist for the agent binaries themselves: probes "
             "which of Claude Code, Codex CLI and the Cursor CLI are installed and logged in "
@@ -9432,7 +9626,7 @@ IMPLEMENTED = {
     "land": cmd_land, "kill-owner": cmd_kill_owner, "cursor": cmd_cursor,
     "doctor": cmd_doctor, "mcp": cmd_mcp, "new": cmd_new, "new-land": cmd_new_land,
     "checkout": cmd_checkout, "instructions": cmd_instructions,
-    "install": cmd_install, "integrate": cmd_integrate,
+    "login": cmd_login, "install": cmd_install, "integrate": cmd_integrate,
     "permissions": cmd_permissions, "trust": cmd_trust,
     "app": cmd_app, "restart": cmd_restart,
     "config": cmd_config,
