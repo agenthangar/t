@@ -8546,6 +8546,11 @@ def cmd_mcp(cfg, args):
     return _mcp_serve(cfg)
 
 
+def cmd_agentcore(cfg, args):
+    helper = runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_agentcore.py"))
+    return helper["execute"](args)
+
+
 # ─── argument parsing (gh-style) ───────────────────────────────────────────────
 
 # Public command vocabulary. Values are the established parser spellings and any
@@ -8571,6 +8576,7 @@ COMMAND_GROUPS = {
              "add": ("hosts", "add"), "edit": ("hosts", "edit"),
              "remove": ("hosts", "remove"), "default": ("hosts", "default"),
              "run": ("on",)},
+    "agentcore": {"invoke": ("agentcore", "invoke"), "stop": ("agentcore", "stop")},
     "config": {"open": ("config",), "show": ("config", "--show"),
                "edit": ("config", "--edit"), "setup": ("setup",)},
     "profile": {"init": ("instructions", "--init"),
@@ -8586,6 +8592,7 @@ COMMAND_GROUPS = {
 }
 
 GROUP_DESCRIPTIONS = {
+    "agentcore": "Submit work to an existing Amazon Bedrock AgentCore runtime",
     "session": "Open, find, and move work sessions",
     "repo": "List and manage repositories",
     "cursor": "List, resume, and send Cursor chats",
@@ -8653,6 +8660,7 @@ WORK
   repo      List and manage repositories
   cursor    List, resume, and send Cursor chats
   hosts     Manage remote SSH hosts and run commands
+  agentcore Submit work to an AgentCore runtime
 
 CONFIGURATION
   config    Manage local settings
@@ -8731,6 +8739,7 @@ def _group_help(group):
 
 def _command_description(group, action):
     descriptions = {
+        "agentcore": {"invoke": "Submit JSON or continue a runtime session", "stop": "Stop a runtime session"},
         "session": {"open": "Open or reattach a session", "list": "List live sessions",
                     "close": "Close a session", "restart": "Restart a stuck agent",
                     "push": "Background this session", "pop": "Return a session to this terminal",
@@ -9133,6 +9142,27 @@ REMOTE SESSIONS
     sp.add_argument("host", help="$REMOTE_HOSTS key, or a literal ssh target")
     sp.add_argument("rest", nargs=argparse.REMAINDER, help="command to run (omit for an interactive shell)")
 
+    sp = sub.add_parser("agentcore", help="submit work to an existing AgentCore runtime")
+    p._group_parsers["agentcore"] = sp
+    core_sub = sp.add_subparsers(dest="action", metavar="<command>")
+    for action in ("invoke", "stop"):
+        cp = core_sub.add_parser(action, description=(
+            "Submit a JSON object to an existing IAM-authenticated AgentCore runtime. "
+            "Reuse --session-id to continue. Responses are buffered to a new private file. "
+            "No deployment, credential setup, or automatic retry is performed."
+            if action == "invoke" else "Stop a runtime session using existing AWS CLI credentials."))
+        cp.add_argument("--runtime-arn", help="runtime ARN; default: T_AGENTCORE_RUNTIME_ARN")
+        cp.add_argument("--session-id", required=action == "stop", help="33–256 character session ID; invoke defaults to a new UUID")
+        cp.add_argument("--profile", help="existing AWS CLI profile; otherwise use its credential chain")
+        cp.add_argument("--qualifier", help="runtime endpoint name; default: DEFAULT")
+        cp.add_argument("--timeout", type=int, default=900, help="response timeout in seconds (1–28800; default 900)")
+        cp.add_argument("--dry-run", action="store_true", help="validate and print metadata without AWS calls or file writes")
+        if action == "invoke":
+            body = cp.add_mutually_exclusive_group(required=True)
+            body.add_argument("--prompt", help='convenience payload: {"prompt": TEXT}; must match your agent schema')
+            body.add_argument("--payload", help="JSON object file matching the deployed agent schema")
+            cp.add_argument("--output", required=True, help="new response file; never overwritten")
+
     sp = sub.add_parser("hosts", help="manage remote SSH hosts", description="Manage registered remote SSH hosts.")
     p._group_parsers["hosts"] = sp
     host_sub = sp.add_subparsers(dest="action", metavar="<command>")
@@ -9396,6 +9426,7 @@ REMOTE SESSIONS
 
 
 IMPLEMENTED = {
+    "agentcore": cmd_agentcore,
     "ls": cmd_ls, "session-rows": cmd_session_rows, "on": cmd_on, "read": cmd_read,
     "plan": cmd_plan, "paste": cmd_paste, "kill": cmd_kill, "setup": cmd_setup,
     "land": cmd_land, "kill-owner": cmd_kill_owner, "cursor": cmd_cursor,

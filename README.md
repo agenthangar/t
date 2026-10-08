@@ -523,7 +523,7 @@ checked in CI; optional dotfiles integrations are identified explicitly.
 
 These integrations are planned and are not available in the current release:
 
-- **Amazon Bedrock AgentCore support** — [track progress](https://github.com/agenthangar/t/issues/9).
+- **Amazon Bedrock AgentCore support** — [track progress](https://github.com/agenthangar/t/issues/9); [draft workflow and acceptance](docs/agentcore.md).
 - **Teleport support for SSH workflows** — [track progress](https://github.com/agenthangar/t/issues/10).
 
 ## Development

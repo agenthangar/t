@@ -39,6 +39,11 @@ jobs:
             command -v tmux >/dev/null || brew install tmux
           fi
           python -m pip install -r requirements-dev.txt
+      - name: AgentCore AWS CLI contract (local server, synthetic credentials)
+        if: runner.os == 'Linux'
+        env:
+          T_REQUIRE_AWS_CONTRACT: '1'
+        run: python -m pytest -q tests/test_agentcore.py -k real_aws_cli
       - run: python -m pytest --cov --cov-report=term-missing --cov-fail-under=97
   playground:
     runs-on: ubuntu-latest
