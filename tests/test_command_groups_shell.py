@@ -265,7 +265,7 @@ def test_completion_exposes_groups_and_group_actions(tmp_path):
     assert lines[:3] == ["describe:nouns", "describe:actions", "describe:actions"]
     assert lines[3].startswith("values:")
     source = (ROOT / "zsh" / "shim.zsh").read_text()
-    assert "local -a nouns=(session repo cursor hosts config profile policy agent system help)" in source
+    assert "local -a nouns=(session repo cursor hosts config profile policy agent system login help)" in source
 
 
 @pytest.mark.skipif(not shutil.which("zsh"), reason="zsh is required")
@@ -366,3 +366,16 @@ def test_completion_actions_match_python_command_registry(tmp_path, t_mod):
         assert "actions=( " in line and line.endswith(" )"), (group, line)
         offered = set(line.partition("actions=( ")[2].removesuffix(" )").split())
         assert offered == set(t_mod.COMMAND_GROUPS[group]), (group, offered)
+
+
+@pytest.mark.skipif(not shutil.which("zsh"), reason="zsh is required")
+def test_login_spellings_forward_without_shell_session_actions(tmp_path):
+    result = shell(tmp_path, '''
+        t login --ignore codex --dry-run
+        t agent login claude --within-hours 2
+    ''')
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == [
+        "bin:<login><--ignore><codex><--dry-run>",
+        "bin:<agent><login><claude><--within-hours><2>",
+    ]
