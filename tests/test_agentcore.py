@@ -187,30 +187,26 @@ def test_invalid_metadata(core, args, monkeypatch, metadata):
     with pytest.raises(RuntimeError): core.call_aws(['aws'], core.configure(args), 1)
 
 
-def test_real_aws_cli_against_local_http_server(core, args, tmp_path, monkeypatch):
-    """Exercise AWS's real argument parser, SigV4 transport and streaming outfile.
-
-    No real account: static fake credentials, empty config and loopback-only endpoint.
-    Linux CI requires this check; elsewhere it skips if AWS CLI v2 is unavailable.
-    """
+@pytest.fixture
+def runtime_http_server():
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
     import threading
-    from urllib.parse import unquote, urlsplit, parse_qs
-    executable = shutil.which('aws')
-    if not executable:
-        if os.environ.get('T_REQUIRE_AWS_CONTRACT') == '1':
-            pytest.fail('AWS CLI v2 required for the AgentCore transport contract test')
-        pytest.skip('AWS CLI v2 not installed')
     seen = []
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *unused): pass
         def do_POST(self):
+            # Only the fixture's expected session is accepted. Never reflect input
+            # into response headers, including folded or duplicate field values.
+            if self.headers.get_all('X-Amzn-Bedrock-AgentCore-Runtime-Session-Id') != [SID]:
+                self.send_response(400)
+                self.send_header('Content-Length', '0')
+                self.end_headers()
+                return
             body = self.rfile.read(int(self.headers['Content-Length']))
             seen.append((self.path, dict(self.headers), body))
-            sid = self.headers['X-Amzn-Bedrock-AgentCore-Runtime-Session-Id']
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
-            self.send_header('X-Amzn-Bedrock-AgentCore-Runtime-Session-Id', sid)
+            self.send_header('X-Amzn-Bedrock-AgentCore-Runtime-Session-Id', SID)
             response = b'{"reply":"local-fixture"}' if '/invocations?' in self.path else b'{}'
             self.send_header('Content-Length', str(len(response)))
             self.end_headers()
@@ -218,32 +214,86 @@ def test_real_aws_cli_against_local_http_server(core, args, tmp_path, monkeypatc
     server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
     try:
-        # Strip inherited AWS endpoint/profile/credential settings before injecting test data.
-        for key in tuple(os.environ):
-            if key.startswith('AWS_'): monkeypatch.delenv(key)
-        home = tmp_path / 'aws-home'; home.mkdir()
-        config = home / 'config'; config.write_text('')
-        monkeypatch.setenv('HOME', str(home))
-        monkeypatch.setenv('XDG_CACHE_HOME', str(home / '.cache'))
-        for key in ('AWS_CONFIG_FILE', 'AWS_SHARED_CREDENTIALS_FILE'):
-            monkeypatch.setenv(key, str(config))
-        monkeypatch.setenv('AWS_ACCESS_KEY_ID', 'testing')
-        monkeypatch.setenv('AWS_SECRET_ACCESS_KEY', 'testing')
-        monkeypatch.setenv('AWS_EC2_METADATA_DISABLED', 'true')
-        monkeypatch.setenv('AWS_ENDPOINT_URL', f'http://127.0.0.1:{server.server_port}')
-        monkeypatch.setenv('NO_PROXY', '127.0.0.1,localhost')
-        assert core.execute(args) == 0
-        assert json.loads(Path(args.output).read_bytes()) == {'reply': 'local-fixture'}
-        args.action = 'stop'
-        assert core.execute(args) == 0
-        assert len(seen) == 2
-        for path, headers, body in seen:
-            assert unquote(urlsplit(path).path).startswith('/runtimes/' + ARN + '/')
-            assert parse_qs(urlsplit(path).query) == {'qualifier': ['DEFAULT']}
-            lower = {k.lower(): v for k,v in headers.items()}
-            assert lower['x-amzn-bedrock-agentcore-runtime-session-id'] == SID
-            assert lower['authorization'].startswith('AWS4-HMAC-SHA256 ')
-        assert json.loads(seen[0][2]) == {'prompt': 'hello'}
-        assert len(json.loads(seen[1][2])['clientToken']) == 36
+        yield server, seen
     finally:
         server.shutdown(); server.server_close(); thread.join(timeout=5)
+
+
+@pytest.mark.parametrize('session_headers', [
+    b'',
+    b'X-Amzn-Bedrock-AgentCore-Runtime-Session-Id: unexpected\r\n',
+    b'X-Amzn-Bedrock-AgentCore-Runtime-Session-Id: ' + SID.encode() + b'\r\n\tX-Injected: yes\r\n',
+    (b'X-Amzn-Bedrock-AgentCore-Runtime-Session-Id: ' + SID.encode() + b'\r\n') * 2,
+])
+def test_runtime_fixture_rejects_untrusted_session_headers(runtime_http_server, session_headers):
+    import socket
+    server, seen = runtime_http_server
+    with socket.create_connection(('127.0.0.1', server.server_port), timeout=3) as connection:
+        connection.sendall(b'POST /runtimes/test/invocations?qualifier=DEFAULT HTTP/1.0\r\n'
+                           b'Host: localhost\r\n' + session_headers + b'Content-Length: 0\r\n\r\n')
+        chunks = []
+        while chunk := connection.recv(4096):
+            chunks.append(chunk)
+    response = b''.join(chunks)
+    assert response.startswith(b'HTTP/1.0 400 ')
+    assert b'X-Injected' not in response
+    assert b'X-Amzn-Bedrock-AgentCore-Runtime-Session-Id:' not in response
+    assert not seen
+
+
+def test_runtime_fixture_returns_only_expected_session(runtime_http_server):
+    from http.client import HTTPConnection
+    server, seen = runtime_http_server
+    connection = HTTPConnection('127.0.0.1', server.server_port, timeout=3)
+    try:
+        connection.request('POST', '/runtimes/test/invocations?qualifier=DEFAULT', body=b'{}',
+                           headers={'X-Amzn-Bedrock-AgentCore-Runtime-Session-Id': SID})
+        response = connection.getresponse()
+        assert response.status == 200
+        assert response.getheader('X-Amzn-Bedrock-AgentCore-Runtime-Session-Id') == SID
+        assert json.loads(response.read()) == {'reply': 'local-fixture'}
+        assert len(seen) == 1
+    finally:
+        connection.close()
+
+
+def test_real_aws_cli_against_local_http_server(core, args, tmp_path, monkeypatch, runtime_http_server):
+    """Exercise AWS's real argument parser, SigV4 transport and streaming outfile.
+
+    No real account: static fake credentials, empty config and loopback-only endpoint.
+    Linux CI requires this check; elsewhere it skips if AWS CLI v2 is unavailable.
+    """
+    from urllib.parse import unquote, urlsplit, parse_qs
+    executable = shutil.which('aws')
+    if not executable:
+        if os.environ.get('T_REQUIRE_AWS_CONTRACT') == '1':
+            pytest.fail('AWS CLI v2 required for the AgentCore transport contract test')
+        pytest.skip('AWS CLI v2 not installed')
+    server, seen = runtime_http_server
+    # Strip inherited AWS endpoint/profile/credential settings before injecting test data.
+    for key in tuple(os.environ):
+        if key.startswith('AWS_'): monkeypatch.delenv(key)
+    home = tmp_path / 'aws-home'; home.mkdir()
+    config = home / 'config'; config.write_text('')
+    monkeypatch.setenv('HOME', str(home))
+    monkeypatch.setenv('XDG_CACHE_HOME', str(home / '.cache'))
+    for key in ('AWS_CONFIG_FILE', 'AWS_SHARED_CREDENTIALS_FILE'):
+        monkeypatch.setenv(key, str(config))
+    monkeypatch.setenv('AWS_ACCESS_KEY_ID', 'testing')
+    monkeypatch.setenv('AWS_SECRET_ACCESS_KEY', 'testing')
+    monkeypatch.setenv('AWS_EC2_METADATA_DISABLED', 'true')
+    monkeypatch.setenv('AWS_ENDPOINT_URL', f'http://127.0.0.1:{server.server_port}')
+    monkeypatch.setenv('NO_PROXY', '127.0.0.1,localhost')
+    assert core.execute(args) == 0
+    assert json.loads(Path(args.output).read_bytes()) == {'reply': 'local-fixture'}
+    args.action = 'stop'
+    assert core.execute(args) == 0
+    assert len(seen) == 2
+    for path, headers, body in seen:
+        assert unquote(urlsplit(path).path).startswith('/runtimes/' + ARN + '/')
+        assert parse_qs(urlsplit(path).query) == {'qualifier': ['DEFAULT']}
+        lower = {k.lower(): v for k,v in headers.items()}
+        assert lower['x-amzn-bedrock-agentcore-runtime-session-id'] == SID
+        assert lower['authorization'].startswith('AWS4-HMAC-SHA256 ')
+    assert json.loads(seen[0][2]) == {'prompt': 'hello'}
+    assert len(json.loads(seen[1][2])['clientToken']) == 36
