@@ -121,7 +121,8 @@ for this PR, and a credential-bearing runner must not execute arbitrary PR code.
 
 The runner automates command execution, state comparisons, ignore checks, post-login
 status, and optional real requests. It cannot manufacture natural expiry or approve
-OAuth/MFA on your behalf. Before merging:
+OAuth/MFA on your behalf. The following live checks remain unverified; automated
+tests do not establish these behaviors:
 
 1. Run on Linux and macOS, including native credential stores. Confirm installed CLI
    versions and the expected Cursor executable (`cursor-agent`).
