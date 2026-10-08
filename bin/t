@@ -4200,7 +4200,7 @@ def cmd_login(cfg, args):
             return 2
         try:
             if input("Run these login commands? [y/N] ").strip().lower() not in ("y", "yes"):
-                return 0
+                return int(failed)
         except (EOFError, KeyboardInterrupt):
             return 130
     for agent, cmd in planned:

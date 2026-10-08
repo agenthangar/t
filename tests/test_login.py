@@ -240,3 +240,12 @@ def test_cli_cached_expiry_selects_login_without_writing_auth(tmp_path):
 ])
 def test_cache_must_match_reported_auth_source(t_mod, agent, output, expected):
     assert t_mod._login_cache_matches(agent, output) == expected
+
+
+def test_declining_logins_preserves_probe_failure(t_mod, monkeypatch):
+    args = t_mod.build_parser().parse_args(['login', 'claude', 'codex'])
+    monkeypatch.setattr(t_mod, '_login_probe', lambda agent: {
+        'state': 'error' if agent == 'codex' else 'logged-out', 'bin': '/fixture/' + agent})
+    monkeypatch.setattr(t_mod.sys, 'stdin', SimpleNamespace(isatty=lambda: True))
+    monkeypatch.setattr('builtins.input', lambda _: 'n')
+    assert t_mod.cmd_login(None, args) == 1
