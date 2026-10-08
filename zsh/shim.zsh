@@ -548,7 +548,7 @@ _t_beam_xlate() {
 # key for `on`), and slot/flags after. Pulls live from the ${(k)DEV_REPOS} /
 # ${(k)REMOTE_HOSTS} arrays so it stays current with ${T_LOCAL_RC}.
 _t() {
-  local -a nouns=(session repo cursor hosts config profile policy agent system login help)
+  local -a nouns=(session repo cursor hosts agentcore config profile policy agent system login help)
   if (( CURRENT == 2 )); then
     _describe -t nouns 't command group' nouns
     return
@@ -567,6 +567,7 @@ _t() {
     session) actions=(open list close restart push pop resume cd move read view-plan paste search open-app) ;;
     repo) actions=(list cd locate create clone) ;;
     cursor) actions=(list resume send) ;;
+    agentcore) actions=(invoke stop) ;;
     hosts) actions=(list show add edit remove default run) ;;
     config) actions=(open show edit setup) ;;
     profile) actions=(init edit show apply) ;;
@@ -612,6 +613,16 @@ _t() {
     esac
   fi
   case "$group/$action" in
+    agentcore/invoke|agentcore/stop)
+      case ${words[CURRENT-1]} in
+        --payload|--output) _files ;;
+        --runtime-arn|--session-id|--profile|--qualifier|--timeout|--prompt) _message 'value' ;;
+        *)
+          local -a core_flags=(--runtime-arn --session-id --profile --qualifier --timeout --dry-run -h --help)
+          [[ $action == invoke ]] && core_flags+=(--prompt --payload --output)
+          _values 'flag' $core_flags ;;
+      esac ;;
+
     repo/list|repo/cd|repo/locate)
       if (( CURRENT == first )) && [[ $action == cd || $action == locate ]]; then _values 'repo' ${(k)DEV_REPOS}
       else _values 'flag' -h --help; fi ;;

@@ -51,9 +51,13 @@ Watch the [MP4](docs/media/demo.mp4) or use the [static poster](docs/media/demo-
   other desktop chats can stay open. It resumes the same conversation and
   attaches automatically. The `t app` commands remain available for scripts and advanced options.
 
-**Coming soon:** submit work to your agent framework, starting with
-[AgentCore](https://github.com/agenthangar/t/issues/9), and use
-[Teleport for SSH access](https://github.com/agenthangar/t/issues/10).
+- **Submit to an existing AgentCore runtime.** `t agentcore invoke` submits JSON
+  using your existing AWS CLI profile; continue with the same session ID and use
+  `t agentcore stop` to terminate it. See the [supported workflow](docs/agentcore.md)
+  for setup and limitations. Automated tests cover the CLI contract; live AWS
+  behavior remains unverified.
+
+**Coming soon:** [Teleport for SSH access](https://github.com/agenthangar/t/issues/10).
 
 ## Install
 
@@ -524,7 +528,6 @@ checked in CI; optional dotfiles integrations are identified explicitly.
 
 These integrations are planned and are not available in the current release:
 
-- **Amazon Bedrock AgentCore support** — [track progress](https://github.com/agenthangar/t/issues/9).
 - **Teleport support for SSH workflows** — [track progress](https://github.com/agenthangar/t/issues/10).
 
 ## Development
