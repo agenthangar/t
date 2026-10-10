@@ -216,6 +216,33 @@ mean cluster keys and recordings disappear with the disk. Remove only this run's
 local client credentials/CA files/hosts mapping and any temporary operator grants.
 Leave the existing SSH key pair untouched. Retain sanitized evidence, not auth.
 
+## Recommended defaults for the deployment decision
+
+Use these defaults unless the sandbox owner's policy requires a change. They are
+recommendations to approve together, not permissions already granted:
+
+| Decision | Recommended default |
+| --- | --- |
+| Sequence | Finish and clean up AgentCore A before starting Teleport B |
+| AWS region | us-east-1, standard on-demand pricing |
+| Teleport host | Template as written: one Ubuntu 22.04 x86_64 t3.small, standard credits, 8 GiB gp3, no instance role |
+| Teleport edition/version | CE 18.11.3 candidate from the official demo, subject to eligibility and security/artifact verification |
+| Auth | Local MFA user, Linux login taccept without sudo, lab-only RBAC, one-hour maximum certificate TTL |
+| TLS | Private lab CA, scoped client trust in an isolated Linux test environment; hostname taccept.test with isolated name resolution |
+| Access | Existing sandbox SSH key; one operator/test-client public IPv4 /32 for ports 22/443 |
+| Run bounds | A: four calls and one-hour teardown; B: four-hour teardown, no reboot or extension |
+| Allowance | $1 per stage, $2 total operator allowance; no hard AWS billing cap |
+| Rollback | Executor deletes receipt-identified resources immediately on success/failure; named owner covers disconnection |
+
+The owner still needs to supply the account, existing profile/role and accessible
+execution machine, client /32, existing SSH key name, any required permissions
+boundary/customer KMS policy, CE eligibility, fallback cleanup owner and run window.
+Once account access is available, the executor can resolve the official Ubuntu
+AMI ID, current artifact hashes and exact resource ARNs for approval; the owner
+need not research these technical identifiers. Client-scoped TLS trust must be
+validated locally before starting the four-hour cloud clock. An unsupported trust
+mechanism, license mismatch or newly required IAM action means stop and revise.
+
 ## Bundled confirmation required before any provisioning
 
 Ask the parent/owner to fill and approve all of the following together:
@@ -262,11 +289,10 @@ Git root. The 14 existing AgentCore fixture tests pass. Full log:
 No application code was changed to mask these failures. tmux and AWS CLI are absent,
 so skipped/inapplicable live tests are not acceptance evidence.
 
-CONTRIBUTING.md says that opening a PR accepts the CLA, while this delegation
-forbids accepting new legal agreements. Keep these preparatory artifacts local
-until the parent confirms existing contribution authorization or gives it explicitly;
-do not silently treat a PR as a license-neutral action. No GitHub allowlist or
-release changes are part of this task.
+The owner explicitly approved publishing this infrastructure draft under the
+repository CLA and MIT terms. Keep the PR in draft while deployment decisions are
+pending; publication is not provisioning, IAM, security or spending approval.
+No GitHub allowlist or release changes are part of this task.
 
 ## Official references checked 2026-10-10
 
