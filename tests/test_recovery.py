@@ -762,6 +762,37 @@ background server is not running
 '''
 
 
+MISMATCH = """Background server has incompatible feature settings
+This session requires api_key_model_discovery to be disabled
+Restart will use these shared feature settings:
+  api_key_model_discovery = false
+  code_mode_host = true
+  auth_elicitation = true
+  mcp_oauth_refresh_coordination = false
+These settings persist and can disable functionality for other clients. Restart may
+interrupt active or queued work.
+1. Run without daemon this time
+2. Restart with these settings
+› 3. Cancel
+"""
+
+
+@pytest.mark.parametrize('screen', [
+    MISMATCH, MISMATCH.replace('be disabled', 'be enabled'),
+    MISMATCH.replace('to be disabled', 'to be\n disabled'),
+    MISMATCH.replace('2. Restart with these settings',
+                     'Restart with these settings (disabled) This server is not managed by Codex.').replace('3. Cancel', '2. Cancel'),
+])
+def test_feature_mismatch_detection(recovery, screen):
+    assert recovery.failure('codex', screen) == recovery.BACKGROUND
+    assert recovery.failure('claude', screen) == ''
+    assert recovery.failure('codex', '```\n' + screen + '```') == ''
+    assert recovery.failure('codex', '\n'.join('> ' + line for line in screen.splitlines())) == ''
+    for removed in ('Run without daemon this time', 'Cancel', 'This session requires',
+                    'Background server has incompatible feature settings'):
+        assert recovery.failure('codex', screen.replace(removed, '')) == ''
+
+
 @pytest.mark.parametrize('args,expected', [
     ('/usr/bin/codex', True),
     ('codex --model gpt-6 -c model_reasoning_effort=high --enable fast_mode', True),
@@ -776,7 +807,8 @@ def test_startup_fresh_launch_is_proven(recovery, args, expected):
     assert recovery.fresh_codex({'args': args}) == expected
 
 
-def test_startup_detection_owner_and_callback(recovery, target, monkeypatch):
+@pytest.mark.parametrize("startup_screen", [STARTUP, MISMATCH])
+def test_startup_detection_owner_and_callback(recovery, target, monkeypatch, startup_screen):
     assert recovery.failure('codex', STARTUP) == recovery.BACKGROUND
     assert recovery.failure('codex', UNAVAILABLE) == recovery.BACKGROUND
     assert recovery.failure('codex', UNAVAILABLE.replace('background server is not running',
@@ -794,7 +826,7 @@ def test_startup_detection_owner_and_callback(recovery, target, monkeypatch):
     assert recovery.owner(target['socket'], pane, startup=True) == target
     monkeypatch.setattr(recovery, 'panes', lambda s: [pane])
     assert recovery.current(target)
-    monkeypatch.setattr(recovery, 'tmux', lambda *a: result('DEV_AGENT=codex' if a[1] == 'show-environment' else STARTUP))
+    monkeypatch.setattr(recovery, 'tmux', lambda *a: result('DEV_AGENT=codex' if a[1] == 'show-environment' else startup_screen))
     offered = []
     monkeypatch.setattr(recovery, 'offer', lambda t, e: offered.append(t) or True)
     watcher = recovery.Watcher(target['socket'])

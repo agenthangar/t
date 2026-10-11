@@ -242,12 +242,15 @@ before quitting and relaunching. It stays visible until dismissed. The monitor
 keeps checking and, after dismissal, can offer recovery once the conversation is
 verified.
 
-Codex's **Cannot use the background server / Experimental feature request failed**
-screen, and its startup menu reporting a stopped or unreachable background server,
+Codex's **Background server has incompatible feature settings** screen,
+**Cannot use the background server / Experimental feature request failed** screen,
+and its startup menu reporting a stopped or unreachable background server,
 get a separate **Run without daemon this time** offer. It relaunches only
 that client with `--no-daemon`, retaining its exact conversation (or a verified fresh
 launch if startup failed before creating one). It leaves the shared server and
 global settings alone. The failure is checked again before stopping the client.
+An older CLI and a newer daemon can disagree on shared feature defaults even
+without overrides; see the [investigation and disposable reproduction](docs/codex-background-server.md).
 
 Codex's **Failed to start turn … invalid cwd: No such file or directory** error
 offers **Save draft and restart here**. If the slot's worktree still exists,

@@ -432,11 +432,17 @@ time.sleep(60)
         mod.cursor_restart(target)
 
 
-def test_real_codex_startup_fallback_preserves_pane_and_uses_no_daemon(terminal):
+@pytest.mark.parametrize("mismatch", [False, True])
+def test_real_codex_startup_fallback_preserves_pane_and_uses_no_daemon(terminal, mismatch):
     mod, tmux, _, env, home = terminal
     bins = home / 'bin'
     bins.mkdir()
     executable = bins / 'codex'
+    failure = ('Background server has incompatible feature settings\n'
+               'This session requires api_key_model_discovery to be disabled\n'
+               '1. Run without daemon this time\n2. Restart with these settings\n3. Cancel'
+               if mismatch else 'Cannot use the background server\nExperimental feature request failed\n'
+               '1. Run without daemon this time\nRestart cannot resolve this compatibility check.\n2. Cancel')
     executable.write_text(f'''#!{sys.executable}
 import os, pathlib, sys, time
 if '--help' in sys.argv:
@@ -447,7 +453,7 @@ if '--no-daemon' in sys.argv:
     pathlib.Path({str(home / 'resumed')!r}).write_text(' '.join(sys.argv[1:]))
     print('Ready without daemon', flush=True)
 else:
-    print('Cannot use the background server\\nExperimental feature request failed\\n1. Run without daemon this time\\nRestart cannot resolve this compatibility check.\\n2. Cancel', flush=True)
+    print({failure!r}, flush=True)
 time.sleep(60)
 ''')
     executable.chmod(0o755)
@@ -464,7 +470,9 @@ _dev_agent_new_cmd() {{ print 'codex --model chosen'; }}
     assert tmux('new-session', '-d', '-s', 'dev-api-1', '-c', str(home), 'zsh', '-lic', 'exec codex --model chosen').returncode == 0
     socket = tmux('display-message', '-p', '-t', '=dev-api-1:', '#{socket_path}').stdout.strip()
     pane = mod.panes(socket)[0]
-    until(lambda: '2. Cancel' in tmux('capture-pane', '-p', '-t', pane['pane']).stdout)
+    until(lambda: 'Cancel' in tmux('capture-pane', '-p', '-t', pane['pane']).stdout)
+    tmux('set-environment', '-t', '=dev-api-1', 'DEV_AGENT', 'codex')
+    assert mod.pane_failure(socket, pane) == mod.BACKGROUND
     restart_env = dict(env, TMUX=socket + ',0,0')
     agent_pid = (home / 'agent-pid').read_text()
     command = shlex.join(['_t_restart_slot', 'dev-api-1', str(home), '', 'codex', 'restart-no-daemon', agent_pid])
@@ -475,7 +483,7 @@ _dev_agent_new_cmd() {{ print 'codex --model chosen'; }}
     assert (home / 'resumed').read_text() == '--model chosen --no-daemon'
     assert mod.panes(socket)[0]['pane'] == pane['pane']
     saved = list((home / 'cache/t/restart').iterdir())
-    assert len(saved) == 1 and 'Experimental feature request failed' in saved[0].read_text()
+    assert len(saved) == 1 and failure.splitlines()[1] in saved[0].read_text()
 
 
 @pytest.mark.parametrize("error", ["invalid_cwd", "connection"])

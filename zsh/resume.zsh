@@ -1326,13 +1326,16 @@ _t_restart_slot() {
       launch="$(_dev_agent_resume_cmd "$agent" "$sid") --cd ${(q)dir} --no-daemon"
     elif [[ $mode == restart-no-daemon ]]; then
       screen=$(tmux capture-pane -p -J -t "$pane") || return 1
-      [[ $screen == *'Cannot use the background server'* &&
-         $screen == *'Run without daemon this time'* &&
-         ( ( $screen == *'Experimental feature request failed'* &&
+      [[ $screen == *'Run without daemon this time'* &&
+         ( ( $screen == *'Background server has incompatible feature settings'* &&
+             $screen == *'This session requires '* &&
+             ( $screen == *'2. Cancel'* || $screen == *'3. Cancel'* ) ) ||
+           ( $screen == *'Cannot use the background server'* &&
+           ( ( $screen == *'Experimental feature request failed'* &&
              $screen == *'Restart cannot resolve this compatibility check.'* &&
              $screen == *'2. Cancel'* ) ||
            $screen == *'background server is not running'* ||
-           $screen == *'background server socket is stale or unreachable'* ) ]] || {
+           $screen == *'background server socket is stale or unreachable'* ) ) ) ]] || {
         print -u2 -- 't restart: the startup failure cleared; nothing was stopped'; return 1
       }
       if [[ -n $sid ]]; then

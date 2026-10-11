@@ -2456,3 +2456,22 @@ def test_open_multi_foreground_refused_before_opening(zsh):
     ''')
     assert "rc=1" in result.stdout and "ONE session" in result.stderr
     assert "UNEXPECTED" not in result.stdout
+
+
+@pytest.mark.parametrize('settings,args', [
+    ('', 'codex'),
+    ('DEV_MODEL[codex]=chosen', 'codex --model chosen'),
+    ('DEV_EFFORT[codex]=high', 'codex -c model_reasoning_effort=high'),
+    ('DEV_FAST[codex]=1', 'codex -c service_tier=fast --enable fast_mode'),
+])
+def test_open_new_codex_passes_only_requested_defaults(zsh, settings, args):
+    """The reported public entry point must not change shared feature settings."""
+    (zsh.home / 'code' / 'api').mkdir(parents=True)
+    r = zsh('DEV_WORKTREE[api]=0; _dev_agent_check() { return 0; }; '
+            '_dev_slot_fresh() { return 0; }; ' + settings + '; t open api --new')
+    assert r.returncode == 0, r.stderr
+    calls = zsh.log.read_text().splitlines()
+    launches = [c for c in calls if c.startswith('send-keys ')]
+    assert len(launches) == 1
+    assert launches[0].endswith('; ' + args + '; exit Enter')
+    assert not any('daemon' in c or 'restart' in c for c in calls)
