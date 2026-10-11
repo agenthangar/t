@@ -276,7 +276,7 @@ _t_restart_slot dev-api-1 "$dir" {SID} codex restart-dead '' '%1 99999 123 1'
     assert "respawn-pane -k" not in actions
 
 
-@pytest.mark.parametrize('scenario', ['fresh', 'resume', 'not_running', 'stale_socket',
+@pytest.mark.parametrize('scenario', ['fresh', 'resume', 'not_running', 'stale_socket', 'mismatch', 'unmanaged_mismatch',
                                       'changed_pid', 'cleared', 'unsupported', 'not_fresh'])
 def test_restart_background_failure_uses_invocation_local_fallback(tmp_path, scenario):
     bins = tmp_path / 'bin'
@@ -303,11 +303,11 @@ tmux() {{
     show-options) print off ;;
     capture-pane)
       [[ $scenario == cleared ]] && {{ print 'ready'; return; }}
-      print -r -- 'Cannot use the background server
-{'background server is not running' if scenario == 'not_running' else 'background server socket is stale or unreachable' if scenario == 'stale_socket' else 'Experimental feature request failed'}
+      print -r -- '{'Background server has incompatible feature settings' if 'mismatch' in scenario else 'Cannot use the background server'}
+{'This session requires api_key_model_discovery to be disabled' if 'mismatch' in scenario else 'background server is not running' if scenario == 'not_running' else 'background server socket is stale or unreachable' if scenario == 'stale_socket' else 'Experimental feature request failed'}
 1. Run without daemon this time
-{"" if scenario in ('not_running', 'stale_socket') else 'Restart cannot resolve this compatibility check.'}
-2. Cancel' ;;
+{'2. Restart with these settings' if scenario == 'mismatch' else 'Restart with these settings (disabled) This server is not managed by Codex.' if scenario == 'unmanaged_mismatch' else '' if scenario in ('not_running', 'stale_socket') else 'Restart cannot resolve this compatibility check.'}
+{'3' if scenario == 'mismatch' else '2'}. Cancel' ;;
   esac
   return 0
 }}
@@ -323,14 +323,14 @@ kill() {{ print -r -- "signal $*" >> "$log"; [[ $1 == -TERM ]]; }}
 _t_restart_slot dev-api-1 "$dir" {shlex.quote(sid)} codex restart-no-daemon {'88888' if scenario == 'changed_pid' else '99999'}
 '''
     completed = run_shell(tmp_path, code)
-    assert (completed.returncode == 0) == (scenario in ('fresh', 'resume', 'not_running', 'stale_socket')), completed.stderr
+    assert (completed.returncode == 0) == (scenario in ('fresh', 'resume', 'not_running', 'stale_socket', 'mismatch', 'unmanaged_mismatch')), completed.stderr
     actions = (tmp_path / 'actions').read_text()
-    if scenario in ('fresh', 'resume', 'not_running', 'stale_socket'):
+    if scenario in ('fresh', 'resume', 'not_running', 'stale_socket', 'mismatch', 'unmanaged_mismatch'):
         assert actions.index('capture-pane') < actions.index('signal -TERM') < actions.index('respawn-pane')
         launch = next(line for line in actions.splitlines() if line.startswith('respawn-pane'))
         assert '--no-daemon' in launch and '-k' not in launch
         assert (SID in launch) == (scenario == 'resume')
-        assert ('chosen' in launch) == (scenario in ('fresh', 'not_running', 'stale_socket'))
+        assert ('chosen' in launch) == (scenario in ('fresh', 'not_running', 'stale_socket', 'mismatch', 'unmanaged_mismatch'))
     else:
         assert 'signal' not in actions and 'respawn-pane' not in actions
 

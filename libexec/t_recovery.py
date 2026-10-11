@@ -91,7 +91,11 @@ def failure(agent, screen):
     incompatible = ("Experimental feature request failed" in visible and
                     any("Restart cannot resolve this compatibility check." in line for line in visible) and
                     any(re.fullmatch(r"[>›❯]?\s*2\. Cancel", line) for line in visible))
-    if (agent == "codex" and BACKGROUND in visible and (incompatible or unavailable)
+    feature_mismatch = ("Background server has incompatible feature settings" in visible and
+                        re.search(r"(?:^| )This session requires [a-z_]+ to be (?:enabled|disabled)(?: |$)",
+                                  " ".join(visible)) and
+                        any(re.fullmatch(r"[>›❯]?\s*[23]\. Cancel", line) for line in visible))
+    if (agent == "codex" and (feature_mismatch or (BACKGROUND in visible and (incompatible or unavailable)))
             and any(re.fullmatch(r"[>›❯]?\s*1\. Run without daemon this time", line)
                     for line in visible)):
         return BACKGROUND
@@ -266,9 +270,10 @@ def offer(target, error, viewer=None):
         lines = ["The agent's terminal process has exited.",
                  "Restart to continue this conversation.", "Your visible draft will be saved first."]
     elif target.get("startup"):
-        title, choice = "t: SERVER UNAVAILABLE", "Run without daemon this time"
-        lines = ["The background server is unavailable.",
-                 "Continue with a standalone client for this session."]
+        title, choice = "t: BACKGROUND SERVER", "Run without daemon this time"
+        lines = ["The background server cannot serve this session.",
+                 "Continue with a standalone client for this session.",
+                 "The shared server and other sessions stay running."]
     elif error == INVALID_CWD:
         title, choice = "t: WORKSPACE UNAVAILABLE", "Save draft and restart here"
         lines = ["The agent cannot access its workspace.",
