@@ -2663,3 +2663,38 @@ def test_open_new_codex_keeps_defaults_and_uses_private_backend(zsh, settings, a
     assert len(launches) == 1
     assert launches[0].endswith('; ' + args + ' --no-daemon; exit Enter')
     assert not any('app-server' in c or 'restart' in c for c in calls)
+
+
+def test_installed_symlink_hook_records_history_without_plugin_environment(sandbox, tmp_path):
+    home, env = sandbox
+    env = {key: value for key, value in env.items() if not key.startswith('COV_CORE_')}
+    env.pop('T_HOME', None)
+    for name in ('XDG_STATE_HOME', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_CACHE_HOME'):
+        env[name] = str(home / name.lower())
+    repo = home / 'code/project'
+    repo.mkdir(parents=True)
+    for command in (['git', 'init', '-b', 'main', str(repo)],
+                    ['git', '-C', str(repo), 'config', 'user.name', 'Hook test'],
+                    ['git', '-C', str(repo), 'config', 'user.email', 'hook@example.invalid'],
+                    ['git', '-C', str(repo), 'commit', '--allow-empty', '-m', 'Initial'],
+                    ['git', '-C', str(repo), 'remote', 'add', 'origin', 'https://github.com/example/project.git']):
+        subprocess.run(command, env=env, check=True, capture_output=True)
+    installed = home / 'bin/claude-stamp-tmux'
+    installed.parent.mkdir()
+    intermediate = home / 'links/hook'
+    intermediate.parent.mkdir()
+    intermediate.symlink_to(HOOK)
+    installed.symlink_to('../links/hook')
+    result = subprocess.run([str(installed)], input=json.dumps(dict(session_id='synthetic-hook-session', cwd=str(repo))),
+                            env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    database = pathlib.Path(env['XDG_STATE_HOME']) / 't/history/v1/history.sqlite3'
+    with sqlite3.connect(database) as db:
+        records = [json.loads(row[0]) for row in db.execute('select record from conversations')]
+    assert len(records) == 1
+    assert records[0]['sid'] == 'synthetic-hook-session'
+    assert records[0]['repo'] == 'example/project'
+    assert records[0]['associations'][0]['workspace'] == str(repo)
+    assert records[0]['associations'][0]['commit']
+    assert records[0]['associations'][0]['generation']
+    assert not pathlib.Path(env['TMUX_LOG']).exists()

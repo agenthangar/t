@@ -7704,6 +7704,7 @@ done
 # This is deliberately after revalidation and the self-handoff guard.
 tmux set-environment -t "=$session" CLAUDE_RESUME_ID "$expected_sid" || exit 1
 tmux set-environment -t "=$session" DEV_AGENT codex || exit 1
+_dev_history_record "$expected_sid" codex "$expected_cwd" handoff
 # Some slots exec Codex as the pane process, with no shell to return to. Keep
 # that pane after exit too, or the session and its conversation stamp disappear.
 tmux set-option -p -t "=$session:" remain-on-exit on || exit 1
@@ -8989,6 +8990,18 @@ def cmd_agentcore(cfg, args):
     return helper["execute"](args)
 
 
+def cmd_history(cfg, args):
+    helper = runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_history.py"))
+    history = helper["HistoryCommand"](cfg, globals())
+    try:
+        return history.execute(args)
+    except (ValueError, OSError) as error:
+        print(f"t history: {error}", file=sys.stderr)
+        return 1
+    finally:
+        history.store.close()
+
+
 def cmd_issue(cfg, args):
     helper = runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_issue.py"))
     return helper["run"](cfg, args, globals())
@@ -9006,7 +9019,7 @@ COMMAND_GROUPS = {
     "session": {
         "open": ("open",), "list": ("ls",), "close": ("kill",),
         "restart": ("restart",), "push": ("push",), "pop": ("pop",),
-        "resume": ("resume",), "cd": ("cd",), "move": ("beam",),
+        "resume": ("resume",), "history": ("history",), "cd": ("cd",), "move": ("beam",),
         "read": ("read",), "view-plan": ("plan",), "paste": ("paste",),
         "search": ("find",), "open-app": ("app",),
     },
@@ -9211,7 +9224,7 @@ def _command_description(group, action):
         "session": {"open": "Open or reattach a session", "list": "List live sessions",
                     "close": "Close a session", "restart": "Restart a stuck agent",
                     "push": "Background this session", "pop": "Return a session to this terminal",
-                    "resume": "Revive a saved conversation", "cd": "Enter a slot worktree",
+                    "resume": "Revive a saved conversation", "history": "Browse all conversations for a slot", "cd": "Enter a slot worktree",
                     "move": "Move a session between machines", "read": "Read slot output",
                     "view-plan": "Show a Claude session plan", "paste": "Paste a recent file path",
                     "search": "Search and resume a saved conversation",
@@ -9527,6 +9540,21 @@ REMOTE SESSIONS
             "and `t session pop api 3` pulls dev-api-3. Inverse of `t session push`.")
     sp.add_argument("repo", nargs="?", help="DEV_REPOS key; defaults to the repo your cwd is in")
     sp.add_argument("slot", nargs="?", help="slot number; a lone slot implies the cwd repo")
+
+    sp = sub.add_parser("history", help="browse every conversation associated with a slot",
+        description="Browse local and retained slot history, including live, inactive, archived, "
+                    "and removed worktrees. A lone number infers the repository; no arguments "
+                    "infer the current slot or offer a slot picker. History never automatically "
+                    "resumes a sole conversation. Search covers all pages. Enter resumes the "
+                    "selected conversation; Ctrl-F/B change page, Ctrl-R refreshes remote "
+                    "metadata, Ctrl-/ shows details, and Escape cancels. Without a terminal "
+                    "this command lists only. Remote refresh fetches metadata; only an actual "
+                    "resume fetches a selected transcript.")
+    sp.add_argument("target", nargs="*", metavar="REPO_OR_SLOT")
+    sp.add_argument("--limit", type=int, default=50, help="conversations per page (default: 50)")
+    sp.add_argument("--page", type=int, default=1, help="first page to show (default: 1)")
+    sp.add_argument("--refresh", action="store_true", help="refresh registered hosts' metadata and PR states")
+    sp.add_argument("--json", action="store_true", help="print paginated metadata without launching")
 
     sp = sub.add_parser("resume", help="revive a dead slot's saved conversation",
         description="Revive a DEAD dev slot's conversation (`t session open` on a dead slot "
@@ -9970,6 +9998,7 @@ REMOTE SESSIONS
 
 IMPLEMENTED = {
     "issue": cmd_issue,
+    "history": cmd_history,
     "agentcore": cmd_agentcore,
     "ls": cmd_ls, "session-rows": cmd_session_rows, "on": cmd_on, "read": cmd_read,
     "plan": cmd_plan, "paste": cmd_paste, "kill": cmd_kill, "setup": cmd_setup,
@@ -10047,6 +10076,20 @@ def main(argv):
     argv = _hosts_argv(argv)
     if argv == ["__update-prompt"]:
         return _t_offer_update()
+    if len(argv) == 2 and argv[0] == "__history-export":
+        helper = runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_history.py"))
+        cfg = Config()
+        history = helper["HistoryCommand"](cfg, globals())
+        try:
+            for alias in cfg.repos:
+                if history.identity(alias) == argv[1]:
+                    history.discover(alias)
+                    print(json.dumps(history.export(alias)))
+                    return 0
+            print("[]")
+            return 0
+        finally:
+            history.store.close()
     if argv and argv[0] == "__session-picker-rows" and set(argv[1:]) <= {"--remote", "--repo"}:
         rows = _parse_rows(sys.stdin.read(), host_prefixed=True)
         for line in _session_picker_rows(rows, remote="--remote" in argv, scoped="--repo" in argv):
