@@ -75,20 +75,15 @@ def test_issue_url_never_needs_repository_picker(app, mod, monkeypatch):
 
 
 @pytest.mark.parametrize('action,json_mode,scan_host', [
-    ('list', True, False), ('start', False, True), ('status', True, False),
+    ('start', False, True), ('status', True, False),
 ])
 def test_missing_repo_noninteractive_modes_fail_before_provider(app, mod, monkeypatch,
                                                                 action, json_mode, scan_host):
     monkeypatch.setattr(app, 'pick_rows', lambda *a, **kw: pytest.fail('no interactive picker'))
     monkeypatch.setattr(mod, 'command', lambda *a, **kw: pytest.fail('no GitHub or Git request'))
-    if action == 'list':
-        args = SimpleNamespace(action=action, repo=None, repository=None,
-                               state='open', json=json_mode)
-        call = lambda: app.list_issues(args)
-    else:
-        args = SimpleNamespace(action=action, target=['12'], repo=None,
-                               json=json_mode, scan_host=scan_host)
-        call = lambda: app.start_targets(args)
+    args = SimpleNamespace(action=action, target=['12'], repo=None,
+                           json=json_mode, scan_host=scan_host)
+    call = lambda: app.start_targets(args)
     with pytest.raises(mod.IssueError, match='repo'):
         call()
 

@@ -289,20 +289,70 @@ class IssueCommand:
                      assignees=[user['login'] for user in row.get('assignees', [])])
                 for page in data for row in page if 'pull_request' not in row]
 
+    def list_repositories(self, repo, all_repos=False):
+        """Match session-list scope: cwd when known, otherwise every repository."""
+        if repo and all_repos:
+            raise IssueError('a repo and --all are contradictory — pick one')
+        scope = repo or (None if all_repos else self.cfg.repo_of_dir(os.getcwd())[0])
+        identities, errors = [], []
+        for name in [scope] if scope else sorted(self.cfg.repos):
+            try:
+                identity = repository(name, self.cfg, require_checkout=False)['repo']
+                if identity not in identities:
+                    identities.append(identity)
+            except IssueError as error:
+                errors.append(f'{clean_text(name)}: {error}')
+        return identities, scope, errors
+
+    def render_issues(self, rows, scope, state):
+        """Use the same compact, scoped table presentation as session list."""
+        where = clean_text(scope) if scope else 'all registered repositories'
+        if not rows:
+            qualifier = '' if state == 'all' else state + ' '
+            print(f'No {qualifier}issues in {where}.')
+            return
+        st = self.api['Style']()
+        truncate = self.api['_truncate']
+        cells = [(clean_text(row['repo']), f'#{row["number"]}', clean_text(row['state']),
+                  clean_text(row['title'])) for row in rows]
+        widths = [max(len(heading), *(len(row[i]) for row in cells))
+                  for i, heading in enumerate(('REPO', 'ISSUE', 'STATE'))]
+        avail = max(12, self.api['_columns']() - sum(widths) - 8)
+        note = f'repo: {where} — --all for all' if scope else where
+        print(f'issues   {st.y}{state} · {note}{st.r}')
+        print()
+        print(f'  {st.y}{"REPO":<{widths[0]}}  {"ISSUE":<{widths[1]}}  '
+              f'{"STATE":<{widths[2]}}  TITLE{st.r}')
+        for repo, number, status, title in cells:
+            print(f'  {repo:<{widths[0]}}  {number:<{widths[1]}}  '
+                  f'{status:<{widths[2]}}  {st.y}{truncate(title, avail)}{st.r}')
+        print()
+        print(f'  {st.y}start: t issue start <repo> <id> · '
+              f'inspect: t issue status <repo> <id>{st.r}')
+
     def list_issues(self, args):
         positional = getattr(args, 'repository', None)
         if positional and args.repo:
             raise IssueError('specify the repository once, positionally or with --repo')
-        repo = self.resolve_repo(positional or args.repo, interactive=not args.json)
-        rows = self.issues(repo, args.state)
+        identities, scope, errors = self.list_repositories(
+            positional or args.repo, getattr(args, 'all', False))
+        rows = []
+        for identity in identities:
+            try:
+                rows.extend(self.issues(identity, args.state))
+            except IssueError as error:
+                errors.append(f'{identity}: {error}')
         if args.json:
             print(json.dumps(rows))
-        elif not rows:
-            print('No matching issues.')
+        elif not identities and not errors:
+            print('No repositories registered. Run t repo clone to register one.')
+        elif errors and not rows:
+            print('Issue list incomplete; no matching issues returned.')
         else:
-            for row in rows:
-                print(clean_text(f'#{row["number"]}  {row["state"]:6}  {row["title"]}  {row["url"]}'))
-        return 0
+            self.render_issues(rows, scope, args.state)
+        for error in errors:
+            print(f't issue list: {error}', file=sys.stderr)
+        return int(bool(errors))
 
     def pick_rows(self, default, all_rows, action, label, legend, *, multi=True, noun='issues'):
         """Keep shared fzf controls and styling; large lists travel in private files."""
