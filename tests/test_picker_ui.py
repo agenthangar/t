@@ -21,7 +21,7 @@ def picker():
         root = Path(directory)
         socket = str(root / 'tmux.sock')
         env = {k: v for k, v in os.environ.items() if not k.startswith('COV_CORE_')}
-        env.update(HOME=directory, XDG_CONFIG_HOME=directory, XDG_CACHE_HOME=directory,
+        env.update(HOME=directory, ZDOTDIR=directory, XDG_CONFIG_HOME=directory, XDG_CACHE_HOME=directory,
                    XDG_STATE_HOME=directory, TMPDIR=directory, TMUX='', SHELL='/bin/sh',
                    TERM='xterm-256color', FZF_DEFAULT_OPTS='', FZF_DEFAULT_OPTS_FILE='/dev/null')
 
@@ -29,19 +29,31 @@ def picker():
             return subprocess.run(['tmux', '-S', socket, *args], env=env, text=True,
                                   capture_output=True, check=check)
 
-        def start(empty=False, width=90):
+        def start(empty=False, width=90, mode='open', shell='/bin/sh'):
             rows = ('local\tapi-2\tdetached\tapi  2  ⬡ codex  ○  Alpha completed task\n'
                     'local\tweb-4\tapp\tweb  4  ⬡ codex  ▣  Beta full task detail END-OF-TITLE\n'
                     'local\tapi-7\tattached\tapi  7  ✱ claude  ●  Pending task\n')
+            default = '' if empty else '\n'.join(rows.splitlines()[:2]) + '\n'
+            if mode == 'kill':
+                rows = ('local\tapi-1\tdetached\tDetached completed\n'
+                        'local\tapi-2\tattached\tAttached completed\n'
+                        'local\tapi-3\tdetached\tDetached pending\n'
+                        'local\tapi-4\tattached\tAttached pending\n')
+                default = rows.splitlines()[0] + '\n'
+                (root / 'attached').write_text('\n'.join(rows.splitlines()[:2]) + '\n')
+                (root / 'pending').write_text('\n'.join(rows.splitlines()[::2]) + '\n')
             (root / 'all').write_text(rows)
-            (root / 'default').write_text('' if empty else '\n'.join(rows.splitlines()[:2]) + '\n')
+            (root / 'default').write_text(default)
+            mode_env = 'T_PICKER_SESSION_FILTERS=' + shlex.quote(mode) + ' '
+            if mode == 'kill':
+                mode_env += 'T_PICKER_WITH_ATTACHED="$(cat "$HOME/attached")" T_PICKER_WITH_PENDING="$(cat "$HOME/pending")" '
             script = (f'. {shlex.quote(str(ROOT / "ui/fzf.sh"))}\n'
-                      '_t_fzf_filtered "$(cat "$HOME/default")" "$(cat "$HOME/all")" '
-                      'open unattached "⬡ codex · ✱ claude" "" --prompt="open > " > "$HOME/selected"\n'
+                      + mode_env + '_t_fzf_filtered "$(cat "$HOME/default")" "$(cat "$HOME/all")" '
+                      + mode + ' unattached "⬡ codex · ✱ claude" "" --prompt="' + mode + ' > " > "$HOME/selected"\n'
                       'printf done > "$HOME/done"\n')
             (root / 'run.sh').write_text(script)
             tmux('-f', '/dev/null', 'new-session', '-d', '-x', str(width), '-y', '26',
-                 '/bin/sh ' + shlex.quote(str(root / 'run.sh')))
+                 shell + ' ' + shlex.quote(str(root / 'run.sh')))
 
         def wait(text):
             deadline = time.monotonic() + 5
@@ -72,16 +84,16 @@ def test_filter_toggle_preserves_query_and_removes_hidden_marks(picker):
     wait('1/2 (0)')
     keys('C-a')
     screen = wait('1/3 (0)')
-    assert 'All sessions' in screen and 'open > Beta' in screen
-    keys('C-a')
+    assert 'Ctrl-T attached: shown' in screen and 'open > Beta' in screen
+    keys('C-f')
     wait('1/2 (0)')
     keys('C-u')
     wait('2/2 (0)')
     keys('Up', 'Space', 'C-a')
-    wait('All sessions')
+    wait('Ctrl-T attached: shown')
     modern = '--id-nth' in subprocess.check_output(['fzf', '--help'], text=True)
     wait('3/3 (1)' if modern else '3/3 (0)')
-    keys('Down', 'Space', 'C-a')
+    keys('Down', 'Space', 'C-t')
     screen = wait('2/2 (1)' if modern else '2/2 (0)')
     assert 'Pending task' not in screen and 'Ctrl-A show all' in screen
     if not modern:
@@ -101,3 +113,50 @@ def test_empty_filter_can_reveal_rows_and_narrow_preview_keeps_details(picker):
     keys('Tab')
     wait('3/3 (2)')
     assert [row.split('\t')[1] for row in finish()] == ['api-2', 'web-4']
+
+
+@pytest.mark.parametrize('shell', ['/bin/sh', 'zsh -f'])
+def test_kill_filters_are_independent_and_show_all_is_idempotent(picker, shell):
+    start, wait, keys, finish = picker
+    start(mode='kill', shell=shell)
+    wait('1/1 (0)')
+    keys('C-t')
+    screen = wait('2/2 (0)')
+    assert 'Attached completed' in screen and 'Detached pending' not in screen
+    assert 'Ctrl-T attached: shown' in screen and 'Ctrl-P pending: hidden' in screen
+    keys('C-p')
+    screen = wait('4/4 (0)')
+    assert 'Ctrl-T attached: shown' in screen and 'Ctrl-P pending: shown' in screen
+    keys('C-t')
+    screen = wait('2/2 (0)')
+    assert 'Detached pending' in screen and 'Attached completed' not in screen
+    keys('C-a')
+    wait('4/4 (0)')
+    # A repeated show-all command must not restore either filter.
+    keys('C-a')
+    keys('-l', 'pending')
+    screen = wait('2/4 (0)')
+    assert 'Attached pending' in screen and 'Detached pending' in screen
+    keys('C-f')
+    screen = wait('0/1 (0)')
+    assert 'kill > pending' in screen
+    keys('C-p')
+    wait('1/2 (0)')
+    assert [row.split('\t')[1] for row in finish()] == ['api-3']
+
+
+def test_resume_live_hotkey_restores_defaults_without_losing_search(picker):
+    start, wait, keys, finish = picker
+    start(mode='resume')
+    wait('2/2 (0)')
+    keys('-l', 'Pending')
+    wait('0/2 (0)')
+    keys('C-l')
+    screen = wait('1/3 (0)')
+    assert 'Ctrl-L live: shown' in screen
+    keys('C-f')
+    screen = wait('0/2 (0)')
+    assert 'Ctrl-L live: hidden' in screen and 'resume > Pending' in screen
+    keys('C-a')
+    wait('1/3 (0)')
+    assert [row.split('\t')[1] for row in finish()] == ['api-7']

@@ -26,10 +26,11 @@ if '--help' in sys.argv:
 rows = sys.stdin.read().splitlines()
 open(os.environ['PICKER_LOG'], 'w').write('\n'.join(rows))
 Path(os.environ['PICKER_LOG'] + '.all').write_text(Path(os.environ['T_PICKER_ALL']).read_text())
-for _ in range(int(os.environ.get('PICK_TOGGLES', '0'))):
-    subprocess.run(['sh', os.environ['T_PICKER_TOGGLE']], check=True)
+for index, action in enumerate(filter(None, os.environ.get('PICK_ACTIONS', '').split(','))):
+    subprocess.run(['sh', os.environ['T_PICKER_TOGGLE'], action], check=True)
     Path(os.environ['PICKER_LOG'] + '.header').write_text(Path(os.environ['T_PICKER_CURRENT_HEADER']).read_text())
     rows = Path(os.environ['T_PICKER_CURRENT']).read_text().splitlines()
+    Path(os.environ['PICKER_LOG'] + f'.step{index}').write_text('\n'.join(rows))
 selected = os.environ.get('PICK_LABELS', '').split(',')
 for row in rows:
     if row.split('\t')[1] in selected:
@@ -139,16 +140,30 @@ def test_picker_formatter_preserves_full_metadata_and_legacy_rows(t_mod, monkeyp
     assert fallback[0].split('\t')[3].startswith('api  -  ✱ claude')
 
 
-@pytest.mark.parametrize('args,toggles,selected', [('', '1', 'api-2'), ('--attached', '1', 'web-6')])
-def test_open_hotkey_reverses_initial_filter(zsh, tmp_path, args, toggles, selected):
+@pytest.mark.parametrize('args,actions,selected,attached', [('', 'all', 'api-2', 'shown'),
+                                                            ('--attached', 'default', 'web-6', 'hidden')])
+def test_open_hotkeys_show_all_and_restore_defaults(zsh, tmp_path, args, actions, selected, attached):
     env = picker_stub(tmp_path, selected)
     result = zsh(ROWS + r'''
       _t_dev() { print -r -- "CLI $*"; }
-      _t_open ''' + args, _tty=True, PICK_TOGGLES=toggles, **env)
+      _t_open ''' + args, _tty=True, PICK_ACTIONS=actions, **env)
     assert result.returncode == 0, result.stdout
     assert 'CLI ' + selected.replace('-', ' ') + ' --local' in result.stdout
     header = (tmp_path / 'picker.log.header').read_text()
-    assert ('All sessions' if not args else 'unattached') in header
+    assert 'Ctrl-T attached: ' + attached in header
+
+
+def test_open_attached_toggle_can_hide_after_show_all(zsh, tmp_path):
+    env = picker_stub(tmp_path, 'web-6')
+    result = zsh(ROWS + r'''
+      _t_dev() { print -r -- "CLI $*"; }
+      _t_open
+    ''', _tty=True, PICK_ACTIONS='all,first', **env)
+    assert result.returncode == 0, result.stdout
+    assert 'CLI web 6 --local' in result.stdout
+    assert 'api-2' in (tmp_path / 'picker.log.step0').read_text()
+    assert 'api-2' not in (tmp_path / 'picker.log.step1').read_text()
+    assert 'Ctrl-T attached: hidden' in (tmp_path / 'picker.log.header').read_text()
 
 
 def test_open_remote_picker_retains_model_and_selected_host(zsh, tmp_path):

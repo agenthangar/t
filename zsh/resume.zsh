@@ -47,7 +47,8 @@ _t_resume_on_host() {
 # and needs a prompt on the far side, so "resume what just died on the other
 # machine" cannot wait for it), then scans as usual. LIVE slots — local or on a
 # $REMOTE_HOSTS host — are retained but filtered from the initial picker view.
-# Ctrl-A reveals them and restores the inactive view; -l/--live starts with all
+# Ctrl-A reveals all, Ctrl-L toggles live rows, Ctrl-F restores the inactive
+# defaults; -l/--live starts with all
 # rows. Their labels ("● active" / "● on <host>") remain visible when revealed and a pick
 # ATTACHES in place instead of resuming (one-live-owner: a second `claude -r` on a
 # live id diverges the transcript). An explicit `t resume <repo> <slot>` on a live
@@ -597,7 +598,7 @@ _t_resume() {
     fi
     (( i++ ))
   done
-  # Keep the inactive set separate from the initial view so Ctrl-A can always
+  # Keep the inactive set separate from the initial view so Ctrl-F can always
   # restore it, even when --live (or an explicit slot) starts with all rows.
   # The full row, including every aligned display detail, is identical in both
   # views; only membership changes.
@@ -624,7 +625,7 @@ _t_resume() {
      f=("${(@ps:\t:)visible[1]}") && [[ $f[7] == - || -t 1 ]]; then
     pick=${visible[1]}
   elif [[ -t 0 && -t 1 ]] && command -v fzf >/dev/null; then
-    pick=$(_t_fzf_filtered "$(print -rl -- "${(@)inactive}")" \
+    pick=$(T_PICKER_SESSION_FILTERS=resume _t_fzf_filtered "$(print -rl -- "${(@)inactive}")" \
       "$(print -rl -- "${(@)cands}")" resume inactive "$legend" "$show_all" \
       --delimiter=$'\t' --with-nth=-1 --no-hscroll \
       --prompt="$fprompt") || return 1
@@ -639,7 +640,7 @@ _t_resume() {
     for c in "${(@)visible}"; do echo "  ${c##*$'\t'}" >&2; done
     echo "  $legend" >&2
   elif (( ! $#visible )); then
-    echo "Nothing inactive to resume for ${repo:-any repo} — Ctrl-A in an interactive picker or t session resume --live shows live sessions." >&2
+    echo "Nothing inactive to resume for ${repo:-any repo} — Ctrl-L or Ctrl-A in an interactive picker, or t session resume --live, shows live sessions." >&2
     return 1
   else
     if [[ -n $all_mode ]]; then
