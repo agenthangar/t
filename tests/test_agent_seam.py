@@ -2261,6 +2261,8 @@ def test_zsh_resume_host_lands_the_pick_on_that_host(zsh, tmp_path):
     ('claude', '0', '--settings\n{"fastMode":false}\n'),
     ('codex', '1', '-c\nservice_tier=fast\n--enable\nfast_mode\n'),
     ('codex', '0', '-c\nservice_tier=default\n'),
+    ('codex', 'fast', '-c\nservice_tier=fast\n--enable\nfast_mode\n'),
+    ('codex', 'ultrafast', '-c\nservice_tier=ultrafast\n--enable\nfast_mode\n'),
 ])
 def test_fast_mode_reaches_new_tmux_and_foreground_launches(zsh, agent, fast, args):
     (zsh.home / 'code' / 'web').mkdir(parents=True)
@@ -2645,6 +2647,8 @@ def test_open_multi_foreground_refused_before_opening(zsh):
     ('DEV_MODEL[codex]=chosen', 'codex --model chosen'),
     ('DEV_EFFORT[codex]=high', 'codex -c model_reasoning_effort=high'),
     ('DEV_FAST[codex]=1', 'codex -c service_tier=fast --enable fast_mode'),
+    ('DEV_FAST[codex]=fast', 'codex -c service_tier=fast --enable fast_mode'),
+    ('DEV_FAST[codex]=ultrafast', 'codex -c service_tier=ultrafast --enable fast_mode'),
 ])
 def test_open_new_codex_keeps_defaults_and_uses_private_backend(zsh, settings, args):
     """The reported public entry point must not change shared feature settings."""

@@ -131,7 +131,7 @@ class Config:
         self.auto_trust = os.environ.get("T_AUTO_TRUST", "0")
         self.models = {}     # agent -> model for NEW sessions; empty defers to the CLI
         self.efforts = {}    # agent -> reasoning effort for NEW sessions
-        self.fast = {}       # agent -> 1/0 fast mode; empty inherits the CLI setting
+        self.fast = {}       # agent -> speed override; empty inherits the CLI setting
         self.beam_host = ""
         self.mini_host = ""  # legacy host seed; cleared if its host is removed
         self.local_rc = _current_local_rc()
@@ -1464,8 +1464,10 @@ def _config_assignment(key, value):
         raise ValueError("model IDs must contain no spaces or shell commands")
     if key.startswith("DEV_EFFORT[") and value and not _EFFORT_ID.fullmatch(value):
         raise ValueError("effort must be a level name reported by the tool")
-    if key.startswith("DEV_FAST[") and value not in ("", "1", "0"):
-        raise ValueError("fast mode must be 1, 0, or empty to inherit")
+    if key.startswith("DEV_FAST["):
+        allowed = ("", "1", "0", "fast", "ultrafast") if key == "DEV_FAST[codex]" else ("", "1", "0")
+        if value not in allowed:
+            raise ValueError("fast mode must be 1, 0, or empty to inherit; Codex also accepts fast and ultrafast")
     if (key == "DEV_OPEN_MODE_DEFAULT" or key.startswith("DEV_OPEN_MODE[")) and value not in ("cli", "app"):
         raise ValueError("choose cli or app for opening mode")
     if key == "T_AUTO_TRUST" and value not in ("1", "0"):
@@ -1786,14 +1788,18 @@ def _config_catalog(agent, raw):
             if isinstance(value, str) and _EFFORT_ID.fullmatch(value) and value not in efforts:
                 efforts.append(value)
         fast = model.get("supportsFastMode") is True
+        ultrafast = False
         if agent == "codex":
             tiers = model.get("serviceTiers")
             if isinstance(tiers, list):
                 fast = any(isinstance(tier, dict) and tier.get("id") in ("fast", "priority") for tier in tiers)
+                ultrafast = any(isinstance(tier, dict) and tier.get("id") == "ultrafast" for tier in tiers)
             else:
                 legacy = model.get("additionalSpeedTiers")
                 fast = isinstance(legacy, list) and "fast" in legacy
-        catalog.append({"id": ident, "resolved": resolved, "label": label, "efforts": efforts, "fast": fast})
+                ultrafast = isinstance(legacy, list) and "ultrafast" in legacy
+        catalog.append({"id": ident, "resolved": resolved, "label": label, "efforts": efforts,
+                        "fast": fast, "ultrafast": ultrafast})
     return catalog
 
 
@@ -1827,7 +1833,9 @@ def _config_set_model(cfg, agent, model, catalog):
     if effort and (info is None or effort not in info["efforts"]):
         cfg.efforts[agent] = ""
         reset.append("effort")
-    if cfg.fast.get(agent) == "1" and (info is None or not info["fast"]):
+    speed = cfg.fast.get(agent)
+    capability = "fast" if speed in ("1", "fast") else "ultrafast"
+    if speed in ("1", "fast", "ultrafast") and (info is None or not info[capability]):
         cfg.fast[agent] = "0"
         reset.append("fast mode")
     return reset
@@ -1848,14 +1856,18 @@ def _config_model_menu(ui, cfg, agent, catalogs, setting="model"):
         model = cfg.models.get(agent, "")
         if setting == "fast":
             current = cfg.fast.get(agent, "")
+            if agent == "codex" and current == "1":
+                current = "fast"
             info = _config_find_model(catalog, model)
-            rows = [("", "Use tool's own setting"), ("0", "Off · standard speed")]
+            rows = [("", "Use tool's own setting"), ("0", "Standard")]
             if info and info["fast"]:
-                rows.append(("1", "On · higher usage / cost"))
-            else:
-                ui.done("fast mode", "Choose a model that reports Fast mode support to enable it.")
-                if current == "1":
-                    rows.append(("1", "On (saved; support not verified)"))
+                rows.append(("fast" if agent == "codex" else "1", "Fast · higher usage / cost"))
+            if info and info["ultrafast"]:
+                rows.append(("ultrafast", "Ultrafast · higher usage / cost"))
+            if len(rows) == 2:
+                ui.done("speed", "Choose a model that reports Fast or Ultrafast support to enable it.")
+            if current and current not in dict(rows):
+                rows.append((current, f"{_config_speed_label(current)} (saved; support not verified)"))
             rows.append(("__refresh__", "Refresh model list"))
         elif setting == "effort":
             current = cfg.efforts.get(agent, "")
@@ -1868,7 +1880,7 @@ def _config_model_menu(ui, cfg, agent, catalogs, setting="model"):
         else:
             current = model
             rows = _config_model_rows(current, catalog)
-        title = f"{agent.title()} {setting if setting != 'fast' else 'Fast mode'}"
+        title = f"{agent.title()} {setting if setting != 'fast' else ('Speed' if agent == 'codex' else 'Fast mode')}"
         if setting != "model":
             title += f" · {model or 'tool default'}"
         picked = ui.pick(title, rows,
@@ -1904,14 +1916,19 @@ def _config_summary(agent, models, overrides):
     return lines
 
 
+def _config_speed_label(value):
+    return {"1": "Fast", "fast": "Fast", "ultrafast": "Ultrafast", "0": "Standard"}.get(value, value or "tool default")
+
+
 def _config_tool_menu(ui, cfg, agent, catalogs):
     last = "model"
     while True:
-        rows = [("model", "Model"), ("effort", "Effort"), ("fast", "Fast mode"), ("back", "Back to settings")]
+        rows = [("model", "Model"), ("effort", "Effort"),
+                ("fast", "Speed" if agent == "codex" else "Fast mode"), ("back", "Back to settings")]
         choice = ui.pick(f"{agent.title()} settings", rows,
                          values={"model": cfg.models.get(agent) or "tool default",
                                  "effort": cfg.efforts.get(agent) or "tool default",
-                                 "fast": {"1": "on", "0": "off"}.get(cfg.fast.get(agent), "tool default")},
+                                 "fast": _config_speed_label(cfg.fast.get(agent))},
                          default=next(i for i, row in enumerate(rows) if row[0] == last))
         if choice in (None, "back"):
             return
@@ -2194,7 +2211,7 @@ def cmd_config(cfg, args):
         print("\n".join(_config_summary(cfg.agent_default, cfg.models, cfg.agents)))
         for agent in AGENTS:
             print(f"{agent} effort: {cfg.efforts.get(agent) or 'tool default'}")
-            print(f"{agent} Fast mode: " + {"1": "on", "0": "off"}.get(cfg.fast.get(agent), "tool default"))
+            print(f"{agent} speed: {_config_speed_label(cfg.fast.get(agent))}")
         print(f"Default opening mode: {cfg.open_mode_default}")
         print(f"Default beam host: {cfg.beam_host or 'none'}")
         print(f"Worktrees: {cfg.worktree_default} · root: {cfg.worktree_root} · shared-tree branch: {cfg.branch}")
@@ -9561,14 +9578,14 @@ REMOTE SESSIONS
     repo_path = repos_sub.add_parser("path", help="print a checkout's absolute path")
     repo_path.add_argument("repo", help="registered repository alias")
 
-    sp = sub.add_parser("config", help="manage local settings: tools, models, effort, Fast mode, repos and hosts",
-        description="Arrow-key settings hub for this machine: default tool, plus model, effort and Fast mode submenus; "
+    sp = sub.add_parser("config", help="manage local settings: tools, models, effort, Fast/Ultrafast speed, repos and hosts",
+        description="Arrow-key settings hub for this machine: default tool, plus model, effort and speed submenus; "
             "query each CLI for current models and their supported effort levels; "
             "add, edit or remove hosts; register or unregister repos and set their tool, branch "
             "and worktree overrides; choose the default beam host and worktree defaults. "
             "Save changes reviews then writes a managed block in T_LOCAL_RC. Removed "
             "hosts stop participating in remote t commands; unregistering repos keeps their files "
-            "and sessions. Tool/model/effort/Fast mode defaults apply to fresh tmux and --fg sessions only. "
+            "and sessions. Tool/model/effort/speed defaults apply to fresh tmux and --fg sessions only. "
             "Open local config in editor covers all custom shell settings (VISUAL/EDITOR, else vi). "
             "For a reusable AGENTS.md profile, run `t profile init`.")
     cg = sp.add_mutually_exclusive_group()

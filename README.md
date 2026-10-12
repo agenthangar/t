@@ -274,7 +274,7 @@ verified.
 
 Fresh Codex sessions (`t open --new`, including `--fg`) start with `--no-daemon`.
 Each new session uses its own backend, avoiding feature-setting conflicts with
-a running shared server while preserving model, effort, and Fast mode preferences.
+a running shared server while preserving model, effort, and speed preferences.
 The shared server and its other clients keep running.
 
 For existing sessions, Codex's **Background server has incompatible feature settings** screen,
@@ -479,10 +479,18 @@ does not close app windows or delete the worktree.
 
 **Your preferences, or shared enterprise defaults.** Choose the agents and models
 that work for you, and use a common open/resume/handoff workflow across supported
-vendors. `t config open` sets agent defaults, models, effort, Fast mode, repository
-choices, and hosts. Teams can share those defaults alongside their preferred
+vendors. `t config open` sets agent defaults, models, effort, speed (Fast and
+Ultrafast where supported), repository choices, and hosts. Teams can share those defaults alongside their preferred
 workflows and agent configurations to standardize the parts of their setup that
 matter.
+
+In `t config open` → Codex → Speed, choose the tool's own setting, Standard,
+Fast, or Ultrafast. Faster modes appear when the selected model reports support;
+select a model first, and use Refresh model list to check updated capabilities.
+These defaults apply to new tmux and foreground sessions. Changing models resets
+an unsupported speed to Standard. Existing `DEV_FAST[codex]=1` settings still mean
+Fast; named `fast` and `ultrafast` values are also supported. Claude keeps its
+Fast mode setting. `t config show` displays the saved speed for each tool.
 
 To change a repository alias, open `t config open` → Repositories → select the
 repository → Short name, then Save changes. Its tool, branch, and worktree
