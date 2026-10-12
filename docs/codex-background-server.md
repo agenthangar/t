@@ -92,8 +92,8 @@ ownership and callbacks, and real isolated-tmux recovery.
 
 ## Remaining regression contracts
 
-The follow-up report confirms both the startup menu and an empty desktop-slot
-close refusal still occur. Recovery coverage in #78 does not establish that a
+The follow-up report covered both the startup menu and an empty desktop-slot
+close refusal. Recovery coverage in #78 does not establish that a
 fresh launch avoids the menu. The desired launch contract now has a strict
 expected-failure test: `test_public_open_new_reaches_ready_with_existing_server`.
 It invokes `t open demo --new` through the real shell and an isolated tmux server,
@@ -103,15 +103,17 @@ the selected model, working directory, unchanged configuration, and surviving
 peer pane and simulated server process. This deterministic test is not a new
 measurement of the user's installed Codex versions or effective flags.
 
-The separate `t kill` symptom is covered at both the Python close entry point and
-the shell's final verifier. An empty, reserved worktree with no saved conversation
-or writer is refused whenever any Codex/ChatGPT frontend runs. The desired contract
-is to close only the selected empty slot while other desktop work remains open;
-implementing it must retain the existing ownership checks and establish safe
-release of the selected view. The tests cover both frontend names and the presence
-or absence of a parked tmux session, preserving the worktree and saved history.
+The separate empty-slot `t kill` regression is fixed at both the Python close
+entry point and the shell's final verifier. Explicit close releases a never-started
+slot after verifying its conversation index and writer locks, even while other
+Codex/ChatGPT sessions run. It preserves the worktree; the unused blank composer
+tab can be closed separately. Saved conversations still require archive or
+frontend exit. The tests cover both frontend names, a live writer in another
+worktree, and parked tmux sessions. A conversation appearing during cleanup keeps
+the reservation intact.
 
-To expose all five current failures (plus the passing compatible-launch control):
+To exercise the close regressions and expose the remaining startup failure
+(alongside the passing compatible-launch control):
 
 ```sh
 python3 -m pytest --runxfail -q \
@@ -119,7 +121,6 @@ python3 -m pytest --runxfail -q \
   -k 'blank_workspace_with_unrelated or empty_desktop_close_with_unrelated or public_open_new'
 ```
 
-Normal runs record these as strict expected failures so a tests-only change can
-land without disabling CI. Only the specific known refusal/menu is accepted as
-an expected failure; fixture and safety assertion failures remain failures. Once
-a case succeeds, its strict XPASS requires removing the corresponding marker.
+The startup failure remains a strict expected failure in normal runs. Only the
+specific known menu is accepted as an expected failure; fixture and safety
+assertion failures remain failures. The empty-slot close tests now pass normally.

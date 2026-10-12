@@ -413,16 +413,25 @@ def assert_workspace_released(codex_home, cwd, *, retry="Retry: t kill <repo> <s
 
 
 def assert_desktop_view_released(bundle, run, *, archived=False, empty=False,
+                                 codex_home=None, cwd=None,
                                  retry="Retry: t kill <repo> <slot>."):
-    """A free writer is insufficient if an unarchived desktop tab can reopen."""
+    """Verify a saved view was released, or prove this slot never had a thread.
+
+    A blank composer has no conversation to archive. Explicitly closing its t
+    slot releases the reservation after checking its index and writers; the
+    frontend process alone does not own a conversation in this worktree.
+    Never accept `empty` as proof without checking the actual workspace.
+    """
+    if empty:
+        if not isinstance(cwd, str) or not os.path.isabs(cwd):
+            raise ValueError("the empty desktop workspace path is unknown. " + retry)
+        assert_workspace_released(codex_home, cwd, retry=retry)
+        return
     if archived:
         return
     frontends, _ = _owners(bundle, _processes(run, retry))
     if not frontends:
         return
-    if empty:
-        raise ValueError("Cannot verify this empty workspace was closed while Codex "
-                         "is running; close Codex and retry. " + retry)
     raise ValueError("Stop or finish the turn, then Archive this chat in Codex; "
                      "the app and other chats can stay open. " + retry)
 

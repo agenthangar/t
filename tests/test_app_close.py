@@ -203,15 +203,9 @@ def test_blank_workspace_rejects_saved_record_even_when_not_selectable(
     assert not any(argv[0] == "zsh" for argv in calls)
 
 
-class EmptyWorkspaceCloseBlocked(AssertionError):
-    """Only the reported global frontend refusal is an expected failure."""
-
-
-@pytest.mark.xfail(strict=True, raises=EmptyWorkspaceCloseBlocked,
-                   reason="Reported with #74: empty slot close requires quitting unrelated desktop chats")
 @pytest.mark.parametrize("frontend", ["Codex", "ChatGPT"])
 def test_close_blank_workspace_with_unrelated_frontend_running(
-        t_mod, desktop_close, monkeypatch, frontend):
+        t_mod, desktop_close, monkeypatch, capsys, frontend):
     cfg, row, home, rollout, marker, calls, _ = desktop_close
     row["sid"] = "-"
     rollout.unlink()
@@ -229,16 +223,10 @@ def test_close_blank_workspace_with_unrelated_frontend_running(
                 argv, 0, f"123 /Applications/{frontend}.app/Contents/MacOS/{frontend}", "")
         return actual(argv, cwd=cwd, timeout=timeout)
     monkeypatch.setattr(t_mod, "_run", run)
-    try:
-        result = t_mod._app_close(cfg, "repo", "13")
-    except ValueError as exc:
-        # Only this known failure is expected; ownership/fixture failures remain red.
-        assert str(exc) == ("Cannot verify this empty workspace was closed while Codex "
-                            "is running; close Codex and retry. Retry: t kill repo 13")
-        assert marker.exists() and not any(argv[0] == "zsh" for argv in calls)
-        raise EmptyWorkspaceCloseBlocked(str(exc)) from exc
+    result = t_mod._app_close(cfg, "repo", "13")
     assert result == row
     shell = [argv for argv in calls if argv[0] == "zsh"]
     assert len(shell) == 1
     assert "_t_app_close_slot dev-repo-13 " in shell[0][2]
     assert shell[0][2].endswith(" - 0")
+    assert "Closed empty desktop slot repo-13; its worktree is preserved." in capsys.readouterr().out

@@ -359,7 +359,9 @@ preserving the saved conversation and worktree. Archive that chat in Codex
 before closing its slot while the app is running; finish or stop any active
 turn first. Other chats and the app can stay open. If the chat remains
 unarchived, close Codex before retrying. An empty desktop workspace can be
-closed after Codex exits and no conversation or writer is present in its worktree.
+closed while Codex stays open: `t` verifies that its worktree has no saved
+conversation or active writer, then releases the unused slot. Close the unused
+blank app tab separately; `t kill` manages the slot, not desktop windows.
 
 ## Configuration
 

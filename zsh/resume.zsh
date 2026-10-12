@@ -1679,10 +1679,7 @@ try:
     mod = runpy.run_path(helper)
     if not mod['_safe_archive_hint'](cwd, run):
         raise ValueError('this is not a reserved t worktree safe to close')
-    if sid == '-':
-        mod['assert_workspace_released'](home, cwd,
-                                         retry='Retry t kill after Codex releases this worktree.')
-    else:
+    if sid != '-':
         db = Path(home) / 'state_5.sqlite'
         with sqlite3.connect(db.as_uri() + '?mode=ro', uri=True, timeout=0.5) as conn:
             rows = conn.execute('select cwd,rollout_path,archived from threads where id=?',
@@ -1698,6 +1695,7 @@ try:
                                retry='Retry t kill after the conversation is released.')
     mod['assert_desktop_view_released'](
         None, run, archived=archived == '1', empty=sid == '-',
+        codex_home=home, cwd=cwd,
         retry='Retry t kill after closing or archiving the desktop view.')
 except (OSError, ValueError, sqlite3.Error) as exc:
     message = str(exc)

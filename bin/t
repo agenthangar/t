@@ -7136,10 +7136,7 @@ def _app_close(cfg, repo, slot):
                                  "this empty desktop workspace") from exc
             selected = dict(row, sid="-", codex_home=os.path.dirname(db),
                             rollout="-", archived=False)
-        if selected["sid"] == "-":
-            helper["assert_workspace_released"](
-                selected["codex_home"], selected["cwd"], retry=retry)
-        else:
+        if selected["sid"] != "-":
             try:
                 helper["assert_released"](
                     _app_bundle(), selected["sid"], selected["cwd"], _run,
@@ -7161,7 +7158,8 @@ def _app_close(cfg, repo, slot):
                 raise
         helper["assert_desktop_view_released"](
             _app_bundle(), _run, archived=selected["archived"],
-            empty=selected["sid"] == "-", retry=retry)
+            empty=selected["sid"] == "-", codex_home=selected["codex_home"],
+            cwd=selected["cwd"], retry=retry)
         parts = ["_t_app_close_slot", "dev-" + row["slot"], row["cwd"],
                  selected["sid"], selected["codex_home"], selected["rollout"],
                  "1" if selected["archived"] else "0"]
@@ -7169,7 +7167,10 @@ def _app_close(cfg, repo, slot):
         if result.returncode:
             raise ValueError(result.stderr.strip() or "could not close the desktop slot; "
                              "its reservation remains intact")
-    print(f"Closed {row['slot']}; its Codex conversation and worktree are preserved.")
+    if selected["sid"] == "-":
+        print(f"Closed empty desktop slot {row['slot']}; its worktree is preserved.")
+    else:
+        print(f"Closed {row['slot']}; its Codex conversation and worktree are preserved.")
     return row
 
 
@@ -9188,7 +9189,8 @@ REMOTE SESSIONS
             "without resuming it in the CLI; its conversation and worktree are preserved. "
             "Archive that chat in Codex while the app is running, then retry; finish or "
             "stop any active turn first. Other desktop chats can stay open. An empty "
-            "desktop workspace can close after Codex exits. "
+            "desktop workspace can close while Codex stays open, once no conversation "
+            "or writer exists for that worktree. "
             "Names default to the cwd "
             "repo, so `t session close 3` kills this repo's slot 3 and `t session close all` kills every slot for "
             "it. A foreground / :fg row from `t session list` (a bare `claude`, or one in a tmux "

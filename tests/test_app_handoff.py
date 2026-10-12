@@ -403,10 +403,37 @@ def test_desktop_view_guard_requires_archive_or_frontend_exit(handoff):
     live, calls = process_table("123 /Applications/Codex.app/Contents/MacOS/Codex")
     with pytest.raises(ValueError, match="Archive this chat.*app and other chats can stay open"):
         handoff.assert_desktop_view_released(None, live)
-    with pytest.raises(ValueError, match="empty workspace.*close Codex"):
-        handoff.assert_desktop_view_released(None, live, empty=True)
     handoff.assert_desktop_view_released(None, live, archived=True)
-    assert len(calls) == 2  # Archived proof does not inspect unrelated running views.
+    assert len(calls) == 1  # Archived proof does not inspect unrelated running views.
+
+
+def test_empty_view_requires_workspace_evidence_not_just_a_flag(handoff, target):
+    live, _ = process_table("123 /Applications/Codex.app/Contents/MacOS/Codex")
+    with pytest.raises(ValueError, match="workspace path is unknown"):
+        handoff.assert_desktop_view_released(None, live, empty=True)
+    with pytest.raises(ValueError, match="state directory is unknown"):
+        handoff.assert_desktop_view_released(None, live, empty=True, cwd=str(target["cwd"]))
+
+
+def test_empty_view_allows_other_worktree_writer_but_rechecks_selected_workspace(
+        handoff, target, tmp_path):
+    db = sqlite3.connect(target["home"] / "state_5.sqlite")
+    db.execute("create table threads (id text, cwd text)")
+    db.execute("insert into threads values (?,?)", (OTHER, str(tmp_path / "other-worktree")))
+    db.commit()
+    live, calls = process_table("123 /Applications/Codex.app/Contents/MacOS/Codex")
+    other_lock = target["locks"] / f"{OTHER}.lock"
+    other_lock.touch()
+    options = dict(empty=True, cwd=str(target["cwd"]), codex_home=str(target["home"]))
+    with locked(other_lock, tmp_path):
+        handoff.assert_desktop_view_released(None, live, **options)
+        # The same request must fail if a new conversation appears on recheck.
+        db.execute("insert into threads values (?,?)", (SID, str(target["cwd"])))
+        db.commit()
+        with pytest.raises(ValueError, match="saved Codex conversation"):
+            handoff.assert_desktop_view_released(None, live, **options)
+    db.close()
+    assert not calls  # No global frontend inspection or control is needed.
 
 
 def test_cli_pid_must_hold_exact_selected_lock(handoff, target, tmp_path):
