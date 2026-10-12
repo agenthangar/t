@@ -8855,6 +8855,8 @@ def cmd_issue(cfg, args):
 # shell-bound dispatch in zsh/; the Python parser remains the source of flag
 # definitions for both public commands and compatibility aliases.
 COMMAND_GROUPS = {
+    "issue": {"list": ("issue", "list"), "status": ("issue", "status"),
+              "start": ("issue", "start")},
     "session": {
         "open": ("open",), "list": ("ls",), "close": ("kill",),
         "restart": ("restart",), "push": ("push",), "pop": ("pop",),
@@ -8889,6 +8891,7 @@ COMMAND_GROUPS = {
 }
 
 GROUP_DESCRIPTIONS = {
+    "issue": "List GitHub issues, inspect existing work, or start work",
     "agentcore": "Submit work to an existing Amazon Bedrock AgentCore runtime",
     "session": "Open, find, and move work sessions",
     "repo": "List and manage repositories",
@@ -8954,7 +8957,7 @@ def _root_help():
 
 WORK
   session   Open, find, and move work sessions
-  issue     Find existing issue work or start an isolated agent
+  issue     List issues, inspect work, and start agents
   repo      List and manage repositories
   cursor    List, resume, and send Cursor chats
   hosts     Manage remote SSH hosts and run commands
@@ -9038,6 +9041,8 @@ def _group_help(group):
 
 def _command_description(group, action):
     descriptions = {
+        "issue": {"list": "List repository issues", "status": "Inspect existing issue work",
+                  "start": "Continue or start work on issues"},
         "agentcore": {"invoke": "Submit JSON or continue a runtime session", "stop": "Stop a runtime session"},
         "session": {"open": "Open or reattach a session", "list": "List live sessions",
                     "close": "Close a session", "restart": "Restart a stuck agent",
@@ -9141,21 +9146,34 @@ def build_parser():
             "For example: `t help session open` or `t help repo locate`.")
     help_sp.add_argument("command", nargs="*", help="command and optional subcommand")
 
-    sp = sub.add_parser("issue", help="continue or start work on a GitHub issue",
-        usage="%(prog)s [repo] NUMBER | GITHUB_ISSUE_URL [flags]",
+    sp = sub.add_parser("issue", help="list issues, inspect work, or start agents",
+        description="Find GitHub issues and their existing local, remote, or cloud agent work.")
+    issue_sub = sp.add_subparsers(dest="action", metavar="<verb>")
+    p._group_parsers["issue"] = sp
+    issue_list = issue_sub.add_parser("list", help="list issues in a repository",
+        description="List issues in a registered GitHub repository. Defaults to the current checkout.")
+    issue_list.add_argument("repo", nargs="?", help="registered repository alias or GitHub owner/name")
+    issue_list.add_argument("--state", choices=("open", "closed", "all"), default="open",
+                            help="issue state (default: open)")
+    issue_list.add_argument("--json", action="store_true", help="output machine-readable issues")
+    issue_status = issue_sub.add_parser("status", help="inspect existing work for an issue",
         description="Check local and remote worktrees, agent sessions, Codex Cloud, Cursor Cloud, "
-            "and GitHub before starting work. Repository defaults to the current checkout. "
-            "An existing registered checkout is required. Cloud takeover requires a stopped "
-            "agent and published PR. --json implies --check.")
-    sp.add_argument("target", nargs="+", help="issue number, repo and number, or GitHub issue URL")
-    sp.add_argument("--check", action="store_true", help="report existing work without launching or attaching")
-    sp.add_argument("--json", action="store_true", help="machine-readable discovery report; implies --check")
-    sp.add_argument("--allow-incomplete-check", action="store_true",
-                    help="allow new work despite unavailable discovery sources; does not override known owners")
-    agents = sp.add_mutually_exclusive_group()
-    agents.add_argument("--codex", action="store_true", help="use Codex for a new local session")
-    agents.add_argument("--claude", action="store_true", help="use Claude for a new local session")
-    sp.add_argument("--scan-host", action="store_true", help=argparse.SUPPRESS)
+            "and GitHub without starting or attaching. Repository defaults to the current checkout.")
+    issue_status.add_argument("target", nargs="+", help="issue number, repo and number, or GitHub issue URL")
+    issue_status.add_argument("--repo", help="registered repository alias or GitHub owner/name")
+    issue_status.add_argument("--json", action="store_true", help="output machine-readable discovery report")
+    issue_status.add_argument("--scan-host", action="store_true", help=argparse.SUPPRESS)
+    issue_start = issue_sub.add_parser("start", help="continue or start work on issues",
+        description="Find existing work before starting agents. Without an issue number, select "
+            "issues from the inferred or specified repository. Multiple independent issues can "
+            "be selected. An issue with an existing owner is continued, not duplicated.")
+    issue_start.add_argument("target", nargs="*", help="issue numbers, repository and numbers, or GitHub issue URLs")
+    issue_start.add_argument("--repo", help="registered repository alias or GitHub owner/name")
+    issue_start.add_argument("--allow-incomplete-check", action="store_true",
+        help="allow new work despite unavailable discovery sources; does not override known owners")
+    agents = issue_start.add_mutually_exclusive_group()
+    agents.add_argument("--codex", action="store_true", help="use Codex for new local sessions")
+    agents.add_argument("--claude", action="store_true", help="use Claude for new local sessions")
 
     sp = sub.add_parser("open", help="open or reattach a session",
         usage="%(prog)s [repo] [slot] [flags]",

@@ -1999,7 +1999,7 @@ _dev_new_session() {
 _dev_new_session_claimed() {
   local session="$1" dir="$2" branch="${3:-$DEV_BRANCH}" skip_prepare="${4:-}" agent="${5:-claude}"
   if [[ -z $7 ]] && (( ${+functions[_dev_issue_preparing]} )) && _dev_issue_preparing "$dir"; then
-    print -u2 't: issue launch is reserved; rerun t issue to recover it'; return 1
+    print -u2 't: issue launch is reserved; rerun t issue start <issue> to recover it'; return 1
   fi
   _dev_launch_preflight "$session" "$dir" '' || return 1
   _dev_auto_trust "$dir"

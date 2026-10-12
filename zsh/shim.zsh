@@ -718,12 +718,23 @@ _t() {
   fi
   local -a actions
   if [[ $group == issue ]]; then
+    if (( CURRENT == 3 )); then
+      local -a issue_actions=(list status start)
+      _describe -t actions 'issue action' issue_actions
+      return
+    fi
     if [[ ${words[CURRENT]} == -* ]]; then
-      _values 'flag' --check --json --codex --claude --allow-incomplete-check -h --help
-    elif (( CURRENT == 3 )); then
-      _values 'repo or issue number' ${(k)DEV_REPOS}
-    else
-      _message 'GitHub issue number'
+      case $action in
+        list) _values 'flag' --state --json -h --help ;;
+        status) _values 'flag' --repo --json -h --help ;;
+        start) _values 'flag' --repo --codex --claude --allow-incomplete-check -h --help ;;
+      esac
+    elif [[ ${words[CURRENT-1]} == --repo ]]; then
+      _values 'repository' ${(k)DEV_REPOS}
+    elif [[ $action == list && ${words[CURRENT-1]} == --state ]]; then
+      _values 'issue state' open closed all
+    elif [[ $action == list || $action == start || $action == status ]]; then
+      _values 'repository or issue number' ${(k)DEV_REPOS}
     fi
     return
   fi

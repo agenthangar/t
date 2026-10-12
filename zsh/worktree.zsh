@@ -98,7 +98,7 @@ _dev_worktree_create() {
   local repodir="${DEV_REPOS[$repo]}"
   local wt br; wt="$(_dev_worktree_path "$repo" "$slot")"; br="$(_dev_worktree_branch "$repo" "$slot")"
   if [[ -e "$wt/.git" ]]; then          # already materialized → reuse (idempotent)
-    _dev_issue_preparing "$wt" && { print -u2 't: issue launch is reserved; rerun t issue to recover it'; return 1; }
+    _dev_issue_preparing "$wt" && { print -u2 't: issue launch is reserved; rerun t issue start <issue> to recover it'; return 1; }
     if _dev_app_slot_reserved "$wt"; then
       print -u2 -- "t: $repo $slot is reserved for the Codex desktop app."
       print -u2 -- '  To continue in the CLI, run this on the Mac with the conversation and follow its release instructions:'

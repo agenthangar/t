@@ -2,6 +2,14 @@
 
 `t` is a Python CLI plus a zsh plugin for agent sessions and isolated Git worktrees.
 
+Keep public commands in noun/verb families. For issue work, expose `t issue list`
+to browse a repository, `t issue status` for read-only ownership discovery, and
+`t issue start` to continue or start work. Reuse the shared session picker for
+interactive issue selection; allow multiple independent issues to be selected,
+but never start a second live owner for one issue. Do not add a bare `t issue`
+target form or a new public single-word command. Run `python3 scripts/lint_cli.py`
+after CLI changes; CI enforces this command contract.
+
 Before implementing any new enhancement or fix in a public repository, verify
 the repository's visibility and find a matching open issue on its host or create one.
 Record the issue URL before editing code, reuse it for the task, and link the PR
