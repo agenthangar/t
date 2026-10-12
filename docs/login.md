@@ -22,12 +22,13 @@ flag on later runs, or name just the tools you want. Missing tools are skipped
 when scanning all tools; an explicitly named missing tool produces a nonzero
 exit. Nothing is installed, updated, or propagated to remote hosts.
 
-Use arrows or j/k to move, Space to toggle agents, and Enter to review the selected
-login commands. Press Enter again to run, n to go back, or q to cancel. Selecting an agent
+Use arrows or j/k to move, Space to toggle agents, and Enter to run the selected
+login commands immediately. There is no second review or confirmation. Press q
+to cancel before running. Selecting an agent
 explicitly requests login even if its status is healthy or unavailable. Terminals
-without the checklist UI fall back to one prompt per agent and a final review,
-where Enter runs the commands and n cancels.
-`-y` skips selection and confirmation and uses the preselected logins, but the
+without the checklist UI fall back to one prompt per agent, then run the selection
+without another confirmation. Use q or EOF during selection to cancel the whole run.
+`-y` skips selection and uses the preselected logins, but the
 vendor may still require a browser/device-code step.
 `--dry-run` and `--status` only inspect state and print the plan. Failed or
 unrecognized status probes are reported separately from logged-out accounts;
@@ -43,7 +44,13 @@ There is no uniform vendor CLI expiry interface. Cached access-token expiry is
 an **advisory hint**, not a prediction of session failure: the vendor may refresh
 the access token automatically. `t` does not refresh tokens, log out accounts,
 write credential stores, or print captured status output or token contents.
-The vendor login process inherits the terminal and manages its own credentials.
+The vendor login process retains terminal input and manages its own credentials.
+Interactive output adds a compact **Open sign-in page** hyperlink below HTTP(S)
+URLs. These use terminal OSC 8 links, so long URLs remain clickable even when the
+original text wraps. The original URL stays visible and copyable; terminals without
+OSC 8 support show the label as plain text. In iTerm2, use Command-click
+([terminal documentation](https://iterm2.com/documentation-escape-codes.html)).
+Redirected output is unchanged. Vendor output is never written to a log by `t`.
 A logged-in status is not proof that a model request will succeed.
 
 | Tool | Status and login | Best-effort expiry hint |
