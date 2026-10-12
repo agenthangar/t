@@ -41,6 +41,18 @@ with tempfile.TemporaryDirectory(prefix="t-desktop-golden-") as home:
     core.sessions = lambda config, all_hosts=False: []
     core.cli._t_version = lambda: "v0.1.0"
 
+    # Destructive-operation review captures an owner before serialization. Supply
+    # entirely synthetic metadata here; never inspect a live tmux pane or agent.
+    core.capture_owner = lambda config, arguments, expected=None: {
+        "session": "dev-fixture-1",
+        "identity": "100\t$1\t%1\t200\t/tmp/t-desktop-fixture/worktrees/project/1",
+        "host": "local",
+        "target": None,
+        "sid": "22222222-2222-4222-8222-222222222222",
+        "agent": "codex",
+        "clientPid": "300",
+    }
+
     def call(method, params):
         response = handle(
             core, {"version": 1, "id": 1, "method": method, "params": params}
