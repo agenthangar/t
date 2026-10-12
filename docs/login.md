@@ -1,11 +1,14 @@
 # Logging in agent tools
 
 `t login` (also `t agent login`) reviews local Claude Code, Codex, and Cursor
-CLI authentication and offers the vendor's login command for logged-out tools
-or cached access tokens expiring within **24 hours**. Use `--within-hours N`
+CLI authentication. In a terminal it discovers installed tools and shows a
+multi-select checklist with their current login state. Logged-out tools and
+cached access tokens expiring within **24 hours** are preselected; already
+logged-in tools remain selectable so you can sign in again. Use `--within-hours N`
 to change that window (0 means already expired, maximum 8760 hours).
 
 ```sh
+t login                                 # discover tools and select logins
 t login --dry-run                       # inspect the plan without sign-in
 t login --ignore codex                  # skip Codex entirely this invocation
 t login claude codex --within-hours 2   # inspect only these tools
@@ -19,8 +22,12 @@ flag on later runs, or name just the tools you want. Missing tools are skipped
 when scanning all tools; an explicitly named missing tool produces a nonzero
 exit. Nothing is installed, updated, or propagated to remote hosts.
 
-The plan prints each login command before asking for confirmation. `-y` skips
-that confirmation, but the vendor may still require a browser/device-code step.
+Use arrows or j/k to move, Space to toggle agents, and Enter to review the selected
+login commands. Press y to run, n to go back, or q to cancel. Selecting an agent
+explicitly requests login even if its status is healthy or unavailable. Terminals
+without the checklist UI fall back to one prompt per agent and a final review.
+`-y` skips selection and confirmation and uses the preselected logins, but the
+vendor may still require a browser/device-code step.
 `--dry-run` and `--status` only inspect state and print the plan. Failed or
 unrecognized status probes are reported separately from logged-out accounts;
 `t` does not automatically attempt login for those errors. `--force` requires

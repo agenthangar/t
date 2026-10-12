@@ -122,6 +122,40 @@ def test_parser_defaults_and_alias(t_mod):
     assert t_mod._login_hours('0.5') == .5
 
 
+def test_parser_rejects_unknown_agents(t_mod):
+    with pytest.raises(SystemExit) as exc:
+        t_mod.build_parser().parse_args(['login', 'unknown'])
+    assert exc.value.code == 2
+
+
+def test_login_checklist_discovers_and_selects_authenticated_agents(t_mod):
+    probed = {
+        'claude': {'state': 'logged-in', 'expires': None, 'bin': '/fixture/claude'},
+        'codex': {'state': 'logged-out', 'bin': '/fixture/codex'},
+        'cursor': {'state': 'missing', 'bin': None},
+    }
+    items = t_mod._login_items(probed, 1000, 24)
+    assert [it['checked'] for it in items[1:]] == [False, True, False]
+    assert items[-1]['t'] == 'locked'
+    items[1]['checked'], items[2]['checked'] = True, False
+    steps = t_mod._login_plan(items, probed, False)
+    assert [s['cmd'] for s in steps] == [['/fixture/claude', 'auth', 'login']]
+    probed['cursor'] = {'state': 'logged-out', 'bin': '/fixture/cursor-agent'}
+    steps = t_mod._login_plan(t_mod._login_items(probed, 1000, 24), probed, True)
+    assert steps[-1]['cmd'] == ['env', 'NO_OPEN_BROWSER=1', '/fixture/cursor-agent', 'login']
+
+
+def test_empty_agent_list_on_system_python(tmp_path):
+    python = Path('/usr/bin/python3')
+    if not python.exists():
+        pytest.skip('no system Python')
+    env = cli_sandbox(tmp_path)
+    result = subprocess.run([str(python), str(ROOT / 'bin/t'), 'login', '--dry-run'],
+                            env=env, capture_output=True, text=True, timeout=20)
+    assert result.returncode == 0, result.stderr
+    assert 'claude: logged out' in result.stdout
+
+
 def test_probe_paths_and_timeout(t_mod, tmp_path, monkeypatch):
     monkeypatch.setattr(t_mod, 'HOME', str(tmp_path))
     monkeypatch.setattr(t_mod.shutil, 'which', lambda _: None)
@@ -249,3 +283,24 @@ def test_declining_logins_preserves_probe_failure(t_mod, monkeypatch):
     monkeypatch.setattr(t_mod.sys, 'stdin', SimpleNamespace(isatty=lambda: True))
     monkeypatch.setattr('builtins.input', lambda _: 'n')
     assert t_mod.cmd_login(None, args) == 1
+
+
+@pytest.mark.parametrize('approve', [False, True])
+def test_login_prompt_fallback_selects_healthy_tool(t_mod, monkeypatch, approve):
+    args = t_mod.build_parser().parse_args(['login'])
+    monkeypatch.setattr(t_mod.sys.stdin, 'isatty', lambda: True)
+    monkeypatch.setattr(t_mod.sys.stdout, 'isatty', lambda: True)
+    def unavailable(*args, **kwargs):
+        raise OSError('no raw terminal')
+    monkeypatch.setattr(t_mod, '_install_wizard', unavailable)
+    monkeypatch.setattr(t_mod, '_login_probe', lambda agent: {
+        'state': 'logged-in', 'bin': '/fixture/' + agent, 'expires': None})
+    answers = iter(['n', 'y', 'n', 'y' if approve else 'n'])
+    monkeypatch.setattr('builtins.input', lambda _: next(answers))
+    calls = []
+    def run(cmd):
+        calls.append(cmd)
+        return SimpleNamespace(returncode=0)
+    monkeypatch.setattr(t_mod.subprocess, 'run', run)
+    assert t_mod.cmd_login(None, args) == 0
+    assert calls == ([['/fixture/codex', 'login']] if approve else [])
