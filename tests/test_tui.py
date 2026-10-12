@@ -65,12 +65,12 @@ def test_review_can_scroll_and_back_out_with_action_still_visible(t_mod):
 
 
 @pytest.mark.parametrize('state,keys,expected', [
-    ('logged-in', ['space', 'space', 'enter', 'enter'], ['claude', 'codex']),
-    ('logged-in', ['space', 'space', 'enter', 'y'], ['claude', 'codex']),
-    ('logged-in', ['space', 'space', 'enter', 'n', 'q'], []),
-    ('logged-out', ['space', 'enter', 'enter'], ['codex', 'cursor']),
+    ('logged-in', ['space', 'space', 'enter'], ['claude', 'codex']),
+    ('logged-in', ['space', 'space', 'q'], []),
+    ('logged-in', ['enter', 'q'], []),
+    ('logged-out', ['space', 'enter'], ['codex', 'cursor']),
 ])
-def test_login_multiselect_reviews_before_running(t_mod, monkeypatch, state, keys, expected):
+def test_login_multiselect_runs_directly(t_mod, monkeypatch, state, keys, expected):
     # Healthy tools can be selected; recommended logins can be deselected.
     args = t_mod.build_parser().parse_args(['login'])
     ui = make_ui(t_mod, keys)
@@ -85,13 +85,14 @@ def test_login_multiselect_reviews_before_running(t_mod, monkeypatch, state, key
         assert ui.restored
         calls.append(cmd[0].rsplit('/', 1)[-1])
         return type('Result', (), {'returncode': 0})()
-    monkeypatch.setattr(t_mod.subprocess, 'run', run)
+    monkeypatch.setattr(t_mod, '_login_run', run)
     monkeypatch.setattr('builtins.print', lambda *a, **kw: None)
     assert t_mod.cmd_login(None, args) == 0
     assert calls == expected
     assert any('Pick agents to log in' in line for frame in ui.frames for line in frame)
-    assert any('/fixture/codex login' in line for frame in ui.frames for line in frame)
-    assert any('enter' in line and 'RUN COMMANDS' in line for frame in ui.frames for line in frame)
+    assert any('enter' in line and 'RUN LOGINS' in line for frame in ui.frames for line in frame)
+    assert not any('REVIEW' in line or 'review' in line or 'confirm' in line
+                   for frame in ui.frames for line in frame)
     assert ui.restored
 
 
