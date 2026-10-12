@@ -429,20 +429,23 @@ def test_clear_callback_view_is_scoped_to_our_error_buffer(recovery, target, mon
             return result(output, scenario == "capture_failed")
         return result()
     monkeypatch.setattr(recovery, "tmux", tmux)
-    recovery.clear_callback_view(target["socket"], target["pane"])
+    unreadable = recovery.clear_callback_view(target["socket"], target["pane"])
+    assert bool(unreadable) == (scenario == "capture_failed")
     cancelled = [(command, args) for command, args in calls if command == "send-keys"]
     assert bool(cancelled) == (scenario in ("accept", "dismiss", "reopen", "new_accept", "wrapped"))
     if cancelled:
         assert cancelled == [("send-keys", ("-t", target["pane"], "-X", "cancel"))]
 
 
-@pytest.mark.parametrize("scenario", ["offer", "background", "unverified", "cleared", "missing", "other_client", "failed"])
+@pytest.mark.parametrize("scenario", ["offer", "background", "unverified", "cleared", "unreadable", "missing", "other_client", "failed"])
 def test_reopen_checks_current_failure_and_requesting_viewer(recovery, target, monkeypatch, scenario):
     monkeypatch.setattr(recovery, "panes", lambda s: [] if scenario == "missing" else [target])
     monkeypatch.setattr(recovery, "clients", lambda *a: ["first", "requester"])
     views = []
-    monkeypatch.setattr(recovery, "clear_callback_view", lambda *a: views.append(a))
-    error = "" if scenario == "cleared" else recovery.BACKGROUND if scenario == "background" else recovery.DEAD
+    monkeypatch.setattr(recovery, "clear_callback_view", lambda *a: views.append(a) or scenario == "unreadable")
+    messages = []
+    monkeypatch.setattr(recovery, "tmux", lambda *a: messages.append(a) or result())
+    error = "" if scenario in ("cleared", "unreadable") else recovery.BACKGROUND if scenario == "background" else recovery.DEAD
     monkeypatch.setattr(recovery, "pane_failure", lambda *a: error)
     owners = []
     def owner(*a, **kw):
@@ -461,7 +464,9 @@ def test_reopen_checks_current_failure_and_requesting_viewer(recovery, target, m
     assert bool(notices) == (scenario == "unverified")
     if notices:
         assert notices == [((target["socket"], target["pane"]), {"viewer": "requester"})]
-    assert bool(cleared) == (scenario == "cleared")
+    assert bool(cleared) == (scenario in ("cleared", "unreadable"))
+    if scenario == "unreadable":
+        assert "close tmux output with q" in messages[-1][-1]
     assert bool(views) == (scenario not in ("missing", "other_client"))
     if scenario == "background":
         assert owners == [{"startup": True}]

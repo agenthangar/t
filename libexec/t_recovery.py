@@ -387,15 +387,19 @@ def clear_hint(socket, pane):
 
 
 def clear_callback_view(socket, pane):
-    """Dismiss only an old recovery callback's tmux error buffer."""
+    """Dismiss our stale error buffer; return True if tmux cannot inspect it."""
     mode = tmux(socket, "display-message", "-p", "-t", pane, "#{pane_mode}")
     if mode.returncode or mode.stdout.strip() != "view-mode":
         return
     screen = tmux(socket, "capture-pane", "-p", "-J", "-M", "-t", pane)
+    if screen.returncode:
+        # Older tmux releases cannot capture mode output. Let the user close
+        # it rather than guessing that an unrelated command's output is ours.
+        return True
     # View-mode wraps long commands at the terminal width. These callbacks
     # emitted no output beyond tmux's quoted command and exit status.
     match = re.fullmatch(r"'(.*)' returned [1-9]\d*", screen.stdout.replace("\n", "").strip())
-    if screen.returncode or not match:
+    if not match:
         return
     try:
         args = shlex.split(match[1])
@@ -417,11 +421,13 @@ def reopen(socket, pane_id, viewer):
     pane = next((row for row in panes(socket) if row["pane"] == pane_id), None)
     if pane is None or viewer not in clients(socket, pane_id):
         return 1
-    clear_callback_view(socket, pane_id)
+    unreadable_view = clear_callback_view(socket, pane_id)
     error = pane_failure(socket, pane)
     if not error:
         clear_hint(socket, pane_id)
-        tmux(socket, "display-message", "-c", viewer, "t: this pane no longer needs recovery")
+        message = ("t: close tmux output with q to return to the agent" if unreadable_view else
+                   "t: this pane no longer needs recovery")
+        tmux(socket, "display-message", "-c", viewer, message)
         return 0
     target = owner(socket, pane, startup=True) if error == BACKGROUND else owner(socket, pane)
     shown = offer(target, error, viewer=viewer) if target else unverified_notice(socket, pane_id, viewer=viewer)

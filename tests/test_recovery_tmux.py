@@ -415,11 +415,20 @@ _t_restart_slot() {{ touch "$HOME/accepted"; }}
         pid = mod.panes(socket)[0]["pane_pid"]
         tmux("run-shell", "-t", pane["pane"], callback)
         assert tmux("display-message", "-p", "-t", pane["pane"], "#{pane_mode}").stdout.strip() == "view-mode"
+        capture = tmux("capture-pane", "-p", "-M", "-t", pane["pane"])
         visible.clear()
         os.write(master, b"\x01\x1br" if custom else b"\x02R")
+        if capture.returncode:
+            assert "flag" in capture.stderr and "M" in capture.stderr
+            until(lambda: showing(b"close tmux output with q"))
+            assert tmux("display-message", "-p", "-t", pane["pane"], "#{pane_in_mode}").stdout.strip() == "1"
+            # Clear the status message first; it consumes the next keystroke.
+            os.write(master, b" ")
+            os.write(master, b"q")
         until(lambda: tmux("display-message", "-p", "-t", pane["pane"], "#{pane_in_mode}").stdout.strip() == "0",
               detail=lambda: tmux("capture-pane", "-p", "-M", "-t", pane["pane"]).stdout)
-        until(lambda: showing(b"no longer needs recovery"))
+        if not capture.returncode:
+            until(lambda: showing(b"no longer needs recovery"))
         assert mod.panes(socket)[0]["pane_pid"] == pid
         assert "healthy" in tmux("capture-pane", "-p", "-t", pane["pane"]).stdout
     finally:
