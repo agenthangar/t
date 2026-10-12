@@ -620,7 +620,14 @@ _t_resume() {
   # _t_dev / _dev_remote_attach, both of which need a terminal to attach; fall
   # through to the listing branch so the message matches the multi-candidate
   # no-fzf case instead of failing hard from inside the attach helper.
-  if (( $#visible == 1 )) && \
+  if [[ ${T_CORE_DETACH:-} == 1 && -n ${T_CORE_RESUME_SID:-} ]]; then
+    pick=
+    for c in "${(@)visible}"; do
+      f=("${(@ps:\t:)c}")
+      [[ $f[3] == $T_CORE_RESUME_SID ]] && { pick=$c; break; }
+    done
+    [[ -n $pick ]] || { print -u2 -- 't resume: selected conversation is no longer available'; return 1; }
+  elif (( $#visible == 1 )) && \
      { (( ! hidden_live || $#cands == 1 )) || [[ ! -t 0 || ! -t 1 ]]; } && \
      f=("${(@ps:\t:)visible[1]}") && [[ $f[7] == - || -t 1 ]]; then
     pick=${visible[1]}
@@ -662,6 +669,10 @@ _t_resume() {
   # both become hints, not errors, so one stray mark never aborts the batch.
   local -a picks; picks=("${(@f)pick}")
   if (( $#picks > 1 )); then
+    if [[ ${T_CORE_DETACH:-} == 1 ]]; then
+      print -u2 -- 't resume: select one exact conversation for a headless resume'
+      return 1
+    fi
     if [[ -n $no_tmux ]]; then
       echo "t resume --fg resumes ONE conversation inline in this terminal — mark a single row (or drop --fg)." >&2
       return 1
@@ -811,6 +822,10 @@ _t_resume() {
 
   # A LIVE row was picked: attach in place (local or on its host) — resuming it
   # here would mint a second owner of the session id (see the scan note above).
+  if [[ ${T_CORE_DETACH:-} == 1 && $loc != - && $loc != here ]]; then
+    print -u2 -- 't resume: this owner requires explicit terminal review'
+    return 1
+  fi
   if [[ $loc == fg:* ]]; then
     echo "That conversation is live as foreground $lalias — attaching."
     _dev_open_fg "$lalias"
@@ -869,6 +884,10 @@ _t_resume() {
   local session="dev-${repo}-${slot}"
   echo "Resuming ${sid:0:8} in $session ($cwd)"
   _dev_resume_session "$session" "$cwd" "$sid" "$agent" || return 1
+  if [[ ${T_CORE_DETACH:-} == 1 ]]; then
+    [[ -n ${T_CORE_RESULT:-} ]] && print -r -- "$session" > "$T_CORE_RESULT"
+    return 0
+  fi
   if [[ -z $TMUX && -t 0 && -t 1 ]]; then
     tmux attach-session -t "=$session:"
   else
@@ -1312,7 +1331,8 @@ _t_restart_client_only() {
 
 _t_restart_slot() {
   emulate -L zsh
-  local session="$1" dir="$2" sid="$3" agent="$4" mode="$5" expected_pid="${6:-}" expected_dead="${7:-}"
+  local session="$1" dir="$2" sid="$3" agent="$4" mode="$5" expected_pid="${6:-}" expected_dead="${7:-}" expected_owner="${8:-}"
+  [[ -z $expected_owner ]] || _dev_core_owner_matches "$session" "$expected_owner" "$sid" "$agent" "$expected_pid" || return 75
   local pane cpid up attempt snapshot old_remain actual_dir launch screen invalid_cwd=0
   local cache="${XDG_CACHE_HOME:-$HOME/.cache}/t/restart" lock
   # Do not reuse a process snapshot captured by another command in this shell.
@@ -1462,10 +1482,16 @@ _t_restart_slot() {
       }
     fi
     if [[ -n $cpid ]]; then _t_restart_client_only "$cpid" || return 1; fi
+    [[ -z $expected_owner ]] || _dev_core_owner_matches "$session" "$expected_owner" "$sid" "$agent" "$expected_pid" || return 75
     old_remain=$(tmux show-options -A -p -v -t "$pane" remain-on-exit) || return 1
-    tmux set-environment -t "=$session" CLAUDE_RESUME_ID "$sid" || return 1
-    tmux set-environment -t "=$session" DEV_AGENT "$agent" || return 1
-    tmux set-option -p -t "$pane" remain-on-exit on || return 1
+    if [[ -n $expected_owner ]]; then
+      local -a owner_identity; owner_identity=("${(@ps:\t:)expected_owner}")
+      _dev_core_tmux_effect "$expected_owner" "set-environment -t ${(q)owner_identity[2]} CLAUDE_RESUME_ID ${(q)sid}; set-environment -t ${(q)owner_identity[2]} DEV_AGENT ${(q)agent}; set-option -p -t ${(q)pane} remain-on-exit on" || return 75
+    else
+      tmux set-environment -t "=$session" CLAUDE_RESUME_ID "$sid" || return 1
+      tmux set-environment -t "=$session" DEV_AGENT "$agent" || return 1
+      tmux set-option -p -t "$pane" remain-on-exit on || return 1
+    fi
     if [[ -n $cpid ]]; then kill -TERM "$cpid" || return 1; fi
     for attempt in {1..200}; do
       if [[ $(tmux display-message -p -t "$pane" '#{pane_dead}') == 1 ]] &&
@@ -1475,8 +1501,13 @@ _t_restart_slot() {
         # kill -0 still succeeds, but a verified Z state cannot run an agent.
         # An unknown or unreadable process state keeps the pane reserved.
         # No -k: tmux must refuse if anything is still running in this pane.
-        tmux respawn-pane -t "$pane" -c "$dir" "zsh -lic ${(q)launch}" || return 1
-        tmux set-option -p -t "$pane" remain-on-exit "$old_remain"
+        if [[ -n $expected_owner ]]; then
+          local core_launch="zsh -lic ${(q)launch}"
+          _dev_core_tmux_effect "$expected_owner" "respawn-pane -t ${(q)pane} -c ${(q)dir} ${(q)core_launch}; set-option -p -t ${(q)pane} remain-on-exit ${(q)old_remain}"
+        else
+          tmux respawn-pane -t "$pane" -c "$dir" "zsh -lic ${(q)launch}" || return 1
+          tmux set-option -p -t "$pane" remain-on-exit "$old_remain"
+        fi
         return $?
       fi
       sleep 0.05

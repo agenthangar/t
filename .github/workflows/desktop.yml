@@ -1,0 +1,58 @@
+name: Desktop
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  workspace:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install frontend dependencies
+        working-directory: desktop
+        run: npm ci
+      - name: Frontend protocol tests and production build
+        working-directory: desktop
+        run: |
+          npm test
+          npm run build
+      - name: Headless browser flows and visual QA
+        working-directory: desktop
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/t-playwright
+        run: |
+          npx playwright install chromium
+          npm run test:ui
+      - name: Stage pinned Python and test bundled shared core
+        run: python3 desktop/scripts/bundle-runtime.py
+      - name: Rust transport and PTY tests
+        run: cargo test --locked --manifest-path desktop/src-tauri/Cargo.toml
+      - name: Build unsigned macOS application
+        working-directory: desktop
+        run: npm run tauri -- build --bundles app
+      - name: Relocated application smoke without native UI
+        run: python3 desktop/scripts/smoke-bundle.py
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: desktop-visual-qa
+          path: desktop/test-results/*.png
+      - name: Archive app preserving permissions and symlinks
+        working-directory: desktop
+        run: ditto -c -k --sequesterRsrc --keepParent 'src-tauri/target/release/bundle/macos/t Workspace.app' src-tauri/target/release/bundle/macos/t-workspace-macos.zip
+      - uses: actions/upload-artifact@v6
+        with:
+          name: t-workspace-macos
+          path: desktop/src-tauri/target/release/bundle/macos/t-workspace-macos.zip
