@@ -22,6 +22,9 @@ build_spec.loader.exec_module(builder)
 
 @pytest.fixture
 def sandbox(tmp_path, monkeypatch):
+    for name in list(os.environ):
+        if name.startswith('COV_CORE_'):
+            monkeypatch.delenv(name)
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))

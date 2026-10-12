@@ -32,7 +32,7 @@ def box(tmp_path):
 
 def relink(co, home, **extra):
     env = {
-        **os.environ,
+        **{key: value for key, value in os.environ.items() if not key.startswith('COV_CORE_')},
         "HOME": str(home),
         "T_LINKS_ONLY": "1",
         "T_NO_MCP": "1",
