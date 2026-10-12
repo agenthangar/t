@@ -9171,7 +9171,7 @@ def _group_help(group):
     if group == "issue":
         return _wrap_help("""USAGE
   t issue <verb> [repo] [arguments] [flags]
-  t issue list [repo] [--state open|closed|all] [--json]
+  t issue list [repo] [-a|--all] [--state open|closed|all] [--json]
   t issue status [repo] <id> [--json]
   t issue start [repo] [id ...] [--codex|--claude]
 
@@ -9179,8 +9179,9 @@ List repository issues, inspect existing agent work, or start agents.
 
 REPOSITORIES
   Use a registered alias or GitHub owner/repo; --repo works with every verb.
-  Without a repo, t uses the current registered checkout. If none is known,
-  interactive commands let you select a registered repository.
+  List uses the current checkout, or all registered repositories outside one.
+  List --all widens the view from a checkout. Status and start can select a
+  repository interactively when none is known.
   An issue URL includes its repository and can replace [repo] <id>.
 
 Run `t help issue <verb>` for flags and arguments.
@@ -9314,12 +9315,16 @@ def build_parser():
     issue_sub = sp.add_subparsers(dest="action", metavar="<verb>")
     p._group_parsers["issue"] = sp
     issue_list = issue_sub.add_parser("list", help="list issues in a repository",
-        usage="%(prog)s [repo] [--repo REPO] [--state open|closed|all] [--json]",
-        description="List GitHub issues. Use a registered alias or owner/repo. The repository "
-            "defaults to the current checkout; interactive use can select a registered repository.")
+        usage="%(prog)s [repo] [-a|--all] [--repo REPO] [--state open|closed|all] [--json]",
+        description="List GitHub issues directly, without a picker. Use a registered alias or "
+            "owner/repo to scope the list. By default, use the current registered checkout, "
+            "or list all registered GitHub repositories when outside one. --all widens a "
+            "checkout's scope to every registered GitHub repository; --state all includes "
+            "closed issues. An explicit repository and --all cannot be combined.")
     issue_list.add_argument("repository", nargs="?", metavar="repo",
                             help="registered repository alias or GitHub owner/name")
     issue_list.add_argument("--repo", help="repository alias or owner/repo (alternative to positional repo)")
+    issue_list.add_argument("-a", "--all", action="store_true", help="issues from every registered GitHub repository")
     issue_list.add_argument("--state", choices=("open", "closed", "all"), default="open",
                             help="issue state (default: open)")
     issue_list.add_argument("--json", action="store_true", help="output machine-readable issues")

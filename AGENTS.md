@@ -10,8 +10,12 @@ but never start a second live owner for one issue. Do not add a bare `t issue`
 target form or a new public single-word command. Run `python3 scripts/lint_cli.py`
 after CLI changes; CI enforces this command contract.
 Command-group help must show repository argument positions and explain inference
-and selection. Keep `--repo` consistent across issue verbs; JSON, remote scanners,
-and non-interactive commands must never prompt for a missing repository.
+and selection. Keep `--repo` consistent across issue verbs. `t issue list` is a
+read-only display like `t session list`: scope to an explicit or current repo,
+or show all registered GitHub repositories outside a checkout; `-a`/`--all`
+widens the view from inside a checkout. Keep `--state all` independent of repo
+scope. List must never open a picker. JSON, remote scanners, and non-interactive
+commands must never prompt for a missing repository.
 
 Before implementing any new enhancement or fix in a public repository, verify
 the repository's visibility and find a matching open issue on its host or create one.
@@ -41,6 +45,9 @@ Native macOS UI tests open windows and steal focus. Keep them disabled in routin
 local runs; use `--run-macos-ui` only on disposable CI or when the user explicitly
 requests native desktop verification. Mark any new interactive desktop tests
 `macos_ui` so they share this opt-in gate.
+Keep macOS CI enabled by default. Apply the `ci:skip-macos` label to a PR only
+when the user explicitly requests skipping macOS CI for that PR; remove the label
+when that exception no longer applies. The Linux and other CI jobs still run.
 
 Keep the one-live-owner guarantee, remote `zsh -lic` contract, and worktree safety
 checks. No plain local declarations of zsh tied parameters such as path/fpath.
