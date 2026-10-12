@@ -152,13 +152,13 @@ translate_path() {  # <cwd> <from-home> <to-home>
   esac
 }
 
-# One row per chat: <chat-id>  <workspace or hash>  <last-used>  <title>.
+# One tab-delimited row per chat: <chat-id> <workspace or hash> <last-used> <title>.
 # Newest first, by the newest file in the chat dir (store.db while a chat is
 # live; a chat that has not had a conversation yet holds only meta.json —
 # still listed). Also the picker's row source.
 list_chats() {
   local dir ws cwd newest title
-  [[ -d "$CHATS" ]] || { echo "No cursor chats here (~/.cursor/chats is empty)."; return; }
+  [[ -d "$CHATS" ]] || return 0
   # shellcheck disable=SC2012
   { ls -dt "$CHATS"/*/*/ 2>/dev/null || true; } | while IFS= read -r dir; do
     dir="${dir%/}"
@@ -168,9 +168,24 @@ list_chats() {
     title="$(chat_title "$dir")"
     # shellcheck disable=SC2012
     newest=$(ls -t "$dir" 2>/dev/null | head -1)
-    printf '%s  %s  %s  %s\n' "$(basename "$dir")" "${cwd:-hash:$ws}" \
+    printf '%s\t%s\t%s\t%s\n' "$(basename "$dir")" "${cwd:-hash:$ws}" \
       "$(mtime_fmt "$dir/${newest:-.}")" "${title:-(untitled)}"
   done
+}
+
+# Use the same human table renderer as repository, session, host and issue lists.
+# Redirected output retains complete identities; narrow terminals stack labels.
+print_chat_list() {
+  list_chats | python3 -c '
+import runpy, sys
+from pathlib import Path
+rows = [line.rstrip("\n").split("\t", 3) for line in sys.stdin if line.strip()]
+if not rows:
+    print("No cursor chats here (~/.cursor/chats is empty).")
+    raise SystemExit(0)
+api = runpy.run_path(str(Path(sys.argv[1]).resolve().with_name("t")))
+print("\n".join(api["_table_lines"](("CHAT ID", "WORKSPACE", "LAST USED", "TITLE"), rows)))
+' "$0"
 }
 
 # fzf over list_chats rows (title + workspace visible — no id juggling).
@@ -181,13 +196,11 @@ pick_chat() {
   local row
   local tui_lib
   tui_lib=$(python3 -c 'import os, sys; print(os.path.join(os.path.dirname(os.path.realpath(sys.argv[1])), "..", "ui", "fzf.sh"))' "$0")
-  _t_fzf() { command fzf "$@"; }
-  if [[ -r "$tui_lib" ]]; then
-    # shellcheck source=ui/fzf.sh
-    source "$tui_lib"
-  fi
-  row=$(list_chats | _t_fzf --prompt='cursor chat> ' --no-multi) || return 1
-  awk '{print $1}' <<<"$row"
+  [[ -r "$tui_lib" ]] || { echo "cursor-beam: shared picker unavailable: $tui_lib" >&2; return 2; }
+  # shellcheck source=ui/fzf.sh
+  source "$tui_lib"
+  row=$(list_chats | _t_fzf_single open 'Cursor chats' --delimiter=$'\t' --with-nth=2.. --prompt='cursor chat> ') || return $?
+  printf '%s\n' "${row%%$'\t'*}"
 }
 
 # Resolve a chat dir under $CHATS: exact id, unique prefix, or (no id) the
@@ -233,7 +246,7 @@ if (( do_ls )); then
     # interactive PATH, same contract as the rest of the family.
     exec ssh "$host" "zsh -lic 't cursor ls'"
   fi
-  list_chats
+  print_chat_list
   exit 0
 fi
 
@@ -244,7 +257,7 @@ if (( do_resume )); then
   if [[ -n "$host" ]]; then
     exec ssh -t "$host" "zsh -lic 'if command -v security >/dev/null; then security unlock-keychain || exit 1; fi; t cursor resume ${chat_id}'"
   fi
-  if (( do_pick )); then chat_id=$(pick_chat) || exit 1; fi
+  if (( do_pick )); then chat_id=$(pick_chat) || exit $?; fi
   dir=$(resolve_chat "$chat_id")
   id="$(basename "$dir")"
   cwd="$(chat_cwd "$dir" || true)"
@@ -328,7 +341,7 @@ fi
 # ---- send (default) ----
 host="${host:-$(default_host)}"
 [[ -n "$host" ]] || { echo "cursor-beam: no host (--host <h>, or set TBEAM_HOST / REMOTE_HOSTS)" >&2; exit 2; }
-if (( do_pick )); then chat_id=$(pick_chat) || exit 1; fi
+if (( do_pick )); then chat_id=$(pick_chat) || exit $?; fi
 dir=$(resolve_chat "$chat_id")
 id="$(basename "$dir")"
 rel="${dir#"$CHATS"/}"

@@ -45,6 +45,7 @@ import sys
 import tempfile
 import textwrap
 import time
+import unicodedata
 from contextlib import closing, contextmanager, redirect_stdout
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import TCPServer
@@ -284,6 +285,50 @@ class Style:
 
 def _columns():
     return shutil.get_terminal_size((80, 24)).columns
+
+
+def _display_width(text):
+    return sum(0 if unicodedata.category(char) in ("Mn", "Me", "Cf") else
+               2 if unicodedata.east_asian_width(char) in ("W", "F") else 1
+               for char in text)
+
+
+def _wrap_columns(text, width, continuation=""):
+    """Wrap plain cells by terminal columns, including wide/combining glyphs."""
+    lines, line, used = [], "", 0
+    for char in text:
+        size = _display_width(char)
+        if used + size > width and line:
+            lines.append(line.rstrip())
+            line, used = continuation, _display_width(continuation)
+        line += char
+        used += size
+    if line:
+        lines.append(line.rstrip())
+    return lines
+
+
+def _table_lines(headings, rows, width=None):
+    """Shared human table: aligned columns, stacked labels on small terminals.
+
+    Callers supply plain cells; format before applying color. Redirected output
+    keeps complete values, while a terminal wraps them without losing identities.
+    """
+    rows = [tuple(str(cell) for cell in row) for row in rows]
+    width = width if width is not None else (_columns() if sys.stdout.isatty() else None)
+    widths = [max([_display_width(heading)] + [_display_width(row[i]) for row in rows])
+              for i, heading in enumerate(headings)]
+    if width is None or sum(widths) + 2 * len(widths) <= width:
+        return ["  " + "  ".join(cell + " " * (widths[i] - _display_width(cell))
+                                 for i, cell in enumerate(row)).rstrip()
+                for row in [headings, *rows]]
+    lines = []
+    for row in rows:
+        if lines:
+            lines.append("")
+        for heading, cell in zip(headings, row):
+            lines.extend(_wrap_columns(f"{heading}: {cell}", max(4, width - 2), "  "))
+    return ["  " + line if line else "" for line in lines]
 
 
 def _truncate(s, avail):
@@ -531,18 +576,30 @@ def _session_picker_rows(rows, remote=False, scoped=False):
     return out
 
 
+def _session_table_lines(rows, remote=False):
+    headings = ["STATUS", "UI", "MODEL"] + (["HOST"] if remote else []) + ["SESSION", "WORKING ON"]
+    cells = []
+    for row in rows:
+        active = row.get("context") == "active"
+        attached = row.get("state") == "attached" or (row.get("state") == "app" and active)
+        marks = ("●" if attached else "○") + (" ✓" if active else "")
+        if _PR_WIP_RE.search(row.get("summary") or ""):
+            marks += " ↻"
+        cell = [marks, "▣ desktop" if row.get("state") == "app" else "› cli",
+                f"{_agent_glyph(row.get('agent', 'claude'))} {row.get('model') or '-'}"]
+        if remote:
+            cell.append(row.get("host", "local"))
+        cells.append([*cell, row["slot"], row.get("summary") or ""])
+    return _table_lines(headings, cells)
+
+
 def _render_local(rows, scope, st, has_remote=False):
-    name_w = max([7] + [len(r["slot"]) for r in rows])
-    model_w = min(28, max([7] + [len(str(r.get("model") or "-")) + 2 for r in rows]))
-    avail = _columns() - 21 - model_w - name_w
-    if avail < 12:
-        avail = 80 - 21 - model_w - name_w
     print(_header(st, scope))
     print()
-    print(f"  {st.y}{'STATUS':<7}{'UI':<10}{'MODEL':<{model_w}} {'SESSION':<{name_w}} WORKING ON{st.r}")
+    for line in _session_table_lines(rows):
+        print(line.replace("●", f"{st.g}●{st.r}").replace("✓", f"{st.c}✓{st.r}").replace("↻", f"{st.w}↻{st.r}"))
     has_fg = has_app = False
     for r in rows:
-        print("  " + _slot_line(r, st, name_w, avail, model_w=model_w))
         if ":" in r["slot"]:                       # colon marks a foreground row
             has_fg = True
         if r["state"] == "app" or "Codex desktop workspace" in r["summary"]:
@@ -562,18 +619,12 @@ def _render_local(rows, scope, st, has_remote=False):
 
 
 def _render_remote(rows, scope, st):
-    host_w = max([4] + [len(r["host"]) for r in rows if r["host"] != "local"])
-    name_w = max([7] + [len(r["slot"]) for r in rows])
-    model_w = min(28, max([7] + [len(str(r.get("model") or "-")) + 2 for r in rows]))
-    avail = _columns() - 22 - model_w - host_w - name_w
-    if avail < 12:
-        avail = 80 - 22 - model_w - host_w - name_w
     print(_header(st, scope))
     print()
-    print(f"  {st.y}{'STATUS':<7}{'UI':<10}{'MODEL':<{model_w}} {'HOST':<{host_w}} {'SESSION':<{name_w}} WORKING ON{st.r}")
+    for line in _session_table_lines(rows, remote=True):
+        print(line.replace("●", f"{st.g}●{st.r}").replace("✓", f"{st.c}✓{st.r}").replace("↻", f"{st.w}↻{st.r}"))
     has_fg = has_app = False
     for r in rows:
-        print("  " + _slot_line(r, st, name_w, avail, host_w, model_w=model_w))
         if ":" in r["slot"]:                       # colon marks a foreground row
             has_fg = True
         if r["state"] == "app" or "Codex desktop workspace" in r["summary"]:
@@ -1574,11 +1625,11 @@ def cmd_hosts(cfg, args):
             elif not cfg.hosts:
                 print("No remote hosts registered. Add one with `t hosts add <alias> <user@host>`.")
             else:
-                width = max(5, max(map(len, cfg.hosts)))
-                print(f"{'ALIAS':<{width}}  SSH TARGET")
+                rows = []
                 for alias, target in sorted(cfg.hosts.items()):
                     suffix = "  (default for session move)" if cfg.beam_host in (alias, target) else ""
-                    print(f"{alias:<{width}}  {target}{suffix}")
+                    rows.append((alias, target + suffix))
+                print("\n".join(_table_lines(("ALIAS", "SSH TARGET"), rows)))
             return 0
         alias = getattr(args, "alias", None)
         if action == "show":
@@ -2200,9 +2251,8 @@ def cmd_repos(cfg, args):
         if not cfg.repos:
             print("No repositories registered. Run t setup to register one.")
             return 0
-        width = max(len(alias) for alias in cfg.repos)
-        for alias, path in sorted(cfg.repos.items()):
-            print(f"{alias:<{width}}  {_tilde(path)}")
+        print("\n".join(_table_lines(("REPO", "CHECKOUT"),
+                                    [(alias, _tilde(path)) for alias, path in sorted(cfg.repos.items())])))
         return 0
     if args.repo not in cfg.repos:
         print(f"t repos path: unknown repo {args.repo!r} (known: "
@@ -2235,7 +2285,7 @@ def cmd_config(cfg, args):
         before = _config_read(_current_local_rc())
         result = "edit" if getattr(args, "edit", False) else _config_wizard(cfg)
         if result is None:
-            return 0
+            return 130
         if result == "edit":
             rc = _config_editor()
             if rc:
@@ -2252,6 +2302,8 @@ def cmd_config(cfg, args):
     except (OSError, ValueError) as exc:
         print(f"t config: {exc}", file=sys.stderr)
         return 1
+    except KeyboardInterrupt:
+        return 130
     zsh_capture("_t_sync_config")
     print("✓ saved local settings to T_LOCAL_RC")
     if not os.environ.get("T_SETUP_SHIM"):
@@ -2496,7 +2548,9 @@ class _RailUI:
                 cur = min(cur + 1, len(rows) - 1)
             elif k == "enter":
                 return [rows[i][0] for i in sorted(marks)] if multi else rows[cur][0]
-            elif k in ("q", "esc", "abort"):
+            elif k == "abort":
+                raise KeyboardInterrupt
+            elif k in ("q", "esc"):
                 return None
             else:
                 flash = "No binding for that key"
@@ -2709,7 +2763,9 @@ def _setup_prompt_flow(items, taken, trailer=None):
                      "host": f"add host {it['alias']} → {it['value']}"}[it["kind"]]
                 while True:   # any answer that is not y/n = yes, under that alias
                     r = _prompt(f"  {q}? [y/N/other alias] ")
-                    if r is None or r.lower() in ("", "n", "no"):
+                    if r is None:
+                        return False
+                    if r.lower() in ("", "n", "no"):
                         break
                     if r.lower() in ("y", "yes"):
                         it["checked"] = True
@@ -2727,6 +2783,8 @@ def _setup_prompt_flow(items, taken, trailer=None):
                 it["checked"] = _confirm(f"  {q}?")
     while True:
         ent = _prompt("add host (alias=target or user@host, blank to finish): ")
+        if ent is None:
+            return False
         if not ent:
             break
         used = taken | {x["alias"] for x in items if x["t"] in ("toggle", "locked")}
@@ -2857,7 +2915,7 @@ def cmd_setup(cfg, args):
     if not confirmed:
         if not wizard_ran:   # the wizard already printed its └ aborted line
             print("t setup: aborted — nothing written")
-        return 1
+        return 130
 
     add_repos, add_hosts, tbeam_target, stale_ok = _setup_result(items)
     st = Style()
@@ -3766,7 +3824,7 @@ def cmd_new(cfg, args):
     if r is None:
         if not wizard_ran:
             print("t new: aborted — nothing created")
-        return 1
+        return 130
     steps, answers = r
     errs = [s for s in steps if s["do"] == "error"]
     if errs:
@@ -4393,8 +4451,11 @@ def cmd_login(cfg, args):
                 confirmed = _install_prompt_flow(items, plan, login=True)
         except (EOFError, KeyboardInterrupt):
             return 130
-        if not confirmed:
+        if confirmed == "empty":
+            print("No logins selected; nothing run.")
             return int(probe_failed())
+        if not confirmed:
+            return 130
     else:
         for item in items[1:]:
             print(f"{item['alias']}: {item['value']}")
@@ -4403,14 +4464,8 @@ def cmd_login(cfg, args):
         if args.dry_run or args.status or not plan():
             return int(probe_failed())
     if not args.yes and not interactive:
-        if not sys.stdin.isatty():
-            print("t login: use --dry-run to inspect or -y to run the displayed logins", file=sys.stderr)
-            return 2
-        try:
-            if not _confirm_run("Run these login commands?"):
-                return int(probe_failed())
-        except (EOFError, KeyboardInterrupt):
-            return 130
+        print("t login: use --dry-run to inspect or -y to run the displayed logins", file=sys.stderr)
+        return 2
     failed = probe_failed(confirmed=True)
     for step in plan():
         agent, cmd = step["agent"], step["cmd"]
@@ -4853,15 +4908,70 @@ def _t_offer_update(installation=None):
     return 10
 
 
+def _command_readonly(argv, *, terminal=None):
+    """Classify t-owned read-only modes before any update prompt or config load.
+
+    Forwarded command arguments belong to the child, so a literal --json or
+    --status after a passthrough target must not change t's classification.
+    """
+    words = _canonical_argv(argv)
+    if not words:
+        return True
+    verb, tail = words[0], words[1:]
+    if verb == "on":
+        return False
+    options = tail[:tail.index("--")] if "--" in tail else tail
+    if verb == "cursor":
+        return bool(tail and tail[0] in ("ls", "list", "--ls"))
+    if verb == "share":
+        # Sending and retrying write a receipt even when --json formats it.
+        # Skip option values before looking for a read-only subcommand.
+        pending = iter(tail)
+        for word in pending:
+            if word in ("--to", "--file", "--attach", "--from", "--host", "--retry"):
+                next(pending, None)
+            elif word == "--json" or word.startswith(("--to=", "--file=", "--attach=", "--from=", "--host=", "--retry=")):
+                continue
+            else:
+                return word in ("targets", "inbox", "read")
+        return not tail or all(word == "--json" for word in tail)
+    if verb == "history":
+        if terminal is None:
+            terminal = sys.stdin.isatty() and sys.stdout.isatty()
+        return "--json" in options or not terminal
+    if any(flag in options for flag in ("--dry-run", "--json", "--dump", "--statusline")):
+        return True
+    if verb in ("help", "ls", "read", "plan", "doctor", "session-rows"):
+        return True
+    if verb == "issue":
+        return bool(tail and tail[0] in ("list", "status"))
+    if verb == "repos":
+        return bool(tail and tail[0] in ("ls", "path"))
+    if verb == "hosts":
+        return bool(tail and (tail[0] in ("list", "show") or
+                            (tail[0] == "default" and len(tail) == 1)))
+    if verb in ("config", "instructions"):
+        return "--show" in options
+    if verb == "permissions":
+        return "--apply" not in options
+    if verb in ("install", "login", "trust"):
+        return "--status" in options
+    if verb == "update":
+        return "--check" in options
+    return False
+
+
 def _t_auto_update(argv):
     """Return None to continue, or replace this process with the updated CLI."""
-    public = {"open", "app", "ls", "kill", "restart", "push", "pop", "resume", "cd",
+    public = {"open", "app", "ls", "kill", "restart", "push", "pop", "resume", "history", "cd",
               "beam", "read", "plan", "paste", "find", "cursor", "repos", "config",
               "setup", "new", "checkout", "instructions", "install", "integrate",
               "permissions", "trust", "doctor"}
     operation = _canonical_argv(argv)
-    if (not operation or operation[0] not in public or not _t_update_interactive()
-            or any(flag in argv for flag in ("--dry-run", "--json", "--dump", "--statusline"))):
+    # Share may write a receipt while emitting JSON; keep its machine protocol
+    # free of update prompts independently of the read-only classifier.
+    if (not operation or operation[0] == "share" or operation[0] not in public or _command_readonly(argv)
+            or not _t_update_interactive()):
         return None
     installation = _t_update_installation()
     if not installation:
@@ -5193,10 +5303,13 @@ def _install_prompt_flow(items, plan, login=False):
                     return False
                 it["checked"] = answer.lower() in ("y", "yes")
             else:
-                it["checked"] = _confirm(f"  {it['alias']} ({it['value']})?")
+                answer = _prompt(f"  {it['alias']} ({it['value']})? [y/N/q] ")
+                if answer is None or answer.lower() == "q":
+                    return False
+                it["checked"] = answer.lower() in ("y", "yes")
     lines = _install_render(plan(), st)
     if not lines:
-        return False
+        return "empty"
     print(f"\n{st.b}Running{st.r}:\n" if login else f"\n{st.b}review{st.r} — what will run:\n")
     for ln in lines:
         print(f"  {ln}")
@@ -5264,10 +5377,13 @@ def cmd_install(cfg, args):
         wizard_ran = False
         print(f"(inline UI unavailable: {e} — falling back to prompts)", file=sys.stderr)
         confirmed = _install_prompt_flow(items, plan)
+    if confirmed == "empty":
+        print("No installs selected; nothing run.")
+        return 0
     if not confirmed:
         if not wizard_ran:
             print("t install: aborted — nothing run")
-        return 1
+        return 130
     return _install_then_setup(cfg, args, _install_walk(plan(), close=wizard_ran))
 
 
@@ -9199,8 +9315,8 @@ List repository issues, inspect existing agent work, or start agents.
 REPOSITORIES
   Use a registered alias or GitHub owner/repo; --repo works with every verb.
   List uses the current checkout, or all registered repositories outside one.
-  List --all widens the view from a checkout. Status and start can select a
-  repository interactively when none is known.
+  List --all widens the view from a checkout. Status never prompts: specify a
+  repository when outside a registered checkout. Start can select one interactively.
   An issue URL includes its repository and can replace [repo] <id>.
 
 Run `t help issue <verb>` for flags and arguments.
@@ -9351,7 +9467,8 @@ def build_parser():
         usage="%(prog)s [repo] <id> [--repo REPO] [--json]",
         description="Check local and remote worktrees, agent sessions, Codex Cloud, Cursor Cloud, "
             "and GitHub without starting or attaching. Use a registered alias or owner/repo, "
-            "or omit it to use the current checkout or interactive repository picker. "
+            "or omit it to use the current registered checkout. Outside a checkout, specify "
+            "the repository explicitly; status never prompts. "
             "An issue URL includes its repository.")
     issue_status.add_argument("target", nargs="+", help="issue number, repo and number, or GitHub issue URL")
     issue_status.add_argument("--repo", help="registered repository alias or GitHub owner/name")

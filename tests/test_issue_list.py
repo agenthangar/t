@@ -19,7 +19,7 @@ def mod():
 
 
 @pytest.fixture
-def listing(mod, tmp_path, monkeypatch):
+def listing(mod, t_mod, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     cfg = SimpleNamespace(
         repos={name: str(tmp_path / name) for name in ('api', 'api_copy', 'web')},
@@ -30,6 +30,7 @@ def listing(mod, tmp_path, monkeypatch):
         'Style': lambda tty=None: SimpleNamespace(y='', r='', b='', c='', g='', w=''),
         '_columns': lambda: 100,
         '_truncate': lambda text, width: text[:width],
+        '_table_lines': t_mod._table_lines,
     })
     monkeypatch.setattr(app, 'pick_rows', lambda *a, **kw: pytest.fail('list must not open a picker'))
     origins = {'api': 'Org/API', 'api_copy': 'Org/API', 'web': 'Org/Web'}
@@ -91,6 +92,20 @@ def test_inferred_and_explicit_repository_scope_and_all_override(listing, monkey
     assert app.list_issues(args(all=True)) == 0
     assert set(seen) == {'org/api', 'org/web'}
     assert len(seen) == 2
+
+
+def test_all_state_is_independent_of_repository_scope(listing, monkeypatch, capsys):
+    app, cfg, _ = listing
+    cfg.repo_of_dir = lambda cwd: ('api', '1')
+    seen = []
+    monkeypatch.setattr(app, 'issues', lambda repo, state: seen.append((repo, state)) or [])
+
+    assert app.list_issues(args(state='all')) == 0
+    assert seen == [('org/api', 'all')]
+    assert 'No issues in api.' in capsys.readouterr().out
+
+    assert app.list_issues(args(all=True, state='all')) == 0
+    assert set(seen[1:]) == {('org/api', 'all'), ('org/web', 'all')}
 
 
 def test_list_json_works_outside_checkout_and_has_canonical_repo(listing, monkeypatch, capsys):

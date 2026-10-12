@@ -126,13 +126,10 @@ def test_picker_explicit_selection_refresh_cancel_and_private_snapshots(history,
     monkeypatch.setenv('COV_CORE_SOURCE', 'private')
     def fzf(argv, **kwargs):
         calls.append(argv)
-        assert '--no-multi' in argv
-        assert '--disabled' in argv
-        assert '--sync' in argv
-        assert '--with-nth=2' in argv
+        assert '_t_fzf_paginated' in argv[2]
+        assert not any(part.startswith(('--bind=', '--header=', '--no-multi')) for part in argv)
         assert not any(k.startswith('COV_CORE_') for k in kwargs['env'])
-        preview = next(a for a in argv if a.startswith('--preview='))
-        words = shlex.split(preview.split('=', 1)[1])
+        words = shlex.split(argv[8])
         snapshot = Path(words[3])
         assert snapshot.is_file()
         assert json.loads(snapshot.read_text())[0]['sid'] == 'session-0'
@@ -142,7 +139,7 @@ def test_picker_explicit_selection_refresh_cancel_and_private_snapshots(history,
     selected, key, query = app.pick(rows(1), 'repo', query='Conversation' if expected else '')
     assert (selected['sid'] if selected else None) == expected
     assert len(calls) == 1
-    assert key == ('ctrl-r' if 'ctrl-r' in stdout else 'enter' if expected else '')
+    assert key == ('ctrl-r' if 'ctrl-r' in stdout else 'enter' if expected else 'cancel')
 
 
 @pytest.mark.parametrize('code,stdout,error', [(2, '', 'unavailable'), (0, '\nenter\n99\tinvalid\n', 'selection')])
@@ -175,7 +172,8 @@ def test_scope_bare_slot_and_explicit_repo_slot_are_read_only(history, app):
             app.scope(target)
 
 
-def test_real_isolated_tmux_picker_paging_global_search_refresh_and_cancel(history, tmp_path):
+@pytest.mark.parametrize('hostile_defaults', [False, True])
+def test_real_isolated_tmux_picker_paging_global_search_refresh_and_cancel(history, tmp_path, hostile_defaults):
     """fzf actually reloads its rows under a private PTY; no desktop windows."""
     import shutil
     import subprocess
@@ -187,7 +185,10 @@ def test_real_isolated_tmux_picker_paging_global_search_refresh_and_cancel(histo
     env = {k: v for k, v in os.environ.items() if not k.startswith('COV_CORE_')}
     env.pop('TMUX', None)
     env['TERM'] = 'xterm-256color'
-    env['FZF_DEFAULT_OPTS'] = ''
+    env['FZF_DEFAULT_OPTS'] = '--bind=enter:abort,ctrl-r:abort,esc:accept' if hostile_defaults else ''
+    options_file = tmp_path / 'fzf-defaults'
+    options_file.write_text('--bind=enter:abort,ctrl-r:abort,esc:accept\n' if hostile_defaults else '')
+    env['FZF_DEFAULT_OPTS_FILE'] = str(options_file)
     env['FZF_DEFAULT_COMMAND'] = ''
     data = rows()
     snapshot, result = tmp_path / 'input.json', tmp_path / 'selection.json'
@@ -257,7 +258,7 @@ finally:
             while not result.exists() and time.monotonic() < deadline:
                 time.sleep(.05)
             assert result.exists(), screen()
-            assert json.loads(result.read_text()) == {'sid': None, 'key': '', 'query': ''}
+            assert json.loads(result.read_text()) == {'sid': None, 'key': 'cancel', 'query': ''}
             tmux('kill-session', '-t', 'picker')
             result.unlink()
             tmux('new-session', '-d', '-s', 'picker', '-x', '220', '-y', '45', command)
@@ -272,6 +273,61 @@ finally:
                 time.sleep(.05)
             assert result.exists(), screen()
             assert json.loads(result.read_text()) == {'sid': 'session-119', 'key': 'enter', 'query': 'session-119'}, result.with_suffix('.fzf').read_text()
+        finally:
+            subprocess.run(['tmux', '-S', socket, 'kill-server'], env=env, capture_output=True, timeout=10)
+
+
+@pytest.mark.parametrize('width,height', [(44, 20), (32, 12)])
+def test_paginated_history_keeps_action_and_focused_row_visible_on_small_terminals(
+        history, tmp_path, width, height):
+    import shutil
+    import subprocess
+    import sys
+    import tempfile
+    import time
+    if not shutil.which('tmux') or not shutil.which('fzf'):
+        pytest.skip('isolated PTY picker requires tmux and fzf')
+    env = {k: v for k, v in os.environ.items() if not k.startswith('COV_CORE_')}
+    env.pop('TMUX', None)
+    env.update(TERM='xterm-256color', FZF_DEFAULT_OPTS='', FZF_DEFAULT_COMMAND='')
+    snapshot, result = tmp_path / 'input.json', tmp_path / 'selection.json'
+    snapshot.write_text(json.dumps(rows(1)))
+    harness = tmp_path / 'picker.py'
+    harness.write_text('''import importlib.util, json, pathlib, sys
+from types import SimpleNamespace
+root, snapshot, result = map(pathlib.Path, sys.argv[1:])
+spec = importlib.util.spec_from_file_location('history_small_pty', root / 'libexec/t_history.py')
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+app = m.HistoryCommand(SimpleNamespace(repos={'repo':'/unused'}, hosts={}), {'_t_source_root':lambda: str(root)})
+try:
+    row, key, query = app.pick(json.loads(snapshot.read_text()), 'repo')
+    result.write_text(json.dumps({'sid':row['sid'] if row else None, 'key':key}))
+finally:
+    app.store.close()
+''')
+    with tempfile.TemporaryDirectory(prefix='t-history-small-pty-') as short:
+        socket = str(Path(short) / 'tmux.sock')
+        command = shlex.join([sys.executable, str(harness), str(ROOT), str(snapshot), str(result)])
+        def tmux(*argv):
+            return subprocess.run(['tmux', '-S', socket, '-f', '/dev/null', *argv], env=env,
+                                  capture_output=True, text=True, timeout=10, check=True).stdout
+        try:
+            tmux('new-session', '-d', '-s', 'picker', '-x', str(width), '-y', str(height), command)
+            tmux('set-option', '-t', 'picker', 'remain-on-exit', 'on')
+            deadline = time.monotonic() + 10
+            captured = ''
+            while time.monotonic() < deadline:
+                captured = tmux('capture-pane', '-p', '-t', 'picker')
+                if 'Enter resume' in captured and '▸' in captured and 'Conversat' in captured:
+                    break
+                time.sleep(.05)
+            assert 'Enter resume' in captured and '▸' in captured and 'Conversat' in captured, captured
+            tmux('send-keys', '-t', 'picker', 'Escape')
+            deadline = time.monotonic() + 10
+            while not result.exists() and time.monotonic() < deadline:
+                time.sleep(.05)
+            assert json.loads(result.read_text()) == {'sid': None, 'key': 'cancel'}
         finally:
             subprocess.run(['tmux', '-S', socket, 'kill-server'], env=env, capture_output=True, timeout=10)
 

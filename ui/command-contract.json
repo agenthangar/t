@@ -1,0 +1,2300 @@
+{
+  "schema_version": 1,
+  "description": "Development-only public command appearance and interaction inventory; aliases inherit canonical routes in bin/t COMMAND_GROUPS.",
+  "patterns": {
+    "list": "Direct read-only aligned rows, scope, and empty state; never launches a picker.",
+    "detail": "Read-only labeled values; no work starts or prompt appears.",
+    "single": "One focused target chosen with Enter in the shared picker or inline menu.",
+    "multi": "Space/Tab marks searchable rows; Enter accepts marks or the focused row.",
+    "filtered": "Shared Ctrl-A all and Ctrl-F defaults; session filters add Ctrl-T, Ctrl-L, or Ctrl-P.",
+    "wizard": "Stage edits and review before applying with the shared Rail UI.",
+    "review": "Show selected install actions before running; Enter applies the reviewed plan.",
+    "action": "Run an explicit target without unnecessary selection; confirm interruption when needed.",
+    "passthrough": "Preserve raw or delegated tool I/O and exit behavior.",
+    "machine": "Stable JSON/raw output, with no prompt or ANSI styling."
+  },
+  "commands": {
+    "share": {
+      "patterns": [
+        "action",
+        "machine"
+      ],
+      "renderer": "mixed",
+      "scope": "exact destination conversation and optional host",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_share.py::test_run_local_send_then_inbox_and_read"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "share",
+            "--to",
+            "codex:123",
+            "--file",
+            "summary.md"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_share.py::test_run_local_send_then_inbox_and_read",
+            "tests/test_share.py::test_human_output_shows_targets_inbox_summary_attachment_and_receipt"
+          ]
+        },
+        "json": {
+          "argv": [
+            "share",
+            "--to",
+            "codex:123",
+            "--file",
+            "summary.md",
+            "--json"
+          ],
+          "patterns": [
+            "action",
+            "machine"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_share.py::test_run_local_send_then_inbox_and_read"
+          ],
+          "notes": "A machine-readable receipt still follows a mutating send; no automatic update prompt."
+        },
+        "retry": {
+          "argv": [
+            "share",
+            "--retry",
+            "123"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_share.py::test_run_remote_lost_receipt_then_retries_original_bundle"
+          ]
+        },
+        "remote": {
+          "argv": [
+            "share",
+            "--to",
+            "cursor:123",
+            "--file",
+            "summary.md",
+            "--host",
+            "mini"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_share.py::test_run_remote_lost_receipt_then_retries_original_bundle"
+          ]
+        }
+      }
+    },
+    "share targets": {
+      "patterns": [
+        "list",
+        "machine"
+      ],
+      "renderer": "plain",
+      "scope": "local or explicit host",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_share.py::test_human_output_shows_targets_inbox_summary_attachment_and_receipt"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "share",
+            "targets"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_share.py::test_human_output_shows_targets_inbox_summary_attachment_and_receipt"
+          ]
+        },
+        "json": {
+          "argv": [
+            "share",
+            "targets",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_share.py::test_run_targets_labels_selected_host"
+          ]
+        },
+        "host": {
+          "argv": [
+            "share",
+            "targets",
+            "--host",
+            "mini"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_share.py::test_run_targets_labels_selected_host"
+          ]
+        }
+      }
+    },
+    "share inbox": {
+      "patterns": [
+        "list",
+        "machine"
+      ],
+      "renderer": "plain",
+      "scope": "local or exact receiving conversation and optional host",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_share.py::test_run_local_send_then_inbox_and_read"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "share",
+            "inbox"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_share.py::test_human_output_shows_targets_inbox_summary_attachment_and_receipt"
+          ]
+        },
+        "json": {
+          "argv": [
+            "share",
+            "inbox",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_share.py::test_run_local_send_then_inbox_and_read"
+          ]
+        }
+      }
+    },
+    "share read": {
+      "patterns": [
+        "detail",
+        "passthrough",
+        "machine"
+      ],
+      "renderer": "plain",
+      "scope": "exact message ID, recipient, and optional host",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_share.py::test_run_local_send_then_inbox_and_read"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "share",
+            "read",
+            "123"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_share.py::test_human_output_shows_targets_inbox_summary_attachment_and_receipt"
+          ]
+        },
+        "attachment": {
+          "argv": [
+            "share",
+            "read",
+            "123",
+            "--attachment",
+            "history.md"
+          ],
+          "patterns": [
+            "passthrough"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_share.py::test_run_local_send_then_inbox_and_read"
+          ]
+        },
+        "json": {
+          "argv": [
+            "share",
+            "read",
+            "123",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_share.py::test_run_local_send_then_inbox_and_read"
+          ]
+        }
+      }
+    },
+    "issue list": {
+      "patterns": [
+        "list",
+        "machine"
+      ],
+      "renderer": "plain",
+      "scope": "explicit/inferred repository; list may span registered GitHub repositories",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_issue_list.py::test_inferred_and_explicit_repository_scope_and_all_override"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "issue",
+            "list"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_issue_list.py::test_inferred_and_explicit_repository_scope_and_all_override",
+            "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
+          ]
+        },
+        "json": {
+          "argv": [
+            "issue",
+            "list",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_issue_list.py::test_list_json_works_outside_checkout_and_has_canonical_repo",
+            "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
+          ]
+        },
+        "all_scope": {
+          "argv": [
+            "issue",
+            "list",
+            "--all"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_issue_list.py::test_inferred_and_explicit_repository_scope_and_all_override",
+            "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
+          ]
+        },
+        "all_state": {
+          "argv": [
+            "issue",
+            "list",
+            "--state",
+            "all"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_issue_list.py::test_all_state_is_independent_of_repository_scope",
+            "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
+          ]
+        }
+      }
+    },
+    "issue status": {
+      "patterns": [
+        "detail",
+        "machine"
+      ],
+      "renderer": "plain",
+      "scope": "explicit/inferred repository; list may span registered GitHub repositories",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_issue.py::test_readonly_modes"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "issue",
+            "status",
+            "123"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_issue.py::test_readonly_modes",
+            "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
+          ]
+        },
+        "json": {
+          "argv": [
+            "issue",
+            "status",
+            "123",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_issue.py::test_standalone_json_check_never_launches",
+            "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
+          ]
+        },
+        "remote_scan": {
+          "argv": [
+            "issue",
+            "status",
+            "123",
+            "--scan-host"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_issue.py::test_readonly_modes",
+            "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
+          ]
+        }
+      }
+    },
+    "issue start": {
+      "patterns": [
+        "action",
+        "filtered",
+        "multi"
+      ],
+      "renderer": "fzf",
+      "scope": "explicit/inferred repository; list may span registered GitHub repositories",
+      "confirmation": "per_target",
+      "tests": [
+        "tests/test_issue_verbs.py::test_start_without_ids_uses_shared_multiselect"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "issue",
+            "start"
+          ],
+          "patterns": [
+            "multi",
+            "filtered"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_issue_verbs.py::test_start_without_ids_uses_shared_multiselect"
+          ]
+        },
+        "explicit": {
+          "argv": [
+            "issue",
+            "start",
+            "123"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_issue_verbs.py::test_batch_starts_every_selected_issue_before_attaching"
+          ]
+        }
+      }
+    },
+    "session open": {
+      "patterns": [
+        "action",
+        "filtered",
+        "multi"
+      ],
+      "renderer": "fzf",
+      "scope": "explicit/inferred repository or all local/remote sessions",
+      "confirmation": "per_target",
+      "tests": [
+        "tests/test_open_picker.py::test_bare_open_inside_worktree_shows_every_detail_and_repo"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "session",
+            "open"
+          ],
+          "patterns": [
+            "multi",
+            "filtered"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_open_picker.py::test_bare_open_inside_worktree_shows_every_detail_and_repo"
+          ]
+        },
+        "explicit": {
+          "argv": [
+            "session",
+            "open",
+            "api",
+            "1"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_open_picker.py::test_explicit_open_target_bypasses_picker"
+          ]
+        }
+      }
+    },
+    "session list": {
+      "patterns": [
+        "list"
+      ],
+      "renderer": "plain",
+      "scope": "explicit/inferred repository or all local/remote sessions",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_t.py::test_ls_scope_defaults_to_cwd_repo"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "session",
+            "list"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_t.py::test_ls_scope_defaults_to_cwd_repo",
+            "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
+          ]
+        }
+      }
+    },
+    "session close": {
+      "patterns": [
+        "action",
+        "filtered",
+        "multi"
+      ],
+      "renderer": "fzf",
+      "scope": "explicit/inferred repository or all local/remote sessions",
+      "confirmation": "per_target",
+      "tests": [
+        "tests/test_kill_multiselect.py::test_kill_picker_starts_with_only_proven_safe_rows"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "session",
+            "close"
+          ],
+          "patterns": [
+            "multi",
+            "filtered"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_kill_multiselect.py::test_kill_picker_starts_with_only_proven_safe_rows"
+          ]
+        },
+        "explicit": {
+          "argv": [
+            "session",
+            "close",
+            "api",
+            "1"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_desktop_close.py::test_desktop_slot_close_dispatches_exact_slot_without_killing_tmux"
+          ]
+        }
+      }
+    },
+    "session restart": {
+      "patterns": [
+        "action",
+        "detail"
+      ],
+      "renderer": "plain",
+      "scope": "explicit/inferred repository or all local/remote sessions",
+      "confirmation": "when_interrupting",
+      "tests": [
+        "tests/test_restart.py::test_restart_command"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "session",
+            "restart"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_restart.py::test_restart_command"
+          ]
+        },
+        "dry_run": {
+          "argv": [
+            "session",
+            "restart",
+            "api",
+            "1",
+            "--dry-run"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_restart.py::test_restart_command",
+            "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
+          ]
+        }
+      }
+    },
+    "session push": {
+      "patterns": [
+        "single"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit/inferred repository or all local/remote sessions",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_command_groups_shell.py::test_grouped_shell_commands_keep_arguments_and_caller_shell"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "session",
+            "push"
+          ],
+          "patterns": [
+            "single",
+            "single"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_command_groups_shell.py::test_grouped_shell_commands_keep_arguments_and_caller_shell"
+          ]
+        },
+        "explicit": {
+          "argv": [
+            "session",
+            "push",
+            "--pick"
+          ],
+          "patterns": [
+            "single"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_command_groups_shell.py::test_grouped_shell_commands_keep_arguments_and_caller_shell"
+          ]
+        }
+      }
+    },
+    "session pop": {
+      "patterns": [
+        "single"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit/inferred repository or all local/remote sessions",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_command_groups_shell.py::test_shell_dispatch_matches_python_command_registry"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "session",
+            "pop"
+          ],
+          "patterns": [
+            "single",
+            "single"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_command_groups_shell.py::test_shell_dispatch_matches_python_command_registry"
+          ]
+        }
+      }
+    },
+    "session resume": {
+      "patterns": [
+        "action",
+        "filtered",
+        "multi"
+      ],
+      "renderer": "fzf",
+      "scope": "explicit/inferred repository or all local/remote sessions",
+      "confirmation": "per_target",
+      "tests": [
+        "tests/test_resume_multiselect.py::test_resume_multi_opens_selected_live_slot_and_revives_dead_slot"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "session",
+            "resume"
+          ],
+          "patterns": [
+            "multi",
+            "filtered"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_resume_multiselect.py::test_resume_multi_opens_selected_live_slot_and_revives_dead_slot"
+          ]
+        },
+        "explicit": {
+          "argv": [
+            "session",
+            "resume",
+            "api",
+            "1"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_resume_multiselect.py::test_resume_multi_opens_selected_live_slot_and_revives_dead_slot"
+          ]
+        }
+      }
+    },
+    "session history": {
+      "patterns": [
+        "list",
+        "machine",
+        "single"
+      ],
+      "renderer": "fzf",
+      "scope": "explicit/inferred repository and slot",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_history_picker.py::test_real_isolated_tmux_picker_paging_global_search_refresh_and_cancel"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "session",
+            "history",
+            "api",
+            "1"
+          ],
+          "patterns": [
+            "single"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_history_picker.py::test_real_isolated_tmux_picker_paging_global_search_refresh_and_cancel"
+          ],
+          "notes": "Paginated single choice. Ctrl-F next and Ctrl-B previous page are the documented exception to filtered-picker Ctrl-F defaults."
+        },
+        "pagination": {
+          "argv": [
+            "session",
+            "history",
+            "api",
+            "1",
+            "--limit",
+            "25",
+            "--page",
+            "2"
+          ],
+          "patterns": [
+            "single"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_history_picker.py::test_default_pages_are_50_and_global_search_precedes_slicing"
+          ]
+        },
+        "refresh": {
+          "argv": [
+            "session",
+            "history",
+            "api",
+            "1",
+            "--refresh"
+          ],
+          "patterns": [
+            "single"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_history_resume.py::test_interactive_history_controls_preserve_records"
+          ],
+          "notes": "Refreshes remote metadata; an interactive selection may still resume."
+        },
+        "non_tty": {
+          "argv": [
+            "session",
+            "history",
+            "api",
+            "1"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_history_resume.py::test_history_cli_forms_inference_json_and_readonly"
+          ],
+          "notes": "Without stdin and stdout TTYs, print a scoped table and page footer without an update prompt."
+        },
+        "json": {
+          "argv": [
+            "session",
+            "history",
+            "api",
+            "1",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_history_resume.py::test_history_cli_forms_inference_json_and_readonly",
+            "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
+          ]
+        }
+      }
+    },
+    "session cd": {
+      "patterns": [
+        "action",
+        "single"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit/inferred repository or all local/remote sessions",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_command_groups_shell.py::test_grouped_shell_commands_keep_arguments_and_caller_shell"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "session",
+            "cd"
+          ],
+          "patterns": [
+            "single",
+            "single"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_command_groups_shell.py::test_grouped_shell_commands_keep_arguments_and_caller_shell"
+          ]
+        },
+        "explicit": {
+          "argv": [
+            "session",
+            "cd",
+            "api",
+            "1"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_command_groups_shell.py::test_grouped_shell_commands_keep_arguments_and_caller_shell"
+          ]
+        }
+      }
+    },
+    "session move": {
+      "patterns": [
+        "action",
+        "single"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit/inferred repository or all local/remote sessions",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_command_groups_shell.py::test_grouped_shell_commands_keep_arguments_and_caller_shell"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "session",
+            "move"
+          ],
+          "patterns": [
+            "single",
+            "single"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_command_groups_shell.py::test_grouped_shell_commands_keep_arguments_and_caller_shell"
+          ]
+        },
+        "explicit": {
+          "argv": [
+            "session",
+            "move",
+            "api",
+            "1",
+            "--host",
+            "build"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_command_groups_shell.py::test_grouped_shell_commands_keep_arguments_and_caller_shell"
+          ]
+        }
+      }
+    },
+    "session read": {
+      "patterns": [
+        "machine",
+        "passthrough"
+      ],
+      "renderer": "external",
+      "scope": "explicit/inferred repository or all local/remote sessions",
+      "confirmation": "external",
+      "tests": [
+        "tests/test_command_groups_shell.py::test_grouped_bin_commands_and_help_keep_exact_arguments"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "session",
+            "read",
+            "api",
+            "1"
+          ],
+          "patterns": [
+            "passthrough"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_command_groups_shell.py::test_grouped_bin_commands_and_help_keep_exact_arguments",
+            "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
+          ]
+        },
+        "dump": {
+          "argv": [
+            "session",
+            "read",
+            "api",
+            "1",
+            "--dump"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_command_groups_shell.py::test_grouped_bin_commands_and_help_keep_exact_arguments",
+            "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
+          ]
+        }
+      }
+    },
+    "session view-plan": {
+      "patterns": [
+        "passthrough"
+      ],
+      "renderer": "external",
+      "scope": "explicit/inferred repository or all local/remote sessions",
+      "confirmation": "external",
+      "tests": [
+        "tests/test_t.py::test_plan_head_lines"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "session",
+            "view-plan",
+            "api",
+            "1"
+          ],
+          "patterns": [
+            "passthrough"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_t.py::test_plan_head_lines",
+            "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
+          ]
+        }
+      }
+    },
+    "session paste": {
+      "patterns": [
+        "action",
+        "single"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit/inferred repository or all local/remote sessions",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_command_groups_shell.py::test_shell_dispatch_matches_python_command_registry"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "session",
+            "paste"
+          ],
+          "patterns": [
+            "single",
+            "single"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_command_groups_shell.py::test_shell_dispatch_matches_python_command_registry"
+          ]
+        },
+        "newest": {
+          "argv": [
+            "session",
+            "paste",
+            "--newest"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_agent_seam.py::test_paste_does_not_fall_back_to_shared_tree_when_desktop_worktree_is_reserved"
+          ]
+        }
+      }
+    },
+    "session search": {
+      "patterns": [
+        "single"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit/inferred repository or all local/remote sessions",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_command_groups_shell.py::test_grouped_shell_commands_keep_arguments_and_caller_shell"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "session",
+            "search"
+          ],
+          "patterns": [
+            "single",
+            "single"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_command_groups_shell.py::test_grouped_shell_commands_keep_arguments_and_caller_shell"
+          ]
+        }
+      }
+    },
+    "session open-app": {
+      "patterns": [
+        "action",
+        "detail"
+      ],
+      "renderer": "plain",
+      "scope": "explicit/inferred repository or all local/remote sessions",
+      "confirmation": "when_interrupting",
+      "tests": [
+        "tests/test_app_pull.py::test_app_direction"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "session",
+            "open-app"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_app_pull.py::test_app_direction"
+          ]
+        },
+        "dry_run": {
+          "argv": [
+            "session",
+            "open-app",
+            "api",
+            "1",
+            "--dry-run"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_app.py::test_app_command_dry_run_is_read_only",
+            "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
+          ]
+        }
+      }
+    },
+    "repo list": {
+      "patterns": [
+        "list"
+      ],
+      "renderer": "plain",
+      "scope": "registered repository or checkout",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_t.py::test_repos_lists_short_names_and_paths"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "repo",
+            "list"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_t.py::test_repos_lists_short_names_and_paths",
+            "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
+          ]
+        }
+      }
+    },
+    "repo cd": {
+      "patterns": [
+        "single"
+      ],
+      "renderer": "mixed",
+      "scope": "registered repository or checkout",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_command_groups_shell.py::test_grouped_shell_commands_keep_arguments_and_caller_shell"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "repo",
+            "cd",
+            "api"
+          ],
+          "patterns": [
+            "single",
+            "single"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_command_groups_shell.py::test_grouped_shell_commands_keep_arguments_and_caller_shell"
+          ]
+        }
+      }
+    },
+    "repo locate": {
+      "patterns": [
+        "detail"
+      ],
+      "renderer": "plain",
+      "scope": "registered repository or checkout",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_command_groups_shell.py::test_grouped_bin_commands_and_help_keep_exact_arguments"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "repo",
+            "locate",
+            "api"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_command_groups_shell.py::test_grouped_bin_commands_and_help_keep_exact_arguments",
+            "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
+          ]
+        }
+      }
+    },
+    "repo create": {
+      "patterns": [
+        "detail",
+        "wizard"
+      ],
+      "renderer": "rail",
+      "scope": "registered repository or checkout",
+      "confirmation": "review",
+      "tests": [
+        "tests/test_t.py::test_new_plan_fresh_repo"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "repo",
+            "create"
+          ],
+          "patterns": [
+            "wizard"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_t.py::test_new_plan_fresh_repo"
+          ]
+        },
+        "dry_run": {
+          "argv": [
+            "repo",
+            "create",
+            "example",
+            "--dry-run"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_t.py::test_new_plan_fresh_repo",
+            "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
+          ]
+        }
+      }
+    },
+    "repo clone": {
+      "patterns": [
+        "detail",
+        "wizard"
+      ],
+      "renderer": "rail",
+      "scope": "registered repository or checkout",
+      "confirmation": "review",
+      "tests": [
+        "tests/test_checkout.py::test_checkout_clones_registers_and_reuses_dirty_clone"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "repo",
+            "clone",
+            "owner/repo"
+          ],
+          "patterns": [
+            "wizard"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_checkout.py::test_checkout_clones_registers_and_reuses_dirty_clone"
+          ]
+        },
+        "dry_run": {
+          "argv": [
+            "repo",
+            "clone",
+            "https://github.com/example/example",
+            "--dry-run"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_checkout.py::test_checkout_dry_run_is_read_only",
+            "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
+          ]
+        }
+      }
+    },
+    "cursor list": {
+      "patterns": [
+        "list"
+      ],
+      "renderer": "plain",
+      "scope": "local chat inventory or named host",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_cursor_list.py::test_cursor_list_keeps_complete_identities_in_terminal_and_redirects"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "cursor",
+            "list"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_cursor_list.py::test_cursor_list_keeps_complete_identities_in_terminal_and_redirects",
+            "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
+          ]
+        }
+      }
+    },
+    "cursor resume": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "plain",
+      "scope": "local chat inventory or named host",
+      "confirmation": "when_interrupting",
+      "tests": [
+        "tests/test_recovery.py::test_cursor_resume_has_one_owner"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "cursor",
+            "resume"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_recovery.py::test_cursor_resume_has_one_owner"
+          ]
+        },
+        "explicit": {
+          "argv": [
+            "cursor",
+            "resume",
+            "chat-id"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_recovery.py::test_cursor_resume_has_one_owner"
+          ]
+        }
+      }
+    },
+    "cursor send": {
+      "patterns": [
+        "action",
+        "single"
+      ],
+      "renderer": "mixed",
+      "scope": "local chat inventory or named host",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_t.py::test_cursor_explicit_send_preserves_legacy_forwarding"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "cursor",
+            "send"
+          ],
+          "patterns": [
+            "single",
+            "single"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_t.py::test_cursor_explicit_send_preserves_legacy_forwarding"
+          ]
+        },
+        "explicit": {
+          "argv": [
+            "cursor",
+            "send",
+            "chat-id"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_t.py::test_cursor_explicit_send_preserves_legacy_forwarding"
+          ]
+        }
+      }
+    },
+    "hosts list": {
+      "patterns": [
+        "list",
+        "machine"
+      ],
+      "renderer": "plain",
+      "scope": "registered alias or literal SSH target",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_hosts.py::test_explicit_hosts_list_dispatches_the_list_action"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "hosts",
+            "list"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_hosts.py::test_explicit_hosts_list_dispatches_the_list_action",
+            "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
+          ]
+        },
+        "json": {
+          "argv": [
+            "hosts",
+            "list",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_hosts.py::test_host_lifecycle_without_dotfiles",
+            "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
+          ]
+        }
+      }
+    },
+    "hosts show": {
+      "patterns": [
+        "detail"
+      ],
+      "renderer": "plain",
+      "scope": "registered alias or literal SSH target",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_hosts.py::test_host_lifecycle_without_dotfiles"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "hosts",
+            "show",
+            "build"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_hosts.py::test_host_lifecycle_without_dotfiles",
+            "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
+          ]
+        }
+      }
+    },
+    "hosts add": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "plain",
+      "scope": "registered alias or literal SSH target",
+      "confirmation": "when_interrupting",
+      "tests": [
+        "tests/test_hosts.py::test_host_lifecycle_without_dotfiles"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "hosts",
+            "add",
+            "build",
+            "example.com"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_hosts.py::test_host_lifecycle_without_dotfiles"
+          ]
+        }
+      }
+    },
+    "hosts edit": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "plain",
+      "scope": "registered alias or literal SSH target",
+      "confirmation": "when_interrupting",
+      "tests": [
+        "tests/test_hosts.py::test_host_edits_preserve_shell_ssh_and_other_settings"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "hosts",
+            "edit",
+            "build",
+            "example.com"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_hosts.py::test_host_edits_preserve_shell_ssh_and_other_settings"
+          ]
+        }
+      }
+    },
+    "hosts remove": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "plain",
+      "scope": "registered alias or literal SSH target",
+      "confirmation": "when_interrupting",
+      "tests": [
+        "tests/test_hosts.py::test_host_lifecycle_without_dotfiles"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "hosts",
+            "remove",
+            "build"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_hosts.py::test_host_lifecycle_without_dotfiles"
+          ]
+        }
+      }
+    },
+    "hosts default": {
+      "patterns": [
+        "action",
+        "detail"
+      ],
+      "renderer": "plain",
+      "scope": "registered alias or literal SSH target",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_hosts.py::test_default_rejects_alias_with_clear"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "hosts",
+            "default"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_hosts.py::test_default_rejects_alias_with_clear",
+            "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
+          ]
+        },
+        "set": {
+          "argv": [
+            "hosts",
+            "default",
+            "build"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_hosts.py::test_host_change_updates_defaults_and_rejects_option_targets"
+          ]
+        },
+        "clear": {
+          "argv": [
+            "hosts",
+            "default",
+            "--clear"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_hosts.py::test_default_rejects_alias_with_clear"
+          ]
+        }
+      }
+    },
+    "hosts run": {
+      "patterns": [
+        "passthrough"
+      ],
+      "renderer": "external",
+      "scope": "registered alias or literal SSH target",
+      "confirmation": "external",
+      "tests": [
+        "tests/test_hosts.py::test_plural_run_keeps_login_shell_and_remote_arguments"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "hosts",
+            "run",
+            "build"
+          ],
+          "patterns": [
+            "passthrough"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_hosts.py::test_plural_run_keeps_login_shell_and_remote_arguments"
+          ]
+        }
+      }
+    },
+    "agentcore invoke": {
+      "patterns": [
+        "detail",
+        "passthrough"
+      ],
+      "renderer": "external",
+      "scope": "existing runtime ARN/session",
+      "confirmation": "external",
+      "tests": [
+        "tests/test_agentcore.py::test_cli_invoke_continue_stop"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "agentcore",
+            "invoke",
+            "--prompt",
+            "hello",
+            "--output",
+            "/tmp/response.json"
+          ],
+          "patterns": [
+            "passthrough"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_agentcore.py::test_cli_invoke_continue_stop"
+          ]
+        },
+        "dry_run": {
+          "argv": [
+            "agentcore",
+            "invoke",
+            "--prompt",
+            "hello",
+            "--output",
+            "/tmp/response.json",
+            "--dry-run"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_agentcore.py::test_dry_run_no_aws_or_writes",
+            "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
+          ]
+        }
+      }
+    },
+    "agentcore stop": {
+      "patterns": [
+        "action",
+        "detail"
+      ],
+      "renderer": "plain",
+      "scope": "existing runtime ARN/session",
+      "confirmation": "when_interrupting",
+      "tests": [
+        "tests/test_agentcore.py::test_cli_invoke_continue_stop"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "agentcore",
+            "stop",
+            "--session-id",
+            "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_agentcore.py::test_cli_invoke_continue_stop"
+          ]
+        },
+        "dry_run": {
+          "argv": [
+            "agentcore",
+            "stop",
+            "--session-id",
+            "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            "--dry-run"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_agentcore.py::test_dry_run_no_aws_or_writes",
+            "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
+          ]
+        }
+      }
+    },
+    "config open": {
+      "patterns": [
+        "wizard"
+      ],
+      "renderer": "rail",
+      "scope": "local machine",
+      "confirmation": "review",
+      "tests": [
+        "tests/test_config.py::test_config_menu_save_then_cancel"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "config",
+            "open"
+          ],
+          "patterns": [
+            "wizard"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_config.py::test_config_menu_save_then_cancel"
+          ]
+        }
+      }
+    },
+    "config show": {
+      "patterns": [
+        "detail"
+      ],
+      "renderer": "plain",
+      "scope": "local machine",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_config.py::test_config_bridge_reads_model_defaults"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "config",
+            "show"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_config.py::test_config_bridge_reads_model_defaults",
+            "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
+          ]
+        }
+      }
+    },
+    "config edit": {
+      "patterns": [
+        "wizard"
+      ],
+      "renderer": "rail",
+      "scope": "local machine",
+      "confirmation": "review",
+      "tests": [
+        "tests/test_command_groups_shell.py::test_legacy_and_grouped_config_edits_reload_the_caller"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "config",
+            "edit"
+          ],
+          "patterns": [
+            "wizard"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_command_groups_shell.py::test_legacy_and_grouped_config_edits_reload_the_caller"
+          ]
+        }
+      }
+    },
+    "config setup": {
+      "patterns": [
+        "detail",
+        "wizard"
+      ],
+      "renderer": "rail",
+      "scope": "local machine",
+      "confirmation": "review",
+      "tests": [
+        "tests/test_t.py::test_setup_items_full_structure"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "config",
+            "setup"
+          ],
+          "patterns": [
+            "wizard"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_t.py::test_setup_items_full_structure"
+          ]
+        },
+        "dry_run": {
+          "argv": [
+            "config",
+            "setup",
+            "--dry-run"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_t.py::test_setup_result_unchecked_is_empty",
+            "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
+          ]
+        }
+      }
+    },
+    "profile init": {
+      "patterns": [
+        "wizard"
+      ],
+      "renderer": "rail",
+      "scope": "local profile and optional repository",
+      "confirmation": "review",
+      "tests": [
+        "tests/test_checkout.py::test_interactive_offer_creates_profile_then_can_decline_or_apply"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "profile",
+            "init"
+          ],
+          "patterns": [
+            "wizard"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_checkout.py::test_interactive_offer_creates_profile_then_can_decline_or_apply"
+          ]
+        }
+      }
+    },
+    "profile edit": {
+      "patterns": [
+        "wizard"
+      ],
+      "renderer": "rail",
+      "scope": "local profile and optional repository",
+      "confirmation": "review",
+      "tests": [
+        "tests/test_checkout.py::test_instructions_profile_and_managed_block_preserve_custom_text"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "profile",
+            "edit"
+          ],
+          "patterns": [
+            "wizard"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_checkout.py::test_instructions_profile_and_managed_block_preserve_custom_text"
+          ]
+        }
+      }
+    },
+    "profile show": {
+      "patterns": [
+        "passthrough"
+      ],
+      "renderer": "external",
+      "scope": "local profile and optional repository",
+      "confirmation": "external",
+      "tests": [
+        "tests/test_checkout.py::test_instructions_profile_and_managed_block_preserve_custom_text"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "profile",
+            "show"
+          ],
+          "patterns": [
+            "passthrough"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_checkout.py::test_instructions_profile_and_managed_block_preserve_custom_text",
+            "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
+          ]
+        }
+      }
+    },
+    "profile apply": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "plain",
+      "scope": "local profile and optional repository",
+      "confirmation": "when_interrupting",
+      "tests": [
+        "tests/test_checkout.py::test_instructions_profile_and_managed_block_preserve_custom_text"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "profile",
+            "apply",
+            "api"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_checkout.py::test_instructions_profile_and_managed_block_preserve_custom_text"
+          ]
+        }
+      }
+    },
+    "policy check": {
+      "patterns": [
+        "detail"
+      ],
+      "renderer": "plain",
+      "scope": "local policy and installed agents",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_permissions.py::test_perm_list_plan"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "policy",
+            "check"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_permissions.py::test_perm_list_plan",
+            "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
+          ]
+        }
+      }
+    },
+    "policy show": {
+      "patterns": [
+        "passthrough"
+      ],
+      "renderer": "external",
+      "scope": "local policy and installed agents",
+      "confirmation": "external",
+      "tests": [
+        "tests/test_permissions.py::test_perm_lines_cover_every_state"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "policy",
+            "show"
+          ],
+          "patterns": [
+            "passthrough"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_permissions.py::test_perm_lines_cover_every_state",
+            "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
+          ]
+        }
+      }
+    },
+    "policy apply": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "plain",
+      "scope": "local policy and installed agents",
+      "confirmation": "when_interrupting",
+      "tests": [
+        "tests/test_permissions.py::test_perm_sync_reports_every_agent"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "policy",
+            "apply"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_permissions.py::test_perm_sync_reports_every_agent"
+          ]
+        }
+      }
+    },
+    "agent login": {
+      "patterns": [
+        "action",
+        "detail",
+        "list",
+        "multi"
+      ],
+      "renderer": "rail",
+      "scope": "local installed agents and optional hosts",
+      "confirmation": "enter",
+      "tests": [
+        "tests/test_login.py::test_login_checklist_discovers_and_selects_authenticated_agents"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "agent",
+            "login"
+          ],
+          "patterns": [
+            "multi",
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_login.py::test_command_confirmation_defaults_to_enter"
+          ]
+        },
+        "dry_run": {
+          "argv": [
+            "agent",
+            "login",
+            "--dry-run"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_login.py::test_cli_dry_run_ignore_and_no_credential_output",
+            "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
+          ]
+        },
+        "status": {
+          "argv": [
+            "agent",
+            "login",
+            "--status"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_login.py::test_cli_dry_run_ignore_and_no_credential_output",
+            "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
+          ]
+        }
+      }
+    },
+    "agent install": {
+      "patterns": [
+        "detail",
+        "review"
+      ],
+      "renderer": "rail",
+      "scope": "local installed agents and optional hosts",
+      "confirmation": "enter",
+      "tests": [
+        "tests/test_install.py::test_install_plan_full_matrix"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "agent",
+            "install"
+          ],
+          "patterns": [
+            "review"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_tui.py::test_install_review_defaults_to_enter"
+          ]
+        },
+        "dry_run": {
+          "argv": [
+            "agent",
+            "install",
+            "--dry-run"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_install.py::test_install_plan_full_matrix",
+            "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
+          ]
+        }
+      }
+    },
+    "agent status": {
+      "patterns": [
+        "detail",
+        "list"
+      ],
+      "renderer": "plain",
+      "scope": "local installed agents and optional hosts",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_install.py::test_install_status_ok_claude_reads_json"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "agent",
+            "status"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_install.py::test_install_status_ok_claude_reads_json",
+            "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
+          ]
+        },
+        "dry_run": {
+          "argv": [
+            "agent",
+            "status",
+            "--dry-run"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_install.py::test_install_status_ok_claude_reads_json",
+            "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
+          ]
+        }
+      }
+    },
+    "agent trust": {
+      "patterns": [
+        "action",
+        "detail",
+        "machine"
+      ],
+      "renderer": "plain",
+      "scope": "local installed agents and optional hosts",
+      "confirmation": "when_interrupting",
+      "tests": [
+        "tests/test_trust.py::test_cmd_trust_bare_trusts_the_repo_you_are_in"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "agent",
+            "trust"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_trust.py::test_cmd_trust_bare_trusts_the_repo_you_are_in"
+          ]
+        },
+        "status": {
+          "argv": [
+            "agent",
+            "trust",
+            "--status"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_command_groups.py::test_agent_trust_status_remains_a_read_only_option",
+            "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
+          ]
+        },
+        "quiet": {
+          "argv": [
+            "agent",
+            "trust",
+            "--quiet"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_trust.py::test_cmd_trust_all_quiet_is_silent_once_synced"
+          ]
+        }
+      }
+    },
+    "system integrate": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "plain",
+      "scope": "local installation",
+      "confirmation": "when_interrupting",
+      "tests": [
+        "tests/test_update.py::test_integrate_runs_full_release_installer"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "system",
+            "integrate"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_update.py::test_integrate_runs_full_release_installer"
+          ]
+        }
+      }
+    },
+    "system update": {
+      "patterns": [
+        "action",
+        "detail"
+      ],
+      "renderer": "plain",
+      "scope": "local installation",
+      "confirmation": "when_interrupting",
+      "tests": [
+        "tests/test_update.py::test_update_local_switches_packaged_install_to_updated_main"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "system",
+            "update"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_update.py::test_update_local_switches_packaged_install_to_updated_main"
+          ]
+        },
+        "check": {
+          "argv": [
+            "system",
+            "update",
+            "--check"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_update_prompt.py::test_manual_check_uses_packaged_helper_without_installing",
+            "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
+          ]
+        }
+      }
+    },
+    "system diagnose": {
+      "patterns": [
+        "detail"
+      ],
+      "renderer": "plain",
+      "scope": "local installation",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_update.py::test_doctor_reports_archive_release_without_checkout_probe"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "system",
+            "diagnose"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_update.py::test_doctor_reports_archive_release_without_checkout_probe",
+            "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
+          ]
+        }
+      }
+    }
+  }
+}

@@ -8,6 +8,11 @@ By opening a pull request you accept the [Contributor License Agreement](CLA.md)
 and license your contribution under [MIT](LICENSE).
 
 Develop in a worktree or feature branch; canonical main may be a live installation.
+For command changes, read the [command and terminal contract](ui/README.md) and
+its [inventory](ui/command-contract.json) first. Classify each new mode, reuse
+the shared interaction profiles, and update examples, contract cases, and help
+with the code. Run `python3 scripts/lint_cli.py`; CI also requires real picker
+tests with supported older and current fzf releases.
 Install test dependencies with `python3 -m pip install -r requirements-dev.txt` and
 run `python3 -m pytest --cov --cov-fail-under=97`. Lint Bash with shellcheck and
 validate every changed zsh file with `zsh -n`. Keep new behavior covered by meaningful

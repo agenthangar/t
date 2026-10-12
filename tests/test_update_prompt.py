@@ -93,7 +93,7 @@ def test_suppressed_environments_never_offer(t_mod, terminal, monkeypatch, name)
     monkeypatch.setenv(name, "1")
     monkeypatch.setattr(t_mod, "_t_update_installation", lambda: pytest.fail("must not inspect source"))
     assert t_mod._t_offer_update() == 0
-    assert t_mod._t_auto_update(["ls"]) is None
+    assert t_mod._t_auto_update(["open", "api", "1"]) is None
 
 
 def test_prompt_marker_only_applies_to_current_invocation(t_mod, terminal, monkeypatch):
@@ -148,7 +148,7 @@ def test_update_failure_aborts_original_command(t_mod, terminal, offer, monkeypa
     terminal[0].seek(0)
     monkeypatch.setattr(t_mod, "cmd_update", lambda cfg, args: 1)
     monkeypatch.setattr(t_mod.os, "execv", lambda *args: pytest.fail("must not rerun after failure"))
-    assert t_mod._t_auto_update(["ls"]) == 1
+    assert t_mod._t_auto_update(["open", "api", "1"]) == 1
     assert "original command was not run" in terminal[2].getvalue()
 
 
@@ -165,10 +165,10 @@ def test_checker_failures_do_not_block_commands(t_mod, terminal, offer, monkeypa
     assert t_mod._t_offer_update() == 0
     monkeypatch.setattr(t_mod, "_t_update_installation", lambda: None)
     assert t_mod._t_offer_update() == 0
-    assert t_mod._t_auto_update(["ls"]) is None
+    assert t_mod._t_auto_update(["open", "api", "1"]) is None
 
 
-@pytest.mark.parametrize("argv", [[], ["help"], ["update"], ["on", "host", "t", "ls"],
+@pytest.mark.parametrize("argv", [[], ["help"], ["ls"], ["repos", "ls"], ["update"], ["on", "host", "t", "ls"],
                                       ["mcp"], ["__recovery"], ["app", "--dry-run"],
                                       ["ls", "--json"], ["config", "--dump"], ["ls", "--statusline"]])
 def test_protocol_and_explicit_update_commands_skip_prompt(t_mod, terminal, monkeypatch, argv):
@@ -193,12 +193,12 @@ def test_success_reexecs_updated_cli_with_exact_arguments(t_mod, tmp_path, termi
 def test_reexec_failure_is_actionable(t_mod, terminal, offer, monkeypatch):
     monkeypatch.setattr(t_mod, "_t_offer_update", lambda source: 10)
     monkeypatch.setattr(t_mod.os, "execv", fail)
-    assert t_mod._t_auto_update(["ls"]) == 1
+    assert t_mod._t_auto_update(["open", "api", "1"]) == 1
     assert "could not continue" in terminal[2].getvalue()
 
 
 def test_normal_command_continues_after_skip(t_mod, terminal, offer):
-    assert t_mod._t_auto_update(["ls"]) is None
+    assert t_mod._t_auto_update(["open", "api", "1"]) is None
     assert offer[1][-1][0] == "schedule"
 
 

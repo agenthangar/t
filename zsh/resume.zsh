@@ -628,8 +628,8 @@ _t_resume() {
     pick=$(T_PICKER_SESSION_FILTERS=resume _t_fzf_filtered "$(print -rl -- "${(@)inactive}")" \
       "$(print -rl -- "${(@)cands}")" resume inactive "$legend" "$show_all" \
       --delimiter=$'\t' --with-nth=-1 --no-hscroll \
-      --prompt="$fprompt") || return 1
-    [[ -n $pick ]] || return 1
+      --prompt="$fprompt") || return $?
+    [[ -n $pick ]] || return 130
   elif [[ -n $slot ]] && { pick=; for c in "${(@)visible}"; do
          f=("${(@ps:\t:)c}"); [[ $f[7] == - ]] && { pick=$c; break; }; done; [[ -n $pick ]]; }; then
     # Explicit slot but no TTY/fzf to pick with: the newest DEAD conversation IS
@@ -893,11 +893,11 @@ _t_find() {
   # No query → browse newest-first (matches `t find -h`); Sonnet has nothing to rank
   # without a query, so route through the keyword/browse picker even without -k.
   if [[ -n $keyword || -z "$*" ]]; then
-    row=$(_claude_sessions_fzf "" "$*") || return 1       # offline keyword rank / browse
+    row=$(_claude_sessions_fzf "" "$*") || return $?       # offline keyword rank / browse
   else
-    row=$(_claude_sessions_semantic "$*") || return 1     # Sonnet-reranked
+    row=$(_claude_sessions_semantic "$*") || return $?     # Sonnet-reranked
   fi
-  [[ -n $row ]] || return 1
+  [[ -n $row ]] || return 130
   local sid cwd
   sid=${row%%$'\t'*}
   cwd=${${row#*$'\t'}%%$'\t'*}
@@ -929,8 +929,8 @@ _claude_sessions_semantic() {
   local query="$1"
   echo "↻ Asking Sonnet which session matches \"$query\"…  (-k to skip)" >&2
 
-  python3 - "$projects" "$query" <<'PY' | _t_fzf --delimiter=$'\t' --with-nth=3 --no-hscroll \
-        --prompt="resume claude (sonnet: $query) > " --height=60% --reverse
+  python3 - "$projects" "$query" <<'PY' | _t_fzf_single resume 'Claude sessions' --delimiter=$'\t' --with-nth=3 --no-hscroll \
+        --prompt="resume claude (sonnet: $query) > "
 import json, os, sys, glob, datetime, subprocess, re, time
 root, query = sys.argv[1], sys.argv[2]
 STOP = {'of','the','a','an','to','on','in','for','and','is','it','with','at'}
@@ -1274,8 +1274,8 @@ _claude_sessions_fzf() {
   local fzf_prompt='resume claude (all) > '   # not `prompt`: that local IS the shell's PS1
   [[ -n $filter ]] && fzf_prompt="resume claude (${filter:t}) > "
   [[ -n $query  ]] && fzf_prompt="resume claude (search: $query) > "
-  _claude_session_rows "$filter" "$query" | _t_fzf --delimiter=$'\t' --with-nth=3 --no-hscroll \
-        --prompt="$fzf_prompt" --height=60% --reverse
+  _claude_session_rows "$filter" "$query" | _t_fzf_single resume 'Claude sessions' --delimiter=$'\t' --with-nth=3 --no-hscroll \
+        --prompt="$fzf_prompt"
 }
 
 # Return success only for the visible, final Codex turn error. A quoted example
@@ -2061,8 +2061,8 @@ _t_push() {
   else
     local row filter="$PWD"
     [[ -n $all ]] && filter=""                     # --all: every project
-    row=$(_claude_sessions_fzf "$filter") || return 1
-    [[ -n $row ]] || return 1
+    row=$(_claude_sessions_fzf "$filter") || return $?
+    [[ -n $row ]] || return 130
     sid=${row%%$'\t'*}
     cwd=${${row#*$'\t'}%%$'\t'*}
   fi
@@ -2224,7 +2224,11 @@ _t_pop() {
       # repo from $PWD and let _dev_remote_delegate resolve/pop it over there (empty
       # slot → it picks the repo's remote slot, fzf-picks if several). Same remote
       # detection the explicit `t pop <repo> <slot>` path gets, now for bare `t pop`.
-      local repo; repo=$(_t_infer_repo) && _dev_remote_delegate "$repo" "" pop && return
+      local repo remote_rc
+      if repo=$(_t_infer_repo); then
+        _dev_remote_delegate "$repo" "" pop; remote_rc=$?
+        (( remote_rc == 1 )) || return $remote_rc
+      fi
       echo "No dev session for $scope (here or on any remote host). Pass a repo/slot or session name."; return 1
     fi
   fi
@@ -2235,7 +2239,8 @@ _t_pop() {
     # it through the ssh TTY — the same semantics as a local pop (closing ssh ends the
     # foreground claude, exactly like a no-tmux local pop). Falls through to the local
     # error only when the slot is live nowhere.
-    _dev_session_remote_fallback "$session" pop && return
+    _dev_session_remote_fallback "$session" pop; local remote_rc=$?
+    (( remote_rc == 1 )) || return $remote_rc
     echo "No such session: $session"; return 1
   fi
   if [[ -n $TMUX && "$(tmux display-message -p '#S')" == "$session" ]]; then
@@ -2542,7 +2547,7 @@ _t_beam() {
     # the picker to that repo and hide every other remote session.
     if [[ $repo_arg == <-> && -z $slot_arg ]]; then slot_arg=$repo_arg; repo_arg=$(_t_infer_repo); fi
     # _dev_remote_resolve returns "<host>\t<repo>\t<slot>" (fzf-picks if several live).
-    local res; res=$(_dev_remote_resolve "$repo_arg" "$slot_arg") || return 1
+    local res; res=$(_dev_remote_resolve "$repo_arg" "$slot_arg") || return $?
     from_host=${res%%$'\t'*}
     repo_arg=${${res#*$'\t'}%%$'\t'*}
     slot_arg=${res##*$'\t'}
@@ -2684,8 +2689,8 @@ _t_beam() {
   else
     local row filter="$PWD"
     [[ -n $all ]] && filter=""                      # --all: every project
-    row=$(_claude_sessions_fzf "$filter") || return 1
-    [[ -n $row ]] || return 1
+    row=$(_claude_sessions_fzf "$filter") || return $?
+    [[ -n $row ]] || return 130
     sid=${row%%$'\t'*}
     cwd=${${row#*$'\t'}%%$'\t'*}
   fi

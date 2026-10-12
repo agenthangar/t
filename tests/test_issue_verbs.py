@@ -132,11 +132,13 @@ def test_picker_rejects_cancellation_invalid_rows_and_multi_owner(mod, cfg, monk
     responses = iter([(130, ''), (127, ''), (0, ''), (0, 'other\n'), (0, 'a\nb\n'), (0, 'a\n')])
     def run(argv, **kwargs):
         status, stdout = next(responses)
-        assert '--no-multi' in argv
+        assert '_t_fzf_single' in argv[2]
         assert kwargs['env']['T_PICKER_ALL_LABEL'] == 'Existing work'
         return SimpleNamespace(returncode=status, stdout=stdout)
     monkeypatch.setattr(mod.subprocess, 'run', run)
-    for message in ('cancelled', 'unavailable', 'invalid', 'invalid', 'invalid'):
+    with pytest.raises(mod.IssueCancelled, match='cancelled'):
+        app.pick_rows(['a'], ['a', 'b'], 'continue', 'work', 'legend', multi=False)
+    for message in ('unavailable', 'invalid', 'invalid', 'invalid'):
         with pytest.raises(mod.IssueError, match=message):
             app.pick_rows(['a'], ['a', 'b'], 'continue', 'work', 'legend', multi=False)
     assert app.pick_rows(['a'], ['a', 'b'], 'continue', 'work', 'legend', multi=False) == ['a']
@@ -208,6 +210,34 @@ def test_closed_and_failed_items_do_not_stop_batch(mod, cfg, monkeypatch, capsys
     assert app.run(SimpleNamespace(action='start')) == 1
     assert events == ['12', '13', '14', [{'host': 'local', 'session': 'dev-repo-14'}]]
     assert 'incomplete scan' in capsys.readouterr().err
+
+
+def test_cancel_during_issue_batch_keeps_prior_launch_and_stops_remaining(
+        mod, cfg, monkeypatch, capsys):
+    app = mod.IssueCommand(cfg, {'_t_source_root': lambda: str(ROOT)})
+    monkeypatch.setattr(app, 'start_targets', lambda args: [['12'], ['13'], ['14']])
+    events = []
+
+    def run_one(args, words, *, attach=True):
+        events.append(('start', words[0], attach))
+        if words[0] == '13':
+            raise mod.IssueCancelled('selection cancelled')
+        return {'host': 'local', 'session': 'dev-repo-' + words[0]}
+
+    monkeypatch.setattr(app, 'run_one', run_one)
+    monkeypatch.setattr(app, 'attach_many', lambda rows: events.append(
+        ('attach', rows)) or 0)
+    assert app.run(SimpleNamespace(action='start')) == 130
+    assert events == [('start', '12', False), ('start', '13', False)]
+    assert 'remaining issues left unchanged' in capsys.readouterr().err
+
+
+@pytest.mark.parametrize('error', ['cancel', 'eof'])
+def test_issue_wrapper_maps_aborted_selection_to_130(mod, cfg, monkeypatch, error):
+    failure = mod.IssueCancelled('cancelled') if error == 'cancel' else EOFError()
+    monkeypatch.setattr(mod.IssueCommand, 'run', lambda *a: (_ for _ in ()).throw(failure))
+    assert mod.run(cfg, SimpleNamespace(action='start'),
+                   {'_t_source_root': lambda: str(ROOT)}) == 130
 
 
 def test_dispatch_launches_two_issues_before_any_attach(mod, cfg, tmp_path, monkeypatch):

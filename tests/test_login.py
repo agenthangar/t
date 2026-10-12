@@ -281,17 +281,19 @@ def test_declining_logins_preserves_probe_failure(t_mod, monkeypatch):
     monkeypatch.setattr(t_mod, '_login_probe', lambda agent: {
         'state': 'error' if agent == 'codex' else 'logged-out', 'bin': '/fixture/' + agent})
     monkeypatch.setattr(t_mod.sys, 'stdin', SimpleNamespace(isatty=lambda: True))
+    monkeypatch.setattr(t_mod.sys.stdout, 'isatty', lambda: True)
+    monkeypatch.setattr(t_mod, '_install_wizard', lambda *a, **kw: (_ for _ in ()).throw(OSError('no raw terminal')))
     monkeypatch.setattr('builtins.input', lambda _: 'n')
     assert t_mod.cmd_login(None, args) == 1
 
 
-@pytest.mark.parametrize('answers,expected', [
-    (['n', 'y', 'n'], [['/fixture/codex', 'login']]),
-    (['n', 'n', 'n'], []),
-    (['n', 'y', 'q'], []),
-    (['n', 'y', None], []),
+@pytest.mark.parametrize('answers,expected,status', [
+    (['n', 'y', 'n'], [['/fixture/codex', 'login']], 0),
+    (['n', 'n', 'n'], [], 0),
+    (['n', 'y', 'q'], [], 130),
+    (['n', 'y', None], [], 130),
 ])
-def test_login_prompt_fallback_runs_selection_directly(t_mod, monkeypatch, answers, expected):
+def test_login_prompt_fallback_runs_selection_directly(t_mod, monkeypatch, answers, expected, status):
     args = t_mod.build_parser().parse_args(['login'])
     monkeypatch.setattr(t_mod.sys.stdin, 'isatty', lambda: True)
     monkeypatch.setattr(t_mod.sys.stdout, 'isatty', lambda: True)
@@ -312,7 +314,7 @@ def test_login_prompt_fallback_runs_selection_directly(t_mod, monkeypatch, answe
         calls.append(cmd)
         return SimpleNamespace(returncode=0)
     monkeypatch.setattr(t_mod, '_login_run', run)
-    assert t_mod.cmd_login(None, args) == 0
+    assert t_mod.cmd_login(None, args) == status
     assert calls == expected
 
 

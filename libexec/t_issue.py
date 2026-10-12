@@ -16,6 +16,10 @@ class IssueError(ValueError):
     pass
 
 
+class IssueCancelled(IssueError):
+    """An interactive selection was aborted, rather than failing discovery."""
+
+
 def workflow_policy():
     return Path(__file__).with_name('t_issue_policy.txt').read_text(encoding='utf-8').strip()
 
@@ -312,20 +316,12 @@ class IssueCommand:
             print(f'No {qualifier}issues in {where}.')
             return
         st = self.api['Style']()
-        truncate = self.api['_truncate']
         cells = [(clean_text(row['repo']), f'#{row["number"]}', clean_text(row['state']),
                   clean_text(row['title'])) for row in rows]
-        widths = [max(len(heading), *(len(row[i]) for row in cells))
-                  for i, heading in enumerate(('REPO', 'ISSUE', 'STATE'))]
-        avail = max(12, self.api['_columns']() - sum(widths) - 8)
         note = f'repo: {where} — --all for all' if scope else where
         print(f'issues   {st.y}{state} · {note}{st.r}')
         print()
-        print(f'  {st.y}{"REPO":<{widths[0]}}  {"ISSUE":<{widths[1]}}  '
-              f'{"STATE":<{widths[2]}}  TITLE{st.r}')
-        for repo, number, status, title in cells:
-            print(f'  {repo:<{widths[0]}}  {number:<{widths[1]}}  '
-                  f'{status:<{widths[2]}}  {st.y}{truncate(title, avail)}{st.r}')
+        print('\n'.join(self.api['_table_lines'](('REPO', 'ISSUE', 'STATE', 'TITLE'), cells)))
         print()
         print(f'  {st.y}start: t issue start <repo> <id> · '
               f'inspect: t issue status <repo> <id>{st.r}')
@@ -363,20 +359,19 @@ class IssueCommand:
             for path, rows in zip(paths, (default, all_rows)):
                 private_write(path, '\n'.join(rows) + ('\n' if rows else ''))
             snippet = ('. "$1"; defaults=$(cat -- "$2"); all_rows=$(cat -- "$3"); '
-                       'shift 3; _t_fzf_filtered "$defaults" "$all_rows" "$@"')
+                       'shift 3; _t_fzf_filtered "$defaults" "$all_rows" "$@"' if multi else
+                       '. "$1"; rows=$3; shift 3; _t_fzf_single "$@" < "$rows"')
             argv = ['sh', '-c', snippet, 't-issue-picker', str(Path(self.root) / 'ui/fzf.sh'),
                     *map(str, paths), action, label, legend, '', f'--prompt={noun}> ']
             if not multi:
-                header = ('Enter selects a repository · Ctrl-/ details · Esc cancels' if noun == 'repositories' else
-                          'Enter continues · Ctrl-/ details · Esc leaves work unchanged')
-                argv += ['--no-multi', '--bind=space:accept,tab:down,btab:up',
-                         '--header=' + header]
+                argv = argv[:7] + [action, legend, f'--prompt={noun}> ',
+                                  '--delimiter=\t', '--with-nth=-1']
             env = {k: v for k, v in os.environ.items() if not k.startswith('COV_CORE_')}
             env['T_PICKER_ALL_LABEL'] = ('Registered repositories' if noun == 'repositories' else
                                          'All issues' if multi else 'Existing work')
             result = subprocess.run(argv, env=env, stdout=subprocess.PIPE, text=True)
             if result.returncode in (1, 130):
-                raise IssueError('selection cancelled; existing work left unchanged')
+                raise IssueCancelled('selection cancelled; existing work left unchanged')
             if result.returncode:
                 raise IssueError(f'{noun} picker unavailable; install fzf or specify targets explicitly')
             selected = list(dict.fromkeys(result.stdout.splitlines()))
@@ -405,7 +400,8 @@ class IssueCommand:
     def start_targets(self, args):
         repo, identifiers = split_targets(args.target, getattr(args, 'repo', None))
         if not identifiers or any(identifier.isdecimal() for identifier in identifiers):
-            repo = self.resolve_repo(repo, interactive=not (getattr(args, 'json', False) or
+            repo = self.resolve_repo(repo, interactive=not (getattr(args, 'action', 'start') == 'status' or
+                                                            getattr(args, 'json', False) or
                                                             getattr(args, 'scan_host', False)))
         if not identifiers:
             return self.select_issues(repo)
@@ -673,7 +669,7 @@ class IssueCommand:
                 return None
         elif selected in rows:
             return matches[rows.index(selected)]
-        raise IssueError('existing work left unchanged')
+        raise IssueCancelled('existing work left unchanged')
 
     def attach_argv(self, row, *, new_terminal=False):
         if row.get('app'):
@@ -721,7 +717,7 @@ class IssueCommand:
             raise IssueError('takeover requires an interactive handoff')
         print('Stop or hand off the external agent and publish its work before continuing.')
         if input('Type stopped to confirm it will no longer edit this task: ') != 'stopped':
-            raise IssueError('takeover cancelled')
+            raise IssueCancelled('takeover cancelled')
         # A second provider read may disprove the user's acknowledgment.
         if row['provider'] in ('codex-cloud', 'cursor-cloud'):
             check = self.codex if row['provider'] == 'codex-cloud' else self.cursor
@@ -876,7 +872,13 @@ class IssueCommand:
                 row = self.run_one(args, words, attach=False)
                 if row:
                     rows.append(row)
-            except (IssueError, OSError, KeyError, TypeError, EOFError) as error:
+            except (IssueCancelled, EOFError, KeyboardInterrupt):
+                if rows:
+                    print(f't issue: {len(rows)} earlier issue(s) already continued or started; '
+                          'use t issue status to inspect them', file=sys.stderr)
+                print('t issue: selection cancelled; remaining issues left unchanged', file=sys.stderr)
+                return 130
+            except (IssueError, OSError, KeyError, TypeError) as error:
                 print(f't issue start {clean_text(" ".join(words))}: {error}', file=sys.stderr)
                 failures = True
         attached = self.attach_many(rows)
@@ -886,7 +888,10 @@ class IssueCommand:
 def run(cfg, args, api):
     try:
         return IssueCommand(cfg, api).run(args)
-    except (IssueError, OSError, KeyError, TypeError, EOFError) as error:
+    except (IssueCancelled, EOFError, KeyboardInterrupt):
+        print('t issue: selection cancelled; existing work left unchanged', file=sys.stderr)
+        return 130
+    except (IssueError, OSError, KeyError, TypeError) as error:
         print('t issue: ' + str(error), file=sys.stderr)
         return 1
 

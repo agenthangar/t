@@ -91,6 +91,13 @@ t() {
     repos_cd) check_update=1 ;;
     repos) [[ ${shell_args[1]} == cd ]] && check_update=1 ;;
   esac
+  # Read-only shell-dispatched modes must display immediately, even when the
+  # installed command has an available update. Bin-owned modes check there.
+  if [[ ( $verb == config && ( $action == show || $action == --show ) ) ||
+        ( $verb == install && ${shell_args[1]} == --status ) ||
+        ( $verb == agent && $action == install && ${shell_args[1]} == --status ) ]]; then
+    check_update=
+  fi
   if [[ -n $check_update && -z $machine_output && -o interactive && -t 0 && -t 1 && -t 2 \
         && -z ${CI:-} && -z ${CLAUDECODE:-} && -z ${CODEX_THREAD_ID:-} \
         && -z ${T_NO_UPDATE_CHECK:-} && ${T_UPDATE_PROMPTED:-} != $$ ]]; then
@@ -232,7 +239,7 @@ _t_cd() {
       rows+=("${wt}"$'\t'"${wt#$DEV_WORKTREE_ROOT/}"$'\t'"${br:-?}")
     done
     line=$(print -rl -- "${rows[@]}" \
-             | _t_fzf --with-nth=2.. --delimiter='\t' --prompt='t cd > ' --height=40% --reverse) || return 1
+             | _t_fzf_single jump 'Worktrees' --with-nth=2.. --delimiter='\t' --prompt='t cd > ') || return $?
     cd "${line%%$'\t'*}"; return
   fi
   local -a short; short=("${wts[@]#$DEV_WORKTREE_ROOT/}")
@@ -443,8 +450,8 @@ _t_open_picker() {
   filtered="${(F)visible}"
   selected=$(T_PICKER_SESSION_FILTERS=open _t_fzf_filtered "$filtered" "$rows" open unattached \
     "$(_dev_agent_legend)" "$include_attached" --prompt="open ${repo:+$repo }> " \
-    --preview='printf "%s\n" {4}') || return 1
-  [[ -n $selected ]] || return 1
+    --preview='printf "%s\n" {4}') || return $?
+  [[ -n $selected ]] || return 130
   _t_open_selected "$selected" "$app" "$cli"
 }
 
@@ -627,7 +634,8 @@ _t_open_app_claim() {
       print -u2 -- "t open --app: $repo $slot is reserved by the Codex desktop app on $remote_owner; close it there and release the reservation before opening here"
       return 1
     fi
-    (( cli_scan_rc == 3 || app_scan_rc == 3 )) && return 1
+    (( cli_scan_rc > 1 )) && return $cli_scan_rc
+    (( app_scan_rc > 1 )) && return $app_scan_rc
   fi
   if _dev_app_slot_reserved "$dir"; then
     reopen=1 # Preserve its branch and reopen the saved conversation.

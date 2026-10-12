@@ -175,6 +175,9 @@ Use `t system diagnose` when something is missing.
 Run `t` or `t help` for a short overview, then `t help <noun>` or
 `t <noun> <verb> --help` for details. Commands use the `t <noun> <verb>` form,
 with `t share` as the context sharing command.
+Contributors can find the behavior, keyboard, and appearance rules in the
+[command and terminal contract](ui/README.md).
+
 The older spellings still work; `t help aliases` lists them. Bare `t config`
 continues to open its interactive menu.
 
@@ -388,15 +391,16 @@ issues from all registered GitHub repositories when run outside a checkout;
 canonical repository. `--state all` includes closed issues and is independent
 of the repository scope. An explicit repository and `--all` conflict.
 
-Without a repository, `status` and `start` use the current registered checkout
-or present a repository picker interactively. An issue URL already names its
+Without a repository, `status` and `start` use the current registered checkout.
+Outside a checkout, `status` requires an explicit repository; `start` can present
+a repository picker interactively. An issue URL already names its
 repository. Supplying a repo both positionally and with `--repo` is an error.
 JSON, remote scans, and other non-interactive commands never prompt.
 
 `list` and `status` are read-only. `start` accepts explicit issue numbers or a
 GitHub issue URL. With no number, it presents the same multi-select picker used
 for sessions; Space or Tab marks issues, and Enter starts the marked issues.
-Ctrl-A toggles between open and all issues; Ctrl-/ shows full details. Each issue
+Ctrl-A shows all issues; Ctrl-F restores open issues; Ctrl-/ shows full details. Each issue
 is checked independently for an existing owner. The command starts all new
 sessions before attaching to one. Additional CLI sessions open in terminal tabs,
 with attach commands printed when tabs are unavailable.

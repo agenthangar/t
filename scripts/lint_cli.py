@@ -6,12 +6,15 @@ import ast
 import contextlib
 import importlib.util
 import io
+import json
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
+import re
 import sys
 
 
 ROOT = Path(__file__).resolve().parent.parent
+CONTRACT = ROOT / "ui" / "command-contract.json"
 # Existing single-word spellings remain available as compatibility shortcuts.
 # A new public command must enter a noun/verb family instead of growing this set.
 LEGACY_SHORTCUTS = frozenset({
@@ -99,9 +102,21 @@ def check_issue_help(help_text):
     for detail in ("owner/repo", "--repo", "current checkout"):
         if detail not in help_text:
             errors.append("t issue help must explain " + detail)
-    for detail in ("list --all", "all registered repositories", "Status and start"):
+    for detail in ("list --all", "all registered repositories", "Status never prompts"):
         if detail.lower() not in help_text.lower():
             errors.append("t issue help must explain " + detail)
+    return errors
+
+
+def check_group_help(group_help, command_groups):
+    """Every canonical command must remain discoverable in its group menu."""
+    errors = []
+    for group, verbs in command_groups.items():
+        menu = group_help(group)
+        for verb in verbs:
+            if (not re.search(rf"(?m)^  {re.escape(verb)}\s+\S", menu)
+                    and f"t {group} {verb}" not in " ".join(menu.split())):
+                errors.append(f"{group} {verb} is missing from command-group help")
     return errors
 
 
@@ -256,6 +271,182 @@ def check(parser, command_groups, instructions):
     return errors
 
 
+def check_command_patterns(parser, command_groups, contract, *, root=ROOT):
+    """Validate the development inventory against the parser and test suite."""
+    errors = []
+    allowed = {"list", "detail", "single", "multi", "filtered", "wizard",
+               "review", "action", "passthrough", "machine"}
+    if contract.get("schema_version") != 1:
+        errors.append("command inventory schema version must be 1")
+    patterns = contract.get("patterns", {})
+    if set(patterns) != allowed:
+        errors.append("command patterns must define the ten approved behavior types")
+    routes = ({f"{group} {verb}" for group, verbs in command_groups.items() for verb in verbs}
+              | {SHARE_COMMAND, "share targets", "share inbox", "share read"})
+    top = _subparsers(parser)
+    commands = contract.get("commands", {})
+    if set(commands) != routes:
+        missing = routes - set(commands)
+        stale = set(commands) - routes
+        errors.append("command inventory differs from COMMAND_GROUPS: missing " +
+                      ", ".join(sorted(missing)) + "; stale " + ", ".join(sorted(stale)))
+
+    def accepts(argv):
+        with contextlib.redirect_stderr(io.StringIO()):
+            try:
+                parser.parse_args(argv)
+            except SystemExit:
+                return False
+        return True
+
+    for name in sorted(routes & set(commands)):
+        entry = commands[name]
+        words = name.split()
+        route = command_groups[words[0]][words[1]] if len(words) == 2 and words[0] != SHARE_COMMAND else tuple(words)
+        leaf = top._name_parser_map.get(route[0]) if top else None
+        for word in route[1:]:
+            if word.startswith("-"):
+                continue
+            nested = _subparsers(leaf) if leaf else None
+            leaf = nested._name_parser_map.get(word) if nested else None
+        modes = entry.get("modes", {})
+        if not modes or "default" not in modes:
+            errors.append(f"{name} needs a default mode")
+        if (entry.get("renderer") not in {"plain", "fzf", "rail", "external", "mixed"}
+                or not entry.get("scope")
+                or entry.get("confirmation") not in {"none", "enter", "review", "per_target", "when_interrupting", "external"}):
+            errors.append(f"{name} needs renderer, scope, and confirmation policy")
+        declared = set(entry.get("patterns", []))
+        actual = set()
+        if not declared <= allowed or not declared:
+            errors.append(f"{name} names an unknown or empty command pattern")
+        for mode, spec in modes.items():
+            mode_patterns = set(spec.get("patterns", []))
+            actual |= mode_patterns
+            if not mode_patterns or not mode_patterns <= allowed:
+                errors.append(f"{name} {mode} names an unknown or empty mode pattern")
+            if not isinstance(spec.get("read_only"), bool):
+                errors.append(f"{name} {mode} needs a read_only policy")
+            if "terminal" in spec and not isinstance(spec["terminal"], bool):
+                errors.append(f"{name} {mode} terminal context must be boolean")
+            argv = spec.get("argv", [])
+            if not isinstance(argv, list) or argv[:len(words)] != words or not accepts(argv):
+                errors.append(f"{name} {mode} example does not parse as its canonical command")
+            for reference in spec.get("tests", []):
+                errors.extend(_check_test_reference(reference, root))
+            if not spec.get("tests"):
+                errors.append(f"{name} {mode} needs a test reference")
+        if actual != declared:
+            errors.append(f"{name} command patterns disagree with its modes")
+        if leaf is not None:
+            conditional = {"--json", "--dry-run", "--status", "--check", "--dump", "--quiet"}
+            available = conditional & set(leaf._option_string_actions)
+            # These flags change the presentation or safety contract. A route
+            # whose canonical verb already selects the mode need not repeat it.
+            implicit = {word for word in route if word.startswith("-")}
+            if name == "agent install":
+                implicit.add("--status")  # Public action is `agent status`.
+            for flag in sorted(available - implicit):
+                if not any(flag in spec.get("argv", []) for spec in modes.values()):
+                    errors.append(f"{name} lacks a conditional mode for {flag}")
+        for reference in entry.get("tests", []):
+            errors.extend(_check_test_reference(reference, root))
+        if not entry.get("tests"):
+            errors.append(f"{name} needs a command test reference")
+    return errors
+
+
+def _check_test_reference(reference, root):
+    if not isinstance(reference, str) or "::" not in reference:
+        return [f"invalid command contract test reference: {reference!r}"]
+    relpath, test_name = reference.split("::", 1)
+    if not relpath.startswith("tests/") or not test_name.startswith("test_"):
+        return [f"invalid command contract test reference: {reference!r}"]
+    if relpath in ("tests/test_command_patterns.py", "tests/test_cli_contract.py"):
+        return [f"command contract needs a behavior test, not inventory-only test: {reference}"]
+    path = root / relpath
+    if not path.is_file():
+        return [f"missing command contract test file: {relpath}"]
+    try:
+        tree = ast.parse(path.read_text())
+    except SyntaxError:
+        return [f"invalid command contract test file: {relpath}"]
+    if not any(isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and
+               node.name == test_name for node in tree.body):
+        return [f"missing command contract test: {reference}"]
+    return []
+
+
+_RESERVED_PICKER_OPTION = re.compile(
+    r"(?:--(?:bind|header|no-header|multi|no-multi|marker|pointer|color|height|layout|reverse|border|margin|expect)(?:\b|=)|(?<!\S)-m(?:\s|$))")
+_SHELL_FZF_LAUNCH = re.compile(
+    r"(?:^|[|;]\s*|&&\s*|\$\(\s*|\bthen\s+)(?:command\s+)?fzf(?:\s|$)")
+_LAUNCH_CALLS = {"run", "Popen", "call", "check_call", "check_output",
+                 "_run", "command", "system", "execvp", "execvpe", "spawnvp", "spawnvpe"}
+
+
+def _python_fzf_launches(source, relpath):
+    """Find literal Python process launches without treating prose as a launch."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return [f"{relpath} is not valid Python"]
+    errors = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not node.args:
+            continue
+        call_name = node.func.attr if isinstance(node.func, ast.Attribute) else (
+            node.func.id if isinstance(node.func, ast.Name) else "")
+        if call_name not in _LAUNCH_CALLS:
+            continue
+        argv = node.args[0]
+        if isinstance(argv, (ast.List, ast.Tuple)) and argv.elts:
+            first = argv.elts[0]
+            if isinstance(first, ast.Constant) and first.value == "fzf":
+                # A version/capability probe is not a picker implementation.
+                second = argv.elts[1] if len(argv.elts) > 1 else None
+                if not (isinstance(second, ast.Constant) and second.value in ("--version", "--help")):
+                    errors.append(f"{relpath}:{node.lineno} launches fzf outside ui/fzf.sh")
+            elif (isinstance(first, ast.Constant) and first.value in ("sh", "bash", "zsh")
+                  and len(argv.elts) >= 3):
+                shell_body = argv.elts[2]
+                if isinstance(shell_body, ast.Constant) and isinstance(shell_body.value, str) and \
+                        _SHELL_FZF_LAUNCH.search(shell_body.value):
+                    errors.append(f"{relpath}:{node.lineno} launches fzf outside ui/fzf.sh")
+        elif isinstance(argv, ast.Constant) and isinstance(argv.value, str) and \
+                _SHELL_FZF_LAUNCH.search(argv.value):
+            errors.append(f"{relpath}:{node.lineno} launches fzf outside ui/fzf.sh")
+    return errors
+
+
+def check_picker_boundaries(*, root=ROOT):
+    """Keep launches and controls in the shared picker implementation."""
+    errors = []
+    shell_paths = [*sorted((root / "zsh").glob("*.zsh")), root / "t.plugin.zsh"]
+    if (root / "bin").exists():
+        shell_paths.extend(sorted((root / "bin").iterdir()))
+    for path in shell_paths:
+        if not path.is_file():
+            continue
+        if path.suffix != ".zsh" and not path.read_bytes().startswith(
+                (b"#!/bin/sh", b"#!/bin/bash", b"#!/usr/bin/env bash", b"#!/usr/bin/env zsh")):
+            continue
+        relpath = path.relative_to(root)
+        for number, line in enumerate(path.read_text().splitlines(), 1):
+            code = line.split("#", 1)[0]
+            if _SHELL_FZF_LAUNCH.search(code):
+                errors.append(f"{relpath}:{number} launches fzf outside ui/fzf.sh")
+            if re.search(r"\b_t_fzf(?:\s|\()", code) and not re.search(r"\b_t_fzf_(?:single|multi|filtered)\b", code):
+                errors.append(f"{relpath}:{number} bypasses a picker profile")
+            if "_t_fzf_" in code and _RESERVED_PICKER_OPTION.search(code):
+                errors.append(f"{relpath}:{number} overrides reserved picker controls")
+    python_paths = [root / "bin/t", *sorted((root / "libexec").glob("*.py"))]
+    for path in python_paths:
+        if path.is_file():
+            errors.extend(_python_fzf_launches(path.read_text(), path.relative_to(root)))
+    return errors
+
+
 def main():
     loader = SourceFileLoader("t_cli_lint", str(ROOT / "bin/t"))
     spec = importlib.util.spec_from_loader(loader.name, loader)
@@ -264,6 +455,17 @@ def main():
     errors = check(module.build_parser(), module.COMMAND_GROUPS,
                    (ROOT / "AGENTS.md").read_text())
     errors.extend(check_issue_help(module._group_help("issue")))
+    errors.extend(check_group_help(module._group_help, module.COMMAND_GROUPS))
+    try:
+        contract = json.loads(CONTRACT.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        errors.append(f"cannot read command inventory: {exc}")
+    else:
+        errors.extend(check_command_patterns(module.build_parser(), module.COMMAND_GROUPS, contract))
+    errors.extend(check_picker_boundaries())
+    for path in (ROOT / "AGENTS.md", ROOT / "CONTRIBUTING.md"):
+        if "ui/command-contract.json" not in path.read_text():
+            errors.append(f"{path.name} must link ui/command-contract.json")
     for error in errors:
         print("CLI contract: " + error, file=sys.stderr)
     if not errors:

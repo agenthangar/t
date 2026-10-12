@@ -64,13 +64,13 @@ def test_review_can_scroll_and_back_out_with_action_still_visible(t_mod):
         assert sum(t_mod._term_rows(line, 44) for line in frame) <= 20
 
 
-@pytest.mark.parametrize('state,keys,expected', [
-    ('logged-in', ['space', 'space', 'enter'], ['claude', 'codex']),
-    ('logged-in', ['space', 'space', 'q'], []),
-    ('logged-in', ['enter', 'q'], []),
-    ('logged-out', ['space', 'enter'], ['codex', 'cursor']),
+@pytest.mark.parametrize('state,keys,expected,status', [
+    ('logged-in', ['space', 'space', 'enter'], ['claude', 'codex'], 0),
+    ('logged-in', ['space', 'space', 'q'], [], 130),
+    ('logged-in', ['enter', 'q'], [], 130),
+    ('logged-out', ['space', 'enter'], ['codex', 'cursor'], 0),
 ])
-def test_login_multiselect_runs_directly(t_mod, monkeypatch, state, keys, expected):
+def test_login_multiselect_runs_directly(t_mod, monkeypatch, state, keys, expected, status):
     # Healthy tools can be selected; recommended logins can be deselected.
     args = t_mod.build_parser().parse_args(['login'])
     ui = make_ui(t_mod, keys)
@@ -87,7 +87,7 @@ def test_login_multiselect_runs_directly(t_mod, monkeypatch, state, keys, expect
         return type('Result', (), {'returncode': 0})()
     monkeypatch.setattr(t_mod, '_login_run', run)
     monkeypatch.setattr('builtins.print', lambda *a, **kw: None)
-    assert t_mod.cmd_login(None, args) == 0
+    assert t_mod.cmd_login(None, args) == status
     assert calls == expected
     assert any('Pick agents to log in' in line for frame in ui.frames for line in frame)
     assert any('enter' in line and 'RUN LOGINS' in line for frame in ui.frames for line in frame)
@@ -120,3 +120,24 @@ def test_config_review_saves_with_enter_or_y(t_mod, monkeypatch, tmp_path, save_
               for line in frame]
     assert any('enter' in line and 'SAVE CHANGES' in line for line in review)
     assert not any('no binding' in line for line in review)
+
+
+def test_dirty_config_ctrl_c_aborts_and_restores_terminal(t_mod, monkeypatch, tmp_path):
+    local = tmp_path / 'local.zsh'
+    local.write_text('# keep me\n')
+    monkeypatch.setenv('T_LOCAL_RC', str(local))
+    monkeypatch.setattr(t_mod, 'CONFIG', str(tmp_path / 'config.sh'))
+    monkeypatch.setattr(t_mod.sys.stdin, 'isatty', lambda: True)
+    monkeypatch.setattr(t_mod.sys.stdout, 'isatty', lambda: True)
+    ui = make_ui(t_mod, ['j', 'enter', 'j', 'enter', 'abort'])
+    monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
+    monkeypatch.setattr(t_mod, '_config_write',
+                        lambda *a: pytest.fail('aborted config wrote changes'))
+    monkeypatch.setattr(t_mod, 'zsh_capture',
+                        lambda *a: pytest.fail('aborted config synced settings'))
+
+    cfg = t_mod.Config()
+    cfg.open_mode_default = 'cli'
+    assert t_mod.cmd_config(cfg, t_mod.build_parser().parse_args(['config'])) == 130
+    assert ui.restored
+    assert local.read_text() == '# keep me\n'

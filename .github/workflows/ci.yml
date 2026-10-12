@@ -32,6 +32,7 @@ jobs:
       fail-fast: false
       matrix:
         os: ${{ fromJSON(contains(github.event.pull_request.labels.*.name, 'ci:skip-macos') && '["ubuntu-latest"]' || '["ubuntu-latest","macos-latest"]') }}
+        fzf: ['0.44.1', '0.74.5']
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -46,6 +47,44 @@ jobs:
             command -v tmux >/dev/null || brew install tmux
           fi
           python -m pip install -r requirements-dev.txt
+      - name: Pinned fzf ${{ matrix.fzf }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=${{ matrix.fzf }}
+          case "$(uname -s)" in
+            Darwin) platform=darwin ;;
+            Linux) platform=linux ;;
+          esac
+          case "$(uname -m)" in
+            x86_64) arch=amd64 ;;
+            arm64|aarch64) arch=arm64 ;;
+          esac
+          extension=tar.gz
+          if [ "$platform" = darwin ] && [ "$version" = 0.44.1 ]; then extension=zip; fi
+          asset="fzf-${version}-${platform}_${arch}.${extension}"
+          tag="$version"
+          if [ "$version" = 0.74.5 ]; then tag="v$version"; fi
+          url="https://github.com/junegunn/fzf/releases/download/${tag}"
+          curl -fsSL --retry 3 "$url/$asset" -o "$RUNNER_TEMP/$asset"
+          curl -fsSL --retry 3 "$url/fzf_${version}_checksums.txt" -o "$RUNNER_TEMP/fzf-checksums.txt"
+          expected=$(awk -v asset="$asset" '$2 == asset {print $1}' "$RUNNER_TEMP/fzf-checksums.txt")
+          test -n "$expected"
+          actual=$(shasum -a 256 "$RUNNER_TEMP/$asset" | awk '{print $1}')
+          test "$actual" = "$expected"
+          mkdir -p "$RUNNER_TEMP/fzf-bin"
+          if [ "$extension" = zip ]; then
+            unzip -q "$RUNNER_TEMP/$asset" -d "$RUNNER_TEMP/fzf-bin"
+          else
+            tar -xzf "$RUNNER_TEMP/$asset" -C "$RUNNER_TEMP/fzf-bin"
+          fi
+          echo "$RUNNER_TEMP/fzf-bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/fzf-bin/fzf" --version
+      - name: Required real terminal picker tests
+        run: |
+          command -v fzf
+          command -v tmux
+          python -m pytest -q tests/test_picker_ui.py
       - name: AgentCore AWS CLI contract (local server, synthetic credentials)
         if: runner.os == 'Linux'
         env:

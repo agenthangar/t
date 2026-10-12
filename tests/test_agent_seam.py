@@ -548,7 +548,7 @@ def test_open_unknown_remote_owner_does_not_start_local_session(zsh):
       _dev_rows_all() { return 1; }
       _t_dev api 3; print -r -- "rc=$?"
     ''')
-    assert "rc=1" in result.stdout
+    assert "rc=3" in result.stdout  # Preserve the incomplete ownership scan status.
     assert "remote ownership is unknown" in result.stderr
     assert "new-session" not in (zsh.log.read_text() if zsh.log.exists() else "")
 
@@ -2150,7 +2150,7 @@ def test_zsh_resume_picker_shows_the_display_column_for_every_row(zsh, tmp_path)
     log = tmp_path / "fzf.log"
     r = zsh("_t_resume api --live; echo rc=$?", _tty=True, FZF_LOG=str(log),
             FAKE_SESSIONS="dev-api-4", FAKE_SESSION_PATH=f"{zsh.home}/code/.worktrees/api/4")
-    assert "rc=1" in r.stdout, r.stdout                        # esc in the picker → rc 1, nothing spawned
+    assert "rc=130" in r.stdout.splitlines(), r.stdout                    # Esc cancels without spawning work
     rows = log.read_text().splitlines()
     assert len(rows) == 3, rows                                # the subagent thread adds no row
     assert rows[0].split()[:5] == ["4", "✱", "claude", "●", "active"]   # the live slot pins to the top, agent named
@@ -2164,7 +2164,7 @@ def test_zsh_resume_picker_shows_the_display_column_for_every_row(zsh, tmp_path)
     assert {row[4:12] for row in rows} == {"✱ claude", "⬡ codex "}
     # the fzf header spells the full legend — every supported tool, not just the ones on screen
     header = (tmp_path / "fzf.log.header").read_text().splitlines()
-    assert header[0] == "Space/Tab select · Enter resume · Ctrl-/ details · Esc cancel"
+    assert header[0] == "Enter resume · Esc · Space/Tab mark ✓ · Ctrl-/ details"
     assert header[1].startswith("Ctrl-A show all · Ctrl-F defaults")
     assert header[2] == "Ctrl-L live: shown"
     assert header[3].startswith("✱ claude · ⬡ codex · ◆ cursor")
@@ -2560,7 +2560,7 @@ def test_open_local_multi_picker(zsh, tmp_path, tabs):
     assert "new-session" not in calls and "dev-web-3" not in calls
     args = log.read_text()
     assert "--multi" in args and "space:toggle+down" in args
-    assert "Space/Tab select · Enter open · Ctrl-/ details · Esc cancel" in args
+    assert "Enter open · Esc · Space/Tab mark ✓ · Ctrl-/ details" in args
     assert "Ctrl-A show all · Ctrl-F defaults" in args
     assert "Ctrl-T attached: hidden" in args
 
