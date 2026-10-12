@@ -19,8 +19,12 @@ def lint_module():
 def test_issue_parser_accepts_verbs_and_separates_options(t_mod):
     parser = t_mod.build_parser()
     listed = parser.parse_args(["issue", "list", "api", "--state", "closed", "--json"])
-    assert (listed.verb, listed.action, listed.repo, listed.state, listed.json) == (
-        "issue", "list", "api", "closed", True)
+    assert (listed.verb, listed.action, listed.repository, listed.repo, listed.state, listed.json) == (
+        "issue", "list", "api", None, "closed", True)
+    chosen = parser.parse_args(["issue", "list", "--repo", "owner/repo"])
+    assert (chosen.repository, chosen.repo) == (None, "owner/repo")
+    conflict = parser.parse_args(["issue", "list", "api", "--repo", "owner/repo"])
+    assert (conflict.repository, conflict.repo) == ("api", "owner/repo")
     status = parser.parse_args(["issue", "status", "123", "--repo", "api", "--json"])
     assert (status.action, status.target, status.repo, status.json) == (
         "status", ["123"], "api", True)
@@ -56,6 +60,22 @@ def test_issue_help_is_a_side_effect_free_verb_menu(t_mod, monkeypatch, capsys):
     assert "usage: t issue start" in capsys.readouterr().out
 
 
+def test_issue_help_shows_repository_resolution_on_every_verb(t_mod, capsys):
+    menu = t_mod._group_help("issue")
+    for syntax in ("t issue list [repo]", "t issue status [repo] <id>",
+                   "t issue start [repo] [id ...]"):
+        assert syntax in menu
+    assert "owner/repo" in menu and "--repo" in menu
+    lint = lint_module()
+    assert lint.check_issue_help(menu) == []
+    assert any("status [repo]" in error for error in lint.check_issue_help(
+        menu.replace("t issue status [repo] <id>", "t issue status <id>")))
+    for verb in ("list", "status", "start"):
+        assert t_mod.main(["help", "issue", verb]) == 0
+        help_text = capsys.readouterr().out
+        assert "[repo]" in help_text and "--repo" in help_text
+
+
 def test_cli_lint_passes_and_detects_contract_regressions(t_mod):
     lint = lint_module()
     parser = t_mod.build_parser()
@@ -86,9 +106,12 @@ def test_cli_lint_passes_and_detects_contract_regressions(t_mod):
 
     extended = t_mod.build_parser()
     issue = lint._subparsers(extended)._name_parser_map["issue"]
-    lint._subparsers(issue).add_parser("triage")
+    triage = lint._subparsers(issue).add_parser("triage", usage="%(prog)s [repo]")
     groups = {name: dict(actions) for name, actions in t_mod.COMMAND_GROUPS.items()}
     groups["issue"]["triage"] = ("issue", "triage")
+    assert any("issue triage" in error for error in lint.check(extended, groups, instructions))
+    triage.add_argument("repo", nargs="?")
+    triage.add_argument("--repo", dest="repo")
     assert lint.check(extended, groups, instructions) == []
 
     assert any("AGENTS.md" in error for error in lint.check(t_mod.build_parser(),
@@ -103,7 +126,7 @@ def test_cli_lint_detects_shared_picker_regressions():
     bespoke = source.replace("_t_fzf_filtered", "_t_issue_private_picker", 1)
     assert any("_t_fzf_filtered" in error for error in lint.check_issue_picker(bespoke))
 
-    single_default = source.replace("*, multi=True):", "*, multi=False):", 1)
+    single_default = source.replace("multi=True", "multi=False", 1)
     assert any("default to multi-select" in error
                for error in lint.check_issue_picker(single_default))
 

@@ -316,6 +316,7 @@ current chat IDs; close an untracked CLI first to avoid duplicate conversation o
 ```sh
 t issue list                         # open issues in the current registered repo
 t issue list api --state all         # all issues in the registered "api" repo
+t issue list --repo owner/repo       # choose a GitHub repository explicitly
 t issue list owner/repo --json       # machine-readable GitHub issues
 t issue status 123                   # inspect ownership without starting work
 t issue status api 123 --json        # structured discovery for a registered repo
@@ -323,6 +324,14 @@ t issue start                        # select one or several open issues
 t issue start api 123 124            # work on two independent issues
 t issue start https://github.com/owner/repo/issues/123 --codex
 ```
+
+Every verb accepts a registered repository alias or GitHub `owner/repo`, either
+positionally or with `--repo`. If omitted, `t` uses the current registered
+checkout. When there is no checkout to infer from, interactive use presents the
+registered-repository picker. An issue URL already names its repository. When a
+repo is supplied both positionally and with `--repo`, the command rejects the
+conflict. `--json` and other non-interactive uses require an explicit repo or an
+inferable current checkout; they never prompt.
 
 `list` and `status` are read-only. `start` accepts explicit issue numbers or a
 GitHub issue URL. With no number, it presents the same multi-select picker used
