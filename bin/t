@@ -4171,39 +4171,88 @@ def _login_hours(value):
     raise argparse.ArgumentTypeError("use a finite number of hours from 0 to 8760")
 
 
+def _login_agent(value):
+    # argparse on older Python checks an empty nargs='*' list against choices.
+    # Validate individual tokens instead so bare `t login` reaches discovery.
+    if value not in INSTALL_AGENTS:
+        raise argparse.ArgumentTypeError("choose from: " + ", ".join(INSTALL_AGENTS))
+    return value
+
+
+def _login_items(probed, now, within_hours, force=False):
+    items = [{"t": "header", "label": "LOGIN · local agents"}]
+    for agent, probe in probed.items():
+        run, reason = _login_decision(probe, now, within_hours, force)
+        items.append({"t": "locked" if probe["state"] == "missing" else "toggle",
+                      "alias": agent, "value": reason, "checked": run})
+    return items
+
+
+def _login_plan(items, probed, headless):
+    steps = []
+    for item in items:
+        if item["t"] != "toggle" or not item["checked"]:
+            continue
+        agent = item["alias"]
+        cmd = list(_install_login_cmd(agent, headless))
+        # Probe and login must use the same binary, including ~/.local/bin.
+        cmd[2 if cmd[0] == "env" else 0] = probed[agent]["bin"]
+        steps.append({"step": "login:" + agent, "do": "run", "label": shlex.join(cmd),
+                      "cmd": cmd, "agent": agent})
+    return steps
+
+
 def cmd_login(cfg, args):
     if args.force and not args.agents:
         print("t login: --force requires named agents", file=sys.stderr)
         return 2
     headless = _install_headless(os.environ, args.headless)
-    planned, failed = [], False
+    probed = {}
     for agent in dict.fromkeys(args.agents or INSTALL_AGENTS):
         if agent in args.ignore:
             print(f"{agent}: ignored for this invocation")
             continue
-        probe = _login_probe(agent)
-        run, reason = _login_decision(probe, time.time(), args.within_hours, args.force)
-        print(f"{agent}: {reason}")
-        if not run:
-            failed |= probe["state"] == "error" or (probe["state"] == "missing" and bool(args.agents))
-            continue
-        cmd = list(_install_login_cmd(agent, headless))
-        # Use the same discovered binary for probe and login, including ~/.local/bin.
-        cmd[2 if cmd[0] == "env" else 0] = probe["bin"]
-        print("  + " + shlex.join(cmd))
-        planned.append((agent, cmd))
-    if args.dry_run or args.status or not planned:
-        return int(failed)
-    if not args.yes:
+        probed[agent] = _login_probe(agent)
+    items = _login_items(probed, time.time(), args.within_hours, args.force)
+
+    def plan():
+        return _login_plan(items, probed, headless)
+
+    def probe_failed(confirmed=False):
+        selected = {step["agent"] for step in plan()} if confirmed or args.force else set()
+        return any((p["state"] == "error" and a not in selected) or
+                   (p["state"] == "missing" and bool(args.agents)) for a, p in probed.items())
+
+    interactive = sys.stdin.isatty() and sys.stdout.isatty()
+    if interactive and not (args.yes or args.dry_run or args.status) and _selectable(items):
+        try:
+            try:
+                confirmed = _install_wizard(items, plan, login=True)
+            except Exception:
+                confirmed = _install_prompt_flow(items, plan)
+        except (EOFError, KeyboardInterrupt):
+            return 130
+        if not confirmed:
+            return int(probe_failed())
+    else:
+        for item in items[1:]:
+            print(f"{item['alias']}: {item['value']}")
+        for step in plan():
+            print("  + " + step["label"])
+        if args.dry_run or args.status or not plan():
+            return int(probe_failed())
+    if not args.yes and not interactive:
         if not sys.stdin.isatty():
             print("t login: use --dry-run to inspect or -y to run the displayed logins", file=sys.stderr)
             return 2
         try:
             if input("Run these login commands? [y/N] ").strip().lower() not in ("y", "yes"):
-                return int(failed)
+                return int(probe_failed())
         except (EOFError, KeyboardInterrupt):
             return 130
-    for agent, cmd in planned:
+    failed = probe_failed(confirmed=True)
+    for step in plan():
+        agent, cmd = step["agent"], step["cmd"]
         try:
             result = subprocess.run(cmd)
         except KeyboardInterrupt:
@@ -4870,7 +4919,7 @@ def _install_walk(steps, close=False):
     return 1 if failed else 0
 
 
-def _install_wizard(items, plan):
+def _install_wizard(items, plan, login=False):
     """The `t setup` TUI over the install items: ONE list (agents, login, options,
     hosts) under a single cursor, present entries locked under a dim ✓; enter → the
     diff-style review (y apply · n back · q quit), re-planned from the live marks
@@ -4901,7 +4950,7 @@ def _install_wizard(items, plan):
                     disp.append((ui.section(it["label"]), None))
                 else:
                     disp += [(line, idx) for line in row_text(it, aw, idx == cur)]
-            ui.frame("Pick what to install", disp, cur, "↑↓/jk move · space select · q back",
+            ui.frame("Pick agents to log in" if login else "Pick what to install", disp, cur, "↑↓/jk move · space select · q back",
                      primary=("enter", "REVIEW CHANGES", ""), flash=msg)
             msg = ""
             k = ui.read_key()
@@ -4932,7 +4981,7 @@ def _install_wizard(items, plan):
             return True
         return False if k in ("n", "esc") else None
 
-    ui.intro("t install", "Agent CLIs · nothing runs until you confirm.")
+    ui.intro("t login" if login else "t install", "Agent CLIs · nothing runs until you confirm.")
     ui.raw()
     ok, msg = False, ""
     try:
@@ -4941,7 +4990,7 @@ def _install_wizard(items, plan):
                 break
             r = review_screen(_install_render(plan(), st))
             if r == "empty":
-                msg = "nothing selected — space marks ◼ what gets installed"
+                msg = "nothing selected — space marks ◼ what runs"
                 continue
             if r:
                 ok = True
@@ -9481,7 +9530,7 @@ REMOTE SESSIONS
         description="Review local agent logins. Cached access-token expiry is an advisory hint; "
             "vendor automatic refresh may still work. Missing expiry stays unknown. "
             "Ignored tools are not probed. No tools are installed and no remote hosts are changed.")
-    sp.add_argument("agents", nargs="*", metavar="AGENT", choices=INSTALL_AGENTS,
+    sp.add_argument("agents", nargs="*", metavar="AGENT", type=_login_agent,
                     help="claude, codex, cursor (default: all installed tools)")
     sp.add_argument("--ignore", action="append", default=[], choices=INSTALL_AGENTS,
                     help="skip this tool without probing it; repeatable, invocation only")
