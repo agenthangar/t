@@ -23,6 +23,9 @@ def test_issue_parser_accepts_verbs_and_separates_options(t_mod):
         "issue", "list", "api", None, "closed", True)
     chosen = parser.parse_args(["issue", "list", "--repo", "owner/repo"])
     assert (chosen.repository, chosen.repo) == (None, "owner/repo")
+    all_repos = parser.parse_args(["issue", "list", "-a", "--state", "all", "--json"])
+    assert (all_repos.repository, all_repos.repo, all_repos.all, all_repos.state,
+            all_repos.json) == (None, None, True, "all", True)
     conflict = parser.parse_args(["issue", "list", "api", "--repo", "owner/repo"])
     assert (conflict.repository, conflict.repo) == ("api", "owner/repo")
     status = parser.parse_args(["issue", "status", "123", "--repo", "api", "--json"])
@@ -66,6 +69,7 @@ def test_issue_help_shows_repository_resolution_on_every_verb(t_mod, capsys):
                    "t issue start [repo] [id ...]"):
         assert syntax in menu
     assert "owner/repo" in menu and "--repo" in menu
+    assert "list --all" in menu.lower() and "all registered repositories" in menu.lower()
     lint = lint_module()
     assert lint.check_issue_help(menu) == []
     assert any("status [repo]" in error for error in lint.check_issue_help(
@@ -74,6 +78,8 @@ def test_issue_help_shows_repository_resolution_on_every_verb(t_mod, capsys):
         assert t_mod.main(["help", "issue", verb]) == 0
         help_text = capsys.readouterr().out
         assert "[repo]" in help_text and "--repo" in help_text
+        if verb == "list":
+            assert "--all" in help_text
 
 
 def test_cli_lint_passes_and_detects_contract_regressions(t_mod):
@@ -114,6 +120,13 @@ def test_cli_lint_passes_and_detects_contract_regressions(t_mod):
     triage.add_argument("--repo", dest="repo")
     assert lint.check(extended, groups, instructions) == []
 
+    missing_scope = t_mod.build_parser()
+    list_parser = lint._subparsers(lint._subparsers(missing_scope)
+                                   ._name_parser_map["issue"])._name_parser_map["list"]
+    list_parser._option_string_actions.pop("--all")
+    assert any("issue list must expose -a/--all" in error
+               for error in lint.check(missing_scope, t_mod.COMMAND_GROUPS, instructions))
+
     assert any("AGENTS.md" in error for error in lint.check(t_mod.build_parser(),
                                                             t_mod.COMMAND_GROUPS, ""))
 
@@ -136,3 +149,15 @@ def test_cli_lint_detects_shared_picker_regressions():
 
     many_owners = source.replace("multi=False)[0]", "multi=True)[0]", 1)
     assert any("choose" in error for error in lint.check_issue_picker(many_owners))
+
+
+def test_cli_lint_keeps_issue_list_noninteractive():
+    lint = lint_module()
+    source = (ROOT / "libexec/t_issue.py").read_text()
+    assert lint.check_issue_list(source) == []
+
+    no_scope = source.replace("self.list_repositories(", "self.resolve_repo(", 1)
+    assert any("list_repositories" in error for error in lint.check_issue_list(no_scope))
+
+    picker = source.replace("self.list_repositories(", "self.pick_rows(", 1)
+    assert any("interactive selection" in error for error in lint.check_issue_list(picker))

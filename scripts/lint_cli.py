@@ -93,9 +93,44 @@ def check_issue_help(help_text):
                    "t issue start [repo] [id ...]"):
         if syntax not in help_text:
             errors.append("t issue help must show " + syntax)
-    for detail in ("owner/repo", "--repo", "current registered checkout"):
+    for detail in ("owner/repo", "--repo", "current checkout"):
         if detail not in help_text:
             errors.append("t issue help must explain " + detail)
+    for detail in ("list --all", "all registered repositories", "Status and start"):
+        if detail.lower() not in help_text.lower():
+            errors.append("t issue help must explain " + detail)
+    return errors
+
+
+def check_issue_list(source):
+    """Keep list as a direct, read-only display with explicit scope and rendering."""
+    try:
+        module = ast.parse(source)
+    except SyntaxError:
+        return ["issue list source is not valid Python"]
+    owner = next((node for node in module.body if isinstance(node, ast.ClassDef)
+                  and node.name == "IssueCommand"), None)
+    methods = {node.name: node for node in owner.body if isinstance(node, ast.FunctionDef)} if owner else {}
+    errors = []
+    for name in ("list_issues", "list_repositories", "render_issues"):
+        if name not in methods:
+            errors.append(f"IssueCommand.{name} must support direct issue listing")
+    listing = methods.get("list_issues")
+    calls = {node.func.attr for node in ast.walk(listing)
+             if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+             and isinstance(node.func.value, ast.Name) and node.func.value.id == "self"} if listing else set()
+    for name in ("list_repositories", "render_issues"):
+        if name not in calls:
+            errors.append(f"IssueCommand.list_issues must call {name}")
+    for name in ("list_issues", "list_repositories", "render_issues"):
+        method = methods.get(name)
+        if method is None:
+            continue
+        forbidden = {node.func.attr for node in ast.walk(method)
+                     if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                     and node.func.attr in ("resolve_repo", "pick_rows", "select_issues")}
+        if forbidden:
+            errors.append(f"IssueCommand.{name} must not use interactive selection")
     return errors
 
 
@@ -160,6 +195,11 @@ def check(parser, command_groups, instructions):
             if verb == "list" and not any(action.dest == "repository" and action.nargs == "?"
                                           for action in leaf._actions):
                 errors.append("issue list must keep optional positional repository separate from --repo")
+            if verb == "list" and not (leaf._option_string_actions.get("--all") is not None
+                                       and leaf._option_string_actions.get("-a") is
+                                       leaf._option_string_actions.get("--all")
+                                       and leaf._option_string_actions["--all"].dest == "all"):
+                errors.append("issue list must expose -a/--all for repository scope")
 
     def accepts(words):
         with contextlib.redirect_stderr(io.StringIO()):
@@ -169,7 +209,8 @@ def check(parser, command_groups, instructions):
                 return False, None
         return True, args
 
-    for words in (["issue", "list"], ["issue", "list", "repo", "--state", "all", "--json"],
+    for words in (["issue", "list"], ["issue", "list", "--all", "--json"],
+                  ["issue", "list", "-a"], ["issue", "list", "repo", "--state", "all", "--json"],
                   ["issue", "list", "--repo", "repo"],
                   ["issue", "status", "123", "--json"],
                   ["issue", "status", "123", "--repo", "repo"],
@@ -190,6 +231,7 @@ def check(parser, command_groups, instructions):
         if phrase not in instructions:
             errors.append("AGENTS.md must document " + phrase)
     errors.extend(check_issue_picker((ROOT / "libexec/t_issue.py").read_text()))
+    errors.extend(check_issue_list((ROOT / "libexec/t_issue.py").read_text()))
     return errors
 
 
