@@ -441,7 +441,7 @@ _t_open_picker() {
     [[ -n ${hidden[$fields[1]/$fields[2]]:-} ]] || visible+=("$row")
   done
   filtered="${(F)visible}"
-  selected=$(_t_fzf_filtered "$filtered" "$rows" open unattached \
+  selected=$(T_PICKER_SESSION_FILTERS=open _t_fzf_filtered "$filtered" "$rows" open unattached \
     "$(_dev_agent_legend)" "$include_attached" --prompt="open ${repo:+$repo }> " \
     --preview='printf "%s\n" {4}') || return 1
   [[ -n $selected ]] || return 1

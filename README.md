@@ -120,17 +120,20 @@ sessions are hidden by default; `--attached` includes them. Idle sessions and
 unloaded desktop workspaces remain visible. An explicit slot still opens directly.
 
 `t open`, `t resume`, and `t kill` share the compact resume picker design:
-**Space/Tab marks ✓ and Enter acts on the selection**. **Ctrl-A** toggles between
-the default view and all sessions, keeping your search. The header shows the
-current filter and hidden count. **Ctrl-/** opens a wrapped full-detail preview.
+**Space/Tab marks ✓ and Enter acts on the selection**. **Ctrl-A** shows all
+sessions; **Ctrl-F** restores the default filters. **Ctrl-T** toggles attached
+sessions in `t open` and `t kill`, **Ctrl-L** toggles live sessions in `t resume`,
+and **Ctrl-P** toggles pending work in `t kill`. Each key keeps your search. The
+header shows the active filters and hidden count. **Ctrl-/** opens a wrapped
+full-detail preview.
 Rows keep agent, interface, status, model, session and task/PR details; resume
 also keeps recency and origin.
 
 The default views are unattached sessions for `t open`, inactive conversations
 for `t resume`, and unattached sessions with no pending work for `t kill`. Kill
 requires a clean worktree and proof that its commits have landed; open/unknown
-PRs and uncertain work stay hidden until Ctrl-A. `t resume --live` starts with
-all conversations; `t open --attached` starts with all sessions.
+PRs and uncertain work stay hidden until Ctrl-P or Ctrl-A. `t resume --live`
+and `t open --attached` start with all rows; Ctrl-F restores their defaults.
 
 CLI opens use this terminal for the first selection and new tabs for the rest,
 with attach commands when tabs are unavailable; desktop selections open in the

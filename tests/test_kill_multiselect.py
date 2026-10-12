@@ -26,6 +26,14 @@ def _safe_repo(zsh):
     return repo
 
 
+def _picked_labels(log, view):
+    return [row.split('\t')[1] for row in Path(f'{log}.{view}').read_text().splitlines() if '\t' in row]
+
+
+def _picked_targets(log, view):
+    return [tuple(row.split('\t')[:2]) for row in Path(f'{log}.{view}').read_text().splitlines() if '\t' in row]
+
+
 def test_kill_safety_requires_clean_work_and_merged_head(zsh):
     repo = _safe_repo(zsh)
     assert zsh(f'_dev_kill_no_pending_work {repo}').returncode == 0
@@ -110,6 +118,25 @@ def test_kill_picker_starts_with_only_proven_safe_rows(zsh):
     assert all(f'api-{n}' in all_rows for n in range(1, 5))
 
 
+def test_kill_picker_exports_independent_attachment_and_pending_views(zsh):
+    log = _picker_stub(zsh)
+    repo = _safe_repo(zsh)
+    rows = '\n'.join([
+        f'-\t{repo}\tapi-1\tdetached\tactive\tCompleted detached\tcodex\tgpt-6',
+        f'-\t{repo}\tapi-2\tattached\tactive\tCompleted attached\tcodex\tgpt-6',
+        f'-\t{repo}\tapi-3\tdetached\tactive\tPending detached · #43 open\tcodex\tgpt-6',
+        f'-\t{repo}\tapi-4\tattached\tactive\tPending attached · #44 ?\tcodex\tgpt-6',
+    ])
+    code = PICKER_MOCK + '_dev_session_rows() { print -r -- "$FAKE_DETAILS"; }; _dev_kill_pick api ""'
+    result = zsh(code, _tty=True, FAKE_DETAILS=rows, FZF_LOG=str(log), FZF_CANCEL='1')
+    assert result.returncode == 130
+    assert Path(f'{log}.mode').read_text().strip() == 'kill'
+    assert _picked_labels(log, 'visible') == ['api-1']
+    assert _picked_labels(log, 'attached') == ['api-1', 'api-2']
+    assert _picked_labels(log, 'pending') == ['api-1', 'api-3']
+    assert _picked_labels(log, 'all') == ['api-1', 'api-2', 'api-3', 'api-4']
+
+
 def test_kill_picker_empty_default_can_still_reveal_pending_rows(zsh):
     log = _picker_stub(zsh)
     repo = _safe_repo(zsh)
@@ -132,7 +159,7 @@ def test_kill_picker_remote_default_uses_verified_host_labels(zsh):
     ssh = zsh.home.parent / 'stubbin' / 'ssh'
     ssh.write_text('''#!/bin/sh
 printf '%s\n' "$*" >> "$SSH_LOG"
-case "$*" in *mini.example*'_dev_kill_safe_labels'*) printf 'api-3\n' ;; esac
+case "$*" in *mini.example*'_dev_kill_completed_labels'*) printf 'api-3\n' ;; esac
 ''')
     ssh.chmod(0o755)
     ssh_log = zsh.home.parent / 'ssh.log'
@@ -148,13 +175,43 @@ case "$*" in *mini.example*'_dev_kill_safe_labels'*) printf 'api-3\n' ;; esac
     all_rows = Path(f'{log}.all').read_text()
     assert 'api-3' in visible and 'api-4' not in visible
     assert 'api-3' in all_rows and 'api-4' in all_rows
-    assert ssh_log.read_text().count('_dev_kill_safe_labels') == 2
+    assert ssh_log.read_text().count('_dev_kill_completed_labels') == 2
+
+
+def test_kill_picker_remote_views_keep_completion_and_attachment_independent(zsh):
+    log = _picker_stub(zsh)
+    repo = zsh.home / 'code' / 'api'
+    rows = '\n'.join([
+        f'mini\t-\t{repo}\tapi-3\tattached\tactive\tCompleted remotely\tcodex\tgpt-6',
+        f'studio\t-\t{repo}\tapi-3\tdetached\tactive\tPending remotely · #43 open\tcodex\tgpt-6',
+    ])
+    ssh = zsh.home.parent / 'stubbin' / 'ssh'
+    ssh.write_text('''#!/bin/sh
+printf '%s\n' "$*" >> "$SSH_LOG"
+case "$*" in *mini.example*'_dev_kill_completed_labels'*) printf 'api-3\n' ;; esac
+''')
+    ssh.chmod(0o755)
+    code = PICKER_MOCK + '''
+      typeset -gA REMOTE_HOSTS=(mini mini.example studio studio.example)
+      _dev_rows_all() { print -r -- "$FAKE_DETAILS"; }
+      _dev_kill_pick api '' 1
+    '''
+    result = zsh(code, _tty=True, FAKE_DETAILS=rows, FZF_LOG=str(log), FZF_CANCEL='1',
+                 SSH_LOG=str(zsh.home.parent / 'ssh.log'))
+    assert result.returncode == 130
+    assert _picked_targets(log, 'visible') == []
+    assert _picked_targets(log, 'attached') == [('mini', 'api-3')]
+    assert _picked_targets(log, 'pending') == [('studio', 'api-3')]
+    assert _picked_targets(log, 'all') == [('mini', 'api-3'), ('studio', 'api-3')]
 
 
 PICKER_MOCK = """
   _t_fzf_filtered() {
     print -r -- "$1" > "$FZF_LOG.visible"
     print -r -- "$2" > "$FZF_LOG.all"
+    print -r -- "$T_PICKER_WITH_ATTACHED" > "$FZF_LOG.attached"
+    print -r -- "$T_PICKER_WITH_PENDING" > "$FZF_LOG.pending"
+    print -r -- "$T_PICKER_SESSION_FILTERS" > "$FZF_LOG.mode"
     [[ -n $FZF_CANCEL ]] && return 1
     if [[ -n $FZF_SELECT_ALL ]]; then print -r -- "$2"
     else print -r -- "$1"; fi
