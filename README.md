@@ -173,7 +173,8 @@ Use `t system diagnose` when something is missing.
 ## Commands
 
 Run `t` or `t help` for a short overview, then `t help <noun>` or
-`t <noun> <verb> --help` for details. Commands use the `t <noun> <verb>` form.
+`t <noun> <verb> --help` for details. Commands use the `t <noun> <verb>` form,
+with `t share` as the context sharing command.
 Contributors can find the behavior, keyboard, and appearance rules in the
 [command and terminal contract](ui/README.md).
 
@@ -204,6 +205,8 @@ for a host's login shell.
 | `t issue list [repo] [-a]` | List issues in the current, named, or all registered GitHub repositories |
 | `t issue status [repo] <number>` | Inspect existing work without starting an agent |
 | `t issue start [repo] [number ...]` | Continue or start work on one or several issues |
+| `t share --to agent:id --file summary.md [--attach history.md]` | Share selected context with an exact Claude, Codex, or Cursor conversation |
+| `t share targets` / `t share inbox` / `t share read <message-id>` | Find conversations and read received shares |
 | `t session list [-r] [-a]` | List sessions across local or remote hosts and repositories |
 | `t session close <repo> <slot>` / `t session restart <repo> <slot>` | Stop a slot or recover a stuck agent in the same conversation |
 | `t session push` / `t session pop` | Move between foreground and detached tmux |
@@ -341,6 +344,29 @@ monitor startup. Native desktop apps and CLIs launched outside `t` are not monit
 The monitor runs from a stable directory and reloads its code after an update.
 Before opening another Cursor chat, `t` requires existing Cursor CLIs to have verified
 current chat IDs; close an untracked CLI first to avoid duplicate conversation owners.
+
+### Sharing context between agents
+
+```sh
+t share targets --json
+t share --to codex:<conversation-id> --file summary.md --attach history.md
+t share --to claude:<conversation-id> --host mini --file - < summary.md
+t share inbox
+t share read <message-id>
+t share read <message-id> --attachment history.md
+t share --retry <message-id>
+```
+
+The sending agent writes the summary and selects any UTF-8 text attachments; `t`
+does not extract transcripts or generate a summary. A share addresses one exact
+conversation, where the receiving agent reads it on request. Reading does not
+remove the share. Sending does not interrupt or start the receiving agent. Use `--from agent:id` if the
+source conversation cannot be inferred, or `--for agent:id` with `inbox` and
+`read` outside the receiving conversation. `--host` selects a configured SSH
+host. `--json` is available on every form. Messages remain on their receiving
+host without automatic expiration. The combined summary and attachments have a
+10 MiB UTF-8 limit. A send receipt confirms storage; if delivery is uncertain,
+retry the saved message with `t share --retry <message-id>`.
 
 ### Working on GitHub issues
 

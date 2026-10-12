@@ -23,6 +23,9 @@ LEGACY_SHORTCUTS = frozenset({
     "repos", "setup", "new", "checkout", "instructions", "login",
     "install", "integrate", "update", "permissions", "trust", "doctor",
 })
+# `t share` is the reviewed exception: sending is the root action, while
+# targets, inbox, and read remain explicit read-only verbs.
+SHARE_COMMAND = "share"
 ISSUE_VERBS = {"list", "status", "start"}
 # These established families route to compatibility parsers. Freeze their
 # accepted verbs so extending one requires an intentional contract review.
@@ -156,7 +159,7 @@ def check(parser, command_groups, instructions):
     if top is None:
         return ["root command parser has no noun/verb dispatch"]
     public = set(top.choices)
-    unsupported = public - set(command_groups) - LEGACY_SHORTCUTS
+    unsupported = public - set(command_groups) - LEGACY_SHORTCUTS - {SHARE_COMMAND}
     if unsupported:
         errors.append("new public top-level command lacks a noun/verb group: " +
                       ", ".join(sorted(unsupported)))
@@ -215,6 +218,10 @@ def check(parser, command_groups, instructions):
                                        leaf._option_string_actions.get("--all")
                                        and leaf._option_string_actions["--all"].dest == "all"):
                 errors.append("issue list must expose -a/--all for repository scope")
+    share = top._name_parser_map.get(SHARE_COMMAND)
+    share_sub = _subparsers(share) if share else None
+    if share_sub is None or set(share_sub.choices) != {"targets", "inbox", "read"}:
+        errors.append("share parser must expose only targets, inbox, and read verbs")
 
     def accepts(words):
         with contextlib.redirect_stderr(io.StringIO()):
@@ -245,6 +252,20 @@ def check(parser, command_groups, instructions):
     for phrase in ("t issue list", "t issue status", "t issue start"):
         if phrase not in instructions:
             errors.append("AGENTS.md must document " + phrase)
+    if "t share" not in instructions:
+        errors.append("AGENTS.md must document the explicit t share exception")
+    for words in (["share", "--to", "codex:123", "--file", "-"],
+                  ["share", "--retry", "123"], ["share", "targets"],
+                  ["share", "inbox"], ["share", "read", "123"]):
+        valid, args = accepts(words)
+        if not valid or args.verb != "share":
+            errors.append("share parser rejected required form: " + " ".join(words))
+    for words in (["share", "send"], ["share", "targets", "--file", "x"],
+                  ["share", "inbox", "--to", "codex:123"],
+                  ["share", "read", "--retry", "123"]):
+        valid, _ = accepts(words)
+        if valid:
+            errors.append("share parser accepted invalid form: " + " ".join(words))
     errors.extend(check_issue_picker((ROOT / "libexec/t_issue.py").read_text()))
     errors.extend(check_issue_list((ROOT / "libexec/t_issue.py").read_text()))
     return errors
