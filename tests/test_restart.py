@@ -317,7 +317,7 @@ _dev_app_slot_reserved() {{ return 1; }}
 _dev_session_claude_pid() {{ print 99999; }}
 _dev_agent_at_welcome() {{ [[ $scenario != not_fresh ]]; }}
 _dev_agent_resume_cmd() {{ print -r -- "codex resume $2"; }}
-_dev_agent_new_cmd() {{ print -r -- 'codex --model chosen -c model_reasoning_effort=high'; }}
+_dev_agent_new_cmd() {{ print -r -- 'codex --model chosen -c model_reasoning_effort=high --no-daemon'; }}
 ps() {{ print 1; }}
 kill() {{ print -r -- "signal $*" >> "$log"; [[ $1 == -TERM ]]; }}
 _t_restart_slot dev-api-1 "$dir" {shlex.quote(sid)} codex restart-no-daemon {'88888' if scenario == 'changed_pid' else '99999'}
