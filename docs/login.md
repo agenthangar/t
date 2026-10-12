@@ -23,9 +23,10 @@ when scanning all tools; an explicitly named missing tool produces a nonzero
 exit. Nothing is installed, updated, or propagated to remote hosts.
 
 Use arrows or j/k to move, Space to toggle agents, and Enter to review the selected
-login commands. Press y to run, n to go back, or q to cancel. Selecting an agent
+login commands. Press Enter again to run, n to go back, or q to cancel. Selecting an agent
 explicitly requests login even if its status is healthy or unavailable. Terminals
-without the checklist UI fall back to one prompt per agent and a final review.
+without the checklist UI fall back to one prompt per agent and a final review,
+where Enter runs the commands and n cancels.
 `-y` skips selection and confirmation and uses the preselected logins, but the
 vendor may still require a browser/device-code step.
 `--dry-run` and `--status` only inspect state and print the plan. Failed or

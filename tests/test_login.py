@@ -295,7 +295,7 @@ def test_login_prompt_fallback_selects_healthy_tool(t_mod, monkeypatch, approve)
     monkeypatch.setattr(t_mod, '_install_wizard', unavailable)
     monkeypatch.setattr(t_mod, '_login_probe', lambda agent: {
         'state': 'logged-in', 'bin': '/fixture/' + agent, 'expires': None})
-    answers = iter(['n', 'y', 'n', 'y' if approve else 'n'])
+    answers = iter(['n', 'y', 'n', '' if approve else 'n'])
     monkeypatch.setattr('builtins.input', lambda _: next(answers))
     calls = []
     def run(cmd):
@@ -304,3 +304,24 @@ def test_login_prompt_fallback_selects_healthy_tool(t_mod, monkeypatch, approve)
     monkeypatch.setattr(t_mod.subprocess, 'run', run)
     assert t_mod.cmd_login(None, args) == 0
     assert calls == ([['/fixture/codex', 'login']] if approve else [])
+
+
+@pytest.mark.parametrize('answer,expected', [('', True), ('y', True), ('YES', True),
+                                          ('n', False), ('q', False), ('invalid', False)])
+def test_command_confirmation_defaults_to_enter(t_mod, monkeypatch, answer, expected):
+    monkeypatch.setattr('builtins.input', lambda _: answer)
+    assert t_mod._confirm_run('Run?') is expected
+
+
+def test_command_confirmation_eof_and_interrupt_never_run(t_mod, monkeypatch):
+    def eof(_):
+        raise EOFError
+    monkeypatch.setattr('builtins.input', eof)
+    assert not t_mod._confirm_run('Run?')
+    def interrupt(_):
+        raise KeyboardInterrupt
+    monkeypatch.setattr('builtins.input', interrupt)
+    with pytest.raises(KeyboardInterrupt):
+        t_mod._confirm_run('Run?')
+    monkeypatch.setattr('builtins.input', lambda _: '')
+    assert not t_mod._confirm('Change configuration?')
