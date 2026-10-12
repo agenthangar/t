@@ -109,7 +109,7 @@ _t_fzf_filtered() (
   # fzf 0.44 needs one fewer header row to leave a focused item visible at
   # 32×12. The agent legend is secondary to the action and filter controls.
   _t_picker_size=$(stty size 2>/dev/null) || _t_picker_size=
-  if [ -n "$_t_picker_size" ] && [ "${_t_picker_size%% *}" -le 12 ]; then
+  if [ -n "$_t_picker_size" ] && [ "${_t_picker_size%% *}" -gt 0 ] && [ "${_t_picker_size%% *}" -le 12 ]; then
     _t_picker_legend=
   fi
   umask 077
