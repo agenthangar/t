@@ -548,7 +548,7 @@ def test_open_unknown_remote_owner_does_not_start_local_session(zsh):
       _dev_rows_all() { return 1; }
       _t_dev api 3; print -r -- "rc=$?"
     ''')
-    assert "rc=1" in result.stdout
+    assert "rc=3" in result.stdout  # Preserve the incomplete ownership scan status.
     assert "remote ownership is unknown" in result.stderr
     assert "new-session" not in (zsh.log.read_text() if zsh.log.exists() else "")
 
