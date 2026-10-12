@@ -163,3 +163,45 @@ def test_fast_support_comes_from_each_vendors_capabilities(t_mod):
     assert t_mod._config_assignment('DEV_FAST[codex]', '1') == 'DEV_FAST[codex]=1'
     with pytest.raises(ValueError, match='fast mode'):
         t_mod._config_assignment('DEV_FAST[codex]', 'yes')
+
+
+def test_speed_tiers_use_current_metadata_before_legacy_fallback(t_mod):
+    catalog = t_mod._config_catalog('codex', [
+        {'model': 'both', 'serviceTiers': [{'id': 'priority'}, {'id': 'ultrafast'}, None]},
+        {'model': 'ultrafast-only', 'serviceTiers': [{'id': 'ultrafast'}]},
+        {'model': 'legacy', 'additionalSpeedTiers': ['fast', 'ultrafast']},
+        {'model': 'empty', 'serviceTiers': [], 'additionalSpeedTiers': ['ultrafast']},
+        {'model': 'unknown', 'serviceTiers': [{'id': 'future'}, 'ultrafast']},
+    ])
+    assert [(m['fast'], m['ultrafast']) for m in catalog] == [
+        (True, True), (False, True), (True, True), (False, False), (False, False)]
+    assert not t_mod._config_catalog('claude', [{'value': 'opus', 'supportsFastMode': True,
+                                               'serviceTiers': [{'id': 'ultrafast'}]}])[0]['ultrafast']
+
+
+@pytest.mark.parametrize('speed', ['', '0', '1', 'fast', 'ultrafast'])
+def test_codex_speed_round_trips_and_displays(t_mod, tmp_path, monkeypatch, speed):
+    path = tmp_path / 'config.sh'
+    path.write_text(t_mod._config_text('', {'DEV_FAST[codex]': speed}))
+    monkeypatch.setattr(t_mod, 'CONFIG', str(path))
+    assert t_mod.Config().fast == {'codex': speed}
+    assert t_mod._config_speed_label(speed) == {
+        '': 'tool default', '0': 'Standard', '1': 'Fast', 'fast': 'Fast', 'ultrafast': 'Ultrafast'}[speed]
+    if speed in ('fast', 'ultrafast'):
+        with pytest.raises(ValueError, match='fast mode'):
+            t_mod._config_assignment('DEV_FAST[claude]', speed)
+
+
+@pytest.mark.parametrize('speed,model,expected', [
+    ('ultrafast', 'both', 'ultrafast'), ('ultrafast', 'fast-only', '0'),
+    ('ultrafast', 'unknown', '0'), ('fast', 'fast-only', 'fast'),
+    ('fast', 'plain', '0'), ('1', 'fast-only', '1'), ('0', 'plain', '0'), ('', 'plain', ''),
+])
+def test_model_changes_reset_only_unsupported_speed(t_mod, speed, model, expected):
+    catalog = t_mod._config_catalog('codex', [
+        {'model': 'both', 'additionalSpeedTiers': ['fast', 'ultrafast']},
+        {'model': 'fast-only', 'additionalSpeedTiers': ['fast']}, {'model': 'plain'}])
+    cfg = SimpleNamespace(models={}, efforts={}, fast={'codex': speed})
+    reset = t_mod._config_set_model(cfg, 'codex', model, catalog)
+    assert cfg.fast['codex'] == expected
+    assert reset == (['fast mode'] if speed != expected else [])
