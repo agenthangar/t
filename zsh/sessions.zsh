@@ -2454,7 +2454,8 @@ _t_dev() {
       esac
     fi
     case "$agent:${DEV_FAST[$agent]:-}" in
-      codex:1) model_args+=(-c service_tier=fast --enable fast_mode) ;;
+      codex:1|codex:fast) model_args+=(-c service_tier=fast --enable fast_mode) ;;
+      codex:ultrafast) model_args+=(-c service_tier=ultrafast --enable fast_mode) ;;
       codex:0) model_args+=(-c service_tier=default) ;;
       claude:1) model_args+=(--settings '{"fastMode":true}') ;;
       claude:0) model_args+=(--settings '{"fastMode":false}') ;;

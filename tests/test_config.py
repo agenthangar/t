@@ -477,10 +477,10 @@ def test_dirty_exit_keeps_edits_unless_discard_is_explicit(t_mod, config_cli, mo
 def test_fast_mode_persists_per_tool_and_can_be_disabled_or_inherited(t_mod, config_cli, monkeypatch):
     cfg, local = config_cli
     ui = Menu(['claude', 'model', 'opus', 'fast', '1', 'back',
-               'codex', 'model', 'test-model', 'fast', '1', 'back', 'save'])
+               'codex', 'model', 'test-model', 'fast', 'fast', 'back', 'save'])
     monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
     assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == 0
-    assert 'DEV_FAST[claude]=1' in local.read_text() and 'DEV_FAST[codex]=1' in local.read_text()
+    assert 'DEV_FAST[claude]=1' in local.read_text() and 'DEV_FAST[codex]=fast' in local.read_text()
     cfg.fast = {'claude': '1', 'codex': '1'}
     ui = Menu(['claude', 'fast', '0', 'back', 'codex', 'fast', '', 'back', 'save'])
     assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == 0
@@ -500,6 +500,52 @@ def test_unsupported_model_does_not_offer_fast_and_switching_disables_it(t_mod, 
     monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
     assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == 0
     assert 'DEV_FAST[claude]=0' in local.read_text()
+
+
+def test_ultrafast_menu_save_reload_and_show(t_mod, config_cli, monkeypatch, capsys):
+    cfg, local = config_cli
+    monkeypatch.setattr(t_mod.sys.stdout, 'isatty', lambda: True)
+    cfg.models = {'codex': 'both'}
+    monkeypatch.setattr(t_mod, '_config_live_models', lambda agent: [
+        {'model': 'both', 'serviceTiers': [{'id': 'priority'}, {'id': 'ultrafast'}]}])
+    ui = Menu(['codex', 'fast', 'ultrafast', 'back', 'save'])
+    original_pick = ui.pick
+    def pick(label, rows, default=0, **kwargs):
+        if 'Speed' in label:
+            assert dict(rows)['fast'].startswith('Fast')
+            assert dict(rows)['ultrafast'].startswith('Ultrafast')
+        return original_pick(label, rows, default, **kwargs)
+    ui.pick = pick
+    monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
+    assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == 0
+    assert 'DEV_FAST[codex]=ultrafast' in local.read_text()
+    monkeypatch.setattr(t_mod, 'CONFIG', str(local))
+    reloaded = t_mod.Config()
+    assert reloaded.fast['codex'] == 'ultrafast'
+    assert t_mod.cmd_config(reloaded, SimpleNamespace(show=True)) == 0
+    assert 'codex speed: Ultrafast' in capsys.readouterr().out
+
+
+@pytest.mark.parametrize('saved,expected', [('1', 'fast'), ('fast', 'fast'), ('ultrafast', 'ultrafast')])
+@pytest.mark.parametrize('available', [True, False])
+def test_saved_speed_stays_selected_when_metadata_changes(t_mod, config_cli, monkeypatch, saved, expected, available):
+    cfg, _ = config_cli
+    cfg.models, cfg.fast = {'codex': 'chosen'}, {'codex': saved}
+    def models(agent):
+        if not available:
+            raise OSError('offline')
+        return [{'model': 'chosen', 'serviceTiers': [{'id': 'priority'}]}]
+    monkeypatch.setattr(t_mod, '_config_live_models', models)
+    ui = Menu([None])
+    original_pick = ui.pick
+    def pick(label, rows, default=0, **kwargs):
+        assert rows[default][0] == expected
+        if not available or saved == 'ultrafast':
+            assert 'saved; support not verified' in rows[default][1]
+        return original_pick(label, rows, default, **kwargs)
+    ui.pick = pick
+    t_mod._config_model_menu(ui, cfg, 'codex', {}, setting='fast')
+    assert cfg.fast['codex'] == saved
 
 
 def test_config_opening_mode_global_and_repo_defaults(t_mod, config_cli, monkeypatch):

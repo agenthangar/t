@@ -93,7 +93,8 @@ _dev_agent_new_cmd() {
     esac
   fi
   case "$agent:${DEV_FAST[$agent]:-}" in
-    codex:1) launch_args+=(-c service_tier=fast --enable fast_mode) ;;
+    codex:1|codex:fast) launch_args+=(-c service_tier=fast --enable fast_mode) ;;
+    codex:ultrafast) launch_args+=(-c service_tier=ultrafast --enable fast_mode) ;;
     codex:0) launch_args+=(-c service_tier=default) ;;
     claude:1) launch_args+=(--settings '{"fastMode":true}') ;;
     claude:0) launch_args+=(--settings '{"fastMode":false}') ;;

@@ -5,5 +5,6 @@ DEV_REPOS[myproject]="$HOME/code/myproject"
 # DEV_AGENT_DEFAULT=codex
 # DEV_MODEL[codex]="gpt-6-sol"
 # DEV_EFFORT[codex]=high
+# DEV_FAST[codex]=fast  # fast or ultrafast (when supported), 0 for Standard; empty inherits
 # DEV_WORKTREE[myproject]=1
 # TBEAM_HOST=build
