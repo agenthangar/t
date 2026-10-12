@@ -399,3 +399,81 @@ def test_delayed_attachment_refuses_same_name_replacement(lifecycle, restart_ser
     assert _tmux(base, env, "list-clients", "-F", "#{client_pid}").stdout.strip() == ""
     assert _tmux(base, env, "has-session", "-t", "=dev-repo-1:").returncode == 0
     assert _launches(base) == launches
+
+
+def _slot_identity(base, env):
+    identity = _tmux(base, env, "display-message", "-p", "-t", "=dev-repo-1:",
+                     "#{pid}\t#{session_id}\t#{pane_id}\t#{pane_pid}\t#{session_path}")
+    assert identity.returncode == 0, identity.stderr
+    sid = _tmux(base, env, "show-environment", "-t", "=dev-repo-1", "CLAUDE_RESUME_ID")
+    assert sid.returncode == 0 and sid.stdout.startswith("CLAUDE_RESUME_ID="), sid.stderr
+    return identity.stdout.strip(), sid.stdout.strip().split("=", 1)[1]
+
+
+def _save_claude_thread(base, sid):
+    worktree = base / "worktrees" / "repo" / "1"
+    project = base / "home" / ".claude" / "projects" / "".join(
+        character if character.isalnum() else "-" for character in str(worktree))
+    project.mkdir(parents=True, exist_ok=True)
+    (project / (sid + ".jsonl")).write_text(json.dumps({"type": "user", "message": {
+        "role": "user", "content": "Isolated lifecycle regression"}}, separators=(",", ":")) + "\n")
+
+
+@pytest.mark.parametrize("method", ["sessions.close", "sessions.restart"], ids=["close", "restart"])
+@pytest.mark.parametrize("restart_server", [False, True], ids=["same-server", "new-server"])
+def test_prepared_mutation_refuses_replacement_live_owner(lifecycle, method, restart_server):
+    base, env = lifecycle
+    keeper = _tmux(base, env, "new-session", "-d", "-s", "mutation-keeper", "-c", str(base))
+    assert keeper.returncode == 0, keeper.stderr
+    _apply(base, env, _prepare(base, env, repo="repo", slot=1, agent="claude"))
+    _until(lambda: _launches(base))
+    original_identity, original_sid = _slot_identity(base, env)
+    _save_claude_thread(base, original_sid)
+    operation = _prepare(base, env, method, repo="repo", slot=1, sid=original_sid)
+
+    removed = _tmux(base, env, "kill-server") if restart_server else _tmux(
+        base, env, "kill-session", "-t", "=dev-repo-1:")
+    assert removed.returncode == 0, removed.stderr
+    replacement_sid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    assert replacement_sid != original_sid
+    _save_claude_thread(base, replacement_sid)
+    worktree = base / "worktrees" / "repo" / "1"
+    replacement = _tmux(base, env, "new-session", "-d", "-s", "dev-repo-1", "-c", str(worktree),
+                        "exec " + shlex.join([str(base / "bin" / "claude"), "-r", replacement_sid]))
+    assert replacement.returncode == 0, replacement.stderr
+    for key, value in (("CLAUDE_RESUME_ID", replacement_sid), ("DEV_AGENT", "claude")):
+        stamped = _tmux(base, env, "set-environment", "-t", "=dev-repo-1", key, value)
+        assert stamped.returncode == 0, stamped.stderr
+    launches = _until(lambda: _launches(base) if len(_launches(base)) == 2 else None)
+    replacement_identity, recorded_sid = _slot_identity(base, env)
+    assert replacement_identity != original_identity and recorded_sid == replacement_sid
+    pane_pid = int(replacement_identity.split("\t")[3])
+
+    applied = _call(base, env, "operations.apply", {"operationId": operation})
+    assert applied["error"]["code"] == "stale_target", applied
+    reconciled = _call(base, env, "operations.reconcile", {"operationId": operation})
+    assert reconciled["result"]["state"] == "rejected", reconciled
+    assert _slot_identity(base, env) == (replacement_identity, replacement_sid)
+    os.kill(pane_pid, 0)
+    assert _launches(base) == launches
+    assert _call(base, env, "operations.apply", {"operationId": operation})["error"]["code"] == "already_applied"
+    assert _slot_identity(base, env) == (replacement_identity, replacement_sid)
+    assert _launches(base) == launches
+
+
+def test_prepared_restart_preserves_unchanged_conversation(lifecycle):
+    base, env = lifecycle
+    _apply(base, env, _prepare(base, env, repo="repo", slot=1, agent="claude"))
+    _until(lambda: _launches(base))
+    original_identity, original_sid = _slot_identity(base, env)
+    _save_claude_thread(base, original_sid)
+    operation = _prepare(base, env, "sessions.restart", repo="repo", slot=1, sid=original_sid)
+    restarted = _apply(base, env, operation)
+    assert restarted["state"] == "completed", restarted
+    launches = _until(lambda: _launches(base) if len(_launches(base)) == 2 else None)
+    assert launches[1].endswith("|-r|" + original_sid)
+    current_identity, current_sid = _slot_identity(base, env)
+    assert current_sid == original_sid
+    assert current_identity.split("\t")[3] != original_identity.split("\t")[3]
+    assert restarted["result"]["session"] == "dev-repo-1"
+    assert restarted["attachment"]["validation"]["identity"] == current_identity

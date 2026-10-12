@@ -161,6 +161,27 @@ class Core:
         except (OSError, ValueError):
             raise CoreError('unknown_operation', 'operation is unavailable') from None
 
+    def capture_owner(self, cfg, arguments, expected=None):
+        repo, slot, session = self._slot(cfg, arguments)
+        host = arguments.get('host', 'local')
+        identity, target = self._attachment_identity(cfg, session, host)
+        query = shlex.join(['_dev_core_owner_metadata', session])
+        argv = self.shell(query) if host == 'local' else ['ssh', '-o', 'BatchMode=yes', target,
+                'zsh -lic ' + shlex.quote('source "${commands[t]:A:h:h}/t.plugin.zsh"; ' + query)]
+        result = self.cli._run(argv, timeout=15)
+        fields = getattr(result, 'stdout', '').strip('\n').split('\t')
+        if result.returncode or len(fields) != 3:
+            raise CoreError('invalid_target', 'could not verify the selected owner')
+        sid, agent, client_pid = fields
+        owner = {'session': session, 'identity': identity, 'host': host, 'target': target,
+                 'sid': sid, 'agent': agent, 'clientPid': client_pid}
+        if (arguments.get('sid') not in (None, '') and ('' if arguments['sid'] == '-' else arguments['sid']) != sid or
+                expected and any(owner.get(key) != expected.get(key) for key in owner)):
+            raise CoreError('stale_target', 'selected owner changed; refresh before reviewing the action')
+        if self._attachment_identity(cfg, session, host)[0] != identity:
+            raise CoreError('stale_target', 'selected owner changed during review')
+        return owner
+
     def prepare(self, params):
         method = params.get('method')
         arguments = params.get('arguments', {})
@@ -178,9 +199,16 @@ class Core:
             raise CoreError('invalid_method', 'unsupported mutation')
         if not isinstance(arguments, dict):
             raise CoreError('invalid_params', 'arguments must be an object')
+        arguments = dict(arguments)
+        arguments.pop('_owner', None)
+        owner = self.capture_owner(self.config(), arguments, params.get('expectedOwner')) if method in ('sessions.close', 'sessions.restart') else None
         record = {'operationId': str(uuid.uuid4()), 'method': method, 'arguments': arguments,
                   'state': 'prepared', 'summary': ' '.join(command) if command else method,
                   'command': command, 'fingerprint': hashlib.sha256(json.dumps([method, arguments], sort_keys=True).encode()).hexdigest()}
+        if owner is not None:
+            record['owner'] = owner
+            if not arguments.get('sid'):
+                arguments['sid'] = owner['sid'] or '-'
         if method == 'terminal':
             cwd = arguments.get('cwd') or str(Path.home())
             if not os.path.isdir(cwd):
@@ -207,6 +235,8 @@ class Core:
             controls = 'typeset T_CORE_DETACH=1 T_CORE_RESULT=' + shlex.quote(str(result_path)) + '; typeset +x T_CORE_DETACH T_CORE_RESULT; '
             result = subprocess.run(self.shell(controls + snippet), cwd=cwd, env=env, stdin=subprocess.DEVNULL,
                                     capture_output=True, text=True, start_new_session=True, timeout=90)
+            if result.returncode == 75:
+                raise CoreError('stale_target', 'selected owner changed; refresh before reviewing the action')
             if result.returncode:
                 raise CoreError('operation_failed', 'shared shell operation failed; inspect current state before retrying')
             outcome = {'exitCode': result.returncode}
@@ -221,15 +251,20 @@ class Core:
             raise CoreError('invalid_target', 'select a registered SSH host')
         arguments = dict(args)
         arguments.pop('host')
+        expected = arguments.pop('_owner', None)
+        if expected:
+            if expected.get('target') != target:
+                raise CoreError('stale_target', 'SSH destination changed; refresh before reviewing the action')
+            expected = dict(expected, host='local', target=None)
         # Execute the same installed core on the host, inside its login shell.
         # Arguments are JSON argv data; no renderer strings become Python code.
         program = ('import json,os,shutil,sys; '
                    'root=os.path.dirname(os.path.dirname(os.path.realpath(shutil.which("t")))); '
                    'sys.path.insert(0,os.path.join(root,"libexec")); '
                    'from t_core import Core; c=Core(); '
-                   'r=c.call(sys.argv[1],json.loads(sys.argv[2])); '
+                   'r=c.prepare(dict(method=sys.argv[1],arguments=json.loads(sys.argv[2]),expectedOwner=json.loads(sys.argv[3]))); '
                    'print(json.dumps(c.apply(r["operationId"])))')
-        remote = 'zsh -lic ' + shlex.quote(shlex.join(['python3', '-c', program, method, json.dumps(arguments)]))
+        remote = 'zsh -lic ' + shlex.quote(shlex.join(['python3', '-c', program, method, json.dumps(arguments), json.dumps(expected)]))
         result = self.cli._run(['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5', target, remote], timeout=100)
         if result.returncode:
             raise CoreError('unknown_outcome', 'remote operation could not be verified; inspect the host before retrying')
@@ -283,13 +318,27 @@ class Core:
                 if not session:
                     raise CoreError('unknown_outcome', 'session allocation could not be verified')
             elif action == 'close':
-                self._run_shell(shlex.join(['_t_dev', 'kill', repo, slot, '-y']))
-            else:
+                owner = args['_owner']
                 try:
-                    row = restart_target(self.api, cfg, repo, slot, os.getcwd())
+                    self.validate_attachment(owner)
+                except CoreError:
+                    raise CoreError('stale_target', 'selected owner changed; refresh before reviewing the action') from None
+                cwd = owner['identity'].split('\t', 4)[4]
+                self._run_shell(shlex.join(['_dev_with_launch_locks', cwd, owner['sid'],
+                    '_dev_kill_one', session, '1', owner['identity'], owner['sid'], owner['agent'], owner['clientPid']]))
+            else:
+                owner = args['_owner']
+                try:
+                    self.validate_attachment(owner)
+                except CoreError:
+                    raise CoreError('stale_target', 'selected owner changed; refresh before reviewing the action') from None
+                try:
+                    row = {'cwd': owner['identity'].split('\t', 4)[4], 'sid': owner['sid'], 'agent': owner['agent']}
+                    if not re.fullmatch(r'[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}', row['sid']):
+                        raise CoreError('invalid_target', 'restart requires a verified conversation')
                 except ValueError:
                     raise CoreError('invalid_target', 'restart requires an available verified conversation and worktree') from None
-                self._run_shell(shlex.join(['_t_restart_slot', session, row['cwd'], row['sid'], row['agent'], 'restart']))
+                self._run_shell(shlex.join(['_dev_with_launch_locks', row['cwd'], row['sid'], '_t_restart_slot', session, row['cwd'], row['sid'], row['agent'], 'restart', owner['clientPid'], '', owner['identity']]))
             return {'session': session, 'attachment': self.attachment(session) if action != 'close' else None}
         if method in ('hosts.change', 'config.set', 'repositories.register'):
             before = self.cli._config_read(self.cli._current_local_rc())
@@ -378,11 +427,14 @@ class Core:
             if record['method'] == 'terminal':
                 record['state'] = 'ready'
             else:
-                record['result'] = self._mutate(record['method'], record['arguments'])
+                arguments = dict(record['arguments'])
+                if 'owner' in record:
+                    arguments['_owner'] = record['owner']
+                record['result'] = self._mutate(record['method'], arguments)
                 record['attachment'] = record['result'].get('attachment')
                 record['state'] = record['result'].get('state', 'completed')
         except CoreError as error:
-            if error.code in ('invalid_params', 'invalid_target', 'review_required', 'invalid_method'):
+            if error.code in ('invalid_params', 'invalid_target', 'review_required', 'invalid_method', 'stale_target', 'stale_attachment'):
                 record['state'] = 'rejected'
                 record['error'] = {'code': error.code, 'message': str(error), 'retryable': False}
                 self._record(record)

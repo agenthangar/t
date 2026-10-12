@@ -1485,8 +1485,33 @@ _dev_list_remote() {
 # "idle — no conversation") has no conversation to interrupt, so kill it without
 # the prompt. Mirrors _dev_list's two-signal distinction; without it `dev kill`
 # prompted "Claude is live there" for the very sessions ls calls idle.
+# Private stable metadata and ownership checks for reviewed desktop mutations.
+_dev_core_owner_metadata() {
+  local sid agent cpid _DEV_PS_AT=0
+  sid=$(_dev_session_sid "$1")
+  agent=$(_dev_agent_of_session "$1")
+  cpid=$(_dev_session_claude_pid "$1")
+  printf '%s\t%s\t%s\n' "$sid" "$agent" "$cpid"
+}
+
+_dev_core_owner_matches() {
+  local session="$1" expected="$2" sid="${3:-}" agent="${4:-}" cpid="${5:-}" actual _DEV_PS_AT=0
+  actual=$(tmux display-message -p -t "=$session:" $'#{pid}\t#{session_id}\t#{pane_id}\t#{pane_pid}\t#{session_path}' 2>/dev/null) || return 75
+  [[ $actual == $expected ]] || return 75
+  [[ $(_dev_core_owner_metadata "$session") == "$sid"$'\t'"$agent"$'\t'"$cpid" ]] || return 75
+}
+
+_dev_core_tmux_effect() {
+  local expected="$1" command="$2" output
+  local -a identity; identity=("${(@ps:\t:)expected}")
+  local condition="#{&&:#{==:#{pid},$identity[1]},#{&&:#{==:#{session_id},$identity[2]},#{&&:#{==:#{pane_id},$identity[3]},#{==:#{pane_pid},$identity[4]}}}}"
+  output=$(tmux if-shell -F -t "$identity[2]" "$condition" "$command" 'display-message -p T_CORE_STALE') || return 75
+  [[ $output != T_CORE_STALE ]] || return 75
+}
+
 _dev_kill_one() {
-  local session="$1" force="$2" agent
+  local session="$1" force="$2" agent expected="${3:-}" expected_sid="${4:-}" expected_agent="${5:-}" expected_client="${6:-}"
+  [[ -z $expected ]] || _dev_core_owner_matches "$session" "$expected" "$expected_sid" "$expected_agent" "$expected_client" || return 75
   agent=$(_dev_agent_of_session "$session")
   if [[ -z "$force" ]] && _dev_session_has_claude "$session" \
        && ! _dev_agent_at_welcome "$agent" "$session"; then
@@ -1500,7 +1525,12 @@ _dev_kill_one() {
   local wt; wt=$(tmux display-message -p -t "=$session:" '#{session_path}' 2>/dev/null)
   _dev_history_record "$(_dev_session_sid "$session")" "$agent" "$wt" close
   local _kerr
-  if _kerr=$(tmux kill-session -t "=$session:" 2>&1); then echo "Killed $session"
+  if [[ -n $expected ]]; then
+    _dev_core_owner_matches "$session" "$expected" "$expected_sid" "$expected_agent" "$expected_client" || return 75
+    local -a identity; identity=("${(@ps:\t:)expected}")
+    _dev_core_tmux_effect "$expected" "kill-session -t ${(q)identity[2]}" || return 75
+    echo "Killed $session"
+  elif _kerr=$(tmux kill-session -t "=$session:" 2>&1); then echo "Killed $session"
   else echo "t kill: tmux kill-session $session failed${_kerr:+: $_kerr}" >&2; return 1; fi
   # A slot's dev server is detached from its tmux session and would outlive it,
   # serving the old code on the slot's port. Only a per-session worktree is swept

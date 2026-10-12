@@ -26,7 +26,10 @@ def core(t_mod, tmp_path, monkeypatch):
     cfg.hosts = {'remote': 'user@remote'}
     cfg.beam_host = 'remote'
     monkeypatch.setattr(t_mod, 'Config', lambda: cfg)
-    monkeypatch.setattr(t_mod, '_run', lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout='123\t$1\t%1\t456\t/tmp'))
+    def run(argv, **kwargs):
+        text = '12345678-1234-1234-1234-123456789abc\tcodex\t789' if '_dev_core_owner_metadata' in argv[-1] else '123\t$1\t%1\t456\t/tmp'
+        return SimpleNamespace(returncode=0, stdout=text)
+    monkeypatch.setattr(t_mod, '_run', run)
     return t_core.Core(t_mod, tmp_path / 'operations')
 
 
@@ -107,9 +110,9 @@ def test_lifecycle_calls_guarded_shared_shell(core, monkeypatch, action):
     assert outcome['state'] == 'completed'
     assert len(calls) == 1
     if action == 'close':
-        assert calls == ['_t_dev kill demo 1 -y'] and outcome['attachment'] is None
+        assert '_dev_with_launch_locks /tmp' in calls[0] and '_dev_kill_one dev-demo-1 1' in calls[0] and outcome['attachment'] is None
     elif action == 'restart':
-        assert calls == ['_t_restart_slot dev-demo-1 /tmp 12345678-1234-1234-1234-123456789abc codex restart']
+        assert '_dev_with_launch_locks /tmp' in calls[0] and '_t_restart_slot dev-demo-1 /tmp 12345678-1234-1234-1234-123456789abc codex restart' in calls[0]
     else:
         assert calls[0].startswith('_t_' + action + ' demo 1')
         assert outcome['attachment']['validation']['session'] == 'dev-demo-1'
@@ -531,3 +534,72 @@ def test_remote_repository_alias_is_authoritative_even_when_cwd_matches_local(co
     result = core.call('workspace.snapshot', {'all_hosts': True})
     remote = next(row for row in result['sessions'] if row['host'] == 'remote')
     assert remote['repo'] == 'different' and remote['slot'] == 'different-1'
+
+
+def test_reviewed_owner_metadata_and_remote_destination_are_bound(core, monkeypatch):
+    before = core.prepare({'method': 'sessions.close', 'arguments': {'repo': 'demo', 'slot': '1', 'sid': SID}})
+    assert '_owner' not in before['arguments'] and before['owner']['sid'] == SID
+    with pytest.raises(t_core.CoreError) as error:
+        core.prepare({'method': 'sessions.close', 'arguments': {'repo': 'demo', 'slot': '1', 'sid': '-'}})
+    assert error.value.code == 'stale_target'
+    with pytest.raises(t_core.CoreError):
+        core.prepare({'method': 'sessions.close', 'arguments': {'repo': 'demo', 'slot': '1', 'sid': 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'}})
+    remote = core.prepare({'method': 'sessions.close', 'arguments': {'repo': 'demo', 'slot': '1', 'host': 'remote'}})
+    original = remote['owner']
+    calls = []
+    def run(argv, **kwargs):
+        calls.append(argv)
+        if 'python3' in argv[-1]:
+            assert 'expectedOwner=json.loads(sys.argv[3])' in argv[-1]
+            assert original['identity'] in argv[-1].replace('\\t', '\t')
+            return SimpleNamespace(returncode=0, stdout=json.dumps({'result': {'session': 'dev-demo-1'}}))
+        return SimpleNamespace(returncode=0, stdout=original['identity'])
+    monkeypatch.setattr(core.cli, '_run', run)
+    assert core.apply(remote['operationId'])['state'] == 'completed'
+    second = core._record(dict(remote, operationId='aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', state='prepared'))
+    core.config().hosts['remote'] = 'changed@host'
+    with pytest.raises(t_core.CoreError) as error:
+        core.apply(second['operationId'])
+    assert error.value.code == 'stale_target'
+    assert core._read(second['operationId'])['state'] == 'rejected'
+
+
+@pytest.mark.parametrize('action', ['close', 'restart'])
+def test_destructive_shell_guard_refuses_same_pane_changed_conversation(lifecycle, action):
+    from test_desktop_core_integration import _slot_identity, _save_claude_thread
+    base, env = lifecycle
+    prepared = _bridge_call(base, env, 'sessions.open', {'repo': 'repo', 'slot': '1', 'agent': 'claude'})
+    _bridge_call(base, env, 'operations.apply', {'operationId': prepared['operationId']})
+    _until(lambda: (base / 'agents.log').exists())
+    identity, sid = _slot_identity(base, env)
+    _save_claude_thread(base, sid)
+    record = _bridge_call(base, env, 'sessions.' + action, {'repo': 'repo', 'slot': '1', 'sid': sid})
+    owner = record['owner']
+    replacement = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+    _save_claude_thread(base, replacement)
+    tmux = str(base / 'bin/tmux')
+    assert _run([tmux, 'set-environment', '-t', '=dev-repo-1', 'CLAUDE_RESUME_ID', replacement], env=env, cwd=base).returncode == 0
+    args = (['_dev_kill_one', owner['session'], '1', owner['identity'], owner['sid'], owner['agent'], owner['clientPid']]
+            if action == 'close' else ['_t_restart_slot', owner['session'], str(base / 'worktrees/repo/1'), owner['sid'], owner['agent'], 'restart', owner['clientPid'], '', owner['identity']])
+    command = 'source ' + str(ROOT / 't.plugin.zsh') + '; ' + __import__('shlex').join(args)
+    guarded = _run(['zsh', '-lic', command], env=env, cwd=base)
+    assert guarded.returncode == 75, guarded.stdout + guarded.stderr
+    assert _slot_identity(base, env) == (identity, replacement)
+    assert len((base / 'agents.log').read_text().splitlines()) == 1
+
+
+def test_reviewed_idle_slot_close_preserves_empty_owner_contract(lifecycle):
+    base, env = lifecycle
+    worktree = base / 'worktrees/repo/1'
+    worktree.parent.mkdir(parents=True)
+    result = _run(['git', '-C', str(base / 'repo'), 'worktree', 'add', '-q', '-b',
+                   'dev/repo-1', str(worktree), 'origin/main'], env=env, cwd=base)
+    assert result.returncode == 0, result.stderr
+    tmux = str(base / 'bin/tmux')
+    assert _run([tmux, 'new-session', '-d', '-s', 'dev-repo-1', '-c', str(worktree), 'sleep 60'], env=env, cwd=base).returncode == 0
+    record = _bridge_call(base, env, 'sessions.close', {'repo': 'repo', 'slot': '1', 'sid': '-'})
+    assert record['owner']['sid'] == '' and record['owner']['clientPid'] == ''
+    closed = _bridge_call(base, env, 'operations.apply', {'operationId': record['operationId']})
+    assert closed['state'] == 'completed'
+    assert _run([tmux, 'has-session', '-t', '=dev-repo-1:'], env=env, cwd=base).returncode != 0
+    assert not (base / 'agents.log').exists()
