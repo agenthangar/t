@@ -9,6 +9,8 @@ pyproject.toml, so these subprocess tests do not move the ratchet.
 """
 
 import json
+import fcntl
+import hashlib
 import os
 import pathlib
 import pty
@@ -515,6 +517,181 @@ def test_zsh_resume_session_uses_the_agent_resume_line(zsh):
     zsh.log.write_text("")
     zsh("_dev_resume_session dev-api-8 $HOME/code/api sid-1")
     assert "send-keys -t =dev-api-8: claude -r sid-1; exit Enter" in zsh.log.read_text()
+
+
+@pytest.mark.parametrize("launch", ["new", "resume"])
+def test_failed_tmux_creation_never_sends_keys_into_an_existing_slot(zsh, tmp_path, launch):
+    stub = tmp_path / "stubbin" / "tmux"
+    stub.write_text(TMUX_LOG_STUB.replace('case "$1" in',
+                                          '[[ "$1" == new-session ]] && exit 1\ncase "$1" in'))
+    command = ("_dev_new_session dev-api-3 $HOME/code/api dev/x 1 codex" if launch == "new"
+               else "_dev_resume_session dev-api-3 $HOME/code/api saved-id codex")
+    result = zsh(command)
+    assert result.returncode == 1, result.stderr
+    calls = zsh.log.read_text()
+    assert "new-session -d -s dev-api-3" in calls
+    assert "send-keys" not in calls
+
+
+def test_launch_rechecks_session_name_under_worktree_lock(zsh):
+    result = zsh("_dev_resume_session dev-api-3 $HOME/code/api saved-id codex",
+                 FAKE_SESSION_ROWS=f"dev-api-3|{zsh.home}/code/api")
+    assert result.returncode == 1
+    assert "already owns" in result.stderr
+    assert "new-session" not in zsh.log.read_text()
+
+
+def test_open_unknown_remote_owner_does_not_start_local_session(zsh):
+    (zsh.home / "code/api").mkdir(parents=True)
+    result = zsh(r'''
+      REMOTE_HOSTS[mini]=mini
+      _dev_rows_all() { return 1; }
+      _t_dev api 3; print -r -- "rc=$?"
+    ''')
+    assert "rc=1" in result.stdout
+    assert "remote ownership is unknown" in result.stderr
+    assert "new-session" not in (zsh.log.read_text() if zsh.log.exists() else "")
+
+
+def test_verified_remote_owner_can_attach_when_another_host_scan_fails(zsh):
+    result = zsh(r'''
+      REMOTE_HOSTS[mini]=mini
+      REMOTE_HOSTS[offline]=offline
+      _dev_rows_all() {
+        printf 'mini\tsaved-id\t%s\tapi-3\tdetached\tactive\tWork\n' "$HOME/code/api"
+        print -u2 -- 'dev: offline unreachable — skipped'
+        return 1
+      }
+      _dev_remote_resolve api 3; print -r -- "rc=$?"
+    ''')
+    assert "mini\tapi\t3" in result.stdout
+    assert "rc=0" in result.stdout
+    assert "offline unreachable" in result.stderr
+
+
+def test_session_scan_reports_local_failure_even_without_remote_hosts(zsh):
+    result = zsh(r'''
+      _dev_session_rows() { return 7; }
+      _dev_rows_all; print -r -- "rc=$?"
+    ''')
+    assert "rc=1" in result.stdout
+    assert "local session scan failed (rc=7)" in result.stderr
+
+
+def test_internal_remote_probe_is_quiet_when_every_host_is_empty(zsh):
+    result = zsh(r'''
+      _dev_rows_all() { return 0; }
+      _dev_remote_resolve api 3 '' quiet; print -r -- "rc=$?"
+    ''')
+    assert "rc=1" in result.stdout
+    assert result.stderr == ""
+
+
+def test_remote_scan_timeout_preserves_login_contract_and_blocks_revival(zsh, tmp_path):
+    stub = tmp_path / "stubbin" / "ssh"
+    stub.write_text('#!/bin/sh\nsleep 10\n')
+    stub.chmod(0o755)
+    result = zsh(r'''
+      REMOTE_HOSTS[mini]=mini
+      _dev_session_rows() { :; }
+      _dev_rows_all; print -r -- "rc=$?"
+    ''', T_REMOTE_SCAN_TIMEOUT="0.1")
+    assert "rc=1" in result.stdout
+    assert "mini session scan timed out" in result.stderr
+
+
+def test_remote_scan_preserves_login_command(zsh, tmp_path):
+    stub = tmp_path / "stubbin" / "ssh"
+    stub.write_text('#!/bin/sh\nprintf "%s\\n" "$*" > "$HOME/ssh-args"\n')
+    stub.chmod(0o755)
+    result = zsh(r'''
+      REMOTE_HOSTS[mini]=mini
+      _dev_session_rows() { :; }
+      _dev_rows_all; print -r -- "rc=$?"
+    ''')
+    assert "rc=0" in result.stdout
+    assert "zsh -lic _dev_session_rows" in (zsh.home / "ssh-args").read_text()
+
+
+@pytest.mark.parametrize("slot,should_launch", [("new", True), ("3", False)])
+def test_here_new_can_launch_when_remote_owner_is_unknown(zsh, slot, should_launch):
+    (zsh.home / "code/api").mkdir(parents=True)
+    result = zsh(f'''
+      REMOTE_HOSTS[mini]=mini
+      _dev_remote_app_owner() {{ return 3; }}
+      _dev_worktree_enabled() {{ return 1; }}
+      _dev_slot_fresh() {{ [[ $2 == 1 ]]; }}
+      _dev_agent_check() {{ return 0; }}
+      _dev_new_session() {{ print -r -- launched; }}
+      _t_dev api {slot} --local; print -r -- "rc=$?"
+    ''')
+    assert ("launched" in result.stdout) is should_launch
+    assert ("rc=0" in result.stdout) is should_launch
+
+
+def test_startup_exit_reports_saved_log(zsh, tmp_path):
+    stub = tmp_path / "stubbin" / "tmux"
+    stub.write_text(TMUX_LOG_STUB.replace('case "$1" in',
+                                          '[[ "$1" == display-message && "$*" == *pane_dead* ]] && { echo 1; exit 0; }\n'
+                                          'case "$1" in'))
+    result = zsh("_dev_resume_session dev-api-3 $HOME/code/api saved-id codex")
+    assert result.returncode == 1
+    assert "exited during startup" in result.stderr
+    assert str(zsh.home / ".tmux-logs/dev-api-3.log") in result.stderr
+
+
+def test_app_claim_rechecks_sibling_alias_owner_under_lock(zsh):
+    worktree = zsh.home / "worktrees/api/3"
+    result = zsh('_dev_with_launch_locks "$HOME/worktrees/api/3" "" '
+                 '_t_open_app_claim api 3 "$HOME/worktrees/api/3"',
+                 FAKE_SESSION_ROWS=f"dev-other-3|{worktree}")
+    assert result.returncode == 1
+    assert "now owns this worktree" in result.stderr
+
+
+def test_cli_and_python_app_handoff_share_process_lock(zsh, tmp_path):
+    cwd = tmp_path / "worktree"
+    cwd.mkdir()
+    cache = zsh.home / ".cache"
+    lockdir = cache / "claude-sessions/app-handoffs"
+    lockdir.mkdir(parents=True)
+    key = hashlib.sha256(os.path.realpath(cwd).encode()).hexdigest()
+    lockpath = lockdir / f"{key}.lock"
+    env = {**os.environ, "HOME": str(zsh.home), "XDG_CACHE_HOME": str(cache)}
+    script = (f"source {shlex.quote(str(REPO_ROOT / 'zsh/sessions.zsh'))}; "
+              f"_dev_with_launch_locks {shlex.quote(str(cwd))} '' print acquired")
+    with open(lockpath, "a+") as held:
+        fcntl.lockf(held, fcntl.LOCK_EX)
+        waiter = subprocess.Popen(["zsh", "-f", "-c", script], env=env,
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            time.sleep(0.2)
+            assert waiter.poll() is None  # zsystem is waiting on Python's POSIX lock.
+        finally:
+            fcntl.lockf(held, fcntl.LOCK_UN)
+        out, err = waiter.communicate(timeout=5)
+        assert waiter.returncode == 0, err
+        assert out.strip() == "acquired"
+
+    holder_script = (f"source {shlex.quote(str(REPO_ROOT / 'zsh/sessions.zsh'))}; "
+                     "_hold() { print held; read -r response; }; "
+                     f"_dev_with_launch_locks {shlex.quote(str(cwd))} '' _hold")
+    holder = subprocess.Popen(["zsh", "-f", "-c", holder_script], env=env,
+                              stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE, text=True)
+    try:
+        assert holder.stdout.readline().strip() == "held"
+        with open(lockpath, "a+") as contender:
+            with pytest.raises(BlockingIOError):
+                fcntl.lockf(contender, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        holder.stdin.write("release\n")
+        holder.stdin.flush()
+        _, err = holder.communicate(timeout=5)
+        assert holder.returncode == 0, err
+    finally:
+        if holder.poll() is None:
+            holder.kill()
+            holder.communicate()
 
 
 def test_zsh_sync_config_emits_the_agent_keys(zsh):
@@ -2253,9 +2430,13 @@ def test_rich_session_rows_keep_targeting_and_activity_while_recovering_context(
 def test_remote_rich_scan_preserves_login_shell_contract(zsh):
     row = f'{SID}\t/wt/3\tapi-3\tapp\tnone\tTask context\tcodex\tmodel-test'
     log = zsh.home/'ssh-args'
+    ssh = zsh.home.parent / 'stubbin/ssh'
+    ssh.write_text('#!/bin/sh\n'
+                   f'printf "%s\\n" "$*" > {shlex.quote(str(log))}\n'
+                   f'printf "%s\\n" {shlex.quote(row)}\n')
+    ssh.chmod(0o755)
     r = zsh(f'REMOTE_HOSTS[mini]=example; '
             f'_dev_session_rows() {{ print -r -- {shlex.quote(row)}; }}; '
-            f'ssh() {{ print -r -- "$*" > {shlex.quote(str(log))}; print -r -- {shlex.quote(row)}; }}; '
             '_dev_rows_all --details')
     assert r.returncode == 0, r.stderr
     assert set(r.stdout.splitlines()) == {'local\t'+row, 'mini\t'+row}

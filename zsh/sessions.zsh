@@ -111,7 +111,8 @@ _t_paste() {
   fi
 
   if (( ${#REMOTE_HOSTS} )); then
-    local app_owner; app_owner=$(_dev_remote_app_owner "$repo" "$slot")
+    local app_owner app_rc; app_owner=$(_dev_remote_app_owner "$repo" "$slot"); app_rc=$?
+    (( app_rc == 3 )) && return 1
     if [[ -n $app_owner ]]; then
       print -u2 -- "t paste: $repo $slot is reserved by the Codex desktop app on $app_owner; close it there and release the reservation before opening here"
       return 1
@@ -126,7 +127,7 @@ _t_paste() {
     else _dev_worktree_refuse "$repo" "$slot"; return 1; fi
   fi
   echo "Starting $session for the file…"
-  _dev_new_session "$session" "$_pdir" "$(_dev_branch_for "$repo")" "$_pskip"
+  _dev_new_session "$session" "$_pdir" "$(_dev_branch_for "$repo")" "$_pskip" || return 1
 
   # wait (up to ~30s) for Claude's process to take over the pane; if the
   # readiness check never matches this degrades to a plain 30s wait
@@ -1334,6 +1335,21 @@ _dev_session_rows() {
 # (rc 255) from "reachable but the scan errored" (e.g. rc 127 → stale dotfiles), and
 # warn accordingly. local-first; within a host, _dev_session_rows' own order holds.
 # Rows are prefixed verbatim (no re-splitting), so empty fields can't collapse.
+_dev_remote_scan_with_timeout() {
+  local target=$1 remote_command=$2 limit=${3:-15}
+  python3 -c '
+import subprocess, sys
+target, command, limit = sys.argv[1:]
+try:
+    result = subprocess.run(["ssh", "-o", "ConnectTimeout=3", "-o", "BatchMode=yes",
+                             target, command], timeout=float(limit), stdout=sys.stdout,
+                            stderr=subprocess.DEVNULL)
+except subprocess.TimeoutExpired:
+    sys.exit(124)
+sys.exit(result.returncode)
+' "$target" "$remote_command" "$limit"
+}
+
 _dev_rows_all() {
   # no_monitor/no_notify: this fans out with `&` + `wait`; in a monitor-mode shell that
   # would print in-run job-control notices ("[2] 67794", "exit 1 …", "done"). Silences
@@ -1345,33 +1361,47 @@ _dev_rows_all() {
   # subshell callers below already run job-control-off, so they never warn either.
   setopt local_options no_monitor no_notify
   local tmpd; tmpd=$(mktemp -d) || return 1
-  _dev_session_rows "$@" > "$tmpd/.local" 2>/dev/null &
+  ( _dev_session_rows "$@" > "$tmpd/.local" 2>/dev/null
+    print -r -- $? > "$tmpd/.local.rc" ) &
   local scan=_dev_session_rows remote_scan
   [[ ${1:-} == --details ]] && scan+=' --details'
   remote_scan="zsh -lic ${(q)scan}"
   local h
   for h in ${(k)REMOTE_HOSTS}; do
-    ( ssh -o ConnectTimeout=3 -o BatchMode=yes "${REMOTE_HOSTS[$h]}" "$remote_scan" \
+    ( _dev_remote_scan_with_timeout "${REMOTE_HOSTS[$h]}" "$remote_scan" "${T_REMOTE_SCAN_TIMEOUT:-15}" \
         > "$tmpd/$h" 2>/dev/null
       print -r -- $? > "$tmpd/$h.rc" ) &
   done
   wait
 
-  local host file rc line
+  local host file rc line failed=0
   for host in local ${(k)REMOTE_HOSTS}; do
     if [[ $host == local ]]; then
       file="$tmpd/.local"
+      rc=$(< "$tmpd/.local.rc" 2>/dev/null)
+      if [[ $rc != 0 ]]; then
+        print -u2 -r -- "dev: local session scan failed (rc=${rc:-unknown})"
+        failed=1
+        continue
+      fi
     else
       file="$tmpd/$host"
       rc=$(< "$tmpd/$host.rc" 2>/dev/null)
       if [[ -z $rc || $rc == 255 ]]; then          # ssh-level failure = unreachable
         print -u2 -r -- "dev: $host unreachable — skipped"
+        failed=1
+        continue
+      elif [[ $rc == 124 ]]; then
+        print -u2 -r -- "dev: $host session scan timed out — skipped"
+        failed=1
         continue
       elif [[ $rc == 127 ]]; then                  # command or shell integration missing
         print -u2 -r -- "dev: $host scan failed (rc=127; install or update t's shell integration there) — skipped"
+        failed=1
         continue
       elif [[ $rc != 0 ]]; then                    # reachable, but the scan errored
         print -u2 -r -- "dev: $host scan failed (rc=$rc) — skipped"
+        failed=1
         continue
       fi
     fi
@@ -1381,6 +1411,7 @@ _dev_rows_all() {
     done < "$file"
   done
   rm -rf "$tmpd"
+  (( ! failed ))
 }
 
 # _dev_list_remote — `dev ls -r`: _dev_list across THIS machine AND every
@@ -1877,11 +1908,100 @@ _dev_recovery_watch() {
 # identical summaries for sibling slots and `tpop` couldn't target a specific
 # one. uuidgen is uppercase but Claude stores ids lowercase, so we lowercase to
 # keep the transcript filename glob (`<sid>.jsonl`) matching.
+# A launch claims its canonical worktree and, for resumes, its conversation id.
+# The shell keeps these advisory locks until tmux has been created and stamped;
+# lock files remain on disk so a waiting process never locks a replaced inode.
+_dev_with_launch_locks() {
+  emulate -L zsh
+  local dir=${1:A} sid=$2 callback=$3; shift 3
+  local lockdir="${XDG_CACHE_HOME:-$HOME/.cache}/claude-sessions/app-handoffs"
+  local sid_lockdir="${XDG_CACHE_HOME:-$HOME/.cache}/claude-sessions/launch-sids"
+  local key sid_key cwd_fd sid_fd
+  mkdir -p "$lockdir" "$sid_lockdir" || return 1
+  key=$(python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.argv[1].encode()).hexdigest())' "$dir") || return 1
+  zmodload zsh/system || return 1
+  : >> "$lockdir/$key.lock" || return 1
+  zsystem flock -t 15 -f cwd_fd "$lockdir/$key.lock" || {
+    print -u2 -- "t: timed out waiting to open $dir"; return 1
+  }
+  {
+    if [[ -n $sid ]]; then
+      sid_key=$(python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.argv[1].encode()).hexdigest())' "$sid") || return 1
+      : >> "$sid_lockdir/$sid_key.lock" || return 1
+      zsystem flock -t 15 -f sid_fd "$sid_lockdir/$sid_key.lock" || {
+        print -u2 -- 't: timed out waiting for the saved conversation'; return 1
+      }
+    fi
+    "$callback" "$@"
+  } always {
+    [[ -n $sid_fd ]] && zsystem flock -u "$sid_fd"
+    zsystem flock -u "$cwd_fd"
+  }
+}
+
+_dev_launch_preflight() {
+  local session=$1 dir=${2:A} sid=$3 name owner_path rows rc host row_sid row_cwd row_name
+  if _dev_app_slot_reserved "$dir"; then
+    print -u2 -- "t: the desktop app still reserves $dir; use t open --cli for its verified handoff"
+    return 1
+  fi
+  while IFS='|' read -r name owner_path; do
+    [[ -n $name ]] || continue
+    if [[ $name == $session || ( -n $owner_path && ${owner_path:A} == $dir ) ]]; then
+      print -u2 -- "t: a live tmux session already owns $session or $dir ($name)"
+      return 1
+    fi
+  done < <(tmux list-sessions -F '#{session_name}|#{session_path}' 2>/dev/null)
+  local fg_sid fg_cwd fg_tail
+  while IFS=$'\t' read -r fg_sid fg_cwd fg_tail; do
+    if [[ -n $fg_cwd && ${fg_cwd:A} == $dir ]]; then
+      print -u2 -- "t: a foreground agent already owns $dir (${fg_sid:-unknown conversation})"
+      return 1
+    fi
+  done < <(_dev_fg_rows 2>/dev/null)
+  [[ -n $sid ]] || return 0
+  rows=$(_dev_rows_all); rc=$?
+  if (( rc )); then
+    print -u2 -- 't: saved conversation ownership is unknown because a local or configured host scan failed'
+    return 1
+  fi
+  while IFS=$'\t' read -r host row_sid row_cwd row_name; do
+    if [[ $row_sid == $sid ]]; then
+      print -u2 -- "t: saved conversation is already live in $row_name on $host"
+      return 1
+    fi
+  done <<< "$rows"
+  return 0
+}
+
+_dev_launch_startup_check() {
+  local session=$1 logfile=$2 pane_dead
+  sleep 0.1
+  pane_dead=$(tmux display-message -p -t "=$session:" '#{pane_dead}' 2>/dev/null) || {
+    print -u2 -- "t: $session exited during startup; inspect $logfile"
+    return 1
+  }
+  if [[ $pane_dead == 1 ]]; then
+    print -u2 -- "t: $session exited during startup; inspect $logfile"
+    return 1
+  fi
+}
+
+_dev_foreground_new() {
+  local dir=$1
+  _dev_launch_preflight "dev-foreground-new" "$dir" ''
+}
+
 _dev_new_session() {
+  _dev_with_launch_locks "$2" '' _dev_new_session_claimed "$@"
+}
+
+_dev_new_session_claimed() {
   local session="$1" dir="$2" branch="${3:-$DEV_BRANCH}" skip_prepare="${4:-}" agent="${5:-claude}"
   if [[ -z $7 ]] && (( ${+functions[_dev_issue_preparing]} )) && _dev_issue_preparing "$dir"; then
     print -u2 't: issue launch is reserved; rerun t issue to recover it'; return 1
   fi
+  _dev_launch_preflight "$session" "$dir" '' || return 1
   _dev_auto_trust "$dir"
   local logfile="$HOME/.tmux-logs/${session}.log"
   local sid; sid="$(uuidgen | tr 'A-Z' 'a-z')"
@@ -1894,21 +2014,26 @@ _dev_new_session() {
   # but we set it explicitly so it holds on machines with a different default.)
   # The trailing colon keeps dots in repo names out of tmux window/pane parsing.
   tmux new-session -d -s "$session" -c "$dir" || return 1
-  tmux set-option -t "=$session:" window-size latest 2>/dev/null
-  tmux pipe-pane -t "=$session:" -o "cat >> $logfile"
+  tmux set-option -t "=$session:" window-size latest 2>/dev/null || { tmux kill-session -t "=$session:"; return 1; }
+  tmux pipe-pane -t "=$session:" -o "cat >> $logfile" || { tmux kill-session -t "=$session:"; return 1; }
   # Which agent occupies the slot, for every later reader (_dev_agent_of_session). Only
   # claude takes a pre-assigned id; a codex slot is stamped by its SessionStart hook once
   # codex has minted one (there is no `codex --session-id`).
-  tmux set-environment -t "=$session" DEV_AGENT "$agent"
-  [[ -n $7 ]] && tmux set-environment -t "=$session" T_ISSUE_TOKEN "$7"
-  [[ $agent == claude ]] && tmux set-environment -t "=$session" CLAUDE_RESUME_ID "$sid"
+  tmux set-environment -t "=$session" DEV_AGENT "$agent" || { tmux kill-session -t "=$session:"; return 1; }
+  if [[ -n $7 ]]; then
+    tmux set-environment -t "=$session" T_ISSUE_TOKEN "$7" || { tmux kill-session -t "=$session:"; return 1; }
+  fi
+  if [[ $agent == claude ]]; then
+    tmux set-environment -t "=$session" CLAUDE_RESUME_ID "$sid" || { tmux kill-session -t "=$session:"; return 1; }
+  fi
   # `; exit` so quitting Claude closes the pane's shell and tears down the
   # (single-window) tmux session instead of leaving an idle prompt behind. Fires
   # on any exit (clean or crash); crash output survives in the pipe-pane logfile
   # (`t read`). `t pop` kill-sessions the slot itself, so the exit is moot there.
   local prep="_dev_repo_prepare ${(q)branch}; "
   [[ -n $skip_prepare ]] && prep=    # worktree mode: <dir> is already on its branch
-  tmux send-keys -t "=$session:" "${prep}$(_dev_agent_new_cmd "$agent" "$sid" "$6"); exit" Enter || return 1
+  tmux send-keys -t "=$session:" "${prep}$(_dev_agent_new_cmd "$agent" "$sid" "$6"); exit" Enter || { tmux kill-session -t "=$session:"; return 1; }
+  _dev_launch_startup_check "$session" "$logfile" || return 1
   _dev_recovery_watch "$session"
 }
 
@@ -2096,6 +2221,8 @@ _t_dev() {
 
   local dir="${DEV_REPOS[$repo]}"
   local branch="$(_dev_branch_for "$repo")"
+  local allow_unverified_new=
+  [[ -n $local_only && $slot == new ]] && allow_unverified_new=1
 
   if [[ ! -d "$dir" ]]; then
     echo "Repo dir not found: $dir"
@@ -2169,8 +2296,12 @@ _t_dev() {
   # is live only on another host is NOT attached — a fresh local slot is opened
   # instead (combine with --fg for a local foreground resume / inline claude).
   if (( ${#REMOTE_HOSTS} )) && [[ -z $no_tmux && -z $local_only && $slot != new ]] && ! _dev_local_slot_live "$repo" "$slot"; then
-    local res resolve_rc; res=$(_dev_remote_resolve "$repo" "$slot" multi 2>/dev/null); resolve_rc=$?
+    local res resolve_rc; res=$(_dev_remote_resolve "$repo" "$slot" multi quiet); resolve_rc=$?
     (( resolve_rc == 130 )) && return 1   # cancellation must not start a fresh slot
+    if (( resolve_rc != 0 && resolve_rc != 1 )); then
+      print -u2 -- 't open: remote ownership is unknown; no local session was started. Retry when configured hosts are reachable.'
+      return 1
+    fi
     if [[ -n $res ]]; then
       echo "(not live here — attaching on ${res%%$'\t'*}; Ctrl-b d to detach)"
       _dev_open_picks "$res" "$no_tmux"
@@ -2190,11 +2321,19 @@ _t_dev() {
   # no-tmux branch, which otherwise bypasses the ordinary slot preflight.
   if [[ -n $no_tmux && $slot == <-> ]] && (( ${#REMOTE_HOSTS} )) \
      && ! tmux has-session -t "=dev-${repo}-${slot}:" 2>/dev/null; then
-    local app_owner; app_owner=$(_dev_remote_app_owner "$repo" "$slot")
+    local app_owner app_rc; app_owner=$(_dev_remote_app_owner "$repo" "$slot"); app_rc=$?
+    (( app_rc == 3 )) && return 1
     if [[ -n $app_owner ]]; then
       print -u2 -- "t open: $repo $slot is reserved by the Codex desktop app on $app_owner; close it there and release the reservation before opening here"
       return 1
     fi
+    local remote_cli remote_rc
+    remote_cli=$(_dev_remote_resolve "$repo" "$slot" '' quiet); remote_rc=$?
+    if [[ -n $remote_cli ]]; then
+      print -u2 -- "t open: $repo $slot is live on ${remote_cli%%$'\t'*}; attach there or move it here before opening a local foreground session"
+      return 1
+    fi
+    (( remote_rc == 3 )) && return 1
   fi
 
   # -f/--fg (a.k.a. --no-tmux): run claude inline, no tmux. If a SPECIFIC slot is
@@ -2220,7 +2359,8 @@ _t_dev() {
         while ! _dev_slot_fresh "$repo" "$_wslot"; do (( _wslot++ )); done
       fi
       if [[ $slot != <-> ]] && (( ${#REMOTE_HOSTS} )); then
-        local app_owner; app_owner=$(_dev_remote_app_owner "$repo" "$_wslot")
+        local app_owner app_rc; app_owner=$(_dev_remote_app_owner "$repo" "$_wslot"); app_rc=$?
+        (( app_rc == 3 )) && [[ -z $allow_unverified_new ]] && return 1
         if [[ -n $app_owner ]]; then
           print -u2 -- "t open: $repo $_wslot is reserved by the Codex desktop app on $app_owner; close it there and release the reservation before opening here"
           return 1
@@ -2250,8 +2390,9 @@ _t_dev() {
       claude:0) model_args+=(--settings '{"fastMode":false}') ;;
     esac
     [[ $agent == codex ]] && model_args+=(--no-daemon)
-    "$agent" "${model_args[@]}"   # retain the claude()/codex() wrappers (tpush sentinel)
-    return
+    _dev_with_launch_locks "$dir" '' _dev_foreground_new "$dir" || return 1
+    "$agent" "${model_args[@]}"   # keep the claude()/codex() wrappers and their t push sentinel
+    return $?
   fi
 
   # `dev <repo> new` — force the next never-used slot (skip reattaching to an
@@ -2309,7 +2450,8 @@ _t_dev() {
   # attach resolver deliberately excludes them, so check their reservation before
   # creating a local CLI on the same worktree/branch.
   if ! tmux has-session -t "=$session:" 2>/dev/null && (( ${#REMOTE_HOSTS} )); then
-    local app_owner; app_owner=$(_dev_remote_app_owner "$repo" "$slot")
+    local app_owner app_rc; app_owner=$(_dev_remote_app_owner "$repo" "$slot"); app_rc=$?
+    (( app_rc == 3 )) && [[ -z $allow_unverified_new ]] && return 1
     if [[ -n $app_owner ]]; then
       print -u2 -- "t open: $repo $slot is reserved by the Codex desktop app on $app_owner; close it there and release the reservation before opening here"
       return 1
@@ -2330,7 +2472,10 @@ _t_dev() {
     # resume logging if it stopped (e.g. after server restart)
     tmux pipe-pane -t "=$session:" -o "cat >> $logfile"
     _dev_recovery_watch "$session"
-    tmux attach-session -t "=$session:"
+    tmux attach-session -t "=$session:" || {
+      print -u2 -- "t open: could not attach $session; inspect $logfile"
+      return 1
+    }
   else
     # Worktree mode: this slot gets its OWN worktree on dev/<basename>-<slot> off
     # main, so it shares no tree with siblings. _dev_worktree_create is idempotent —
@@ -2346,8 +2491,11 @@ _t_dev() {
     _dev_agent_check "$agent" || return 1
     local agent_note=; [[ $agent != claude ]] && agent_note=" · $agent"
     echo "Starting $session in $dir$agent_note (logging to $logfile)"
-    _dev_new_session "$session" "$dir" "$branch" "$skip_prepare" "$agent"
-    tmux attach-session -t "=$session:"
+    _dev_new_session "$session" "$dir" "$branch" "$skip_prepare" "$agent" || return 1
+    tmux attach-session -t "=$session:" || {
+      print -u2 -- "t open: $session did not remain available; inspect $logfile"
+      return 1
+    }
   fi
 }
 

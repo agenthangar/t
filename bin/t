@@ -7018,11 +7018,12 @@ def _app_saved_thread(row, thread=None):
                 archived=archived, codex_home=codex_home)
 
 
-def _app_cli_release(row, contract=None):
+def _app_cli_release(row, contract=None, *, unknown=None):
     """Stopping a CLI client does not necessarily stop its conversation writer."""
     try:
         helper = runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_app_handoff.py"))
         options = {key: row[key] for key in ("codex_home", "rollout")}
+        options["unknown"] = unknown if unknown is not None else set()
         if contract is None:
             return helper["preflight_cli_release"](row["sid"], row["cwd"], **options)
         # An already transferred slot can be reopened without waiting for the
@@ -7033,6 +7034,10 @@ def _app_cli_release(row, contract=None):
         if helper["_lock_held"](lock) and any(
                sid == row["sid"] and os.path.realpath(cwd) == os.path.realpath(row["cwd"])
                for sid, cwd, _ in desktop["loaded_threads"](row["codex_home"], require_writer=True)):
+            # The desktop may have loaded another conversation in this worktree
+            # since the preflight. Recheck known sibling owners before accepting
+            # a direct transfer of the selected thread.
+            helper["preflight_cli_release"](row["sid"], row["cwd"], **options)
             return
         repo, _, slot = row["slot"].rpartition("-")
         retry = "Retry: " + shlex.join(["t", "open", repo, slot, "--app"])
@@ -7044,6 +7049,9 @@ def _app_cli_release(row, contract=None):
         raise ValueError(f"could not check Codex conversation release: {exc}") from exc
 
 
+_APP_HANDOFF_HELD = set()
+
+
 @contextmanager
 def _app_handoff_lock(row):
     """Serialize push and pull for a worktree, including sibling repo aliases."""
@@ -7051,17 +7059,29 @@ def _app_handoff_lock(row):
     try:
         os.makedirs(root, mode=0o700, exist_ok=True)
         key = hashlib.sha256(os.path.realpath(row["cwd"]).encode()).hexdigest()
-        fh = open(os.path.join(root, key + ".lock"), "a")
+        path = os.path.join(root, key + ".lock")
+        # POSIX locks are process-wide: closing *any* descriptor for this
+        # inode can release the outer lock. Reject nested calls before open.
+        if path in _APP_HANDOFF_HELD:
+            raise ValueError("another app handoff is in progress for this worktree")
+        fh = open(path, "a")
     except OSError as e:
         raise ValueError(f"could not lock the app handoff: {e}") from e
     with fh:
         try:
-            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            # zsh's zsystem flock uses POSIX fcntl locks. lockf speaks the
+            # same protocol on macOS and Linux; BSD flock does not on Linux.
+            fcntl.lockf(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as e:
             raise ValueError("another app handoff is in progress for this worktree") from e
         except OSError as e:
             raise ValueError(f"could not lock the app handoff: {e}") from e
-        yield
+        _APP_HANDOFF_HELD.add(path)
+        try:
+            yield
+        finally:
+            _APP_HANDOFF_HELD.remove(path)
+            fcntl.lockf(fh, fcntl.LOCK_UN)
 
 
 def _app_assert_released(row, bundle, *, retry=None):
@@ -7072,12 +7092,22 @@ def _app_assert_released(row, bundle, *, retry=None):
         owner = zsh_capture(shlex.join(["_t_app_pull_owner", "dev-" + row["slot"],
                                        row["cwd"], row["sid"], row["codex_home"]])).strip()
         options = {key: row[key] for key in ("codex_home", "rollout", "archived")}
+        unknown = set()
+        options["unknown"] = unknown
         options["cli_pid"] = int(owner) if owner.isascii() and owner.isdecimal() else None
         if retry is not None:
             options["retry"] = retry
         runpy.run_path(helper)["assert_released"](bundle, row["sid"], row["cwd"], _run, **options)
+        _app_unknown_warning(unknown)
     except OSError as e:
         raise ValueError(f"could not check desktop ownership: {e}") from e
+
+
+def _app_unknown_warning(unknown):
+    if unknown:
+        print(f"Note: {len(unknown)} other held Codex writer lock(s) have no worktree "
+              "mapping; this handoff checked the selected thread and known "
+              "worktree owners.", file=sys.stderr)
 
 
 def _app_pull_cli(row):
@@ -7562,7 +7592,11 @@ def _app_workspace_link(cwd):
 
 def _app_workspace_thread(cwd):
     """Resolve a reserved workspace's only saved conversation, without guessing."""
-    db = os.path.join(os.environ.get("CODEX_HOME") or os.path.join(HOME, ".codex"), "state_5.sqlite")
+    # The login shell may select a different CODEX_HOME from this Python
+    # process. Use the same store resolver as desktop pull and session rows.
+    db = zsh_capture("_codex_db").strip()
+    if not os.path.isabs(db) or os.path.basename(db) != "state_5.sqlite":
+        raise ValueError("could not locate the Codex conversation index for this workspace")
     if not os.path.exists(db):
         return None
     try:
@@ -7658,7 +7692,8 @@ def cmd_app(cfg, args):
             row = _app_saved_thread(row)
             if row["archived"]:
                 raise ValueError("this conversation is archived; restore it before opening it in the app")
-            contract = _app_cli_release(row)
+            unknown = set()
+            contract = _app_cli_release(row, unknown=unknown)
             _trust_auto([row["cwd"]])
             # A new PROCESS is not a new WINDOW. Invoke the native New Window action
             # and retain the verified new window before stopping the slot's CLI.
@@ -7677,7 +7712,7 @@ def cmd_app(cfg, args):
             if stopped.returncode:
                 raise ValueError(stopped.stderr.strip() or "could not stop the CLI; the app was not opened")
             try:
-                _app_cli_release(row, contract)
+                _app_cli_release(row, contract, unknown=unknown)
             except ValueError as exc:
                 raise ValueError(f"{exc}. The app conversation was not opened; "
                                  "its history and worktree remain reserved.") from exc
@@ -7694,6 +7729,7 @@ def cmd_app(cfg, args):
                 _app_remember_preview(row, url)
             if plan:
                 _index_save(_app_plan_cache(row), {"cwd": row["cwd"], "path": plan})
+        _app_unknown_warning(unknown)
         print(("New app window created. " if window else "") +
               "Open request sent to macOS; app delivery is not confirmed. "
               "Tmux keeps this worktree slot reserved.")

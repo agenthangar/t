@@ -5,6 +5,7 @@ from pathlib import Path
 import shlex
 import sqlite3
 import subprocess
+import sys
 
 import pytest
 
@@ -181,6 +182,15 @@ def test_app_handoff_lock_serializes_aliases_and_releases(t_mod, app_slot):
         with pytest.raises(ValueError, match="in progress"):
             with t_mod._app_handoff_lock(dict(row, slot="a-13")):
                 pytest.fail("must not enter a concurrent handoff")
+        # A nested rejection must not close another FD on the same inode:
+        # POSIX locks would release the outer lock for every other process.
+        root = Path(t_mod._cache_root()) / "app-handoffs"
+        lockfile, = root.glob("*.lock")
+        probe = subprocess.run([sys.executable, "-c",
+                                "import fcntl,sys; f=open(sys.argv[1],'a'); "
+                                "fcntl.lockf(f,fcntl.LOCK_EX|fcntl.LOCK_NB)",
+                                str(lockfile)], capture_output=True, text=True)
+        assert probe.returncode != 0
     with pytest.raises(ValueError, match="operation failed"):
         with t_mod._app_handoff_lock(row):
             raise ValueError("operation failed")
@@ -222,8 +232,12 @@ def test_pull_release_helper(t_mod, app_slot, monkeypatch, owner, expected_pid):
     t_mod._app_assert_released(row, "test.app")
     expected = dict(codex_home=row["codex_home"], rollout=row["rollout"],
                     archived=False, cli_pid=expected_pid)
-    assert calls == [(("test.app", SID, row["cwd"], t_mod._run), expected)]
+    assert len(calls) == 1
+    assert calls[0][0] == ("test.app", SID, row["cwd"], t_mod._run)
+    assert calls[0][1].pop("unknown") == set()
+    assert calls[0][1] == expected
     t_mod._app_assert_released(row, "test.app", retry="Retry t open api 13 --cli")
+    assert calls[-1][1].pop("unknown") == set()
     assert calls[-1][1] == dict(expected, retry="Retry t open api 13 --cli")
     monkeypatch.setattr(t_mod.runpy, "run_path", lambda path: (_ for _ in ()).throw(OSError("missing")))
     with pytest.raises(ValueError, match="desktop ownership"):
