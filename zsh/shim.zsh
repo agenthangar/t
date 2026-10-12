@@ -401,7 +401,7 @@ _t_open() {
 _t_open_picker() {
   local repo="$1" remote="$2" app="$3" cli="$4" rows row selected scope="${DEV_REPOS[$1]:-}"
   local -a fields candidates format_args
-  local include_attached="$5" hidden=0
+  local include_attached="$5" filtered
   local scope_rel wt_rel cwd_rel
   scope_rel=$(_dev_homerel "$scope")
   wt_rel=$(_dev_homerel "${DEV_WORKTREE_ROOT}/${scope:t}")
@@ -421,29 +421,29 @@ _t_open_picker() {
       [[ $cwd_rel == $scope_rel || $cwd_rel == $scope_rel/* ||
          ( -n $DEV_WORKTREE_ROOT && $cwd_rel == $wt_rel/* ) ]] || continue
     fi
-    if [[ -z $include_attached && ( $fields[5] == attached ||
-         ( $fields[5] == app && $fields[6] == active ) ) ]]; then
-      (( ++hidden ))
-      continue
-    fi
     candidates+=("$row")
   done
-  if (( ! $#candidates )); then
-    if (( hidden )); then
-      print -r -- "t open: $hidden attached/loaded session(s) hidden — use t open ${remote:+-r }${repo:+$repo }--attached to include them"
-      return 0
-    fi
-    return 2
-  fi
+  (( $#candidates )) || return 2
+  [[ -n $repo ]] && format_args+=(--repo)
   rows=$(print -rl -- "${candidates[@]}" | python3 "$T_HOME/bin/t" __session-picker-rows "${format_args[@]}") || return 1
   [[ -n $rows ]] || return 1
-  local legend=$'● attached/loaded · ✓ active · ↻ in progress\n'
-  legend+="$(_dev_agent_legend)"$'\nCtrl-/ full details · Esc cancel'
-  (( hidden )) && legend+=" · $hidden attached hidden (--attached)"
-  selected=$(print -r -- "$rows" | _t_fzf_sessions "$legend" \
-    --delimiter=$'\t' --with-nth=-1 --header-lines=1 --height=90% \
-    --preview="printf '%s\n' {4}" --preview-window='down,4,wrap,hidden' \
-    --bind='ctrl-/:toggle-preview' --prompt="t open ${repo:-all sessions} > ") || return 1
+  # Filter from raw ownership fields, then match stable host/session identities.
+  local -A hidden
+  for row in "${candidates[@]}"; do
+    fields=("${(@ps:\t:)row}")
+    if [[ $fields[5] == attached || ( $fields[5] == app && $fields[6] == active ) ]]; then
+      hidden[$fields[1]/$fields[4]]=1
+    fi
+  done
+  local -a visible
+  for row in "${(@f)rows}"; do
+    fields=("${(@ps:\t:)row}")
+    [[ -n ${hidden[$fields[1]/$fields[2]]:-} ]] || visible+=("$row")
+  done
+  filtered="${(F)visible}"
+  selected=$(_t_fzf_filtered "$filtered" "$rows" open unattached \
+    "$(_dev_agent_legend)" "$include_attached" --prompt="open ${repo:+$repo }> " \
+    --preview='printf "%s\n" {4}') || return 1
   [[ -n $selected ]] || return 1
   _t_open_selected "$selected" "$app" "$cli"
 }

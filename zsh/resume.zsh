@@ -46,10 +46,9 @@ _t_resume_on_host() {
 # transcripts from every $REMOTE_HOSTS host first (direct rsync — csync is periodic
 # and needs a prompt on the far side, so "resume what just died on the other
 # machine" cannot wait for it), then scans as usual. LIVE slots — local or on a
-# $REMOTE_HOSTS host — are HIDDEN from the scan by default (a stderr count names
-# them; `t open` is the verb for a running slot, and with a dozen live slots pinned
-# to the top the dead rows this verb exists for scrolled off a phone screen);
-# -l/--live shows them as labeled rows ("● active" / "● on <host>") whose pick
+# $REMOTE_HOSTS host — are retained but filtered from the initial picker view.
+# Ctrl-A reveals them and restores the inactive view; -l/--live starts with all
+# rows. Their labels ("● active" / "● on <host>") remain visible when revealed and a pick
 # ATTACHES in place instead of resuming (one-live-owner: a second `claude -r` on a
 # live id diverges the transcript). An explicit `t resume <repo> <slot>` on a live
 # slot always attaches — a direct ask, not a scan.
@@ -325,7 +324,7 @@ _t_resume() {
           return 1
         fi
         live_seen[app/${repo}-$n]=1
-        [[ -n $live_flag ]] || { (( hidden_live++ )); continue; }
+        [[ -n $live_flag ]] || (( hidden_live++ ))
         cands+=(9999999999$'\t'"$repo"$'\t'"$n"$'\t'-$'\t'"$wt"$'\t'"◉ desktop here"$'\t'"(Codex desktop workspace)"$'\t'app:here$'\t'-$'\t'-$'\t'codex)
         continue
       fi
@@ -336,13 +335,12 @@ _t_resume() {
           _t_dev "$repo" "$n"
           return
         fi
-        # Scan: a live local slot is HIDDEN by default (counted for the hint
-        # below — the list is "what can I revive", and live slots are `t open`'s
-        # business); -l/--live shows it as a labeled row (pick → attach). Sort
+        # Scan: retain live local slots for Ctrl-A, while the initial view
+        # filters them (unless --live was passed). Sort
         # key (field 1, stripped after the global sort below): a live session is
         # "now", so the max sentinel pins it above every dead transcript.
         live_seen[here/${busy#dev-}]=1
-        [[ -n $live_flag ]] || { (( hidden_live++ )); continue; }
+        [[ -n $live_flag ]] || (( hidden_live++ ))
         cands+=(9999999999$'\t'"$repo"$'\t'"$n"$'\t'-$'\t'"$wt"$'\t'"● active"$'\t'"${local_sum[${busy#dev-}]:-(live session)}"$'\t'here$'\t'-$'\t'-$'\t'"${local_agent[${busy#dev-}]:-$(_dev_agent_of_session "$busy")}")
         continue
       fi
@@ -355,7 +353,7 @@ _t_resume() {
             return 1
           fi
           live_seen[app/$rhost/${remote_live_alias[$n]}-$n]=1
-          [[ -n $live_flag ]] || { (( hidden_live++ )); continue; }
+          [[ -n $live_flag ]] || (( hidden_live++ ))
           cands+=(9999999999$'\t'"$repo"$'\t'"$n"$'\t'-$'\t'"$wt"$'\t'"◉ desktop on $rhost"$'\t'"${remote_live_sum[$n]:-(Codex desktop workspace)}"$'\t'"app:$rhost"$'\t'"${remote_live_alias[$n]}"$'\t'-$'\t'codex)
           continue
         fi
@@ -365,7 +363,7 @@ _t_resume() {
           return
         fi
         live_seen[$rhost/${remote_live_alias[$n]}-$n]=1
-        [[ -n $live_flag ]] || { (( hidden_live++ )); continue; }
+        [[ -n $live_flag ]] || (( hidden_live++ ))
         cands+=(9999999999$'\t'"$repo"$'\t'"$n"$'\t'-$'\t'"$wt"$'\t'"● on $rhost"$'\t'"${remote_live_sum[$n]:-(live session)}"$'\t'"$rhost"$'\t'"${remote_live_alias[$n]}"$'\t'-$'\t'"${remote_live_agent[$n]:-claude}")
         continue
       fi
@@ -395,7 +393,7 @@ _t_resume() {
           return
         fi
         live_seen[here/${_stale#dev-}]=1
-        [[ -n $live_flag ]] || { (( hidden_live++ )); continue; }
+        [[ -n $live_flag ]] || (( hidden_live++ ))
         cands+=(9999999999$'\t'"$repo"$'\t'"$n"$'\t'-$'\t'"${stale_path:-$wt}"$'\t'"● active"$'\t'"${local_sum[${_stale#dev-}]:-(live session)}"$'\t'here$'\t'-$'\t'-$'\t'"${local_agent[${_stale#dev-}]:-$(_dev_agent_of_session "$_stale")}")
         continue
       fi
@@ -440,8 +438,8 @@ _t_resume() {
 
   # Conversations live under ANOTHER slot's session (or a foreground one). One row
   # per owner — skipped when the owner's own slot row was already counted/emitted.
-  # Hidden like any live row unless -l, or unless a slot was named: `t resume ff 13`
-  # must say where 13's conversation went rather than "nothing to resume".
+  # Filtered like any live row initially unless -l, or unless a slot was named:
+  # `t resume ff 13` must say where its conversation went.
   local _sl _sloc _salias _sslot _ssum _sag _skey _slabel
   local -a _slf
   for _sl in "${(@)sidlive}"; do
@@ -450,7 +448,7 @@ _t_resume() {
     if [[ $_sloc == fg:* ]]; then _skey="$_sloc/$_salias"; else _skey="$_sloc/$_salias-$_sslot"; fi
     [[ -n ${live_seen[$_skey]:-} ]] && continue
     live_seen[$_skey]=1
-    if [[ -z $live_flag && -z $slot ]]; then (( hidden_live++ )); continue; fi
+    if [[ -z $live_flag && -z $slot ]]; then (( hidden_live++ )); fi
     case $_sloc in
       here)  _slabel="● in $_salias-$_sslot" ;;
       fg:*)  _slabel="● fg ${${_sloc#fg:}/here/here}" ;;
@@ -516,7 +514,8 @@ _t_resume() {
   _pr_state_flush
 
   (( skipped )) && echo "(${skipped} older conversation(s) outside the last ${days}d hidden — t session resume --days all shows them)" >&2
-  (( hidden_live )) && echo "(${hidden_live} live slot(s) hidden — t session resume --live lists them; t session open attaches one)" >&2
+  (( hidden_live )) && [[ ! -t 0 || ! -t 1 ]] && \
+    echo "(${hidden_live} live slot(s) hidden — t session resume --live lists them; t session open attaches one)" >&2
 
   # ONE global newest-first order by session time (the leading epoch field),
   # never grouped by repo — the loop above emits repo-by-repo, so without this
@@ -598,41 +597,57 @@ _t_resume() {
     fi
     (( i++ ))
   done
-  # Sole candidate auto-picks — but only when it is DEAD (loc == -, resumed in
-  # place here) or we have a TTY. A sole LIVE row without a TTY would hit
+  # Keep the inactive set separate from the initial view so Ctrl-A can always
+  # restore it, even when --live (or an explicit slot) starts with all rows.
+  # The full row, including every aligned display detail, is identical in both
+  # views; only membership changes.
+  local -a inactive visible
+  local show_all=
+  [[ -n $live_flag || -n $slot ]] && show_all=1
+  for c in "${(@)cands}"; do
+    f=("${(@ps:\t:)c}")
+    [[ $f[7] == - ]] && inactive+=("$c")
+  done
+  if [[ -n $show_all ]]; then
+    visible=("${(@)cands}")
+  else
+    visible=("${(@)inactive}")
+  fi
+
+  # Sole candidate auto-picks only when there are no excluded rows to reveal.
+  # A sole LIVE row without a TTY would hit
   # _t_dev / _dev_remote_attach, both of which need a terminal to attach; fall
   # through to the listing branch so the message matches the multi-candidate
   # no-fzf case instead of failing hard from inside the attach helper.
-  if (( $#cands == 1 )) && f=("${(@ps:\t:)cands[1]}") && [[ $f[7] == - || -t 1 ]]; then
-    pick=${cands[1]}
+  if (( $#visible == 1 )) && \
+     { (( ! hidden_live || $#cands == 1 )) || [[ ! -t 0 || ! -t 1 ]]; } && \
+     f=("${(@ps:\t:)visible[1]}") && [[ $f[7] == - || -t 1 ]]; then
+    pick=${visible[1]}
   elif [[ -t 0 && -t 1 ]] && command -v fzf >/dev/null; then
-    # Space toggles a ✓ mark (bound to toggle+down — the same action as fzf's
-    # default tab binding, so both work and marking a batch is spacebar-taps
-    # down the list). The cost: a literal space no longer types into the filter
-    # query — acceptable because fzf's fuzzy match crosses word gaps ("fixbug"
-    # still matches "fix bug").
-    pick=$(print -rl -- "${(@)cands}" | _t_fzf_sessions "$legend · Ctrl-/ details" \
+    pick=$(_t_fzf_filtered "$(print -rl -- "${(@)inactive}")" \
+      "$(print -rl -- "${(@)cands}")" resume inactive "$legend" "$show_all" \
       --delimiter=$'\t' --with-nth=-1 --no-hscroll \
-      --preview='printf "%s\n" {11}' --preview-window='hidden:wrap:down:40%' \
-      --bind='ctrl-/:toggle-preview' \
       --prompt="$fprompt") || return 1
     [[ -n $pick ]] || return 1
-  elif [[ -n $slot ]] && { pick=; for c in "${(@)cands}"; do
+  elif [[ -n $slot ]] && { pick=; for c in "${(@)visible}"; do
          f=("${(@ps:\t:)c}"); [[ $f[7] == - ]] && { pick=$c; break; }; done; [[ -n $pick ]]; }; then
     # Explicit slot but no TTY/fzf to pick with: the newest DEAD conversation IS
     # the documented contract ("revive the slot's last conversation") — take it
     # (never a live row: attaching needs the terminal we lack), and list the rest
     # so a specific pick is one fzf-equipped call away.
-    echo "Slot $slot has $#cands saved conversations — resuming the newest (run from a terminal to pick):" >&2
-    for c in "${(@)cands}"; do echo "  ${c##*$'\t'}" >&2; done
+    echo "Slot $slot has $#visible saved conversations — resuming the newest (run from a terminal to pick):" >&2
+    for c in "${(@)visible}"; do echo "  ${c##*$'\t'}" >&2; done
     echo "  $legend" >&2
+  elif (( ! $#visible )); then
+    echo "Nothing inactive to resume for ${repo:-any repo} — Ctrl-A in an interactive picker or t session resume --live shows live sessions." >&2
+    return 1
   else
     if [[ -n $all_mode ]]; then
       echo "Several resumable conversations — name one (t session resume <repo> <slot>):" >&2
     else
       echo "Several resumable conversations for $repo — name one (t session resume $repo <slot>):" >&2
     fi
-    for c in "${(@)cands}"; do echo "  ${c##*$'\t'}" >&2; done
+    for c in "${(@)visible}"; do echo "  ${c##*$'\t'}" >&2; done
     echo "  $legend" >&2
     return 1
   fi

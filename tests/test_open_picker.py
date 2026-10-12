@@ -18,11 +18,20 @@ ROWS = r'''
 def picker_stub(tmp_path, selection="api-2"):
     stub = tmp_path / "stubbin/fzf"
     stub.write_text(r"""#!/usr/bin/env python3
-import os, sys
+import os, sys, subprocess
+from pathlib import Path
+if '--help' in sys.argv:
+    print('--id-nth')
+    sys.exit()
 rows = sys.stdin.read().splitlines()
 open(os.environ['PICKER_LOG'], 'w').write('\n'.join(rows))
+Path(os.environ['PICKER_LOG'] + '.all').write_text(Path(os.environ['T_PICKER_ALL']).read_text())
+for _ in range(int(os.environ.get('PICK_TOGGLES', '0'))):
+    subprocess.run(['sh', os.environ['T_PICKER_TOGGLE']], check=True)
+    Path(os.environ['PICKER_LOG'] + '.header').write_text(Path(os.environ['T_PICKER_CURRENT_HEADER']).read_text())
+    rows = Path(os.environ['T_PICKER_CURRENT']).read_text().splitlines()
 selected = os.environ.get('PICK_LABELS', '').split(',')
-for row in rows[1:]:
+for row in rows:
     if row.split('\t')[1] in selected:
         print(row)
 if selected == ['']:
@@ -42,15 +51,15 @@ def test_bare_open_inside_worktree_shows_every_detail_and_repo(zsh, tmp_path):
     ''', _tty=True, **env)
     assert result.returncode == 0, result.stdout
     rows = (tmp_path / "picker.log").read_text().splitlines()
-    assert [row.split('\t')[1] for row in rows[1:]] == ['api-2', 'api-4', 'web-6', 'web:abcdef12']
+    assert [row.split('\t')[1] for row in rows] == ['api-2', 'api-4', 'web-6', 'web:abcdef12']
     display = [row.split('\t')[-1] for row in rows]
-    assert display[0].split() == ['STATUS', 'UI', 'MODEL', 'SESSION', 'WORKING', 'ON']
-    assert '● ✓ ↻' in display[1] and '› cli' in display[1]
-    assert '⬡ gpt-test-astra' in display[1]
-    assert display[1].endswith('First task · #12 merged, still in progress')
-    assert '▣ desktop' in display[2] and display[2].endswith('No conversation recorded')
-    assert '(idle — no conversation)' in display[3]
-    assert 'claude-test-model' in display[4] and 'Foreground task' in display[4]
+    assert all('STATUS' not in row for row in display)
+    assert '● ✓ ↻' in display[0] and '› cli' in display[0]
+    assert '⬡ codex' in display[0] and 'gpt-test-astra' in display[0]
+    assert display[0].endswith('First task · #12 merged, still in progress')
+    assert '▣ desktop' in display[1] and display[1].endswith('No conversation recorded')
+    assert '(idle — no conversation)' in display[2]
+    assert 'claude-test-model' in display[3] and 'Foreground task' in display[3]
     assert 'CLI api 2 --local' in result.stdout
 
 
@@ -63,7 +72,7 @@ def test_open_repo_filter_keeps_desktop_and_cli(zsh, tmp_path):
     ''', _tty=True, **env)
     assert result.returncode == 0, result.stdout
     rows = (tmp_path / 'picker.log').read_text().splitlines()
-    assert [row.split('\t')[1] for row in rows[1:]] == ['api-2', 'api-4']
+    assert [row.split('\t')[1] for row in rows] == ['api-2', 'api-4']
     assert 'APP api 4 --app' in result.stdout
     assert 'UNEXPECTED' not in result.stdout
 
@@ -115,13 +124,31 @@ def test_picker_formatter_preserves_full_metadata_and_legacy_rows(t_mod, monkeyp
     monkeypatch.setattr(t_mod.sys, 'stdin', io.StringIO(raw))
     assert t_mod.main(['__session-picker-rows', '--remote']) == 0
     rows = capsys.readouterr().out.splitlines()
-    assert rows[0].split('\t')[-1].split() == ['STATUS', 'UI', 'MODEL', 'HOST', 'SESSION', 'WORKING', 'ON']
-    assert rows[1].split('\t')[:3] == ['local', 'api-2', 'attached']
-    assert title in rows[1] and 'very-long-recorded-model-name' in rows[1]
-    assert '↻' in rows[1] and '● ✓' in rows[1]
-    assert '▣ desktop' in rows[2] and 'mini' in rows[2]
-    assert '✱ -' in rows[3] and 'Legacy row' in rows[3]
+    assert len(rows) == 3
+    assert rows[0].split('\t')[:3] == ['local', 'api-2', 'attached']
+    assert title in rows[0] and 'very-long-recorded-model-name' in rows[0]
+    assert len(rows[0].split('\t')) == 5
+    assert 'very-long-recorded-model-name' in rows[0].split('\t')[3]
+    assert 'very-long-recorded-model-name' not in rows[0].split('\t')[-1]
+    assert rows[0].split('\t')[-1].endswith(title)
+    assert '↻' in rows[0] and '● ✓' in rows[0]
+    assert '▣ desktop' in rows[1] and 'mini' in rows[1]
+    assert '✱ claude' in rows[2] and 'Legacy row' in rows[2]
     assert t_mod._session_picker_rows([]) == []
+    fallback = t_mod._session_picker_rows([dict(host='local', slot='api', state='detached')])
+    assert fallback[0].split('\t')[3].startswith('api  -  ✱ claude')
+
+
+@pytest.mark.parametrize('args,toggles,selected', [('', '1', 'api-2'), ('--attached', '1', 'web-6')])
+def test_open_hotkey_reverses_initial_filter(zsh, tmp_path, args, toggles, selected):
+    env = picker_stub(tmp_path, selected)
+    result = zsh(ROWS + r'''
+      _t_dev() { print -r -- "CLI $*"; }
+      _t_open ''' + args, _tty=True, PICK_TOGGLES=toggles, **env)
+    assert result.returncode == 0, result.stdout
+    assert 'CLI ' + selected.replace('-', ' ') + ' --local' in result.stdout
+    header = (tmp_path / 'picker.log.header').read_text()
+    assert ('All sessions' if not args else 'unattached') in header
 
 
 def test_open_remote_picker_retains_model_and_selected_host(zsh, tmp_path):
@@ -140,7 +167,7 @@ def test_open_remote_picker_retains_model_and_selected_host(zsh, tmp_path):
     ''', _tty=True, **env)
     assert result.returncode == 0, result.stdout
     rows = (tmp_path / 'picker.log').read_text()
-    assert 'MODEL' in rows and 'HOST' in rows and 'claude-test-model' in rows
+    assert 'mini' in rows and 'studio' in rows and 'claude-test-model' in rows
     assert 'Local hidden' not in rows
     assert 'TAB t open web 4 --cli --host studio' in result.stdout
     assert 'REMOTE mini alias 2 --cli' in result.stdout
@@ -157,7 +184,7 @@ def test_open_hides_attached_and_loaded_desktop_by_default(zsh, tmp_path):
     ''', _tty=True, **env)
     assert result.returncode == 0, result.stdout
     rows = (tmp_path / 'picker.log').read_text().splitlines()
-    assert [row.split('\t')[1] for row in rows[1:]] == ['api-4', 'web-6']
+    assert [row.split('\t')[1] for row in rows] == ['api-4', 'web-6']
     assert 'CLI web 6 --local' in result.stdout
 
 
@@ -171,10 +198,10 @@ def test_open_all_attached_does_not_create_fresh_session(zsh, tmp_path):
       _t_dev() { print UNEXPECTED_FRESH; }
       _t_open
     ''', _tty=True, **env)
-    assert result.returncode == 0, result.stdout
-    assert '2 attached/loaded session(s) hidden' in result.stdout
-    assert '--attached' in result.stdout and 'UNEXPECTED' not in result.stdout
-    assert not (tmp_path / 'picker.log').exists()
+    assert result.returncode == 1, result.stdout
+    assert 'UNEXPECTED' not in result.stdout
+    assert (tmp_path / 'picker.log').read_text() == ''
+    assert 'api-2' in (tmp_path / 'picker.log.all').read_text()
 
 
 def test_open_attached_flag_with_explicit_slot_stays_direct(zsh):

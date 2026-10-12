@@ -119,11 +119,18 @@ worktree; `t open my-project` filters to that repo. Attached CLI and loaded desk
 sessions are hidden by default; `--attached` includes them. Idle sessions and
 unloaded desktop workspaces remain visible. An explicit slot still opens directly.
 
-`t open`, `t resume`, and `t kill` support multi-select: **Space/Tab marks ✓ and
-Enter acts on the selection**. Every row retains its session details; **Ctrl-/**
-opens a wrapped preview when the terminal is narrow. Open/kill show status, UI,
-recorded model, session and full title (plus host remotely). Resume keeps its
-agent, recency, origin and PR details.
+`t open`, `t resume`, and `t kill` share the compact resume picker design:
+**Space/Tab marks ✓ and Enter acts on the selection**. **Ctrl-A** toggles between
+the default view and all sessions, keeping your search. The header shows the
+current filter and hidden count. **Ctrl-/** opens a wrapped full-detail preview.
+Rows keep agent, interface, status, model, session and task/PR details; resume
+also keeps recency and origin.
+
+The default views are unattached sessions for `t open`, inactive conversations
+for `t resume`, and unattached sessions with no pending work for `t kill`. Kill
+requires a clean worktree and proof that its commits have landed; open/unknown
+PRs and uncertain work stay hidden until Ctrl-A. `t resume --live` starts with
+all conversations; `t open --attached` starts with all sessions.
 
 CLI opens use this terminal for the first selection and new tabs for the rest,
 with attach commands when tabs are unavailable; desktop selections open in the

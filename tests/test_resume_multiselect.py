@@ -44,9 +44,7 @@ def test_resume_multi_opens_selected_live_slot_and_revives_dead_slot(zsh, tmp_pa
     rows = log.read_text().splitlines()
     assert any("4" in row and "⬡ codex" in row and "● active" in row and "Live work" in row for row in rows)
     assert any("3" in row and "✱ claude" in row and "Fix login" in row for row in rows)
-    args = (tmp_path / "fzf.log.args").read_text()
-    assert "--with-nth=-1" in args and "--preview=printf \"%s\\n\" {11}" in args
-    assert "--bind=ctrl-/:toggle-preview" in args and "Ctrl-/ details" in args
+    assert "--with-nth=-1" in (tmp_path / "fzf.log.args").read_text()
 
 
 def test_resume_multi_fg_guard_prevents_any_revive(zsh, tmp_path):
@@ -165,3 +163,65 @@ def test_resume_multi_only_remote_foreground_attaches_on_exact_host(zsh, tmp_pat
     assert ("REMOTE mini api:fg3 --cli" in r.stdout and "TAB t open api:fg5 --cli --host mini" in r.stdout) or (
         "REMOTE mini api:fg5 --cli" in r.stdout and "TAB t open api:fg3 --cli --host mini" in r.stdout
     ), r.stdout
+
+
+def test_resume_default_filters_live_rows_without_dropping_their_details(zsh, tmp_path):
+    stub = tmp_path / "stubbin" / "fzf"
+    stub.write_text(FZF_ALL)
+    stub.chmod(0o755)
+    wt3 = zsh.home / "code" / ".worktrees" / "api" / "3"
+    wt4 = zsh.home / "code" / ".worktrees" / "api" / "4"
+    wt3.mkdir(parents=True)
+    wt4.mkdir(parents=True)
+    proj = zsh.home / ".claude" / "projects" / re.sub(r"[^A-Za-z0-9]", "-", str(wt3))
+    proj.mkdir(parents=True)
+    (proj / "c3.jsonl").write_text('{"type":"user","message":{"content":"Dead work"}}\n')
+    tab = "\t"
+    files = tmp_path / "picker"
+    shell = (
+        f"_dev_session_rows() {{ print -r -- '-{tab}{wt4}{tab}api-4{tab}detached{tab}active{tab}Live work{tab}codex'; }}; "
+        f"_t_fzf_filtered() {{ print -r -- \"$1\" > {files}.filtered; "
+        f"print -r -- \"$2\" > {files}.all; print -r -- \"$6\" > {files}.show; return 1; }}; "
+    )
+    env = dict(FAKE_SESSIONS="dev-api-4", FAKE_SESSION_PATH=str(wt4))
+    r = zsh(shell + "_t_resume api; echo rc=$?", _tty=True, **env)
+    assert "rc=1" in r.stdout, r.stdout
+    filtered = pathlib.Path(f"{files}.filtered").read_text()
+    all_rows = pathlib.Path(f"{files}.all").read_text()
+    assert "Dead work" in filtered and "Live work" not in filtered
+    assert "Dead work" in all_rows and "Live work" in all_rows and "⬡ codex" in all_rows
+    assert pathlib.Path(f"{files}.show").read_text().strip() == ""
+    r = zsh(shell + "_t_resume api --live; echo rc=$?", _tty=True, **env)
+    assert "rc=1" in r.stdout, r.stdout
+    assert pathlib.Path(f"{files}.show").read_text().strip() == "1"
+    restored = pathlib.Path(f"{files}.filtered").read_text()
+    all_rows = pathlib.Path(f"{files}.all").read_text()
+    assert "Dead work" in restored and "Live work" not in restored
+    assert "Dead work" in all_rows and "Live work" in all_rows
+    # Non-interactive use has no Ctrl-A; its sole inactive row keeps the old
+    # automatic resume behavior even though a live row was excluded.
+    zsh.log.write_text("")
+    r = zsh(shell + "_t_resume api; echo rc=$?", **env)
+    assert "rc=0" in r.stdout and "Resuming c3 in dev-api-3" in r.stdout, (r.stdout, r.stderr)
+    assert "claude -r c3" in zsh.log.read_text()
+
+
+def test_resume_live_only_still_opens_toggleable_picker(zsh, tmp_path):
+    stub = tmp_path / "stubbin" / "fzf"
+    stub.write_text(FZF_ALL)
+    stub.chmod(0o755)
+    wt = zsh.home / "code" / ".worktrees" / "api" / "4"
+    wt.mkdir(parents=True)
+    tab = "\t"
+    files = tmp_path / "picker"
+    shell = (
+        f"_dev_session_rows() {{ print -r -- '-{tab}{wt}{tab}api-4{tab}detached{tab}active{tab}Live work{tab}codex'; }}; "
+        f"_t_fzf_filtered() {{ print -r -- \"$1\" > {files}.filtered; "
+        f"print -r -- \"$2\" > {files}.all; return 1; }}; "
+        "_t_dev() { echo UNEXPECTED-ATTACH; }; "
+    )
+    r = zsh(shell + "_t_resume api; echo rc=$?", _tty=True,
+            FAKE_SESSIONS="dev-api-4", FAKE_SESSION_PATH=str(wt))
+    assert "rc=1" in r.stdout and "UNEXPECTED-ATTACH" not in r.stdout, r.stdout
+    assert pathlib.Path(f"{files}.filtered").read_text().strip() == ""
+    assert "Live work" in pathlib.Path(f"{files}.all").read_text()

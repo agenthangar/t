@@ -497,26 +497,37 @@ def _slot_line(r, st, name_w, avail, host_w=None, model_w=7):
             f"{host}{r['slot']:<{name_w}} {st.y}{summary}{st.r}")
 
 
-def _session_picker_rows(rows, remote=False):
-    """The list's full display plus stable targets, shared by open and close pickers.
-
-    Keep complete model names and summaries: fzf can scroll and its wrapped
-    preview exposes every detail on a narrow terminal. Metadata is never parsed
-    back from padded display text.
-    """
+def _session_picker_rows(rows, remote=False, scoped=False):
+    """Resume-style rows: target fields, full details, then compact display."""
     if not rows:
         return []
-    st = Style(tty=False)
-    name_w = max(7, *(len(r["slot"]) for r in rows))
-    model_w = max(7, *(len(str(r.get("model") or "-")) + 2 for r in rows))
-    host_w = max(4, *(len(r["host"]) for r in rows)) if remote else None
-    host_header = f"{'HOST':<{host_w}} " if remote else ""
-    header = f"{'STATUS':<7}{'UI':<10}{'MODEL':<{model_w}} {host_header}{'SESSION':<{name_w}} WORKING ON"
-    out = ["-\t-\t-\t" + header]
+    cells = []
     for row in rows:
-        display = _slot_line(row, st, name_w, max(1, len(row.get("summary") or "")),
-                             host_w=host_w, model_w=model_w)
-        out.append("\t".join((row["host"], row["slot"], row["state"], display)))
+        label = row["slot"]
+        repo, separator, slot = label.partition(":") if ":" in label else label.rpartition("-")
+        if not separator:
+            repo, slot = label, "-"
+        elif separator == ":":
+            slot = ":" + slot
+        agent = row.get("agent") or "claude"
+        attached = row["state"] == "attached" or (row["state"] == "app" and row.get("context") == "active")
+        status = ("●" if attached else "○") + (" ✓" if row.get("context") == "active" else "  ")
+        status += " ↻" if _PR_WIP_RE.search(row.get("summary") or "") else "  "
+        parts = ([] if scoped else [repo]) + [slot, f"{_agent_glyph(agent)} {agent}"]
+        if remote:
+            parts.append(row["host"])
+        parts += ["▣ desktop" if row["state"] == "app" else "› cli", status, str(row.get("model") or "-")]
+        cells.append(parts)
+    widths = [max(len(parts[i]) for parts in cells) for i in range(len(cells[0]))]
+    widths[-1] = min(widths[-1], 24)
+    out = []
+    for row, parts in zip(rows, cells):
+        summary = row.get("summary") or ""
+        details = "  ".join(parts) + "  " + summary
+        parts[-1] = _truncate(parts[-1], widths[-1])
+        display = "  ".join(value.ljust(width) for value, width in zip(parts, widths))
+        display += "  " + summary
+        out.append("\t".join((row["host"], row["slot"], row["state"], details, display)))
     return out
 
 
@@ -9185,7 +9196,7 @@ def build_parser():
   %(prog)s api 2               Attach to api's slot 2
 
 select several sessions:
-  Space/Tab marks ✓; Enter opens. CLI extras use tabs; desktop opens in-app.
+  Space/Tab marks ✓; Enter opens; Ctrl-A shows all. Extras use tabs or app.
 
 desktop → CLI:
   %(prog)s api 2 --cli
@@ -9201,9 +9212,10 @@ Run `t help open` for session targeting, defaults, and remote details.""",
   Use `t open <repo> fg` to select that repo's foreground sessions.
   Bare t open lists sessions across all local repos, even from a worktree.
   t open <repo> filters. Attached CLI and loaded desktop rows are hidden;
-  --attached includes them. Explicit slots still open directly.
-  Pickers retain STATUS, UI, MODEL, SESSION and WORKING ON, including idle
-  and desktop rows. Space/Tab marks multiple rows; Enter opens them.
+  Ctrl-A toggles that filter; --attached starts with all rows.
+  Explicit slots still open directly. Compact resume-style rows retain agent,
+  UI, status, model, session and task details, including idle/desktop rows.
+  Space/Tab marks multiple rows; Enter opens them.
   Ctrl-/ shows full details. The first CLI opens here, others use tabs;
   desktop rows open in the app. Remote pickers add HOST. --fg opens one.
 
@@ -9301,8 +9313,10 @@ REMOTE SESSIONS
             "desktop workspace can close while Codex stays open, after its worktree passes ownership checks. "
             "Bare `t kill` picks across all local sessions; `t kill <repo>` filters to that repo. "
             "Space/Tab marks multiple rows and Enter closes the selection, retaining each target's "
-            "normal confirmation and desktop release checks. The picker retains STATUS, UI, MODEL, "
-            "SESSION and WORKING ON; Ctrl-/ shows full details. `-r` picks remote sessions with HOST. "
+            "normal confirmation and desktop release checks. Initially shows only unattached sessions "
+            "with clean, merged work; pending or uncertain work stays hidden. Ctrl-A toggles all rows. "
+            "The compact resume-style picker retains every session detail; Ctrl-/ opens its full preview. "
+            "`-r` picks remote sessions with their host. "
             "Explicit numbers default to the cwd repo, so `t session close 3` kills this repo's slot 3 "
             "and `t session close all` kills every slot for "
             "it. A foreground / :fg row from `t session list` (a bare `claude`, or one in a tmux "
@@ -9352,17 +9366,19 @@ REMOTE SESSIONS
             "skipped), rebuilding a reaped worktree from its branch first, then resumes the pick "
             "in a fresh dev slot and attaches. Names default to "
             "the cwd repo; outside any repo dir a bare `t session resume` scans every worktree repo. "
-            "One candidate is taken, several fzf-pick (an explicit slot with no TTY takes the "
-            "newest). The picker MULTI-SELECTS: space-mark several rows with a ✓ (tab works "
-            "too) and every marked dead "
+            "One inactive candidate is taken when there are no excluded live rows; otherwise "
+            "fzf picks (an explicit slot with no TTY takes the newest). The picker MULTI-SELECTS: "
+            "Space/Tab marks rows with a ✓, Ctrl-A toggles inactive and all sessions, and Ctrl-/ "
+            "shows the full wrapped row details. Every marked dead "
             "slot revives into its own detached dev slot — the first attaches, the rest open "
             "in NEW terminal tabs (Terminal.app/iTerm2; `t session open` hints when tabs are "
             "impossible — ssh, unrecognized terminal, no Accessibility; --fg takes a single "
             "pick only). "
-            "LIVE slots are hidden by default (a stderr count names them — `t session open` is "
-            "the verb for a running slot); -l/--live lists them as labeled rows — "
-            "'● active' / '● on <host>' — and picking one ATTACHES in place (locally or on "
-            "its host) instead of resuming; naming a live slot explicitly always attaches. "
+            "LIVE slots are excluded from the initial view but remain available through Ctrl-A; "
+            "-l/--live starts with all rows and Ctrl-A restores the inactive view. Live rows "
+            "show '● active' / '● on <host>'; picking one attaches to its existing owner "
+            "(locally or on its host) instead of resuming; naming a live slot explicitly "
+            "always attaches. "
             "A conversation is live by its ID too: one resumed into ANOTHER slot (or run as "
             "a foreground session) is shown as a row pointing at that owner — never resumed "
             "a second time. --host H revives the pick on H instead of here. "
@@ -9376,7 +9392,7 @@ REMOTE SESSIONS
     sp.add_argument("-f", "--fg", action="store_true", help="resume inline in THIS terminal (no tmux slot)")
     sp.add_argument("-a", "--all", action="store_true", help="scan every worktree repo (the default outside a repo dir)")
     sp.add_argument("-l", "--live", action="store_true",
-        help="also list LIVE slots (hidden by default) as '● active' / '● on <host>' rows that attach on pick")
+        help="start with all sessions shown; Ctrl-A restores the inactive-only view (live rows attach on pick)")
     sp.add_argument("-r", "--remote", action="store_true",
         help="pull the latest transcripts from every $REMOTE_HOSTS host first (direct rsync; "
              "csync is periodic and needs a shell on the far side), then scan as usual")
@@ -9861,9 +9877,9 @@ def main(argv):
     argv = _hosts_argv(argv)
     if argv == ["__update-prompt"]:
         return _t_offer_update()
-    if argv in (["__session-picker-rows"], ["__session-picker-rows", "--remote"]):
+    if argv and argv[0] == "__session-picker-rows" and set(argv[1:]) <= {"--remote", "--repo"}:
         rows = _parse_rows(sys.stdin.read(), host_prefixed=True)
-        for line in _session_picker_rows(rows, remote="--remote" in argv):
+        for line in _session_picker_rows(rows, remote="--remote" in argv, scoped="--repo" in argv):
             print(line)
         return 0
     if argv == ["__update-check"]:
