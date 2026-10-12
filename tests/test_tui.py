@@ -65,9 +65,10 @@ def test_review_can_scroll_and_back_out_with_action_still_visible(t_mod):
 
 
 @pytest.mark.parametrize('state,keys,expected', [
+    ('logged-in', ['space', 'space', 'enter', 'enter'], ['claude', 'codex']),
     ('logged-in', ['space', 'space', 'enter', 'y'], ['claude', 'codex']),
     ('logged-in', ['space', 'space', 'enter', 'n', 'q'], []),
-    ('logged-out', ['space', 'enter', 'y'], ['codex', 'cursor']),
+    ('logged-out', ['space', 'enter', 'enter'], ['codex', 'cursor']),
 ])
 def test_login_multiselect_reviews_before_running(t_mod, monkeypatch, state, keys, expected):
     # Healthy tools can be selected; recommended logins can be deselected.
@@ -90,6 +91,18 @@ def test_login_multiselect_reviews_before_running(t_mod, monkeypatch, state, key
     assert calls == expected
     assert any('Pick agents to log in' in line for frame in ui.frames for line in frame)
     assert any('/fixture/codex login' in line for frame in ui.frames for line in frame)
+    assert any('enter' in line and 'RUN COMMANDS' in line for frame in ui.frames for line in frame)
+    assert ui.restored
+
+
+@pytest.mark.parametrize('key,confirmed', [('enter', True), ('y', True), ('q', False), ('abort', False)])
+def test_install_review_defaults_to_enter(t_mod, monkeypatch, key, confirmed):
+    ui = make_ui(t_mod, ['enter', key])
+    monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
+    items = [{'t': 'toggle', 'alias': 'codex', 'value': 'install', 'checked': True}]
+    plan = lambda: [{'step': 'install', 'do': 'run', 'label': 'Install codex'}]
+    assert t_mod._install_wizard(items, plan) is confirmed
+    assert any('enter' in line and 'RUN COMMANDS' in line for frame in ui.frames for line in frame)
     assert ui.restored
 
 

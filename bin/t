@@ -1210,6 +1210,12 @@ def _confirm(msg):
     return bool(r) and r.lower() in ("y", "yes")
 
 
+def _confirm_run(msg):
+    """Enter runs reviewed commands; EOF cancels, unlike an empty input line."""
+    r = _prompt(f"{msg} [Enter to run / n to cancel] ", default="yes")
+    return bool(r) and r.lower() in ("y", "yes")
+
+
 _INSTRUCTIONS_BEGIN = "<!-- t instructions: begin -->"
 _INSTRUCTIONS_END = "<!-- t instructions: end -->"
 _INSTRUCTIONS_STARTER = """# Preferred agent workflow
@@ -4287,7 +4293,7 @@ def cmd_login(cfg, args):
             print("t login: use --dry-run to inspect or -y to run the displayed logins", file=sys.stderr)
             return 2
         try:
-            if input("Run these login commands? [y/N] ").strip().lower() not in ("y", "yes"):
+            if not _confirm_run("Run these login commands?"):
                 return int(probe_failed())
         except (EOFError, KeyboardInterrupt):
             return 130
@@ -4963,7 +4969,7 @@ def _install_walk(steps, close=False):
 def _install_wizard(items, plan, login=False):
     """The `t setup` TUI over the install items: ONE list (agents, login, options,
     hosts) under a single cursor, present entries locked under a dim ✓; enter → the
-    diff-style review (y apply · n back · q quit), re-planned from the live marks
+    diff-style review (enter runs · n back · q quit), re-planned from the live marks
     through `plan()`. Returns True on apply (items mutated in place), False on abort;
     raises off a tty → _install_prompt_flow."""
     ui = _RailUI()
@@ -5015,9 +5021,9 @@ def _install_wizard(items, plan, login=False):
             return "empty"
         body = [f"{rail}  {ln}" for ln in lines]
         k = ui.page("review — what will run", body,
-                    accept=("y", "n", "esc", "q", "abort"), keys="n back · q quit",
-                    primary=("y", "APPLY CHANGES", ""))
-        if k == "y":
+                    accept=("enter", "y", "n", "esc", "q", "abort"), keys="n back · q quit",
+                    primary=("enter", "RUN COMMANDS", ""))
+        if k in ("enter", "y"):
             ui.commit(ui.head("Running", marker=f"{st.g}◇{st.r}") + body)
             return True
         return False if k in ("n", "esc") else None
@@ -5065,7 +5071,7 @@ def _install_prompt_flow(items, plan):
     print(f"\n{st.b}review{st.r} — what will run:\n")
     for ln in lines:
         print(f"  {ln}")
-    return _confirm("proceed?")
+    return _confirm_run("Run these commands?")
 
 
 def cmd_install(cfg, args):
@@ -9678,7 +9684,7 @@ REMOTE SESSIONS
             "here, then offers the rest on ONE list — installed and logged-in entries locked "
             "under a ✓, the missing ones pre-marked — with the vendors' install one-liners and "
             "each agent's login command shown verbatim in a review before anything runs "
-            "(y runs, n goes back, q aborts). Logins are interactive (browser, or a device "
+            "(Enter runs, n goes back, q aborts). Logins are interactive (browser, or a device "
             "code over ssh / --headless). Every REMOTE_HOSTS host is then offered the same "
             "run over ssh -t. Re-running is safe: present entries are never re-offered — "
             "running an installer again is its own OPTIONS row (reinstall <agent>), which "
