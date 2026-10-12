@@ -1635,6 +1635,52 @@ _dev_kill_fg() {
   return 2
 }
 
+# Local, read-only proof that closing a slot will leave no pending Git work.
+# Unknown status, missing main, and unmerged commits fail closed. A squash merge
+# can have a different commit id, so accept an identical first-parent main tree
+# or the exact head recorded for a merged PR in the existing state cache.
+_dev_kill_no_pending_work() {
+  local cwd="$1" head main base tree trees dirty origin slug file cache
+  [[ -d $cwd && -e $cwd/.git ]] || return 1
+  dirty=$(git -C "$cwd" status --porcelain --untracked-files=all 2>/dev/null) || return 1
+  [[ -z $dirty ]] || return 1
+  head=$(git -C "$cwd" rev-parse --verify HEAD 2>/dev/null) || return 1
+  main=$(git -C "$cwd" rev-parse --verify refs/remotes/origin/main 2>/dev/null)
+  if [[ -n $main ]]; then
+    git -C "$cwd" merge-base --is-ancestor "$head" "$main" 2>/dev/null && return 0
+    base=$(git -C "$cwd" merge-base "$head" "$main" 2>/dev/null)
+    tree=$(git -C "$cwd" rev-parse 'HEAD^{tree}' 2>/dev/null)
+    if [[ -n $base && -n $tree ]]; then
+      trees=$(git -C "$cwd" log --first-parent --format=%T "$base..$main" 2>/dev/null)
+      [[ $'\n'$trees$'\n' == *$'\n'$tree$'\n'* ]] && return 0
+    fi
+  fi
+  origin=$(git -C "$cwd" remote get-url origin 2>/dev/null) || return 1
+  slug=${origin%.git}; slug=${slug#*github.com:}; slug=${slug#*github.com/}
+  [[ $slug == */* && $slug != *:* ]] || return 1
+  cache="${XDG_CACHE_HOME:-$HOME/.cache}/claude-sessions/pr"
+  for file in "$cache/${slug//\//#}"\#*.head(N); do
+    [[ -f ${file%.head} && $(<"${file%.head}") == MERGED && $(<"$file") == "$head" ]] && return 0
+  done
+  return 1
+}
+
+# Read per-host --details rows on that host, returning only labels whose owner
+# is unattached and whose worktree has proven no pending work. The remote picker
+# calls this once per host over zsh -lic; an older host without it is unknown.
+_dev_kill_safe_labels() {
+  local sid cwd label state context summary agent model
+  while IFS=$'\t' read -r sid cwd label state context summary agent model; do
+    [[ $state == detached || ( $state == app && $context != active ) ]] || continue
+    [[ $label == *:* ]] && continue  # foreground agents are bound to a terminal
+    [[ $summary == *'merged, still in progress'* \
+       || $summary == *'#'<->' open'* \
+       || $summary == *'#'<->' ?'* ]] && continue
+    _dev_kill_no_pending_work "$cwd" || continue
+    print -r -- "$label"
+  done
+}
+
 # _dev_kill_pick [repo] [force] [remote_only] — select one or more rows from the
 # same detailed, cross-host inventory used by the session list. The picker keeps
 # its state, model, UI, and title columns; only the first three hidden fields are
@@ -1666,22 +1712,46 @@ _dev_kill_pick() {
 
   local -a formatter=( python3 "$T_HOME/bin/t" __session-picker-rows )
   [[ -n $remote_only ]] && formatter+=( --remote )
+  [[ -n $repo ]] && formatter+=( --repo )
   local display; display=$(print -r -- "$rows" | "${formatter[@]}") || return 1
   [[ -n $display ]] || return 1
+
+  local -A safe
+  local labels label host row rest target rcmd safe_display= line
+  labels=$(print -r -- "$rows" | awk -F'\t' '$1 == "local" {print substr($0, index($0, "\t")+1)}' | _dev_kill_safe_labels)
+  for label in "${(@f)labels}"; do safe[local/$label]=1; done
+  if [[ -n $remote_only ]]; then
+    for host in ${(k)REMOTE_HOSTS}; do
+      [[ $'\n'$rows == *$'\n'$host$'\t'* ]] || continue
+      target="${REMOTE_HOSTS[$host]}"
+      rcmd='_dev_session_rows --details | _dev_kill_safe_labels'
+      labels=$(ssh -o ConnectTimeout=3 -o BatchMode=yes "$target" "zsh -lic ${(qq)rcmd}" 2>/dev/null) || continue
+      for label in "${(@f)labels}"; do safe[$host/$label]=1; done
+    done
+  fi
+  for row in "${(@f)display}"; do
+    host=${row%%$'\t'*}
+    rest=${row#*$'\t'}; label=${rest%%$'\t'*}
+    [[ -n ${safe[$host/$label]:-} ]] && safe_display+="$row"$'\n'
+  done
+  safe_display=${safe_display%$'\n'}
+
   if [[ ! -t 0 || ! -t 1 ]] || ! command -v fzf >/dev/null 2>&1; then
-    print -r -- "$display" | cut -f4-
-    print -u2 -- 't kill: select sessions in a terminal with fzf, or name a session explicitly'
+    if [[ -n $safe_display ]]; then
+      print -r -- "$safe_display" | cut -f4
+    else
+      print -r -- 'No unattached sessions with no pending work.'
+    fi
+    print -u2 -- 't kill: use Ctrl-A in the interactive picker to see all, or name a session explicitly'
     return 1
   fi
 
   local picked
-  picked=$(print -r -- "$display" | _t_fzf --multi --marker='✓' \
-    --bind 'space:toggle+down,ctrl-/:toggle-preview' --header-lines=1 \
-    --delimiter=$'\t' --with-nth=-1 --preview 'printf "%s\n" {4}' \
-    --preview-window='down,4,wrap,hidden' --no-hscroll --prompt='t kill > ' --height=70% --reverse \
-    --header=$'MULTI-SELECT · Space/Tab mark ✓\nEnter kills selected sessions · Ctrl-/ full details · Esc cancels') || return 130
+  picked=$(_t_fzf_filtered "$safe_display" "$display" kill \
+    'unattached · no pending work' "$(_dev_agent_legend)" '' \
+    --preview='printf "%s\n" {4}') || return 130
   [[ -n $picked ]] || return 130
-  local line host label state target rcmd rc=0 prepo slot
+  local state rc=0 prepo slot
   for line in "${(@f)picked}"; do
     host=${line%%$'\t'*}
     line=${line#*$'\t'}

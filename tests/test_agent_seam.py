@@ -2164,8 +2164,8 @@ def test_zsh_resume_picker_shows_the_display_column_for_every_row(zsh, tmp_path)
     assert {row[4:12] for row in rows} == {"✱ claude", "⬡ codex "}
     # the fzf header spells the full legend — every supported tool, not just the ones on screen
     header = (tmp_path / "fzf.log.header").read_text().splitlines()
-    assert header[0] == "MULTI-SELECT · Space/Tab mark ✓"
-    assert header[1] == "Enter opens: here + extra tabs"
+    assert header[0] == "Space/Tab select · Enter resume · Ctrl-/ details · Esc cancel"
+    assert header[1] == "All sessions · Ctrl-A restore filter"
     assert header[2].startswith("✱ claude · ⬡ codex · ◆ cursor")
 
 
@@ -2534,7 +2534,7 @@ def test_open_local_multi_picker(zsh, tmp_path, tabs):
     """A batch opens extra slots before attaching, keeping aliases and local scope."""
     (zsh.home / "code/api").mkdir(parents=True)
     stub = tmp_path / "stubbin/fzf"
-    stub.write_text("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$FZF_LOG\"\nsed '1d'\n")
+    stub.write_text("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$FZF_LOG\"\ncat\n")
     stub.chmod(0o755)
     log = tmp_path / "fzf.args"
     snippet = r'''
@@ -2557,7 +2557,8 @@ def test_open_local_multi_picker(zsh, tmp_path, tabs):
     assert "new-session" not in calls and "dev-web-3" not in calls
     args = log.read_text()
     assert "--multi" in args and "space:toggle+down" in args
-    assert "MULTI-SELECT · Space/Tab mark ✓\nEnter opens: here + extra tabs" in args
+    assert "Space/Tab select · Enter open · Ctrl-/ details · Esc cancel" in args
+    assert "unattached · Ctrl-A show all" in args
 
 
 def test_open_picker_cancel_does_not_create_session(zsh, tmp_path):

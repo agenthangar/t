@@ -99,8 +99,9 @@ def test_desktop_only_repo_close_lists_or_closes_reserved_slot(tmp_path, args):
     if args.endswith("all"):
         assert (tmp_path / "home" / "close-actions").read_text().strip() == "_app-close api 13"
     else:
-        assert "▣ desktop" in result.stdout and "api-13" in result.stdout
-        assert "MODEL" in result.stdout and "WORKING ON" in result.stdout
+        # An unverified worktree is hidden by the default safe-session filter.
+        assert "No unattached sessions with no pending work." in result.stdout
+        assert "Ctrl-A" in result.stderr and "explicitly" in result.stderr
         assert not (tmp_path / "home" / "close-actions").exists()
     assert "No sessions" not in result.stdout + result.stderr
     assert not (tmp_path / "home" / "tmux-actions").exists()
