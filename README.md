@@ -170,7 +170,7 @@ for a host's login shell.
 | Command | Purpose |
 | --- | --- |
 | `t session open <repo> [slot]` | Open or reattach a task; `--new` starts another, `--codex` selects Codex, `--app` opens the desktop app, `--cli` resumes in the terminal |
-| `t issue list [repo]` | List issues in a GitHub repository |
+| `t issue list [repo] [-a]` | List issues in the current, named, or all registered GitHub repositories |
 | `t issue status [repo] <number>` | Inspect existing work without starting an agent |
 | `t issue start [repo] [number ...]` | Continue or start work on one or several issues |
 | `t session list [-r] [-a]` | List sessions across local or remote hosts and repositories |
@@ -314,7 +314,8 @@ current chat IDs; close an untracked CLI first to avoid duplicate conversation o
 ### Working on GitHub issues
 
 ```sh
-t issue list                         # open issues in the current registered repo
+t issue list                         # current repo, or all registered repos from ~
+t issue list --all                   # all registered repos, even inside a checkout
 t issue list api --state all         # all issues in the registered "api" repo
 t issue list --repo owner/repo       # choose a GitHub repository explicitly
 t issue list owner/repo --json       # machine-readable GitHub issues
@@ -326,12 +327,17 @@ t issue start https://github.com/owner/repo/issues/123 --codex
 ```
 
 Every verb accepts a registered repository alias or GitHub `owner/repo`, either
-positionally or with `--repo`. If omitted, `t` uses the current registered
-checkout. When there is no checkout to infer from, interactive use presents the
-registered-repository picker. An issue URL already names its repository. When a
-repo is supplied both positionally and with `--repo`, the command rejects the
-conflict. `--json` and other non-interactive uses require an explicit repo or an
-inferable current checkout; they never prompt.
+positionally or with `--repo`. `list` shows the current checkout's issues, or
+issues from all registered GitHub repositories when run outside a checkout;
+`-a`/`--all` widens the list from inside a checkout. Its `REPO`, `ISSUE`,
+`STATE`, and `TITLE` columns identify each result, and `--json` includes the
+canonical repository. `--state all` includes closed issues and is independent
+of the repository scope. An explicit repository and `--all` conflict.
+
+Without a repository, `status` and `start` use the current registered checkout
+or present a repository picker interactively. An issue URL already names its
+repository. Supplying a repo both positionally and with `--repo` is an error.
+JSON, remote scans, and other non-interactive commands never prompt.
 
 `list` and `status` are read-only. `start` accepts explicit issue numbers or a
 GitHub issue URL. With no number, it presents the same multi-select picker used

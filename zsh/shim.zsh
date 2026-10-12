@@ -725,7 +725,7 @@ _t() {
     fi
     if [[ ${words[CURRENT]} == -* ]]; then
       case $action in
-        list) _values 'flag' --state --json -h --help ;;
+        list) _values 'flag' --repo -a --all --state --json -h --help ;;
         status) _values 'flag' --repo --json -h --help ;;
         start) _values 'flag' --repo --codex --claude --allow-incomplete-check -h --help ;;
       esac
