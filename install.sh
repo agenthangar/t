@@ -78,7 +78,7 @@ valid_source() {
     [[ "$(cat "$root/.t-install-version")" == 1 ]] || return 1
     for asset in install.sh t.plugin.zsh local.zsh.example \
         claude/settings.json.example bin/t bin/claude-stamp-tmux bin/cursor-beam \
-        libexec/t_issue.py libexec/t_issue_policy.txt \
+        libexec/t_issue.py libexec/t_issue_policy.txt libexec/t_history.py \
         claude/commands/tpush.md claude/commands/tpop.md \
         codex/prompts/tpush.md codex/prompts/tpop.md; do
         [[ -f "$root/$asset" ]] || return 1

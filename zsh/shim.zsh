@@ -747,7 +747,7 @@ _t() {
     return
   fi
   case $group in
-    session) actions=(open list close restart push pop resume cd move read view-plan paste search open-app) ;;
+    session) actions=(open list close restart push pop resume history cd move read view-plan paste search open-app) ;;
     repo) actions=(list cd locate create clone) ;;
     cursor) actions=(list resume send) ;;
     agentcore) actions=(invoke stop) ;;
@@ -773,7 +773,7 @@ _t() {
   fi
   # Old spellings remain usable once typed, but are not offered at top level.
   case $group in
-    open|ls|kill|restart|push|pop|resume|cd|beam|read|plan|paste|find|app)
+    open|ls|kill|restart|push|pop|resume|history|cd|beam|read|plan|paste|find|app)
       action=$group; group=session; first=3 ;;
     repos)
       group=repo; first=4
@@ -825,6 +825,15 @@ _t() {
         else _values 'direction or repo' push pull ${(k)DEV_REPOS}; fi
       elif (( CURRENT == first + 1 )); then _message 'local slot number'
       else _values 'flag' $app_flags; fi ;;
+    session/history)
+      local -a history_flags=(--limit --page --refresh --json -h --help)
+      if [[ ${words[CURRENT-1]} == --limit || ${words[CURRENT-1]} == --page ]]; then
+        _message 'positive integer'
+      elif [[ ${words[CURRENT]} == -* ]] || (( CURRENT > first + 1 )) \
+           || { (( CURRENT == first + 1 )) && [[ ${words[first]} == <-> ]]; }; then
+        _values 'flag' "${history_flags[@]}"
+      elif (( CURRENT == first )); then _values 'repo or slot' ${(k)DEV_REPOS} 1 2 3 4
+      else _message 'local slot number'; fi ;;
     session/restart)
       if [[ ${words[CURRENT]} == -* ]]; then _values 'flag' --dry-run -h --help
       elif (( CURRENT == first )); then _values 'repo' ${(k)DEV_REPOS}

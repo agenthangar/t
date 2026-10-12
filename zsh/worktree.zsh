@@ -26,7 +26,8 @@ _dev_app_slot_reserved() {
 # A t issue launch reserves its freshly created worktree until the task and
 # ownership stamp are installed. Other open/resume paths must not race it.
 _dev_issue_preparing() {
-  local gitdir
+  local gitdir reservation="${1:h}/.${1:t}.history-reservation"
+  if [[ -f $reservation && $(<$reservation) != ${T_HISTORY_TOKEN:-} ]]; then return 0; fi
   gitdir=$(git -C "$1" rev-parse --absolute-git-dir 2>/dev/null) || return 1
   [[ -f "$gitdir/t-issue-preparing" ]]
 }

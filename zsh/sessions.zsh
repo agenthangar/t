@@ -1498,6 +1498,7 @@ _dev_kill_one() {
   # keeps the tie but starts EMPTY — so every command below (the kill itself) was
   # "command not found". Pinned by test_zshrc_never_declares_a_tied_special_….
   local wt; wt=$(tmux display-message -p -t "=$session:" '#{session_path}' 2>/dev/null)
+  _dev_history_record "$(_dev_session_sid "$session")" "$agent" "$wt" close
   local _kerr
   if _kerr=$(tmux kill-session -t "=$session:" 2>&1); then echo "Killed $session"
   else echo "t kill: tmux kill-session $session failed${_kerr:+: $_kerr}" >&2; return 1; fi
@@ -2012,6 +2013,14 @@ _dev_recovery_watch() {
 # A launch claims its canonical worktree and, for resumes, its conversation id.
 # The shell keeps these advisory locks until tmux has been created and stamped;
 # lock files remain on disk so a waiting process never locks a replaced inode.
+# Durable revision evidence belongs to the conversation, never just a slot branch.
+_dev_history_record() {
+  local sid=$1 agent=$2 dir=$3 event=${4:-launch} tx
+  [[ -n $sid && $sid != - ]] || return 0
+  tx=$(_dev_agent_transcript "$agent" "$sid" "$dir" 2>/dev/null)
+  python3 "$T_HOME/libexec/t_history.py" record "$sid" "$agent" "$dir" "$tx" "$event" >/dev/null 2>&1 || true
+}
+
 _dev_with_launch_locks() {
   emulate -L zsh
   local dir=${1:A} sid=$2 callback=$3; shift 3
@@ -2042,6 +2051,10 @@ _dev_with_launch_locks() {
 
 _dev_launch_preflight() {
   local session=$1 dir=${2:A} sid=$3 name owner_path rows rc host row_sid row_cwd row_name
+  local history_reservation="${dir:h}/.${dir:t}.history-reservation"
+  if [[ -f $history_reservation && $(<$history_reservation) != ${T_HISTORY_TOKEN:-} ]]; then
+    print -u2 -- 't: history workspace launch is reserved; retry after preparation completes'; return 1
+  fi
   if _dev_app_slot_reserved "$dir"; then
     print -u2 -- "t: the desktop app still reserves $dir; use t open --cli for its verified handoff"
     return 1
@@ -2135,7 +2148,25 @@ _dev_new_session_claimed() {
   [[ -n $skip_prepare ]] && prep=    # worktree mode: <dir> is already on its branch
   tmux send-keys -t "=$session:" "${prep}$(_dev_agent_new_cmd "$agent" "$sid" "$6"); exit" Enter || { tmux kill-session -t "=$session:"; return 1; }
   _dev_launch_startup_check "$session" "$logfile" || return 1
+  [[ $agent == claude ]] && _dev_history_record "$sid" "$agent" "$dir" launch
   _dev_recovery_watch "$session"
+}
+
+# Attach-only history action: no generic open path can create a replacement owner.
+_t_history_attach() {
+  local label=$1 sid=$2 dir=${3:A} agent=$4 session="dev-$1" actual_sid actual_dir actual_agent immutable
+  tmux has-session -t "=$session:" 2>/dev/null || { print -u2 't history: selected owner exited; reopen history'; return 1; }
+  local identity
+  identity=$(tmux display-message -p -t "=$session:" '#{session_id}|#{session_path}' 2>/dev/null) || return 1
+  immutable=${identity%%|*}; actual_dir=${identity#*|}
+  [[ $immutable == \$<-> ]] || { print -u2 't history: could not verify selected owner identity'; return 1; }
+  actual_sid=$(_dev_session_sid "$session")
+  actual_agent=$(_dev_agent_of_session "$session")
+  [[ $actual_sid == $sid && ${actual_dir:A} == $dir && $actual_agent == $agent ]] || {
+    print -u2 't history: selected owner changed; reopen history'; return 1
+  }
+  if [[ -n $TMUX ]]; then tmux switch-client -t "$immutable:"
+  else tmux attach-session -t "$immutable:"; fi
 }
 
 # t issue holds the repository allocation lock across prepare + launch. These

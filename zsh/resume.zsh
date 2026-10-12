@@ -1853,6 +1853,7 @@ _t_app_close_slot() {
     fi
   done
   _t_app_close_verify "$dir" "$sid" "$codex_home" "$rollout" "$archived" || return 1
+  _dev_history_record "$sid" codex "$dir" close
   if tmux has-session -t "=$session:" 2>/dev/null; then
     tmux kill-session -t "=$session:" || {
       print -u2 -- 't kill: could not close the parked tmux slot'; return 1
@@ -1864,6 +1865,7 @@ _t_app_close_slot() {
   # Recheck after tmux/process cleanup: another writer may have claimed this
   # thread in the meantime. The marker is the final mutation.
   _t_app_close_verify "$dir" "$sid" "$codex_home" "$rollout" "$archived" || return 1
+  _dev_history_record "$sid" codex "$dir" close
   [[ -f $marker && ! -L $marker && $(<"$marker") == codex-app ]] || {
     print -u2 -- 't kill: desktop reservation changed during close'; return 1
   }
@@ -1908,8 +1910,13 @@ _dev_resume_session_claimed() {
   tmux set-environment -t "=$session" DEV_AGENT "$agent" || { tmux kill-session -t "=$session:"; return 1; }
   # `; exit` so quitting Claude tears the session down rather than leaving an idle
   # shell (see _dev_new_session for the full rationale).
-  tmux send-keys -t "=$session:" "$(_dev_agent_resume_cmd "$agent" "$sid"); exit" Enter || { tmux kill-session -t "=$session:"; return 1; }
+  local resume_command; resume_command=$(_dev_agent_resume_cmd "$agent" "$sid")
+  if [[ $5 == history && $agent == codex ]]; then
+    resume_command+=" --cd ${(q)dir} --no-daemon"
+  fi
+  tmux send-keys -t "=$session:" "$resume_command; exit" Enter || { tmux kill-session -t "=$session:"; return 1; }
   _dev_launch_startup_check "$session" "$logfile" || return 1
+  _dev_history_record "$sid" "$agent" "$dir" resume
   _dev_recovery_watch "$session"
 }
 
@@ -2380,6 +2387,10 @@ _tbeam_kill_owner() {
   for s in ${(f)"$(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep '^dev-')"}; do
     slot_sid=$(_dev_session_sid "$s")
     if [[ "$slot_sid" == "$sid" ]]; then
+      local source_dir source_agent
+      source_dir=$(tmux display-message -p -t "=$s:" '#{session_path}' 2>/dev/null)
+      source_agent=$(_dev_agent_of_session "$s")
+      _dev_history_record "$sid" "$source_agent" "$source_dir" handoff
       tmux kill-session -t "=$s:" 2>/dev/null && { print -r -- "$s"; return 0; }
     fi
   done
