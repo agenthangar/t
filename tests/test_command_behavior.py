@@ -8,13 +8,13 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 CONTRACT = json.loads((ROOT / 'ui/command-contract.json').read_text())
-READONLY = [pytest.param(mode['argv'], id=f'{name}-{key}')
+READONLY = [pytest.param(mode['argv'], mode.get('terminal', True), id=f'{name}-{key}')
             for name, entry in CONTRACT['commands'].items()
             for key, mode in entry['modes'].items() if mode['read_only']]
 
 
-@pytest.mark.parametrize('argv', READONLY)
-def test_readonly_commands_never_offer_updates(t_mod, monkeypatch, argv):
+@pytest.mark.parametrize('argv,terminal', READONLY)
+def test_readonly_commands_never_offer_updates(t_mod, monkeypatch, argv, terminal):
     # Check the real dispatch preamble in a terminal with an update available.
     # Handler behavior is covered by each inventory entry's concrete regressions.
     monkeypatch.setattr(t_mod, '_t_update_interactive', lambda: True)
@@ -27,7 +27,7 @@ def test_readonly_commands_never_offer_updates(t_mod, monkeypatch, argv):
     monkeypatch.setattr(t_mod, 'cmd_cursor', handler)
     assert t_mod.main(argv) == 0
     assert len(seen) == 1
-    assert t_mod._command_readonly(argv)
+    assert t_mod._command_readonly(argv, terminal=terminal)
 
 
 @pytest.mark.parametrize('argv', [
@@ -50,6 +50,21 @@ def test_readonly_aliases_share_the_prompt_contract(t_mod, monkeypatch, argv):
 ])
 def test_action_and_forwarded_arguments_are_not_readonly(t_mod, argv):
     assert not t_mod._command_readonly(argv)
+
+
+def test_history_readonly_follows_terminal_context(t_mod, monkeypatch):
+    import io
+
+    argv = ['session', 'history', 'api', '1']
+    tty_in, tty_out = io.StringIO(), io.StringIO()
+    tty_in.isatty = tty_out.isatty = lambda: True
+    with monkeypatch.context() as context:
+        context.setattr(t_mod.sys, 'stdin', tty_in)
+        context.setattr(t_mod.sys, 'stdout', tty_out)
+        assert not t_mod._command_readonly(argv)
+        assert t_mod._command_readonly([*argv, '--json'])
+        context.setattr(t_mod.sys, 'stdin', io.StringIO())
+        assert t_mod._command_readonly(argv)
 
 
 @pytest.mark.parametrize('width', [80, 44, 32])

@@ -4908,7 +4908,7 @@ def _t_offer_update(installation=None):
     return 10
 
 
-def _command_readonly(argv):
+def _command_readonly(argv, *, terminal=None):
     """Classify t-owned read-only modes before any update prompt or config load.
 
     Forwarded command arguments belong to the child, so a literal --json or
@@ -4923,6 +4923,10 @@ def _command_readonly(argv):
     options = tail[:tail.index("--")] if "--" in tail else tail
     if verb == "cursor":
         return bool(tail and tail[0] in ("ls", "list", "--ls"))
+    if verb == "history":
+        if terminal is None:
+            terminal = sys.stdin.isatty() and sys.stdout.isatty()
+        return "--json" in options or not terminal
     if any(flag in options for flag in ("--dry-run", "--json", "--dump", "--statusline")):
         return True
     if verb in ("help", "ls", "read", "plan", "doctor", "session-rows"):
@@ -4947,7 +4951,7 @@ def _command_readonly(argv):
 
 def _t_auto_update(argv):
     """Return None to continue, or replace this process with the updated CLI."""
-    public = {"open", "app", "ls", "kill", "restart", "push", "pop", "resume", "cd",
+    public = {"open", "app", "ls", "kill", "restart", "push", "pop", "resume", "history", "cd",
               "beam", "read", "plan", "paste", "find", "cursor", "repos", "config",
               "setup", "new", "checkout", "instructions", "install", "integrate",
               "permissions", "trust", "doctor"}
@@ -5285,10 +5289,13 @@ def _install_prompt_flow(items, plan, login=False):
                     return False
                 it["checked"] = answer.lower() in ("y", "yes")
             else:
-                it["checked"] = _confirm(f"  {it['alias']} ({it['value']})?")
+                answer = _prompt(f"  {it['alias']} ({it['value']})? [y/N/q] ")
+                if answer is None or answer.lower() == "q":
+                    return False
+                it["checked"] = answer.lower() in ("y", "yes")
     lines = _install_render(plan(), st)
     if not lines:
-        return "empty" if login else False
+        return "empty"
     print(f"\n{st.b}Running{st.r}:\n" if login else f"\n{st.b}review{st.r} — what will run:\n")
     for ln in lines:
         print(f"  {ln}")
@@ -5356,6 +5363,9 @@ def cmd_install(cfg, args):
         wizard_ran = False
         print(f"(inline UI unavailable: {e} — falling back to prompts)", file=sys.stderr)
         confirmed = _install_prompt_flow(items, plan)
+    if confirmed == "empty":
+        print("No installs selected; nothing run.")
+        return 0
     if not confirmed:
         if not wizard_ran:
             print("t install: aborted — nothing run")

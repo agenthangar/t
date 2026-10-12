@@ -7,6 +7,7 @@ findings it feeds. The tty loop / subprocess walk are glue, excluded from covera
 import json
 import os
 import pathlib
+from types import SimpleNamespace
 
 import pytest
 
@@ -138,6 +139,32 @@ def test_install_items_no_login_unmarks_logins(t_mod):
     assert all(not it["checked"] for it in items if it.get("kind") == "login")
     # an installed-but-logged-out agent still gets a login TOGGLE, not a lock
     assert any(it.get("kind") == "login" and it["alias"] == "codex" for it in items)
+
+
+@pytest.mark.parametrize('answer,expected,prompts', [('n', 0, 6), (None, 130, 1)])
+def test_plain_install_fallback_distinguishes_empty_selection_from_eof(
+        t_mod, monkeypatch, answer, expected, prompts):
+    monkeypatch.setattr(t_mod.sys.stdin, 'isatty', lambda: True)
+    monkeypatch.setattr(t_mod.sys.stdout, 'isatty', lambda: True)
+    monkeypatch.setattr(t_mod, '_install_probe', _probed)
+    monkeypatch.setattr(t_mod, '_install_wizard',
+                        lambda *a, **kw: (_ for _ in ()).throw(OSError('no raw terminal')))
+    monkeypatch.setattr(t_mod, '_install_walk',
+                        lambda *a, **kw: pytest.fail('empty or aborted selection ran installers'))
+    monkeypatch.setattr(t_mod, '_install_then_setup',
+                        lambda *a, **kw: pytest.fail('empty or aborted selection started setup'))
+    calls = []
+
+    def respond(prompt):
+        calls.append(prompt)
+        if answer is None:
+            raise EOFError
+        return answer
+
+    monkeypatch.setattr('builtins.input', respond)
+    args = t_mod.build_parser().parse_args(['install'])
+    assert t_mod.cmd_install(SimpleNamespace(hosts={}), args) == expected
+    assert len(calls) == prompts
 
 
 def test_install_result_collects_checked_toggles(t_mod):

@@ -29,6 +29,10 @@ class HistoryError(ValueError):
     pass
 
 
+class HistoryCancelled(HistoryError):
+    """The user left a history selection without choosing work."""
+
+
 def clean(value):
     return ' '.join(re.sub(r'[\x00-\x1f\x7f-\x9f]', ' ', str(value or '')).split())
 
@@ -677,27 +681,19 @@ class HistoryCommand:
             private_write(snapshot, rows)
             private_write(state, dict(page=page, query=query, limit=limit))
             helper = shlex.join([sys.executable, str(Path(self.root) / 'libexec/t_history.py'), 'picker', str(snapshot), str(state)])
-            reload = helper + ' show {q}'
             header = state.with_suffix('.header')
-            controls = 'Enter resume · Ctrl-F next page · Ctrl-B previous page · Ctrl-R remote refresh · Ctrl-/ details · Esc cancel'
             _, total = page_rows(rows, query, limit, page)
-            header.write_text(f'{controls}\nPage {page} · {total} conversations · {limit} per page')
-            header_command = 'cat ' + shlex.quote(str(header))
+            header.write_text(f'Page {page} · {total} conversations · {limit} per page\n')
             rows_file = state.with_suffix('.rows')
             rows_file.write_text(picker_rows(rows, query, limit, page))
-            rows_command = 'cat ' + shlex.quote(str(rows_file))
-            bindings = [f'{event}:execute-silent({helper} {action} {{q}})+reload-sync({rows_command})+transform-header({header_command})' for event, action in [('change', 'show'), ('ctrl-f', 'next'), ('ctrl-b', 'previous')]] + ['ctrl-/:toggle-preview']
-            snippet = '. "$1"; shift; _t_fzf "$@"'
+            snippet = '. "$1"; shift; _t_fzf_paginated "$@"'
             result = subprocess.run(['sh', '-c', snippet, 't-history', str(Path(self.root) / 'ui/fzf.sh'),
-                    '--disabled', '--sync', '--no-multi', '--delimiter=\t', '--with-nth=2', '--no-hscroll',
-                    '--print-query', '--expect=enter,ctrl-r', '--query=' + query,
-                    '--prompt=history ' + alias + '> ',
-                    '--header=' + header.read_text(),
-                    '--bind=' + ','.join(bindings), '--preview=' + helper + ' details {1}', '--preview-window=hidden:wrap:down:40%'],
-                    input=picker_rows(rows, query, limit, page), stdout=subprocess.PIPE, text=True,
+                    str(header), str(rows_file), helper, helper + ' details {1}', query,
+                    'history ' + alias + '> '],
+                    stdout=subprocess.PIPE, text=True,
                     env={k: v for k, v in os.environ.items() if not k.startswith('COV_CORE_')})
             if result.returncode in (1, 130):
-                return None, '', query
+                return None, 'cancel', query
             if result.returncode:
                 raise HistoryError('history picker unavailable; install fzf')
             lines = result.stdout.splitlines()
@@ -705,7 +701,7 @@ class HistoryCommand:
             if key == 'ctrl-r':
                 return None, key, query
             if len(lines) < 3:
-                return None, '', query
+                return None, 'cancel', query
             index = int(lines[2].split('\t')[0])
             if not 0 <= index < len(rows):
                 raise HistoryError('invalid selection')
@@ -719,6 +715,8 @@ class HistoryCommand:
 
     def choose_slot(self, rows, alias):
         slots = sorted({a.get('slot') for row in rows for a in row['associations'] if a.get('slot')}, key=int)
+        if not slots:
+            return ''
         if len(slots) == 1:
             return slots[0]
         options = [dict(repo=self.identity(alias), sid=slot, agent='slot', title=f'Slot {slot}', updated=max((r['updated'] for r in rows if any(a.get('slot') == slot for a in r['associations'])), default=0), associations=[], sources=[], prs=[], mentions=[]) for slot in slots]
@@ -776,7 +774,7 @@ class HistoryCommand:
         options = [dict(repo=self.identity(alias), sid=name, agent='revision', title=title, updated=0, associations=[], sources=[], prs=[], mentions=[]) for name, title in [('main', 'Historical revision unavailable: start from current main'), ('cancel', 'Cancel and keep history available')]]
         selected, _, _ = self.pick(options, alias + ' · revision unavailable')
         if not selected or selected['sid'] != 'main':
-            raise HistoryError('resume cancelled; history and workspaces retained')
+            raise HistoryCancelled('resume cancelled; history and workspaces retained')
         directory = self.cfg.repos[alias]
         run(['git', '-C', directory, 'fetch', 'origin', 'main'])
         return run(['git', '-C', directory, 'rev-parse', 'origin/main^{commit}']).strip()
@@ -1041,7 +1039,7 @@ class HistoryCommand:
         if not slot and tty and not args.json:
             slot = self.choose_slot(rows, alias)
             if slot is None:
-                return 0
+                return 130
             rows = self.records(alias, slot, owners)
         self.branch_prs(rows, refresh=args.refresh)
         self.pr_states(rows, refresh=args.refresh)
@@ -1050,8 +1048,23 @@ class HistoryCommand:
             print(json.dumps(dict(version=VERSION, repo=self.identity(alias), slot=slot, page=args.page, limit=args.limit, total=total, conversations=selected)))
             return 0
         if not tty:
-            for row in selected:
-                print(format_row(row))
+            if selected:
+                cells = []
+                for row in selected:
+                    owners = ','.join(clean(owner.get('host', 'local') + ':' + owner.get('slot', '?'))
+                                      for owner in row.get('owners', [])) or 'inactive'
+                    hosts = ','.join(sorted({a.get('host', 'local') for a in row['associations']})) or 'local'
+                    branches = ','.join(dict.fromkeys(a.get('branch', '') for a in row['associations']
+                                                     if a.get('branch'))) or '?'
+                    prs = ' '.join(f'#{pr["number"]}[{pr.get("state", "?")}]' for pr in row['prs'][:3]) or '—'
+                    date = datetime.datetime.fromtimestamp(row.get('updated', 0)).strftime('%Y-%m-%d')
+                    cells.append((date, row['agent'], row['sid'], row['title'] or 'Untitled conversation',
+                                  hosts, owners, branches, prs))
+                print(f'history   {alias}' + (f' slot {slot}' if slot else ' · all slots'))
+                print('\n'.join(self.api['_table_lines'](
+                    ('DATE', 'AGENT', 'SESSION', 'TITLE', 'HOST', 'OWNER', 'BRANCH', 'PRS'), cells)))
+            else:
+                print('No retained conversations for this slot.')
             print(f'Page {args.page} · {total} conversations · {args.limit} per page')
             return 0
         query = ''
@@ -1066,9 +1079,11 @@ class HistoryCommand:
                 self.pr_states(rows, refresh=True)
                 continue
             if not row:
-                return 0
+                return 130
             try:
                 return self.resume(alias, row)
+            except HistoryCancelled:
+                return 130
             except (HistoryError, OSError, ValueError) as error:
                 print(f't history: {error}', file=sys.stderr)
                 rows = self.records(alias, slot, owners)
@@ -1099,7 +1114,7 @@ def picker(argv):
     elif action == 'previous':
         settings['page'] = max(1, settings['page'] - 1)
     private_write(state, settings)
-    Path(state).with_suffix('.header').write_text('Enter resume · Ctrl-F next page · Ctrl-B previous page · Ctrl-R remote refresh · Ctrl-/ details · Esc cancel\n' + f'Page {settings["page"]} · {total} conversations · {settings["limit"]} per page')
+    Path(state).with_suffix('.header').write_text(f'Page {settings["page"]} · {total} conversations · {settings["limit"]} per page\n')
     output = picker_rows(rows, value, settings['limit'], settings['page'])
     Path(state).with_suffix('.rows').write_text(output)
     print(output, end='')

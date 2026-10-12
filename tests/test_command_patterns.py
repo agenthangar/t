@@ -36,7 +36,7 @@ def test_declared_modes(t_mod, command, mode, spec):
         parser.parse_args(spec["argv"])
     assert spec["patterns"] and set(spec["patterns"]) <= set(CONTRACT["patterns"])
     assert isinstance(spec["read_only"], bool)
-    assert t_mod._command_readonly(spec["argv"]) == spec["read_only"]
+    assert t_mod._command_readonly(spec["argv"], terminal=spec.get("terminal", True)) == spec["read_only"]
 
 
 def test_inventory_lint_rejects_missing_routes_modes_and_test_references(t_mod):

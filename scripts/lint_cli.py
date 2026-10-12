@@ -305,6 +305,8 @@ def check_command_patterns(parser, command_groups, contract, *, root=ROOT):
                 errors.append(f"{name} {mode} names an unknown or empty mode pattern")
             if not isinstance(spec.get("read_only"), bool):
                 errors.append(f"{name} {mode} needs a read_only policy")
+            if "terminal" in spec and not isinstance(spec["terminal"], bool):
+                errors.append(f"{name} {mode} terminal context must be boolean")
             argv = spec.get("argv", [])
             if not isinstance(argv, list) or argv[:2] != name.split() or not accepts(argv):
                 errors.append(f"{name} {mode} example does not parse as its canonical command")

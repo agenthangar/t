@@ -29,7 +29,7 @@ def picker():
             return subprocess.run(['tmux', '-S', socket, *args], env=env, text=True,
                                   capture_output=True, check=check)
 
-        def start(empty=False, width=90, mode='open', shell='/bin/sh', *, hostile_opts=False, profile='filtered'):
+        def start(empty=False, width=90, height=26, mode='open', shell='/bin/sh', *, hostile_opts=False, profile='filtered'):
             rows = ('local\tapi-2\tdetached\tapi  2  ⬡ codex  ○  Alpha completed task\n'
                     'local\tweb-4\tapp\tweb  4  ⬡ codex  ▣  Beta full task detail END-OF-TITLE\n'
                     'local\tapi-7\tattached\tapi  7  ✱ claude  ●  Pending task\n')
@@ -58,11 +58,13 @@ def picker():
                           + mode + ' unattached "⬡ codex · ✱ claude" "" --prompt="' + mode + ' > "')
             if profile == 'single':
                 picker_cmd = '_t_fzf_single open "Saved sessions" --delimiter="$(printf "\\t")" --with-nth=-1 --prompt="single > " < "$HOME/default"'
+            elif profile == 'multi':
+                picker_cmd = '_t_fzf_multi open "Saved sessions" --delimiter="$(printf "\\t")" --with-nth=-1 --prompt="multi > " < "$HOME/default"'
             script = (f'. {shlex.quote(str(ROOT / "ui/fzf.sh"))}\n'
                       + picker_cmd + ' > "$HOME/selected"\n'
                       'printf done > "$HOME/done"\n')
             (root / 'run.sh').write_text(script)
-            tmux('-f', '/dev/null', 'new-session', '-d', '-x', str(width), '-y', '26',
+            tmux('-f', '/dev/null', 'new-session', '-d', '-x', str(width), '-y', str(height),
                  shell + ' ' + shlex.quote(str(root / 'run.sh')))
 
         def wait(text):
@@ -228,3 +230,15 @@ def test_single_picker_abort_keys_override_hostile_fzf_options(picker, source, k
     start(hostile_opts=source, profile='single')
     wait('2/2')
     assert finish(key) == []
+
+
+@pytest.mark.parametrize('width,height', [(80, 24), (44, 20), (32, 12)])
+@pytest.mark.parametrize('profile,prompt', [('single', 'single'), ('multi', 'multi'), ('filtered', 'open')])
+def test_primary_action_and_focused_row_visible_in_small_viewports(picker, width, height, profile, prompt):
+    start, wait, keys, finish = picker
+    start(width=width, height=height, profile=profile)
+    screen = wait('▸')
+    assert 'Enter open · Esc' in screen
+    assert any('▸' in line and 'api' in line for line in screen.splitlines())
+    assert f'{prompt} >' in screen
+    assert len(finish()) == 1

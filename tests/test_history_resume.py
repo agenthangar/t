@@ -321,7 +321,11 @@ def test_history_cli_forms_inference_json_and_readonly(t_mod, app, monkeypatch, 
     output = json.loads(capsys.readouterr().out)
     assert output['total'] == 1 and output['limit'] == 50
     assert app.execute(SimpleNamespace(target=['repo', '5'], json=False, refresh=False, page=1, limit=50)) == 0
-    assert 'Page 1' in capsys.readouterr().out
+    listing = capsys.readouterr().out
+    assert 'history   repo slot 5' in listing
+    assert all(heading in listing for heading in ('DATE', 'AGENT', 'SESSION', 'TITLE', 'HOST', 'OWNER', 'BRANCH', 'PRS'))
+    assert 'same-sid' in listing and 'Implement history' in listing and 'Page 1' in listing
+    assert '\x1b' not in listing
 
 
 def test_deleted_and_recreated_same_branch_head_has_different_generation(app, history, store, git_repo):
@@ -699,7 +703,8 @@ def test_interactive_history_controls_preserve_records(app, history, monkeypatch
     monkeypatch.setattr(app, 'pick', lambda *a: next(selections))
     monkeypatch.setattr(app, 'resume', lambda *a: pytest.fail('control must not launch'))
     target = ['repo'] if mode in ('cancel-slot', 'choose-slot') else ['repo', '1']
-    assert app.execute(SimpleNamespace(target=target, json=False, refresh=True, page=1, limit=50)) == 0
+    expected = 0 if mode in ('empty', 'owners-unavailable') else 130
+    assert app.execute(SimpleNamespace(target=target, json=False, refresh=True, page=1, limit=50)) == expected
     if mode == 'retry-refresh-cancel':
         assert len([call for call in calls if call[0] == 'refresh']) == 2
     if mode == 'empty':

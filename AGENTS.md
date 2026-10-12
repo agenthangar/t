@@ -5,7 +5,7 @@
 Before changing a public command, read [the command and terminal contract](ui/README.md)
 and [the command inventory](ui/command-contract.json). Classify every new command
 and conditional mode; compatibility aliases inherit the canonical entry. Use
-the shared `_RailUI` or `_t_fzf_single`/`_t_fzf_multi`/`_t_fzf_filtered`
+the shared `_RailUI` or `_t_fzf_single`/`_t_fzf_multi`/`_t_fzf_filtered`/`_t_fzf_paginated`
 profile for interactive behavior. Update the inventory, help, examples, and
 contract tests with the implementation. Lists and status are read-only and
 must never open a picker or an automatic update prompt. Run

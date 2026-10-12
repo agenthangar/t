@@ -218,8 +218,7 @@ def test_config_menu_interrupt_restores_terminal(t_mod, config_cli, monkeypatch)
         raise KeyboardInterrupt
     ui.pick = interrupt
     monkeypatch.setattr(t_mod, "_RailUI", lambda: ui)
-    with pytest.raises(KeyboardInterrupt):
-        t_mod.cmd_config(cfg, SimpleNamespace(show=False))
+    assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == 130
     assert ui.restored and local.read_text() == "# keep me\n"
 
 

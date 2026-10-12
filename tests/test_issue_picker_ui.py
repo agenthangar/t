@@ -89,7 +89,7 @@ def test_issue_picker_uses_shared_multiselect_and_preserves_full_rows(tmp_path):
     assert 'ctrl-f:execute-silent(sh "$T_PICKER_TOGGLE" default)+reload-sync(cat "$T_PICKER_CURRENT")' in args
     assert 'transform-header(cat "$T_PICKER_CURRENT_HEADER")' in args
     assert "--preview-window=hidden:wrap:down:40%" in args
-    assert "Space/Tab select · Enter start · Ctrl-/ details" in (tmp_path / "default-header").read_text()
+    assert "Enter start · Esc · Space/Tab mark ✓ · Ctrl-/ details" in (tmp_path / "default-header").read_text()
     assert "Open issues · Ctrl-A show all · Ctrl-F defaults · 1 hidden" in (tmp_path / "default-header").read_text()
     assert "All issues · Ctrl-A show all · Ctrl-F defaults" in (tmp_path / "all-header").read_text()
     assert list(tmp_path.glob("t-picker.*")) == []
@@ -142,7 +142,7 @@ def test_named_picker_profiles_own_cardinality_controls_and_theme(tmp_path):
         assert result.stdout == "one\ntwo\n"
         args = (tmp_path / "args").read_text()
         assert expected in args and "--margin=1,2" in args and "--pointer=▸" in args
-        assert "Esc cancel" in args and "--prompt=pick > " in args
+        assert " · Esc" in args and "--prompt=pick > " in args
         forbidden = subprocess.run(
             ["sh", "-c", f'. "$1"; {profile} {arguments} --bind=space:accept', "sh", str(PICKER)],
             env=env, capture_output=True, text=True,

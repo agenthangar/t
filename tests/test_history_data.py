@@ -36,7 +36,7 @@ def store(history):
 
 
 @pytest.fixture
-def app(history, store, tmp_path, monkeypatch):
+def app(history, store, tmp_path, monkeypatch, t_mod):
     repo = tmp_path / 'repo'
     repo.mkdir()
     worktrees = tmp_path / 'worktrees' / 'repo'
@@ -52,7 +52,9 @@ def app(history, store, tmp_path, monkeypatch):
 
     cfg = SimpleNamespace(repos={'repo': str(repo)}, hosts={}, worktree_root=str(worktrees.parent),
                           repo_of_dir=repo_of_dir)
-    value = history.HistoryCommand(cfg, {'_t_source_root': lambda: str(ROOT), '_parse_rows': lambda *a, **k: []}, store)
+    value = history.HistoryCommand(cfg, {'_t_source_root': lambda: str(ROOT),
+                                         '_parse_rows': lambda *a, **k: [],
+                                         '_table_lines': t_mod._table_lines}, store)
     monkeypatch.setattr(value, 'identity', lambda alias: 'org/repo')
     return value
 

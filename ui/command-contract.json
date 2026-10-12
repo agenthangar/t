@@ -463,6 +463,107 @@
         }
       }
     },
+    "session history": {
+      "patterns": [
+        "list",
+        "machine",
+        "single"
+      ],
+      "renderer": "fzf",
+      "scope": "explicit/inferred repository and slot",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_history_picker.py::test_real_isolated_tmux_picker_paging_global_search_refresh_and_cancel"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "session",
+            "history",
+            "api",
+            "1"
+          ],
+          "patterns": [
+            "single"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_history_picker.py::test_real_isolated_tmux_picker_paging_global_search_refresh_and_cancel"
+          ],
+          "notes": "Paginated single choice. Ctrl-F next and Ctrl-B previous page are the documented exception to filtered-picker Ctrl-F defaults."
+        },
+        "pagination": {
+          "argv": [
+            "session",
+            "history",
+            "api",
+            "1",
+            "--limit",
+            "25",
+            "--page",
+            "2"
+          ],
+          "patterns": [
+            "single"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_history_picker.py::test_default_pages_are_50_and_global_search_precedes_slicing"
+          ]
+        },
+        "refresh": {
+          "argv": [
+            "session",
+            "history",
+            "api",
+            "1",
+            "--refresh"
+          ],
+          "patterns": [
+            "single"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_history_resume.py::test_interactive_history_controls_preserve_records"
+          ],
+          "notes": "Refreshes remote metadata; an interactive selection may still resume."
+        },
+        "non_tty": {
+          "argv": [
+            "session",
+            "history",
+            "api",
+            "1"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_history_resume.py::test_history_cli_forms_inference_json_and_readonly"
+          ],
+          "notes": "Without stdin and stdout TTYs, print a scoped table and page footer without an update prompt."
+        },
+        "json": {
+          "argv": [
+            "session",
+            "history",
+            "api",
+            "1",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_history_resume.py::test_history_cli_forms_inference_json_and_readonly",
+            "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
+          ]
+        }
+      }
+    },
     "session cd": {
       "patterns": [
         "action",
