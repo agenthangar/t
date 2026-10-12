@@ -85,6 +85,20 @@ def check_issue_picker(source):
     return errors
 
 
+def check_issue_help(help_text):
+    """Keep repository selection visible on the bare issue command."""
+    errors = []
+    help_text = " ".join(help_text.split())
+    for syntax in ("t issue list [repo]", "t issue status [repo] <id>",
+                   "t issue start [repo] [id ...]"):
+        if syntax not in help_text:
+            errors.append("t issue help must show " + syntax)
+    for detail in ("owner/repo", "--repo", "current registered checkout"):
+        if detail not in help_text:
+            errors.append("t issue help must explain " + detail)
+    return errors
+
+
 def check(parser, command_groups, instructions):
     """Return violations of the explicit issue verbs and public command shape."""
     errors = []
@@ -135,6 +149,17 @@ def check(parser, command_groups, instructions):
         errors.append("issue parser must expose list, status, and start as verbs")
     elif issue_registry != set(issue_sub.choices):
         errors.append("issue parser verbs must match its public command registry")
+    if issue_sub is not None:
+        for verb in issue_registry:
+            leaf = issue_sub._name_parser_map.get(verb)
+            if leaf is None:
+                continue
+            repo_option = leaf._option_string_actions.get("--repo")
+            if repo_option is None or repo_option.dest != "repo" or "[repo]" not in leaf.format_usage():
+                errors.append(f"issue {verb} must expose positional repo and --repo")
+            if verb == "list" and not any(action.dest == "repository" and action.nargs == "?"
+                                          for action in leaf._actions):
+                errors.append("issue list must keep optional positional repository separate from --repo")
 
     def accepts(words):
         with contextlib.redirect_stderr(io.StringIO()):
@@ -145,6 +170,7 @@ def check(parser, command_groups, instructions):
         return True, args
 
     for words in (["issue", "list"], ["issue", "list", "repo", "--state", "all", "--json"],
+                  ["issue", "list", "--repo", "repo"],
                   ["issue", "status", "123", "--json"],
                   ["issue", "status", "123", "--repo", "repo"],
                   ["issue", "start"], ["issue", "start", "repo", "123", "124", "--codex"]):
@@ -174,6 +200,7 @@ def main():
     loader.exec_module(module)
     errors = check(module.build_parser(), module.COMMAND_GROUPS,
                    (ROOT / "AGENTS.md").read_text())
+    errors.extend(check_issue_help(module._group_help("issue")))
     for error in errors:
         print("CLI contract: " + error, file=sys.stderr)
     if not errors:

@@ -9151,6 +9151,23 @@ def _wrap_help(body):
 
 
 def _group_help(group):
+    if group == "issue":
+        return _wrap_help("""USAGE
+  t issue <verb> [repo] [arguments] [flags]
+  t issue list [repo] [--state open|closed|all] [--json]
+  t issue status [repo] <id> [--json]
+  t issue start [repo] [id ...] [--codex|--claude]
+
+List repository issues, inspect existing agent work, or start agents.
+
+REPOSITORIES
+  Use a registered alias or GitHub owner/repo; --repo works with every verb.
+  Without a repo, t uses the current registered checkout. If none is known,
+  interactive commands let you select a registered repository.
+  An issue URL includes its repository and can replace [repo] <id>.
+
+Run `t help issue <verb>` for flags and arguments.
+""")
     width = max(map(len, COMMAND_GROUPS[group]))
     rows = [f"  {action:<{width}}  { _command_description(group, action)}"
             for action in COMMAND_GROUPS[group]]
@@ -9280,21 +9297,31 @@ def build_parser():
     issue_sub = sp.add_subparsers(dest="action", metavar="<verb>")
     p._group_parsers["issue"] = sp
     issue_list = issue_sub.add_parser("list", help="list issues in a repository",
-        description="List issues in a registered GitHub repository. Defaults to the current checkout.")
-    issue_list.add_argument("repo", nargs="?", help="registered repository alias or GitHub owner/name")
+        usage="%(prog)s [repo] [--repo REPO] [--state open|closed|all] [--json]",
+        description="List GitHub issues. Use a registered alias or owner/repo. The repository "
+            "defaults to the current checkout; interactive use can select a registered repository.")
+    issue_list.add_argument("repository", nargs="?", metavar="repo",
+                            help="registered repository alias or GitHub owner/name")
+    issue_list.add_argument("--repo", help="repository alias or owner/repo (alternative to positional repo)")
     issue_list.add_argument("--state", choices=("open", "closed", "all"), default="open",
                             help="issue state (default: open)")
     issue_list.add_argument("--json", action="store_true", help="output machine-readable issues")
     issue_status = issue_sub.add_parser("status", help="inspect existing work for an issue",
+        usage="%(prog)s [repo] <id> [--repo REPO] [--json]",
         description="Check local and remote worktrees, agent sessions, Codex Cloud, Cursor Cloud, "
-            "and GitHub without starting or attaching. Repository defaults to the current checkout.")
+            "and GitHub without starting or attaching. Use a registered alias or owner/repo, "
+            "or omit it to use the current checkout or interactive repository picker. "
+            "An issue URL includes its repository.")
     issue_status.add_argument("target", nargs="+", help="issue number, repo and number, or GitHub issue URL")
     issue_status.add_argument("--repo", help="registered repository alias or GitHub owner/name")
     issue_status.add_argument("--json", action="store_true", help="output machine-readable discovery report")
     issue_status.add_argument("--scan-host", action="store_true", help=argparse.SUPPRESS)
     issue_start = issue_sub.add_parser("start", help="continue or start work on issues",
+        usage="%(prog)s [repo] [id ...] [--repo REPO] [flags]",
         description="Find existing work before starting agents. Without an issue number, select "
-            "issues from the inferred or specified repository. Multiple independent issues can "
+            "issues from the inferred or specified repository. Use a registered alias or "
+            "owner/repo; interactive use can select a registered repository. "
+            "An issue URL includes its repository. Multiple independent issues can "
             "be selected. An issue with an existing owner is continued, not duplicated.")
     issue_start.add_argument("target", nargs="*", help="issue numbers, repository and numbers, or GitHub issue URLs")
     issue_start.add_argument("--repo", help="registered repository alias or GitHub owner/name")

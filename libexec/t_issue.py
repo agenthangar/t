@@ -257,6 +257,27 @@ class IssueCommand:
         return ['zsh', '-lic', 'setopt no_monitor no_notify; source ' +
                 shlex.quote(str(Path(self.root) / 't.plugin.zsh')) + '; ' + snippet]
 
+    def resolve_repo(self, repo, *, interactive=True):
+        """Choose a repo only when neither an explicit target nor cwd supplies one."""
+        if repo:
+            return repo
+        inferred = self.cfg.repo_of_dir(os.getcwd())[0]
+        if inferred:
+            return inferred
+        if not interactive or not sys.stdin.isatty() or not sys.stdout.isatty():
+            raise IssueError('cannot infer repository; specify [repo] after the verb or '
+                             '--repo OWNER/REPO (for example: t issue list agenthangar/t)')
+        if not self.cfg.repos:
+            raise IssueError('no registered repositories to select; specify --repo OWNER/REPO '
+                             'to list issues, or use t repo clone first')
+        choices = {'\t'.join([clean_text(alias), '0', 'repository',
+                    clean_text(f'{alias} · {directory}')]): alias
+                   for alias, directory in sorted(self.cfg.repos.items())}
+        selected = self.pick_rows(list(choices), list(choices), 'select', 'Registered repositories',
+                                  'Select the repository whose issues you want to work with',
+                                  multi=False, noun='repositories')
+        return choices[selected[0]]
+
     def issues(self, repo, state='open'):
         identity = repository(repo, self.cfg, require_checkout=False)['repo']
         data = decoded(command(['gh', 'api', '--paginate', '--slurp',
@@ -269,7 +290,11 @@ class IssueCommand:
                 for page in data for row in page if 'pull_request' not in row]
 
     def list_issues(self, args):
-        rows = self.issues(args.repo, args.state)
+        positional = getattr(args, 'repository', None)
+        if positional and args.repo:
+            raise IssueError('specify the repository once, positionally or with --repo')
+        repo = self.resolve_repo(positional or args.repo, interactive=not args.json)
+        rows = self.issues(repo, args.state)
         if args.json:
             print(json.dumps(rows))
         elif not rows:
@@ -279,7 +304,7 @@ class IssueCommand:
                 print(clean_text(f'#{row["number"]}  {row["state"]:6}  {row["title"]}  {row["url"]}'))
         return 0
 
-    def pick_rows(self, default, all_rows, action, label, legend, *, multi=True):
+    def pick_rows(self, default, all_rows, action, label, legend, *, multi=True, noun='issues'):
         """Keep shared fzf controls and styling; large lists travel in private files."""
         if not sys.stdin.isatty():
             raise IssueError('selection requires a terminal; use t issue list or provide issue numbers')
@@ -290,17 +315,20 @@ class IssueCommand:
             snippet = ('. "$1"; defaults=$(cat -- "$2"); all_rows=$(cat -- "$3"); '
                        'shift 3; _t_fzf_filtered "$defaults" "$all_rows" "$@"')
             argv = ['sh', '-c', snippet, 't-issue-picker', str(Path(self.root) / 'ui/fzf.sh'),
-                    *map(str, paths), action, label, legend, '', '--prompt=issues> ']
+                    *map(str, paths), action, label, legend, '', f'--prompt={noun}> ']
             if not multi:
+                header = ('Enter selects a repository · Ctrl-/ details · Esc cancels' if noun == 'repositories' else
+                          'Enter continues · Ctrl-/ details · Esc leaves work unchanged')
                 argv += ['--no-multi', '--bind=space:accept,tab:down,btab:up',
-                         '--header=Enter continues · Ctrl-/ details · Esc leaves work unchanged']
+                         '--header=' + header]
             env = {k: v for k, v in os.environ.items() if not k.startswith('COV_CORE_')}
-            env['T_PICKER_ALL_LABEL'] = 'All issues' if multi else 'Existing work'
+            env['T_PICKER_ALL_LABEL'] = ('Registered repositories' if noun == 'repositories' else
+                                         'All issues' if multi else 'Existing work')
             result = subprocess.run(argv, env=env, stdout=subprocess.PIPE, text=True)
             if result.returncode in (1, 130):
                 raise IssueError('selection cancelled; existing work left unchanged')
             if result.returncode:
-                raise IssueError('issue picker unavailable; install fzf or provide issue numbers')
+                raise IssueError(f'{noun} picker unavailable; install fzf or specify targets explicitly')
             selected = list(dict.fromkeys(result.stdout.splitlines()))
             if not selected or any(row not in all_rows for row in selected) or (not multi and len(selected) != 1):
                 raise IssueError('invalid or empty picker selection; no work started')
@@ -326,6 +354,9 @@ class IssueCommand:
 
     def start_targets(self, args):
         repo, identifiers = split_targets(args.target, getattr(args, 'repo', None))
+        if not identifiers or any(identifier.isdecimal() for identifier in identifiers):
+            repo = self.resolve_repo(repo, interactive=not (getattr(args, 'json', False) or
+                                                            getattr(args, 'scan_host', False)))
         if not identifiers:
             return self.select_issues(repo)
         result = []

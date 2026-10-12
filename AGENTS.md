@@ -9,6 +9,9 @@ interactive issue selection; allow multiple independent issues to be selected,
 but never start a second live owner for one issue. Do not add a bare `t issue`
 target form or a new public single-word command. Run `python3 scripts/lint_cli.py`
 after CLI changes; CI enforces this command contract.
+Command-group help must show repository argument positions and explain inference
+and selection. Keep `--repo` consistent across issue verbs; JSON, remote scanners,
+and non-interactive commands must never prompt for a missing repository.
 
 Before implementing any new enhancement or fix in a public repository, verify
 the repository's visibility and find a matching open issue on its host or create one.
