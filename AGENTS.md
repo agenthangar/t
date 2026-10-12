@@ -2,6 +2,12 @@
 
 `t` is a Python CLI plus a zsh plugin for agent sessions and isolated Git worktrees.
 
+Before implementing any new enhancement or fix in a public repository, verify
+the repository's visibility and find a matching open issue on its host or create one.
+Record the issue URL before editing code, reuse it for the task, and link the PR
+to it. Do not create duplicate issues or publish private context. If visibility
+or issue creation cannot be verified, resolve that before implementation.
+
 Work in a per-session worktree on `dev/t-<slot>` or a `cursor/*` feature branch.
 The canonical checkout is the live release on `main`; never develop or commit there.
 

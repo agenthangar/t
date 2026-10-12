@@ -73,6 +73,8 @@ def test_no_codex_home_no_hooks_file(box):
     # link_all creates ~/.codex/prompts on every machine; that alone must not seed hooks
     assert (home / ".codex" / "prompts" / "tpush.md").is_symlink()
     assert not (home / ".codex" / "hooks.json").exists()
+    for path in [home / '.codex/AGENTS.md', home / '.claude/CLAUDE.md']:
+        assert 'Record its URL before editing code' in path.read_text()
 
 
 def test_second_run_is_a_silent_noop(box):
