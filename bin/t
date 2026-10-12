@@ -9007,6 +9007,11 @@ def cmd_issue(cfg, args):
     return helper["run"](cfg, args, globals())
 
 
+def cmd_share(cfg, args):
+    helper = runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_share.py"))
+    return helper["run"](cfg, args, globals())
+
+
 # ─── argument parsing (gh-style) ───────────────────────────────────────────────
 
 # Public command vocabulary. Values are the established parser spellings and any
@@ -9117,6 +9122,7 @@ def _root_help():
 WORK
   session   Open, find, and move work sessions
   issue     List issues, inspect work, and start agents
+  share     Share context between agent conversations
   repo      List and manage repositories
   cursor    List, resume, and send Cursor chats
   hosts     Manage remote SSH hosts and run commands
@@ -9365,6 +9371,40 @@ def build_parser():
     agents = issue_start.add_mutually_exclusive_group()
     agents.add_argument("--codex", action="store_true", help="use Codex for new local sessions")
     agents.add_argument("--claude", action="store_true", help="use Claude for new local sessions")
+
+    share = sub.add_parser("share", help="share context with another agent conversation",
+        description="Send a summary and selected text to a Claude, Codex, or Cursor conversation. "
+                    "Bare `t share` shows this help.")
+    share.add_argument("--to", dest="destination", metavar="AGENT:ID",
+                       help="exact destination conversation")
+    share.add_argument("--file", metavar="PATH|-", help="UTF-8 summary file or stdin")
+    share.add_argument("--attach", action="append", default=[], metavar="PATH",
+                       help="attach selected UTF-8 history; repeat as needed")
+    share.add_argument("--from", dest="source", metavar="AGENT:ID",
+                       help="exact source conversation when it cannot be inferred")
+    share.add_argument("--host", help="destination host alias")
+    share.add_argument("--retry", metavar="MESSAGE_ID",
+                       help="retry the original saved delivery unchanged")
+    share.add_argument("--json", action="store_true", help="print a machine-readable receipt")
+    share_actions = share.add_subparsers(dest="share_action", metavar="<verb>")
+    targets = share_actions.add_parser("targets", help="list addressable conversations")
+    targets.add_argument("--host", default=argparse.SUPPRESS, help="host alias to inspect")
+    targets.add_argument("--json", action="store_true", default=argparse.SUPPRESS,
+                         help="print machine-readable targets")
+    inbox = share_actions.add_parser("inbox", help="list shares for a conversation")
+    inbox.add_argument("--for", dest="recipient", metavar="AGENT:ID",
+                       help="exact receiving conversation")
+    inbox.add_argument("--host", default=argparse.SUPPRESS, help="host alias to inspect")
+    inbox.add_argument("--json", action="store_true", default=argparse.SUPPRESS,
+                       help="print machine-readable messages")
+    read = share_actions.add_parser("read", help="read a share or one attachment")
+    read.add_argument("message_id", help="share message ID")
+    read.add_argument("--attachment", metavar="NAME", help="attachment label to read")
+    read.add_argument("--for", dest="recipient", metavar="AGENT:ID",
+                      help="exact receiving conversation")
+    read.add_argument("--host", default=argparse.SUPPRESS, help="host alias to inspect")
+    read.add_argument("--json", action="store_true", default=argparse.SUPPRESS,
+                      help="print machine-readable content")
 
     sp = sub.add_parser("open", help="open or reattach a session",
         usage="%(prog)s [repo] [slot] [flags]",
@@ -9999,6 +10039,7 @@ REMOTE SESSIONS
 IMPLEMENTED = {
     "issue": cmd_issue,
     "history": cmd_history,
+    "share": cmd_share,
     "agentcore": cmd_agentcore,
     "ls": cmd_ls, "session-rows": cmd_session_rows, "on": cmd_on, "read": cmd_read,
     "plan": cmd_plan, "paste": cmd_paste, "kill": cmd_kill, "setup": cmd_setup,
@@ -10035,6 +10076,8 @@ def _print_command_help(target, words, canonical, *, detailed=False):
         examples = target.epilog.rsplit("\n\n", 1)[0]
         target.epilog = examples + "\n\n" + target.help_details
     if words and words[0] in COMMAND_GROUPS and len(words) >= 2:
+        words = words[:2]
+    elif words and words[0] == "share" and len(words) >= 2 and words[1] in ("targets", "inbox", "read"):
         words = words[:2]
     elif words and words[0] in ("repos", "cursor") and len(words) >= 2:
         words = words[:2]
@@ -10074,6 +10117,9 @@ def _print_command_help(target, words, canonical, *, detailed=False):
 
 def main(argv):
     argv = _hosts_argv(argv)
+    if argv == ["__share"]:
+        helper = runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_share.py"))
+        return helper["internal"]()
     if argv == ["__update-prompt"]:
         return _t_offer_update()
     if len(argv) == 2 and argv[0] == "__history-export":
@@ -10140,6 +10186,9 @@ def main(argv):
             return 2
         _print_command_help(target, words, canonical, detailed=True)
         return 0
+    if argv in (["share"], ["share", "-h"], ["share", "--help"]):
+        _help_parser(parser, ["share"]).print_help()
+        return 0
     if len(argv) == 1 and argv[0] in COMMAND_GROUPS and argv[0] != "config":
         print(_group_help(argv[0]), end="")
         return 0
@@ -10190,6 +10239,15 @@ def main(argv):
     if argv and argv[0] == "todo":
         return cmd_todo(Config(), argparse.Namespace(rest=argv[1:]))
     args = parser.parse_args(argv)
+    if args.verb == "share":
+        if args.share_action is None:
+            if args.retry:
+                if args.destination or args.file or args.attach or args.source or args.host:
+                    parser.error("t share --retry cannot be combined with send options")
+            elif not args.destination or not args.file:
+                parser.error("t share requires --to and --file")
+        elif args.destination or args.file or args.attach or args.source or args.retry:
+            parser.error("t share read-only verbs cannot be combined with send options")
     if args.verb == "on":
         args.rest = argv[2:]
     if not args.verb:

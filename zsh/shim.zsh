@@ -702,7 +702,7 @@ _t_beam_xlate() {
 # key for `on`), and slot/flags after. Pulls live from the ${(k)DEV_REPOS} /
 # ${(k)REMOTE_HOSTS} arrays so it stays current with ${T_LOCAL_RC}.
 _t() {
-  local -a nouns=(session issue repo cursor hosts agentcore config profile policy agent system login help)
+  local -a nouns=(session issue share repo cursor hosts agentcore config profile policy agent system login help)
   if (( CURRENT == 2 )); then
     _describe -t nouns 't command group' nouns
     return
@@ -735,6 +735,30 @@ _t() {
       _values 'issue state' open closed all
     elif [[ $action == list || $action == start || $action == status ]]; then
       _values 'repository or issue number' ${(k)DEV_REPOS}
+    fi
+    return
+  fi
+  if [[ $group == share ]]; then
+    if (( CURRENT == first - 1 )) && [[ ${words[CURRENT]} != -* ]]; then
+      local -a share_actions=(targets inbox read)
+      _describe -t actions 'share action' share_actions
+      return
+    fi
+    case ${words[CURRENT-1]} in
+      --file|--attach) _files; return ;;
+      --to|--from|--for) _message 'agent:conversation-id'; return ;;
+      --host) _values 'host' ${(k)REMOTE_HOSTS}; return ;;
+      --retry|--attachment) _message 'message ID or attachment name'; return ;;
+    esac
+    if [[ ${words[CURRENT]} == -* ]]; then
+      case $action in
+        targets) _values 'flag' --host --json -h --help ;;
+        inbox) _values 'flag' --for --host --json -h --help ;;
+        read) _values 'flag' --attachment --for --host --json -h --help ;;
+        *) _values 'flag' --to --file --attach --from --host --retry --json -h --help ;;
+      esac
+    elif [[ $action == read ]]; then
+      _message 'message ID'
     fi
     return
   fi
