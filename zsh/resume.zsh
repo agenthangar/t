@@ -1341,7 +1341,7 @@ _t_restart_slot() {
       if [[ -n $sid ]]; then
         launch="$(_dev_agent_resume_cmd "$agent" "$sid") --no-daemon"
       else
-        launch="$(_dev_agent_new_cmd "$agent") --no-daemon"
+        launch=$(_dev_agent_new_cmd "$agent")
       fi
     else
       launch=$(_dev_agent_resume_cmd "$agent" "$sid")

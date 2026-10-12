@@ -58,17 +58,9 @@ def until(check, timeout=5, detail=lambda: ""):
     pytest.fail("timed out waiting for isolated tmux state: " + detail())
 
 
-class BackgroundCompatibilityBlocked(AssertionError):
-    """A new public launch reached the known #74 menu instead of a ready client."""
-
-
-@pytest.mark.parametrize("compatible", [
-    True,
-    pytest.param(False, marks=pytest.mark.xfail(
-        strict=True, raises=BackgroundCompatibilityBlocked,
-        reason="#74: t open --new still reaches the incompatible-settings menu")),
-])
-def test_public_open_new_reaches_ready_with_existing_server(terminal, compatible):
+@pytest.mark.parametrize("compatible", [True, False])
+@pytest.mark.parametrize("foreground", [False, True])
+def test_public_open_new_reaches_ready_with_existing_server(terminal, compatible, foreground):
     """Real public shell + tmux launch; a synthetic Codex models the flag check.
 
     #78 tests recovery after choosing a menu item. This contract requires a fresh
@@ -84,6 +76,7 @@ def test_public_open_new_reaches_ready_with_existing_server(terminal, compatible
     codex_home.mkdir()
     env["CODEX_HOME"] = str(codex_home)
     env["T_AUTO_TRUST"] = "0"
+    env["T_TEST_FOREGROUND"] = "1" if foreground else "0"
     config = codex_home / "config.toml"
     config.write_text('[features]\napi_key_model_discovery=' +
                       str(compatible).lower() + '\n')
@@ -118,7 +111,8 @@ print('Ready for a new conversation' if ready else {failure!r}, flush=True)
 snapshot = pathlib.Path({str(state.with_suffix('.tmp'))!r})
 snapshot.write_text(json.dumps({{'ready': ready, 'argv': args, 'cwd': os.getcwd()}}))
 snapshot.replace({str(state)!r})
-time.sleep(60)
+if os.environ.get('T_TEST_FOREGROUND') != '1':
+    time.sleep(60)
 ''')
     executable.chmod(0o755)
     wrapper = bins / "tmux"
@@ -142,12 +136,16 @@ tmux() {{ [[ $1 == attach-session ]] && return 0; command tmux "$@"; }}
     server = subprocess.Popen([str(executable), "app-server", "--listen", "unix://"],
                               env=dict(env, T_TEST_SERVER="1"))
     try:
-        result = subprocess.run(["zsh", "-lic", "t open demo --new"], env=env,
+        launch = "t open demo --new" + (" --fg" if foreground else "")
+        result = subprocess.run(["zsh", "-lic", launch], env=env,
                                 cwd=work, capture_output=True, text=True, timeout=20)
         assert result.returncode == 0, result.stdout + result.stderr
         until(state.exists, detail=lambda: tmux("capture-pane", "-p", "-t", "=dev-demo-1:").stdout)
         client = json.loads(state.read_text())
-        screen = tmux("capture-pane", "-p", "-J", "-t", "=dev-demo-1:").stdout
+        screen = result.stdout if foreground else tmux(
+            "capture-pane", "-p", "-J", "-t", "=dev-demo-1:").stdout
+        if foreground:
+            assert tmux("has-session", "-t", "=dev-demo-1:").returncode == 1
         assert client["cwd"] == str(work)
         model_index = client["argv"].index("--model")
         assert client["argv"][model_index + 1] == "chosen"
@@ -157,10 +155,8 @@ tmux() {{ [[ $1 == attach-session ]] && return 0; command tmux "$@"; }}
         assert config.read_bytes() == original_config
         assert server_features.read_bytes() == original_features
         assert not (home / "unexpected-server-command").exists()
-        if not client["ready"]:
-            assert "Background server has incompatible feature settings" in screen
-            assert "This session requires api_key_model_discovery to be disabled" in screen
-            raise BackgroundCompatibilityBlocked(screen)
+        assert client["ready"], screen
+        assert client["argv"].count("--no-daemon") == 1
         assert "Ready for a new conversation" in screen
         assert "incompatible feature settings" not in screen
     finally:
@@ -599,7 +595,7 @@ _dev_session_sid() {{ :; }}
 _dev_session_claude_pid() {{ cat "$HOME/agent-pid"; }}
 _dev_app_slot_reserved() {{ return 1; }}
 _dev_agent_at_welcome() {{ return 0; }}
-_dev_agent_new_cmd() {{ print 'codex --model chosen'; }}
+_dev_agent_new_cmd() {{ print 'codex --model chosen --no-daemon'; }}
 ''')
     assert tmux('new-session', '-d', '-s', 'dev-api-1', '-c', str(home), 'zsh', '-lic', 'exec codex --model chosen').returncode == 0
     socket = tmux('display-message', '-p', '-t', '=dev-api-1:', '#{socket_path}').stdout.strip()

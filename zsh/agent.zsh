@@ -98,6 +98,9 @@ _dev_agent_new_cmd() {
     claude:1) launch_args+=(--settings '{"fastMode":true}') ;;
     claude:0) launch_args+=(--settings '{"fastMode":false}') ;;
   esac
+  # A fresh slot must not inherit an independently updated shared daemon's
+  # feature settings. Keep its backend local, as with desktop handoffs/recovery.
+  [[ $agent == codex ]] && launch_args+=(--no-daemon)
   # Read the optional task in the pane, as one quoted argument. Keep its body
   # out of the command sent to tmux and the interactive shell's history.
   local brief_arg=""

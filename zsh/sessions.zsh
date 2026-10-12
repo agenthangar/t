@@ -2175,6 +2175,7 @@ _t_dev() {
       claude:1) model_args+=(--settings '{"fastMode":true}') ;;
       claude:0) model_args+=(--settings '{"fastMode":false}') ;;
     esac
+    [[ $agent == codex ]] && model_args+=(--no-daemon)
     "$agent" "${model_args[@]}"   # retain the claude()/codex() wrappers (tpush sentinel)
     return
   fi

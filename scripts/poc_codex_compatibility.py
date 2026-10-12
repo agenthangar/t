@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Reproduce t open --new compatibility recovery without credentials or turns.
+"""Verify t open --new bypasses shared feature conflicts without credentials or turns.
 
 Requires Codex 0.160.0, zsh, and tmux. All config, sockets, processes, and pane
 captures are disposable. Only the attachment UI is skipped; t creates the slots.
@@ -12,9 +12,9 @@ from pathlib import Path
 import shlex
 import shutil
 import subprocess
-import sys
 import tempfile
 import time
+import tomllib
 
 from poc_desktop_shared_backend import connect, stop
 
@@ -107,40 +107,38 @@ def run(binary):
                 control = home / "app-server-control/app-server-control.sock"
                 until(control.exists)
                 rpc = connect(str(control), "t_compatibility_probe")
-                shell("t open demo --new")
+                # Seed an unrelated shared-server client. New t slots now use
+                # private backends even when the shared settings happen to match.
+                tmux("new-session", "-d", "-s", "peer", "-c", str(work),
+                     zsh_binary, "-lic", "codex")
                 until(lambda: rpc.request("thread/loaded/list")["data"])
-                until(lambda: "poc default" in screen(1))
-                peer = tmux("display-message", "-p", "-t", "=dev-demo-1:", "#{pane_pid}")
+                peer = tmux("display-message", "-p", "-t", "=peer:", "#{pane_pid}")
                 loaded = rpc.request("thread/loaded/list")["data"]
+                shell("t open demo --new")
+                until(lambda: "poc default" in screen(1))
                 assert "incompatible" not in screen(1)
-                print("compatible t open --new: ready on shared server")
+                assert rpc.request("thread/loaded/list")["data"] == loaded
+                print("compatible t open --new: ready on private backend")
 
                 configure(False)
+                client_config = tomllib.loads(config.read_text())
                 shell("t open demo --new")
-                until(lambda: "2. Cancel" in screen(2))
-                failed = screen(2)
-                assert "Background server has incompatible feature settings" in failed
-                assert "This session requires api_key_model_discovery to be disabled" in failed
-                subprocess.run([sys.executable, "-c",
-                    "import sys; sys.path.insert(0, sys.argv[1]); import t_recovery as r; "
-                    "s = sys.argv[2]; p = next(p for p in r.panes(s) if p['session'] == 'dev-demo-2'); "
-                    "assert r.pane_failure(s, p) == r.BACKGROUND; "
-                    "target = r.owner(s, p, startup=True); assert target and not target['sid']",
-                    str(ROOT / "libexec"), str(socket)], env=env, cwd=work, check=True, timeout=30)
-                print("incompatible t open --new: confirmed api_key_model_discovery mismatch")
-                shell("export TMUX=" + shlex.quote(str(socket) + ",0,0") +
-                      "; pid=$(_dev_session_claude_pid dev-demo-2); " +
-                      shlex.join(["_t_restart_slot", "dev-demo-2", str(work), "", "codex",
-                                  "restart-no-daemon"]) + ' "$pid"')
                 until(lambda: "poc default" in screen(2))
                 assert "incompatible" not in screen(2)
+                # Codex itself appends first-run TUI acknowledgements. All
+                # declared provider, project, and feature settings must survive.
+                current_config = tomllib.loads(config.read_text())
+                assert all(current_config[key] == value for key, value in client_config.items())
                 assert server.poll() is None
                 assert rpc.request("thread/loaded/list")["data"] == loaded
-                assert tmux("display-message", "-p", "-t", "=dev-demo-1:", "#{pane_pid}") == peer
+                assert tmux("display-message", "-p", "-t", "=peer:", "#{pane_pid}") == peer
                 for sid in loaded:
                     assert rpc.request("thread/read", {"threadId": sid, "includeTurns": False})["thread"]["id"] == sid
-                assert rpc.request("experimentalFeature/list", {"limit": 100})["data"]
-                print("recovery: standalone client ready; shared server and peer preserved; no turns")
+                features = rpc.request("experimentalFeature/list", {"limit": 100})["data"]
+                assert any(item["name"] == "api_key_model_discovery" and item["enabled"]
+                           for item in features)
+                print("incompatible shared settings: new client ready without recovery; "
+                      "shared server, settings, and peer preserved; no turns")
         finally:
             subprocess.run([str(wrapper), "kill-server"], env=env, capture_output=True, timeout=10)
             if rpc is not None:

@@ -414,15 +414,18 @@ def assert_workspace_released(codex_home, cwd, *, retry="Retry: t kill <repo> <s
 
 def assert_desktop_view_released(bundle, run, *, archived=False, empty=False,
                                  retry="Retry: t kill <repo> <slot>."):
-    """A free writer is insufficient if an unarchived desktop tab can reopen."""
-    if archived:
+    """A saved, unarchived desktop tab needs release beyond its free writer.
+
+    For an empty reservation, callers must first assert_workspace_released and
+    recheck immediately before removing its marker. There is no saved thread to
+    reopen; a running frontend alone is not an owner of this worktree. Closing
+    the reservation preserves the directory and does not start another agent.
+    """
+    if archived or empty:
         return
     frontends, _ = _owners(bundle, _processes(run, retry))
     if not frontends:
         return
-    if empty:
-        raise ValueError("Cannot verify this empty workspace was closed while Codex "
-                         "is running; close Codex and retry. " + retry)
     raise ValueError("Stop or finish the turn, then Archive this chat in Codex; "
                      "the app and other chats can stay open. " + retry)
 

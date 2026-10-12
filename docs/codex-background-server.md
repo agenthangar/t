@@ -4,7 +4,7 @@ Investigation for [#74](https://github.com/agenthangar/t/issues/74), October 11,
 
 ## Confirmed cause
 
-A fresh `t open <repo> --new` can launch an older `codex` from `PATH` while an
+Before this fix, a fresh `t open <repo> --new` could launch an older `codex` from `PATH` while an
 independently updated shared daemon is already running. Their effective feature
 defaults can differ even when neither invocation supplies feature overrides.
 
@@ -36,9 +36,10 @@ failure mechanisms.
 ## How t selects the settings
 
 The zsh public entry point maps `--new` to a fresh slot and launches the configured
-agent in that slot's worktree. For Codex, `_dev_agent_new_cmd` emits `codex`, plus
-only configured `DEV_MODEL[codex]`, `DEV_EFFORT[codex]`, and `DEV_FAST[codex]`
-defaults. The foreground path does the same. It does not request any of the four
+agent in that slot's worktree. For Codex, `_dev_agent_new_cmd` emits `codex`, the
+configured `DEV_MODEL[codex]`, `DEV_EFFORT[codex]`, and `DEV_FAST[codex]` defaults,
+and `--no-daemon`. The foreground path does the same. Each fresh session uses a
+private backend, so it cannot conflict with the running shared server's settings. It does not request any of the four
 shared flags above. Codex reads its own configuration and version-specific defaults.
 
 In 0.160.0, reasoning-effort and service-tier `-c` overrides (including t's fast-mode
@@ -49,7 +50,7 @@ assumption about every Codex release.
 
 ## Recovery
 
-Choose **Run without daemon this time** in t's recovery panel (or Codex's own menu,
+For existing sessions that already reached a startup error, choose **Run without daemon this time** in t's recovery panel (or Codex's own menu,
 including foreground launches). t saves the pane and relaunches only the verified
 client with `--no-daemon`, preserving the fresh-session defaults or exact existing
 conversation. It rechecks the process and visible failure before stopping anything.
@@ -76,50 +77,47 @@ provider points at an unused loopback port. It starts and cleans up only its own
 server and clients. The attachment UI is skipped so the check can run unattended.
 
 1. Start an isolated app-server with `api_key_model_discovery=true` and a matching
-   client config. The real `t open demo --new` creates a session on that server.
+   raw Codex peer on that server. The real `t open demo --new` becomes ready using
+   a private backend and leaves the shared server's loaded-thread list unchanged.
 2. Change only the disposable client config to `false`. The server's command-line
-   override remains `true`; a second `t open demo --new` shows the mismatch.
-3. Run t's guarded session-only recovery. The new standalone client becomes ready;
-   the original pane PID and server process remain alive, the shared loaded-thread
-   list is unchanged, and the existing RPC connection still answers requests.
+   override remains `true`; a second `t open demo --new` becomes ready without
+   presenting the incompatibility menu or requiring recovery.
+3. Verify that the peer pane and server process remain alive, the shared
+   loaded-thread list and feature setting are unchanged, and the existing RPC
+   connection still answers requests.
 
-This reproduces the flag conflict on one binary version without depending on a
-particular update service or installing an older daemon. The local version/default
-comparison above independently explains how the same disagreement arises without
-explicit overrides. Regression tests cover the public `t open --new` arguments,
-managed and unmanaged mismatch menus, quoted/partial screen rejection, verified
-ownership and callbacks, and real isolated-tmux recovery.
+This tests prevention with a real feature conflict on one binary version without
+requiring a particular update service or installing an older daemon. The earlier
+version/default comparison independently explains how the same disagreement can
+arise without explicit overrides. Existing recovery coverage remains for older
+sessions and other shared-server failures.
 
-## Remaining regression contracts
+## Regression coverage and empty desktop slots
 
-The follow-up report confirms both the startup menu and an empty desktop-slot
-close refusal still occur. Recovery coverage in #78 does not establish that a
-fresh launch avoids the menu. The desired launch contract now has a strict
-expected-failure test: `test_public_open_new_reaches_ready_with_existing_server`.
-It invokes `t open demo --new` through the real shell and an isolated tmux server,
-with a synthetic Codex client modeling the documented feature disagreement. The
-compatible control passes; the incompatible case reaches the menu. It also checks
-the selected model, working directory, unchanged configuration, and surviving
-peer pane and simulated server process. This deterministic test is not a new
-measurement of the user's installed Codex versions or effective flags.
+The tests added after #78 now pass without expected-failure markers.
+`test_public_open_new_reaches_ready_with_existing_server` exercises public shell
+launches with real isolated tmux and a synthetic Codex compatibility boundary.
+It covers matching/conflicting settings and tmux/foreground launches, checking the
+selected model, working directory, unchanged configuration, and surviving peer
+and simulated server. The disposable probe above separately checks real Codex.
 
-The separate `t kill` symptom is covered at both the Python close entry point and
-the shell's final verifier. An empty, reserved worktree with no saved conversation
-or writer is refused whenever any Codex/ChatGPT frontend runs. The desired contract
-is to close only the selected empty slot while other desktop work remains open;
-implementing it must retain the existing ownership checks and establish safe
-release of the selected view. The tests cover both frontend names and the presence
-or absence of a parked tmux session, preserving the worktree and saved history.
+The separate `t kill` symptom came from treating any running desktop frontend as
+an owner of an empty reserved worktree. Empty slots can now release their t
+reservation while Codex/ChatGPT stays open. They must have no saved conversation,
+no live writer belonging to the worktree, and no foreground CLI. An unknown
+writer, unreadable index, changed reservation, or a conversation appearing during
+cleanup still blocks release. The shell rechecks these facts before cleanup and
+before removing the reservation. The worktree remains on disk; no new agent is
+started, no saved thread is reopened, and no desktop window is closed.
 
-To expose all five current failures (plus the passing compatible-launch control):
+Saved, unarchived conversations retain the existing archive/quit requirement.
+Tests cover both frontend names, parked and absent tmux sessions, an unrelated
+held writer lock, and a conversation appearing during cleanup.
+
+Run the focused regressions with:
 
 ```sh
-python3 -m pytest --runxfail -q \
+python3 -m pytest -q \
   tests/test_app_close.py tests/test_desktop_close.py tests/test_recovery_tmux.py \
-  -k 'blank_workspace_with_unrelated or empty_desktop_close_with_unrelated or public_open_new'
+  -k 'blank_workspace_with_unrelated or empty_desktop or public_open_new'
 ```
-
-Normal runs record these as strict expected failures so a tests-only change can
-land without disabling CI. Only the specific known refusal/menu is accepted as
-an expected failure; fixture and safety assertion failures remain failures. Once
-a case succeeds, its strict XPASS requires removing the corresponding marker.

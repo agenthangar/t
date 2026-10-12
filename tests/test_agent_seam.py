@@ -422,7 +422,7 @@ def test_zsh_agent_is_proc_and_of_comm(zsh):
 def test_zsh_agent_launch_lines(zsh):
     r = zsh("_dev_agent_new_cmd claude abc; _dev_agent_new_cmd codex abc; "
             "_dev_agent_resume_cmd claude abc; _dev_agent_resume_cmd codex abc")
-    assert r.stdout.splitlines() == ["claude --session-id abc", "codex", "claude -r abc", "codex resume abc"]
+    assert r.stdout.splitlines() == ["claude --session-id abc", "codex --no-daemon", "claude -r abc", "codex resume abc"]
 
 
 def test_zsh_agent_glyphs_match_bin_t(zsh, t_mod):
@@ -493,7 +493,7 @@ def test_zsh_new_session_stamps_the_agent_and_launch_line(zsh):
     log = zsh.log.read_text().splitlines()
     assert "set-environment -t =dev-api-3 DEV_AGENT codex" in log
     assert not any("CLAUDE_RESUME_ID" in ln for ln in log)          # codex mints its own id
-    assert "send-keys -t =dev-api-3: codex; exit Enter" in log
+    assert "send-keys -t =dev-api-3: codex --no-daemon; exit Enter" in log
     zsh.log.write_text("")
     r = zsh("_dev_new_session dev-api-4 $HOME/code/api dev/x 1 claude")
     log = zsh.log.read_text().splitlines()
@@ -546,7 +546,7 @@ def test_zsh_model_defaults_reach_new_tmux_sessions_and_not_resumes(zsh):
             "_dev_resume_session dev-api-5 $HOME/code/api thread-id codex")
     assert r.returncode == 0, r.stderr
     lines = zsh.log.read_text().splitlines()
-    assert "send-keys -t =dev-api-3: codex --model local/model -c model_reasoning_effort=ultra; exit Enter" in lines
+    assert "send-keys -t =dev-api-3: codex --model local/model -c model_reasoning_effort=ultra --no-daemon; exit Enter" in lines
     assert any("claude --session-id " in line and " --model sonnet --effort max; exit Enter" in line for line in lines)
     assert "send-keys -t =dev-api-5: codex resume thread-id; exit Enter" in lines
 
@@ -560,7 +560,7 @@ def test_zsh_foreground_uses_the_selected_tools_model_and_effort(zsh, agent):
             f"{agent}() {{ print -rl -- ARG \"$@\"; }}; "
             "_t_dev web new --fg")
     assert r.returncode == 0, r.stderr
-    effort_args = "-c\nmodel_reasoning_effort=high" if agent == "codex" else "--effort\nhigh"
+    effort_args = "-c\nmodel_reasoning_effort=high\n--no-daemon" if agent == "codex" else "--effort\nhigh"
     assert r.stdout.endswith(f"ARG\n--model\nmodel[1m]\n{effort_args}\n"), r.stdout
 
 
@@ -2464,7 +2464,7 @@ def test_open_multi_foreground_refused_before_opening(zsh):
     ('DEV_EFFORT[codex]=high', 'codex -c model_reasoning_effort=high'),
     ('DEV_FAST[codex]=1', 'codex -c service_tier=fast --enable fast_mode'),
 ])
-def test_open_new_codex_passes_only_requested_defaults(zsh, settings, args):
+def test_open_new_codex_keeps_defaults_and_uses_private_backend(zsh, settings, args):
     """The reported public entry point must not change shared feature settings."""
     (zsh.home / 'code' / 'api').mkdir(parents=True)
     r = zsh('DEV_WORKTREE[api]=0; _dev_agent_check() { return 0; }; '
@@ -2473,5 +2473,5 @@ def test_open_new_codex_passes_only_requested_defaults(zsh, settings, args):
     calls = zsh.log.read_text().splitlines()
     launches = [c for c in calls if c.startswith('send-keys ')]
     assert len(launches) == 1
-    assert launches[0].endswith('; ' + args + '; exit Enter')
-    assert not any('daemon' in c or 'restart' in c for c in calls)
+    assert launches[0].endswith('; ' + args + ' --no-daemon; exit Enter')
+    assert not any('app-server' in c or 'restart' in c for c in calls)

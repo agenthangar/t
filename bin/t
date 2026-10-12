@@ -9217,7 +9217,7 @@ REMOTE SESSIONS
             "without resuming it in the CLI; its conversation and worktree are preserved. "
             "Archive that chat in Codex while the app is running, then retry; finish or "
             "stop any active turn first. Other desktop chats can stay open. An empty "
-            "desktop workspace can close after Codex exits. "
+            "desktop workspace can close while Codex stays open, after its worktree passes ownership checks. "
             "Names default to the cwd "
             "repo, so `t session close 3` kills this repo's slot 3 and `t session close all` kills every slot for "
             "it. A foreground / :fg row from `t session list` (a bare `claude`, or one in a tmux "

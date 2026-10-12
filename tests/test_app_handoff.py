@@ -403,10 +403,9 @@ def test_desktop_view_guard_requires_archive_or_frontend_exit(handoff):
     live, calls = process_table("123 /Applications/Codex.app/Contents/MacOS/Codex")
     with pytest.raises(ValueError, match="Archive this chat.*app and other chats can stay open"):
         handoff.assert_desktop_view_released(None, live)
-    with pytest.raises(ValueError, match="empty workspace.*close Codex"):
-        handoff.assert_desktop_view_released(None, live, empty=True)
+    handoff.assert_desktop_view_released(None, live, empty=True)
     handoff.assert_desktop_view_released(None, live, archived=True)
-    assert len(calls) == 2  # Archived proof does not inspect unrelated running views.
+    assert len(calls) == 1  # Archived/empty proof does not inspect unrelated views.
 
 
 def test_cli_pid_must_hold_exact_selected_lock(handoff, target, tmp_path):
