@@ -119,6 +119,31 @@ worktree; `t open my-project` filters to that repo. Attached CLI and loaded desk
 sessions are hidden by default; `--attached` includes them. Idle sessions and
 unloaded desktop workspaces remain visible. An explicit slot still opens directly.
 
+`t history 5` browses every saved conversation associated with slot 5 in the
+current repository. `t history t 5` and `t session history t 5` name the repository
+explicitly. With no arguments, history infers your current slot or lets you choose
+one. It retains inactive and live conversations, archived records, and records
+whose worktrees or transcripts have been removed. It always asks you to select a
+conversation before resuming, including when only one exists.
+
+History shows 50 conversations per page. Search covers all pages; Ctrl-F and
+Ctrl-B move between pages, Ctrl-/ opens details, Enter resumes the exact selected
+conversation, and Escape cancels. Ctrl-R or `--refresh` refreshes metadata from
+registered hosts without downloading their transcripts. Unreachable hosts retain
+their cached records. `--limit N --page N --json` provides paginated metadata;
+without a terminal the command only lists conversations.
+
+A live terminal conversation attaches to its existing owner. A desktop or
+foreground owner offers an explicit handoff path. An inactive conversation reuses
+its original workspace only when recorded ownership and revision still match;
+otherwise it gets a new slot branch based on the verified historical commit.
+Existing dirty work stays in its source workspace. If the historical commit is
+unavailable, the picker explicitly offers current main or cancel. Legacy history
+can lack commit, host, title, or PR evidence; these details stay unknown. Associated
+PRs require structured tool evidence or a matching branch and commit; incidental
+links appear separately in details. History records are private under
+`$XDG_STATE_HOME/t/history/v1` (default `~/.local/state/t/history/v1`).
+
 `t open`, `t resume`, and `t kill` share the compact resume picker design:
 **Space/Tab marks ✓ and Enter acts on the selection**. **Ctrl-A** shows all
 sessions; **Ctrl-F** restores the default filters. **Ctrl-T** toggles attached

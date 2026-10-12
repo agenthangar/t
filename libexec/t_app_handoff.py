@@ -439,7 +439,7 @@ def assert_desktop_view_released(bundle, run, *, archived=False, empty=False,
                      "the app and other chats can stay open. " + retry)
 
 
-def unarchive_thread(sid, cwd, *, codex_home, rollout):
+def unarchive_thread(sid, cwd, *, codex_home, rollout, process_cwd=None):
     """Restore one saved thread through a private stdio backend, never proxy."""
     if not _UUID.fullmatch(sid):
         raise ValueError("the selected Codex thread id is invalid")
@@ -451,7 +451,7 @@ def unarchive_thread(sid, cwd, *, codex_home, rollout):
     environment["CODEX_HOME"] = codex_home
     process = subprocess.Popen(
         ["codex", "app-server", "--disable", "plugins", "--listen", "stdio://"],
-        cwd=cwd, env=environment, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        cwd=process_cwd or cwd, env=environment, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL, start_new_session=True)
     deadline = time.monotonic() + 12
     try:

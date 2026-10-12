@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parent.parent
 # A new public command must enter a noun/verb family instead of growing this set.
 LEGACY_SHORTCUTS = frozenset({
     "help", "open", "app", "ls", "kill", "restart", "push", "pop",
-    "resume", "cd", "beam", "read", "plan", "paste", "find", "on",
+    "resume", "history", "cd", "beam", "read", "plan", "paste", "find", "on",
     "repos", "setup", "new", "checkout", "instructions", "login",
     "install", "integrate", "update", "permissions", "trust", "doctor",
 })
@@ -24,7 +24,7 @@ ISSUE_VERBS = {"list", "status", "start"}
 # These established families route to compatibility parsers. Freeze their
 # accepted verbs so extending one requires an intentional contract review.
 LEGACY_GROUP_VERBS = {
-    "session": {"open", "list", "close", "restart", "push", "pop", "resume", "cd",
+    "session": {"open", "list", "close", "restart", "push", "pop", "resume", "history", "cd",
                 "move", "read", "view-plan", "paste", "search", "open-app"},
     "repo": {"list", "cd", "locate", "create", "clone"},
     "cursor": {"list", "resume", "send"},
