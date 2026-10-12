@@ -595,18 +595,24 @@ def test_publish_refuses_symlink_and_target_race(app, history, tmp_path, monkeyp
         app.publish_transcript(symlink, b'original\nmore\n', conversation())
     target = tmp_path / 'target'
     target.write_bytes(b'original\n')
-    original = history.Path.lstat
-    counts = []
-    def raced(path, *a, **k):
-        if path == target:
-            counts.append(path)
-            if len(counts) == 2:
-                target.write_bytes(b'other owner\n')
-        return original(path, *a, **k)
-    monkeypatch.setattr(history.Path, 'lstat', raced)
+    original_open = history.Path.open
+    backups, replacements = [], []
+    backup_directory = app.store.directory / 'transcript-backups'
+    def raced(path, mode='r', *args, **kwargs):
+        stream = original_open(path, mode, *args, **kwargs)
+        if path.parent == backup_directory and mode == 'xb':
+            # Backup creation follows the original-byte/prefix validation and
+            # precedes the final target check, independent of pathlib internals.
+            backups.append(path)
+            target.write_bytes(b'other owner\n')
+        return stream
+    monkeypatch.setattr(history.Path, 'open', raced)
+    monkeypatch.setattr(history.os, 'replace', lambda *args: replacements.append(args))
     with pytest.raises(history.HistoryError, match='changed during restore'):
         app.publish_transcript(target, b'original\nmore\n', conversation())
     assert target.read_bytes() == b'other owner\n'
+    assert len(backups) == 1 and backups[0].read_bytes() == b'original\n'
+    assert replacements == []
 
 
 def test_source_mutation_during_final_verification_cannot_publish(app, history, tmp_path, monkeypatch):
