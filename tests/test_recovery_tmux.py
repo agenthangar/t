@@ -58,6 +58,116 @@ def until(check, timeout=5, detail=lambda: ""):
     pytest.fail("timed out waiting for isolated tmux state: " + detail())
 
 
+class BackgroundCompatibilityBlocked(AssertionError):
+    """A new public launch reached the known #74 menu instead of a ready client."""
+
+
+@pytest.mark.parametrize("compatible", [
+    True,
+    pytest.param(False, marks=pytest.mark.xfail(
+        strict=True, raises=BackgroundCompatibilityBlocked,
+        reason="#74: t open --new still reaches the incompatible-settings menu")),
+])
+def test_public_open_new_reaches_ready_with_existing_server(terminal, compatible):
+    """Real public shell + tmux launch; a synthetic Codex models the flag check.
+
+    #78 tests recovery after choosing a menu item. This contract requires a fresh
+    launch to become usable without that extra intervention, preserving peers.
+    No installed Codex, credentials, personal configuration, or inference is used.
+    """
+    _, tmux, command, env, home = terminal
+    work = home / "work"
+    work.mkdir()
+    bins = home / "bin"
+    bins.mkdir()
+    codex_home = home / "codex-home"
+    codex_home.mkdir()
+    env["CODEX_HOME"] = str(codex_home)
+    env["T_AUTO_TRUST"] = "0"
+    config = codex_home / "config.toml"
+    config.write_text('[features]\napi_key_model_discovery=' +
+                      str(compatible).lower() + '\n')
+    original_config = config.read_bytes()
+    server_features = home / "server-features.json"
+    server_features.write_text('{"api_key_model_discovery": true}\n')
+    original_features = server_features.read_bytes()
+    state = home / "client-state.json"
+    failure = ("Background server has incompatible feature settings\n"
+               "This session requires api_key_model_discovery to be disabled\n"
+               "1. Run without daemon this time\n2. Restart with these settings\n3. Cancel")
+    executable = bins / "codex"
+    executable.write_text(f'''#!{sys.executable}
+import json, os, pathlib, sys, time
+if '--help' in sys.argv:
+    print('--no-daemon --model --enable --disable')
+    sys.exit(0)
+if '--version' in sys.argv:
+    print('codex-cli 0.160.0')
+    sys.exit(0)
+args = sys.argv[1:]
+if 'app-server' in args:
+    if os.environ.get('T_TEST_SERVER') == '1':
+        time.sleep(60)
+        sys.exit(0)
+    pathlib.Path({str(home / 'unexpected-server-command')!r}).write_text(' '.join(args))
+    sys.exit(1)
+requested = 'api_key_model_discovery=true' in pathlib.Path({str(config)!r}).read_text()
+shared = json.loads(pathlib.Path({str(server_features)!r}).read_text())['api_key_model_discovery']
+ready = '--no-daemon' in args or requested == shared
+print('Ready for a new conversation' if ready else {failure!r}, flush=True)
+snapshot = pathlib.Path({str(state.with_suffix('.tmp'))!r})
+snapshot.write_text(json.dumps({{'ready': ready, 'argv': args, 'cwd': os.getcwd()}}))
+snapshot.replace({str(state)!r})
+time.sleep(60)
+''')
+    executable.chmod(0o755)
+    wrapper = bins / "tmux"
+    wrapper.write_text('#!/bin/sh\nexec ' + shlex.join(command) + ' "$@"\n')
+    wrapper.chmod(0o755)
+    env["PATH"] = os.pathsep.join([str(bins), str(REPO_ROOT / "bin"), env["PATH"]])
+    (home / ".zshrc").write_text(f'''
+export PATH={shlex.quote(env['PATH'])}
+source {shlex.quote(str(REPO_ROOT / 't.plugin.zsh'))}
+DEV_REPOS[demo]={shlex.quote(str(work))}
+DEV_WORKTREE[demo]=0
+DEV_AGENT[demo]=codex
+DEV_MODEL[codex]=chosen
+_dev_repo_prepare() {{ :; }}
+tmux() {{ [[ $1 == attach-session ]] && return 0; command tmux "$@"; }}
+''')
+    subprocess.run(["git", "init", "-q", str(work)], env=env, check=True)
+    assert tmux("new-session", "-d", "-s", "dev-peer-1", "sleep 60").returncode == 0
+    assert tmux("set-option", "-g", "default-shell", shutil.which("zsh")).returncode == 0
+    peer = tmux("display-message", "-p", "-t", "=dev-peer-1:", "#{pane_pid}").stdout
+    server = subprocess.Popen([str(executable), "app-server", "--listen", "unix://"],
+                              env=dict(env, T_TEST_SERVER="1"))
+    try:
+        result = subprocess.run(["zsh", "-lic", "t open demo --new"], env=env,
+                                cwd=work, capture_output=True, text=True, timeout=20)
+        assert result.returncode == 0, result.stdout + result.stderr
+        until(state.exists, detail=lambda: tmux("capture-pane", "-p", "-t", "=dev-demo-1:").stdout)
+        client = json.loads(state.read_text())
+        screen = tmux("capture-pane", "-p", "-J", "-t", "=dev-demo-1:").stdout
+        assert client["cwd"] == str(work)
+        model_index = client["argv"].index("--model")
+        assert client["argv"][model_index + 1] == "chosen"
+        assert server.poll() is None
+        assert tmux("display-message", "-p", "-t", "=dev-peer-1:", "#{pane_pid}").stdout == peer
+        assert tmux("display-message", "-p", "-t", "=dev-peer-1:", "#{pane_dead}").stdout.strip() == "0"
+        assert config.read_bytes() == original_config
+        assert server_features.read_bytes() == original_features
+        assert not (home / "unexpected-server-command").exists()
+        if not client["ready"]:
+            assert "Background server has incompatible feature settings" in screen
+            assert "This session requires api_key_model_discovery to be disabled" in screen
+            raise BackgroundCompatibilityBlocked(screen)
+        assert "Ready for a new conversation" in screen
+        assert "incompatible feature settings" not in screen
+    finally:
+        server.terminate()
+        server.wait(timeout=5)
+
+
 @pytest.mark.parametrize("choice", ["q", "r"])
 def test_real_dead_pane_menu_resumes_exact_thread(terminal, choice):
     mod, tmux, command, env, home = terminal

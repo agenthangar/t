@@ -269,11 +269,35 @@ def test_desktop_close_keeps_marker_when_process_inspection_or_stop_fails(tmp_pa
 
 
 @pytest.mark.skipif(not shutil.which("zsh"), reason="zsh required")
-@pytest.mark.parametrize("blank", [False, True])
-def test_desktop_close_requires_view_release_even_when_writer_is_free(tmp_path, blank):
+def test_desktop_close_requires_view_release_even_when_writer_is_free(tmp_path):
     result, marker, actions, wt, rollout = run_verified_close(
-        tmp_path, blank=blank, frontend_running=True)
+        tmp_path, frontend_running=True)
     assert result.returncode != 0
     assert marker.exists() and wt.is_dir()
     assert actions == []
-    assert ("close Codex" if blank else "Archive this chat") in result.stderr
+    assert "Archive this chat" in result.stderr
+
+
+class EmptyWorkspaceCloseBlocked(AssertionError):
+    """The exact known refusal, separate from fixture or safety failures."""
+
+
+@pytest.mark.skipif(not shutil.which("zsh"), reason="zsh required")
+@pytest.mark.xfail(strict=True, raises=EmptyWorkspaceCloseBlocked,
+                   reason="Reported with #74: shell close repeats the global frontend veto")
+@pytest.mark.parametrize("parked", [False, True])
+def test_empty_desktop_close_with_unrelated_frontend_running(tmp_path, parked):
+    result, marker, actions, wt, rollout = run_verified_close(
+        tmp_path, blank=True, parked=parked, frontend_running=True)
+    assert wt.is_dir() and not rollout.exists()
+    if result.returncode:
+        assert result.returncode == 1
+        assert result.stderr.strip() == (
+            "t kill: Cannot verify this empty workspace was closed while Codex "
+            "is running; close Codex and retry. "
+            "Retry t kill after closing or archiving the desktop view.")
+        assert marker.exists() and actions == []
+        raise EmptyWorkspaceCloseBlocked(result.stderr)
+    assert not marker.exists()
+    assert actions == (["kill-session -t =dev-api-13:"] if parked else []) + ["stop"]
+    assert "Closed empty desktop slot dev-api-13." in result.stdout

@@ -89,3 +89,37 @@ comparison above independently explains how the same disagreement arises without
 explicit overrides. Regression tests cover the public `t open --new` arguments,
 managed and unmanaged mismatch menus, quoted/partial screen rejection, verified
 ownership and callbacks, and real isolated-tmux recovery.
+
+## Remaining regression contracts
+
+The follow-up report confirms both the startup menu and an empty desktop-slot
+close refusal still occur. Recovery coverage in #78 does not establish that a
+fresh launch avoids the menu. The desired launch contract now has a strict
+expected-failure test: `test_public_open_new_reaches_ready_with_existing_server`.
+It invokes `t open demo --new` through the real shell and an isolated tmux server,
+with a synthetic Codex client modeling the documented feature disagreement. The
+compatible control passes; the incompatible case reaches the menu. It also checks
+the selected model, working directory, unchanged configuration, and surviving
+peer pane and simulated server process. This deterministic test is not a new
+measurement of the user's installed Codex versions or effective flags.
+
+The separate `t kill` symptom is covered at both the Python close entry point and
+the shell's final verifier. An empty, reserved worktree with no saved conversation
+or writer is refused whenever any Codex/ChatGPT frontend runs. The desired contract
+is to close only the selected empty slot while other desktop work remains open;
+implementing it must retain the existing ownership checks and establish safe
+release of the selected view. The tests cover both frontend names and the presence
+or absence of a parked tmux session, preserving the worktree and saved history.
+
+To expose all five current failures (plus the passing compatible-launch control):
+
+```sh
+python3 -m pytest --runxfail -q \
+  tests/test_app_close.py tests/test_desktop_close.py tests/test_recovery_tmux.py \
+  -k 'blank_workspace_with_unrelated or empty_desktop_close_with_unrelated or public_open_new'
+```
+
+Normal runs record these as strict expected failures so a tests-only change can
+land without disabling CI. Only the specific known refusal/menu is accepted as
+an expected failure; fixture and safety assertion failures remain failures. Once
+a case succeeds, its strict XPASS requires removing the corresponding marker.
