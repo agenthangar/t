@@ -150,7 +150,7 @@ def check(parser, command_groups, instructions):
     elif issue_registry != set(issue_sub.choices):
         errors.append("issue parser verbs must match its public command registry")
     if issue_sub is not None:
-        for verb in ISSUE_VERBS:
+        for verb in issue_registry:
             leaf = issue_sub._name_parser_map.get(verb)
             if leaf is None:
                 continue

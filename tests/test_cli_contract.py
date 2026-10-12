@@ -106,9 +106,12 @@ def test_cli_lint_passes_and_detects_contract_regressions(t_mod):
 
     extended = t_mod.build_parser()
     issue = lint._subparsers(extended)._name_parser_map["issue"]
-    lint._subparsers(issue).add_parser("triage")
+    triage = lint._subparsers(issue).add_parser("triage", usage="%(prog)s [repo]")
     groups = {name: dict(actions) for name, actions in t_mod.COMMAND_GROUPS.items()}
     groups["issue"]["triage"] = ("issue", "triage")
+    assert any("issue triage" in error for error in lint.check(extended, groups, instructions))
+    triage.add_argument("repo", nargs="?")
+    triage.add_argument("--repo", dest="repo")
     assert lint.check(extended, groups, instructions) == []
 
     assert any("AGENTS.md" in error for error in lint.check(t_mod.build_parser(),
