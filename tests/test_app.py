@@ -166,9 +166,9 @@ def test_app_waits_for_backend_release_before_open(t_mod, app_command, monkeypat
     """The frontend exiting cannot authorize opening while its backend owns it."""
     call, events, row = app_command
     check = t_mod._app_cli_release
-    def release(selected, contract=None):
+    def release(selected, contract=None, *, unknown=None):
         if contract is None:
-            return check(selected)
+            return check(selected, unknown=unknown)
         assert events == [("stop", row)]
         events.append(("release", row))
     monkeypatch.setattr(t_mod, "_app_cli_release", release)
@@ -176,10 +176,25 @@ def test_app_waits_for_backend_release_before_open(t_mod, app_command, monkeypat
     assert [event[0] for event in events] == ["stop", "release", "open"]
 
 
+def test_app_reports_unmapped_writers_once_across_preflight_and_wait(
+        t_mod, app_command, monkeypatch, capsys):
+    call, _, _ = app_command
+    def release(row, contract=None, *, unknown=None):
+        unknown.add('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee')
+        if contract is None:
+            return 'modern'
+        unknown.add('ffffffff-eeee-dddd-cccc-bbbbbbbbbbbb')
+    monkeypatch.setattr(t_mod, '_app_cli_release', release)
+    assert call() == 0
+    warning = capsys.readouterr().err
+    assert warning.count('other held Codex writer lock(s)') == 1
+    assert '2 other held' in warning
+
+
 @pytest.mark.parametrize("stage", ["preflight", "wait"])
 def test_app_unverified_release_never_opens(t_mod, app_command, monkeypatch, capsys, stage):
     call, events, _ = app_command
-    def release(row, contract=None):
+    def release(row, contract=None, *, unknown=None):
         if stage == "preflight" or contract is not None:
             raise ValueError("writer still held; Retry: t open api 13 --app")
         return "modern"
@@ -212,6 +227,7 @@ def test_app_release_reopens_only_verified_desktop_owner(t_mod, app_slot, monkey
         if destination == "missing_helper":
             raise OSError("missing helper")
         return {"wait_cli_released": wait, "_lock_held": lambda path: True,
+                "preflight_cli_release": lambda sid, cwd, **options: "modern",
                 "loaded_threads": lambda home, require_writer: loaded if require_writer else []}
     monkeypatch.setattr(t_mod.runpy, "run_path", helper)
     if destination == "missing_helper":
@@ -223,6 +239,27 @@ def test_app_release_reopens_only_verified_desktop_owner(t_mod, app_slot, monkey
     if calls:
         assert calls[0][2]["retry"] == "Retry: t open api 13 --app"
         assert "75 seconds" in capsys.readouterr().out
+
+
+def test_app_direct_desktop_takeover_rechecks_new_sibling_owner(t_mod, app_slot, monkeypatch):
+    _, row = app_slot
+    row.update(codex_home="/isolated/codex", rollout="/isolated/rollout")
+    checks = []
+    def helper(path):
+        if path.endswith("t_desktop.py"):
+            return {"loaded_threads": lambda home, require_writer: [(SID, row["cwd"], "Fixture")]}
+        def preflight(sid, cwd, **options):
+            checks.append((sid, cwd, options))
+            raise ValueError("another Codex conversation in this worktree is still loaded")
+        return {"_lock_held": lambda path: True,
+                "preflight_cli_release": preflight,
+                "wait_cli_released": lambda *args, **kwargs: pytest.fail("must not wait")}
+    monkeypatch.setattr(t_mod.runpy, "run_path", helper)
+    unknown = set()
+    with pytest.raises(ValueError, match="another Codex conversation"):
+        t_mod._app_cli_release(row, "modern", unknown=unknown)
+    assert checks == [(SID, row["cwd"], dict(codex_home=row["codex_home"],
+                                             rollout=row["rollout"], unknown=unknown))]
 
 
 def test_app_does_not_stop_cli_for_archived_thread(t_mod, app_command, monkeypatch, capsys):
@@ -858,6 +895,7 @@ def workspace_store(t_mod, tmp_path, monkeypatch):
     rollout = home / 'rollout.jsonl'
     rollout.write_text('{}\n')
     db = home / 'state_5.sqlite'
+    monkeypatch.setattr(t_mod, 'zsh_capture', lambda command: str(db))
     with closing(sqlite3.connect(db)) as connection, connection:
         connection.execute('create table threads (id, rollout_path, cwd, archived, source)')
         connection.execute('insert into threads values (?,?,?,?,?)', (SID, str(rollout), cwd, 0, 'cli'))
@@ -874,6 +912,27 @@ def test_workspace_reopens_only_its_saved_parent_conversation(t_mod, workspace_s
         ])
     assert t_mod._app_workspace_thread(cwd) == SID
     assert t_mod._app_workspace_thread(cwd + '/empty') is None
+
+
+def test_workspace_uses_login_shell_codex_store(t_mod, workspace_store, monkeypatch):
+    db, cwd, _ = workspace_store
+    monkeypatch.setenv('CODEX_HOME', str(db.parent / 'wrong-python-home'))
+    commands = []
+    def capture(command):
+        commands.append(command)
+        return str(db)
+    monkeypatch.setattr(t_mod, 'zsh_capture', capture)
+    assert t_mod._app_workspace_thread(cwd) == SID
+    assert commands == ['_codex_db']
+
+
+@pytest.mark.parametrize('resolved', ['', 'relative/state_5.sqlite', '/tmp/state_6.sqlite'])
+def test_workspace_rejects_invalid_login_shell_store(
+        t_mod, workspace_store, monkeypatch, resolved):
+    _, cwd, _ = workspace_store
+    monkeypatch.setattr(t_mod, 'zsh_capture', lambda command: resolved)
+    with pytest.raises(ValueError, match='could not locate the Codex conversation index'):
+        t_mod._app_workspace_thread(cwd)
 
 
 @pytest.mark.parametrize('problem', ['ambiguous', 'missing_rollout', 'invalid_sid', 'null_rollout', 'corrupt'])
@@ -896,6 +955,7 @@ def test_workspace_refuses_uncertain_saved_conversations(t_mod, workspace_store,
 
 def test_workspace_without_codex_history_does_not_create_a_database(t_mod, tmp_path, monkeypatch):
     monkeypatch.setattr(t_mod, 'HOME', str(tmp_path))
+    monkeypatch.setattr(t_mod, 'zsh_capture', lambda command: str(tmp_path / '.codex' / 'state_5.sqlite'))
     assert t_mod._app_workspace_thread(str(tmp_path)) is None
     assert not (tmp_path / '.codex').exists()
 

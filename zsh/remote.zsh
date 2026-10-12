@@ -6,21 +6,41 @@ _dev_remote_app_owner() {
   local repo="$1" slot="$2" dir="${DEV_REPOS[$1]:-}" base wtr
   [[ -n $dir ]] || return 1
   base=${dir:t}; wtr=${DEV_WORKTREE_ROOT:-}
-  _dev_rows_all 2>/dev/null | awk -F'\t' \
+  local rows result scan_rc
+  rows=$(_dev_rows_all); scan_rc=$?
+  result=$(print -r -- "$rows" | awk -F'\t' \
     -v d="$(_dev_homerel "$dir")" -v s="$slot" \
     -v wtr="$(_dev_homerel "$wtr")" -v b="$base" '
       $1 != "local" && $5 == "app" {
         c=$3; sub(/^\/(Users|home)\/[^\/]+\//, "", c)
         n=$4; sub(/^.*-/, "", n)
         if ((c==d || (wtr != "" && b != "" && index(c, wtr "/" b "/") == 1)) && (s == "" || n == s)) { print $1; exit }
-      }'
+      }')
+  if [[ -n $result ]]; then
+    print -r -- "$result"
+    return 0
+  fi
+  if (( scan_rc )); then
+    print -u2 -- 't: desktop slot ownership could not be verified while a configured host was unavailable'
+    return 3
+  fi
+  return 1
 }
 
 _dev_remote_resolve() {
-  local repo="$1" slot="$2" multi="${3:-}"
+  local repo="$1" slot="$2" multi="${3:-}" quiet_empty="${4:-}"
   # _dev_rows_all columns: host(1) sid(2) cwd(3) slot(4) state(5) context(6) summary(7)
-  local rows; rows=$(_dev_rows_all 2>/dev/null | awk -F'\t' '$1 != "local" && $5 != "app" && $4 !~ /:/')
-  [[ -n $rows ]] || { echo "dev: no live dev sessions on any remote host (\`dev ls -r\`)." >&2; return 1; }
+  local all_rows rows scan_rc
+  all_rows=$(_dev_rows_all); scan_rc=$?
+  rows=$(print -r -- "$all_rows" | awk -F'\t' '$1 != "local" && $5 != "app" && $4 !~ /:/')
+  if [[ -z $rows ]]; then
+    if (( scan_rc )); then
+      print -u2 -- 't open: remote ownership could not be verified; retry when the skipped host is reachable'
+      return 3
+    fi
+    [[ -n $quiet_empty ]] || echo "dev: no live dev sessions on any remote host (\`dev ls -r\`)." >&2
+    return 1
+  fi
   # Match on the repo DIRECTORY (field 3 = session cwd), NOT the alias-derived
   # slot label (field 4): the same repo dir can carry different DEV_REPOS aliases
   # on different machines — a slot is `dev-dot-2` on mini but `dev-dotfiles-2`
@@ -54,7 +74,14 @@ _dev_remote_resolve() {
     match=$(print -r -- "$rows" | awk -F'\t' -v w="${repo}-" 'index($4,w)==1')
   fi
   local n; n=$(print -r -- "$match" | grep -c .)
-  (( n )) || { echo "dev: no live '$repo${slot:+ $slot}' session on any remote host (\`dev ls -r\` to see what's live where)." >&2; return 1; }
+  if (( ! n && scan_rc )); then
+    print -u2 -- 't open: remote ownership could not be verified; retry when the skipped host is reachable'
+    return 3
+  fi
+  (( n )) || {
+    [[ -n $quiet_empty ]] || echo "dev: no live '$repo${slot:+ $slot}' session on any remote host (\`dev ls -r\` to see what's live where)." >&2
+    return 1
+  }
 
   local host hostslot
   if (( n == 1 )); then
@@ -589,7 +616,7 @@ _dev_pull() {
     read -r lrepo lslot < <(_dev_slot_for_cwd "$cwd")
     [[ -n $lrepo && -n $lslot ]] || { echo "dev: couldn't map $cwd to a dev slot" >&2; return 1; }
     session="dev-${lrepo}-${lslot}"
-    _dev_resume_session "$session" "$cwd" "$sid" "$agent"
+    _dev_resume_session "$session" "$cwd" "$sid" "$agent" || return 1
   fi
   echo "✓ Landed here as $session"
   if [[ -t 1 && -z $CLAUDE_CODE_SESSION_ID ]]; then

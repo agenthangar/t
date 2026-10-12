@@ -67,7 +67,7 @@ def test_app_creates_a_real_window_and_preserves_the_existing_session(t_mod, tmp
                    state="detached", context="active", agent="codex", summary="Handoff")
         monkeypatch.setattr(t_mod, "_app_select", lambda *args: row)
         monkeypatch.setattr(t_mod, "_app_saved_thread", lambda *args: dict(row, archived=False))
-        monkeypatch.setattr(t_mod, "_app_cli_release", lambda *args: "modern")
+        monkeypatch.setattr(t_mod, "_app_cli_release", lambda *args, **kwargs: "modern")
         monkeypatch.setattr(t_mod, "zsh_capture", lambda *args: "")
         monkeypatch.setattr(t_mod, "_app_bundle", lambda: str(bundle))
         stopped = []
@@ -143,6 +143,7 @@ def test_app_creates_a_real_window_and_preserves_the_existing_session(t_mod, tmp
         codex_home = tmp_path / 'codex-home'
         codex_home.mkdir()
         monkeypatch.setenv('CODEX_HOME', str(codex_home))
+        monkeypatch.setattr(t_mod, "zsh_capture", lambda command: str(codex_home / 'state_5.sqlite'))
         rollout = codex_home / 'rollout.jsonl'
         rollout.write_text('{}\n')
         with closing(sqlite3.connect(codex_home / 'state_5.sqlite')) as connection, connection:

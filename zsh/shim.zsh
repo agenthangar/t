@@ -590,59 +590,79 @@ _t_open_app() {
     command t app "$repo" "$slot"
     return
   fi
-  if (( ${#REMOTE_HOSTS} )); then
-    local remote_owner
-    remote_owner=$(_dev_remote_app_owner "$repo" "$slot")
-    if [[ -n $remote_owner ]]; then
-      print -u2 -- "t open --app: $repo $slot is reserved by the Codex desktop app on $remote_owner; close it there and release the reservation before opening here"
+  dir=$(_dev_worktree_path "$repo" "$slot")
+  _dev_with_launch_locks "$dir" '' _t_open_app_claim "$repo" "$slot" "$dir" || return 1
+  print -r -- "Opening $repo $slot in the Codex desktop app: $dir"
+  command t _app-workspace "$dir" ${reopen:+--reopen} || {
+    print -u2 -- "t open --app: could not confirm the app open request; the worktree remains reserved at $dir for a retry"
+    return 1
+  }
+}
+
+_t_open_app_claim() {
+  local repo=$1 slot=$2 dir=$3 remote_owner remote_rc cli_scan_rc app_scan_rc owner owner_dir
+  # Recheck after taking the same worktree lock as CLI creation and app handoff.
+  local session="dev-${repo}-${slot}"
+  if tmux has-session -t "=$session:" 2>/dev/null; then
+    print -u2 -- "t open --app: $session became live while opening; retry to hand it to the app"
+    return 1
+  fi
+  while IFS='|' read -r owner owner_dir; do
+    [[ -n $owner_dir ]] || continue
+    if [[ ${owner_dir:A} == ${dir:A} ]]; then
+      print -u2 -- "t open --app: $owner now owns this worktree; retry to hand it to the app"
       return 1
     fi
-    remote_owner=$(_dev_remote_resolve "$repo" "$slot" 2>/dev/null)
+  done < <(tmux list-sessions -F '#{session_name}|#{session_path}' 2>/dev/null)
+  if (( ${#REMOTE_HOSTS} )); then
+    remote_owner=$(_dev_remote_resolve "$repo" "$slot" '' quiet); remote_rc=$?
     if [[ -n $remote_owner ]]; then
       print -u2 -- "t open --app: $repo $slot is live on ${remote_owner%%$'\t'*}; move it here with t beam before opening the app"
       return 1
     fi
+    cli_scan_rc=$remote_rc
+    remote_owner=$(_dev_remote_app_owner "$repo" "$slot"); remote_rc=$?
+    app_scan_rc=$remote_rc
+    if [[ -n $remote_owner ]]; then
+      print -u2 -- "t open --app: $repo $slot is reserved by the Codex desktop app on $remote_owner; close it there and release the reservation before opening here"
+      return 1
+    fi
+    (( cli_scan_rc == 3 || app_scan_rc == 3 )) && return 1
   fi
-  dir=$(_dev_worktree_path "$repo" "$slot")
   if _dev_app_slot_reserved "$dir"; then
     reopen=1 # Preserve its branch and reopen the saved conversation.
-    # A foreground CLI can own a reserved workspace without a tmux slot. Do not
-    # load that conversation a second time in the app. Shared backends are not
-    # CLI owners; their cwd can belong to an unrelated conversation.
-    local pid workspace_pids
-    workspace_pids=$(_dev_cwd_pids "$dir") || {
-      print -u2 -- 't open --app: could not check workspace processes; retry before reopening'
+  fi
+  # A foreground CLI can own a worktree without tmux or a desktop marker.
+  # Shared backends are not CLI owners; their cwd can belong to another thread.
+  local pid workspace_pids
+  workspace_pids=$(_dev_cwd_pids "$dir") || {
+    print -u2 -- 't open --app: could not check workspace processes; retry before opening'
+    return 1
+  }
+  _DEV_PS_AT=0
+  _dev_ps_snapshot || {
+    print -u2 -- 't open --app: could not check terminal agents; retry before opening'
+    return 1
+  }
+  for pid in ${(f)workspace_pids}; do
+    [[ -n ${_DEV_PS_COMM[$pid]:-} ]] || {
+      kill -0 "$pid" 2>/dev/null || continue # The cwd probe itself may have exited.
+      print -u2 -- 't open --app: workspace processes changed; retry before opening'
       return 1
     }
-    _DEV_PS_AT=0
-    _dev_ps_snapshot || {
-      print -u2 -- 't open --app: could not check terminal agents; retry before reopening'
-      return 1
-    }
-    for pid in ${(f)workspace_pids}; do
-      [[ -n ${_DEV_PS_COMM[$pid]:-} ]] || {
-        kill -0 "$pid" 2>/dev/null || continue # The cwd probe itself may have exited.
-        print -u2 -- 't open --app: workspace processes changed; retry before reopening'
-        return 1
-      }
-      [[ -n ${_DEV_PS_APP[$pid]:-} ]] && continue
-      _dev_agent_is_proc "${_DEV_PS_COMM[$pid]:-}" || continue
-      _dev_agent_is_service "$pid" && continue
-      print -u2 -- "t open --app: a terminal agent still owns this workspace (pid $pid); exit it before reopening in the app"
-      return 1
-    done
-  else
+    [[ -n ${_DEV_PS_APP[$pid]:-} ]] && continue
+    _dev_agent_is_proc "${_DEV_PS_COMM[$pid]:-}" || continue
+    _dev_agent_is_service "$pid" && continue
+    print -u2 -- "t open --app: a terminal agent still owns this workspace (pid $pid); exit it before opening in the app"
+    return 1
+  done
+  if [[ -z $reopen ]]; then
     dir=$(_dev_worktree_create "$repo" "$slot")
   fi
   [[ -n $dir && -e $dir/.git ]] || { _dev_worktree_refuse "$repo" "$slot"; return 1; }
   _dev_auto_trust "$dir"
   _dev_app_slot_reserve "$dir" || {
     print -u2 -- "t open --app: could not reserve $dir against automatic cleanup"
-    return 1
-  }
-  print -r -- "Opening $repo $slot in the Codex desktop app: $dir"
-  command t _app-workspace "$dir" ${reopen:+--reopen} || {
-    print -u2 -- "t open --app: could not confirm the app open request; the worktree remains reserved at $dir for a retry"
     return 1
   }
 }

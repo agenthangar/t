@@ -449,6 +449,52 @@ def test_unknown_held_sibling_fails_closed(handoff, target, tmp_path):
             handoff.assert_released(None, SID, str(target["cwd"]), run, **options(target))
 
 
+def test_handoff_records_unknown_writer_without_global_veto(handoff, target, tmp_path):
+    path = target["locks"] / f"{OTHER}.lock"
+    path.touch()
+    run, _ = process_table()
+    with locked(path, tmp_path):
+        unknown = set()
+        handoff.assert_released(None, SID, str(target["cwd"]), run,
+                                **options(target, unknown=unknown))
+        assert unknown == {OTHER}
+        unknown.clear()
+        assert handoff.preflight_cli_release(SID, str(target["cwd"]),
+                                             **options(target, unknown=unknown)) == "modern"
+        assert unknown == {OTHER}
+        unknown.clear()
+        handoff.wait_cli_released(SID, str(target["cwd"]),
+                                  **options(target, contract="modern", unknown=unknown))
+        assert unknown == {OTHER}
+
+
+def test_handoff_scans_past_unknown_writer_for_known_worktree_owner(
+        handoff, target, tmp_path, monkeypatch):
+    known_sid = "ffffffff-eeee-dddd-cccc-bbbbbbbbbbbb"
+    db = sqlite3.connect(target["home"] / "state_5.sqlite")
+    db.execute("create table threads (id text, cwd text)")
+    db.execute("insert into threads values (?, ?)", (known_sid, str(target["cwd"])))
+    db.commit()
+    db.close()
+    for sid in (OTHER, known_sid):
+        (target["locks"] / f"{sid}.lock").touch()
+    scandir = handoff.os.scandir
+    def ordered(path):
+        if path != str(target["locks"]):
+            return scandir(path)
+        with scandir(path) as entries:
+            return iter(sorted(entries, key=lambda entry: entry.name))
+    monkeypatch.setattr(handoff.os, "scandir", ordered)
+    run, _ = process_table()
+    with locked(target["locks"] / f"{OTHER}.lock", tmp_path), \
+            locked(target["locks"] / f"{known_sid}.lock", tmp_path):
+        unknown = set()
+        with pytest.raises(ValueError, match="another Codex conversation in this worktree"):
+            handoff.assert_released(None, SID, str(target["cwd"]), run,
+                                    **options(target, unknown=unknown))
+        assert unknown == {OTHER}
+
+
 def test_lock_file_symlink_is_rejected(handoff, target):
     path = target["locks"] / f"{SID}.lock"
     path.unlink()

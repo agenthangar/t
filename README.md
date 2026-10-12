@@ -147,6 +147,17 @@ examples; `t help session open` adds session targeting, defaults, and remote
 behavior. Start a fresh Codex session in the current repo with
 `t open --codex --new` (`codex` without `--` is a repository name).
 
+Opening and resuming serialize local tmux launches for the same worktree and
+conversation, including repository aliases. Foreground launches recheck ownership
+before invoking the agent. A failed tmux launch reports the failure instead
+of sending a second launch into an existing pane. When a configured remote host
+cannot be checked, t refuses an unverified saved-session revival; retry after
+the host is reachable. An existing verified local session still attaches. To
+deliberately start a different conversation locally, use
+`t session open my-project --here --new --cli`.
+Remote ownership scans time out after 15 seconds rather than waiting indefinitely
+for a host's login shell.
+
 ### Work
 
 | Command | Purpose |
@@ -371,8 +382,10 @@ On macOS, `t session open my-project --app` creates a fresh isolated worktree an
 opens that folder in a new desktop app window with Codex mode explicitly selected,
 without starting a terminal agent. Name a reserved slot to reopen its saved
 conversation (`t session open my-project 3` automatically uses the app). A slot
-without a saved conversation opens its workspace in Codex mode; when several
-conversations share the worktree, select the intended one in the desktop app.
+without a saved conversation opens its workspace in Codex mode. When several
+conversations share the worktree and no exact thread is recorded, reopening
+reports the ambiguity; select the intended conversation in the desktop app,
+or use `t app pull my-project 3 --thread <id>` to return that conversation to CLI.
 Exit any foreground terminal agent in that workspace before reopening. With `--app`, if
 that slot is running
 Codex in tmux, `t` hands the same conversation to the app. It waits for that
@@ -413,13 +426,24 @@ worktree started with `t session open --app`, it selects the only saved conversa
 if several chats share the worktree, use `t app pull my-project 3 --thread <id>`
 to select one, then open it. A previously pushed slot defaults to its handed-off
 thread. `t app pull` resumes without attaching; `--dry-run` previews either direction.
-Pull checks Codex's per-conversation writer lock and refuses if another loaded
-conversation shares the worktree. It resumes with `--no-daemon`, so an unrelated
+Handoffs check Codex's per-conversation writer lock and refuse if another loaded
+conversation is known to share the worktree. Codex can hold other thread locks
+without entries in its saved-conversation index. Those unindexed locks produce
+a diagnostic during opening and handoffs; they do not block every worktree.
+An unindexed lock is not proof of an unrelated conversation, and the selected
+thread must still pass its own ownership checks. Closing a slot keeps stricter
+checks because it releases the worktree reservation.
+Pull resumes with `--no-daemon`, so an unrelated
 background server cannot stall the transfer. It never quits the app or stops
 its backend. Codex versions without a verifiable writer lock use conservative
 release checks. The reservation is released only after the exact CLI process
 owns the conversation's lock and its resumed thread is verified; a failed
 handoff keeps the worktree protected.
+
+Fresh Codex starts use `--no-daemon`; ordinary saved resumes retain their configured
+backend behavior. See the
+[session lifecycle validation guide](docs/session-lifecycle-validation.md) for
+the automated checks and the separate real-desktop acceptance procedure.
 
 To close a desktop slot, run `t kill my-project 3` (or `t session close my-project 3`). It stops that
 slot's parked terminal and dev server and releases its reservation while

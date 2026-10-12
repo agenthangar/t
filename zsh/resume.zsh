@@ -204,11 +204,25 @@ _t_resume() {
   # path, same rule as _dev_remote_resolve so a `dev-dot-2` on mini matches
   # `dev-dotfiles-2` here — both key one dir); the alias is captured so an attach
   # needs no second scan.
-  local all_rows= remote_rows= live_all=
+  local all_rows= remote_rows= live_all= live_scan_rc=0
   if (( ${#REMOTE_HOSTS} )); then
-    live_all=$(_dev_rows_all 2>/dev/null)
+    live_all=$(_dev_rows_all); live_scan_rc=$?
   else
     live_all=$(_dev_session_rows 2>/dev/null | awk -F'\t' '{print "local\t" $0}')
+  fi
+  if (( live_scan_rc )); then
+    if [[ -n $slot ]]; then
+      local local_wt local_owner
+      local_wt=$(_dev_worktree_path "$repo" "$slot")
+      local_owner=${live[${local_wt:A}]:-}
+      if [[ -n $local_owner ]] || tmux has-session -t "=dev-${repo}-${slot}:" 2>/dev/null; then
+        print -u2 -- "Slot $slot is live locally ($local_owner) — attaching."
+        _t_dev "$repo" "$slot" --local
+        return
+      fi
+    fi
+    print -u2 -- 't resume: remote ownership could not be verified; no saved conversation was resumed. Retry when configured hosts are reachable.'
+    return 1
   fi
   all_rows=$(print -r -- "$live_all" | awk -F'\t' 'NF && $4 !~ /:/')
   # Live session IDS — every row, foreground ones included. The slot rules below
@@ -685,7 +699,11 @@ _t_resume() {
       mp_taken[$repo/$slot]=1
       mp_session="dev-${repo}-${slot}"
       echo "Resuming ${sid:0:8} in $mp_session ($mp_cwd)"
-      _dev_resume_session "$mp_session" "$mp_cwd" "$sid" "$mp_agent"
+      _dev_resume_session "$mp_session" "$mp_cwd" "$sid" "$mp_agent" || {
+        print -u2 -- "· $repo $slot: launch failed; this conversation was not resumed."
+        unset 'mp_taken[$repo/$slot]'
+        continue
+      }
       if [[ -z $mp_first_repo ]]; then
         mp_first_repo=$repo; mp_first_slot=$slot
       else
@@ -815,6 +833,10 @@ _t_resume() {
   # The recorded cwd is the transcript's lookup key: rebuild the worktree at the
   # IDENTICAL path when it was reaped/never existed here (branch + transcript are
   # durable; the dir is not).
+  if [[ -n $no_tmux && -n $TMUX && -n $CLAUDE_CODE_SESSION_ID ]]; then
+    echo "Run t session resume --fg from a plain shell — it resumes the session in the foreground." >&2
+    return 1
+  fi
   local cwd
   cwd=$(_dev_ensure_session_cwd "$wt") || {
     echo "Couldn't rebuild the worktree for $repo slot $slot ($wt) — is its dev/${${DEV_REPOS[$repo]}:t}-${slot} branch gone?" >&2
@@ -822,18 +844,15 @@ _t_resume() {
   }
 
   if [[ -n $no_tmux ]]; then
-    if [[ -n $TMUX && -n $CLAUDE_CODE_SESSION_ID ]]; then
-      echo "Run t session resume --fg from a plain shell — it resumes the session in the foreground." >&2
-      return 1
-    fi
+    _dev_with_launch_locks "$cwd" "$sid" _dev_foreground_resume_preflight "$sid" "$cwd" || return 1
     cd "$cwd" || return 1
     if [[ $agent == codex ]]; then codex resume "$sid"; else claude -r "$sid"; fi
-    return
+    return $?
   fi
 
   local session="dev-${repo}-${slot}"
   echo "Resuming ${sid:0:8} in $session ($cwd)"
-  _dev_resume_session "$session" "$cwd" "$sid" "$agent"
+  _dev_resume_session "$session" "$cwd" "$sid" "$agent" || return 1
   if [[ -z $TMUX && -t 0 && -t 1 ]]; then
     tmux attach-session -t "=$session:"
   else
@@ -1845,26 +1864,36 @@ _t_app_close_slot() {
 # conversation (claude -r) rather than starting fresh on $DEV_BRANCH. Same name
 # + log path convention so dev/tread/tpaste treat it like any dev session.
 _dev_resume_session() {
+  _dev_with_launch_locks "$2" "$3" _dev_resume_session_claimed "$@"
+}
+
+_dev_foreground_resume_preflight() {
+  _dev_launch_preflight "dev-foreground-$1" "$2" "$1"
+}
+
+_dev_resume_session_claimed() {
   local session="$1" dir="$2" sid="$3" agent="${4:-claude}"
   if (( ${+functions[_dev_issue_preparing]} )) && _dev_issue_preparing "$dir"; then
     print -u2 't: issue launch is reserved; rerun t issue to recover it'; return 1
   fi
+  _dev_launch_preflight "$session" "$dir" "$sid" || return 1
   _dev_auto_trust "$dir"
   local logfile="$HOME/.tmux-logs/${session}.log"
   mkdir -p "$HOME/.tmux-logs"
   # No fixed geometry / window-size latest: fit the active client so attaching from
   # a phone doesn't pan a too-wide window (see _dev_new_session for the full why).
   tmux new-session -d -s "$session" -c "$dir" || return 1
-  tmux set-option -t "=$session:" window-size latest 2>/dev/null
-  tmux pipe-pane -t "=$session:" -o "cat >> $logfile"
+  tmux set-option -t "=$session:" window-size latest 2>/dev/null || { tmux kill-session -t "=$session:"; return 1; }
+  tmux pipe-pane -t "=$session:" -o "cat >> $logfile" || { tmux kill-session -t "=$session:"; return 1; }
   # Record the resumed id on the session so `tpop` can pull the exact same
   # conversation back to the foreground (it also falls back to the dir's newest
   # transcript, but this is the precise signal when we know it).
-  tmux set-environment -t "=$session" CLAUDE_RESUME_ID "$sid"
-  tmux set-environment -t "=$session" DEV_AGENT "$agent"
+  tmux set-environment -t "=$session" CLAUDE_RESUME_ID "$sid" || { tmux kill-session -t "=$session:"; return 1; }
+  tmux set-environment -t "=$session" DEV_AGENT "$agent" || { tmux kill-session -t "=$session:"; return 1; }
   # `; exit` so quitting Claude tears the session down rather than leaving an idle
   # shell (see _dev_new_session for the full rationale).
-  tmux send-keys -t "=$session:" "$(_dev_agent_resume_cmd "$agent" "$sid"); exit" Enter
+  tmux send-keys -t "=$session:" "$(_dev_agent_resume_cmd "$agent" "$sid"); exit" Enter || { tmux kill-session -t "=$session:"; return 1; }
+  _dev_launch_startup_check "$session" "$logfile" || return 1
   _dev_recovery_watch "$session"
 }
 
@@ -2068,7 +2097,7 @@ _t_push() {
   elif [[ -n $defer ]]; then
     echo "Will resume ${sid[1,8]}… into detached $session ($cwd) on exit."
   else
-    _dev_resume_session "$session" "$cwd" "$sid" "$agent"
+    _dev_resume_session "$session" "$cwd" "$sid" "$agent" || return 1
     echo "Resumed ${sid[1,8]}… in detached $session ($cwd)"
   fi
 
@@ -2106,7 +2135,9 @@ _t_push() {
   else
     # Inside Claude without the wrapper (older shell): can't defer, so spawn now
     # and warn — exit immediately, two live copies of one session diverge.
-    [[ -z $existing ]] && _dev_resume_session "$session" "$cwd" "$sid" "$agent"
+    if [[ -z $existing ]]; then
+      _dev_resume_session "$session" "$cwd" "$sid" "$agent" || return 1
+    fi
     echo "$attach_hint"
     echo "(Exit this foreground Claude NOW — two live copies of one session diverge.)"
   fi
@@ -2421,13 +2452,14 @@ _tbeam_land() {
   fi
   cd "$land" 2>/dev/null || { echo "tbeam: $land not found on ${HOST:-this host}" >&2; return 1; }
   if [[ "$TB_MODE" == fg ]]; then                # owns this ssh TTY; dies with it
+    _dev_with_launch_locks "$land" "$TB_SID" _dev_foreground_resume_preflight "$TB_SID" "$land" || return 1
     if [[ $agent == codex ]]; then exec codex resume "$TB_SID"; else exec claude -r "$TB_SID"; fi
   fi
   local repo slot session
   read -r repo slot < <(_dev_slot_for_cwd "$land")
   [[ -n $repo && -n $slot ]] || { echo "tbeam: couldn't map $land to a dev slot" >&2; return 1; }
   session="dev-${repo}-${slot}"
-  _dev_resume_session "$session" "$land" "$TB_SID" "$agent"
+  _dev_resume_session "$session" "$land" "$TB_SID" "$agent" || return 1
   if [[ -n $TB_ATTACH ]]; then
     exec tmux attach -t "=$session:"              # drop the ssh caller straight in
   fi

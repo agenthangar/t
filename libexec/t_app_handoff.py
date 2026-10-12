@@ -165,7 +165,13 @@ def _thread_cwds(codex_home, sid):
     return known
 
 
-def _other_cwd_owner(folder, sid, cwd, codex_home):
+def _other_cwd_owner(folder, sid, cwd, codex_home, *, unknown=None):
+    """Find a known writer in cwd; optionally record unindexed live writers.
+
+    Destructive close callers omit ``unknown`` and continue to fail closed.
+    Handoffs supply a set: an unindexed lock is diagnostic, while a known
+    same-worktree writer remains a conflict even if scanned after that lock.
+    """
     if folder is None:
         return None
     for entry in os.scandir(folder):
@@ -176,7 +182,10 @@ def _other_cwd_owner(folder, sid, cwd, codex_home):
             continue
         cwds = _thread_cwds(codex_home, other)
         if not cwds:
-            raise ValueError("another loaded Codex conversation could not be matched to its worktree")
+            if unknown is None:
+                raise ValueError("another loaded Codex conversation could not be matched to its worktree")
+            unknown.add(other)
+            continue
         if any(os.path.realpath(path) == os.path.realpath(cwd) for path in cwds):
             return other
     return None
@@ -263,7 +272,7 @@ def _archived_released(codex_home, sid, cwd, rollout, run):
 
 
 def assert_released(bundle, sid, cwd, run, *, codex_home=None, rollout=None,
-                    archived=False, cli_pid=None, retry=_RETRY):
+                    archived=False, cli_pid=None, retry=_RETRY, unknown=None):
     """Allow only a free selected writer lock and no other writer in its cwd.
 
     The eventual `codex resume --no-daemon` takes the lock atomically. This
@@ -298,7 +307,7 @@ def assert_released(bundle, sid, cwd, run, *, codex_home=None, rollout=None,
                              "(its writer lock is held). "
                              + _release_guidance(cwd, archived, run) + retry)
         try:
-            other = _other_cwd_owner(folder, sid, cwd, codex_home)
+            other = _other_cwd_owner(folder, sid, cwd, codex_home, unknown=unknown)
         except ValueError as exc:
             raise ValueError(str(exc) + ". " + retry) from exc
         if other:
@@ -313,7 +322,7 @@ def assert_released(bundle, sid, cwd, run, *, codex_home=None, rollout=None,
                          + str(exc) + ". " + retry) from exc
 
 
-def preflight_cli_release(sid, cwd, *, codex_home, rollout):
+def preflight_cli_release(sid, cwd, *, codex_home, rollout, unknown=None):
     """Validate an exact CLI-to-app handoff before stopping its CLI frontend.
 
     A shared app-server may own the writer lock instead of the CLI PID. A
@@ -333,7 +342,7 @@ def preflight_cli_release(sid, cwd, *, codex_home, rollout):
             contract = "held"
         if contract is None:
             raise ValueError("the selected Codex conversation has no verifiable writer-lock contract")
-        other = _other_cwd_owner(folder, sid, cwd, codex_home)
+        other = _other_cwd_owner(folder, sid, cwd, codex_home, unknown=unknown)
         if other:
             raise ValueError("another Codex conversation in this worktree is still loaded "
                              f"({other})")
@@ -345,7 +354,7 @@ def preflight_cli_release(sid, cwd, *, codex_home, rollout):
 
 def wait_cli_released(sid, cwd, *, codex_home, rollout, contract=None,
                       timeout=75, interval=0.2, on_wait=None,
-                      retry="Retry: t open <repo> <slot> --app."):
+                      retry="Retry: t open <repo> <slot> --app.", unknown=None):
     """Wait for this thread's writer to unload, without affecting other threads.
 
     `contract` must come from preflight_cli_release before the CLI is stopped;
@@ -366,7 +375,7 @@ def wait_cli_released(sid, cwd, *, codex_home, rollout, contract=None,
         deadline = time.monotonic() + timeout
         announced = False
         while True:
-            other = _other_cwd_owner(folder, sid, cwd, codex_home)
+            other = _other_cwd_owner(folder, sid, cwd, codex_home, unknown=unknown)
             if other:
                 raise ValueError("another Codex conversation in this worktree is still loaded "
                                  f"({other}). " + retry)
