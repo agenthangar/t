@@ -212,7 +212,7 @@ PICKER_MOCK = """
     print -r -- "$T_PICKER_WITH_ATTACHED" > "$FZF_LOG.attached"
     print -r -- "$T_PICKER_WITH_PENDING" > "$FZF_LOG.pending"
     print -r -- "$T_PICKER_SESSION_FILTERS" > "$FZF_LOG.mode"
-    [[ -n $FZF_CANCEL ]] && return 1
+    [[ -n $FZF_CANCEL ]] && return 130
     if [[ -n $FZF_SELECT_ALL ]]; then print -r -- "$2"
     else print -r -- "$1"; fi
   }

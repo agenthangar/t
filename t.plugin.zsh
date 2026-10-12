@@ -21,8 +21,8 @@ _t_load_plugin() {
   zmodload zsh/datetime 2>/dev/null
   zmodload -F zsh/stat b:zstat 2>/dev/null
   autoload -Uz add-zsh-hook
-  _t_fzf() { command fzf "$@"; }
-  [[ -r "$T_HOME/ui/fzf.sh" ]] && source "$T_HOME/ui/fzf.sh"
+  [[ -r "$T_HOME/ui/fzf.sh" ]] || { print -u2 -- "t: shared picker is missing: $T_HOME/ui/fzf.sh"; return 1; }
+  source "$T_HOME/ui/fzf.sh"
 
   # The cached local data must be rebuilt before the Python executable runs.
   source "$T_HOME/zsh/config.zsh"
@@ -96,5 +96,5 @@ _stat_birth() {
   print -r -- "$b"
 }
 
-_t_load_plugin
+_t_load_plugin || return $?
 unfunction _t_load_plugin

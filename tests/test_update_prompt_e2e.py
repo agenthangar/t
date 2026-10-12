@@ -67,7 +67,7 @@ def test_release_prompt_updates_then_reexecs_original_argv(tmp_path):
                XDG_STATE_HOME=str(home / ".local" / "state"),
                T_E2E_UPDATED=str(updated), T_E2E_CALLS=str(calls),
                TMUX_TMPDIR=str(tmp_path / "tmux"), TERM="dumb")
-    argv = ["repos", "ls"]
+    argv = ["open", "api", "1"]
     master, slave = pty.openpty()
     output = bytearray()
     proc = None

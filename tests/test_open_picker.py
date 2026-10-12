@@ -213,7 +213,7 @@ def test_open_all_attached_does_not_create_fresh_session(zsh, tmp_path):
       _t_dev() { print UNEXPECTED_FRESH; }
       _t_open
     ''', _tty=True, **env)
-    assert result.returncode == 1, result.stdout
+    assert result.returncode == 130, result.stdout
     assert 'UNEXPECTED' not in result.stdout
     assert (tmp_path / 'picker.log').read_text() == ''
     assert 'api-2' in (tmp_path / 'picker.log.all').read_text()

@@ -90,11 +90,11 @@ _dev_remote_resolve() {
   # stdout is captured by callers; stdin still identifies the calling terminal.
   elif [[ -t 0 ]] && command -v fzf >/dev/null 2>&1; then
     local picked
-    local -a picker=(_t_fzf)
-    [[ -n $multi ]] && picker=(_t_fzf_sessions 'Live remote sessions · Esc cancel')
+    local -a picker=(_t_fzf_single open 'Live remote sessions')
+    [[ -n $multi ]] && picker=(_t_fzf_multi 'open: here + extra tabs' 'Live remote sessions')
     picked=$(print -r -- "$match" | awk -F'\t' '{printf "%s\t%s\t%s/%-12s %s\n", $1, $4, $1, $4, $7}' \
           | "${picker[@]}" --delimiter=$'\t' --with-nth=3 --no-hscroll \
-                --prompt="t open remote ${repo:-pick} > " --height=60% --reverse) || return 130
+                --prompt="t open remote ${repo:-pick} > ") || return $?
     [[ -n $picked ]] || return 130
     local pick
     for pick in "${(@f)picked}"; do
@@ -183,12 +183,14 @@ _dev_remote() {
   local res resolve_rc
   local multi=multi; [[ -n $fg ]] && multi=
   res=$(_dev_remote_resolve "$repo" "$slot" "$multi"); resolve_rc=$?
-  (( resolve_rc == 130 )) && return 1
+  (( resolve_rc == 130 )) && return 130
   if (( resolve_rc != 0 )); then
     # Nothing live to attach. `-r` is attach-only; starting one is `-r --new`.
-    local dh; dh=$(_dev_default_host) \
-      && echo "  to START one remotely: t session open ${repo:-<repo>}${slot:+ $slot} -r --new   (on $dh; --host <h> to choose)" >&2
-    return 1
+    if (( resolve_rc == 1 )); then
+      local dh; dh=$(_dev_default_host) \
+        && echo "  to START one remotely: t session open ${repo:-<repo>}${slot:+ $slot} -r --new   (on $dh; --host <h> to choose)" >&2
+    fi
+    return $resolve_rc
   fi
   _dev_open_picks "$res" "$fg"
 }
@@ -299,7 +301,7 @@ _dev_remote_delegate() {
   # any `dev-<repo>-*`, which would block delegation whenever an unrelated slot of the
   # same repo happens to be live here.
   [[ -n $slot ]] && _dev_local_slot_live "$repo" "$slot" && return 1
-  local res; res=$(_dev_remote_resolve "$repo" "$slot") || return 1
+  local res; res=$(_dev_remote_resolve "$repo" "$slot") || return $?
   [[ -n $res ]] || return 1
   local host=${res%%$'\t'*} prepo=${${res#*$'\t'}%%$'\t'*} pslot=${res##*$'\t'}
   local target="${REMOTE_HOSTS[$host]:-$host}"
@@ -325,8 +327,9 @@ _dev_remote_delegate() {
 # t open uses the attach-flavoured _dev_remote_attach; t read is bin-native and calls
 # _try_remote_delegate). Splits repo/slot off the dev-<repo>-<slot> name on the LAST
 # dash (so multi-dash repos like dotfiles resolve) and hands them to
-# _dev_remote_delegate. Returns 0 = handled on the slot's host over ssh -t (caller
-# should `return`); 1 = no remote slot (caller falls through to its local error).
+# _dev_remote_delegate. Returns 0 when handled, 1 when no remote slot matches,
+# 130 on picker cancellation, and the scanner/picker error on failure. Callers
+# may fall through to a local error only for 1.
 _dev_session_remote_fallback() {
   local session="$1" verb="$2"; shift 2
   local repo=${${session#dev-}%-*} slot=${session##*-}
@@ -402,7 +405,7 @@ _dev_remote_fg_open() {
   if (( n == 1 )); then
     sel=$rows
   elif [[ -t 0 && -t 1 ]] && command -v fzf >/dev/null 2>&1; then
-    sel=$(print -r -- "$rows" | _t_fzf --with-nth=2,1,3 --delimiter=$'\t' --prompt="t open > ") || return 0
+    sel=$(print -r -- "$rows" | _t_fzf_single open 'Foreground sessions' --with-nth=2,1,3 --delimiter=$'\t' --prompt="t open > ") || return $?
   else
     echo "t open: '$handle' matches foreground sessions on several hosts — name one:" >&2
     print -r -- "$rows" | awk -F'\t' '{printf "  t session open %s   (on %s — %s)\n", $2, $1, $3}' >&2
@@ -499,7 +502,7 @@ _dev_remote_kill() {
     _dev_remote_fg_kill "$repo" "$force"; local _frc=$?
     (( _frc != 2 )) && return $_frc
   fi
-  local res; res=$(_dev_remote_resolve "$repo" "$slot") || return 1
+  local res; res=$(_dev_remote_resolve "$repo" "$slot") || return $?
   local host=${res%%$'\t'*} prepo=${${res#*$'\t'}%%$'\t'*} pslot=${res##*$'\t'}
   local target="${REMOTE_HOSTS[$host]:-$host}"
   echo "→ Killing $host:dev-${prepo}-${pslot}"
@@ -641,8 +644,8 @@ _t_plan() {
   local sid
   if [[ "$1" == "--all" || "$1" == "-a" ]]; then
     local row
-    row=$(_claude_sessions_fzf "") || return 1     # every project
-    [[ -n $row ]] || return 1
+    row=$(_claude_sessions_fzf "") || return $?     # every project
+    [[ -n $row ]] || return 130
     sid=${row%%$'\t'*}
   elif [[ -n "$1" ]]; then
     # repo/slot or full session name → tmux session → stashed CLAUDE_RESUME_ID
@@ -678,7 +681,8 @@ _t_plan() {
       # `t plan` over there (shared _dev_session_remote_fallback): the plan .md lives in
       # that host's ~/.claude/plans (csync syncs transcripts, not plan files), so it
       # must be rendered on the slot's host.
-      _dev_session_remote_fallback "$session" plan && return
+      _dev_session_remote_fallback "$session" plan; local remote_rc=$?
+      (( remote_rc == 1 )) || return $remote_rc
       echo "No such session: $session" >&2; return 1
     fi
     if [[ $(_dev_agent_of_session "$session") == codex ]]; then
@@ -696,8 +700,8 @@ _t_plan() {
     sid=$CLAUDE_CODE_SESSION_ID                     # current-session mode
   else
     local row
-    row=$(_claude_sessions_fzf "$PWD") || return 1  # scoped to this dir
-    [[ -n $row ]] || return 1
+    row=$(_claude_sessions_fzf "$PWD") || return $?  # scoped to this dir
+    [[ -n $row ]] || return 130
     sid=${row%%$'\t'*}
   fi
 

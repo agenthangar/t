@@ -75,8 +75,8 @@ _t_paste() {
   # the fast path. No TTY/fzf (or -n) falls back to the newest file by mtime.
   if (( ! newest )) && [[ -t 0 && -t 1 ]] && command -v fzf >/dev/null 2>&1; then
     # ls -t sorts newest-first; show just the basename but return the full path
-    src=$(ls -t "${files[@]}" | _t_fzf --prompt='tpaste> ' --height=40% --reverse \
-          --delimiter=/ --with-nth=-1) || { echo "Cancelled."; return 1; }
+    src=$(ls -t "${files[@]}" | _t_fzf_single paste 'Recent files' --prompt='tpaste> ' \
+          --delimiter=/ --with-nth=-1) || { local picker_rc=$?; (( picker_rc == 130 )) && echo "Cancelled."; return $picker_rc; }
   else
     src=$(ls -t "${files[@]}" | head -1)
   fi
@@ -859,7 +859,7 @@ _dev_adopt_fg() {
     [[ -t 0 && -t 1 ]] || { echo "t open: several foreground sessions — name one (\`t session open <id>\`) or pick from a terminal:" >&2; print -r -- "$resumable" | awk -F'\t' '{printf "  %s  %s\n",$3,$6}' >&2; return 1; }
     local pick
     pick=$(print -r -- "$resumable" | awk -F'\t' '{printf "%s\t%s\t%s\n", $1, $3, $6}' \
-             | _t_fzf --with-nth=2.. --delimiter='\t' --prompt="t open > ") || return 1
+             | _t_fzf_single open 'Foreground sessions' --with-nth=2.. --delimiter='\t' --prompt="t open > ") || return $?
     sid=${pick%%$'\t'*}
     cwd=$(print -r -- "$resumable" | awk -F'\t' -v s="$sid" '$1==s{print $2; exit}')
     agent=$(print -r -- "$resumable" | awk -F'\t' -v s="$sid" '$1==s{print $7; exit}')
@@ -914,7 +914,7 @@ _dev_attach_fg() {
   if (( ${#att} == 1 )); then
     sel=${att[1]}
   elif [[ -t 0 && -t 1 ]] && command -v fzf >/dev/null 2>&1; then
-    sel=$(print -rl -- "${att[@]}" | _t_fzf --with-nth=5 --delimiter=$'\t' --prompt="t open > ") || return 0
+    sel=$(print -rl -- "${att[@]}" | _t_fzf_single open 'Attached sessions' --with-nth=5 --delimiter=$'\t' --prompt="t open > ") || return $?
   else
     echo "t open: several tmux'd sessions match '$handle' — name one:" >&2
     print -rl -- "${att[@]}" | awk -F'\t' '{printf "  t session open %s   (tmux %s)\n", $5, $1}' >&2
@@ -950,6 +950,7 @@ _dev_open_fg() {
   local handle="$1" rc
   _dev_attach_fg "$handle"; rc=$?
   (( rc == 0 )) && return 0
+  (( rc == 130 || rc > 2 )) && return $rc
   if (( rc == 2 )) && (( ${#REMOTE_HOSTS} )); then
     _dev_remote_fg_open "$handle"; rc=$?
     (( rc != 2 )) && return $rc
@@ -1777,7 +1778,7 @@ _dev_kill_pick() {
   picked=$(T_PICKER_SESSION_FILTERS=kill T_PICKER_WITH_ATTACHED="$with_attached" \
     T_PICKER_WITH_PENDING="$with_pending" _t_fzf_filtered "$safe_display" "$display" kill \
     'unattached · no pending work' "$(_dev_agent_legend)" '' \
-    --prompt="kill ${repo:+$repo }> " --preview='printf "%s\n" {4}') || return 130
+    --prompt="kill ${repo:+$repo }> " --preview='printf "%s\n" {4}') || return $?
   [[ -n $picked ]] || return 130
   local state rc=0 prepo slot
   for line in "${(@f)picked}"; do
@@ -1929,7 +1930,8 @@ _dev_kill() {
     # this explicitly. With no slot, never auto-pick a kill target — just point at where
     # to look.
     if [[ -n $slot && $slot != all ]]; then
-      _dev_remote_delegate "$repo" "$slot" kill ${force:+-y} && return
+      _dev_remote_delegate "$repo" "$slot" kill ${force:+-y}; local remote_rc=$?
+      (( remote_rc == 1 )) || return $remote_rc
     fi
     # No dev slot here. The target may be a FOREGROUND / non-dev-slot claude — the
     # `<repo>:<id>` / `:fg` rows `t ls` shows (a true foreground claude, or one in a
@@ -1975,7 +1977,8 @@ _dev_kill() {
   if ! tmux has-session -t "=$session:" 2>/dev/null; then
     # Live on another host? Tear it down there (shared fallback; remote `t kill` still
     # confirms unless -y). Same remote detection pop/plan get; -r forces it explicitly.
-    _dev_session_remote_fallback "$session" kill ${force:+-y} && return
+    _dev_session_remote_fallback "$session" kill ${force:+-y}; local remote_rc=$?
+    (( remote_rc == 1 )) || return $remote_rc
     echo "No session: $session"
     return 1
   fi
@@ -2395,10 +2398,10 @@ _t_dev() {
   # instead (combine with --fg for a local foreground resume / inline claude).
   if (( ${#REMOTE_HOSTS} )) && [[ -z $no_tmux && -z $local_only && $slot != new ]] && ! _dev_local_slot_live "$repo" "$slot"; then
     local res resolve_rc; res=$(_dev_remote_resolve "$repo" "$slot" multi quiet); resolve_rc=$?
-    (( resolve_rc == 130 )) && return 1   # cancellation must not start a fresh slot
+    (( resolve_rc == 130 )) && return 130   # cancellation must not start a fresh slot
     if (( resolve_rc != 0 && resolve_rc != 1 )); then
-      print -u2 -- 't open: remote ownership is unknown; no local session was started. Retry when configured hosts are reachable.'
-      return 1
+      (( resolve_rc != 3 )) || print -u2 -- 't open: remote ownership is unknown; no local session was started. Retry when configured hosts are reachable.'
+      return $resolve_rc
     fi
     if [[ -n $res ]]; then
       echo "(not live here — attaching on ${res%%$'\t'*}; Ctrl-b d to detach)"
@@ -2431,7 +2434,7 @@ _t_dev() {
       print -u2 -- "t open: $repo $slot is live on ${remote_cli%%$'\t'*}; attach there or move it here before opening a local foreground session"
       return 1
     fi
-    (( remote_rc == 3 )) && return 1
+    (( remote_rc > 1 )) && return $remote_rc
   fi
 
   # -f/--fg (a.k.a. --no-tmux): run claude inline, no tmux. If a SPECIFIC slot is

@@ -515,7 +515,7 @@ def test_run_existing_rechecks_and_errors(mod, app, issue, args, monkeypatch, tm
     setup_run(app, issue, monkeypatch, iter([report, report]))
     with pytest.raises(mod.IssueError, match='became active'): app.run_one(args, args.target)
     monkeypatch.setattr(mod.IssueCommand, 'run', lambda *a: (_ for _ in ()).throw(EOFError('cancelled')))
-    assert mod.run(app.cfg, args, app.api) == 1
+    assert mod.run(app.cfg, args, app.api) == 130
 
 
 def test_parser_and_handler(t_mod, monkeypatch):

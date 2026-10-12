@@ -281,12 +281,19 @@ def test_declining_logins_preserves_probe_failure(t_mod, monkeypatch):
     monkeypatch.setattr(t_mod, '_login_probe', lambda agent: {
         'state': 'error' if agent == 'codex' else 'logged-out', 'bin': '/fixture/' + agent})
     monkeypatch.setattr(t_mod.sys, 'stdin', SimpleNamespace(isatty=lambda: True))
+    monkeypatch.setattr(t_mod.sys.stdout, 'isatty', lambda: True)
+    monkeypatch.setattr(t_mod, '_install_wizard', lambda *a, **kw: (_ for _ in ()).throw(OSError('no raw terminal')))
     monkeypatch.setattr('builtins.input', lambda _: 'n')
     assert t_mod.cmd_login(None, args) == 1
 
 
-@pytest.mark.parametrize('approve', [False, True])
-def test_login_prompt_fallback_selects_healthy_tool(t_mod, monkeypatch, approve):
+@pytest.mark.parametrize('answers,expected,status', [
+    (['n', 'y', 'n'], [['/fixture/codex', 'login']], 0),
+    (['n', 'n', 'n'], [], 0),
+    (['n', 'y', 'q'], [], 130),
+    (['n', 'y', None], [], 130),
+])
+def test_login_prompt_fallback_runs_selection_directly(t_mod, monkeypatch, answers, expected, status):
     args = t_mod.build_parser().parse_args(['login'])
     monkeypatch.setattr(t_mod.sys.stdin, 'isatty', lambda: True)
     monkeypatch.setattr(t_mod.sys.stdout, 'isatty', lambda: True)
@@ -295,15 +302,20 @@ def test_login_prompt_fallback_selects_healthy_tool(t_mod, monkeypatch, approve)
     monkeypatch.setattr(t_mod, '_install_wizard', unavailable)
     monkeypatch.setattr(t_mod, '_login_probe', lambda agent: {
         'state': 'logged-in', 'bin': '/fixture/' + agent, 'expires': None})
-    answers = iter(['n', 'y', 'n', '' if approve else 'n'])
-    monkeypatch.setattr('builtins.input', lambda _: next(answers))
+    answers = iter(answers)
+    def answer(_):
+        value = next(answers)
+        if value is None:
+            raise EOFError
+        return value
+    monkeypatch.setattr('builtins.input', answer)
     calls = []
     def run(cmd):
         calls.append(cmd)
         return SimpleNamespace(returncode=0)
-    monkeypatch.setattr(t_mod.subprocess, 'run', run)
-    assert t_mod.cmd_login(None, args) == 0
-    assert calls == ([['/fixture/codex', 'login']] if approve else [])
+    monkeypatch.setattr(t_mod, '_login_run', run)
+    assert t_mod.cmd_login(None, args) == status
+    assert calls == expected
 
 
 @pytest.mark.parametrize('answer,expected', [('', True), ('y', True), ('YES', True),

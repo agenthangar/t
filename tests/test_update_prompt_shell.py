@@ -160,6 +160,15 @@ def test_machine_or_dry_run_command_does_not_prompt(tmp_path, flag):
 
 
 @pytest.mark.skipif(not shutil.which("zsh"), reason="zsh is required")
+@pytest.mark.parametrize("command", ["t config show", "t config --show", "t install --status",
+                                     "t agent install --status"])
+def test_read_only_shell_modes_do_not_prompt(tmp_path, command):
+    calls = run_shim(tmp_path, command)
+    assert all("__update-prompt" not in call for call in calls)
+    assert calls[-1] == "after:marker="
+
+
+@pytest.mark.skipif(not shutil.which("zsh"), reason="zsh is required")
 def test_help_and_native_commands_do_not_prompt_in_shim(tmp_path):
     calls = run_shim(tmp_path, "t open --help; t ls; t update")
     assert calls == [

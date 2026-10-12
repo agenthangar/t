@@ -29,7 +29,7 @@ def picker():
             return subprocess.run(['tmux', '-S', socket, *args], env=env, text=True,
                                   capture_output=True, check=check)
 
-        def start(empty=False, width=90, mode='open', shell='/bin/sh'):
+        def start(empty=False, width=90, mode='open', shell='/bin/sh', *, hostile_opts=False, profile='filtered'):
             rows = ('local\tapi-2\tdetached\tapi  2  ⬡ codex  ○  Alpha completed task\n'
                     'local\tweb-4\tapp\tweb  4  ⬡ codex  ▣  Beta full task detail END-OF-TITLE\n'
                     'local\tapi-7\tattached\tapi  7  ✱ claude  ●  Pending task\n')
@@ -47,9 +47,19 @@ def picker():
             mode_env = 'T_PICKER_SESSION_FILTERS=' + shlex.quote(mode) + ' '
             if mode == 'kill':
                 mode_env += 'T_PICKER_WITH_ATTACHED="$(cat "$HOME/attached")" T_PICKER_WITH_PENDING="$(cat "$HOME/pending")" '
+            if hostile_opts:
+                (root / 'fzf-options').write_text('--bind=enter:abort,esc:accept,tab:abort,space:abort\n')
+                env['FZF_DEFAULT_OPTS'] = '--cycle'
+                env['FZF_DEFAULT_OPTS_FILE'] = str(root / 'fzf-options')
+                if hostile_opts == 'env':
+                    env['FZF_DEFAULT_OPTS'] += ' --bind=enter:abort,esc:accept,tab:abort,space:abort'
+                    env['FZF_DEFAULT_OPTS_FILE'] = '/dev/null'
+            picker_cmd = (mode_env + '_t_fzf_filtered "$(cat "$HOME/default")" "$(cat "$HOME/all")" '
+                          + mode + ' unattached "⬡ codex · ✱ claude" "" --prompt="' + mode + ' > "')
+            if profile == 'single':
+                picker_cmd = '_t_fzf_single open "Saved sessions" --delimiter="$(printf "\\t")" --with-nth=-1 --prompt="single > " < "$HOME/default"'
             script = (f'. {shlex.quote(str(ROOT / "ui/fzf.sh"))}\n'
-                      + mode_env + '_t_fzf_filtered "$(cat "$HOME/default")" "$(cat "$HOME/all")" '
-                      + mode + ' unattached "⬡ codex · ✱ claude" "" --prompt="' + mode + ' > " > "$HOME/selected"\n'
+                      + picker_cmd + ' > "$HOME/selected"\n'
                       'printf done > "$HOME/done"\n')
             (root / 'run.sh').write_text(script)
             tmux('-f', '/dev/null', 'new-session', '-d', '-x', str(width), '-y', '26',
@@ -64,8 +74,8 @@ def picker():
                 time.sleep(.05)
             pytest.fail(f'Picker never displayed {text!r}:\n{screen}')
 
-        def finish():
-            tmux('send-keys', 'Enter')
+        def finish(key='Enter'):
+            tmux('send-keys', key)
             deadline = time.monotonic() + 5
             while not (root / 'done').exists() and time.monotonic() < deadline:
                 time.sleep(.05)
@@ -160,3 +170,61 @@ def test_resume_live_hotkey_restores_defaults_without_losing_search(picker):
     keys('C-a')
     wait('1/3 (0)')
     assert [row.split('\t')[1] for row in finish()] == ['api-7']
+
+
+def test_generic_filtered_picker_uses_explicit_show_all_and_defaults(picker):
+    start, wait, keys, finish = picker
+    start(mode='generic')
+    wait('2/2 (0)')
+    keys('-l', 'Pending')
+    wait('0/2 (0)')
+    keys('C-a')
+    screen = wait('1/3 (0)')
+    assert 'Ctrl-F defaults' in screen and 'generic > Pending' in screen
+    keys('C-a')
+    wait('1/3 (0)')
+    keys('C-f')
+    wait('0/2 (0)')
+    keys('C-a')
+    wait('1/3 (0)')
+    assert [row.split('\t')[1] for row in finish()] == ['api-7']
+
+
+def test_filtered_picker_remains_operable_at_32_columns(picker):
+    start, wait, keys, finish = picker
+    start(width=32)
+    wait('2/2 (0)')
+    keys('C-a')
+    wait('3/3 (0)')
+    keys('-l', 'Pending')
+    wait('1/3 (0)')
+    assert [row.split('\t')[1] for row in finish()] == ['api-7']
+
+
+@pytest.mark.parametrize('source', ['env', 'file'])
+def test_filtered_picker_controls_override_hostile_fzf_options(picker, source):
+    start, wait, keys, finish = picker
+    start(hostile_opts=source)
+    wait('2/2 (0)')
+    keys('Space')
+    wait('2/2 (1)')
+    assert len(finish()) == 1
+
+
+@pytest.mark.parametrize('source', ['env', 'file'])
+def test_single_picker_enter_override_hostile_fzf_options(picker, source):
+    start, wait, keys, finish = picker
+    start(hostile_opts=source, profile='single')
+    wait('2/2')
+    keys('Tab')
+    wait('2/2')
+    assert len(finish()) == 1
+
+
+@pytest.mark.parametrize('source', ['env', 'file'])
+@pytest.mark.parametrize('key', ['Escape', 'C-c'])
+def test_single_picker_abort_keys_override_hostile_fzf_options(picker, source, key):
+    start, wait, keys, finish = picker
+    start(hostile_opts=source, profile='single')
+    wait('2/2')
+    assert finish(key) == []

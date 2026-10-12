@@ -2132,7 +2132,8 @@ def test_ls_parser_accepts_optional_repo(t_mod):
 def test_repos_lists_short_names_and_paths(t_mod, capsys):
     cfg = type("Cfg", (), {"repos": {"t": "/code/t", "api": "/code/my-api"}})()
     assert t_mod.cmd_repos(cfg, t_mod.build_parser().parse_args(["repos", "ls"])) == 0
-    assert capsys.readouterr().out.splitlines() == ["api  /code/my-api", "t    /code/t"]
+    assert capsys.readouterr().out.splitlines() == [
+        "  REPO  CHECKOUT", "  api   /code/my-api", "  t     /code/t"]
     assert t_mod.cmd_repos(cfg, t_mod.build_parser().parse_args(["repos", "path", "t"])) == 0
     assert capsys.readouterr().out == "/code/t\n"
     assert t_mod.cmd_repos(cfg, t_mod.build_parser().parse_args(["repos", "path", "missing"])) == 1

@@ -168,7 +168,7 @@ def test_config_menu_save_then_cancel(t_mod, config_cli, monkeypatch):
     assert text.startswith("# keep me\n") and "DEV_AGENT_DEFAULT=codex" in text
     assert "DEV_MODEL[codex]=local/model" in text and "DEV_MODEL[claude]=opus" in text
     ui = Menu(["tool", "claude", "cancel"])
-    assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == 0
+    assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == 130
     assert local.read_text() == text and ui.restored
 
 
@@ -208,7 +208,7 @@ def test_config_main_menu_shows_repo_aliases(t_mod, config_cli, monkeypatch):
         return "cancel"
     ui.pick = pick
     monkeypatch.setattr(t_mod, "_RailUI", lambda: ui)
-    assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == 0
+    assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == 130
 
 
 def test_config_menu_interrupt_restores_terminal(t_mod, config_cli, monkeypatch):
@@ -276,7 +276,7 @@ def test_config_hosts_remove_save_and_cancel(t_mod, config_cli, monkeypatch):
     before = local.read_text()
     ui = Menu(["hosts", "retired", "remove", "__back__", "cancel", "discard"])
     monkeypatch.setattr(t_mod, "_RailUI", lambda: ui)
-    assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == 0
+    assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == 130
     assert local.read_text() == before and "retired" in cfg.hosts
     ui = Menu(["hosts", "retired", "remove", "__back__", "save"])
     assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == 0
@@ -378,7 +378,7 @@ def test_config_repo_short_name_cancel_discards_changes(t_mod, config_cli, monke
     before = t_mod._config_state(cfg)
     ui = Menu(["repos", "site", "alias", "back", "__back__", "cancel", "discard"], [new_alias])
     monkeypatch.setattr(t_mod, "_RailUI", lambda: ui)
-    assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == 0
+    assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == 130
     assert t_mod._config_state(cfg) == before
     assert local.read_text() == "# keep me\n"
 
@@ -387,7 +387,7 @@ def test_config_review_can_back_out_or_cancel(t_mod, config_cli, monkeypatch):
     cfg, local = config_cli
     ui = Menu(["tool", "codex", "save", "save", "cancel", "discard"], pages=["n", "q"])
     monkeypatch.setattr(t_mod, "_RailUI", lambda: ui)
-    assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == 0
+    assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == 130
     assert local.read_text() == "# keep me\n"
 
 
@@ -406,7 +406,7 @@ def test_config_editor_requires_pending_changes_to_be_saved(t_mod, config_cli, m
     ui = Menu(["tool", "codex", "edit", "cancel", "discard"])
     monkeypatch.setattr(t_mod, "_RailUI", lambda: ui)
     monkeypatch.setattr(t_mod, "_config_editor", lambda: pytest.fail("must not open editor"))
-    assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == 0
+    assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == 130
     assert local.read_text() == "# keep me\n"
 
 
@@ -441,7 +441,7 @@ def test_config_model_lookup_is_lazy_and_refreshable(t_mod, config_cli, monkeypa
     monkeypatch.setattr(t_mod, "_config_live_models", discover)
     ui = Menu(["cancel"])
     monkeypatch.setattr(t_mod, "_RailUI", lambda: ui)
-    assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == 0 and not calls
+    assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == 130 and not calls
     ui = Menu(["codex", "model", "__refresh__", "new-model", "effort", "ultra", "back", "save"])
     assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == 0
     assert calls == ["codex", "codex"]  # one retry, then reuse within this menu

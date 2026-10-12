@@ -2,6 +2,15 @@
 
 `t` is a Python CLI plus a zsh plugin for agent sessions and isolated Git worktrees.
 
+Before changing a public command, read [the command and terminal contract](ui/README.md)
+and [the command inventory](ui/command-contract.json). Classify every new command
+and conditional mode; compatibility aliases inherit the canonical entry. Use
+the shared `_RailUI` or `_t_fzf_single`/`_t_fzf_multi`/`_t_fzf_filtered`
+profile for interactive behavior. Update the inventory, help, examples, and
+contract tests with the implementation. Lists and status are read-only and
+must never open a picker or an automatic update prompt. Run
+`python3 scripts/lint_cli.py` to check these rules.
+
 Keep public commands in noun/verb families. For issue work, expose `t issue list`
 to browse a repository, `t issue status` for read-only ownership discovery, and
 `t issue start` to continue or start work. Reuse the shared session picker for
