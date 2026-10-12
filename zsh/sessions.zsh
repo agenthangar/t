@@ -2605,6 +2605,10 @@ _t_dev() {
     # resume logging if it stopped (e.g. after server restart)
     tmux pipe-pane -t "=$session:" -o "cat >> $logfile"
     _dev_recovery_watch "$session"
+    if [[ ${T_CORE_DETACH:-} == 1 ]]; then
+      [[ -n ${T_CORE_RESULT:-} ]] && print -r -- "$session" > "$T_CORE_RESULT"
+      return 0
+    fi
     tmux attach-session -t "=$session:" || {
       print -u2 -- "t open: could not attach $session; inspect $logfile"
       return 1
@@ -2625,6 +2629,10 @@ _t_dev() {
     local agent_note=; [[ $agent != claude ]] && agent_note=" · $agent"
     echo "Starting $session in $dir$agent_note (logging to $logfile)"
     _dev_new_session "$session" "$dir" "$branch" "$skip_prepare" "$agent" || return 1
+    if [[ ${T_CORE_DETACH:-} == 1 ]]; then
+      [[ -n ${T_CORE_RESULT:-} ]] && print -r -- "$session" > "$T_CORE_RESULT"
+      return 0
+    fi
     tmux attach-session -t "=$session:" || {
       print -u2 -- "t open: $session did not remain available; inspect $logfile"
       return 1

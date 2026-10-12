@@ -620,7 +620,14 @@ _t_resume() {
   # _t_dev / _dev_remote_attach, both of which need a terminal to attach; fall
   # through to the listing branch so the message matches the multi-candidate
   # no-fzf case instead of failing hard from inside the attach helper.
-  if (( $#visible == 1 )) && \
+  if [[ ${T_CORE_DETACH:-} == 1 && -n ${T_CORE_RESUME_SID:-} ]]; then
+    pick=
+    for c in "${(@)visible}"; do
+      f=("${(@ps:\t:)c}")
+      [[ $f[3] == $T_CORE_RESUME_SID ]] && { pick=$c; break; }
+    done
+    [[ -n $pick ]] || { print -u2 -- 't resume: selected conversation is no longer available'; return 1; }
+  elif (( $#visible == 1 )) && \
      { (( ! hidden_live || $#cands == 1 )) || [[ ! -t 0 || ! -t 1 ]]; } && \
      f=("${(@ps:\t:)visible[1]}") && [[ $f[7] == - || -t 1 ]]; then
     pick=${visible[1]}
@@ -662,6 +669,10 @@ _t_resume() {
   # both become hints, not errors, so one stray mark never aborts the batch.
   local -a picks; picks=("${(@f)pick}")
   if (( $#picks > 1 )); then
+    if [[ ${T_CORE_DETACH:-} == 1 ]]; then
+      print -u2 -- 't resume: select one exact conversation for a headless resume'
+      return 1
+    fi
     if [[ -n $no_tmux ]]; then
       echo "t resume --fg resumes ONE conversation inline in this terminal — mark a single row (or drop --fg)." >&2
       return 1
@@ -811,6 +822,10 @@ _t_resume() {
 
   # A LIVE row was picked: attach in place (local or on its host) — resuming it
   # here would mint a second owner of the session id (see the scan note above).
+  if [[ ${T_CORE_DETACH:-} == 1 && $loc != - && $loc != here ]]; then
+    print -u2 -- 't resume: this owner requires explicit terminal review'
+    return 1
+  fi
   if [[ $loc == fg:* ]]; then
     echo "That conversation is live as foreground $lalias — attaching."
     _dev_open_fg "$lalias"
@@ -869,6 +884,10 @@ _t_resume() {
   local session="dev-${repo}-${slot}"
   echo "Resuming ${sid:0:8} in $session ($cwd)"
   _dev_resume_session "$session" "$cwd" "$sid" "$agent" || return 1
+  if [[ ${T_CORE_DETACH:-} == 1 ]]; then
+    [[ -n ${T_CORE_RESULT:-} ]] && print -r -- "$session" > "$T_CORE_RESULT"
+    return 0
+  fi
   if [[ -z $TMUX && -t 0 && -t 1 ]]; then
     tmux attach-session -t "=$session:"
   else

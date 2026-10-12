@@ -12,6 +12,7 @@ ASSETS = (
     "bin/t", "bin/claude-stamp-tmux", "bin/cursor-beam",
     "libexec/t_issue.py", "libexec/t_issue_policy.txt", "libexec/t_history.py",
     "libexec/t_share.py", "libexec/t_share_sessions.py",
+    "libexec/t_core.py", "libexec/t_bridge.py",
     "claude/commands/tpush.md", "claude/commands/tpop.md",
     "claude/settings.json.example",
     "codex/prompts/tpush.md", "codex/prompts/tpop.md",
