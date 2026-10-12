@@ -4249,6 +4249,103 @@ def _login_plan(items, probed, headless):
     return steps
 
 
+class _LoginLinks:
+    """Add OSC 8 links after complete URL lines; relay prompts immediately.
+
+    Keep only a bounded, unfinished line in memory. Never save vendor output.
+    The original URL remains copyable in terminals without hyperlink support.
+    """
+    def __init__(self):
+        self.pending = b""
+
+    def feed(self, data):
+        output = []
+        for part in data.splitlines(keepends=True):
+            output.append(part)
+            if self.pending is not None:
+                self.pending += part
+                if len(self.pending) > 16384:
+                    self.pending = None
+            if part.endswith(b"\n"):
+                output.append(self.finish())
+        return b"".join(output)
+
+    def finish(self):
+        line, self.pending = self.pending, b""
+        if not line:
+            return b""
+        text = _ANSI_RE.sub("", _OSC.sub(b"", line).decode("utf-8", errors="replace"))
+        links = []
+        for url in dict.fromkeys(re.findall(r'https?://[^\s\x00-\x1f\x7f-\x9f<>"\']+', text)):
+            try:
+                if not urlsplit(url).hostname:
+                    continue
+            except ValueError:
+                continue
+            links.append(b"  \x1b]8;;" + url.encode("utf-8") +
+                         b"\x1b\\Open sign-in page\x1b]8;;\x1b\\\n")
+        return (b"\n" if links and not line.endswith(b"\n") else b"") + b"".join(links)
+
+
+def _login_run(cmd):
+    """Relay terminal output through a PTY to add links without breaking input.
+
+    Stdin and the controlling terminal stay inherited: vendor prompts, browser
+    callbacks and signals retain their normal behavior. Redirected output stays
+    untouched. Only stdout/stderr pass through the output PTY.
+    """
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        return subprocess.run(cmd)
+    import errno
+    import termios
+    master, slave = os.openpty()
+    child = None
+    previous = signal.getsignal(signal.SIGWINCH)
+    links = _LoginLinks()
+
+    def resize(*_):
+        size = fcntl.ioctl(sys.stdout.fileno(), termios.TIOCGWINSZ, b"\0" * 8)
+        fcntl.ioctl(master, termios.TIOCSWINSZ, size)
+
+    try:
+        # The outer terminal applies output processing; do not apply it twice.
+        attrs = termios.tcgetattr(slave)
+        attrs[1] &= ~termios.OPOST
+        termios.tcsetattr(slave, termios.TCSANOW, attrs)
+        resize()
+        signal.signal(signal.SIGWINCH, resize)
+        sys.stdout.flush()
+        child = subprocess.Popen(cmd, stdout=slave, stderr=slave)
+        os.close(slave)
+        slave = None
+        while True:
+            try:
+                data = os.read(master, 4096)
+            except OSError as exc:
+                if exc.errno != errno.EIO:
+                    raise
+                break  # Linux PTYs signal EOF with EIO.
+            if not data:
+                break
+            sys.stdout.buffer.write(links.feed(data))
+            sys.stdout.buffer.flush()
+        sys.stdout.buffer.write(links.finish())
+        sys.stdout.buffer.flush()
+        return subprocess.CompletedProcess(cmd, child.wait())
+    finally:
+        signal.signal(signal.SIGWINCH, previous)
+        os.close(master)
+        if slave is not None:
+            os.close(slave)
+        if child is not None and child.poll() is None:
+            child.terminate()
+            try:
+                child.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                child.kill()
+                child.wait()
+
+
 def cmd_login(cfg, args):
     if args.force and not args.agents:
         print("t login: --force requires named agents", file=sys.stderr)
@@ -4276,7 +4373,7 @@ def cmd_login(cfg, args):
             try:
                 confirmed = _install_wizard(items, plan, login=True)
             except Exception:
-                confirmed = _install_prompt_flow(items, plan)
+                confirmed = _install_prompt_flow(items, plan, login=True)
         except (EOFError, KeyboardInterrupt):
             return 130
         if not confirmed:
@@ -4301,7 +4398,7 @@ def cmd_login(cfg, args):
     for step in plan():
         agent, cmd = step["agent"], step["cmd"]
         try:
-            result = subprocess.run(cmd)
+            result = _login_run(cmd)
         except KeyboardInterrupt:
             return 130
         except OSError:
@@ -4971,10 +5068,11 @@ def _install_wizard(items, plan, login=False):
     hosts) under a single cursor, present entries locked under a dim ✓; enter → the
     diff-style review (enter runs · n back · q quit), re-planned from the live marks
     through `plan()`. Returns True on apply (items mutated in place), False on abort;
-    raises off a tty → _install_prompt_flow."""
+    raises off a tty → _install_prompt_flow. Login runs the selected commands on
+    Enter directly, without the install review screen."""
     ui = _RailUI()
     st, out, rail = ui.st, ui.out, ui.rail
-    HINTS = "space select · enter review · q quit"
+    HINTS = "space select · enter run · q quit" if login else "space select · enter review · q quit"
 
     def row_text(it, aw, cur):
         locked = it["t"] == "locked"
@@ -4998,7 +5096,7 @@ def _install_wizard(items, plan, login=False):
                 else:
                     disp += [(line, idx) for line in row_text(it, aw, idx == cur)]
             ui.frame("Pick agents to log in" if login else "Pick what to install", disp, cur, "↑↓/jk move · space select · q back",
-                     primary=("enter", "REVIEW CHANGES", ""), flash=msg)
+                     primary=("enter", "RUN LOGINS" if login else "REVIEW CHANGES", ""), flash=msg)
             msg = ""
             k = ui.read_key()
             it = items[cur] if sel else None
@@ -5028,14 +5126,22 @@ def _install_wizard(items, plan, login=False):
             return True
         return False if k in ("n", "esc") else None
 
-    ui.intro("t login" if login else "t install", "Agent CLIs · nothing runs until you confirm.")
+    ui.intro("t login" if login else "t install",
+             "Select agents · Enter runs their login commands." if login else
+             "Agent CLIs · nothing runs until you confirm.")
     ui.raw()
     ok, msg = False, ""
     try:
         while True:
             if not select_screen(msg):
                 break
-            r = review_screen(_install_render(plan(), st))
+            lines = _install_render(plan(), st)
+            if login and lines:
+                ui.commit(ui.head("Running", marker=f"{st.g}◇{st.r}") +
+                          [f"{rail}  {line}" for line in lines])
+                ok = True
+                break
+            r = "empty" if login else review_screen(lines)
             if r == "empty":
                 msg = "nothing selected — space marks ◼ what runs"
                 continue
@@ -5054,9 +5160,9 @@ def _install_wizard(items, plan, login=False):
     return ok
 
 
-def _install_prompt_flow(items, plan):
+def _install_prompt_flow(items, plan, login=False):
     """Plain-prompt fallback (TERM=dumb, no raw mode): one y/N per toggle over the
-    same item model, then the same review gate."""
+    same item model. Install has a review gate; login runs the selection directly."""
     st = Style()
     for it in items:
         if it["t"] == "header":
@@ -5064,14 +5170,20 @@ def _install_prompt_flow(items, plan):
         elif it["t"] == "locked":
             print(f"  {st.y}✓ {it['alias']} — {it['value']}{st.r}")
         elif it["t"] == "toggle":
-            it["checked"] = _confirm(f"  {it['alias']} ({it['value']})?")
+            if login:
+                answer = _prompt(f"  Log in {it['alias']} ({it['value']})? [y/N/q] ")
+                if answer is None or answer.lower() == "q":
+                    return False
+                it["checked"] = answer.lower() in ("y", "yes")
+            else:
+                it["checked"] = _confirm(f"  {it['alias']} ({it['value']})?")
     lines = _install_render(plan(), st)
     if not lines:
         return False
-    print(f"\n{st.b}review{st.r} — what will run:\n")
+    print(f"\n{st.b}Running{st.r}:\n" if login else f"\n{st.b}review{st.r} — what will run:\n")
     for ln in lines:
         print(f"  {ln}")
-    return _confirm_run("Run these commands?")
+    return True if login else _confirm_run("Run these commands?")
 
 
 def cmd_install(cfg, args):
