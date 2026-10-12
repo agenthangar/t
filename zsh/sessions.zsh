@@ -1665,18 +1665,35 @@ _dev_kill_no_pending_work() {
   return 1
 }
 
-# Read per-host --details rows on that host, returning only labels whose owner
-# is unattached and whose worktree has proven no pending work. The remote picker
-# calls this once per host over zsh -lic; an older host without it is unknown.
+# Completion is independent of attachment. An explicit open or unverified PR
+# is pending even when the checkout currently looks clean.
+_dev_kill_row_completed() {
+  local cwd="$1" summary="$2"
+  [[ $summary == *'merged, still in progress'* \
+     || $summary == *'#'<->' open'* \
+     || $summary == *'#'<->' ?'* ]] && return 1
+  _dev_kill_no_pending_work "$cwd"
+}
+
+# Read per-host --details rows on that host. The remote picker calls the
+# completion variant once per host over zsh -lic; an older host without it is
+# unknown and therefore absent from the completion-filtered views.
+_dev_kill_completed_labels() {
+  local sid cwd label state context summary agent model
+  while IFS=$'\t' read -r sid cwd label state context summary agent model; do
+    _dev_kill_row_completed "$cwd" "$summary" || continue
+    print -r -- "$label"
+  done
+}
+
+# The original safe-label contract remains available to callers and older
+# probes: both filters on means unattached AND completed.
 _dev_kill_safe_labels() {
   local sid cwd label state context summary agent model
   while IFS=$'\t' read -r sid cwd label state context summary agent model; do
     [[ $state == detached || ( $state == app && $context != active ) ]] || continue
     [[ $label == *:* ]] && continue  # foreground agents are bound to a terminal
-    [[ $summary == *'merged, still in progress'* \
-       || $summary == *'#'<->' open'* \
-       || $summary == *'#'<->' ?'* ]] && continue
-    _dev_kill_no_pending_work "$cwd" || continue
+    _dev_kill_row_completed "$cwd" "$summary" || continue
     print -r -- "$label"
   done
 }
@@ -1716,25 +1733,35 @@ _dev_kill_pick() {
   local display; display=$(print -r -- "$rows" | "${formatter[@]}") || return 1
   [[ -n $display ]] || return 1
 
-  local -A safe
-  local labels label host row rest target rcmd safe_display= line
-  labels=$(print -r -- "$rows" | awk -F'\t' '$1 == "local" {print substr($0, index($0, "\t")+1)}' | _dev_kill_safe_labels)
-  for label in "${(@f)labels}"; do safe[local/$label]=1; done
+  local -A completed unattached
+  local labels label host row rest target rcmd safe_display= with_attached= with_pending= line
+  local sid cwd state context
+  while IFS=$'\t' read -r host sid cwd label state context rest; do
+    if [[ ( $state == detached || ( $state == app && $context != active ) ) && $label != *:* ]]; then
+      unattached[$host/$label]=1
+    fi
+  done <<< "$rows"
+  labels=$(print -r -- "$rows" | awk -F'\t' '$1 == "local" {print substr($0, index($0, "\t")+1)}' | _dev_kill_completed_labels)
+  for label in "${(@f)labels}"; do completed[local/$label]=1; done
   if [[ -n $remote_only ]]; then
     for host in ${(k)REMOTE_HOSTS}; do
       [[ $'\n'$rows == *$'\n'$host$'\t'* ]] || continue
       target="${REMOTE_HOSTS[$host]}"
-      rcmd='_dev_session_rows --details | _dev_kill_safe_labels'
+      rcmd='_dev_session_rows --details | _dev_kill_completed_labels'
       labels=$(ssh -o ConnectTimeout=3 -o BatchMode=yes "$target" "zsh -lic ${(qq)rcmd}" 2>/dev/null) || continue
-      for label in "${(@f)labels}"; do safe[$host/$label]=1; done
+      for label in "${(@f)labels}"; do completed[$host/$label]=1; done
     done
   fi
   for row in "${(@f)display}"; do
     host=${row%%$'\t'*}
     rest=${row#*$'\t'}; label=${rest%%$'\t'*}
-    [[ -n ${safe[$host/$label]:-} ]] && safe_display+="$row"$'\n'
+    [[ -n ${completed[$host/$label]:-} ]] && with_attached+="$row"$'\n'
+    [[ -n ${unattached[$host/$label]:-} ]] && with_pending+="$row"$'\n'
+    [[ -n ${completed[$host/$label]:-} && -n ${unattached[$host/$label]:-} ]] && safe_display+="$row"$'\n'
   done
   safe_display=${safe_display%$'\n'}
+  with_attached=${with_attached%$'\n'}
+  with_pending=${with_pending%$'\n'}
 
   if [[ ! -t 0 || ! -t 1 ]] || ! command -v fzf >/dev/null 2>&1; then
     if [[ -n $safe_display ]]; then
@@ -1747,7 +1774,8 @@ _dev_kill_pick() {
   fi
 
   local picked
-  picked=$(_t_fzf_filtered "$safe_display" "$display" kill \
+  picked=$(T_PICKER_SESSION_FILTERS=kill T_PICKER_WITH_ATTACHED="$with_attached" \
+    T_PICKER_WITH_PENDING="$with_pending" _t_fzf_filtered "$safe_display" "$display" kill \
     'unattached · no pending work' "$(_dev_agent_legend)" '' \
     --prompt="kill ${repo:+$repo }> " --preview='printf "%s\n" {4}') || return 130
   [[ -n $picked ]] || return 130

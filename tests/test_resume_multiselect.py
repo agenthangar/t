@@ -7,8 +7,18 @@ from test_agent_seam import zsh  # noqa: F401 — sandboxed shell fixture
 
 
 FZF_ALL = """#!/usr/bin/env python3
-import os, sys
+import os, sys, subprocess
+from pathlib import Path
+if '--help' in sys.argv:
+    print('--id-nth')
+    sys.exit()
 rows = sys.stdin.read().splitlines()
+Path(os.environ['FZF_LOG'] + '.initial').write_text('\\n'.join(rows))
+for index, action in enumerate(filter(None, os.environ.get('PICK_ACTIONS', '').split(','))):
+    subprocess.run(['sh', os.environ['T_PICKER_TOGGLE'], action], check=True)
+    rows = Path(os.environ['T_PICKER_CURRENT']).read_text().splitlines()
+    Path(os.environ['FZF_LOG'] + f'.step{index}').write_text('\\n'.join(rows))
+    Path(os.environ['FZF_LOG'] + f'.header{index}').write_text(Path(os.environ['T_PICKER_CURRENT_HEADER']).read_text())
 with open(os.environ['FZF_LOG'] + '.args', 'w') as args:
     args.write('\\n'.join(sys.argv[1:]))
 with open(os.environ['FZF_LOG'], 'w') as log:
@@ -16,6 +26,8 @@ with open(os.environ['FZF_LOG'], 'w') as log:
         log.write(row.split('\\t')[-1] + '\\n')
 for row in rows:
     print(row)
+if os.environ.get('PICK_CANCEL'):
+    sys.exit(1)
 """
 
 
@@ -225,3 +237,29 @@ def test_resume_live_only_still_opens_toggleable_picker(zsh, tmp_path):
     assert "rc=1" in r.stdout and "UNEXPECTED-ATTACH" not in r.stdout, r.stdout
     assert pathlib.Path(f"{files}.filtered").read_text().strip() == ""
     assert "Live work" in pathlib.Path(f"{files}.all").read_text()
+
+
+def test_resume_live_hotkey_hides_live_without_losing_saved_rows(zsh, tmp_path):
+    stub = tmp_path / "stubbin" / "fzf"
+    stub.write_text(FZF_ALL)
+    stub.chmod(0o755)
+    wt3 = zsh.home / "code" / ".worktrees" / "api" / "3"
+    wt4 = zsh.home / "code" / ".worktrees" / "api" / "4"
+    wt3.mkdir(parents=True)
+    wt4.mkdir(parents=True)
+    proj = zsh.home / ".claude" / "projects" / re.sub(r"[^A-Za-z0-9]", "-", str(wt3))
+    proj.mkdir(parents=True)
+    (proj / "c3.jsonl").write_text('{"type":"user","message":{"content":"Dead work"}}\n')
+    tab = "\t"
+    shell = f"_dev_session_rows() {{ print -r -- '-{tab}{wt4}{tab}api-4{tab}detached{tab}active{tab}Live work{tab}codex'; }}; "
+    log = tmp_path / "fzf.log"
+    result = zsh(shell + "_t_resume api --live; echo rc=$?", _tty=True,
+                 FAKE_SESSIONS="dev-api-4", FAKE_SESSION_PATH=str(wt4),
+                 FZF_LOG=str(log), PICK_ACTIONS="first", PICK_CANCEL="1")
+    assert "rc=1" in result.stdout, result.stdout
+    initial = pathlib.Path(f"{log}.initial").read_text()
+    filtered = pathlib.Path(f"{log}.step0").read_text()
+    assert "Live work" in initial and "Dead work" in initial
+    assert "Live work" not in filtered and "Dead work" in filtered
+    assert "Ctrl-L live: hidden" in pathlib.Path(f"{log}.header0").read_text()
+    assert "send-keys" not in (zsh.log.read_text() if zsh.log.exists() else "")

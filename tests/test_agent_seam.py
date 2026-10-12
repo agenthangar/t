@@ -2165,8 +2165,9 @@ def test_zsh_resume_picker_shows_the_display_column_for_every_row(zsh, tmp_path)
     # the fzf header spells the full legend — every supported tool, not just the ones on screen
     header = (tmp_path / "fzf.log.header").read_text().splitlines()
     assert header[0] == "Space/Tab select · Enter resume · Ctrl-/ details · Esc cancel"
-    assert header[1] == "All sessions · Ctrl-A restore filter"
-    assert header[2].startswith("✱ claude · ⬡ codex · ◆ cursor")
+    assert header[1].startswith("Ctrl-A show all · Ctrl-F defaults")
+    assert header[2] == "Ctrl-L live: shown"
+    assert header[3].startswith("✱ claude · ⬡ codex · ◆ cursor")
 
 
 def test_zsh_resume_pick_revives_the_row_with_its_own_agent(zsh, tmp_path):
@@ -2560,7 +2561,8 @@ def test_open_local_multi_picker(zsh, tmp_path, tabs):
     args = log.read_text()
     assert "--multi" in args and "space:toggle+down" in args
     assert "Space/Tab select · Enter open · Ctrl-/ details · Esc cancel" in args
-    assert "unattached · Ctrl-A show all" in args
+    assert "Ctrl-A show all · Ctrl-F defaults" in args
+    assert "Ctrl-T attached: hidden" in args
 
 
 def test_open_picker_cancel_does_not_create_session(zsh, tmp_path):

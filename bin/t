@@ -9358,7 +9358,8 @@ def build_parser():
   %(prog)s api 2               Attach to api's slot 2
 
 select several sessions:
-  Space/Tab marks ✓; Enter opens; Ctrl-A shows all. Extras use tabs or app.
+  Space/Tab marks ✓; Enter opens; Ctrl-A shows all; Ctrl-F restores defaults.
+  Ctrl-T toggles attached sessions. Extras: tabs/app.
 
 desktop → CLI:
   %(prog)s api 2 --cli
@@ -9374,7 +9375,8 @@ Run `t help open` for session targeting, defaults, and remote details.""",
   Use `t open <repo> fg` to select that repo's foreground sessions.
   Bare t open lists sessions across all local repos, even from a worktree.
   t open <repo> filters. Attached CLI and loaded desktop rows are hidden;
-  Ctrl-A toggles that filter; --attached starts with all rows.
+  Ctrl-T toggles attached rows; Ctrl-A shows all; Ctrl-F restores defaults.
+  --attached starts with all rows.
   Explicit slots still open directly. Compact resume-style rows retain agent,
   UI, status, model, session and task details, including idle/desktop rows.
   Space/Tab marks multiple rows; Enter opens them.
@@ -9476,7 +9478,8 @@ REMOTE SESSIONS
             "Bare `t kill` picks across all local sessions; `t kill <repo>` filters to that repo. "
             "Space/Tab marks multiple rows and Enter closes the selection, retaining each target's "
             "normal confirmation and desktop release checks. Initially shows only unattached sessions "
-            "with clean, merged work; pending or uncertain work stays hidden. Ctrl-A toggles all rows. "
+            "with clean, merged work; pending or uncertain work stays hidden. Ctrl-T toggles "
+            "attached rows, Ctrl-P toggles pending work, Ctrl-A shows all, and Ctrl-F restores defaults. "
             "The compact resume-style picker retains every session detail; Ctrl-/ opens its full preview. "
             "`-r` picks remote sessions with their host. "
             "Explicit numbers default to the cwd repo, so `t session close 3` kills this repo's slot 3 "
@@ -9530,14 +9533,14 @@ REMOTE SESSIONS
             "the cwd repo; outside any repo dir a bare `t session resume` scans every worktree repo. "
             "One inactive candidate is taken when there are no excluded live rows; otherwise "
             "fzf picks (an explicit slot with no TTY takes the newest). The picker MULTI-SELECTS: "
-            "Space/Tab marks rows with a ✓, Ctrl-A toggles inactive and all sessions, and Ctrl-/ "
-            "shows the full wrapped row details. Every marked dead "
+            "Space/Tab marks rows with a ✓; Ctrl-L toggles live rows, Ctrl-A shows all, Ctrl-F "
+            "restores defaults, and Ctrl-/ shows the full wrapped row details. Every marked dead "
             "slot revives into its own detached dev slot — the first attaches, the rest open "
             "in NEW terminal tabs (Terminal.app/iTerm2; `t session open` hints when tabs are "
             "impossible — ssh, unrecognized terminal, no Accessibility; --fg takes a single "
             "pick only). "
-            "LIVE slots are excluded from the initial view but remain available through Ctrl-A; "
-            "-l/--live starts with all rows and Ctrl-A restores the inactive view. Live rows "
+            "LIVE slots are excluded from the initial view but remain available through Ctrl-L "
+            "or Ctrl-A; -l/--live starts with all rows and Ctrl-F restores the inactive view. Live rows "
             "show '● active' / '● on <host>'; picking one attaches to its existing owner "
             "(locally or on its host) instead of resuming; naming a live slot explicitly "
             "always attaches. "
@@ -9554,7 +9557,7 @@ REMOTE SESSIONS
     sp.add_argument("-f", "--fg", action="store_true", help="resume inline in THIS terminal (no tmux slot)")
     sp.add_argument("-a", "--all", action="store_true", help="scan every worktree repo (the default outside a repo dir)")
     sp.add_argument("-l", "--live", action="store_true",
-        help="start with all sessions shown; Ctrl-A restores the inactive-only view (live rows attach on pick)")
+        help="start with all sessions shown; Ctrl-F restores the inactive-only view (live rows attach on pick)")
     sp.add_argument("-r", "--remote", action="store_true",
         help="pull the latest transcripts from every $REMOTE_HOSTS host first (direct rsync; "
              "csync is periodic and needs a shell on the far side), then scan as usual")
