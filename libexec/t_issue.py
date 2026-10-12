@@ -37,6 +37,10 @@ def install_workflow():
             if path.is_symlink():
                 raise IssueError('instruction file is a symlink; add the issue-first rule at its source')
             before = path.read_text(encoding='utf-8') if path.exists() else ''
+            # Codex skips empty overrides. Filling one would hide the user's
+            # base AGENTS.md; leave it empty so the updated base still loads.
+            if path == override and not before.strip():
+                continue
             if start in before or end in before:
                 if before.count(start) != 1 or before.count(end) != 1 or before.index(start) > before.index(end):
                     raise IssueError('malformed t public-issues markers; repair them before reinstalling')

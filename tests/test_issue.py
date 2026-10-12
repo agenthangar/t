@@ -721,6 +721,17 @@ def test_install_workflow_uses_custom_agent_homes(mod, tmp_path, monkeypatch):
     assert not (tmp_path / '.claude').exists()
 
 
+def test_install_workflow_keeps_empty_codex_override_inactive(mod, tmp_path, monkeypatch):
+    monkeypatch.setenv('HOME', str(tmp_path))
+    codex = tmp_path / '.codex'; codex.mkdir()
+    base = codex / 'AGENTS.md'; base.write_text('Existing global instructions.\n')
+    override = codex / 'AGENTS.override.md'; override.write_text(' \n')
+    assert mod.install_workflow() == 0
+    assert override.read_text() == ' \n'
+    assert base.read_text().startswith('Existing global instructions.\n')
+    assert mod.workflow_policy() in base.read_text()
+
+
 @pytest.mark.parametrize('existing', ['<!-- t public-issues: begin -->',
     '<!-- t public-issues: end --><!-- t public-issues: begin -->', 'symlink'])
 def test_install_workflow_refuses_unsafe_files(mod, tmp_path, monkeypatch, existing, capsys):
