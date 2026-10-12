@@ -407,6 +407,30 @@ _t_restart_slot() {{ touch "$HOME/accepted"; }}
         else:
             assert not tmux("show-options", "-q", "-t", "=dev-api-1:", "status-left").stdout
         assert not mod.hint_path(socket, pane["pane"]).exists()
+        # An older installed callback could leave a pane-wide error viewer
+        # covering a healthy agent. Reopening recovery must reveal the agent.
+        legacy = home / "t_recovery.py"
+        legacy.write_text("raise SystemExit(1)\n")
+        callback = shlex.join([sys.executable, str(legacy), "accept", socket, "f" * 32])
+        pid = mod.panes(socket)[0]["pane_pid"]
+        tmux("run-shell", "-t", pane["pane"], callback)
+        assert tmux("display-message", "-p", "-t", pane["pane"], "#{pane_mode}").stdout.strip() == "view-mode"
+        capture = tmux("capture-pane", "-p", "-M", "-t", pane["pane"])
+        visible.clear()
+        os.write(master, b"\x01\x1br" if custom else b"\x02R")
+        if capture.returncode:
+            assert "flag" in capture.stderr and "M" in capture.stderr
+            until(lambda: showing(b"close tmux output with q"))
+            assert tmux("display-message", "-p", "-t", pane["pane"], "#{pane_in_mode}").stdout.strip() == "1"
+            # Clear the status message first; it consumes the next keystroke.
+            os.write(master, b" ")
+            os.write(master, b"q")
+        until(lambda: tmux("display-message", "-p", "-t", pane["pane"], "#{pane_in_mode}").stdout.strip() == "0",
+              detail=lambda: tmux("capture-pane", "-p", "-M", "-t", pane["pane"]).stdout)
+        if not capture.returncode:
+            until(lambda: showing(b"no longer needs recovery"))
+        assert mod.panes(socket)[0]["pane_pid"] == pid
+        assert "healthy" in tmux("capture-pane", "-p", "-t", pane["pane"]).stdout
     finally:
         client.terminate()
         try:
