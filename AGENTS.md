@@ -20,6 +20,11 @@ Use sandbox HOME/XDG directories and isolated tmux sockets in tests; never let a
 installer test mutate the developer's agent configuration or tmux server. Strip
 COV_CORE_* when launching copies of measured binaries.
 
+Native macOS UI tests open windows and steal focus. Keep them disabled in routine
+local runs; use `--run-macos-ui` only on disposable CI or when the user explicitly
+requests native desktop verification. Mark any new interactive desktop tests
+`macos_ui` so they share this opt-in gate.
+
 Keep the one-live-owner guarantee, remote `zsh -lic` contract, and worktree safety
 checks. No plain local declarations of zsh tied parameters such as path/fpath.
 The package must work without dotfiles, personal policy, iCloud, or launchd.

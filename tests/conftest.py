@@ -19,6 +19,22 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 BIN = REPO_ROOT / "bin"
 
 
+def pytest_addoption(parser):
+    parser.addoption(
+        "--run-macos-ui", action="store_true", default=False,
+        help="run native macOS tests that open windows and take desktop focus",
+    )
+
+
+def pytest_collection_modifyitems(config, items):
+    if config.getoption("--run-macos-ui"):
+        return
+    skip = pytest.mark.skip(reason="opens desktop windows; opt in with --run-macos-ui")
+    for item in items:
+        if item.get_closest_marker("macos_ui"):
+            item.add_marker(skip)
+
+
 def load_script(path, mod_name):
     """Import an extensionless script at `path` as a module named `mod_name`.
 
