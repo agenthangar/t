@@ -1749,7 +1749,7 @@ _dev_kill_pick() {
   local picked
   picked=$(_t_fzf_filtered "$safe_display" "$display" kill \
     'unattached · no pending work' "$(_dev_agent_legend)" '' \
-    --preview='printf "%s\n" {4}') || return 130
+    --prompt="kill ${repo:+$repo }> " --preview='printf "%s\n" {4}') || return 130
   [[ -n $picked ]] || return 130
   local state rc=0 prepo slot
   for line in "${(@f)picked}"; do
