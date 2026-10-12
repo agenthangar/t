@@ -595,6 +595,17 @@ python3 -m pytest --cov --cov-fail-under=97
 zsh -n t.plugin.zsh
 ```
 
+Local test runs skip native macOS UI tests because their disposable app opens
+windows and takes desktop focus. Handoff logic still runs against fake UI APIs.
+For an intentional desktop check on macOS with Swift and Accessibility access:
+
+```sh
+python3 -m pytest tests/test_app_macos.py --run-macos-ui
+```
+
+CI explicitly opts in on disposable runners. Selecting the test file or
+`-m macos_ui` alone does not enable desktop interaction.
+
 The installer has no pip runtime dependencies. Markdown rendering uses a small
 vendored library with its [license and provenance](libexec/vendor/README.md).
 Read [CONTRIBUTING.md](CONTRIBUTING.md) and [AGENTS.md](AGENTS.md) before changing
