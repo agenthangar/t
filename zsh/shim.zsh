@@ -256,7 +256,7 @@ _t_cd() {
 # The host paths dispatch via _dev_remote_open with the original gh-style args (minus
 # --host / -r), so H's own `t open` re-parses them from ITS $PWD.
 _t_open() {
-  local -a a rest mode_pos; local arg want_host= host= remote= isnew= local_only= app= cli= cli_intent=
+  local -a a rest mode_pos; local arg want_host= host= remote= isnew= local_only= app= cli= cli_intent= include_attached=
   for arg in "$@"; do
     if [[ -n $want_host ]]; then host=$arg; want_host=; continue; fi
     case "$arg" in
@@ -266,6 +266,7 @@ _t_open() {
     rest+=("$arg")
     case "$arg" in
       --new|new)         a+=(new); isnew=1 ;;
+      --attached)        include_attached=1 ;;
       --app)             app=1 ;;
       --cli)             cli=1 ;;
       --fg)              cli_intent=1; a+=(-f) ;;
@@ -278,6 +279,36 @@ _t_open() {
   done
   [[ -n $want_host ]] && { echo "t open: --host requires a value" >&2; return 2; }
   [[ -n $app && -n $cli ]] && { echo "t open: --app and --cli are mutually exclusive" >&2; return 2; }
+
+  # A slot-less interactive open browses the same complete rows as `t ls`.
+  # Bare means every local repo, even from a worktree; a named repo filters.
+  # Explicit slots, fresh sessions, agent flags and foreground requests retain
+  # their direct paths. Resolve the picker before the configured opening mode,
+  # since each existing row already knows whether it belongs to CLI or desktop.
+  local picker_ok=1 picker_repo= picker_rc
+  if [[ -z $host && -z $isnew && -t 0 && -t 1 ]] && command -v fzf >/dev/null 2>&1; then
+    for arg in "${rest[@]}"; do
+      case $arg in
+        --cli|--app|--attached|-l|--local|--here|-r|--remote) ;;
+        -*) picker_ok= ;;
+        *)
+          if [[ -z $picker_repo && -n ${DEV_REPOS[$arg]:-} ]]; then
+            picker_repo=$arg
+          else
+            picker_ok=
+          fi ;;
+      esac
+    done
+    if [[ -n $picker_ok ]]; then
+      if [[ -n $local_only && -n $remote ]]; then
+        print -u2 -- 't open: --local/--here and -r/--remote are mutually exclusive'
+        return 2
+      fi
+      _t_open_picker "$picker_repo" "$remote" "$app" "$cli" "$include_attached"; picker_rc=$?
+      (( picker_rc == 2 )) || return $picker_rc
+      # No existing rows: use the ordinary fresh-session/default-host path.
+    fi
+  fi
 
   # Explicit CLI/remote intents take precedence over reservations and defaults.
   if [[ -z $app && -z $cli && -z $cli_intent && -z $host && -z $remote ]]; then
@@ -308,7 +339,7 @@ _t_open() {
   fi
 
   if [[ -n $app ]]; then
-    _t_open_app "${rest[@]}" ${host:+--host "$host"}
+    _t_open_app "${(@)rest:#--attached}" ${host:+--host "$host"}
     return
   fi
 
@@ -363,6 +394,109 @@ _t_open() {
     return
   fi
   _t_dev "${a[@]}"
+}
+
+# Complete current-session picker. Return 2 only when there are no candidates;
+# cancellation and rendering failures must never create a new session.
+_t_open_picker() {
+  local repo="$1" remote="$2" app="$3" cli="$4" rows row selected scope="${DEV_REPOS[$1]:-}"
+  local -a fields candidates format_args
+  local include_attached="$5" hidden=0
+  local scope_rel wt_rel cwd_rel
+  scope_rel=$(_dev_homerel "$scope")
+  wt_rel=$(_dev_homerel "${DEV_WORKTREE_ROOT}/${scope:t}")
+  if [[ -n $remote ]]; then
+    rows=$(_dev_rows_all --details) || return 1
+    format_args=(--remote)
+  else
+    rows=$(_dev_session_rows --details) || return 1
+    rows=$(print -r -- "$rows" | awk 'NF {print "local\t" $0}')
+  fi
+  for row in "${(@f)rows}"; do
+    fields=("${(@ps:\t:)row}")
+    (( $#fields >= 7 )) || continue
+    [[ -n $remote && $fields[1] == local ]] && continue
+    if [[ -n $scope ]]; then
+      cwd_rel=$(_dev_homerel "$fields[3]")
+      [[ $cwd_rel == $scope_rel || $cwd_rel == $scope_rel/* ||
+         ( -n $DEV_WORKTREE_ROOT && $cwd_rel == $wt_rel/* ) ]] || continue
+    fi
+    if [[ -z $include_attached && ( $fields[5] == attached ||
+         ( $fields[5] == app && $fields[6] == active ) ) ]]; then
+      (( ++hidden ))
+      continue
+    fi
+    candidates+=("$row")
+  done
+  if (( ! $#candidates )); then
+    if (( hidden )); then
+      print -r -- "t open: $hidden attached/loaded session(s) hidden — use t open ${remote:+-r }${repo:+$repo }--attached to include them"
+      return 0
+    fi
+    return 2
+  fi
+  rows=$(print -rl -- "${candidates[@]}" | python3 "$T_HOME/bin/t" __session-picker-rows "${format_args[@]}") || return 1
+  [[ -n $rows ]] || return 1
+  local legend=$'● attached/loaded · ✓ active · ↻ in progress\n'
+  legend+="$(_dev_agent_legend)"$'\nCtrl-/ full details · Esc cancel'
+  (( hidden )) && legend+=" · $hidden attached hidden (--attached)"
+  selected=$(print -r -- "$rows" | _t_fzf_sessions "$legend" \
+    --delimiter=$'\t' --with-nth=-1 --header-lines=1 --height=90% \
+    --preview="printf '%s\n' {4}" --preview-window='down,4,wrap,hidden' \
+    --bind='ctrl-/:toggle-preview' --prompt="t open ${repo:-all sessions} > ") || return 1
+  [[ -n $selected ]] || return 1
+  _t_open_selected "$selected" "$app" "$cli"
+}
+
+# Desktop selections open immediately; the first CLI selection uses this terminal
+# and the remaining CLI selections get tabs. Preserve the selected host/interface,
+# so a configured default never converts an existing owner as a side effect.
+_t_open_selected() {
+  local selected="$1" app="$2" cli="$3" row host label state mode cmd rc=0
+  local -a fields args first
+  for row in "${(@f)selected}"; do
+    fields=("${(@ps:\t:)row}")
+    host=$fields[1]; label=$fields[2]; state=$fields[3]
+    mode=--cli
+    [[ $state == app && -z $cli || -n $app ]] && mode=--app
+    args=()
+    if [[ $label == *:* ]]; then
+      args+=("$label")
+    else
+      args+=("${label%-*}" "${label##*-}")
+    fi
+    args+=("$mode")
+    if [[ $host != local ]]; then
+      if [[ $mode == --app ]]; then
+        print -u2 -- "t open: $label is a desktop workspace on $host — open it on that Mac with: t open ${(j: :)${(@q)args}}"
+        rc=1
+        continue
+      fi
+      args+=(--host "$host")
+    elif [[ $mode == --cli ]]; then
+      args+=(--local)
+    fi
+    if [[ $mode == --app ]]; then
+      _t_open "${args[@]}" || rc=1
+    elif (( ! $#first )); then
+      first=("${args[@]}")
+    else
+      cmd="t open ${(j: :)${(@q)args}}"
+      _dev_open_tab "$cmd" || print -r -- "Attach with: $cmd"
+    fi
+  done
+  if (( $#first )); then
+    # A local tmux slot can switch in place. Desktop-to-CLI handoff and true
+    # foreground handles still go through their ordinary ownership checks.
+    if [[ -n $TMUX && $first[-1] == --local && $first[2] == <-> ]] \
+        && ! _dev_app_slot_reserved "$(_dev_worktree_path "$first[1]" "$first[2]")" \
+        && tmux has-session -t "=dev-${first[1]}-${first[2]}:" 2>/dev/null; then
+      tmux switch-client -t "=dev-${first[1]}-${first[2]}:" || rc=1
+    else
+      _t_open "${first[@]}" || rc=1
+    fi
+  fi
+  return $rc
 }
 
 # Open a dedicated t worktree in the Codex desktop app. A running Codex CLI slot

@@ -36,7 +36,7 @@ _t_resume_on_host() {
 # revives into its own detached dev slot, the first revived (topmost = newest)
 # attaches, the rest open in NEW terminal tabs (_dev_open_tab above; attach-hint
 # fallback when tabs are impossible — ssh, unrecognized terminal, no
-# Accessibility). A live mark is already open (noted, never
+# Accessibility). A live mark attaches to its existing owner (never
 # resumed — one-live-owner), a second conversation marked for a slot an earlier mark
 # just took is skipped (one tmux session per dev-<repo>-<slot> name), and --fg
 # refuses a multi-pick (one terminal, one inline claude); outside any DEV_REPOS dir a bare
@@ -442,7 +442,7 @@ _t_resume() {
       fg:*)  _slabel="● fg ${${_sloc#fg:}/here/here}" ;;
       *)     _slabel="● $_salias-$_sslot on $_sloc" ;;
     esac
-    cands+=(9999999999$'\t'"$_slf[1]"$'\t'"${${_sslot:#-}:-$slot}"$'\t'"$_slf[2]"$'\t'"$_slf[3]"$'\t'"$_slabel"$'\t'"${_ssum:-(live session)}"$'\t'"$_sloc"$'\t'"$_salias"$'\t'-$'\t'"$_sag")
+    cands+=(9999999999$'\t'"$_slf[1]"$'\t'"${${_sslot:#-}:-${slot:--}}"$'\t'"$_slf[2]"$'\t'"$_slf[3]"$'\t'"$_slabel"$'\t'"${_ssum:-(live session)}"$'\t'"$_sloc"$'\t'"$_salias"$'\t'-$'\t'"$_sag")
   done
 
   # ONE batched metadata read for every surviving candidate (title + last PR URL),
@@ -597,8 +597,10 @@ _t_resume() {
     # down the list). The cost: a literal space no longer types into the filter
     # query — acceptable because fzf's fuzzy match crosses word gaps ("fixbug"
     # still matches "fix bug").
-    pick=$(print -rl -- "${(@)cands}" | _t_fzf_sessions "$legend" \
+    pick=$(print -rl -- "${(@)cands}" | _t_fzf_sessions "$legend · Ctrl-/ details" \
       --delimiter=$'\t' --with-nth=-1 --no-hscroll \
+      --preview='printf "%s\n" {11}' --preview-window='hidden:wrap:down:40%' \
+      --bind='ctrl-/:toggle-preview' \
       --prompt="$fprompt") || return 1
     [[ -n $pick ]] || return 1
   elif [[ -n $slot ]] && { pick=; for c in "${(@)cands}"; do
@@ -624,8 +626,8 @@ _t_resume() {
   # per line, in LIST order, so the first row is the newest / a pinned live one).
   # Revive every marked dead row detached, then attach the FIRST revived slot —
   # a resume ends inside a session, same as a single pick; the rest open in
-  # their own terminal tabs (attach-hint fallback). Live marks are already open
-  # (one-live-owner: never a second `claude -r`) and a second conversation
+  # their own terminal tabs (attach-hint fallback). Live marks attach to their
+  # existing owner (one-live-owner: never a second `claude -r`), and a second conversation
   # marked for a slot an earlier mark just took can't have the tmux name —
   # both become hints, not errors, so one stray mark never aborts the batch.
   local -a picks; picks=("${(@f)pick}")
@@ -636,19 +638,27 @@ _t_resume() {
     fi
     local -A mp_taken
     local mp_first_repo= mp_first_slot= mp_first_session= mp_cwd mp_session mp_loc mp_pair mp_agent
-    local -a mp_rest mp_unopened
+    local mp_live_first= mp_live_cmd= mp_live_alias= mp_live_repo= mp_live_slot= mp_live_loc=
+    local -a mp_rest mp_unopened mp_live mp_live_fields
     for pick in "${(@)picks}"; do
       f=("${(@ps:\t:)pick}")
       repo=$f[1]; slot=$f[2]; sid=$f[3]; wt=$f[4]; mp_loc="${f[7]:-}"; mp_agent="${f[10]:-claude}"
       if [[ $mp_loc == fg:* ]]; then
-        echo "· $repo: that conversation is live as foreground ${f[8]} — attach with: t session open ${f[8]}"
+        mp_live+=("$mp_loc"$'\t'"$repo"$'\t'"$slot"$'\t'"${f[8]}")
         continue
       elif [[ $mp_loc == here ]]; then
         [[ -n ${f[8]:-} && $f[8] != - ]] && repo=$f[8]
-        echo "· $repo $slot is already live here — attach with: t session open $repo $slot"
+        mp_live+=("$mp_loc"$'\t'"$repo"$'\t'"$slot"$'\t'-)
+        continue
+      elif [[ $mp_loc == app:here ]]; then
+        mp_live+=("$mp_loc"$'\t'"$repo"$'\t'"$slot"$'\t'-)
+        continue
+      elif [[ $mp_loc == app:* ]]; then
+        echo "· $repo $slot: desktop app is on ${mp_loc#app:}; open it on that Mac." >&2
         continue
       elif [[ -n $mp_loc && $mp_loc != - ]]; then
-        echo "· $repo $slot is live on $mp_loc — attach with: t session open $repo $slot"
+        [[ -n ${f[8]:-} && $f[8] != - ]] && repo=$f[8]
+        mp_live+=("$mp_loc"$'\t'"$repo"$'\t'"$slot"$'\t'-)
         continue
       fi
       if [[ -n ${mp_taken[$repo/$slot]:-} ]]; then
@@ -682,14 +692,54 @@ _t_resume() {
         mp_rest+=("$repo $slot")
       fi
     done
-    if [[ -z $mp_first_repo ]]; then
-      echo "Nothing revived — every marked row was already live or unrecoverable." >&2
+    # A live mark gets the same attachment path as a single pick. When no dead
+    # mark revived, attach the first live row here; otherwise give each live
+    # owner a tab alongside the extra revived rows.
+    if [[ -z $mp_first_repo && $#mp_live -gt 0 ]]; then
+      mp_live_first=$mp_live[1]
+      mp_live=("${(@)mp_live[2,-1]}")
+    fi
+    if [[ -z $mp_first_repo && -z $mp_live_first ]]; then
+      echo "Nothing opened — every marked row was unavailable." >&2
       return 1
     fi
+    for mp_pair in "${(@)mp_live}"; do
+      mp_live_fields=("${(@ps:\t:)mp_pair}")
+      mp_live_loc=$mp_live_fields[1]; mp_live_repo=$mp_live_fields[2]
+      mp_live_slot=$mp_live_fields[3]; mp_live_alias=$mp_live_fields[4]
+      case $mp_live_loc in
+        fg:*)     mp_live_cmd="t open ${(q)mp_live_alias} --cli"
+                  [[ $mp_live_loc != fg:here ]] && mp_live_cmd+=" --host ${(q)${mp_live_loc#fg:}}" ;;
+        here)     mp_live_cmd="t open ${(q)mp_live_repo} ${(q)mp_live_slot} --cli --local" ;;
+        app:here) mp_live_cmd="t open ${(q)mp_live_repo} ${(q)mp_live_slot} --app" ;;
+        *)        mp_live_cmd="t open ${(q)mp_live_repo} ${(q)mp_live_slot} --cli --host ${(q)mp_live_loc}" ;;
+      esac
+      _dev_open_tab "$mp_live_cmd" || mp_unopened+=("$mp_live_cmd")
+    done
+    if (( $#mp_unopened )); then
+      echo "Also selected — attach with: ${(j: · :)mp_unopened}"
+    fi
+    if [[ -n $mp_live_first ]]; then
+      mp_live_fields=("${(@ps:\t:)mp_live_first}")
+      mp_live_loc=$mp_live_fields[1]; mp_live_repo=$mp_live_fields[2]
+      mp_live_slot=$mp_live_fields[3]; mp_live_alias=$mp_live_fields[4]
+      case $mp_live_loc in
+        fg:here)  _dev_open_fg "$mp_live_alias" ;;
+        fg:*)     _dev_remote_open "${mp_live_loc#fg:}" "$mp_live_alias" --cli ;;
+        here)     _dev_open_picks "local"$'\t'"$mp_live_repo"$'\t'"$mp_live_slot" ;;
+        app:here) _t_open "$mp_live_repo" "$mp_live_slot" --app ;;
+        *)        _dev_remote_attach "$mp_live_loc"$'\t'"$mp_live_repo"$'\t'"$mp_live_slot" "" ;;
+      esac
+      return
+    fi
     if [[ -n $on_host ]]; then
-      # Remote landings: the rest are one `t open` away (it auto-finds the host);
-      # the first attaches in place over ssh when there is a terminal to do it in.
-      (( $#mp_rest )) && echo "Also landed on $on_host — attach with: ${(j: · :)${mp_rest/#/t session open }}"
+      # Open every extra remote landing on the exact target host before the
+      # first blocking ssh attach; provide commands if GUI tabs are unavailable.
+      for mp_pair in "${(@)mp_rest}"; do
+        mp_live_cmd="t open ${(q)${mp_pair%% *}} ${(q)${mp_pair##* }} --cli --host ${(q)on_host}"
+        _dev_open_tab "$mp_live_cmd" || mp_unopened+=("$mp_live_cmd")
+      done
+      (( $#mp_unopened )) && echo "Also landed on $on_host — attach with: ${(j: · :)mp_unopened}"
       if [[ -t 0 && -t 1 ]]; then
         ssh -t "${REMOTE_HOSTS[$on_host]:-$on_host}" "zsh -lic ${(q):-tmux attach -t $mp_first_session}"
       else

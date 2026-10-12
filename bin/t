@@ -497,6 +497,29 @@ def _slot_line(r, st, name_w, avail, host_w=None, model_w=7):
             f"{host}{r['slot']:<{name_w}} {st.y}{summary}{st.r}")
 
 
+def _session_picker_rows(rows, remote=False):
+    """The list's full display plus stable targets, shared by open and close pickers.
+
+    Keep complete model names and summaries: fzf can scroll and its wrapped
+    preview exposes every detail on a narrow terminal. Metadata is never parsed
+    back from padded display text.
+    """
+    if not rows:
+        return []
+    st = Style(tty=False)
+    name_w = max(7, *(len(r["slot"]) for r in rows))
+    model_w = max(7, *(len(str(r.get("model") or "-")) + 2 for r in rows))
+    host_w = max(4, *(len(r["host"]) for r in rows)) if remote else None
+    host_header = f"{'HOST':<{host_w}} " if remote else ""
+    header = f"{'STATUS':<7}{'UI':<10}{'MODEL':<{model_w}} {host_header}{'SESSION':<{name_w}} WORKING ON"
+    out = ["-\t-\t-\t" + header]
+    for row in rows:
+        display = _slot_line(row, st, name_w, max(1, len(row.get("summary") or "")),
+                             host_w=host_w, model_w=model_w)
+        out.append("\t".join((row["host"], row["slot"], row["state"], display)))
+    return out
+
+
 def _render_local(rows, scope, st, has_remote=False):
     name_w = max([7] + [len(r["slot"]) for r in rows])
     model_w = min(28, max([7] + [len(str(r.get("model") or "-")) + 2 for r in rows]))
@@ -9100,16 +9123,15 @@ def build_parser():
 
     sp = sub.add_parser("open", help="open or reattach a session",
         usage="%(prog)s [repo] [slot] [flags]",
-        description="Open or reattach a session. Defaults to the current repository.",
+        description="Open sessions. Bare: browse all repos; attached sessions are hidden.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""examples:
-  %(prog)s                     Continue in the current repo
+  %(prog)s                     Browse sessions across repos
   %(prog)s --codex --new        Start a new Codex session
   %(prog)s api 2               Attach to api's slot 2
 
 select several sessions:
-  In the CLI picker, Space/Tab selects ✓; Enter opens your selection.
-  The first opens here; others open in terminal tabs (or show attach commands).
+  Space/Tab marks ✓; Enter opens. CLI extras use tabs; desktop opens in-app.
 
 desktop → CLI:
   %(prog)s api 2 --cli
@@ -9123,9 +9145,13 @@ Run `t help open` for session targeting, defaults, and remote details.""",
   <repo>:<id>, <repo>:p<pid>, or a session ID. A session in tmux attaches
   in place; a foreground Claude session moves into this terminal.
   Use `t open <repo> fg` to select that repo's foreground sessions.
-  With several live CLI slots, Space/Tab selects multiple rows; Enter opens
-  them. Explicit slots and opens from a slot worktree keep their target.
-  Remote slot pickers support the same selection; --fg opens one session.
+  Bare t open lists sessions across all local repos, even from a worktree.
+  t open <repo> filters. Attached CLI and loaded desktop rows are hidden;
+  --attached includes them. Explicit slots still open directly.
+  Pickers retain STATUS, UI, MODEL, SESSION and WORKING ON, including idle
+  and desktop rows. Space/Tab marks multiple rows; Enter opens them.
+  Ctrl-/ shows full details. The first CLI opens here, others use tabs;
+  desktop rows open in the app. Remote pickers add HOST. --fg opens one.
 
 OPENING DEFAULTS
   The configured opening mode chooses CLI or app; --cli and --app override
@@ -9149,9 +9175,10 @@ REMOTE SESSIONS
   default host (the alphabetically first REMOTE_HOSTS key).
   --host HOST chooses a host explicitly, for either opening or attaching.""")
     sp._positionals.title = "arguments"
-    sp.add_argument("repo", nargs="?", help="repository or session (default: current repo)")
+    sp.add_argument("repo", nargs="?", help="repository or session (default: browse all repos)")
     sp.add_argument("slot", nargs="?", help="slot number, session ID, or 'fg'")
     sp.add_argument("--new", action="store_true", help="start a fresh session")
+    sp.add_argument("--attached", action="store_true", help="include attached/loaded sessions in the picker")
     sp.add_argument("--fg", action="store_true", help="run in this terminal, without tmux")
     sp.add_argument("--cli", action="store_true", help="open in the CLI; resume desktop conversations")
     sp.add_argument("--app", action="store_true", help="open in the Codex desktop app (macOS)")
@@ -9218,13 +9245,17 @@ REMOTE SESSIONS
             "Archive that chat in Codex while the app is running, then retry; finish or "
             "stop any active turn first. Other desktop chats can stay open. An empty "
             "desktop workspace can close while Codex stays open, after its worktree passes ownership checks. "
-            "Names default to the cwd "
-            "repo, so `t session close 3` kills this repo's slot 3 and `t session close all` kills every slot for "
+            "Bare `t kill` picks across all local sessions; `t kill <repo>` filters to that repo. "
+            "Space/Tab marks multiple rows and Enter closes the selection, retaining each target's "
+            "normal confirmation and desktop release checks. The picker retains STATUS, UI, MODEL, "
+            "SESSION and WORKING ON; Ctrl-/ shows full details. `-r` picks remote sessions with HOST. "
+            "Explicit numbers default to the cwd repo, so `t session close 3` kills this repo's slot 3 "
+            "and `t session close all` kills every slot for "
             "it. A foreground / :fg row from `t session list` (a bare `claude`, or one in a tmux "
             "session of its own) is killed by its shown SESSION name — `t session close ff:p4242` or `t session close "
             "<short-id>` — since it is not a dev slot. Confirms first while a Claude is live "
             "unless `-y`; `-r` kills it on its remote host instead.")
-    sp.add_argument("repo", nargs="?", help="DEV_REPOS key (or a foreground row's SESSION name); defaults to the repo your cwd is in")
+    sp.add_argument("repo", nargs="?", help="filter to a repo, or name a foreground session; default: pick across local repos")
     sp.add_argument("slot", nargs="?", help="slot number; a lone slot implies the cwd repo")
     sp.add_argument("-y", "--yes", action="store_true", help="skip the 'Claude is live' confirm")
     sp.add_argument("-r", "--remote", action="store_true", help="kill it on its host instead")
@@ -9776,6 +9807,11 @@ def main(argv):
     argv = _hosts_argv(argv)
     if argv == ["__update-prompt"]:
         return _t_offer_update()
+    if argv in (["__session-picker-rows"], ["__session-picker-rows", "--remote"]):
+        rows = _parse_rows(sys.stdin.read(), host_prefixed=True)
+        for line in _session_picker_rows(rows, remote="--remote" in argv):
+            print(line)
+        return 0
     if argv == ["__update-check"]:
         try:
             _t_check_update()

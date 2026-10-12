@@ -1604,16 +1604,106 @@ _dev_kill_fg() {
   return 2
 }
 
+# _dev_kill_pick [repo] [force] [remote_only] — select one or more rows from the
+# same detailed, cross-host inventory used by the session list. The picker keeps
+# its state, model, UI, and title columns; only the first three hidden fields are
+# used to route the selected row to the existing kill implementation.
+_dev_kill_pick() {
+  local repo="$1" force="$2" remote_only="$3"
+  local rows
+  if [[ -n $remote_only ]]; then
+    rows=$(_dev_rows_all --details) || return 1
+  else
+    rows=$(_dev_session_rows --details | awk -F'\t' 'NF >= 7 {print "local\t" $0}') || return 1
+  fi
+  if [[ -n $remote_only ]]; then
+    rows=$(print -r -- "$rows" | awk -F'\t' '$1 != "local"')
+  fi
+  if [[ -n $repo ]]; then
+    local dir="${DEV_REPOS[$repo]:-}" root="${DEV_WORKTREE_ROOT:-}"
+    if [[ -n $dir ]]; then
+      rows=$(print -r -- "$rows" | awk -F'\t' \
+        -v d="$(_dev_homerel "$dir")" -v w="$(_dev_homerel "$root")/${dir:t}" \
+        '{ c=$3; sub(/^\/(Users|home)\/[^\/]+\//, "", c) }
+         c==d || index(c, d"/")==1 || index(c, w"/")==1')
+    else
+      rows=$(print -r -- "$rows" | awk -F'\t' -v r="$repo" \
+        '$4==r || index($4,r"-")==1 || index($4,r":")==1')
+    fi
+  fi
+  [[ -n $rows ]] || { print -u2 -- "t kill: no sessions${repo:+ for '$repo'} found"; return 1; }
+
+  local -a formatter=( python3 "$T_HOME/bin/t" __session-picker-rows )
+  [[ -n $remote_only ]] && formatter+=( --remote )
+  local display; display=$(print -r -- "$rows" | "${formatter[@]}") || return 1
+  [[ -n $display ]] || return 1
+  if [[ ! -t 0 || ! -t 1 ]] || ! command -v fzf >/dev/null 2>&1; then
+    print -r -- "$display" | cut -f4-
+    print -u2 -- 't kill: select sessions in a terminal with fzf, or name a session explicitly'
+    return 1
+  fi
+
+  local picked
+  picked=$(print -r -- "$display" | _t_fzf --multi --marker='✓' \
+    --bind 'space:toggle+down,ctrl-/:toggle-preview' --header-lines=1 \
+    --delimiter=$'\t' --with-nth=-1 --preview 'printf "%s\n" {4}' \
+    --preview-window='down,4,wrap,hidden' --no-hscroll --prompt='t kill > ' --height=70% --reverse \
+    --header=$'MULTI-SELECT · Space/Tab mark ✓\nEnter kills selected sessions · Ctrl-/ full details · Esc cancels') || return 130
+  [[ -n $picked ]] || return 130
+  local line host label state target rcmd rc=0 prepo slot
+  for line in "${(@f)picked}"; do
+    host=${line%%$'\t'*}
+    line=${line#*$'\t'}
+    label=${line%%$'\t'*}
+    line=${line#*$'\t'}
+    state=${line%%$'\t'*}
+    if [[ $host == local ]]; then
+      if [[ $label == *:* ]]; then
+        _dev_kill_fg "$label" "$force" || rc=1
+      else
+        prepo=${label%-*}; slot=${label##*-}
+        # Recheck the local owner before dispatching: _dev_kill's explicit-slot
+        # fallback can find an identically named slot on a remote host.
+        if ! tmux has-session -t "=dev-${label}:" 2>/dev/null \
+             && { [[ $state != app ]] || ! _dev_app_slot_reserved "$(_dev_worktree_path "$prepo" "$slot")"; }; then
+          print -u2 -- "t kill: $label is no longer here"; rc=1; continue
+        fi
+        _dev_kill "$prepo" "$slot" "$force" || rc=1
+      fi
+    else
+      target="${REMOTE_HOSTS[$host]:-}"
+      [[ -n $target ]] || { print -u2 -- "t kill: host '$host' is no longer configured"; rc=1; continue; }
+      if [[ $label == *:* ]]; then
+        rcmd="T_UPDATE_PROMPTED=\$\$ t kill ${(q)label}"
+      else
+        prepo=${label%-*}; slot=${label##*-}
+        rcmd="T_UPDATE_PROMPTED=\$\$ t kill ${(q)prepo} ${(q)slot}"
+      fi
+      [[ -n $force ]] && rcmd+=' -y'
+      print -r -- "→ Killing $host:$label"
+      _term_title "$host: kill $label"
+      ssh -t "$target" "zsh -lic ${(qq)rcmd}" || rc=1
+      _term_title ''
+    fi
+  done
+  return $rc
+}
+
 # _dev_kill <repo> <slot|all> [force] — tear down dev-<repo>-<slot> sessions.
 # Keyed on session NAMES, not DEV_REPOS, so it also reaches orphaned sessions
-# whose repo alias is gone. A slot (or `all`) is REQUIRED — with no slot we list
-# the repo's sessions and bail rather than guess which to kill.
+# whose repo alias is gone. With no slot, the detailed picker selects targets.
 _dev_kill() {
   local repo="$1" slot="$2" force="$3"
 
+  # Bare and repo-only invocations are interactive batch selectors. An explicit
+  # foreground handle keeps its direct path below, as do numbered slots and all.
+  if [[ -z $slot && ( -z $repo || -n ${DEV_REPOS[$repo]:-} ) ]]; then
+    _dev_kill_pick "$repo" "$force"
+    return $?
+  fi
+
   # Repo-aware: `t kill 4` / `t kill all` mean the repo $PWD is in (live-session
-  # name wins — see _t_infer_repo); bare `t kill` infers the repo and then lists
-  # its slots below (a slot is still required — no guessing on a kill).
+  # name wins — see _t_infer_repo). These explicit forms keep their direct path.
   if [[ -z ${DEV_REPOS[$repo]:-} && -z $slot && ( $repo == <-> || $repo == all ) ]]; then
     slot=$repo; repo=$(_t_infer_repo "$slot")
   elif [[ -z $repo ]]; then
@@ -2062,27 +2152,11 @@ _t_dev() {
     return
   fi
 
-  # Offer live local slots before the automatic reattach/fresh fallback. Explicit
-  # slots, worktree-inferred slots, --new and foreground opens keep their targeting.
+  # Legacy/internal slot-less CLI callers share the complete picker too.
   if [[ -z $slot && -z $no_tmux && -t 0 && -t 1 ]] && command -v fzf >/dev/null 2>&1; then
-    local open_sid open_cwd open_label open_state open_ctx open_title open_agent open_pick
-    local -a open_rows open_fields open_picks
-    while IFS=$'\t' read -r open_sid open_cwd open_label open_state open_ctx open_title open_agent; do
-      [[ $open_label != *:* && $open_label == *-<-> && $open_state != app ]] || continue
-      _dev_dir_in_scope "$open_cwd" "$dir" || continue
-      open_rows+=("local"$'\t'"${open_label%-*}"$'\t'"${open_label##*-}"$'\t'"$open_label  ${open_agent:-claude}  $open_title")
-    done < <(_dev_session_rows 2>/dev/null)
-    if (( $#open_rows > 1 )); then
-      open_pick=$(print -rl -- "${open_rows[@]}" | _t_fzf_sessions 'Live sessions · Esc cancel' \
-        --delimiter=$'\t' --with-nth=-1 --no-hscroll --prompt="t open $repo > ") || return 1
-      [[ -n $open_pick ]] || return 1
-      for open_pick in "${(@f)open_pick}"; do
-        open_fields=("${(@ps:\t:)open_pick}")
-        open_picks+=("${open_fields[1]}"$'\t'"${open_fields[2]}"$'\t'"${open_fields[3]}")
-      done
-      _dev_open_picks "${(F)open_picks}"
-      return
-    fi
+    local open_rc
+    _t_open_picker "$repo" "" "" 1; open_rc=$?
+    (( open_rc == 2 )) || return $open_rc
   fi
 
   # Remote-aware open (auto half): <repo> is a valid key now (cwd-defaulted if bare) and
