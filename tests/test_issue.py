@@ -42,7 +42,7 @@ def app(mod, cfg, t_mod):
 
 @pytest.fixture
 def args():
-    return SimpleNamespace(target=['12'], scan_host=False, check=False, json=False,
+    return SimpleNamespace(action='start', target=['12'], repo=None, scan_host=False, json=False,
                            allow_incomplete_check=False, codex=False, claude=False)
 
 
@@ -296,10 +296,80 @@ def test_local_managed_unmanaged_saved_reused(mod, app, issue, local_scan):
     assert app.local(issue) == []
 
 
+def test_local_prepared_reservation_is_verified_without_live_agent(mod, app, issue, local_scan):
+    state, marker, tx = local_scan
+    state.update(live=False, transcript=False)
+    data = json.loads(marker.read_text())
+    data['state'] = 'prepared'
+    marker.write_text(json.dumps(data))
+    (marker.parent / 't-issue-prompt').write_text('Address issue #12')
+    row = app.local(issue)[0]
+    assert row['state'] == 'prepared' and row['verified'] and row['prepared']
+    assert not row.get('resume') and not row.get('session')
+    report = clean_report(); report['matches'] = [row]
+    assert app.choose(report) == row
+    (marker.parent / 't-issue-prompt').unlink()
+    incomplete = app.local(issue)[0]
+    assert not incomplete.get('prepared') and not incomplete['verified']
+
+
+def test_prepared_retry_requires_same_reservation_after_lock(mod, app, issue, args,
+                                                             monkeypatch, tmp_path):
+    prepared = dict(provider='local', id='/worktree', host='local', worktree='/worktree',
+                    evidence='recorded', verified=True, prepared=True, state='prepared',
+                    alias='repo', slot='1')
+    report = clean_report(); report['matches'] = [prepared]
+    setup_run(app, issue, monkeypatch, iter([report, report]))
+    monkeypatch.setattr(mod, 'command', lambda *a: str(tmp_path))
+    retried = []
+    monkeypatch.setattr(app, 'retry', lambda row: retried.append(row) or
+                        dict(host='local', session='dev-repo-1'))
+    monkeypatch.setattr(app, 'launch', lambda *a: pytest.fail('must reuse reservation'))
+    monkeypatch.setattr(app, 'takeover', lambda *a: pytest.fail('must not take over reservation'))
+    monkeypatch.setattr(app, 'attach', lambda row: 0)
+    assert app.run_one(args, args.target) == 0
+    assert retried == [prepared]
+
+
+@pytest.mark.parametrize('fresh_matches', [[],
+    [dict(provider='local', id='/worktree', host='local', worktree='/worktree',
+          evidence='recorded', verified=False, prepared=False, state='saved')],
+    [dict(provider='local', id='/worktree', host='local', worktree='/worktree',
+          evidence='recorded', verified=True, prepared=True, state='prepared'),
+     dict(provider='local', id='/other', host='local', worktree='/other',
+          evidence='recorded', verified=True, prepared=True, state='prepared')]])
+def test_prepared_retry_blocks_changed_or_additional_reservation(mod, app, issue, args,
+                                                                 monkeypatch, tmp_path, fresh_matches):
+    selected = dict(provider='local', id='/worktree', host='local', worktree='/worktree',
+                    evidence='recorded', verified=True, prepared=True, state='prepared',
+                    alias='repo', slot='1')
+    original = clean_report(); original['matches'] = [selected]
+    latest = clean_report(); latest['matches'] = fresh_matches
+    setup_run(app, issue, monkeypatch, iter([original, latest]))
+    monkeypatch.setattr(mod, 'command', lambda *a: str(tmp_path))
+    monkeypatch.setattr(app, 'retry', lambda *a: pytest.fail('changed reservation must not start'))
+    monkeypatch.setattr(app, 'launch', lambda *a: pytest.fail('must not allocate new worktree'))
+    with pytest.raises(mod.IssueError):
+        app.run_one(args, args.target)
+
+
+def test_remote_prepared_reservation_requires_on_host_recovery(mod, app, issue, args, monkeypatch):
+    prepared = dict(provider='remote', id='cloud:/worktree', host='cloud', worktree='/worktree',
+                    evidence='recorded', verified=True, prepared=True, state='prepared',
+                    alias='repo', slot='1')
+    report = clean_report(); report['matches'] = [prepared]
+    setup_run(app, issue, monkeypatch, iter([report]))
+    monkeypatch.setattr(app, 'takeover', lambda *a: pytest.fail('must not take over remote reservation'))
+    monkeypatch.setattr(app, 'launch', lambda *a: pytest.fail('must not launch another agent'))
+    with pytest.raises(mod.IssueError, match='host'):
+        app.run_one(args, args.target)
+
+
 def test_choose(mod, app, monkeypatch):
     report = clean_report()
     assert app.choose(report) is None
-    row = dict(verified=True, session='dev-repo-1')
+    row = dict(verified=True, session='dev-repo-1', provider='local', state='active',
+               evidence='recorded', worktree='/work')
     report['matches'] = [row]
     assert app.choose(report) == row
     row['verified'] = False
@@ -307,17 +377,20 @@ def test_choose(mod, app, monkeypatch):
     with pytest.raises(mod.IssueError, match='review'):
         app.choose(report)
     monkeypatch.setattr(mod.sys.stdin, 'isatty', lambda: True)
-    monkeypatch.setattr('builtins.input', lambda text: '1')
+    monkeypatch.setattr(app, 'pick_rows', lambda defaults, all_rows, *a, **kw: [all_rows[0]])
     assert app.choose(report) == row
-    for answer in ['', 'bad', 'd']:
-        monkeypatch.setattr('builtins.input', lambda text: answer)
-        with pytest.raises(mod.IssueError): app.choose(report)
-    replies = iter(['d', 'unrelated'])
-    monkeypatch.setattr('builtins.input', lambda text: next(replies))
+    monkeypatch.setattr(app, 'pick_rows', lambda defaults, all_rows, *a, **kw: [all_rows[-1]])
+    monkeypatch.setattr('builtins.input', lambda text: 'unrelated')
     assert app.choose(report) is None
-    report['matches'].append(dict(verified=True))
-    monkeypatch.setattr('builtins.input', lambda text: 'd')
-    with pytest.raises(mod.IssueError, match='cannot be dismissed'): app.choose(report)
+    report['matches'].append(dict(verified=True, provider='cloud', state='running',
+                                  evidence='issue reference', url='https://example.test/task'))
+    observed = {}
+    def pick(defaults, all_rows, *a, **kw):
+        observed['rows'] = all_rows
+        return [all_rows[-1]]
+    monkeypatch.setattr(app, 'pick_rows', pick)
+    assert app.choose(report) == report['matches'][-1]
+    assert not any('dismiss' in value for value in observed['rows'])
 
 
 def test_attach(mod, app, monkeypatch):
@@ -395,10 +468,12 @@ def setup_run(app, issue, monkeypatch, reports):
     monkeypatch.setattr(app, 'scan', lambda *a: next(reports))
 
 
-@pytest.mark.parametrize('mode', ['check', 'json', 'scan_host', 'closed', 'closed_json'])
+@pytest.mark.parametrize('mode', ['status', 'json', 'scan_host', 'closed', 'closed_json'])
 def test_readonly_modes(mod, app, issue, args, monkeypatch, capsys, mode):
     if mode.startswith('closed'): issue['state'] = 'closed'
-    else: setattr(args, mode, True)
+    elif mode == 'status': args.action = 'status'
+    elif mode == 'json': args.action = 'status'; args.json = True
+    else: setattr(args, mode, True); args.action = 'status'
     if mode == 'closed_json': args.json = True
     monkeypatch.setattr(mod, 'target', lambda *a: dict(issue))
     setup_run(app, issue, monkeypatch, iter([clean_report()]))
@@ -410,16 +485,16 @@ def test_run_guardrails(mod, app, issue, args, monkeypatch, capsys, tmp_path):
     report = clean_report()
     report['incomplete'] = [{'source': 'cursor', 'reason': 'missing'}]
     setup_run(app, issue, monkeypatch, iter([report, report, report]))
-    args.check = True
-    assert app.run(args) == 2
-    args.check = False
-    with pytest.raises(mod.IssueError, match='incomplete'): app.run(args)
+    args.action = 'status'
+    assert app.run_one(args, args.target) == 2
+    args.action = 'start'
+    with pytest.raises(mod.IssueError, match='incomplete'): app.run_one(args, args.target)
     args.allow_incomplete_check = True
     monkeypatch.setattr(mod, 'command', lambda *a: str(tmp_path))
     monkeypatch.setattr(app, 'scan', lambda *a: report)
     monkeypatch.setattr(app, 'launch', lambda *a: {'session': 'new'})
     monkeypatch.setattr(app, 'attach', lambda r: 7)
-    assert app.run(args) == 7
+    assert app.run_one(args, args.target) == 7
     assert 'Incomplete:' in capsys.readouterr().out
 
 
@@ -429,25 +504,27 @@ def test_run_existing_rechecks_and_errors(mod, app, issue, args, monkeypatch, tm
     report = clean_report(); report['matches'] = [owner]
     setup_run(app, issue, monkeypatch, iter([report]))
     monkeypatch.setattr(app, 'attach', lambda r: 8)
-    assert app.run(args) == 8
+    assert app.run_one(args, args.target) == 8
     monkeypatch.setattr(mod, 'command', lambda *a: str(tmp_path))
     setup_run(app, issue, monkeypatch, iter([clean_report(), report]))
-    with pytest.raises(mod.IssueError, match='appeared'): app.run(args)
+    with pytest.raises(mod.IssueError, match='appeared'): app.run_one(args, args.target)
     partial = clean_report(); partial['incomplete'] = ['failure']
     setup_run(app, issue, monkeypatch, iter([clean_report(), partial]))
-    with pytest.raises(mod.IssueError, match='recheck'): app.run(args)
+    with pytest.raises(mod.IssueError, match='recheck'): app.run_one(args, args.target)
     monkeypatch.setattr(app, 'choose', lambda r: None)
     setup_run(app, issue, monkeypatch, iter([report, report]))
-    with pytest.raises(mod.IssueError, match='became active'): app.run(args)
+    with pytest.raises(mod.IssueError, match='became active'): app.run_one(args, args.target)
     monkeypatch.setattr(mod.IssueCommand, 'run', lambda *a: (_ for _ in ()).throw(EOFError('cancelled')))
     assert mod.run(app.cfg, args, app.api) == 1
 
 
 def test_parser_and_handler(t_mod, monkeypatch):
-    args = t_mod.build_parser().parse_args(['issue', 'org/repo', '12', '--json'])
-    assert args.target == ['org/repo', '12'] and args.json
+    args = t_mod.build_parser().parse_args(['issue', 'status', 'org/repo', '12', '--json'])
+    assert args.action == 'status' and args.target == ['org/repo', '12'] and args.json
     with pytest.raises(SystemExit):
-        t_mod.build_parser().parse_args(['issue', '12', '--codex', '--claude'])
+        t_mod.build_parser().parse_args(['issue', 'start', '12', '--codex', '--claude'])
+    with pytest.raises(SystemExit):
+        t_mod.build_parser().parse_args(['issue', '12'])
     monkeypatch.setattr(t_mod.runpy, 'run_path', lambda path: {'run': lambda cfg, args, api: 9})
     assert t_mod.cmd_issue(None, args) == 9
 
@@ -476,7 +553,7 @@ def test_takeover_blocks_active_recheck(mod, app, issue, args, monkeypatch, tmp_
     monkeypatch.setattr(app, 'choose', lambda r: row)
     monkeypatch.setattr(app, 'takeover', lambda *a: {'pr': 'u'})
     monkeypatch.setattr(mod, 'command', lambda *a: str(tmp_path))
-    with pytest.raises(mod.IssueError, match='still active'): app.run(args)
+    with pytest.raises(mod.IssueError, match='still active'): app.run_one(args, args.target)
 
 
 @pytest.mark.parametrize('agent', ['codex', 'claude'])
@@ -589,7 +666,7 @@ def test_concurrent_invocations_launch_once(mod, cfg, issue, args, t_mod, monkey
         monkeypatch.setattr(app, 'attach', lambda r: 0)
     def run(app):
         try:
-            return app.run(args)
+            return app.run_one(args, args.target)
         except mod.IssueError as error:
             assert 'appeared' in str(error)
             return 1
@@ -605,9 +682,9 @@ def test_saved_resume_requires_complete_scan(mod, app, issue, args, monkeypatch)
     report['incomplete'] = [{'source': 'remote', 'reason': 'unreachable'}]
     setup_run(app, issue, monkeypatch, iter([report, report]))
     monkeypatch.setattr(app, 'attach', lambda r: 3)
-    with pytest.raises(mod.IssueError, match='incomplete'): app.run(args)
+    with pytest.raises(mod.IssueError, match='incomplete'): app.run_one(args, args.target)
     args.allow_incomplete_check = True
-    assert app.run(args) == 3
+    assert app.run_one(args, args.target) == 3
 
 
 def test_private_metadata_is_atomic(mod, tmp_path, monkeypatch):
@@ -626,7 +703,7 @@ def test_takeover_changed_head(mod, app, issue, args, monkeypatch, tmp_path):
     monkeypatch.setattr(app, 'choose', lambda r: row)
     monkeypatch.setattr(app, 'takeover', lambda *a: {'pr': 'pr', 'head': 'a'*40})
     monkeypatch.setattr(mod, 'command', lambda *a: str(tmp_path))
-    with pytest.raises(mod.IssueError, match='published work changed'): app.run(args)
+    with pytest.raises(mod.IssueError, match='published work changed'): app.run_one(args, args.target)
 
 
 def test_standalone_json_check_never_launches(tmp_path):
@@ -651,7 +728,7 @@ def test_standalone_json_check_never_launches(tmp_path):
     (bins / 'codex').write_text('#!/bin/sh\n[ "$1 $2" = "cloud list" ] || exit 99\nprintf \'{"tasks": []}\\n\'\n')
     (bins / 'zsh').write_text('#!/bin/sh\nexit 0\n')
     for file in bins.iterdir(): file.chmod(0o755)
-    result = subprocess.run([sys.executable, str(ROOT / 'bin/t'), 'issue', '12', '--json'],
+    result = subprocess.run([sys.executable, str(ROOT / 'bin/t'), 'issue', 'status', '12', '--json'],
                             cwd=repo, env=env, capture_output=True, text=True, timeout=15)
     assert result.returncode == 2, result.stderr
     report = json.loads(result.stdout)

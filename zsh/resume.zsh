@@ -1874,7 +1874,7 @@ _dev_foreground_resume_preflight() {
 _dev_resume_session_claimed() {
   local session="$1" dir="$2" sid="$3" agent="${4:-claude}"
   if (( ${+functions[_dev_issue_preparing]} )) && _dev_issue_preparing "$dir"; then
-    print -u2 't: issue launch is reserved; rerun t issue to recover it'; return 1
+    print -u2 't: issue launch is reserved; rerun t issue start <issue> to recover it'; return 1
   fi
   _dev_launch_preflight "$session" "$dir" "$sid" || return 1
   _dev_auto_trust "$dir"

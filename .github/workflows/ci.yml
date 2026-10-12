@@ -7,6 +7,12 @@ on:
 permissions:
   contents: read
 jobs:
+  cli-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Public CLI noun/verb contract
+        run: python3 scripts/lint_cli.py
   shell:
     runs-on: ubuntu-latest
     steps:
@@ -83,7 +89,7 @@ jobs:
   ci:
     name: CI
     if: always()
-    needs: [shell, pytest, playground, gitleaks, pip-audit, codeql]
+    needs: [cli-contract, shell, pytest, playground, gitleaks, pip-audit, codeql]
     runs-on: ubuntu-latest
     steps:
       - run: |

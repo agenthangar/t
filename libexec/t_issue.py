@@ -103,19 +103,8 @@ def slug(value):
     return match[1].lower() if match else None
 
 
-def target(words, cfg):
-    if len(words) == 1:
-        match = re.fullmatch(r'https://github\.com/([^/]+/[^/]+)/issues/([1-9][0-9]*)/?', words[0])
-        if match:
-            repo, number = match.groups()
-        else:
-            repo, number = cfg.repo_of_dir(os.getcwd())[0], words[0]
-    elif len(words) == 2:
-        repo, number = words
-    else:
-        raise IssueError('usage: t issue [repo] NUMBER | GITHUB_ISSUE_URL')
-    if not re.fullmatch(r'[1-9][0-9]*', number):
-        raise IssueError('issue number must be a positive integer')
+def repository(repo, cfg, *, require_checkout=True):
+    repo = repo or cfg.repo_of_dir(os.getcwd())[0]
     if not repo:
         raise IssueError('cannot infer repository; specify a registered alias or owner/repo')
     if repo in cfg.repos:
@@ -123,6 +112,10 @@ def target(words, cfg):
         identity = slug(command(['git', '-C', cfg.repos[alias], 'remote', 'get-url', 'origin']).strip())
     else:
         identity = slug(repo)
+        if not identity:
+            raise IssueError('repository must be a registered alias or GitHub owner/repo')
+        if not require_checkout:
+            return {'repo': identity}
         aliases = []
         for name, directory in cfg.repos.items():
             try:
@@ -136,8 +129,38 @@ def target(words, cfg):
         alias = min(aliases, key=lambda name: (len(name), name))
     if not identity:
         raise IssueError('repository origin must identify a github.com repository')
-    return {'repo': identity, 'number': int(number), 'alias': alias,
-            'directory': cfg.repos[alias], 'url': f'https://github.com/{identity}/issues/{number}'}
+    return {'repo': identity, 'alias': alias, 'directory': cfg.repos[alias]}
+
+
+def target(words, cfg):
+    if len(words) == 1:
+        match = re.fullmatch(r'https://github\.com/([^/]+/[^/]+)/issues/([1-9][0-9]*)/?', words[0])
+        repo, number = match.groups() if match else (None, words[0])
+    elif len(words) == 2:
+        repo, number = words
+    else:
+        raise IssueError('usage: t issue start|status [repo] NUMBER | GITHUB_ISSUE_URL')
+    if not re.fullmatch(r'[1-9][0-9]*', number):
+        raise IssueError('issue number must be a positive integer')
+    item = repository(repo, cfg)
+    return dict(item, number=int(number), url=f'https://github.com/{item["repo"]}/issues/{number}')
+
+
+def split_targets(words, repo=None):
+    """Separate a positional repo from one or more issue IDs/URLs, without I/O."""
+    words = list(words)
+    if words and not words[0].isdecimal() and not words[0].startswith('https://'):
+        if repo:
+            raise IssueError('specify the repository once, positionally or with --repo')
+        repo = words.pop(0)
+    for word in words:
+        if not re.fullmatch(r'[1-9][0-9]*|https://github\.com/[^/]+/[^/]+/issues/[1-9][0-9]*/?', word):
+            raise IssueError('issue targets must be positive numbers or GitHub issue URLs')
+    return repo, list(dict.fromkeys(words))
+
+
+def clean_text(value):
+    return re.sub(r'[\x00-\x1f\x7f-\x9f]', ' ', str(value))
 
 
 def references(text, issue, *, scoped=False):
@@ -233,6 +256,91 @@ class IssueCommand:
         # and does not accidentally use an older installed launch helper.
         return ['zsh', '-lic', 'setopt no_monitor no_notify; source ' +
                 shlex.quote(str(Path(self.root) / 't.plugin.zsh')) + '; ' + snippet]
+
+    def issues(self, repo, state='open'):
+        identity = repository(repo, self.cfg, require_checkout=False)['repo']
+        data = decoded(command(['gh', 'api', '--paginate', '--slurp',
+            f'repos/{identity}/issues?' + urlencode(dict(state=state, per_page=100,
+                                                       sort='updated', direction='desc'))]))
+        return [dict(repo=identity, number=row['number'], title=row['title'],
+                     state=row['state'], url=f'https://github.com/{identity}/issues/{row["number"]}',
+                     labels=[label['name'] for label in row.get('labels', [])],
+                     assignees=[user['login'] for user in row.get('assignees', [])])
+                for page in data for row in page if 'pull_request' not in row]
+
+    def list_issues(self, args):
+        rows = self.issues(args.repo, args.state)
+        if args.json:
+            print(json.dumps(rows))
+        elif not rows:
+            print('No matching issues.')
+        else:
+            for row in rows:
+                print(clean_text(f'#{row["number"]}  {row["state"]:6}  {row["title"]}  {row["url"]}'))
+        return 0
+
+    def pick_rows(self, default, all_rows, action, label, legend, *, multi=True):
+        """Keep shared fzf controls and styling; large lists travel in private files."""
+        if not sys.stdin.isatty():
+            raise IssueError('selection requires a terminal; use t issue list or provide issue numbers')
+        with tempfile.TemporaryDirectory(prefix='t-issue-picker-') as directory:
+            paths = [Path(directory) / name for name in ('default', 'all')]
+            for path, rows in zip(paths, (default, all_rows)):
+                private_write(path, '\n'.join(rows) + ('\n' if rows else ''))
+            snippet = ('. "$1"; defaults=$(cat -- "$2"); all_rows=$(cat -- "$3"); '
+                       'shift 3; _t_fzf_filtered "$defaults" "$all_rows" "$@"')
+            argv = ['sh', '-c', snippet, 't-issue-picker', str(Path(self.root) / 'ui/fzf.sh'),
+                    *map(str, paths), action, label, legend, '', '--prompt=issues> ']
+            if not multi:
+                argv += ['--no-multi', '--bind=space:accept,tab:down,btab:up',
+                         '--header=Enter continues · Ctrl-/ details · Esc leaves work unchanged']
+            env = {k: v for k, v in os.environ.items() if not k.startswith('COV_CORE_')}
+            env['T_PICKER_ALL_LABEL'] = 'All issues' if multi else 'Existing work'
+            result = subprocess.run(argv, env=env, stdout=subprocess.PIPE, text=True)
+            if result.returncode in (1, 130):
+                raise IssueError('selection cancelled; existing work left unchanged')
+            if result.returncode:
+                raise IssueError('issue picker unavailable; install fzf or provide issue numbers')
+            selected = list(dict.fromkeys(result.stdout.splitlines()))
+            if not selected or any(row not in all_rows for row in selected) or (not multi and len(selected) != 1):
+                raise IssueError('invalid or empty picker selection; no work started')
+            return selected
+
+    def select_issues(self, repo):
+        issues = self.issues(repo, 'all')
+        if not issues:
+            print('No issues in this repository.')
+            return []
+        all_rows, default, targets = [], [], {}
+        for item in issues:
+            details = (f'#{item["number"]} [{item["state"]}] {item["title"]} '
+                       f'· labels: {", ".join(item["labels"]) or "—"} '
+                       f'· assignees: {", ".join(item["assignees"]) or "—"} · {item["url"]}')
+            row = '\t'.join([item['repo'], str(item['number']), 'issue', clean_text(details)])
+            all_rows.append(row)
+            targets[row] = [item['url']]
+            if item['state'] == 'open':
+                default.append(row)
+        return [targets[row] for row in self.pick_rows(default, all_rows, 'start', 'Open issues',
+                'One agent per issue · ownership checked before starting')]
+
+    def start_targets(self, args):
+        repo, identifiers = split_targets(args.target, getattr(args, 'repo', None))
+        if not identifiers:
+            return self.select_issues(repo)
+        result = []
+        for identifier in identifiers:
+            if identifier.startswith('https://'):
+                if repo and repository(repo, self.cfg)['repo'] != target([identifier], self.cfg)['repo']:
+                    raise IssueError('issue URL does not match the specified repository')
+                result.append([identifier])
+            else:
+                result.append([repo, identifier] if repo else [identifier])
+        unique = {}
+        for words in result:
+            item = target(words, self.cfg)
+            unique.setdefault((item['repo'], item['number']), words)
+        return list(unique.values())
 
     def issue(self, words):
         item = target(words, self.cfg)
@@ -400,14 +508,16 @@ class IssueCommand:
                 alias, slot = self.cfg.repo_of_dir(cwd)
                 row.update(alias=alias, slot=slot)
                 row['resume'] = bool((linked or associated) and has_transcripts and alias and slot)
-                row['verified'] = row['resume']
                 row['prepared'] = bool(linked and marker.get('state') == 'prepared' and marker.get('token')
                                        and alias and slot and (Path(gitdir) / 't-issue-prompt').is_file())
+                row['verified'] = row['resume'] or row['prepared']
+                if row['prepared']:
+                    row['state'] = 'prepared'
             result.append(row)
         return result
 
     def remote(self, issue, host, destination):
-        argv = ['t', 'issue', issue['repo'], str(issue['number']), '--scan-host']
+        argv = ['t', 'issue', 'status', issue['repo'], str(issue['number']), '--scan-host']
         remote = 'zsh -lic ' + shlex.quote(shlex.join(argv))
         report = decoded(command(['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8',
                                   destination, remote], timeout=60))
@@ -465,40 +575,65 @@ class IssueCommand:
         matches = report['matches']
         if not matches:
             return None
-        if len(matches) == 1 and matches[0].get('verified') and (matches[0].get('session') or matches[0].get('resume')):
+        if len(matches) == 1 and matches[0].get('verified') and any(
+                matches[0].get(key) for key in ('session', 'resume', 'prepared')):
             return matches[0]
         if not sys.stdin.isatty():
             raise IssueError('existing work needs review; rerun interactively to continue or take over')
-        answer = input('Select existing work [number], dismiss unrelated matches [d], or leave running [Enter]: ').strip()
-        if answer == 'd':
-            if any(r.get('verified') for r in matches):
-                raise IssueError('a verified owner cannot be dismissed; continue or hand off that work')
+        rows = ['\t'.join(['owner', str(i), 'work', clean_text(
+                    f'{row["provider"]} [{row["state"]}] {row.get("url") or row.get("worktree")} · {row["evidence"]}')])
+                for i, row in enumerate(matches)]
+        dismiss = 'dismiss\t0\taction\tThese matches are unrelated; start new work'
+        choices = rows + ([dismiss] if not any(r.get('verified') for r in matches) else [])
+        selected = self.pick_rows(choices, choices, 'continue', 'Existing work',
+                                  'Select one owner to continue or hand off', multi=False)[0]
+        if selected == dismiss:
             if input('Type unrelated to confirm these matches do not address the issue: ') == 'unrelated':
                 return None
-        elif answer.isdecimal() and 1 <= int(answer) <= len(matches):
-            return matches[int(answer) - 1]
+        elif selected in rows:
+            return matches[rows.index(selected)]
         raise IssueError('existing work left unchanged')
 
-    def attach(self, row):
+    def attach_argv(self, row, *, new_terminal=False):
         if row.get('app'):
             argv = ['t', 'session', 'open', row['alias'], row['slot'], '--app']
             if row.get('host') == 'local':
-                return subprocess.call(self.shell(shlex.join(['_t_open', *argv[3:]])))
-            return subprocess.call(['ssh', '-t', self.cfg.hosts[row['host']],
-                                    'zsh -lic ' + shlex.quote(shlex.join(argv))])
+                return self.shell(shlex.join(['_t_open', *argv[3:]]))
+            return ['ssh', '-t', self.cfg.hosts[row['host']], 'zsh -lic ' + shlex.quote(shlex.join(argv))]
         if row.get('resume'):
             argv = ['t', 'session', 'resume', row['alias'], row['slot'], '--days', 'all']
             if row.get('host') == 'local':
-                return subprocess.call(self.shell(shlex.join(['_t_resume', *argv[3:]])))
-            return subprocess.call(['ssh', '-t', self.cfg.hosts[row['host']],
-                                    'zsh -lic ' + shlex.quote(shlex.join(argv))])
+                return self.shell(shlex.join(['_t_resume', *argv[3:]]))
+            return ['ssh', '-t', self.cfg.hosts[row['host']], 'zsh -lic ' + shlex.quote(shlex.join(argv))]
         if row.get('host') == 'local':
             # Exact-session attach cannot accidentally create a new owner.
-            verb = 'switch-client' if os.environ.get('TMUX') else 'attach-session'
-            return subprocess.call(['tmux', verb, '-t', '=' + row['session']])
+            verb = 'switch-client' if os.environ.get('TMUX') and not new_terminal else 'attach-session'
+            return ['tmux', verb, '-t', '=' + row['session']]
         dest = self.cfg.hosts[row['host']]
-        return subprocess.call(['ssh', '-t', dest, 'zsh -lic ' + shlex.quote(
-            shlex.join(['tmux', 'attach-session', '-t', '=' + row['session']]))])
+        return ['ssh', '-t', dest, 'zsh -lic ' + shlex.quote(
+            shlex.join(['tmux', 'attach-session', '-t', '=' + row['session']]))]
+
+    def attach(self, row):
+        return subprocess.call(self.attach_argv(row))
+
+    def attach_many(self, rows):
+        # All fresh sessions have been launched before any blocking attachment.
+        unique = {}
+        for row in rows:
+            key = (row.get('host'), row.get('session'), row.get('alias'), row.get('slot'))
+            unique.setdefault(key, row)
+        rows = list(unique.values())
+        if not rows:
+            return 0
+        result = 0
+        for row in rows[1:]:
+            if row.get('app'):
+                result = self.attach(row) or result
+                continue
+            cmd = shlex.join(self.attach_argv(row, new_terminal=True))
+            if subprocess.call(self.shell('_dev_open_tab ' + shlex.quote(cmd))):
+                print('Attach with: ' + cmd)
+        return self.attach(rows[0]) or result
 
     def takeover(self, issue, row):
         if not sys.stdin.isatty():
@@ -548,7 +683,7 @@ class IssueCommand:
         gitdir = Path(command(['git', '-C', cwd, 'rev-parse', '--absolute-git-dir']).strip())
         marker = decoded((gitdir / 't-issue.json').read_text())
         if marker['state'] != 'prepared':
-            raise IssueError('reservation changed; rerun t issue')
+            raise IssueError('reservation changed; rerun t issue start')
         command(self.shell('_t_issue_launch ' + shlex.join([
             row['alias'], row['slot'], cwd, marker['agent'], str(gitdir / 't-issue-prompt'), marker['token']])))
         marker['state'] = 'started'
@@ -581,30 +716,36 @@ class IssueCommand:
         private_write(path, json.dumps(marker) + '\n')
         return dict(host='local', session=f'dev-{issue["alias"]}-{slot}')
 
-    def run(self, args):
-        if args.scan_host:
-            issue = target(args.target, self.cfg)
+    def run_one(self, args, words, *, attach=True):
+        host_only = getattr(args, 'scan_host', False)
+        readonly = args.action == 'status'
+        as_json = getattr(args, 'json', False)
+        if host_only:
+            issue = target(words, self.cfg)
             issue['title'] = ''
         else:
-            issue = self.issue(args.target)
+            issue = self.issue(words)
         if issue.get('state') == 'closed':
-            print(json.dumps({'issue': issue['url'], 'state': 'closed'}) if args.json else
+            print(json.dumps({'issue': issue['url'], 'state': 'closed'}) if as_json else
                   f'{issue["url"]} is closed; no session started.')
-            return 0
-        report = self.scan(issue, args.scan_host)
-        if args.json or args.scan_host:
+            return 0 if readonly or attach else None
+        report = self.scan(issue, host_only)
+        if as_json or host_only:
             print(json.dumps(report))
         else:
             self.display(issue, report)
-        if args.check or args.json or args.scan_host:
+        if readonly:
             return 2 if report['incomplete'] else 0
         selected = self.choose(report)
         if selected and selected.get('verified') and selected.get('session'):
-            return self.attach(selected)
+            return self.attach(selected) if attach else selected
         if report['incomplete'] and not args.allow_incomplete_check:
             raise IssueError('ownership check incomplete; fix access or explicitly use --allow-incomplete-check')
         if selected and selected.get('verified') and selected.get('resume'):
-            return self.attach(selected)
+            return self.attach(selected) if attach else selected
+        if selected and selected.get('prepared') and selected.get('host') != 'local':
+            raise IssueError('issue launch is reserved on host ' + clean_text(selected.get('host')) +
+                             f'; run t issue start {issue["url"]} there to recover it')
         retry = selected and selected.get('prepared') and selected.get('host') == 'local'
         handoff = self.takeover(issue, selected) if selected and not retry else None
         common = command(['git', '-C', issue['directory'], 'rev-parse', '--git-common-dir']).strip()
@@ -615,12 +756,18 @@ class IssueCommand:
             fresh = self.scan(issue)
             known = {(r['provider'], r['id']) for r in report['matches']}
             if any((r['provider'], r['id']) not in known for r in fresh['matches']):
-                raise IssueError('new existing work appeared during review; rerun t issue')
+                raise IssueError('new existing work appeared during review; rerun t issue start')
             if fresh['incomplete'] and not args.allow_incomplete_check:
                 raise IssueError('ownership recheck incomplete; no session started')
             # Another invocation may have launched into a worktree seen earlier.
             if any(r.get('verified') and r.get('session') for r in fresh['matches']):
                 raise IssueError('an issue owner became active during review; rerun to attach')
+            reservations = [r for r in fresh['matches'] if r.get('prepared')]
+            if any(not retry or (r['provider'], r['id']) != (selected['provider'], selected['id'])
+                   for r in reservations):
+                raise IssueError('another issue launch is reserved; recover it before starting work')
+            if retry and not reservations:
+                raise IssueError('issue reservation changed; rerun t issue start to review ownership')
             if handoff and any(r['state'] in ('active', 'running', 'creating', 'pending', 'queued', 'in_progress')
                                for r in fresh['matches']):
                 raise IssueError('existing work is still active; finish its handoff before takeover')
@@ -630,7 +777,29 @@ class IssueCommand:
             override = 'codex' if args.codex else 'claude' if args.claude else None
             row = self.retry(selected) if retry else self.launch(
                 issue, fresh, self.cfg.agent_for(issue['alias'], override), handoff)
-        return self.attach(row)
+        return self.attach(row) if attach else row
+
+    def run(self, args):
+        if args.action == 'list':
+            return self.list_issues(args)
+        if args.action == 'status':
+            repo, identifiers = split_targets(args.target, getattr(args, 'repo', None))
+            if len(identifiers) != 1:
+                raise IssueError('usage: t issue status [repo] NUMBER | GITHUB_ISSUE_URL')
+            words = self.start_targets(args)[0]
+            return self.run_one(args, words)
+        targets = self.start_targets(args)
+        rows, failures = [], False
+        for words in targets:
+            try:
+                row = self.run_one(args, words, attach=False)
+                if row:
+                    rows.append(row)
+            except (IssueError, OSError, KeyError, TypeError, EOFError) as error:
+                print(f't issue start {clean_text(" ".join(words))}: {error}', file=sys.stderr)
+                failures = True
+        attached = self.attach_many(rows)
+        return 1 if failures else attached
 
 
 def run(cfg, args, api):

@@ -163,7 +163,9 @@ for a host's login shell.
 | Command | Purpose |
 | --- | --- |
 | `t session open <repo> [slot]` | Open or reattach a task; `--new` starts another, `--codex` selects Codex, `--app` opens the desktop app, `--cli` resumes in the terminal |
-| `t issue [repo] <number>` | Find existing issue work, continue it, or start an isolated agent session |
+| `t issue list [repo]` | List issues in a GitHub repository |
+| `t issue status [repo] <number>` | Inspect existing work without starting an agent |
+| `t issue start [repo] [number ...]` | Continue or start work on one or several issues |
 | `t session list [-r] [-a]` | List sessions across local or remote hosts and repositories |
 | `t session close <repo> <slot>` / `t session restart <repo> <slot>` | Stop a slot or recover a stuck agent in the same conversation |
 | `t session push` / `t session pop` | Move between foreground and detached tmux |
@@ -305,14 +307,23 @@ current chat IDs; close an untracked CLI first to avoid duplicate conversation o
 ### Working on GitHub issues
 
 ```sh
-t issue 123                         # infer the registered repo from this directory
-t issue api 123                     # registered repository alias
-t issue owner/repo 123               # GitHub repository with a registered checkout
-t issue https://github.com/owner/repo/issues/123
-t issue 123 --check                  # inspect ownership without starting work
-t issue 123 --json                   # structured discovery; also never starts work
-t issue 123 --codex                  # choose the agent for a new local session
+t issue list                         # open issues in the current registered repo
+t issue list api --state all         # all issues in the registered "api" repo
+t issue list owner/repo --json       # machine-readable GitHub issues
+t issue status 123                   # inspect ownership without starting work
+t issue status api 123 --json        # structured discovery for a registered repo
+t issue start                        # select one or several open issues
+t issue start api 123 124            # work on two independent issues
+t issue start https://github.com/owner/repo/issues/123 --codex
 ```
+
+`list` and `status` are read-only. `start` accepts explicit issue numbers or a
+GitHub issue URL. With no number, it presents the same multi-select picker used
+for sessions; Space or Tab marks issues, and Enter starts the marked issues.
+Ctrl-A toggles between open and all issues; Ctrl-/ shows full details. Each issue
+is checked independently for an existing owner. The command starts all new
+sessions before attaching to one. Additional CLI sessions open in terminal tabs,
+with attach commands printed when tabs are unavailable.
 
 Before starting, `t issue` checks local and registered remote hosts, including
 ordinary Git worktrees and agent activity outside `t`. It also checks GitHub PRs,
@@ -331,9 +342,10 @@ open a PR, following the repository's merge and deployment instructions.
 
 Unreachable hosts, missing provider credentials, old remote versions, and failed
 checks block new work. `--allow-incomplete-check` explicitly permits proceeding
-with those gaps; it does not override a known owner. `--check` and `--json` return
-exit status 2 when discovery is incomplete, 0 when complete; command failures
-return 1. A closed issue is reported without launching work.
+with those gaps; it does not override a known owner. `status` returns exit status
+2 when discovery is incomplete, 0 when complete; command failures return 1.
+A closed issue is reported without launching work. In a batch, failures are
+reported per issue and the command returns nonzero after processing the rest.
 
 Discovery covers only accessible accounts and identifiable issue references.
 Private cloud work without a repository/issue reference may be undiscoverable;
