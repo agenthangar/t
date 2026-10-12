@@ -502,6 +502,9 @@ def test_real_isolated_launch_quotes_brief_and_reserves_tree(tmp_path, agent):
     (bindir / agent).write_text('#!' + sys.executable + '\nimport json, pathlib, sys, time\n' +
         f'pathlib.Path({str(record)!r}).write_text(json.dumps(sys.argv[1:]))\ntime.sleep(30)\n')
     for file in bindir.iterdir(): file.chmod(0o755)
+    # Ubuntu's system zshrc can prompt about shared completion permissions
+    # before our sandbox zshrc loads. Keep that unrelated prompt out of tmux.
+    (home / '.zshenv').write_text('skip_global_compinit=1\n')
     (home / '.zshrc').write_text('export PATH=' + shlex.quote(str(bindir)) + ':$PATH\n')
     repo = home / 'repo'
     def git(*a):
