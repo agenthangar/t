@@ -4,6 +4,7 @@
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["macos_ui: opens native desktop windows and takes focus (requires --run-macos-ui)"]
 
 [tool.coverage.run]
 # Coverage attributes lines through each module's importlib-set __file__, so we
@@ -35,7 +36,7 @@ exclude_lines = [
     "def _read_usage\\(",
     "def _columns\\(",
     "class Style",
-    # Thin macOS ctypes bridge: exercised by test_app_macos.py on macOS.
+    # Thin macOS ctypes bridge: exercised by test_app_macos.py with --run-macos-ui.
     "class Accessibility",
     "class Element",
     # bin/t interactive setup glue (inline wizard + input() prompts)

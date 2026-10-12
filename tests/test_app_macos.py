@@ -1,4 +1,4 @@
-"""Native New Window action + URL routing, with a disposable app, never Codex."""
+"""Opt-in native New Window + URL routing, with a disposable app, never Codex."""
 
 import ctypes
 import json
@@ -14,6 +14,9 @@ import uuid
 from contextlib import closing
 
 import pytest
+
+
+pytestmark = pytest.mark.macos_ui
 
 
 @pytest.mark.skipif(sys.platform != "darwin" or not shutil.which("swiftc"),
