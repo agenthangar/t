@@ -392,10 +392,56 @@ def test_unverified_notice_cleans_marker_if_menu_launch_fails(recovery, target, 
     assert not recovery.notice_path(target["socket"], target["pane"]).exists()
 
 
+@pytest.mark.parametrize("scenario", ["accept", "dismiss", "reopen", "new_accept", "wrapped", "copy",
+                                      "mode_failed", "capture_failed", "output", "bad_quote", "other_script",
+                                      "other_socket", "other_pane", "bad_token", "other_action", "bad_length"])
+def test_clear_callback_view_is_scoped_to_our_error_buffer(recovery, target, monkeypatch, scenario):
+    args = ["/usr/bin/python3", "/repo/libexec/t_recovery.py", "accept", target["socket"], "a" * 32]
+    if scenario == "dismiss":
+        args[2] = "dismiss"
+    if scenario == "reopen":
+        args[2:] = ["reopen", target["socket"], target["pane"], "viewer"]
+    if scenario in ("new_accept", "other_pane"):
+        args.extend(["%999" if scenario == "other_pane" else target["pane"], "viewer"])
+    if scenario == "other_script":
+        args[1] = "/repo/other.py"
+    if scenario == "other_socket":
+        args[3] = "/tmp/other-socket"
+    if scenario == "bad_token":
+        args[4] = "not-a-token"
+    if scenario == "other_action":
+        args[2] = "watch"
+    if scenario == "bad_length":
+        args.append("unexpected")
+    output = "'" + shlex.join(args) + "' returned 1\n\n"
+    if scenario == "wrapped":
+        output = "\n".join(output[i:i + 40] for i in range(0, len(output), 40))
+    if scenario == "output":
+        output = "unrelated output\n" + output
+    if scenario == "bad_quote":
+        output = "'python 'unterminated' returned 1"
+    calls = []
+    def tmux(socket, command, *arguments):
+        calls.append((command, arguments))
+        if command == "display-message":
+            return result("copy-mode" if scenario == "copy" else "view-mode", scenario == "mode_failed")
+        if command == "capture-pane":
+            return result(output, scenario == "capture_failed")
+        return result()
+    monkeypatch.setattr(recovery, "tmux", tmux)
+    recovery.clear_callback_view(target["socket"], target["pane"])
+    cancelled = [(command, args) for command, args in calls if command == "send-keys"]
+    assert bool(cancelled) == (scenario in ("accept", "dismiss", "reopen", "new_accept", "wrapped"))
+    if cancelled:
+        assert cancelled == [("send-keys", ("-t", target["pane"], "-X", "cancel"))]
+
+
 @pytest.mark.parametrize("scenario", ["offer", "background", "unverified", "cleared", "missing", "other_client", "failed"])
 def test_reopen_checks_current_failure_and_requesting_viewer(recovery, target, monkeypatch, scenario):
     monkeypatch.setattr(recovery, "panes", lambda s: [] if scenario == "missing" else [target])
     monkeypatch.setattr(recovery, "clients", lambda *a: ["first", "requester"])
+    views = []
+    monkeypatch.setattr(recovery, "clear_callback_view", lambda *a: views.append(a))
     error = "" if scenario == "cleared" else recovery.BACKGROUND if scenario == "background" else recovery.DEAD
     monkeypatch.setattr(recovery, "pane_failure", lambda *a: error)
     owners = []
@@ -416,6 +462,7 @@ def test_reopen_checks_current_failure_and_requesting_viewer(recovery, target, m
     if notices:
         assert notices == [((target["socket"], target["pane"]), {"viewer": "requester"})]
     assert bool(cleared) == (scenario == "cleared")
+    assert bool(views) == (scenario not in ("missing", "other_client"))
     if scenario == "background":
         assert owners == [{"startup": True}]
 

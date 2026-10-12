@@ -407,6 +407,21 @@ _t_restart_slot() {{ touch "$HOME/accepted"; }}
         else:
             assert not tmux("show-options", "-q", "-t", "=dev-api-1:", "status-left").stdout
         assert not mod.hint_path(socket, pane["pane"]).exists()
+        # An older installed callback could leave a pane-wide error viewer
+        # covering a healthy agent. Reopening recovery must reveal the agent.
+        legacy = home / "t_recovery.py"
+        legacy.write_text("raise SystemExit(1)\n")
+        callback = shlex.join([sys.executable, str(legacy), "accept", socket, "f" * 32])
+        pid = mod.panes(socket)[0]["pane_pid"]
+        tmux("run-shell", "-t", pane["pane"], callback)
+        assert tmux("display-message", "-p", "-t", pane["pane"], "#{pane_mode}").stdout.strip() == "view-mode"
+        visible.clear()
+        os.write(master, b"\x01\x1br" if custom else b"\x02R")
+        until(lambda: tmux("display-message", "-p", "-t", pane["pane"], "#{pane_in_mode}").stdout.strip() == "0",
+              detail=lambda: tmux("capture-pane", "-p", "-M", "-t", pane["pane"]).stdout)
+        until(lambda: showing(b"no longer needs recovery"))
+        assert mod.panes(socket)[0]["pane_pid"] == pid
+        assert "healthy" in tmux("capture-pane", "-p", "-t", pane["pane"]).stdout
     finally:
         client.terminate()
         try:

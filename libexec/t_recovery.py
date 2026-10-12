@@ -386,10 +386,38 @@ def clear_hint(socket, pane):
     path.unlink(missing_ok=True)
 
 
+def clear_callback_view(socket, pane):
+    """Dismiss only an old recovery callback's tmux error buffer."""
+    mode = tmux(socket, "display-message", "-p", "-t", pane, "#{pane_mode}")
+    if mode.returncode or mode.stdout.strip() != "view-mode":
+        return
+    screen = tmux(socket, "capture-pane", "-p", "-J", "-M", "-t", pane)
+    # View-mode wraps long commands at the terminal width. These callbacks
+    # emitted no output beyond tmux's quoted command and exit status.
+    match = re.fullmatch(r"'(.*)' returned [1-9]\d*", screen.stdout.replace("\n", "").strip())
+    if screen.returncode or not match:
+        return
+    try:
+        args = shlex.split(match[1])
+    except ValueError:
+        return
+    if (len(args) not in (5, 6, 7) or Path(args[1]).name != "t_recovery.py"
+            or args[3] != socket):
+        return
+    if args[2] in ("accept", "dismiss"):
+        if (len(args) not in (5, 7) or not re.fullmatch(r"[0-9a-f]{32}", args[4])
+                or (len(args) == 7 and args[5] != pane)):
+            return
+    elif args[2] != "reopen" or len(args) != 6 or args[4] != pane:
+        return
+    tmux(socket, "send-keys", "-t", pane, "-X", "cancel")
+
+
 def reopen(socket, pane_id, viewer):
     pane = next((row for row in panes(socket) if row["pane"] == pane_id), None)
     if pane is None or viewer not in clients(socket, pane_id):
         return 1
+    clear_callback_view(socket, pane_id)
     error = pane_failure(socket, pane)
     if not error:
         clear_hint(socket, pane_id)
