@@ -465,7 +465,7 @@ def args(**changes):
 
 
 def test_human_output_shows_targets_inbox_summary_attachment_and_receipt(
-    share, state, capsys
+    share, state, capsys, t_mod
 ):
     source, target = identity("claude"), identity("codex")
     item = share.make_envelope(source, target, "A short decision", [
@@ -473,12 +473,17 @@ def test_human_output_shows_targets_inbox_summary_attachment_and_receipt(
     ])
     store = share.Store()
     store.receive(item)
-    share.render([target], "targets")
-    assert target["address"] in capsys.readouterr().out
+    share.render([target], "targets", table_lines=t_mod._table_lines, scope='local')
+    output = capsys.readouterr().out
+    assert all(label in output for label in ('Share targets · local', 'TARGET', 'HOST',
+                                            'DIRECTORY', 'TITLE', target['address']))
     share.render([], "targets")
     assert "No recorded" in capsys.readouterr().out
-    share.render(store.inbox(target["address"]), "inbox")
-    assert item["id"] in capsys.readouterr().out
+    share.render(store.inbox(target["address"]), "inbox",
+                 table_lines=t_mod._table_lines, scope=target['address'] + ' on local')
+    output = capsys.readouterr().out
+    assert all(label in output for label in ('Share inbox · ' + target['address'],
+                                            'MESSAGE ID', 'RECEIVED', 'FROM', 'HOST', item['id']))
     share.render([], "inbox")
     assert "No shared context" in capsys.readouterr().out
     share.render(store.read(target["address"], item["id"]), "read")
@@ -488,6 +493,18 @@ def test_human_output_shows_targets_inbox_summary_attachment_and_receipt(
     assert "Selected turns" in capsys.readouterr().out
     share.render(dict(store.receive(item), host="local"), None)
     assert "t share read " + item["id"] in capsys.readouterr().out
+
+
+def test_run_human_targets_uses_shared_table(share, t_mod, state, monkeypatch, capsys):
+    target = identity('cursor')
+    monkeypatch.setattr(share, 'request_at', lambda route, request, store: [target])
+    cfg = SimpleNamespace(hosts={})
+    assert share.run(cfg, args(share_action='targets', json=False),
+                     api={'_table_lines': t_mod._table_lines}) == 0
+    output = capsys.readouterr().out
+    assert 'Share targets · local' in output
+    assert 'TARGET' in output and 'HOST' in output and 'DIRECTORY' in output
+    assert target['address'] in output
 
 
 def test_run_local_send_then_inbox_and_read(share, state, tmp_path, monkeypatch, capsys):

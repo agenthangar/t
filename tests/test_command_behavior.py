@@ -67,6 +67,28 @@ def test_history_readonly_follows_terminal_context(t_mod, monkeypatch):
         assert t_mod._command_readonly(argv)
 
 
+def test_share_machine_receipt_is_mutating_but_never_offers_update(t_mod, monkeypatch):
+    argv = ['share', '--to', 'codex:123', '--file', '-', '--json']
+    assert not t_mod._command_readonly(argv, terminal=True)
+    assert not t_mod._command_readonly(['share', '--file', 'read', '--to', 'codex:123'])
+    monkeypatch.setattr(t_mod, '_t_update_interactive',
+                        lambda: pytest.fail('share machine output reached update prompt'))
+    monkeypatch.setattr(t_mod, 'Config', lambda: object())
+    seen = []
+    monkeypatch.setitem(t_mod.IMPLEMENTED, 'share',
+                        lambda cfg, args: seen.append(args) or 0)
+    assert t_mod.main(argv) == 0
+    assert len(seen) == 1 and seen[0].json
+
+
+@pytest.mark.parametrize('argv', [
+    ['share'], ['share', 'targets'], ['share', 'targets', '--json'],
+    ['share', 'inbox'], ['share', 'read', '123'], ['share', '--json', 'targets'],
+])
+def test_share_readonly_verbs_and_bare_help(t_mod, argv):
+    assert t_mod._command_readonly(argv)
+
+
 @pytest.mark.parametrize('width', [80, 44, 32])
 def test_tables_keep_complete_values_and_stay_inside_terminal(t_mod, width):
     value = 'a-long-checkout-or-issue-title-' * 5

@@ -281,7 +281,8 @@ def check_command_patterns(parser, command_groups, contract, *, root=ROOT):
     patterns = contract.get("patterns", {})
     if set(patterns) != allowed:
         errors.append("command patterns must define the ten approved behavior types")
-    routes = {f"{group} {verb}" for group, verbs in command_groups.items() for verb in verbs}
+    routes = ({f"{group} {verb}" for group, verbs in command_groups.items() for verb in verbs}
+              | {SHARE_COMMAND, "share targets", "share inbox", "share read"})
     top = _subparsers(parser)
     commands = contract.get("commands", {})
     if set(commands) != routes:
@@ -300,8 +301,8 @@ def check_command_patterns(parser, command_groups, contract, *, root=ROOT):
 
     for name in sorted(routes & set(commands)):
         entry = commands[name]
-        group, verb = name.split()
-        route = command_groups[group][verb]
+        words = name.split()
+        route = command_groups[words[0]][words[1]] if len(words) == 2 and words[0] != SHARE_COMMAND else tuple(words)
         leaf = top._name_parser_map.get(route[0]) if top else None
         for word in route[1:]:
             if word.startswith("-"):
@@ -329,7 +330,7 @@ def check_command_patterns(parser, command_groups, contract, *, root=ROOT):
             if "terminal" in spec and not isinstance(spec["terminal"], bool):
                 errors.append(f"{name} {mode} terminal context must be boolean")
             argv = spec.get("argv", [])
-            if not isinstance(argv, list) or argv[:2] != name.split() or not accepts(argv):
+            if not isinstance(argv, list) or argv[:len(words)] != words or not accepts(argv):
                 errors.append(f"{name} {mode} example does not parse as its canonical command")
             for reference in spec.get("tests", []):
                 errors.extend(_check_test_reference(reference, root))

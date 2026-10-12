@@ -23,14 +23,15 @@ def _cases():
 def test_declared_commands(t_mod):
     lint = lint_module()
     assert lint.check_command_patterns(t_mod.build_parser(), t_mod.COMMAND_GROUPS, CONTRACT) == []
-    assert set(CONTRACT["commands"]) == {
+    assert set(CONTRACT["commands"]) == ({
         f"{group} {verb}" for group, verbs in t_mod.COMMAND_GROUPS.items() for verb in verbs}
+        | {"share", "share targets", "share inbox", "share read"})
 
 
 @pytest.mark.parametrize("command,mode,spec", list(_cases()))
 def test_declared_modes(t_mod, command, mode, spec):
     parser = t_mod.build_parser()
-    assert spec["argv"][:2] == command.split()
+    assert spec["argv"][:len(command.split())] == command.split()
     assert t_mod._canonical_error(spec["argv"]) is None
     with contextlib.redirect_stderr(io.StringIO()):
         parser.parse_args(spec["argv"])
@@ -45,6 +46,11 @@ def test_inventory_lint_rejects_missing_routes_modes_and_test_references(t_mod):
     changed = json.loads(json.dumps(CONTRACT))
     del changed["commands"]["issue list"]
     assert any("missing issue list" in error for error in
+               lint.check_command_patterns(parser, t_mod.COMMAND_GROUPS, changed))
+
+    changed = json.loads(json.dumps(CONTRACT))
+    del changed["commands"]["share read"]
+    assert any("missing share read" in error for error in
                lint.check_command_patterns(parser, t_mod.COMMAND_GROUPS, changed))
 
     changed = json.loads(json.dumps(CONTRACT))

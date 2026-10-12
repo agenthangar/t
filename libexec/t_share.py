@@ -350,18 +350,32 @@ def request_at(route, request, store):
     return remote(route['target'], request) if route['alias'] is not None else dispatch(request, store)
 
 
-def render(result, action, as_json=False):
+def render(result, action, as_json=False, *, table_lines=None, scope='local'):
     if as_json:
         print(json.dumps(dict(version=VERSION, result=result), ensure_ascii=True))
     elif action == 'targets':
-        for row in result:
-            print(f"{row['address']}\t{row['host']}\t{row['cwd']}\t{row['title']}")
-        if not result:
+        print(f'Share targets · {scope}')
+        if result:
+            if table_lines is None:
+                raise ShareError('shared table renderer unavailable')
+            print()
+            for line in table_lines(['TARGET', 'HOST', 'DIRECTORY', 'TITLE'],
+                                    [[row['address'], row['host'], row['cwd'], row['title']]
+                                     for row in result]):
+                print(line)
+        else:
             print('No recorded conversations found.')
     elif action == 'inbox':
-        for row in result:
-            print(f"{row['id']}\t{row['created_at']}\t{row['source']['address']}\t{row['source']['host']}")
-        if not result:
+        print(f'Share inbox · {scope}')
+        if result:
+            if table_lines is None:
+                raise ShareError('shared table renderer unavailable')
+            print()
+            for line in table_lines(['MESSAGE ID', 'RECEIVED', 'FROM', 'HOST'],
+                                    [[row['id'], row['created_at'], row['source']['address'],
+                                      row['source']['host']] for row in result]):
+                print(line)
+        else:
             print('No shared context in this conversation inbox.')
     elif action == 'read':
         print(f"Shared context from {result['source']['address']} ({result['source']['host']}).")
@@ -432,7 +446,10 @@ def run(cfg, args, api=None):
             except (ValueError, OSError) as error:
                 raise ShareError(f'Delivery unconfirmed: {error}. Retry unchanged with: t share --retry {envelope["id"]}') from error
             result = dict(result, host=route['alias'] or 'local')
-        render(result, action, getattr(args, 'json', False))
+        scope = (host or 'local') if action == 'targets' else (
+            f"{request['recipient']} on {host or 'local'}" if action == 'inbox' else 'local')
+        render(result, action, getattr(args, 'json', False),
+               table_lines=(api or {}).get('_table_lines'), scope=scope)
         return 0
     except (ValueError, OSError, KeyError, TypeError) as error:
         print('t share: ' + str(error), file=sys.stderr)

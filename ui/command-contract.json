@@ -14,6 +14,245 @@
     "machine": "Stable JSON/raw output, with no prompt or ANSI styling."
   },
   "commands": {
+    "share": {
+      "patterns": [
+        "action",
+        "machine"
+      ],
+      "renderer": "mixed",
+      "scope": "exact destination conversation and optional host",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_share.py::test_run_local_send_then_inbox_and_read"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "share",
+            "--to",
+            "codex:123",
+            "--file",
+            "summary.md"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_share.py::test_run_local_send_then_inbox_and_read",
+            "tests/test_share.py::test_human_output_shows_targets_inbox_summary_attachment_and_receipt"
+          ]
+        },
+        "json": {
+          "argv": [
+            "share",
+            "--to",
+            "codex:123",
+            "--file",
+            "summary.md",
+            "--json"
+          ],
+          "patterns": [
+            "action",
+            "machine"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_share.py::test_run_local_send_then_inbox_and_read"
+          ],
+          "notes": "A machine-readable receipt still follows a mutating send; no automatic update prompt."
+        },
+        "retry": {
+          "argv": [
+            "share",
+            "--retry",
+            "123"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_share.py::test_run_remote_lost_receipt_then_retries_original_bundle"
+          ]
+        },
+        "remote": {
+          "argv": [
+            "share",
+            "--to",
+            "cursor:123",
+            "--file",
+            "summary.md",
+            "--host",
+            "mini"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_share.py::test_run_remote_lost_receipt_then_retries_original_bundle"
+          ]
+        }
+      }
+    },
+    "share targets": {
+      "patterns": [
+        "list",
+        "machine"
+      ],
+      "renderer": "plain",
+      "scope": "local or explicit host",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_share.py::test_human_output_shows_targets_inbox_summary_attachment_and_receipt"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "share",
+            "targets"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_share.py::test_human_output_shows_targets_inbox_summary_attachment_and_receipt"
+          ]
+        },
+        "json": {
+          "argv": [
+            "share",
+            "targets",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_share.py::test_run_targets_labels_selected_host"
+          ]
+        },
+        "host": {
+          "argv": [
+            "share",
+            "targets",
+            "--host",
+            "mini"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_share.py::test_run_targets_labels_selected_host"
+          ]
+        }
+      }
+    },
+    "share inbox": {
+      "patterns": [
+        "list",
+        "machine"
+      ],
+      "renderer": "plain",
+      "scope": "local or exact receiving conversation and optional host",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_share.py::test_run_local_send_then_inbox_and_read"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "share",
+            "inbox"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_share.py::test_human_output_shows_targets_inbox_summary_attachment_and_receipt"
+          ]
+        },
+        "json": {
+          "argv": [
+            "share",
+            "inbox",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_share.py::test_run_local_send_then_inbox_and_read"
+          ]
+        }
+      }
+    },
+    "share read": {
+      "patterns": [
+        "detail",
+        "passthrough",
+        "machine"
+      ],
+      "renderer": "plain",
+      "scope": "exact message ID, recipient, and optional host",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_share.py::test_run_local_send_then_inbox_and_read"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "share",
+            "read",
+            "123"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_share.py::test_human_output_shows_targets_inbox_summary_attachment_and_receipt"
+          ]
+        },
+        "attachment": {
+          "argv": [
+            "share",
+            "read",
+            "123",
+            "--attachment",
+            "history.md"
+          ],
+          "patterns": [
+            "passthrough"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_share.py::test_run_local_send_then_inbox_and_read"
+          ]
+        },
+        "json": {
+          "argv": [
+            "share",
+            "read",
+            "123",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_share.py::test_run_local_send_then_inbox_and_read"
+          ]
+        }
+      }
+    },
     "issue list": {
       "patterns": [
         "list",

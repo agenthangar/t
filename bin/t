@@ -4923,6 +4923,18 @@ def _command_readonly(argv, *, terminal=None):
     options = tail[:tail.index("--")] if "--" in tail else tail
     if verb == "cursor":
         return bool(tail and tail[0] in ("ls", "list", "--ls"))
+    if verb == "share":
+        # Sending and retrying write a receipt even when --json formats it.
+        # Skip option values before looking for a read-only subcommand.
+        pending = iter(tail)
+        for word in pending:
+            if word in ("--to", "--file", "--attach", "--from", "--host", "--retry"):
+                next(pending, None)
+            elif word == "--json" or word.startswith(("--to=", "--file=", "--attach=", "--from=", "--host=", "--retry=")):
+                continue
+            else:
+                return word in ("targets", "inbox", "read")
+        return not tail or all(word == "--json" for word in tail)
     if verb == "history":
         if terminal is None:
             terminal = sys.stdin.isatty() and sys.stdout.isatty()
@@ -4956,7 +4968,9 @@ def _t_auto_update(argv):
               "setup", "new", "checkout", "instructions", "install", "integrate",
               "permissions", "trust", "doctor"}
     operation = _canonical_argv(argv)
-    if (not operation or operation[0] not in public or _command_readonly(argv)
+    # Share may write a receipt while emitting JSON; keep its machine protocol
+    # free of update prompts independently of the read-only classifier.
+    if (not operation or operation[0] == "share" or operation[0] not in public or _command_readonly(argv)
             or not _t_update_interactive()):
         return None
     installation = _t_update_installation()
