@@ -242,7 +242,12 @@ before quitting and relaunching. It stays visible until dismissed. The monitor
 keeps checking and, after dismissal, can offer recovery once the conversation is
 verified.
 
-Codex's **Background server has incompatible feature settings** screen,
+Fresh Codex sessions (`t open --new`, including `--fg`) start with `--no-daemon`.
+Each new session uses its own backend, avoiding feature-setting conflicts with
+a running shared server while preserving model, effort, and Fast mode preferences.
+The shared server and its other clients keep running.
+
+For existing sessions, Codex's **Background server has incompatible feature settings** screen,
 **Cannot use the background server / Experimental feature request failed** screen,
 and its startup menu reporting a stopped or unreachable background server,
 get a separate **Run without daemon this time** offer. It relaunches only
@@ -359,7 +364,10 @@ preserving the saved conversation and worktree. Archive that chat in Codex
 before closing its slot while the app is running; finish or stop any active
 turn first. Other chats and the app can stay open. If the chat remains
 unarchived, close Codex before retrying. An empty desktop workspace can be
-closed after Codex exits and no conversation or writer is present in its worktree.
+closed while Codex stays open when no saved conversation or live writer belongs
+to its worktree. The close rechecks ownership after cleanup and retains the
+reservation if a conversation appears. This releases t's slot reservation; it
+does not close app windows or delete the worktree.
 
 ## Configuration
 

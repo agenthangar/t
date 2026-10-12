@@ -142,7 +142,7 @@ def test_missing_unreserved_slot_keeps_existing_message(tmp_path):
 
 def run_verified_close(tmp_path, *, blank=False, parked=False, wrong_stamp=False,
                        hold_lock=False, unreadable_pid=False, stop_failure=False,
-                       frontend_running=False):
+                       frontend_running=False, peer_writer=False, thread_after_stop=False):
     """Run the real shell verifier against a disposable Git worktree and Codex index."""
     home = tmp_path / "home"
     home.mkdir()
@@ -178,6 +178,11 @@ def run_verified_close(tmp_path, *, blank=False, parked=False, wrong_stamp=False
         connection.execute("create table threads (id text, cwd text, rollout_path text, archived integer)")
         if not blank:
             connection.execute("insert into threads values (?,?,?,0)", (sid, str(wt), str(rollout)))
+        if peer_writer:
+            peer = home / "worktrees" / "api" / "14"
+            peer.mkdir()
+            connection.execute("insert into threads values (?,?,?,0)",
+                               (sid, str(peer), str(codex_home / "peer.jsonl")))
     bins = home / "bin"
     bins.mkdir()
     ps = bins / "ps"
@@ -196,17 +201,24 @@ def run_verified_close(tmp_path, *, blank=False, parked=False, wrong_stamp=False
            "T_TEST_FRONTEND": "1" if frontend_running else "0"}
     env.pop("TMUX", None)
     holder = None
-    if hold_lock:
+    if hold_lock or peer_writer:
         holder = subprocess.Popen([sys.executable, "-c", "import fcntl,sys,time; "
                                    "f=open(sys.argv[1],'w+'); fcntl.flock(f,fcntl.LOCK_EX); "
                                    "print('ready',flush=True); time.sleep(15)",
                                    str(locks / (sid + ".lock"))],
                                   env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         assert holder.stdout.readline().strip() == "ready"
+    after_stop = ":"
+    if thread_after_stop:
+        after_stop = shlex.join([sys.executable, "-c",
+            "import sqlite3,sys; "
+            "db=sqlite3.connect(sys.argv[1]); "
+            "db.execute('insert into threads values (?,?,?,0)', sys.argv[2:]); db.commit()",
+            str(codex_home / "state_5.sqlite"), sid, str(wt), str(rollout)])
     script = f'''
 source {shlex.quote(str(ROOT / "t.plugin.zsh"))}
 _dev_cwd_pids() {{ {"print -r -- 999999999" if unreadable_pid else ":"}; }}
-_dev_stop_rooted() {{ print -r -- stop >> "$HOME/close-actions"; {"return 1" if stop_failure else ":"}; }}
+_dev_stop_rooted() {{ print -r -- stop >> "$HOME/close-actions"; {"return 1" if stop_failure else after_stop}; }}
 _dev_session_has_claude() {{ return 1; }}
 tmux() {{
   case $1 in
@@ -223,6 +235,10 @@ _t_app_close_slot dev-api-13 {shlex.quote(str(wt))} {"-" if blank else sid} \
     try:
         result = subprocess.run(["zsh", "-f", "-c", script], env=env,
                                 capture_output=True, text=True, timeout=20)
+        if peer_writer:
+            assert holder.poll() is None, "closing one empty slot stopped an unrelated writer"
+            with sqlite3.connect(codex_home / "state_5.sqlite") as connection:
+                assert connection.execute("select cwd from threads where id=?", (sid,)).fetchall() == [(str(peer),)]
     finally:
         if holder:
             holder.terminate()
@@ -278,26 +294,24 @@ def test_desktop_close_requires_view_release_even_when_writer_is_free(tmp_path):
     assert "Archive this chat" in result.stderr
 
 
-class EmptyWorkspaceCloseBlocked(AssertionError):
-    """The exact known refusal, separate from fixture or safety failures."""
-
-
 @pytest.mark.skipif(not shutil.which("zsh"), reason="zsh required")
-@pytest.mark.xfail(strict=True, raises=EmptyWorkspaceCloseBlocked,
-                   reason="Reported with #74: shell close repeats the global frontend veto")
 @pytest.mark.parametrize("parked", [False, True])
-def test_empty_desktop_close_with_unrelated_frontend_running(tmp_path, parked):
+@pytest.mark.parametrize("peer_writer", [False, True])
+def test_empty_desktop_close_with_unrelated_frontend_running(tmp_path, parked, peer_writer):
     result, marker, actions, wt, rollout = run_verified_close(
-        tmp_path, blank=True, parked=parked, frontend_running=True)
+        tmp_path, blank=True, parked=parked, frontend_running=True, peer_writer=peer_writer)
     assert wt.is_dir() and not rollout.exists()
-    if result.returncode:
-        assert result.returncode == 1
-        assert result.stderr.strip() == (
-            "t kill: Cannot verify this empty workspace was closed while Codex "
-            "is running; close Codex and retry. "
-            "Retry t kill after closing or archiving the desktop view.")
-        assert marker.exists() and actions == []
-        raise EmptyWorkspaceCloseBlocked(result.stderr)
+    assert result.returncode == 0, result.stderr
     assert not marker.exists()
     assert actions == (["kill-session -t =dev-api-13:"] if parked else []) + ["stop"]
     assert "Closed empty desktop slot dev-api-13." in result.stdout
+
+
+@pytest.mark.skipif(not shutil.which("zsh"), reason="zsh required")
+def test_empty_desktop_close_keeps_reservation_if_conversation_appears_during_cleanup(tmp_path):
+    result, marker, actions, wt, rollout = run_verified_close(
+        tmp_path, blank=True, frontend_running=True, thread_after_stop=True)
+    assert result.returncode == 1
+    assert "saved Codex conversation" in result.stderr
+    assert marker.exists() and wt.is_dir()
+    assert actions == ["stop"]
