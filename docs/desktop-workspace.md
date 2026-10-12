@@ -51,8 +51,9 @@ not invent production state or silently substitute successful fixture results.
 | CLI family | Current verbs | Desktop route |
 | --- | --- | --- |
 | issue | list, status, start | Dedicated forms/read results for list, status, start; optional reviewed interactive route for the same verbs and advanced flags |
-| session | open, list, close, restart, push, pop, resume, cd, move, read, view-plan, paste, search, open-app | Dedicated forms/read results for open, list, close, restart, resume, search; reviewed terminal for other verbs; cd retains an interactive shell; push/pop detach/attach the selected GUI session |
+| session | open, list, history, close, restart, push, pop, resume, cd, move, read, view-plan, paste, search, open-app | Dedicated forms/read results for open, list, close, restart, resume, search; reviewed terminal for other verbs; cd retains an interactive shell; push/pop detach/attach the selected GUI session |
 | repo | list, cd, locate, create, clone | Dedicated forms/read results for list; reviewed terminal for other verbs; register existing checkout in sidebar; cd retains an interactive shell |
+| share | `t share --to AGENT:ID --file PATH`, targets, inbox, read | Reviewed terminal actions for send, recipient discovery, inbox, and message/attachment reads; send uses standalone `t share` flags |
 | cursor | list, resume, send | Reviewed terminal action |
 | hosts | list, show, add, edit, remove, default, run | Dedicated forms/read results for list; reviewed terminal for other verbs; add/remove/default typed host form in sidebar |
 | agentcore | invoke, stop | Reviewed terminal action |
@@ -65,15 +66,27 @@ not invent production state or silently substitute successful fixture results.
 
 Search uses the shared keyword-scored history index with readable excerpts and
 an exact-conversation resume action when repository and numbered slot resolve. Unresolved rows offer the existing shared terminal picker with an explicit conversation-selection step. Users can also use the original
-interactive CLI search through a terminal command. Issue list/status read the
-shared GitHub scanner; selected independent issues may start together, while
-ambiguous existing owners require explicit terminal review. Core safeguards remain
+interactive CLI search through a terminal command. `t session history` opens the
+existing local and retained slot-history browser as a reviewed terminal action.
+
+Issue list/status read the shared GitHub scanner. List scope follows the CLI:
+an explicit repository limits the scan; otherwise a registered current checkout
+selects that repository, and a location outside registered checkouts scans all
+registered repositories. Advanced `--all` and `--state open|closed|all` flags are
+available through the reviewed terminal route. Aggregate typed results retain
+available issues and display repository failures; an incomplete empty result
+reports that no issues could be verified. Selected independent issues may start
+together, while ambiguous existing owners require explicit terminal review.
+Core safeguards remain
 responsible for the one-live-owner guarantee and worktree safety.
 
 Repository creation/clone, session move and attachments/plans, external Codex app,
 Cursor, AgentCore, profile/policy, agent status/login/install/trust, and system
 maintenance use their current CLI route and prompts in the embedded terminal.
-The frontend catalog does not reproduce those business rules.
+The frontend catalog does not reproduce those business rules. Context sharing
+uses standalone `t share --to AGENT:ID --file PATH` flags (or `--retry MESSAGE_ID`).
+`share targets`, `share inbox`, and `share read` retain their
+existing recipient selection, host options, receipts, and attachment behavior.
 
 ## Build and verification
 

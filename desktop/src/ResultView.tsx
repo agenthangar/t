@@ -19,11 +19,44 @@ export function ResultView({
         {typeof value === "boolean" ? (value ? "Yes" : "No") : String(value)}
       </span>
     );
-  if (!Array.isArray(value) && "issues" in value && Array.isArray(value.issues))
+  if (
+    !Array.isArray(value) &&
+    "issues" in value &&
+    Array.isArray(value.issues)
+  ) {
+    const errors =
+      "errors" in value && Array.isArray(value.errors) ? value.errors : [];
+    const incomplete =
+      ("incomplete" in value && value.incomplete === true) || errors.length > 0;
+    const targets = new Set(
+      value.issues.map((row: Record<string, unknown>) =>
+        String(row.url || `${row.repo}#${row.number}`),
+      ),
+    );
+    const selectedTargets = selected.filter((target) => targets.has(target));
     return (
       <div className="issue-results">
+        {incomplete && (
+          <div role="status">
+            <p>Issue results are incomplete.</p>
+            {errors.length > 0 && (
+              <ul>
+                {errors.map((error: Record<string, unknown>, index: number) => (
+                  <li key={index}>
+                    {String(error.repo || "Registered repository")}:{" "}
+                    {String(
+                      error.message || "Repository issues could not be read.",
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
         {value.issues.length === 0 ? (
-          <p>No issues found.</p>
+          <p>
+            {incomplete ? "No issues could be verified." : "No issues found."}
+          </p>
         ) : (
           value.issues.map((row: Record<string, unknown>) => {
             const target = String(row.url || `${row.repo}#${row.number}`);
@@ -52,14 +85,18 @@ export function ResultView({
             );
           })
         )}
-        {selected.length > 0 && onIssuesStart && (
-          <button className="primary" onClick={() => onIssuesStart(selected)}>
-            Start {selected.length} selected{" "}
-            {selected.length === 1 ? "issue" : "issues"}
+        {selectedTargets.length > 0 && onIssuesStart && (
+          <button
+            className="primary"
+            onClick={() => onIssuesStart(selectedTargets)}
+          >
+            Start {selectedTargets.length} selected{" "}
+            {selectedTargets.length === 1 ? "issue" : "issues"}
           </button>
         )}
       </div>
     );
+  }
   if (
     !Array.isArray(value) &&
     "results" in value &&

@@ -5,7 +5,10 @@
     "capabilities": [
       {
         "method": "issue.list",
-        "command": ["issue", "list"],
+        "command": [
+          "issue",
+          "list"
+        ],
         "kind": "core",
         "coreMethod": "issues.list",
         "argumentSpecs": [],
@@ -13,7 +16,10 @@
       },
       {
         "method": "issue.status",
-        "command": ["issue", "status"],
+        "command": [
+          "issue",
+          "status"
+        ],
         "kind": "core",
         "coreMethod": "issues.status",
         "argumentSpecs": [],
@@ -21,7 +27,10 @@
       },
       {
         "method": "issue.start",
-        "command": ["issue", "start"],
+        "command": [
+          "issue",
+          "start"
+        ],
         "kind": "core",
         "coreMethod": "issues.start",
         "argumentSpecs": [],
@@ -29,7 +38,10 @@
       },
       {
         "method": "session.open",
-        "command": ["session", "open"],
+        "command": [
+          "session",
+          "open"
+        ],
         "kind": "core",
         "coreMethod": "sessions.open",
         "argumentSpecs": [],
@@ -37,7 +49,10 @@
       },
       {
         "method": "session.list",
-        "command": ["session", "list"],
+        "command": [
+          "session",
+          "list"
+        ],
         "kind": "core",
         "coreMethod": "sessions.list",
         "argumentSpecs": [],
@@ -45,7 +60,10 @@
       },
       {
         "method": "session.close",
-        "command": ["session", "close"],
+        "command": [
+          "session",
+          "close"
+        ],
         "kind": "core",
         "coreMethod": "sessions.close",
         "argumentSpecs": [],
@@ -53,7 +71,10 @@
       },
       {
         "method": "session.restart",
-        "command": ["session", "restart"],
+        "command": [
+          "session",
+          "restart"
+        ],
         "kind": "core",
         "coreMethod": "sessions.restart",
         "argumentSpecs": [],
@@ -61,7 +82,10 @@
       },
       {
         "method": "session.push",
-        "command": ["session", "push"],
+        "command": [
+          "session",
+          "push"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -69,7 +93,10 @@
       },
       {
         "method": "session.pop",
-        "command": ["session", "pop"],
+        "command": [
+          "session",
+          "pop"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -77,15 +104,32 @@
       },
       {
         "method": "session.resume",
-        "command": ["session", "resume"],
+        "command": [
+          "session",
+          "resume"
+        ],
         "kind": "core",
         "coreMethod": "sessions.resume",
         "argumentSpecs": [],
         "acceptsArguments": true
       },
       {
+        "method": "session.history",
+        "command": [
+          "session",
+          "history"
+        ],
+        "kind": "terminal",
+        "coreMethod": null,
+        "argumentSpecs": [],
+        "acceptsArguments": true
+      },
+      {
         "method": "session.cd",
-        "command": ["session", "cd"],
+        "command": [
+          "session",
+          "cd"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -93,7 +137,10 @@
       },
       {
         "method": "session.move",
-        "command": ["session", "move"],
+        "command": [
+          "session",
+          "move"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -101,7 +148,10 @@
       },
       {
         "method": "session.read",
-        "command": ["session", "read"],
+        "command": [
+          "session",
+          "read"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -109,7 +159,10 @@
       },
       {
         "method": "session.view-plan",
-        "command": ["session", "view-plan"],
+        "command": [
+          "session",
+          "view-plan"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -117,7 +170,10 @@
       },
       {
         "method": "session.paste",
-        "command": ["session", "paste"],
+        "command": [
+          "session",
+          "paste"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -125,7 +181,10 @@
       },
       {
         "method": "session.search",
-        "command": ["session", "search"],
+        "command": [
+          "session",
+          "search"
+        ],
         "kind": "core",
         "coreMethod": "sessions.search",
         "argumentSpecs": [],
@@ -133,7 +192,10 @@
       },
       {
         "method": "session.open-app",
-        "command": ["session", "open-app"],
+        "command": [
+          "session",
+          "open-app"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -141,7 +203,10 @@
       },
       {
         "method": "repo.list",
-        "command": ["repo", "list"],
+        "command": [
+          "repo",
+          "list"
+        ],
         "kind": "core",
         "coreMethod": "repositories.list",
         "argumentSpecs": [],
@@ -149,7 +214,10 @@
       },
       {
         "method": "repo.cd",
-        "command": ["repo", "cd"],
+        "command": [
+          "repo",
+          "cd"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -157,7 +225,10 @@
       },
       {
         "method": "repo.locate",
-        "command": ["repo", "locate"],
+        "command": [
+          "repo",
+          "locate"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -165,7 +236,10 @@
       },
       {
         "method": "repo.create",
-        "command": ["repo", "create"],
+        "command": [
+          "repo",
+          "create"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -173,7 +247,10 @@
       },
       {
         "method": "repo.clone",
-        "command": ["repo", "clone"],
+        "command": [
+          "repo",
+          "clone"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -181,7 +258,10 @@
       },
       {
         "method": "cursor.list",
-        "command": ["cursor", "list"],
+        "command": [
+          "cursor",
+          "list"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -189,7 +269,10 @@
       },
       {
         "method": "cursor.resume",
-        "command": ["cursor", "resume"],
+        "command": [
+          "cursor",
+          "resume"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -197,7 +280,10 @@
       },
       {
         "method": "cursor.send",
-        "command": ["cursor", "send"],
+        "command": [
+          "cursor",
+          "send"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -205,7 +291,10 @@
       },
       {
         "method": "hosts.list",
-        "command": ["hosts", "list"],
+        "command": [
+          "hosts",
+          "list"
+        ],
         "kind": "core",
         "coreMethod": "hosts.list",
         "argumentSpecs": [],
@@ -213,7 +302,10 @@
       },
       {
         "method": "hosts.show",
-        "command": ["hosts", "show"],
+        "command": [
+          "hosts",
+          "show"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -221,7 +313,10 @@
       },
       {
         "method": "hosts.add",
-        "command": ["hosts", "add"],
+        "command": [
+          "hosts",
+          "add"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -229,7 +324,10 @@
       },
       {
         "method": "hosts.edit",
-        "command": ["hosts", "edit"],
+        "command": [
+          "hosts",
+          "edit"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -237,7 +335,10 @@
       },
       {
         "method": "hosts.remove",
-        "command": ["hosts", "remove"],
+        "command": [
+          "hosts",
+          "remove"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -245,7 +346,10 @@
       },
       {
         "method": "hosts.default",
-        "command": ["hosts", "default"],
+        "command": [
+          "hosts",
+          "default"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -253,7 +357,10 @@
       },
       {
         "method": "hosts.run",
-        "command": ["hosts", "run"],
+        "command": [
+          "hosts",
+          "run"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -261,7 +368,10 @@
       },
       {
         "method": "agentcore.invoke",
-        "command": ["agentcore", "invoke"],
+        "command": [
+          "agentcore",
+          "invoke"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -269,7 +379,10 @@
       },
       {
         "method": "agentcore.stop",
-        "command": ["agentcore", "stop"],
+        "command": [
+          "agentcore",
+          "stop"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -277,7 +390,10 @@
       },
       {
         "method": "config.open",
-        "command": ["config", "open"],
+        "command": [
+          "config",
+          "open"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -285,7 +401,10 @@
       },
       {
         "method": "config.show",
-        "command": ["config", "show"],
+        "command": [
+          "config",
+          "show"
+        ],
         "kind": "core",
         "coreMethod": "config.get",
         "argumentSpecs": [],
@@ -293,7 +412,10 @@
       },
       {
         "method": "config.edit",
-        "command": ["config", "edit"],
+        "command": [
+          "config",
+          "edit"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -301,7 +423,10 @@
       },
       {
         "method": "config.setup",
-        "command": ["config", "setup"],
+        "command": [
+          "config",
+          "setup"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -309,7 +434,10 @@
       },
       {
         "method": "profile.init",
-        "command": ["profile", "init"],
+        "command": [
+          "profile",
+          "init"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -317,7 +445,10 @@
       },
       {
         "method": "profile.edit",
-        "command": ["profile", "edit"],
+        "command": [
+          "profile",
+          "edit"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -325,7 +456,10 @@
       },
       {
         "method": "profile.show",
-        "command": ["profile", "show"],
+        "command": [
+          "profile",
+          "show"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -333,7 +467,10 @@
       },
       {
         "method": "profile.apply",
-        "command": ["profile", "apply"],
+        "command": [
+          "profile",
+          "apply"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -341,7 +478,10 @@
       },
       {
         "method": "policy.check",
-        "command": ["policy", "check"],
+        "command": [
+          "policy",
+          "check"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -349,7 +489,10 @@
       },
       {
         "method": "policy.show",
-        "command": ["policy", "show"],
+        "command": [
+          "policy",
+          "show"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -357,7 +500,10 @@
       },
       {
         "method": "policy.apply",
-        "command": ["policy", "apply"],
+        "command": [
+          "policy",
+          "apply"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -365,7 +511,10 @@
       },
       {
         "method": "agent.login",
-        "command": ["agent", "login"],
+        "command": [
+          "agent",
+          "login"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -373,7 +522,10 @@
       },
       {
         "method": "agent.install",
-        "command": ["agent", "install"],
+        "command": [
+          "agent",
+          "install"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -381,7 +533,10 @@
       },
       {
         "method": "agent.status",
-        "command": ["agent", "status"],
+        "command": [
+          "agent",
+          "status"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -389,7 +544,10 @@
       },
       {
         "method": "agent.trust",
-        "command": ["agent", "trust"],
+        "command": [
+          "agent",
+          "trust"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -397,7 +555,10 @@
       },
       {
         "method": "system.integrate",
-        "command": ["system", "integrate"],
+        "command": [
+          "system",
+          "integrate"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -405,7 +566,10 @@
       },
       {
         "method": "system.update",
-        "command": ["system", "update"],
+        "command": [
+          "system",
+          "update"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -413,7 +577,53 @@
       },
       {
         "method": "system.diagnose",
-        "command": ["system", "diagnose"],
+        "command": [
+          "system",
+          "diagnose"
+        ],
+        "kind": "terminal",
+        "coreMethod": null,
+        "argumentSpecs": [],
+        "acceptsArguments": true
+      },
+      {
+        "method": "share.send",
+        "command": [
+          "share"
+        ],
+        "kind": "terminal",
+        "coreMethod": null,
+        "argumentSpecs": [],
+        "acceptsArguments": true
+      },
+      {
+        "method": "share.targets",
+        "command": [
+          "share",
+          "targets"
+        ],
+        "kind": "terminal",
+        "coreMethod": null,
+        "argumentSpecs": [],
+        "acceptsArguments": true
+      },
+      {
+        "method": "share.inbox",
+        "command": [
+          "share",
+          "inbox"
+        ],
+        "kind": "terminal",
+        "coreMethod": null,
+        "argumentSpecs": [],
+        "acceptsArguments": true
+      },
+      {
+        "method": "share.read",
+        "command": [
+          "share",
+          "read"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -438,7 +648,10 @@
     "capabilities": [
       {
         "method": "issue.list",
-        "command": ["issue", "list"],
+        "command": [
+          "issue",
+          "list"
+        ],
         "kind": "core",
         "coreMethod": "issues.list",
         "argumentSpecs": [],
@@ -446,7 +659,10 @@
       },
       {
         "method": "issue.status",
-        "command": ["issue", "status"],
+        "command": [
+          "issue",
+          "status"
+        ],
         "kind": "core",
         "coreMethod": "issues.status",
         "argumentSpecs": [],
@@ -454,7 +670,10 @@
       },
       {
         "method": "issue.start",
-        "command": ["issue", "start"],
+        "command": [
+          "issue",
+          "start"
+        ],
         "kind": "core",
         "coreMethod": "issues.start",
         "argumentSpecs": [],
@@ -462,7 +681,10 @@
       },
       {
         "method": "session.open",
-        "command": ["session", "open"],
+        "command": [
+          "session",
+          "open"
+        ],
         "kind": "core",
         "coreMethod": "sessions.open",
         "argumentSpecs": [],
@@ -470,7 +692,10 @@
       },
       {
         "method": "session.list",
-        "command": ["session", "list"],
+        "command": [
+          "session",
+          "list"
+        ],
         "kind": "core",
         "coreMethod": "sessions.list",
         "argumentSpecs": [],
@@ -478,7 +703,10 @@
       },
       {
         "method": "session.close",
-        "command": ["session", "close"],
+        "command": [
+          "session",
+          "close"
+        ],
         "kind": "core",
         "coreMethod": "sessions.close",
         "argumentSpecs": [],
@@ -486,7 +714,10 @@
       },
       {
         "method": "session.restart",
-        "command": ["session", "restart"],
+        "command": [
+          "session",
+          "restart"
+        ],
         "kind": "core",
         "coreMethod": "sessions.restart",
         "argumentSpecs": [],
@@ -494,7 +725,10 @@
       },
       {
         "method": "session.push",
-        "command": ["session", "push"],
+        "command": [
+          "session",
+          "push"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -502,7 +736,10 @@
       },
       {
         "method": "session.pop",
-        "command": ["session", "pop"],
+        "command": [
+          "session",
+          "pop"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -510,15 +747,32 @@
       },
       {
         "method": "session.resume",
-        "command": ["session", "resume"],
+        "command": [
+          "session",
+          "resume"
+        ],
         "kind": "core",
         "coreMethod": "sessions.resume",
         "argumentSpecs": [],
         "acceptsArguments": true
       },
       {
+        "method": "session.history",
+        "command": [
+          "session",
+          "history"
+        ],
+        "kind": "terminal",
+        "coreMethod": null,
+        "argumentSpecs": [],
+        "acceptsArguments": true
+      },
+      {
         "method": "session.cd",
-        "command": ["session", "cd"],
+        "command": [
+          "session",
+          "cd"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -526,7 +780,10 @@
       },
       {
         "method": "session.move",
-        "command": ["session", "move"],
+        "command": [
+          "session",
+          "move"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -534,7 +791,10 @@
       },
       {
         "method": "session.read",
-        "command": ["session", "read"],
+        "command": [
+          "session",
+          "read"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -542,7 +802,10 @@
       },
       {
         "method": "session.view-plan",
-        "command": ["session", "view-plan"],
+        "command": [
+          "session",
+          "view-plan"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -550,7 +813,10 @@
       },
       {
         "method": "session.paste",
-        "command": ["session", "paste"],
+        "command": [
+          "session",
+          "paste"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -558,7 +824,10 @@
       },
       {
         "method": "session.search",
-        "command": ["session", "search"],
+        "command": [
+          "session",
+          "search"
+        ],
         "kind": "core",
         "coreMethod": "sessions.search",
         "argumentSpecs": [],
@@ -566,7 +835,10 @@
       },
       {
         "method": "session.open-app",
-        "command": ["session", "open-app"],
+        "command": [
+          "session",
+          "open-app"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -574,7 +846,10 @@
       },
       {
         "method": "repo.list",
-        "command": ["repo", "list"],
+        "command": [
+          "repo",
+          "list"
+        ],
         "kind": "core",
         "coreMethod": "repositories.list",
         "argumentSpecs": [],
@@ -582,7 +857,10 @@
       },
       {
         "method": "repo.cd",
-        "command": ["repo", "cd"],
+        "command": [
+          "repo",
+          "cd"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -590,7 +868,10 @@
       },
       {
         "method": "repo.locate",
-        "command": ["repo", "locate"],
+        "command": [
+          "repo",
+          "locate"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -598,7 +879,10 @@
       },
       {
         "method": "repo.create",
-        "command": ["repo", "create"],
+        "command": [
+          "repo",
+          "create"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -606,7 +890,10 @@
       },
       {
         "method": "repo.clone",
-        "command": ["repo", "clone"],
+        "command": [
+          "repo",
+          "clone"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -614,7 +901,10 @@
       },
       {
         "method": "cursor.list",
-        "command": ["cursor", "list"],
+        "command": [
+          "cursor",
+          "list"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -622,7 +912,10 @@
       },
       {
         "method": "cursor.resume",
-        "command": ["cursor", "resume"],
+        "command": [
+          "cursor",
+          "resume"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -630,7 +923,10 @@
       },
       {
         "method": "cursor.send",
-        "command": ["cursor", "send"],
+        "command": [
+          "cursor",
+          "send"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -638,7 +934,10 @@
       },
       {
         "method": "hosts.list",
-        "command": ["hosts", "list"],
+        "command": [
+          "hosts",
+          "list"
+        ],
         "kind": "core",
         "coreMethod": "hosts.list",
         "argumentSpecs": [],
@@ -646,7 +945,10 @@
       },
       {
         "method": "hosts.show",
-        "command": ["hosts", "show"],
+        "command": [
+          "hosts",
+          "show"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -654,7 +956,10 @@
       },
       {
         "method": "hosts.add",
-        "command": ["hosts", "add"],
+        "command": [
+          "hosts",
+          "add"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -662,7 +967,10 @@
       },
       {
         "method": "hosts.edit",
-        "command": ["hosts", "edit"],
+        "command": [
+          "hosts",
+          "edit"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -670,7 +978,10 @@
       },
       {
         "method": "hosts.remove",
-        "command": ["hosts", "remove"],
+        "command": [
+          "hosts",
+          "remove"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -678,7 +989,10 @@
       },
       {
         "method": "hosts.default",
-        "command": ["hosts", "default"],
+        "command": [
+          "hosts",
+          "default"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -686,7 +1000,10 @@
       },
       {
         "method": "hosts.run",
-        "command": ["hosts", "run"],
+        "command": [
+          "hosts",
+          "run"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -694,7 +1011,10 @@
       },
       {
         "method": "agentcore.invoke",
-        "command": ["agentcore", "invoke"],
+        "command": [
+          "agentcore",
+          "invoke"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -702,7 +1022,10 @@
       },
       {
         "method": "agentcore.stop",
-        "command": ["agentcore", "stop"],
+        "command": [
+          "agentcore",
+          "stop"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -710,7 +1033,10 @@
       },
       {
         "method": "config.open",
-        "command": ["config", "open"],
+        "command": [
+          "config",
+          "open"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -718,7 +1044,10 @@
       },
       {
         "method": "config.show",
-        "command": ["config", "show"],
+        "command": [
+          "config",
+          "show"
+        ],
         "kind": "core",
         "coreMethod": "config.get",
         "argumentSpecs": [],
@@ -726,7 +1055,10 @@
       },
       {
         "method": "config.edit",
-        "command": ["config", "edit"],
+        "command": [
+          "config",
+          "edit"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -734,7 +1066,10 @@
       },
       {
         "method": "config.setup",
-        "command": ["config", "setup"],
+        "command": [
+          "config",
+          "setup"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -742,7 +1077,10 @@
       },
       {
         "method": "profile.init",
-        "command": ["profile", "init"],
+        "command": [
+          "profile",
+          "init"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -750,7 +1088,10 @@
       },
       {
         "method": "profile.edit",
-        "command": ["profile", "edit"],
+        "command": [
+          "profile",
+          "edit"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -758,7 +1099,10 @@
       },
       {
         "method": "profile.show",
-        "command": ["profile", "show"],
+        "command": [
+          "profile",
+          "show"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -766,7 +1110,10 @@
       },
       {
         "method": "profile.apply",
-        "command": ["profile", "apply"],
+        "command": [
+          "profile",
+          "apply"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -774,7 +1121,10 @@
       },
       {
         "method": "policy.check",
-        "command": ["policy", "check"],
+        "command": [
+          "policy",
+          "check"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -782,7 +1132,10 @@
       },
       {
         "method": "policy.show",
-        "command": ["policy", "show"],
+        "command": [
+          "policy",
+          "show"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -790,7 +1143,10 @@
       },
       {
         "method": "policy.apply",
-        "command": ["policy", "apply"],
+        "command": [
+          "policy",
+          "apply"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -798,7 +1154,10 @@
       },
       {
         "method": "agent.login",
-        "command": ["agent", "login"],
+        "command": [
+          "agent",
+          "login"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -806,7 +1165,10 @@
       },
       {
         "method": "agent.install",
-        "command": ["agent", "install"],
+        "command": [
+          "agent",
+          "install"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -814,7 +1176,10 @@
       },
       {
         "method": "agent.status",
-        "command": ["agent", "status"],
+        "command": [
+          "agent",
+          "status"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -822,7 +1187,10 @@
       },
       {
         "method": "agent.trust",
-        "command": ["agent", "trust"],
+        "command": [
+          "agent",
+          "trust"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -830,7 +1198,10 @@
       },
       {
         "method": "system.integrate",
-        "command": ["system", "integrate"],
+        "command": [
+          "system",
+          "integrate"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -838,7 +1209,10 @@
       },
       {
         "method": "system.update",
-        "command": ["system", "update"],
+        "command": [
+          "system",
+          "update"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -846,7 +1220,53 @@
       },
       {
         "method": "system.diagnose",
-        "command": ["system", "diagnose"],
+        "command": [
+          "system",
+          "diagnose"
+        ],
+        "kind": "terminal",
+        "coreMethod": null,
+        "argumentSpecs": [],
+        "acceptsArguments": true
+      },
+      {
+        "method": "share.send",
+        "command": [
+          "share"
+        ],
+        "kind": "terminal",
+        "coreMethod": null,
+        "argumentSpecs": [],
+        "acceptsArguments": true
+      },
+      {
+        "method": "share.targets",
+        "command": [
+          "share",
+          "targets"
+        ],
+        "kind": "terminal",
+        "coreMethod": null,
+        "argumentSpecs": [],
+        "acceptsArguments": true
+      },
+      {
+        "method": "share.inbox",
+        "command": [
+          "share",
+          "inbox"
+        ],
+        "kind": "terminal",
+        "coreMethod": null,
+        "argumentSpecs": [],
+        "acceptsArguments": true
+      },
+      {
+        "method": "share.read",
+        "command": [
+          "share",
+          "read"
+        ],
         "kind": "terminal",
         "coreMethod": null,
         "argumentSpecs": [],
@@ -855,8 +1275,51 @@
     ],
     "remoteStatus": []
   },
+  "issues.list.empty": {
+    "issues": [],
+    "scope": null,
+    "state": "open",
+    "errors": [],
+    "incomplete": false
+  },
+  "issues.list.partial": {
+    "issues": [
+      {
+        "repo": "fixture/project",
+        "number": 12,
+        "state": "OPEN",
+        "title": "Synthetic workspace task",
+        "url": "https://github.com/fixture/project/issues/12"
+      }
+    ],
+    "scope": null,
+    "state": "open",
+    "errors": [
+      {
+        "repo": "fixture/unavailable",
+        "code": "unavailable",
+        "message": "repository issues could not be read"
+      }
+    ],
+    "incomplete": true
+  },
+  "issues.list.unavailable": {
+    "issues": [],
+    "scope": null,
+    "state": "open",
+    "errors": [
+      {
+        "repo": "fixture/unavailable",
+        "code": "unavailable",
+        "message": "repository issues could not be read"
+      }
+    ],
+    "incomplete": true
+  },
   "search": {
-    "query_terms": ["workspace"],
+    "query_terms": [
+      "workspace"
+    ],
     "window_days": 0,
     "scanned": 1,
     "matched": 1,
@@ -883,12 +1346,16 @@
         "pr": null,
         "plan": null,
         "prompts_total": 1,
-        "first_prompts": ["Fixture shared workspace search"],
+        "first_prompts": [
+          "Fixture shared workspace search"
+        ],
         "last_prompts": [],
         "url": null,
         "this_session": false,
         "score": 5,
-        "excerpts": ["11-14 14:13 \u00b7 Fixture shared workspace search"]
+        "excerpts": [
+          "11-14 14:13 \u00b7 Fixture shared workspace search"
+        ]
       }
     ]
   },
@@ -920,7 +1387,12 @@
         "session": "dev-fixture-1",
         "attachment": {
           "kind": "terminal",
-          "argv": ["tmux", "attach-session", "-t", "=dev-fixture-1:"],
+          "argv": [
+            "tmux",
+            "attach-session",
+            "-t",
+            "=dev-fixture-1:"
+          ],
           "cwd": "/tmp/t-desktop-fixture",
           "env": {},
           "detachKeepsSession": true
@@ -928,7 +1400,12 @@
       },
       "attachment": {
         "kind": "terminal",
-        "argv": ["tmux", "attach-session", "-t", "=dev-fixture-1:"],
+        "argv": [
+          "tmux",
+          "attach-session",
+          "-t",
+          "=dev-fixture-1:"
+        ],
         "cwd": "/tmp/t-desktop-fixture",
         "env": {},
         "detachKeepsSession": true
@@ -963,7 +1440,12 @@
         "session": "dev-fixture-1",
         "attachment": {
           "kind": "terminal",
-          "argv": ["tmux", "attach-session", "-t", "=dev-fixture-1:"],
+          "argv": [
+            "tmux",
+            "attach-session",
+            "-t",
+            "=dev-fixture-1:"
+          ],
           "cwd": "/tmp/t-desktop-fixture",
           "env": {},
           "detachKeepsSession": true
@@ -971,7 +1453,12 @@
       },
       "attachment": {
         "kind": "terminal",
-        "argv": ["tmux", "attach-session", "-t", "=dev-fixture-1:"],
+        "argv": [
+          "tmux",
+          "attach-session",
+          "-t",
+          "=dev-fixture-1:"
+        ],
         "cwd": "/tmp/t-desktop-fixture",
         "env": {},
         "detachKeepsSession": true
@@ -1026,7 +1513,12 @@
         "session": "dev-fixture-1",
         "attachment": {
           "kind": "terminal",
-          "argv": ["tmux", "attach-session", "-t", "=dev-fixture-1:"],
+          "argv": [
+            "tmux",
+            "attach-session",
+            "-t",
+            "=dev-fixture-1:"
+          ],
           "cwd": "/tmp/t-desktop-fixture",
           "env": {},
           "detachKeepsSession": true
@@ -1034,7 +1526,12 @@
       },
       "attachment": {
         "kind": "terminal",
-        "argv": ["tmux", "attach-session", "-t", "=dev-fixture-1:"],
+        "argv": [
+          "tmux",
+          "attach-session",
+          "-t",
+          "=dev-fixture-1:"
+        ],
         "cwd": "/tmp/t-desktop-fixture",
         "env": {},
         "detachKeepsSession": true
@@ -1097,7 +1594,11 @@
       "operationId": "11111111-1111-4111-8111-111111111111",
       "method": "issues.start",
       "arguments": {
-        "targets": ["fixture", "12", "34"]
+        "targets": [
+          "fixture",
+          "12",
+          "34"
+        ]
       },
       "state": "prepared",
       "summary": "issues.start",
@@ -1108,7 +1609,11 @@
       "operationId": "11111111-1111-4111-8111-111111111111",
       "method": "issues.start",
       "arguments": {
-        "targets": ["fixture", "12", "34"]
+        "targets": [
+          "fixture",
+          "12",
+          "34"
+        ]
       },
       "state": "completed",
       "summary": "issues.start",
@@ -1124,14 +1629,24 @@
         "attachments": [
           {
             "kind": "terminal",
-            "argv": ["tmux", "attach-session", "-t", "=dev-fixture-1:"],
+            "argv": [
+              "tmux",
+              "attach-session",
+              "-t",
+              "=dev-fixture-1:"
+            ],
             "cwd": "/tmp/t-desktop-fixture",
             "env": {},
             "detachKeepsSession": true
           },
           {
             "kind": "terminal",
-            "argv": ["tmux", "attach-session", "-t", "=dev-fixture-2:"],
+            "argv": [
+              "tmux",
+              "attach-session",
+              "-t",
+              "=dev-fixture-2:"
+            ],
             "cwd": "/tmp/t-desktop-fixture",
             "env": {},
             "detachKeepsSession": true
@@ -1146,12 +1661,18 @@
       "operationId": "11111111-1111-4111-8111-111111111111",
       "method": "terminal",
       "arguments": {
-        "command": ["mcp", "--install"],
+        "command": [
+          "mcp",
+          "--install"
+        ],
         "cwd": "/tmp/t-desktop-fixture"
       },
       "state": "prepared",
       "summary": "mcp --install",
-      "command": ["mcp", "--install"],
+      "command": [
+        "mcp",
+        "--install"
+      ],
       "fingerprint": "0000000000000000000000000000000000000000000000000000000000000000",
       "attachment": {
         "kind": "terminal",
@@ -1169,12 +1690,18 @@
       "operationId": "11111111-1111-4111-8111-111111111111",
       "method": "terminal",
       "arguments": {
-        "command": ["mcp", "--install"],
+        "command": [
+          "mcp",
+          "--install"
+        ],
         "cwd": "/tmp/t-desktop-fixture"
       },
       "state": "ready",
       "summary": "mcp --install",
-      "command": ["mcp", "--install"],
+      "command": [
+        "mcp",
+        "--install"
+      ],
       "fingerprint": "0000000000000000000000000000000000000000000000000000000000000000",
       "attachment": {
         "kind": "terminal",
@@ -1193,12 +1720,18 @@
     "operationId": "11111111-1111-4111-8111-111111111111",
     "method": "terminal",
     "arguments": {
-      "command": ["mcp", "--list-tools"],
+      "command": [
+        "mcp",
+        "--list-tools"
+      ],
       "cwd": "/tmp/t-desktop-fixture"
     },
     "state": "prepared",
     "summary": "mcp --list-tools",
-    "command": ["mcp", "--list-tools"],
+    "command": [
+      "mcp",
+      "--list-tools"
+    ],
     "fingerprint": "0000000000000000000000000000000000000000000000000000000000000000",
     "attachment": {
       "kind": "terminal",
@@ -1216,12 +1749,18 @@
     "operationId": "11111111-1111-4111-8111-111111111111",
     "method": "terminal",
     "arguments": {
-      "command": ["mcp", "--reindex"],
+      "command": [
+        "mcp",
+        "--reindex"
+      ],
       "cwd": "/tmp/t-desktop-fixture"
     },
     "state": "prepared",
     "summary": "mcp --reindex",
-    "command": ["mcp", "--reindex"],
+    "command": [
+      "mcp",
+      "--reindex"
+    ],
     "fingerprint": "0000000000000000000000000000000000000000000000000000000000000000",
     "attachment": {
       "kind": "terminal",
@@ -1235,16 +1774,327 @@
       "detachKeepsSession": true
     }
   },
+  "share.send": {
+    "prepared": {
+      "operationId": "11111111-1111-4111-8111-111111111111",
+      "method": "terminal",
+      "arguments": {
+        "command": [
+          "share",
+          "--to",
+          "codex:22222222-2222-4222-8222-222222222222",
+          "--file",
+          "/tmp/t-desktop-fixture/summary.txt"
+        ],
+        "cwd": "/tmp/t-desktop-fixture"
+      },
+      "state": "prepared",
+      "summary": "share --to codex:22222222-2222-4222-8222-222222222222 --file /tmp/t-desktop-fixture/summary.txt",
+      "command": [
+        "share",
+        "--to",
+        "codex:22222222-2222-4222-8222-222222222222",
+        "--file",
+        "/tmp/t-desktop-fixture/summary.txt"
+      ],
+      "fingerprint": "0000000000000000000000000000000000000000000000000000000000000000",
+      "attachment": {
+        "kind": "terminal",
+        "argv": [
+          "zsh",
+          "-lic",
+          "setopt no_monitor no_notify; export T_NO_UPDATE_CHECK=1 T_NO_AUTORELOAD=1; export PATH=/fixture/core/bin:/fixture/python/bin:$PATH:/opt/homebrew/bin:/usr/local/bin:/tmp/t-desktop-fixture/.local/bin:/tmp/t-desktop-fixture/bin; source /fixture/core/t.plugin.zsh; setopt no_monitor no_notify; export T_NO_UPDATE_CHECK=1 T_NO_AUTORELOAD=1; export PATH=/fixture/core/bin:/fixture/python/bin:$PATH:/opt/homebrew/bin:/usr/local/bin:/tmp/t-desktop-fixture/.local/bin:/tmp/t-desktop-fixture/bin; t share --to codex:22222222-2222-4222-8222-222222222222 --file /tmp/t-desktop-fixture/summary.txt"
+        ],
+        "cwd": "/tmp/t-desktop-fixture",
+        "env": {},
+        "detachKeepsSession": true
+      }
+    },
+    "applied": {
+      "operationId": "11111111-1111-4111-8111-111111111111",
+      "method": "terminal",
+      "arguments": {
+        "command": [
+          "share",
+          "--to",
+          "codex:22222222-2222-4222-8222-222222222222",
+          "--file",
+          "/tmp/t-desktop-fixture/summary.txt"
+        ],
+        "cwd": "/tmp/t-desktop-fixture"
+      },
+      "state": "ready",
+      "summary": "share --to codex:22222222-2222-4222-8222-222222222222 --file /tmp/t-desktop-fixture/summary.txt",
+      "command": [
+        "share",
+        "--to",
+        "codex:22222222-2222-4222-8222-222222222222",
+        "--file",
+        "/tmp/t-desktop-fixture/summary.txt"
+      ],
+      "fingerprint": "0000000000000000000000000000000000000000000000000000000000000000",
+      "attachment": {
+        "kind": "terminal",
+        "argv": [
+          "zsh",
+          "-lic",
+          "setopt no_monitor no_notify; export T_NO_UPDATE_CHECK=1 T_NO_AUTORELOAD=1; export PATH=/fixture/core/bin:/fixture/python/bin:$PATH:/opt/homebrew/bin:/usr/local/bin:/tmp/t-desktop-fixture/.local/bin:/tmp/t-desktop-fixture/bin; source /fixture/core/t.plugin.zsh; setopt no_monitor no_notify; export T_NO_UPDATE_CHECK=1 T_NO_AUTORELOAD=1; export PATH=/fixture/core/bin:/fixture/python/bin:$PATH:/opt/homebrew/bin:/usr/local/bin:/tmp/t-desktop-fixture/.local/bin:/tmp/t-desktop-fixture/bin; t share --to codex:22222222-2222-4222-8222-222222222222 --file /tmp/t-desktop-fixture/summary.txt"
+        ],
+        "cwd": "/tmp/t-desktop-fixture",
+        "env": {},
+        "detachKeepsSession": true
+      }
+    }
+  },
+  "share.targets": {
+    "prepared": {
+      "operationId": "11111111-1111-4111-8111-111111111111",
+      "method": "terminal",
+      "arguments": {
+        "command": [
+          "share",
+          "targets",
+          "--json"
+        ],
+        "cwd": "/tmp/t-desktop-fixture"
+      },
+      "state": "prepared",
+      "summary": "share targets --json",
+      "command": [
+        "share",
+        "targets",
+        "--json"
+      ],
+      "fingerprint": "0000000000000000000000000000000000000000000000000000000000000000",
+      "attachment": {
+        "kind": "terminal",
+        "argv": [
+          "zsh",
+          "-lic",
+          "setopt no_monitor no_notify; export T_NO_UPDATE_CHECK=1 T_NO_AUTORELOAD=1; export PATH=/fixture/core/bin:/fixture/python/bin:$PATH:/opt/homebrew/bin:/usr/local/bin:/tmp/t-desktop-fixture/.local/bin:/tmp/t-desktop-fixture/bin; source /fixture/core/t.plugin.zsh; setopt no_monitor no_notify; export T_NO_UPDATE_CHECK=1 T_NO_AUTORELOAD=1; export PATH=/fixture/core/bin:/fixture/python/bin:$PATH:/opt/homebrew/bin:/usr/local/bin:/tmp/t-desktop-fixture/.local/bin:/tmp/t-desktop-fixture/bin; t share targets --json"
+        ],
+        "cwd": "/tmp/t-desktop-fixture",
+        "env": {},
+        "detachKeepsSession": true
+      }
+    },
+    "applied": {
+      "operationId": "11111111-1111-4111-8111-111111111111",
+      "method": "terminal",
+      "arguments": {
+        "command": [
+          "share",
+          "targets",
+          "--json"
+        ],
+        "cwd": "/tmp/t-desktop-fixture"
+      },
+      "state": "ready",
+      "summary": "share targets --json",
+      "command": [
+        "share",
+        "targets",
+        "--json"
+      ],
+      "fingerprint": "0000000000000000000000000000000000000000000000000000000000000000",
+      "attachment": {
+        "kind": "terminal",
+        "argv": [
+          "zsh",
+          "-lic",
+          "setopt no_monitor no_notify; export T_NO_UPDATE_CHECK=1 T_NO_AUTORELOAD=1; export PATH=/fixture/core/bin:/fixture/python/bin:$PATH:/opt/homebrew/bin:/usr/local/bin:/tmp/t-desktop-fixture/.local/bin:/tmp/t-desktop-fixture/bin; source /fixture/core/t.plugin.zsh; setopt no_monitor no_notify; export T_NO_UPDATE_CHECK=1 T_NO_AUTORELOAD=1; export PATH=/fixture/core/bin:/fixture/python/bin:$PATH:/opt/homebrew/bin:/usr/local/bin:/tmp/t-desktop-fixture/.local/bin:/tmp/t-desktop-fixture/bin; t share targets --json"
+        ],
+        "cwd": "/tmp/t-desktop-fixture",
+        "env": {},
+        "detachKeepsSession": true
+      }
+    }
+  },
+  "share.inbox": {
+    "prepared": {
+      "operationId": "11111111-1111-4111-8111-111111111111",
+      "method": "terminal",
+      "arguments": {
+        "command": [
+          "share",
+          "inbox",
+          "--for",
+          "codex:22222222-2222-4222-8222-222222222222"
+        ],
+        "cwd": "/tmp/t-desktop-fixture"
+      },
+      "state": "prepared",
+      "summary": "share inbox --for codex:22222222-2222-4222-8222-222222222222",
+      "command": [
+        "share",
+        "inbox",
+        "--for",
+        "codex:22222222-2222-4222-8222-222222222222"
+      ],
+      "fingerprint": "0000000000000000000000000000000000000000000000000000000000000000",
+      "attachment": {
+        "kind": "terminal",
+        "argv": [
+          "zsh",
+          "-lic",
+          "setopt no_monitor no_notify; export T_NO_UPDATE_CHECK=1 T_NO_AUTORELOAD=1; export PATH=/fixture/core/bin:/fixture/python/bin:$PATH:/opt/homebrew/bin:/usr/local/bin:/tmp/t-desktop-fixture/.local/bin:/tmp/t-desktop-fixture/bin; source /fixture/core/t.plugin.zsh; setopt no_monitor no_notify; export T_NO_UPDATE_CHECK=1 T_NO_AUTORELOAD=1; export PATH=/fixture/core/bin:/fixture/python/bin:$PATH:/opt/homebrew/bin:/usr/local/bin:/tmp/t-desktop-fixture/.local/bin:/tmp/t-desktop-fixture/bin; t share inbox --for codex:22222222-2222-4222-8222-222222222222"
+        ],
+        "cwd": "/tmp/t-desktop-fixture",
+        "env": {},
+        "detachKeepsSession": true
+      }
+    },
+    "applied": {
+      "operationId": "11111111-1111-4111-8111-111111111111",
+      "method": "terminal",
+      "arguments": {
+        "command": [
+          "share",
+          "inbox",
+          "--for",
+          "codex:22222222-2222-4222-8222-222222222222"
+        ],
+        "cwd": "/tmp/t-desktop-fixture"
+      },
+      "state": "ready",
+      "summary": "share inbox --for codex:22222222-2222-4222-8222-222222222222",
+      "command": [
+        "share",
+        "inbox",
+        "--for",
+        "codex:22222222-2222-4222-8222-222222222222"
+      ],
+      "fingerprint": "0000000000000000000000000000000000000000000000000000000000000000",
+      "attachment": {
+        "kind": "terminal",
+        "argv": [
+          "zsh",
+          "-lic",
+          "setopt no_monitor no_notify; export T_NO_UPDATE_CHECK=1 T_NO_AUTORELOAD=1; export PATH=/fixture/core/bin:/fixture/python/bin:$PATH:/opt/homebrew/bin:/usr/local/bin:/tmp/t-desktop-fixture/.local/bin:/tmp/t-desktop-fixture/bin; source /fixture/core/t.plugin.zsh; setopt no_monitor no_notify; export T_NO_UPDATE_CHECK=1 T_NO_AUTORELOAD=1; export PATH=/fixture/core/bin:/fixture/python/bin:$PATH:/opt/homebrew/bin:/usr/local/bin:/tmp/t-desktop-fixture/.local/bin:/tmp/t-desktop-fixture/bin; t share inbox --for codex:22222222-2222-4222-8222-222222222222"
+        ],
+        "cwd": "/tmp/t-desktop-fixture",
+        "env": {},
+        "detachKeepsSession": true
+      }
+    }
+  },
+  "share.read": {
+    "prepared": {
+      "operationId": "11111111-1111-4111-8111-111111111111",
+      "method": "terminal",
+      "arguments": {
+        "command": [
+          "share",
+          "read",
+          "fixture-message",
+          "--for",
+          "codex:22222222-2222-4222-8222-222222222222"
+        ],
+        "cwd": "/tmp/t-desktop-fixture"
+      },
+      "state": "prepared",
+      "summary": "share read fixture-message --for codex:22222222-2222-4222-8222-222222222222",
+      "command": [
+        "share",
+        "read",
+        "fixture-message",
+        "--for",
+        "codex:22222222-2222-4222-8222-222222222222"
+      ],
+      "fingerprint": "0000000000000000000000000000000000000000000000000000000000000000",
+      "attachment": {
+        "kind": "terminal",
+        "argv": [
+          "zsh",
+          "-lic",
+          "setopt no_monitor no_notify; export T_NO_UPDATE_CHECK=1 T_NO_AUTORELOAD=1; export PATH=/fixture/core/bin:/fixture/python/bin:$PATH:/opt/homebrew/bin:/usr/local/bin:/tmp/t-desktop-fixture/.local/bin:/tmp/t-desktop-fixture/bin; source /fixture/core/t.plugin.zsh; setopt no_monitor no_notify; export T_NO_UPDATE_CHECK=1 T_NO_AUTORELOAD=1; export PATH=/fixture/core/bin:/fixture/python/bin:$PATH:/opt/homebrew/bin:/usr/local/bin:/tmp/t-desktop-fixture/.local/bin:/tmp/t-desktop-fixture/bin; t share read fixture-message --for codex:22222222-2222-4222-8222-222222222222"
+        ],
+        "cwd": "/tmp/t-desktop-fixture",
+        "env": {},
+        "detachKeepsSession": true
+      }
+    },
+    "applied": {
+      "operationId": "11111111-1111-4111-8111-111111111111",
+      "method": "terminal",
+      "arguments": {
+        "command": [
+          "share",
+          "read",
+          "fixture-message",
+          "--for",
+          "codex:22222222-2222-4222-8222-222222222222"
+        ],
+        "cwd": "/tmp/t-desktop-fixture"
+      },
+      "state": "ready",
+      "summary": "share read fixture-message --for codex:22222222-2222-4222-8222-222222222222",
+      "command": [
+        "share",
+        "read",
+        "fixture-message",
+        "--for",
+        "codex:22222222-2222-4222-8222-222222222222"
+      ],
+      "fingerprint": "0000000000000000000000000000000000000000000000000000000000000000",
+      "attachment": {
+        "kind": "terminal",
+        "argv": [
+          "zsh",
+          "-lic",
+          "setopt no_monitor no_notify; export T_NO_UPDATE_CHECK=1 T_NO_AUTORELOAD=1; export PATH=/fixture/core/bin:/fixture/python/bin:$PATH:/opt/homebrew/bin:/usr/local/bin:/tmp/t-desktop-fixture/.local/bin:/tmp/t-desktop-fixture/bin; source /fixture/core/t.plugin.zsh; setopt no_monitor no_notify; export T_NO_UPDATE_CHECK=1 T_NO_AUTORELOAD=1; export PATH=/fixture/core/bin:/fixture/python/bin:$PATH:/opt/homebrew/bin:/usr/local/bin:/tmp/t-desktop-fixture/.local/bin:/tmp/t-desktop-fixture/bin; t share read fixture-message --for codex:22222222-2222-4222-8222-222222222222"
+        ],
+        "cwd": "/tmp/t-desktop-fixture",
+        "env": {},
+        "detachKeepsSession": true
+      }
+    }
+  },
+  "session.history": {
+    "operationId": "11111111-1111-4111-8111-111111111111",
+    "method": "terminal",
+    "arguments": {
+      "command": [
+        "session",
+        "history"
+      ],
+      "cwd": "/tmp/t-desktop-fixture"
+    },
+    "state": "prepared",
+    "summary": "session history",
+    "command": [
+      "session",
+      "history"
+    ],
+    "fingerprint": "0000000000000000000000000000000000000000000000000000000000000000",
+    "attachment": {
+      "kind": "terminal",
+      "argv": [
+        "zsh",
+        "-lic",
+        "setopt no_monitor no_notify; export T_NO_UPDATE_CHECK=1 T_NO_AUTORELOAD=1; export PATH=/fixture/core/bin:/fixture/python/bin:$PATH:/opt/homebrew/bin:/usr/local/bin:/tmp/t-desktop-fixture/.local/bin:/tmp/t-desktop-fixture/bin; source /fixture/core/t.plugin.zsh; setopt no_monitor no_notify; export T_NO_UPDATE_CHECK=1 T_NO_AUTORELOAD=1; export PATH=/fixture/core/bin:/fixture/python/bin:$PATH:/opt/homebrew/bin:/usr/local/bin:/tmp/t-desktop-fixture/.local/bin:/tmp/t-desktop-fixture/bin; t session history"
+      ],
+      "cwd": "/tmp/t-desktop-fixture",
+      "env": {},
+      "detachKeepsSession": true
+    }
+  },
   "terminal": {
     "operationId": "11111111-1111-4111-8111-111111111111",
     "method": "terminal",
     "arguments": {
-      "command": ["session", "view-plan"],
+      "command": [
+        "session",
+        "view-plan"
+      ],
       "cwd": "/tmp/t-desktop-fixture"
     },
     "state": "prepared",
     "summary": "session view-plan",
-    "command": ["session", "view-plan"],
+    "command": [
+      "session",
+      "view-plan"
+    ],
     "fingerprint": "0000000000000000000000000000000000000000000000000000000000000000",
     "attachment": {
       "kind": "terminal",

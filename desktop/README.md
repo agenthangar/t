@@ -87,7 +87,18 @@ command. Inherently interactive and less common CLI capabilities open reviewed
 terminal actions. Arguments use ordinary quoted words, never shell evaluation
 in the renderer. Agent model/effort, profiles, policy, authentication, trust,
 installation, external Codex/Cursor/AgentCore, and system maintenance remain
-available through this catalog. The workspace parity matrix and exact scope are
+available through this catalog. Session history and context sharing also use
+reviewed terminal actions. Share send preserves
+`t share --to AGENT:ID --file PATH`; targets, inbox, and read are its existing
+subcommands.
+
+Issue lists infer the current registered checkout or scan all registered
+repositories outside one. An explicit repository scopes the read; advanced
+`--all` and `--state` options remain available in the reviewed terminal route.
+Results show unavailable repositories alongside successful issue rows, and an
+incomplete empty scan reports that no issues could be verified.
+
+The workspace parity matrix and exact scope are
 in [the desktop workspace documentation](../docs/desktop-workspace.md).
 
 Preparations may be cancelled before execution. Cancelling a form does not send

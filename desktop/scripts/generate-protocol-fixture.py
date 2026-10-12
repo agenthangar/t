@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "libexec"))
@@ -70,6 +71,32 @@ with tempfile.TemporaryDirectory(prefix="t-desktop-golden-") as home:
         and golden["snapshot"]["repositories"] == []
         and golden["snapshot"]["hosts"] == []
     ), "Fixture isolation failed; refusing to export developer state"
+    # Inject repository/provider reads before issue calls; aggregation, sanitized
+    # errors, and bridge serialization still come from the real core.
+    class FixtureIssueCommand:
+        repositories = []
+
+        def __init__(self, config, api):
+            pass
+
+        def list_repositories(self, repo, all_repos=False):
+            assert repo is None and all_repos
+            return self.repositories, None, []
+
+        def issues(self, repo, state):
+            assert state == "open"
+            if repo == "fixture/unavailable":
+                raise OSError("synthetic unavailable provider")
+            return [{"repo": repo, "number": 12, "state": "OPEN",
+                     "title": "Synthetic workspace task",
+                     "url": "https://github.com/fixture/project/issues/12"}]
+
+    with patch("t_core.runpy.run_path", return_value={"IssueCommand": FixtureIssueCommand}):
+        golden["issues.list.empty"] = call("issues.list", {"all": True})
+        FixtureIssueCommand.repositories = ["fixture/project", "fixture/unavailable"]
+        golden["issues.list.partial"] = call("issues.list", {"all": True, "state": "open"})
+        FixtureIssueCommand.repositories = ["fixture/unavailable"]
+        golden["issues.list.unavailable"] = call("issues.list", {"all": True})
     core.attachment = lambda session, cwd=None: {
         "kind": "terminal",
         "argv": ["tmux", "attach-session", "-t", "=" + session + ":"],
@@ -127,6 +154,38 @@ with tempfile.TemporaryDirectory(prefix="t-desktop-golden-") as home:
         golden[name] = call(
             "operations.prepare", {"command": ["mcp", flag], "cwd": home}
         )
+    # Share send is the standalone public syntax, not a fictional send verb.
+    # Preparation validates real parser argv but never sends context or reads a
+    # summary. Apply only exposes the reviewed terminal plan as ready.
+    share_commands = {
+        "share.send": ["share", "--to", "codex:22222222-2222-4222-8222-222222222222",
+                       "--file", "/tmp/t-desktop-fixture/summary.txt"],
+        "share.targets": ["share", "targets", "--json"],
+        "share.inbox": ["share", "inbox", "--for", "codex:22222222-2222-4222-8222-222222222222"],
+        "share.read": ["share", "read", "fixture-message",
+                       "--for", "codex:22222222-2222-4222-8222-222222222222"],
+    }
+    for name, command in share_commands.items():
+        prepared = call("operations.prepare", {"command": command, "cwd": home})
+        golden[name] = {
+            "prepared": prepared,
+            "applied": call("operations.apply", {"operationId": prepared["operationId"]}),
+        }
+    golden["session.history"] = call(
+        "operations.prepare", {"command": ["session", "history"], "cwd": home}
+    )
+    expected_share = {
+        "share.send": ["share"], "share.targets": ["share", "targets"],
+        "share.inbox": ["share", "inbox"], "share.read": ["share", "read"],
+    }
+    catalog = {entry["method"]: entry for entry in golden["initialize"]["capabilities"]}
+    assert "session.history" in catalog
+    for method, command in expected_share.items():
+        assert catalog[method]["command"] == command and catalog[method]["kind"] == "terminal"
+        assert golden[method]["applied"]["state"] == "ready"
+    assert golden["issues.list.empty"]["issues"] == [] and not golden["issues.list.empty"]["incomplete"]
+    assert len(golden["issues.list.partial"]["issues"]) == 1 and golden["issues.list.partial"]["incomplete"]
+    assert golden["issues.list.unavailable"]["issues"] == [] and golden["issues.list.unavailable"]["incomplete"]
     golden["terminal"] = call(
         "operations.prepare", {"command": ["session", "view-plan"], "cwd": home}
     )

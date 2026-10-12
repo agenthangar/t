@@ -9,12 +9,17 @@ const golden = JSON.parse(
 // TEST ONLY transport: never included in the production renderer bundle.
 async function setup(
   page: import("@playwright/test").Page,
-  scenario: { applyFailure?: boolean; terminalReady?: boolean } = {},
+  scenario: {
+    applyFailure?: boolean;
+    terminalReady?: boolean;
+    issueResults?: "mixed" | "unavailable";
+  } = {},
 ) {
   await page.addInitScript(
     ({ golden, scenario }) => {
       const calls: { method: string; params: unknown }[] = [];
       (window as any).fixtureCalls = calls;
+      (window as any).fixtureIssueResults = scenario.issueResults;
       let appliedMethod = "sessions.open";
       let sequence = 0;
       const tokenize = (value: any): any => {
@@ -55,6 +60,13 @@ async function setup(
                 ],
               };
             if (args.method === "sessions.search") return golden.search;
+            if (args.method === "issues.list") {
+              return golden[
+                (window as any).fixtureIssueResults === "unavailable"
+                  ? "issues.list.unavailable"
+                  : "issues.list.partial"
+              ];
+            }
             if (
               (args.method.startsWith("sessions.") &&
                 args.method !== "sessions.attach") ||
@@ -317,3 +329,61 @@ test("ready terminal operation retains durable recovery after Escape", async ({
     page.getByRole("button", { name: "1 operation to reconcile" }),
   ).toBeVisible();
 });
+
+for (const scenario of ["mixed", "unavailable"] as const) {
+  test(`issue results surface ${scenario} repository failures without a false empty result`, async ({
+    page,
+  }) => {
+    await setup(page, { issueResults: scenario });
+    await page.keyboard.press("Meta+k");
+    await page
+      .getByPlaceholder("What would you like to do?")
+      .fill("issue list");
+    await page.keyboard.press("Enter");
+    await page
+      .getByRole("button", { name: "Read current state", exact: true })
+      .click();
+    await expect(
+      page.getByText("Issue results are incomplete.", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByText(
+        "fixture/unavailable: repository issues could not be read",
+        { exact: true },
+      ),
+    ).toBeVisible();
+    await expect(
+      page.getByText("No issues found.", { exact: true }),
+    ).toHaveCount(0);
+    if (scenario === "mixed") {
+      await expect(
+        page.getByText("#12 Synthetic workspace task", { exact: true }),
+      ).toBeVisible();
+      await page.getByRole("checkbox").check();
+      await expect(
+        page.getByRole("button", { name: "Start 1 selected issue" }),
+      ).toBeVisible();
+      await expect(
+        page.getByText("No issues could be verified.", { exact: true }),
+      ).toHaveCount(0);
+      await page.evaluate(() => {
+        (window as any).fixtureIssueResults = "unavailable";
+      });
+      await page
+        .getByRole("button", { name: "Read current state", exact: true })
+        .click();
+      await expect(
+        page.getByText("No issues could be verified.", { exact: true }),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("button", { name: "Start 1 selected issue" }),
+      ).toHaveCount(0);
+      await expect(page.getByRole("checkbox")).toHaveCount(0);
+    } else {
+      await expect(
+        page.getByText("No issues could be verified.", { exact: true }),
+      ).toBeVisible();
+      await expect(page.getByRole("checkbox")).toHaveCount(0);
+    }
+  });
+}
