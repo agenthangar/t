@@ -101,7 +101,11 @@ _dev_agent_new_cmd() {
   # A fresh slot must not inherit an independently updated shared daemon's
   # feature settings. Keep its backend local, as with desktop handoffs/recovery.
   [[ $agent == codex ]] && launch_args+=(--no-daemon)
-  print -r -- "${(j: :)${(@q)launch_args}}"
+  # Read the optional task in the pane, as one quoted argument. Keep its body
+  # out of the command sent to tmux and the interactive shell's history.
+  local brief_arg=""
+  [[ -n $3 ]] && brief_arg=" -- \"\$(cat -- ${(q)3})\""
+  print -r -- "${(j: :)${(@q)launch_args}}${brief_arg}"
 }
 # _dev_agent_resume_cmd <agent> <sid> — the pane command that resumes conversation <sid>.
 _dev_agent_resume_cmd() {

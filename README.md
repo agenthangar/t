@@ -143,6 +143,7 @@ behavior. Start a fresh Codex session in the current repo with
 | Command | Purpose |
 | --- | --- |
 | `t session open <repo> [slot]` | Open or reattach a task; `--new` starts another, `--codex` selects Codex, `--app` opens the desktop app, `--cli` resumes in the terminal |
+| `t issue [repo] <number>` | Find existing issue work, continue it, or start an isolated agent session |
 | `t session list [-r] [-a]` | List sessions across local or remote hosts and repositories |
 | `t session close <repo> <slot>` / `t session restart <repo> <slot>` | Stop a slot or recover a stuck agent in the same conversation |
 | `t session push` / `t session pop` | Move between foreground and detached tmux |
@@ -280,6 +281,59 @@ monitor startup. Native desktop apps and CLIs launched outside `t` are not monit
 The monitor runs from a stable directory and reloads its code after an update.
 Before opening another Cursor chat, `t` requires existing Cursor CLIs to have verified
 current chat IDs; close an untracked CLI first to avoid duplicate conversation owners.
+
+### Working on GitHub issues
+
+```sh
+t issue 123                         # infer the registered repo from this directory
+t issue api 123                     # registered repository alias
+t issue owner/repo 123               # GitHub repository with a registered checkout
+t issue https://github.com/owner/repo/issues/123
+t issue 123 --check                  # inspect ownership without starting work
+t issue 123 --json                   # structured discovery; also never starts work
+t issue 123 --codex                  # choose the agent for a new local session
+```
+
+Before starting, `t issue` checks local and registered remote hosts, including
+ordinary Git worktrees and agent activity outside `t`. It also checks GitHub PRs,
+issue references and branch names, Codex Cloud tasks using your Codex CLI login,
+and Cursor Cloud agents using `CURSOR_API_KEY`. Checks are read-only; the command
+does not post issue comments, assign issues, or stop cloud agents.
+
+A verified existing session attaches in place. A saved conversation goes through
+the existing resume workflow. Ambiguous matches show their evidence for review.
+An external task can be left running or taken over after you stop or hand it off
+and publish a PR. Takeover starts from that PR's exact published commit in a fresh
+local worktree and asks the agent to update the existing PR. Unpublished cloud
+edits must be exported or published first. New work uses your configured CLI agent
+(`--claude` and `--codex` override it) and is instructed to implement, test, and
+open a PR, following the repository's merge and deployment instructions.
+
+Unreachable hosts, missing provider credentials, old remote versions, and failed
+checks block new work. `--allow-incomplete-check` explicitly permits proceeding
+with those gaps; it does not override a known owner. `--check` and `--json` return
+exit status 2 when discovery is incomplete, 0 when complete; command failures
+return 1. A closed issue is reported without launching work.
+
+Discovery covers only accessible accounts and identifiable issue references.
+Private cloud work without a repository/issue reference may be undiscoverable;
+task titles and branch numbers are candidates, not proof. A local launch lock
+prevents concurrent `t issue` invocations from creating duplicate local sessions,
+but does not provide an atomic lock across cloud services or machines. Issue
+associations and launch briefs stay in private Git metadata; the initial task
+also carries its association so moved conversations remain discoverable.
+
+The installer adds an issue-first workflow to Codex's global `AGENTS.md` (and an
+existing `AGENTS.override.md`) and Claude's global `CLAUDE.md`, respecting
+`CODEX_HOME` and `CLAUDE_CONFIG_DIR`. It preserves your prose and updates only its
+marked block; symlinks or malformed markers are reported for manual repair.
+For a new fix or enhancement in a public repository, the agent must verify
+visibility, create or reuse an open issue, and record its URL before editing code.
+An issue supplied through `t issue` already satisfies the rule. Sessions without
+a task still open normally and wait for your request. This is agent guidance,
+not a filesystem write gate; it applies in new sessions that load these files.
+Existing sessions and cloud environments need the same rule in their own
+instructions. New `t profile init` templates also include it for repository use.
 
 Every command has `-h`. Repo-aware commands infer the repository from your current
 directory, so `t session open 2` and `t session cd 2` work inside a registered repository.

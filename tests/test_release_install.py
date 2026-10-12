@@ -22,6 +22,9 @@ build_spec.loader.exec_module(builder)
 
 @pytest.fixture
 def sandbox(tmp_path, monkeypatch):
+    for name in list(os.environ):
+        if name.startswith('COV_CORE_'):
+            monkeypatch.delenv(name)
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
@@ -39,6 +42,9 @@ def sandbox(tmp_path, monkeypatch):
 def artifact(version="v1.2.3", changed=None, extra=None):
     changed = changed or {}
     files = {name: (ROOT / name).read_bytes() for name in release.REQUIRED if name != ".t-release-version"}
+    # Current installer integrations extend the backwards-compatible release minimum.
+    for name in ('libexec/t_issue.py', 'libexec/t_issue_policy.txt'):
+        files[name] = (ROOT / name).read_bytes()
     files[".t-release-version"] = (version + "\n").encode()
     files.update(changed)
     stream = io.BytesIO()

@@ -1796,12 +1796,15 @@ _t_app_close_slot() {
 # + log path convention so dev/tread/tpaste treat it like any dev session.
 _dev_resume_session() {
   local session="$1" dir="$2" sid="$3" agent="${4:-claude}"
+  if (( ${+functions[_dev_issue_preparing]} )) && _dev_issue_preparing "$dir"; then
+    print -u2 't: issue launch is reserved; rerun t issue to recover it'; return 1
+  fi
   _dev_auto_trust "$dir"
   local logfile="$HOME/.tmux-logs/${session}.log"
   mkdir -p "$HOME/.tmux-logs"
   # No fixed geometry / window-size latest: fit the active client so attaching from
   # a phone doesn't pan a too-wide window (see _dev_new_session for the full why).
-  tmux new-session -d -s "$session" -c "$dir"
+  tmux new-session -d -s "$session" -c "$dir" || return 1
   tmux set-option -t "=$session:" window-size latest 2>/dev/null
   tmux pipe-pane -t "=$session:" -o "cat >> $logfile"
   # Record the resumed id on the session so `tpop` can pull the exact same

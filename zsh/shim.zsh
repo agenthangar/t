@@ -548,7 +548,7 @@ _t_beam_xlate() {
 # key for `on`), and slot/flags after. Pulls live from the ${(k)DEV_REPOS} /
 # ${(k)REMOTE_HOSTS} arrays so it stays current with ${T_LOCAL_RC}.
 _t() {
-  local -a nouns=(session repo cursor hosts agentcore config profile policy agent system login help)
+  local -a nouns=(session issue repo cursor hosts agentcore config profile policy agent system login help)
   if (( CURRENT == 2 )); then
     _describe -t nouns 't command group' nouns
     return
@@ -563,6 +563,16 @@ _t() {
     group=${words[3]} action=${words[4]} first=5
   fi
   local -a actions
+  if [[ $group == issue ]]; then
+    if [[ ${words[CURRENT]} == -* ]]; then
+      _values 'flag' --check --json --codex --claude --allow-incomplete-check -h --help
+    elif (( CURRENT == 3 )); then
+      _values 'repo or issue number' ${(k)DEV_REPOS}
+    else
+      _message 'GitHub issue number'
+    fi
+    return
+  fi
   case $group in
     session) actions=(open list close restart push pop resume cd move read view-plan paste search open-app) ;;
     repo) actions=(list cd locate create clone) ;;

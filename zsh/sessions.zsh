@@ -1789,6 +1789,9 @@ _dev_recovery_watch() {
 # keep the transcript filename glob (`<sid>.jsonl`) matching.
 _dev_new_session() {
   local session="$1" dir="$2" branch="${3:-$DEV_BRANCH}" skip_prepare="${4:-}" agent="${5:-claude}"
+  if [[ -z $7 ]] && (( ${+functions[_dev_issue_preparing]} )) && _dev_issue_preparing "$dir"; then
+    print -u2 't: issue launch is reserved; rerun t issue to recover it'; return 1
+  fi
   _dev_auto_trust "$dir"
   local logfile="$HOME/.tmux-logs/${session}.log"
   local sid; sid="$(uuidgen | tr 'A-Z' 'a-z')"
@@ -1800,13 +1803,14 @@ _dev_new_session() {
   # client is active, so it fits the phone on attach. (latest is tmux's default,
   # but we set it explicitly so it holds on machines with a different default.)
   # The trailing colon keeps dots in repo names out of tmux window/pane parsing.
-  tmux new-session -d -s "$session" -c "$dir"
+  tmux new-session -d -s "$session" -c "$dir" || return 1
   tmux set-option -t "=$session:" window-size latest 2>/dev/null
   tmux pipe-pane -t "=$session:" -o "cat >> $logfile"
   # Which agent occupies the slot, for every later reader (_dev_agent_of_session). Only
   # claude takes a pre-assigned id; a codex slot is stamped by its SessionStart hook once
   # codex has minted one (there is no `codex --session-id`).
   tmux set-environment -t "=$session" DEV_AGENT "$agent"
+  [[ -n $7 ]] && tmux set-environment -t "=$session" T_ISSUE_TOKEN "$7"
   [[ $agent == claude ]] && tmux set-environment -t "=$session" CLAUDE_RESUME_ID "$sid"
   # `; exit` so quitting Claude closes the pane's shell and tears down the
   # (single-window) tmux session instead of leaving an idle prompt behind. Fires
@@ -1814,8 +1818,51 @@ _dev_new_session() {
   # (`t read`). `t pop` kill-sessions the slot itself, so the exit is moot there.
   local prep="_dev_repo_prepare ${(q)branch}; "
   [[ -n $skip_prepare ]] && prep=    # worktree mode: <dir> is already on its branch
-  tmux send-keys -t "=$session:" "${prep}$(_dev_agent_new_cmd "$agent" "$sid"); exit" Enter
+  tmux send-keys -t "=$session:" "${prep}$(_dev_agent_new_cmd "$agent" "$sid" "$6"); exit" Enter || return 1
   _dev_recovery_watch "$session"
+}
+
+# t issue holds the repository allocation lock across prepare + launch. These
+# helpers deliberately never reuse a parked worktree or fall back to main.
+_t_issue_prepare() {
+  local repo="$1" agent="$2" start_ref="${3:-origin/main}" slot=1 wt br owner gitdir
+  [[ -n ${DEV_REPOS[$repo]:-} ]] || return 1
+  _dev_worktree_enabled "$repo" || { print -u2 't issue requires isolated worktrees'; return 1; }
+  _dev_agent_check "$agent" || return 1
+  command -v tmux >/dev/null || return 1
+  git -C "${DEV_REPOS[$repo]}" fetch -q --prune origin || return 1
+  while true; do
+    wt=$(_dev_worktree_path "$repo" "$slot")
+    br=$(_dev_worktree_branch "$repo" "$slot")
+    # Never resume or reap a branch, even a merged one. Fetch before checking so
+    # an unseen remote branch cannot turn a new issue into another task's slot.
+    if _dev_slot_fresh "$repo" "$slot" && [[ ! -e $wt && ! -L $wt ]] &&
+       ! git -C "${DEV_REPOS[$repo]}" show-ref --verify --quiet "refs/heads/$br" &&
+       ! git -C "${DEV_REPOS[$repo]}" show-ref --verify --quiet "refs/remotes/origin/$br"; then
+      break
+    fi
+    (( slot++ ))
+  done
+  if (( ${#REMOTE_HOSTS} )); then
+    owner=$(_dev_remote_app_owner "$repo" "$slot")
+    [[ -z $owner ]] || { print -u2 "t issue: slot reserved by desktop on $owner"; return 1; }
+  fi
+  # Git atomically refuses a competing branch creation. Start at the published
+  # handoff commit directly; no reset of a potentially reused worktree is needed.
+  git -C "${DEV_REPOS[$repo]}" worktree add -q -b "$br" "$wt" "$start_ref" || return 1
+  gitdir=$(git -C "$wt" rev-parse --absolute-git-dir) || return 1
+  : > "$gitdir/t-issue-preparing" || return 1
+  printf '%s\t%s\n' "$slot" "$wt"
+}
+
+_t_issue_launch() {
+  local repo="$1" slot="$2" wt="$3" agent="$4" brief="$5" token="$6" gitdir
+  [[ $slot == <-> && -n $token && -f $brief && -f $wt/.git ]] || return 1
+  [[ $wt == "$(_dev_worktree_path "$repo" "$slot")" ]] || return 1
+  _dev_local_slot_live "$repo" "$slot" && return 1
+  _dev_new_session "dev-$repo-$slot" "$wt" "" 1 "$agent" "$brief" "$token" || return 1
+  gitdir=$(git -C "$wt" rev-parse --absolute-git-dir) || return 1
+  command rm -f -- "$gitdir/t-issue-preparing"
 }
 
 # _t_dev — the engine behind `t open`: open/reattach a Claude Code tmux session, local or on

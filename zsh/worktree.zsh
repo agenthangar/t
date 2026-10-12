@@ -22,6 +22,14 @@ _dev_app_slot_reserved() {
   local marker; marker=$(_dev_app_slot_marker "$1") || return 1
   [[ -f $marker ]]
 }
+
+# A t issue launch reserves its freshly created worktree until the task and
+# ownership stamp are installed. Other open/resume paths must not race it.
+_dev_issue_preparing() {
+  local gitdir
+  gitdir=$(git -C "$1" rev-parse --absolute-git-dir 2>/dev/null) || return 1
+  [[ -f "$gitdir/t-issue-preparing" ]]
+}
 _dev_app_slot_reserve() {
   local marker; marker=$(_dev_app_slot_marker "$1") || return 1
   print -r -- 'codex-app' >| "$marker"
@@ -90,6 +98,7 @@ _dev_worktree_create() {
   local repodir="${DEV_REPOS[$repo]}"
   local wt br; wt="$(_dev_worktree_path "$repo" "$slot")"; br="$(_dev_worktree_branch "$repo" "$slot")"
   if [[ -e "$wt/.git" ]]; then          # already materialized → reuse (idempotent)
+    _dev_issue_preparing "$wt" && { print -u2 't: issue launch is reserved; rerun t issue to recover it'; return 1; }
     if _dev_app_slot_reserved "$wt"; then
       print -u2 -- "t: $repo $slot is reserved for the Codex desktop app."
       print -u2 -- '  To continue in the CLI, run this on the Mac with the conversation and follow its release instructions:'
@@ -647,6 +656,7 @@ _dev_worktree_sweep_run() {
     [[ -e "$wt/.git" ]] || continue
     (( ${livepaths[(Ie)$wt]} )) && continue         # live session here → keep
     _dev_app_slot_reserved "$wt" && continue      # desktop app owns this worktree
+    _dev_issue_preparing "$wt" && continue        # issue launch is still being prepared
     # Unlike the dirty/merged skips below this one is LOGGED: a worktree that is
     # merged, clean, and never reaped is otherwise a silent mystery.
     if _t_tree_is_live "$wt"; then

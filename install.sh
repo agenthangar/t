@@ -78,6 +78,7 @@ valid_source() {
     [[ "$(cat "$root/.t-install-version")" == 1 ]] || return 1
     for asset in install.sh t.plugin.zsh local.zsh.example \
         claude/settings.json.example bin/t bin/claude-stamp-tmux bin/cursor-beam \
+        libexec/t_issue.py libexec/t_issue_policy.txt \
         claude/commands/tpush.md claude/commands/tpop.md \
         codex/prompts/tpush.md codex/prompts/tpop.md; do
         [[ -f "$root/$asset" ]] || return 1
@@ -127,6 +128,10 @@ link_all() {
     link "$T_LINK_SRC/codex/prompts/tpop.md" "$HOME/.codex/prompts/tpop.md"
 }
 link_all
+
+# Agent instructions apply to new tasks in both terminal and desktop sessions.
+# Preserve user prose and surface files that could not safely be integrated.
+python3 "$T_LINK_SRC/libexec/t_issue.py" --install-workflow
 
 # Remove only the retired status line that the old dotfiles installer wrote.
 retire_statusline() {
@@ -284,7 +289,7 @@ if [[ -z "${T_LINKS_ONLY:-}" ]]; then
     merge_claude_settings
 fi
 
-# Policy is deliberately absent by default. The dotfiles adapter opts in with a
+# Permission overrides are absent by default. The dotfiles adapter opts in with a
 # directory of user-owned rules, and independent users may do the same explicitly.
 if [[ -n "${T_PERMISSIONS_DIR:-}" && -z "${T_NO_PERMISSIONS:-}" ]]; then
     if [[ ! -f "$T_PERMISSIONS_DIR/permissions.allow" ]]; then
