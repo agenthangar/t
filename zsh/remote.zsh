@@ -408,6 +408,10 @@ _dev_remote_kill() {
   elif [[ -z $repo ]]; then
     repo=$(_t_infer_repo)
   fi
+  if [[ -z $slot && ( -z $repo || -n ${DEV_REPOS[$repo]:-} ) ]]; then
+    _dev_kill_pick "$repo" "$force" 1
+    return $?
+  fi
   # `all` can't be resolved as a single row (slot names are `<repo>-<N>`, never
   # `<repo>-all`); enumerate the remote hosts with any live dev-<repo>-* slot and
   # delegate `t kill <repo> all` to each — the remote _dev_kill iterates its own.

@@ -2353,14 +2353,14 @@ def test_open_local_multi_picker(zsh, tmp_path, tabs):
     """A batch opens extra slots before attaching, keeping aliases and local scope."""
     (zsh.home / "code/api").mkdir(parents=True)
     stub = tmp_path / "stubbin/fzf"
-    stub.write_text("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$FZF_LOG\"\ncat\n")
+    stub.write_text("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$FZF_LOG\"\nsed '1d'\n")
     stub.chmod(0o755)
     log = tmp_path / "fzf.args"
     snippet = r'''
       DEV_REPOS[alias]=$DEV_REPOS[api]
       _dev_session_rows() {
         printf 'sid1\t%s\tapi-2\tdetached\tactive\tFirst task\tcodex\n' "$HOME/code/api"
-        printf 'sid2\t%s\talias-4\tattached\tactive\tSecond task\tclaude\n' "$HOME/code/api"
+        printf 'sid2\t%s\talias-4\tdetached\tactive\tSecond task\tclaude\n' "$HOME/code/api"
         printf 'sid3\t%s\tweb-3\tdetached\tactive\tOther repo\tcodex\n' "$HOME/code/web"
       }
       _dev_open_tab() { print -r -- "TAB $*"; TAB_RESULT; }

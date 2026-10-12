@@ -22,6 +22,7 @@ def run_close(tmp_path, args, *, tmux_state="absent", reserved=True, close_rc=0,
     config.mkdir(parents=True)
     worktree = home / "worktrees" / "api" / "13"
     worktree.mkdir(parents=True)
+    (worktree / ".git").write_text("gitdir: /nonexistent/test-worktree\n")
     bins = home / "bin"
     bins.mkdir()
     cli = bins / "t"
@@ -34,7 +35,7 @@ def run_close(tmp_path, args, *, tmux_state="absent", reserved=True, close_rc=0,
     )
     env = {key: value for key, value in os.environ.items() if not key.startswith("COV_CORE_")}
     env.update(
-        HOME=str(home), ZDOTDIR=str(home),
+        HOME=str(home), ZDOTDIR=str(home), CODEX_HOME=str(home / ".codex"),
         XDG_CONFIG_HOME=str(home / ".config"),
         XDG_CACHE_HOME=str(home / ".cache"),
         XDG_STATE_HOME=str(home / ".local" / "state"),
@@ -98,7 +99,8 @@ def test_desktop_only_repo_close_lists_or_closes_reserved_slot(tmp_path, args):
     if args.endswith("all"):
         assert (tmp_path / "home" / "close-actions").read_text().strip() == "_app-close api 13"
     else:
-        assert "api 13  ▣ desktop" in result.stdout
+        assert "▣ desktop" in result.stdout and "api-13" in result.stdout
+        assert "MODEL" in result.stdout and "WORKING ON" in result.stdout
         assert not (tmp_path / "home" / "close-actions").exists()
     assert "No sessions" not in result.stdout + result.stderr
     assert not (tmp_path / "home" / "tmux-actions").exists()
