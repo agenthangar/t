@@ -184,7 +184,7 @@ def test_all_session_agent_families_and_snapshot(core, monkeypatch):
     assert snapshot['sessions'][0]['agent'] == 'codex'
     assert snapshot['sessions'][0]['title'] == 'Codex title'
     assert snapshot['hosts'][0]['default']
-    assert set(tuple(cap['command']) for cap in snapshot['capabilities']) == {(group, action) for group, actions in core.cli.COMMAND_GROUPS.items() for action in actions}
+    assert {(group, action) for group, actions in core.cli.COMMAND_GROUPS.items() for action in actions} <= set(tuple(cap['command']) for cap in snapshot['capabilities'])
     assert core.call('sessions.list', {})['sessions']
     core.sessions(core.config(), True)
     assert calls[-1][0] == 'ssh'
@@ -322,6 +322,8 @@ def test_issue_reads_and_guarded_headless_launch(core, monkeypatch):
     class Owner:
         def __init__(self, cfg, api):
             owners.append(self)
+        def list_repositories(self, repo, all_repos):
+            return [repo], repo, []
         def issues(self, repo, state):
             return [{'repo': repo, 'state': state}]
         def issue(self, targets):
@@ -336,7 +338,7 @@ def test_issue_reads_and_guarded_headless_launch(core, monkeypatch):
             assert new_terminal
             return ['ssh', '-t', 'remote', 'zsh -lic tmux-attach']
     monkeypatch.setattr(t_core.runpy, 'run_path', lambda path: {'IssueCommand': Owner, 'split_targets': lambda words: ('demo', words[1:])})
-    assert core.call('issues.list', {'repo': 'demo'}) == {'issues': [{'repo': 'demo', 'state': 'open'}]}
+    assert core.call('issues.list', {'repo': 'demo'})['issues'] == [{'repo': 'demo', 'state': 'open'}]
     assert core.call('issues.status', {'targets': ['demo', '1']}) == report
     result = core._mutate('issues.start', {'targets': ['demo', '1', '2']})
     assert len(result['attachments']) == 2
@@ -603,3 +605,41 @@ def test_reviewed_idle_slot_close_preserves_empty_owner_contract(lifecycle):
     assert closed['state'] == 'completed'
     assert _run([tmux, 'has-session', '-t', '=dev-repo-1:'], env=env, cwd=base).returncode != 0
     assert not (base / 'agents.log').exists()
+
+
+def test_upstream_standalone_share_has_real_reviewed_routes(core):
+    catalog = {item['method']: item['command'] for item in core.capabilities()}
+    assert catalog['share.send'] == ['share']
+    assert catalog['share.targets'] == ['share', 'targets']
+    examples = [['share'], ['share', '--to', 'codex:123', '--file', 'summary.md'],
+                ['share', '--retry', 'receipt'], ['share', 'targets', '--json'],
+                ['share', 'inbox', '--for', 'claude:123'], ['share', 'read', 'receipt']]
+    for command in examples:
+        core.cli.build_parser().parse_args(command)
+        assert core.prepare({'command': command})['command'] == command
+    with pytest.raises(t_core.CoreError):
+        core.prepare({'command': ['share', 'invented-action']})
+
+
+def test_issue_scope_matches_upstream_and_preserves_partial_reads(core, monkeypatch):
+    calls = []
+    class Owner:
+        def __init__(self, cfg, api):
+            pass
+        def list_repositories(self, repo, all_repos):
+            calls.append((repo, all_repos))
+            return ['one/repo', 'offline/repo'], repo, ['unresolvable registration']
+        def issues(self, repo, state):
+            if repo == 'offline/repo':
+                raise ValueError('private provider diagnostic')
+            return [{'repo': repo, 'state': state}]
+    monkeypatch.setattr(t_core.runpy, 'run_path', lambda path: {'IssueCommand': Owner})
+    result = core.call('issues.list', {'all': True, 'state': 'all'})
+    assert calls == [(None, True)]
+    assert result['issues'] == [{'repo': 'one/repo', 'state': 'all'}]
+    assert result['scope'] is None and result['incomplete'] and len(result['errors']) == 2
+    assert 'private' not in json.dumps(result)
+    core.call('issues.list', {'repo': 'explicit', 'state': 'closed'})
+    assert calls[-1] == ('explicit', False)
+    with pytest.raises(t_core.CoreError):
+        core.call('issues.list', {'state': 'invented'})

@@ -84,11 +84,16 @@ class Core:
                  'issue.list': 'issues.list', 'issue.status': 'issues.status',
                  'issue.start': 'issues.start', 'repo.list': 'repositories.list',
                  'hosts.list': 'hosts.list', 'config.show': 'config.get'}
-        return [{'method': group + '.' + action, 'command': [group, action],
+        catalog = [{'method': group + '.' + action, 'command': [group, action],
                  'kind': 'core' if group + '.' + action in typed else 'terminal',
                  'coreMethod': typed.get(group + '.' + action),
                  'argumentSpecs': [], 'acceptsArguments': True}
                 for group, actions in self.cli.COMMAND_GROUPS.items() for action in actions]
+        if 'share' in self.cli.IMPLEMENTED:
+            catalog.extend({'method': 'share.' + action, 'command': ['share'] + ([] if action == 'send' else [action]),
+                            'kind': 'terminal', 'coreMethod': None, 'argumentSpecs': [], 'acceptsArguments': True}
+                           for action in ('send', 'targets', 'inbox', 'read'))
+        return catalog
 
     def shell(self, snippet, cwd=None):
         runtime_path = str(self.root / 'bin') + os.pathsep + str(Path(sys.executable).parent)
@@ -187,11 +192,18 @@ class Core:
         arguments = params.get('arguments', {})
         command = params.get('command')
         if command is not None:
-            if (not isinstance(command, list) or len(command) < 2 or
+            if (not isinstance(command, list) or not command or len(command) < 2 and command[0] != 'share' or
                     not all(isinstance(word, str) and '\x00' not in word for word in command) or
-                    not (command[0] in self.cli.COMMAND_GROUPS and command[1] in self.cli.COMMAND_GROUPS[command[0]]
-                         or command in (['mcp', '--install'], ['mcp', '--list-tools'], ['mcp', '--reindex']))):
+                    not (command[0] in self.cli.COMMAND_GROUPS and len(command) > 1 and command[1] in self.cli.COMMAND_GROUPS[command[0]]
+                         or command in (['mcp', '--install'], ['mcp', '--list-tools'], ['mcp', '--reindex'])
+                         or command[0] == 'share' and 'share' in self.cli.IMPLEMENTED)):
                 raise CoreError('invalid_command', 'choose a supported command family and action')
+            if command[0] == 'share':
+                # Preserve the reviewed standalone exception and its actual parser.
+                try:
+                    self.cli.build_parser().parse_args(command)
+                except SystemExit:
+                    raise CoreError('invalid_command', 'invalid share command arguments') from None
             method = 'terminal'
             arguments = {'command': command, 'cwd': params.get('cwd')}
         if method not in ('sessions.open', 'sessions.resume', 'sessions.close', 'sessions.restart',
@@ -559,7 +571,18 @@ class Core:
             helper = runpy.run_path(str(self.root / 'libexec' / 't_issue.py'))
             owner = helper['IssueCommand'](cfg, self.api)
             if method == 'issues.list':
-                return {'issues': owner.issues(params.get('repo'), params.get('state', 'open'))}
+                state = params.get('state', 'open')
+                if state not in ('open', 'closed', 'all'):
+                    raise CoreError('invalid_params', 'issue state must be open, closed, or all')
+                identities, scope, scope_errors = owner.list_repositories(params.get('repo'), params.get('all', False))
+                errors = [{'repo': None, 'code': 'unavailable', 'message': 'registered repository could not be resolved'} for _ in scope_errors]
+                rows = []
+                for identity in identities:
+                    try:
+                        rows.extend(owner.issues(identity, state))
+                    except (ValueError, OSError):
+                        errors.append({'repo': identity, 'code': 'unavailable', 'message': 'repository issues could not be read'})
+                return {'issues': rows, 'scope': scope, 'state': state, 'errors': errors, 'incomplete': bool(errors)}
             issue = owner.issue(params.get('targets') or [])
             return owner.scan(issue)
         if method == 'workspace.snapshot':
