@@ -1,0 +1,3 @@
+{"version": 2, "width": 120, "height": 30, "title": "ssh mini 'cd ~/demo/worktrees/demo/1 && python3 -m unittest -v && python3 tasks.py tasks.json --status open'"}
+[0.038, "o", "$ ssh mini 'cd ~/demo/worktrees/demo/1 && python3 -m unittest -v && python3 tasks.py tasks.json --status open'\r\n"]
+[2.382, "o", "test_all_tasks (test_tasks.TaskFilterTests) ... ok\r\ntest_done_tasks (test_tasks.TaskFilterTests) ... ok\r\ntest_empty_tasks (test_tasks.TaskFilterTests) ... ok\r\ntest_filter_preserves_input (test_tasks.TaskFilterTests) ... ok\r\n[open] Ship the CLI\r\n[open] Test desktop handoff\r\ntest_open_tasks (test_tasks.TaskFilterTests) ... ok\r\n\r\n----------------------------------------------------------------------\r\nRan 5 tests in 0.000s\r\n\r\nOK\r\n"]

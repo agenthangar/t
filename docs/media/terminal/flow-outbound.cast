@@ -1,0 +1,9 @@
+{"version": 2, "width": 120, "height": 30, "title": "t beam demo 1 --host mini --detach"}
+[0.034, "o", "$ t beam demo 1 --host mini --detach\r\n"]
+[2.378, "o", "\u27f3 Beaming [thread]\u2026 (~/demo/worktrees/demo/1) \u2192 mini\r\n"]
+[2.61, "o", "\u2702 Stopped the local copy (dev-demo-1) \u2014 moved to mini\r\n"]
+[2.88, "o", "\u2191 carried dev/demo-1 \u2192 origin\r\n"]
+[3.257, "o", "session=dev-demo-1\r\n"]
+[4.23, "o", "\u2713 Running on mini as dev-demo-1\r\n"]
+[4.23, "o", "slot=1\r\n"]
+[4.23, "o", "  Attach: t session open demo 1    (or pull it back: t session move demo 1 --from mini)\r\n"]
