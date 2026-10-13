@@ -243,6 +243,7 @@ for a host's login shell.
 | `t issue list [repo] [-a]` | List issues in the current, named, or all registered GitHub repositories |
 | `t issue status [repo] <number>` | Inspect existing work without starting an agent |
 | `t issue start [repo] [number ...]` | Continue or start work on one or several issues |
+| `t issue open [repo] [number ...]` | Open one or several GitHub issues in your browser |
 | `t share --to agent:id --file summary.md [--attach history.md]` | Share selected context with an exact Claude, Codex, or Cursor conversation |
 | `t share targets` / `t share inbox` / `t share read <message-id>` | Find conversations and read received shares |
 | `t session list [-r] [-a]` | List sessions across local or remote hosts and repositories |
@@ -419,6 +420,9 @@ t issue status api 123 --json        # structured discovery for a registered rep
 t issue start                        # select one or several open issues
 t issue start api 123 124            # work on two independent issues
 t issue start https://github.com/owner/repo/issues/123 --codex
+t issue open api 123 124             # open several issues in your browser
+t issue open                         # select issues to open interactively
+t issue open https://github.com/owner/repo/issues/123
 ```
 
 Every verb accepts a registered repository alias or GitHub `owner/repo`, either
@@ -429,13 +433,19 @@ issues from all registered GitHub repositories when run outside a checkout;
 canonical repository. `--state all` includes closed issues and is independent
 of the repository scope. An explicit repository and `--all` conflict.
 
-Without a repository, `status` and `start` use the current registered checkout.
-Outside a checkout, `status` requires an explicit repository; `start` can present
+Without a repository, `status`, `start`, and `open` use the current registered checkout.
+Outside a checkout, `status` requires an explicit repository; `start` and `open` can present
 a repository picker interactively. An issue URL already names its
 repository. Supplying a repo both positionally and with `--repo` is an error.
 JSON, remote scans, and other non-interactive commands never prompt.
 
-`list` and `status` are read-only. `start` accepts explicit issue numbers or a
+`list` and `status` are read-only. `open` accepts issue numbers or URLs and asks
+GitHub CLI to open each in the user's browser. With no issue number, it uses the
+same multi-select issue picker; it does not start an agent or create a worktree.
+An explicit GitHub `owner/repo` or issue URL does not require a registered
+checkout for `open`.
+
+`start` accepts explicit issue numbers or a
 GitHub issue URL. With no number, it presents the same multi-select picker used
 for sessions; Space or Tab marks issues, and Enter starts the marked issues.
 Ctrl-A shows all issues; Ctrl-F restores open issues; Ctrl-/ shows full details. Each issue
