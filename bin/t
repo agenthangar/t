@@ -9237,7 +9237,7 @@ def _root_help():
 
 WORK
   session   Open, find, and move work sessions
-  issue     List issues, inspect work, start agents, and open issues in a browser
+  issue     List, inspect, work on, and open GitHub issues
   share     Share context between agent conversations
   repo      List and manage repositories
   cursor    List, resume, and send Cursor chats
