@@ -2,12 +2,17 @@
 
 ![t — coding-agent sessions, under control](docs/media/hero.svg)
 
-**A 24/7 coding utility. Take your work with you.**
+**Your terminal. Your desktop. Same task.**
 
-Start a task with your coding agent, keep it running on a remote machine, and
-pick it up from your laptop or a phone's SSH terminal. Move between local and
-cloud development, or bring a local Codex conversation into its macOS desktop
-app with the running web preview beside it.
+Start in the terminal. Continue in the Codex desktop app. Keep your conversation,
+isolated Git worktree, and running web preview together. On macOS, use
+`t session open my-project 1 --app` to move a local Codex conversation to the
+desktop, and `t session open my-project 1 --cli` to return after following t’s
+instructions to release that desktop chat.
+
+Terminal workflows support macOS and Linux. Move sessions to a configured SSH
+host and check in from another computer or a phone’s terminal while that host
+stays awake and reachable. Desktop handoff is specific to Codex on macOS.
 
 t manages sessions in tmux and gives each task its own Git worktree. It includes
 Claude Code and Codex session workflows, plus Cursor transfer tools.
@@ -25,10 +30,43 @@ Supported workflows vary by agent; see the [support matrix](#agents).
 
 [Get started](#install) · [Work from anywhere](#work-from-anywhere) · [Commands](#commands) · [Configuration](#configuration) · [Agent support](#agents) · [Coming soon](#coming-soon) · [AgentHangar](https://agenthangar.ai)
 
-![A rendered 24-second walkthrough of a real Codex thread moving from Mac to mini and back, followed by a desktop open request](docs/media/demo.gif)
+## Watch one task move
 
-The [demo recording](docs/media/README.md) explains exactly what was captured.
-Watch the [MP4](docs/media/demo.mp4) or use the [static poster](docs/media/demo-poster.png).
+![One task: terminal, mini, desktop, and resume](docs/media/terminal/workflow.gif)
+
+[Watch the 66-second demo](docs/media/terminal/workflow.mp4) ·
+[Static cover](docs/media/terminal/workflow-poster.png) ·
+[Capture notes and sources](docs/media/terminal/README.md)
+
+GPT-6.1-Sol fixes a real task-CLI bug: two failing tests become five passing tests,
+with the code change and actual CLI output visible. The same task moves to mini,
+runs the tests there, returns through Codex desktop, and resumes in the terminal
+for another verification turn. The 66-second cut keeps reading sections at normal
+speed and plays session setup at 2×. The app window was not filmed; mini needed
+Codex sign-in at capture time, so no remote model turn is shown.
+
+### Open → another host → desktop → resume
+
+```sh
+t open my-project --codex             # start in an isolated worktree
+t beam my-project 1 --host mini       # move to your configured host
+t beam my-project 1 --from mini       # bring it back locally
+t open my-project 1 --app             # continue in Codex desktop (macOS)
+t open my-project 1 --cli             # return after releasing the desktop chat
+t resume my-project 1                 # revive a saved conversation after its CLI ends
+```
+
+The [sample project and actual patch](docs/media/terminal/fixture/README.md)
+reproduce the bug fix. Host transfer uses `t beam`; `t push` backgrounds a local session.
+
+The same local conversation and worktree stay together. Desktop handoff can
+include its running web preview and referenced Markdown plan. See
+[the desktop workflow details](#work-from-anywhere) for ownership and release behavior.
+
+The earlier [host-handoff walkthrough](docs/media/demo.mp4) follows a Codex thread
+from Mac to mini and back. It is an edited rendering of verified command output;
+its final desktop open request was sent but app delivery was not confirmed.
+[Read its evidence notes](docs/media/README.md).
 
 ## Work from anywhere
 
@@ -218,6 +256,7 @@ for a host's login shell.
 | `t issue list [repo] [-a]` | List issues in the current, named, or all registered GitHub repositories |
 | `t issue status [repo] <number>` | Inspect existing work without starting an agent |
 | `t issue start [repo] [number ...]` | Continue or start work on one or several issues |
+| `t issue open [repo] [number ...]` | Open one or several GitHub issues in your browser |
 | `t share --to agent:id --file summary.md [--attach history.md]` | Share selected context with an exact Claude, Codex, or Cursor conversation |
 | `t share targets` / `t share inbox` / `t share read <message-id>` | Find conversations and read received shares |
 | `t session list [-r] [-a]` | List sessions across local or remote hosts and repositories |
@@ -394,6 +433,9 @@ t issue status api 123 --json        # structured discovery for a registered rep
 t issue start                        # select one or several open issues
 t issue start api 123 124            # work on two independent issues
 t issue start https://github.com/owner/repo/issues/123 --codex
+t issue open api 123 124             # open several issues in your browser
+t issue open                         # select issues to open interactively
+t issue open https://github.com/owner/repo/issues/123
 ```
 
 Every verb accepts a registered repository alias or GitHub `owner/repo`, either
@@ -404,13 +446,19 @@ issues from all registered GitHub repositories when run outside a checkout;
 canonical repository. `--state all` includes closed issues and is independent
 of the repository scope. An explicit repository and `--all` conflict.
 
-Without a repository, `status` and `start` use the current registered checkout.
-Outside a checkout, `status` requires an explicit repository; `start` can present
+Without a repository, `status`, `start`, and `open` use the current registered checkout.
+Outside a checkout, `status` requires an explicit repository; `start` and `open` can present
 a repository picker interactively. An issue URL already names its
 repository. Supplying a repo both positionally and with `--repo` is an error.
 JSON, remote scans, and other non-interactive commands never prompt.
 
-`list` and `status` are read-only. `start` accepts explicit issue numbers or a
+`list` and `status` are read-only. `open` accepts issue numbers or URLs and asks
+GitHub CLI to open each in the user's browser. With no issue number, it uses the
+same multi-select issue picker; it does not start an agent or create a worktree.
+An explicit GitHub `owner/repo` or issue URL does not require a registered
+checkout for `open`.
+
+`start` accepts explicit issue numbers or a
 GitHub issue URL. With no number, it presents the same multi-select picker used
 for sessions; Space or Tab marks issues, and Enter starts the marked issues.
 Ctrl-A shows all issues; Ctrl-F restores open issues; Ctrl-/ shows full details. Each issue

@@ -1,0 +1,8 @@
+{"version": 2, "width": 120, "height": 30, "title": "python3 -m unittest -v && python3 tasks.py tasks.json --status open && git diff --stat"}
+[0.028, "o", "$ python3 -m unittest -v && python3 tasks.py tasks.json --status open && git diff --stat\r\n"]
+[2.078, "o", "test_all_tasks (test_tasks.TaskFilterTests.test_all_tasks) ... "]
+[2.078, "o", "ok\r\ntest_done_tasks (test_tasks.TaskFilterTests.test_done_tasks) ... ok\r\n"]
+[2.078, "o", "test_empty_tasks (test_tasks.TaskFilterTests.test_empty_tasks) ... "]
+[2.078, "o", "ok\r\ntest_filter_preserves_input (test_tasks.TaskFilterTests.test_filter_preserves_input) ... ok\r\ntest_open_tasks (test_tasks.TaskFilterTests.test_open_tasks) ... ok\r\n\r\n----------------------------------------------------------------------\r\nRan 5 tests in 0.000s\r\n\r\nOK\r\n"]
+[2.111, "o", "[open] Ship the CLI\r\n[open] Test desktop handoff\r\n"]
+[2.122, "o", " tasks.py      |  5 \u001b[32m+++\u001b[m\u001b[31m--\u001b[m\r\n test_tasks.py | 12 \u001b[32m++++++++++++\u001b[m\r\n 2 files changed, 15 insertions(+), 2 deletions(-)\r\n"]

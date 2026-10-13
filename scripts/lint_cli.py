@@ -26,7 +26,7 @@ LEGACY_SHORTCUTS = frozenset({
 # `t share` is the reviewed exception: sending is the root action, while
 # targets, inbox, and read remain explicit read-only verbs.
 SHARE_COMMAND = "share"
-ISSUE_VERBS = {"list", "status", "start"}
+ISSUE_VERBS = {"list", "status", "start", "open"}
 # These established families route to compatibility parsers. Freeze their
 # accepted verbs so extending one requires an intentional contract review.
 LEGACY_GROUP_VERBS = {
@@ -96,7 +96,7 @@ def check_issue_help(help_text):
     errors = []
     help_text = " ".join(help_text.split())
     for syntax in ("t issue list [repo]", "t issue status [repo] <id>",
-                   "t issue start [repo] [id ...]"):
+                   "t issue start [repo] [id ...]", "t issue open [repo] [id ...]"):
         if syntax not in help_text:
             errors.append("t issue help must show " + syntax)
     for detail in ("owner/repo", "--repo", "current checkout"):
@@ -165,7 +165,7 @@ def check(parser, command_groups, instructions):
                       ", ".join(sorted(unsupported)))
     issue_registry = set(command_groups.get("issue", {}))
     if not ISSUE_VERBS <= issue_registry:
-        errors.append("issue command registry must expose list, status, and start")
+        errors.append("issue command registry must expose list, status, start, and open")
     for group, verbs in LEGACY_GROUP_VERBS.items():
         if set(command_groups.get(group, {})) != verbs:
             errors.append(f"{group} compatibility verb registry changed; review its CLI contract")
@@ -199,7 +199,7 @@ def check(parser, command_groups, instructions):
     issue = top._name_parser_map.get("issue")
     issue_sub = _subparsers(issue) if issue else None
     if issue_sub is None or not ISSUE_VERBS <= set(issue_sub.choices):
-        errors.append("issue parser must expose list, status, and start as verbs")
+        errors.append("issue parser must expose list, status, start, and open as verbs")
     elif issue_registry != set(issue_sub.choices):
         errors.append("issue parser verbs must match its public command registry")
     if issue_sub is not None:
@@ -236,7 +236,10 @@ def check(parser, command_groups, instructions):
                   ["issue", "list", "--repo", "repo"],
                   ["issue", "status", "123", "--json"],
                   ["issue", "status", "123", "--repo", "repo"],
-                  ["issue", "start"], ["issue", "start", "repo", "123", "124", "--codex"]):
+                  ["issue", "start"], ["issue", "start", "repo", "123", "124", "--codex"],
+                  ["issue", "open"], ["issue", "open", "repo", "123", "124"],
+                  ["issue", "open", "--repo", "owner/repo", "123"],
+                  ["issue", "open", "https://github.com/owner/repo/issues/123"]):
         valid, args = accepts(words)
         if not valid or args.verb != "issue" or args.action != words[1]:
             errors.append("issue parser rejected required form: " + " ".join(words))
@@ -245,11 +248,13 @@ def check(parser, command_groups, instructions):
                   ["issue", "status", "123", "--codex"],
                   ["issue", "status", "123", "--allow-incomplete-check"],
                   ["issue", "start", "123", "--json"],
+                  ["issue", "open", "123", "--json"],
+                  ["issue", "open", "123", "--codex"],
                   ["issue", "start", "123", "--codex", "--claude"]):
         valid, _ = accepts(words)
         if valid:
             errors.append("issue parser accepted invalid form: " + " ".join(words))
-    for phrase in ("t issue list", "t issue status", "t issue start"):
+    for phrase in ("t issue list", "t issue status", "t issue start", "t issue open"):
         if phrase not in instructions:
             errors.append("AGENTS.md must document " + phrase)
     if "t share" not in instructions:
