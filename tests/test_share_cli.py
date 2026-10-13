@@ -48,8 +48,7 @@ def test_share_parser_rejects_cross_action_flags(t_mod, argv):
 
 
 @pytest.mark.parametrize("argv", [
-    ["share", "--to", "codex:abc"],
-    ["share", "--file", "summary.md"],
+    ["share", "--json"],
     ["share", "--retry", "id", "--to", "codex:abc"],
     ["share", "--retry", "id", "--file", "summary.md"],
     ["share", "--to", "codex:abc", "--file", "summary.md", "targets"],
@@ -58,6 +57,23 @@ def test_share_main_rejects_incomplete_or_mixed_send_forms(t_mod, argv):
     with pytest.raises(SystemExit) as exc:
         t_mod.main(argv)
     assert exc.value.code == 2
+
+
+@pytest.mark.parametrize("argv", [
+    ["share"], ["share", "--to", "claude"],
+    ["share", "--to", "codex:abc"], ["share", "--file", "summary.md"],
+    ["share", "--from", "codex", "--to", "claude"],
+    ["share", "--to", "claude", "--json"],
+])
+def test_guided_share_forms_reach_handler_without_requiring_file(t_mod, monkeypatch, argv):
+    monkeypatch.setattr(t_mod.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(t_mod.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(t_mod, "Config", lambda: object())
+    monkeypatch.setattr(t_mod, "_t_update_interactive", lambda: pytest.fail("share checked updates"))
+    seen = []
+    monkeypatch.setitem(t_mod.IMPLEMENTED, "share", lambda cfg, args: seen.append(args) or 0)
+    assert t_mod.main(argv) == 0
+    assert len(seen) == 1
 
 
 def test_bare_share_help_has_no_side_effects(t_mod, monkeypatch, capsys):

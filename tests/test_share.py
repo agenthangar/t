@@ -588,7 +588,7 @@ def test_run_validates_route_retry_and_send_arguments(
     assert share.run(cfg, args(share_action="targets", host="absent")) == 1
     assert "unknown host alias" in capsys.readouterr().err
     assert share.run(cfg, args()) == 1
-    assert "requires --to" in capsys.readouterr().err
+    assert "receiving agent with --to" in capsys.readouterr().err
     assert share.run(cfg, args(retry=str(share.uuid.uuid4()), destination=target["address"])) == 1
     assert "do not supply" in capsys.readouterr().err
     assert share.run(cfg, args(destination=target["address"], file=str(summary),

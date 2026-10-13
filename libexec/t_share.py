@@ -350,6 +350,19 @@ def request_at(route, request, store):
     return remote(route['target'], request) if route['alias'] is not None else dispatch(request, store)
 
 
+def deliver(store, envelope, route):
+    store.save_outgoing(envelope, route)
+    try:
+        result = request_at(route, dict(version=VERSION, op='receive', envelope=envelope), store)
+        expected = dict(id=envelope['id'], digest=envelope['digest'],
+                        target=envelope['target']['address'], status='stored')
+        if result != expected:
+            raise ShareError('receipt does not match this share')
+    except (ValueError, OSError) as error:
+        raise ShareError(f'Delivery unconfirmed: {error}. Retry unchanged with: t share --retry {envelope["id"]}') from error
+    return dict(result, host=route['alias'] or 'local')
+
+
 def render(result, action, as_json=False, *, table_lines=None, scope='local'):
     if as_json:
         print(json.dumps(dict(version=VERSION, result=result), ensure_ascii=True))
@@ -392,6 +405,9 @@ def render(result, action, as_json=False, *, table_lines=None, scope='local'):
 
 def run(cfg, args, api=None):
     try:
+        flow = runpy.run_path(str(Path(__file__).with_name('t_share_flow.py')))
+        if flow['wanted'](args):
+            return flow['run'](cfg, args, api or {}, globals())
         store = Store()
         action = getattr(args, 'share_action', None)
         retry = getattr(args, 'retry', None)
@@ -437,20 +453,14 @@ def run(cfg, args, api=None):
                     remaining -= text_size(content)
                     attachments.append(dict(name=attachment_name(Path(path).name), text=content))
                 envelope = make_envelope(source, target, summary, attachments)
-                store.save_outgoing(envelope, route)
-            try:
-                result = request_at(route, dict(version=VERSION, op='receive', envelope=envelope), store)
-                expected = dict(id=envelope['id'], digest=envelope['digest'], target=envelope['target']['address'], status='stored')
-                if result != expected:
-                    raise ShareError('receipt does not match this share')
-            except (ValueError, OSError) as error:
-                raise ShareError(f'Delivery unconfirmed: {error}. Retry unchanged with: t share --retry {envelope["id"]}') from error
-            result = dict(result, host=route['alias'] or 'local')
+            result = deliver(store, envelope, route)
         scope = (host or 'local') if action == 'targets' else (
             f"{request['recipient']} on {host or 'local'}" if action == 'inbox' else 'local')
         render(result, action, getattr(args, 'json', False),
                table_lines=(api or {}).get('_table_lines'), scope=scope)
         return 0
+    except KeyboardInterrupt:
+        return 130
     except (ValueError, OSError, KeyError, TypeError) as error:
         print('t share: ' + str(error), file=sys.stderr)
         return 1

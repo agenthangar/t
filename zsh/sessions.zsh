@@ -2146,6 +2146,12 @@ _dev_new_session_claimed() {
   # (`t read`). `t pop` kill-sessions the slot itself, so the exit is moot there.
   local prep="_dev_repo_prepare ${(q)branch}; "
   [[ -n $skip_prepare ]] && prep=    # worktree mode: <dir> is already on its branch
+  # Share-only launches can enter a tmux server that inherited the source
+  # agent's environment. Clear its identities in the new pane before startup.
+  if [[ $8 == share ]]; then
+    local clear_identity='unset CLAUDECODE CLAUDE_CODE_SESSION_ID CLAUDE_RESUME_ID CODEX_THREAD_ID CODEX_SESSION_ID CURSOR_SESSION_ID CURSOR_AGENT T_ISSUE_TOKEN; '
+    prep="${clear_identity}${prep}"
+  fi
   tmux send-keys -t "=$session:" "${prep}$(_dev_agent_new_cmd "$agent" "$sid" "$6"); exit" Enter || { tmux kill-session -t "=$session:"; return 1; }
   _dev_launch_startup_check "$session" "$logfile" || return 1
   [[ $agent == claude ]] && _dev_history_record "$sid" "$agent" "$dir" launch

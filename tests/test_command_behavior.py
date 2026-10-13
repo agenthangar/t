@@ -1,5 +1,6 @@
 """Cross-command behavior, checked at runtime rather than inferred from lint."""
 import json
+import io
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -15,8 +16,12 @@ READONLY = [pytest.param(mode['argv'], mode.get('terminal', True), id=f'{name}-{
 
 @pytest.mark.parametrize('argv,terminal', READONLY)
 def test_readonly_commands_never_offer_updates(t_mod, monkeypatch, argv, terminal):
-    # Check the real dispatch preamble in a terminal with an update available.
+    # Check the real dispatch preamble with an update available.
     # Handler behavior is covered by each inventory entry's concrete regressions.
+    stdin, stdout = io.StringIO(), io.StringIO()
+    stdin.isatty = stdout.isatty = lambda: terminal
+    monkeypatch.setattr(t_mod.sys, 'stdin', stdin)
+    monkeypatch.setattr(t_mod.sys, 'stdout', stdout)
     monkeypatch.setattr(t_mod, '_t_update_interactive', lambda: True)
     monkeypatch.setattr(t_mod, '_t_update_installation', lambda: pytest.fail('read-only command checked updates'))
     monkeypatch.setattr(t_mod, 'Config', lambda: object())
@@ -26,7 +31,7 @@ def test_readonly_commands_never_offer_updates(t_mod, monkeypatch, argv, termina
         monkeypatch.setitem(t_mod.IMPLEMENTED, name, handler)
     monkeypatch.setattr(t_mod, 'cmd_cursor', handler)
     assert t_mod.main(argv) == 0
-    assert len(seen) == 1
+    assert len(seen) == (0 if argv == ['share'] and not terminal else 1)
     assert t_mod._command_readonly(argv, terminal=terminal)
 
 
@@ -82,11 +87,17 @@ def test_share_machine_receipt_is_mutating_but_never_offers_update(t_mod, monkey
 
 
 @pytest.mark.parametrize('argv', [
-    ['share'], ['share', 'targets'], ['share', 'targets', '--json'],
+    ['share', 'targets'], ['share', 'targets', '--json'],
     ['share', 'inbox'], ['share', 'read', '123'], ['share', '--json', 'targets'],
 ])
 def test_share_readonly_verbs_and_bare_help(t_mod, argv):
     assert t_mod._command_readonly(argv)
+
+
+def test_bare_share_is_readonly_help_only_without_terminal(t_mod):
+    assert t_mod._command_readonly(['share'], terminal=False)
+    assert not t_mod._command_readonly(['share'], terminal=True)
+    assert t_mod._command_readonly(['share', '--json'], terminal=True)
 
 
 @pytest.mark.parametrize('width', [80, 44, 32])
