@@ -232,6 +232,10 @@ the operation without substituting another conversation. `--app` conflicts with
 Without a terminal, an explicit slot selects its newest saved conversation as
 usual. Use `--days all` to include older histories. Desktop delivery remains an
 OS open request, not proof that the app loaded the conversation.
+Copied histories must already be indexed by the local Codex installation; otherwise
+the error gives the CLI selection command to index that exact conversation first.
+Older histories without a verifiable writer-lock contract are refused until a
+current Codex CLI owns them and can perform the guarded handoff.
 
 `t open`, `t resume`, and `t kill` share the compact resume picker design:
 **Space/Tab marks ✓ and Enter acts on the selection**. **Ctrl-A** shows all

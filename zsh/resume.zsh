@@ -913,7 +913,7 @@ _t_resume() {
 _t_resume_app_check() {
   emulate -L zsh
   local repo=$1 slot=$2 sid=$3 dir=$4 resolved rows host row_sid row_cwd label state context summary agent
-  local owner= name owner_dir aliases alias number
+  local owner= cli_owner= expects_cli= name owner_dir alias number
   resolved=$(_dev_worktree_path "$repo" "$slot") || return 1
   [[ $resolved == $dir && -d $dir && -n $sid && $sid != - ]] || {
     print -u2 -- 't resume --app: recorded worktree changed; no conversation was opened'; return 1
@@ -934,13 +934,19 @@ _t_resume_app_check() {
         print -u2 -- "t resume --app: selected conversation or worktree is owned on $host ($label); release it there or use t session move before retrying"
         return 1
       }
+      # Our own reservation is also listed between preflight and open. It is
+      # not evidence that any conversation is loaded; Python checks writer locks.
+      if [[ $state == app && $context == none && $row_sid == - &&
+            $row_cwd == $dir && $agent == codex && $label != *:* ]]; then
+        continue
+      fi
       [[ $row_sid == $sid && $row_cwd == $dir && $agent == codex && $label != *:* ]] || {
         print -u2 -- "t resume --app: $label owns a different conversation or workspace; release it before retrying (selected $sid)"
         return 1
       }
       [[ -z $owner || $owner == $label ]] || { print -u2 -- 't resume --app: multiple local owners; no handoff attempted'; return 1; }
-      # App rows reserve a worktree without necessarily having a tmux session.
-      [[ $state == app ]] || owner=$label
+      owner=$label
+      [[ $state == app ]] || expects_cli=1
     fi
   done <<< "$rows"
   while IFS='|' read -r name owner_dir; do
@@ -952,9 +958,13 @@ _t_resume_app_check() {
          $(_dev_agent_of_session "$name") == codex && $(_dev_session_sid "$name" "$dir") == $sid ]] || {
         print -u2 -- 't resume --app: local slot changed or has an unverified owner; retry after checking t session list'; return 1
       }
+      cli_owner=$owner
     fi
   done < <(tmux list-sessions -F '#{session_name}|#{session_path}' 2>/dev/null)
-  if [[ -n $owner ]]; then print -r -- "cli"$'\t'"$owner"
+  if [[ -n $expects_cli && -z $cli_owner ]]; then
+    print -u2 -- 't resume --app: selected CLI exited while checking ownership; retry'; return 1
+  fi
+  if [[ -n $cli_owner ]]; then print -r -- "cli"$'\t'"$cli_owner"
   else print -r -- "saved"$'\t'"$repo-$slot"; fi
 }
 

@@ -7424,7 +7424,7 @@ def _app_cli_release(row, contract=None, *, unknown=None):
         options = {key: row[key] for key in ("codex_home", "rollout")}
         options["unknown"] = unknown if unknown is not None else set()
         repo, _, slot = row["slot"].rpartition("-")
-        options["retry"] = "Retry: " + shlex.join(["t", "open", repo, slot, "--app"])
+        options["retry"] = row.get("resume_retry") or "Retry: " + shlex.join(["t", "open", repo, slot, "--app"])
         options["run"] = _run
         if contract is None:
             return helper["preflight_cli_release"](row["sid"], row["cwd"], **options)
@@ -8100,6 +8100,9 @@ def cmd_app(cfg, args, *, saved=None):
                 raise ValueError("recorded worktree does not match the selected repository and slot")
             row = dict(host="local", sid=sid, cwd=cwd, slot=f"{repo}-{slot}",
                        state="saved", context="none", agent="codex", summary="")
+            row["resume_retry"] = ("Retry: " + shlex.join([
+                "t", "session", "resume", repo, slot, "--days", "all", "--app"])
+                + f" and select conversation {sid}. ")
         if not os.path.isdir(row["cwd"]):
             raise ValueError(f"the session's worktree is missing: {row['cwd']}")
         if not args.no_plan and plan is None:
@@ -8124,7 +8127,15 @@ def cmd_app(cfg, args, *, saved=None):
         if not bundle:
             raise ValueError("install the Codex desktop app in /Applications or ~/Applications first")
         with _app_handoff_lock(row), (_app_resume_lock(row) if saved else nullcontext()):
-            row = _app_saved_thread(row)
+            try:
+                row = _app_saved_thread(row)
+            except ValueError as exc:
+                if saved:
+                    raise ValueError(f"{exc}. Desktop resume requires this exact thread in the local "
+                                     "Codex index. Run " + shlex.join([
+                                         "t", "session", "resume", repo, slot, "--days", "all", "--cli"])
+                                     + f" and select {row['sid']} to index it before retrying.") from exc
+                raise
             if row["archived"]:
                 raise ValueError("this conversation is archived; restore it before opening it in the app")
             unknown = set()
@@ -8179,7 +8190,7 @@ def cmd_app(cfg, args, *, saved=None):
               "The worktree slot remains reserved.")
         return 0
     except ValueError as e:
-        print(f"t app: {e}", file=sys.stderr)
+        print(f"{'t resume --app' if saved else 't app'}: {e}", file=sys.stderr)
         return 1
 
 
@@ -9935,7 +9946,9 @@ REMOTE SESSIONS
             "or Ctrl-A; -l/--live starts with all rows and Ctrl-F restores the inactive view. Live rows "
             "show '● active' / '● on <host>'; picking one attaches to its existing owner "
             "(locally or on its host) instead of resuming; naming a live slot explicitly "
-            "always attaches. "
+            "always attaches in CLI mode. --app instead selects ONE exact saved Codex "
+            "conversation for the local macOS app, including histories in a live slot; "
+            "only that same local owner can be handed off. Other owners are refused. "
             "A conversation is live by its ID too: one resumed into ANOTHER slot (or run as "
             "a foreground session) is shown as a row pointing at that owner — never resumed "
             "a second time. --host H revives the pick on H instead of here. "
@@ -10479,7 +10492,7 @@ def main(argv):
     if len(argv) == 3 and argv[0] == "_app-open-cli":
         return cmd_app_open_cli(Config(), argv[1], argv[2])
     if len(argv) == 5 and argv[0] == "_app-resume":
-        args = build_parser().parse_args(["app", argv[1], argv[2], "--reuse-window"])
+        args = build_parser().parse_args(["app", "push", argv[1], argv[2], "--reuse-window"])
         return cmd_app(Config(), args, saved=(argv[3], argv[4]))
     if len(argv) == 3 and argv[0] == "_app-close":
         return cmd_app_close(Config(), argv[1], argv[2])
