@@ -1,0 +1,5 @@
+{"version": 2, "width": 120, "height": 30, "title": "t app pull demo 1 --thread [demo-thread]"}
+[0.029, "o", "$ t app pull demo 1 --thread [demo-thread]\r\n"]
+[3.067, "o", "demo-1 \u2192 Codex CLI \u00b7 thread [demo-thread]\r\n"]
+[3.131, "o", "Note: 1 other held Codex writer lock(s) have no worktree mapping; this handoff checked the selected thread and known worktree owners.\r\n"]
+[5.9, "o", "Resumed the same conversation in tmux. Attach with: t open demo 1 --cli\r\n"]

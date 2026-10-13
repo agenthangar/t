@@ -1,0 +1,14 @@
+[
+  {
+    "title": "Ship the CLI",
+    "status": "open"
+  },
+  {
+    "title": "Write the docs",
+    "status": "done"
+  },
+  {
+    "title": "Test desktop handoff",
+    "status": "open"
+  }
+]
