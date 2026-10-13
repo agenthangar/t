@@ -62,9 +62,19 @@ _t_fzf_paginated() (
   _t_paged_size=$(stty size </dev/tty 2>/dev/null) || _t_paged_size=
   if [ -n "$_t_paged_size" ] && [ "${_t_paged_size#* }" -le 44 ]; then
     T_PICKER_PAGED_CONTROLS='Enter resume · Esc
-Ctrl-F/B pg · Ctrl-R'
+Ctrl-F/B pg · Ctrl-R
+Ctrl-/ details'
   else
     T_PICKER_PAGED_CONTROLS='Enter resume · Esc · Ctrl-F/B pages · Ctrl-R refresh · Ctrl-/ details'
+  fi
+  _t_paged_preview_window='hidden:wrap:down:40%:~1'
+  _t_paged_margin='1,2' _t_paged_info=default
+  if [ -n "$_t_paged_size" ] && [ "${_t_paged_size%% *}" -le 14 ]; then
+    _t_paged_margin='0,2' _t_paged_info=inline
+    _t_paged_preview_window='hidden:wrap:down:3:border-none:~1'
+  fi
+  if [ -n "$_t_paged_size" ] && [ "${_t_paged_size%% *}" -ge 22 ] && [ "${_t_paged_size#* }" -ge 70 ]; then
+    _t_paged_preview_window='wrap:down:35%:border-top:~1'
   fi
   T_PICKER_PAGED_PAGE=$_t_paged_page T_PICKER_PAGED_ROWS=$_t_paged_rows
   export T_PICKER_PAGED_CONTROLS T_PICKER_PAGED_PAGE T_PICKER_PAGED_ROWS
@@ -84,12 +94,12 @@ SH
   # shellcheck disable=SC2016
   _t_paged_header_command='sh "$T_PICKER_PAGED_RENDER"'
   _t_paged_bind="change:execute-silent($_t_paged_helper show {q})+reload-sync($_t_paged_rows_command)+transform-header($_t_paged_header_command),ctrl-f:execute-silent($_t_paged_helper next {q})+reload-sync($_t_paged_rows_command)+transform-header($_t_paged_header_command),ctrl-b:execute-silent($_t_paged_helper previous {q})+reload-sync($_t_paged_rows_command)+transform-header($_t_paged_header_command)"
-  _t_fzf --disabled --sync --no-multi --delimiter="$(printf '\t')" --with-nth=2 --no-hscroll \
+  _t_fzf --height=100% --margin="$_t_paged_margin" --info="$_t_paged_info" --disabled --sync --no-multi --delimiter="$(printf '\t')" --with-nth=2 --no-hscroll \
     --print-query --expect=enter,ctrl-r --query="$_t_paged_query" --prompt="$_t_paged_prompt" \
     --header="$(sh "$T_PICKER_PAGED_RENDER")" \
-    --bind='esc:abort,ctrl-c:abort,tab:down,shift-tab:up,ctrl-/:toggle-preview' \
+    --bind='esc:abort,ctrl-c:abort,tab:down,shift-tab:up,ctrl-/:toggle-preview,shift-up:preview-up,shift-down:preview-down' \
     --bind="$_t_paged_bind" --preview="$_t_paged_preview" \
-    --preview-window='hidden:wrap:down:40%' < "$_t_paged_rows"
+    --preview-window="$_t_paged_preview_window" < "$_t_paged_rows"
 )
 
 # Resume-style session picker with a reversible default filter. Keep both views

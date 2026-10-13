@@ -126,12 +126,25 @@ one. It retains inactive and live conversations, archived records, and records
 whose worktrees or transcripts have been removed. It always asks you to select a
 conversation before resuming, including when only one exists.
 
+History uses the same session information as `t ls`: status and active context,
+CLI or desktop interface, agent glyph and recorded model, host, session, and
+working-on summary. Saved conversations keep their recorded metadata; missing
+historical model or interface evidence stays unknown. The picker aligns these
+fields and keeps the summary visible on small terminals. Its details pane shows
+full values, date, branch and commit evidence, every associated PR, and the exact
+conversation ID. At 80×24 and larger the pane opens by default; **Ctrl-/** toggles
+it on smaller screens, and **Shift-↑/↓** scrolls it. PR suffixes use **O** open,
+**M** merged, **C** closed, and **?** unknown; extra PRs show a count.
+
 History shows 50 conversations per page. Search covers all pages; Ctrl-F and
 Ctrl-B move between pages, Ctrl-/ opens details, Enter resumes the exact selected
 conversation, and Escape cancels. Ctrl-R or `--refresh` refreshes metadata from
 registered hosts without downloading their transcripts. Unreachable hosts retain
 their cached records. `--limit N --page N --json` provides paginated metadata;
-without a terminal the command only lists conversations.
+without a terminal the command only prints an aligned table, retaining dates,
+branches, PR states, and full conversation IDs. JSON also includes the normalized
+`display` fields and recorded metadata provenance. PR state reads use the cache;
+Ctrl-R or `--refresh` updates it explicitly.
 
 A live terminal conversation attaches to its existing owner. A desktop or
 foreground owner offers an explicit handoff path. An inactive conversation reuses

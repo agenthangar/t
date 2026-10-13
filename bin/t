@@ -287,25 +287,23 @@ def _columns():
     return shutil.get_terminal_size((80, 24)).columns
 
 
+_SESSION_DISPLAY = None
+
+
+def _session_display_helpers():
+    global _SESSION_DISPLAY
+    if _SESSION_DISPLAY is None:
+        _SESSION_DISPLAY = runpy.run_path(os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))),
+                                                      "libexec", "t_session_details.py"))
+    return _SESSION_DISPLAY
+
+
 def _display_width(text):
-    return sum(0 if unicodedata.category(char) in ("Mn", "Me", "Cf") else
-               2 if unicodedata.east_asian_width(char) in ("W", "F") else 1
-               for char in text)
+    return _session_display_helpers()["display_width"](text)
 
 
 def _wrap_columns(text, width, continuation=""):
-    """Wrap plain cells by terminal columns, including wide/combining glyphs."""
-    lines, line, used = [], "", 0
-    for char in text:
-        size = _display_width(char)
-        if used + size > width and line:
-            lines.append(line.rstrip())
-            line, used = continuation, _display_width(continuation)
-        line += char
-        used += size
-    if line:
-        lines.append(line.rstrip())
-    return lines
+    return _session_display_helpers()["wrap_columns"](text, width, continuation)
 
 
 def _table_lines(headings, rows, width=None):
@@ -578,18 +576,8 @@ def _session_picker_rows(rows, remote=False, scoped=False):
 
 def _session_table_lines(rows, remote=False):
     headings = ["STATUS", "UI", "MODEL"] + (["HOST"] if remote else []) + ["SESSION", "WORKING ON"]
-    cells = []
-    for row in rows:
-        active = row.get("context") == "active"
-        attached = row.get("state") == "attached" or (row.get("state") == "app" and active)
-        marks = ("●" if attached else "○") + (" ✓" if active else "")
-        if _PR_WIP_RE.search(row.get("summary") or ""):
-            marks += " ↻"
-        cell = [marks, "▣ desktop" if row.get("state") == "app" else "› cli",
-                f"{_agent_glyph(row.get('agent', 'claude'))} {row.get('model') or '-'}"]
-        if remote:
-            cell.append(row.get("host", "local"))
-        cells.append([*cell, row["slot"], row.get("summary") or ""])
+    cells = [_session_display_helpers()["session_cells"](row, _agent_glyph(row.get("agent", "claude")), remote)
+             for row in rows]
     return _table_lines(headings, cells)
 
 
@@ -9702,7 +9690,11 @@ REMOTE SESSIONS
         description="Browse local and retained slot history, including live, inactive, archived, "
                     "and removed worktrees. A lone number infers the repository; no arguments "
                     "infer the current slot or offer a slot picker. History never automatically "
-                    "resumes a sole conversation. Search covers all pages. Enter resumes the "
+                    "resumes a sole conversation. Rows show the same status, interface, recorded model, "
+                    "host, session, and working-on summary as t session list. Full details retain "
+                    "dates, branches, PRs, and exact IDs; unknown historical metadata stays unknown. "
+                    "The details pane opens on larger terminals; Ctrl-/ toggles it and Shift-Up/Down "
+                    "scrolls. Search covers all pages. Enter resumes the "
                     "selected conversation; Ctrl-F/B change page, Ctrl-R refreshes remote "
                     "metadata, Ctrl-/ shows details, and Escape cancels. Without a terminal "
                     "this command lists only. Remote refresh fetches metadata; only an actual "

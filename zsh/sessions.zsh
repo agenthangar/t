@@ -2015,10 +2015,10 @@ _dev_recovery_watch() {
 # lock files remain on disk so a waiting process never locks a replaced inode.
 # Durable revision evidence belongs to the conversation, never just a slot branch.
 _dev_history_record() {
-  local sid=$1 agent=$2 dir=$3 event=${4:-launch} tx
+  local sid=$1 agent=$2 dir=$3 event=${4:-launch} interface=${5:-cli} tx
   [[ -n $sid && $sid != - ]] || return 0
   tx=$(_dev_agent_transcript "$agent" "$sid" "$dir" 2>/dev/null)
-  python3 "$T_HOME/libexec/t_history.py" record "$sid" "$agent" "$dir" "$tx" "$event" >/dev/null 2>&1 || true
+  python3 "$T_HOME/libexec/t_history.py" record "$sid" "$agent" "$dir" "$tx" "$event" "$interface" >/dev/null 2>&1 || true
 }
 
 _dev_with_launch_locks() {

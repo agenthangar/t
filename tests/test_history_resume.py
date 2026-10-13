@@ -323,7 +323,7 @@ def test_history_cli_forms_inference_json_and_readonly(t_mod, app, monkeypatch, 
     assert app.execute(SimpleNamespace(target=['repo', '5'], json=False, refresh=False, page=1, limit=50)) == 0
     listing = capsys.readouterr().out
     assert 'history   repo slot 5' in listing
-    assert all(heading in listing for heading in ('DATE', 'AGENT', 'SESSION', 'TITLE', 'HOST', 'OWNER', 'BRANCH', 'PRS'))
+    assert all(heading in listing for heading in ('STATUS', 'UI', 'MODEL', 'HOST', 'SESSION', 'WORKING ON', 'DATE', 'BRANCH', 'PRS', 'ID'))
     assert 'same-sid' in listing and 'Implement history' in listing and 'Page 1' in listing
     assert '\x1b' not in listing
 

@@ -5,6 +5,66 @@ from pathlib import Path
 import re
 import sqlite3
 import sys
+import unicodedata
+
+
+def display_width(text):
+    return sum(0 if unicodedata.category(char) in ('Mn', 'Me', 'Cf') else
+               2 if unicodedata.east_asian_width(char) in ('W', 'F') else 1
+               for char in text)
+
+
+def clip_columns(text, width):
+    if width <= 0:
+        return ''
+    if display_width(text) <= width:
+        return text
+    out, used = '', 0
+    for char in text:
+        size = display_width(char)
+        if used + size > width - 1:
+            break
+        out += char
+        used += size
+    return out + '…'
+
+
+def wrap_columns(text, width, continuation=''):
+    lines, line, used = [], '', 0
+    for char in text:
+        size = display_width(char)
+        if used + size > width and line:
+            lines.append(line.rstrip())
+            line, used = continuation, display_width(continuation)
+        line += char
+        used += size
+    if line:
+        lines.append(line.rstrip())
+    return lines
+
+
+def recorded_model(record):
+    if not isinstance(record, dict):
+        return None
+    payload = record.get('payload') if record.get('type') == 'turn_context' else (
+        record.get('message') if record.get('type') == 'assistant' else None)
+    model = payload.get('model') if isinstance(payload, dict) else None
+    return model if isinstance(model, str) and model and model != '<synthetic>' else None
+
+
+def session_cells(row, glyph, remote=False):
+    active = row.get('context') == 'active'
+    attached = row.get('state') == 'attached' or (row.get('state') == 'app' and active)
+    marks = ('●' if attached else '○') + (' ✓' if active else '')
+    marks = {'saved': '· saved', 'archived': '□ archived', 'missing': '! missing'}.get(row.get('state'), marks)
+    if re.search(r'#\d+ merged, still in progress', row.get('summary') or ''):
+        marks += ' ↻'
+    interface = row.get('interface') or ('desktop' if row.get('state') == 'app' else 'cli')
+    ui = {'desktop': '▣ desktop', 'cli': '› cli', 'foreground': '› foreground', 'unknown': '? unknown'}[interface]
+    cells = [marks, ui, f'{glyph} {row.get("model") or "-"}']
+    if remote:
+        cells.append(row.get('host', 'local'))
+    return [*cells, row['slot'], row.get('summary') or '']
 
 
 def transcript_model(path):
@@ -24,10 +84,8 @@ def transcript_model(path):
                 rec = json.loads(line)
                 if not isinstance(rec, dict):
                     continue
-                payload = rec.get('payload') if rec.get('type') == 'turn_context' else (
-                    rec.get('message') if rec.get('type') == 'assistant' else None)
-                model = payload.get('model') if isinstance(payload, dict) else None
-                if isinstance(model, str) and model and model != '<synthetic>':
+                model = recorded_model(rec)
+                if model:
                     return model
             except (ValueError, TypeError):
                 continue

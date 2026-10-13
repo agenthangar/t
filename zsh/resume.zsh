@@ -1853,7 +1853,7 @@ _t_app_close_slot() {
     fi
   done
   _t_app_close_verify "$dir" "$sid" "$codex_home" "$rollout" "$archived" || return 1
-  _dev_history_record "$sid" codex "$dir" close
+  _dev_history_record "$sid" codex "$dir" close desktop
   if tmux has-session -t "=$session:" 2>/dev/null; then
     tmux kill-session -t "=$session:" || {
       print -u2 -- 't kill: could not close the parked tmux slot'; return 1
@@ -1865,7 +1865,7 @@ _t_app_close_slot() {
   # Recheck after tmux/process cleanup: another writer may have claimed this
   # thread in the meantime. The marker is the final mutation.
   _t_app_close_verify "$dir" "$sid" "$codex_home" "$rollout" "$archived" || return 1
-  _dev_history_record "$sid" codex "$dir" close
+  _dev_history_record "$sid" codex "$dir" close desktop
   [[ -f $marker && ! -L $marker && $(<"$marker") == codex-app ]] || {
     print -u2 -- 't kill: desktop reservation changed during close'; return 1
   }
