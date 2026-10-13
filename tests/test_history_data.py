@@ -230,7 +230,11 @@ def test_records_scope_exact_agent_and_sid_and_keep_cached_remote_paths(history,
     store.merge(conversation(associations=[association], sources=[{'host': 'remote', 'path': '/secret/transcript'}]))
     store.merge(conversation(agent='claude', associations=[association]))
     store.merge(conversation(repo='other/repo', associations=[association]))
-    owners = [{'agent': 'codex', 'sid': 'same-sid', 'host': 'local', 'slot': 'repo-1'}]
+    owner_workspace = Path(app.cfg.worktree_root) / 'repo/1'
+    owner_workspace.mkdir()
+    owners = [{'agent': 'codex', 'sid': 'same-sid', 'host': 'local', 'slot': 'repo-1',
+               'cwd': str(owner_workspace), 'state': 'detached', 'context': '',
+               'model': 'fixture-owner-model', 'summary': 'Exact owner working-on text'}]
     rows = app.records('repo', '7', owners)
     assert len(rows) == 2
     assert next(r for r in rows if r['agent'] == 'codex')['owners'] == owners
@@ -330,9 +334,9 @@ def test_private_atomic_json_and_sanitized_details(history, tmp_path):
                        sources=[{'host': 'remote', 'path': '/tx'}], prs=[{'url': 'https://github.com/org/repo/pull/2', 'number': 2}],
                        mentions=[{'url': 'https://github.com/org/repo/pull/2'}, {'url': 'https://github.com/org/repo/pull/3'}])
     rendered = history.details(row)
-    assert 'commit unverified' in rendered
+    assert 'Revision: unverified' in rendered
     assert rendered.count('Incidental PR mention:') == 1
-    assert 'branch unknown' in rendered
+    assert 'Branch: unknown' in rendered
     assert history.clean(' title\x1b\n secret\t words ') == 'title secret words'
 
 
