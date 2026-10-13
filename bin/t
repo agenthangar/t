@@ -5062,7 +5062,11 @@ def _command_readonly(argv, *, terminal=None):
                 continue
             else:
                 return word in ("targets", "inbox", "read")
-        return not tail or all(word == "--json" for word in tail)
+        if not tail:
+            if terminal is None:
+                terminal = sys.stdin.isatty() and sys.stdout.isatty()
+            return not terminal
+        return all(word == "--json" for word in tail)
     if verb == "history":
         if terminal is None:
             terminal = sys.stdin.isatty() and sys.stdout.isatty()
@@ -9628,16 +9632,19 @@ def build_parser():
     issue_open.add_argument("--repo", help="registered repository alias or GitHub owner/name")
 
     share = sub.add_parser("share", help="share context with another agent conversation",
-        description="Send a summary and selected text to a Claude, Codex, or Cursor conversation. "
-                    "Bare `t share` shows this help.")
-    share.add_argument("--to", dest="destination", metavar="AGENT:ID",
-                       help="exact destination conversation")
-    share.add_argument("--file", metavar="PATH|-", help="UTF-8 summary file or stdin")
+        description="Continue your current conversation with Claude, Codex, or Cursor. "
+                    "Run `t share` in a terminal to choose an agent and review the context. "
+                    "`t share --to claude` starts a new Claude session with the original request "
+                    "and recent conversation text, in a fresh worktree. "
+                    "Use an exact agent:<id> to send to an existing conversation instead.")
+    share.add_argument("--to", dest="destination", metavar="AGENT[:ID]",
+                       help="receiving agent (claude, codex, cursor), or exact conversation")
+    share.add_argument("--file", metavar="PATH|-", help="use this UTF-8 context instead of captured conversation text")
     share.add_argument("--attach", action="append", default=[], metavar="PATH",
                        help="attach selected UTF-8 history; repeat as needed")
-    share.add_argument("--from", dest="source", metavar="AGENT:ID",
-                       help="exact source conversation when it cannot be inferred")
-    share.add_argument("--host", help="destination host alias")
+    share.add_argument("--from", dest="source", metavar="AGENT[:ID]",
+                       help="source conversation; an agent name filters the interactive source picker")
+    share.add_argument("--host", help="host of an existing receiving conversation")
     share.add_argument("--retry", metavar="MESSAGE_ID",
                        help="retry the original saved delivery unchanged")
     share.add_argument("--json", action="store_true", help="print a machine-readable receipt")
@@ -10442,7 +10449,8 @@ def main(argv):
             return 2
         _print_command_help(target, words, canonical, detailed=True)
         return 0
-    if argv in (["share"], ["share", "-h"], ["share", "--help"]):
+    if argv in (["share", "-h"], ["share", "--help"]) or (
+            argv == ["share"] and not (sys.stdin.isatty() and sys.stdout.isatty())):
         _help_parser(parser, ["share"]).print_help()
         return 0
     if len(argv) == 1 and argv[0] in COMMAND_GROUPS and argv[0] != "config":
@@ -10500,8 +10508,8 @@ def main(argv):
             if args.retry:
                 if args.destination or args.file or args.attach or args.source or args.host:
                     parser.error("t share --retry cannot be combined with send options")
-            elif not args.destination or not args.file:
-                parser.error("t share requires --to and --file")
+            elif args.json and not args.destination:
+                parser.error("t share --json requires --to")
         elif args.destination or args.file or args.attach or args.source or args.retry:
             parser.error("t share read-only verbs cannot be combined with send options")
     if args.verb == "on":

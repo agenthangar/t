@@ -755,7 +755,8 @@ _t() {
     fi
     case ${words[CURRENT-1]} in
       --file|--attach) _files; return ;;
-      --to|--from|--for) _message 'agent:conversation-id'; return ;;
+      --to|--from) _values 'agent or agent:conversation-id' claude codex cursor; return ;;
+      --for) _message 'agent:conversation-id'; return ;;
       --host) _values 'host' ${(k)REMOTE_HOSTS}; return ;;
       --retry|--attachment) _message 'message ID or attachment name'; return ;;
     esac

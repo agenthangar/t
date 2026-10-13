@@ -16,17 +16,118 @@
   "commands": {
     "share": {
       "patterns": [
+        "wizard",
+        "single",
         "action",
-        "machine"
+        "machine",
+        "detail"
       ],
       "renderer": "mixed",
-      "scope": "exact destination conversation and optional host",
-      "confirmation": "none",
+      "scope": "verified source conversation, selected agent or exact destination, and optional host",
+      "confirmation": "review",
       "tests": [
+        "tests/test_share_flow.py::test_bare_interactive_share_defaults_to_new_claude_and_inferred_codex",
+        "tests/test_share_flow.py::test_guided_existing_recipient_delivers_without_launch",
         "tests/test_share.py::test_run_local_send_then_inbox_and_read"
       ],
       "modes": {
         "default": {
+          "argv": [
+            "share"
+          ],
+          "patterns": [
+            "wizard",
+            "single"
+          ],
+          "read_only": false,
+          "terminal": true,
+          "tests": [
+            "tests/test_share_flow.py::test_bare_interactive_share_defaults_to_new_claude_and_inferred_codex",
+            "tests/test_share_flow.py::test_cancel_source_destination_note_and_review_without_side_effects"
+          ],
+          "notes": "Infer or choose a source, choose a recipient agent, review selected messages, then launch and enter a local session."
+        },
+        "nonterminal_help": {
+          "argv": [
+            "share"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_share_cli.py::test_bare_share_help_has_no_side_effects"
+          ],
+          "notes": "With no terminal, bare share prints help and exits without dispatching a share."
+        },
+        "new": {
+          "argv": [
+            "share",
+            "--to",
+            "claude"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_share_flow.py::test_short_destination_runs_without_tty_and_json_prints_result"
+          ],
+          "notes": "Starts a new local session when the exact source is known; terminal use reviews context and enters the session, while nonterminal use leaves it detached."
+        },
+        "new_json": {
+          "argv": [
+            "share",
+            "--to",
+            "claude",
+            "--json"
+          ],
+          "patterns": [
+            "action",
+            "machine"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_share_flow.py::test_short_destination_runs_without_tty_and_json_prints_result"
+          ],
+          "notes": "Machine-readable launch result, without an interactive prompt or session entry."
+        },
+        "source_picker": {
+          "argv": [
+            "share",
+            "--from",
+            "codex",
+            "--to",
+            "claude"
+          ],
+          "patterns": [
+            "wizard",
+            "single"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_share_flow.py::test_source_picker_selection_is_revalidated_before_capture"
+          ],
+          "notes": "Agent-only --from filters the source picker; --from agent:id selects an exact source."
+        },
+        "exact_context": {
+          "argv": [
+            "share",
+            "--to",
+            "claude:123"
+          ],
+          "patterns": [
+            "wizard",
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_share_flow.py::test_guided_existing_recipient_delivers_without_launch"
+          ],
+          "notes": "Captures source context for an existing recipient and reviews it before sending in a terminal."
+        },
+        "manual_file": {
           "argv": [
             "share",
             "--to",
@@ -40,10 +141,11 @@
           "read_only": false,
           "tests": [
             "tests/test_share.py::test_run_local_send_then_inbox_and_read",
-            "tests/test_share.py::test_human_output_shows_targets_inbox_summary_attachment_and_receipt"
-          ]
+            "tests/test_share_flow.py::test_manual_file_and_attachments_share_exact_reviewed_content"
+          ],
+          "notes": "Exact destination with a file sends directly; attachments add UTF-8 text."
         },
-        "json": {
+        "manual_file_json": {
           "argv": [
             "share",
             "--to",
@@ -60,7 +162,7 @@
           "tests": [
             "tests/test_share.py::test_run_local_send_then_inbox_and_read"
           ],
-          "notes": "A machine-readable receipt still follows a mutating send; no automatic update prompt."
+          "notes": "Machine-readable receipt follows a mutating send."
         },
         "retry": {
           "argv": [
@@ -93,6 +195,24 @@
           "tests": [
             "tests/test_share.py::test_run_remote_lost_receipt_then_retries_original_bundle"
           ]
+        },
+        "remote_picker": {
+          "argv": [
+            "share",
+            "--to",
+            "claude",
+            "--host",
+            "mini"
+          ],
+          "patterns": [
+            "single",
+            "wizard"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_share_flow.py::test_remote_agent_chooser_selects_existing_target"
+          ],
+          "notes": "Interactive chooser selects an existing remote conversation; new remote sessions are unsupported."
         }
       }
     },

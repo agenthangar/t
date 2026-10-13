@@ -181,6 +181,11 @@ def test_build_archive_is_deterministic_and_runtime_only(tmp_path):
     assert "t/libexec/t_app_handoff.py" in names
     assert "t/libexec/t_share.py" in names
     assert "t/libexec/t_share_sessions.py" in names
+    assert "t/libexec/t_share_flow.py" in names
+    assert "t/libexec/t_share_context.py" in names
+    assert "t/libexec/t_share_launch.py" in names
+    assert "t/libexec/t_share_ui.py" in names
+    assert "t/zsh/share.zsh" in names
     assert "t/libexec/vendor/mistune/LICENSE" in names
     assert "t/.t-release-version" in names
     assert "t/private.txt" not in names
