@@ -7423,6 +7423,9 @@ def _app_cli_release(row, contract=None, *, unknown=None):
         helper = runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_app_handoff.py"))
         options = {key: row[key] for key in ("codex_home", "rollout")}
         options["unknown"] = unknown if unknown is not None else set()
+        repo, _, slot = row["slot"].rpartition("-")
+        options["retry"] = "Retry: " + shlex.join(["t", "open", repo, slot, "--app"])
+        options["run"] = _run
         if contract is None:
             return helper["preflight_cli_release"](row["sid"], row["cwd"], **options)
         # An already transferred slot can be reopened without waiting for the
@@ -7438,10 +7441,8 @@ def _app_cli_release(row, contract=None, *, unknown=None):
             # a direct transfer of the selected thread.
             helper["preflight_cli_release"](row["sid"], row["cwd"], **options)
             return
-        repo, _, slot = row["slot"].rpartition("-")
-        retry = "Retry: " + shlex.join(["t", "open", repo, slot, "--app"])
         helper["wait_cli_released"](
-            row["sid"], row["cwd"], **options, contract=contract, retry=retry,
+            row["sid"], row["cwd"], **options, contract=contract,
             on_wait=lambda: print("Waiting for Codex to release this conversation "
                                   "(up to 75 seconds)…", flush=True))
     except OSError as exc:
@@ -9752,9 +9753,11 @@ REMOTE SESSIONS
             "Usually, use `t open <repo> <slot> --app` or `--cli`; open handles the handoff. "
             "To return to the CLI, run `t open <repo> <slot> --cli` on the Mac running "
             "the desktop conversation, then follow its release instructions if needed. "
-            "To move into the app, `t app [push] [repo] [slot]` stops the slot's CLI, "
-            "waits for its conversation writer to release (up to 75 seconds), "
-            "and opens the SAME conversation in the "
+            "Before stopping the slot's CLI, `t app [push] [repo] [slot]` checks for "
+            "a different loaded conversation in the same worktree. A refusal gives "
+            "release instructions and an exact retry command, preserving both owners. "
+            "After preflight succeeds, it stops the selected CLI, waits for its writer "
+            "to release (up to 75 seconds), and opens the SAME conversation in the "
             "Codex desktop app on macOS, with its running web preview and referenced Markdown "
             "plan in separate built-in browser tabs. "
             "Use Annotation mode there to leave comments. The tmux slot stays reserved, "

@@ -1220,7 +1220,8 @@
       "scope": "explicit/inferred repository or all local/remote sessions",
       "confirmation": "when_interrupting",
       "tests": [
-        "tests/test_app_pull.py::test_app_direction"
+        "tests/test_app_pull.py::test_app_direction",
+        "tests/test_app.py::test_app_conflicting_owner_release_and_retry_preserves_exact_history"
       ],
       "modes": {
         "default": {
@@ -1233,7 +1234,8 @@
           ],
           "read_only": false,
           "tests": [
-            "tests/test_app_pull.py::test_app_direction"
+            "tests/test_app_pull.py::test_app_direction",
+            "tests/test_app.py::test_app_conflicting_owner_release_and_retry_preserves_exact_history"
           ]
         },
         "dry_run": {
