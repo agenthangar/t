@@ -9136,7 +9136,7 @@ def cmd_share(cfg, args):
 # definitions for both public commands and compatibility aliases.
 COMMAND_GROUPS = {
     "issue": {"list": ("issue", "list"), "status": ("issue", "status"),
-              "start": ("issue", "start")},
+              "start": ("issue", "start"), "open": ("issue", "open")},
     "session": {
         "open": ("open",), "list": ("ls",), "close": ("kill",),
         "restart": ("restart",), "push": ("push",), "pop": ("pop",),
@@ -9171,7 +9171,7 @@ COMMAND_GROUPS = {
 }
 
 GROUP_DESCRIPTIONS = {
-    "issue": "List GitHub issues, inspect existing work, or start work",
+    "issue": "List GitHub issues, inspect work, start agents, or open issues in a browser",
     "agentcore": "Submit work to an existing Amazon Bedrock AgentCore runtime",
     "session": "Open, find, and move work sessions",
     "repo": "List and manage repositories",
@@ -9237,7 +9237,7 @@ def _root_help():
 
 WORK
   session   Open, find, and move work sessions
-  issue     List issues, inspect work, and start agents
+  issue     List, inspect, work on, and open GitHub issues
   share     Share context between agent conversations
   repo      List and manage repositories
   cursor    List, resume, and send Cursor chats
@@ -9309,14 +9309,16 @@ def _group_help(group):
   t issue list [repo] [-a|--all] [--state open|closed|all] [--json]
   t issue status [repo] <id> [--json]
   t issue start [repo] [id ...] [--codex|--claude]
+  t issue open [repo] [id ...] [--repo REPO]
 
-List repository issues, inspect existing agent work, or start agents.
+List repository issues, inspect existing agent work, start agents, or open issues in a browser.
 
 REPOSITORIES
   Use a registered alias or GitHub owner/repo; --repo works with every verb.
   List uses the current checkout, or all registered repositories outside one.
   List --all widens the view from a checkout. Status never prompts: specify a
-  repository when outside a registered checkout. Start can select one interactively.
+  repository when outside a registered checkout. Start and open can select repositories
+  and issues interactively.
   An issue URL includes its repository and can replace [repo] <id>.
 
 Run `t help issue <verb>` for flags and arguments.
@@ -9341,7 +9343,7 @@ Run `t help issue <verb>` for flags and arguments.
 def _command_description(group, action):
     descriptions = {
         "issue": {"list": "List repository issues", "status": "Inspect existing issue work",
-                  "start": "Continue or start work on issues"},
+                  "start": "Continue or start work on issues", "open": "Open issues in your browser"},
         "agentcore": {"invoke": "Submit JSON or continue a runtime session", "stop": "Stop a runtime session"},
         "session": {"open": "Open or reattach a session", "list": "List live sessions",
                     "close": "Close a session", "restart": "Restart a stuck agent",
@@ -9445,7 +9447,7 @@ def build_parser():
             "For example: `t help session open` or `t help repo locate`.")
     help_sp.add_argument("command", nargs="*", help="command and optional subcommand")
 
-    sp = sub.add_parser("issue", help="list issues, inspect work, or start agents",
+    sp = sub.add_parser("issue", help="list issues, inspect work, start agents, or open issues",
         description="Find GitHub issues and their existing local, remote, or cloud agent work.")
     issue_sub = sp.add_subparsers(dest="action", metavar="<verb>")
     p._group_parsers["issue"] = sp
@@ -9488,6 +9490,14 @@ def build_parser():
     agents = issue_start.add_mutually_exclusive_group()
     agents.add_argument("--codex", action="store_true", help="use Codex for new local sessions")
     agents.add_argument("--claude", action="store_true", help="use Claude for new local sessions")
+    issue_open = issue_sub.add_parser("open", help="open issues in your browser",
+        usage="%(prog)s [repo] [id ...] [--repo REPO]",
+        description="Open GitHub issues in your browser. Use explicit issue numbers or issue URLs, "
+            "or omit the numbers to select issues interactively. A registered alias or "
+            "GitHub owner/repo can select the repository, positionally or with --repo. "
+            "An issue URL includes its repository. Each selected issue opens in your configured browser.")
+    issue_open.add_argument("target", nargs="*", help="issue numbers, repository and numbers, or GitHub issue URLs")
+    issue_open.add_argument("--repo", help="registered repository alias or GitHub owner/name")
 
     share = sub.add_parser("share", help="share context with another agent conversation",
         description="Send a summary and selected text to a Claude, Codex, or Cursor conversation. "

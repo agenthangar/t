@@ -12,8 +12,9 @@ must never open a picker or an automatic update prompt. Run
 `python3 scripts/lint_cli.py` to check these rules.
 
 Keep public commands in noun/verb families. For issue work, expose `t issue list`
-to browse a repository, `t issue status` for read-only ownership discovery, and
-`t issue start` to continue or start work. Reuse the shared session picker for
+to browse a repository, `t issue status` for read-only ownership discovery,
+`t issue start` to continue or start work, and `t issue open` to open issues in
+the user's browser. Reuse the shared session picker for
 interactive issue selection; allow multiple independent issues to be selected,
 but never start a second live owner for one issue. Do not add a bare `t issue`
 target form or a new public single-word command except the reviewed `t share`

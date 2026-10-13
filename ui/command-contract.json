@@ -431,6 +431,51 @@
         }
       }
     },
+    "issue open": {
+      "patterns": [
+        "action",
+        "filtered",
+        "multi"
+      ],
+      "renderer": "fzf",
+      "scope": "explicit or inferred GitHub repository; an issue URL identifies its repository",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_issue_open.py::test_open_explicit_target_uses_gh_browser",
+        "tests/test_issue_open.py::test_open_without_target_uses_shared_issue_picker"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "issue",
+            "open"
+          ],
+          "patterns": [
+            "multi",
+            "filtered"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_issue_open.py::test_open_without_target_uses_shared_issue_picker"
+          ]
+        },
+        "explicit": {
+          "argv": [
+            "issue",
+            "open",
+            "owner/repo",
+            "123"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_issue_open.py::test_open_explicit_target_uses_gh_browser"
+          ]
+        }
+      }
+    },
     "session open": {
       "patterns": [
         "action",
