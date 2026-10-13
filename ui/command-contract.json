@@ -2010,7 +2010,10 @@
       "scope": "local installed agents and optional hosts",
       "confirmation": "enter",
       "tests": [
-        "tests/test_login.py::test_login_checklist_discovers_and_selects_authenticated_agents"
+        "tests/test_login.py::test_login_checklist_discovers_and_selects_authenticated_agents",
+        "tests/test_login.py::test_login_success_reports_fresh_expiry",
+        "tests/test_login_links.py::test_login_terminal_links_input_exit_and_interrupt",
+        "tests/test_login_links.py::test_local_browser_link_redirect_and_lifetime"
       ],
       "modes": {
         "default": {

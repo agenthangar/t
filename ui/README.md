@@ -100,6 +100,7 @@ should be added here with their disposition before becoming a precedent.
 | Batch `open`, `kill`, and issue starts ([#68](https://github.com/agenthangar/t/pull/68), [#93](https://github.com/agenthangar/t/pull/93)) | Retain multi-selection and one-live-owner checks. |
 | Richer rows, interface/model columns, and detail previews ([#85](https://github.com/agenthangar/t/pull/85)) | Retain within the baseline spacing and focus design. |
 | Reversible filters and dedicated keys ([#94](https://github.com/agenthangar/t/pull/94), [#102](https://github.com/agenthangar/t/pull/102)) | Adopt the filter controls above. |
+| Login terminal I/O and expiry ([#119](https://github.com/agenthangar/t/issues/119)) | Preserve one vendor terminal and restore it on exit; local sign-in links have a short plain-URL fallback. Status shows cached deadlines when available and keeps authenticated state distinct from expiry availability. |
 | Login selection and first-Enter execution ([#83](https://github.com/agenthangar/t/pull/83), [#105](https://github.com/agenthangar/t/pull/105)) | Adopt first-Enter execution; reuse the merged implementation. |
 | Reviewed Enter-to-run install ([#98](https://github.com/agenthangar/t/pull/98)) | Retain review followed by Enter to run. |
 | Read-only issue table ([#108](https://github.com/agenthangar/t/pull/108)) | Apply the list contract. |
