@@ -163,3 +163,13 @@ _t_beam -s exact-id test-host
     assert result.returncode != 0
     assert 'source was not stopped' in result.stderr
     assert 'UNEXPECTED' not in result.stderr
+
+
+def test_navigation_ignores_unmanaged_worktree_names(tmp_path):
+    (tmp_path / 'home/work trees/api/unmanaged/.git').mkdir(parents=True)
+    canonical = tmp_path / 'home/code with spaces/api'
+    canonical.mkdir(parents=True)
+    result = configured_shell(tmp_path, '_t_cd api && print -r -- "$PWD"')
+    assert result.returncode == 0 and result.stdout.strip() == str(canonical)
+    result = configured_shell(tmp_path, '_t_cd')
+    assert result.returncode != 0 and 'no managed worktrees' in result.stderr

@@ -236,7 +236,11 @@ _t_cd() {
     _dev_worktree_slot "${${candidate:h}:t}" "${candidate:t}" >/dev/null && recognized+=("$candidate")
   done
   wts=("${recognized[@]}")
-  (( ${#wts} )) || return 1
+  if (( ! ${#wts} )); then
+    [[ -n $repo ]] && { cd "${DEV_REPOS[$repo]}"; return; }
+    print -u2 -- "t cd: no managed worktrees under $DEV_WORKTREE_ROOT ('t open <repo>' creates one)"
+    return 1
+  fi
   (( ${#wts} == 1 )) && { cd "${wts[1]}"; return }
   if [[ -t 0 && -t 1 ]] && command -v fzf >/dev/null 2>&1; then
     local wt br line; local -a rows
