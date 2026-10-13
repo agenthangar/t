@@ -354,6 +354,11 @@ def test_claude_keychain_expiry_profiles_fallback_and_failure(t_mod, tmp_path, m
     assert t_mod._login_cached_expiry('claude', str(tmp_path), {'CLAUDE_CONFIG_DIR': str(profile)}) == 4000
     suffix = t_mod.hashlib.sha256(str(profile).encode()).hexdigest()[:8]
     assert calls[-1] == 'Claude Code-credentials-' + suffix
+    assert t_mod._login_cached_expiry('claude', str(tmp_path), {'CLAUDE_SECURESTORAGE_CONFIG_DIR': str(profile)}) == 4000
+    assert calls[-1] == 'Claude Code-credentials-' + suffix
+    count = len(calls)
+    assert t_mod._login_cached_expiry('claude', str(tmp_path), {'CLAUDE_CODE_CUSTOM_OAUTH_URL': 'https://example.invalid'}) is None
+    assert len(calls) == count
     monkeypatch.setattr(t_mod, '_login_keychain', lambda _: None)
     assert t_mod._login_cached_expiry('claude', str(tmp_path), {}) == 1000
     def fail(_):

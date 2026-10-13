@@ -4207,7 +4207,7 @@ def _login_cached_expiry(agent, home, env):
             root = env.get("CLAUDE_SECURESTORAGE_CONFIG_DIR", env.get("CLAUDE_CONFIG_DIR")) or os.path.join(home, ".claude")
             if sys.platform == "darwin":
                 # Custom OAuth endpoints use a different service namespace.
-                if env.get("CLAUDE_CODE_OAUTH_URL") or env.get("CLAUDE_LOCAL_OAUTH"):
+                if env.get("CLAUDE_CODE_CUSTOM_OAUTH_URL") or env.get("CLAUDE_LOCAL_OAUTH"):
                     return None
                 service = "Claude Code-credentials"
                 if env.get("CLAUDE_SECURESTORAGE_CONFIG_DIR", env.get("CLAUDE_CONFIG_DIR")):

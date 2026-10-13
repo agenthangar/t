@@ -55,7 +55,7 @@ def test_redirected_login_output_is_inherited_without_hyperlinks(t_mod, monkeypa
     assert calls == [['fixture', 'login']]
 
 
-@pytest.mark.parametrize('mode', ['remote', 'local', 'hidden', 'ctrl-c', 'sigterm'])
+@pytest.mark.parametrize('mode', ['remote', 'local', 'hidden', 'ctrl-c', 'sigterm', 'outer-noecho'])
 @pytest.mark.parametrize('answer,expected', [('fixture-code\n', 0), ('fail\n', 1), (None, 130)])
 def test_login_terminal_links_input_exit_and_interrupt(tmp_path, answer, expected, mode):
     env = cli_sandbox(tmp_path)
@@ -85,6 +85,9 @@ if answer != 'fixture-code': sys.exit(7)
 ''')
     master, slave = os.openpty()
     process = None
+    if mode == 'outer-noecho':
+        attrs = termios.tcgetattr(slave); attrs[3] &= ~termios.ECHO
+        termios.tcsetattr(slave, termios.TCSANOW, attrs)
     saved = termios.tcgetattr(master)
     try:
         process = subprocess.Popen([sys.executable, str(ROOT / 'bin/t'), 'login', 'claude', '--force', '-y'],
