@@ -815,3 +815,17 @@ def test_parser_upgrade_rebackfills_unchanged_cached_transcript(app, history, tm
     rescanned = app.store.scan(source, 'codex')
     assert rescanned['prs'][0]['number'] == 2
     assert rescanned['_scan']['parser'] == history.PARSER_VERSION
+
+
+def test_history_does_not_reuse_slot_with_two_layouts(app, history, store, git_repo):
+    root = Path(app.cfg.worktree_root) / 'repo'
+    old, named = root / '1', root / 'repo-1'
+    history.run(['git', '-C', app.cfg.repos['repo'], 'worktree', 'add', '-b', 'dev/repo-1', str(old), git_repo])
+    history.run(['git', '-C', app.cfg.repos['repo'], 'worktree', 'add', '-b', 'other-conversation', str(named), git_repo])
+    row = store.merge(saved_row(app, git_repo, old))
+    (named / 'keep').write_text('other conversation work')
+    destination, slot, created = app.destination('repo', row, git_repo, [])
+    assert created and slot == '2' and Path(destination).name == 'repo-2'
+    assert old.is_dir() and (named / 'keep').read_text() == 'other conversation work'
+    assert row['sid'] == 'selected'
+    app.reservation.unlink()

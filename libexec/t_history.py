@@ -968,7 +968,7 @@ class HistoryCommand:
                         latest.append((a.get('observed', 0), conversation['sid'], conversation['agent']))
         current_identity = max(latest, default=(0, '', ''))[1:]
         # Reuse only when both revision and provenance match, never by branch name alone.
-        if association.get('generation') and association['generation'] == generation(historical_path) and current_identity == (row['sid'], row['agent']) and recorded == revision and historical_path and association.get('host') == 'local' and os.path.realpath(association.get('workspace', '')) == os.path.realpath(historical_path) and historical_path.is_dir() and os.path.realpath(historical_path) not in busy:
+        if historical_path and association.get('generation') and association['generation'] == generation(historical_path) and current_identity == (row['sid'], row['agent']) and recorded == revision and association.get('host') == 'local' and os.path.realpath(association.get('workspace', '')) == os.path.realpath(historical_path) and historical_path.is_dir() and os.path.realpath(historical_path) not in busy:
             head = run(['git', '-C', str(historical_path), 'rev-parse', 'HEAD'], optional=True).strip()
             actual = run(['git', '-C', str(historical_path), 'branch', '--show-current'], optional=True).strip()
             if head == revision and actual == association.get('branch'):

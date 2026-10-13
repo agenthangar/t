@@ -1,10 +1,7 @@
 """Folder labels must not change slot IDs, saved paths, or writer ownership."""
-import json
-import os
 from pathlib import Path
 import re
 import shlex
-import subprocess
 
 import pytest
 
@@ -147,3 +144,22 @@ def test_transcript_projection_keeps_exact_recorded_workspace(tmp_path, monkeypa
     assert row['slot'] == 'api-4' and row['worktree'] == cwd
     assert row['sid'] == rec['sid']
     assert t_mod._session_ref_resolve('api-4', cfg, [rec], {}) is rec
+
+
+@pytest.mark.parametrize('leaf', ['4', 'api-4'])
+def test_public_move_refuses_old_peer_before_stopping_or_copying(tmp_path, leaf):
+    cwd = tmp_path / 'home/work trees/api' / leaf
+    result = configured_shell(tmp_path, f'''
+rsync() {{ print -u2 UNEXPECTED_COPY; return 99; }}
+ssh() {{ return 1; }}
+_dev_self_sid() {{ :; }}
+_codex_thread_lookup() {{ printf 'exact-id\\trollout\\t%s\\n' {shlex.quote(str(cwd))}; }}
+_dev_app_slot_reserved() {{ return 1; }}
+_dev_codex_rollout_integrity() {{ return 0; }}
+_tbeam_kill_owner() {{ print -u2 UNEXPECTED_STOP; return 99; }}
+_dev_worktree_beam_push() {{ print -u2 UNEXPECTED_PUSH; return 99; }}
+_t_beam -s exact-id test-host
+''')
+    assert result.returncode != 0
+    assert 'source was not stopped' in result.stderr
+    assert 'UNEXPECTED' not in result.stderr
