@@ -7,6 +7,10 @@ on:
     types: [opened, synchronize, reopened, labeled, unlabeled]
 permissions:
   contents: read
+concurrency:
+  # Keep only the newest CI run for each PR or pushed branch.
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 jobs:
   cli-contract:
     runs-on: ubuntu-latest
