@@ -4301,7 +4301,9 @@ def _login_decision(probe, now, within_hours, force=False):
         return False, "logged in; expiry unavailable from credential store; no login needed"
     deadline = time.strftime("%Y-%m-%d %H:%M %Z", time.localtime(expiry))
     if expiry <= now + within_hours * 3600:
-        return True, "logged in; cached access token %s %s (within %g hours); automatic refresh may still work" % ("expired" if expiry <= now else "expires", deadline, within_hours)
+        verb = "expired" if expiry <= now else "expires"
+        window = "" if expiry <= now else " (within %g hours)" % within_hours
+        return True, f"logged in; cached access token {verb} {deadline}{window}; automatic refresh may still work"
     return False, "logged in; cached access token expires " + deadline
 
 
@@ -4395,6 +4397,14 @@ class _LoginBrowserLinks:
         self.targets = {}
         targets = self.targets
 
+        class Server(HTTPServer):
+            def server_bind(self):
+                # HTTPServer normally reverse-resolves its address. A local
+                # sign-in shortcut must never wait on DNS before relaying I/O.
+                TCPServer.server_bind(self)
+                self.server_name = "localhost"
+                self.server_port = self.server_address[1]
+
         class Handler(BaseHTTPRequestHandler):
             def setup(self):
                 super().setup()
@@ -4415,7 +4425,7 @@ class _LoginBrowserLinks:
                 pass  # Sign-in URLs must never enter logs.
 
         import threading
-        self.server = HTTPServer(("127.0.0.1", 0), Handler)
+        self.server = Server(("127.0.0.1", 0), Handler)
         self.thread = threading.Thread(target=self.server.serve_forever,
                                        kwargs={"poll_interval": .05}, daemon=True)
         self.thread.start()

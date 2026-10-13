@@ -195,9 +195,10 @@ def test_login_relay_spawn_failure_closes_pty(t_mod, monkeypatch):
             os.fstat(fd)
 
 
-def test_local_browser_link_redirect_and_lifetime(t_mod, capsys):
+def test_local_browser_link_redirect_and_lifetime(t_mod, capsys, monkeypatch):
     import http.client
     from urllib.parse import urlsplit
+    monkeypatch.setattr(t_mod.socket, 'getfqdn', lambda *a: pytest.fail('login shortcut must not resolve DNS'))
     bridge = t_mod._LoginBrowserLinks()
     try:
         links = t_mod._LoginLinks(bridge.shorten)
