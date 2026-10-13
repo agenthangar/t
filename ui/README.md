@@ -106,7 +106,7 @@ should be added here with their disposition before becoming a precedent.
 | Open GitHub issues in the browser ([#118](https://github.com/agenthangar/t/issues/118)) | Explicit IDs or URLs act directly; omitted IDs use the shared filtered multi picker. |
 | Noun/verb help, added command groups, and speed submenu ([#101](https://github.com/agenthangar/t/pull/101)) | Retain and classify each mode in the inventory. |
 | Paginated history selection ([#113](https://github.com/agenthangar/t/pull/113)) | Treat as single selection with Ctrl-F next, Ctrl-B previous, and Ctrl-R refresh; do not apply the filtered picker's Ctrl-F defaults binding. |
-| Conversation context sharing ([#112](https://github.com/agenthangar/t/pull/112)) | Keep the reviewed bare `t share` send/retry exception. `targets` and `inbox` are read-only lists; `read` is detail or raw attachment output; JSON is machine output and never prompts. Sending acts on an exact conversation without a picker. |
+| Conversation context sharing ([#112](https://github.com/agenthangar/t/pull/112), [#122](https://github.com/agenthangar/t/issues/122)) | Bare `t share` in a terminal is a source, recipient, context, and launch review wizard; after review it enters the new session. A known source and agent-only `--to` can launch without a terminal and leave the new session detached; `--json` returns the result without prompting or entering. An exact destination with `--file` still sends directly. `targets` and `inbox` are read-only lists; `read` is detail or raw attachment output. Cancellation leaves sessions and inboxes untouched. |
 
 ## Verification
 
