@@ -1,0 +1,50 @@
+[
+  {
+    "label": "One task. Every surface.",
+    "seconds": 0
+  },
+  {
+    "label": "01 / Open a task",
+    "seconds": 2.0
+  },
+  {
+    "label": "01 / Reproduce the bug",
+    "seconds": 4.0
+  },
+  {
+    "label": "01 / Fix the code",
+    "seconds": 7.0
+  },
+  {
+    "label": "01 / Five tests pass",
+    "seconds": 17.0
+  },
+  {
+    "label": "02 / Move to mini",
+    "seconds": 21.0
+  },
+  {
+    "label": "02 / Tests pass on mini",
+    "seconds": 27.0
+  },
+  {
+    "label": "02 / Bring the task home",
+    "seconds": 31.0
+  },
+  {
+    "label": "03 / Open in desktop",
+    "seconds": 36.0
+  },
+  {
+    "label": "03 / Same task in desktop",
+    "seconds": 42.0
+  },
+  {
+    "label": "04 / Resume the task",
+    "seconds": 46.0
+  },
+  {
+    "label": "04 / Keep working",
+    "seconds": 58.0
+  }
+]
