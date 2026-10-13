@@ -399,6 +399,9 @@ def test_launch_detects_source_change_inside_lock(launcher, repo, monkeypatch):
 
 def test_cursor_shell_launcher_sends_only_private_prompt_path(zsh, tmp_path):
     """Use the established sandbox tmux stub; no real Cursor client starts."""
+    executable = zsh.log.parent / "stubbin" / "cursor-agent"
+    executable.write_text("#!/bin/sh\nexit 99\n")
+    executable.chmod(0o755)
     sid = "12345678-1234-1234-1234-123456789abc"
     session = "t-cursor-" + sid
     cwd = zsh.home / "code" / "cursor-worktree"
