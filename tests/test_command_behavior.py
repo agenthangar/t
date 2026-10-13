@@ -183,3 +183,158 @@ def test_python_wizard_cancellation_does_not_apply(t_mod, monkeypatch, tmp_path,
     args = t_mod.build_parser().parse_args(argv)
     assert getattr(t_mod, 'cmd_' + command)(t_mod.Config(), args) == 130
     assert not (tmp_path / 'local').exists()
+
+
+# Synthetic history fixtures use the same HOME/XDG sandbox as the history suite.
+from test_history_data import history
+from test_cli_contract import lint_module
+
+
+def _history_display_fixture(tmp_path, *, owned):
+    owner = dict(host='mini', slot='api-17', state='attached', context='active', agent='codex',
+                 sid='exact-history-conversation', cwd=str(tmp_path / 'worktree'), model='model-test',
+                 summary='Fix login #12 merged, still in progress')
+    row = dict(repo='org/api', sid=owner['sid'], agent='codex', title='Retained working-on text',
+               updated=1767225600, owners=[owner] if owned else [],
+               associations=[dict(host='mini', slot='17', workspace=str(tmp_path / 'worktree'),
+                                  branch='retained/branch-with-full-detail', commit='a' * 40,
+                                  evidence='transcript', observed=1767225600, available=True)],
+               sources=[dict(host='mini', path='/recorded/transcript-with-full-detail.jsonl', available=True)],
+               prs=[dict(repo='org/api', number=12, url='https://github.com/org/api/pull/12', state='MERGED')],
+               mentions=[dict(repo='org/api', number=99, url='https://github.com/org/api/pull/99')])
+    return row, owner
+
+
+def _history_contract_command(history, t_mod, tmp_path, monkeypatch, row, owners):
+    cfg = SimpleNamespace(repos={'api': str(tmp_path / 'api')}, hosts={'mini': 'fixture.example'},
+                          worktree_root=str(tmp_path / 'worktrees'), repo_of_dir=lambda cwd: ('api', '17'))
+    store = history.Store()
+    store.merge(row)
+    command = history.HistoryCommand(cfg, {**vars(t_mod), '_t_source_root': lambda: str(ROOT)}, store)
+    monkeypatch.setattr(command, 'identity', lambda alias: 'org/api')
+    monkeypatch.setattr(command, 'discover', lambda alias: None)
+    monkeypatch.setattr(command, 'owners', lambda *a: owners)
+    monkeypatch.setattr(command, 'branch_prs', lambda *a, **k: None)
+    monkeypatch.setattr(command, 'pr_states', lambda *a, **k: None)
+    for effect in ('pick', 'choose_slot', 'resume', 'refresh'):
+        monkeypatch.setattr(command, effect, lambda *a, **k: pytest.fail('display contract started interactive or network work'))
+    return command, store
+
+
+def _table_contract_cells(text, labels):
+    """Read aligned or labeled output, so swapped/missing rendered fields fail."""
+    lines = [line for line in text.splitlines() if line.startswith('  ')]
+    header = next((line for line in lines if all(label in line for label in labels)), None)
+    if header:
+        start = lines.index(header) + 1
+        body = lines[start]
+        positions = [header.index(label) for label in labels] + [len(body)]
+        return {label: body[positions[i]:positions[i + 1]].strip() for i, label in enumerate(labels)}
+    cells, current = {}, None
+    for line in lines:
+        stripped = line.strip()
+        label = next((label for label in labels if stripped.startswith(label + ':')), None)
+        if label:
+            current = label
+            cells[current] = stripped[len(label) + 1:].strip()
+        elif current:
+            cells[current] += stripped
+    return cells
+
+
+@pytest.mark.parametrize('width', [None, 80, 44, 32])
+def test_session_and_history_display_follow_shared_schema(history, t_mod, tmp_path, monkeypatch, capsys, width):
+    """The contract must describe real ls and history output, including wrapped cells."""
+    common = CONTRACT['display_schemas']['session_information']
+    schema = CONTRACT['display_schemas']['history_information']
+    row, owner = _history_display_fixture(tmp_path, owned=True)
+    command, store = _history_contract_command(history, t_mod, tmp_path, monkeypatch, row, [owner])
+    enriched, = command.records('api', '17', [owner])
+    projection = history.history_display(enriched, alias='api')
+    assert lint_module().check_display_projection(CONTRACT, 'history_information', projection) == []
+    assert projection['state'] == owner['state'] and projection['context'] == owner['context']
+    assert projection['model'] == owner['model'] and projection['slot'] == owner['slot']
+    assert projection['interface'] == 'cli' and projection['host'] == owner['host']
+    # A missing renderer fact is an executable violation, even if its schema exists.
+    incomplete = dict(projection)
+    incomplete.pop('model')
+    assert any('model' in error for error in lint_module().check_display_projection(
+        CONTRACT, 'history_information', incomplete))
+    monkeypatch.setattr(t_mod.sys.stdin, 'isatty', lambda: False)
+    monkeypatch.setattr(t_mod.sys.stdout, 'isatty', lambda: width is not None)
+    if width is not None:
+        monkeypatch.setattr(t_mod, '_columns', lambda: width)
+    live = '\n'.join(t_mod._session_table_lines([owner], remote=True))
+    try:
+        args = t_mod.build_parser().parse_args(['session', 'history', 'api', '17'])
+        assert command.execute(args) == 0
+        retained = capsys.readouterr().out
+    finally:
+        store.close()
+    labels = [column['label'] for column in common['columns']]
+    assert schema['layouts']['table']['columns'][:len(labels)] == labels
+    for label in schema['layouts']['table']['columns']:
+        assert label in retained
+    for label in labels:
+        assert label in live and label in retained
+    live_cells = _table_contract_cells(live, labels)
+    retained_cells = _table_contract_cells(retained, schema['layouts']['table']['columns'])
+    for label, value in (('UI', 'cli'), ('HOST', owner['host']), ('SESSION', owner['slot']),
+                         ('MODEL', owner['model']), ('WORKING ON', owner['summary'])):
+        assert ''.join(value.split()) in ''.join(live_cells[label].split())
+        assert ''.join(value.split()) in ''.join(retained_cells[label].split())
+    assert row['associations'][0]['branch'] in retained_cells['BRANCH']
+    assert '#12[MERGED]' in retained_cells['PRS']
+    assert retained_cells['ID'] == row['sid']
+    import re
+    assert re.fullmatch(r'\d{4}-\d{2}-\d{2}', retained_cells['DATE'])
+    for mark in common['status_marks'].values():
+        if mark != common['status_marks']['detached']:
+            assert mark in live and mark in retained
+    if width is not None:
+        assert all(t_mod._display_width(line) <= width for line in retained.splitlines() if line.startswith('  '))
+
+
+def test_history_display_contract_preserves_unknowns_preview_and_json(history, t_mod, tmp_path, monkeypatch, capsys):
+    schema = CONTRACT['display_schemas']['history_information']
+    common = CONTRACT['display_schemas']['session_information']
+    row, _ = _history_display_fixture(tmp_path, owned=False)
+    projection = history.history_display(row, alias='api')
+    assert projection['model'] == common['fields']['model']['unknown']
+    assert projection['interface'] == common['fields']['interface']['unknown']
+    assert projection['context'] == common['fields']['context']['unknown']
+    assert '✓' not in projection['status'] and '●' not in projection['status']
+    preview = history.details(row, alias='api')
+    for label in ('Working on:', 'Status:', 'Context:', 'UI:', 'Model:', 'Host:', 'Session:', 'Date:', 'ID:', 'Branch:', 'PRs:'):
+        assert label in preview
+    for value in (row['repo'], row['sid'], row['title'], row['associations'][0]['workspace'],
+                  row['associations'][0]['branch'], row['associations'][0]['commit'],
+                  row['prs'][0]['url'], row['mentions'][0]['url'], row['sources'][0]['path']):
+        assert value in preview
+    command, store = _history_contract_command(history, t_mod, tmp_path, monkeypatch, row, [])
+    try:
+        args = t_mod.build_parser().parse_args(['session', 'history', 'api', '17', '--json'])
+        assert command.execute(args) == 0
+        output = capsys.readouterr().out
+    finally:
+        store.close()
+    payload = json.loads(output)
+    assert lint_module().check_history_json(CONTRACT, payload) == []
+    legacy = json.loads(output)
+    for field in schema['json']['additive_fields']:
+        legacy['conversations'][0].pop(field, None)
+    assert lint_module().check_history_json(CONTRACT, legacy) == []
+    mistyped = json.loads(output)
+    mistyped['page'] = True
+    assert any('page' in error for error in lint_module().check_history_json(CONTRACT, mistyped))
+    malformed = json.loads(output)
+    malformed['conversations'][0]['display'].pop('summary')
+    assert any('summary' in error for error in lint_module().check_history_json(CONTRACT, malformed))
+    assert set(schema['json']['envelope_required']) <= set(payload)
+    assert payload['version'] == schema['json']['version']
+    record, = payload['conversations']
+    assert set(schema['json']['conversation_required']) <= set(record)
+    assert record['sid'] == row['sid'] and record['associations'][0]['commit'] == 'a' * 40
+    assert lint_module().check_display_projection(CONTRACT, 'history_information', record['display']) == []
+    assert record['display']['model'] == '-' and record['display']['interface'] == 'unknown'
+    assert '\x1b' not in output and 'Enter ' not in output

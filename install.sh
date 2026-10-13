@@ -78,7 +78,7 @@ valid_source() {
     [[ "$(cat "$root/.t-install-version")" == 1 ]] || return 1
     for asset in install.sh t.plugin.zsh local.zsh.example \
         claude/settings.json.example bin/t bin/claude-stamp-tmux bin/cursor-beam \
-        libexec/t_issue.py libexec/t_issue_policy.txt libexec/t_history.py \
+        libexec/t_issue.py libexec/t_issue_policy.txt libexec/t_history.py libexec/t_session_details.py \
         libexec/t_share.py libexec/t_share_sessions.py \
         libexec/t_share_context.py libexec/t_share_flow.py libexec/t_share_launch.py libexec/t_share_ui.py zsh/share.zsh \
         claude/commands/tpush.md claude/commands/tpop.md \

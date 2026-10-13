@@ -648,7 +648,8 @@
       "scope": "explicit/inferred repository or all local/remote sessions",
       "confirmation": "none",
       "tests": [
-        "tests/test_t.py::test_ls_scope_defaults_to_cwd_repo"
+        "tests/test_t.py::test_ls_scope_defaults_to_cwd_repo",
+        "tests/test_command_behavior.py::test_session_and_history_display_follow_shared_schema"
       ],
       "modes": {
         "default": {
@@ -665,7 +666,8 @@
             "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
           ]
         }
-      }
+      },
+      "display_schema": "session_information"
     },
     "session close": {
       "patterns": [
@@ -877,7 +879,9 @@
       "scope": "explicit/inferred repository and slot",
       "confirmation": "none",
       "tests": [
-        "tests/test_history_picker.py::test_real_isolated_tmux_picker_paging_global_search_refresh_and_cancel"
+        "tests/test_history_picker.py::test_real_isolated_tmux_picker_paging_global_search_refresh_and_cancel",
+        "tests/test_command_behavior.py::test_session_and_history_display_follow_shared_schema",
+        "tests/test_command_behavior.py::test_history_display_contract_preserves_unknowns_preview_and_json"
       ],
       "modes": {
         "default": {
@@ -966,7 +970,8 @@
             "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
           ]
         }
-      }
+      },
+      "display_schema": "history_information"
     },
     "session cd": {
       "patterns": [
@@ -2459,6 +2464,351 @@
             "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
           ]
         }
+      }
+    }
+  },
+  "display_schemas": {
+    "session_information": {
+      "fields": {
+        "state": {
+          "type": "string",
+          "meaning": "Reported ownership state; saved history never implies a live owner.",
+          "unknown": "unknown"
+        },
+        "context": {
+          "type": "string",
+          "meaning": "Active-context evidence from the exact current owner; unknown historical context never adds an active mark.",
+          "unknown": "unknown"
+        },
+        "interface": {
+          "type": "string",
+          "meaning": "CLI, desktop, or foreground interface recorded or reported for this conversation.",
+          "unknown": "unknown"
+        },
+        "agent": {
+          "type": "string",
+          "meaning": "The conversation agent, independently of its interface and recorded model.",
+          "unknown": "unknown"
+        },
+        "model": {
+          "type": "string",
+          "meaning": "Exact recorded or current-owner model; never infer a model from the agent name.",
+          "unknown": "-"
+        },
+        "host": {
+          "type": "string",
+          "meaning": "Host associated with the displayed conversation or exact current owner.",
+          "unknown": "unknown"
+        },
+        "slot": {
+          "type": "string",
+          "meaning": "Repository and slot/session label, distinct from the immutable conversation ID.",
+          "unknown": "unknown"
+        },
+        "summary": {
+          "type": "string",
+          "meaning": "Working-on text from current-owner evidence, recorded summary, or retained title.",
+          "unknown": ""
+        },
+        "status": {
+          "type": "string",
+          "meaning": "Human-readable ownership/history state label for full details. STATUS marks are rendered separately from state, context, and summary.",
+          "unknown": "unknown"
+        }
+      },
+      "columns": [
+        {
+          "label": "STATUS",
+          "fields": [
+            "state",
+            "context",
+            "status"
+          ]
+        },
+        {
+          "label": "UI",
+          "fields": [
+            "interface"
+          ]
+        },
+        {
+          "label": "MODEL",
+          "fields": [
+            "agent",
+            "model"
+          ]
+        },
+        {
+          "label": "HOST",
+          "fields": [
+            "host"
+          ],
+          "when": "remote_or_history"
+        },
+        {
+          "label": "SESSION",
+          "fields": [
+            "slot"
+          ]
+        },
+        {
+          "label": "WORKING ON",
+          "fields": [
+            "summary"
+          ]
+        }
+      ],
+      "status_marks": {
+        "attached": "\u25cf",
+        "detached": "\u25cb",
+        "active_context": "\u2713",
+        "still_in_progress": "\u21bb"
+      },
+      "layouts": {
+        "table": {
+          "wide": "aligned_columns",
+          "narrow": "labeled_wrapped_cells",
+          "switch": "when_columns_do_not_fit",
+          "preserve_values": true,
+          "redirected": "untruncated",
+          "terminal_sizes": [
+            [
+              80,
+              24
+            ],
+            [
+              44,
+              20
+            ],
+            [
+              32,
+              12
+            ]
+          ]
+        }
+      },
+      "unknown_policy": {
+        "infer_interface_from_agent": false,
+        "infer_model_from_agent": false,
+        "infer_active_context_without_owner": false
+      },
+      "behavior_tests": [
+        "tests/test_command_behavior.py::test_session_and_history_display_follow_shared_schema"
+      ]
+    },
+    "history_information": {
+      "extends": "session_information",
+      "fields": {
+        "prs": {
+          "type": "array",
+          "meaning": "Evidence-backed associated PRs and cached states, independent of incidental mentions.",
+          "unknown": []
+        }
+      },
+      "historical_fields": {
+        "updated": {
+          "type": "number",
+          "meaning": "Retained activity timestamp; Date remains fully available in the labeled preview and JSON."
+        },
+        "associations": {
+          "type": "array",
+          "meaning": "All recorded workspace, slot, host, branch, commit, evidence, and availability snapshots."
+        },
+        "sid": {
+          "type": "string",
+          "meaning": "Full immutable conversation ID in details and JSON; SESSION remains the repository/slot label."
+        },
+        "model_source": {
+          "type": "string",
+          "meaning": "Provenance of recorded model metadata."
+        },
+        "summary_source": {
+          "type": "string",
+          "meaning": "Provenance of recorded working-on text."
+        },
+        "mentions": {
+          "type": "array",
+          "meaning": "Incidental links, separately labeled from associated PR evidence."
+        },
+        "sources": {
+          "type": "array",
+          "meaning": "Every retained transcript source and its availability."
+        }
+      },
+      "layouts": {
+        "table": {
+          "columns": [
+            "STATUS",
+            "UI",
+            "MODEL",
+            "HOST",
+            "SESSION",
+            "WORKING ON",
+            "DATE",
+            "BRANCH",
+            "PRS",
+            "ID"
+          ],
+          "inherits": "session_information.table",
+          "extensions": {
+            "DATE": "updated",
+            "BRANCH": "associations[].branch",
+            "PRS": "prs",
+            "ID": "sid"
+          }
+        },
+        "picker": {
+          "profile": "_t_fzf_paginated",
+          "wide": "aligned_session_information",
+          "narrow": "status_and_working_on_first",
+          "full_details": "preview",
+          "physical_row": "single_line",
+          "max_prs_per_row": 3,
+          "overflow_prs": "count_in_working_on_and_full_preview",
+          "terminal_sizes": [
+            [
+              80,
+              24
+            ],
+            [
+              44,
+              20
+            ],
+            [
+              32,
+              12
+            ]
+          ],
+          "height": "full_terminal"
+        }
+      },
+      "preview": {
+        "required_fields": [
+          "repo",
+          "sid",
+          "title",
+          "updated",
+          "display.state",
+          "display.context",
+          "display.interface",
+          "display.agent",
+          "display.model",
+          "display.host",
+          "display.slot",
+          "display.summary",
+          "display.status",
+          "associations",
+          "prs",
+          "mentions",
+          "sources",
+          "model_source",
+          "summary_source"
+        ],
+        "full_values": true,
+        "default": "when_terminal_fits",
+        "toggle": "ctrl-/",
+        "identity": "exact_conversation",
+        "minimum_columns": 70,
+        "minimum_lines": 22,
+        "placement": "bottom",
+        "height_percent": 35
+      },
+      "selection": {
+        "count": 1,
+        "identity_fields": [
+          "repo",
+          "agent",
+          "sid"
+        ],
+        "accept": "enter",
+        "cancel": [
+          "esc",
+          "ctrl-c"
+        ],
+        "auto_accept_single_result": false,
+        "search": "global_before_pagination",
+        "page_size": 50,
+        "keys": {
+          "next": "ctrl-f",
+          "previous": "ctrl-b",
+          "refresh": "ctrl-r"
+        },
+        "validate_returned_query_page_and_snapshot": true,
+        "non_tty": "read_only_table",
+        "json": "read_only_machine_output",
+        "network": "explicit_refresh_only"
+      },
+      "json": {
+        "version": 1,
+        "envelope_required": [
+          "version",
+          "repo",
+          "slot",
+          "page",
+          "limit",
+          "total",
+          "conversations"
+        ],
+        "conversation_required": [
+          "repo",
+          "agent",
+          "sid",
+          "title",
+          "updated",
+          "associations",
+          "sources",
+          "prs",
+          "mentions",
+          "owners"
+        ],
+        "additive_fields": [
+          "model",
+          "model_source",
+          "summary",
+          "summary_source",
+          "interface",
+          "display"
+        ],
+        "compatibility": "additive_only",
+        "ansi": false,
+        "prompts": false,
+        "envelope_types": {
+          "version": "integer",
+          "repo": "string",
+          "slot": "string",
+          "page": "integer",
+          "limit": "integer",
+          "total": "integer",
+          "conversations": "array"
+        },
+        "conversation_types": {
+          "repo": "string",
+          "agent": "string",
+          "sid": "string",
+          "title": "string",
+          "updated": "number",
+          "associations": "array",
+          "sources": "array",
+          "prs": "array",
+          "mentions": "array",
+          "owners": "array",
+          "model": "string",
+          "model_source": "string",
+          "summary": "string",
+          "summary_source": "string",
+          "interface": "string",
+          "display": "object"
+        },
+        "display_schema": "history_information"
+      },
+      "behavior_tests": [
+        "tests/test_command_behavior.py::test_session_and_history_display_follow_shared_schema",
+        "tests/test_command_behavior.py::test_history_display_contract_preserves_unknowns_preview_and_json"
+      ],
+      "status_marks": {
+        "saved": "\u00b7",
+        "archived": "\u25a1",
+        "missing": "!"
       }
     }
   }

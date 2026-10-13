@@ -127,3 +127,44 @@ def test_group_help_lint_rejects_missing_action(t_mod):
         return menu.replace("  list       List live sessions\n", "") if group == "session" else menu
     assert any("session list" in error for error in
                lint.check_group_help(missing_list, t_mod.COMMAND_GROUPS))
+
+
+@pytest.mark.parametrize('change,needle', [
+    ('missing_schema', 'display schemas'), ('missing_binding', 'must bind'),
+    ('missing_model', 'typed session detail fields'), ('missing_summary_column', 'columns and field coverage'),
+    ('guessed_interface', 'unknown policy'), ('hidden_full_id', 'preview must retain full'),
+    ('changed_wire_version', 'version 1 envelope'), ('single_result_autoaccept', 'auto_accept_single_result'),
+    ('clipped_narrow_tables', 'labeled_wrapped_cells'), ('missing_preview_toggle', 'Ctrl-/ details'), ('missing_printed_id', 'DATE/BRANCH/PRS/ID'),
+    ('swapped_column_meanings', 'bind their actual'), ('untyped_model_metadata', 'type its original'),
+])
+def test_display_schema_lint_rejects_missing_detail_or_policy_drift(change, needle):
+    contract = json.loads(json.dumps(CONTRACT))
+    common = contract['display_schemas']['session_information']
+    history = contract['display_schemas']['history_information']
+    if change == 'missing_schema':
+        del contract['display_schemas']['history_information']
+    elif change == 'missing_binding':
+        del contract['commands']['session history']['display_schema']
+    elif change == 'missing_model':
+        del common['fields']['model']
+    elif change == 'missing_summary_column':
+        common['columns'].pop()
+    elif change == 'guessed_interface':
+        common['unknown_policy']['infer_interface_from_agent'] = True
+    elif change == 'hidden_full_id':
+        history['preview']['required_fields'].remove('sid')
+    elif change == 'changed_wire_version':
+        history['json']['version'] = 2
+    elif change == 'single_result_autoaccept':
+        history['selection']['auto_accept_single_result'] = True
+    elif change == 'clipped_narrow_tables':
+        common['layouts']['table']['narrow'] = 'truncated_columns'
+    elif change == 'missing_preview_toggle':
+        history['preview']['toggle'] = None
+    elif change == 'missing_printed_id':
+        history['layouts']['table']['columns'].remove('ID')
+    elif change == 'swapped_column_meanings':
+        common['columns'][1]['fields'], common['columns'][2]['fields'] = common['columns'][2]['fields'], common['columns'][1]['fields']
+    elif change == 'untyped_model_metadata':
+        history['json']['conversation_types'].pop('model')
+    assert any(needle in error for error in lint_module().check_display_contracts(contract))

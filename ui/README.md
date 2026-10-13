@@ -90,6 +90,60 @@ ordinary menus. Editable lists use `row` and `frame` with `(line, item_key)`
 pairs, with `None` for headings. `page` renders the review. Render notices
 with `done` and editable prompts with `cooked_input`.
 
+## Session information and history
+
+The inventory's `display_schemas` are machine-readable definitions for the
+information shared by `t session list` (`t ls`) and `t session history`
+(`t history`). Each command binds its `display_schema`; history extends
+`session_information` with recorded PR evidence and historical details. CLI lint
+checks these definitions and their safety policies. Behavior tests check actual
+renderer projections, table output, details, and JSON against the definitions.
+
+| Column | Meaning |
+| --- | --- |
+| STATUS | Reported ownership status, active-context evidence, and the still-in-progress mark. A retained conversation can be saved, archived, or missing without a live owner. |
+| UI | The recorded or reported CLI, desktop, or foreground interface. Interface and agent are independent facts. |
+| MODEL | The agent glyph and exact recorded or current-owner model. `-` means the model is unknown. |
+| HOST | The reported owner or retained association host. Local `t ls` can omit this column; history includes it. |
+| SESSION | The repository/slot or foreground-session label. It is distinct from the immutable conversation ID. |
+| WORKING ON | The current owner's working-on text, recorded summary, or retained conversation title. History includes up to three associated PR references and states, with an additional count when needed. |
+
+Printed history appends DATE, BRANCH, PRS, and the full conversation ID after these
+shared columns, retaining
+historical details when no preview is available. Wide tables align these columns. When the actual columns do not fit, printed
+lists switch to labeled, wrapped cells and preserve complete values. Redirected
+output remains untruncated. History picker rows stay on one physical line;
+compact layouts put status and meaningful working-on text first. Date, branch,
+and technical identity must not displace that text. Verify the 80×24, 44×20, and
+32×12 layouts and count Unicode display columns rather than string length.
+
+Unrecorded historical interface and active-context facts remain unknown. Never
+infer a CLI interface or a model from `codex`/`claude`, and never turn a saved
+conversation into an attached or active one from its branch, current worktree,
+or PR state. Only an exact current owner supplies current ownership facts.
+Recorded model and summary provenance remain available in the full details.
+Presentation enrichment does not change conversation ownership or resume checks.
+
+The preview includes the complete working-on text, status/context, UI, agent and
+model, host/session, date, repository and full conversation ID, every workspace
+association and branch/commit/evidence, all associated PRs and their states,
+incidental mentions labeled separately, and transcript availability. Show it by
+default at 70 or more columns and 22 or more rows, in a bottom preview occupying
+35% of the full-height picker; Ctrl-/ toggles it at every size. Use the shared
+paginated single picker: Enter selects one exact conversation, Esc/Ctrl-C cancels,
+Ctrl-F/Ctrl-B changes pages, and Ctrl-R explicitly refreshes metadata. Search runs
+against all retained records before slicing a page. A single search result still
+waits for Enter, and returned query/page/snapshot identity must be validated before
+resuming. Browsing uses cached provider metadata; refresh is explicit.
+
+History JSON retains its version 1 envelope (`version`, `repo`, `slot`, `page`,
+`limit`, `total`, and `conversations`) and existing conversation fields, including
+full `sid`, associations, transcript sources, PR evidence, mentions, and owners.
+Recorded `model`/`summary`/`interface`, their provenance, and the derived `display`
+projection are additive metadata. They must not replace raw identity or evidence.
+JSON and non-TTY listings never select or resume; JSON has no ANSI styling,
+presentation headers, or prompts.
+
 ## Changes since the visual baseline
 
 Review these behavior changes when applying the v0.4.2 standard. Later changes
