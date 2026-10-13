@@ -54,6 +54,7 @@ t beam my-project 1 --from mini       # bring it back locally
 t open my-project 1 --app             # continue in Codex desktop (macOS)
 t open my-project 1 --cli             # return after releasing the desktop chat
 t resume my-project 1                 # revive a saved conversation after its CLI ends
+t resume my-project 1 --app           # choose the exact saved Codex conversation for the Mac app
 ```
 
 The [sample project and actual patch](docs/media/terminal/fixture/README.md)
@@ -220,6 +221,17 @@ can lack commit, host, title, or PR evidence; these details stay unknown. Associ
 PRs require structured tool evidence or a matching branch and commit; incidental
 links appear separately in details. History records are private under
 `$XDG_STATE_HOME/t/history/v1` (default `~/.local/state/t/history/v1`).
+
+`t resume <repo> [slot] --app` selects one saved Codex conversation and opens its
+exact ID in the local macOS app, preserving its history and recorded worktree.
+It uses the existing guarded CLI-to-desktop handoff when that same conversation
+is running locally. A different conversation in the slot, a remote or foreground
+owner, unverifiable ownership, unsupported agent, or multiple marked rows stops
+the operation without substituting another conversation. `--app` conflicts with
+`--cli`, `--fg`, and `--host`; `--remote` may still fetch saved histories first.
+Without a terminal, an explicit slot selects its newest saved conversation as
+usual. Use `--days all` to include older histories. Desktop delivery remains an
+OS open request, not proof that the app loaded the conversation.
 
 `t open`, `t resume`, and `t kill` share the compact resume picker design:
 **Space/Tab marks ✓ and Enter acts on the selection**. **Ctrl-A** shows all

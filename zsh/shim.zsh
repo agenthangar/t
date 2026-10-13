@@ -899,7 +899,7 @@ _t() {
           view-plan) flags+=(-a --all) ;;
           paste) flags+=(-p --pick -n --newest) ;;
           move) flags+=(--host --from --here --fg -d --detach -p --pick -a --all -s --session) ;;
-          resume) flags+=(-f --fg -a --all -l --live -r --remote --days --host) ;;
+          resume) flags+=(-f --fg --app --cli -a --all -l --live -r --remote --days --host) ;;
         esac
         _values 'flag' "${flags[@]}"
       elif (( CURRENT == first )); then _values 'repo' ${(k)DEV_REPOS}

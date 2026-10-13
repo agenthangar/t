@@ -98,6 +98,12 @@ CLI. Keep missing-preview notices distinct from ownership failures. Retrying
 after the conflicting owner releases must preserve the selected conversation,
 recorded worktree and history, and unrelated writers.
 
+`session resume --app` retains the saved-conversation picker and accepts exactly
+one Codex row. Selection carries the immutable ID and recorded worktree through
+the existing guarded desktop handoff; live slots never substitute their current
+conversation. Remote owners, incompatible flags, unsupported agents, and multiple
+marks fail before launching. `--cli` explicitly selects the ordinary resume route.
+
 New worktree folders include the repository basename (`t/t-12`); numeric slot
 arguments, tmux identity, JSON slot fields and history associations are unchanged.
 Existing `t/12` folders and recorded conversation paths remain valid. Both

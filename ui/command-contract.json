@@ -868,6 +868,45 @@
           "tests": [
             "tests/test_resume_multiselect.py::test_resume_multi_opens_selected_live_slot_and_revives_dead_slot"
           ]
+        },
+        "desktop": {
+          "argv": [
+            "session",
+            "resume",
+            "api",
+            "3",
+            "--app"
+          ],
+          "patterns": [
+            "action",
+            "filtered",
+            "multi"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_resume_app.py::test_resume_app_exact_saved_route",
+            "tests/test_resume_app.py::test_resume_app_multiple_marks_never_launch"
+          ],
+          "notes": "Select exactly one saved Codex ID for local guarded desktop handoff; multiple marks, unsupported agents, remote owners and incompatible flags fail without substituting sessions."
+        },
+        "cli": {
+          "argv": [
+            "session",
+            "resume",
+            "api",
+            "3",
+            "--cli"
+          ],
+          "patterns": [
+            "action",
+            "filtered",
+            "multi"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_resume_app.py::test_resume_cli_retains_terminal_route"
+          ],
+          "notes": "Explicit terminal destination; preserves existing saved resume behavior."
         }
       }
     },
