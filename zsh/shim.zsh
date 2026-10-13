@@ -675,7 +675,7 @@ _t_open_app_claim() {
     return 1
   done
   if [[ -z $reopen ]]; then
-    dir=$(_dev_worktree_create "$repo" "$slot")
+    dir=$(_dev_worktree_create "$repo" "$slot" "$dir") || return 1
   fi
   [[ -n $dir && -e $dir/.git ]] || { _dev_worktree_refuse "$repo" "$slot"; return 1; }
   _dev_auto_trust "$dir"

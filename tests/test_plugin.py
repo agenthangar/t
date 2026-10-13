@@ -144,10 +144,9 @@ def test_live_tree_guard_protects_canonical_and_selected_code(tmp_path):
     assert "home=1" in result.stdout
 
 
-@pytest.mark.skipif(not shutil.which("zsh") or os.uname().sysname != "Darwin",
-                    reason="Codex desktop launch requires macOS and zsh")
-@pytest.mark.parametrize("reopen", [False, True])
-def test_open_app_creates_worktree_without_starting_tmux_or_cli(tmp_path, reopen):
+@pytest.mark.skipif(not shutil.which("zsh"), reason="zsh is required")
+@pytest.mark.parametrize("reopen,leaf", [(False, "api-1"), (True, "1"), (True, "api-1")])
+def test_open_app_creates_worktree_without_starting_tmux_or_cli(tmp_path, reopen, leaf):
     bins = tmp_path / "stubbin"
     bins.mkdir()
     launcher = bins / "t"
@@ -159,14 +158,15 @@ def test_open_app_creates_worktree_without_starting_tmux_or_cli(tmp_path, reopen
     log = tmp_path / "codex.log"
     repo = tmp_path / "home" / "code" / "api"
     if reopen:
-        metadata = tmp_path / "home" / "worktrees" / "api" / "1" / ".git"
+        metadata = tmp_path / "home" / "worktrees" / "api" / leaf / ".git"
         metadata.mkdir(parents=True)
         (metadata / "t-app-slot").write_text("codex-app\n")
     result = shell(
         tmp_path,
         f'''mkdir -p {repo}
+        OSTYPE=darwin # All app/process commands are stubs; no native window opens.
         _dev_slot_fresh() {{ [[ $2 == 1 ]] }}
-        _dev_worktree_create() {{ local wt="$HOME/worktrees/api/$2"; mkdir -p "$wt/.git"; print -r -- "$wt"; }}
+        _dev_worktree_create() {{ local wt="$HOME/worktrees/api/{leaf}"; [[ $3 == "$wt" ]] || return 1; mkdir -p "$wt/.git"; print -r -- "$wt"; }}
         _dev_app_slot_marker() {{ print -r -- "$1/.git/t-app-slot"; }}
         _dev_ps_snapshot() {{ :; }}
         _dev_cwd_pids() {{ :; }}
@@ -178,8 +178,8 @@ def test_open_app_creates_worktree_without_starting_tmux_or_cli(tmp_path, reopen
                    "TMUX_TMPDIR": str(tmp_path / "tmux")},
     )
     assert result.returncode == 0, result.stderr
-    assert log.read_text().strip() == f"_app-workspace {tmp_path}/home/worktrees/api/1" + (' --reopen' if reopen else '')
-    assert (tmp_path / "home" / "worktrees" / "api" / "1" / ".git" / "t-app-slot").read_text().strip() == "codex-app"
+    assert log.read_text().strip() == f"_app-workspace {tmp_path}/home/worktrees/api/{leaf}" + (' --reopen' if reopen else '')
+    assert (tmp_path / "home" / "worktrees" / "api" / leaf / ".git" / "t-app-slot").read_text().strip() == "codex-app"
     assert "Open request sent" in result.stdout
     assert "unexpected worktree creation" not in result.stderr
 

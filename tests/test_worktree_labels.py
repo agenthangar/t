@@ -173,3 +173,19 @@ def test_navigation_ignores_unmanaged_worktree_names(tmp_path):
     assert result.returncode == 0 and result.stdout.strip() == str(canonical)
     result = configured_shell(tmp_path, '_t_cd')
     assert result.returncode != 0 and 'no managed worktrees' in result.stderr
+
+
+def test_desktop_claim_cannot_switch_layout_after_lock_selection(tmp_path):
+    old = tmp_path / 'home/work trees/api/4'
+    (old / '.git').mkdir(parents=True)
+    named = old.parent / 'api-4'
+    result = configured_shell(tmp_path, f'''
+_dev_ps_snapshot() {{ :; }}
+_dev_cwd_pids() {{ :; }}
+_dev_app_slot_reserve() {{ print -u2 UNEXPECTED_RESERVATION; return 99; }}
+_t_open_app_claim api 4 {shlex.quote(str(named))}
+''')
+    assert result.returncode != 0
+    assert 'another worktree path' in result.stderr
+    assert 'UNEXPECTED_RESERVATION' not in result.stderr
+    assert old.is_dir() and not named.exists()
