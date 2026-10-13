@@ -1,0 +1,4 @@
+{"version": 2, "width": 120, "height": 30, "title": "t app demo 1 --reuse-window --no-preview --no-plan"}
+[0.026, "o", "$ t app demo 1 --reuse-window --no-preview --no-plan\r\n"]
+[2.889, "o", "demo-1 \u2192 Codex app \u00b7 thread [demo-thread]\r\n"]
+[3.455, "o", "Note: 1 other held Codex writer lock(s) have no worktree mapping; this handoff checked the selected thread and known worktree owners.\r\nOpen request sent to macOS; app delivery is not confirmed. Tmux keeps this worktree slot reserved.\r\n"]

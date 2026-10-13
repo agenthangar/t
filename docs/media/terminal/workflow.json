@@ -1,0 +1,126 @@
+{
+  "capture_date": "2026-10-11",
+  "same_thread_verified": true,
+  "remote_transcript_verified": true,
+  "remote_tests_passed": 5,
+  "local_tests_before": {
+    "total": 3,
+    "failures": 2
+  },
+  "local_tests_after": {
+    "total": 5,
+    "failures": 0
+  },
+  "remote_model_turn_ran": false,
+  "remote_limitation": "Mini Codex is not logged in; actual tests run there but no remote model turn.",
+  "desktop_owner_verified": true,
+  "desktop_window_filmed": false,
+  "fixture": "fixture",
+  "issues": [
+    "https://github.com/agenthangar/agenthangar.github.io/issues/5",
+    "https://github.com/agenthangar/t/issues/107"
+  ],
+  "editing": "66-second edited cut with a two-second editorial title card. Reading sections play at normal speed; open, return, and resume setup play at 2x, marked on screen. Idle sections and repeated output removed. Desktop-to-CLI return occurs between chapters. Setup retries omitted; transfer follows WIP checkpoint. No fabricated terminal output.",
+  "chapters": [
+    {
+      "source": "flow-open.cast",
+      "label": "01 / Open a task",
+      "note": "Real terminal capture \u00b7 GPT-6.1-Sol selected",
+      "start": 0,
+      "end": 4,
+      "poster": false,
+      "speed": 2
+    },
+    {
+      "source": "flow-work.cast",
+      "label": "01 / Reproduce the bug",
+      "note": "Real agent work \u00b7 Reproduce failures, edit code, add regression tests",
+      "start": 28,
+      "end": 31,
+      "poster": false,
+      "speed": 1
+    },
+    {
+      "source": "flow-work.cast",
+      "label": "01 / Fix the code",
+      "note": "Real agent work \u00b7 Reproduce failures, edit code, add regression tests",
+      "start": 40,
+      "end": 50,
+      "poster": true,
+      "speed": 1
+    },
+    {
+      "source": "flow-verify.cast",
+      "label": "01 / Five tests pass",
+      "note": "Five tests passing \u00b7 Only open tasks returned \u00b7 Actual changed-file summary",
+      "start": 1,
+      "end": 5,
+      "poster": false,
+      "speed": 1
+    },
+    {
+      "source": "flow-outbound.cast",
+      "label": "02 / Move to mini",
+      "note": "Same coding task and fixed working tree \u00b7 Local WIP checkpoint transferred",
+      "start": 0,
+      "end": 6,
+      "poster": false,
+      "speed": 1
+    },
+    {
+      "source": "flow-remote-tests.cast",
+      "label": "02 / Tests pass on mini",
+      "note": "Real remote test run \u00b7 Five pass \u00b7 Remote Codex model turn needs sign-in",
+      "start": 1,
+      "end": 5,
+      "poster": false,
+      "speed": 1
+    },
+    {
+      "source": "flow-return.cast",
+      "label": "02 / Bring the task home",
+      "note": "Same coding conversation and fixed project return to the Mac",
+      "start": 0,
+      "end": 10,
+      "poster": false,
+      "speed": 2
+    },
+    {
+      "source": "flow-app.cast",
+      "label": "03 / Open in desktop",
+      "note": "Real app handoff command \u00b7 App window not filmed",
+      "start": 0,
+      "end": 6,
+      "poster": false,
+      "speed": 1
+    },
+    {
+      "source": "flow-desktop.cast",
+      "label": "03 / Same task in desktop",
+      "note": "Same task, model and context \u00b7 Desktop writer independently verified",
+      "start": 2,
+      "end": 6,
+      "poster": false,
+      "speed": 1
+    },
+    {
+      "source": "flow-resume.cast",
+      "label": "04 / Resume the task",
+      "note": "Select the coding task \u00b7 Original fix and conversation restored",
+      "start": 0,
+      "end": 24,
+      "poster": false,
+      "speed": 2
+    },
+    {
+      "source": "flow-continued.cast",
+      "label": "04 / Keep working",
+      "note": "Resumed agent verifies the same fix \u00b7 Tests and actual --status done output",
+      "start": 12,
+      "end": 20,
+      "poster": false,
+      "speed": 1
+    }
+  ],
+  "intro_seconds": 2
+}
