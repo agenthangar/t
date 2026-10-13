@@ -4432,7 +4432,7 @@ class _LoginBrowserLinks:
         self.targets.clear()
 
 
-def _login_run(cmd):
+def _login_run(cmd, headless=False):
     """Give the vendor one controlling terminal for input, output and echo."""
     if not (sys.stdin.isatty() and sys.stdout.isatty()):
         return subprocess.run(cmd)
@@ -4470,7 +4470,7 @@ def _login_run(cmd):
                                  preexec_fn=child_terminal)
         os.close(slave)
         slave = None
-        if not _install_headless(os.environ, False):
+        if not _install_headless(os.environ, headless):
             try:
                 browser = _LoginBrowserLinks()
             except OSError:
@@ -4585,7 +4585,7 @@ def cmd_login(cfg, args):
     for step in plan():
         agent, cmd = step["agent"], step["cmd"]
         try:
-            result = _login_run(cmd)
+            result = _login_run(cmd, headless=headless)
         except KeyboardInterrupt:
             return 130
         except OSError:

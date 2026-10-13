@@ -311,7 +311,7 @@ def test_login_prompt_fallback_runs_selection_directly(t_mod, monkeypatch, answe
         return value
     monkeypatch.setattr('builtins.input', answer)
     calls = []
-    def run(cmd):
+    def run(cmd, **kwargs):
         calls.append(cmd)
         return SimpleNamespace(returncode=0)
     monkeypatch.setattr(t_mod, '_login_run', run)
@@ -386,7 +386,7 @@ def test_login_success_reports_fresh_expiry(t_mod, monkeypatch, capsys):
     probes = iter([{'state': 'logged-out', 'bin': '/fixture', 'expires': None},
                    {'state': 'logged-in', 'bin': '/fixture', 'expires': 2000000000}])
     monkeypatch.setattr(t_mod, '_login_probe', lambda _: next(probes))
-    monkeypatch.setattr(t_mod, '_login_run', lambda cmd: SimpleNamespace(returncode=0))
+    monkeypatch.setattr(t_mod, '_login_run', lambda cmd, **kw: SimpleNamespace(returncode=0))
     args = t_mod.build_parser().parse_args(['login', 'codex', '-y'])
     assert t_mod.cmd_login({}, args) == 0
     output = capsys.readouterr().out

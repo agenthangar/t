@@ -55,12 +55,12 @@ def test_redirected_login_output_is_inherited_without_hyperlinks(t_mod, monkeypa
     assert calls == [['fixture', 'login']]
 
 
-@pytest.mark.parametrize('mode', ['remote', 'local', 'hidden', 'ctrl-c', 'sigterm', 'outer-noecho'])
+@pytest.mark.parametrize('mode', ['remote', 'local', 'hidden', 'ctrl-c', 'sigterm', 'outer-noecho', 'headless'])
 @pytest.mark.parametrize('answer,expected', [('fixture-code\n', 0), ('fail\n', 1), (None, 130)])
 def test_login_terminal_links_input_exit_and_interrupt(tmp_path, answer, expected, mode):
     env = cli_sandbox(tmp_path)
     if mode == 'sigterm' and answer is None: expected = 143
-    if mode != 'local': env['SSH_CONNECTION'] = 'fixture'
+    if mode not in ('local', 'headless'): env['SSH_CONNECTION'] = 'fixture'
     if mode == 'hidden': env['HIDE_INPUT'] = '1'
     vendor = tmp_path / 'bin/claude'
     vendor.write_text('''#!/usr/bin/env python3
@@ -90,7 +90,7 @@ if answer != 'fixture-code': sys.exit(7)
         termios.tcsetattr(slave, termios.TCSANOW, attrs)
     saved = termios.tcgetattr(master)
     try:
-        process = subprocess.Popen([sys.executable, str(ROOT / 'bin/t'), 'login', 'claude', '--force', '-y'],
+        process = subprocess.Popen([sys.executable, str(ROOT / 'bin/t'), 'login', 'claude', '--force', '-y', *(['--headless'] if mode == 'headless' else [])],
                                    env=env, stdin=slave, stdout=slave, stderr=slave, start_new_session=True)
         os.close(slave)
         slave = None

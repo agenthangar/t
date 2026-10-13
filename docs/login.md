@@ -55,7 +55,7 @@ URL. In macOS Terminal, **hold Command and double-click the short URL**
 This loopback-only redirect keeps its target in memory and stops when that login
 command ends. It has no access logs and does not store credentials or send the
 sign-in URL to a URL-shortening service. The original vendor URL stays copyable.
-Over SSH, use the original URL or the styled OSC 8 link (Command-click in
+Over SSH or with `--headless`, use the original URL or the styled OSC 8 link (Command-click in
 [iTerm2](https://iterm2.com/documentation-escape-codes.html)); a remote loopback
 link would not point to the user's computer, so none is created. Redirected output
 is unchanged. Vendor output is never written to a log by `t`.
