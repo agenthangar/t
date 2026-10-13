@@ -606,7 +606,8 @@
       "scope": "explicit/inferred repository or all local/remote sessions",
       "confirmation": "per_target",
       "tests": [
-        "tests/test_open_picker.py::test_bare_open_inside_worktree_shows_every_detail_and_repo"
+        "tests/test_open_picker.py::test_bare_open_inside_worktree_shows_every_detail_and_repo",
+        "tests/test_worktree_labels.py::test_python_and_shell_resolve_same_numeric_identity"
       ],
       "modes": {
         "default": {
@@ -835,7 +836,8 @@
       "scope": "explicit/inferred repository or all local/remote sessions",
       "confirmation": "per_target",
       "tests": [
-        "tests/test_resume_multiselect.py::test_resume_multi_opens_selected_live_slot_and_revives_dead_slot"
+        "tests/test_resume_multiselect.py::test_resume_multi_opens_selected_live_slot_and_revives_dead_slot",
+        "tests/test_worktree_labels.py::test_python_and_shell_resolve_same_numeric_identity"
       ],
       "modes": {
         "default": {
@@ -881,7 +883,8 @@
       "tests": [
         "tests/test_history_picker.py::test_real_isolated_tmux_picker_paging_global_search_refresh_and_cancel",
         "tests/test_command_behavior.py::test_session_and_history_display_follow_shared_schema",
-        "tests/test_command_behavior.py::test_history_display_contract_preserves_unknowns_preview_and_json"
+        "tests/test_command_behavior.py::test_history_display_contract_preserves_unknowns_preview_and_json",
+        "tests/test_worktree_labels.py::test_python_and_shell_resolve_same_numeric_identity"
       ],
       "modes": {
         "default": {
@@ -982,7 +985,8 @@
       "scope": "explicit/inferred repository or all local/remote sessions",
       "confirmation": "none",
       "tests": [
-        "tests/test_command_groups_shell.py::test_grouped_shell_commands_keep_arguments_and_caller_shell"
+        "tests/test_command_groups_shell.py::test_grouped_shell_commands_keep_arguments_and_caller_shell",
+        "tests/test_worktree_labels.py::test_python_and_shell_resolve_same_numeric_identity"
       ],
       "modes": {
         "default": {
@@ -1025,7 +1029,8 @@
       "scope": "explicit/inferred repository or all local/remote sessions",
       "confirmation": "none",
       "tests": [
-        "tests/test_command_groups_shell.py::test_grouped_shell_commands_keep_arguments_and_caller_shell"
+        "tests/test_command_groups_shell.py::test_grouped_shell_commands_keep_arguments_and_caller_shell",
+        "tests/test_worktree_labels.py::test_python_and_shell_resolve_same_numeric_identity"
       ],
       "modes": {
         "default": {

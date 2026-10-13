@@ -487,6 +487,7 @@ def test_open_cli_and_app_conflict(tmp_path):
     ("api 3 --host mini", "remote mini api 3 --cli"),
 ])
 def test_open_infers_reserved_desktop_slot_before_cli_default(tmp_path, args, expected):
+    (tmp_path / "home/worktrees/api/3").mkdir(parents=True)
     result = shell(tmp_path,
         '_t_open_app() { print -r -- "app $*"; }; '
         '_t_dev() { print -r -- "cli $*"; }; '

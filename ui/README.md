@@ -92,6 +92,14 @@ with `done` and editable prompts with `cooked_input`.
 
 ## Session information and history
 
+New worktree folders include the repository basename (`t/t-12`); numeric slot
+arguments, tmux identity, JSON slot fields and history associations are unchanged.
+Existing `t/12` folders and recorded conversation paths remain valid. Both
+layouts appear in list and navigation results. Ambiguous simultaneous layouts
+must fail with an inspection/history hint before a slot mutation. Transfers
+negotiate layout support before stopping the source; see the compatibility rules
+in the main README. These are path changes within existing command modes.
+
 The inventory's `display_schemas` are machine-readable definitions for the
 information shared by `t session list` (`t ls`) and `t session history`
 (`t history`). Each command binds its `display_schema`; history extends

@@ -214,7 +214,7 @@ _t_cd() {
     echo "t cd: unknown repo '$repo' (known: ${(k)DEV_REPOS})" >&2; return 1
   fi
   if [[ -n $repo && -n $slot ]]; then
-    local wt; wt=$(_dev_worktree_path "$repo" "$slot")
+    local wt; wt=$(_dev_worktree_path "$repo" "$slot") || return 1
     [[ -e $wt/.git ]] || {
       echo "t cd: no worktree at $wt  ('t open $repo $slot' creates one)" >&2; return 1 }
     cd "$wt"; return
@@ -224,13 +224,19 @@ _t_cd() {
   # require .git so a leftover / hand-made numeric dir under $DEV_WORKTREE_ROOT is not offered.
   local -a wts
   if [[ -n $repo ]]; then
-    wts=("$DEV_WORKTREE_ROOT/${DEV_REPOS[$repo]:t}"/<->(N/ne:'[[ -e $REPLY/.git ]]':))
+    wts=("$DEV_WORKTREE_ROOT/${DEV_REPOS[$repo]:t}"/*(N/ne:'[[ -e $REPLY/.git ]]':))
     (( ${#wts} )) || { cd "${DEV_REPOS[$repo]}"; return }   # none yet → the repo itself
   else
-    wts=("$DEV_WORKTREE_ROOT"/*/<->(N/ne:'[[ -e $REPLY/.git ]]':))
+    wts=("$DEV_WORKTREE_ROOT"/*/*(N/ne:'[[ -e $REPLY/.git ]]':))
     (( ${#wts} )) || {
       echo "t cd: no worktrees under $DEV_WORKTREE_ROOT ('t open <repo>' creates one)" >&2; return 1 }
   fi
+  local candidate; local -a recognized
+  for candidate in "${wts[@]}"; do
+    _dev_worktree_slot "${${candidate:h}:t}" "${candidate:t}" >/dev/null && recognized+=("$candidate")
+  done
+  wts=("${recognized[@]}")
+  (( ${#wts} )) || return 1
   (( ${#wts} == 1 )) && { cd "${wts[1]}"; return }
   if [[ -t 0 && -t 1 ]] && command -v fzf >/dev/null 2>&1; then
     local wt br line; local -a rows
@@ -597,7 +603,7 @@ _t_open_app() {
     command t app "$repo" "$slot"
     return
   fi
-  dir=$(_dev_worktree_path "$repo" "$slot")
+  dir=$(_dev_worktree_path "$repo" "$slot") || return 1
   _dev_with_launch_locks "$dir" '' _t_open_app_claim "$repo" "$slot" "$dir" || return 1
   print -r -- "Opening $repo $slot in the Codex desktop app: $dir"
   command t _app-workspace "$dir" ${reopen:+--reopen} || {

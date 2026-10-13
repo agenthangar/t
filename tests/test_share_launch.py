@@ -30,7 +30,7 @@ def launcher(monkeypatch):
         parent = Path(os.environ["HOME"]) / "code" / ".worktrees"
         if session.startswith("t-cursor-"):
             return "$42", str(parent / "repo-cursor" / session.removeprefix("t-cursor-"))
-        return "$42", str(parent / "repo" / session.rsplit("-", 1)[1])
+        return "$42", str(parent / "repo" / ("repo-" + session.rsplit("-", 1)[1]))
     monkeypatch.setattr(module, "_tmux_identity", fake_identity)
     return module
 

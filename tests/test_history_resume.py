@@ -33,11 +33,12 @@ def saved_row(app, revision, workspace, *, sid='selected', evidence='resume', ob
         info = gitfile.stat()
         gitdir = subprocess.run(['git', '-C', str(workspace), 'rev-parse', '--absolute-git-dir'], text=True, capture_output=True).stdout.strip()
         generation = hashlib.sha256(json.dumps([gitdir, info.st_dev, info.st_ino, info.st_ctime_ns]).encode()).hexdigest()
-    return conversation(sid=sid, agent=agent, associations=[dict(workspace=str(workspace), slot=Path(workspace).name, host='local', branch='dev/repo-1', commit=revision, evidence=evidence, observed=observed, generation=generation)])
+    return conversation(sid=sid, agent=agent, associations=[dict(workspace=str(workspace), slot=Path(workspace).name.removeprefix('repo-'), host='local', branch='dev/repo-1', commit=revision, evidence=evidence, observed=observed, generation=generation)])
 
 
-def test_destination_reuses_original_only_with_durable_identity(app, history, store, git_repo):
-    path = Path(app.cfg.worktree_root) / 'repo/1'
+@pytest.mark.parametrize("leaf", ["1", "repo-1"])
+def test_destination_reuses_original_only_with_durable_identity(app, history, store, git_repo, leaf):
+    path = Path(app.cfg.worktree_root) / "repo" / leaf
     history.run(['git', '-C', app.cfg.repos['repo'], 'worktree', 'add', '-b', 'dev/repo-1', str(path), git_repo])
     row = store.merge(saved_row(app, git_repo, path))
     assert app.destination('repo', row, git_repo, []) == (str(path), '1', False)
@@ -272,7 +273,7 @@ def test_resume_launch_failure_keeps_worktree_and_releases_reservation(app, hist
     with pytest.raises(history.HistoryError, match='launch failed'):
         app.resume('repo', row)
     root = Path(app.cfg.worktree_root) / 'repo'
-    assert (root / '1').is_dir()
+    assert (root / 'repo-1').is_dir()
     assert not list(root.glob('.*.history-reservation'))
     assert source.exists()
 

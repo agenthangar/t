@@ -152,6 +152,32 @@ t session list             # see your running sessions
 
 Detach from tmux with `Ctrl-b d`; reattach with `t session open my-project 1`.
 
+New slot worktrees use an identifiable directory such as
+`$DEV_WORKTREE_ROOT/t/t-12`, `cashfwd/cashfwd-4`, or `hive/hive-7`.
+The slot argument remains numeric (`t session open t 12`), as do tmux slot IDs
+and history associations. Existing numeric directories such as `t/12` are reused
+without being moved. Saved conversations retain their exact IDs and paths;
+resume can rebuild either layout after a worktree is swept. Codex receives that
+directory name when opening a workspace; this does not group every worktree
+under one common heading in the app. Live GUI rendering is not verified by the
+automated compatibility tests.
+
+Both layouts work with CLI open/resume, desktop discovery and handoff, navigation,
+and retained history. If both `t/12` and `t/t-12` exist, slot actions refuse to
+choose: inspect the two worktrees and use `t session history t 12` to select a
+specific conversation. t never resolves this collision by moving either tree.
+
+Upgrade t's CLI and shell plugin together on each host before using labeled
+worktrees. A current sender checks the destination's layout capability before
+stopping its source writer; an older receiver is refused with an update hint.
+A current receiver can accept an older sender's numeric path. Older commands
+do not understand labeled worktrees: upgrade on that host before opening or
+resuming them. Transfer preserves the exact cwd and requires matching configured
+worktree roots; different home directories or roots are refused before the
+source is stopped. Attach on the source host, align the configuration for future
+work, or use history's verified resume into a fresh local workspace. Existing
+worktrees and agent history should not be manually renamed to bridge hosts.
+
 `t open` browses sessions across all local repositories, including from inside a
 worktree; `t open my-project` filters to that repo. Attached CLI and loaded desktop
 sessions are hidden by default; `--attached` includes them. Idle sessions and

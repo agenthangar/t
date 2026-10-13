@@ -194,6 +194,9 @@ class Config:
             parts = cwd[len(root) + 1:].split("/")
             if len(parts) >= 2:
                 base, slot = parts[0], parts[1]
+                slot = slot.removeprefix(base + "-")
+                if not re.fullmatch(r"[0-9]+", slot):
+                    return (None, None)
         if base is None:
             best = ""
             for path in self.repos.values():
@@ -209,6 +212,20 @@ class Config:
         if base in matches:
             return (base, slot)
         return (min(matches, key=len), slot)
+
+    def worktree_paths(self, alias, slot):
+        base = os.path.basename(self.repos[alias])
+        if not re.fullmatch(r"[0-9]+", str(slot)):
+            raise ValueError("worktree slot must be numeric")
+        root = os.path.join(self.worktree_root, base)
+        return (os.path.join(root, str(slot)), os.path.join(root, f"{base}-{slot}"))
+
+    def worktree_path(self, alias, slot):
+        paths = self.worktree_paths(alias, slot)
+        present = [path for path in paths if os.path.lexists(path)]
+        if len(present) > 1:
+            raise ValueError(f"both worktree layouts exist for {alias} {slot}; inspect {paths[0]} and {paths[1]} before continuing")
+        return present[0] if present else paths[1]
 
     def repo_dir_for_cwd(self, cwd):
         """Canonical DEV_REPOS dir for cwd (or for the worktree containing it), else ''.
@@ -8484,7 +8501,9 @@ def _session_row(cfg, rec, live_by_sid, now, cache_root=None, this_sid=None,
     key = worktree = None
     if alias and slot:
         key = "%s-%s" % (alias, slot)
-        worktree = os.path.join(cfg.worktree_root, os.path.basename(cfg.repos[alias]), slot)
+        # Preserve the transcript's exact layout, even after its folder was swept.
+        worktree = next((p for p in cfg.worktree_paths(alias, slot)
+                         if cwd == p or cwd.startswith(p + "/")), None)
     branch = rec.get("branch")
     if not branch and key:
         branch = "dev/%s-%s" % (os.path.basename(cfg.repos[alias]), slot)
@@ -8755,15 +8774,15 @@ def _session_ref_resolve(ref, cfg, recs, live_by_sid):
     if m and m.group(1) in cfg.repos:
         alias, n = m.groups()
         path = cfg.repos[alias]
-        wt = os.path.join(cfg.worktree_root, os.path.basename(path), n)
+        paths = cfg.worktree_paths(alias, n)
         for sid, info in live_by_sid.items():
-            if info.get("cwd") == wt and sid in by_sid:
+            if info.get("cwd") in paths and sid in by_sid:
                 return by_sid[sid]
         for sid, info in live_by_sid.items():
             head, _, num = info.get("slot", "").rpartition("-")
             if num == n and cfg.repos.get(head) == path and sid in by_sid:
                 return by_sid[sid]
-        cands = [r for r in recs if r.get("cwd") == wt and r.get("n_prompts")]
+        cands = [r for r in recs if r.get("cwd") in paths and r.get("n_prompts")]
         if cands:
             return max(cands, key=lambda r: (r.get("last_ts") or 0, r.get("mtime") or 0))
         raise ValueError("no transcript for slot %s-%s here (never run, a shared-tree repo, "
@@ -8833,7 +8852,7 @@ _MCP_INSTRUCTIONS = (
     "doing or where it left off, or which PR a session opened. find_sessions returns candidates WITH prompt excerpts: judge the match "
     "yourself from the excerpts and titles, then session_detail for the winner. Slots are "
     "named <repo>-<n> (tmux session dev-<repo>-<n>, worktree ~/code/.worktrees/<basename>/"
-    "<n>, branch dev/<basename>-<n>); a live one is attached with `t open <repo> <n>`, a "
+    "<basename>-<n> (legacy <n> retained), branch dev/<basename>-<n>); a live one is attached with `t open <repo> <n>`, a "
     "dead one revived with `t resume <repo> <n>` — tell the user those commands rather than running them. A result flagged "
     "this_session is the conversation you are in.")
 
@@ -9896,7 +9915,7 @@ REMOTE SESSIONS
 
     sp = sub.add_parser("cd", help="cd this shell into a dev slot's worktree",
         description="cd the calling shell into a dev slot's worktree "
-            "($DEV_WORKTREE_ROOT/<repo>/<slot>). Names default to the cwd repo, so `t session cd 3` "
+            "($DEV_WORKTREE_ROOT/<repo>/<repo>-<slot>, or an existing numeric folder). Names default to the cwd repo, so `t session cd 3` "
             "jumps to this repo's slot 3. With no slot: the repo's only worktree, an fzf pick "
             "when there are several (showing each worktree's checked-out branch), or the "
             "canonical repo dir when it has none. Bare `t session cd` picks across every worktree. "
