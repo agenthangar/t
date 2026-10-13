@@ -317,7 +317,7 @@ def test_batch_starts_two_real_isolated_agents_before_attaching(mod, tmp_path, m
     def verify_before_attach(rows):
         assert [row['session'] for row in rows] == ['dev-repo-1', 'dev-repo-2']
         deadline = time.monotonic() + 5
-        trees = [home / 'trees' / 'repo' / '1', home / 'trees' / 'repo' / '2']
+        trees = [home / 'trees' / 'repo' / 'repo-1', home / 'trees' / 'repo' / 'repo-2']
         while not all((tree / 'agent-started').exists() for tree in trees) and time.monotonic() < deadline:
             time.sleep(.05)
         for slot, tree in enumerate(trees, 1):

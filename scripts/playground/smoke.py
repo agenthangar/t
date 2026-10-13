@@ -113,7 +113,7 @@ def main():
             pane_pid = run("tmux", "display-message", "-p", "-t", "=dev-playground-1", "#{pane_pid}").stdout
             terminal.send(b"\x02d")
             terminal.finish()
-        worktree = home / "code/.worktrees/playground/1"
+        worktree = home / "code/.worktrees/playground/playground-1"
         assert worktree.is_dir(), worktree
         assert run("git", "-C", str(worktree), "branch", "--show-current").stdout.strip() == "dev/playground-1"
         (worktree / "smoke.txt").write_text("Keep this work across reattachment.\n")

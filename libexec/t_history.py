@@ -953,7 +953,12 @@ class HistoryCommand:
         root = Path(self.cfg.worktree_root) / base
         association, recorded = self.revision(row)
         historical_slot = association.get('slot', '')
-        historical_path = root / historical_slot if historical_slot else None
+        # A slot number does not identify its layout. Reuse only its recorded path.
+        workspace = Path(association.get('workspace') or '/')
+        candidates = (root / historical_slot, root / f'{base}-{historical_slot}') if historical_slot else ()
+        historical_path = workspace if workspace in candidates else None
+        if any(os.path.lexists(p) for p in candidates if p != workspace):
+            historical_path = None
         busy = {os.path.realpath(owner['cwd']) for owner in owners}
         latest = []
         if historical_path:
@@ -963,7 +968,7 @@ class HistoryCommand:
                         latest.append((a.get('observed', 0), conversation['sid'], conversation['agent']))
         current_identity = max(latest, default=(0, '', ''))[1:]
         # Reuse only when both revision and provenance match, never by branch name alone.
-        if association.get('generation') and association['generation'] == generation(historical_path) and current_identity == (row['sid'], row['agent']) and recorded == revision and historical_path and association.get('host') == 'local' and os.path.realpath(association.get('workspace', '')) == os.path.realpath(historical_path) and historical_path.is_dir() and os.path.realpath(historical_path) not in busy:
+        if historical_path and association.get('generation') and association['generation'] == generation(historical_path) and current_identity == (row['sid'], row['agent']) and recorded == revision and association.get('host') == 'local' and os.path.realpath(association.get('workspace', '')) == os.path.realpath(historical_path) and historical_path.is_dir() and os.path.realpath(historical_path) not in busy:
             head = run(['git', '-C', str(historical_path), 'rev-parse', 'HEAD'], optional=True).strip()
             actual = run(['git', '-C', str(historical_path), 'branch', '--show-current'], optional=True).strip()
             if head == revision and actual == association.get('branch'):
@@ -971,13 +976,14 @@ class HistoryCommand:
                 return str(historical_path), historical_slot, False
         # Fresh allocation skips every existing branch/worktree and every owner.
         for slot in range(1, 10001):
-            path, branch = root / str(slot), f'dev/{base}-{slot}'
-            if path.exists() or any(owner['slot'] == f'{alias}-{slot}' for owner in owners):
+            path, branch = root / f'{base}-{slot}', f'dev/{base}-{slot}'
+            legacy = root / str(slot)
+            if any(os.path.lexists(p) for p in (path, legacy, root / f'.{slot}.history-reservation')) or any(owner['slot'] == f'{alias}-{slot}' for owner in owners):
                 continue
             if run(['git', '-C', directory, 'rev-parse', '--verify', 'refs/heads/' + branch], optional=True) or run(['git', '-C', directory, 'rev-parse', '--verify', 'refs/remotes/origin/' + branch], optional=True):
                 continue
             root.mkdir(parents=True, exist_ok=True)
-            marker = root / f'.{slot}.history-reservation'
+            marker = root / f'.{path.name}.history-reservation'
             try:
                 with marker.open('x') as stream:
                     os.chmod(marker, 0o600)
@@ -1297,7 +1303,8 @@ def record_association(sid, agent, workspace, transcript_path='', event='launch'
             return
         commit = run(['git', '-C', workspace, 'rev-parse', 'HEAD'], optional=True).strip()
         branch = run(['git', '-C', workspace, 'branch', '--show-current'], optional=True).strip()
-        slot = Path(workspace).name if Path(workspace).name.isdigit() else ''
+        leaf = Path(workspace).name.removeprefix(Path(workspace).parent.name + '-')
+        slot = leaf if re.fullmatch(r'[0-9]+', leaf) else ''
         value = dict(repo=repo, agent=agent, sid=sid, interface=interface, interface_updated=time.time(), updated=time.time(), associations=[dict(workspace=workspace, slot=slot, host='local', branch=branch, commit=commit, generation=generation(workspace), evidence=event, observed=time.time())])
         if saved:
             value.update({key: saved[key] for key in ('title', 'summary', 'summary_source', 'model', 'model_source', 'model_updated', 'summary_updated') if key in saved})

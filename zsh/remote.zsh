@@ -553,6 +553,14 @@ _dev_pull() {
     }
   fi
 
+  # Validate the local layout before stopping the remote writer or syncing data.
+  if [[ -n $DEV_WORKTREE_ROOT && $cwd == $DEV_WORKTREE_ROOT/*/* ]] ||
+     { [[ ${${cwd:h}:t} == ${DEV_REPOS[$repo]:t} ]] && _dev_worktree_slot "${DEV_REPOS[$repo]:t}" "${cwd:t}" >/dev/null; }; then
+    _dev_worktree_accept_cwd "$cwd" || return 1
+  elif [[ ! -d $cwd ]]; then
+    print -u2 -- "t: source path $cwd cannot be used here; align configured roots or attach on $host (source was not stopped)"
+    return 1
+  fi
   echo "⟳ Pulling ${sid[1,8]}… ($cwd) from $host → here"
   # It's a MOVE: stop the origin copy on <host> FIRST, before snapshotting its
   # worktree + transcript, so a still-live claude there can't keep editing files
@@ -586,7 +594,7 @@ _dev_pull() {
     # Materialize it locally from its branch on origin if absent, rather than hard-failing.
     if [[ ! -d $cwd ]]; then
       local _pr _ps; _pr=$(_dev_repo_of_dir "$cwd"); _ps=${_pr#*$'\t'}; _pr=${_pr%%$'\t'*}
-      [[ -n $_pr && -n $_ps ]] && _dev_worktree_enabled "$_pr" && _dev_worktree_create "$_pr" "$_ps" >/dev/null
+      [[ -n $_pr && -n $_ps ]] && _dev_worktree_enabled "$_pr" && _dev_worktree_create "$_pr" "$_ps" "$cwd" >/dev/null || return 1
     fi
     [[ -d $cwd ]] || { echo "dev: $cwd doesn't exist here — clone/sync the repo first." >&2; return 1; }
     _dev_worktree_beam_sync "$cwd"      # fast-forward to the edits the origin just pushed

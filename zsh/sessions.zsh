@@ -988,7 +988,8 @@ _dev_repo_of_dir() {
   local dir="$1" base= slot= k best=
   if [[ -n $DEV_WORKTREE_ROOT && $dir == $DEV_WORKTREE_ROOT/*/* ]]; then
     local rest=${dir#$DEV_WORKTREE_ROOT/}   # <basename>/<slot>[/...]
-    base=${rest%%/*}; rest=${rest#*/}; slot=${rest%%/*}
+    base=${rest%%/*}; rest=${rest#*/}
+    slot=$(_dev_worktree_slot "$base" "${rest%%/*}") || return 1
   else
     local d bestlen=0                       # canonical dir or subdir; longest/most-specific wins
     for k in ${(k)DEV_REPOS}; do
@@ -1044,7 +1045,7 @@ _dev_ensure_session_cwd() {
   repo=${r%%$'\t'*}; slot=${r#*$'\t'}
   [[ -n $repo && -n $slot ]] || return 1   # not a worktree path → nothing to rebuild
   _dev_worktree_enabled "$repo" || return 1
-  _dev_worktree_create "$repo" "$slot"     # prints the rebuilt path, or returns 1
+  _dev_worktree_create "$repo" "$slot" "$cwd" # prints the rebuilt path, or returns 1
 }
 
 # _dev_cwd_repo_dir — print the canonical DEV_REPOS directory that contains $PWD (or
@@ -1309,7 +1310,7 @@ _dev_session_rows() {
   # Desktop-only workspaces have no tmux session, but their private Git marker
   # reserves the slot. Surface them in t ls without claiming an active agent.
   local wt match app_repo app_slot
-  for wt in $DEV_WORKTREE_ROOT/*/<->(N/); do
+  for wt in $DEV_WORKTREE_ROOT/*/*(N/); do
     [[ -e $wt/.git && -z ${had_path[$wt]:-} ]] || continue
     [[ -n ${desktop_sid[$wt]:-} ]] || _dev_app_slot_reserved "$wt" || continue
     match=$(_dev_repo_of_dir "$wt") || continue
@@ -1878,7 +1879,7 @@ _dev_kill() {
   # treating a parked pane as a CLI to kill. A live terminal agent still wins.
   if [[ $slot == <-> && -n ${DEV_REPOS[$repo]:-} && -n $DEV_WORKTREE_ROOT ]]; then
     local desktop_wt desktop_session desktop_cli=
-    desktop_wt=$(_dev_worktree_path "$repo" "$slot")
+    desktop_wt=$(_dev_worktree_path "$repo" "$slot") || return 1
     if _dev_app_slot_reserved "$desktop_wt"; then
       for _kk in ${(k)DEV_REPOS}; do
         [[ ${DEV_REPOS[$_kk]} == ${DEV_REPOS[$repo]} ]] || continue
@@ -1906,8 +1907,7 @@ _dev_kill() {
   local desktop_path desktop_slot desktop_live
   if [[ -n ${DEV_REPOS[$repo]:-} && -n $DEV_WORKTREE_ROOT ]]; then
     for desktop_path in "${DEV_WORKTREE_ROOT}/${DEV_REPOS[$repo]:t}"/*(N/); do
-      desktop_slot=${desktop_path:t}
-      [[ $desktop_slot == <-> ]] || continue
+      desktop_slot=$(_dev_worktree_slot "${DEV_REPOS[$repo]:t}" "${desktop_path:t}") || continue
       _dev_app_slot_reserved "$desktop_path" || continue
       desktop_live=
       for _kk in ${(k)DEV_REPOS}; do
@@ -2185,7 +2185,7 @@ _t_issue_prepare() {
   command -v tmux >/dev/null || return 1
   git -C "${DEV_REPOS[$repo]}" fetch -q --prune origin || return 1
   while true; do
-    wt=$(_dev_worktree_path "$repo" "$slot")
+    wt=$(_dev_worktree_path "$repo" "$slot") || return 1
     br=$(_dev_worktree_branch "$repo" "$slot")
     # Never resume or reap a branch, even a merged one. Fetch before checking so
     # an unseen remote branch cannot turn a new issue into another task's slot.

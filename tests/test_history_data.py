@@ -46,8 +46,8 @@ def app(history, store, tmp_path, monkeypatch, t_mod):
         path = Path(cwd)
         if path == repo or repo in path.parents:
             return 'repo', ''
-        if path.parent == worktrees and path.name.isdigit():
-            return 'repo', path.name
+        if path.parent == worktrees and path.name.removeprefix('repo-').isdigit():
+            return 'repo', path.name.removeprefix('repo-')
         return None, None
 
     cfg = SimpleNamespace(repos={'repo': str(repo)}, hosts={}, worktree_root=str(worktrees.parent),

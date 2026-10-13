@@ -19,14 +19,14 @@ import pytest
 SID = "01234567-89ab-cdef-0123-456789abcdef"
 
 
-@pytest.fixture
-def app_slot(t_mod, tmp_path, monkeypatch):
+@pytest.fixture(params=["13", "my-api-13"])
+def app_slot(t_mod, tmp_path, monkeypatch, request):
     monkeypatch.setattr(t_mod, "CONFIG", str(tmp_path / "no-config"))
     monkeypatch.setattr(t_mod, "_cache_root", lambda: str(tmp_path / "cache"))
     cfg = t_mod.Config()
     cfg.repos = {"api": str(tmp_path / "my-api"), "a": str(tmp_path / "my-api")}
     cfg.worktree_root = str(tmp_path / "worktrees")
-    cwd = tmp_path / "worktrees" / "my-api" / "13"
+    cwd = tmp_path / "worktrees" / "my-api" / request.param
     cwd.mkdir(parents=True)
     row = dict(host="local", sid=SID, cwd=str(cwd), slot="api-13",
                state="detached", context="active", agent="codex", summary="Fix settings")

@@ -213,7 +213,7 @@ _t_resume() {
   if (( live_scan_rc )); then
     if [[ -n $slot ]]; then
       local local_wt local_owner
-      local_wt=$(_dev_worktree_path "$repo" "$slot")
+      local_wt=$(_dev_worktree_path "$repo" "$slot") || return 1
       local_owner=${live[${local_wt:A}]:-}
       if [[ -n $local_owner ]] || tmux has-session -t "=dev-${repo}-${slot}:" 2>/dev/null; then
         print -u2 -- "Slot $slot is live locally ($local_owner) — attaching."
@@ -318,7 +318,11 @@ _t_resume() {
       slots=(${(nou)slots:#})
     fi
     for n in $slots; do
-      wt=$(_dev_worktree_path "$repo" "$n")
+      wt=$(_dev_worktree_path "$repo" "$n") || return 1
+      local candidate
+      for candidate in "${(@f)$(_dev_worktree_paths "$repo" "$n")}"; do
+        [[ -n ${live[${candidate:A}]:-} ]] && { wt=$candidate; break; }
+      done
       if _dev_app_slot_reserved "$wt"; then
         if [[ -n $slot ]]; then
           print -u2 -- "t resume: $repo $n is reserved for the Codex desktop app; use t session open $repo $n --app"
@@ -398,41 +402,44 @@ _t_resume() {
         cands+=(9999999999$'\t'"$repo"$'\t'"$n"$'\t'-$'\t'"${stale_path:-$wt}"$'\t'"● active"$'\t'"${local_sum[${_stale#dev-}]:-(live session)}"$'\t'here$'\t'-$'\t'-$'\t'"${local_agent[${_stale#dev-}]:-$(_dev_agent_of_session "$_stale")}")
         continue
       fi
-      # every conversation either agent recorded in this worktree: claude's project
-      # dir by mtime, codex's threads from its sqlite index (rollouts are date-keyed)
-      tx=( "$HOME/.claude/projects/${wt//[^A-Za-z0-9]/-}"/*.jsonl(Nom)
-           ${(f)"$(_dev_agent_transcripts_for_cwd codex "$wt")"} )
-      for txf in "${(@)tx}"; do
-        # Live by ID (see live_sid above): never a second resume — a live row
-        # aimed at the owner, collected apart so the dedup below can drop it when
-        # the owner's own slot already produced its row. Checked before --days:
-        # a running conversation is current whatever its file's mtime says.
-        sid=$(_dev_transcript_sid "$txf")
-        if [[ -n ${live_sid[$sid]:-} ]]; then
-          sidlive+=("$repo"$'\t'"$sid"$'\t'"$wt"$'\t'"${live_sid[$sid]}")
-          continue
-        fi
-        ep=$(zstat +mtime "$txf" 2>/dev/null || echo 0)   # sort key + --days gate
-        # Effective recency = max(transcript mtime, opened stamp): resuming
-        # writes nothing to the .jsonl, so without the stamp a just-reopened
-        # conversation sorts — and --days-gates — as days old. Stamp newer →
-        # the row is dated by the stamp and marked ↻.
-        reopened=; opf="$opdir/$(_dev_transcript_sid "$txf")"
-        if [[ -f $opf ]]; then
-          opep=$(zstat +mtime "$opf" 2>/dev/null || echo 0)
-          (( opep > ep )) && { ep=$opep; reopened=1; }
-        fi
-        if (( cutoff && ep < cutoff )); then
-          (( skipped++ )); continue        # outside the --days window
-        fi
-        # Nothing is READ from the transcript here: the title and the PR URL both
-        # need the file's contents, and doing that inline meant a python3 fork
-        # plus a whole-file `grep -ao` per candidate — 135MB read twice for ff's
-        # 43 in-window conversations. Collect the survivors instead and read them
-        # all in ONE batched, incrementally-cached pass below. Every field is
-        # non-empty (reopened is 1/0, never blank) so the `ps:\t:` split back
-        # cannot collapse a column.
-        pending+=("$ep"$'\t'"$repo"$'\t'"$n"$'\t'"$wt"$'\t'"$txf"$'\t'"${reopened:-0}")
+      # Scan both immutable layouts, including swept numeric folders.
+      for wt in "${(@f)$(_dev_worktree_paths "$repo" "$n")}"; do
+        # every conversation either agent recorded in this worktree: claude's project
+        # dir by mtime, codex's threads from its sqlite index (rollouts are date-keyed)
+        tx=( "$HOME/.claude/projects/${wt//[^A-Za-z0-9]/-}"/*.jsonl(Nom)
+             ${(f)"$(_dev_agent_transcripts_for_cwd codex "$wt")"} )
+        for txf in "${(@)tx}"; do
+          # Live by ID (see live_sid above): never a second resume — a live row
+          # aimed at the owner, collected apart so the dedup below can drop it when
+          # the owner's own slot already produced its row. Checked before --days:
+          # a running conversation is current whatever its file's mtime says.
+          sid=$(_dev_transcript_sid "$txf")
+          if [[ -n ${live_sid[$sid]:-} ]]; then
+            sidlive+=("$repo"$'\t'"$sid"$'\t'"$wt"$'\t'"${live_sid[$sid]}")
+            continue
+          fi
+          ep=$(zstat +mtime "$txf" 2>/dev/null || echo 0)   # sort key + --days gate
+          # Effective recency = max(transcript mtime, opened stamp): resuming
+          # writes nothing to the .jsonl, so without the stamp a just-reopened
+          # conversation sorts — and --days-gates — as days old. Stamp newer →
+          # the row is dated by the stamp and marked ↻.
+          reopened=; opf="$opdir/$(_dev_transcript_sid "$txf")"
+          if [[ -f $opf ]]; then
+            opep=$(zstat +mtime "$opf" 2>/dev/null || echo 0)
+            (( opep > ep )) && { ep=$opep; reopened=1; }
+          fi
+          if (( cutoff && ep < cutoff )); then
+            (( skipped++ )); continue        # outside the --days window
+          fi
+          # Nothing is READ from the transcript here: the title and the PR URL both
+          # need the file's contents, and doing that inline meant a python3 fork
+          # plus a whole-file `grep -ao` per candidate — 135MB read twice for ff's
+          # 43 in-window conversations. Collect the survivors instead and read them
+          # all in ONE batched, incrementally-cached pass below. Every field is
+          # non-empty (reopened is 1/0, never blank) so the `ps:\t:` split back
+          # cannot collapse a column.
+          pending+=("$ep"$'\t'"$repo"$'\t'"$n"$'\t'"$wt"$'\t'"$txf"$'\t'"${reopened:-0}")
+        done
       done
     done
   done
@@ -1810,7 +1817,7 @@ _t_app_close_slot() {
   [[ -n ${DEV_REPOS[$alias_key]:-} && -n $DEV_WORKTREE_ROOT ]] || {
     print -u2 -- 't kill: the desktop slot is not registered here'; return 1
   }
-  expected=$(_dev_worktree_path "$alias_key" "$slot")
+  expected=$(_dev_worktree_path "$alias_key" "$slot") || return 1
   [[ ${expected:A} == ${dir:A} ]] || {
     print -u2 -- 't kill: the desktop worktree changed'; return 1
   }
@@ -2469,6 +2476,9 @@ _tbeam_land() {
   # relocating the already-synced transcript with it (the sender ran _tbeam_sync_transcript
   # before invoking us, so the sid's files are on disk either way).
   local agent=${TB_AGENT:-claude}; _dev_agent_valid "$agent" || agent=claude
+  if [[ -n $DEV_WORKTREE_ROOT && $TB_CWD == $DEV_WORKTREE_ROOT/*/* ]]; then
+    _dev_worktree_accept_cwd "$TB_CWD" || return 1
+  fi
   local land; land=$(_dev_beam_land_cwd "$TB_CWD" "$TB_SID" "" "$agent") || return 1
   if [[ $land == "$TB_CWD" ]]; then
     # Worktree mode: if TB_CWD does not exist here yet, materialize the slot's worktree
@@ -2478,7 +2488,7 @@ _tbeam_land() {
     # freshly created one; the real work is when it pre-existed and was reused stale).
     if [[ ! -d $TB_CWD ]]; then
       local _br _bs; _br=$(_dev_repo_of_dir "$TB_CWD"); _bs=${_br#*$'\t'}; _br=${_br%%$'\t'*}
-      [[ -n $_br && -n $_bs ]] && _dev_worktree_enabled "$_br" && _dev_worktree_create "$_br" "$_bs" >/dev/null
+      [[ -n $_br && -n $_bs ]] && _dev_worktree_enabled "$_br" && _dev_worktree_create "$_br" "$_bs" "$TB_CWD" >/dev/null || return 1
     fi
     _dev_worktree_beam_sync "$TB_CWD"
   fi
@@ -2712,6 +2722,8 @@ _t_beam() {
       echo "tbeam: $cwd doesn't exist on $host — clone/sync the repo there first." >&2
       return 1
     fi
+  else
+    _dev_worktree_remote_accept "$host" "$cwd" || return 1
   fi
 
   echo "⟳ Beaming ${sid[1,8]}… ($cwd) → $host"

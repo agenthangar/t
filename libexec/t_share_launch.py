@@ -160,6 +160,7 @@ def _remote_slots(cfg, repo, base):
             continue
         match = re.search(r"-([0-9]+)$", fields[3])
         if match and (fields[2].rstrip("/").endswith("/" + base + "/" + match[1]) or
+                      fields[2].rstrip("/").endswith("/" + base + "/" + base + "-" + match[1]) or
                       fields[2].rstrip("/").endswith("/" + base)):
             occupied.add(int(match[1]))
     return occupied
@@ -171,9 +172,9 @@ def _fresh_numeric_slot(cfg, plan, occupied):
     parent = Path(plan["worktree_parent"])
     base = Path(canonical).name
     for slot in range(1, 10000):
-        path = parent / str(slot)
+        path = parent / f"{base}-{slot}"
         branch = f"dev/{base}-{slot}"
-        if slot in occupied or path.exists() or path.is_symlink():
+        if slot in occupied or any(os.path.lexists(p) for p in (path, parent / str(slot), parent / f'.{slot}.history-reservation', parent / f'.{path.name}.history-reservation')):
             continue
         owner = _session_state(f"dev-{repo}-{slot}")
         if owner is None:

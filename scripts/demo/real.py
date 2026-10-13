@@ -128,7 +128,7 @@ def capture_real():
             opened_line = next((line for line in re.split(r"[\r\n]", opened)
                                 if "Starting dev-demo-1" in line), "")
             opened_line = re.sub(r" in \S+ · codex \(logging to \S+\)",
-                                 " in ~/worktrees/demo/1 · codex", opened_line)
+                                 " in ~/worktrees/demo/demo-1 · codex", opened_line)
             return {"before": before.strip(), "opened": opened_line, "after": after.strip(),
                     "worktree": worktree.replace(str(base), "~"), "response": answer}
         finally:
