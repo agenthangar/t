@@ -44,29 +44,43 @@ There is no uniform vendor CLI expiry interface. Cached access-token expiry is
 an **advisory hint**, not a prediction of session failure: the vendor may refresh
 the access token automatically. `t` does not refresh tokens, log out accounts,
 write credential stores, or print captured status output or token contents.
-The vendor login process retains terminal input and manages its own credentials.
-Interactive output adds a compact **Open sign-in page** hyperlink below HTTP(S)
-URLs. These use terminal OSC 8 links, so long URLs remain clickable even when the
-original text wraps. The original URL stays visible and copyable; terminals without
-OSC 8 support show the label as plain text. In iTerm2, use Command-click
-([terminal documentation](https://iterm2.com/documentation-escape-codes.html)).
-Redirected output is unchanged. Vendor output is never written to a log by `t`.
+The vendor login process gets one controlling terminal for input, output, line
+editing, and echo. Pasted text is visible before Enter when the vendor echoes it;
+a hidden canonical prompt gets an **Input received; press Enter to submit** notice
+without revealing the code. Terminal settings are restored on exit or cancellation.
+
+Interactive local output adds a short **Open sign-in page** URL below each HTTP(S)
+URL. In macOS Terminal, **hold Command and double-click the short URL**
+([Apple's keyboard shortcuts](https://support.apple.com/guide/terminal/trmlshtcts/mac)).
+This loopback-only redirect keeps its target in memory and stops when that login
+command ends. It has no access logs and does not store credentials or send the
+sign-in URL to a URL-shortening service. The original vendor URL stays copyable.
+Over SSH or with `--headless`, use the original URL or the styled OSC 8 link (Command-click in
+[iTerm2](https://iterm2.com/documentation-escape-codes.html)); a remote loopback
+link would not point to the user's computer, so none is created. Redirected output
+is unchanged. Vendor output is never written to a log by `t`.
 A logged-in status is not proof that a model request will succeed.
 
 | Tool | Status and login | Best-effort expiry hint |
 | --- | --- | --- |
-| Claude Code | `claude auth status`, `claude auth login` | On non-macOS systems, `claudeAiOauth.expiresAt` (milliseconds) from `$CLAUDE_CONFIG_DIR/.credentials.json`, default `~/.claude/.credentials.json`. This cache format is not a documented stable CLI contract. |
+| Claude Code | `claude auth status`, `claude auth login` | `claudeAiOauth.expiresAt` (milliseconds) from the matching macOS Keychain service, or `.credentials.json` on other platforms. A missing Keychain item permits the vendor file fallback; a denied/timed-out read does not. Profile-specific credential roots are respected. This cache format is not a documented stable CLI contract. |
 | Codex | `codex login status`, `codex login` | JWT `exp` from `tokens.access_token` in `$CODEX_HOME/auth.json`, default `~/.codex/auth.json`, for file-based ChatGPT authentication. JWT contents are decoded only as a local hint, not verified as authentication. |
 | Cursor | `cursor-agent status`, `cursor-agent login` | Unknown: no supported expiry field has been established. |
 
-Keychain/alternate stores, opaque tokens, missing/unreadable/malformed metadata,
-and recognized API-key/environment authentication paths leave expiry unknown.
-Claude on macOS always leaves expiry unknown rather than reading a possibly stale
-file alongside Keychain. Codex skips file expiry when `cli_auth_credentials_store`
-is not `file`; parsing an existing config requires Python 3.11+ (`tomllib`), otherwise
-expiry is unknown. File metadata can still be stale, and cannot establish refresh
-or revocation behavior. Unknown expiry is displayed and does not trigger login;
-use `t login TOOL --force` if you need to sign in again.
+Status and post-login output show the cached deadline with its timezone when
+available. Successful login triggers a fresh probe. An unavailable deadline is
+shown alongside **logged in**, without suggesting another login is required.
+
+Codex alternate stores, opaque tokens, missing/unreadable/malformed metadata,
+and recognized API-key/environment authentication paths have no available expiry.
+Codex skips file expiry when `cli_auth_credentials_store` is not `file`; parsing
+an existing config requires Python 3.11+ (`tomllib`). Claude's Keychain service
+follows its credential-root namespace (including `CLAUDE_SECURESTORAGE_CONFIG_DIR`
+when set); a stale file cannot override an existing Keychain item. Custom OAuth
+endpoints stay unavailable rather than borrowing the default account's deadline.
+Cached metadata can itself be stale and cannot establish refresh or revocation
+behavior. An unavailable expiry does not select an agent for login; use
+`t login TOOL --force` if you need to sign in again.
 
 Over SSH or with `--headless`, Codex uses `login --device-auth`; Cursor uses
 `NO_OPEN_BROWSER=1 cursor-agent login`; Claude uses `auth login` and its own

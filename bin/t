@@ -4168,23 +4168,44 @@ def _login_timestamp(value, divisor=1):
         return None
     try:
         result = value / divisor
-        return result if math.isfinite(result) and result > 0 else None
+        return result if math.isfinite(result) and 0 < result <= 253402300799 else None
     except OverflowError:
         return None
 
 
+def _login_keychain(service):
+    """Read one vendor-owned item in memory; never log security's output."""
+    result = subprocess.run(["/usr/bin/security", "find-generic-password", "-s", service, "-w"],
+                            capture_output=True, timeout=5)
+    if result.returncode == 44:  # errSecItemNotFound: vendor can use its file fallback.
+        return None
+    if result.returncode:
+        raise OSError("credential store unavailable")
+    return json.loads(result.stdout)
+
+
 def _login_cached_expiry(agent, home, env):
-    """Best-effort file metadata only; keychains and opaque tokens stay unknown."""
+    """Best-effort metadata from the vendor's credential source, never a login TTL."""
     try:
         if agent == "claude":
-            # macOS normally uses Keychain; a leftover file may be stale.
-            if sys.platform == "darwin" or any(env.get(k) for k in (
+            if any(env.get(k) for k in (
                     "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN",
                     "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY")):
                 return None
-            root = env.get("CLAUDE_CONFIG_DIR") or os.path.join(home, ".claude")
-            with open(os.path.join(root, ".credentials.json"), encoding="utf-8") as file:
-                data = json.load(file)
+            root = env.get("CLAUDE_SECURESTORAGE_CONFIG_DIR", env.get("CLAUDE_CONFIG_DIR")) or os.path.join(home, ".claude")
+            if sys.platform == "darwin":
+                # Custom OAuth endpoints use a different service namespace.
+                if env.get("CLAUDE_CODE_CUSTOM_OAUTH_URL") or env.get("CLAUDE_LOCAL_OAUTH"):
+                    return None
+                service = "Claude Code-credentials"
+                if env.get("CLAUDE_SECURESTORAGE_CONFIG_DIR", env.get("CLAUDE_CONFIG_DIR")):
+                    service += "-" + hashlib.sha256(unicodedata.normalize("NFC", root).encode()).hexdigest()[:8]
+                data = _login_keychain(service)
+            else:
+                data = None
+            if data is None:
+                with open(os.path.join(root, ".credentials.json"), encoding="utf-8") as file:
+                    data = json.load(file)
             return _login_timestamp(data["claudeAiOauth"]["expiresAt"], 1000)
         if agent != "codex" or env.get("OPENAI_API_KEY") or env.get("CODEX_API_KEY"):
             return None
@@ -4207,7 +4228,7 @@ def _login_cached_expiry(agent, home, env):
             return None
         payload = json.loads(base64.urlsafe_b64decode(pieces[1] + "=" * (-len(pieces[1]) % 4)))
         return _login_timestamp(payload.get("exp"))
-    except (OSError, ValueError, TypeError, KeyError, AttributeError, ImportError):
+    except (OSError, ValueError, TypeError, KeyError, AttributeError, ImportError, subprocess.TimeoutExpired):
         return None
 
 
@@ -4265,10 +4286,13 @@ def _login_decision(probe, now, within_hours, force=False):
     if state == "logged-out":
         return True, "logged out"
     if expiry is None:
-        return False, "logged in; expiry unknown (use --force to sign in again)"
+        return False, "logged in; expiry unavailable from credential store; no login needed"
+    deadline = time.strftime("%Y-%m-%d %H:%M %Z", time.localtime(expiry))
     if expiry <= now + within_hours * 3600:
-        return True, "cached access token expired or expires within %g hours; automatic refresh may still work" % within_hours
-    return False, "logged in; cached access token expires beyond %g hours" % within_hours
+        verb = "expired" if expiry <= now else "expires"
+        window = "" if expiry <= now else " (within %g hours)" % within_hours
+        return True, f"logged in; cached access token {verb} {deadline}{window}; automatic refresh may still work"
+    return False, "logged in; cached access token expires " + deadline
 
 
 def _login_hours(value):
@@ -4318,8 +4342,9 @@ class _LoginLinks:
     Keep only a bounded, unfinished line in memory. Never save vendor output.
     The original URL remains copyable in terminals without hyperlink support.
     """
-    def __init__(self):
+    def __init__(self, shorten=None):
         self.pending = b""
+        self.shorten = shorten
 
     def feed(self, data):
         output = []
@@ -4345,43 +4370,131 @@ class _LoginLinks:
                     continue
             except ValueError:
                 continue
-            links.append(b"  \x1b]8;;" + url.encode("utf-8") +
-                         b"\x1b\\Open sign-in page\x1b]8;;\x1b\\\n")
+            target = self.shorten(url) if self.shorten else url
+            label = target if self.shorten else "Open sign-in page (Cmd-click)"
+            if self.shorten:
+                links.append(b"  Open sign-in page (Cmd-double-click in Terminal):\r\n")
+            links.append(b"  \x1b]8;;" + target.encode("utf-8") +
+                         b"\x1b\\\x1b[4;36m" + label.encode("utf-8") + b"\x1b[0m\x1b]8;;\x1b\\\r\n")
         return (b"\n" if links and not line.endswith(b"\n") else b"") + b"".join(links)
 
 
-def _login_run(cmd):
-    """Relay terminal output through a PTY to add links without breaking input.
+class _LoginBrowserLinks:
+    """Short, terminal-detectable URLs; targets live only for this login process."""
+    def __init__(self):
+        self.targets = {}
+        targets = self.targets
 
-    Stdin and the controlling terminal stay inherited: vendor prompts, browser
-    callbacks and signals retain their normal behavior. Redirected output stays
-    untouched. Only stdout/stderr pass through the output PTY.
-    """
+        class Server(HTTPServer):
+            def server_bind(self):
+                # HTTPServer normally reverse-resolves its address. A local
+                # sign-in shortcut must never wait on DNS before relaying I/O.
+                TCPServer.server_bind(self)
+                self.server_name = "localhost"
+                self.server_port = self.server_address[1]
+
+        class Handler(BaseHTTPRequestHandler):
+            def setup(self):
+                super().setup()
+                self.connection.settimeout(2)
+
+            def do_GET(self):
+                target = targets.get(self.path)
+                if not target or self.headers.get("Host") != "127.0.0.1:%d" % self.server.server_port:
+                    self.send_error(404)
+                    return
+                self.send_response(302)
+                self.send_header("Location", target)
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Referrer-Policy", "no-referrer")
+                self.end_headers()
+
+            def log_message(self, *_):
+                pass  # Sign-in URLs must never enter logs.
+
+        import threading
+        self.server = Server(("127.0.0.1", 0), Handler)
+        self.thread = threading.Thread(target=self.server.serve_forever,
+                                       kwargs={"poll_interval": .05}, daemon=True)
+        self.thread.start()
+
+    def shorten(self, url):
+        path = "/" + secrets.token_urlsafe(18)
+        self.targets[path] = quote(url, safe=":/?#[]@!$&'()*+,;=%-._~")
+        return "http://127.0.0.1:%d%s" % (self.server.server_port, path)
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join()
+        self.targets.clear()
+
+
+def _login_run(cmd, headless=False):
+    """Give the vendor one controlling terminal for input, output and echo."""
     if not (sys.stdin.isatty() and sys.stdout.isatty()):
         return subprocess.run(cmd)
     import errno
     import termios
+    import tty
     master, slave = os.openpty()
     child = None
+    browser = None
+    input_fd = sys.stdin.fileno()
+    saved = termios.tcgetattr(input_fd)
     previous = signal.getsignal(signal.SIGWINCH)
-    links = _LoginLinks()
+    previous_term = signal.getsignal(signal.SIGTERM)
+
+    def terminate(signum, _):
+        raise SystemExit(128 + signum)
+
+    def child_terminal():
+        os.setsid()
+        fcntl.ioctl(0, termios.TIOCSCTTY, 0)
 
     def resize(*_):
         size = fcntl.ioctl(sys.stdout.fileno(), termios.TIOCGWINSZ, b"\0" * 8)
         fcntl.ioctl(master, termios.TIOCSWINSZ, size)
 
     try:
-        # The outer terminal applies output processing; do not apply it twice.
-        attrs = termios.tcgetattr(slave)
-        attrs[1] &= ~termios.OPOST
-        termios.tcsetattr(slave, termios.TCSANOW, attrs)
         resize()
         signal.signal(signal.SIGWINCH, resize)
+        signal.signal(signal.SIGTERM, terminate)
         sys.stdout.flush()
-        child = subprocess.Popen(cmd, stdout=slave, stderr=slave)
+        # Raw outer input is forwarded unchanged; the child's PTY owns echo,
+        # line editing, /dev/tty and signals. Never split vendor stdin/stdout.
+        tty.setraw(input_fd)
+        child = subprocess.Popen(cmd, stdin=slave, stdout=slave, stderr=slave,
+                                 preexec_fn=child_terminal)
         os.close(slave)
         slave = None
+        if not _install_headless(os.environ, headless):
+            try:
+                browser = _LoginBrowserLinks()
+            except OSError:
+                pass  # OSC 8 and the original URL remain available.
+        links = _LoginLinks(browser.shorten if browser else None)
+        notified = False
         while True:
+            ready, _, _ = select.select([master, input_fd], [], [])
+            if input_fd in ready:
+                data = os.read(input_fd, 4096)
+                if not data:
+                    break
+                # A canonical password prompt can deliberately suppress echo.
+                # Acknowledge input without exposing the pasted code itself.
+                flags = termios.tcgetattr(master)[3]
+                if flags & termios.ICANON and not flags & termios.ECHO and not notified and data.strip():
+                    sys.stdout.buffer.write(b"\r\n  Input received; press Enter to submit.\r\n")
+                    sys.stdout.buffer.flush()
+                    notified = True
+                if b"\r" in data or b"\n" in data:
+                    notified = False
+                view = memoryview(data)
+                while view:
+                    view = view[os.write(master, view):]
+            if master not in ready:
+                continue
             try:
                 data = os.read(master, 4096)
             except OSError as exc:
@@ -4396,17 +4509,29 @@ def _login_run(cmd):
         sys.stdout.buffer.flush()
         return subprocess.CompletedProcess(cmd, child.wait())
     finally:
+        try:
+            termios.tcsetattr(input_fd, termios.TCSADRAIN, saved)
+        except termios.error:
+            pass  # A closed outer terminal must not prevent child cleanup.
         signal.signal(signal.SIGWINCH, previous)
-        os.close(master)
-        if slave is not None:
-            os.close(slave)
-        if child is not None and child.poll() is None:
-            child.terminate()
-            try:
-                child.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                child.kill()
-                child.wait()
+        signal.signal(signal.SIGTERM, previous_term)
+        if browser:
+            browser.close()
+        try:
+            if child is not None and child.poll() is None:
+                try:
+                    os.killpg(child.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+                try:
+                    child.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    child.kill()
+                    child.wait()
+        finally:
+            os.close(master)
+            if slave is not None:
+                os.close(slave)
 
 
 def cmd_login(cfg, args):
@@ -4458,23 +4583,26 @@ def cmd_login(cfg, args):
     for step in plan():
         agent, cmd = step["agent"], step["cmd"]
         try:
-            result = _login_run(cmd)
+            result = _login_run(cmd, headless=headless)
         except KeyboardInterrupt:
             return 130
         except OSError:
             print(f"{agent}: could not start login", file=sys.stderr)
             failed = True
             continue
+        if result.returncode in (-signal.SIGINT, 130):
+            return 130
         if result.returncode != 0:
             print(f"{agent}: login failed (exit {result.returncode})", file=sys.stderr)
             failed = True
             continue
         # A successful child exit alone is not evidence of an authenticated account.
-        if _login_probe(agent)["state"] != "logged-in":
+        refreshed = _login_probe(agent)
+        if refreshed["state"] != "logged-in":
             print(f"{agent}: login exited successfully, but status is not logged in", file=sys.stderr)
             failed = True
         else:
-            print(f"{agent}: login completed; status reports logged in")
+            print(f"{agent}: login completed; " + _login_decision(refreshed, time.time(), args.within_hours)[1])
     return int(failed)
 
 
@@ -10022,7 +10150,8 @@ REMOTE SESSIONS
 
     sp = sub.add_parser("login", help="log in logged-out or expiring agent tools",
         description="Review local agent logins. Cached access-token expiry is an advisory hint; "
-            "vendor automatic refresh may still work. Missing expiry stays unknown. "
+            "vendor automatic refresh may still work. Status shows cached deadlines when available. "
+            "Local sign-in URLs support Command-double-click in macOS Terminal. "
             "Ignored tools are not probed. No tools are installed and no remote hosts are changed.")
     sp.add_argument("agents", nargs="*", metavar="AGENT", type=_login_agent,
                     help="claude, codex, cursor (default: all installed tools)")
