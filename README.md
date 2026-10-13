@@ -244,7 +244,8 @@ for a host's login shell.
 | `t issue status [repo] <number>` | Inspect existing work without starting an agent |
 | `t issue start [repo] [number ...]` | Continue or start work on one or several issues |
 | `t issue open [repo] [number ...]` | Open one or several GitHub issues in your browser |
-| `t share --to agent:id --file summary.md [--attach history.md]` | Share selected context with an exact Claude, Codex, or Cursor conversation |
+| `t share` / `t share --to claude` | Review captured conversation context and start a new agent session; `--to` also works without a terminal when the source is known |
+| `t share --to agent:id [--file summary.md] [--attach history.md]` | Share context with an exact existing conversation; `--file` supplies your own text |
 | `t share targets` / `t share inbox` / `t share read <message-id>` | Find conversations and read received shares |
 | `t session list [-r] [-a]` | List sessions across local or remote hosts and repositories |
 | `t session close <repo> <slot>` / `t session restart <repo> <slot>` | Stop a slot or recover a stuck agent in the same conversation |
@@ -387,8 +388,12 @@ current chat IDs; close an untracked CLI first to avoid duplicate conversation o
 ### Sharing context between agents
 
 ```sh
+t share                              # choose a recipient, review context, start a new session
+t share --to claude                  # hand this conversation to a new Claude session
+t share --to claude --from codex:<conversation-id> --json
+t share --to claude --file summary.md --attach history.md
 t share targets --json
-t share --to codex:<conversation-id> --file summary.md --attach history.md
+t share --to codex:<conversation-id> --file summary.md
 t share --to claude:<conversation-id> --host mini --file - < summary.md
 t share inbox
 t share read <message-id>
@@ -396,16 +401,30 @@ t share read <message-id> --attachment history.md
 t share --retry <message-id>
 ```
 
-The sending agent writes the summary and selects any UTF-8 text attachments; `t`
-does not extract transcripts or generate a summary. A share addresses one exact
-conversation, where the receiving agent reads it on request. Reading does not
-remove the share. Sending does not interrupt or start the receiving agent. Use `--from agent:id` if the
-source conversation cannot be inferred, or `--for agent:id` with `inbox` and
-`read` outside the receiving conversation. `--host` selects a configured SSH
-host. `--json` is available on every form. Messages remain on their receiving
-host without automatic expiration. The combined summary and attachments have a
-10 MiB UTF-8 limit. A send receipt confirms storage; if delivery is uncertain,
-retry the saved message with `t share --retry <message-id>`.
+For a new session, `t share` identifies the current conversation or offers a
+searchable source picker, lets you choose Claude, Codex, or Cursor, and shows the
+context before launch. It selects the original request and recent conversation
+messages within a stated limit. This is an extract of selected messages, not a
+generated summary. Capturing Cursor chats is not currently supported; in a
+terminal, enter context yourself or use `--file` with UTF-8 text.
+`--from agent:id` selects an exact source; `--from agent` filters the interactive picker.
+An agent-only `--to` starts a new local session in a new worktree at the source
+HEAD. After the terminal review, `t` enters the new session. The source session
+remains open, and uncommitted edits stay in its worktree. Without a terminal,
+provide `--to` and an identifiable source (or `--from agent:id`); the new
+session remains detached and `t` prints how to open it. `--json` returns the
+launch result without entering the session.
+
+To address an existing conversation, use `--to agent:id`. An exact destination
+with `--file` sends directly; without `--file`, the captured context is reviewed
+in a terminal. With `--host`, an agent-only `--to` offers a picker for existing
+remote conversations; new remote sessions are not supported. The recipient
+reads a delivered share with `t share inbox` and `t share read`; reading does
+not remove it or interrupt the receiving agent. Use `--for agent:id` with those
+commands outside the receiving conversation. Messages remain on the receiving
+host without automatic expiration. The combined context and UTF-8 attachments
+have a 10 MiB limit. If delivery is uncertain, retry the saved message with
+`t share --retry <message-id>`.
 
 ### Working on GitHub issues
 
