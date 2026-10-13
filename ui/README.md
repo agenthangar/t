@@ -92,6 +92,12 @@ with `done` and editable prompts with `cooked_input`.
 
 ## Session information and history
 
+Desktop handoff refusals identify a verified conflicting conversation and give
+release instructions with the exact retry command before stopping the selected
+CLI. Keep missing-preview notices distinct from ownership failures. Retrying
+after the conflicting owner releases must preserve the selected conversation,
+recorded worktree and history, and unrelated writers.
+
 New worktree folders include the repository basename (`t/t-12`); numeric slot
 arguments, tmux identity, JSON slot fields and history associations are unchanged.
 Existing `t/12` folders and recorded conversation paths remain valid. Both

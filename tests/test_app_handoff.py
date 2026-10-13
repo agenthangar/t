@@ -329,7 +329,9 @@ def test_cli_release_timeout_preserves_selected_writer(handoff, target, tmp_path
         assert events == ["waiting"]
 
 
-def test_cli_release_preflight_rejects_sibling_same_worktree(handoff, target, tmp_path):
+@pytest.mark.parametrize("reserved", [False, True])
+@pytest.mark.parametrize("stage", ["preflight", "wait"])
+def test_cli_release_preflight_rejects_sibling_same_worktree(handoff, target, tmp_path, reserved, stage):
     db = sqlite3.connect(target["home"] / "state_5.sqlite")
     db.execute("create table threads (id text, cwd text)")
     db.execute("insert into threads values (?, ?)", (OTHER, str(target["cwd"])))
@@ -337,9 +339,23 @@ def test_cli_release_preflight_rejects_sibling_same_worktree(handoff, target, tm
     db.close()
     sibling = target["locks"] / f"{OTHER}.lock"
     sibling.touch()
+    private = tmp_path / "private-git"
+    private.mkdir()
+    (target["cwd"] / ".git").write_text("gitdir: ../private-git\n")
+    if reserved:
+        (private / "t-app-slot").write_text("codex-app\n")
+    run, _ = process_table(gitdir=private)
     with locked(sibling, tmp_path):
-        with pytest.raises(ValueError, match="another Codex conversation"):
-            handoff.preflight_cli_release(SID, str(target["cwd"]), **options(target))
+        with pytest.raises(ValueError, match="another Codex conversation") as error:
+            check = handoff.preflight_cli_release if stage == "preflight" else handoff.wait_cli_released
+            extra = {} if stage == "preflight" else {"contract": "modern"}
+            check(SID, str(target["cwd"]), **options(target), **extra,
+                  run=run, retry="Retry: t open v 9 --app")
+        message = str(error.value)
+        assert OTHER in message
+        assert "Retry: t open v 9 --app" in message
+        assert ("Archive it in Codex" in message) is reserved
+        assert handoff._lock_held(str(sibling)) is True
 
 
 def test_cli_release_wait_rejects_unverified_contract(handoff, target):

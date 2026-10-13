@@ -625,7 +625,14 @@ if several chats share the worktree, use `t app pull my-project 3 --thread <id>`
 to select one, then open it. A previously pushed slot defaults to its handed-off
 thread. `t app pull` resumes without attaching; `--dry-run` previews either direction.
 Handoffs check Codex's per-conversation writer lock and refuse if another loaded
-conversation is known to share the worktree. Codex can hold other thread locks
+conversation is known to share the worktree. The refusal names that conversation
+and gives release instructions plus the exact command to retry. Finish that
+other conversation's turn and exit its owning client; in a verified reserved
+`t` worktree, the message can instead suggest Archive in Codex. Wait for that
+conversation's backend to release its writer, then retry the selected slot.
+An inactive leftover lock file does not block the handoff. The missing-preview
+notice is independent: providing `--url` does not resolve an ownership conflict.
+Codex can hold other thread locks
 without entries in its saved-conversation index. Those unindexed locks produce
 a diagnostic during opening and handoffs; they do not block every worktree.
 An unindexed lock is not proof of an unrelated conversation, and the selected
