@@ -79,7 +79,7 @@ def run_shell(tmp_path, code):
                XDG_CONFIG_HOME=str(tmp_path / "config"),
                XDG_STATE_HOME=str(tmp_path / "state"))
     env.pop("TMUX", None)
-    return subprocess.run(["zsh", "-f", "-c", f"source {shlex.quote(str(ROOT / 'zsh/resume.zsh'))}\n" + code],
+    return subprocess.run(["zsh", "-f", "-c", f"source {shlex.quote(str(ROOT / 'zsh/agent.zsh'))}\nsource {shlex.quote(str(ROOT / 'zsh/resume.zsh'))}\n" + code],
                           env=env, capture_output=True, text=True, timeout=20)
 
 
@@ -123,7 +123,6 @@ _dev_session_claude_pid() {{
   [[ $scenario == race && -f $log && $(<"$log") == *capture-pane* ]] && {{ print 88888; return; }}
   [[ $scenario == self ]] && print $PPID || print 99999
 }}
-_dev_agent_resume_cmd() {{ print -r -- "codex resume $2"; }}
 ps() {{
   if [[ $* == '-ww -o args= -p '* ]]; then
     [[ $scenario == unreadable_process ]] && return 1
@@ -263,7 +262,6 @@ _dev_agent_of_session() {{ print codex; }}
 _dev_session_sid() {{ print {SID}; }}
 _dev_app_slot_reserved() {{ return 1; }}
 _dev_session_claude_pid() {{ [[ $scenario == live_owner ]] && print 88888; }}
-_dev_agent_resume_cmd() {{ print -r -- "codex resume $2"; }}
 ps() {{ print 1; }}
 kill() {{ print -r -- "signal $*" >> "$log"; return 1; }}
 _t_restart_slot dev-api-1 "$dir" {SID} codex restart-dead '' '%1 99999 123 1'
@@ -316,7 +314,6 @@ _dev_session_sid() {{ print -r -- {shlex.quote(sid)}; }}
 _dev_app_slot_reserved() {{ return 1; }}
 _dev_session_claude_pid() {{ print 99999; }}
 _dev_agent_at_welcome() {{ [[ $scenario != not_fresh ]]; }}
-_dev_agent_resume_cmd() {{ print -r -- "codex resume $2"; }}
 _dev_agent_new_cmd() {{ print -r -- 'codex --model chosen -c model_reasoning_effort=high --no-daemon'; }}
 ps() {{ print 1; }}
 kill() {{ print -r -- "signal $*" >> "$log"; [[ $1 == -TERM ]]; }}
@@ -377,7 +374,6 @@ _dev_agent_of_session() {{ print codex; }}
 _dev_session_sid() {{ print -r -- {shlex.quote(sid)}; }}
 _dev_app_slot_reserved() {{ return 1; }}
 _dev_session_claude_pid() {{ print 99999; }}
-_dev_agent_resume_cmd() {{ print -r -- "codex resume $2 -c feature_setting=preserved"; }}
 ps() {{ print 1; }}
 kill() {{ print -r -- "signal $*" >> "$log"; [[ $1 == -TERM ]]; }}
 _t_restart_slot dev-api-1 "$dir" {shlex.quote(sid)} codex {mode} {expected_pid}
@@ -389,7 +385,7 @@ _t_restart_slot dev-api-1 "$dir" {shlex.quote(sid)} codex {mode} {expected_pid}
         assert actions.index('capture-pane') < actions.index('signal -TERM') < actions.index('respawn-pane')
         launch = next(line for line in actions.splitlines() if line.startswith('respawn-pane'))
         assert 'codex' in launch and 'resume' in launch and SID in launch
-        assert launch.index(SID) < launch.index('feature_setting=preserved') < launch.index('--cd') < launch.index('--no-daemon')
+        assert launch.index(SID) < launch.index('--cd') < launch.index('--no-daemon')
         assert str(worktree) in launch
         assert '-k' not in launch
         assert worktree.is_dir()

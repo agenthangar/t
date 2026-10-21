@@ -631,14 +631,16 @@ _t_open_app_claim() {
       return 1
     fi
   done < <(tmux list-sessions -F '#{session_name}|#{session_path}' 2>/dev/null)
+  local fresh_scan=
+  _dev_slot_fresh "$repo" "$slot" && fresh_scan=1
   if (( ${#REMOTE_HOSTS} )); then
-    remote_owner=$(_dev_remote_resolve "$repo" "$slot" '' quiet); remote_rc=$?
+    remote_owner=$(_dev_remote_resolve "$repo" "$slot" '' quiet "$fresh_scan"); remote_rc=$?
     if [[ -n $remote_owner ]]; then
       print -u2 -- "t open --app: $repo $slot is live on ${remote_owner%%$'\t'*}; move it here with t beam before opening the app"
       return 1
     fi
     cli_scan_rc=$remote_rc
-    remote_owner=$(_dev_remote_app_owner "$repo" "$slot"); remote_rc=$?
+    remote_owner=$(_dev_remote_app_owner "$repo" "$slot" "$fresh_scan"); remote_rc=$?
     app_scan_rc=$remote_rc
     if [[ -n $remote_owner ]]; then
       print -u2 -- "t open --app: $repo $slot is reserved by the Codex desktop app on $remote_owner; close it there and release the reservation before opening here"

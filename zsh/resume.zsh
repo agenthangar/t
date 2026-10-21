@@ -894,7 +894,7 @@ _t_resume() {
   if [[ -n $no_tmux ]]; then
     _dev_with_launch_locks "$cwd" "$sid" _dev_foreground_resume_preflight "$sid" "$cwd" || return 1
     cd "$cwd" || return 1
-    if [[ $agent == codex ]]; then codex resume "$sid"; else claude -r "$sid"; fi
+    if [[ $agent == codex ]]; then codex resume "$sid" --no-daemon; else claude -r "$sid"; fi
     return $?
   fi
 
@@ -1500,7 +1500,7 @@ _t_restart_slot() {
       command codex resume --help 2>/dev/null | command grep -q -- '--cd' || {
         print -u2 -- 't restart: this Codex version does not support --cd'; return 1
       }
-      launch="$(_dev_agent_resume_cmd "$agent" "$sid") --cd ${(q)dir} --no-daemon"
+      launch=$(_dev_agent_resume_cmd "$agent" "$sid" --cd "$dir")
     elif [[ $mode == restart-no-daemon ]]; then
       screen=$(tmux capture-pane -p -J -t "$pane") || return 1
       [[ $screen == *'Run without daemon this time'* &&
@@ -1516,7 +1516,7 @@ _t_restart_slot() {
         print -u2 -- 't restart: the startup failure cleared; nothing was stopped'; return 1
       }
       if [[ -n $sid ]]; then
-        launch="$(_dev_agent_resume_cmd "$agent" "$sid") --no-daemon"
+        launch=$(_dev_agent_resume_cmd "$agent" "$sid")
       else
         launch=$(_dev_agent_new_cmd "$agent")
       fi
@@ -1528,7 +1528,6 @@ _t_restart_slot() {
         command codex resume --help 2>/dev/null | command grep -q -- '--no-daemon' || {
           print -u2 -- 't restart: this Codex version does not support --no-daemon; nothing was stopped'; return 1
         }
-        launch+=' --no-daemon'
       fi
     fi
     if (( invalid_cwd )); then
@@ -2004,7 +2003,7 @@ _dev_resume_session_claimed() {
   # shell (see _dev_new_session for the full rationale).
   local resume_command; resume_command=$(_dev_agent_resume_cmd "$agent" "$sid")
   if [[ $5 == history && $agent == codex ]]; then
-    resume_command+=" --cd ${(q)dir} --no-daemon"
+    resume_command=$(_dev_agent_resume_cmd "$agent" "$sid" --cd "$dir")
   fi
   tmux send-keys -t "=$session:" "$resume_command; exit" Enter || { tmux kill-session -t "=$session:"; return 1; }
   _dev_launch_startup_check "$session" "$logfile" || return 1
@@ -2371,7 +2370,7 @@ _t_pop() {
       echo "warning: $session's $agent ($cpid) didn't exit; resuming anyway — transcript may interleave." >&2
   fi
   cd "$dir" || return 1
-  if [[ $agent == codex ]]; then codex resume "$sid"; else claude -r "$sid"; fi
+  if [[ $agent == codex ]]; then codex resume "$sid" --no-daemon; else claude -r "$sid"; fi
 }
 
 # _tbeam_sync_transcript <cwd> <host> — copy a session's transcript dir to <host>
@@ -2580,7 +2579,7 @@ _tbeam_land() {
   cd "$land" 2>/dev/null || { echo "tbeam: $land not found on ${HOST:-this host}" >&2; return 1; }
   if [[ "$TB_MODE" == fg ]]; then                # owns this ssh TTY; dies with it
     _dev_with_launch_locks "$land" "$TB_SID" _dev_foreground_resume_preflight "$TB_SID" "$land" || return 1
-    if [[ $agent == codex ]]; then exec codex resume "$TB_SID"; else exec claude -r "$TB_SID"; fi
+    if [[ $agent == codex ]]; then exec codex resume "$TB_SID" --no-daemon; else exec claude -r "$TB_SID"; fi
   fi
   local repo slot session
   read -r repo slot < <(_dev_slot_for_cwd "$land")

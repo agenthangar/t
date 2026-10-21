@@ -30,6 +30,12 @@ Use the [disposable playground](docs/playground.md) to rehearse installation and
 the first session in a clean Linux account. Run `python3 scripts/playground.py smoke`
 for its automated flow.
 
+CI runs Linux with both pinned fzf versions by default. macOS tests are disabled
+for routine pull requests and main-branch pushes. For an explicit macOS check,
+run the **CI** workflow manually with **Include macOS and native desktop tests**
+enabled (`gh workflow run ci.yml -f run_macos=true`). Local native desktop tests
+remain opt-in through `--run-macos-ui`.
+
 ## Publishing a release
 
 After the release commit has merged and CI passes, build its runtime archive with

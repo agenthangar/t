@@ -2,6 +2,8 @@
 # A desktop-only slot has no tmux process to attach, but it still owns its
 # worktree and conversation. Keep this separate from _dev_remote_resolve, whose
 # result is strictly an attachable tmux slot.
+# Optional third argument permits an incomplete scan only for a fresh local slot.
+# Positive remote ownership evidence always wins. Existing work stays strict.
 _dev_remote_app_owner() {
   local repo="$1" slot="$2" dir="${DEV_REPOS[$1]:-}" base wtr
   [[ -n $dir ]] || return 1
@@ -20,13 +22,14 @@ _dev_remote_app_owner() {
     print -r -- "$result"
     return 0
   fi
-  if (( scan_rc )); then
+  if (( scan_rc )) && [[ -z $3 ]]; then
     print -u2 -- 't: desktop slot ownership could not be verified while a configured host was unavailable'
     return 3
   fi
   return 1
 }
 
+# Optional fifth argument has the same fresh-slot-only meaning.
 _dev_remote_resolve() {
   local repo="$1" slot="$2" multi="${3:-}" quiet_empty="${4:-}"
   # _dev_rows_all columns: host(1) sid(2) cwd(3) slot(4) state(5) context(6) summary(7)
@@ -34,7 +37,7 @@ _dev_remote_resolve() {
   all_rows=$(_dev_rows_all); scan_rc=$?
   rows=$(print -r -- "$all_rows" | awk -F'\t' '$1 != "local" && $5 != "app" && $4 !~ /:/')
   if [[ -z $rows ]]; then
-    if (( scan_rc )); then
+    if (( scan_rc )) && [[ -z $5 ]]; then
       print -u2 -- 't open: remote ownership could not be verified; retry when the skipped host is reachable'
       return 3
     fi
@@ -74,7 +77,7 @@ _dev_remote_resolve() {
     match=$(print -r -- "$rows" | awk -F'\t' -v w="${repo}-" 'index($4,w)==1')
   fi
   local n; n=$(print -r -- "$match" | grep -c .)
-  if (( ! n && scan_rc )); then
+  if (( ! n && scan_rc )) && [[ -z $5 ]]; then
     print -u2 -- 't open: remote ownership could not be verified; retry when the skipped host is reachable'
     return 3
   fi
@@ -616,7 +619,7 @@ _dev_pull() {
     _term_title ""
     [[ -n $existing ]] && { echo "dev: already running locally in $existing — attaching."; tmux attach-session -t "=$existing:"; return; }
     echo "✓ Resuming ${sid[1,8]}… here"
-    if [[ $agent == codex ]]; then ( cd "$cwd" && exec codex resume "$sid" ); else ( cd "$cwd" && exec claude -r "$sid" ); fi
+    if [[ $agent == codex ]]; then ( cd "$cwd" && exec codex resume "$sid" --no-daemon ); else ( cd "$cwd" && exec claude -r "$sid" ); fi
     return
   fi
 

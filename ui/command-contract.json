@@ -607,7 +607,9 @@
       "confirmation": "per_target",
       "tests": [
         "tests/test_open_picker.py::test_bare_open_inside_worktree_shows_every_detail_and_repo",
-        "tests/test_worktree_labels.py::test_python_and_shell_resolve_same_numeric_identity"
+        "tests/test_worktree_labels.py::test_python_and_shell_resolve_same_numeric_identity",
+        "tests/test_offline_open.py::test_fresh_cli_open_with_offline_host",
+        "tests/test_offline_open.py::test_desktop_claim_offline_allows_only_fresh_unowned_slot"
       ],
       "modes": {
         "default": {
@@ -637,7 +639,8 @@
           "read_only": false,
           "tests": [
             "tests/test_open_picker.py::test_explicit_open_target_bypasses_picker"
-          ]
+          ],
+          "notes": "Fresh unused local slots tolerate incomplete remote discovery; known remote owners and existing-workspace ownership checks remain enforced."
         }
       }
     },
@@ -837,7 +840,8 @@
       "confirmation": "per_target",
       "tests": [
         "tests/test_resume_multiselect.py::test_resume_multi_opens_selected_live_slot_and_revives_dead_slot",
-        "tests/test_worktree_labels.py::test_python_and_shell_resolve_same_numeric_identity"
+        "tests/test_worktree_labels.py::test_python_and_shell_resolve_same_numeric_identity",
+        "tests/test_agent_seam.py::test_zsh_resume_session_uses_the_agent_resume_line"
       ],
       "modes": {
         "default": {

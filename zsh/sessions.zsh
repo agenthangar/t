@@ -879,7 +879,7 @@ _dev_adopt_fg() {
       echo "warning: foreground owner ($pid) didn't exit; resuming anyway — transcript may interleave." >&2
   fi
   cd "$cwd" || return 1
-  if [[ $agent == codex ]]; then codex resume "$sid"; else claude -r "$sid"; fi
+  if [[ $agent == codex ]]; then codex resume "$sid" --no-daemon; else claude -r "$sid"; fi
 }
 
 # _dev_attach_fg <handle> — ATTACH IN PLACE an fg-row session that actually lives in a
@@ -2360,7 +2360,11 @@ _t_dev() {
   local dir="${DEV_REPOS[$repo]}"
   local branch="$(_dev_branch_for "$repo")"
   local allow_unverified_new=
-  [[ -n $local_only && $slot == new ]] && allow_unverified_new=1
+  # A new conversation has no remote conversation owner to resume. Only
+  # unused local slots may tolerate an incomplete discovery scan.
+  if [[ -z $slot || $slot == new ]] || _dev_slot_fresh "$repo" "$slot"; then
+    allow_unverified_new=1
+  fi
 
   if [[ ! -d "$dir" ]]; then
     echo "Repo dir not found: $dir"
@@ -2434,7 +2438,7 @@ _t_dev() {
   # is live only on another host is NOT attached — a fresh local slot is opened
   # instead (combine with --fg for a local foreground resume / inline claude).
   if (( ${#REMOTE_HOSTS} )) && [[ -z $no_tmux && -z $local_only && $slot != new ]] && ! _dev_local_slot_live "$repo" "$slot"; then
-    local res resolve_rc; res=$(_dev_remote_resolve "$repo" "$slot" multi quiet); resolve_rc=$?
+    local res resolve_rc; res=$(_dev_remote_resolve "$repo" "$slot" multi quiet "$allow_unverified_new"); resolve_rc=$?
     (( resolve_rc == 130 )) && return 130   # cancellation must not start a fresh slot
     if (( resolve_rc != 0 && resolve_rc != 1 )); then
       (( resolve_rc != 3 )) || print -u2 -- 't open: remote ownership is unknown; no local session was started. Retry when configured hosts are reachable.'
@@ -2459,14 +2463,14 @@ _t_dev() {
   # no-tmux branch, which otherwise bypasses the ordinary slot preflight.
   if [[ -n $no_tmux && $slot == <-> ]] && (( ${#REMOTE_HOSTS} )) \
      && ! tmux has-session -t "=dev-${repo}-${slot}:" 2>/dev/null; then
-    local app_owner app_rc; app_owner=$(_dev_remote_app_owner "$repo" "$slot"); app_rc=$?
+    local app_owner app_rc; app_owner=$(_dev_remote_app_owner "$repo" "$slot" "$allow_unverified_new"); app_rc=$?
     (( app_rc == 3 )) && return 1
     if [[ -n $app_owner ]]; then
       print -u2 -- "t open: $repo $slot is reserved by the Codex desktop app on $app_owner; close it there and release the reservation before opening here"
       return 1
     fi
     local remote_cli remote_rc
-    remote_cli=$(_dev_remote_resolve "$repo" "$slot" '' quiet); remote_rc=$?
+    remote_cli=$(_dev_remote_resolve "$repo" "$slot" '' quiet "$allow_unverified_new"); remote_rc=$?
     if [[ -n $remote_cli ]]; then
       print -u2 -- "t open: $repo $slot is live on ${remote_cli%%$'\t'*}; attach there or move it here before opening a local foreground session"
       return 1
@@ -2497,7 +2501,7 @@ _t_dev() {
         while ! _dev_slot_fresh "$repo" "$_wslot"; do (( _wslot++ )); done
       fi
       if [[ $slot != <-> ]] && (( ${#REMOTE_HOSTS} )); then
-        local app_owner app_rc; app_owner=$(_dev_remote_app_owner "$repo" "$_wslot"); app_rc=$?
+        local app_owner app_rc; app_owner=$(_dev_remote_app_owner "$repo" "$_wslot" "$allow_unverified_new"); app_rc=$?
         (( app_rc == 3 )) && [[ -z $allow_unverified_new ]] && return 1
         if [[ -n $app_owner ]]; then
           print -u2 -- "t open: $repo $_wslot is reserved by the Codex desktop app on $app_owner; close it there and release the reservation before opening here"
@@ -2589,7 +2593,7 @@ _t_dev() {
   # attach resolver deliberately excludes them, so check their reservation before
   # creating a local CLI on the same worktree/branch.
   if ! tmux has-session -t "=$session:" 2>/dev/null && (( ${#REMOTE_HOSTS} )); then
-    local app_owner app_rc; app_owner=$(_dev_remote_app_owner "$repo" "$slot"); app_rc=$?
+    local app_owner app_rc; app_owner=$(_dev_remote_app_owner "$repo" "$slot" "$allow_unverified_new"); app_rc=$?
     (( app_rc == 3 )) && [[ -z $allow_unverified_new ]] && return 1
     if [[ -n $app_owner ]]; then
       print -u2 -- "t open: $repo $slot is reserved by the Codex desktop app on $app_owner; close it there and release the reservation before opening here"
