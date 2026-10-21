@@ -419,11 +419,11 @@ def test_generation_race_after_destination_is_blocked_under_claim(app, history, 
 def test_codex_history_launch_sets_destination_cd_and_private_backend(history, tmp_path):
     commands = tmp_path / 'commands'
     script = f'''
+source {ROOT}/zsh/agent.zsh
 source {ROOT}/zsh/resume.zsh
 _dev_issue_preparing() {{ return 1; }}
 _dev_launch_preflight() {{ return 0; }}
 _dev_auto_trust() {{ return 0; }}
-_dev_agent_resume_cmd() {{ print "codex resume $2"; }}
 _dev_launch_startup_check() {{ return 0; }}
 _dev_history_record() {{ return 0; }}
 _dev_recovery_watch() {{ return 0; }}

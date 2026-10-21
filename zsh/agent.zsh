@@ -110,7 +110,13 @@ _dev_agent_new_cmd() {
 }
 # _dev_agent_resume_cmd <agent> <sid> — the pane command that resumes conversation <sid>.
 _dev_agent_resume_cmd() {
-  case "$1" in codex) print -r -- "codex resume $2" ;; *) print -r -- "claude -r $2" ;; esac
+  local agent=$1 sid=$2; shift 2
+  local -a args
+  case "$agent" in
+    codex) args=(codex resume "$sid" "$@" --no-daemon) ;;
+    *) args=(claude -r "$sid" "$@") ;;
+  esac
+  print -r -- "${(j: :)${(@q)args}}"
 }
 # _dev_agent_at_welcome <agent> <session> [cwd] — live but no conversation yet.
 # claude: the 'Welcome back' banner (_dev_session_at_welcome). codex: a recorded id

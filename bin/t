@@ -9782,6 +9782,8 @@ DESKTOP TO CLI
 
 REMOTE SESSIONS
   A slot live only on another host attaches there automatically.
+  Fresh local slots can open when a configured host is offline. Existing
+  workspaces still require verified ownership before a new owner starts.
   --local (also --here) skips that lookup; combine with --fg to run here.
   --remote attaches to a live remote slot; add --new to start one on the
   default host (the alphabetically first REMOTE_HOSTS key).

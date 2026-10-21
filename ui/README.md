@@ -164,6 +164,12 @@ projection are additive metadata. They must not replace raw identity or evidence
 JSON and non-TTY listings never select or resume; JSON has no ANSI styling,
 presentation headers, or prompts.
 
+Fresh local opens may continue after incomplete remote discovery when the local
+slot is unused. Known remote owners still block or route to that host. Existing
+workspaces and saved-conversation handoffs keep strict ownership checks. All Codex
+CLI starts and resumes use an invocation-local backend (`--no-daemon`).
+These are direct-action behaviors within the existing open/resume modes.
+
 ## Changes since the visual baseline
 
 Review these behavior changes when applying the v0.4.2 standard. Later changes

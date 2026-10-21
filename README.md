@@ -401,8 +401,13 @@ before quitting and relaunching. It stays visible until dismissed. The monitor
 keeps checking and, after dismissal, can offer recovery once the conversation is
 verified.
 
-Fresh Codex sessions (`t open --new`, including `--fg`) start with `--no-daemon`.
-Each new session uses its own backend, avoiding feature-setting conflicts with
+Fresh local slots can open while a configured remote host is offline, for example
+`t session open my-project --new --codex --cli` or
+`t session open my-project --new --app`. Known remote owners are still respected;
+existing workspaces and saved conversations require verified ownership.
+
+Codex CLI starts and resumes (including `--fg` and transfers) use `--no-daemon`.
+Each session uses its own backend, avoiding feature-setting conflicts with
 a running shared server while preserving model, effort, and speed preferences.
 The shared server and its other clients keep running.
 
