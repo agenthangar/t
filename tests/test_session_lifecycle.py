@@ -317,7 +317,8 @@ def test_public_resume_revives_saved_thread_once(lifecycle, agent, leaf, swept):
     log = base / "agents.log"
     launches = _until(lambda: log.read_text().splitlines() if log.exists() else None)
     assert len(launches) == 1
-    assert launches[0].endswith(("|resume|" if agent == "codex" else "|-r|") + SID)
+    expected = "|resume|" + SID + "|--no-daemon" if agent == "codex" else "|-r|" + SID
+    assert launches[0].endswith(expected)
     assert str(worktree) in launches[0]
     opened = _shell(base, env, "t session open repo 1")
     assert opened.returncode == 0, opened.stderr
