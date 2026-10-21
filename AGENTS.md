@@ -56,9 +56,10 @@ Native macOS UI tests open windows and steal focus. Keep them disabled in routin
 local runs; use `--run-macos-ui` only on disposable CI or when the user explicitly
 requests native desktop verification. Mark any new interactive desktop tests
 `macos_ui` so they share this opt-in gate.
-Keep macOS CI enabled by default. Apply the `ci:skip-macos` label to a PR only
-when the user explicitly requests skipping macOS CI for that PR; remove the label
-when that exception no longer applies. The Linux and other CI jobs still run.
+Default CI runs Linux only. Run macOS CI only when the user explicitly requests
+it, using the CI workflow’s `run_macos` manual input. Keep the macOS test code
+and native UI opt-in gate available; do not re-enable macOS in default PR checks.
+The Linux and other required CI jobs must still run.
 
 Keep the one-live-owner guarantee, remote `zsh -lic` contract, and worktree safety
 checks. No plain local declarations of zsh tied parameters such as path/fpath.

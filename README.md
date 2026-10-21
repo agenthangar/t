@@ -878,8 +878,9 @@ For an intentional desktop check on macOS with Swift and Accessibility access:
 python3 -m pytest tests/test_app_macos.py --run-macos-ui
 ```
 
-CI explicitly opts in on disposable runners. Selecting the test file or
-`-m macos_ui` alone does not enable desktop interaction.
+Default CI runs Linux only. To explicitly run macOS and native desktop checks
+on disposable runners, manually launch CI with `run_macos=true`. Selecting the
+test file or `-m macos_ui` alone does not enable desktop interaction.
 
 The installer has no pip runtime dependencies. Markdown rendering uses a small
 vendored library with its [license and provenance](libexec/vendor/README.md).
