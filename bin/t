@@ -1659,8 +1659,7 @@ def cmd_hosts(cfg, args):
         if not changes:
             print("Hosts unchanged — nothing written")
             return 0
-        _config_write(path, before, _config_text(before, changes, initial))
-        _host_refresh_config()
+        _shared_core()["persist_config"](globals(), cfg, before, initial)
     except (OSError, ValueError) as exc:
         print(f"t hosts {action}: {exc}", file=sys.stderr)
         return 1
@@ -7672,13 +7671,7 @@ def cmd_app_close(cfg, repo, slot):
 
 def cmd_restart(cfg, args):
     try:
-        row = _slot_select(cfg, _parse_rows(zsh_capture("_dev_session_rows")),
-                           args.repo, args.slot, os.getcwd(), "restart")
-        if row["agent"] not in ("codex", "claude") or not re.fullmatch(
-                r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", row["sid"]):
-            raise ValueError("the slot has no verified conversation; check t doctor")
-        if not os.path.isdir(row["cwd"]):
-            raise ValueError(f"the session's worktree is missing: {row['cwd']}")
+        row = _shared_core()["restart_target"](globals(), cfg, args.repo, args.slot, os.getcwd())
         parts = ["_t_restart_slot", "dev-" + row["slot"], row["cwd"], row["sid"],
                  row["agent"], "dry-run" if args.dry_run else "restart"]
         result = _run(["zsh", "-lic", ZSH_PRELUDE + shlex.join(parts)], timeout=30)
@@ -10456,6 +10449,10 @@ def _print_command_help(target, words, canonical, *, detailed=False):
         target.prog = old_prog
 
 
+def _shared_core():
+    return runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_core.py"))
+
+
 def main(argv):
     argv = _hosts_argv(argv)
     if argv == ["__share"]:
@@ -10606,11 +10603,7 @@ def main(argv):
     if update_result is not None:
         return update_result
     cfg = Config()
-    handler = IMPLEMENTED.get(args.verb)
-    if handler:
-        return handler(cfg, args)
-    args._verb = args.verb
-    return cmd_pending(cfg, args)
+    return _shared_core()["dispatch"](globals(), cfg, args)
 
 
 if __name__ == "__main__":

@@ -84,15 +84,20 @@ def test_resume_app_platform_and_agent_refusals(zsh, tmp_path):
     assert "APP" not in result.stdout
 
 
-def test_resume_app_multiple_marks_never_launch(zsh, tmp_path):
+@pytest.mark.parametrize("route,message", [("--app", "mark a single row"),
+    ("--cli", "select one exact conversation")])
+def test_resume_app_multiple_marks_never_launch(zsh, tmp_path, route, message):
     saved_rollout(zsh)
     saved_rollout(zsh, OTHER)
     app_stub(tmp_path)
     picker = tmp_path / "stubbin/fzf"
     picker.write_text('#!/bin/sh\ncat\n')
     picker.chmod(0o755)
-    result = zsh("OSTYPE=darwin; _t_resume api --app", _tty=True)
-    assert "mark a single row" in result.stdout and "APP" not in result.stdout
+    controls = "T_CORE_DETACH=1 " if route == "--cli" else ""
+    result = zsh(f"OSTYPE=darwin; {controls}_t_resume api {route}", _tty=True)
+    assert result.returncode == 1
+    assert message in result.stdout and "APP" not in result.stdout
+    assert "send-keys" not in zsh.log.read_text()
 
 
 def test_resume_cli_retains_terminal_route(zsh, tmp_path):
