@@ -50,7 +50,7 @@ not invent production state or silently substitute successful fixture results.
 
 | CLI family | Current verbs | Desktop route |
 | --- | --- | --- |
-| issue | list, status, start | Dedicated forms/read results for list, status, start; optional reviewed interactive route for the same verbs and advanced flags |
+| issue | list, status, start, open | Dedicated forms/read results for list, status, start; reviewed terminal route for open and advanced flags |
 | session | open, list, history, close, restart, push, pop, resume, cd, move, read, view-plan, paste, search, open-app | Dedicated forms/read results for open, list, close, restart, resume, search; reviewed terminal for other verbs; cd retains an interactive shell; push/pop detach/attach the selected GUI session |
 | repo | list, cd, locate, create, clone | Dedicated forms/read results for list; reviewed terminal for other verbs; register existing checkout in sidebar; cd retains an interactive shell |
 | share | `t share --to AGENT:ID --file PATH`, targets, inbox, read | Reviewed terminal actions for send, recipient discovery, inbox, and message/attachment reads; send uses standalone `t share` flags |
