@@ -244,6 +244,10 @@ sessions in `t open` and `t kill`, **Ctrl-L** toggles live sessions in `t resume
 and **Ctrl-P** toggles pending work in `t kill`. Each key keeps your search. The
 header shows the active filters and hidden count. **Ctrl-/** opens a wrapped
 full-detail preview.
+In `t open`, **Alt-N** starts the existing `--new` flow with the same repository
+and opening flags, even when filtering leaves no matches. For example, run
+`t open api` and press Alt-N to start a new session in `api`. Marked sessions are
+not opened by this shortcut; Esc/Ctrl-C still cancels without starting work.
 Rows keep agent, interface, status, model, session and task/PR details; resume
 also keeps recency and origin.
 

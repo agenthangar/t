@@ -26,6 +26,9 @@ if '--help' in sys.argv:
 rows = sys.stdin.read().splitlines()
 open(os.environ['PICKER_LOG'], 'w').write('\n'.join(rows))
 Path(os.environ['PICKER_LOG'] + '.all').write_text(Path(os.environ['T_PICKER_ALL']).read_text())
+if os.environ.get('PICK_NEW'):
+    Path(os.environ['T_PICKER_NEW']).touch()
+    sys.exit(130)
 for index, action in enumerate(filter(None, os.environ.get('PICK_ACTIONS', '').split(','))):
     subprocess.run(['sh', os.environ['T_PICKER_TOGGLE'], action], check=True)
     Path(os.environ['PICKER_LOG'] + '.header').write_text(Path(os.environ['T_PICKER_CURRENT_HEADER']).read_text())
@@ -236,3 +239,65 @@ def test_open_batch_tab_failure_reports_exact_attach_command(zsh):
     assert result.returncode == 0, result.stdout + result.stderr
     assert 'Attach with: t open api 4 --cli --local' in result.stdout
     assert 'OPEN api 2 --cli --local' in result.stdout
+
+
+@pytest.mark.parametrize('args,default_mode,expected', [
+    ('', 'cli', 'CLI new'),
+    ('api', 'cli', 'CLI api new'),
+    ('api --cli --local --attached', 'app', 'CLI api --local new'),
+    ('api --app', 'cli', 'APP api --app --new'),
+    ('api', 'app', 'APP api --new'),
+    ('api -r --cli', 'cli', 'REMOTE mini api --cli --new'),
+])
+def test_open_new_shortcut_preserves_repo_and_opening_flags(zsh, tmp_path, args, default_mode, expected):
+    env = picker_stub(tmp_path)
+    result = zsh(ROWS + r'''
+      DEV_OPEN_MODE_DEFAULT=$OPEN_MODE
+      _t_infer_repo() { print api; }
+      _dev_rows_all() { _dev_session_rows "$@" | awk '{print "mini\t" $0}'; }
+      _dev_default_host() { print mini; }
+      _t_dev() { print -r -- "CLI $*"; }
+      _t_open_app() { print -r -- "APP $*"; }
+      _dev_remote_open() { print -r -- "REMOTE $*"; }
+      _t_open ''' + args, _tty=True, PICK_NEW='1', OPEN_MODE=default_mode, **env)
+    assert result.returncode == 0, result.stdout
+    assert expected in result.stdout
+    assert result.stdout.count(expected) == 1
+
+
+@pytest.mark.parametrize('new_status', [2, 130])
+def test_open_new_shortcut_preserves_failure_and_cancellation(zsh, tmp_path, new_status):
+    env = picker_stub(tmp_path)
+    result = zsh(ROWS + r'''
+      _t_dev() { print -r -- "NEW $*"; return $NEW_STATUS; }
+      _t_open api --cli
+    ''', _tty=True, PICK_NEW='1', NEW_STATUS=str(new_status), **env)
+    assert result.returncode == new_status, result.stdout
+    assert result.stdout.count('NEW api new') == 1
+
+
+def test_legacy_open_new_shortcut_starts_fresh_instead_of_remote_attach(zsh, tmp_path):
+    env = picker_stub(tmp_path)
+    (zsh.home / 'code/api').mkdir(parents=True)
+    result = zsh(ROWS + r'''
+      REMOTE_HOSTS[offline]=offline
+      _dev_rows_all() { return 1; }
+      _dev_remote_resolve() { print -u2 UNEXPECTED_REMOTE_ATTACH; return 1; }
+      _dev_slot_fresh() { return 0; }
+      _dev_worktree_enabled() { return 1; }
+      _dev_agent_check() { return 0; }
+      _dev_repo_prepare() { :; }
+      _dev_auto_trust() { :; }
+      _dev_with_launch_locks() { return 0; }
+      _dev_new_session() { print -r -- "LAUNCHED $*"; }
+      _t_dev api
+    ''', _tty=True, PICK_NEW='1', **env)
+    assert result.returncode == 0, result.stdout
+    assert 'LAUNCHED dev-api-1' in result.stdout
+    assert 'UNEXPECTED' not in result.stdout
+
+
+def test_open_help_describes_new_shortcut(t_mod):
+    parser = t_mod.build_parser()
+    help_text = parser._subparsers._group_actions[0].choices['open'].format_help()
+    assert 'Alt-N starts a new session' in help_text

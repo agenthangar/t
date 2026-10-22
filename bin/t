@@ -9741,7 +9741,7 @@ def build_parser():
 
 select several sessions:
   Space/Tab marks ✓; Enter opens; Ctrl-A shows all; Ctrl-F restores defaults.
-  Ctrl-T toggles attached sessions. Extras: tabs/app.
+  Ctrl-T toggles attached sessions; Alt-N starts a new session. Extras: tabs/app.
 
 desktop → CLI:
   %(prog)s api 2 --cli
@@ -9759,6 +9759,8 @@ Run `t help open` for session targeting, defaults, and remote details.""",
   t open <repo> filters. Attached CLI and loaded desktop rows are hidden;
   Ctrl-T toggles attached rows; Ctrl-A shows all; Ctrl-F restores defaults.
   --attached starts with all rows.
+  Alt-N starts the existing --new flow, keeping the repo and opening flags.
+  It also works with no matching rows and does not open marked sessions.
   Explicit slots still open directly. Compact resume-style rows retain agent,
   UI, status, model, session and task details, including idle/desktop rows.
   Space/Tab marks multiple rows; Enter opens them.

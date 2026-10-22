@@ -623,8 +623,12 @@
           ],
           "read_only": false,
           "tests": [
-            "tests/test_open_picker.py::test_bare_open_inside_worktree_shows_every_detail_and_repo"
-          ]
+            "tests/test_open_picker.py::test_bare_open_inside_worktree_shows_every_detail_and_repo",
+            "tests/test_picker_ui.py::test_open_new_shortcut_invokes_existing_flow_in_small_viewports",
+            "tests/test_open_picker.py::test_open_new_shortcut_preserves_repo_and_opening_flags",
+            "tests/test_open_picker.py::test_open_new_shortcut_preserves_failure_and_cancellation"
+          ],
+          "notes": "Alt-N starts the existing --new flow with the original repository and opening flags, even with no matching rows; marks are discarded. Ctrl-N remains navigation."
         },
         "explicit": {
           "argv": [

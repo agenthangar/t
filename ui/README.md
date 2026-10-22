@@ -64,12 +64,17 @@ dev sessions   ● attached/loaded · ✓ active context · ↻ still in progres
 
 Enter open · Esc · Space/Tab mark ✓ · Ctrl-/ details
 Ctrl-A show all · Ctrl-F defaults · 2 hidden
-Ctrl-T attached: hidden
+Alt-N new · Ctrl-T attached: hidden
 ▸ api  2  ⬡ codex  › cli  ○  codex  Fix login
 ```
 
 The rows above illustrate hierarchy and controls, not a fixed column schema.
 List commands print normally; picker headers and marks appear only for selection.
+
+The open picker adds Alt-N to start its existing `--new` flow with the original
+repository and opening flags. It discards marks and works with no matching rows.
+Ctrl-N remains navigation. The shared filtered open profile returns 3 for this
+explicit action; cancellation continues to return 130 without starting work.
 
 ## Shared implementations
 
