@@ -424,7 +424,7 @@ def test_zsh_agent_is_proc_and_of_comm(zsh):
 def test_zsh_agent_launch_lines(zsh):
     r = zsh("_dev_agent_new_cmd claude abc; _dev_agent_new_cmd codex abc; "
             "_dev_agent_resume_cmd claude abc; _dev_agent_resume_cmd codex abc")
-    assert r.stdout.splitlines() == ["claude --session-id abc", "codex --no-daemon", "claude -r abc", "codex resume abc"]
+    assert r.stdout.splitlines() == ["claude --session-id abc", "codex --no-daemon", "claude -r abc", "codex resume abc --no-daemon"]
 
 
 def test_zsh_agent_glyphs_match_bin_t(zsh, t_mod):
@@ -513,7 +513,7 @@ def test_zsh_resume_session_uses_the_agent_resume_line(zsh):
     log = zsh.log.read_text().splitlines()
     assert "set-environment -t =dev-api-7 CLAUDE_RESUME_ID thr_9" in log
     assert "set-environment -t =dev-api-7 DEV_AGENT codex" in log
-    assert "send-keys -t =dev-api-7: codex resume thr_9; exit Enter" in log
+    assert "send-keys -t =dev-api-7: codex resume thr_9 --no-daemon; exit Enter" in log
     zsh.log.write_text("")
     zsh("_dev_resume_session dev-api-8 $HOME/code/api sid-1")
     assert "send-keys -t =dev-api-8: claude -r sid-1; exit Enter" in zsh.log.read_text()
@@ -546,6 +546,7 @@ def test_open_unknown_remote_owner_does_not_start_local_session(zsh):
     result = zsh(r'''
       REMOTE_HOSTS[mini]=mini
       _dev_rows_all() { return 1; }
+      _dev_slot_fresh() { return 1; }
       _t_dev api 3; print -r -- "rc=$?"
     ''')
     assert "rc=3" in result.stdout  # Preserve the incomplete ownership scan status.
@@ -725,7 +726,7 @@ def test_zsh_model_defaults_reach_new_tmux_sessions_and_not_resumes(zsh):
     lines = zsh.log.read_text().splitlines()
     assert "send-keys -t =dev-api-3: codex --model local/model -c model_reasoning_effort=ultra --no-daemon; exit Enter" in lines
     assert any("claude --session-id " in line and " --model sonnet --effort max; exit Enter" in line for line in lines)
-    assert "send-keys -t =dev-api-5: codex resume thread-id; exit Enter" in lines
+    assert "send-keys -t =dev-api-5: codex resume thread-id --no-daemon; exit Enter" in lines
 
 
 @pytest.mark.parametrize("agent", ["claude", "codex"])
@@ -1376,7 +1377,7 @@ def test_zsh_agent_wrap_spawns_the_recorded_agent(zsh, tmp_path):
     stub.chmod(0o755)
     r = zsh("codex; echo rc=$?")
     log = zsh.log.read_text().splitlines()
-    assert "send-keys -t =dev-api-3: codex resume thr_7; exit Enter" in log
+    assert "send-keys -t =dev-api-3: codex resume thr_7 --no-daemon; exit Enter" in log
     assert "set-environment -t =dev-api-3 DEV_AGENT codex" in log
     # a payload WITHOUT the agent field (an older t push) resumes as claude
     stub.write_text('#!/bin/bash\nprintf "SPAWN\\tdev-api-4\\t%s\\t%s\\n" "$HOME/code/.worktrees/api/4" "sid-9" > "$CLAUDE_TPUSH_ATTACH"\n')
@@ -2188,7 +2189,7 @@ def test_zsh_resume_pick_revives_the_row_with_its_own_agent(zsh, tmp_path):
     r = zsh("_t_resume api; echo rc=$?", _tty=True, FZF_LOG=str(log), FZF_PICK="word OK")
     assert "rc=0" in r.stdout and f"Resuming {SID[:8]} in dev-api-3 ({wt3})" in r.stdout, r.stdout
     tlog = zsh.log.read_text().splitlines()
-    assert f"send-keys -t =dev-api-3: codex resume {SID}; exit Enter" in tlog
+    assert f"send-keys -t =dev-api-3: codex resume {SID} --no-daemon; exit Enter" in tlog
     assert "set-environment -t =dev-api-3 DEV_AGENT codex" in tlog
     assert "attach-session -t =dev-api-3:" in tlog
     zsh.log.write_text("")
@@ -2276,7 +2277,7 @@ def test_fast_mode_reaches_new_tmux_and_foreground_launches(zsh, agent, fast, ar
     assert r.returncode == 0, r.stderr
     assert r.stdout.count('ARG\n' + args) == 2, r.stdout
     assert f'DEV_FAST[{agent}]={fast}' in r.stdout
-    resume = f'{agent} resume saved-id' if agent == 'codex' else 'claude -r saved-id'
+    resume = f'{agent} resume saved-id --no-daemon' if agent == 'codex' else 'claude -r saved-id'
     assert f'send-keys -t =dev-web-9: {resume}; exit Enter' in zsh.log.read_text()
 
 

@@ -2,12 +2,17 @@
 
 ![t — coding-agent sessions, under control](docs/media/hero.svg)
 
-**A 24/7 coding utility. Take your work with you.**
+**Your terminal. Your desktop. Same task.**
 
-Start a task with your coding agent, keep it running on a remote machine, and
-pick it up from your laptop or a phone's SSH terminal. Move between local and
-cloud development, or bring a local Codex conversation into its macOS desktop
-app with the running web preview beside it.
+Start in the terminal. Continue in the Codex desktop app. Keep your conversation,
+isolated Git worktree, and running web preview together. On macOS, use
+`t session open my-project 1 --app` to move a local Codex conversation to the
+desktop, and `t session open my-project 1 --cli` to return after following t’s
+instructions to release that desktop chat.
+
+Terminal workflows support macOS and Linux. Move sessions to a configured SSH
+host and check in from another computer or a phone’s terminal while that host
+stays awake and reachable. Desktop handoff is specific to Codex on macOS.
 
 t manages sessions in tmux and gives each task its own Git worktree. It includes
 Claude Code and Codex session workflows, plus Cursor transfer tools.
@@ -25,10 +30,44 @@ Supported workflows vary by agent; see the [support matrix](#agents).
 
 [Get started](#install) · [Work from anywhere](#work-from-anywhere) · [Commands](#commands) · [Configuration](#configuration) · [Agent support](#agents) · [Coming soon](#coming-soon) · [AgentHangar](https://agenthangar.ai)
 
-![A rendered 24-second walkthrough of a real Codex thread moving from Mac to mini and back, followed by a desktop open request](docs/media/demo.gif)
+## Watch one task move
 
-The [demo recording](docs/media/README.md) explains exactly what was captured.
-Watch the [MP4](docs/media/demo.mp4) or use the [static poster](docs/media/demo-poster.png).
+![One task: terminal, mini, desktop, and resume](docs/media/terminal/workflow.gif)
+
+[Watch the 66-second demo](docs/media/terminal/workflow.mp4) ·
+[Static cover](docs/media/terminal/workflow-poster.png) ·
+[Capture notes and sources](docs/media/terminal/README.md)
+
+GPT-6.1-Sol fixes a real task-CLI bug: two failing tests become five passing tests,
+with the code change and actual CLI output visible. The same task moves to mini,
+runs the tests there, returns through Codex desktop, and resumes in the terminal
+for another verification turn. The 66-second cut keeps reading sections at normal
+speed and plays session setup at 2×. The app window was not filmed; mini needed
+Codex sign-in at capture time, so no remote model turn is shown.
+
+### Open → another host → desktop → resume
+
+```sh
+t open my-project --codex             # start in an isolated worktree
+t beam my-project 1 --host mini       # move to your configured host
+t beam my-project 1 --from mini       # bring it back locally
+t open my-project 1 --app             # continue in Codex desktop (macOS)
+t open my-project 1 --cli             # return after releasing the desktop chat
+t resume my-project 1                 # revive a saved conversation after its CLI ends
+t resume my-project 1 --app           # choose the exact saved Codex conversation for the Mac app
+```
+
+The [sample project and actual patch](docs/media/terminal/fixture/README.md)
+reproduce the bug fix. Host transfer uses `t beam`; `t push` backgrounds a local session.
+
+The same local conversation and worktree stay together. Desktop handoff can
+include its running web preview and referenced Markdown plan. See
+[the desktop workflow details](#work-from-anywhere) for ownership and release behavior.
+
+The earlier [host-handoff walkthrough](docs/media/demo.mp4) follows a Codex thread
+from Mac to mini and back. It is an edited rendering of verified command output;
+its final desktop open request was sent but app delivery was not confirmed.
+[Read its evidence notes](docs/media/README.md).
 
 ## Work from anywhere
 
@@ -114,6 +153,32 @@ t session list             # see your running sessions
 
 Detach from tmux with `Ctrl-b d`; reattach with `t session open my-project 1`.
 
+New slot worktrees use an identifiable directory such as
+`$DEV_WORKTREE_ROOT/t/t-12`, `cashfwd/cashfwd-4`, or `hive/hive-7`.
+The slot argument remains numeric (`t session open t 12`), as do tmux slot IDs
+and history associations. Existing numeric directories such as `t/12` are reused
+without being moved. Saved conversations retain their exact IDs and paths;
+resume can rebuild either layout after a worktree is swept. Codex receives that
+directory name when opening a workspace; this does not group every worktree
+under one common heading in the app. Live GUI rendering is not verified by the
+automated compatibility tests.
+
+Both layouts work with CLI open/resume, desktop discovery and handoff, navigation,
+and retained history. If both `t/12` and `t/t-12` exist, slot actions refuse to
+choose: inspect the two worktrees and use `t session history t 12` to select a
+specific conversation. t never resolves this collision by moving either tree.
+
+Upgrade t's CLI and shell plugin together on each host before using labeled
+worktrees. A current sender checks the destination's layout capability before
+stopping its source writer; an older receiver is refused with an update hint.
+A current receiver can accept an older sender's numeric path. Older commands
+do not understand labeled worktrees: upgrade on that host before opening or
+resuming them. Transfer preserves the exact cwd and requires matching configured
+worktree roots; different home directories or roots are refused before the
+source is stopped. Attach on the source host, align the configuration for future
+work, or use history's verified resume into a fresh local workspace. Existing
+worktrees and agent history should not be manually renamed to bridge hosts.
+
 `t open` browses sessions across all local repositories, including from inside a
 worktree; `t open my-project` filters to that repo. Attached CLI and loaded desktop
 sessions are hidden by default; `--attached` includes them. Idle sessions and
@@ -126,12 +191,25 @@ one. It retains inactive and live conversations, archived records, and records
 whose worktrees or transcripts have been removed. It always asks you to select a
 conversation before resuming, including when only one exists.
 
+History uses the same session information as `t ls`: status and active context,
+CLI or desktop interface, agent glyph and recorded model, host, session, and
+working-on summary. Saved conversations keep their recorded metadata; missing
+historical model or interface evidence stays unknown. The picker aligns these
+fields and keeps the summary visible on small terminals. Its details pane shows
+full values, date, branch and commit evidence, every associated PR, and the exact
+conversation ID. At 80×24 and larger the pane opens by default; **Ctrl-/** toggles
+it on smaller screens, and **Shift-↑/↓** scrolls it. PR suffixes use **O** open,
+**M** merged, **C** closed, and **?** unknown; extra PRs show a count.
+
 History shows 50 conversations per page. Search covers all pages; Ctrl-F and
 Ctrl-B move between pages, Ctrl-/ opens details, Enter resumes the exact selected
 conversation, and Escape cancels. Ctrl-R or `--refresh` refreshes metadata from
 registered hosts without downloading their transcripts. Unreachable hosts retain
 their cached records. `--limit N --page N --json` provides paginated metadata;
-without a terminal the command only lists conversations.
+without a terminal the command only prints an aligned table, retaining dates,
+branches, PR states, and full conversation IDs. JSON also includes the normalized
+`display` fields and recorded metadata provenance. PR state reads use the cache;
+Ctrl-R or `--refresh` updates it explicitly.
 
 A live terminal conversation attaches to its existing owner. A desktop or
 foreground owner offers an explicit handoff path. An inactive conversation reuses
@@ -144,6 +222,21 @@ PRs require structured tool evidence or a matching branch and commit; incidental
 links appear separately in details. History records are private under
 `$XDG_STATE_HOME/t/history/v1` (default `~/.local/state/t/history/v1`).
 
+`t resume <repo> [slot] --app` selects one saved Codex conversation and opens its
+exact ID in the local macOS app, preserving its history and recorded worktree.
+It uses the existing guarded CLI-to-desktop handoff when that same conversation
+is running locally. A different conversation in the slot, a remote or foreground
+owner, unverifiable ownership, unsupported agent, or multiple marked rows stops
+the operation without substituting another conversation. `--app` conflicts with
+`--cli`, `--fg`, and `--host`; `--remote` may still fetch saved histories first.
+Without a terminal, an explicit slot selects its newest saved conversation as
+usual. Use `--days all` to include older histories. Desktop delivery remains an
+OS open request, not proof that the app loaded the conversation.
+Copied histories must already be indexed by the local Codex installation; otherwise
+the error gives the CLI selection command to index that exact conversation first.
+Older histories without a verifiable writer-lock contract are refused until a
+current Codex CLI owns them and can perform the guarded handoff.
+
 `t open`, `t resume`, and `t kill` share the compact resume picker design:
 **Space/Tab marks ✓ and Enter acts on the selection**. **Ctrl-A** shows all
 sessions; **Ctrl-F** restores the default filters. **Ctrl-T** toggles attached
@@ -151,6 +244,10 @@ sessions in `t open` and `t kill`, **Ctrl-L** toggles live sessions in `t resume
 and **Ctrl-P** toggles pending work in `t kill`. Each key keeps your search. The
 header shows the active filters and hidden count. **Ctrl-/** opens a wrapped
 full-detail preview.
+In `t open`, **Alt-N** starts the existing `--new` flow with the same repository
+and opening flags, even when filtering leaves no matches. For example, run
+`t open api` and press Alt-N to start a new session in `api`. Marked sessions are
+not opened by this shortcut; Esc/Ctrl-C still cancels without starting work.
 Rows keep agent, interface, status, model, session and task/PR details; resume
 also keeps recency and origin.
 
@@ -205,7 +302,9 @@ for a host's login shell.
 | `t issue list [repo] [-a]` | List issues in the current, named, or all registered GitHub repositories |
 | `t issue status [repo] <number>` | Inspect existing work without starting an agent |
 | `t issue start [repo] [number ...]` | Continue or start work on one or several issues |
-| `t share --to agent:id --file summary.md [--attach history.md]` | Share selected context with an exact Claude, Codex, or Cursor conversation |
+| `t issue open [repo] [number ...]` | Open one or several GitHub issues in your browser |
+| `t share` / `t share --to claude` | Review captured conversation context and start a new agent session; `--to` also works without a terminal when the source is known |
+| `t share --to agent:id [--file summary.md] [--attach history.md]` | Share context with an exact existing conversation; `--file` supplies your own text |
 | `t share targets` / `t share inbox` / `t share read <message-id>` | Find conversations and read received shares |
 | `t session list [-r] [-a]` | List sessions across local or remote hosts and repositories |
 | `t session close <repo> <slot>` / `t session restart <repo> <slot>` | Stop a slot or recover a stuck agent in the same conversation |
@@ -306,8 +405,13 @@ before quitting and relaunching. It stays visible until dismissed. The monitor
 keeps checking and, after dismissal, can offer recovery once the conversation is
 verified.
 
-Fresh Codex sessions (`t open --new`, including `--fg`) start with `--no-daemon`.
-Each new session uses its own backend, avoiding feature-setting conflicts with
+Fresh local slots can open while a configured remote host is offline, for example
+`t session open my-project --new --codex --cli` or
+`t session open my-project --new --app`. Known remote owners are still respected;
+existing workspaces and saved conversations require verified ownership.
+
+Codex CLI starts and resumes (including `--fg` and transfers) use `--no-daemon`.
+Each session uses its own backend, avoiding feature-setting conflicts with
 a running shared server while preserving model, effort, and speed preferences.
 The shared server and its other clients keep running.
 
@@ -348,8 +452,12 @@ current chat IDs; close an untracked CLI first to avoid duplicate conversation o
 ### Sharing context between agents
 
 ```sh
+t share                              # choose a recipient, review context, start a new session
+t share --to claude                  # hand this conversation to a new Claude session
+t share --to claude --from codex:<conversation-id> --json
+t share --to claude --file summary.md --attach history.md
 t share targets --json
-t share --to codex:<conversation-id> --file summary.md --attach history.md
+t share --to codex:<conversation-id> --file summary.md
 t share --to claude:<conversation-id> --host mini --file - < summary.md
 t share inbox
 t share read <message-id>
@@ -357,16 +465,30 @@ t share read <message-id> --attachment history.md
 t share --retry <message-id>
 ```
 
-The sending agent writes the summary and selects any UTF-8 text attachments; `t`
-does not extract transcripts or generate a summary. A share addresses one exact
-conversation, where the receiving agent reads it on request. Reading does not
-remove the share. Sending does not interrupt or start the receiving agent. Use `--from agent:id` if the
-source conversation cannot be inferred, or `--for agent:id` with `inbox` and
-`read` outside the receiving conversation. `--host` selects a configured SSH
-host. `--json` is available on every form. Messages remain on their receiving
-host without automatic expiration. The combined summary and attachments have a
-10 MiB UTF-8 limit. A send receipt confirms storage; if delivery is uncertain,
-retry the saved message with `t share --retry <message-id>`.
+For a new session, `t share` identifies the current conversation or offers a
+searchable source picker, lets you choose Claude, Codex, or Cursor, and shows the
+context before launch. It selects the original request and recent conversation
+messages within a stated limit. This is an extract of selected messages, not a
+generated summary. Capturing Cursor chats is not currently supported; in a
+terminal, enter context yourself or use `--file` with UTF-8 text.
+`--from agent:id` selects an exact source; `--from agent` filters the interactive picker.
+An agent-only `--to` starts a new local session in a new worktree at the source
+HEAD. After the terminal review, `t` enters the new session. The source session
+remains open, and uncommitted edits stay in its worktree. Without a terminal,
+provide `--to` and an identifiable source (or `--from agent:id`); the new
+session remains detached and `t` prints how to open it. `--json` returns the
+launch result without entering the session.
+
+To address an existing conversation, use `--to agent:id`. An exact destination
+with `--file` sends directly; without `--file`, the captured context is reviewed
+in a terminal. With `--host`, an agent-only `--to` offers a picker for existing
+remote conversations; new remote sessions are not supported. The recipient
+reads a delivered share with `t share inbox` and `t share read`; reading does
+not remove it or interrupt the receiving agent. Use `--for agent:id` with those
+commands outside the receiving conversation. Messages remain on the receiving
+host without automatic expiration. The combined context and UTF-8 attachments
+have a 10 MiB limit. If delivery is uncertain, retry the saved message with
+`t share --retry <message-id>`.
 
 ### Working on GitHub issues
 
@@ -381,6 +503,9 @@ t issue status api 123 --json        # structured discovery for a registered rep
 t issue start                        # select one or several open issues
 t issue start api 123 124            # work on two independent issues
 t issue start https://github.com/owner/repo/issues/123 --codex
+t issue open api 123 124             # open several issues in your browser
+t issue open                         # select issues to open interactively
+t issue open https://github.com/owner/repo/issues/123
 ```
 
 Every verb accepts a registered repository alias or GitHub `owner/repo`, either
@@ -391,13 +516,19 @@ issues from all registered GitHub repositories when run outside a checkout;
 canonical repository. `--state all` includes closed issues and is independent
 of the repository scope. An explicit repository and `--all` conflict.
 
-Without a repository, `status` and `start` use the current registered checkout.
-Outside a checkout, `status` requires an explicit repository; `start` can present
+Without a repository, `status`, `start`, and `open` use the current registered checkout.
+Outside a checkout, `status` requires an explicit repository; `start` and `open` can present
 a repository picker interactively. An issue URL already names its
 repository. Supplying a repo both positionally and with `--repo` is an error.
 JSON, remote scans, and other non-interactive commands never prompt.
 
-`list` and `status` are read-only. `start` accepts explicit issue numbers or a
+`list` and `status` are read-only. `open` accepts issue numbers or URLs and asks
+GitHub CLI to open each in the user's browser. With no issue number, it uses the
+same multi-select issue picker; it does not start an agent or create a worktree.
+An explicit GitHub `owner/repo` or issue URL does not require a registered
+checkout for `open`.
+
+`start` accepts explicit issue numbers or a
 GitHub issue URL. With no number, it presents the same multi-select picker used
 for sessions; Space or Tab marks issues, and Enter starts the marked issues.
 Ctrl-A shows all issues; Ctrl-F restores open issues; Ctrl-/ shows full details. Each issue
@@ -519,7 +650,14 @@ if several chats share the worktree, use `t app pull my-project 3 --thread <id>`
 to select one, then open it. A previously pushed slot defaults to its handed-off
 thread. `t app pull` resumes without attaching; `--dry-run` previews either direction.
 Handoffs check Codex's per-conversation writer lock and refuse if another loaded
-conversation is known to share the worktree. Codex can hold other thread locks
+conversation is known to share the worktree. The refusal names that conversation
+and gives release instructions plus the exact command to retry. Finish that
+other conversation's turn and exit its owning client; in a verified reserved
+`t` worktree, the message can instead suggest Archive in Codex. Wait for that
+conversation's backend to release its writer, then retry the selected slot.
+An inactive leftover lock file does not block the handoff. The missing-preview
+notice is independent: providing `--url` does not resolve an ownership conflict.
+Codex can hold other thread locks
 without entries in its saved-conversation index. Those unindexed locks produce
 a diagnostic during opening and handoffs; they do not block every worktree.
 An unindexed lock is not proof of an unrelated conversation, and the selected
@@ -744,8 +882,9 @@ For an intentional desktop check on macOS with Swift and Accessibility access:
 python3 -m pytest tests/test_app_macos.py --run-macos-ui
 ```
 
-CI explicitly opts in on disposable runners. Selecting the test file or
-`-m macos_ui` alone does not enable desktop interaction.
+Default CI runs Linux only. To explicitly run macOS and native desktop checks
+on disposable runners, manually launch CI with `run_macos=true`. Selecting the
+test file or `-m macos_ui` alone does not enable desktop interaction.
 
 The installer has no pip runtime dependencies. Markdown rendering uses a small
 vendored library with its [license and provenance](libexec/vendor/README.md).

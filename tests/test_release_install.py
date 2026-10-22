@@ -43,7 +43,7 @@ def artifact(version="v1.2.3", changed=None, extra=None):
     changed = changed or {}
     files = {name: (ROOT / name).read_bytes() for name in release.REQUIRED if name != ".t-release-version"}
     # Current installer integrations extend the backwards-compatible release minimum.
-    for name in ('libexec/t_issue.py', 'libexec/t_issue_policy.txt', 'libexec/t_history.py'):
+    for name in ('libexec/t_issue.py', 'libexec/t_issue_policy.txt', 'libexec/t_history.py', 'libexec/t_session_details.py'):
         files[name] = (ROOT / name).read_bytes()
     files[".t-release-version"] = (version + "\n").encode()
     files.update(changed)
@@ -181,6 +181,11 @@ def test_build_archive_is_deterministic_and_runtime_only(tmp_path):
     assert "t/libexec/t_app_handoff.py" in names
     assert "t/libexec/t_share.py" in names
     assert "t/libexec/t_share_sessions.py" in names
+    assert "t/libexec/t_share_flow.py" in names
+    assert "t/libexec/t_share_context.py" in names
+    assert "t/libexec/t_share_launch.py" in names
+    assert "t/libexec/t_share_ui.py" in names
+    assert "t/zsh/share.zsh" in names
     assert "t/libexec/vendor/mistune/LICENSE" in names
     assert "t/.t-release-version" in names
     assert "t/private.txt" not in names

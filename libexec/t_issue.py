@@ -325,6 +325,7 @@ class IssueCommand:
         print()
         print(f'  {st.y}start: t issue start <repo> <id> · '
               f'inspect: t issue status <repo> <id>{st.r}')
+        print(f'  {st.y}browser: t issue open <repo> <id>{st.r}')
 
     def list_issues(self, args):
         positional = getattr(args, 'repository', None)
@@ -349,6 +350,38 @@ class IssueCommand:
         for error in errors:
             print(f't issue list: {error}', file=sys.stderr)
         return int(bool(errors))
+
+    def open_issues(self, args):
+        """Open browser targets without requiring a checkout or discovering owners."""
+        repo, identifiers = split_targets(args.target, getattr(args, 'repo', None))
+        if not identifiers or any(identifier.isdecimal() for identifier in identifiers):
+            repo = self.resolve_repo(repo)
+        identity = repository(repo, self.cfg, require_checkout=False)['repo'] if repo else None
+        if not identifiers:
+            identifiers = [words[0] for words in self.select_issues(identity, action='open')]
+        targets = {}
+        for identifier in identifiers:
+            if identifier.isdecimal():
+                target_repo, number = identity, int(identifier)
+            else:
+                match = re.fullmatch(r'https://github\.com/([^/]+/[^/]+)/issues/([1-9][0-9]*)/?',
+                                    identifier)
+                target_repo, number = slug(match[1]), int(match[2])
+                if not target_repo:
+                    raise IssueError('issue URL must identify a GitHub owner/repo')
+                if identity and identity != target_repo:
+                    raise IssueError('issue URL does not match the specified repository')
+            targets.setdefault((target_repo, number),
+                               f'https://github.com/{target_repo}/issues/{number}')
+        env = {key: value for key, value in os.environ.items() if not key.startswith('COV_CORE_')}
+        env.update(GH_PROMPT_DISABLED='1', GIT_TERMINAL_PROMPT='0')
+        for (target_repo, number), url in targets.items():
+            print(f'Opening {url}', flush=True)
+            result = subprocess.call(['gh', 'issue', 'view', str(number), '--repo', target_repo,
+                                      '--web'], env=env)
+            if result:
+                return result
+        return 0
 
     def pick_rows(self, default, all_rows, action, label, legend, *, multi=True, noun='issues'):
         """Keep shared fzf controls and styling; large lists travel in private files."""
@@ -379,7 +412,7 @@ class IssueCommand:
                 raise IssueError('invalid or empty picker selection; no work started')
             return selected
 
-    def select_issues(self, repo):
+    def select_issues(self, repo, *, action='start'):
         issues = self.issues(repo, 'all')
         if not issues:
             print('No issues in this repository.')
@@ -394,8 +427,9 @@ class IssueCommand:
             targets[row] = [item['url']]
             if item['state'] == 'open':
                 default.append(row)
-        return [targets[row] for row in self.pick_rows(default, all_rows, 'start', 'Open issues',
-                'One agent per issue · ownership checked before starting')]
+        legend = ('Open selected issues in your browser' if action == 'open' else
+                  'One agent per issue · ownership checked before starting')
+        return [targets[row] for row in self.pick_rows(default, all_rows, action, 'Open issues', legend)]
 
     def start_targets(self, args):
         repo, identifiers = split_targets(args.target, getattr(args, 'repo', None))
@@ -859,6 +893,8 @@ class IssueCommand:
     def run(self, args):
         if args.action == 'list':
             return self.list_issues(args)
+        if args.action == 'open':
+            return self.open_issues(args)
         if args.action == 'status':
             repo, identifiers = split_targets(args.target, getattr(args, 'repo', None))
             if len(identifiers) != 1:

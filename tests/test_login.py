@@ -42,7 +42,7 @@ def test_status_classification(t_mod, agent, rc, text, state):
     assert t_mod._login_state(agent, rc, text) == state
 
 
-@pytest.mark.parametrize('value', [None, True, '123', -1, 0, float('nan'), float('inf'), 10**400])
+@pytest.mark.parametrize('value', [None, True, '123', -1, 0, float('nan'), float('inf'), 1e50, 10**400])
 def test_bad_timestamps_are_unknown(t_mod, value):
     assert t_mod._login_timestamp(value) is None
 
@@ -60,6 +60,7 @@ def test_cached_expiry_and_alternate_locations(t_mod, tmp_path, monkeypatch):
     assert t_mod._login_cached_expiry('claude', str(tmp_path), {'ANTHROPIC_API_KEY': 'fixture'}) is None
     assert t_mod._login_cached_expiry('codex', str(tmp_path), {'OPENAI_API_KEY': 'fixture'}) is None
     monkeypatch.setattr(t_mod.sys, 'platform', 'darwin')
+    monkeypatch.setattr(t_mod, '_login_keychain', lambda _: {})
     assert t_mod._login_cached_expiry('claude', str(tmp_path), {}) is None
 
 
@@ -98,10 +99,10 @@ def test_missing_unreadable_and_alternate_storage(t_mod, tmp_path, monkeypatch):
     ('error', None, False, False, 'status unavailable'),
     ('error', None, True, True, 'explicitly'),
     ('logged-out', None, False, True, 'logged out'),
-    ('logged-in', None, False, False, 'expiry unknown'),
+    ('logged-in', None, False, False, 'expiry unavailable'),
     ('logged-in', 100, False, True, 'automatic refresh'),
     ('logged-in', 87400, False, True, 'within'),
-    ('logged-in', 87401, False, False, 'beyond'),
+    ('logged-in', 87401, False, False, 'expires'),
 ])
 def test_plan_boundaries(t_mod, state, expiry, force, run, reason):
     result = t_mod._login_decision({'state': state, 'expires': expiry}, 1000, 24, force)
@@ -239,7 +240,7 @@ def test_cli_force_and_confirmation_guards(tmp_path):
     assert (tmp_path / 'calls').read_text() == 'codex login status\n'
     (tmp_path / 'codex-logged-in').touch()
     result = invoke(env, 'login', 'codex', '-y')
-    assert result.returncode == 0 and 'expiry unknown' in result.stdout
+    assert result.returncode == 0 and 'expiry unavailable' in result.stdout
     result = invoke(env, 'login', 'codex', 'codex', '--force', '-y')
     assert result.returncode == 0
     assert (tmp_path / 'calls').read_text().splitlines().count('codex login') == 1
@@ -310,7 +311,7 @@ def test_login_prompt_fallback_runs_selection_directly(t_mod, monkeypatch, answe
         return value
     monkeypatch.setattr('builtins.input', answer)
     calls = []
-    def run(cmd):
+    def run(cmd, **kwargs):
         calls.append(cmd)
         return SimpleNamespace(returncode=0)
     monkeypatch.setattr(t_mod, '_login_run', run)
@@ -337,3 +338,57 @@ def test_command_confirmation_eof_and_interrupt_never_run(t_mod, monkeypatch):
         t_mod._confirm_run('Run?')
     monkeypatch.setattr('builtins.input', lambda _: '')
     assert not t_mod._confirm('Change configuration?')
+
+
+def test_claude_keychain_expiry_profiles_fallback_and_failure(t_mod, tmp_path, monkeypatch):
+    monkeypatch.setattr(t_mod.sys, 'platform', 'darwin')
+    calls = []
+    def read(service):
+        calls.append(service)
+        return {'claudeAiOauth': {'expiresAt': 4000000, 'accessToken': 'PRIVATE'}}
+    monkeypatch.setattr(t_mod, '_login_keychain', read)
+    put(tmp_path, '.claude/.credentials.json', '{"claudeAiOauth":{"expiresAt":1000000}}')
+    assert t_mod._login_cached_expiry('claude', str(tmp_path), {}) == 4000
+    assert calls == ['Claude Code-credentials']
+    profile = tmp_path / 'profile'
+    assert t_mod._login_cached_expiry('claude', str(tmp_path), {'CLAUDE_CONFIG_DIR': str(profile)}) == 4000
+    suffix = t_mod.hashlib.sha256(str(profile).encode()).hexdigest()[:8]
+    assert calls[-1] == 'Claude Code-credentials-' + suffix
+    assert t_mod._login_cached_expiry('claude', str(tmp_path), {'CLAUDE_SECURESTORAGE_CONFIG_DIR': str(profile)}) == 4000
+    assert calls[-1] == 'Claude Code-credentials-' + suffix
+    count = len(calls)
+    assert t_mod._login_cached_expiry('claude', str(tmp_path), {'CLAUDE_CODE_CUSTOM_OAUTH_URL': 'https://example.invalid'}) is None
+    assert len(calls) == count
+    monkeypatch.setattr(t_mod, '_login_keychain', lambda _: None)
+    assert t_mod._login_cached_expiry('claude', str(tmp_path), {}) == 1000
+    def fail(_):
+        raise subprocess.TimeoutExpired('security', 5)
+    monkeypatch.setattr(t_mod, '_login_keychain', fail)
+    assert t_mod._login_cached_expiry('claude', str(tmp_path), {}) is None
+
+
+@pytest.mark.parametrize('rc,output,expected', [(0, b'{"value":1}', {'value': 1}), (44, b'', None), (1, b'PRIVATE', 'error')])
+def test_keychain_reader_captures_output_and_bounds_wait(t_mod, monkeypatch, capsys, rc, output, expected):
+    def run(cmd, **kw):
+        assert cmd == ['/usr/bin/security', 'find-generic-password', '-s', 'fixture', '-w']
+        assert kw == {'capture_output': True, 'timeout': 5}
+        return SimpleNamespace(returncode=rc, stdout=output)
+    monkeypatch.setattr(t_mod.subprocess, 'run', run)
+    if expected == 'error':
+        with pytest.raises(OSError, match='credential store unavailable'):
+            t_mod._login_keychain('fixture')
+    else:
+        assert t_mod._login_keychain('fixture') == expected
+    assert not capsys.readouterr().out
+
+
+def test_login_success_reports_fresh_expiry(t_mod, monkeypatch, capsys):
+    probes = iter([{'state': 'logged-out', 'bin': '/fixture', 'expires': None},
+                   {'state': 'logged-in', 'bin': '/fixture', 'expires': 2000000000}])
+    monkeypatch.setattr(t_mod, '_login_probe', lambda _: next(probes))
+    monkeypatch.setattr(t_mod, '_login_run', lambda cmd, **kw: SimpleNamespace(returncode=0))
+    args = t_mod.build_parser().parse_args(['login', 'codex', '-y'])
+    assert t_mod.cmd_login({}, args) == 0
+    output = capsys.readouterr().out
+    assert 'login completed; logged in; cached access token expires ' in output
+    assert 'expiry unavailable' not in output

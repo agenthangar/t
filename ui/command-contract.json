@@ -16,17 +16,118 @@
   "commands": {
     "share": {
       "patterns": [
+        "wizard",
+        "single",
         "action",
-        "machine"
+        "machine",
+        "detail"
       ],
       "renderer": "mixed",
-      "scope": "exact destination conversation and optional host",
-      "confirmation": "none",
+      "scope": "verified source conversation, selected agent or exact destination, and optional host",
+      "confirmation": "review",
       "tests": [
+        "tests/test_share_flow.py::test_bare_interactive_share_defaults_to_new_claude_and_inferred_codex",
+        "tests/test_share_flow.py::test_guided_existing_recipient_delivers_without_launch",
         "tests/test_share.py::test_run_local_send_then_inbox_and_read"
       ],
       "modes": {
         "default": {
+          "argv": [
+            "share"
+          ],
+          "patterns": [
+            "wizard",
+            "single"
+          ],
+          "read_only": false,
+          "terminal": true,
+          "tests": [
+            "tests/test_share_flow.py::test_bare_interactive_share_defaults_to_new_claude_and_inferred_codex",
+            "tests/test_share_flow.py::test_cancel_source_destination_note_and_review_without_side_effects"
+          ],
+          "notes": "Infer or choose a source, choose a recipient agent, review selected messages, then launch and enter a local session."
+        },
+        "nonterminal_help": {
+          "argv": [
+            "share"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_share_cli.py::test_bare_share_help_has_no_side_effects"
+          ],
+          "notes": "With no terminal, bare share prints help and exits without dispatching a share."
+        },
+        "new": {
+          "argv": [
+            "share",
+            "--to",
+            "claude"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_share_flow.py::test_short_destination_runs_without_tty_and_json_prints_result"
+          ],
+          "notes": "Starts a new local session when the exact source is known; terminal use reviews context and enters the session, while nonterminal use leaves it detached."
+        },
+        "new_json": {
+          "argv": [
+            "share",
+            "--to",
+            "claude",
+            "--json"
+          ],
+          "patterns": [
+            "action",
+            "machine"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_share_flow.py::test_short_destination_runs_without_tty_and_json_prints_result"
+          ],
+          "notes": "Machine-readable launch result, without an interactive prompt or session entry."
+        },
+        "source_picker": {
+          "argv": [
+            "share",
+            "--from",
+            "codex",
+            "--to",
+            "claude"
+          ],
+          "patterns": [
+            "wizard",
+            "single"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_share_flow.py::test_source_picker_selection_is_revalidated_before_capture"
+          ],
+          "notes": "Agent-only --from filters the source picker; --from agent:id selects an exact source."
+        },
+        "exact_context": {
+          "argv": [
+            "share",
+            "--to",
+            "claude:123"
+          ],
+          "patterns": [
+            "wizard",
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_share_flow.py::test_guided_existing_recipient_delivers_without_launch"
+          ],
+          "notes": "Captures source context for an existing recipient and reviews it before sending in a terminal."
+        },
+        "manual_file": {
           "argv": [
             "share",
             "--to",
@@ -40,10 +141,11 @@
           "read_only": false,
           "tests": [
             "tests/test_share.py::test_run_local_send_then_inbox_and_read",
-            "tests/test_share.py::test_human_output_shows_targets_inbox_summary_attachment_and_receipt"
-          ]
+            "tests/test_share_flow.py::test_manual_file_and_attachments_share_exact_reviewed_content"
+          ],
+          "notes": "Exact destination with a file sends directly; attachments add UTF-8 text."
         },
-        "json": {
+        "manual_file_json": {
           "argv": [
             "share",
             "--to",
@@ -60,7 +162,7 @@
           "tests": [
             "tests/test_share.py::test_run_local_send_then_inbox_and_read"
           ],
-          "notes": "A machine-readable receipt still follows a mutating send; no automatic update prompt."
+          "notes": "Machine-readable receipt follows a mutating send."
         },
         "retry": {
           "argv": [
@@ -93,6 +195,24 @@
           "tests": [
             "tests/test_share.py::test_run_remote_lost_receipt_then_retries_original_bundle"
           ]
+        },
+        "remote_picker": {
+          "argv": [
+            "share",
+            "--to",
+            "claude",
+            "--host",
+            "mini"
+          ],
+          "patterns": [
+            "single",
+            "wizard"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_share_flow.py::test_remote_agent_chooser_selects_existing_target"
+          ],
+          "notes": "Interactive chooser selects an existing remote conversation; new remote sessions are unsupported."
         }
       }
     },
@@ -431,6 +551,51 @@
         }
       }
     },
+    "issue open": {
+      "patterns": [
+        "action",
+        "filtered",
+        "multi"
+      ],
+      "renderer": "fzf",
+      "scope": "explicit or inferred GitHub repository; an issue URL identifies its repository",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_issue_open.py::test_open_explicit_target_uses_gh_browser",
+        "tests/test_issue_open.py::test_open_without_target_uses_shared_issue_picker"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "issue",
+            "open"
+          ],
+          "patterns": [
+            "multi",
+            "filtered"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_issue_open.py::test_open_without_target_uses_shared_issue_picker"
+          ]
+        },
+        "explicit": {
+          "argv": [
+            "issue",
+            "open",
+            "owner/repo",
+            "123"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_issue_open.py::test_open_explicit_target_uses_gh_browser"
+          ]
+        }
+      }
+    },
     "session open": {
       "patterns": [
         "action",
@@ -441,7 +606,10 @@
       "scope": "explicit/inferred repository or all local/remote sessions",
       "confirmation": "per_target",
       "tests": [
-        "tests/test_open_picker.py::test_bare_open_inside_worktree_shows_every_detail_and_repo"
+        "tests/test_open_picker.py::test_bare_open_inside_worktree_shows_every_detail_and_repo",
+        "tests/test_worktree_labels.py::test_python_and_shell_resolve_same_numeric_identity",
+        "tests/test_offline_open.py::test_fresh_cli_open_with_offline_host",
+        "tests/test_offline_open.py::test_desktop_claim_offline_allows_only_fresh_unowned_slot"
       ],
       "modes": {
         "default": {
@@ -455,8 +623,12 @@
           ],
           "read_only": false,
           "tests": [
-            "tests/test_open_picker.py::test_bare_open_inside_worktree_shows_every_detail_and_repo"
-          ]
+            "tests/test_open_picker.py::test_bare_open_inside_worktree_shows_every_detail_and_repo",
+            "tests/test_picker_ui.py::test_open_new_shortcut_invokes_existing_flow_in_small_viewports",
+            "tests/test_open_picker.py::test_open_new_shortcut_preserves_repo_and_opening_flags",
+            "tests/test_open_picker.py::test_open_new_shortcut_preserves_failure_and_cancellation"
+          ],
+          "notes": "Alt-N starts the existing --new flow with the original repository and opening flags, even with no matching rows; marks are discarded. Ctrl-N remains navigation."
         },
         "explicit": {
           "argv": [
@@ -471,7 +643,8 @@
           "read_only": false,
           "tests": [
             "tests/test_open_picker.py::test_explicit_open_target_bypasses_picker"
-          ]
+          ],
+          "notes": "Fresh unused local slots tolerate incomplete remote discovery; known remote owners and existing-workspace ownership checks remain enforced."
         }
       }
     },
@@ -483,7 +656,8 @@
       "scope": "explicit/inferred repository or all local/remote sessions",
       "confirmation": "none",
       "tests": [
-        "tests/test_t.py::test_ls_scope_defaults_to_cwd_repo"
+        "tests/test_t.py::test_ls_scope_defaults_to_cwd_repo",
+        "tests/test_command_behavior.py::test_session_and_history_display_follow_shared_schema"
       ],
       "modes": {
         "default": {
@@ -500,7 +674,8 @@
             "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
           ]
         }
-      }
+      },
+      "display_schema": "session_information"
     },
     "session close": {
       "patterns": [
@@ -668,7 +843,9 @@
       "scope": "explicit/inferred repository or all local/remote sessions",
       "confirmation": "per_target",
       "tests": [
-        "tests/test_resume_multiselect.py::test_resume_multi_opens_selected_live_slot_and_revives_dead_slot"
+        "tests/test_resume_multiselect.py::test_resume_multi_opens_selected_live_slot_and_revives_dead_slot",
+        "tests/test_worktree_labels.py::test_python_and_shell_resolve_same_numeric_identity",
+        "tests/test_agent_seam.py::test_zsh_resume_session_uses_the_agent_resume_line"
       ],
       "modes": {
         "default": {
@@ -699,6 +876,45 @@
           "tests": [
             "tests/test_resume_multiselect.py::test_resume_multi_opens_selected_live_slot_and_revives_dead_slot"
           ]
+        },
+        "desktop": {
+          "argv": [
+            "session",
+            "resume",
+            "api",
+            "3",
+            "--app"
+          ],
+          "patterns": [
+            "action",
+            "filtered",
+            "multi"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_resume_app.py::test_resume_app_exact_saved_route",
+            "tests/test_resume_app.py::test_resume_app_multiple_marks_never_launch"
+          ],
+          "notes": "Select exactly one saved Codex ID for local guarded desktop handoff; multiple marks, unsupported agents, remote owners and incompatible flags fail without substituting sessions."
+        },
+        "cli": {
+          "argv": [
+            "session",
+            "resume",
+            "api",
+            "3",
+            "--cli"
+          ],
+          "patterns": [
+            "action",
+            "filtered",
+            "multi"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_resume_app.py::test_resume_cli_retains_terminal_route"
+          ],
+          "notes": "Explicit terminal destination; preserves existing saved resume behavior."
         }
       }
     },
@@ -712,7 +928,10 @@
       "scope": "explicit/inferred repository and slot",
       "confirmation": "none",
       "tests": [
-        "tests/test_history_picker.py::test_real_isolated_tmux_picker_paging_global_search_refresh_and_cancel"
+        "tests/test_history_picker.py::test_real_isolated_tmux_picker_paging_global_search_refresh_and_cancel",
+        "tests/test_command_behavior.py::test_session_and_history_display_follow_shared_schema",
+        "tests/test_command_behavior.py::test_history_display_contract_preserves_unknowns_preview_and_json",
+        "tests/test_worktree_labels.py::test_python_and_shell_resolve_same_numeric_identity"
       ],
       "modes": {
         "default": {
@@ -801,7 +1020,8 @@
             "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
           ]
         }
-      }
+      },
+      "display_schema": "history_information"
     },
     "session cd": {
       "patterns": [
@@ -812,7 +1032,8 @@
       "scope": "explicit/inferred repository or all local/remote sessions",
       "confirmation": "none",
       "tests": [
-        "tests/test_command_groups_shell.py::test_grouped_shell_commands_keep_arguments_and_caller_shell"
+        "tests/test_command_groups_shell.py::test_grouped_shell_commands_keep_arguments_and_caller_shell",
+        "tests/test_worktree_labels.py::test_python_and_shell_resolve_same_numeric_identity"
       ],
       "modes": {
         "default": {
@@ -855,7 +1076,8 @@
       "scope": "explicit/inferred repository or all local/remote sessions",
       "confirmation": "none",
       "tests": [
-        "tests/test_command_groups_shell.py::test_grouped_shell_commands_keep_arguments_and_caller_shell"
+        "tests/test_command_groups_shell.py::test_grouped_shell_commands_keep_arguments_and_caller_shell",
+        "tests/test_worktree_labels.py::test_python_and_shell_resolve_same_numeric_identity"
       ],
       "modes": {
         "default": {
@@ -1045,7 +1267,8 @@
       "scope": "explicit/inferred repository or all local/remote sessions",
       "confirmation": "when_interrupting",
       "tests": [
-        "tests/test_app_pull.py::test_app_direction"
+        "tests/test_app_pull.py::test_app_direction",
+        "tests/test_app.py::test_app_conflicting_owner_release_and_retry_preserves_exact_history"
       ],
       "modes": {
         "default": {
@@ -1058,7 +1281,8 @@
           ],
           "read_only": false,
           "tests": [
-            "tests/test_app_pull.py::test_app_direction"
+            "tests/test_app_pull.py::test_app_direction",
+            "tests/test_app.py::test_app_conflicting_owner_release_and_retry_preserves_exact_history"
           ]
         },
         "dry_run": {
@@ -2010,7 +2234,10 @@
       "scope": "local installed agents and optional hosts",
       "confirmation": "enter",
       "tests": [
-        "tests/test_login.py::test_login_checklist_discovers_and_selects_authenticated_agents"
+        "tests/test_login.py::test_login_checklist_discovers_and_selects_authenticated_agents",
+        "tests/test_login.py::test_login_success_reports_fresh_expiry",
+        "tests/test_login_links.py::test_login_terminal_links_input_exit_and_interrupt",
+        "tests/test_login_links.py::test_local_browser_link_redirect_and_lifetime"
       ],
       "modes": {
         "default": {
@@ -2294,6 +2521,351 @@
             "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
           ]
         }
+      }
+    }
+  },
+  "display_schemas": {
+    "session_information": {
+      "fields": {
+        "state": {
+          "type": "string",
+          "meaning": "Reported ownership state; saved history never implies a live owner.",
+          "unknown": "unknown"
+        },
+        "context": {
+          "type": "string",
+          "meaning": "Active-context evidence from the exact current owner; unknown historical context never adds an active mark.",
+          "unknown": "unknown"
+        },
+        "interface": {
+          "type": "string",
+          "meaning": "CLI, desktop, or foreground interface recorded or reported for this conversation.",
+          "unknown": "unknown"
+        },
+        "agent": {
+          "type": "string",
+          "meaning": "The conversation agent, independently of its interface and recorded model.",
+          "unknown": "unknown"
+        },
+        "model": {
+          "type": "string",
+          "meaning": "Exact recorded or current-owner model; never infer a model from the agent name.",
+          "unknown": "-"
+        },
+        "host": {
+          "type": "string",
+          "meaning": "Host associated with the displayed conversation or exact current owner.",
+          "unknown": "unknown"
+        },
+        "slot": {
+          "type": "string",
+          "meaning": "Repository and slot/session label, distinct from the immutable conversation ID.",
+          "unknown": "unknown"
+        },
+        "summary": {
+          "type": "string",
+          "meaning": "Working-on text from current-owner evidence, recorded summary, or retained title.",
+          "unknown": ""
+        },
+        "status": {
+          "type": "string",
+          "meaning": "Human-readable ownership/history state label for full details. STATUS marks are rendered separately from state, context, and summary.",
+          "unknown": "unknown"
+        }
+      },
+      "columns": [
+        {
+          "label": "STATUS",
+          "fields": [
+            "state",
+            "context",
+            "status"
+          ]
+        },
+        {
+          "label": "UI",
+          "fields": [
+            "interface"
+          ]
+        },
+        {
+          "label": "MODEL",
+          "fields": [
+            "agent",
+            "model"
+          ]
+        },
+        {
+          "label": "HOST",
+          "fields": [
+            "host"
+          ],
+          "when": "remote_or_history"
+        },
+        {
+          "label": "SESSION",
+          "fields": [
+            "slot"
+          ]
+        },
+        {
+          "label": "WORKING ON",
+          "fields": [
+            "summary"
+          ]
+        }
+      ],
+      "status_marks": {
+        "attached": "\u25cf",
+        "detached": "\u25cb",
+        "active_context": "\u2713",
+        "still_in_progress": "\u21bb"
+      },
+      "layouts": {
+        "table": {
+          "wide": "aligned_columns",
+          "narrow": "labeled_wrapped_cells",
+          "switch": "when_columns_do_not_fit",
+          "preserve_values": true,
+          "redirected": "untruncated",
+          "terminal_sizes": [
+            [
+              80,
+              24
+            ],
+            [
+              44,
+              20
+            ],
+            [
+              32,
+              12
+            ]
+          ]
+        }
+      },
+      "unknown_policy": {
+        "infer_interface_from_agent": false,
+        "infer_model_from_agent": false,
+        "infer_active_context_without_owner": false
+      },
+      "behavior_tests": [
+        "tests/test_command_behavior.py::test_session_and_history_display_follow_shared_schema"
+      ]
+    },
+    "history_information": {
+      "extends": "session_information",
+      "fields": {
+        "prs": {
+          "type": "array",
+          "meaning": "Evidence-backed associated PRs and cached states, independent of incidental mentions.",
+          "unknown": []
+        }
+      },
+      "historical_fields": {
+        "updated": {
+          "type": "number",
+          "meaning": "Retained activity timestamp; Date remains fully available in the labeled preview and JSON."
+        },
+        "associations": {
+          "type": "array",
+          "meaning": "All recorded workspace, slot, host, branch, commit, evidence, and availability snapshots."
+        },
+        "sid": {
+          "type": "string",
+          "meaning": "Full immutable conversation ID in details and JSON; SESSION remains the repository/slot label."
+        },
+        "model_source": {
+          "type": "string",
+          "meaning": "Provenance of recorded model metadata."
+        },
+        "summary_source": {
+          "type": "string",
+          "meaning": "Provenance of recorded working-on text."
+        },
+        "mentions": {
+          "type": "array",
+          "meaning": "Incidental links, separately labeled from associated PR evidence."
+        },
+        "sources": {
+          "type": "array",
+          "meaning": "Every retained transcript source and its availability."
+        }
+      },
+      "layouts": {
+        "table": {
+          "columns": [
+            "STATUS",
+            "UI",
+            "MODEL",
+            "HOST",
+            "SESSION",
+            "WORKING ON",
+            "DATE",
+            "BRANCH",
+            "PRS",
+            "ID"
+          ],
+          "inherits": "session_information.table",
+          "extensions": {
+            "DATE": "updated",
+            "BRANCH": "associations[].branch",
+            "PRS": "prs",
+            "ID": "sid"
+          }
+        },
+        "picker": {
+          "profile": "_t_fzf_paginated",
+          "wide": "aligned_session_information",
+          "narrow": "status_and_working_on_first",
+          "full_details": "preview",
+          "physical_row": "single_line",
+          "max_prs_per_row": 3,
+          "overflow_prs": "count_in_working_on_and_full_preview",
+          "terminal_sizes": [
+            [
+              80,
+              24
+            ],
+            [
+              44,
+              20
+            ],
+            [
+              32,
+              12
+            ]
+          ],
+          "height": "full_terminal"
+        }
+      },
+      "preview": {
+        "required_fields": [
+          "repo",
+          "sid",
+          "title",
+          "updated",
+          "display.state",
+          "display.context",
+          "display.interface",
+          "display.agent",
+          "display.model",
+          "display.host",
+          "display.slot",
+          "display.summary",
+          "display.status",
+          "associations",
+          "prs",
+          "mentions",
+          "sources",
+          "model_source",
+          "summary_source"
+        ],
+        "full_values": true,
+        "default": "when_terminal_fits",
+        "toggle": "ctrl-/",
+        "identity": "exact_conversation",
+        "minimum_columns": 70,
+        "minimum_lines": 22,
+        "placement": "bottom",
+        "height_percent": 35
+      },
+      "selection": {
+        "count": 1,
+        "identity_fields": [
+          "repo",
+          "agent",
+          "sid"
+        ],
+        "accept": "enter",
+        "cancel": [
+          "esc",
+          "ctrl-c"
+        ],
+        "auto_accept_single_result": false,
+        "search": "global_before_pagination",
+        "page_size": 50,
+        "keys": {
+          "next": "ctrl-f",
+          "previous": "ctrl-b",
+          "refresh": "ctrl-r"
+        },
+        "validate_returned_query_page_and_snapshot": true,
+        "non_tty": "read_only_table",
+        "json": "read_only_machine_output",
+        "network": "explicit_refresh_only"
+      },
+      "json": {
+        "version": 1,
+        "envelope_required": [
+          "version",
+          "repo",
+          "slot",
+          "page",
+          "limit",
+          "total",
+          "conversations"
+        ],
+        "conversation_required": [
+          "repo",
+          "agent",
+          "sid",
+          "title",
+          "updated",
+          "associations",
+          "sources",
+          "prs",
+          "mentions",
+          "owners"
+        ],
+        "additive_fields": [
+          "model",
+          "model_source",
+          "summary",
+          "summary_source",
+          "interface",
+          "display"
+        ],
+        "compatibility": "additive_only",
+        "ansi": false,
+        "prompts": false,
+        "envelope_types": {
+          "version": "integer",
+          "repo": "string",
+          "slot": "string",
+          "page": "integer",
+          "limit": "integer",
+          "total": "integer",
+          "conversations": "array"
+        },
+        "conversation_types": {
+          "repo": "string",
+          "agent": "string",
+          "sid": "string",
+          "title": "string",
+          "updated": "number",
+          "associations": "array",
+          "sources": "array",
+          "prs": "array",
+          "mentions": "array",
+          "owners": "array",
+          "model": "string",
+          "model_source": "string",
+          "summary": "string",
+          "summary_source": "string",
+          "interface": "string",
+          "display": "object"
+        },
+        "display_schema": "history_information"
+      },
+      "behavior_tests": [
+        "tests/test_command_behavior.py::test_session_and_history_display_follow_shared_schema",
+        "tests/test_command_behavior.py::test_history_display_contract_preserves_unknowns_preview_and_json"
+      ],
+      "status_marks": {
+        "saved": "\u00b7",
+        "archived": "\u25a1",
+        "missing": "!"
       }
     }
   }

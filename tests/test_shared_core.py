@@ -582,7 +582,7 @@ def test_destructive_shell_guard_refuses_same_pane_changed_conversation(lifecycl
     tmux = str(base / 'bin/tmux')
     assert _run([tmux, 'set-environment', '-t', '=dev-repo-1', 'CLAUDE_RESUME_ID', replacement], env=env, cwd=base).returncode == 0
     args = (['_dev_kill_one', owner['session'], '1', owner['identity'], owner['sid'], owner['agent'], owner['clientPid']]
-            if action == 'close' else ['_t_restart_slot', owner['session'], str(base / 'worktrees/repo/1'), owner['sid'], owner['agent'], 'restart', owner['clientPid'], '', owner['identity']])
+            if action == 'close' else ['_t_restart_slot', owner['session'], str(base / 'worktrees/repo/repo-1'), owner['sid'], owner['agent'], 'restart', owner['clientPid'], '', owner['identity']])
     command = 'source ' + str(ROOT / 't.plugin.zsh') + '; ' + __import__('shlex').join(args)
     guarded = _run(['zsh', '-lic', command], env=env, cwd=base)
     assert guarded.returncode == 75, guarded.stdout + guarded.stderr

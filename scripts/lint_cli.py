@@ -26,7 +26,7 @@ LEGACY_SHORTCUTS = frozenset({
 # `t share` is the reviewed exception: sending is the root action, while
 # targets, inbox, and read remain explicit read-only verbs.
 SHARE_COMMAND = "share"
-ISSUE_VERBS = {"list", "status", "start"}
+ISSUE_VERBS = {"list", "status", "start", "open"}
 # These established families route to compatibility parsers. Freeze their
 # accepted verbs so extending one requires an intentional contract review.
 LEGACY_GROUP_VERBS = {
@@ -96,7 +96,7 @@ def check_issue_help(help_text):
     errors = []
     help_text = " ".join(help_text.split())
     for syntax in ("t issue list [repo]", "t issue status [repo] <id>",
-                   "t issue start [repo] [id ...]"):
+                   "t issue start [repo] [id ...]", "t issue open [repo] [id ...]"):
         if syntax not in help_text:
             errors.append("t issue help must show " + syntax)
     for detail in ("owner/repo", "--repo", "current checkout"):
@@ -165,7 +165,7 @@ def check(parser, command_groups, instructions):
                       ", ".join(sorted(unsupported)))
     issue_registry = set(command_groups.get("issue", {}))
     if not ISSUE_VERBS <= issue_registry:
-        errors.append("issue command registry must expose list, status, and start")
+        errors.append("issue command registry must expose list, status, start, and open")
     for group, verbs in LEGACY_GROUP_VERBS.items():
         if set(command_groups.get(group, {})) != verbs:
             errors.append(f"{group} compatibility verb registry changed; review its CLI contract")
@@ -199,7 +199,7 @@ def check(parser, command_groups, instructions):
     issue = top._name_parser_map.get("issue")
     issue_sub = _subparsers(issue) if issue else None
     if issue_sub is None or not ISSUE_VERBS <= set(issue_sub.choices):
-        errors.append("issue parser must expose list, status, and start as verbs")
+        errors.append("issue parser must expose list, status, start, and open as verbs")
     elif issue_registry != set(issue_sub.choices):
         errors.append("issue parser verbs must match its public command registry")
     if issue_sub is not None:
@@ -236,7 +236,10 @@ def check(parser, command_groups, instructions):
                   ["issue", "list", "--repo", "repo"],
                   ["issue", "status", "123", "--json"],
                   ["issue", "status", "123", "--repo", "repo"],
-                  ["issue", "start"], ["issue", "start", "repo", "123", "124", "--codex"]):
+                  ["issue", "start"], ["issue", "start", "repo", "123", "124", "--codex"],
+                  ["issue", "open"], ["issue", "open", "repo", "123", "124"],
+                  ["issue", "open", "--repo", "owner/repo", "123"],
+                  ["issue", "open", "https://github.com/owner/repo/issues/123"]):
         valid, args = accepts(words)
         if not valid or args.verb != "issue" or args.action != words[1]:
             errors.append("issue parser rejected required form: " + " ".join(words))
@@ -245,11 +248,13 @@ def check(parser, command_groups, instructions):
                   ["issue", "status", "123", "--codex"],
                   ["issue", "status", "123", "--allow-incomplete-check"],
                   ["issue", "start", "123", "--json"],
+                  ["issue", "open", "123", "--json"],
+                  ["issue", "open", "123", "--codex"],
                   ["issue", "start", "123", "--codex", "--claude"]):
         valid, _ = accepts(words)
         if valid:
             errors.append("issue parser accepted invalid form: " + " ".join(words))
-    for phrase in ("t issue list", "t issue status", "t issue start"):
+    for phrase in ("t issue list", "t issue status", "t issue start", "t issue open"):
         if phrase not in instructions:
             errors.append("AGENTS.md must document " + phrase)
     if "t share" not in instructions:
@@ -353,6 +358,149 @@ def check_command_patterns(parser, command_groups, contract, *, root=ROOT):
             errors.extend(_check_test_reference(reference, root))
         if not entry.get("tests"):
             errors.append(f"{name} needs a command test reference")
+    errors.extend(check_display_contracts(contract, root=root))
+    return errors
+
+
+DISPLAY_FIELDS = frozenset({"state", "context", "interface", "agent", "model", "host", "slot", "summary", "status"})
+DISPLAY_COLUMNS = ("STATUS", "UI", "MODEL", "HOST", "SESSION", "WORKING ON")
+HISTORY_ENVELOPE = frozenset({"version", "repo", "slot", "page", "limit", "total", "conversations"})
+HISTORY_RECORD = frozenset({"repo", "agent", "sid", "title", "updated", "associations", "sources", "prs", "mentions", "owners"})
+
+
+def check_display_contracts(contract, *, root=ROOT):
+    """Keep the shared ls/history information contract executable and complete."""
+    errors = []
+    schemas = contract.get("display_schemas", {})
+    common, history = schemas.get("session_information"), schemas.get("history_information")
+    if not isinstance(common, dict) or not isinstance(history, dict):
+        return ["command inventory must define session_information and history_information display schemas"]
+    for command, name in (("session list", "session_information"), ("session history", "history_information")):
+        if contract.get("commands", {}).get(command, {}).get("display_schema") != name:
+            errors.append(f"{command} must bind the {name} display schema")
+    fields = common.get("fields", {})
+    if set(fields) != DISPLAY_FIELDS or any(not isinstance(spec, dict) or spec.get("type") != "string"
+                                          or not spec.get("meaning") or "unknown" not in spec
+                                          for spec in fields.values()):
+        errors.append("session_information must define all typed session detail fields and unknown meanings")
+    columns = common.get("columns", [])
+    if (not isinstance(columns, list) or tuple(column.get("label") for column in columns if isinstance(column, dict)) != DISPLAY_COLUMNS
+            or {field for column in columns if isinstance(column, dict) for field in column.get("fields", [])} != DISPLAY_FIELDS):
+        errors.append("session_information must preserve STATUS/UI/MODEL/HOST/SESSION/WORKING ON columns and field coverage")
+    groups = {"STATUS": ["state", "context", "status"], "UI": ["interface"], "MODEL": ["agent", "model"],
+              "HOST": ["host"], "SESSION": ["slot"], "WORKING ON": ["summary"]}
+    if any(column.get("fields") != groups.get(column.get("label")) for column in columns if isinstance(column, dict)):
+        errors.append("session_information columns must bind their actual session detail fields")
+    if common.get("status_marks") != {"attached": "●", "detached": "○", "active_context": "✓", "still_in_progress": "↻"}:
+        errors.append("session_information must preserve the session status mark meanings")
+    table = common.get("layouts", {}).get("table", {})
+    for key, value in (("wide", "aligned_columns"), ("narrow", "labeled_wrapped_cells"),
+                       ("switch", "when_columns_do_not_fit"), ("preserve_values", True), ("redirected", "untruncated"),
+                       ("terminal_sizes", [[80, 24], [44, 20], [32, 12]])):
+        if table.get(key) != value:
+            errors.append(f"session_information table must define {key} as {value!r}")
+    for key in ("infer_interface_from_agent", "infer_model_from_agent", "infer_active_context_without_owner"):
+        if common.get("unknown_policy", {}).get(key) is not False:
+            errors.append(f"session_information unknown policy must prohibit {key}")
+    if history.get("extends") != "session_information" or history.get("fields", {}).get("prs", {}).get("type") != "array":
+        errors.append("history_information must extend session_information and define structured PRs")
+    historical = {"updated", "associations", "sid", "model_source", "summary_source", "mentions", "sources"}
+    if not historical <= set(history.get("historical_fields", {})):
+        errors.append("history_information must define historical detail identity, metadata provenance, and evidence")
+    if any(not isinstance(spec, dict) or spec.get("type") not in {"string", "number", "array"}
+           or not spec.get("meaning") for spec in history.get("historical_fields", {}).values()):
+        errors.append("history_information historical metadata needs typed meanings")
+    layouts = history.get("layouts", {})
+    printed = layouts.get("table", {}).get("columns", [])
+    if printed[:len(DISPLAY_COLUMNS)] != list(DISPLAY_COLUMNS) or not {"DATE", "BRANCH", "PRS", "ID"} <= set(printed):
+        errors.append("history_information table must preserve session list column order and retained DATE/BRANCH/PRS/ID details")
+    if layouts.get("table", {}).get("extensions") != {"DATE": "updated", "BRANCH": "associations[].branch", "PRS": "prs", "ID": "sid"}:
+        errors.append("history_information table extensions must bind retained historical metadata")
+    picker = layouts.get("picker", {})
+    for key, value in (("profile", "_t_fzf_paginated"), ("physical_row", "single_line"),
+                       ("narrow", "status_and_working_on_first"), ("max_prs_per_row", 3),
+                       ("terminal_sizes", [[80, 24], [44, 20], [32, 12]])):
+        if picker.get(key) != value:
+            errors.append(f"history_information picker must define {key} as {value!r}")
+    preview = history.get("preview", {})
+    required = historical | {"repo", "title", "prs"} | {"display." + field for field in DISPLAY_FIELDS}
+    if not required <= set(preview.get("required_fields", [])) or preview.get("full_values") is not True:
+        errors.append("history_information preview must retain full identity, session information, and historical evidence")
+    if (preview.get("default") != "when_terminal_fits" or preview.get("toggle") != "ctrl-/"
+            or preview.get("minimum_columns") != 70 or preview.get("minimum_lines") != 22
+            or preview.get("placement") != "bottom" or preview.get("height_percent") != 35):
+        errors.append("history_information preview must use responsive defaults and Ctrl-/ details")
+    selection = history.get("selection", {})
+    for key, value in (("count", 1), ("identity_fields", ["repo", "agent", "sid"]),
+                       ("accept", "enter"), ("cancel", ["esc", "ctrl-c"]), ("page_size", 50),
+                       ("keys", {"next": "ctrl-f", "previous": "ctrl-b", "refresh": "ctrl-r"}),
+                       ("auto_accept_single_result", False), ("search", "global_before_pagination"),
+                       ("validate_returned_query_page_and_snapshot", True), ("network", "explicit_refresh_only"),
+                       ("non_tty", "read_only_table"), ("json", "read_only_machine_output")):
+        if selection.get(key) != value:
+            errors.append(f"history_information selection must define {key} as {value!r}")
+    machine = history.get("json", {})
+    if (machine.get("version") != 1 or set(machine.get("envelope_required", [])) != HISTORY_ENVELOPE
+            or set(machine.get("conversation_required", [])) != HISTORY_RECORD
+            or machine.get("compatibility") != "additive_only" or machine.get("ansi") is not False or machine.get("prompts") is not False):
+        errors.append("history_information JSON must preserve the version 1 envelope and existing conversation fields without chrome or prompts")
+    wire_types = {"version": "integer", "repo": "string", "slot": "string", "page": "integer",
+                  "limit": "integer", "total": "integer", "conversations": "array"}
+    record_types = {"repo": "string", "agent": "string", "sid": "string", "title": "string", "updated": "number",
+                    "associations": "array", "sources": "array", "prs": "array", "mentions": "array", "owners": "array",
+                    "model": "string", "model_source": "string", "summary": "string", "summary_source": "string",
+                    "interface": "string", "display": "object"}
+    if (machine.get("envelope_types") != wire_types or machine.get("conversation_types") != record_types
+            or machine.get("display_schema") != "history_information"):
+        errors.append("history_information JSON must type its original fields and additive display metadata")
+    for schema in (common, history):
+        if not schema.get("behavior_tests"):
+            errors.append("display schemas need behavior tests exercising actual renderers")
+        for reference in schema.get("behavior_tests", []):
+            errors.extend(_check_test_reference(reference, root))
+    return errors
+
+
+def check_display_projection(contract, name, projection):
+    """Validate an actual renderer projection, allowing additive JSON metadata."""
+    schemas = contract["display_schemas"]
+    schema = schemas[name]
+    fields = dict(schemas[schema["extends"]]["fields"]) if "extends" in schema else {}
+    fields.update(schema["fields"])
+    errors = []
+    for field, spec in fields.items():
+        value = projection.get(field)
+        expected = str if spec["type"] == "string" else list
+        if not isinstance(value, expected):
+            errors.append(f"{name} projection missing or invalid {field}: expected {spec['type']}")
+    return errors
+
+
+def check_history_json(contract, payload):
+    """Check actual history machine output without requiring optional additions."""
+    machine = contract["display_schemas"]["history_information"]["json"]
+    kinds = {"string": str, "integer": int, "number": (int, float), "array": list, "object": dict}
+    errors = []
+
+    def fields(value, required, declared, label):
+        if not isinstance(value, dict):
+            errors.append(f"{label} must be an object")
+            return False
+        for field, kind in declared.items():
+            if field not in required and field not in value:
+                continue
+            item = value.get(field)
+            if not isinstance(item, kinds[kind]) or isinstance(item, bool) and kind in ("integer", "number"):
+                errors.append(f"{label} missing or invalid {field}: expected {kind}")
+        return True
+
+    if not fields(payload, machine["envelope_required"], machine["envelope_types"], "history JSON"):
+        return errors
+    if payload.get("version") != machine["version"]:
+        errors.append("history JSON changed its wire version")
+    for record in payload.get("conversations", []) if isinstance(payload.get("conversations"), list) else []:
+        if fields(record, machine["conversation_required"], machine["conversation_types"], "history conversation") and isinstance(record.get("display"), dict):
+            errors.extend(check_display_projection(contract, machine["display_schema"], record["display"]))
     return errors
 
 

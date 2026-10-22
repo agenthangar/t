@@ -230,6 +230,14 @@ def _release_guidance(cwd, archived, run):
             "wait for its background backend to exit. ")
 
 
+def _other_release_guidance(cwd, run):
+    if run is not None and _safe_archive_hint(cwd, run):
+        return ("Finish that other conversation's turn and Archive it in Codex "
+                "(Cmd-Shift-A), then wait for its writer to release. ")
+    return ("Finish that other conversation's turn and exit its owning client, "
+            "then wait for its backend to release the writer. ")
+
+
 def _archived_in_home(codex_home, rollout):
     """The selected archived file is inside this exact Codex home's archive."""
     archive = os.path.realpath(os.path.join(codex_home, "archived_sessions"))
@@ -322,7 +330,8 @@ def assert_released(bundle, sid, cwd, run, *, codex_home=None, rollout=None,
                          + str(exc) + ". " + retry) from exc
 
 
-def preflight_cli_release(sid, cwd, *, codex_home, rollout, unknown=None):
+def preflight_cli_release(sid, cwd, *, codex_home, rollout, unknown=None,
+                          run=None, retry="Retry: t open <repo> <slot> --app."):
     """Validate an exact CLI-to-app handoff before stopping its CLI frontend.
 
     A shared app-server may own the writer lock instead of the CLI PID. A
@@ -345,7 +354,7 @@ def preflight_cli_release(sid, cwd, *, codex_home, rollout, unknown=None):
         other = _other_cwd_owner(folder, sid, cwd, codex_home, unknown=unknown)
         if other:
             raise ValueError("another Codex conversation in this worktree is still loaded "
-                             f"({other})")
+                             f"({other}). " + _other_release_guidance(cwd, run) + retry)
         return contract
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise ValueError("could not verify the selected Codex conversation before stopping "
@@ -354,7 +363,7 @@ def preflight_cli_release(sid, cwd, *, codex_home, rollout, unknown=None):
 
 def wait_cli_released(sid, cwd, *, codex_home, rollout, contract=None,
                       timeout=75, interval=0.2, on_wait=None,
-                      retry="Retry: t open <repo> <slot> --app.", unknown=None):
+                      retry="Retry: t open <repo> <slot> --app.", unknown=None, run=None):
     """Wait for this thread's writer to unload, without affecting other threads.
 
     `contract` must come from preflight_cli_release before the CLI is stopped;
@@ -378,7 +387,7 @@ def wait_cli_released(sid, cwd, *, codex_home, rollout, contract=None,
             other = _other_cwd_owner(folder, sid, cwd, codex_home, unknown=unknown)
             if other:
                 raise ValueError("another Codex conversation in this worktree is still loaded "
-                                 f"({other}). " + retry)
+                                 f"({other}). " + _other_release_guidance(cwd, run) + retry)
             if _lock_held(target) is not True:
                 return
             if not announced and on_wait is not None:

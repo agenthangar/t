@@ -62,9 +62,19 @@ _t_fzf_paginated() (
   _t_paged_size=$(stty size </dev/tty 2>/dev/null) || _t_paged_size=
   if [ -n "$_t_paged_size" ] && [ "${_t_paged_size#* }" -le 44 ]; then
     T_PICKER_PAGED_CONTROLS='Enter resume · Esc
-Ctrl-F/B pg · Ctrl-R'
+Ctrl-F/B pg · Ctrl-R
+Ctrl-/ details'
   else
     T_PICKER_PAGED_CONTROLS='Enter resume · Esc · Ctrl-F/B pages · Ctrl-R refresh · Ctrl-/ details'
+  fi
+  _t_paged_preview_window='hidden:wrap:down:40%:~1'
+  _t_paged_margin='1,2' _t_paged_info=default
+  if [ -n "$_t_paged_size" ] && [ "${_t_paged_size%% *}" -le 14 ]; then
+    _t_paged_margin='0,2' _t_paged_info=inline
+    _t_paged_preview_window='hidden:wrap:down:3:border-none:~1'
+  fi
+  if [ -n "$_t_paged_size" ] && [ "${_t_paged_size%% *}" -ge 22 ] && [ "${_t_paged_size#* }" -ge 70 ]; then
+    _t_paged_preview_window='wrap:down:35%:border-top:~1'
   fi
   T_PICKER_PAGED_PAGE=$_t_paged_page T_PICKER_PAGED_ROWS=$_t_paged_rows
   export T_PICKER_PAGED_CONTROLS T_PICKER_PAGED_PAGE T_PICKER_PAGED_ROWS
@@ -84,12 +94,12 @@ SH
   # shellcheck disable=SC2016
   _t_paged_header_command='sh "$T_PICKER_PAGED_RENDER"'
   _t_paged_bind="change:execute-silent($_t_paged_helper show {q})+reload-sync($_t_paged_rows_command)+transform-header($_t_paged_header_command),ctrl-f:execute-silent($_t_paged_helper next {q})+reload-sync($_t_paged_rows_command)+transform-header($_t_paged_header_command),ctrl-b:execute-silent($_t_paged_helper previous {q})+reload-sync($_t_paged_rows_command)+transform-header($_t_paged_header_command)"
-  _t_fzf --disabled --sync --no-multi --delimiter="$(printf '\t')" --with-nth=2 --no-hscroll \
+  _t_fzf --height=100% --margin="$_t_paged_margin" --info="$_t_paged_info" --disabled --sync --no-multi --delimiter="$(printf '\t')" --with-nth=2 --no-hscroll \
     --print-query --expect=enter,ctrl-r --query="$_t_paged_query" --prompt="$_t_paged_prompt" \
     --header="$(sh "$T_PICKER_PAGED_RENDER")" \
-    --bind='esc:abort,ctrl-c:abort,tab:down,shift-tab:up,ctrl-/:toggle-preview' \
+    --bind='esc:abort,ctrl-c:abort,tab:down,shift-tab:up,ctrl-/:toggle-preview,shift-up:preview-up,shift-down:preview-down' \
     --bind="$_t_paged_bind" --preview="$_t_paged_preview" \
-    --preview-window='hidden:wrap:down:40%' < "$_t_paged_rows"
+    --preview-window="$_t_paged_preview_window" < "$_t_paged_rows"
 )
 
 # Resume-style session picker with a reversible default filter. Keep both views
@@ -98,6 +108,7 @@ SH
 # Session callers opt into independent controls with T_PICKER_SESSION_FILTERS.
 # Kill also supplies the two single-filter views via T_PICKER_WITH_ATTACHED and
 # T_PICKER_WITH_PENDING. All callers use Ctrl-A for all and Ctrl-F for defaults.
+# The open profile returns 3 on Alt-N, requesting the caller's new-session flow.
 _t_fzf_filtered() (
   _t_picker_default=$1 _t_picker_all=$2 _t_picker_action=$3
   _t_picker_label=$4 _t_picker_legend=$5 _t_picker_show_all=$6
@@ -119,6 +130,7 @@ _t_fzf_filtered() (
   export T_PICKER_DEFAULT="$_t_picker_dir/default" T_PICKER_ALL="$_t_picker_dir/all"
   export T_PICKER_STATE="$_t_picker_dir/show-all" T_PICKER_TOGGLE="$_t_picker_dir/toggle"
   export T_PICKER_CURRENT="$_t_picker_dir/current" T_PICKER_CURRENT_HEADER="$_t_picker_dir/current-header"
+  export T_PICKER_NEW="$_t_picker_dir/new"
   export T_PICKER_HEADER_DEFAULT="$_t_picker_dir/header-default" T_PICKER_HEADER_ALL="$_t_picker_dir/header-all"
   : > "$T_PICKER_DEFAULT"
   : > "$T_PICKER_ALL"
@@ -155,7 +167,7 @@ _t_fzf_filtered() (
       [ $(( _t_picker_mask & 2 )) = 0 ] || _t_picker_second=shown
       case $T_PICKER_SESSION_FILTERS in
         resume) _t_picker_filters="Ctrl-L live: $_t_picker_first" ;;
-        open) _t_picker_filters="Ctrl-T attached: $_t_picker_first" ;;
+        open) _t_picker_filters="Alt-N new · Ctrl-T attached: $_t_picker_first" ;;
         kill) _t_picker_filters="Ctrl-T attached: $_t_picker_first · Ctrl-P pending: $_t_picker_second" ;;
       esac
       _t_picker_hidden=$(( $(wc -l < "$T_PICKER_ALL") - $(wc -l < "$_t_picker_dir/rows-$_t_picker_mask") ))
@@ -226,9 +238,18 @@ SH
       _t_picker_bind="${_t_picker_bind}${_t_picker_bind:+,}${_t_picker_key}:${T_PICKER_CLEAR_MARKS}execute-silent(sh \"\$T_PICKER_TOGGLE\" $_t_picker_action)+reload-sync(cat \"\$T_PICKER_CURRENT\")+transform-header(cat \"\$T_PICKER_CURRENT_HEADER\")"
     done
   fi
+  if [ "${T_PICKER_SESSION_FILTERS:-}" = open ]; then
+    # No row placeholder: new must also work with zero matches or hidden rows.
+    # Abort discards marks instead of accidentally opening existing sessions.
+    # shellcheck disable=SC2016
+    _t_picker_bind="$_t_picker_bind"',alt-n:execute-silent(: > "$T_PICKER_NEW")+abort'
+  fi
   _t_fzf --multi --no-hscroll --delimiter="$(printf '\t')" --with-nth=-1 \
     --bind='enter:accept,esc:abort,ctrl-c:abort,space:toggle+down,tab:toggle+down,shift-tab:up,ctrl-/:toggle-preview' \
     --bind="$_t_picker_bind" \
     --preview='printf "%s\n" {-1}' --preview-window='hidden:wrap:down:40%' \
     --header="$(cat "$_t_picker_header")" "$@" < "$T_PICKER_CURRENT"
+  _t_picker_rc=$?
+  [ ! -f "$T_PICKER_NEW" ] || exit 3
+  exit "$_t_picker_rc"
 )

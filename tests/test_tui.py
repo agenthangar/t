@@ -81,7 +81,7 @@ def test_login_multiselect_runs_directly(t_mod, monkeypatch, state, keys, expect
     monkeypatch.setattr(t_mod, '_login_probe', lambda agent: {
         'state': 'logged-in' if agent in calls else state,
         'bin': '/fixture/' + agent, 'expires': None})
-    def run(cmd):
+    def run(cmd, **kwargs):
         assert ui.restored
         calls.append(cmd[0].rsplit('/', 1)[-1])
         return type('Result', (), {'returncode': 0})()

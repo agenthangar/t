@@ -12,6 +12,7 @@ import re
 import shlex
 import runpy
 import socket
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -20,7 +21,14 @@ import time
 import uuid
 
 VERSION = 1
-PARSER_VERSION = 3
+PARSER_VERSION = 4
+_DISPLAY = runpy.run_path(str(Path(__file__).with_name('t_session_details.py')))
+display_width = _DISPLAY['display_width']
+clip_columns = _DISPLAY['clip_columns']
+wrap_columns = _DISPLAY['wrap_columns']
+recorded_model = _DISPLAY['recorded_model']
+AGENT_GLYPHS = {'codex': '⬡', 'claude': '✱', 'slot': '·', 'revision': '·'}
+
 SID = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,199}\Z')
 PR_URL = re.compile(r'https://github\.com/([\w.-]+/[\w.-]+)/pull/([1-9][0-9]*)')
 
@@ -75,6 +83,14 @@ def validate(record):
         raise HistoryError('invalid conversation identity')
     if not isinstance(record.get('updated', 0), (int, float)) or not math.isfinite(record.get('updated', 0)) or not 0 <= record.get('updated', 0) <= 253402300799:
         raise HistoryError('invalid history timestamp')
+    for field in ('model', 'model_source', 'summary', 'summary_source', 'interface'):
+        if field in record and not isinstance(record[field], str):
+            raise HistoryError('invalid recorded display metadata')
+    if record.get('interface', 'unknown') not in ('cli', 'desktop', 'foreground', 'unknown'):
+        raise HistoryError('invalid recorded interface')
+    for field in ('model_updated', 'summary_updated', 'interface_updated'):
+        if field in record and (not isinstance(record[field], (int, float)) or not math.isfinite(record[field]) or not 0 <= record[field] <= 253402300799):
+            raise HistoryError('invalid display metadata timestamp')
     for field in ('associations', 'sources', 'prs', 'mentions'):
         values = record.get(field, [])
         if not isinstance(values, list) or any(not isinstance(value, dict) for value in values):
@@ -134,8 +150,19 @@ class Store:
         existing = self.db.execute('select record from conversations where key=?', (key,)).fetchone()
         old = json.loads(existing[0]) if existing else {}
         merged = {**old, **record, 'version': VERSION}
-        if not record.get('title') and old.get('title'):
-            merged['title'] = old['title']
+        for field in ('title', 'model', 'summary', 'interface'):
+            incoming_known = record.get(field) not in (None, '', '-', 'unknown')
+            old_known = old.get(field) not in (None, '', '-', 'unknown')
+            incoming_time = record.get(field + '_updated', record.get('updated', 0))
+            old_time = old.get(field + '_updated', old.get('updated', 0))
+            if old_known and (not incoming_known or incoming_time < old_time):
+                merged[field] = old[field]
+                if field in ('model', 'summary', 'interface'):
+                    merged[field + '_updated'] = old_time
+                if field + '_source' in old:
+                    merged[field + '_source'] = old[field + '_source']
+            elif incoming_known and field in ('model', 'summary', 'interface'):
+                merged[field + '_updated'] = incoming_time
         for field in ('associations', 'prs', 'mentions', 'sources'):
             values = old.get(field, []) + record.get(field, [])
             key_for = (lambda value: (value['repo'], value['number'])) if field in ('prs', 'mentions') else (lambda value: (value.get('host'), value.get('path'))) if field == 'sources' else (lambda value: json.dumps(value, sort_keys=True))
@@ -305,7 +332,7 @@ def tool_pr_command(command):
 
 
 def transcript(path, agent, previous=None):
-    record = dict(agent=agent, sid='', title='', updated=0, associations=[], prs=[], mentions=[])
+    record = dict(agent=agent, sid='', title='', summary='', summary_source='unknown', model='-', model_source='unknown', interface='unknown', updated=0, associations=[], prs=[], mentions=[])
     state = previous.get('_scan', {}) if previous else {}
     if previous and state.get('offset', 0) <= path.stat().st_size:
         record = json.loads(json.dumps(previous))
@@ -329,6 +356,9 @@ def transcript(path, agent, previous=None):
                 except ValueError:
                     continue
                 record['updated'] = max(record['updated'], timestamp(row.get('timestamp')))
+                model = recorded_model(row)
+                if model:
+                    record.update(model=clean(model), model_source='transcript', model_updated=record['updated'])
                 payload = row.get('payload', {}) if agent == 'codex' else row
                 if not isinstance(payload, dict):
                     continue
@@ -355,6 +385,8 @@ def transcript(path, agent, previous=None):
                         record['associations'].append(association)
                 if row.get('type') in ('custom-title', 'ai-title'):
                     record['title'] = clean(row.get('customTitle') or row.get('aiTitle'))
+                    if record['title']:
+                        record.update(summary=record['title'], summary_source='transcript title', summary_updated=record['updated'])
                 message = payload if agent == 'codex' else row.get('message', {})
                 if not isinstance(message, dict):
                     continue
@@ -364,6 +396,8 @@ def transcript(path, agent, previous=None):
                 text = ' '.join(str(b.get('text', '')) for b in blocks if isinstance(b, dict))
                 if role == 'user' and not record['title'] and text.strip() and not text.lstrip().startswith(('<', '# AGENTS.md instructions')):
                     record['title'] = clean(text)[:200]
+                if role == 'user' and text.strip() and not text.lstrip().startswith(('<', '# AGENTS.md instructions')):
+                    record.update(summary=record['title'] or clean(text), summary_source='transcript', summary_updated=record['updated'])
                 if role in ('user', 'assistant'):
                     record['mentions'].extend(pr_refs(text))
                 # Structured tool invocations establish association; conversational
@@ -445,24 +479,144 @@ def association_matches(association, cfg, alias):
     return (slot or '') if repo and os.path.realpath(cfg.repos[repo]) == os.path.realpath(cfg.repos[alias]) else None
 
 
-def format_row(row):
-    date = datetime.datetime.fromtimestamp(row.get('updated', 0)).strftime('%Y-%m-%d')
+def history_display(row, alias=''):
+    """Exact-conversation display facts; presentation never grants ownership."""
     owners = row.get('owners', [])
-    owner = ','.join(clean(r.get('host', 'local') + ':' + r.get('slot', '?')) for r in owners) or 'inactive'
-    hosts = ','.join(sorted({a.get('host', 'local') for a in row['associations']})) or 'local'
-    branches = ','.join(dict.fromkeys(a.get('branch', '') for a in row['associations'] if a.get('branch'))) or '?'
-    prs = ' '.join(f'#{p["number"]}[{p.get("state", "?")}]' for p in row['prs'][:3])
-    return clean(f'{date}  {row["title"] or "Untitled conversation"}  {row["agent"]} {row["sid"][:8]}  {hosts}  {owner}  {branches}  {prs}')
+    owner = owners[0] if len(owners) == 1 else {}
+    latest = max(row.get('associations', []), key=lambda value: value.get('observed', 0), default={})
+    state = owner.get('state') or ('archived' if row.get('archived') else 'saved')
+    sources = row.get('sources', [])
+    if not owner and sources and all(source.get('available') is False for source in sources):
+        state = 'missing'
+    interface = ('desktop' if state == 'app' else 'foreground' if ':' in owner.get('slot', '') else 'cli') if owner else row.get('interface', 'unknown')
+    slot = owner.get('slot')
+    if not slot:
+        name = alias or row.get('display', {}).get('slot', '').rsplit('-', 1)[0] or row['repo'].rsplit('/', 1)[-1]
+        slot = name + '-' + latest['slot'] if latest.get('slot') else 'unknown'
+    summary = clean(row.get('summary') or row.get('title')) or 'Untitled conversation'
+    return dict(state=state, context=owner.get('context') or 'unknown', interface=interface,
+                agent=row['agent'], model=clean(row.get('model')) or '-', host=owner.get('host') or latest.get('host') or 'unknown',
+                slot=clean(slot), summary=summary,
+                status={'attached': 'Attached', 'detached': 'Detached', 'app': 'Desktop', 'saved': 'Saved',
+                        'archived': 'Archived', 'missing': 'Missing transcript'}.get(state, 'Live'), prs=row.get('prs', []))
 
 
-def details(row):
-    fields = [f'{row["agent"]} {row["sid"]}', f'Repository: {row["repo"]}', f'Title: {row["title"]}',
-              f'Current owner: {json.dumps(row.get("owners", [])) or "inactive"}']
-    fields.extend(f'Workspace: {a.get("workspace")} · slot {a.get("slot", "?")} · host {a.get("host", "?")} · branch {a.get("branch") or "unknown"} · commit {a.get("commit") or "unverified"} · evidence {a.get("evidence")} · availability {a.get("available", "unknown")}' for a in row['associations'])
-    fields.extend(f'Associated PR: {p["url"]} [{p.get("state", "unknown")}]' for p in row['prs'])
-    fields.extend(f'Incidental PR mention: {p["url"]}' for p in row['mentions'] if p['url'] not in {r['url'] for r in row['prs']})
-    fields.extend(f'Transcript: {s.get("host")}:{s.get("path")} · available {s.get("available", "unknown")}' for s in row['sources'])
-    return '\n'.join(clean(field) for field in fields)
+def pr_summary(refs, compact=False):
+    states = {'OPEN': 'O', 'MERGED': 'M', 'CLOSED': 'C'}
+    parts = [f'#{pr["number"]}{states.get(pr.get("state"), "?")}' if compact else
+             f'#{pr["number"]}[{pr.get("state") or "unknown"}]' for pr in refs[:3]]
+    if len(refs) > 3:
+        parts.append(f'+{len(refs) - 3}')
+    return ' '.join(parts)
+
+
+def picker_columns(width):
+    if width >= 60:
+        return [('ST', 3), ('UI', 2), ('MODEL', 24 if width >= 100 else 13), ('HOST', 10 if width >= 100 else 5), ('SESSION', 12 if width >= 100 else 7)]
+    if width >= 32:
+        return [('ST', 2), ('U', 1), ('MODEL', 9), ('#', 2)]
+    return [('S', 1), ('A', 1), ('#', 2)]
+
+
+def compact_model(model, width):
+    if display_width(model) <= width:
+        return model
+    for prefix in ('claude-', 'gpt-'):
+        if model.startswith(prefix):
+            model = model[len(prefix):]
+            break
+    return clip_columns(model, width)
+
+
+def format_row(row, width=80):
+    display = row.get('display') or history_display(row)
+    glyph = AGENT_GLYPHS.get(display['agent'], '?')
+    state, context = display['state'], display['context']
+    status = '●' if state == 'attached' or (state == 'app' and context == 'active') else '○' if state in ('detached', 'app') else '□' if state == 'archived' else '!' if state == 'missing' else '·'
+    if context == 'active':
+        status += '✓'
+    if re.search(r'#\d+ merged, still in progress', display['summary']):
+        status += '↻'
+    ui = {'cli': '›', 'desktop': '▣', 'foreground': '›', 'unknown': '?'}[display['interface']]
+    values = [status, ui, glyph + ' ' + display['model'], display['host'], display['slot']]
+    columns = picker_columns(width)
+    if width < 60:
+        slot = display['slot'].rsplit('-', 1)[-1]
+        values = [status, ui, glyph + ' ' + display['model'], slot] if width >= 32 else [status[:1], glyph, slot]
+    if width >= 32:
+        values[2] = glyph + ' ' + compact_model(display['model'], columns[2][1] - 2)
+    prefix = ' '.join(clip_columns(value, cap) + ' ' * (cap - display_width(clip_columns(value, cap))) for value, (_, cap) in zip(values, columns))
+    remaining = max(1, width - display_width(prefix) - 1)
+    prs = pr_summary(row.get('prs', []), compact=True)
+    title = display['summary']
+    if prs and remaining >= 24:
+        budget = min(display_width(prs), max(0, remaining - 15))
+        prs = clip_columns(prs, budget)
+        title = clip_columns(title, remaining - display_width(prs) - 1)
+        summary = title + ' ' + prs
+    elif prs:
+        hint = f' +{len(row["prs"])}PR'
+        summary = clip_columns(title, max(1, remaining - len(hint))) + hint if remaining >= 17 else clip_columns(title, remaining)
+    else:
+        summary = clip_columns(title, remaining)
+    return prefix + ' ' + summary
+
+
+def picker_header(rows, query, limit, page, width=80):
+    _, total = page_rows(rows, query, limit, page)
+    pages = max(1, (total + limit - 1) // limit)
+    page_label = f'Page {page} · {total} conversations · {limit} per page' if width >= 60 else f'Page {page}/{pages} · {total} conversations'
+    columns = picker_columns(width)
+    heading = ' '.join(clip_columns(label, cap).ljust(cap) for label, cap in columns) + ' WORKING ON'
+    lines = [clip_columns(page_label, width), clip_columns(heading, width)]
+    if width >= 60:
+        lines.insert(1, 'PR: O open · M merged · C closed · ? unknown')
+    return '\n'.join(lines) + '\n'
+
+
+def history_table(rows, api, alias=''):
+    cells = []
+    for row in rows:
+        display = history_display(row, alias)
+        base = _DISPLAY['session_cells'](display, AGENT_GLYPHS.get(display['agent'], '?'), remote=True)
+        date = datetime.datetime.fromtimestamp(row.get('updated', 0)).strftime('%Y-%m-%d')
+        branches = ', '.join(dict.fromkeys(a.get('branch') for a in row.get('associations', []) if a.get('branch'))) or 'unknown'
+        cells.append([*base, date, branches, pr_summary(row.get('prs', [])) or 'none recorded', row['sid']])
+    return api['_table_lines'](('STATUS', 'UI', 'MODEL', 'HOST', 'SESSION', 'WORKING ON', 'DATE', 'BRANCH', 'PRS', 'ID'), cells)
+
+
+def details(row, alias='', width=None, compact=False):
+    display = row.get('display') or history_display(row, alias)
+    model = f'{AGENT_GLYPHS.get(display["agent"], "?")} {display["model"]} ({display["agent"]})'
+    date = datetime.datetime.fromtimestamp(row.get('updated', 0)).strftime('%Y-%m-%d %H:%M')
+    fields = [f'Working on: {display["summary"]}',
+              f'Status: {display["status"]} · Context: {display["context"]}',
+              f'UI: {display["interface"]} · Model: {model}',
+              f'Host: {display["host"]} · Session: {display["slot"]}',
+              f'Date: {date} · PRs: {pr_summary(row.get("prs", [])) or "none recorded"}',
+              f'ID: {row["sid"]}', f'Repository: {row["repo"]}', f'Title: {row.get("title") or "Untitled conversation"}',
+              f'Model evidence: {row.get("model_source") or "unknown"}',
+              f'Summary evidence: {row.get("summary_source") or "unknown"}']
+    if compact:
+        fields = [f'Model: {display["model"]}', f'UI: {display["interface"]}', f'Status: {display["status"]} · {display["context"]}', *fields]
+    fields += ['', 'Workspace history']
+    for association in row.get('associations', []):
+        fields.extend([f'  Workspace: {association.get("workspace")}',
+                       f'  Slot: {association.get("slot") or "unknown"} · Host: {association.get("host") or "unknown"}',
+                       f'  Branch: {association.get("branch") or "unknown"}',
+                       f'  Revision: {association.get("commit") or "unverified"}',
+                       f'  Evidence: {association.get("evidence") or "unknown"} · Available: {association.get("available", "unknown")}'])
+    for pr in row.get('prs', []):
+        fields.extend(['', f'Associated PR: {pr["url"]}', f'  State: {pr.get("state") or "unknown"}'])
+    linked = {pr['url'] for pr in row.get('prs', [])}
+    for mention in row.get('mentions', []):
+        if mention['url'] not in linked:
+            fields.extend(['', f'Incidental PR mention: {mention["url"]}'])
+    for source in row.get('sources', []):
+        fields.extend(['', f'Transcript: {source.get("path")}', f'  Host: {source.get("host") or "unknown"} · Available: {source.get("available", "unknown")}'])
+    if width:
+        fields = [part for field in fields for part in wrap_columns(clean(field), max(8, width), '  ')]
+    return '\n'.join(fields)
 
 
 class HistoryCommand:
@@ -558,7 +712,7 @@ class HistoryCommand:
                         row = dict(row)
                         if '"subagent"' in str(row.get('source', '')):
                             continue
-                        value = dict(agent='codex', sid=row.get('id', ''), title=clean(row.get('name') or row.get('title') or row.get('first_user_message')), updated=timestamp(row.get('updated_at')), archived=bool(row.get('archived')), associations=[dict(workspace=row.get('cwd', ''), branch=clean(row.get('git_branch')), commit=row.get('git_sha') or '', evidence='index', observed=timestamp(row.get('updated_at')))], sources=[dict(host='local', path=row.get('rollout_path') or '', available=Path(row.get('rollout_path') or '').is_file())])
+                        value = dict(agent='codex', sid=row.get('id', ''), title=clean(row.get('name') or row.get('title') or row.get('first_user_message')), summary=clean(row.get('name') or row.get('title') or row.get('first_user_message')), summary_source='index', model=clean(row.get('model')) or '-', model_source='index' if row.get('model') else 'unknown', updated=timestamp(row.get('updated_at')), archived=bool(row.get('archived')), associations=[dict(workspace=row.get('cwd', ''), branch=clean(row.get('git_branch')), commit=row.get('git_sha') or '', evidence='index', observed=timestamp(row.get('updated_at')))], sources=[dict(host='local', path=row.get('rollout_path') or '', available=Path(row.get('rollout_path') or '').is_file())])
                         self.ingest(value, alias)
                 break
             except sqlite3.Error:
@@ -596,7 +750,7 @@ class HistoryCommand:
                 print(f't history: {host} unavailable; retained cached history', file=sys.stderr)
 
     def owners(self, all_hosts=False):
-        snippet = '_DEV_PS_AT=0; _DEV_PS_COMM=(); ' + ('_dev_rows_all' if all_hosts else "_dev_session_rows | awk 'NF {print \"local\\t\" $0}'")
+        snippet = '_DEV_PS_AT=0; _DEV_PS_COMM=(); ' + ('_dev_rows_all' if all_hosts else "_dev_session_rows --details | awk 'NF {print \"local\\t\" $0}'")
         text = run(self.shell(snippet))
         return self.api['_parse_rows'](text, host_prefixed=True)
 
@@ -608,9 +762,21 @@ class HistoryCommand:
                 continue
             row = dict(value)
             row.setdefault('title', '')
-            row['owners'] = [owner for owner in owners or [] if owner['sid'] == row['sid'] and owner['agent'] == row['agent']]
+            row['owners'] = [owner for owner in owners or [] if owner['sid'] == row['sid'] and owner['agent'] == row['agent'] and (association_matches(dict(workspace=owner.get('cwd', '')), self.cfg, alias) is not None or any(a.get('host') == owner.get('host') and os.path.normpath(a['workspace']) == os.path.normpath(owner.get('cwd') or '') for a in row['associations']))]
+            if len(row['owners']) == 1:
+                owner = row['owners'][0]
+                metadata = {}
+                if owner.get('model') not in (None, '', '-'):
+                    metadata.update(model=clean(owner['model']), model_source='exact owner', model_updated=time.time())
+                if owner.get('summary'):
+                    metadata.update(summary=clean(owner['summary']), summary_source='exact owner', summary_updated=time.time())
+                metadata['interface_updated'] = time.time()
+                metadata['interface'] = 'desktop' if owner.get('state') == 'app' else 'foreground' if ':' in owner.get('slot', '') else 'cli'
+                row.update(metadata)
+                self.store.merge({**value, **metadata})
             row['associations'] = [{**a, 'available': Path(a['workspace']).is_dir() if a.get('host') == 'local' else 'cached'} for a in row['associations']]
             row['sources'] = [{**s, 'available': Path(s['path']).is_file() if s.get('host') == 'local' else 'cached'} for s in row['sources']]
+            row['display'] = history_display(row, alias)
             if not slot or any(a.get('slot') == slot for a in row['associations']):
                 rows.append(row)
         return rows
@@ -679,13 +845,15 @@ class HistoryCommand:
         with tempfile.TemporaryDirectory(prefix='t-history-') as directory:
             snapshot, state = Path(directory) / 'records.json', Path(directory) / 'page.json'
             private_write(snapshot, rows)
-            private_write(state, dict(page=page, query=query, limit=limit))
+            terminal = shutil.get_terminal_size((80, 24))
+            width = max(12, terminal.columns - 12)
+            private_write(state, dict(page=page, query=query, limit=limit, width=width))
             helper = shlex.join([sys.executable, str(Path(self.root) / 'libexec/t_history.py'), 'picker', str(snapshot), str(state)])
             header = state.with_suffix('.header')
             _, total = page_rows(rows, query, limit, page)
-            header.write_text(f'Page {page} · {total} conversations · {limit} per page\n')
+            header.write_text(picker_header(rows, query, limit, page, width))
             rows_file = state.with_suffix('.rows')
-            rows_file.write_text(picker_rows(rows, query, limit, page))
+            rows_file.write_text(picker_rows(rows, query, limit, page, width))
             snippet = '. "$1"; shift; _t_fzf_paginated "$@"'
             result = subprocess.run(['sh', '-c', snippet, 't-history', str(Path(self.root) / 'ui/fzf.sh'),
                     str(header), str(rows_file), helper, helper + ' details {1}', query,
@@ -708,7 +876,7 @@ class HistoryCommand:
             settings = json.loads(state.read_text())
             matching, _ = page_rows(rows, query, limit, settings['page'])
             selected = rows[index]
-            expected = f'{index}\t{format_row(selected)}\t{clean(json.dumps(selected, ensure_ascii=False))}'
+            expected = f'{index}\t{format_row(selected, settings.get("width", 80))}\t{clean(json.dumps(selected, ensure_ascii=False))}'
             if settings['query'] != query or selected not in matching or lines[2] != expected:
                 return None, 'retry', query
             return selected, key, query
@@ -785,7 +953,12 @@ class HistoryCommand:
         root = Path(self.cfg.worktree_root) / base
         association, recorded = self.revision(row)
         historical_slot = association.get('slot', '')
-        historical_path = root / historical_slot if historical_slot else None
+        # A slot number does not identify its layout. Reuse only its recorded path.
+        workspace = Path(association.get('workspace') or '/')
+        candidates = (root / historical_slot, root / f'{base}-{historical_slot}') if historical_slot else ()
+        historical_path = workspace if workspace in candidates else None
+        if any(os.path.lexists(p) for p in candidates if p != workspace):
+            historical_path = None
         busy = {os.path.realpath(owner['cwd']) for owner in owners}
         latest = []
         if historical_path:
@@ -795,7 +968,7 @@ class HistoryCommand:
                         latest.append((a.get('observed', 0), conversation['sid'], conversation['agent']))
         current_identity = max(latest, default=(0, '', ''))[1:]
         # Reuse only when both revision and provenance match, never by branch name alone.
-        if association.get('generation') and association['generation'] == generation(historical_path) and current_identity == (row['sid'], row['agent']) and recorded == revision and historical_path and association.get('host') == 'local' and os.path.realpath(association.get('workspace', '')) == os.path.realpath(historical_path) and historical_path.is_dir() and os.path.realpath(historical_path) not in busy:
+        if historical_path and association.get('generation') and association['generation'] == generation(historical_path) and current_identity == (row['sid'], row['agent']) and recorded == revision and association.get('host') == 'local' and os.path.realpath(association.get('workspace', '')) == os.path.realpath(historical_path) and historical_path.is_dir() and os.path.realpath(historical_path) not in busy:
             head = run(['git', '-C', str(historical_path), 'rev-parse', 'HEAD'], optional=True).strip()
             actual = run(['git', '-C', str(historical_path), 'branch', '--show-current'], optional=True).strip()
             if head == revision and actual == association.get('branch'):
@@ -803,13 +976,14 @@ class HistoryCommand:
                 return str(historical_path), historical_slot, False
         # Fresh allocation skips every existing branch/worktree and every owner.
         for slot in range(1, 10001):
-            path, branch = root / str(slot), f'dev/{base}-{slot}'
-            if path.exists() or any(owner['slot'] == f'{alias}-{slot}' for owner in owners):
+            path, branch = root / f'{base}-{slot}', f'dev/{base}-{slot}'
+            legacy = root / str(slot)
+            if any(os.path.lexists(p) for p in (path, legacy, root / f'.{slot}.history-reservation')) or any(owner['slot'] == f'{alias}-{slot}' for owner in owners):
                 continue
             if run(['git', '-C', directory, 'rev-parse', '--verify', 'refs/heads/' + branch], optional=True) or run(['git', '-C', directory, 'rev-parse', '--verify', 'refs/remotes/origin/' + branch], optional=True):
                 continue
             root.mkdir(parents=True, exist_ok=True)
-            marker = root / f'.{slot}.history-reservation'
+            marker = root / f'.{path.name}.history-reservation'
             try:
                 with marker.open('x') as stream:
                     os.chmod(marker, 0o600)
@@ -1043,26 +1217,16 @@ class HistoryCommand:
             rows = self.records(alias, slot, owners)
         self.branch_prs(rows, refresh=args.refresh)
         self.pr_states(rows, refresh=args.refresh)
+        for row in rows:
+            row['display'] = history_display(row, alias)
         selected, total = page_rows(rows, '', args.limit, args.page)
         if args.json:
             print(json.dumps(dict(version=VERSION, repo=self.identity(alias), slot=slot, page=args.page, limit=args.limit, total=total, conversations=selected)))
             return 0
         if not tty:
             if selected:
-                cells = []
-                for row in selected:
-                    owners = ','.join(clean(owner.get('host', 'local') + ':' + owner.get('slot', '?'))
-                                      for owner in row.get('owners', [])) or 'inactive'
-                    hosts = ','.join(sorted({a.get('host', 'local') for a in row['associations']})) or 'local'
-                    branches = ','.join(dict.fromkeys(a.get('branch', '') for a in row['associations']
-                                                     if a.get('branch'))) or '?'
-                    prs = ' '.join(f'#{pr["number"]}[{pr.get("state", "?")}]' for pr in row['prs'][:3]) or '—'
-                    date = datetime.datetime.fromtimestamp(row.get('updated', 0)).strftime('%Y-%m-%d')
-                    cells.append((date, row['agent'], row['sid'], row['title'] or 'Untitled conversation',
-                                  hosts, owners, branches, prs))
                 print(f'history   {alias}' + (f' slot {slot}' if slot else ' · all slots'))
-                print('\n'.join(self.api['_table_lines'](
-                    ('DATE', 'AGENT', 'SESSION', 'TITLE', 'HOST', 'OWNER', 'BRANCH', 'PRS'), cells)))
+                print('\n'.join(history_table(selected, self.api, alias)))
             else:
                 print('No retained conversations for this slot.')
             print(f'Page {args.page} · {total} conversations · {args.limit} per page')
@@ -1092,10 +1256,10 @@ class HistoryCommand:
         return 0
 
 
-def picker_rows(rows, query, limit, page):
+def picker_rows(rows, query, limit, page, width=80):
     selected, total = page_rows(rows, query, limit, page)
     indices = {json.dumps([row['repo'], row['agent'], row['sid']]): i for i, row in enumerate(rows)}
-    return ''.join(f'{indices[json.dumps([row["repo"], row["agent"], row["sid"]])]}\t{format_row(row)}\t{clean(json.dumps(row, ensure_ascii=False))}\n' for row in selected)
+    return ''.join(f'{indices[json.dumps([row["repo"], row["agent"], row["sid"]])]}\t{format_row(row, width)}\t{clean(json.dumps(row, ensure_ascii=False))}\n' for row in selected)
 
 
 def picker(argv):
@@ -1103,7 +1267,8 @@ def picker(argv):
     rows = json.loads(Path(snapshot).read_text())
     settings = json.loads(Path(state).read_text())
     if action == 'details':
-        print(details(rows[int(value)]))
+        print('Details · Shift ↑↓')
+        print(details(rows[int(value)], width=max(8, int(os.environ.get('FZF_PREVIEW_COLUMNS') or 80) - 3), compact=0 < int(os.environ.get('FZF_PREVIEW_LINES') or 0) <= 3))
         return
     if settings['query'] != value:
         settings.update(query=value, page=1)
@@ -1114,13 +1279,13 @@ def picker(argv):
     elif action == 'previous':
         settings['page'] = max(1, settings['page'] - 1)
     private_write(state, settings)
-    Path(state).with_suffix('.header').write_text(f'Page {settings["page"]} · {total} conversations · {settings["limit"]} per page\n')
-    output = picker_rows(rows, value, settings['limit'], settings['page'])
+    Path(state).with_suffix('.header').write_text(picker_header(rows, value, settings['limit'], settings['page'], settings.get('width', 80)))
+    output = picker_rows(rows, value, settings['limit'], settings['page'], settings.get('width', 80))
     Path(state).with_suffix('.rows').write_text(output)
     print(output, end='')
 
 
-def record_association(sid, agent, workspace, transcript_path='', event='launch'):
+def record_association(sid, agent, workspace, transcript_path='', event='launch', interface='unknown'):
     """Hook and lifecycle seam: capture immutable revision evidence when it occurs."""
     if not SID.fullmatch(sid) or agent not in ('claude', 'codex'):
         return
@@ -1131,14 +1296,18 @@ def record_association(sid, agent, workspace, transcript_path='', event='launch'
         if not common:
             return
         repo = 'local:' + str(Path(common).parent.resolve())
-    if transcript_path and Path(transcript_path).is_file() and transcript(Path(transcript_path), agent)['sid'] != sid:
-        return
-    commit = run(['git', '-C', workspace, 'rev-parse', 'HEAD'], optional=True).strip()
-    branch = run(['git', '-C', workspace, 'branch', '--show-current'], optional=True).strip()
-    slot = Path(workspace).name if Path(workspace).name.isdigit() else ''
     store = Store()
     try:
-        value = dict(repo=repo, agent=agent, sid=sid, updated=time.time(), associations=[dict(workspace=workspace, slot=slot, host='local', branch=branch, commit=commit, generation=generation(workspace), evidence=event, observed=time.time())])
+        saved = store.scan(Path(transcript_path), agent) if transcript_path and Path(transcript_path).is_file() else None
+        if saved and saved['sid'] != sid:
+            return
+        commit = run(['git', '-C', workspace, 'rev-parse', 'HEAD'], optional=True).strip()
+        branch = run(['git', '-C', workspace, 'branch', '--show-current'], optional=True).strip()
+        leaf = Path(workspace).name.removeprefix(Path(workspace).parent.name + '-')
+        slot = leaf if re.fullmatch(r'[0-9]+', leaf) else ''
+        value = dict(repo=repo, agent=agent, sid=sid, interface=interface, interface_updated=time.time(), updated=time.time(), associations=[dict(workspace=workspace, slot=slot, host='local', branch=branch, commit=commit, generation=generation(workspace), evidence=event, observed=time.time())])
+        if saved:
+            value.update({key: saved[key] for key in ('title', 'summary', 'summary_source', 'model', 'model_source', 'model_updated', 'summary_updated') if key in saved})
         if transcript_path:
             value['sources'] = [dict(host='local', path=transcript_path, updated=timestamp(time.time()))]
         store.merge(value)

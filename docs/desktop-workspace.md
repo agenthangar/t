@@ -92,9 +92,11 @@ existing recipient selection, host options, receipts, and attachment behavior.
 
 See [desktop/README.md](../desktop/README.md) for pinned runtime sources,
 checksums, executable/resource layout, licenses, development commands, and
-headless verification. CI runs frontend protocol tests, browser interactions and
-screenshots, Rust bridge/PTY tests, production build, unsigned macOS packaging,
-and copied-bundle smoke with isolated HOME/XDG and restricted Finder PATH.
+headless verification. Default Linux CI runs frontend protocol tests, browser
+interactions and screenshots, and the production build. Explicitly dispatching
+the Desktop workflow with `run_macos: true` runs Rust bridge/PTY tests, unsigned
+macOS packaging, and copied-bundle smoke with isolated HOME/XDG and restricted
+Finder PATH.
 Signing/notarization and native desktop focus-stealing verification are excluded
 from routine local runs. This release targets macOS; other Tauri hosts are not
 claimed as tested distribution platforms.

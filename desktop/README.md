@@ -35,8 +35,10 @@ and `T_DESKTOP_PYTHON` may select its interpreter. Release builds always use the
 bundled interpreter and absolute application resource paths.
 
 `npm run format` formats TypeScript, React, styles, configuration, and Rust.
-Both npm and Cargo lockfiles are maintained. CI builds an unsigned macOS `.app`,
-runs transport/PTY and browser tests, and tests a relocated application bundle.
+Both npm and Cargo lockfiles are maintained. Default Linux CI runs frontend
+protocol tests, the production build, and headless browser tests. The Desktop
+workflow runs Rust transport/PTY tests, builds an unsigned macOS `.app`, and tests
+a relocated bundle only when explicitly dispatched with `run_macos: true`.
 Signing and notarization are distribution steps, not required for local builds.
 
 ## Bundled runtime

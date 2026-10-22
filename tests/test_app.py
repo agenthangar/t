@@ -8,6 +8,7 @@ import shlex
 import shutil
 import sqlite3
 import subprocess
+import sys
 import time
 import uuid
 from contextlib import closing
@@ -19,14 +20,14 @@ import pytest
 SID = "01234567-89ab-cdef-0123-456789abcdef"
 
 
-@pytest.fixture
-def app_slot(t_mod, tmp_path, monkeypatch):
+@pytest.fixture(params=["13", "my-api-13"])
+def app_slot(t_mod, tmp_path, monkeypatch, request):
     monkeypatch.setattr(t_mod, "CONFIG", str(tmp_path / "no-config"))
     monkeypatch.setattr(t_mod, "_cache_root", lambda: str(tmp_path / "cache"))
     cfg = t_mod.Config()
     cfg.repos = {"api": str(tmp_path / "my-api"), "a": str(tmp_path / "my-api")}
     cfg.worktree_root = str(tmp_path / "worktrees")
-    cwd = tmp_path / "worktrees" / "my-api" / "13"
+    cwd = tmp_path / "worktrees" / "my-api" / request.param
     cwd.mkdir(parents=True)
     row = dict(host="local", sid=SID, cwd=str(cwd), slot="api-13",
                state="detached", context="active", agent="codex", summary="Fix settings")
@@ -208,6 +209,72 @@ def test_app_unverified_release_never_opens(t_mod, app_command, monkeypatch, cap
     assert "Open request sent" not in output.out
 
 
+@pytest.mark.parametrize("preview", [False, True])
+def test_app_conflicting_owner_release_and_retry_preserves_exact_history(
+        t_mod, app_command, monkeypatch, tmp_path, capsys, preview):
+    """A live sibling blocks; its leftover free lock must not block the retry."""
+    call, events, row = app_command
+    other = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    unrelated = "ffffffff-eeee-dddd-cccc-bbbbbbbbbbbb"
+    home = tmp_path / "codex"
+    database = home / "state_5.sqlite"
+    with closing(sqlite3.connect(database)) as db:
+        db.execute("create table threads (id text, cwd text)")
+        db.executemany("insert into threads values (?, ?)", [
+            (SID, row["cwd"]), (other, row["cwd"]),
+            (unrelated, str(tmp_path / "unrelated worktree"))])
+        db.commit()
+    locks = [home / "thread-writer-locks" / f"{sid}.lock" for sid in (other, unrelated)]
+    for path in locks:
+        path.touch()
+    before = {path: path.read_bytes() for path in (database, home / "rollout.jsonl")}
+    inodes = [path.stat().st_ino for path in locks]
+    code = ("import fcntl,sys; files=[open(p, 'r') for p in sys.argv[1:]]; "
+            "[fcntl.flock(f, fcntl.LOCK_EX) for f in files]; "
+            "print('ready', flush=True); sys.stdin.readline(); "
+            "fcntl.flock(files[0], fcntl.LOCK_UN); print('released', flush=True); "
+            "sys.stdin.read()")
+    owner = subprocess.Popen([sys.executable, "-c", code, *map(str, locks)],
+                             env={"HOME": str(tmp_path), "PATH": os.defpath},
+                             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE, text=True)
+    helper = t_mod.runpy.run_path(os.path.join(t_mod._t_source_root(), "libexec", "t_app_handoff.py"))
+    monkeypatch.setattr(t_mod, "_dev_url", lambda *args: None)
+    flags = ("--url", "http://localhost:5213") if preview else ()
+    try:
+        assert owner.stdout.readline().strip() == "ready"
+        assert call(*flags) == 1
+        output = capsys.readouterr()
+        assert ("No running preview found" in output.out) is not preview
+        assert f"still loaded ({other})" in output.err
+        assert "Finish that other conversation's turn" in output.err
+        assert "exit its owning client" in output.err
+        assert "Retry: t open api 13 --app" in output.err
+        assert events == [], "refusal must precede stopping the selected CLI or app delivery"
+        assert all(helper["_lock_held"](str(path)) for path in locks)
+        assert all(path.read_bytes() == content for path, content in before.items())
+
+        # The disposable owner releases its own lock without deleting its file.
+        owner.stdin.write("release\n")
+        owner.stdin.flush()
+        assert owner.stdout.readline().strip() == "released"
+        assert helper["_lock_held"](str(locks[0])) is False
+        assert call(*flags) == 0
+        assert [event[0] for event in events] == ["stop", "open"]
+        assert events[0][1]["sid"] == SID
+        assert events[0][1]["cwd"] == row["cwd"]
+        assert events[0][1]["rollout"] == row["rollout"]
+        assert events[1][1][-1] == t_mod._app_link(SID, "http://localhost:5213" if preview else None)
+        assert helper["_lock_held"](str(locks[1])) is True
+        assert [path.stat().st_ino for path in locks] == inodes
+        assert all(path.read_bytes() == content for path, content in before.items())
+    finally:
+        owner.stdin.close()
+        owner.wait(timeout=3)
+        owner.stdout.close()
+        owner.stderr.close()
+
+
 @pytest.mark.parametrize("destination", ["selected", "other_thread", "other_cwd", "absent", "missing_helper"])
 def test_app_release_reopens_only_verified_desktop_owner(t_mod, app_slot, monkeypatch, capsys, destination):
     _, row = app_slot
@@ -259,7 +326,9 @@ def test_app_direct_desktop_takeover_rechecks_new_sibling_owner(t_mod, app_slot,
     with pytest.raises(ValueError, match="another Codex conversation"):
         t_mod._app_cli_release(row, "modern", unknown=unknown)
     assert checks == [(SID, row["cwd"], dict(codex_home=row["codex_home"],
-                                             rollout=row["rollout"], unknown=unknown))]
+                                             rollout=row["rollout"], unknown=unknown,
+                                             retry="Retry: t open api 13 --app",
+                                             run=t_mod._run))]
 
 
 def test_app_does_not_stop_cli_for_archived_thread(t_mod, app_command, monkeypatch, capsys):

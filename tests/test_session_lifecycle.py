@@ -58,7 +58,7 @@ def lifecycle(tmp_path):
            if not key.startswith("COV_CORE_") and
            key not in ("TMUX", "TMUX_PANE", "T_LOCAL_RC", "CLAUDE_RESUME_ID",
                        "CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID")}
-    env.update(HOME=str(home), ZDOTDIR=str(home),
+    env.update(HOME=str(home), ZDOTDIR=str(home), SHELL=shutil.which("zsh"),
                XDG_CONFIG_HOME=str(base / "config"),
                XDG_CACHE_HOME=str(base / "cache"),
                XDG_STATE_HOME=str(base / "state"),
@@ -67,7 +67,7 @@ def lifecycle(tmp_path):
                GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull,
                T_NO_AUTORELOAD="1", T_NO_UPDATE_CHECK="1",
                T_RECOVERY_DISABLE="1", T_AUTO_TRUST="0",
-               T_TEST_BIN=str(bindir), T_TEST_WT=str(base / "worktrees" / "repo" / "1"),
+               T_TEST_BIN=str(bindir), T_TEST_WT=str(base / "worktrees" / "repo" / "repo-1"),
                T_TEST_AGENT_LOG=str(base / "agents.log"),
                T_TEST_APP_LOG=str(base / "app.log"),
                PATH=str(bindir) + os.pathsep + os.environ["PATH"])
@@ -186,12 +186,16 @@ def _until(predicate, *, seconds=5):
     pytest.fail("isolated agent did not reach expected state")
 
 
+@pytest.mark.parametrize("leaf", ["1", "repo-1"])
 @pytest.mark.parametrize("agent", ["codex", "claude"])
-def test_public_cli_open_and_reattach_keep_one_owner(lifecycle, agent):
+def test_public_cli_open_and_reattach_keep_one_owner(lifecycle, agent, leaf):
     base, env = lifecycle
+    worktree = base / "worktrees" / "repo" / leaf
+    if leaf == "1":
+        result = _run(["git", "-C", str(base / "repo"), "worktree", "add", "-b", "dev/repo-1", str(worktree), "origin/main"], env=env, cwd=base)
+        assert result.returncode == 0, result.stderr
     first = _shell(base, env, "t session open repo 1 --" + agent)
     assert first.returncode == 0, first.stderr or first.stdout
-    worktree = base / "worktrees" / "repo" / "1"
     log = base / "agents.log"
     _until(lambda: log.exists() and log.read_text().strip())
     launches = log.read_text().splitlines()
@@ -225,7 +229,7 @@ def test_concurrent_alias_opens_keep_one_worktree_owner(lifecycle):
                 process.kill()
                 process.communicate(timeout=5)
     assert any(rc == 0 for rc, _, _ in results), results
-    worktree = base / "worktrees" / "repo" / "1"
+    worktree = base / "worktrees" / "repo" / "repo-1"
     assert worktree.is_dir()
     log = base / "agents.log"
     launches = _until(lambda: log.read_text().splitlines() if log.exists() else None)
@@ -270,11 +274,13 @@ def test_public_remote_open_uses_login_shell_and_reattaches(lifecycle, agent):
     assert all("--cli" in call for call in calls)
 
 
+@pytest.mark.parametrize("leaf", ["1", "repo-1"])
+@pytest.mark.parametrize("swept", [False, True])
 @pytest.mark.parametrize("agent", ["codex", "claude"])
-def test_public_resume_revives_saved_thread_once(lifecycle, agent):
+def test_public_resume_revives_saved_thread_once(lifecycle, agent, leaf, swept):
     base, env = lifecycle
     repo = base / "repo"
-    worktree = base / "worktrees" / "repo" / "1"
+    worktree = base / "worktrees" / "repo" / leaf
     worktree.parent.mkdir(parents=True)
     checkout = _run(["git", "-C", str(repo), "worktree", "add", "-q", "-b",
                      "dev/repo-1", str(worktree), "origin/main"], env=env, cwd=base)
@@ -302,13 +308,17 @@ def test_public_resume_revives_saved_thread_once(lifecycle, agent):
         transcript.write_text(json.dumps({"type": "user", "message": {
             "role": "user", "content": "Resume my saved work"}},
             separators=(",", ":")) + "\n")
+    if swept:
+        removed = _run(["git", "-C", str(repo), "worktree", "remove", str(worktree)], env=env, cwd=base)
+        assert removed.returncode == 0, removed.stderr
     (base / "cache" / "claude-sessions").mkdir(parents=True)
     resumed = _shell(base, env, "t session resume repo 1")
     assert resumed.returncode == 0, resumed.stderr
     log = base / "agents.log"
     launches = _until(lambda: log.read_text().splitlines() if log.exists() else None)
     assert len(launches) == 1
-    assert launches[0].endswith(("|resume|" if agent == "codex" else "|-r|") + SID)
+    expected = "|resume|" + SID + "|--no-daemon" if agent == "codex" else "|-r|" + SID
+    assert launches[0].endswith(expected)
     assert str(worktree) in launches[0]
     opened = _shell(base, env, "t session open repo 1")
     assert opened.returncode == 0, opened.stderr
@@ -374,7 +384,7 @@ def _install_production_bridge(base):
 def test_public_app_cli_app_round_trip_keeps_worktree_and_thread(lifecycle):
     base, env = lifecycle
     _install_app_bridge(base)
-    worktree = base / "worktrees" / "repo" / "1"
+    worktree = base / "worktrees" / "repo" / "repo-1"
     fresh = _shell(base, env, "t session open repo 1 --app")
     assert fresh.returncode == 0, fresh.stderr
     gitdir = _run(["git", "-C", str(worktree), "rev-parse", "--absolute-git-dir"],
@@ -457,7 +467,7 @@ def test_public_cli_first_sends_exact_thread_to_app(lifecycle):
     _install_app_bridge(base)
     started = _shell(base, env, "t session open repo 1 --codex")
     assert started.returncode == 0, started.stderr
-    worktree = base / "worktrees" / "repo" / "1"
+    worktree = base / "worktrees" / "repo" / "repo-1"
     _until(lambda: (base / "agents.log").is_file())
     stamped = _run([str(base / "bin" / "tmux"), "set-environment", "-t",
                     "=dev-repo-1", "CLAUDE_RESUME_ID", SID], env=env, cwd=base)
@@ -482,7 +492,7 @@ def test_public_cli_first_sends_exact_thread_to_app(lifecycle):
 def test_production_app_coordinator_round_trip_with_unindexed_writers(lifecycle, first_mode):
     base, env = lifecycle
     _install_production_bridge(base)
-    worktree = base / "worktrees" / "repo" / "1"
+    worktree = base / "worktrees" / "repo" / "repo-1"
     if first_mode == "app":
         with (base / "config" / "t" / "local.zsh").open("a") as config:
             config.write("DEV_OPEN_MODE_DEFAULT=app\n")

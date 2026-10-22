@@ -125,6 +125,11 @@ def test_bridge_uses_bundled_plugin_without_user_dotfiles(lifecycle):
     base, env = lifecycle
     (base / "home" / ".zshrc").unlink()
     (base / "home" / ".zshenv").unlink()
+    # Debian zsh otherwise runs its first-use wizard before accepting terminal input.
+    # Disable startup files in this no-dotfiles fixture, including that host wizard.
+    wrapper = base / "bin" / "zsh"
+    wrapper.write_text(wrapper.read_text().replace(" -d ", " -d -f "))
+    env["SHELL"] = str(wrapper)
     with (base / "config" / "t" / "local.zsh").open("a") as config:
         config.write("DEV_OPEN_MODE_DEFAULT=app\n")
     snapshot = _call(base, env, "workspace.snapshot")
@@ -141,7 +146,7 @@ def test_bridge_uses_bundled_plugin_without_user_dotfiles(lifecycle):
     assert "exec tmux attach-session -t " + shlex.quote(internal_id) in record["attachment"]["argv"][2]
     launches = _until(lambda: _launches(base))
     assert len(launches) == 1
-    assert launches[0].split("|")[:2] == ["claude", str(base / "worktrees" / "repo" / "1")]
+    assert launches[0].split("|")[:2] == ["claude", str(base / "worktrees" / "repo" / "repo-1")]
 
 
 def test_concurrent_bridge_processes_claim_one_operation(lifecycle):
@@ -198,7 +203,7 @@ def test_concurrent_cli_and_bridge_same_slot_keep_one_live_owner(lifecycle):
     launches = _until(lambda: _launches(base))
     assert len(launches) == 1, (results, launches)
     sessions = _tmux(base, env, "list-sessions", "-F", "#{session_name}:#{session_path}")
-    assert sessions.stdout.splitlines() == ["dev-repo-1:" + str(base / "worktrees" / "repo" / "1")]
+    assert sessions.stdout.splitlines() == ["dev-repo-1:" + str(base / "worktrees" / "repo" / "repo-1")]
     attached = _shell(base, env, "t session open repo 1 --cli")
     assert attached.returncode == 0, attached.stderr
     assert _launches(base) == launches
@@ -373,7 +378,7 @@ def test_delayed_attachment_refuses_same_name_replacement(lifecycle, restart_ser
     removed = _tmux(base, env, "kill-server") if restart_server else _tmux(
         base, env, "kill-session", "-t", "=dev-repo-1:")
     assert removed.returncode == 0, removed.stderr
-    worktree = base / "worktrees" / "repo" / "1"
+    worktree = base / "worktrees" / "repo" / "repo-1"
     replacement = _tmux(base, env, "new-session", "-d", "-s", "dev-repo-1", "-c", str(worktree), "sleep 60")
     assert replacement.returncode == 0, replacement.stderr
     replacement_sid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
@@ -411,7 +416,7 @@ def _slot_identity(base, env):
 
 
 def _save_claude_thread(base, sid):
-    worktree = base / "worktrees" / "repo" / "1"
+    worktree = base / "worktrees" / "repo" / "repo-1"
     project = base / "home" / ".claude" / "projects" / "".join(
         character if character.isalnum() else "-" for character in str(worktree))
     project.mkdir(parents=True, exist_ok=True)
@@ -437,7 +442,7 @@ def test_prepared_mutation_refuses_replacement_live_owner(lifecycle, method, res
     replacement_sid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
     assert replacement_sid != original_sid
     _save_claude_thread(base, replacement_sid)
-    worktree = base / "worktrees" / "repo" / "1"
+    worktree = base / "worktrees" / "repo" / "repo-1"
     replacement = _tmux(base, env, "new-session", "-d", "-s", "dev-repo-1", "-c", str(worktree),
                         "exec " + shlex.join([str(base / "bin" / "claude"), "-r", replacement_sid]))
     assert replacement.returncode == 0, replacement.stderr

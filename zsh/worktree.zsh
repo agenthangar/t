@@ -4,10 +4,69 @@ _dev_worktree_enabled() {
   [[ -n $v ]] || v=${DEV_WORKTREE_DEFAULT:-1}
   [[ $v != 0 && $v != no && $v != off && $v != false ]]
 }
-# _dev_worktree_path <repo> <slot> — disk location of the slot's worktree.
-_dev_worktree_path()   { print -r -- "${DEV_WORKTREE_ROOT}/${DEV_REPOS[$1]:t}/$2" }
+# Folder labels are presentation; slot IDs and branch names stay numeric.
+_dev_worktree_slot() {
+  local base="$1" leaf="$2"
+  [[ $leaf == "$base-"* ]] && leaf=${leaf#"$base-"}
+  [[ $leaf == <-> ]] || return 1
+  print -r -- "$leaf"
+}
+_dev_worktree_paths() {
+  local base=${DEV_REPOS[$1]:t}
+  [[ -n $base && $2 == <-> ]] || return 1
+  print -rl -- "$DEV_WORKTREE_ROOT/$base/$2" "$DEV_WORKTREE_ROOT/$base/$base-$2"
+}
+# Reuse existing paths, including legacy numeric directories. Never move them.
+_dev_worktree_path() {
+  local -a candidates present
+  candidates=("${(@f)$(_dev_worktree_paths "$1" "$2")}")
+  (( $#candidates == 2 )) || return 1
+  local candidate
+  for candidate in "${candidates[@]}"; do
+    [[ -e $candidate || -L $candidate ]] && present+=("$candidate")
+  done
+  if (( $#present > 1 )); then
+    print -u2 -- "t: both worktree layouts exist for $1 $2; inspect ${candidates[1]} and ${candidates[2]} before continuing (no worktrees moved)"
+    return 1
+  fi
+  print -r -- "${present[1]:-${candidates[2]}}"
+}
 # _dev_worktree_branch <repo> <slot> — the slot's dedicated branch.
 _dev_worktree_branch() { print -r -- "dev/${DEV_REPOS[$1]:t}-$2" }
+
+# Read-only transfer negotiation. The wire cwd is immutable: hosts with different
+# roots must attach at the source or use history's verified fresh-workspace resume.
+_dev_worktree_accept_cwd() {
+  local cwd="$1" row repo slot resolved
+  row=$(_dev_repo_of_dir "$cwd") || {
+    print -u2 -- "t: destination cannot map $cwd; align registered repository/worktree roots, or attach on the source host"; return 1
+  }
+  repo=${row%%$'\t'*}; slot=${row#*$'\t'}
+  [[ -n $slot ]] || {
+    print -u2 -- 't: destination does not map this path to a worktree slot; align configured roots or attach on the source host'; return 1
+  }
+  local -a candidates; candidates=("${(@f)$(_dev_worktree_paths "$repo" "$slot")}")
+  [[ $cwd == $candidates[1] || $cwd == $candidates[2] ]] || {
+    print -u2 -- 't: transfer requires the worktree root, not a subdirectory'; return 1
+  }
+  resolved=$(_dev_worktree_path "$repo" "$slot") || return 1
+  [[ $resolved == "$cwd" || ( ! -e $resolved && ! -L $resolved ) ]] || {
+    print -u2 -- 't: destination slot uses another folder layout; use t session history or an unused slot'; return 1
+  }
+  _dev_worktree_enabled "$repo"
+}
+
+_dev_worktree_remote_accept() {
+  local target="$1" cwd="$2" snippet
+  # Require this capability even for numeric paths: an old receiver cannot
+  # detect that a named sibling on its disk owns the same internal slot.
+  snippet='(( ${+functions[_dev_worktree_accept_cwd]} )) && _dev_worktree_accept_cwd '
+  snippet+=${(q)cwd}
+  ssh "$target" "zsh -lic ${(q)snippet}" || {
+    print -u2 -- "t: $target could not accept the exact worktree path; update t on both hosts and verify their configured roots before retrying (source was not stopped)"
+    return 1
+  }
+}
 
 # A desktop-only Codex slot has no tmux owner. Keep its reservation in the
 # worktree's private Git metadata so commits cannot publish it and sweep cannot
@@ -58,18 +117,18 @@ _dev_repo_slots() {
     done
   done
   for p in ${DEV_WORKTREE_ROOT}/${base}/*(N/); do
-    n=${p:t}; [[ $n == <-> ]] && seen[$n]=1
+    n=$(_dev_worktree_slot "$base" "${p:t}") && seen[$n]=1
   done
   enc=${${:-${DEV_WORKTREE_ROOT}/${base}}//[^A-Za-z0-9]/-}
   for p in "$HOME/.claude/projects/${enc}-"*(N/); do
-    n=${${p:t}#${enc}-}; [[ $n == <-> ]] && seen[$n]=1
+    n=$(_dev_worktree_slot "${base//[^A-Za-z0-9]/-}" "${${p:t}#${enc}-}") && seen[$n]=1
   done
   # codex: its thread index knows which worktree paths have had a conversation
   # (a codex-only slot whose worktree was swept leaves no claude project dir)
   local row c
   for row in ${(f)"$(_codex_threads prefix "${DEV_WORKTREE_ROOT}/${base}/")"}; do
     c=${${row#*$'\t'}#*$'\t'}; c=${c%%$'\t'*}
-    n=${${c#${DEV_WORKTREE_ROOT}/${base}/}%%/*}; [[ $n == <-> ]] && seen[$n]=1
+    n=$(_dev_worktree_slot "$base" "${${c#${DEV_WORKTREE_ROOT}/${base}/}%%/*}") && seen[$n]=1
   done
   (( $#seen )) || return 1
   print -rl -- ${(no)${(k)seen}}
@@ -97,7 +156,17 @@ _dev_repo_slots() {
 _dev_worktree_create() {
   local repo="$1" slot="$2"
   local repodir="${DEV_REPOS[$repo]}"
-  local wt br; wt="$(_dev_worktree_path "$repo" "$slot")"; br="$(_dev_worktree_branch "$repo" "$slot")"
+  local wt br; wt="$(_dev_worktree_path "$repo" "$slot")" || return 1
+  # An exact resume/transfer may rebuild either supported layout, never rename it.
+  if [[ -n ${3:-} ]]; then
+    local -a candidates; candidates=("${(@f)$(_dev_worktree_paths "$repo" "$slot")}")
+    [[ $3 == $candidates[1] || $3 == $candidates[2] ]] || return 1
+    [[ $wt == "$3" || ( ! -e $wt && ! -L $wt ) ]] || {
+      print -u2 -- 't: this slot already uses another worktree path; use t session history to select the exact conversation'; return 1
+    }
+    wt=$3
+  fi
+  br="$(_dev_worktree_branch "$repo" "$slot")"
   if [[ -e "$wt/.git" ]]; then          # already materialized → reuse (idempotent)
     _dev_issue_preparing "$wt" && { print -u2 't: issue launch is reserved; rerun t issue start <issue> to recover it'; return 1; }
     if _dev_app_slot_reserved "$wt"; then
@@ -228,7 +297,7 @@ _dev_slot_fresh() {
   tmux has-session -t "=dev-${repo}-${n}:" 2>/dev/null && return 1
   _dev_worktree_enabled "$repo" || return 0
   local repodir="${DEV_REPOS[$repo]}" wt br ref
-  wt="$(_dev_worktree_path "$repo" "$n")"; br="$(_dev_worktree_branch "$repo" "$n")"
+  wt="$(_dev_worktree_path "$repo" "$n")" || return 1; br="$(_dev_worktree_branch "$repo" "$n")"
   [[ -e "$wt/.git" ]] && return 1
   for ref in "refs/heads/$br" "refs/remotes/origin/$br"; do
     git -C "$repodir" show-ref --verify --quiet "$ref" || continue
@@ -406,7 +475,7 @@ _dev_beam_land_cwd() {
   fi
   local n=1 nbr nwt
   while (( n <= 99 )); do
-    nbr=$(_dev_worktree_branch "$repo" "$n"); nwt=$(_dev_worktree_path "$repo" "$n")
+    nbr=$(_dev_worktree_branch "$repo" "$n"); nwt=$(_dev_worktree_path "$repo" "$n") || return 1
     if ! _dev_local_slot_live "$repo" "$n" && [[ ! -e $nwt/.git ]] \
        && ! git -C "$repodir" show-ref --verify --quiet "refs/heads/$nbr" \
        && ! git -C "$repodir" show-ref --verify --quiet "refs/remotes/origin/$nbr"; then

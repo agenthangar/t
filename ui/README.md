@@ -64,12 +64,17 @@ dev sessions   ● attached/loaded · ✓ active context · ↻ still in progres
 
 Enter open · Esc · Space/Tab mark ✓ · Ctrl-/ details
 Ctrl-A show all · Ctrl-F defaults · 2 hidden
-Ctrl-T attached: hidden
+Alt-N new · Ctrl-T attached: hidden
 ▸ api  2  ⬡ codex  › cli  ○  codex  Fix login
 ```
 
 The rows above illustrate hierarchy and controls, not a fixed column schema.
 List commands print normally; picker headers and marks appear only for selection.
+
+The open picker adds Alt-N to start its existing `--new` flow with the original
+repository and opening flags. It discards marks and works with no matching rows.
+Ctrl-N remains navigation. The shared filtered open profile returns 3 for this
+explicit action; cancellation continues to return 130 without starting work.
 
 ## Shared implementations
 
@@ -90,6 +95,86 @@ ordinary menus. Editable lists use `row` and `frame` with `(line, item_key)`
 pairs, with `None` for headings. `page` renders the review. Render notices
 with `done` and editable prompts with `cooked_input`.
 
+## Session information and history
+
+Desktop handoff refusals identify a verified conflicting conversation and give
+release instructions with the exact retry command before stopping the selected
+CLI. Keep missing-preview notices distinct from ownership failures. Retrying
+after the conflicting owner releases must preserve the selected conversation,
+recorded worktree and history, and unrelated writers.
+
+`session resume --app` retains the saved-conversation picker and accepts exactly
+one Codex row. Selection carries the immutable ID and recorded worktree through
+the existing guarded desktop handoff; live slots never substitute their current
+conversation. Remote owners, incompatible flags, unsupported agents, and multiple
+marks fail before launching. `--cli` explicitly selects the ordinary resume route.
+
+New worktree folders include the repository basename (`t/t-12`); numeric slot
+arguments, tmux identity, JSON slot fields and history associations are unchanged.
+Existing `t/12` folders and recorded conversation paths remain valid. Both
+layouts appear in list and navigation results. Ambiguous simultaneous layouts
+must fail with an inspection/history hint before a slot mutation. Transfers
+negotiate layout support before stopping the source; see the compatibility rules
+in the main README. These are path changes within existing command modes.
+
+The inventory's `display_schemas` are machine-readable definitions for the
+information shared by `t session list` (`t ls`) and `t session history`
+(`t history`). Each command binds its `display_schema`; history extends
+`session_information` with recorded PR evidence and historical details. CLI lint
+checks these definitions and their safety policies. Behavior tests check actual
+renderer projections, table output, details, and JSON against the definitions.
+
+| Column | Meaning |
+| --- | --- |
+| STATUS | Reported ownership status, active-context evidence, and the still-in-progress mark. A retained conversation can be saved, archived, or missing without a live owner. |
+| UI | The recorded or reported CLI, desktop, or foreground interface. Interface and agent are independent facts. |
+| MODEL | The agent glyph and exact recorded or current-owner model. `-` means the model is unknown. |
+| HOST | The reported owner or retained association host. Local `t ls` can omit this column; history includes it. |
+| SESSION | The repository/slot or foreground-session label. It is distinct from the immutable conversation ID. |
+| WORKING ON | The current owner's working-on text, recorded summary, or retained conversation title. History includes up to three associated PR references and states, with an additional count when needed. |
+
+Printed history appends DATE, BRANCH, PRS, and the full conversation ID after these
+shared columns, retaining
+historical details when no preview is available. Wide tables align these columns. When the actual columns do not fit, printed
+lists switch to labeled, wrapped cells and preserve complete values. Redirected
+output remains untruncated. History picker rows stay on one physical line;
+compact layouts put status and meaningful working-on text first. Date, branch,
+and technical identity must not displace that text. Verify the 80×24, 44×20, and
+32×12 layouts and count Unicode display columns rather than string length.
+
+Unrecorded historical interface and active-context facts remain unknown. Never
+infer a CLI interface or a model from `codex`/`claude`, and never turn a saved
+conversation into an attached or active one from its branch, current worktree,
+or PR state. Only an exact current owner supplies current ownership facts.
+Recorded model and summary provenance remain available in the full details.
+Presentation enrichment does not change conversation ownership or resume checks.
+
+The preview includes the complete working-on text, status/context, UI, agent and
+model, host/session, date, repository and full conversation ID, every workspace
+association and branch/commit/evidence, all associated PRs and their states,
+incidental mentions labeled separately, and transcript availability. Show it by
+default at 70 or more columns and 22 or more rows, in a bottom preview occupying
+35% of the full-height picker; Ctrl-/ toggles it at every size. Use the shared
+paginated single picker: Enter selects one exact conversation, Esc/Ctrl-C cancels,
+Ctrl-F/Ctrl-B changes pages, and Ctrl-R explicitly refreshes metadata. Search runs
+against all retained records before slicing a page. A single search result still
+waits for Enter, and returned query/page/snapshot identity must be validated before
+resuming. Browsing uses cached provider metadata; refresh is explicit.
+
+History JSON retains its version 1 envelope (`version`, `repo`, `slot`, `page`,
+`limit`, `total`, and `conversations`) and existing conversation fields, including
+full `sid`, associations, transcript sources, PR evidence, mentions, and owners.
+Recorded `model`/`summary`/`interface`, their provenance, and the derived `display`
+projection are additive metadata. They must not replace raw identity or evidence.
+JSON and non-TTY listings never select or resume; JSON has no ANSI styling,
+presentation headers, or prompts.
+
+Fresh local opens may continue after incomplete remote discovery when the local
+slot is unused. Known remote owners still block or route to that host. Existing
+workspaces and saved-conversation handoffs keep strict ownership checks. All Codex
+CLI starts and resumes use an invocation-local backend (`--no-daemon`).
+These are direct-action behaviors within the existing open/resume modes.
+
 ## Changes since the visual baseline
 
 Review these behavior changes when applying the v0.4.2 standard. Later changes
@@ -100,12 +185,14 @@ should be added here with their disposition before becoming a precedent.
 | Batch `open`, `kill`, and issue starts ([#68](https://github.com/agenthangar/t/pull/68), [#93](https://github.com/agenthangar/t/pull/93)) | Retain multi-selection and one-live-owner checks. |
 | Richer rows, interface/model columns, and detail previews ([#85](https://github.com/agenthangar/t/pull/85)) | Retain within the baseline spacing and focus design. |
 | Reversible filters and dedicated keys ([#94](https://github.com/agenthangar/t/pull/94), [#102](https://github.com/agenthangar/t/pull/102)) | Adopt the filter controls above. |
+| Login terminal I/O and expiry ([#119](https://github.com/agenthangar/t/issues/119)) | Preserve one vendor terminal and restore it on exit; local sign-in links have a short plain-URL fallback. Status shows cached deadlines when available and keeps authenticated state distinct from expiry availability. |
 | Login selection and first-Enter execution ([#83](https://github.com/agenthangar/t/pull/83), [#105](https://github.com/agenthangar/t/pull/105)) | Adopt first-Enter execution; reuse the merged implementation. |
 | Reviewed Enter-to-run install ([#98](https://github.com/agenthangar/t/pull/98)) | Retain review followed by Enter to run. |
 | Read-only issue table ([#108](https://github.com/agenthangar/t/pull/108)) | Apply the list contract. |
+| Open GitHub issues in the browser ([#118](https://github.com/agenthangar/t/issues/118)) | Explicit IDs or URLs act directly; omitted IDs use the shared filtered multi picker. |
 | Noun/verb help, added command groups, and speed submenu ([#101](https://github.com/agenthangar/t/pull/101)) | Retain and classify each mode in the inventory. |
 | Paginated history selection ([#113](https://github.com/agenthangar/t/pull/113)) | Treat as single selection with Ctrl-F next, Ctrl-B previous, and Ctrl-R refresh; do not apply the filtered picker's Ctrl-F defaults binding. |
-| Conversation context sharing ([#112](https://github.com/agenthangar/t/pull/112)) | Keep the reviewed bare `t share` send/retry exception. `targets` and `inbox` are read-only lists; `read` is detail or raw attachment output; JSON is machine output and never prompts. Sending acts on an exact conversation without a picker. |
+| Conversation context sharing ([#112](https://github.com/agenthangar/t/pull/112), [#122](https://github.com/agenthangar/t/issues/122)) | Bare `t share` in a terminal is a source, recipient, context, and launch review wizard; after review it enters the new session. A known source and agent-only `--to` can launch without a terminal and leave the new session detached; `--json` returns the result without prompting or entering. An exact destination with `--file` still sends directly. `targets` and `inbox` are read-only lists; `read` is detail or raw attachment output. Cancellation leaves sessions and inboxes untouched. |
 
 ## Verification
 

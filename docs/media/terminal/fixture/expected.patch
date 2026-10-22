@@ -1,0 +1,39 @@
+diff --git a/tasks.py b/tasks.py
+index d6139ba..f9ac0b2 100644
+--- a/tasks.py
++++ b/tasks.py
+@@ -4,8 +4,9 @@ import json
+ 
+ 
+ def list_tasks(tasks, status="all"):
+-    # Filtering is not wired up yet.
+-    return tasks
++    if status == "all":
++        return tasks
++    return [task for task in tasks if task["status"] == status]
+ 
+ 
+ def main():
+diff --git a/test_tasks.py b/test_tasks.py
+index a692435..b5cc97d 100644
+--- a/test_tasks.py
++++ b/test_tasks.py
+@@ -21,6 +21,18 @@ class TaskFilterTests(unittest.TestCase):
+         self.assertEqual([t["title"] for t in list_tasks(self.tasks, "done")],
+                          ["Write the docs"])
+ 
++    def test_empty_tasks(self):
++        for status in ("all", "open", "done"):
++            with self.subTest(status=status):
++                self.assertEqual(list_tasks([], status), [])
++
++    def test_filter_preserves_input(self):
++        original = [task.copy() for task in self.tasks]
++        for status in ("open", "done"):
++            with self.subTest(status=status):
++                list_tasks(self.tasks, status)
++                self.assertEqual(self.tasks, original)
++
+ 
+ if __name__ == "__main__":
+     unittest.main()

@@ -73,13 +73,18 @@ def test_deterministic_order_for_identical_dates_and_at_most_three_pr_summaries(
     assert [r['sid'] for r in history.page_rows(list(reversed(data)))[0]] == ['session-0', 'session-1', 'session-2']
     data[0]['prs'] = [dict(number=i, state='OPEN', url=f'https://github.com/org/repo/pull/{i}') for i in range(1, 7)]
     rendered = history.format_row(data[0])
-    assert all(f'#{i}[OPEN]' in rendered for i in range(1, 4))
-    assert all(f'#{i}[OPEN]' not in rendered for i in range(4, 7))
+    assert all(f'#{i}O' in rendered for i in range(1, 4))
+    assert all(f'#{i}O' not in rendered for i in range(4, 7))
+    assert '+3' in rendered
+    assert all(f'#{i}[OPEN]' in history.details(data[0]) for i in range(1, 4))
+    assert all(pr['url'] in history.details(data[0]) for pr in data[0]['prs'])
     data[0]['title'] = ''
-    data[0]['owners'] = [{'host': 'remote', 'slot': 'repo-4'}]
+    data[0]['owners'] = [{'host': 'remote', 'slot': 'repo-4', 'state': 'detached', 'context': ''}]
     assert 'Untitled conversation' in history.format_row(data[0])
-    assert 'remote:repo-4' in history.format_row(data[0])
-    assert 'inactive' in history.format_row(data[2])
+    assert 'Host: remote' in history.details(data[0])
+    assert 'Session: repo-4' in history.details(data[0])
+    assert '·' in history.format_row(data[2])
+    assert 'Status: Saved' in history.details(data[2])
 
 
 def test_picker_indices_remain_global_after_search_and_page_sorting(history):
@@ -115,7 +120,9 @@ def test_picker_actions_page_clamp_search_reset_and_preview(history, tmp_path, c
     capsys.readouterr()
     assert json.loads(state.read_text())['page'] == 1
     history.picker([str(snapshot), str(state), 'details', '119'])
-    assert 'codex session-119' in capsys.readouterr().out
+    preview = capsys.readouterr().out
+    assert 'ID: session-119' in preview and '(codex)' in preview
+    assert 'Working on: Conversation 119' in preview
 
 
 @pytest.mark.parametrize('code,stdout,expected', [(130, '', None), (1, '', None),

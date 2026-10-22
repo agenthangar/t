@@ -60,7 +60,8 @@ def until(check, timeout=5, detail=lambda: ""):
 
 @pytest.mark.parametrize("compatible", [True, False])
 @pytest.mark.parametrize("foreground", [False, True])
-def test_public_open_new_reaches_ready_with_existing_server(terminal, compatible, foreground):
+@pytest.mark.parametrize("resume", [False, True])
+def test_public_open_new_reaches_ready_with_existing_server(terminal, compatible, foreground, resume):
     """Real public shell + tmux launch; a synthetic Codex models the flag check.
 
     #78 tests recovery after choosing a menu item. This contract requires a fresh
@@ -137,6 +138,12 @@ tmux() {{ [[ $1 == attach-session ]] && return 0; command tmux "$@"; }}
                               env=dict(env, T_TEST_SERVER="1"))
     try:
         launch = "t open demo --new" + (" --fg" if foreground else "")
+        if resume:
+            if foreground:
+                # Transfer protocol carries the immutable ID and the destination.
+                launch = f'TB_SID={SID} TB_CWD={shlex.quote(str(work))} TB_AGENT=codex TB_MODE=fg _tbeam_land'
+            else:
+                launch = f'_dev_resume_session dev-demo-1 {shlex.quote(str(work))} {SID} codex'
         result = subprocess.run(["zsh", "-lic", launch], env=env,
                                 cwd=work, capture_output=True, text=True, timeout=20)
         assert result.returncode == 0, result.stdout + result.stderr
@@ -147,8 +154,12 @@ tmux() {{ [[ $1 == attach-session ]] && return 0; command tmux "$@"; }}
         if foreground:
             assert tmux("has-session", "-t", "=dev-demo-1:").returncode == 1
         assert client["cwd"] == str(work)
-        model_index = client["argv"].index("--model")
-        assert client["argv"][model_index + 1] == "chosen"
+        if resume:
+            assert client["argv"][:2] == ["resume", SID]
+            assert "--model" not in client["argv"]
+        else:
+            model_index = client["argv"].index("--model")
+            assert client["argv"][model_index + 1] == "chosen"
         assert server.poll() is None
         assert tmux("display-message", "-p", "-t", "=dev-peer-1:", "#{pane_pid}").stdout == peer
         assert tmux("display-message", "-p", "-t", "=dev-peer-1:", "#{pane_dead}").stdout.strip() == "0"
@@ -175,6 +186,7 @@ def test_real_dead_pane_menu_resumes_exact_thread(terminal, choice):
     (home / "dirty.txt").write_text("uncommitted edits")
     (home / ".zshrc").write_text(f'''
 export PATH={shlex.quote(str(bins))}:$PATH
+source {shlex.quote(str(REPO_ROOT / 'zsh/agent.zsh'))}
 source {shlex.quote(str(REPO_ROOT / 'zsh/resume.zsh'))}
 _dev_agent_of_session() {{ print codex; }}
 _dev_session_sid() {{ print {SID}; }}
@@ -183,7 +195,6 @@ _dev_session_claude_pid() {{
   tmux display-message -p -t '=dev-api-1:' '#{{pane_pid}}'
 }}
 _dev_app_slot_reserved() {{ return 1; }}
-_dev_agent_resume_cmd() {{ print -r -- "codex resume $2"; }}
 codex() {{ print -r -- "$PWD|$*" > "$HOME/resumed"; sleep 60; }}
 ''')
     launch = "printf 'Working...\\nunsent draft\\n'; while [[ ! -e $HOME/exit-now ]]; do sleep 0.03; done; exit 143"
@@ -589,6 +600,7 @@ time.sleep(60)
     executable.chmod(0o755)
     (home / '.zshrc').write_text(f'''
 export PATH={shlex.quote(str(bins))}:$PATH
+source {shlex.quote(str(REPO_ROOT / 'zsh/agent.zsh'))}
 source {shlex.quote(str(REPO_ROOT / 'zsh/resume.zsh'))}
 _dev_agent_of_session() {{ print codex; }}
 _dev_session_sid() {{ :; }}
@@ -643,12 +655,12 @@ time.sleep(60)
     codex.chmod(0o755)
     (home / '.zshrc').write_text(f'''
 export PATH={shlex.quote(str(bins))}:$PATH
+source {shlex.quote(str(REPO_ROOT / 'zsh/agent.zsh'))}
 source {shlex.quote(str(REPO_ROOT / 'zsh/resume.zsh'))}
 _dev_agent_of_session() {{ print codex; }}
 _dev_session_sid() {{ print {SID}; }}
 _dev_session_claude_pid() {{ cat "$HOME/agent-pid"; }}
 _dev_app_slot_reserved() {{ return 1; }}
-_dev_agent_resume_cmd() {{ print -r -- "codex resume $2"; }}
 ''')
     daemon = subprocess.Popen(['sleep', '60'], env=env, cwd=home, start_new_session=True)
     try:

@@ -46,7 +46,7 @@ import tempfile
 import textwrap
 import time
 import unicodedata
-from contextlib import closing, contextmanager, redirect_stdout
+from contextlib import closing, contextmanager, nullcontext, redirect_stdout
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import TCPServer
 from urllib.parse import quote, urlencode, urlsplit
@@ -194,6 +194,9 @@ class Config:
             parts = cwd[len(root) + 1:].split("/")
             if len(parts) >= 2:
                 base, slot = parts[0], parts[1]
+                slot = slot.removeprefix(base + "-")
+                if not re.fullmatch(r"[0-9]+", slot):
+                    return (None, None)
         if base is None:
             best = ""
             for path in self.repos.values():
@@ -209,6 +212,20 @@ class Config:
         if base in matches:
             return (base, slot)
         return (min(matches, key=len), slot)
+
+    def worktree_paths(self, alias, slot):
+        base = os.path.basename(self.repos[alias])
+        if not re.fullmatch(r"[0-9]+", str(slot)):
+            raise ValueError("worktree slot must be numeric")
+        root = os.path.join(self.worktree_root, base)
+        return (os.path.join(root, str(slot)), os.path.join(root, f"{base}-{slot}"))
+
+    def worktree_path(self, alias, slot):
+        paths = self.worktree_paths(alias, slot)
+        present = [path for path in paths if os.path.lexists(path)]
+        if len(present) > 1:
+            raise ValueError(f"both worktree layouts exist for {alias} {slot}; inspect {paths[0]} and {paths[1]} before continuing")
+        return present[0] if present else paths[1]
 
     def repo_dir_for_cwd(self, cwd):
         """Canonical DEV_REPOS dir for cwd (or for the worktree containing it), else ''.
@@ -287,25 +304,23 @@ def _columns():
     return shutil.get_terminal_size((80, 24)).columns
 
 
+_SESSION_DISPLAY = None
+
+
+def _session_display_helpers():
+    global _SESSION_DISPLAY
+    if _SESSION_DISPLAY is None:
+        _SESSION_DISPLAY = runpy.run_path(os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))),
+                                                      "libexec", "t_session_details.py"))
+    return _SESSION_DISPLAY
+
+
 def _display_width(text):
-    return sum(0 if unicodedata.category(char) in ("Mn", "Me", "Cf") else
-               2 if unicodedata.east_asian_width(char) in ("W", "F") else 1
-               for char in text)
+    return _session_display_helpers()["display_width"](text)
 
 
 def _wrap_columns(text, width, continuation=""):
-    """Wrap plain cells by terminal columns, including wide/combining glyphs."""
-    lines, line, used = [], "", 0
-    for char in text:
-        size = _display_width(char)
-        if used + size > width and line:
-            lines.append(line.rstrip())
-            line, used = continuation, _display_width(continuation)
-        line += char
-        used += size
-    if line:
-        lines.append(line.rstrip())
-    return lines
+    return _session_display_helpers()["wrap_columns"](text, width, continuation)
 
 
 def _table_lines(headings, rows, width=None):
@@ -578,18 +593,8 @@ def _session_picker_rows(rows, remote=False, scoped=False):
 
 def _session_table_lines(rows, remote=False):
     headings = ["STATUS", "UI", "MODEL"] + (["HOST"] if remote else []) + ["SESSION", "WORKING ON"]
-    cells = []
-    for row in rows:
-        active = row.get("context") == "active"
-        attached = row.get("state") == "attached" or (row.get("state") == "app" and active)
-        marks = ("●" if attached else "○") + (" ✓" if active else "")
-        if _PR_WIP_RE.search(row.get("summary") or ""):
-            marks += " ↻"
-        cell = [marks, "▣ desktop" if row.get("state") == "app" else "› cli",
-                f"{_agent_glyph(row.get('agent', 'claude'))} {row.get('model') or '-'}"]
-        if remote:
-            cell.append(row.get("host", "local"))
-        cells.append([*cell, row["slot"], row.get("summary") or ""])
+    cells = [_session_display_helpers()["session_cells"](row, _agent_glyph(row.get("agent", "claude")), remote)
+             for row in rows]
     return _table_lines(headings, cells)
 
 
@@ -4179,23 +4184,44 @@ def _login_timestamp(value, divisor=1):
         return None
     try:
         result = value / divisor
-        return result if math.isfinite(result) and result > 0 else None
+        return result if math.isfinite(result) and 0 < result <= 253402300799 else None
     except OverflowError:
         return None
 
 
+def _login_keychain(service):
+    """Read one vendor-owned item in memory; never log security's output."""
+    result = subprocess.run(["/usr/bin/security", "find-generic-password", "-s", service, "-w"],
+                            capture_output=True, timeout=5)
+    if result.returncode == 44:  # errSecItemNotFound: vendor can use its file fallback.
+        return None
+    if result.returncode:
+        raise OSError("credential store unavailable")
+    return json.loads(result.stdout)
+
+
 def _login_cached_expiry(agent, home, env):
-    """Best-effort file metadata only; keychains and opaque tokens stay unknown."""
+    """Best-effort metadata from the vendor's credential source, never a login TTL."""
     try:
         if agent == "claude":
-            # macOS normally uses Keychain; a leftover file may be stale.
-            if sys.platform == "darwin" or any(env.get(k) for k in (
+            if any(env.get(k) for k in (
                     "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN",
                     "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY")):
                 return None
-            root = env.get("CLAUDE_CONFIG_DIR") or os.path.join(home, ".claude")
-            with open(os.path.join(root, ".credentials.json"), encoding="utf-8") as file:
-                data = json.load(file)
+            root = env.get("CLAUDE_SECURESTORAGE_CONFIG_DIR", env.get("CLAUDE_CONFIG_DIR")) or os.path.join(home, ".claude")
+            if sys.platform == "darwin":
+                # Custom OAuth endpoints use a different service namespace.
+                if env.get("CLAUDE_CODE_CUSTOM_OAUTH_URL") or env.get("CLAUDE_LOCAL_OAUTH"):
+                    return None
+                service = "Claude Code-credentials"
+                if env.get("CLAUDE_SECURESTORAGE_CONFIG_DIR", env.get("CLAUDE_CONFIG_DIR")):
+                    service += "-" + hashlib.sha256(unicodedata.normalize("NFC", root).encode()).hexdigest()[:8]
+                data = _login_keychain(service)
+            else:
+                data = None
+            if data is None:
+                with open(os.path.join(root, ".credentials.json"), encoding="utf-8") as file:
+                    data = json.load(file)
             return _login_timestamp(data["claudeAiOauth"]["expiresAt"], 1000)
         if agent != "codex" or env.get("OPENAI_API_KEY") or env.get("CODEX_API_KEY"):
             return None
@@ -4218,7 +4244,7 @@ def _login_cached_expiry(agent, home, env):
             return None
         payload = json.loads(base64.urlsafe_b64decode(pieces[1] + "=" * (-len(pieces[1]) % 4)))
         return _login_timestamp(payload.get("exp"))
-    except (OSError, ValueError, TypeError, KeyError, AttributeError, ImportError):
+    except (OSError, ValueError, TypeError, KeyError, AttributeError, ImportError, subprocess.TimeoutExpired):
         return None
 
 
@@ -4276,10 +4302,13 @@ def _login_decision(probe, now, within_hours, force=False):
     if state == "logged-out":
         return True, "logged out"
     if expiry is None:
-        return False, "logged in; expiry unknown (use --force to sign in again)"
+        return False, "logged in; expiry unavailable from credential store; no login needed"
+    deadline = time.strftime("%Y-%m-%d %H:%M %Z", time.localtime(expiry))
     if expiry <= now + within_hours * 3600:
-        return True, "cached access token expired or expires within %g hours; automatic refresh may still work" % within_hours
-    return False, "logged in; cached access token expires beyond %g hours" % within_hours
+        verb = "expired" if expiry <= now else "expires"
+        window = "" if expiry <= now else " (within %g hours)" % within_hours
+        return True, f"logged in; cached access token {verb} {deadline}{window}; automatic refresh may still work"
+    return False, "logged in; cached access token expires " + deadline
 
 
 def _login_hours(value):
@@ -4329,8 +4358,9 @@ class _LoginLinks:
     Keep only a bounded, unfinished line in memory. Never save vendor output.
     The original URL remains copyable in terminals without hyperlink support.
     """
-    def __init__(self):
+    def __init__(self, shorten=None):
         self.pending = b""
+        self.shorten = shorten
 
     def feed(self, data):
         output = []
@@ -4356,43 +4386,131 @@ class _LoginLinks:
                     continue
             except ValueError:
                 continue
-            links.append(b"  \x1b]8;;" + url.encode("utf-8") +
-                         b"\x1b\\Open sign-in page\x1b]8;;\x1b\\\n")
+            target = self.shorten(url) if self.shorten else url
+            label = target if self.shorten else "Open sign-in page (Cmd-click)"
+            if self.shorten:
+                links.append(b"  Open sign-in page (Cmd-double-click in Terminal):\r\n")
+            links.append(b"  \x1b]8;;" + target.encode("utf-8") +
+                         b"\x1b\\\x1b[4;36m" + label.encode("utf-8") + b"\x1b[0m\x1b]8;;\x1b\\\r\n")
         return (b"\n" if links and not line.endswith(b"\n") else b"") + b"".join(links)
 
 
-def _login_run(cmd):
-    """Relay terminal output through a PTY to add links without breaking input.
+class _LoginBrowserLinks:
+    """Short, terminal-detectable URLs; targets live only for this login process."""
+    def __init__(self):
+        self.targets = {}
+        targets = self.targets
 
-    Stdin and the controlling terminal stay inherited: vendor prompts, browser
-    callbacks and signals retain their normal behavior. Redirected output stays
-    untouched. Only stdout/stderr pass through the output PTY.
-    """
+        class Server(HTTPServer):
+            def server_bind(self):
+                # HTTPServer normally reverse-resolves its address. A local
+                # sign-in shortcut must never wait on DNS before relaying I/O.
+                TCPServer.server_bind(self)
+                self.server_name = "localhost"
+                self.server_port = self.server_address[1]
+
+        class Handler(BaseHTTPRequestHandler):
+            def setup(self):
+                super().setup()
+                self.connection.settimeout(2)
+
+            def do_GET(self):
+                target = targets.get(self.path)
+                if not target or self.headers.get("Host") != "127.0.0.1:%d" % self.server.server_port:
+                    self.send_error(404)
+                    return
+                self.send_response(302)
+                self.send_header("Location", target)
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Referrer-Policy", "no-referrer")
+                self.end_headers()
+
+            def log_message(self, *_):
+                pass  # Sign-in URLs must never enter logs.
+
+        import threading
+        self.server = Server(("127.0.0.1", 0), Handler)
+        self.thread = threading.Thread(target=self.server.serve_forever,
+                                       kwargs={"poll_interval": .05}, daemon=True)
+        self.thread.start()
+
+    def shorten(self, url):
+        path = "/" + secrets.token_urlsafe(18)
+        self.targets[path] = quote(url, safe=":/?#[]@!$&'()*+,;=%-._~")
+        return "http://127.0.0.1:%d%s" % (self.server.server_port, path)
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join()
+        self.targets.clear()
+
+
+def _login_run(cmd, headless=False):
+    """Give the vendor one controlling terminal for input, output and echo."""
     if not (sys.stdin.isatty() and sys.stdout.isatty()):
         return subprocess.run(cmd)
     import errno
     import termios
+    import tty
     master, slave = os.openpty()
     child = None
+    browser = None
+    input_fd = sys.stdin.fileno()
+    saved = termios.tcgetattr(input_fd)
     previous = signal.getsignal(signal.SIGWINCH)
-    links = _LoginLinks()
+    previous_term = signal.getsignal(signal.SIGTERM)
+
+    def terminate(signum, _):
+        raise SystemExit(128 + signum)
+
+    def child_terminal():
+        os.setsid()
+        fcntl.ioctl(0, termios.TIOCSCTTY, 0)
 
     def resize(*_):
         size = fcntl.ioctl(sys.stdout.fileno(), termios.TIOCGWINSZ, b"\0" * 8)
         fcntl.ioctl(master, termios.TIOCSWINSZ, size)
 
     try:
-        # The outer terminal applies output processing; do not apply it twice.
-        attrs = termios.tcgetattr(slave)
-        attrs[1] &= ~termios.OPOST
-        termios.tcsetattr(slave, termios.TCSANOW, attrs)
         resize()
         signal.signal(signal.SIGWINCH, resize)
+        signal.signal(signal.SIGTERM, terminate)
         sys.stdout.flush()
-        child = subprocess.Popen(cmd, stdout=slave, stderr=slave)
+        # Raw outer input is forwarded unchanged; the child's PTY owns echo,
+        # line editing, /dev/tty and signals. Never split vendor stdin/stdout.
+        tty.setraw(input_fd)
+        child = subprocess.Popen(cmd, stdin=slave, stdout=slave, stderr=slave,
+                                 preexec_fn=child_terminal)
         os.close(slave)
         slave = None
+        if not _install_headless(os.environ, headless):
+            try:
+                browser = _LoginBrowserLinks()
+            except OSError:
+                pass  # OSC 8 and the original URL remain available.
+        links = _LoginLinks(browser.shorten if browser else None)
+        notified = False
         while True:
+            ready, _, _ = select.select([master, input_fd], [], [])
+            if input_fd in ready:
+                data = os.read(input_fd, 4096)
+                if not data:
+                    break
+                # A canonical password prompt can deliberately suppress echo.
+                # Acknowledge input without exposing the pasted code itself.
+                flags = termios.tcgetattr(master)[3]
+                if flags & termios.ICANON and not flags & termios.ECHO and not notified and data.strip():
+                    sys.stdout.buffer.write(b"\r\n  Input received; press Enter to submit.\r\n")
+                    sys.stdout.buffer.flush()
+                    notified = True
+                if b"\r" in data or b"\n" in data:
+                    notified = False
+                view = memoryview(data)
+                while view:
+                    view = view[os.write(master, view):]
+            if master not in ready:
+                continue
             try:
                 data = os.read(master, 4096)
             except OSError as exc:
@@ -4407,17 +4525,29 @@ def _login_run(cmd):
         sys.stdout.buffer.flush()
         return subprocess.CompletedProcess(cmd, child.wait())
     finally:
+        try:
+            termios.tcsetattr(input_fd, termios.TCSADRAIN, saved)
+        except termios.error:
+            pass  # A closed outer terminal must not prevent child cleanup.
         signal.signal(signal.SIGWINCH, previous)
-        os.close(master)
-        if slave is not None:
-            os.close(slave)
-        if child is not None and child.poll() is None:
-            child.terminate()
-            try:
-                child.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                child.kill()
-                child.wait()
+        signal.signal(signal.SIGTERM, previous_term)
+        if browser:
+            browser.close()
+        try:
+            if child is not None and child.poll() is None:
+                try:
+                    os.killpg(child.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+                try:
+                    child.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    child.kill()
+                    child.wait()
+        finally:
+            os.close(master)
+            if slave is not None:
+                os.close(slave)
 
 
 def cmd_login(cfg, args):
@@ -4469,23 +4599,26 @@ def cmd_login(cfg, args):
     for step in plan():
         agent, cmd = step["agent"], step["cmd"]
         try:
-            result = _login_run(cmd)
+            result = _login_run(cmd, headless=headless)
         except KeyboardInterrupt:
             return 130
         except OSError:
             print(f"{agent}: could not start login", file=sys.stderr)
             failed = True
             continue
+        if result.returncode in (-signal.SIGINT, 130):
+            return 130
         if result.returncode != 0:
             print(f"{agent}: login failed (exit {result.returncode})", file=sys.stderr)
             failed = True
             continue
         # A successful child exit alone is not evidence of an authenticated account.
-        if _login_probe(agent)["state"] != "logged-in":
+        refreshed = _login_probe(agent)
+        if refreshed["state"] != "logged-in":
             print(f"{agent}: login exited successfully, but status is not logged in", file=sys.stderr)
             failed = True
         else:
-            print(f"{agent}: login completed; status reports logged in")
+            print(f"{agent}: login completed; " + _login_decision(refreshed, time.time(), args.within_hours)[1])
     return int(failed)
 
 
@@ -4933,7 +5066,11 @@ def _command_readonly(argv, *, terminal=None):
                 continue
             else:
                 return word in ("targets", "inbox", "read")
-        return not tail or all(word == "--json" for word in tail)
+        if not tail:
+            if terminal is None:
+                terminal = sys.stdin.isatty() and sys.stdout.isatty()
+            return not terminal
+        return all(word == "--json" for word in tail)
     if verb == "history":
         if terminal is None:
             terminal = sys.stdin.isatty() and sys.stdout.isatty()
@@ -7285,6 +7422,9 @@ def _app_cli_release(row, contract=None, *, unknown=None):
         helper = runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_app_handoff.py"))
         options = {key: row[key] for key in ("codex_home", "rollout")}
         options["unknown"] = unknown if unknown is not None else set()
+        repo, _, slot = row["slot"].rpartition("-")
+        options["retry"] = row.get("resume_retry") or "Retry: " + shlex.join(["t", "open", repo, slot, "--app"])
+        options["run"] = _run
         if contract is None:
             return helper["preflight_cli_release"](row["sid"], row["cwd"], **options)
         # An already transferred slot can be reopened without waiting for the
@@ -7300,10 +7440,8 @@ def _app_cli_release(row, contract=None, *, unknown=None):
             # a direct transfer of the selected thread.
             helper["preflight_cli_release"](row["sid"], row["cwd"], **options)
             return
-        repo, _, slot = row["slot"].rpartition("-")
-        retry = "Retry: " + shlex.join(["t", "open", repo, slot, "--app"])
         helper["wait_cli_released"](
-            row["sid"], row["cwd"], **options, contract=contract, retry=retry,
+            row["sid"], row["cwd"], **options, contract=contract,
             on_wait=lambda: print("Waiting for Codex to release this conversation "
                                   "(up to 75 seconds)…", flush=True))
     except OSError as exc:
@@ -7343,6 +7481,33 @@ def _app_handoff_lock(row):
         finally:
             _APP_HANDOFF_HELD.remove(path)
             fcntl.lockf(fh, fcntl.LOCK_UN)
+
+
+@contextmanager
+def _app_resume_lock(row):
+    """Share the SID lock with shell resumes, after taking the worktree lock."""
+    root = os.path.join(_cache_root(), "launch-sids")
+    key = hashlib.sha256(row["sid"].encode()).hexdigest()
+    try:
+        os.makedirs(root, mode=0o700, exist_ok=True)
+        with open(os.path.join(root, key + ".lock"), "a") as handle:
+            fcntl.lockf(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            try:
+                yield
+            finally:
+                fcntl.lockf(handle, fcntl.LOCK_UN)
+    except OSError as exc:
+        raise ValueError(f"could not lock the saved conversation for desktop resume: {exc}") from exc
+
+
+def _app_resume_check(row, repo, slot):
+    result = _run(["zsh", "-lic", ZSH_PRELUDE + shlex.join([
+        "_t_resume_app_check", repo, slot, row["sid"], row["cwd"]])], timeout=60)
+    fields = result.stdout.strip().split("\t")
+    if (result.returncode or len(fields) != 2 or fields[0] not in ("cli", "saved")
+            or not re.fullmatch(r"[A-Za-z0-9_.-]+-[0-9]+", fields[-1])):
+        raise ValueError(result.stderr.strip() or "saved conversation ownership could not be verified")
+    return fields
 
 
 def _app_assert_released(row, bundle, *, retry=None):
@@ -7908,7 +8073,7 @@ def cmd_app_workspace(cwd, reopen=False):
         return 1
 
 
-def cmd_app(cfg, args):
+def cmd_app(cfg, args, *, saved=None):
     try:
         direction, repo, slot = _app_target(args)
         if direction == "pull":
@@ -7919,8 +8084,18 @@ def cmd_app(cfg, args):
         if args.url is not None:
             _app_link("", args.url)
         plan = _app_plan_path(args.plan) if args.plan else None
-        row = _app_select(cfg, _parse_rows(zsh_capture("_dev_session_rows")),
-                          repo, slot, os.getcwd())
+        if saved is None:
+            row = _app_select(cfg, _parse_rows(zsh_capture("_dev_session_rows")),
+                              repo, slot, os.getcwd())
+        else:
+            sid, cwd = saved
+            if repo not in cfg.repos or cfg.worktree_path(repo, slot) != cwd:
+                raise ValueError("recorded worktree does not match the selected repository and slot")
+            row = dict(host="local", sid=sid, cwd=cwd, slot=f"{repo}-{slot}",
+                       state="saved", context="none", agent="codex", summary="")
+            row["resume_retry"] = ("Retry: " + shlex.join([
+                "t", "session", "resume", repo, slot, "--days", "all", "--app"])
+                + f" and select conversation {sid}. ")
         if not os.path.isdir(row["cwd"]):
             raise ValueError(f"the session's worktree is missing: {row['cwd']}")
         if not args.no_plan and plan is None:
@@ -7944,12 +8119,23 @@ def cmd_app(cfg, args):
         bundle = _app_bundle()
         if not bundle:
             raise ValueError("install the Codex desktop app in /Applications or ~/Applications first")
-        with _app_handoff_lock(row):
-            row = _app_saved_thread(row)
+        with _app_handoff_lock(row), (_app_resume_lock(row) if saved else nullcontext()):
+            try:
+                row = _app_saved_thread(row)
+            except ValueError as exc:
+                if saved:
+                    raise ValueError(f"{exc}. Desktop resume requires this exact thread in the local "
+                                     "Codex index. Run " + shlex.join([
+                                         "t", "session", "resume", repo, slot, "--days", "all", "--cli"])
+                                     + f" and select {row['sid']} to index it before retrying.") from exc
+                raise
             if row["archived"]:
                 raise ValueError("this conversation is archived; restore it before opening it in the app")
             unknown = set()
             contract = _app_cli_release(row, unknown=unknown)
+            owner = _app_resume_check(row, repo, slot) if saved else None
+            if owner:
+                row["slot"] = owner[1]
             _trust_auto([row["cwd"]])
             # A new PROCESS is not a new WINDOW. Invoke the native New Window action
             # and retain the verified new window before stopping the slot's CLI.
@@ -7964,9 +8150,12 @@ def cmd_app(cfg, args):
                 # A raw Markdown OS-open would create a new projectless chat.
                 links.append(_app_link(row["sid"], plan_url, "t-plan-" + row["sid"]))
             _app_reserve_worktree(row["cwd"])
-            stopped = _app_stop_cli(row)
-            if stopped.returncode:
-                raise ValueError(stopped.stderr.strip() or "could not stop the CLI; the app was not opened")
+            if saved and _app_resume_check(row, repo, slot) != owner:
+                raise ValueError("selected owner changed while preparing desktop resume; retry")
+            if owner is None or owner[0] == "cli":
+                stopped = _app_stop_cli(row)
+                if stopped.returncode:
+                    raise ValueError(stopped.stderr.strip() or "could not stop the CLI; the app was not opened")
             try:
                 _app_cli_release(row, contract, unknown=unknown)
             except ValueError as exc:
@@ -7985,13 +8174,16 @@ def cmd_app(cfg, args):
                 _app_remember_preview(row, url)
             if plan:
                 _index_save(_app_plan_cache(row), {"cwd": row["cwd"], "path": plan})
+            if saved:
+                _run(["zsh", "-lic", ZSH_PRELUDE + shlex.join([
+                    "_dev_history_record", row["sid"], "codex", row["cwd"], "resume", "desktop"])], timeout=30)
         _app_unknown_warning(unknown)
         print(("New app window created. " if window else "") +
               "Open request sent to macOS; app delivery is not confirmed. "
-              "Tmux keeps this worktree slot reserved.")
+              "The worktree slot remains reserved.")
         return 0
     except ValueError as e:
-        print(f"t app: {e}", file=sys.stderr)
+        print(f"{'t resume --app' if saved else 't app'}: {e}", file=sys.stderr)
         return 1
 
 
@@ -8357,7 +8549,9 @@ def _session_row(cfg, rec, live_by_sid, now, cache_root=None, this_sid=None,
     key = worktree = None
     if alias and slot:
         key = "%s-%s" % (alias, slot)
-        worktree = os.path.join(cfg.worktree_root, os.path.basename(cfg.repos[alias]), slot)
+        # Preserve the transcript's exact layout, even after its folder was swept.
+        worktree = next((p for p in cfg.worktree_paths(alias, slot)
+                         if cwd == p or cwd.startswith(p + "/")), None)
     branch = rec.get("branch")
     if not branch and key:
         branch = "dev/%s-%s" % (os.path.basename(cfg.repos[alias]), slot)
@@ -8628,15 +8822,15 @@ def _session_ref_resolve(ref, cfg, recs, live_by_sid):
     if m and m.group(1) in cfg.repos:
         alias, n = m.groups()
         path = cfg.repos[alias]
-        wt = os.path.join(cfg.worktree_root, os.path.basename(path), n)
+        paths = cfg.worktree_paths(alias, n)
         for sid, info in live_by_sid.items():
-            if info.get("cwd") == wt and sid in by_sid:
+            if info.get("cwd") in paths and sid in by_sid:
                 return by_sid[sid]
         for sid, info in live_by_sid.items():
             head, _, num = info.get("slot", "").rpartition("-")
             if num == n and cfg.repos.get(head) == path and sid in by_sid:
                 return by_sid[sid]
-        cands = [r for r in recs if r.get("cwd") == wt and r.get("n_prompts")]
+        cands = [r for r in recs if r.get("cwd") in paths and r.get("n_prompts")]
         if cands:
             return max(cands, key=lambda r: (r.get("last_ts") or 0, r.get("mtime") or 0))
         raise ValueError("no transcript for slot %s-%s here (never run, a shared-tree repo, "
@@ -8706,7 +8900,7 @@ _MCP_INSTRUCTIONS = (
     "doing or where it left off, or which PR a session opened. find_sessions returns candidates WITH prompt excerpts: judge the match "
     "yourself from the excerpts and titles, then session_detail for the winner. Slots are "
     "named <repo>-<n> (tmux session dev-<repo>-<n>, worktree ~/code/.worktrees/<basename>/"
-    "<n>, branch dev/<basename>-<n>); a live one is attached with `t open <repo> <n>`, a "
+    "<basename>-<n> (legacy <n> retained), branch dev/<basename>-<n>); a live one is attached with `t open <repo> <n>`, a "
     "dead one revived with `t resume <repo> <n>` — tell the user those commands rather than running them. A result flagged "
     "this_session is the conversation you are in.")
 
@@ -9129,7 +9323,7 @@ def cmd_share(cfg, args):
 # definitions for both public commands and compatibility aliases.
 COMMAND_GROUPS = {
     "issue": {"list": ("issue", "list"), "status": ("issue", "status"),
-              "start": ("issue", "start")},
+              "start": ("issue", "start"), "open": ("issue", "open")},
     "session": {
         "open": ("open",), "list": ("ls",), "close": ("kill",),
         "restart": ("restart",), "push": ("push",), "pop": ("pop",),
@@ -9164,7 +9358,7 @@ COMMAND_GROUPS = {
 }
 
 GROUP_DESCRIPTIONS = {
-    "issue": "List GitHub issues, inspect existing work, or start work",
+    "issue": "List GitHub issues, inspect work, start agents, or open issues in a browser",
     "agentcore": "Submit work to an existing Amazon Bedrock AgentCore runtime",
     "session": "Open, find, and move work sessions",
     "repo": "List and manage repositories",
@@ -9230,7 +9424,7 @@ def _root_help():
 
 WORK
   session   Open, find, and move work sessions
-  issue     List issues, inspect work, and start agents
+  issue     List, inspect, work on, and open GitHub issues
   share     Share context between agent conversations
   repo      List and manage repositories
   cursor    List, resume, and send Cursor chats
@@ -9302,14 +9496,16 @@ def _group_help(group):
   t issue list [repo] [-a|--all] [--state open|closed|all] [--json]
   t issue status [repo] <id> [--json]
   t issue start [repo] [id ...] [--codex|--claude]
+  t issue open [repo] [id ...] [--repo REPO]
 
-List repository issues, inspect existing agent work, or start agents.
+List repository issues, inspect existing agent work, start agents, or open issues in a browser.
 
 REPOSITORIES
   Use a registered alias or GitHub owner/repo; --repo works with every verb.
   List uses the current checkout, or all registered repositories outside one.
   List --all widens the view from a checkout. Status never prompts: specify a
-  repository when outside a registered checkout. Start can select one interactively.
+  repository when outside a registered checkout. Start and open can select repositories
+  and issues interactively.
   An issue URL includes its repository and can replace [repo] <id>.
 
 Run `t help issue <verb>` for flags and arguments.
@@ -9334,7 +9530,7 @@ Run `t help issue <verb>` for flags and arguments.
 def _command_description(group, action):
     descriptions = {
         "issue": {"list": "List repository issues", "status": "Inspect existing issue work",
-                  "start": "Continue or start work on issues"},
+                  "start": "Continue or start work on issues", "open": "Open issues in your browser"},
         "agentcore": {"invoke": "Submit JSON or continue a runtime session", "stop": "Stop a runtime session"},
         "session": {"open": "Open or reattach a session", "list": "List live sessions",
                     "close": "Close a session", "restart": "Restart a stuck agent",
@@ -9438,7 +9634,7 @@ def build_parser():
             "For example: `t help session open` or `t help repo locate`.")
     help_sp.add_argument("command", nargs="*", help="command and optional subcommand")
 
-    sp = sub.add_parser("issue", help="list issues, inspect work, or start agents",
+    sp = sub.add_parser("issue", help="list issues, inspect work, start agents, or open issues",
         description="Find GitHub issues and their existing local, remote, or cloud agent work.")
     issue_sub = sp.add_subparsers(dest="action", metavar="<verb>")
     p._group_parsers["issue"] = sp
@@ -9481,18 +9677,29 @@ def build_parser():
     agents = issue_start.add_mutually_exclusive_group()
     agents.add_argument("--codex", action="store_true", help="use Codex for new local sessions")
     agents.add_argument("--claude", action="store_true", help="use Claude for new local sessions")
+    issue_open = issue_sub.add_parser("open", help="open issues in your browser",
+        usage="%(prog)s [repo] [id ...] [--repo REPO]",
+        description="Open GitHub issues in your browser. Use explicit issue numbers or issue URLs, "
+            "or omit the numbers to select issues interactively. A registered alias or "
+            "GitHub owner/repo can select the repository, positionally or with --repo. "
+            "An issue URL includes its repository. Each selected issue opens in your configured browser.")
+    issue_open.add_argument("target", nargs="*", help="issue numbers, repository and numbers, or GitHub issue URLs")
+    issue_open.add_argument("--repo", help="registered repository alias or GitHub owner/name")
 
     share = sub.add_parser("share", help="share context with another agent conversation",
-        description="Send a summary and selected text to a Claude, Codex, or Cursor conversation. "
-                    "Bare `t share` shows this help.")
-    share.add_argument("--to", dest="destination", metavar="AGENT:ID",
-                       help="exact destination conversation")
-    share.add_argument("--file", metavar="PATH|-", help="UTF-8 summary file or stdin")
+        description="Continue your current conversation with Claude, Codex, or Cursor. "
+                    "Run `t share` in a terminal to choose an agent and review the context. "
+                    "`t share --to claude` starts a new Claude session with the original request "
+                    "and recent conversation text, in a fresh worktree. "
+                    "Use an exact agent:<id> to send to an existing conversation instead.")
+    share.add_argument("--to", dest="destination", metavar="AGENT[:ID]",
+                       help="receiving agent (claude, codex, cursor), or exact conversation")
+    share.add_argument("--file", metavar="PATH|-", help="use this UTF-8 context instead of captured conversation text")
     share.add_argument("--attach", action="append", default=[], metavar="PATH",
                        help="attach selected UTF-8 history; repeat as needed")
-    share.add_argument("--from", dest="source", metavar="AGENT:ID",
-                       help="exact source conversation when it cannot be inferred")
-    share.add_argument("--host", help="destination host alias")
+    share.add_argument("--from", dest="source", metavar="AGENT[:ID]",
+                       help="source conversation; an agent name filters the interactive source picker")
+    share.add_argument("--host", help="host of an existing receiving conversation")
     share.add_argument("--retry", metavar="MESSAGE_ID",
                        help="retry the original saved delivery unchanged")
     share.add_argument("--json", action="store_true", help="print a machine-readable receipt")
@@ -9527,7 +9734,7 @@ def build_parser():
 
 select several sessions:
   Space/Tab marks ✓; Enter opens; Ctrl-A shows all; Ctrl-F restores defaults.
-  Ctrl-T toggles attached sessions. Extras: tabs/app.
+  Ctrl-T toggles attached; Alt-N new session.
 
 desktop → CLI:
   %(prog)s api 2 --cli
@@ -9545,6 +9752,8 @@ Run `t help open` for session targeting, defaults, and remote details.""",
   t open <repo> filters. Attached CLI and loaded desktop rows are hidden;
   Ctrl-T toggles attached rows; Ctrl-A shows all; Ctrl-F restores defaults.
   --attached starts with all rows.
+  Alt-N starts the existing --new flow, keeping the repo and opening flags.
+  It also works with no matching rows and does not open marked sessions.
   Explicit slots still open directly. Compact resume-style rows retain agent,
   UI, status, model, session and task details, including idle/desktop rows.
   Space/Tab marks multiple rows; Enter opens them.
@@ -9568,6 +9777,8 @@ DESKTOP TO CLI
 
 REMOTE SESSIONS
   A slot live only on another host attaches there automatically.
+  Fresh local slots can open when a configured host is offline. Existing
+  workspaces still require verified ownership before a new owner starts.
   --local (also --here) skips that lookup; combine with --fg to run here.
   --remote attaches to a live remote slot; add --new to start one on the
   default host (the alphabetically first REMOTE_HOSTS key).
@@ -9593,9 +9804,11 @@ REMOTE SESSIONS
             "Usually, use `t open <repo> <slot> --app` or `--cli`; open handles the handoff. "
             "To return to the CLI, run `t open <repo> <slot> --cli` on the Mac running "
             "the desktop conversation, then follow its release instructions if needed. "
-            "To move into the app, `t app [push] [repo] [slot]` stops the slot's CLI, "
-            "waits for its conversation writer to release (up to 75 seconds), "
-            "and opens the SAME conversation in the "
+            "Before stopping the slot's CLI, `t app [push] [repo] [slot]` checks for "
+            "a different loaded conversation in the same worktree. A refusal gives "
+            "release instructions and an exact retry command, preserving both owners. "
+            "After preflight succeeds, it stops the selected CLI, waits for its writer "
+            "to release (up to 75 seconds), and opens the SAME conversation in the "
             "Codex desktop app on macOS, with its running web preview and referenced Markdown "
             "plan in separate built-in browser tabs. "
             "Use Annotation mode there to leave comments. The tmux slot stays reserved, "
@@ -9695,7 +9908,11 @@ REMOTE SESSIONS
         description="Browse local and retained slot history, including live, inactive, archived, "
                     "and removed worktrees. A lone number infers the repository; no arguments "
                     "infer the current slot or offer a slot picker. History never automatically "
-                    "resumes a sole conversation. Search covers all pages. Enter resumes the "
+                    "resumes a sole conversation. Rows show the same status, interface, recorded model, "
+                    "host, session, and working-on summary as t session list. Full details retain "
+                    "dates, branches, PRs, and exact IDs; unknown historical metadata stays unknown. "
+                    "The details pane opens on larger terminals; Ctrl-/ toggles it and Shift-Up/Down "
+                    "scrolls. Search covers all pages. Enter resumes the "
                     "selected conversation; Ctrl-F/B change page, Ctrl-R refreshes remote "
                     "metadata, Ctrl-/ shows details, and Escape cancels. Without a terminal "
                     "this command lists only. Remote refresh fetches metadata; only an actual "
@@ -9726,7 +9943,9 @@ REMOTE SESSIONS
             "or Ctrl-A; -l/--live starts with all rows and Ctrl-F restores the inactive view. Live rows "
             "show '● active' / '● on <host>'; picking one attaches to its existing owner "
             "(locally or on its host) instead of resuming; naming a live slot explicitly "
-            "always attaches. "
+            "always attaches in CLI mode. --app instead selects ONE exact saved Codex "
+            "conversation for the local macOS app, including histories in a live slot; "
+            "only that same local owner can be handed off. Other owners are refused. "
             "A conversation is live by its ID too: one resumed into ANOTHER slot (or run as "
             "a foreground session) is shown as a row pointing at that owner — never resumed "
             "a second time. --host H revives the pick on H instead of here. "
@@ -9738,6 +9957,10 @@ REMOTE SESSIONS
     sp.add_argument("repo", nargs="?", help="DEV_REPOS key; defaults to the repo your cwd is in")
     sp.add_argument("slot", nargs="?", help="slot number; a lone slot implies the cwd repo")
     sp.add_argument("-f", "--fg", action="store_true", help="resume inline in THIS terminal (no tmux slot)")
+    sp.add_argument("--app", action="store_true",
+        help="open ONE exact saved Codex conversation in the local macOS app using guarded handoff; "
+             "refuses remote owners, other agents, multiple picks, --cli, --fg, and --host")
+    sp.add_argument("--cli", action="store_true", help="resume in the terminal (the default)")
     sp.add_argument("-a", "--all", action="store_true", help="scan every worktree repo (the default outside a repo dir)")
     sp.add_argument("-l", "--live", action="store_true",
         help="start with all sessions shown; Ctrl-F restores the inactive-only view (live rows attach on pick)")
@@ -9752,7 +9975,7 @@ REMOTE SESSIONS
 
     sp = sub.add_parser("cd", help="cd this shell into a dev slot's worktree",
         description="cd the calling shell into a dev slot's worktree "
-            "($DEV_WORKTREE_ROOT/<repo>/<slot>). Names default to the cwd repo, so `t session cd 3` "
+            "($DEV_WORKTREE_ROOT/<repo>/<repo>-<slot>, or an existing numeric folder). Names default to the cwd repo, so `t session cd 3` "
             "jumps to this repo's slot 3. With no slot: the repo's only worktree, an fzf pick "
             "when there are several (showing each worktree's checked-out branch), or the "
             "canonical repo dir when it has none. Bare `t session cd` picks across every worktree. "
@@ -10006,7 +10229,8 @@ REMOTE SESSIONS
 
     sp = sub.add_parser("login", help="log in logged-out or expiring agent tools",
         description="Review local agent logins. Cached access-token expiry is an advisory hint; "
-            "vendor automatic refresh may still work. Missing expiry stays unknown. "
+            "vendor automatic refresh may still work. Status shows cached deadlines when available. "
+            "Local sign-in URLs support Command-double-click in macOS Terminal. "
             "Ignored tools are not probed. No tools are installed and no remote hosts are changed.")
     sp.add_argument("agents", nargs="*", metavar="AGENT", type=_login_agent,
                     help="claude, codex, cursor (default: all installed tools)")
@@ -10268,6 +10492,9 @@ def main(argv):
         return cmd_app_workspace(argv[1], reopen=len(argv) == 3)
     if len(argv) == 3 and argv[0] == "_app-open-cli":
         return cmd_app_open_cli(Config(), argv[1], argv[2])
+    if len(argv) == 5 and argv[0] == "_app-resume":
+        args = build_parser().parse_args(["app", "push", argv[1], argv[2], "--reuse-window"])
+        return cmd_app(Config(), args, saved=(argv[3], argv[4]))
     if len(argv) == 3 and argv[0] == "_app-close":
         return cmd_app_close(Config(), argv[1], argv[2])
     if len(argv) == 2 and argv[0] == "_app-plan-server":
@@ -10300,7 +10527,8 @@ def main(argv):
             return 2
         _print_command_help(target, words, canonical, detailed=True)
         return 0
-    if argv in (["share"], ["share", "-h"], ["share", "--help"]):
+    if argv in (["share", "-h"], ["share", "--help"]) or (
+            argv == ["share"] and not (sys.stdin.isatty() and sys.stdout.isatty())):
         _help_parser(parser, ["share"]).print_help()
         return 0
     if len(argv) == 1 and argv[0] in COMMAND_GROUPS and argv[0] != "config":
@@ -10358,8 +10586,8 @@ def main(argv):
             if args.retry:
                 if args.destination or args.file or args.attach or args.source or args.host:
                     parser.error("t share --retry cannot be combined with send options")
-            elif not args.destination or not args.file:
-                parser.error("t share requires --to and --file")
+            elif args.json and not args.destination:
+                parser.error("t share --json requires --to")
         elif args.destination or args.file or args.attach or args.source or args.retry:
             parser.error("t share read-only verbs cannot be combined with send options")
     if args.verb == "on":

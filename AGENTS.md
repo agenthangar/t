@@ -12,8 +12,9 @@ must never open a picker or an automatic update prompt. Run
 `python3 scripts/lint_cli.py` to check these rules.
 
 Keep public commands in noun/verb families. For issue work, expose `t issue list`
-to browse a repository, `t issue status` for read-only ownership discovery, and
-`t issue start` to continue or start work. Reuse the shared session picker for
+to browse a repository, `t issue status` for read-only ownership discovery,
+`t issue start` to continue or start work, and `t issue open` to open issues in
+the user's browser. Reuse the shared session picker for
 interactive issue selection; allow multiple independent issues to be selected,
 but never start a second live owner for one issue. Do not add a bare `t issue`
 target form or a new public single-word command except the reviewed `t share`
@@ -55,9 +56,10 @@ Native macOS UI tests open windows and steal focus. Keep them disabled in routin
 local runs; use `--run-macos-ui` only on disposable CI or when the user explicitly
 requests native desktop verification. Mark any new interactive desktop tests
 `macos_ui` so they share this opt-in gate.
-Keep macOS CI enabled by default. Apply the `ci:skip-macos` label to a PR only
-when the user explicitly requests skipping macOS CI for that PR; remove the label
-when that exception no longer applies. The Linux and other CI jobs still run.
+Default CI runs Linux only. Run macOS CI only when the user explicitly requests
+it, using the CI workflow’s `run_macos` manual input. Keep the macOS test code
+and native UI opt-in gate available; do not re-enable macOS in default PR checks.
+The Linux and other required CI jobs must still run.
 
 Keep the one-live-owner guarantee, remote `zsh -lic` contract, and worktree safety
 checks. No plain local declarations of zsh tied parameters such as path/fpath.

@@ -214,7 +214,7 @@ _t_cd() {
     echo "t cd: unknown repo '$repo' (known: ${(k)DEV_REPOS})" >&2; return 1
   fi
   if [[ -n $repo && -n $slot ]]; then
-    local wt; wt=$(_dev_worktree_path "$repo" "$slot")
+    local wt; wt=$(_dev_worktree_path "$repo" "$slot") || return 1
     [[ -e $wt/.git ]] || {
       echo "t cd: no worktree at $wt  ('t open $repo $slot' creates one)" >&2; return 1 }
     cd "$wt"; return
@@ -224,12 +224,22 @@ _t_cd() {
   # require .git so a leftover / hand-made numeric dir under $DEV_WORKTREE_ROOT is not offered.
   local -a wts
   if [[ -n $repo ]]; then
-    wts=("$DEV_WORKTREE_ROOT/${DEV_REPOS[$repo]:t}"/<->(N/ne:'[[ -e $REPLY/.git ]]':))
+    wts=("$DEV_WORKTREE_ROOT/${DEV_REPOS[$repo]:t}"/*(N/ne:'[[ -e $REPLY/.git ]]':))
     (( ${#wts} )) || { cd "${DEV_REPOS[$repo]}"; return }   # none yet → the repo itself
   else
-    wts=("$DEV_WORKTREE_ROOT"/*/<->(N/ne:'[[ -e $REPLY/.git ]]':))
+    wts=("$DEV_WORKTREE_ROOT"/*/*(N/ne:'[[ -e $REPLY/.git ]]':))
     (( ${#wts} )) || {
       echo "t cd: no worktrees under $DEV_WORKTREE_ROOT ('t open <repo>' creates one)" >&2; return 1 }
+  fi
+  local candidate; local -a recognized
+  for candidate in "${wts[@]}"; do
+    _dev_worktree_slot "${${candidate:h}:t}" "${candidate:t}" >/dev/null && recognized+=("$candidate")
+  done
+  wts=("${recognized[@]}")
+  if (( ! ${#wts} )); then
+    [[ -n $repo ]] && { cd "${DEV_REPOS[$repo]}"; return; }
+    print -u2 -- "t cd: no managed worktrees under $DEV_WORKTREE_ROOT ('t open <repo>' creates one)"
+    return 1
   fi
   (( ${#wts} == 1 )) && { cd "${wts[1]}"; return }
   if [[ -t 0 && -t 1 ]] && command -v fzf >/dev/null 2>&1; then
@@ -312,6 +322,10 @@ _t_open() {
         return 2
       fi
       _t_open_picker "$picker_repo" "$remote" "$app" "$cli" "$include_attached"; picker_rc=$?
+      if (( picker_rc == 3 )); then
+        _t_open "${rest[@]}" --new
+        return $?
+      fi
       (( picker_rc == 2 )) || return $picker_rc
       # No existing rows: use the ordinary fresh-session/default-host path.
     fi
@@ -403,8 +417,8 @@ _t_open() {
   _t_dev "${a[@]}"
 }
 
-# Complete current-session picker. Return 2 only when there are no candidates;
-# cancellation and rendering failures must never create a new session.
+# Complete current-session picker. Return 2 when there are no candidates, or 3
+# for an explicit new-session request. Cancellation/failure must not start work.
 _t_open_picker() {
   local repo="$1" remote="$2" app="$3" cli="$4" rows row selected scope="${DEV_REPOS[$1]:-}"
   local -a fields candidates format_args
@@ -597,7 +611,7 @@ _t_open_app() {
     command t app "$repo" "$slot"
     return
   fi
-  dir=$(_dev_worktree_path "$repo" "$slot")
+  dir=$(_dev_worktree_path "$repo" "$slot") || return 1
   _dev_with_launch_locks "$dir" '' _t_open_app_claim "$repo" "$slot" "$dir" || return 1
   print -r -- "Opening $repo $slot in the Codex desktop app: $dir"
   command t _app-workspace "$dir" ${reopen:+--reopen} || {
@@ -621,14 +635,16 @@ _t_open_app_claim() {
       return 1
     fi
   done < <(tmux list-sessions -F '#{session_name}|#{session_path}' 2>/dev/null)
+  local fresh_scan=
+  _dev_slot_fresh "$repo" "$slot" && fresh_scan=1
   if (( ${#REMOTE_HOSTS} )); then
-    remote_owner=$(_dev_remote_resolve "$repo" "$slot" '' quiet); remote_rc=$?
+    remote_owner=$(_dev_remote_resolve "$repo" "$slot" '' quiet "$fresh_scan"); remote_rc=$?
     if [[ -n $remote_owner ]]; then
       print -u2 -- "t open --app: $repo $slot is live on ${remote_owner%%$'\t'*}; move it here with t beam before opening the app"
       return 1
     fi
     cli_scan_rc=$remote_rc
-    remote_owner=$(_dev_remote_app_owner "$repo" "$slot"); remote_rc=$?
+    remote_owner=$(_dev_remote_app_owner "$repo" "$slot" "$fresh_scan"); remote_rc=$?
     app_scan_rc=$remote_rc
     if [[ -n $remote_owner ]]; then
       print -u2 -- "t open --app: $repo $slot is reserved by the Codex desktop app on $remote_owner; close it there and release the reservation before opening here"
@@ -665,7 +681,7 @@ _t_open_app_claim() {
     return 1
   done
   if [[ -z $reopen ]]; then
-    dir=$(_dev_worktree_create "$repo" "$slot")
+    dir=$(_dev_worktree_create "$repo" "$slot" "$dir") || return 1
   fi
   [[ -n $dir && -e $dir/.git ]] || { _dev_worktree_refuse "$repo" "$slot"; return 1; }
   _dev_auto_trust "$dir"
@@ -727,7 +743,7 @@ _t() {
   local -a actions
   if [[ $group == issue ]]; then
     if (( CURRENT == 3 )); then
-      local -a issue_actions=(list status start)
+      local -a issue_actions=(list status start open)
       _describe -t actions 'issue action' issue_actions
       return
     fi
@@ -736,12 +752,13 @@ _t() {
         list) _values 'flag' --repo -a --all --state --json -h --help ;;
         status) _values 'flag' --repo --json -h --help ;;
         start) _values 'flag' --repo --codex --claude --allow-incomplete-check -h --help ;;
+        open) _values 'flag' --repo -h --help ;;
       esac
     elif [[ ${words[CURRENT-1]} == --repo ]]; then
       _values 'repository' ${(k)DEV_REPOS}
     elif [[ $action == list && ${words[CURRENT-1]} == --state ]]; then
       _values 'issue state' open closed all
-    elif [[ $action == list || $action == start || $action == status ]]; then
+    elif [[ $action == list || $action == start || $action == status || $action == open ]]; then
       _values 'repository or issue number' ${(k)DEV_REPOS}
     fi
     return
@@ -754,7 +771,8 @@ _t() {
     fi
     case ${words[CURRENT-1]} in
       --file|--attach) _files; return ;;
-      --to|--from|--for) _message 'agent:conversation-id'; return ;;
+      --to|--from) _values 'agent or agent:conversation-id' claude codex cursor; return ;;
+      --for) _message 'agent:conversation-id'; return ;;
       --host) _values 'host' ${(k)REMOTE_HOSTS}; return ;;
       --retry|--attachment) _message 'message ID or attachment name'; return ;;
     esac
@@ -887,7 +905,7 @@ _t() {
           view-plan) flags+=(-a --all) ;;
           paste) flags+=(-p --pick -n --newest) ;;
           move) flags+=(--host --from --here --fg -d --detach -p --pick -a --all -s --session) ;;
-          resume) flags+=(-f --fg -a --all -l --live -r --remote --days --host) ;;
+          resume) flags+=(-f --fg --app --cli -a --all -l --live -r --remote --days --host) ;;
         esac
         _values 'flag' "${flags[@]}"
       elif (( CURRENT == first )); then _values 'repo' ${(k)DEV_REPOS}

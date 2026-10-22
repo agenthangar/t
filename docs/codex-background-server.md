@@ -38,7 +38,7 @@ failure mechanisms.
 The zsh public entry point maps `--new` to a fresh slot and launches the configured
 agent in that slot's worktree. For Codex, `_dev_agent_new_cmd` emits `codex`, the
 configured `DEV_MODEL[codex]`, `DEV_EFFORT[codex]`, and `DEV_FAST[codex]` defaults,
-and `--no-daemon`. The foreground path does the same. Each fresh session uses a
+and `--no-daemon`. The foreground path does the same. Each fresh session and resumed CLI conversation uses a
 private backend, so it cannot conflict with the running shared server's settings. It does not request any of the four
 shared flags above. Codex reads its own configuration and version-specific defaults.
 
@@ -121,3 +121,8 @@ python3 -m pytest -q \
   tests/test_app_close.py tests/test_desktop_close.py tests/test_recovery_tmux.py \
   -k 'blank_workspace_with_unrelated or empty_desktop or public_open_new'
 ```
+
+The follow-up for [#133](https://github.com/agenthangar/t/issues/133) also applies
+`--no-daemon` to ordinary tmux resumes, foreground resumes/adoption, and transfer
+landings. Previously those paths could reconnect to the shared server even though
+fresh launches and recovery already used a private backend.

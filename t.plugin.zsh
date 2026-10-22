@@ -31,6 +31,7 @@ _t_load_plugin() {
   source "$T_HOME/zsh/sessions.zsh"
   source "$T_HOME/zsh/remote.zsh"
   source "$T_HOME/zsh/resume.zsh"
+  source "$T_HOME/zsh/share.zsh"
   source "$T_HOME/zsh/shim.zsh"
 
   add-zsh-hook -d precmd _dev_worktree_sweep 2>/dev/null

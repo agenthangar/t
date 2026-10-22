@@ -879,7 +879,7 @@ _dev_adopt_fg() {
       echo "warning: foreground owner ($pid) didn't exit; resuming anyway — transcript may interleave." >&2
   fi
   cd "$cwd" || return 1
-  if [[ $agent == codex ]]; then codex resume "$sid"; else claude -r "$sid"; fi
+  if [[ $agent == codex ]]; then codex resume "$sid" --no-daemon; else claude -r "$sid"; fi
 }
 
 # _dev_attach_fg <handle> — ATTACH IN PLACE an fg-row session that actually lives in a
@@ -988,7 +988,8 @@ _dev_repo_of_dir() {
   local dir="$1" base= slot= k best=
   if [[ -n $DEV_WORKTREE_ROOT && $dir == $DEV_WORKTREE_ROOT/*/* ]]; then
     local rest=${dir#$DEV_WORKTREE_ROOT/}   # <basename>/<slot>[/...]
-    base=${rest%%/*}; rest=${rest#*/}; slot=${rest%%/*}
+    base=${rest%%/*}; rest=${rest#*/}
+    slot=$(_dev_worktree_slot "$base" "${rest%%/*}") || return 1
   else
     local d bestlen=0                       # canonical dir or subdir; longest/most-specific wins
     for k in ${(k)DEV_REPOS}; do
@@ -1044,7 +1045,7 @@ _dev_ensure_session_cwd() {
   repo=${r%%$'\t'*}; slot=${r#*$'\t'}
   [[ -n $repo && -n $slot ]] || return 1   # not a worktree path → nothing to rebuild
   _dev_worktree_enabled "$repo" || return 1
-  _dev_worktree_create "$repo" "$slot"     # prints the rebuilt path, or returns 1
+  _dev_worktree_create "$repo" "$slot" "$cwd" # prints the rebuilt path, or returns 1
 }
 
 # _dev_cwd_repo_dir — print the canonical DEV_REPOS directory that contains $PWD (or
@@ -1309,7 +1310,7 @@ _dev_session_rows() {
   # Desktop-only workspaces have no tmux session, but their private Git marker
   # reserves the slot. Surface them in t ls without claiming an active agent.
   local wt match app_repo app_slot
-  for wt in $DEV_WORKTREE_ROOT/*/<->(N/); do
+  for wt in $DEV_WORKTREE_ROOT/*/*(N/); do
     [[ -e $wt/.git && -z ${had_path[$wt]:-} ]] || continue
     [[ -n ${desktop_sid[$wt]:-} ]] || _dev_app_slot_reserved "$wt" || continue
     match=$(_dev_repo_of_dir "$wt") || continue
@@ -1908,7 +1909,7 @@ _dev_kill() {
   # treating a parked pane as a CLI to kill. A live terminal agent still wins.
   if [[ $slot == <-> && -n ${DEV_REPOS[$repo]:-} && -n $DEV_WORKTREE_ROOT ]]; then
     local desktop_wt desktop_session desktop_cli=
-    desktop_wt=$(_dev_worktree_path "$repo" "$slot")
+    desktop_wt=$(_dev_worktree_path "$repo" "$slot") || return 1
     if _dev_app_slot_reserved "$desktop_wt"; then
       for _kk in ${(k)DEV_REPOS}; do
         [[ ${DEV_REPOS[$_kk]} == ${DEV_REPOS[$repo]} ]] || continue
@@ -1936,8 +1937,7 @@ _dev_kill() {
   local desktop_path desktop_slot desktop_live
   if [[ -n ${DEV_REPOS[$repo]:-} && -n $DEV_WORKTREE_ROOT ]]; then
     for desktop_path in "${DEV_WORKTREE_ROOT}/${DEV_REPOS[$repo]:t}"/*(N/); do
-      desktop_slot=${desktop_path:t}
-      [[ $desktop_slot == <-> ]] || continue
+      desktop_slot=$(_dev_worktree_slot "${DEV_REPOS[$repo]:t}" "${desktop_path:t}") || continue
       _dev_app_slot_reserved "$desktop_path" || continue
       desktop_live=
       for _kk in ${(k)DEV_REPOS}; do
@@ -2045,10 +2045,10 @@ _dev_recovery_watch() {
 # lock files remain on disk so a waiting process never locks a replaced inode.
 # Durable revision evidence belongs to the conversation, never just a slot branch.
 _dev_history_record() {
-  local sid=$1 agent=$2 dir=$3 event=${4:-launch} tx
+  local sid=$1 agent=$2 dir=$3 event=${4:-launch} interface=${5:-cli} tx
   [[ -n $sid && $sid != - ]] || return 0
   tx=$(_dev_agent_transcript "$agent" "$sid" "$dir" 2>/dev/null)
-  python3 "$T_HOME/libexec/t_history.py" record "$sid" "$agent" "$dir" "$tx" "$event" >/dev/null 2>&1 || true
+  python3 "$T_HOME/libexec/t_history.py" record "$sid" "$agent" "$dir" "$tx" "$event" "$interface" >/dev/null 2>&1 || true
 }
 
 _dev_with_launch_locks() {
@@ -2176,6 +2176,12 @@ _dev_new_session_claimed() {
   # (`t read`). `t pop` kill-sessions the slot itself, so the exit is moot there.
   local prep="_dev_repo_prepare ${(q)branch}; "
   [[ -n $skip_prepare ]] && prep=    # worktree mode: <dir> is already on its branch
+  # Share-only launches can enter a tmux server that inherited the source
+  # agent's environment. Clear its identities in the new pane before startup.
+  if [[ $8 == share ]]; then
+    local clear_identity='unset CLAUDECODE CLAUDE_CODE_SESSION_ID CLAUDE_RESUME_ID CODEX_THREAD_ID CODEX_SESSION_ID CURSOR_SESSION_ID CURSOR_AGENT T_ISSUE_TOKEN; '
+    prep="${clear_identity}${prep}"
+  fi
   tmux send-keys -t "=$session:" "${prep}$(_dev_agent_new_cmd "$agent" "$sid" "$6"); exit" Enter || { tmux kill-session -t "=$session:"; return 1; }
   _dev_launch_startup_check "$session" "$logfile" || return 1
   [[ $agent == claude ]] && _dev_history_record "$sid" "$agent" "$dir" launch
@@ -2209,7 +2215,7 @@ _t_issue_prepare() {
   command -v tmux >/dev/null || return 1
   git -C "${DEV_REPOS[$repo]}" fetch -q --prune origin || return 1
   while true; do
-    wt=$(_dev_worktree_path "$repo" "$slot")
+    wt=$(_dev_worktree_path "$repo" "$slot") || return 1
     br=$(_dev_worktree_branch "$repo" "$slot")
     # Never resume or reap a branch, even a merged one. Fetch before checking so
     # an unseen remote branch cannot turn a new issue into another task's slot.
@@ -2384,7 +2390,11 @@ _t_dev() {
   local dir="${DEV_REPOS[$repo]}"
   local branch="$(_dev_branch_for "$repo")"
   local allow_unverified_new=
-  [[ -n $local_only && $slot == new ]] && allow_unverified_new=1
+  # A new conversation has no remote conversation owner to resume. Only
+  # unused local slots may tolerate an incomplete discovery scan.
+  if [[ -z $slot || $slot == new ]] || _dev_slot_fresh "$repo" "$slot"; then
+    allow_unverified_new=1
+  fi
 
   if [[ ! -d "$dir" ]]; then
     echo "Repo dir not found: $dir"
@@ -2445,7 +2455,11 @@ _t_dev() {
   if [[ -z $slot && -z $no_tmux && -t 0 && -t 1 ]] && command -v fzf >/dev/null 2>&1; then
     local open_rc
     _t_open_picker "$repo" "" "" 1; open_rc=$?
-    (( open_rc == 2 )) || return $open_rc
+    if (( open_rc == 3 )); then
+      slot=new
+    else
+      (( open_rc == 2 )) || return $open_rc
+    fi
   fi
 
   # Remote-aware open (auto half): <repo> is a valid key now (cwd-defaulted if bare) and
@@ -2458,7 +2472,7 @@ _t_dev() {
   # is live only on another host is NOT attached — a fresh local slot is opened
   # instead (combine with --fg for a local foreground resume / inline claude).
   if (( ${#REMOTE_HOSTS} )) && [[ -z $no_tmux && -z $local_only && $slot != new ]] && ! _dev_local_slot_live "$repo" "$slot"; then
-    local res resolve_rc; res=$(_dev_remote_resolve "$repo" "$slot" multi quiet); resolve_rc=$?
+    local res resolve_rc; res=$(_dev_remote_resolve "$repo" "$slot" multi quiet "$allow_unverified_new"); resolve_rc=$?
     (( resolve_rc == 130 )) && return 130   # cancellation must not start a fresh slot
     if (( resolve_rc != 0 && resolve_rc != 1 )); then
       (( resolve_rc != 3 )) || print -u2 -- 't open: remote ownership is unknown; no local session was started. Retry when configured hosts are reachable.'
@@ -2483,14 +2497,14 @@ _t_dev() {
   # no-tmux branch, which otherwise bypasses the ordinary slot preflight.
   if [[ -n $no_tmux && $slot == <-> ]] && (( ${#REMOTE_HOSTS} )) \
      && ! tmux has-session -t "=dev-${repo}-${slot}:" 2>/dev/null; then
-    local app_owner app_rc; app_owner=$(_dev_remote_app_owner "$repo" "$slot"); app_rc=$?
+    local app_owner app_rc; app_owner=$(_dev_remote_app_owner "$repo" "$slot" "$allow_unverified_new"); app_rc=$?
     (( app_rc == 3 )) && return 1
     if [[ -n $app_owner ]]; then
       print -u2 -- "t open: $repo $slot is reserved by the Codex desktop app on $app_owner; close it there and release the reservation before opening here"
       return 1
     fi
     local remote_cli remote_rc
-    remote_cli=$(_dev_remote_resolve "$repo" "$slot" '' quiet); remote_rc=$?
+    remote_cli=$(_dev_remote_resolve "$repo" "$slot" '' quiet "$allow_unverified_new"); remote_rc=$?
     if [[ -n $remote_cli ]]; then
       print -u2 -- "t open: $repo $slot is live on ${remote_cli%%$'\t'*}; attach there or move it here before opening a local foreground session"
       return 1
@@ -2521,7 +2535,7 @@ _t_dev() {
         while ! _dev_slot_fresh "$repo" "$_wslot"; do (( _wslot++ )); done
       fi
       if [[ $slot != <-> ]] && (( ${#REMOTE_HOSTS} )); then
-        local app_owner app_rc; app_owner=$(_dev_remote_app_owner "$repo" "$_wslot"); app_rc=$?
+        local app_owner app_rc; app_owner=$(_dev_remote_app_owner "$repo" "$_wslot" "$allow_unverified_new"); app_rc=$?
         (( app_rc == 3 )) && [[ -z $allow_unverified_new ]] && return 1
         if [[ -n $app_owner ]]; then
           print -u2 -- "t open: $repo $_wslot is reserved by the Codex desktop app on $app_owner; close it there and release the reservation before opening here"
@@ -2613,7 +2627,7 @@ _t_dev() {
   # attach resolver deliberately excludes them, so check their reservation before
   # creating a local CLI on the same worktree/branch.
   if ! tmux has-session -t "=$session:" 2>/dev/null && (( ${#REMOTE_HOSTS} )); then
-    local app_owner app_rc; app_owner=$(_dev_remote_app_owner "$repo" "$slot"); app_rc=$?
+    local app_owner app_rc; app_owner=$(_dev_remote_app_owner "$repo" "$slot" "$allow_unverified_new"); app_rc=$?
     (( app_rc == 3 )) && [[ -z $allow_unverified_new ]] && return 1
     if [[ -n $app_owner ]]; then
       print -u2 -- "t open: $repo $slot is reserved by the Codex desktop app on $app_owner; close it there and release the reservation before opening here"

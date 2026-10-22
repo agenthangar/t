@@ -34,6 +34,11 @@ def test_issue_parser_accepts_verbs_and_separates_options(t_mod):
     start = parser.parse_args(["issue", "start", "api", "123", "124", "--codex"])
     assert (start.action, start.target, start.codex) == ("start", ["api", "123", "124"], True)
     assert parser.parse_args(["issue", "start"]).target == []
+    opened = parser.parse_args(["issue", "open", "api", "123", "124"])
+    assert (opened.action, opened.target, opened.repo) == ("open", ["api", "123", "124"], None)
+    opened = parser.parse_args(["issue", "open", "123", "--repo", "owner/repo"])
+    assert (opened.target, opened.repo) == (["123"], "owner/repo")
+    assert parser.parse_args(["issue", "open"]).target == []
 
 
 @pytest.mark.parametrize("argv", [
@@ -41,6 +46,8 @@ def test_issue_parser_accepts_verbs_and_separates_options(t_mod):
     ["issue", "status", "123", "--allow-incomplete-check"],
     ["issue", "start", "123", "--json"],
     ["issue", "start", "123", "--codex", "--claude"],
+    ["issue", "open", "123", "--json"],
+    ["issue", "open", "123", "--codex"],
 ])
 def test_issue_parser_rejects_bare_target_and_cross_action_flags(t_mod, argv):
     with pytest.raises(SystemExit) as exc:
@@ -54,19 +61,21 @@ def test_issue_help_is_a_side_effect_free_verb_menu(t_mod, monkeypatch, capsys):
     assert t_mod.main(["issue"]) == 0
     menu = capsys.readouterr().out
     assert all(f"t issue {verb}" in menu or verb in menu
-               for verb in ("list", "status", "start"))
+               for verb in ("list", "status", "start", "open"))
     assert t_mod.main(["issue", "--help"]) == 0
     assert capsys.readouterr().out == menu
     assert t_mod.main(["help", "issue", "status"]) == 0
     assert "usage: t issue status" in capsys.readouterr().out
     assert t_mod.main(["help", "issue", "start"]) == 0
     assert "usage: t issue start" in capsys.readouterr().out
+    assert t_mod.main(["help", "issue", "open"]) == 0
+    assert "usage: t issue open" in capsys.readouterr().out
 
 
 def test_issue_help_shows_repository_resolution_on_every_verb(t_mod, capsys):
     menu = t_mod._group_help("issue")
     for syntax in ("t issue list [repo]", "t issue status [repo] <id>",
-                   "t issue start [repo] [id ...]"):
+                   "t issue start [repo] [id ...]", "t issue open [repo] [id ...]"):
         assert syntax in menu
     assert "owner/repo" in menu and "--repo" in menu
     assert "list --all" in menu.lower() and "all registered repositories" in menu.lower()
@@ -74,7 +83,7 @@ def test_issue_help_shows_repository_resolution_on_every_verb(t_mod, capsys):
     assert lint.check_issue_help(menu) == []
     assert any("status [repo]" in error for error in lint.check_issue_help(
         menu.replace("t issue status [repo] <id>", "t issue status <id>")))
-    for verb in ("list", "status", "start"):
+    for verb in ("list", "status", "start", "open"):
         assert t_mod.main(["help", "issue", verb]) == 0
         help_text = capsys.readouterr().out
         assert "[repo]" in help_text and "--repo" in help_text
