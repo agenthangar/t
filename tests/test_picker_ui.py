@@ -48,11 +48,11 @@ def picker():
             if mode == 'kill':
                 mode_env += 'T_PICKER_WITH_ATTACHED="$(cat "$HOME/attached")" T_PICKER_WITH_PENDING="$(cat "$HOME/pending")" '
             if hostile_opts:
-                (root / 'fzf-options').write_text('--bind=enter:abort,esc:accept,tab:abort,space:abort\n')
+                (root / 'fzf-options').write_text('--bind=enter:abort,esc:accept,tab:abort,space:abort,alt-n:accept\n')
                 env['FZF_DEFAULT_OPTS'] = '--cycle'
                 env['FZF_DEFAULT_OPTS_FILE'] = str(root / 'fzf-options')
                 if hostile_opts == 'env':
-                    env['FZF_DEFAULT_OPTS'] += ' --bind=enter:abort,esc:accept,tab:abort,space:abort'
+                    env['FZF_DEFAULT_OPTS'] += ' --bind=enter:abort,esc:accept,tab:abort,space:abort,alt-n:accept'
                     env['FZF_DEFAULT_OPTS_FILE'] = '/dev/null'
             picker_cmd = (mode_env + '_t_fzf_filtered "$(cat "$HOME/default")" "$(cat "$HOME/all")" '
                           + mode + ' unattached "⬡ codex · ✱ claude" "" --prompt="' + mode + ' > "')
@@ -60,8 +60,28 @@ def picker():
                 picker_cmd = '_t_fzf_single open "Saved sessions" --delimiter="$(printf "\\t")" --with-nth=-1 --prompt="single > " < "$HOME/default"'
             elif profile == 'multi':
                 picker_cmd = '_t_fzf_multi open "Saved sessions" --delimiter="$(printf "\\t")" --with-nth=-1 --prompt="multi > " < "$HOME/default"'
-            script = (f'. {shlex.quote(str(ROOT / "ui/fzf.sh"))}\n'
-                      + picker_cmd + ' > "$HOME/selected"\n'
+            prefix = f'. {shlex.quote(str(ROOT / "ui/fzf.sh"))}\n'
+            redirect = ' > "$HOME/selected"'
+            if profile == 'public-open':
+                from test_open_picker import ROWS
+                shell = 'zsh -f'
+                env.update(T_NO_UPDATE_CHECK='1', T_NO_AUTORELOAD='1',
+                           T_LOCAL_RC=str(root / 'local.zsh'))
+                raw = ROWS.replace(r'\tapp\tnone', r'\tapp\tactive') if empty else ROWS
+                prefix = (f'source {shlex.quote(str(ROOT / "t.plugin.zsh"))}\n'
+                          'unset TMUX\n'
+                          'DEV_REPOS[api]="$HOME/code/api"\n'
+                          'DEV_REPOS[web]="$HOME/code/web"\n'
+                          'mkdir -p "$HOME/code/api" "$HOME/code/web"\n'
+                          + raw + '\n'
+                          '_t_dev() { print -r -- "$*" >> "$HOME/selected"; }\n'
+                          ': > "$HOME/selected"\n')
+                picker_cmd = 't open api --cli'
+                redirect = ''  # Public dispatch must see a real terminal on stdout.
+            script = (prefix + 'stty -g > "$HOME/terminal-before"\n'
+                      + picker_cmd + redirect + '\n'
+                      'printf "%s" "$?" > "$HOME/status"\n'
+                      'stty -g > "$HOME/terminal-after"\n'
                       'printf done > "$HOME/done"\n')
             (root / 'run.sh').write_text(script)
             tmux('-f', '/dev/null', 'new-session', '-d', '-x', str(width), '-y', str(height),
@@ -76,12 +96,15 @@ def picker():
                 time.sleep(.05)
             pytest.fail(f'Picker never displayed {text!r}:\n{screen}')
 
-        def finish(key='Enter'):
+        def finish(key='Enter', status=0):
             tmux('send-keys', key)
             deadline = time.monotonic() + 5
             while not (root / 'done').exists() and time.monotonic() < deadline:
                 time.sleep(.05)
             assert (root / 'done').exists()
+            assert (root / 'status').read_text() == str(status)
+            assert (root / 'terminal-before').read_text() == (root / 'terminal-after').read_text()
+            assert not list(root.glob('t-picker.*'))
             return (root / 'selected').read_text().splitlines()
 
         yield start, wait, lambda *keys: tmux('send-keys', *keys), finish
@@ -229,7 +252,7 @@ def test_single_picker_abort_keys_override_hostile_fzf_options(picker, source, k
     start, wait, keys, finish = picker
     start(hostile_opts=source, profile='single')
     wait('2/2')
-    assert finish(key) == []
+    assert finish(key, status=130) == []
 
 
 @pytest.mark.parametrize('width,height', [(80, 24), (44, 20), (32, 12)])
@@ -242,3 +265,62 @@ def test_primary_action_and_focused_row_visible_in_small_viewports(picker, width
     assert any('▸' in line and 'api' in line for line in screen.splitlines())
     assert f'{prompt} >' in screen
     assert len(finish()) == 1
+
+
+@pytest.mark.parametrize('width,height', [(80, 24), (44, 20), (32, 12)])
+def test_open_new_shortcut_invokes_existing_flow_in_small_viewports(picker, width, height):
+    start, wait, keys, finish = picker
+    start(profile='public-open', width=width, height=height)
+    screen = wait('Alt-N new')
+    assert 'Enter open · Esc' in screen
+    assert '▸' in screen
+    keys('Space')
+    wait('1/1 (1)')
+    assert finish('M-n') == ['api new']
+
+
+@pytest.mark.parametrize('empty', [False, True])
+def test_open_new_shortcut_with_no_matches_or_hidden_rows(picker, empty):
+    start, wait, keys, finish = picker
+    start(profile='public-open', empty=empty)
+    wait('Alt-N new')
+    if empty:
+        wait('0/0 (0)')
+    else:
+        wait('1/1 (0)')
+        keys('-l', 'no-such-session')
+        wait('0/1 (0)')
+    keys('C-a')
+    wait('Ctrl-T attached: shown')
+    keys('C-f')
+    wait('Ctrl-T attached: hidden')
+    assert finish('M-n') == ['api new']
+
+
+@pytest.mark.parametrize('key', ['Escape', 'C-c'])
+def test_open_abort_does_not_start_or_attach_sessions(picker, key):
+    start, wait, keys, finish = picker
+    start(profile='public-open')
+    wait('1/1 (0)')
+    keys('Space')
+    wait('1/1 (1)')
+    assert finish(key, status=130) == []
+
+
+@pytest.mark.parametrize('source', ['env', 'file'])
+def test_open_new_shortcut_overrides_hostile_options(picker, source):
+    start, wait, keys, finish = picker
+    start(profile='public-open', hostile_opts=source)
+    wait('1/1 (0)')
+    assert finish('M-n') == ['api new']
+
+
+def test_open_ctrl_n_still_navigates_and_enter_opens_selection(picker):
+    start, wait, keys, finish = picker
+    start(profile='public-open')
+    wait('1/1 (0)')
+    keys('C-a')
+    wait('2/2 (0)')
+    keys('Up', 'C-n')
+    wait('2/2 (0)')
+    assert finish() == ['api 4 --local']

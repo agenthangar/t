@@ -322,6 +322,10 @@ _t_open() {
         return 2
       fi
       _t_open_picker "$picker_repo" "$remote" "$app" "$cli" "$include_attached"; picker_rc=$?
+      if (( picker_rc == 3 )); then
+        _t_open "${rest[@]}" --new
+        return $?
+      fi
       (( picker_rc == 2 )) || return $picker_rc
       # No existing rows: use the ordinary fresh-session/default-host path.
     fi
@@ -413,8 +417,8 @@ _t_open() {
   _t_dev "${a[@]}"
 }
 
-# Complete current-session picker. Return 2 only when there are no candidates;
-# cancellation and rendering failures must never create a new session.
+# Complete current-session picker. Return 2 when there are no candidates, or 3
+# for an explicit new-session request. Cancellation/failure must not start work.
 _t_open_picker() {
   local repo="$1" remote="$2" app="$3" cli="$4" rows row selected scope="${DEV_REPOS[$1]:-}"
   local -a fields candidates format_args
