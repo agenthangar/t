@@ -300,4 +300,4 @@ def test_legacy_open_new_shortcut_starts_fresh_instead_of_remote_attach(zsh, tmp
 def test_open_help_describes_new_shortcut(t_mod):
     parser = t_mod.build_parser()
     help_text = parser._subparsers._group_actions[0].choices['open'].format_help()
-    assert 'Alt-N starts a new session' in help_text
+    assert 'Alt-N new session' in help_text
