@@ -808,8 +808,8 @@ class IssueCommand:
         choices = rows + ([dismiss] if not any(r.get('verified') or (r.get('continuable') and
                               not r.get('review_required')) for r in matches) else [])
         selected = self.pick_rows(choices, choices, 'continue', 'Existing work',
-                                  'Select existing work to continue · details below', multi=False,
-                                  details=details + ['Start new work only if these candidates are unrelated.'], noun='work')[0]
+                                  'Select existing work to continue · details below',
+                                  details=details + ['Start new work only if these candidates are unrelated.'], noun='work', multi=False)[0]
         if selected == dismiss:
             return None
         elif selected in rows:
