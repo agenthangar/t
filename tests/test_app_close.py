@@ -249,3 +249,18 @@ def test_close_stale_archive_record_that_saved_thread_selection_filters_out(
         assert db.execute('select id,archived,rollout_path from threads').fetchall() == [
             (SID, 1, str(archive))]
     assert not archive.exists() and rollout.exists()
+
+
+def test_close_python_preflight_allows_unassociated_writer(t_mod, desktop_close, tmp_path):
+    from test_app_handoff import locked
+    cfg, row, home, rollout, marker, calls, _ = desktop_close
+    other = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+    lock = home / 'thread-writer-locks' / (other + '.lock')
+    lock.touch()
+    with sqlite3.connect(home / 'state_5.sqlite') as db:
+        db.execute('create table threads (id text, cwd text)')
+        db.execute('insert into threads values (?,?)', (SID, row['cwd']))
+    with locked(lock, tmp_path):
+        assert t_mod._app_close(cfg, 'repo', '13') == row
+        assert len([argv for argv in calls if argv[0] == 'zsh']) == 1
+    assert marker.exists() and rollout.exists() and lock.exists()
