@@ -65,7 +65,8 @@ dev sessions   ● attached/loaded · ✓ active context · ↻ still in progres
 Enter open · Esc · Space/Tab mark ✓ · Ctrl-/ details
 Ctrl-A show all · Ctrl-F defaults · 2 hidden
 Alt-N new · Ctrl-T attached: hidden
-▸ api  2  ⬡ codex  › cli  ○  codex  Fix login
+  SESSION  WORKING ON  LAST TURN
+▸ ○ api-2  Fix login   2026-10-23 09:41:07 PDT
 ```
 
 The rows above illustrate hierarchy and controls, not a fixed column schema.
@@ -163,6 +164,11 @@ and compact session/status metadata; Ctrl-/ details retain the complete working-
 text and full timestamp. The shared picker controls and hidden host/session/state
 identity fields remain unchanged. Search includes the full task and metadata even
 when compact rows shorten their presentation. Explicit targets still bypass selection.
+Open and close pickers label their displayed columns in a non-selectable header
+that stays aligned when filters change. Open uses SESSION and WORKING ON in compact
+views, shortened to S and TASK at the smallest width; LAST TURN stays last.
+On short terminals the shared profile removes vertical margins to keep the column
+header, controls, and focused row visible.
 
 Printed history appends DATE, BRANCH, PRS, and the full conversation ID after these
 shared columns, retaining

@@ -446,8 +446,10 @@ _t_open_picker() {
   done
   (( $#candidates )) || return 2
   [[ -n $repo ]] && format_args+=(--repo)
-  rows=$(print -rl -- "${candidates[@]}" | COLUMNS=${COLUMNS:-80} python3 "$T_HOME/bin/t" __session-picker-rows --last-turn "${format_args[@]}") || return 1
+  rows=$(print -rl -- "${candidates[@]}" | COLUMNS=${COLUMNS:-80} python3 "$T_HOME/bin/t" __session-picker-rows --last-turn --header "${format_args[@]}") || return 1
   [[ -n $rows ]] || return 1
+  local columns=${rows%%$'\n'*}
+  rows=${rows#*$'\n'}
   # Filter from raw ownership fields, then match stable host/session identities.
   local -A hidden
   for row in "${candidates[@]}"; do
@@ -462,7 +464,7 @@ _t_open_picker() {
     [[ -n ${hidden[$fields[1]/$fields[2]]:-} ]] || visible+=("$row")
   done
   filtered="${(F)visible}"
-  selected=$(T_PICKER_SESSION_FILTERS=open _t_fzf_filtered "$filtered" "$rows" open unattached \
+  selected=$(T_PICKER_COLUMNS="$columns" T_PICKER_SESSION_FILTERS=open _t_fzf_filtered "$filtered" "$rows" open unattached \
     "LAST TURN: local time · $(_dev_agent_legend)" "$include_attached" --prompt="open ${repo:+$repo }> " \
     --with-nth=5,4 \
     --preview='printf "%s\n" {4}') || return $?

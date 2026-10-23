@@ -331,11 +331,16 @@ def test_open_last_turn_stays_visible_without_changing_selection(picker, t_mod, 
     start, wait, keys, finish = picker
     start(profile='public-open', width=width, height=height)
     wait('1/1 (0)')
+    wait('LAST TURN')
     keys('C-a')
     wait('2/2 (0)')
     stamp = t_mod._session_display_helpers()['format_last_turn']('2026-10-23T16:41:07Z')
     screen = wait(stamp if width >= 60 else stamp[5:16])
     assert 'Fir' in screen and 'Enter open' in screen
+    assert 'LAST TURN' in screen
+    header_line = next(line for line in screen.splitlines() if 'LAST TURN' in line and 'local time' not in line)
+    data_line = next(line for line in screen.splitlines() if (stamp if width >= 60 else stamp[5:16]) in line)
+    assert header_line.index('LAST TURN') == data_line.index(stamp if width >= 60 else stamp[5:16])
     # This part of the task is clipped from the compact row, but still searchable.
     keys('-l', 'progress')
     wait('1/2 (0)')

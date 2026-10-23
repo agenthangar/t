@@ -26,6 +26,7 @@ if '--help' in sys.argv:
 rows = sys.stdin.read().splitlines()
 open(os.environ['PICKER_LOG'], 'w').write('\n'.join(rows))
 Path(os.environ['PICKER_LOG'] + '.all').write_text(Path(os.environ['T_PICKER_ALL']).read_text())
+Path(os.environ['PICKER_LOG'] + '.header').write_text(Path(os.environ['T_PICKER_CURRENT_HEADER']).read_text())
 if os.environ.get('PICK_NEW'):
     Path(os.environ['T_PICKER_NEW']).touch()
     sys.exit(130)
@@ -79,6 +80,9 @@ def test_bare_open_inside_worktree_shows_every_detail_and_repo(zsh, tmp_path):
     assert [row.split('\t')[1] for row in rows] == ['api-2', 'api-4', 'web-6', 'web:abcdef12']
     display = [row.split('\t')[-1].rstrip() for row in rows]
     assert all('STATUS' not in row for row in display)
+    heading = (tmp_path / 'picker.log.header').read_text().splitlines()[-1]
+    assert heading.split() == ['REPO', 'SLOT', 'AGENT', 'UI', 'STATUS', 'MODEL', 'WORKING', 'ON', 'LAST', 'TURN']
+    assert heading.index('LAST TURN') == display[0].index('2026-10-23')
     assert '● ✓ ↻' in display[0] and '› cli' in display[0]
     assert '⬡ codex' in display[0] and 'gpt-test-astra' in display[0]
     assert 'First task · #12 merged, still in progress' in display[0]
@@ -177,6 +181,7 @@ def test_open_hotkeys_show_all_and_restore_defaults(zsh, tmp_path, args, actions
     assert 'CLI ' + selected.replace('-', ' ') + ' --local' in result.stdout
     header = (tmp_path / 'picker.log.header').read_text()
     assert 'Ctrl-T attached: ' + attached in header
+    assert header.splitlines()[-1].endswith('LAST TURN')
 
 
 def test_open_attached_toggle_can_hide_after_show_all(zsh, tmp_path):
@@ -343,9 +348,10 @@ def test_open_last_turn_layout_and_details(t_mod, monkeypatch, capsys, width, re
            'local\t-\t/code/web\tweb-4\tapp\tnone\tNo conversation recorded\tcodex\t-\n')
     monkeypatch.setattr(t_mod.sys, 'stdin', io.StringIO(raw))
     monkeypatch.setattr(t_mod, '_columns', lambda: width)
-    args = ['__session-picker-rows', '--last-turn'] + (['--remote'] if remote else []) + (['--repo'] if scoped else [])
+    args = ['__session-picker-rows', '--last-turn', '--header'] + (['--remote'] if remote else []) + (['--repo'] if scoped else [])
     assert t_mod.main(args) == 0
-    first, unknown = [line.split('\t') for line in capsys.readouterr().out.splitlines()]
+    heading, *lines = capsys.readouterr().out.splitlines()
+    first, unknown = [line.split('\t') for line in lines]
     stamp = t_mod._session_display_helpers()['format_last_turn']('2026-10-23T16:41:07Z')
     assert first[:3] == ['mini', 'api-2', 'attached']
     assert len(first) == len(unknown) == 5
@@ -359,6 +365,10 @@ def test_open_last_turn_layout_and_details(t_mod, monkeypatch, capsys, width, re
     assert unknown[3].endswith('Last turn: -') and unknown[4].endswith('  -')
     shown_stamp = stamp[5:16] if width < 60 else stamp
     assert first[4].endswith(shown_stamp)
+    assert heading.endswith('LAST TURN')
+    assert t_mod._display_width(heading[:-len('LAST TURN')]) == t_mod._display_width(first[4][:-len(shown_stamp)])
+    assert t_mod._display_width(heading) <= width - 12
+    assert ('WORKING ON' if width >= 80 else 'TASK') in heading
     assert first[4].index('Fix') < first[4].index(shown_stamp)
     assert t_mod._display_width(first[4][:-len(shown_stamp)]) == t_mod._display_width(unknown[4][:-1])
     assert all(t_mod._display_width(row[4]) <= width - 10 for row in (first, unknown))
