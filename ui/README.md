@@ -76,6 +76,10 @@ repository and opening flags. It discards marks and works with no matching rows.
 Ctrl-N remains navigation. The shared filtered open profile returns 3 for this
 explicit action; cancellation continues to return 130 without starting work.
 
+`t version` is the reviewed read-only alias for `t --version` (#137). Both print
+the installed release version or checkout revision without loading configuration
+or offering updates. `t help version` and `t version --help` describe this behavior.
+
 ## Shared implementations
 
 | Surface | Implementation | Responsibility |

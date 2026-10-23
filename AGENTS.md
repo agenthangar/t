@@ -18,7 +18,7 @@ the user's browser. Reuse the shared session picker for
 interactive issue selection; allow multiple independent issues to be selected,
 but never start a second live owner for one issue. Do not add a bare `t issue`
 target form or a new public single-word command except the reviewed `t share`
-context handoff command. Run `python3 scripts/lint_cli.py`
+context handoff command and `t version` alias for `t --version`. Run `python3 scripts/lint_cli.py`
 after CLI changes; CI enforces this command contract.
 Command-group help must show repository argument positions and explain inference
 and selection. Keep `--repo` consistent across issue verbs. `t issue list` is a
