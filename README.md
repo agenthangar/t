@@ -729,7 +729,11 @@ slot's parked terminal and dev server and releases its reservation while
 preserving the saved conversation and worktree. Saved, unloaded conversations
 can close while Codex and other chats stay open; missing archived history files
 do not block cleanup. A conversation that still holds its writer lock must be
-stopped and archived in Codex before closing the slot. The close rechecks ownership
+stopped and archived in Codex before closing the slot. Unassociated backend locks
+do not block cleanup: close checks the selected thread and other writers tied to
+this worktree through the conversation index or saved rollout metadata. Unreadable
+ownership data still blocks close. Shared backends and their processes remain protected;
+close does not delete locks or launch a replacement writer. The close rechecks ownership
 after cleanup and retains the reservation if a writer or new conversation appears.
 This releases t's slot reservation; it does not close app windows or delete the
 worktree.
