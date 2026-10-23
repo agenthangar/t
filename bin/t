@@ -7675,7 +7675,7 @@ def _app_close(cfg, repo, slot):
                 helper["assert_released"](
                     _app_bundle(), selected["sid"], selected["cwd"], _run,
                     codex_home=selected["codex_home"], rollout=selected["rollout"],
-                    archived=selected["archived"], retry=retry)
+                    archived=selected["archived"], retry=retry, for_close=True)
             except ValueError as exc:
                 message = str(exc)
                 if "writer lock is held" in message or "no verifiable writer lock contract" in message:
@@ -9912,7 +9912,8 @@ REMOTE SESSIONS
             "without resuming it in the CLI; its conversation and worktree are preserved. "
             "Saved, unloaded chats and stale missing archives do not block close while the app runs. "
             "A chat that still holds its writer lock must be stopped and archived in Codex first. "
-            "Other desktop chats can stay open. "
+            "Other desktop chats can stay open. Unassociated backend locks do not block cleanup; "
+            "known writers in this worktree and unreadable ownership data still do. "
             "Bare `t kill` picks across all local sessions; `t kill <repo>` filters to that repo. "
             "Space/Tab marks multiple rows and Enter confirms and closes the selection without "
             "further prompts; desktop ownership checks still apply. Initially shows only unattached sessions "

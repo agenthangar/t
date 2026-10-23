@@ -756,7 +756,9 @@
       "scope": "explicit/inferred repository or all local/remote sessions",
       "confirmation": "enter",
       "tests": [
-        "tests/test_kill_multiselect.py::test_kill_picker_starts_with_only_proven_safe_rows"
+        "tests/test_kill_multiselect.py::test_kill_picker_starts_with_only_proven_safe_rows",
+        "tests/test_app_close.py::test_close_python_preflight_allows_unassociated_writer",
+        "tests/test_desktop_close.py::test_desktop_close_scopes_unknown_locks_and_rechecks_new_ownership"
       ],
       "modes": {
         "default": {

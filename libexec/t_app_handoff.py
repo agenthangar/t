@@ -148,29 +148,73 @@ def _lock_dir(codex_home):
     return folder
 
 
-def _thread_cwds(codex_home, sid):
-    """Resolve a held sibling lock through this Codex home's local state DBs."""
+def _rollout_cwds(codex_home, sid):
+    """Read only identity metadata for an unindexed writer, never chat content."""
     known = set()
-    for db in glob.glob(os.path.join(codex_home, "state_*.sqlite")):
+    def unreadable(error):
+        raise error
+    for folder in ("sessions", "archived_sessions"):
+        root = os.path.join(codex_home, folder)
         try:
-            if not stat.S_ISREG(os.lstat(db).st_mode):
-                continue
-            uri = "file:" + quote(db, safe="/") + "?mode=ro"
-            with closing(sqlite3.connect(uri, uri=True, timeout=0.5)) as connection:
-                known.update(row[0] for row in connection.execute(
-                    "select cwd from threads where id=?", (sid,))
-                    if isinstance(row[0], str) and os.path.isabs(row[0]))
-        except (OSError, sqlite3.Error):
+            info = os.lstat(root)
+        except FileNotFoundError:
             continue
+        if not stat.S_ISDIR(info.st_mode):
+            raise ValueError("a Codex rollout directory is not a real directory")
+        for directory, _, files in os.walk(root, onerror=unreadable):
+            for name in files:
+                if not name.startswith("rollout-") or not name.endswith(sid + ".jsonl"):
+                    continue
+                path = os.path.join(directory, name)
+                if not stat.S_ISREG(os.lstat(path).st_mode):
+                    raise ValueError("an unindexed Codex rollout is not a regular file")
+                with open(path, encoding="utf-8") as handle:
+                    record = json.loads(handle.readline(1024 * 1024))
+                payload = record.get("payload") if isinstance(record, dict) else None
+                if (not isinstance(record, dict) or record.get("type") != "session_meta"
+                        or not isinstance(payload, dict) or payload.get("id") != sid
+                        or not isinstance(payload.get("cwd"), str)
+                        or not os.path.isabs(payload["cwd"])):
+                    raise ValueError("an unindexed Codex rollout has invalid identity metadata")
+                known.add(payload["cwd"])
     return known
 
 
-def _other_cwd_owner(folder, sid, cwd, codex_home, *, unknown=None):
+def _thread_cwds(codex_home, sid, *, for_close=False):
+    """Resolve a held sibling lock through this Codex home's local state DBs."""
+    known = set()
+    databases = glob.glob(os.path.join(codex_home, "state_*.sqlite"))
+    if for_close and os.path.join(codex_home, "state_5.sqlite") not in databases:
+        raise ValueError("the Codex ownership index is unavailable")
+    for db in databases:
+        try:
+            if not stat.S_ISREG(os.lstat(db).st_mode):
+                if for_close:
+                    raise ValueError("a Codex ownership index is not a regular file")
+                continue
+            uri = "file:" + quote(db, safe="/") + "?mode=ro"
+            with closing(sqlite3.connect(uri, uri=True, timeout=0.5)) as connection:
+                rows = connection.execute("select cwd from threads where id=?", (sid,)).fetchall()
+                if for_close and any(not isinstance(row[0], str) or not os.path.isabs(row[0])
+                                     for row in rows):
+                    raise ValueError("a Codex writer has invalid workspace metadata")
+                known.update(row[0] for row in rows
+                    if isinstance(row[0], str) and os.path.isabs(row[0]))
+        except (OSError, sqlite3.Error) as exc:
+            if for_close:
+                raise ValueError("could not inspect the Codex ownership index") from exc
+            continue
+    if for_close and not known:
+        known = _rollout_cwds(codex_home, sid)
+    return known
+
+
+def _other_cwd_owner(folder, sid, cwd, codex_home, *, unknown=None, for_close=False):
     """Find a known writer in cwd; optionally record unindexed live writers.
 
-    Destructive close callers omit ``unknown`` and continue to fail closed.
-    Handoffs supply a set: an unindexed lock is diagnostic, while a known
-    same-worktree writer remains a conflict even if scanned after that lock.
+    Close requires readable indexes and also checks unindexed rollout metadata.
+    A remaining unassociated lock is not evidence of ownership of every cwd.
+    Handoffs retain their existing strict/diagnostic policy via ``unknown``.
     """
     if folder is None:
         return None
@@ -180,11 +224,12 @@ def _other_cwd_owner(folder, sid, cwd, codex_home, *, unknown=None):
             continue
         if not _lock_held(entry.path):
             continue
-        cwds = _thread_cwds(codex_home, other)
+        cwds = _thread_cwds(codex_home, other, for_close=for_close)
         if not cwds:
-            if unknown is None:
+            if unknown is None and not for_close:
                 raise ValueError("another loaded Codex conversation could not be matched to its worktree")
-            unknown.add(other)
+            if unknown is not None:
+                unknown.add(other)
             continue
         if any(os.path.realpath(path) == os.path.realpath(cwd) for path in cwds):
             return other
@@ -280,7 +325,7 @@ def _archived_released(codex_home, sid, cwd, rollout, run):
 
 
 def assert_released(bundle, sid, cwd, run, *, codex_home=None, rollout=None,
-                    archived=False, cli_pid=None, retry=_RETRY, unknown=None):
+                    archived=False, cli_pid=None, retry=_RETRY, unknown=None, for_close=False):
     """Allow only a free selected writer lock and no other writer in its cwd.
 
     The eventual `codex resume --no-daemon` takes the lock atomically. This
@@ -315,7 +360,8 @@ def assert_released(bundle, sid, cwd, run, *, codex_home=None, rollout=None,
                              "(its writer lock is held). "
                              + _release_guidance(cwd, archived, run) + retry)
         try:
-            other = _other_cwd_owner(folder, sid, cwd, codex_home, unknown=unknown)
+            other = _other_cwd_owner(folder, sid, cwd, codex_home, unknown=unknown,
+                                     for_close=for_close)
         except ValueError as exc:
             raise ValueError(str(exc) + ". " + retry) from exc
         if other:
@@ -405,7 +451,7 @@ def wait_cli_released(sid, cwd, *, codex_home, rollout, contract=None,
 
 
 def assert_workspace_released(codex_home, cwd, *, retry="Retry: t kill <repo> <slot>."):
-    """Verify an unselected workspace has only missing archives and no writer.
+    """Verify an unselected workspace has only missing archives and no associated writer.
 
     Codex can retain archived index rows after their rollout files disappear.
     These are history, not owners. Keep the rows untouched and reject every
@@ -441,7 +487,7 @@ def assert_workspace_released(codex_home, cwd, *, retry="Retry: t kill <repo> <s
                 raise ValueError("this desktop workspace has a saved Codex conversation "
                                  "that could not be selected. " + retry)
         other = _other_cwd_owner(folder, "00000000-0000-0000-0000-000000000000",
-                                 cwd, codex_home)
+                                 cwd, codex_home, for_close=True)
         if other:
             raise ValueError("a Codex conversation in this worktree is still loaded "
                              f"({other}). " + retry)

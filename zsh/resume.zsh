@@ -1883,7 +1883,7 @@ try:
                 or rows[0][2] != int(archived)):
             raise ValueError('the selected saved conversation changed during close')
         mod['assert_released'](None, sid, cwd, run, codex_home=home,
-                               rollout=rollout, archived=archived == '1',
+                               rollout=rollout, archived=archived == '1', for_close=True,
                                retry='Retry t kill after the conversation is released.')
 except (OSError, ValueError, sqlite3.Error) as exc:
     message = str(exc)
