@@ -675,7 +675,21 @@
           ]
         }
       },
-      "display_schema": "session_information"
+      "display_schema": "session_information",
+      "display_extensions": {
+        "last_turn_started_at": {
+          "label": "LAST TURN",
+          "before": "WORKING ON",
+          "type": "string",
+          "meaning": "Latest evidenced turn initiation, not last activity; local date/time with seconds and timezone.",
+          "unknown": "-",
+          "wire_format": "ISO 8601 UTC",
+          "tests": [
+            "tests/test_session_details.py::test_last_turn_ignores_later_activity",
+            "tests/test_command_behavior.py::test_session_last_turn_display_contract"
+          ]
+        }
+      }
     },
     "session close": {
       "patterns": [

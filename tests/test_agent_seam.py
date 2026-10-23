@@ -2428,11 +2428,11 @@ def test_rich_session_rows_keep_targeting_and_activity_while_recovering_context(
     assert r.returncode == 0, r.stderr
     fields = r.stdout.strip().split('\t')
     assert fields[:5] == [SID, wt, 'api-3', 'app', 'none']
-    assert fields[5:] == ['Investigate cache invalidation', 'codex', '-']
+    assert fields[5:] == ['Investigate cache invalidation', 'codex', '-', '2026-09-10T05:20:10Z']
 
 
 def test_remote_rich_scan_preserves_login_shell_contract(zsh):
-    row = f'{SID}\t/wt/3\tapi-3\tapp\tnone\tTask context\tcodex\tmodel-test'
+    row = f'{SID}\t/wt/3\tapi-3\tapp\tnone\tTask context\tcodex\tmodel-test\t2026-10-23T16:41:07Z'
     log = zsh.home/'ssh-args'
     ssh = zsh.home.parent / 'stubbin/ssh'
     ssh.write_text('#!/bin/sh\n'
@@ -2503,6 +2503,8 @@ def test_unstamped_codex_model_uses_the_same_verified_transcript_as_title(zsh):
     paths = _codex_home(zsh, [(SID, wt, "prompt", epoch + 10, 0, "Current task")])
     with paths[SID].open("a") as f:
         f.write(json.dumps({"type": "turn_context", "payload": {"model": "actual-model"}}) + "\n")
+        f.write(json.dumps({"timestamp": "2026-10-23T16:41:07Z", "type": "event_msg",
+                            "payload": {"type": "task_started"}}) + "\n")
     r = zsh('_dev_session_claude_pid() { print 4242; }; '
             '_dev_session_has_claude() { return 0; }; '
             '_dev_fg_rows() { :; }; _pr_state_tag() { REPLY=; }; _pr_state_flush() { :; }; '
@@ -2510,7 +2512,7 @@ def test_unstamped_codex_model_uses_the_same_verified_transcript_as_title(zsh):
             FAKE_DEV_AGENT="codex", FAKE_SESSION_ROWS=f"dev-api-3\t{wt}\tattached",
             FAKE_PANE="OpenAI Codex (v0.158.0)")
     assert r.returncode == 0 and not r.stderr, r.stderr
-    assert r.stdout.strip().split("\t") == ["-", wt, "api-3", "attached", "active", "Current task", "codex", "actual-model"]
+    assert r.stdout.strip().split("\t") == ["-", wt, "api-3", "attached", "active", "Current task", "codex", "actual-model", "2026-10-23T16:41:07Z"]
 
 
 @pytest.mark.parametrize("old_cache", [False, True])
