@@ -198,6 +198,13 @@ def evidence(text, issue, *, scoped=False):
     return None
 
 
+def task_reference(text, issue):
+    """A direct task assignment on the first line, not an issue inside pasted output."""
+    line = text.strip().split('\n', 1)[0]
+    return bool(re.match(r'(?:please\s+)?(?:address|fix|implement|resolve|work on|continue)\b', line, re.I)
+                and references(line, issue, scoped=True))
+
+
 def candidate(provider, identity, reason, **fields):
     return dict(provider=provider, id=str(identity), evidence=reason, verified=False,
                 state='unknown', **fields)
@@ -388,7 +395,7 @@ class IssueCommand:
                 return result
         return 0
 
-    def pick_rows(self, default, all_rows, action, label, legend, *, multi=True, noun='issues'):
+    def pick_rows(self, default, all_rows, action, label, legend, *, multi=True, noun='issues', details=None):
         """Keep shared fzf controls and styling; large lists travel in private files."""
         if not sys.stdin.isatty():
             raise IssueError('selection requires a terminal; use t issue list or provide issue numbers')
@@ -404,6 +411,11 @@ class IssueCommand:
             if not multi:
                 argv = argv[:7] + [action, legend, f'--prompt={noun}> ',
                                   '--delimiter=\t', '--with-nth=-1']
+                if details:
+                    for index, detail in enumerate(details):
+                        private_write(Path(directory) / f'detail-{index}', detail)
+                    argv += ['--preview=cat -- ' + shlex.quote(directory) + '/detail-{2}',
+                             '--preview-window=down,35%,wrap']
             env = {k: v for k, v in os.environ.items() if not k.startswith('COV_CORE_')}
             env['T_PICKER_ALL_LABEL'] = ('Registered repositories' if noun == 'repositories' else
                                          'All issues' if multi else 'Existing work')
@@ -566,12 +578,14 @@ class IssueCommand:
             marker_path = Path(gitdir) / 't-issue.json'
             marker = decoded(marker_path.read_text()) if marker_path.exists() else {}
             live = [r for r in rows if r['cwd'] == cwd or r['cwd'].startswith(cwd + '/')]
-            context = branch + '\n' + '\n'.join(r.get('summary', '') for r in live)
-            context += '\n' + command(['git', '-C', cwd, 'log', '-20', '--format=%s', 'origin/main..HEAD'])
+            changes = command(['git', '-C', cwd, 'log', '-20', '--format=%s', 'origin/main..HEAD'])
+            workspace_reason = evidence(branch + '\n' + changes, issue, scoped=True)
+            context = '\n'.join(r.get('summary', '') for r in live)
             # User prompts from both supported agents, including unmanaged worktrees.
             paths = command(self.shell('for a in claude codex; do '
                 '_dev_agent_transcripts_for_cwd "$a" ' + shlex.quote(cwd) + '; done; true'))
             associated = set()
+            assigned = set()
             has_transcripts = False
             for path in paths.splitlines():
                 if not Path(path).is_file():
@@ -596,12 +610,27 @@ class IssueCommand:
                             prefix = f't issue association: {issue["repo"]}#{issue["number"]}; token='
                             if sid and text.startswith(prefix):
                                 associated.add(sid)
+                            elif sid and task_reference(text, issue):
+                                assigned.add(sid)
             linked = marker.get('repo') == issue['repo'] and marker.get('number') == issue['number'] and marker.get('branch') == branch
-            reason = 'recorded issue worktree' if linked or associated else evidence(context, issue, scoped=True)
+            current_ids = {r['sid'] for r in live}
+            task_ids = associated | assigned
+            current_task = bool(task_ids & current_ids) if live else bool(task_ids)
+            reason = ('recorded issue worktree' if linked else 'conversation assigned to issue' if current_task else
+                      ('worktree branch/commit: ' + workspace_reason) if workspace_reason else
+                      evidence(context, issue, scoped=True))
             if not reason:
                 continue
+            incidental = not (linked or current_task or workspace_reason)
+            review_required = not (linked or current_task or workspace_reason == 'explicit issue reference')
             row = candidate('local', cwd, reason, host='local', worktree=cwd, branch=branch,
                             alias=issue['alias'], slot=marker.get('slot'))
+            row['incidental'] = incidental
+            row['review_required'] = review_required
+            row['owners'] = [dict(owner, interface=('desktop' if owner['state'] == 'app' else
+                                                   'foreground' if ':' in owner['slot'] else 'cli')) for owner in live]
+            if incidental:
+                row['evidence'] = 'incidental transcript mention; not issue ownership'
             row['state'] = 'active' if live else 'saved'
             row['verified'] = bool(linked or associated)
             row['pr'] = (marker.get('handoff') or {}).get('pr')
@@ -621,17 +650,24 @@ class IssueCommand:
                         row.update(app=True, alias=alias, slot=slot)
                 else:
                     row['verified'] = False
+                if not incidental and re.fullmatch(r'.+-[0-9]+', owner['slot']):
+                    alias, slot = owner['slot'].rsplit('-', 1)
+                    row.update(session=session, sid=owner['sid'], alias=alias, slot=slot, continuable=True)
+                    if owner['state'] == 'app':
+                        row['app'] = True
             elif live:
                 row['verified'] = False
             if not live:
                 alias, slot = self.cfg.repo_of_dir(cwd)
                 row.update(alias=alias, slot=slot)
-                row['resume'] = bool((linked or associated) and has_transcripts and alias and slot)
+                row['resume'] = bool(not incidental and has_transcripts and alias and slot)
                 row['prepared'] = bool(linked and marker.get('state') == 'prepared' and marker.get('token')
                                        and alias and slot and (Path(gitdir) / 't-issue-prompt').is_file())
-                row['verified'] = row['resume'] or row['prepared']
+                row['continuable'] = row['resume']
+                row['verified'] = bool((row['resume'] and not review_required) or row['prepared'])
                 if row['prepared']:
                     row['state'] = 'prepared'
+            row['association'] = ('mention' if incidental else 'owner' if row['verified'] and live else 'workspace')
             if linked and row['verified'] and (marker.get('handoff') or {}).get('source'):
                 row['published_source'] = marker['handoff']['source']
             result.append(row)
@@ -644,12 +680,15 @@ class IssueCommand:
                                   destination, remote], timeout=60))
         if report.get('version') != 1 or report.get('incomplete'):
             raise IssueError('remote issue scanner unavailable or incomplete; update t on that host')
-        for row in report['matches']:
+        matches = report['matches'] + [dict(r, incidental=True) for r in report.get('mentions', [])]
+        for row in matches:
             row.update(host=host, provider='remote', id=host + ':' + row['id'])
-        return report['matches']
+            for owner in row.get('owners', []):
+                owner['host'] = host
+        return matches
 
     def scan(self, issue, host_only=False):
-        report = dict(version=1, issue=issue['url'], matches=[], incomplete=[], checked=[])
+        report = dict(version=1, issue=issue['url'], matches=[], mentions=[], incomplete=[], checked=[])
         checks = [('local', lambda: self.local(issue), False)]
         if not host_only:
             checks += [('github', lambda: self.github(issue), False), ('codex-cloud', lambda: self.codex(issue), False),
@@ -665,6 +704,8 @@ class IssueCommand:
                 if isinstance(error, DiscoverySkipped) or optional:
                     failure['skipped'] = True
                 report['incomplete'].append(failure)
+        report['mentions'] = [r for r in report['matches'] if r.get('incidental')]
+        report['matches'] = [r for r in report['matches'] if not r.get('incidental')]
         # A GitHub task link and its provider result identify one owner.
         by_url, matches = {}, []
         for row in sorted(report['matches'], key=lambda r: r['provider'] == 'github'):
@@ -687,12 +728,44 @@ class IssueCommand:
                 matches.remove(row)
         return report
 
+    def row_details(self, row):
+        details = [f'Evidence: {row["evidence"]}']
+        for label, key in [('Host', 'host'), ('Worktree', 'worktree'), ('Branch', 'branch'), ('PR', 'pr')]:
+            if row.get(key):
+                details.append(f'{label}: {row[key]}')
+        for owner in row.get('owners', []):
+            details += [f'Session: {owner.get("host", row.get("host", "local"))} / {owner["slot"]}',
+                        f'Agent: {owner.get("agent", "unknown")} · model {owner.get("model") or "unknown"} · '
+                        f'{owner.get("interface", "unknown")} · {owner["state"]} · context {owner.get("context", "unknown")}',
+                        f'Working on: {owner.get("summary") or "unknown"}',
+                        f'Conversation: {owner.get("sid") or "unknown"}',
+                        f'Last turn started: {owner.get("last_turn_started_at") or "unknown"}']
+            if re.fullmatch(r'.+-[0-9]+', owner['slot']):
+                alias, slot = owner['slot'].rsplit('-', 1)
+                words = ['t', 'session', 'open', alias, slot, '--app' if owner['state'] == 'app' else '--cli']
+                if owner['state'] != 'app':
+                    words.append('--local')
+                if row.get('provider') == 'remote':
+                    words = ['ssh', '-t', self.cfg.hosts[row['host']], 'zsh -lic ' + shlex.quote(shlex.join(words))]
+                details.append('Open session: ' + shlex.join(words))
+        if row.get('resume') and row.get('alias') and row.get('slot'):
+            words = ['t', 'session', 'resume', row['alias'], row['slot'], '--days', 'all']
+            if row.get('provider') == 'remote':
+                words = ['ssh', '-t', self.cfg.hosts[row['host']], 'zsh -lic ' + shlex.quote(shlex.join(words))]
+            details.append('Continue: ' + shlex.join(words))
+        return [clean_text(line) for line in details]
+
     def display(self, issue, report):
         clean = lambda text: re.sub(r'[\x00-\x1f\x7f-\x9f]', ' ', str(text))
         print(clean(f'{issue["repo"]}#{issue["number"]}: {issue["title"]}'))
         for index, row in enumerate(report['matches'], 1):
             print(clean(f'{index}. {row["provider"]} [{row["state"]}] {row.get("url") or row.get("worktree")}'))
-            print('   ' + clean(row['evidence']))
+            for line in self.row_details(row):
+                print('   ' + line)
+        for row in report.get('mentions', []):
+            print(clean(f'Mention only (not an owner): {row.get("worktree") or row.get("url")}'))
+            for line in self.row_details(row):
+                print('   ' + line)
         print('Checked: ' + clean(', '.join(report['checked'])))
         for failure in report['incomplete']:
             label = 'Warning: skipped' if failure.get('skipped') else 'Incomplete:'
@@ -718,21 +791,27 @@ class IssueCommand:
         if (len(matches) == 1 and self.published(matches[0]) and
                 matches[0]['evidence'] in ('explicit issue reference', 'open PR linked from issue')):
             return matches[0]
-        if len(matches) == 1 and matches[0].get('verified') and any(
+        if len(matches) == 1 and not matches[0].get('review_required') and (
+                matches[0].get('verified') or matches[0].get('continuable')) and any(
                 matches[0].get(key) for key in ('session', 'resume', 'prepared')):
             return matches[0]
         if not sys.stdin.isatty():
             raise IssueError('existing work needs review; rerun interactively to continue or take over')
+        details = ['\n'.join(self.row_details(row)) for row in matches]
         rows = ['\t'.join(['owner', str(i), 'work', clean_text(
-                    f'{row["provider"]} [{row["state"]}] {row.get("url") or row.get("worktree")} · {row["evidence"]}')])
+                    f'{row["provider"]} [{row["state"]}] {row.get("url") or row.get("worktree")} · ' +
+                    ' · '.join(f'{o["slot"]} {o.get("agent", "unknown")} {o.get("model") or "unknown"}: '
+                               f'{o.get("summary") or "unknown"}' for o in row.get('owners', [])) +
+                    ' · ' + row['evidence'])])
                 for i, row in enumerate(matches)]
-        dismiss = 'dismiss\t0\taction\tThese matches are unrelated; start new work'
-        choices = rows + ([dismiss] if not any(r.get('verified') for r in matches) else [])
+        dismiss = f'dismiss\t{len(matches)}\taction\tThese matches are unrelated; start new work'
+        choices = rows + ([dismiss] if not any(r.get('verified') or (r.get('continuable') and
+                              not r.get('review_required')) for r in matches) else [])
         selected = self.pick_rows(choices, choices, 'continue', 'Existing work',
-                                  'Select one owner to continue or hand off', multi=False)[0]
+                                  'Select existing work to continue · details below',
+                                  details=details + ['Start new work only if these candidates are unrelated.'], noun='work', multi=False)[0]
         if selected == dismiss:
-            if input('Type unrelated to confirm these matches do not address the issue: ') == 'unrelated':
-                return None
+            return None
         elif selected in rows:
             return matches[rows.index(selected)]
         raise IssueCancelled('existing work left unchanged')
@@ -896,15 +975,20 @@ class IssueCommand:
         if readonly:
             return 2 if report['incomplete'] else 0
         selected = self.choose(report)
-        if selected and selected.get('verified') and selected.get('session'):
+        if selected and (selected.get('verified') or selected.get('continuable')) and selected.get('session'):
             return self.attach(selected) if attach else selected
         self.check_discovery(report, args)
-        if selected and selected.get('verified') and selected.get('resume'):
+        if selected and (selected.get('verified') or selected.get('continuable')) and selected.get('resume'):
             return self.attach(selected) if attach else selected
         if selected and selected.get('prepared') and selected.get('host') != 'local':
             raise IssueError('issue launch is reserved on host ' + clean_text(selected.get('host')) +
                              f'; run t issue start {issue["url"]} there to recover it')
         retry = selected and selected.get('prepared') and selected.get('host') == 'local'
+        if selected and selected['provider'] in ('local', 'remote') and not retry:
+            hint = ('t session history ' + shlex.join([selected['alias'], selected['slot']])
+                    if selected.get('alias') and selected.get('slot') else 'the session commands shown above')
+            raise IssueError('this workspace has no single resumable session; inspect ' + hint +
+                             '. Local work does not require an external-agent takeover.')
         recovery = selected and self.published(selected)
         handoff = (self.recover_published(issue, selected) if recovery else
                    self.takeover(issue, selected) if selected and not retry else None)
@@ -922,7 +1006,8 @@ class IssueCommand:
                     self.display(issue, dict(fresh, matches=[], incomplete=[failure]))
             self.check_discovery(fresh, args, recheck=True)
             # Another invocation may have launched into a worktree seen earlier.
-            if any(r.get('verified') and r.get('session') for r in fresh['matches']):
+            if any((r.get('verified') or (r.get('continuable') and not r.get('review_required')))
+                   and r.get('session') for r in fresh['matches']):
                 raise IssueError('an issue owner became active during review; rerun to attach')
             reservations = [r for r in fresh['matches'] if r.get('prepared')]
             if any(not retry or (r['provider'], r['id']) != (selected['provider'], selected['id'])

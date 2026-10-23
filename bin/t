@@ -9708,7 +9708,9 @@ def build_parser():
             "and GitHub without starting or attaching. Use a registered alias or owner/repo, "
             "or omit it to use the current registered checkout. Outside a checkout, specify "
             "the repository explicitly; status never prompts. "
-            "An issue URL includes its repository.")
+            "An issue URL includes its repository. Show session identity, agent/model, working-on "
+            "summary, branch, and continuation commands. Incidental transcript mentions are "
+            "listed separately from issue owners.")
     issue_status.add_argument("target", nargs="+", help="issue number, repo and number, or GitHub issue URL")
     issue_status.add_argument("--repo", help="registered repository alias or GitHub owner/name")
     issue_status.add_argument("--json", action="store_true", help="output machine-readable discovery report")
@@ -9723,7 +9725,10 @@ def build_parser():
             "Unavailable hosts and unconfigured optional providers are warned and skipped. "
             "A unique explicitly linked GitHub PR is recovered automatically into a fresh "
             "local worktree; ambiguous PRs or branches require selection. Only pushed commits "
-            "are recovered. Known owners and local resume safety checks remain enforced.")
+            "are recovered. Known owners and local resume safety checks remain enforced. "
+            "Incidental transcript mentions do not claim an issue. A unique local workspace "
+            "with issue commits or an assigned conversation continues directly; local work "
+            "never requires an external-agent takeover. Ambiguous work shows session details.")
     issue_start.add_argument("target", nargs="*", help="issue numbers, repository and numbers, or GitHub issue URLs")
     issue_start.add_argument("--repo", help="registered repository alias or GitHub owner/name")
     issue_start.add_argument("--allow-incomplete-check", action="store_true",

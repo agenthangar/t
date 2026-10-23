@@ -126,6 +126,26 @@ def test_picker_passes_private_rows_to_shared_ui_and_cleans_up(mod, cfg, monkeyp
     assert not calls[0].exists()
 
 
+def test_owner_picker_has_private_details_preview(mod, cfg, monkeypatch):
+    app = mod.IssueCommand(cfg, {'_t_source_root': lambda: str(ROOT)})
+    monkeypatch.setattr(mod.sys.stdin, 'isatty', lambda: True)
+    row = 'owner\t0\twork\tSession summary'
+    directories = []
+    def run(argv, **kw):
+        directory = Path(argv[5]).parent
+        directories.append(directory)
+        detail = directory / 'detail-0'
+        assert detail.read_text() == 'Conversation: exact-id\nWorking on: full summary'
+        assert detail.stat().st_mode & 0o777 == 0o600
+        assert any(a.startswith('--preview=cat -- ') and a.endswith('/detail-{2}') for a in argv)
+        assert '--preview-window=down,35%,wrap' in argv
+        return SimpleNamespace(returncode=0, stdout=row+'\n')
+    monkeypatch.setattr(mod.subprocess, 'run', run)
+    assert app.pick_rows([row], [row], 'continue', 'work', 'details below', multi=False,
+                         details=['Conversation: exact-id\nWorking on: full summary']) == [row]
+    assert not directories[0].exists()
+
+
 def test_picker_rejects_cancellation_invalid_rows_and_multi_owner(mod, cfg, monkeypatch):
     app = mod.IssueCommand(cfg, {'_t_source_root': lambda: str(ROOT)})
     monkeypatch.setattr(mod.sys.stdin, 'isatty', lambda: True)
