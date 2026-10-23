@@ -306,7 +306,7 @@ def test_open_help_describes_new_shortcut(t_mod):
     parser = t_mod.build_parser()
     help_text = parser._subparsers._group_actions[0].choices['open'].format_help()
     assert 'Alt-N new session' in help_text
-    assert 'Last turn is the final column' in help_text
+    assert 'LAST TURN is the final column' in parser._subparsers._group_actions[0].choices['open'].help_details
 
 
 @pytest.mark.parametrize('width', [200, 120, 80, 44, 32])

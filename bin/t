@@ -9786,7 +9786,6 @@ def build_parser():
 select several sessions:
   Space/Tab marks ✓; Enter opens; Ctrl-A shows all; Ctrl-F restores defaults.
   Ctrl-T toggles attached; Alt-N new session.
-  Last turn is the final column (local time); Ctrl-/ shows its full timestamp.
 
 desktop → CLI:
   %(prog)s api 2 --cli
@@ -9809,7 +9808,7 @@ Run `t help open` for session targeting, defaults, and remote details.""",
   Explicit slots still open directly. Compact resume-style rows retain agent,
   UI, status, model, session and task details, including idle/desktop rows.
   LAST TURN is the final column, using the same initiation timestamp as t ls.
-  Narrow rows shorten it to MM-DD HH:MM; Ctrl-/ retains date, seconds and timezone.
+  Narrow rows use MM-DD HH:MM; Ctrl-/ shows the full timestamp.
   Space/Tab marks multiple rows; Enter opens them.
   Ctrl-/ shows full details. The first CLI opens here, others use tabs;
   desktop rows open in the app. Remote pickers add HOST. --fg opens one.
