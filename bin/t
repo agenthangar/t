@@ -10568,7 +10568,7 @@ def main(argv):
     if (argv[0] not in top_commands and argv[0] not in COMMAND_GROUPS
             and argv[0] != "todo" and not argv[0].startswith("-")):
         print(f"t: unknown command {argv[0]!r}; choose from "
-              f"{', '.join(COMMAND_GROUPS)}", file=sys.stderr)
+              f"{', '.join([*COMMAND_GROUPS, 'version'])}", file=sys.stderr)
         return 2
     argv = _canonical_argv(argv)
     # Operational `cursor` arguments still belong to cursor-beam. In particular,

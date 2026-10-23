@@ -2239,7 +2239,7 @@ def test_command_discovery_only_advertises_public_verbs(t_mod, capsys, monkeypat
     if argv == ["not-a-command"]:
         assert "unknown command 'not-a-command'" in output
         choices = output.split("choose from ", 1)[1]
-        assert "session," in choices and "system" in choices
+        assert "session," in choices and "system" in choices and "version" in choices
     elif argv != ["--bad-option"]:
         assert "session" in output and "system" in output
 
