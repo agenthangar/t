@@ -1481,39 +1481,41 @@ def test_rooted_cleanup_preserves_agent_trees_and_launchers(zsh, tmp_path):
     Its runtime children aren't named codex, its launcher is a generic node, and
     its own cwd can be OUTSIDE the cleanup directory. Protect the whole ownership
     chain, without exempting an orphaned dev server just because it shares init.
+    Synthetic PIDs exceed the OS PID range so they cannot collide with the
+    invoking shell or its parent, which cleanup must always protect.
     Signals are recorded, never sent to fixture pids.
     """
     ps = tmp_path / "stubbin" / "ps"
     ps.write_text("#!/bin/sh\ncat <<'TABLE'\n"
                   "1 0 launchd\n"
-                  "4000 1 node\n"  # launcher
-                  "4100 4000 /opt/bin/codex\n"  # shared daemon (different cwd)
-                  "4101 4100 /opt/bin/codex-code-mode-host\n"
-                  "4102 4101 node\n"
-                  "4103 4102 node_repl\n"
-                  "4200 1 /Applications/ChatGPT.app/Contents/MacOS/ChatGPT\n"
-                  "4201 4200 node\n"
-                  "4300 1 claude\n"
-                  "4301 4300 node\n"
-                  "4400 1 codex-aarch64-apple-darwin\n"
-                  "4401 4400 node\n"
-                  "4500 1 cursor-agent\n"
-                  "4501 4500 node\n"
-                  "5000 1 node\n"  # orphaned dev server
-                  "5001 5000 esbuild\n"
-                  "6000 1 zsh\n"
-                  "6001 6000 bash\n"
-                  "7000 7001 node\n"  # inconsistent/cyclic snapshot: fail safe
-                  "7001 7000 node\n"
+                  "10004000 1 node\n"  # launcher
+                  "10004100 10004000 /opt/bin/codex\n"  # shared daemon (different cwd)
+                  "10004101 10004100 /opt/bin/codex-code-mode-host\n"
+                  "10004102 10004101 node\n"
+                  "10004103 10004102 node_repl\n"
+                  "10004200 1 /Applications/ChatGPT.app/Contents/MacOS/ChatGPT\n"
+                  "10004201 10004200 node\n"
+                  "10004300 1 claude\n"
+                  "10004301 10004300 node\n"
+                  "10004400 1 codex-aarch64-apple-darwin\n"
+                  "10004401 10004400 node\n"
+                  "10004500 1 cursor-agent\n"
+                  "10004501 10004500 node\n"
+                  "10005000 1 node\n"  # orphaned dev server
+                  "10005001 10005000 esbuild\n"
+                  "10006000 1 zsh\n"
+                  "10006001 10006000 bash\n"
+                  "10007000 10007001 node\n"  # inconsistent/cyclic snapshot: fail safe
+                  "10007001 10007000 node\n"
                   "TABLE\n")
     r = zsh('''
-      _dev_cwd_pids() { print -l 0 1 4000 4101 4102 4103 4200 4201 4300 4301 4400 4401 4500 4501 5000 5001 6000 6001 7000 9999; }
+      _dev_cwd_pids() { print -l 0 1 10004000 10004101 10004102 10004103 10004200 10004201 10004300 10004301 10004400 10004401 10004500 10004501 10005000 10005001 10006000 10006001 10007000 10009999; }
       kill() { print -r -- "SIGNAL $*"; }
       _dev_stop_rooted "$HOME/code/.worktrees/api/3"
     ''')
     assert r.returncode == 0, r.stderr
     assert [line for line in r.stdout.splitlines() if line.startswith("SIGNAL")] == [
-        "SIGNAL -TERM 5000", "SIGNAL -TERM 5001"]
+        "SIGNAL -TERM 10005000", "SIGNAL -TERM 10005001"]
 
 
 def test_rooted_cleanup_preserves_callers_ancestors(zsh, tmp_path):
