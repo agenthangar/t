@@ -512,7 +512,8 @@
       "patterns": [
         "action",
         "filtered",
-        "multi"
+        "multi",
+        "single"
       ],
       "renderer": "fzf",
       "scope": "explicit/inferred repository; list may span registered GitHub repositories",
@@ -546,10 +547,46 @@
           ],
           "read_only": false,
           "tests": [
-            "tests/test_issue_verbs.py::test_batch_starts_every_selected_issue_before_attaching"
+            "tests/test_issue_verbs.py::test_batch_starts_every_selected_issue_before_attaching",
+            "tests/test_issue.py::test_start_skips_unavailable_sources",
+            "tests/test_issue.py::test_recover_published_issue_work",
+            "tests/test_offline_open.py::test_issue_resume_skips_offline_host"
+          ]
+        },
+        "published_recovery": {
+          "argv": [
+            "issue",
+            "start",
+            "123"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "notes": "A unique explicitly referenced or issue-linked GitHub PR recovers automatically without an owner picker. Recheck published state and ownership before fetching into a fresh local worktree.",
+          "tests": [
+            "tests/test_issue.py::test_recover_published_issue_work",
+            "tests/test_issue.py::test_recovery_rechecks_before_launch"
+          ]
+        },
+        "published_selection": {
+          "argv": [
+            "issue",
+            "start",
+            "123"
+          ],
+          "patterns": [
+            "single",
+            "filtered"
+          ],
+          "read_only": false,
+          "notes": "Ambiguous published PRs and branches use the existing shared single-owner picker; cancellation starts no work.",
+          "tests": [
+            "tests/test_issue.py::test_ambiguous_published_matches_require_review"
           ]
         }
-      }
+      },
+      "notes": "Unavailable hosts and unconfigured optional providers warn and skip. Known owners and local checks remain enforced. Recover a unique explicitly linked GitHub PR automatically; review ambiguous PRs/branches. Fetch published commits into a fresh worktree and recheck before launch."
     },
     "issue open": {
       "patterns": [
