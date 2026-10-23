@@ -736,7 +736,7 @@
       ],
       "renderer": "fzf",
       "scope": "explicit/inferred repository or all local/remote sessions",
-      "confirmation": "per_target",
+      "confirmation": "enter",
       "tests": [
         "tests/test_kill_multiselect.py::test_kill_picker_starts_with_only_proven_safe_rows"
       ],
@@ -752,8 +752,11 @@
           ],
           "read_only": false,
           "tests": [
-            "tests/test_kill_multiselect.py::test_kill_picker_starts_with_only_proven_safe_rows"
-          ]
+            "tests/test_kill_multiselect.py::test_kill_picker_starts_with_only_proven_safe_rows",
+            "tests/test_kill_multiselect.py::test_kill_picker_dispatches_multiple_cli_and_desktop_rows",
+            "tests/test_kill_multiselect.py::test_picker_enter_stops_live_agents_without_reading_confirmation"
+          ],
+          "confirmation": "enter"
         },
         "explicit": {
           "argv": [
@@ -767,8 +770,10 @@
           ],
           "read_only": false,
           "tests": [
-            "tests/test_desktop_close.py::test_desktop_slot_close_dispatches_exact_slot_without_killing_tmux"
-          ]
+            "tests/test_desktop_close.py::test_desktop_slot_close_dispatches_exact_slot_without_killing_tmux",
+            "tests/test_app_close.py::test_close_unloaded_saved_view_allows_running_app"
+          ],
+          "confirmation": "when_interrupting"
         }
       }
     },

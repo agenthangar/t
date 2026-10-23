@@ -1782,7 +1782,10 @@ _dev_kill_pick() {
     'unattached · no pending work' "$(_dev_agent_legend)" '' \
     --prompt="kill ${repo:+$repo }> " --preview='printf "%s\n" {4}') || return $?
   [[ -n $picked ]] || return 130
-  local state rc=0 prepo slot
+  # Enter in the kill picker authorizes the complete selection. Keep all
+  # ownership checks, but do not ask again for each local or remote target.
+  force=1
+  local rc=0 prepo slot
   for line in "${(@f)picked}"; do
     host=${line%%$'\t'*}
     line=${line#*$'\t'}

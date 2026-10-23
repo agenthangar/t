@@ -405,7 +405,13 @@ def wait_cli_released(sid, cwd, *, codex_home, rollout, contract=None,
 
 
 def assert_workspace_released(codex_home, cwd, *, retry="Retry: t kill <repo> <slot>."):
-    """A blank desktop workspace has no saved thread and no live writer in its cwd."""
+    """Verify an unselected workspace has only missing archives and no writer.
+
+    Codex can retain archived index rows after their rollout files disappear.
+    These are history, not owners. Keep the rows untouched and reject every
+    active, existing, malformed, or out-of-home record. Callers recheck after
+    cleanup so a new conversation still prevents reservation removal.
+    """
     try:
         folder = _lock_dir(codex_home)
         if folder is None:
@@ -415,11 +421,25 @@ def assert_workspace_released(codex_home, cwd, *, retry="Retry: t kill <repo> <s
             raise ValueError("the Codex conversation index is unavailable. " + retry)
         uri = "file:" + quote(db, safe="/") + "?mode=ro"
         with closing(sqlite3.connect(uri, uri=True, timeout=0.5)) as connection:
-            rows = connection.execute("select cwd from threads").fetchall()
-        if any(isinstance(row[0], str) and os.path.realpath(row[0]) == os.path.realpath(cwd)
-               for row in rows):
-            raise ValueError("this desktop workspace has a saved Codex conversation "
-                             "that could not be selected. " + retry)
+            records = connection.execute(
+                "select id,cwd,archived,rollout_path from threads").fetchall()
+        for sid, recorded_cwd, archived, rollout in records:
+            if (not isinstance(recorded_cwd, str)
+                    or os.path.realpath(recorded_cwd) != os.path.realpath(cwd)):
+                continue
+            if (not isinstance(sid, str) or not _UUID.fullmatch(sid)
+                    or archived != 1 or not isinstance(rollout, str)
+                    or not os.path.isabs(rollout)
+                    or not _archived_in_home(codex_home, rollout)):
+                raise ValueError("this desktop workspace has a saved Codex conversation "
+                                 "that could not be selected. " + retry)
+            try:
+                os.lstat(rollout)
+            except FileNotFoundError:
+                pass
+            else:
+                raise ValueError("this desktop workspace has a saved Codex conversation "
+                                 "that could not be selected. " + retry)
         other = _other_cwd_owner(folder, "00000000-0000-0000-0000-000000000000",
                                  cwd, codex_home)
         if other:
@@ -428,24 +448,6 @@ def assert_workspace_released(codex_home, cwd, *, retry="Retry: t kill <repo> <s
     except (OSError, sqlite3.Error) as exc:
         raise ValueError("could not verify the empty desktop workspace: "
                          + str(exc) + ". " + retry) from exc
-
-
-def assert_desktop_view_released(bundle, run, *, archived=False, empty=False,
-                                 retry="Retry: t kill <repo> <slot>."):
-    """A saved, unarchived desktop tab needs release beyond its free writer.
-
-    For an empty reservation, callers must first assert_workspace_released and
-    recheck immediately before removing its marker. There is no saved thread to
-    reopen; a running frontend alone is not an owner of this worktree. Closing
-    the reservation preserves the directory and does not start another agent.
-    """
-    if archived or empty:
-        return
-    frontends, _ = _owners(bundle, _processes(run, retry))
-    if not frontends:
-        return
-    raise ValueError("Stop or finish the turn, then Archive this chat in Codex; "
-                     "the app and other chats can stay open. " + retry)
 
 
 def unarchive_thread(sid, cwd, *, codex_home, rollout, process_cwd=None):

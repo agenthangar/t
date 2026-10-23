@@ -270,9 +270,10 @@ def test_kill_picker_dispatches_multiple_cli_and_desktop_rows(zsh, force):
     result = zsh(code, _tty=True, FAKE_DETAILS=rows, FAKE_HAS_SESSION="1",
                  FZF_LOG=str(log), FZF_SELECT_ALL="1", KILL_FORCE=force)
     assert result.returncode == 0, result.stdout
-    shown_force = force or 'none'
+    shown_force = '1'
     assert f"CLOSE api 1 [{shown_force}]" in result.stdout
     assert f"CLOSE api 2 [{shown_force}]" in result.stdout
+    assert "state=" not in result.stdout
     shown = Path(f'{log}.all').read_text()
     assert 'gpt-6-astra-extra-long-model' in shown
     assert 'Long task description with every word visible' in shown
@@ -334,7 +335,7 @@ def test_kill_picker_remote_rows_keep_host_and_route_each_selection(zsh, force):
     assert "mini.example" in calls and "studio.example" in calls
     assert "zsh -lic" in calls
     assert "api" in calls and "3" in calls and "4" in calls
-    assert ("-y" in calls) == bool(force)
+    assert "-y" in calls
     assert 'mini' in Path(f'{log}.all').read_text()
 
 
@@ -359,3 +360,37 @@ def test_bare_kill_opens_picker_but_explicit_all_keeps_existing_path(zsh):
     assert "CLOSE dev-api-1 1" in result.stdout
     assert "CLOSE dev-api-2 1" in result.stdout
     assert result.stdout.count("PICK") == 1
+
+
+def test_picker_enter_stops_live_agents_without_reading_confirmation(zsh):
+    log = _picker_stub(zsh)
+    code = PICKER_MOCK + '''
+      _dev_session_rows() { print -r -- "$FAKE_DETAILS"; }
+      _dev_session_has_claude() { return 0; }
+      _dev_agent_at_welcome() { return 1; }
+      _dev_agent_of_session() { print -r -- codex; }
+      _dev_session_sid() { :; }
+      _dev_history_record() { :; }
+      _dev_stop_rooted() { :; }
+      _dev_kill_pick api ''
+    '''
+    rows = _rows(zsh).splitlines()[0]
+    result = zsh(code, _tty=True, FAKE_DETAILS=rows, FAKE_HAS_SESSION='1',
+                 FAKE_SESSIONS='dev-api-1', FZF_LOG=str(log), FZF_SELECT_ALL='1')
+    assert result.returncode == 0, result.stdout
+    assert 'Killed dev-api-1' in result.stdout
+    assert '[y/N]' not in result.stdout and 'state=' not in result.stdout
+    assert 'kill-session -t =dev-api-1:' in zsh.log.read_text()
+
+
+def test_picker_enter_authorizes_foreground_selection(zsh):
+    log = _picker_stub(zsh)
+    row = f'sid-1\t{zsh.home}/code/api\tapi:p123\tattached\tactive\tForeground\tclaude\topus'
+    code = PICKER_MOCK + '''
+      _dev_session_rows() { print -r -- "$FAKE_DETAILS"; }
+      _dev_kill_fg() { print -r -- "FG $1 $2"; }
+      _dev_kill_pick api ''
+    '''
+    result = zsh(code, _tty=True, FAKE_DETAILS=row, FZF_LOG=str(log), FZF_SELECT_ALL='1')
+    assert result.returncode == 0, result.stdout
+    assert 'FG api:p123 1' in result.stdout
