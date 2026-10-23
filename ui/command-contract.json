@@ -667,7 +667,7 @@
             "tests/test_open_picker.py::test_open_last_turn_layout_and_details",
             "tests/test_picker_ui.py::test_open_last_turn_stays_visible_without_changing_selection"
           ],
-          "notes": "Alt-N starts the existing --new flow with the original repository and opening flags, even with no matching rows; marks are discarded. Ctrl-N remains navigation. LAST TURN is the final column, using transcript-backed local time or - when unknown; narrow rows use MM-DD HH:MM and Ctrl-/ preserves the full timestamp."
+          "notes": "Alt-N starts the existing --new flow with the original repository and opening flags, even with no matching rows; marks are discarded. Ctrl-N remains navigation. LAST TURN is the final column, using transcript-backed local time or - when unknown; narrow rows use MM-DD HH:MM and Ctrl-/ preserves the full timestamp. Display columns have a non-selectable aligned header preserved across filter changes; compact open headers use SESSION/WORKING ON or S/TASK and retain LAST TURN last."
         },
         "explicit": {
           "argv": [
@@ -774,7 +774,8 @@
             "tests/test_kill_multiselect.py::test_kill_picker_dispatches_multiple_cli_and_desktop_rows",
             "tests/test_kill_multiselect.py::test_picker_enter_stops_live_agents_without_reading_confirmation"
           ],
-          "confirmation": "enter"
+          "confirmation": "enter",
+          "notes": "Displayed columns have a non-selectable aligned header preserved across filter changes."
         },
         "explicit": {
           "argv": [

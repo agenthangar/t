@@ -116,6 +116,8 @@ def test_kill_picker_starts_with_only_proven_safe_rows(zsh):
     assert 'api-1' in visible and 'api-3' in visible
     assert 'api-2' not in visible and 'api-4' not in visible
     assert all(f'api-{n}' in all_rows for n in range(1, 5))
+    assert Path(f'{log}.columns').read_text().split() == ['SLOT', 'AGENT', 'UI', 'STATUS', 'MODEL', 'WORKING', 'ON']
+    assert 'STATUS' not in all_rows
 
 
 def test_kill_picker_exports_independent_attachment_and_pending_views(zsh):
@@ -212,6 +214,7 @@ PICKER_MOCK = """
     print -r -- "$T_PICKER_WITH_ATTACHED" > "$FZF_LOG.attached"
     print -r -- "$T_PICKER_WITH_PENDING" > "$FZF_LOG.pending"
     print -r -- "$T_PICKER_SESSION_FILTERS" > "$FZF_LOG.mode"
+    print -r -- "$T_PICKER_COLUMNS" > "$FZF_LOG.columns"
     [[ -n $FZF_CANCEL ]] && return 130
     if [[ -n $FZF_SELECT_ALL ]]; then print -r -- "$2"
     else print -r -- "$1"; fi

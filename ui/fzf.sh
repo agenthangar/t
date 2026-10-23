@@ -114,6 +114,8 @@ _t_fzf_filtered() (
   _t_picker_label=$4 _t_picker_legend=$5 _t_picker_show_all=$6
   _t_picker_with_attached=${T_PICKER_WITH_ATTACHED:-}
   _t_picker_with_pending=${T_PICKER_WITH_PENDING:-}
+  _t_picker_columns=${T_PICKER_COLUMNS:-}
+  _t_picker_margin=1,2
   unset T_PICKER_WITH_ATTACHED T_PICKER_WITH_PENDING
   shift 6
   _t_fzf_content_options "$@" || exit $?
@@ -122,6 +124,8 @@ _t_fzf_filtered() (
   _t_picker_size=$(stty size 2>/dev/null) || _t_picker_size=
   if [ -n "$_t_picker_size" ] && [ "${_t_picker_size%% *}" -gt 0 ] && [ "${_t_picker_size%% *}" -le 12 ]; then
     _t_picker_legend=
+    # Keep the column labels and a focused row visible on short terminals.
+    [ -z "$_t_picker_columns" ] || _t_picker_margin=0,2
   fi
   umask 077
   _t_picker_dir=$(mktemp -d "${TMPDIR:-/tmp}/t-picker.XXXXXX") || exit 1
@@ -145,6 +149,10 @@ _t_fzf_filtered() (
   if [ -n "$_t_picker_legend" ]; then
     printf '%s\n' "$_t_picker_legend" >> "$T_PICKER_HEADER_DEFAULT"
     printf '%s\n' "$_t_picker_legend" >> "$T_PICKER_HEADER_ALL"
+  fi
+  if [ -n "$_t_picker_columns" ]; then
+    printf '%s\n' "$_t_picker_columns" >> "$T_PICKER_HEADER_DEFAULT"
+    printf '%s\n' "$_t_picker_columns" >> "$T_PICKER_HEADER_ALL"
   fi
   export T_PICKER_VIEWS="$_t_picker_dir" T_PICKER_SESSION_MASK=
   case ${T_PICKER_SESSION_FILTERS:-} in
@@ -175,6 +183,7 @@ _t_fzf_filtered() (
         "Ctrl-A show all · Ctrl-F defaults · $_t_picker_hidden hidden" \
         "$_t_picker_filters" > "$_t_picker_dir/header-$_t_picker_mask"
       [ -z "$_t_picker_legend" ] || printf '%s\n' "$_t_picker_legend" >> "$_t_picker_dir/header-$_t_picker_mask"
+      [ -z "$_t_picker_columns" ] || printf '%s\n' "$_t_picker_columns" >> "$_t_picker_dir/header-$_t_picker_mask"
     done
     cp "$_t_picker_dir/header-0" "$T_PICKER_HEADER_DEFAULT"
     cp "$_t_picker_dir/header-$T_PICKER_SESSION_MASK" "$T_PICKER_HEADER_ALL"
@@ -244,7 +253,7 @@ SH
     # shellcheck disable=SC2016
     _t_picker_bind="$_t_picker_bind"',alt-n:execute-silent(: > "$T_PICKER_NEW")+abort'
   fi
-  _t_fzf --multi --no-hscroll --delimiter="$(printf '\t')" --with-nth=-1 \
+  _t_fzf --multi --no-hscroll --margin="$_t_picker_margin" --delimiter="$(printf '\t')" --with-nth=-1 \
     --bind='enter:accept,esc:abort,ctrl-c:abort,space:toggle+down,tab:toggle+down,shift-tab:up,ctrl-/:toggle-preview' \
     --bind="$_t_picker_bind" \
     --preview='printf "%s\n" {-1}' --preview-window='hidden:wrap:down:40%' \
