@@ -265,8 +265,10 @@ and `t open --attached` start with all rows; Ctrl-F restores their defaults.
 
 CLI opens use this terminal for the first selection and new tabs for the rest,
 with attach commands when tabs are unavailable; desktop selections open in the
-app. `--fg` opens one session. `t kill` confirms each live selection as usual
-unless `-y` is supplied, and desktop release checks still apply.
+app. `--fg` opens one session. In `t kill`, mark sessions with Space/Tab and
+press Enter to confirm and close the whole selection without further prompts.
+Explicit targets still confirm live-agent interruption unless `-y` is supplied.
+Desktop ownership checks apply in both cases.
 
 Repositories need a fetched `origin/main` for worktree sessions. `t repo create` can create
 and register a GitHub repository with the expected setup, showing its plan first.
@@ -707,14 +709,13 @@ the automated checks and the separate real-desktop acceptance procedure.
 
 To close a desktop slot, run `t kill my-project 3` (or `t session close my-project 3`). It stops that
 slot's parked terminal and dev server and releases its reservation while
-preserving the saved conversation and worktree. Archive that chat in Codex
-before closing its slot while the app is running; finish or stop any active
-turn first. Other chats and the app can stay open. If the chat remains
-unarchived, close Codex before retrying. An empty desktop workspace can be
-closed while Codex stays open when no saved conversation or live writer belongs
-to its worktree. The close rechecks ownership after cleanup and retains the
-reservation if a conversation appears. This releases t's slot reservation; it
-does not close app windows or delete the worktree.
+preserving the saved conversation and worktree. Saved, unloaded conversations
+can close while Codex and other chats stay open; missing archived history files
+do not block cleanup. A conversation that still holds its writer lock must be
+stopped and archived in Codex before closing the slot. The close rechecks ownership
+after cleanup and retains the reservation if a writer or new conversation appears.
+This releases t's slot reservation; it does not close app windows or delete the
+worktree.
 
 ## Configuration
 

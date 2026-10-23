@@ -135,7 +135,7 @@ def test_close_shell_failure_keeps_reservation(t_mod, desktop_close, monkeypatch
     assert marker.read_text() == "codex-app\n"
 
 
-def test_close_active_saved_view_requires_selected_archive_while_app_runs(
+def test_close_unloaded_saved_view_allows_running_app(
         t_mod, desktop_close, monkeypatch):
     cfg, row, home, rollout, marker, calls, _ = desktop_close
     actual = t_mod._run
@@ -145,9 +145,8 @@ def test_close_active_saved_view_requires_selected_archive_while_app_runs(
                 argv, 0, "123 /Applications/Codex.app/Contents/MacOS/Codex", "")
         return actual(argv, cwd=cwd, timeout=timeout)
     monkeypatch.setattr(t_mod, "_run", run)
-    with pytest.raises(ValueError, match="Archive this chat.*app and other chats can stay open"):
-        t_mod._app_close(cfg, "repo", "13")
-    assert marker.exists() and not any(argv[0] == "zsh" for argv in calls)
+    t_mod._app_close(cfg, "repo", "13")
+    assert len([argv for argv in calls if argv[0] == "zsh"]) == 1
 
 
 def test_close_archived_view_allows_unrelated_running_app(t_mod, desktop_close, monkeypatch):
@@ -174,7 +173,7 @@ def test_close_blank_desktop_workspace_without_inventing_a_thread(
     cfg, row, home, rollout, marker, calls, _ = desktop_close
     row["sid"] = "-"
     db = sqlite3.connect(home / "state_5.sqlite")
-    db.execute("create table threads (id text, cwd text)")
+    db.execute("create table threads (id text, cwd text, archived integer, rollout_path text)")
     db.commit()
     db.close()
     monkeypatch.setattr(t_mod, "zsh_capture", lambda command: (
@@ -191,8 +190,8 @@ def test_blank_workspace_rejects_saved_record_even_when_not_selectable(
     cfg, row, home, rollout, marker, calls, _ = desktop_close
     row["sid"] = "-"
     db = sqlite3.connect(home / "state_5.sqlite")
-    db.execute("create table threads (id text, cwd text)")
-    db.execute("insert into threads values (?, ?)", (SID, row["cwd"]))
+    db.execute("create table threads (id text, cwd text, archived integer, rollout_path text)")
+    db.execute("insert into threads values (?, ?, 0, ?)", (SID, row["cwd"], str(rollout)))
     db.commit()
     db.close()
     monkeypatch.setattr(t_mod, "zsh_capture", lambda command: (
@@ -210,7 +209,7 @@ def test_close_blank_workspace_with_unrelated_frontend_running(
     row["sid"] = "-"
     rollout.unlink()
     db = sqlite3.connect(home / "state_5.sqlite")
-    db.execute("create table threads (id text, cwd text)")
+    db.execute("create table threads (id text, cwd text, archived integer, rollout_path text)")
     db.commit()
     db.close()
     monkeypatch.setattr(t_mod, "zsh_capture", lambda command: (
@@ -229,3 +228,24 @@ def test_close_blank_workspace_with_unrelated_frontend_running(
     assert len(shell) == 1
     assert "_t_app_close_slot dev-repo-13 " in shell[0][2]
     assert shell[0][2].endswith(" - 0")
+
+
+def test_close_stale_archive_record_that_saved_thread_selection_filters_out(
+        t_mod, desktop_close, monkeypatch):
+    cfg, row, home, rollout, marker, calls, _ = desktop_close
+    row['sid'] = '-'
+    archive = home / 'archived_sessions' / 'gone.jsonl'
+    with sqlite3.connect(home / 'state_5.sqlite') as db:
+        db.execute('create table threads (id text, cwd text, archived integer, rollout_path text)')
+        db.execute('insert into threads values (?,?,1,?)', (SID, row['cwd'], str(archive)))
+    saved = '\t'.join([SID, str(archive), row['cwd'], '', '', '1', str(home)])
+    monkeypatch.setattr(t_mod, 'zsh_capture', lambda command: (
+        str(home / 'state_5.sqlite') if command == '_codex_db' else saved
+        if command.startswith('_codex_threads_for_cwd') else 'rows'))
+    assert t_mod._app_close(cfg, 'repo', '13') == row
+    shell = [argv for argv in calls if argv[0] == 'zsh']
+    assert len(shell) == 1 and shell[0][2].endswith(' - 0')
+    with sqlite3.connect(home / 'state_5.sqlite') as db:
+        assert db.execute('select id,archived,rollout_path from threads').fetchall() == [
+            (SID, 1, str(archive))]
+    assert not archive.exists() and rollout.exists()

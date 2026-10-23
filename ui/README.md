@@ -31,7 +31,7 @@ the command name.
 | **Multi-selection** | Searchable pickers use Space/Tab to mark rows and Enter to accept the marks, or the focused row if none are marked. Inline checklists use Space to toggle and Enter to submit only checked items. Show marks and the Enter action independently of color. |
 | **Filtered selection** | Show active filters and hidden count in the header. Ctrl-A shows all; Ctrl-F restores defaults. Session pickers add Ctrl-T (attached), Ctrl-L (live), or Ctrl-P (pending) where applicable. Filtering retains the search and removes hidden marks. Apply show-all/default behavior to issue pickers as well. Ctrl-/ toggles full details when rows have previews. |
 | **Wizard/review** | Stage choices, then display the resulting changes before applying them. Config saves on Enter; install enters review and then runs on Enter; login runs the selected logins on its first Enter. Setup and repository creation keep their released `y` confirmation. Show the actual action in the footer. |
-| **Direct action/passthrough** | An explicit target acts without a needless picker. Retain ownership and worktree safety checks, confirmation before interrupting live work, and the delegated tool's input/output and exit status. |
+| **Direct action/passthrough** | An explicit target acts without a needless picker. Retain ownership and worktree safety checks, confirmation before interrupting live work with an explicit target, and the delegated tool's input/output and exit status. |
 | **Machine output** | Preserve existing JSON, raw-value, and remote wire formats. Do not add presentation chrome, ANSI color, or prompts. The inventory identifies machine-facing modes; this does not imply universal JSON support. |
 
 Selection cancellation and wizard abort return 130 without starting work.
@@ -75,6 +75,13 @@ The open picker adds Alt-N to start its existing `--new` flow with the original
 repository and opening flags. It discards marks and works with no matching rows.
 Ctrl-N remains navigation. The shared filtered open profile returns 3 for this
 explicit action; cancellation continues to return 130 without starting work.
+
+The kill multi-picker's Enter action confirms every marked session (or the
+focused row), including live local and remote agents; do not prompt again per
+target. Explicit close targets retain live-agent confirmation unless `-y` is
+supplied. Closing an unloaded desktop slot preserves history and its worktree;
+a running app or missing archived rollout alone does not block cleanup. Verify
+writer ownership before and after cleanup, and retain the reservation on failure.
 
 ## Shared implementations
 

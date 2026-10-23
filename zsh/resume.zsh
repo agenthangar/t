@@ -1885,9 +1885,6 @@ try:
         mod['assert_released'](None, sid, cwd, run, codex_home=home,
                                rollout=rollout, archived=archived == '1',
                                retry='Retry t kill after the conversation is released.')
-    mod['assert_desktop_view_released'](
-        None, run, archived=archived == '1', empty=sid == '-',
-        retry='Retry t kill after closing or archiving the desktop view.')
 except (OSError, ValueError, sqlite3.Error) as exc:
     message = str(exc)
     if ('selected Codex conversation is still loaded' in message
