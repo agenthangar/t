@@ -360,6 +360,29 @@ def test_legacy_active_task_attaches_without_handoff(mod, app, issue, args, loca
     assert row['incidental'] and not row.get('continuable')
 
 
+@pytest.mark.parametrize('live', [True, False])
+def test_slot_number_match_requires_review_before_continuation(mod, app, issue, args,
+                                                              local_scan, monkeypatch, live):
+    state, marker, tx = local_scan
+    marker.unlink()
+    state.update(branch='dev/repo-12', live=live)
+    tx.write_text(json.dumps({'type': 'user', 'sessionId': 'sid', 'message': {'content': 'Unrelated work'}}))
+    row = app.local(issue)[0]
+    assert row['review_required'] and not row['verified'] and row['continuable']
+    report = clean_report(); report['matches'] = [row]
+    monkeypatch.setattr(mod.sys.stdin, 'isatty', lambda: False)
+    with pytest.raises(mod.IssueError, match='review'):
+        app.choose(report)
+    monkeypatch.setattr(mod.sys.stdin, 'isatty', lambda: True)
+    monkeypatch.setattr(app, 'pick_rows', lambda default, all_rows, *a, **kw: [all_rows[-1]])
+    assert app.choose(report) is None  # Enter on the explicit unrelated action is enough.
+    monkeypatch.setattr(app, 'pick_rows', lambda default, all_rows, *a, **kw: [all_rows[0]])
+    setup_run(app, issue, monkeypatch, iter([report]))
+    monkeypatch.setattr(app, 'attach', lambda selected: 7)
+    monkeypatch.setattr(app, 'takeover', lambda *a: pytest.fail('local continuation must not take over'))
+    assert app.run_one(args, args.target) == 7
+
+
 def test_multiple_local_owners_never_fall_through_to_external_takeover(mod, app, issue, args,
                                                                      local_scan, monkeypatch):
     state, marker, tx = local_scan

@@ -622,9 +622,11 @@ class IssueCommand:
             if not reason:
                 continue
             incidental = not (linked or current_task or workspace_reason)
+            review_required = not (linked or current_task or workspace_reason == 'explicit issue reference')
             row = candidate('local', cwd, reason, host='local', worktree=cwd, branch=branch,
                             alias=issue['alias'], slot=marker.get('slot'))
             row['incidental'] = incidental
+            row['review_required'] = review_required
             row['owners'] = [dict(owner, interface=('desktop' if owner['state'] == 'app' else
                                                    'foreground' if ':' in owner['slot'] else 'cli')) for owner in live]
             if incidental:
@@ -661,7 +663,8 @@ class IssueCommand:
                 row['resume'] = bool(not incidental and has_transcripts and alias and slot)
                 row['prepared'] = bool(linked and marker.get('state') == 'prepared' and marker.get('token')
                                        and alias and slot and (Path(gitdir) / 't-issue-prompt').is_file())
-                row['verified'] = row['resume'] or row['prepared']
+                row['continuable'] = row['resume']
+                row['verified'] = bool((row['resume'] and not review_required) or row['prepared'])
                 if row['prepared']:
                     row['state'] = 'prepared'
             row['association'] = ('mention' if incidental else 'owner' if row['verified'] and live else 'workspace')
@@ -788,7 +791,8 @@ class IssueCommand:
         if (len(matches) == 1 and self.published(matches[0]) and
                 matches[0]['evidence'] in ('explicit issue reference', 'open PR linked from issue')):
             return matches[0]
-        if len(matches) == 1 and (matches[0].get('verified') or matches[0].get('continuable')) and any(
+        if len(matches) == 1 and not matches[0].get('review_required') and (
+                matches[0].get('verified') or matches[0].get('continuable')) and any(
                 matches[0].get(key) for key in ('session', 'resume', 'prepared')):
             return matches[0]
         if not sys.stdin.isatty():
@@ -801,7 +805,8 @@ class IssueCommand:
                     ' · ' + row['evidence'])])
                 for i, row in enumerate(matches)]
         dismiss = f'dismiss\t{len(matches)}\taction\tThese matches are unrelated; start new work'
-        choices = rows + ([dismiss] if not any(r.get('verified') or r.get('continuable') for r in matches) else [])
+        choices = rows + ([dismiss] if not any(r.get('verified') or (r.get('continuable') and
+                              not r.get('review_required')) for r in matches) else [])
         selected = self.pick_rows(choices, choices, 'continue', 'Existing work',
                                   'Select existing work to continue · details below', multi=False,
                                   details=details + ['Start new work only if these candidates are unrelated.'], noun='work')[0]
@@ -973,7 +978,7 @@ class IssueCommand:
         if selected and (selected.get('verified') or selected.get('continuable')) and selected.get('session'):
             return self.attach(selected) if attach else selected
         self.check_discovery(report, args)
-        if selected and selected.get('verified') and selected.get('resume'):
+        if selected and (selected.get('verified') or selected.get('continuable')) and selected.get('resume'):
             return self.attach(selected) if attach else selected
         if selected and selected.get('prepared') and selected.get('host') != 'local':
             raise IssueError('issue launch is reserved on host ' + clean_text(selected.get('host')) +
@@ -1001,7 +1006,8 @@ class IssueCommand:
                     self.display(issue, dict(fresh, matches=[], incomplete=[failure]))
             self.check_discovery(fresh, args, recheck=True)
             # Another invocation may have launched into a worktree seen earlier.
-            if any((r.get('verified') or r.get('continuable')) and r.get('session') for r in fresh['matches']):
+            if any((r.get('verified') or (r.get('continuable') and not r.get('review_required')))
+                   and r.get('session') for r in fresh['matches']):
                 raise IssueError('an issue owner became active during review; rerun to attach')
             reservations = [r for r in fresh['matches'] if r.get('prepared')]
             if any(not retry or (r['provider'], r['id']) != (selected['provider'], selected['id'])

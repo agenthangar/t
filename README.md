@@ -558,6 +558,8 @@ mentions, not owners, and do not block continuation. Issue markers, direct task
 assignments, and branch/commit evidence identify work to continue. A legacy saved
 workspace with issue commits resumes without a stop/publish handoff; local live
 sessions attach in place. Local work never enters the external-agent takeover flow.
+Number- or title-only matches still require selection; selecting local work is
+enough to continue, without a second typed acknowledgment.
 If several conversations belong to a saved workspace, the normal resume picker
 still selects the conversation to continue.
 
