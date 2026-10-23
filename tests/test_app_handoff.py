@@ -366,7 +366,7 @@ def test_cli_release_wait_rejects_unverified_contract(handoff, target):
 def test_blank_workspace_requires_zero_saved_threads_and_free_writers(
         handoff, target, tmp_path):
     db = sqlite3.connect(target["home"] / "state_5.sqlite")
-    db.execute("create table threads (id text, cwd text)")
+    db.execute("create table threads (id text, cwd text, archived integer, rollout_path text)")
     db.commit()
     handoff.assert_workspace_released(str(target["home"]), str(target["cwd"]))
     sibling = target["locks"] / f"{OTHER}.lock"
@@ -374,7 +374,7 @@ def test_blank_workspace_requires_zero_saved_threads_and_free_writers(
     with locked(sibling, tmp_path):
         with pytest.raises(ValueError, match="could not be matched"):
             handoff.assert_workspace_released(str(target["home"]), str(target["cwd"]))
-    db.execute("insert into threads values (?, ?)", (SID, str(target["cwd"])))
+    db.execute("insert into threads values (?, ?, 0, ?)", (SID, str(target["cwd"]), str(target["rollout"])))
     db.commit()
     db.close()
     with pytest.raises(ValueError, match="saved Codex conversation"):
@@ -400,12 +400,12 @@ def test_blank_workspace_rejects_missing_lock_contract_or_nonregular_index(
 
 def test_blank_workspace_rejects_writer_from_other_index(handoff, target, tmp_path):
     db5 = sqlite3.connect(target["home"] / "state_5.sqlite")
-    db5.execute("create table threads (id text, cwd text)")
+    db5.execute("create table threads (id text, cwd text, archived integer, rollout_path text)")
     db5.commit()
     db5.close()
     db6 = sqlite3.connect(target["home"] / "state_6.sqlite")
-    db6.execute("create table threads (id text, cwd text)")
-    db6.execute("insert into threads values (?, ?)", (OTHER, str(target["cwd"])))
+    db6.execute("create table threads (id text, cwd text, archived integer, rollout_path text)")
+    db6.execute("insert into threads values (?, ?, 0, ?)", (OTHER, str(target["cwd"]), str(target["rollout"])))
     db6.commit()
     db6.close()
     sibling = target["locks"] / f"{OTHER}.lock"
@@ -413,15 +413,6 @@ def test_blank_workspace_rejects_writer_from_other_index(handoff, target, tmp_pa
     with locked(sibling, tmp_path):
         with pytest.raises(ValueError, match="conversation in this worktree is still loaded"):
             handoff.assert_workspace_released(str(target["home"]), str(target["cwd"]))
-
-
-def test_desktop_view_guard_requires_archive_or_frontend_exit(handoff):
-    live, calls = process_table("123 /Applications/Codex.app/Contents/MacOS/Codex")
-    with pytest.raises(ValueError, match="Archive this chat.*app and other chats can stay open"):
-        handoff.assert_desktop_view_released(None, live)
-    handoff.assert_desktop_view_released(None, live, empty=True)
-    handoff.assert_desktop_view_released(None, live, archived=True)
-    assert len(calls) == 1  # Archived/empty proof does not inspect unrelated views.
 
 
 def test_cli_pid_must_hold_exact_selected_lock(handoff, target, tmp_path):
@@ -846,3 +837,54 @@ def test_private_unarchive_rejects_wrong_rpc_and_reaps_stubborn_child(
         handoff.unarchive_thread(SID, str(target["cwd"]),
                                  codex_home=str(target["home"]), rollout=str(archive))
     assert child.killed
+
+
+@pytest.mark.parametrize('problem', [None, 'active', 'existing', 'symlink', 'outside',
+                                    'relative', 'invalid_id', 'null_path', 'writer', 'unreadable'])
+def test_workspace_close_handles_missing_archives_without_ignoring_owners(
+        handoff, target, tmp_path, monkeypatch, problem):
+    archive = target['home'] / 'archived_sessions' / 'old.jsonl'
+    archive.parent.mkdir()
+    sid, archived, rollout = SID, 1, str(archive)
+    if problem == 'active':
+        archived = 0
+    elif problem == 'existing':
+        archive.write_text('retained history')
+    elif problem == 'symlink':
+        archive.symlink_to(tmp_path / 'missing')
+    elif problem == 'outside':
+        rollout = str(tmp_path / 'outside.jsonl')
+    elif problem == 'relative':
+        rollout = 'relative.jsonl'
+    elif problem == 'invalid_id':
+        sid = 'invalid'
+    elif problem == 'null_path':
+        rollout = None
+    with sqlite3.connect(target['home'] / 'state_5.sqlite') as db:
+        db.execute('create table threads (id text, cwd text, archived integer, rollout_path text)')
+        db.execute('insert into threads values (?,?,?,?)',
+                   (sid, str(target['cwd']), archived, rollout))
+        # Unrelated history must not block this workspace.
+        db.execute('insert into threads values (?,?,0,?)',
+                   (OTHER, str(tmp_path / 'elsewhere'), str(target['rollout'])))
+    before = (target['home'] / 'state_5.sqlite').read_bytes()
+    if problem == 'unreadable':
+        original_lstat = os.lstat
+        def unreadable(path, *args, **kwargs):
+            if str(path) == str(archive):
+                raise PermissionError('archive cannot be inspected')
+            return original_lstat(path, *args, **kwargs)
+        monkeypatch.setattr(os, 'lstat', unreadable)
+        with pytest.raises(ValueError, match='could not verify'):
+            handoff.assert_workspace_released(str(target['home']), str(target['cwd']))
+    elif problem == 'writer':
+        with locked(target['locks'] / f'{SID}.lock', tmp_path):
+            with pytest.raises(ValueError, match='still loaded'):
+                handoff.assert_workspace_released(str(target['home']), str(target['cwd']))
+    elif problem:
+        with pytest.raises(ValueError, match='saved Codex conversation'):
+            handoff.assert_workspace_released(str(target['home']), str(target['cwd']))
+    else:
+        handoff.assert_workspace_released(str(target['home']), str(target['cwd']))
+    assert (target['home'] / 'state_5.sqlite').read_bytes() == before
+    assert target['rollout'].exists()

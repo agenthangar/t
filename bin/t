@@ -7652,9 +7652,8 @@ def _app_close(cfg, repo, slot):
                                      "Stop or finish its turn and Archive it, then retry. "
                                      + retry) from exc
                 raise
-        helper["assert_desktop_view_released"](
-            _app_bundle(), _run, archived=selected["archived"],
-            empty=selected["sid"] == "-", retry=retry)
+        # Closing a reservation starts no replacement writer. A running app or
+        # an unloaded, unarchived saved tab alone must not block it.
         parts = ["_t_app_close_slot", "dev-" + row["slot"], row["cwd"],
                  selected["sid"], selected["codex_home"], selected["rollout"],
                  "1" if selected["archived"] else "0"]
@@ -9871,12 +9870,12 @@ REMOTE SESSIONS
     sp = sub.add_parser("kill", help="tear down a session",
         description="Tear down a dev session. A released Codex desktop slot can be closed "
             "without resuming it in the CLI; its conversation and worktree are preserved. "
-            "Archive that chat in Codex while the app is running, then retry; finish or "
-            "stop any active turn first. Other desktop chats can stay open. An empty "
-            "desktop workspace can close while Codex stays open, after its worktree passes ownership checks. "
+            "Saved, unloaded chats and stale missing archives do not block close while the app runs. "
+            "A chat that still holds its writer lock must be stopped and archived in Codex first. "
+            "Other desktop chats can stay open. "
             "Bare `t kill` picks across all local sessions; `t kill <repo>` filters to that repo. "
-            "Space/Tab marks multiple rows and Enter closes the selection, retaining each target's "
-            "normal confirmation and desktop release checks. Initially shows only unattached sessions "
+            "Space/Tab marks multiple rows and Enter confirms and closes the selection without "
+            "further prompts; desktop ownership checks still apply. Initially shows only unattached sessions "
             "with clean, merged work; pending or uncertain work stays hidden. Ctrl-T toggles "
             "attached rows, Ctrl-P toggles pending work, Ctrl-A shows all, and Ctrl-F restores defaults. "
             "The compact resume-style picker retains every session detail; Ctrl-/ opens its full preview. "
@@ -9885,11 +9884,11 @@ REMOTE SESSIONS
             "and `t session close all` kills every slot for "
             "it. A foreground / :fg row from `t session list` (a bare `claude`, or one in a tmux "
             "session of its own) is killed by its shown SESSION name — `t session close ff:p4242` or `t session close "
-            "<short-id>` — since it is not a dev slot. Confirms first while a Claude is live "
+            "<short-id>` — since it is not a dev slot. Explicit targets confirm while an agent is live "
             "unless `-y`; `-r` kills it on its remote host instead.")
     sp.add_argument("repo", nargs="?", help="filter to a repo, or name a foreground session; default: pick across local repos")
     sp.add_argument("slot", nargs="?", help="slot number; a lone slot implies the cwd repo")
-    sp.add_argument("-y", "--yes", action="store_true", help="skip the 'Claude is live' confirm")
+    sp.add_argument("-y", "--yes", action="store_true", help="skip the live-agent confirmation for explicit targets")
     sp.add_argument("-r", "--remote", action="store_true", help="kill it on its host instead")
 
     sp = sub.add_parser("restart", help="restart a stuck CLI in the same slot and conversation",

@@ -145,7 +145,8 @@ def test_missing_unreserved_slot_keeps_existing_message(tmp_path):
 
 def run_verified_close(tmp_path, *, blank=False, parked=False, wrong_stamp=False,
                        hold_lock=False, unreadable_pid=False, stop_failure=False,
-                       frontend_running=False, peer_writer=False, thread_after_stop=False):
+                       frontend_running=False, peer_writer=False, thread_after_stop=False,
+                       missing_archive=False):
     """Run the real shell verifier against a disposable Git worktree and Codex index."""
     home = tmp_path / "home"
     home.mkdir()
@@ -181,6 +182,9 @@ def run_verified_close(tmp_path, *, blank=False, parked=False, wrong_stamp=False
         connection.execute("create table threads (id text, cwd text, rollout_path text, archived integer)")
         if not blank:
             connection.execute("insert into threads values (?,?,?,0)", (sid, str(wt), str(rollout)))
+        if missing_archive:
+            connection.execute("insert into threads values (?,?,?,1)",
+                               (sid, str(wt), str(codex_home / "archived_sessions" / "old.jsonl")))
         if peer_writer:
             peer = home / "worktrees" / "api" / "14"
             peer.mkdir()
@@ -288,13 +292,12 @@ def test_desktop_close_keeps_marker_when_process_inspection_or_stop_fails(tmp_pa
 
 
 @pytest.mark.skipif(not shutil.which("zsh"), reason="zsh required")
-def test_desktop_close_requires_view_release_even_when_writer_is_free(tmp_path):
+def test_desktop_close_allows_running_frontend_when_writer_is_free(tmp_path):
     result, marker, actions, wt, rollout = run_verified_close(
         tmp_path, frontend_running=True)
-    assert result.returncode != 0
-    assert marker.exists() and wt.is_dir()
-    assert actions == []
-    assert "Archive this chat" in result.stderr
+    assert result.returncode == 0, result.stderr
+    assert not marker.exists() and wt.is_dir() and rollout.exists()
+    assert actions == ["stop"]
 
 
 @pytest.mark.skipif(not shutil.which("zsh"), reason="zsh required")
@@ -318,3 +321,18 @@ def test_empty_desktop_close_keeps_reservation_if_conversation_appears_during_cl
     assert "saved Codex conversation" in result.stderr
     assert marker.exists() and wt.is_dir()
     assert actions == ["stop"]
+
+
+@pytest.mark.skipif(not shutil.which('zsh'), reason='zsh required')
+@pytest.mark.parametrize('hold_lock,thread_after_stop', [(False, False), (True, False), (False, True)])
+def test_missing_archived_history_closes_only_without_a_writer_or_new_thread(
+        tmp_path, hold_lock, thread_after_stop):
+    result, marker, actions, wt, rollout = run_verified_close(
+        tmp_path, blank=True, missing_archive=True, frontend_running=True,
+        hold_lock=hold_lock, thread_after_stop=thread_after_stop)
+    assert wt.is_dir() and not rollout.exists()
+    assert result.returncode == int(hold_lock or thread_after_stop), result.stderr
+    assert marker.exists() == (hold_lock or thread_after_stop)
+    assert actions == ([] if hold_lock else ['stop'])
+    with sqlite3.connect(tmp_path / 'home' / 'codex' / 'state_5.sqlite') as db:
+        assert db.execute('select count(*) from threads where archived=1').fetchone() == (1,)
