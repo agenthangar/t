@@ -1,6 +1,9 @@
 #!/bin/sh
 # Shared visual defaults for every t picker. Callers choose a profile and may
 # customize content (columns, prompt, preview), never controls or visual chrome.
+# These profiles run in subshells. Use `return` for normal completion: an explicit
+# `exit` in zsh runs the caller's inherited zshexit hooks (including Terminal.app's
+# session saver) inside the picker subshell.
 _t_fzf() {
   command fzf --height=60% --layout=reverse --border=rounded --margin=1,2 \
     --pointer='▸' --marker='✓' \
@@ -31,7 +34,7 @@ _t_fzf_content_options() {
 _t_fzf_single() (
   _t_fzf_action=$1 _t_fzf_legend=$2
   shift 2
-  _t_fzf_content_options "$@" || exit $?
+  _t_fzf_content_options "$@" || return $?
   _t_fzf_header="Enter $_t_fzf_action · Esc"
   [ -z "$_t_fzf_legend" ] || _t_fzf_header="$_t_fzf_header
 $_t_fzf_legend"
@@ -43,7 +46,7 @@ $_t_fzf_legend"
 _t_fzf_multi() (
   _t_fzf_action=$1 _t_fzf_legend=$2
   shift 2
-  _t_fzf_content_options "$@" || exit $?
+  _t_fzf_content_options "$@" || return $?
   _t_fzf --multi --bind='enter:accept,esc:abort,ctrl-c:abort,space:toggle+down,tab:toggle+down,shift-tab:up' \
     --header="Enter $_t_fzf_action · Esc · Space/Tab mark ✓
 ${_t_fzf_legend}" "$@"
@@ -56,7 +59,7 @@ ${_t_fzf_legend}" "$@"
 # Arguments: page label file, rows file, quoted helper command, preview command,
 # initial query, prompt. The helper writes rows and the page label on each event.
 _t_fzf_paginated() (
-  [ "$#" -eq 6 ] || { printf 't picker: paged profile needs six arguments\n' >&2; exit 2; }
+  [ "$#" -eq 6 ] || { printf 't picker: paged profile needs six arguments\n' >&2; return 2; }
   _t_paged_page=$1 _t_paged_rows=$2 _t_paged_helper=$3
   _t_paged_preview=$4 _t_paged_query=$5 _t_paged_prompt=$6
   _t_paged_size=$(stty size </dev/tty 2>/dev/null) || _t_paged_size=
@@ -79,7 +82,7 @@ Ctrl-/ details'
   T_PICKER_PAGED_PAGE=$_t_paged_page T_PICKER_PAGED_ROWS=$_t_paged_rows
   export T_PICKER_PAGED_CONTROLS T_PICKER_PAGED_PAGE T_PICKER_PAGED_ROWS
   umask 077
-  _t_paged_dir=$(mktemp -d "${TMPDIR:-/tmp}/t-paged-picker.XXXXXX") || exit 1
+  _t_paged_dir=$(mktemp -d "${TMPDIR:-/tmp}/t-paged-picker.XXXXXX") || return 1
   trap 'rm -rf -- "$_t_paged_dir"' EXIT
   trap 'exit 130' HUP INT TERM
   T_PICKER_PAGED_RENDER=$_t_paged_dir/header
@@ -118,7 +121,7 @@ _t_fzf_filtered() (
   _t_picker_margin=1,2
   unset T_PICKER_WITH_ATTACHED T_PICKER_WITH_PENDING
   shift 6
-  _t_fzf_content_options "$@" || exit $?
+  _t_fzf_content_options "$@" || return $?
   # fzf 0.44 needs one fewer header row to leave a focused item visible at
   # 32×12. The agent legend is secondary to the action and filter controls.
   _t_picker_size=$(stty size 2>/dev/null) || _t_picker_size=
@@ -128,7 +131,7 @@ _t_fzf_filtered() (
     [ -z "$_t_picker_columns" ] || _t_picker_margin=0,2
   fi
   umask 077
-  _t_picker_dir=$(mktemp -d "${TMPDIR:-/tmp}/t-picker.XXXXXX") || exit 1
+  _t_picker_dir=$(mktemp -d "${TMPDIR:-/tmp}/t-picker.XXXXXX") || return 1
   trap 'rm -rf -- "$_t_picker_dir"' EXIT
   trap 'exit 130' HUP INT TERM
   export T_PICKER_DEFAULT="$_t_picker_dir/default" T_PICKER_ALL="$_t_picker_dir/all"
@@ -259,6 +262,6 @@ SH
     --preview='printf "%s\n" {-1}' --preview-window='hidden:wrap:down:40%' \
     --header="$(cat "$_t_picker_header")" "$@" < "$T_PICKER_CURRENT"
   _t_picker_rc=$?
-  [ ! -f "$T_PICKER_NEW" ] || exit 3
-  exit "$_t_picker_rc"
+  [ ! -f "$T_PICKER_NEW" ] || return 3
+  return "$_t_picker_rc"
 )

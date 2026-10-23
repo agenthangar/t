@@ -46,6 +46,26 @@ if selected == ['']:
     return dict(PICKER_LOG=str(tmp_path / "picker.log"), PICK_LABELS=selection)
 
 
+@pytest.mark.parametrize('new', [False, True])
+def test_open_picker_does_not_run_callers_exit_hook_in_subshell(zsh, tmp_path, new):
+    env = picker_stub(tmp_path)
+    if new:
+        env['PICK_NEW'] = '1'
+    result = zsh(ROWS + r'''
+      autoload -Uz add-zsh-hook
+      terminal_save() { print -u2 -- "SESSION_SAVE subshell=$ZSH_SUBSHELL"; }
+      add-zsh-hook zshexit terminal_save
+      _t_dev() { print -r -- "CLI $*"; }
+      _t_open --attached
+      print -r -- "PICKER_RC=$?"
+    ''', _tty=True, **env)
+    assert result.returncode == 0, result.stdout + result.stderr
+    output = result.stdout + result.stderr
+    assert output.count('SESSION_SAVE') == 1, output
+    assert 'SESSION_SAVE subshell=0' in output
+    assert 'PICKER_RC=0' in result.stdout
+
+
 def test_bare_open_inside_worktree_shows_every_detail_and_repo(zsh, tmp_path):
     env = picker_stub(tmp_path)
     result = zsh(ROWS + r'''
