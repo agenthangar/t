@@ -183,6 +183,7 @@ def test_github_provider(mod, app, issue, monkeypatch):
 
 
 def test_codex_cloud_scoping_and_pagination(mod, app, issue, monkeypatch):
+    monkeypatch.setattr(mod.shutil, 'which', lambda name: '/bin/codex')
     calls = []
     def run(argv):
         calls.append(argv)
@@ -311,6 +312,25 @@ def test_local_prepared_reservation_is_verified_without_live_agent(mod, app, iss
     (marker.parent / 't-issue-prompt').unlink()
     incomplete = app.local(issue)[0]
     assert not incomplete.get('prepared') and not incomplete['verified']
+
+
+def test_recovered_branch_is_evidence_for_verified_local_owner(mod, app, issue, local_scan, monkeypatch):
+    state, marker, tx = local_scan
+    data = json.loads(marker.read_text())
+    data['handoff'] = {'pr': None, 'source': 'branch:issue-12'}
+    marker.write_text(json.dumps(data))
+    branch = mod.candidate('github', 'branch:issue-12', 'branch number', branch='issue-12', head='a'*40)
+    monkeypatch.setattr(app, 'github', lambda i: [branch])
+    monkeypatch.setattr(app, 'codex', lambda i: [])
+    monkeypatch.setattr(app, 'cursor', lambda i: [])
+    report = app.scan(issue)
+    assert len(report['matches']) == 1
+    assert app.choose(report)['session'] == 'dev-repo-1'
+    assert report['matches'][0]['published_source'] == branch['id']
+    state.update(second=True)
+    report = app.scan(issue)
+    assert len(report['matches']) == 2
+    assert 'published_source' not in report['matches'][0]
 
 
 def test_prepared_retry_requires_same_reservation_after_lock(mod, app, issue, args,
@@ -508,7 +528,7 @@ def test_run_existing_rechecks_and_errors(mod, app, issue, args, monkeypatch, tm
     monkeypatch.setattr(mod, 'command', lambda *a: str(tmp_path))
     setup_run(app, issue, monkeypatch, iter([clean_report(), report]))
     with pytest.raises(mod.IssueError, match='appeared'): app.run_one(args, args.target)
-    partial = clean_report(); partial['incomplete'] = ['failure']
+    partial = clean_report(); partial['incomplete'] = [{'source': 'github', 'reason': 'failure'}]
     setup_run(app, issue, monkeypatch, iter([clean_report(), partial]))
     with pytest.raises(mod.IssueError, match='recheck'): app.run_one(args, args.target)
     monkeypatch.setattr(app, 'choose', lambda r: None)
@@ -685,6 +705,119 @@ def test_saved_resume_requires_complete_scan(mod, app, issue, args, monkeypatch)
     with pytest.raises(mod.IssueError, match='incomplete'): app.run_one(args, args.target)
     args.allow_incomplete_check = True
     assert app.run_one(args, args.target) == 3
+
+
+@pytest.mark.parametrize('saved', [True, False])
+def test_start_skips_unavailable_sources(mod, app, issue, args, monkeypatch, tmp_path, capsys, saved):
+    app.cfg.hosts = {'offline': 'offline'}
+    owner = dict(provider='local', id='w', evidence='saved', state='saved',
+                 verified=True, resume=True, worktree='/w')
+    monkeypatch.setattr(app, 'local', lambda i: [owner] if saved else [])
+    monkeypatch.setattr(app, 'github', lambda i: [])
+    monkeypatch.setattr(app, 'codex', lambda i: [])
+    monkeypatch.delenv('CURSOR_API_KEY', raising=False)
+    monkeypatch.setattr(app, 'remote', lambda *a: (_ for _ in ()).throw(mod.IssueError('ssh failed')))
+    report = app.scan(issue)
+    assert len(report['incomplete']) == 2
+    assert all(f['skipped'] for f in report['incomplete'])
+    setup_run(app, issue, monkeypatch, iter([report] if saved else [report, report]))
+    monkeypatch.setattr(mod, 'command', lambda *a: str(tmp_path))
+    monkeypatch.setattr(app, 'launch', lambda *a: {'session': 'new'})
+    monkeypatch.setattr(app, 'attach', lambda row: 7)
+    assert app.run_one(args, args.target) == 7
+    assert 'Warning: skipped offline' in capsys.readouterr().out
+
+
+def test_missing_codex_is_skipped(mod, app, issue, monkeypatch):
+    monkeypatch.setattr(mod.shutil, 'which', lambda name: None)
+    with pytest.raises(mod.DiscoverySkipped, match='not installed'):
+        app.codex(issue)
+
+
+def test_override_never_bypasses_local_scan_failure(mod, app, issue, args, monkeypatch):
+    report = clean_report()
+    report['incomplete'] = [{'source': 'local', 'reason': 'failed'}]
+    setup_run(app, issue, monkeypatch, iter([report]))
+    args.allow_incomplete_check = True
+    with pytest.raises(mod.IssueError, match='local discovery'):
+        app.run_one(args, args.target)
+
+
+@pytest.mark.parametrize('kind', ['pr', 'branch'])
+def test_recover_published_issue_work(mod, app, issue, args, monkeypatch, tmp_path, capsys, kind):
+    row = mod.candidate('github', 'branch:issue/12', 'explicit issue reference',
+                        branch='issue/12', head='a'*40, url='https://github.com/org/repo/tree/issue/12')
+    if kind == 'pr':
+        row.update(id='https://github.com/org/repo/pull/5', pr='https://github.com/org/repo/pull/5')
+    report = clean_report(); report['matches'] = [row]
+    late = dict(report, incomplete=[dict(source='offline', reason='ssh failed', skipped=True)])
+    setup_run(app, issue, monkeypatch, iter([report, late]))
+    monkeypatch.setattr(mod.sys.stdin, 'isatty', lambda: False)
+    calls, launches = [], []
+    def command(argv, **kw):
+        calls.append(argv)
+        if argv[0] == 'git': return str(tmp_path)
+        if kind == 'branch':
+            assert argv[-1].endswith('/branches/issue%2F12')
+            return json.dumps({'commit': {'sha': 'a'*40}})
+        return json.dumps(dict(state='open', head=dict(ref='issue/12', sha='a'*40,
+                         repo={'clone_url': 'https://github.com/org/repo.git'})))
+    monkeypatch.setattr(mod, 'command', command)
+    monkeypatch.setattr(app, 'launch', lambda *a: launches.append(a) or {'session': 'new'})
+    monkeypatch.setattr(app, 'takeover', lambda *a: pytest.fail('published recovery must not ask for stopped'))
+    monkeypatch.setattr(app, 'attach', lambda r: 0)
+    assert app.run_one(args, args.target) == 0
+    handoff = launches[0][-1]
+    assert handoff['head'] == 'a'*40 and handoff['branch'] == 'issue/12'
+    assert handoff['pr'] == row.get('pr')
+    assert len([a for a in calls if a[0] == 'gh']) == 2
+    prompt = app.prompt(issue, report, handoff, 'token')
+    assert ('Reuse PR' in prompt) == (kind == 'pr')
+    assert 'unpushed changes' in prompt
+    output = capsys.readouterr().out
+    assert 'Warning: skipped offline' in output and 'Only pushed commits' in output
+
+
+@pytest.mark.parametrize('change', ['head', 'removed', 'active', 'closed', 'branch_head'])
+def test_recovery_rechecks_before_launch(mod, app, issue, args, monkeypatch, tmp_path, change):
+    row = mod.candidate('github', 'pr', 'explicit issue reference',
+                        branch='fix', head='a'*40, pr='https://github.com/org/repo/pull/5', url='pr')
+    report = clean_report(); report['matches'] = [row]
+    if change == 'branch_head':
+        row.pop('pr')
+    fresh = dict(report, matches=[dict(row)])
+    if change == 'removed': fresh['matches'] = []
+    if change == 'active': fresh['matches'][0]['state'] = 'running'
+    setup_run(app, issue, monkeypatch, iter([report, fresh]))
+    reads = []
+    def command(argv, **kw):
+        if argv[0] == 'git': return str(tmp_path)
+        reads.append(argv)
+        if change == 'closed' and len(reads) > 1: return '{"state":"closed"}'
+        sha = ('b' if len(reads) > 1 else 'a') * 40
+        if change == 'branch_head': return json.dumps({'commit': {'sha': sha}})
+        return json.dumps(dict(state='open', head=dict(ref='fix', sha=sha,
+                         repo={'clone_url': 'https://github.com/org/repo.git'})))
+    monkeypatch.setattr(mod, 'command', command)
+    monkeypatch.setattr(app, 'launch', lambda *a: pytest.fail('must not launch'))
+    with pytest.raises(mod.IssueError, match='changed|active|open'):
+        app.run_one(args, args.target)
+
+
+def test_ambiguous_published_matches_require_review(mod, app, monkeypatch):
+    row = mod.candidate('github', 'branch:issue-12', 'branch or task number (review required)',
+                        branch='issue-12', head='a'*40, url='branch')
+    report = clean_report(); report['matches'] = [row]
+    monkeypatch.setattr(mod.sys.stdin, 'isatty', lambda: False)
+    with pytest.raises(mod.IssueError, match='review'):
+        app.choose(report)
+    row['evidence'] = 'explicit issue reference'
+    report['matches'].append(dict(row, id='another'))
+    with pytest.raises(mod.IssueError, match='review'):
+        app.choose(report)
+    monkeypatch.setattr(mod.sys.stdin, 'isatty', lambda: True)
+    monkeypatch.setattr(app, 'pick_rows', lambda defaults, all_rows, *a, **kw: [all_rows[0]])
+    assert app.choose(report) == row
 
 
 def test_private_metadata_is_atomic(mod, tmp_path, monkeypatch):

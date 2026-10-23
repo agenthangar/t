@@ -1,6 +1,43 @@
 """Offline discovery must distinguish fresh work from saved ownership."""
 import pytest
 from test_agent_seam import zsh  # noqa: F401
+from test_resume_app import saved_rollout, SID
+
+
+@pytest.mark.parametrize('mode', ['issue', 'standalone', 'local_failure', 'known_owner', 'moved_owner', 'local_guard'])
+def test_issue_resume_skips_offline_host(zsh, mode):
+    cwd, _ = saved_rollout(zsh)
+    result = zsh(r'''
+      REMOTE_HOSTS[offline]=offline
+      _dev_rows_all() {
+        if [[ $MODE == known_owner || $MODE == moved_owner ]]; then
+          local owner_slot=3
+          [[ $MODE == moved_owner ]] && owner_slot=9
+          printf 'online\t%s\t%s\tapi-%s\tdetached\tactive\tWork\tcodex\n' "$SID" "$CWD" "$owner_slot"
+        fi
+        print -u2 'dev: offline unreachable — skipped'
+        return 1
+      }
+      _dev_session_rows() { [[ $MODE != local_failure ]]; }
+      _dev_ensure_session_cwd() { print -r -- "$1"; }
+      _dev_resume_session() {
+        if [[ $MODE == local_guard ]]; then print -u2 LOCAL_GUARD; return 1; fi
+        print -r -- "RESUMED $*"
+      }
+      _dev_remote_attach() { print -r -- "REMOTE $*"; }
+      if [[ $MODE == standalone ]]; then
+        _t_resume api 3 --days all
+      else
+        _T_ISSUE_SKIP_UNAVAILABLE=1 _t_resume api 3 --days all
+      fi
+    ''', MODE=mode, SID=SID, CWD=str(cwd))
+    assert ('RESUMED' in result.stdout) == (mode == 'issue'), result.stdout + result.stderr
+    assert (result.returncode == 0) == (mode in ('issue', 'known_owner')), result.stdout + result.stderr
+    if mode == 'known_owner': assert 'REMOTE online' in result.stdout
+    if mode == 'moved_owner': assert 'on online' in result.stderr
+    if mode == 'local_guard': assert 'LOCAL_GUARD' in result.stderr
+    if mode == 'local_failure': assert 'local ownership check failed' in result.stderr
+    assert 'offline unreachable' in result.stderr
 
 
 @pytest.mark.parametrize('args', ['--new', '3', '--new --local', '--new --fg'])

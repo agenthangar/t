@@ -175,6 +175,15 @@ workspaces and saved-conversation handoffs keep strict ownership checks. All Cod
 CLI starts and resumes use an invocation-local backend (`--no-daemon`).
 These are direct-action behaviors within the existing open/resume modes.
 
+Issue starts warn and skip unavailable registered hosts and unconfigured optional
+cloud providers. Their saved CLI resume route retains local checks and known owners
+while tolerating unavailable hosts; standalone resume and desktop handoffs stay strict.
+A unique explicitly referenced or issue-linked GitHub PR is a direct action: recover
+its published commit in a fresh local worktree and reuse the PR. Ambiguous PRs and
+branches use the existing single-owner picker; branch recovery does not require a PR.
+Recheck ownership and published state before launch. Read-only status/JSON preserves
+incomplete results, including additive `skipped: true` on warning-only sources.
+
 ## Changes since the visual baseline
 
 Review these behavior changes when applying the v0.4.2 standard. Later changes
