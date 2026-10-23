@@ -57,7 +57,7 @@ def test_bare_open_inside_worktree_shows_every_detail_and_repo(zsh, tmp_path):
     assert result.returncode == 0, result.stdout
     rows = (tmp_path / "picker.log").read_text().splitlines()
     assert [row.split('\t')[1] for row in rows] == ['api-2', 'api-4', 'web-6', 'web:abcdef12']
-    display = [row.split('\t')[-1] for row in rows]
+    display = [row.split('\t')[-1].rstrip() for row in rows]
     assert all('STATUS' not in row for row in display)
     assert '● ✓ ↻' in display[0] and '› cli' in display[0]
     assert '⬡ codex' in display[0] and 'gpt-test-astra' in display[0]
@@ -191,7 +191,7 @@ def test_open_remote_picker_retains_model_and_selected_host(zsh, tmp_path):
     rows = (tmp_path / 'picker.log').read_text()
     assert 'mini' in rows and 'studio' in rows and 'claude-test-model' in rows
     assert 'Local hidden' not in rows
-    assert rows.splitlines()[0].endswith('2026-10-23 16:41:07 UTC')
+    assert rows.splitlines()[0].rstrip().endswith('2026-10-23 16:41:07 UTC')
     assert 'TAB t open web 4 --cli --host studio' in result.stdout
     assert 'REMOTE mini alias 2 --cli' in result.stdout
 
@@ -329,6 +329,9 @@ def test_open_last_turn_layout_and_details(t_mod, monkeypatch, capsys, width, re
     stamp = t_mod._session_display_helpers()['format_last_turn']('2026-10-23T16:41:07Z')
     assert first[:3] == ['mini', 'api-2', 'attached']
     assert len(first) == len(unknown) == 5
+    # Full details follow this viewport in fzf's searchable presentation (5,4).
+    assert t_mod._display_width(first[4]) == t_mod._display_width(unknown[4]) == width
+    first[4], unknown[4] = first[4].rstrip(), unknown[4].rstrip()
     assert title in first[3] and first[3].endswith('Last turn: ' + stamp)
     assert 'gpt-test-astra' in first[3]
     if remote:

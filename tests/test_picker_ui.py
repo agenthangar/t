@@ -335,6 +335,8 @@ def test_open_last_turn_stays_visible_without_changing_selection(picker, t_mod, 
     wait('2/2 (0)')
     stamp = t_mod._session_display_helpers()['format_last_turn']('2026-10-23T16:41:07Z')
     screen = wait(stamp if width >= 60 else stamp[5:16])
-    assert 'First' in screen and 'Enter open' in screen
-    keys('Up')
+    assert 'Fir' in screen and 'Enter open' in screen
+    # This part of the task is clipped from the compact row, but still searchable.
+    keys('-l', 'progress')
+    wait('1/2 (0)')
     assert finish() == ['api 2 --local']

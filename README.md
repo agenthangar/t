@@ -255,6 +255,7 @@ column. For example, a row ends with `Fix login  2026-10-23 09:41:07 PDT`.
 Narrow rows use `MM-DD HH:MM` in local time and shorten task text to keep the
 timestamp visible. **Ctrl-/** retains the complete task and timestamp with date,
 seconds, and timezone. Missing timestamps display `-`, including older remote hosts.
+Search still matches the full task and metadata when a compact row shortens them.
 
 The default views are unattached sessions for `t open`, inactive conversations
 for `t resume`, and unattached sessions with no pending work for `t kill`. Kill

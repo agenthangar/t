@@ -149,7 +149,8 @@ Its row formatter reserves space for the timestamp before clipping working-on
 text, using the shared Unicode width helpers. Narrow rows use local `MM-DD HH:MM`
 and compact session/status metadata; Ctrl-/ details retain the complete working-on
 text and full timestamp. The shared picker controls and hidden host/session/state
-identity fields remain unchanged. Explicit targets still bypass selection.
+identity fields remain unchanged. Search includes the full task and metadata even
+when compact rows shorten their presentation. Explicit targets still bypass selection.
 
 Printed history appends DATE, BRANCH, PRS, and the full conversation ID after these
 shared columns, retaining

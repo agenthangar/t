@@ -464,6 +464,7 @@ _t_open_picker() {
   filtered="${(F)visible}"
   selected=$(T_PICKER_SESSION_FILTERS=open _t_fzf_filtered "$filtered" "$rows" open unattached \
     "LAST TURN: local time · $(_dev_agent_legend)" "$include_attached" --prompt="open ${repo:+$repo }> " \
+    --with-nth=5,4 \
     --preview='printf "%s\n" {4}') || return $?
   [[ -n $selected ]] || return 130
   _t_open_selected "$selected" "$app" "$cli"

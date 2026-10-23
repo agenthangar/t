@@ -562,7 +562,7 @@ def _slot_line(r, st, name_w, avail, host_w=None, model_w=7):
 def _session_picker_turn_columns(rows, prefixes, statuses, stamps, width):
     """Reserve the last column before clipping task text to the fzf viewport."""
     clip = _session_display_helpers()["clip_columns"]
-    available = max(1, width - 10)  # fzf margins, border, pointer and mark.
+    available = max(1, width - 12)  # fzf margins, border, pointer, mark and overflow indicator.
     stamp_width = max(map(_display_width, stamps))
     prefix_width = max(map(_display_width, prefixes))
     if prefix_width + stamp_width + 16 > available:
@@ -621,7 +621,11 @@ def _session_picker_rows(rows, remote=False, scoped=False, last_turn=False):
         out.append("\t".join((row["host"], row["slot"], row["state"], details, display)))
     if last_turn:
         stamps = [_session_display_helpers()["format_last_turn"](row.get("last_turn_started_at")) for row in rows]
-        displays = _session_picker_turn_columns(rows, prefixes, statuses, stamps, _columns())
+        width = _columns()
+        displays = _session_picker_turn_columns(rows, prefixes, statuses, stamps, width)
+        # fzf searches only presented fields. The open picker presents 5,4,
+        # keeping full details searchable beyond the no-hscroll viewport.
+        displays = [display + ' ' * max(0, width - _display_width(display)) for display in displays]
         out = ["\t".join((row["host"], row["slot"], row["state"], details + "  Last turn: " + stamp, display))
                for row, details, stamp, display in zip(rows, details_rows, stamps, displays)]
     return out
