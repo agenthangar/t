@@ -1,3 +1,43 @@
+# Check a desktop claim with one discovery snapshot. A local desktop reservation
+# continues its existing owner; an unreserved saved workspace needs a complete
+# scan before acquiring one. Known remote owners always block either operation.
+_dev_remote_app_check() {
+  local repo=$1 slot=$2 allow_incomplete=$3 dir=${DEV_REPOS[$1]:-}
+  local rows scan_rc owner host state
+  rows=$(_dev_rows_all); scan_rc=$?
+  owner=$(print -r -- "$rows" | awk -F'\t' \
+    -v d="$(_dev_homerel "$dir")" -v s="$slot" \
+    -v wtr="$(_dev_homerel "${DEV_WORKTREE_ROOT:-}")" -v b="${dir:t}" '
+      $1 != "local" && $4 !~ /:/ {
+        c=$3; sub(/^\/(Users|home)\/[^\/]+\//, "", c)
+        n=$4; sub(/^.*-/, "", n)
+        if ((c==d || (wtr != "" && b != "" && index(c, wtr "/" b "/") == 1)) && n==s) {
+          print $1 "\t" $5; exit
+        }
+      }')
+  if [[ -n $owner ]]; then
+    host=${owner%%$'\t'*}; state=${owner#*$'\t'}
+    if [[ $state == app ]]; then
+      print -u2 -- "t open --app: $repo $slot is reserved by the Codex desktop app on $host; close it there and release the reservation before opening here"
+    else
+      print -u2 -- "t open --app: $repo $slot is live on $host; move it here with t beam before opening the app"
+    fi
+    return 1
+  fi
+  if (( scan_rc )); then
+    if [[ -z $allow_incomplete ]]; then
+      print -u2 -- 't open --app: ownership could not be verified for this existing workspace; retry when the skipped host is reachable'
+      return 3
+    fi
+    # The aggregate result includes local failures too. An offline host never
+    # excuses a failed local scan, even for a reserved or fresh workspace.
+    _dev_session_rows >/dev/null || {
+      print -u2 -- 't open --app: local ownership check failed; retry before opening'
+      return 3
+    }
+  fi
+}
+
 # → stderr (stdout is captured).
 # A desktop-only slot has no tmux process to attach, but it still owns its
 # worktree and conversation. Keep this separate from _dev_remote_resolve, whose

@@ -416,7 +416,9 @@ verified.
 Fresh local slots can open while a configured remote host is offline, for example
 `t session open my-project --new --codex --cli` or
 `t session open my-project --new --app`. Known remote owners are still respected;
-existing workspaces and saved conversations require verified ownership.
+`t session open my-project 3 --app` can also reopen a locally reserved desktop
+workspace when another host is offline, after checking local ownership. Other
+existing workspaces and saved-conversation handoffs require verified ownership.
 
 Codex CLI starts and resumes (including `--fg` and transfers) use `--no-daemon`.
 Each session uses its own backend, avoiding feature-setting conflicts with

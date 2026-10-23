@@ -613,7 +613,7 @@ _t_open_app() {
     return
   fi
   dir=$(_dev_worktree_path "$repo" "$slot") || return 1
-  _dev_with_launch_locks "$dir" '' _t_open_app_claim "$repo" "$slot" "$dir" || return 1
+  _dev_with_launch_locks "$dir" '' _t_open_app_claim "$repo" "$slot" "$dir" || return $?
   print -r -- "Opening $repo $slot in the Codex desktop app: $dir"
   command t _app-workspace "$dir" ${reopen:+--reopen} || {
     print -u2 -- "t open --app: could not confirm the app open request; the worktree remains reserved at $dir for a retry"
@@ -622,7 +622,7 @@ _t_open_app() {
 }
 
 _t_open_app_claim() {
-  local repo=$1 slot=$2 dir=$3 remote_owner remote_rc cli_scan_rc app_scan_rc owner owner_dir
+  local repo=$1 slot=$2 dir=$3 owner owner_dir
   # Recheck after taking the same worktree lock as CLI creation and app handoff.
   local session="dev-${repo}-${slot}"
   if tmux has-session -t "=$session:" 2>/dev/null; then
@@ -636,26 +636,15 @@ _t_open_app_claim() {
       return 1
     fi
   done < <(tmux list-sessions -F '#{session_name}|#{session_path}' 2>/dev/null)
-  local fresh_scan=
-  _dev_slot_fresh "$repo" "$slot" && fresh_scan=1
-  if (( ${#REMOTE_HOSTS} )); then
-    remote_owner=$(_dev_remote_resolve "$repo" "$slot" '' quiet "$fresh_scan"); remote_rc=$?
-    if [[ -n $remote_owner ]]; then
-      print -u2 -- "t open --app: $repo $slot is live on ${remote_owner%%$'\t'*}; move it here with t beam before opening the app"
-      return 1
-    fi
-    cli_scan_rc=$remote_rc
-    remote_owner=$(_dev_remote_app_owner "$repo" "$slot" "$fresh_scan"); remote_rc=$?
-    app_scan_rc=$remote_rc
-    if [[ -n $remote_owner ]]; then
-      print -u2 -- "t open --app: $repo $slot is reserved by the Codex desktop app on $remote_owner; close it there and release the reservation before opening here"
-      return 1
-    fi
-    (( cli_scan_rc > 1 )) && return $cli_scan_rc
-    (( app_scan_rc > 1 )) && return $app_scan_rc
-  fi
+  local allow_incomplete=
   if _dev_app_slot_reserved "$dir"; then
     reopen=1 # Preserve its branch and reopen the saved conversation.
+    allow_incomplete=1
+  elif _dev_slot_fresh "$repo" "$slot"; then
+    allow_incomplete=1
+  fi
+  if (( ${#REMOTE_HOSTS} )); then
+    _dev_remote_app_check "$repo" "$slot" "$allow_incomplete" || return $?
   fi
   # A foreground CLI can own a worktree without tmux or a desktop marker.
   # Shared backends are not CLI owners; their cwd can belong to another thread.
