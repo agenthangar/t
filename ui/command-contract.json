@@ -2573,6 +2573,32 @@
           ]
         }
       }
+    },
+    "version": {
+      "patterns": [
+        "detail"
+      ],
+      "renderer": "plain",
+      "scope": "installed t executable",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_version.py::test_version_does_not_load_config_or_check_updates"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "version"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_version.py::test_version_does_not_load_config_or_check_updates"
+          ],
+          "notes": "Same version formatter as --version; no config, update check, or prompt."
+        }
+      }
     }
   },
   "display_schemas": {

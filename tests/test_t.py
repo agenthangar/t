@@ -2221,14 +2221,14 @@ def test_double_dash_preserves_literal_help_argument(t_mod, monkeypatch):
 _INTERNAL_COMMANDS = ("session-rows", "land", "kill-owner", "new-land", "mcp", "__resolve")
 
 
-@pytest.mark.parametrize("argv", [[], ["help"], ["-h"], ["--help"], ["version"], ["--bad-option"]])
+@pytest.mark.parametrize("argv", [[], ["help"], ["-h"], ["--help"], ["not-a-command"], ["--bad-option"]])
 def test_command_discovery_only_advertises_public_verbs(t_mod, capsys, monkeypatch, argv):
     monkeypatch.setattr(t_mod, "Config", lambda: pytest.fail("discovery loaded config"))
     if argv == ["--bad-option"]:
         with pytest.raises(SystemExit) as exc:
             t_mod.main(argv)
         assert exc.value.code == 2
-    elif argv == ["version"]:
+    elif argv == ["not-a-command"]:
         assert t_mod.main(argv) == 2
     else:
         assert t_mod.main(argv) == 0
@@ -2236,10 +2236,10 @@ def test_command_discovery_only_advertises_public_verbs(t_mod, capsys, monkeypat
     output = captured.out + captured.err
     for command in _INTERNAL_COMMANDS:
         assert command not in output
-    if argv == ["version"]:
-        assert "unknown command 'version'" in output
+    if argv == ["not-a-command"]:
+        assert "unknown command 'not-a-command'" in output
         choices = output.split("choose from ", 1)[1]
-        assert "session," in choices and "system" in choices
+        assert "session," in choices and "system" in choices and "version" in choices
     elif argv != ["--bad-option"]:
         assert "session" in output and "system" in output
 

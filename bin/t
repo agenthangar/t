@@ -5084,7 +5084,7 @@ def _command_readonly(argv, *, terminal=None):
         return "--json" in options or not terminal
     if any(flag in options for flag in ("--dry-run", "--json", "--dump", "--statusline")):
         return True
-    if verb in ("help", "ls", "read", "plan", "doctor", "session-rows"):
+    if verb in ("help", "version", "--version", "ls", "read", "plan", "doctor", "session-rows"):
         return True
     if verb == "issue":
         return bool(tail and tail[0] in ("list", "status"))
@@ -9453,6 +9453,7 @@ TOOLS
   login     Log in logged-out or expiring agent tools
   agent     Install and configure agent CLIs
   system    Integrate, update, and diagnose t
+  version   Show installed version (same as --version)
 
 FLAGS
   -h, --help     Show help
@@ -9462,6 +9463,7 @@ EXAMPLES
   t session open api       Open or reattach an api session
   t session list --remote  List sessions across machines
   t repo list              List registered repositories
+  t version                Show installed version
   t hosts list             List registered SSH hosts
 
 LEARN MORE
@@ -9642,6 +9644,8 @@ def build_parser():
     p.add_argument("--version", action="version", version=f"t {_t_version()}")
     sub = p.add_subparsers(dest="verb", metavar="<verb>")
     p._group_parsers = {}
+    sub.add_parser("version", help="show installed version (same as --version)",
+        description="Show the installed release version or Git checkout revision, exactly as `t --version`.")
     help_sp = sub.add_parser("help", help="show help for a command or subcommand",
         description="Show top-level help, or help for a command or subcommand. "
             "For example: `t help session open` or `t help repo locate`.")
@@ -10575,7 +10579,7 @@ def main(argv):
     if (argv[0] not in top_commands and argv[0] not in COMMAND_GROUPS
             and argv[0] != "todo" and not argv[0].startswith("-")):
         print(f"t: unknown command {argv[0]!r}; choose from "
-              f"{', '.join(COMMAND_GROUPS)}", file=sys.stderr)
+              f"{', '.join([*COMMAND_GROUPS, 'version'])}", file=sys.stderr)
         return 2
     argv = _canonical_argv(argv)
     # Operational `cursor` arguments still belong to cursor-beam. In particular,
@@ -10595,6 +10599,9 @@ def main(argv):
     if argv and argv[0] == "todo":
         return cmd_todo(Config(), argparse.Namespace(rest=argv[1:]))
     args = parser.parse_args(argv)
+    if args.verb == "version":
+        print(f"t {_t_version()}")
+        return 0
     if args.verb == "share":
         if args.share_action is None:
             if args.retry:

@@ -31,7 +31,7 @@ def test_readonly_commands_never_offer_updates(t_mod, monkeypatch, argv, termina
         monkeypatch.setitem(t_mod.IMPLEMENTED, name, handler)
     monkeypatch.setattr(t_mod, 'cmd_cursor', handler)
     assert t_mod.main(argv) == 0
-    assert len(seen) == (0 if argv == ['share'] and not terminal else 1)
+    assert len(seen) == (0 if argv == ['version'] or argv == ['share'] and not terminal else 1)
     assert t_mod._command_readonly(argv, terminal=terminal)
 
 

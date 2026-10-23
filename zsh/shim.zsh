@@ -726,7 +726,7 @@ _t_beam_xlate() {
 # key for `on`), and slot/flags after. Pulls live from the ${(k)DEV_REPOS} /
 # ${(k)REMOTE_HOSTS} arrays so it stays current with ${T_LOCAL_RC}.
 _t() {
-  local -a nouns=(session issue share repo cursor hosts agentcore config profile policy agent system login help)
+  local -a nouns=(session issue share repo cursor hosts agentcore config profile policy agent system login version help)
   if (( CURRENT == 2 )); then
     _describe -t nouns 't command group' nouns
     return

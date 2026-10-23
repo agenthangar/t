@@ -785,7 +785,8 @@ Custom rules and existing explicit choices are preserved. `T_NO_TRUST`,
 ### Updates and development
 
 ```sh
-t --version       # installed release, or developer checkout revision
+t version         # installed release, or developer checkout revision
+t --version       # equivalent version flag
 t system update --check   # check now for a newer release
 t system update           # latest tagged release; Git installs update main instead
 t system update --relink  # repair links from the selected source, without fetching

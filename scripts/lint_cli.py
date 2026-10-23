@@ -26,6 +26,8 @@ LEGACY_SHORTCUTS = frozenset({
 # `t share` is the reviewed exception: sending is the root action, while
 # targets, inbox, and read remain explicit read-only verbs.
 SHARE_COMMAND = "share"
+# Reviewed in #137: read-only spelling of the existing --version flag.
+VERSION_COMMAND = "version"
 ISSUE_VERBS = {"list", "status", "start", "open"}
 # These established families route to compatibility parsers. Freeze their
 # accepted verbs so extending one requires an intentional contract review.
@@ -159,7 +161,7 @@ def check(parser, command_groups, instructions):
     if top is None:
         return ["root command parser has no noun/verb dispatch"]
     public = set(top.choices)
-    unsupported = public - set(command_groups) - LEGACY_SHORTCUTS - {SHARE_COMMAND}
+    unsupported = public - set(command_groups) - LEGACY_SHORTCUTS - {SHARE_COMMAND, VERSION_COMMAND}
     if unsupported:
         errors.append("new public top-level command lacks a noun/verb group: " +
                       ", ".join(sorted(unsupported)))
@@ -287,7 +289,7 @@ def check_command_patterns(parser, command_groups, contract, *, root=ROOT):
     if set(patterns) != allowed:
         errors.append("command patterns must define the ten approved behavior types")
     routes = ({f"{group} {verb}" for group, verbs in command_groups.items() for verb in verbs}
-              | {SHARE_COMMAND, "share targets", "share inbox", "share read"})
+              | {SHARE_COMMAND, "share targets", "share inbox", "share read", VERSION_COMMAND})
     top = _subparsers(parser)
     commands = contract.get("commands", {})
     if set(commands) != routes:
