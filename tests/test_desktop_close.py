@@ -146,7 +146,8 @@ def test_missing_unreserved_slot_keeps_existing_message(tmp_path):
 def run_verified_close(tmp_path, *, blank=False, parked=False, wrong_stamp=False,
                        hold_lock=False, unreadable_pid=False, stop_failure=False,
                        frontend_running=False, peer_writer=False, thread_after_stop=False,
-                       missing_archive=False):
+                       missing_archive=False, unknown_writer=False, unindexed_cwd=None,
+                       index_after_stop=False):
     """Run the real shell verifier against a disposable Git worktree and Codex index."""
     home = tmp_path / "home"
     home.mkdir()
@@ -190,6 +191,13 @@ def run_verified_close(tmp_path, *, blank=False, parked=False, wrong_stamp=False
             peer.mkdir()
             connection.execute("insert into threads values (?,?,?,0)",
                                (sid, str(peer), str(codex_home / "peer.jsonl")))
+    other_sid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    if unindexed_cwd:
+        unindexed = codex_home / "sessions" / ("rollout-" + other_sid + ".jsonl")
+        unindexed.parent.mkdir()
+        unindexed.write_text(json.dumps({"type": "session_meta", "payload": {
+            "id": other_sid, "cwd": str(wt if unindexed_cwd == "same" else home / "elsewhere"),
+        }}) + "\n")
     bins = home / "bin"
     bins.mkdir()
     ps = bins / "ps"
@@ -208,20 +216,20 @@ def run_verified_close(tmp_path, *, blank=False, parked=False, wrong_stamp=False
            "T_TEST_FRONTEND": "1" if frontend_running else "0"}
     env.pop("TMUX", None)
     holder = None
-    if hold_lock or peer_writer:
+    if hold_lock or peer_writer or unknown_writer:
         holder = subprocess.Popen([sys.executable, "-c", "import fcntl,sys,time; "
                                    "f=open(sys.argv[1],'w+'); fcntl.flock(f,fcntl.LOCK_EX); "
                                    "print('ready',flush=True); time.sleep(15)",
-                                   str(locks / (sid + ".lock"))],
+                                   str(locks / ((other_sid if unknown_writer else sid) + ".lock"))],
                                   env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         assert holder.stdout.readline().strip() == "ready"
     after_stop = ":"
-    if thread_after_stop:
+    if thread_after_stop or index_after_stop:
         after_stop = shlex.join([sys.executable, "-c",
             "import sqlite3,sys; "
             "db=sqlite3.connect(sys.argv[1]); "
             "db.execute('insert into threads values (?,?,?,0)', sys.argv[2:]); db.commit()",
-            str(codex_home / "state_5.sqlite"), sid, str(wt), str(rollout)])
+            str(codex_home / "state_5.sqlite"), other_sid if index_after_stop else sid, str(wt), str(rollout)])
     script = f'''
 source {shlex.quote(str(ROOT / "t.plugin.zsh"))}
 _dev_cwd_pids() {{ {"print -r -- 999999999" if unreadable_pid else ":"}; }}
@@ -242,6 +250,8 @@ _t_app_close_slot dev-api-13 {shlex.quote(str(wt))} {"-" if blank else sid} \
     try:
         result = subprocess.run(["zsh", "-f", "-c", script], env=env,
                                 capture_output=True, text=True, timeout=20)
+        if unknown_writer:
+            assert holder.poll() is None, "closing a slot stopped an unassociated writer"
         if peer_writer:
             assert holder.poll() is None, "closing one empty slot stopped an unrelated writer"
             with sqlite3.connect(codex_home / "state_5.sqlite") as connection:
@@ -336,3 +346,20 @@ def test_missing_archived_history_closes_only_without_a_writer_or_new_thread(
     assert actions == ([] if hold_lock else ['stop'])
     with sqlite3.connect(tmp_path / 'home' / 'codex' / 'state_5.sqlite') as db:
         assert db.execute('select count(*) from threads where archived=1').fetchone() == (1,)
+
+
+@pytest.mark.skipif(not shutil.which('zsh'), reason='zsh required')
+@pytest.mark.parametrize('blank', [False, True])
+@pytest.mark.parametrize('evidence', ['none', 'same', 'other', 'appears'])
+def test_desktop_close_scopes_unknown_locks_and_rechecks_new_ownership(tmp_path, blank, evidence):
+    result, marker, actions, wt, rollout = run_verified_close(
+        tmp_path, blank=blank, unknown_writer=True, frontend_running=True,
+        unindexed_cwd=evidence if evidence in ('same', 'other') else None,
+        index_after_stop=evidence == 'appears')
+    blocked = evidence in ('same', 'appears')
+    assert result.returncode == int(blocked), result.stderr
+    assert marker.exists() == blocked
+    assert actions == ([] if evidence == 'same' else ['stop'])
+    assert wt.is_dir() and rollout.exists() == (not blank)
+    if blocked:
+        assert 'still loaded' in result.stderr or 'saved Codex conversation' in result.stderr

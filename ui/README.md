@@ -83,6 +83,11 @@ target. Explicit close targets retain live-agent confirmation unless `-y` is
 supplied. Closing an unloaded desktop slot preserves history and its worktree;
 a running app or missing archived rollout alone does not block cleanup. Verify
 writer ownership before and after cleanup, and retain the reservation on failure.
+Close scopes sibling locks through readable conversation indexes and, for unindexed
+threads, validated rollout identity metadata. A lock with no workspace association
+does not veto every close. Selected and known same-worktree writers still block;
+shared backend processes and lock files remain untouched. These are safety rules
+within the existing close modes, with no new prompt or command.
 
 ## Shared implementations
 
