@@ -7,7 +7,7 @@ from test_agent_seam import zsh  # noqa: F401 — shared isolated shell fixture
 ROWS = r'''
   _dev_session_rows() {
     [[ $1 == --details ]] || { print -u2 MISSING_DETAILS; return 1; }
-    printf 'sid1\t%s\tapi-2\tattached\tactive\tFirst task · #12 merged, still in progress\tcodex\tgpt-test-astra\n' "$HOME/code/api"
+    printf 'sid1\t%s\tapi-2\tattached\tactive\tFirst task · #12 merged, still in progress\tcodex\tgpt-test-astra\t2026-10-23T16:41:07Z\n' "$HOME/code/api"
     printf -- '-\t%s\tapi-4\tapp\tnone\tNo conversation recorded\tcodex\t-\n' "$HOME/code/api"
     printf -- '-\t%s\tweb-6\tdetached\tidle\t(idle — no conversation)\tclaude\t-\n' "$HOME/code/web"
     printf 'sid3\t%s\tweb:abcdef12\tattached\tactive\tForeground task\tclaude\tclaude-test-model\n' "$HOME/code/web"
@@ -51,8 +51,9 @@ def test_bare_open_inside_worktree_shows_every_detail_and_repo(zsh, tmp_path):
       mkdir -p "$HOME/code/.worktrees/api/9"
       cd "$HOME/code/.worktrees/api/9"
       _t_dev() { print -r -- "CLI $*"; }
+      COLUMNS=200
       _t_open --attached
-    ''', _tty=True, **env)
+    ''', _tty=True, TZ='UTC', **env)
     assert result.returncode == 0, result.stdout
     rows = (tmp_path / "picker.log").read_text().splitlines()
     assert [row.split('\t')[1] for row in rows] == ['api-2', 'api-4', 'web-6', 'web:abcdef12']
@@ -60,8 +61,10 @@ def test_bare_open_inside_worktree_shows_every_detail_and_repo(zsh, tmp_path):
     assert all('STATUS' not in row for row in display)
     assert '● ✓ ↻' in display[0] and '› cli' in display[0]
     assert '⬡ codex' in display[0] and 'gpt-test-astra' in display[0]
-    assert display[0].endswith('First task · #12 merged, still in progress')
-    assert '▣ desktop' in display[1] and display[1].endswith('No conversation recorded')
+    assert 'First task · #12 merged, still in progress' in display[0]
+    assert display[0].endswith('2026-10-23 16:41:07 UTC')
+    assert '▣ desktop' in display[1] and 'No conversation recorded' in display[1]
+    assert display[1].endswith('  -')
     assert '(idle — no conversation)' in display[2]
     assert 'claude-test-model' in display[3] and 'Foreground task' in display[3]
     assert 'CLI api 2 --local' in result.stdout
@@ -175,18 +178,20 @@ def test_open_remote_picker_retains_model_and_selected_host(zsh, tmp_path):
       REMOTE_HOSTS[mini]=mini
       _dev_rows_all() {
         [[ $1 == --details ]] || return 1
-        printf 'mini\tsid1\t%s\talias-2\tattached\tactive\tRemote first\tcodex\tgpt-test-astra\n' "$HOME/code/api"
+        printf 'mini\tsid1\t%s\talias-2\tattached\tactive\tRemote first\tcodex\tgpt-test-astra\t2026-10-23T16:41:07Z\n' "$HOME/code/api"
         printf 'studio\tsid2\t%s\tweb-4\tdetached\tactive\tRemote second\tclaude\tclaude-test-model\n' "$HOME/code/web"
         printf 'local\tsid3\t%s\tapi-3\tdetached\tactive\tLocal hidden\tcodex\tgpt-test-astra\n' "$HOME/code/api"
       }
       _dev_remote_open() { print -r -- "REMOTE $*"; }
       _dev_open_tab() { print -r -- "TAB $*"; }
+      COLUMNS=200
       _t_open -r --attached
-    ''', _tty=True, **env)
+    ''', _tty=True, TZ='UTC', **env)
     assert result.returncode == 0, result.stdout
     rows = (tmp_path / 'picker.log').read_text()
     assert 'mini' in rows and 'studio' in rows and 'claude-test-model' in rows
     assert 'Local hidden' not in rows
+    assert rows.splitlines()[0].endswith('2026-10-23 16:41:07 UTC')
     assert 'TAB t open web 4 --cli --host studio' in result.stdout
     assert 'REMOTE mini alias 2 --cli' in result.stdout
 
@@ -301,3 +306,40 @@ def test_open_help_describes_new_shortcut(t_mod):
     parser = t_mod.build_parser()
     help_text = parser._subparsers._group_actions[0].choices['open'].format_help()
     assert 'Alt-N new session' in help_text
+    assert 'Last turn is the final column' in help_text
+
+
+@pytest.mark.parametrize('width', [200, 120, 80, 44, 32])
+@pytest.mark.parametrize('remote,scoped', [(False, False), (True, False), (False, True), (True, True)])
+def test_open_last_turn_layout_and_details(t_mod, monkeypatch, capsys, width, remote, scoped):
+    import io
+    import json
+    from pathlib import Path
+    contract = json.loads((Path(__file__).parents[1] / 'ui/command-contract.json').read_text())
+    extension = contract['commands']['session open']['display_extensions']['last_turn_started_at']
+    assert extension['position'] == 'last' and extension['full_details'] == 'ctrl-/'
+    title = 'Fix 界面 login e\u0301 with a long task description that must remain in full details'
+    raw = (f'mini\tsid\t/code/api\tapi-2\tattached\tactive\t{title}\tcodex\tgpt-test-astra\t2026-10-23T16:41:07Z\n'
+           'local\t-\t/code/web\tweb-4\tapp\tnone\tNo conversation recorded\tcodex\t-\n')
+    monkeypatch.setattr(t_mod.sys, 'stdin', io.StringIO(raw))
+    monkeypatch.setattr(t_mod, '_columns', lambda: width)
+    args = ['__session-picker-rows', '--last-turn'] + (['--remote'] if remote else []) + (['--repo'] if scoped else [])
+    assert t_mod.main(args) == 0
+    first, unknown = [line.split('\t') for line in capsys.readouterr().out.splitlines()]
+    stamp = t_mod._session_display_helpers()['format_last_turn']('2026-10-23T16:41:07Z')
+    assert first[:3] == ['mini', 'api-2', 'attached']
+    assert len(first) == len(unknown) == 5
+    assert title in first[3] and first[3].endswith('Last turn: ' + stamp)
+    assert 'gpt-test-astra' in first[3]
+    if remote:
+        assert 'mini' in first[3]
+    assert unknown[3].endswith('Last turn: -') and unknown[4].endswith('  -')
+    shown_stamp = stamp[5:16] if width < 60 else stamp
+    assert first[4].endswith(shown_stamp)
+    assert first[4].index('Fix') < first[4].index(shown_stamp)
+    assert t_mod._display_width(first[4][:-len(shown_stamp)]) == t_mod._display_width(unknown[4][:-1])
+    assert all(t_mod._display_width(row[4]) <= width - 10 for row in (first, unknown))
+    if width < 120:
+        assert first[4].startswith('●')
+    if width >= 120:
+        assert '⬡ codex' in first[4] and '› cli' in first[4]

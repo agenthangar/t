@@ -324,3 +324,17 @@ def test_open_ctrl_n_still_navigates_and_enter_opens_selection(picker):
     keys('Up', 'C-n')
     wait('2/2 (0)')
     assert finish() == ['api 4 --local']
+
+
+@pytest.mark.parametrize('width,height', [(80, 24), (44, 20), (32, 12)])
+def test_open_last_turn_stays_visible_without_changing_selection(picker, t_mod, width, height):
+    start, wait, keys, finish = picker
+    start(profile='public-open', width=width, height=height)
+    wait('1/1 (0)')
+    keys('C-a')
+    wait('2/2 (0)')
+    stamp = t_mod._session_display_helpers()['format_last_turn']('2026-10-23T16:41:07Z')
+    screen = wait(stamp if width >= 60 else stamp[5:16])
+    assert 'First' in screen and 'Enter open' in screen
+    keys('Up')
+    assert finish() == ['api 2 --local']

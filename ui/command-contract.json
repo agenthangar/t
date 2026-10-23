@@ -663,9 +663,10 @@
             "tests/test_open_picker.py::test_bare_open_inside_worktree_shows_every_detail_and_repo",
             "tests/test_picker_ui.py::test_open_new_shortcut_invokes_existing_flow_in_small_viewports",
             "tests/test_open_picker.py::test_open_new_shortcut_preserves_repo_and_opening_flags",
-            "tests/test_open_picker.py::test_open_new_shortcut_preserves_failure_and_cancellation"
+            "tests/test_open_picker.py::test_open_new_shortcut_preserves_failure_and_cancellation",
+            "tests/test_open_picker.py::test_open_last_turn_layout_and_details"
           ],
-          "notes": "Alt-N starts the existing --new flow with the original repository and opening flags, even with no matching rows; marks are discarded. Ctrl-N remains navigation."
+          "notes": "Alt-N starts the existing --new flow with the original repository and opening flags, even with no matching rows; marks are discarded. Ctrl-N remains navigation. LAST TURN is the final column, using transcript-backed local time or - when unknown; narrow rows use MM-DD HH:MM and Ctrl-/ preserves the full timestamp."
         },
         "explicit": {
           "argv": [
@@ -682,6 +683,21 @@
             "tests/test_open_picker.py::test_explicit_open_target_bypasses_picker"
           ],
           "notes": "Fresh unused local slots tolerate incomplete remote discovery; known remote owners and existing-workspace ownership checks remain enforced."
+        }
+      },
+      "display_extensions": {
+        "last_turn_started_at": {
+          "label": "LAST TURN",
+          "position": "last",
+          "type": "string",
+          "meaning": "Latest evidenced turn initiation, not last activity; local date/time with seconds and timezone.",
+          "unknown": "-",
+          "wire_format": "ISO 8601 UTC",
+          "tests": [
+            "tests/test_open_picker.py::test_open_last_turn_layout_and_details"
+          ],
+          "narrow_format": "MM-DD HH:MM",
+          "full_details": "ctrl-/"
         }
       }
     },
