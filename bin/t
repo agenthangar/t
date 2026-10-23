@@ -9835,6 +9835,8 @@ DESKTOP TO CLI
   It verifies release, restores the exact saved conversation in tmux,
   and attaches. A failed handoff keeps the desktop reservation intact.
   Without --cli, opening a desktop slot continues in the app.
+  A locally reserved desktop slot can reopen when another host is offline;
+  reachable remote owners and local terminal writers still block reopening.
 
 REMOTE SESSIONS
   A slot live only on another host attaches there automatically.

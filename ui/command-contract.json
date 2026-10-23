@@ -668,7 +668,9 @@
         "tests/test_open_picker.py::test_bare_open_inside_worktree_shows_every_detail_and_repo",
         "tests/test_worktree_labels.py::test_python_and_shell_resolve_same_numeric_identity",
         "tests/test_offline_open.py::test_fresh_cli_open_with_offline_host",
-        "tests/test_offline_open.py::test_desktop_claim_offline_allows_only_fresh_unowned_slot"
+        "tests/test_offline_open.py::test_desktop_claim_offline_allows_fresh_or_reserved_local_slot",
+        "tests/test_offline_open.py::test_desktop_offline_reopen_retains_local_owner_checks",
+        "tests/test_plugin.py::test_open_app_creates_worktree_without_starting_tmux_or_cli"
       ],
       "modes": {
         "default": {
@@ -687,7 +689,8 @@
             "tests/test_open_picker.py::test_open_new_shortcut_preserves_repo_and_opening_flags",
             "tests/test_open_picker.py::test_open_new_shortcut_preserves_failure_and_cancellation",
             "tests/test_open_picker.py::test_open_last_turn_layout_and_details",
-            "tests/test_picker_ui.py::test_open_last_turn_stays_visible_without_changing_selection"
+            "tests/test_picker_ui.py::test_open_last_turn_stays_visible_without_changing_selection",
+            "tests/test_open_picker.py::test_open_picker_does_not_run_callers_exit_hook_in_subshell"
           ],
           "notes": "Alt-N starts the existing --new flow with the original repository and opening flags, even with no matching rows; marks are discarded. Ctrl-N remains navigation. LAST TURN is the final column, using transcript-backed local time or - when unknown; narrow rows use MM-DD HH:MM and Ctrl-/ preserves the full timestamp."
         },
@@ -705,7 +708,7 @@
           "tests": [
             "tests/test_open_picker.py::test_explicit_open_target_bypasses_picker"
           ],
-          "notes": "Fresh unused local slots tolerate incomplete remote discovery; known remote owners and existing-workspace ownership checks remain enforced."
+          "notes": "Fresh unused local slots and locally reserved desktop reopens tolerate unavailable remote hosts. Desktop claims scan once and still reject known remote owners and failed local ownership checks. Unreserved existing workspaces and saved-conversation handoffs retain strict ownership checks."
         }
       },
       "display_extensions": {

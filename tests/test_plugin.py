@@ -146,7 +146,8 @@ def test_live_tree_guard_protects_canonical_and_selected_code(tmp_path):
 
 @pytest.mark.skipif(not shutil.which("zsh"), reason="zsh is required")
 @pytest.mark.parametrize("reopen,leaf", [(False, "api-1"), (True, "1"), (True, "api-1")])
-def test_open_app_creates_worktree_without_starting_tmux_or_cli(tmp_path, reopen, leaf):
+@pytest.mark.parametrize("offline", [False, True])
+def test_open_app_creates_worktree_without_starting_tmux_or_cli(tmp_path, reopen, leaf, offline):
     bins = tmp_path / "stubbin"
     bins.mkdir()
     launcher = bins / "t"
@@ -170,6 +171,9 @@ def test_open_app_creates_worktree_without_starting_tmux_or_cli(tmp_path, reopen
         _dev_app_slot_marker() {{ print -r -- "$1/.git/t-app-slot"; }}
         _dev_ps_snapshot() {{ :; }}
         _dev_cwd_pids() {{ :; }}
+        _dev_session_rows() {{ :; }}
+        _dev_rows_all() {{ print scan >> "$HOME/scans"; print -u2 'dev: offline unreachable — skipped'; return 1; }}
+        {'REMOTE_HOSTS[offline]=offline' if offline else ':'}
         {'_dev_worktree_create() { print -u2 -- "unexpected worktree creation"; return 1; };' if reopen else ''}
         t open api {'1' if reopen else '--new --app'}
         ''',
@@ -182,6 +186,10 @@ def test_open_app_creates_worktree_without_starting_tmux_or_cli(tmp_path, reopen
     assert (tmp_path / "home" / "worktrees" / "api" / leaf / ".git" / "t-app-slot").read_text().strip() == "codex-app"
     assert "Open request sent" in result.stdout
     assert "unexpected worktree creation" not in result.stderr
+    if offline:
+        assert (tmp_path / 'home/scans').read_text().splitlines() == ['scan']
+        assert result.stderr.count('offline unreachable') == 1
+        assert 'ownership could not be verified' not in result.stderr
 
 
 @pytest.mark.skipif(not shutil.which("zsh"), reason="zsh is required")
@@ -286,7 +294,7 @@ def test_open_app_refuses_a_slot_owned_by_remote_host(tmp_path):
     result = shell(
         tmp_path,
         f'''mkdir -p {repo}
-        _dev_remote_resolve() {{ print -r -- $'mini\\tapi\\t3'; }}
+        _dev_rows_all() {{ printf 'mini\\tsaved-id\\t%s\\tapi-3\\tdetached\\tactive\\tWork\\n' "$HOME/code/api"; }}
         _dev_worktree_create() {{ print -u2 -- 'unexpected worktree creation'; return 1; }}
         t open api 3 --app
         ''',
