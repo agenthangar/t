@@ -219,6 +219,19 @@ _t_resume() {
   else
     live_all=$(_dev_session_rows 2>/dev/null | awk -F'\t' '{print "local\t" $0}')
   fi
+  # Issue starts explicitly tolerate unavailable hosts. Revalidate local rows
+  # separately so a local scanner failure cannot be mistaken for an offline host.
+  if (( live_scan_rc )) && [[ ${_T_ISSUE_SKIP_UNAVAILABLE:-} == 1 && -z $app && -n $slot ]]; then
+    local issue_local_rows
+    issue_local_rows=$(_dev_session_rows) || {
+      print -u2 -- 't issue start: local ownership check failed; no saved conversation resumed'
+      return 1
+    }
+    live_all=$(print -r -- "$live_all" | awk -F'\t' '$1 != "local"')$'\n'$(
+      print -r -- "$issue_local_rows" | awk -F'\t' 'NF {print "local\t" $0}')
+    print -u2 -- 't issue start: warning: unavailable hosts skipped; continuing with known owners'
+    live_scan_rc=0
+  fi
   if (( live_scan_rc )); then
     if [[ -n $slot && -z $app ]]; then
       local local_wt local_owner

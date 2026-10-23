@@ -9676,11 +9676,15 @@ def build_parser():
             "issues from the inferred or specified repository. Use a registered alias or "
             "owner/repo; interactive use can select a registered repository. "
             "An issue URL includes its repository. Multiple independent issues can "
-            "be selected. An issue with an existing owner is continued, not duplicated.")
+            "be selected. An issue with an existing owner is continued, not duplicated. "
+            "Unavailable hosts and unconfigured optional providers are warned and skipped. "
+            "A unique explicitly linked GitHub PR is recovered automatically into a fresh "
+            "local worktree; ambiguous PRs or branches require selection. Only pushed commits "
+            "are recovered. Known owners and local resume safety checks remain enforced.")
     issue_start.add_argument("target", nargs="*", help="issue numbers, repository and numbers, or GitHub issue URLs")
     issue_start.add_argument("--repo", help="registered repository alias or GitHub owner/name")
     issue_start.add_argument("--allow-incomplete-check", action="store_true",
-        help="allow new work despite unavailable discovery sources; does not override known owners")
+        help="allow other required discovery gaps (for example GitHub); never bypass local checks or known owners")
     agents = issue_start.add_mutually_exclusive_group()
     agents.add_argument("--codex", action="store_true", help="use Codex for new local sessions")
     agents.add_argument("--claude", action="store_true", help="use Claude for new local sessions")

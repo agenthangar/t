@@ -542,8 +542,15 @@ issue references and branch names, Codex Cloud tasks using your Codex CLI login,
 and Cursor Cloud agents using `CURSOR_API_KEY`. Checks are read-only; the command
 does not post issue comments, assign issues, or stop cloud agents.
 
-A verified existing session attaches in place. A saved conversation goes through
-the existing resume workflow. Ambiguous matches show their evidence for review.
+A verified existing session attaches in place. A unique saved workspace is selected
+automatically and goes through the existing resume workflow, with local ownership
+checks enforced. Ambiguous matches show their evidence for review.
+A unique explicitly referenced or issue-linked GitHub PR is continued automatically
+in a fresh local worktree, using its exact published commit and reusing the PR.
+Other PR matches and published branches use the existing selection picker. A branch
+without a PR can also be recovered; the new agent opens a PR for its continued work.
+Published state is checked again before launch. This works even if the original host
+is offline, but recovers only pushed commits, not unpushed changes or conversations.
 An external task can be left running or taken over after you stop or hand it off
 and publish a PR. Takeover starts from that PR's exact published commit in a fresh
 local worktree and asks the agent to update the existing PR. Unpublished cloud
@@ -551,9 +558,19 @@ edits must be exported or published first. New work uses your configured CLI age
 (`--claude` and `--codex` override it) and is instructed to implement, test, and
 open a PR, following the repository's merge and deployment instructions.
 
-Unreachable hosts, missing provider credentials, old remote versions, and failed
-checks block new work. `--allow-incomplete-check` explicitly permits proceeding
-with those gaps; it does not override a known owner. `status` returns exit status
+Unavailable registered hosts (including incompatible remote scanners) are warned
+and skipped. Unconfigured optional providers (Cursor without `CURSOR_API_KEY`, or
+an absent Codex CLI) are also warned and skipped. No override is needed:
+
+```sh
+t issue start my-project 123  # continue local work or recover a linked GitHub PR, even with an offline host
+```
+
+Skipped hosts may still have unseen active work. Known owners still block or route
+to the existing session. Other failed discovery checks block new work;
+`--allow-incomplete-check` permits those gaps, but never bypasses local discovery
+or known-owner checks. `status` retains skipped sources in `incomplete` with
+`skipped: true`, and returns exit status
 2 when discovery is incomplete, 0 when complete; command failures return 1.
 A closed issue is reported without launching work. In a batch, failures are
 reported per issue and the command returns nonzero after processing the rest.
