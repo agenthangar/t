@@ -553,6 +553,21 @@ does not post issue comments, assign issues, or stop cloud agents.
 A verified existing session attaches in place. A unique saved workspace is selected
 automatically and goes through the existing resume workflow, with local ownership
 checks enforced. Ambiguous matches show their evidence for review.
+Pasted terminal output and other incidental transcript references are listed as
+mentions, not owners, and do not block continuation. Issue markers, direct task
+assignments, and branch/commit evidence identify work to continue. A legacy saved
+workspace with issue commits resumes without a stop/publish handoff; local live
+sessions attach in place. Local work never enters the external-agent takeover flow.
+If several conversations belong to a saved workspace, the normal resume picker
+still selects the conversation to continue.
+
+Status and the existing-work picker show host/session, agent and model, interface,
+working-on summary, conversation ID, last-turn timestamp, worktree, branch, evidence,
+and available continuation commands. The picker includes a details preview. JSON
+keeps version 1 and adds `mentions` alongside `matches`, plus `owners` and
+`association` details on workspace rows; a live session in a workspace does not by
+itself prove that its current conversation owns the issue.
+
 A unique explicitly referenced or issue-linked GitHub PR is continued automatically
 in a fresh local worktree, using its exact published commit and reusing the PR.
 Other PR matches and published branches use the existing selection picker. A branch

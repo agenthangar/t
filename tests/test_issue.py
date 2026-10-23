@@ -297,6 +297,125 @@ def test_local_managed_unmanaged_saved_reused(mod, app, issue, local_scan):
     assert app.local(issue) == []
 
 
+@pytest.mark.parametrize('text,assigned', [
+    ('Fix #12', True), ('Please implement org/repo#12', True),
+    ('Address GitHub issue https://github.com/org/repo/issues/12', True),
+    ('Fix other/repo#12', False),
+    ('user@host % t issue start repo 12\norg/repo#12: Build desktop\nType stopped:', False),
+    ('Why does this fail?\nFix #12\n', False),
+    ('Here is an example mentioning org/repo#12.', False),
+])
+def test_task_assignment_excludes_pasted_output(mod, issue, text, assigned):
+    assert mod.task_reference(text, issue) == assigned
+
+
+def test_incidental_debugging_session_does_not_block_legacy_saved_work(mod, app, issue, args,
+                                                                    local_scan, monkeypatch, capsys):
+    state, marker, tx = local_scan
+    marker.unlink()
+    tx.write_text(json.dumps({'type': 'user', 'sessionId': 'sid', 'message': {
+        'content': 'user@host % t issue start repo 12\norg/repo#12: Build desktop\nType stopped:'}}))
+    mention = app.local(issue)[0]
+    assert mention['incidental'] and not mention['verified'] and not mention.get('session')
+    assert mention['owners'][0]['sid'] == 'sid'
+    state['live'] = False
+    tx.write_text(json.dumps({'type': 'user', 'sessionId': 'legacy', 'message': {'content': 'Build a desktop app'}}))
+    original = mod.command
+    monkeypatch.setattr(mod, 'command', lambda argv, **kw: 'Build desktop (#12)' if 'log' in argv else original(argv, **kw))
+    saved = app.local(issue)[0]
+    assert saved['resume'] and saved['verified'] and not saved['incidental']
+    assert saved['association'] == 'workspace'
+    monkeypatch.setattr(app, 'local', lambda i: [mention, saved])
+    for provider in ('github', 'codex', 'cursor'):
+        monkeypatch.setattr(app, provider, lambda i: [])
+    report = app.scan(issue)
+    assert report['matches'] == [saved] and report['mentions'] == [mention]
+    monkeypatch.setattr(app, 'issue', lambda w: issue)
+    monkeypatch.setattr(app, 'attach', lambda row: 7 if row == saved else pytest.fail('wrong session'))
+    monkeypatch.setattr(app, 'takeover', lambda *a: pytest.fail('local work must not take over'))
+    monkeypatch.setattr(app, 'launch', lambda *a: pytest.fail('must preserve saved workspace'))
+    assert app.run_one(args, args.target) == 7
+    output = capsys.readouterr().out
+    assert 'Mention only (not an owner)' in output and 'Continue: t session resume repo 1 --days all' in output
+    assert 'Working on: Fix #12' in output and 'Conversation: sid' in output
+    args.action, args.json = 'status', True
+    assert app.run_one(args, args.target) == 0
+    machine = json.loads(capsys.readouterr().out)
+    assert machine['matches'] == [saved] and machine['mentions'] == [mention]
+
+
+def test_legacy_active_task_attaches_without_handoff(mod, app, issue, args, local_scan, monkeypatch):
+    state, marker, tx = local_scan
+    marker.unlink()
+    tx.write_text(json.dumps({'type': 'user', 'sessionId': 'sid', 'message': {'content': 'Fix #12'}}))
+    row = app.local(issue)[0]
+    assert not row['verified'] and row['continuable'] and row['session'] == 'dev-repo-1'
+    report = clean_report(); report['matches'] = [row]
+    setup_run(app, issue, monkeypatch, iter([report]))
+    monkeypatch.setattr(app, 'attach', lambda selected: 8 if selected == row else 0)
+    monkeypatch.setattr(app, 'takeover', lambda *a: pytest.fail('must attach local session'))
+    assert app.run_one(args, args.target) == 8
+    tx.write_text(json.dumps({'type': 'user', 'sessionId': 'old-session', 'message': {'content': 'Fix #12'}}))
+    row = app.local(issue)[0]
+    assert row['incidental'] and not row.get('continuable')
+
+
+def test_multiple_local_owners_never_fall_through_to_external_takeover(mod, app, issue, args,
+                                                                     local_scan, monkeypatch):
+    state, marker, tx = local_scan
+    state['second'] = True
+    row = app.local(issue)[0]
+    assert len(row['owners']) == 2 and not row.get('continuable')
+    report = clean_report(); report['matches'] = [row]
+    setup_run(app, issue, monkeypatch, iter([report]))
+    monkeypatch.setattr(app, 'choose', lambda r: row)
+    monkeypatch.setattr(app, 'takeover', lambda *a: pytest.fail('not an external task'))
+    with pytest.raises(mod.IssueError, match='no single resumable session'):
+        app.run_one(args, args.target)
+
+
+@pytest.mark.parametrize('interface,slot,state', [('cli', 'repo-1', 'attached'),
+                                              ('desktop', 'repo-1', 'app'),
+                                              ('foreground', 'repo:abc', 'running')])
+def test_owner_details_and_picker_preserve_identity(mod, app, issue, monkeypatch, capsys, interface, slot, state):
+    row = mod.candidate('local', '/w', 'recorded issue worktree', worktree='/w', branch='dev/repo-1',
+                        host='local', pr='https://github.com/org/repo/pull/3')
+    row['state'] = 'active'
+    row['owners'] = [dict(host='local', slot=slot, sid='exact-id', state=state, context='active',
+                         interface=interface, agent='codex', model='example-model',
+                         summary='Build desktop\x1b[31m\nworkspace', last_turn_started_at='2026-10-23T12:00:00Z')]
+    report = clean_report(); report['matches'] = [row, dict(row, id='/other')]
+    app.display(issue, report)
+    output = capsys.readouterr().out
+    for text in ('example-model', 'Build desktop', 'Conversation: exact-id', 'Branch: dev/repo-1',
+                 '2026-10-23T12:00:00Z', interface):
+        assert text in output
+    assert '\x1b' not in output
+    assert ('Open session:' in output) == (interface != 'foreground')
+    monkeypatch.setattr(mod.sys.stdin, 'isatty', lambda: False)
+    with pytest.raises(mod.IssueError, match='review'):
+        app.choose(report)
+    monkeypatch.setattr(mod.sys.stdin, 'isatty', lambda: True)
+    def pick(defaults, all_rows, *a, **kw):
+        assert 'example-model' in all_rows[0] and 'Build desktop' in all_rows[0]
+        assert 'Conversation: exact-id' in kw['details'][0]
+        return [all_rows[0]]
+    monkeypatch.setattr(app, 'pick_rows', pick)
+    assert app.choose(report) == row
+
+
+def test_remote_mentions_and_detail_commands(mod, app, issue, monkeypatch):
+    app.cfg.hosts = {'remote': 'remote-host'}
+    owner = dict(host='local', slot='repo-1', sid='sid', state='attached', context='active', agent='codex')
+    row = mod.candidate('local', '/w', 'mention', worktree='/w', owners=[owner])
+    monkeypatch.setattr(mod, 'command', lambda *a, **kw: json.dumps(dict(version=1, matches=[], mentions=[row], incomplete=[])))
+    remote = app.remote(issue, 'remote', 'remote-host')[0]
+    assert remote['incidental'] and remote['owners'][0]['host'] == 'remote'
+    assert 'ssh -t remote-host' in '\n'.join(app.row_details(remote))
+    remote.update(resume=True, alias='repo', slot='1')
+    assert 'session resume repo 1' in '\n'.join(app.row_details(remote))
+
+
 def test_local_prepared_reservation_is_verified_without_live_agent(mod, app, issue, local_scan):
     state, marker, tx = local_scan
     state.update(live=False, transcript=False)
