@@ -295,6 +295,32 @@ def test_session_and_history_display_follow_shared_schema(history, t_mod, tmp_pa
         assert all(t_mod._display_width(line) <= width for line in retained.splitlines() if line.startswith('  '))
 
 
+@pytest.mark.parametrize('width', [None, 120, 80, 44, 32])
+@pytest.mark.parametrize('remote', [False, True])
+def test_session_last_turn_display_contract(t_mod, monkeypatch, width, remote):
+    extension = CONTRACT['commands']['session list']['display_extensions']['last_turn_started_at']
+    monkeypatch.setattr(t_mod.sys.stdout, 'isatty', lambda: width is not None)
+    if width is not None:
+        monkeypatch.setattr(t_mod, '_columns', lambda: width)
+    wire = 'sid\t/wt/3\tweb-3\tdetached\tactive\tFix login\tcodex\tmodel\t2026-10-23T16:41:07Z'
+    row, = t_mod._parse_rows(('mini\t' if remote else '') + wire, host_prefixed=remote)
+    assert row['last_turn_started_at'] == '2026-10-23T16:41:07Z'
+    labels = ['STATUS', 'UI', 'MODEL'] + (['HOST'] if remote else []) + ['SESSION', 'WORKING ON', extension['label']]
+    assert labels[-1] == extension['label'] and extension['position'] == 'last'
+    output = '\n'.join(t_mod._session_table_lines([row], remote=remote))
+    cells = _table_contract_cells(output, labels)
+    expected = t_mod._session_display_helpers()['format_last_turn'](row['last_turn_started_at'])
+    assert ''.join(cells[extension['label']].split()) == ''.join(expected.split())
+    assert cells['WORKING ON'] == 'Fix login'
+    if width is not None:
+        assert all(t_mod._display_width(line) <= width for line in output.splitlines())
+    # Pre-extension hosts remain readable and never substitute general activity.
+    legacy, = t_mod._parse_rows(wire.rsplit('\t', 1)[0])
+    legacy['updated_at'] = '2026-10-23T16:41:07Z'
+    output = '\n'.join(t_mod._session_table_lines([legacy], remote=remote))
+    assert _table_contract_cells(output, labels)[extension['label']] == extension['unknown']
+
+
 def test_history_display_contract_preserves_unknowns_preview_and_json(history, t_mod, tmp_path, monkeypatch, capsys):
     schema = CONTRACT['display_schemas']['history_information']
     common = CONTRACT['display_schemas']['session_information']

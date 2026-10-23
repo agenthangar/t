@@ -133,6 +133,17 @@ renderer projections, table output, details, and JSON against the definitions.
 | SESSION | The repository/slot or foreground-session label. It is distinct from the immutable conversation ID. |
 | WORKING ON | The current owner's working-on text, recorded summary, or retained conversation title. History includes up to three associated PR references and states, with an additional count when needed. |
 
+`t session list` additionally places LAST TURN in the final column, after WORKING ON.
+It shows the latest turn initiation as `YYYY-MM-DD HH:MM:SS TZ` in the viewer's
+local timezone, including remote rows; unavailable evidence displays `-`.
+Codex uses `task_started` (older transcripts may use `user_message`); Claude
+uses an actual user prompt, excluding tool results and injected metadata.
+Assistant output, transcript mtime, and index activity never substitute for a
+turn start. The optional ninth rich-row field, `last_turn_started_at`, carries
+an ISO 8601 UTC timestamp or `-`; legacy rows and the seven-field ownership
+protocol remain valid. This remains a read-only list mode. History's DATE
+continues to describe retained activity.
+
 Printed history appends DATE, BRANCH, PRS, and the full conversation ID after these
 shared columns, retaining
 historical details when no preview is available. Wide tables align these columns. When the actual columns do not fit, printed

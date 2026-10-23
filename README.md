@@ -640,7 +640,14 @@ and does not require Accessibility. It cannot launch a desktop workspace on a re
 The desktop slot stays reserved in private Git worktree metadata so automatic
 cleanup and a later terminal launch cannot reuse it while the app may still be
 working. `t session list` has separate status, UI, model, session, and context
-columns. UI shows `▣ desktop` or `› cli`; model keeps the agent icon and the last
+columns, plus `LAST TURN` for the most recent turn initiation. This timestamp
+uses the viewer's local time with date, seconds, and timezone (for example,
+`2026-10-23 09:41:07 PDT`), including for remote sessions. It comes from a Codex
+turn-start event or a Claude user prompt, not subsequent tool or assistant activity.
+Older Codex transcripts can fall back to a user-message event. `-` means unknown;
+inactive desktop slots can show their last recorded conversation's turn. Narrow
+terminals wrap labeled cells without dropping the timestamp.
+UI shows `▣ desktop` or `› cli`; model keeps the agent icon and the last
 recorded model name (`-` when unavailable). Inactive desktop slots show their
 last recorded conversation title. Status uses `● ✓` for a loaded conversation
 and `○` for inactive. On macOS, live desktop context is verified from rollout files held open

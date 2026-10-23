@@ -1,4 +1,5 @@
 """Display-only session metadata. Never upgrade a row's targeting id or activity."""
+import datetime
 import json
 import os
 from pathlib import Path
@@ -94,6 +95,93 @@ def transcript_model(path):
     return '-'
 
 
+def _reverse_lines(fh):
+    """Read newest records first without loading an entire rollout into memory."""
+    offset = fh.seek(0, 2)
+    pending = b''
+    while offset:
+        size = min(offset, 64 * 1024)
+        offset -= size
+        fh.seek(offset)
+        lines = (fh.read(size) + pending).split(b'\n')
+        pending = lines[0]
+        yield from reversed(lines[1:])
+    yield pending
+
+
+def _turn_timestamp(value):
+    try:
+        stamp = datetime.datetime.fromisoformat(value.replace('Z', '+00:00'))
+        if stamp.tzinfo is not None:
+            return stamp.astimezone(datetime.timezone.utc).isoformat(timespec='seconds').replace('+00:00', 'Z')
+    except (AttributeError, TypeError, ValueError, OverflowError):
+        pass
+    return '-'
+
+
+def transcript_last_turn(path, agent):
+    """Actual turn starts, never file mtime, assistant output, or tool replies."""
+    if agent not in ('codex', 'claude'):
+        return '-'
+    fallback = '-'
+    try:
+        with open(path, 'rb') as fh:
+            for line in _reverse_lines(fh):
+                if b'"timestamp"' not in line:
+                    continue
+                try:
+                    record = json.loads(line)
+                except (ValueError, TypeError):
+                    continue
+                if not isinstance(record, dict):
+                    continue
+                stamp = _turn_timestamp(record.get('timestamp'))
+                if stamp == '-':
+                    continue
+                if agent == 'codex':
+                    payload = record.get('payload')
+                    if record.get('type') != 'event_msg' or not isinstance(payload, dict):
+                        continue
+                    if payload.get('type') == 'task_started':
+                        return stamp
+                    if payload.get('type') in ('task_complete', 'turn_aborted') and fallback != '-':
+                        return fallback
+                    if payload.get('type') == 'user_message':
+                        # Older rollouts may only have user-message evidence.
+                        # Prefer the explicit start immediately preceding it.
+                        if fallback != '-':
+                            return fallback
+                        fallback = stamp
+                elif record.get('type') == 'user' and not any(record.get(key) for key in
+                        ('isMeta', 'isSidechain', 'isCompactSummary')):
+                    message = record.get('message')
+                    content = message.get('content') if isinstance(message, dict) else None
+                    text, image = '', False
+                    if isinstance(content, str):
+                        text = content
+                    elif isinstance(content, list):
+                        blocks = [block for block in content if isinstance(block, dict)]
+                        if any(block.get('type') == 'tool_result' for block in blocks):
+                            continue
+                        text = ' '.join(block['text'] for block in blocks if block.get('type') == 'text'
+                                        and isinstance(block.get('text'), str))
+                        image = any(block.get('type') == 'image' for block in blocks)
+                    if re.match(r'<(?:command-name|local-command-stdout|local-command-stderr|local-command-caveat|system-reminder)(?:>|\s)', text.lstrip()):
+                        continue
+                    if text.strip() or image:
+                        return stamp
+    except (OSError, ValueError, TypeError):
+        pass
+    return fallback
+
+
+def format_last_turn(value):
+    stamp = _turn_timestamp(value)
+    if stamp == '-':
+        return '-'
+    return datetime.datetime.fromisoformat(stamp.replace('Z', '+00:00')).astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')
+
+
 def enrich(lines, home, codex_home):
     db = None
     try:
@@ -114,6 +202,7 @@ def enrich(lines, home, codex_home):
             # Optional private input from the row producer, using the exact same
             # verified transcript as its title. This is not an ownership claim.
             display_transcript = row[7] if len(row) > 7 and row[7] != '-' else None
+            turn_transcript = display_transcript
             if agent == 'codex':
                 record = None
                 if {'id', 'cwd', 'name', 'title', 'source', 'archived', 'updated_at', 'rollout_path'} <= columns:
@@ -137,6 +226,7 @@ def enrich(lines, home, codex_home):
                         pass
                 if record:
                     title, recorded_model, rollout = record
+                    turn_transcript = display_transcript or rollout
                     model = recorded_model if isinstance(recorded_model, str) and recorded_model else transcript_model(rollout)
                     if summary.startswith('(Codex desktop workspace') or summary == '(no active session)':
                         summary = title or 'Untitled conversation'
@@ -144,7 +234,9 @@ def enrich(lines, home, codex_home):
                     summary = 'No conversation recorded'
             elif agent == 'claude' and sid != '-':
                 encoded = re.sub(r'[^A-Za-z0-9]', '-', cwd)
-                model = transcript_model(Path(home) / '.claude/projects' / encoded / (sid + '.jsonl'))
+                transcript = Path(home) / '.claude/projects' / encoded / (sid + '.jsonl')
+                model = transcript_model(transcript)
+                turn_transcript = display_transcript or transcript
             if display_transcript:
                 recorded = transcript_model(display_transcript)
                 if recorded != '-':
@@ -152,7 +244,7 @@ def enrich(lines, home, codex_home):
             # Models and titles are metadata, never terminal control sequences.
             clean = lambda value: ' '.join(re.sub(r'[\x00-\x1f\x7f-\x9f]', ' ', str(value)).split())
             row[5] = clean(summary)
-            out.append('\t'.join(row[:7] + [clean(model)]))
+            out.append('\t'.join(row[:7] + [clean(model), transcript_last_turn(turn_transcript, agent)]))
         return out
     finally:
         if db is not None:
