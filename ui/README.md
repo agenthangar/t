@@ -214,6 +214,16 @@ branches use the existing single-owner picker; branch recovery does not require 
 Recheck ownership and published state before launch. Read-only status/JSON preserves
 incomplete results, including additive `skipped: true` on warning-only sources.
 
+Issue discovery separates incidental transcript mentions from issue owners. A
+unique actionable local workspace continues directly; local candidates never
+enter the external-agent takeover prompt. Legacy saved workspaces can use issue
+commit evidence and the normal guarded resume picker. Existing-work selection
+uses the shared single picker with a private details preview showing session,
+host, agent/model/interface, working-on text, conversation ID, last turn, branch,
+worktree, association evidence and continuation commands. Multiple real owners
+still require selection. Status/JSON remains read-only, with additive `mentions`,
+`owners` and `association` fields; incidental mentions never become launch blockers.
+
 ## Changes since the visual baseline
 
 Review these behavior changes when applying the v0.4.2 standard. Later changes
