@@ -594,12 +594,12 @@ def _session_picker_rows(rows, remote=False, scoped=False):
 
 
 def _session_table_lines(rows, remote=False):
-    headings = ["STATUS", "UI", "MODEL"] + (["HOST"] if remote else []) + ["SESSION", "LAST TURN", "WORKING ON"]
+    headings = ["STATUS", "UI", "MODEL"] + (["HOST"] if remote else []) + ["SESSION", "WORKING ON", "LAST TURN"]
     helpers = _session_display_helpers()
     cells = []
     for row in rows:
         values = helpers["session_cells"](row, _agent_glyph(row.get("agent", "claude")), remote)
-        values.insert(-1, helpers["format_last_turn"](row.get("last_turn_started_at")))
+        values.append(helpers["format_last_turn"](row.get("last_turn_started_at")))
         cells.append(values)
     return _table_lines(headings, cells)
 

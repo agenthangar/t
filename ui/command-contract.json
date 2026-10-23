@@ -679,7 +679,7 @@
       "display_extensions": {
         "last_turn_started_at": {
           "label": "LAST TURN",
-          "before": "WORKING ON",
+          "position": "last",
           "type": "string",
           "meaning": "Latest evidenced turn initiation, not last activity; local date/time with seconds and timezone.",
           "unknown": "-",

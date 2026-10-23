@@ -133,7 +133,7 @@ renderer projections, table output, details, and JSON against the definitions.
 | SESSION | The repository/slot or foreground-session label. It is distinct from the immutable conversation ID. |
 | WORKING ON | The current owner's working-on text, recorded summary, or retained conversation title. History includes up to three associated PR references and states, with an additional count when needed. |
 
-`t session list` additionally places LAST TURN between SESSION and WORKING ON.
+`t session list` additionally places LAST TURN in the final column, after WORKING ON.
 It shows the latest turn initiation as `YYYY-MM-DD HH:MM:SS TZ` in the viewer's
 local timezone, including remote rows; unavailable evidence displays `-`.
 Codex uses `task_started` (older transcripts may use `user_message`); Claude

@@ -305,8 +305,8 @@ def test_session_last_turn_display_contract(t_mod, monkeypatch, width, remote):
     wire = 'sid\t/wt/3\tweb-3\tdetached\tactive\tFix login\tcodex\tmodel\t2026-10-23T16:41:07Z'
     row, = t_mod._parse_rows(('mini\t' if remote else '') + wire, host_prefixed=remote)
     assert row['last_turn_started_at'] == '2026-10-23T16:41:07Z'
-    labels = ['STATUS', 'UI', 'MODEL'] + (['HOST'] if remote else []) + ['SESSION', extension['label'], 'WORKING ON']
-    assert labels[labels.index(extension['label']) + 1] == extension['before']
+    labels = ['STATUS', 'UI', 'MODEL'] + (['HOST'] if remote else []) + ['SESSION', 'WORKING ON', extension['label']]
+    assert labels[-1] == extension['label'] and extension['position'] == 'last'
     output = '\n'.join(t_mod._session_table_lines([row], remote=remote))
     cells = _table_contract_cells(output, labels)
     expected = t_mod._session_display_helpers()['format_last_turn'](row['last_turn_started_at'])
