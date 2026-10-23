@@ -151,6 +151,14 @@ an ISO 8601 UTC timestamp or `-`; legacy rows and the seven-field ownership
 protocol remain valid. This remains a read-only list mode. History's DATE
 continues to describe retained activity.
 
+The filtered multi-selection mode of `t session open` also puts LAST TURN last.
+Its row formatter reserves space for the timestamp before clipping working-on
+text, using the shared Unicode width helpers. Narrow rows use local `MM-DD HH:MM`
+and compact session/status metadata; Ctrl-/ details retain the complete working-on
+text and full timestamp. The shared picker controls and hidden host/session/state
+identity fields remain unchanged. Search includes the full task and metadata even
+when compact rows shorten their presentation. Explicit targets still bypass selection.
+
 Printed history appends DATE, BRANCH, PRS, and the full conversation ID after these
 shared columns, retaining
 historical details when no preview is available. Wide tables align these columns. When the actual columns do not fit, printed

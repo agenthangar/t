@@ -559,11 +559,37 @@ def _slot_line(r, st, name_w, avail, host_w=None, model_w=7):
             f"{host}{r['slot']:<{name_w}} {st.y}{summary}{st.r}")
 
 
-def _session_picker_rows(rows, remote=False, scoped=False):
+def _session_picker_turn_columns(rows, prefixes, statuses, stamps, width):
+    """Reserve the last column before clipping task text to the fzf viewport."""
+    clip = _session_display_helpers()["clip_columns"]
+    available = max(1, width - 12)  # fzf margins, border, pointer, mark and overflow indicator.
+    stamp_width = max(map(_display_width, stamps))
+    prefix_width = max(map(_display_width, prefixes))
+    if prefix_width + stamp_width + 16 > available:
+        prefixes = [f"{status.strip()} {row['slot']}" for row, status in zip(rows, statuses)]
+        prefix_width = max(map(_display_width, prefixes))
+    if prefix_width + stamp_width + 12 > available:
+        stamps = [stamp[5:16] if stamp != '-' else '-' for stamp in stamps]
+        stamp_width = max(map(_display_width, stamps))
+    prefix_width = min(prefix_width, max(1, available - stamp_width - 12))
+    if prefix_width < 3:
+        prefixes = [status[0] for status in statuses]
+    summary_width = max(1, min(max(_display_width(row.get('summary') or '-') for row in rows),
+                               available - prefix_width - stamp_width - 4))
+    lines = []
+    for row, prefix, stamp in zip(rows, prefixes, stamps):
+        prefix = clip(prefix, prefix_width)
+        summary = clip(row.get('summary') or '-', summary_width)
+        lines.append(prefix + ' ' * (prefix_width - _display_width(prefix) + 2) +
+                     summary + ' ' * (summary_width - _display_width(summary) + 2) + stamp)
+    return lines
+
+
+def _session_picker_rows(rows, remote=False, scoped=False, last_turn=False):
     """Resume-style rows: target fields, full details, then compact display."""
     if not rows:
         return []
-    cells = []
+    cells, statuses = [], []
     for row in rows:
         label = row["slot"]
         repo, separator, slot = label.partition(":") if ":" in label else label.rpartition("-")
@@ -575,6 +601,7 @@ def _session_picker_rows(rows, remote=False, scoped=False):
         attached = row["state"] == "attached" or (row["state"] == "app" and row.get("context") == "active")
         status = ("●" if attached else "○") + (" ✓" if row.get("context") == "active" else "  ")
         status += " ↻" if _PR_WIP_RE.search(row.get("summary") or "") else "  "
+        statuses.append(status)
         parts = ([] if scoped else [repo]) + [slot, f"{_agent_glyph(agent)} {agent}"]
         if remote:
             parts.append(row["host"])
@@ -582,14 +609,25 @@ def _session_picker_rows(rows, remote=False, scoped=False):
         cells.append(parts)
     widths = [max(len(parts[i]) for parts in cells) for i in range(len(cells[0]))]
     widths[-1] = min(widths[-1], 24)
-    out = []
+    out, prefixes, details_rows = [], [], []
     for row, parts in zip(rows, cells):
         summary = row.get("summary") or ""
         details = "  ".join(parts) + "  " + summary
         parts[-1] = _truncate(parts[-1], widths[-1])
         display = "  ".join(value.ljust(width) for value, width in zip(parts, widths))
+        prefixes.append(display)
+        details_rows.append(details)
         display += "  " + summary
         out.append("\t".join((row["host"], row["slot"], row["state"], details, display)))
+    if last_turn:
+        stamps = [_session_display_helpers()["format_last_turn"](row.get("last_turn_started_at")) for row in rows]
+        width = _columns()
+        displays = _session_picker_turn_columns(rows, prefixes, statuses, stamps, width)
+        # fzf searches only presented fields. The open picker presents 5,4,
+        # keeping full details searchable beyond the no-hscroll viewport.
+        displays = [display + ' ' * max(0, width - _display_width(display)) for display in displays]
+        out = ["\t".join((row["host"], row["slot"], row["state"], details + "  Last turn: " + stamp, display))
+               for row, details, stamp, display in zip(rows, details_rows, stamps, displays)]
     return out
 
 
@@ -9772,6 +9810,8 @@ Run `t help open` for session targeting, defaults, and remote details.""",
   It also works with no matching rows and does not open marked sessions.
   Explicit slots still open directly. Compact resume-style rows retain agent,
   UI, status, model, session and task details, including idle/desktop rows.
+  LAST TURN is the final column, using the same initiation timestamp as t ls.
+  Narrow rows use MM-DD HH:MM; Ctrl-/ shows the full timestamp.
   Space/Tab marks multiple rows; Enter opens them.
   Ctrl-/ shows full details. The first CLI opens here, others use tabs;
   desktop rows open in the app. Remote pickers add HOST. --fg opens one.
@@ -10487,9 +10527,10 @@ def main(argv):
             return 0
         finally:
             history.store.close()
-    if argv and argv[0] == "__session-picker-rows" and set(argv[1:]) <= {"--remote", "--repo"}:
+    if argv and argv[0] == "__session-picker-rows" and set(argv[1:]) <= {"--remote", "--repo", "--last-turn"}:
         rows = _parse_rows(sys.stdin.read(), host_prefixed=True)
-        for line in _session_picker_rows(rows, remote="--remote" in argv, scoped="--repo" in argv):
+        for line in _session_picker_rows(rows, remote="--remote" in argv, scoped="--repo" in argv,
+                                        last_turn="--last-turn" in argv):
             print(line)
         return 0
     if argv == ["__update-check"]:
