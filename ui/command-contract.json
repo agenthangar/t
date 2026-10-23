@@ -456,7 +456,9 @@
       "scope": "explicit/inferred repository; list may span registered GitHub repositories",
       "confirmation": "none",
       "tests": [
-        "tests/test_issue.py::test_readonly_modes"
+        "tests/test_issue.py::test_readonly_modes",
+        "tests/test_issue.py::test_incidental_debugging_session_does_not_block_legacy_saved_work",
+        "tests/test_issue.py::test_owner_details_and_picker_preserve_identity"
       ],
       "modes": {
         "default": {
@@ -506,7 +508,8 @@
             "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
           ]
         }
-      }
+      },
+      "notes": "Show association evidence and complete live-session details; separate incidental mentions from owners. Version 1 JSON adds mentions and workspace owners/association without changing read-only behavior."
     },
     "issue start": {
       "patterns": [
@@ -582,7 +585,26 @@
           "read_only": false,
           "notes": "Ambiguous published PRs and branches use the existing shared single-owner picker; cancellation starts no work.",
           "tests": [
-            "tests/test_issue.py::test_ambiguous_published_matches_require_review"
+            "tests/test_issue.py::test_ambiguous_published_matches_require_review",
+            "tests/test_issue.py::test_owner_details_and_picker_preserve_identity",
+            "tests/test_issue_verbs.py::test_owner_picker_has_private_details_preview"
+          ]
+        },
+        "local_continuation": {
+          "argv": [
+            "issue",
+            "start",
+            "123"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "notes": "A unique local workspace with issue assignments or commit evidence attaches/resumes through existing safety checks. Incidental transcript mentions do not block; local work never enters external takeover.",
+          "tests": [
+            "tests/test_issue.py::test_incidental_debugging_session_does_not_block_legacy_saved_work",
+            "tests/test_issue.py::test_legacy_active_task_attaches_without_handoff",
+            "tests/test_issue.py::test_multiple_local_owners_never_fall_through_to_external_takeover"
           ]
         }
       },
