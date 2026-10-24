@@ -47,6 +47,21 @@ handler runs; this includes list, detail, status, help, JSON, and other machine
 output modes. Noninteractive commands and remote scanners never ask for a
 missing repository.
 
+Bare `t` in a terminal is a first-run wizard or, for configured accounts, a
+repository/session entry screen. The wizard uses `_RailUI` and cooked prompts if
+raw mode is unavailable. `t config onboard` explicitly repeats discovery. Choose
+agents, local checkouts, GitHub organizations/repos, and optional Tailscale peers;
+review commands and configuration changes before applying. GitHub CLI installation
+and sign-in are separate explicit choices before authenticated discovery. Clone
+and remote-host selections start empty. A Tailscale peer is a candidate, not proof
+of SSH access; registration never starts a remote command. Reuse existing guarded
+session launch and registration paths. Cancellation returns 130 and preserves any
+already completed actions; completion is recorded only after successful setup.
+Bare nonterminal `t` prints help without loading configuration or doing discovery;
+nonterminal `t config onboard` prints the terminal requirement and returns 1.
+Explicit commands never trigger onboarding. These modes are recorded in the
+inventory's `entrypoints.bare_t` and `commands.config onboard` entries.
+
 Config quitting with pending edits offers Keep editing (default), Review and
 save, and Discard changes and exit. Review screens keep their primary action
 visible while scrolling.
