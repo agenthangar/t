@@ -904,14 +904,16 @@ To repair a Git installation directly, run `~/code/t/install.sh`.
 ### Optional integrations
 
 The installer adds t's hooks and the sessions MCP server without replacing unrelated
-settings. `T_NO_MCP=1` and `T_NO_CODEX_HOOKS=1` opt out. The `claude-stamp-tmux` hook
-keeps its historical executable name and also supports Codex.
+settings. `T_NO_MCP=1` and `T_NO_CODEX_HOOKS=1` opt out. The `t-session-start` hook
+supports both Claude and Codex. Installation migrates standard legacy registrations
+to this name. `claude-stamp-tmux` remains a compatibility alias for existing custom
+commands; unrelated hooks and hook approval records are preserved.
 
 Registering the Codex hook does not approve it. After installing or running
 `t config setup ~/code`, finish hook review in the ChatGPT desktop app:
 open **Review hooks** (or hooks in settings), select the **User config** /
 **SessionStart** entry whose command is
-`$HOME/bin/claude-stamp-tmux --agent codex`, and click **Allow selected**.
+`$HOME/bin/t-session-start --agent codex`, and click **Allow selected**.
 In the Codex CLI, use `/hooks` to review and trust that entry. New or changed
 hooks are skipped until approved, so session tracking can be incomplete.
 `t config setup --dry-run ~/code` also prints this guidance when the hook is

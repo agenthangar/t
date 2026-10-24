@@ -55,7 +55,7 @@ _t_resume_on_host() {
 # slot always attaches — a direct ask, not a scan.
 # -f/--fg resumes inline in THIS terminal (t pop's landing) instead of a slot.
 # Dead rows carry the two shared picker signals (see _claude_session_rows and
-# claude-stamp-tmux jobs 3-4): recency/date = max(transcript mtime, last-opened
+# t-session-start jobs 3-4): recency/date = max(transcript mtime, last-opened
 # stamp) with ↻ marking opened-but-unwritten conversations, and a " · #N <state>"
 # tag for the last PR URL in the transcript — merged/closed/open, or "?" while the
 # state is not cached yet. State stays cache-only (never a blocking gh call), so a
@@ -297,7 +297,7 @@ _t_resume() {
   local reopened opf opep REPLY
   local _rwtr=${DEV_WORKTREE_ROOT:-}
   # The two picker signals shared with _claude_session_rows/tfind (see the
-  # claude-stamp-tmux notes): opened/ = the last-opened stamps (recency =
+  # t-session-start notes): opened/ = the last-opened stamps (recency =
   # max(transcript, stamp), ↻ on stamp-newer rows); the PR tag is _pr_state_tag,
   # which owns the pr/ cache (cache-only reads — NEVER a blocking gh call) and
   # collects stale refs into _PR_STALE for the one batched _pr_state_flush below.
@@ -521,7 +521,7 @@ _t_resume() {
     # the whole scan below, so a new state shows on the next invocation.
     _pr_state_tag "${meta_pr[$txf]:-}"; title+=$REPLY
     # Origin: which machine the conversation LAST RAN on — the <sid>.origin
-    # stamp claude-stamp-tmux writes next to the transcript (syncs with it).
+    # stamp t-session-start writes next to the transcript (syncs with it).
     # Blank for this machine / unstamped (pre-feature) transcripts; a raw
     # hostname is translated to its $REMOTE_HOSTS key when the cache knows it.
     org=; orgf="${txf%.jsonl}.origin"
@@ -1203,7 +1203,7 @@ PY
 # its title + your prompts; non-matches are dropped and the list is ranked by
 # relevance, then recency (this is what `tfind` drives). Returns nonzero on no
 # pick / no fzf. Rows carry two extra signals: ↻ marks a session opened more
-# recently than written (the claude-stamp-tmux opened/ stamp), and " · #N <state>"
+# recently than written (the t-session-start opened/ stamp), and " · #N <state>"
 # tags a session whose transcript mentions a PR (cache-only state; see below).
 _claude_session_rows() {
   # Diagnostics go to stderr: this function's stdout is captured by the caller's
@@ -1233,7 +1233,7 @@ query = sys.argv[3] if len(sys.argv) > 3 else ''
 # ($DEV_WORKTREE_ROOT/<repo-basename>/<slot>) as belonging to its repo — the twin of the
 # zsh _dev_dir_in_scope, so the repo-scoped picker shows worktree (incl. synced) sessions.
 wt_root = os.environ.get('DEV_WORKTREE_ROOT', '')
-# Last-opened stamps (claude-stamp-tmux job 3): resuming appends nothing to the
+# Last-opened stamps (t-session-start job 3): resuming appends nothing to the
 # transcript, so recency = max(transcript mtime, opened-stamp mtime) — a session
 # reopened five minutes ago sorts (and dates) as five minutes old even though its
 # last message is days old. Stamp newer than the transcript → the row is marked ↻
@@ -2349,7 +2349,7 @@ _t_pop() {
   fi
 
   # Resume id: the precise CLAUDE_RESUME_ID stamped on the session (by
-  # _dev_new_session/_dev_resume_session, or the claude-stamp-tmux SessionStart
+  # _dev_new_session/_dev_resume_session, or the t-session-start SessionStart
   # hook for any other launch path), else the dir's newest transcript. The
   # newest-fallback is only for pre-hook sessions and is ambiguous when several
   # slots share one repo dir (it returns whichever sibling wrote last); the hook

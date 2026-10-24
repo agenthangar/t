@@ -3056,5 +3056,22 @@
         "missing": "!"
       }
     }
+  },
+  "integration_hooks": {
+    "session_start": {
+      "executable": "t-session-start",
+      "compatibility_aliases": [
+        "claude-stamp-tmux"
+      ],
+      "patterns": [
+        "action"
+      ],
+      "input": "agent SessionStart JSON on stdin",
+      "interactive": false,
+      "tests": [
+        "tests/test_agent_seam.py::test_installed_symlink_hook_records_history_without_plugin_environment",
+        "tests/test_standalone_install.py::test_install_migrates_standard_hook_names_preserving_options_and_trust"
+      ]
+    }
   }
 }

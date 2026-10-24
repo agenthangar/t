@@ -43,7 +43,7 @@ def artifact(version="v1.2.3", changed=None, extra=None):
     changed = changed or {}
     files = {name: (ROOT / name).read_bytes() for name in release.REQUIRED if name != ".t-release-version"}
     # Current installer integrations extend the backwards-compatible release minimum.
-    for name in ('libexec/t_shell_setup.py', 'libexec/t_issue.py', 'libexec/t_issue_policy.txt', 'libexec/t_history.py', 'libexec/t_session_details.py'):
+    for name in ('bin/t-session-start', 'libexec/t_shell_setup.py', 'libexec/t_issue.py', 'libexec/t_issue_policy.txt', 'libexec/t_history.py', 'libexec/t_session_details.py'):
         files[name] = (ROOT / name).read_bytes()
     files[".t-release-version"] = (version + "\n").encode()
     files.update(changed)
@@ -68,7 +68,7 @@ def test_release_installs_without_git_and_preserves_user_settings(sandbox):
     root = release.install(archive, sums, base, home)
     assert root == base / "releases/v1.2.3"
     assert not (root / ".git").exists()
-    assert len([1 for _, dst in release.OWNED_LINKS if (home / dst).is_symlink()]) == 7
+    assert len([1 for _, dst in release.OWNED_LINKS if (home / dst).is_symlink()]) == 8
     assert (home / "bin/t").resolve() == root / "bin/t"
     assert (home / ".zshrc").read_text().startswith("# mine\n# >>> t shell integration >>>")
     assert (home / ".config/t/local.zsh").is_file()
@@ -243,3 +243,24 @@ def test_packaged_install_loads_function_in_fresh_shell_and_repairs_missing_rc(s
     after_security = {str(p.relative_to(home)): p.read_bytes() for directory in ('.claude', '.codex')
                       for p in (home / directory).rglob('*') if p.is_file()}
     assert after_security == before_security
+
+
+def test_release_validator_keeps_legacy_hook_layout_compatible(tmp_path):
+    root = tmp_path
+    release.extract_verified(artifact()[0], root)
+    (root / "bin/t-session-start").unlink()
+    assert release.validate_tree(root) == "v1.2.3"
+
+
+@pytest.mark.parametrize("invalid", ["not_executable", "symlink"])
+def test_release_validator_checks_neutral_hook_when_present(tmp_path, invalid):
+    root = tmp_path
+    release.extract_verified(artifact()[0], root)
+    hook = root / "bin/t-session-start"
+    if invalid == "symlink":
+        hook.unlink()
+        hook.symlink_to("claude-stamp-tmux")
+    else:
+        hook.chmod(0o644)
+    with pytest.raises(ValueError, match="regular executable"):
+        release.validate_tree(root)

@@ -421,7 +421,7 @@ def test_setup_explains_desktop_hook_review(t_mod, box, monkeypatch, capsys, mod
     codex.mkdir()
     hook = codex / "hooks.json"
     hook.write_text(json.dumps({"hooks": {"SessionStart": [{"hooks": [{
-        "type": "command", "command": "$HOME/bin/claude-stamp-tmux --agent codex"
+        "type": "command", "command": "$HOME/bin/t-session-start --agent codex"
     }]}]}}))
     config = codex / "config.toml"
     config.write_text('[hooks.state."unrelated"]\ntrusted_hash = "sha256:other"\n')
@@ -448,7 +448,7 @@ def test_setup_explains_desktop_hook_review(t_mod, box, monkeypatch, capsys, mod
     assert "ChatGPT desktop app" in output
     assert "Review hooks" in output and "Allow selected" in output
     assert "User config / SessionStart" in output and "/hooks" in output
-    assert "claude-stamp-tmux --agent codex" in output
+    assert "t-session-start --agent codex" in output
     assert "Trust all" not in output and "Allow all" not in output
     assert (hook.read_bytes(), config.read_bytes()) == before[:2]
     if mode != "apply":

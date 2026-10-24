@@ -4167,7 +4167,7 @@ def cmd_pending(cfg, args):
 _CODEX_HOOK_REVIEW = (
     "In the ChatGPT desktop app, open Review hooks (or hooks in settings), "
     "select the User config / SessionStart hook running "
-    "claude-stamp-tmux --agent codex, then click Allow selected. "
+    "t-session-start --agent codex, then click Allow selected. "
     "In the Codex CLI, use /hooks to review and trust that hook. "
     "Until approved, the hook is skipped and session tracking can be incomplete."
 )
@@ -5774,8 +5774,8 @@ def _codex_hook_trusted(config_toml):
 
 def _codex_hook_state(path):
     """~/.codex/hooks.json: "registered" when a SessionStart command runs
-    claude-stamp-tmux, "none" when the file is absent or has no such entry, None when
-    it is unreadable or foreign-shaped (not ours to judge — the twin of
+    t-session-start (or its legacy alias), "none" when the file is absent or has no
+    such entry, None when it is unreadable or foreign-shaped (not ours to judge — the twin of
     _mcp_allow_state)."""
     try:
         with open(path, encoding="utf-8") as fh:
@@ -5792,7 +5792,8 @@ def _codex_hook_state(path):
         return None
     for g in groups:
         for h in (g.get("hooks") or []) if isinstance(g, dict) else []:
-            if isinstance(h, dict) and "claude-stamp-tmux" in str(h.get("command", "")):
+            if isinstance(h, dict) and any(name in str(h.get("command", ""))
+                                          for name in ("t-session-start", "claude-stamp-tmux")):
                 return "registered"
     return "none"
 
@@ -8413,7 +8414,7 @@ def cmd_app(cfg, args, *, saved=None):
 # incremental INDEX cache (~/.cache/claude-sessions/index/<key>: the same inode +
 # byte-offset scheme as .zshrc's _transcript_meta_batch, so a dead transcript is never
 # re-read and a live one re-reads only what was appended); (2) liveness from the pid
-# registry (~/.cache/claude-sessions/<pid> = sid\tcwd, written by claude-stamp-tmux)
+# registry (~/.cache/claude-sessions/<pid> = sid\tcwd, written by t-session-start)
 # plus ONE `tmux list-sessions` fork — the zsh _dev_session_rows scan costs 1-5 s and
 # its only extra signal (idle vs active by capture-pane) is not decision-relevant
 # here; only all_hosts=true pays for zsh_capture("_dev_rows_all"), because remote
@@ -8699,7 +8700,7 @@ def _pr_info(pr, pr_dir):
 
 
 def _opened_stamp(sid, cache_root):
-    """mtime of the last-opened stamp claude-stamp-tmux touches on every start; 0 if
+    """mtime of the last-opened stamp t-session-start touches on every start; 0 if
     none. Resuming appends nothing, so by transcript mtime alone a just-reopened
     session looks days old."""
     try:

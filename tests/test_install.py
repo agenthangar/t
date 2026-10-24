@@ -430,7 +430,8 @@ def test_parity_matrix_is_available_in_its_help_topic(t_mod, capsys):
 
 # ─── codex hook state + doctor findings ────────────────────────────────────────
 
-def test_codex_hook_state(t_mod, tmp_path):
+@pytest.mark.parametrize("name", ["t-session-start", "claude-stamp-tmux"])
+def test_codex_hook_state(t_mod, tmp_path, name):
     p = tmp_path / "hooks.json"
     assert t_mod._codex_hook_state(str(p)) == "none"          # absent
     p.write_text("{not json")
@@ -439,7 +440,7 @@ def test_codex_hook_state(t_mod, tmp_path):
     assert t_mod._codex_hook_state(str(p)) == "none"          # other events only
     p.write_text(json.dumps({"hooks": {"SessionStart": [
         {"matcher": "startup", "hooks": [{"type": "command", "command": "python3 x.py"}]},
-        {"hooks": [{"type": "command", "command": "$HOME/bin/claude-stamp-tmux --agent codex"}]}]}}))
+        {"hooks": [{"type": "command", "command": f"$HOME/bin/{name} --agent codex"}]}]}}))
     assert t_mod._codex_hook_state(str(p)) == "registered"
     p.write_text(json.dumps({"hooks": {"SessionStart": "nope"}}))
     assert t_mod._codex_hook_state(str(p)) is None            # foreign shape

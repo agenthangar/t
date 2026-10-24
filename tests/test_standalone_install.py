@@ -24,7 +24,7 @@ def box(tmp_path):
     return checkout, home
 
 
-def test_clean_install_owns_seven_links_and_preserves_shell_content(box):
+def test_clean_install_owns_eight_links_and_preserves_shell_content(box):
     checkout, home = box
     (home / ".zshrc").write_text("# my shell\n")
     (home / ".tmux.conf").write_text("# my tmux\n")
@@ -33,6 +33,7 @@ def test_clean_install_owns_seven_links_and_preserves_shell_content(box):
     assert "  source " in result.stdout
     expected = {
         "bin/t": "bin/t",
+        "bin/t-session-start": "bin/t-session-start",
         "bin/claude-stamp-tmux": "bin/claude-stamp-tmux",
         "bin/cursor-beam": "bin/cursor-beam",
         ".claude/commands/tpush.md": "claude/commands/tpush.md",
@@ -50,12 +51,26 @@ def test_clean_install_owns_seven_links_and_preserves_shell_content(box):
     assert not (home / ".ssh").exists()
 
 
-def test_links_only_is_idempotent_and_does_not_seed_local_config(box):
+@pytest.mark.parametrize("codex_hooks", [False, True])
+def test_links_only_is_idempotent_and_does_not_seed_local_config(box, codex_hooks):
     checkout, home = box
-    first = run_install(checkout, home, T_LINKS_ONLY="1")
-    second = run_install(checkout, home, T_LINKS_ONLY="1")
+    # Exercise both paths on CI regardless of whether its host has Codex installed.
+    if codex_hooks:
+        (home / ".codex").mkdir()
+        (home / ".codex/config.toml").write_text('model = "gpt-6"\n')
+    options = {"T_LINKS_ONLY": "1", "T_NO_CODEX_HOOKS": "" if codex_hooks else "1"}
+    first = run_install(checkout, home, **options)
+    hooks = home / ".codex/hooks.json"
+    before = hooks.read_bytes() if codex_hooks else None
+    second = run_install(checkout, home, **options)
     assert first.returncode == second.returncode == 0
-    assert second.stdout == ""
+    if codex_hooks:
+        assert "Review hooks" in second.stdout and "Allow selected" in second.stdout
+        assert "Registered the SessionStart hook" not in second.stdout
+        assert hooks.read_bytes() == before
+    else:
+        assert second.stdout == ""
+        assert not hooks.exists()
     assert not (home / ".config/t/local.zsh").exists()
     assert not (home / ".claude/settings.json").exists()
     assert git("config", "--local", "--get", "core.hooksPath", cwd=checkout, check=False).returncode != 0
@@ -116,7 +131,8 @@ def test_homebrew_links_use_stable_opt_path_across_cellar_upgrade(tmp_path):
     result = run_install(first, home, T_LINKS_ONLY="1", T_LINK_DEV="1")
     assert result.returncode == 0, result.stderr
     links = {
-        "bin/t": "bin/t", "bin/claude-stamp-tmux": "bin/claude-stamp-tmux",
+        "bin/t": "bin/t", "bin/t-session-start": "bin/t-session-start",
+        "bin/claude-stamp-tmux": "bin/claude-stamp-tmux",
         "bin/cursor-beam": "bin/cursor-beam",
         ".claude/commands/tpush.md": "claude/commands/tpush.md",
         ".claude/commands/tpop.md": "claude/commands/tpop.md",
@@ -165,7 +181,7 @@ def test_existing_claude_settings_are_merged_without_losing_foreign_keys(box):
     data = json.loads(settings.read_text())
     assert data["model"] == "mine"
     assert data["hooks"]["Stop"] == [{"hooks": [{"type": "command", "command": "say done"}]}]
-    assert data["hooks"]["SessionStart"][0]["hooks"][0]["command"] == "$HOME/bin/claude-stamp-tmux"
+    assert data["hooks"]["SessionStart"][0]["hooks"][0]["command"] == "$HOME/bin/t-session-start"
     assert data["permissions"]["allow"] == ["Bash(git status)"]  # MCP opt-out in helper
     before = settings.read_text()
     assert run_install(checkout, home).returncode == 0
@@ -208,3 +224,36 @@ def test_live_main_hook_blocks_canonical_but_allows_worktree(box):
     git("worktree", "add", "-q", "-b", "dev/t-1", str(dev), cwd=checkout)
     allowed = subprocess.run([str(hook)], cwd=dev, env=env, capture_output=True, text=True)
     assert allowed.returncode == 0
+
+
+@pytest.mark.parametrize("absolute", [False, True])
+def test_install_migrates_standard_hook_names_preserving_options_and_trust(box, absolute):
+    checkout, home = box
+    prefix = str(home) if absolute else "$HOME"
+    old = prefix + "/bin/claude-stamp-tmux"
+    config = home / ".codex/config.toml"
+    config.parent.mkdir()
+    config.write_text('[hooks.state."legacy"]\ntrusted_hash = "sha256:unchanged"\n')
+    trust = config.read_bytes()
+    paths = [(home / ".claude/settings.json", ""), (home / ".codex/hooks.json", " --agent codex")]
+    expected = []
+    for path, flags in paths:
+        path.parent.mkdir(exist_ok=True)
+        custom = {"type": "command", "command": "/opt/bin/claude-stamp-tmux" + flags + " --quiet"}
+        hook = {"type": "command", "command": old + flags, "timeout": 12, "statusMessage": "Session tracking"}
+        data = {"description": "keep me", "hooks": {
+            "SessionStart": [{"matcher": "startup|resume", "hooks": [hook, custom]}],
+            "Stop": [{"hooks": [{"type": "command", "command": "other-tool"}]}]}}
+        path.write_text(json.dumps(data))
+        hook["command"] = "$HOME/bin/t-session-start" + flags
+        expected.append(data)
+    result = run_install(checkout, home, T_LINKS_ONLY="1")
+    assert result.returncode == 0, result.stderr
+    assert "Updated the SessionStart hook" in result.stdout
+    for (path, _), data in zip(paths, expected):
+        assert json.loads(path.read_text()) == data
+    assert config.read_bytes() == trust
+    before = [path.read_bytes() for path, _ in paths]
+    assert run_install(checkout, home, T_LINKS_ONLY="1").returncode == 0
+    assert [path.read_bytes() for path, _ in paths] == before
+    assert config.read_bytes() == trust

@@ -701,7 +701,7 @@ _t_plan() {
   elif [[ -n "$1" ]]; then
     # repo/slot or full session name → tmux session → stashed CLAUDE_RESUME_ID
     # (stamped by _dev_new_session/_dev_resume_session and, for every other launch
-    # path, by the claude-stamp-tmux SessionStart hook), falling back to the dir's
+    # path, by the t-session-start SessionStart hook), falling back to the dir's
     # newest transcript only for pre-hook sessions. That fallback is ambiguous when
     # several slots share one repo dir (dev-api-1..5 all root at the same project,
     # so one ~/.claude/projects/<enc>/) — it returns whichever sibling wrote last,
