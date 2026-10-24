@@ -313,6 +313,10 @@ def test_real_isolated_tty_source_target_review_cancel(tmp_path, width, height):
     harness.write_text('''import importlib.util, json, pathlib, runpy, sys
 from importlib.machinery import SourceFileLoader
 root, stage, result, sent = map(pathlib.Path, sys.argv[1:])
+def finish(payload):
+    pending = result.with_suffix('.tmp')
+    pending.write_text(json.dumps(payload))
+    pending.replace(result)
 loader = SourceFileLoader('t_share_tty_bin', str(root / 'bin/t'))
 spec = importlib.util.spec_from_file_location('t_share_tty_bin', str(root / 'bin/t'), loader=loader)
 t = importlib.util.module_from_spec(spec)
@@ -338,13 +342,13 @@ with ShareUI(vars(t)) as ui:
     stage.write_text('source')
     source = ui.conversations('From conversation', sources, '/repo/t/15')
     if source is None:
-        result.write_text(json.dumps({'cancelled':'source'}))
+        finish({'cancelled':'source'})
         sys.exit(0)
     ui.done('From', source['title'])
     stage.write_text('target')
     target = ui.conversations('To conversation', targets, '/repo/t/15')
     if target is None:
-        result.write_text(json.dumps({'cancelled':'target'}))
+        finish({'cancelled':'target'})
         sys.exit(0)
     ui.done('To', target['title'])
     stage.write_text('review')
@@ -352,8 +356,8 @@ with ShareUI(vars(t)) as ui:
                          context_label='Recent conversation text', action='Share context')
     if accepted:
         sent.write_text('unexpected share')
-    result.write_text(json.dumps({'cancelled':'review' if not accepted else None,
-                                  'source':source['id'], 'target':target['id']}))
+    finish({'cancelled':'review' if not accepted else None,
+            'source':source['id'], 'target':target['id']})
 ''')
     with tempfile.TemporaryDirectory(prefix="t-share-tty-") as short:
         socket = str(Path(short) / "tmux.sock")
