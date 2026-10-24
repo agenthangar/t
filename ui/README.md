@@ -53,7 +53,13 @@ raw mode is unavailable. `t config onboard` explicitly repeats discovery. Choose
 agents, local checkouts, GitHub organizations/repos, and optional Tailscale peers;
 review commands and configuration changes before applying. GitHub CLI installation
 and sign-in are separate explicit choices before authenticated discovery. Clone
-and remote-host selections start empty. A Tailscale peer is a candidate, not proof
+and remote-host selections start empty. Within setup, q/Esc goes back to the
+previous applicable choice screen, preserving current marks even before Enter;
+empty and inapplicable steps are skipped. Review n/Esc returns to the last
+applicable choice; review q, welcome q/Esc, and Ctrl-C cancel. Revisiting choices
+retains discovery results and does not repeat completed GitHub install/sign-in.
+Selections follow repository paths, GitHub names, and host targets; changing
+organizations removes unavailable clone selections. A Tailscale peer is a candidate, not proof
 of SSH access; registration never starts a remote command. Reuse existing guarded
 session launch and registration paths. Cancellation returns 130 and preserves any
 already completed actions; completion is recorded only after successful setup.

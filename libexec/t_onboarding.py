@@ -19,6 +19,13 @@ class Aborted(Exception):
     """The user left a setup screen without applying it."""
 
 
+class Back(Exception):
+    """Return to the previous setup choice, retaining the current selection."""
+
+    def __init__(self, selection=None):
+        self.selection = selection
+
+
 def _marker():
     return Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "t" / "onboarding.json"
 
@@ -84,24 +91,34 @@ class Dialog:
         else:
             print(text)
 
-    def choose(self, label, rows, *, multi=False, marked=()):
+    def choose(self, label, rows, *, multi=False, marked=(), default=0, back=False):
         if not rows:
             return [] if multi else None
         if self.ui is not None:
+            selection = []
             result = self.ui.pick(label, rows, multi=multi, marked=marked,
+                                  default=default, on_back=selection.append,
+                                  back_label="back" if back else "cancel",
                                   primary=("enter", "CONTINUE", ""))
             if result is None:
+                if back:
+                    raise Back(selection[0] if selection else None)
                 raise Aborted
             return result
         print("\n" + label)
         for index, (_, text) in enumerate(rows, 1):
             mark = " [x]" if multi and index - 1 in marked else ""
             print(f"  {index}. {text}{mark}")
+        action = "goes back" if back else "cancels"
         while True:
-            answer = input("Numbers separated by commas (Enter keeps marks, - selects none, q quits): "
-                           if multi else "Number (q quits): ").strip()
-            if answer.lower() in ("q", "quit"):
+            answer = input(f"Numbers separated by commas (Enter keeps marks, - selects none, q {action}, Ctrl-C cancels): "
+                           if multi else f"Number (Enter keeps choice, q {action}, Ctrl-C cancels): ").strip()
+            if answer.lower() in ("q", "quit", "back", "\x1b"):
+                if back:
+                    raise Back([rows[i][0] for i in marked] if multi else rows[default][0])
                 raise Aborted
+            if not multi and not answer:
+                return rows[default][0]
             if multi and answer in ("", "-"):
                 return [rows[i][0] for i in marked] if not answer else []
             try:
@@ -118,12 +135,12 @@ class Dialog:
                     for part in (textwrap.wrap(line, width=max(10, self.ui.cols() - 6)) or [""])]
             key = self.ui.page("Review setup changes", body,
                                {"y", "n", "q", "esc", "abort"},
-                               keys="y apply · n change choices · q quit",
+                               keys="y apply · n/esc back · q quit · ctrl-c cancel",
                                primary=("y", "APPLY SETUP", ""))
         else:
             print("\nReview setup changes\n" + "\n".join("  " + line for line in lines))
-            key = input("Apply these changes? [y/n/q] ").strip().lower()
-        if key in ("q", "esc", "abort"):
+            key = input("Apply these changes? [y apply / n back / q quit; Ctrl-C cancels] ").strip().lower()
+        if key in ("q", "abort"):
             raise Aborted
         return key == "y"
 
@@ -132,12 +149,18 @@ def _discovery(api):
     return runpy.run_path(os.path.join(api["_t_source_root"](), "libexec", "t_discovery.py"))
 
 
-def _organizations(dialog, discovery):
-    state = discovery["github_auth_state"]()
+def _organizations(dialog, discovery, cache=None, choose=None):
+    cache = {} if cache is None else cache
+    choose = choose or dialog.choose
+    if "state" not in cache:
+        cache["state"] = discovery["github_auth_state"]()
+    state = cache["state"]
     if state == "missing":
-        command = discovery["github_install_command"]()
+        if "command" not in cache:
+            cache["command"] = discovery["github_install_command"]()
+        command = cache["command"]
         if command:
-            choice = dialog.choose("Install GitHub CLI to discover organization repositories?", [
+            choice = choose("Install GitHub CLI to discover organization repositories?", [
                 ("install", "Run " + shlex.join(command)), ("skip", "Skip GitHub for now")])
             if choice == "skip":
                 return []
@@ -149,12 +172,12 @@ def _organizations(dialog, discovery):
             if not installed:
                 dialog.notice("GitHub CLI installation did not finish; continuing with local setup.")
                 return []
-            state = discovery["github_auth_state"]()
+            state = cache["state"] = discovery["github_auth_state"]()
         if state == "missing":
             dialog.notice("Install GitHub CLI from https://cli.github.com, then run t config onboard.")
             return []
     if state != "authenticated":
-        choice = dialog.choose("Connect GitHub to discover organization repositories?", [
+        choice = choose("Connect GitHub to discover organization repositories?", [
             ("login", "Run gh auth login --hostname github.com"), ("skip", "Skip GitHub for now")])
         if choice == "skip":
             return []
@@ -167,10 +190,13 @@ def _organizations(dialog, discovery):
         if not ok:
             dialog.notice("GitHub sign-in did not finish; continuing with local setup.")
             return []
-    orgs, warnings = discovery["github_orgs"]()
-    for warning in warnings:
-        dialog.notice(warning)
-    return orgs
+        cache["state"] = "authenticated"
+    if "orgs" not in cache:
+        orgs, warnings = discovery["github_orgs"]()
+        for warning in warnings:
+            dialog.notice(warning)
+        cache["orgs"] = orgs
+    return cache["orgs"]
 
 
 def _agent_plan(api, selected, probed):
@@ -197,78 +223,153 @@ def _repo_aliases(api, paths, taken):
     return aliases
 
 
-def _collect(cfg, api, dialog, discovery):
-    probed = api["_install_probe"]()
-    agents = list(api["INSTALL_AGENTS"])
-    selected = dialog.choose("Choose agents to use (missing tools will be installed)", [
-        (agent, f"{agent} · " + ("installed" if probed[agent].get("version") else "install") +
-         (" · chats only" if agent not in api["AGENTS"] else ""))
-        for agent in agents], multi=True,
-        marked=[i for i, agent in enumerate(agents) if probed[agent].get("version")])
-    launchable = [agent for agent in selected if agent in api["AGENTS"]]
-    agent = (dialog.choose("Default agent for new sessions", [(a, a) for a in launchable])
-             if len(launchable) > 1 else next(iter(launchable), None))
-    steps = _agent_plan(api, selected, probed)
-    home = Path(api["HOME"])
-    current = api["_run"](["git", "rev-parse", "--show-toplevel"], timeout=5)
-    cwd = current.stdout.strip() if current.returncode == 0 else os.getcwd()
-    roots = list(dict.fromkeys([str(home / "code"), str(home / "config"), cwd,
-                               *cfg.repos.values()]))
-    local = discovery["discover_local"](roots, [cfg.worktree_root])
-    registered = {os.path.realpath(path) for path in cfg.repos.values()}
-    candidates = [repo for repo in local if os.path.realpath(repo["path"]) not in registered]
-    chosen = dialog.choose("Register existing checkouts", [
-        (i, repo["path"]) for i, repo in enumerate(candidates)], multi=True,
-        marked=range(len(candidates)))
-    repos = [candidates[i] for i in chosen]
-    orgs = _organizations(dialog, discovery)
-    org_choices = dialog.choose("Organizations to browse (optional)", [(o, o) for o in orgs], multi=True)
-    remote = []
-    identities = {repo["identity"]: repo["path"] for repo in local if repo.get("identity")}
-    for org in org_choices:
-        found, warnings = discovery["github_repos"](org)
-        for warning in warnings:
-            dialog.notice(warning)
-        remote.extend(found)
-    clone_rows, clone_candidates = [], []
-    for repo in remote:
-        identity = repo["full_name"].lower()
-        if identity in identities:
-            if not any(os.path.realpath(r["path"]) == os.path.realpath(identities[identity]) for r in repos):
-                dialog.notice(f"Already cloned: {repo['full_name']} → {identities[identity]}")
+def _collect(cfg, api, dialog, discovery, state=None, *, back=False):
+    """Visit applicable choices in order; Back retains edits and skips empty steps."""
+    state = {} if state is None else state
+    choices = state.setdefault("choices", {})
+    cache = state.setdefault("cache", {})
+    if "probed" not in cache:
+        cache["probed"] = api["_install_probe"]()
+    probed = cache["probed"]
+    agents_label = "Choose agents to use (missing tools will be installed)"
+    default_label = "Default agent for new sessions"
+    local_label = "Register existing checkouts"
+    org_label = "Organizations to browse (optional)"
+    clone_label = "Clone repositories (none selected by default)"
+    host_label = "Optional Tailscale hosts (SSH access is not verified)"
+    index, direction = (state.get("last", 0), -1) if back else (0, 1)
+    shown = False
+
+    def choose(label, rows, *, multi=False, marked=()):
+        nonlocal shown
+        keys = [key for key, _ in rows]
+        initial = [keys[i] for i in marked] if multi else next(iter(keys), None)
+        previous = choices.get(label, initial)
+        previous = ([key for key in previous if key in keys] if multi else
+                    previous if previous in keys else initial)
+        choices[label] = previous
+        if not rows:
+            return previous
+        shown = True
+        try:
+            result = dialog.choose(label, rows, multi=multi, back=True,
+                                   marked=[i for i, key in enumerate(keys) if key in previous] if multi else (),
+                                   default=0 if multi else keys.index(previous))
+        except Back as exc:
+            if exc.selection is not None:
+                choices[label] = exc.selection
+            raise
+        choices[label] = result
+        return result
+
+    while 0 <= index < 7:
+        shown = False
+        try:
+            if index == 0:
+                agents = list(api["INSTALL_AGENTS"])
+                choose(agents_label, [
+                    (agent, f"{agent} · " + ("installed" if probed[agent].get("version") else "install") +
+                     (" · chats only" if agent not in api["AGENTS"] else ""))
+                    for agent in agents], multi=True,
+                    marked=[i for i, agent in enumerate(agents) if probed[agent].get("version")])
+            elif index == 1:
+                launchable = [agent for agent in choices[agents_label] if agent in api["AGENTS"]]
+                if len(launchable) > 1:
+                    choose(default_label, [(agent, agent) for agent in launchable])
+                else:
+                    choices[default_label] = next(iter(launchable), None)
+            elif index == 2:
+                if "local" not in cache:
+                    home = Path(api["HOME"])
+                    current = api["_run"](["git", "rev-parse", "--show-toplevel"], timeout=5)
+                    cwd = current.stdout.strip() if current.returncode == 0 else os.getcwd()
+                    roots = list(dict.fromkeys([str(home / "code"), str(home / "config"), cwd,
+                                               *cfg.repos.values()]))
+                    cache["local"] = discovery["discover_local"](roots, [cfg.worktree_root])
+                    registered = {os.path.realpath(path) for path in cfg.repos.values()}
+                    cache["candidates"] = [repo for repo in cache["local"]
+                                           if os.path.realpath(repo["path"]) not in registered]
+                candidates = cache["candidates"]
+                choose(local_label, [(repo["path"], repo["path"]) for repo in candidates],
+                       multi=True, marked=range(len(candidates)))
+            elif index == 3:
+                cache["orgs"] = _organizations(dialog, discovery, cache.setdefault("github", {}), choose)
+            elif index == 4:
+                choose(org_label, [(org, org) for org in cache["orgs"]], multi=True)
+            elif index == 5:
+                remote = []
+                org_repos = cache.setdefault("org_repos", {})
+                for org in choices[org_label]:
+                    if org not in org_repos:
+                        found, warnings = discovery["github_repos"](org)
+                        for warning in warnings:
+                            dialog.notice(warning)
+                        org_repos[org] = found
+                    remote.extend(org_repos[org])
+                identities = {repo["identity"]: repo["path"] for repo in cache["local"] if repo.get("identity")}
+                clone_rows, candidates, seen = [], [], set()
+                for repo in remote:
+                    identity = repo["full_name"].lower()
+                    if identity in seen:
+                        continue
+                    seen.add(identity)
+                    if identity in identities:
+                        if not any(os.path.realpath(path) == os.path.realpath(identities[identity])
+                                   for path in choices[local_label]):
+                            dialog.notice(f"Already cloned: {repo['full_name']} → {identities[identity]}")
+                        continue
+                    destinations = cache.setdefault("destinations", {})
+                    if identity not in destinations:
+                        destinations[identity] = discovery["clone_destination"](repo["full_name"])
+                    target = destinations[identity]
+                    suffix = " · archived" if repo.get("archived") else " · fork" if repo.get("fork") else ""
+                    clone_rows.append((identity, f"{repo['full_name']}{suffix} → {target}"))
+                    candidates.append({**repo, "path": target})
+                cache["clones"] = candidates
+                choose(clone_label, clone_rows, multi=True)
+            else:
+                if "hosts" not in cache:
+                    hosts, warnings = discovery["tailscale_hosts"]()
+                    for warning in warnings:
+                        dialog.notice(warning)
+                    targets, aliases = set(cfg.hosts.values()), set(cfg.hosts)
+                    available = []
+                    for host in hosts:
+                        if host["target"] in targets:
+                            continue
+                        alias = host["alias"]
+                        if alias in aliases:
+                            alias = host["target"]
+                        if not api["_CONFIG_ALIAS"].fullmatch(alias) or alias in aliases:
+                            base, number = host["alias"], 2
+                            alias = f"{base}-{number}"
+                            while alias in aliases:
+                                number += 1
+                                alias = f"{base}-{number}"
+                        aliases.add(alias)
+                        targets.add(host["target"])
+                        available.append({**host, "alias": alias})
+                    cache["hosts"] = available
+                choose(host_label, [(host["target"], f"{host['alias']} → {host['target']}")
+                                    for host in cache["hosts"]], multi=True)
+        except Back:
+            index -= 1
+            direction = -1
             continue
-        target = discovery["clone_destination"](repo["full_name"])
-        suffix = " · archived" if repo.get("archived") else " · fork" if repo.get("fork") else ""
-        clone_rows.append((len(clone_candidates), f"{repo['full_name']}{suffix} → {target}"))
-        clone_candidates.append({**repo, "path": target})
-    picked = dialog.choose("Clone repositories (none selected by default)", clone_rows, multi=True)
-    clones = [clone_candidates[i] for i in picked]
-    hosts, warnings = discovery["tailscale_hosts"]()
-    for warning in warnings:
-        dialog.notice(warning)
-    targets = set(cfg.hosts.values())
-    aliases = set(cfg.hosts)
-    available = []
-    for host in hosts:
-        if host["target"] in targets:
-            continue
-        alias = host["alias"]
-        if alias in aliases:
-            alias = host["target"]
-        if not api["_CONFIG_ALIAS"].fullmatch(alias) or alias in aliases:
-            base, number = host["alias"], 2
-            alias = f"{base}-{number}"
-            while alias in aliases:
-                number += 1
-                alias = f"{base}-{number}"
-        aliases.add(alias)
-        targets.add(host["target"])
-        available.append({**host, "alias": alias})
-    chosen_hosts = dialog.choose("Optional Tailscale hosts (SSH access is not verified)", [
-        (i, f"{host['alias']} → {host['target']}") for i, host in enumerate(available)], multi=True)
-    proposals = _repo_aliases(api, [r["path"] for r in repos + clones], cfg.repos)
-    return {"agent": agent, "selected": selected, "steps": steps, "repos": repos,
-            "clones": clones, "aliases": proposals, "hosts": [available[i] for i in chosen_hosts]}
+        if shown:
+            state["last"] = index
+            direction = 1
+        index += direction
+    if index < 0:
+        raise Back
+    selected = choices[agents_label]
+    repos = [repo for repo in cache["candidates"] if repo["path"] in choices[local_label]]
+    clones = [repo for repo in cache["clones"] if repo["full_name"].lower() in choices[clone_label]]
+    hosts = [host for host in cache["hosts"] if host["target"] in choices[host_label]]
+    proposals = _repo_aliases(api, [repo["path"] for repo in repos + clones], cfg.repos)
+    return {"agent": choices[default_label], "selected": selected,
+            "steps": _agent_plan(api, selected, probed), "repos": repos,
+            "clones": clones, "aliases": proposals, "hosts": hosts}
 
 
 def _review(plan, api):
@@ -350,16 +451,26 @@ def run(cfg, api, *, force=False):
         return api["_onboarding_start"](cfg, None)
     dialog = Dialog(api)
     try:
-        action = dialog.choose("Welcome to t", [("setup", "Set up agents and repositories"),
-                                                ("later", "Not now")])
-        if action == "later":
-            dialog.notice("Run t again when ready, or use t config onboard to revisit setup.")
-            return 0
-        discovery = _discovery(api)
+        state, discovery = {}, None
+        welcome, back = True, False
         while True:
-            plan = _collect(cfg, api, dialog, discovery)
+            if welcome:
+                action = dialog.choose("Welcome to t", [("setup", "Set up agents and repositories"),
+                                                        ("later", "Not now")])
+                if action == "later":
+                    dialog.notice("Run t again when ready, or use t config onboard to revisit setup.")
+                    return 0
+                if discovery is None:
+                    discovery = _discovery(api)
+                welcome = False
+            try:
+                plan = _collect(cfg, api, dialog, discovery, state, back=back)
+            except Back:
+                welcome, back = True, False
+                continue
             if dialog.review(_review(plan, api)):
                 break
+            back = True
         with dialog.suspended():
             result = _apply(cfg, api, discovery, plan)
         if result:

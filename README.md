@@ -134,7 +134,10 @@ matching clones are detected and preserved.
 Available Tailscale peers are offered as optional remote hosts. Registration does
 not connect to a host, configure SSH, install t remotely, or grant access; SSH must
 already be available before using a remote host. All setup steps can be skipped
-or canceled. Completed actions remain in place if a later step fails.
+or canceled. On a choice screen, `q` or Esc goes back and keeps your choices,
+including checkboxes changed before pressing Enter. At review, `n` or Esc goes
+back; `q` cancels setup. Ctrl-C cancels from any screen. Completed actions remain
+in place if a later step fails.
 
 Returning users run `t` to choose a work session. Run `t config onboard` (or choose
 **Find repositories and hosts** from the session entry screen) to discover newly

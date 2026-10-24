@@ -2652,13 +2652,15 @@ class _RailUI:
         self.commit([f"  {color}◇  {label}{st.r}", f"      {value}", ""])
 
     def pick(self, label, rows, multi=False, default=0, marked=None,
-             values=None, sections=None, accents=None, primary=None, shortcuts=None):
+             values=None, sections=None, accents=None, primary=None, shortcuts=None,
+             on_back=None, back_label=None):
         """Single/multiple selection on the shared row/frame template.
         Sections are not selectable; optional shortcuts return an action key."""
         values, sections, accents = values or {}, sections or {}, accents or {}
         cur = max(0, min(default or 0, len(rows) - 1))
         marks = set(marked or ())
-        keys = "↑↓/jk move" + (" · space mark" if multi else "") + " · enter select · q back"
+        keys = "↑↓/jk move" + (" · space mark" if multi else "") + " · enter select"
+        keys += (f" · q/esc {back_label} · ctrl-c cancel" if back_label else " · q back")
         flash = ""
         while True:
             display = []
@@ -2688,6 +2690,8 @@ class _RailUI:
             elif k == "abort":
                 raise KeyboardInterrupt
             elif k in ("q", "esc"):
+                if on_back is not None:
+                    on_back([rows[i][0] for i in sorted(marks)] if multi else rows[cur][0])
                 return None
             else:
                 flash = "No binding for that key"
@@ -10432,7 +10436,8 @@ REMOTE SESSIONS
     cg.add_argument("--show", action="store_true", help="print current settings without opening the menu")
     cg.add_argument("--edit", action="store_true", help="open T_LOCAL_RC in VISUAL/EDITOR directly")
     cg.add_argument("--onboard", action="store_true",
-                    help="review guided setup, discover local/GitHub repos and Tailscale hosts; terminal only")
+                    help="review guided setup, discover local/GitHub repos and Tailscale hosts; terminal only. "
+                         "Choices: q/Esc back; review: n/Esc back, q quit; Ctrl-C cancels")
 
     sp = sub.add_parser("setup", help="register local repos and ssh hosts in T_LOCAL_RC",
         description="Interactive onboarding for this machine's per-machine config: a stepped "
