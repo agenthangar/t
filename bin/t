@@ -2122,15 +2122,26 @@ def _config_repos(ui, cfg):
                 return
         if repo == "__add__":
             repo = None
-            alias = _config_input(ui, "repo alias", kind="alias")
+            repo_path = _config_input(ui, "repo path", os.path.join(HOME, "config"), "path")
+            if repo_path is None:
+                continue
+            try:
+                repo_path = _repo_checkout_path(cfg, repo_path)
+                suggested = os.path.basename(repo_path)
+            except (OSError, ValueError) as exc:
+                ui.done("invalid", str(exc))
+                continue
+            alias = _config_input(ui, "repo alias", suggested, "alias")
             if alias is None:
                 continue
             if alias in cfg.repos or alias in ("__add__", "__back__"):
                 ui.done("invalid", "That alias is already in use or reserved.")
                 continue
-            repo_path = _config_input(ui, "repo path", kind="path")
-            if repo_path is not None:
+            try:
+                alias, repo_path = _repo_add_target(cfg, repo_path, alias)
                 cfg.repos[alias] = repo_path
+            except (OSError, ValueError) as exc:
+                ui.done("invalid", str(exc))
             continue
         action = ui.pick(f"Repository · {repo}", [
             ("alias", "Short name"), ("mode", "Opening mode"),
@@ -2301,14 +2312,75 @@ def _config_editor():
     return subprocess.call(["zsh", "-n", _current_local_rc()])
 
 
+def _repo_checkout_path(cfg, raw_path):
+    """Resolve an existing checkout without modifying its Git state."""
+    path = os.path.realpath(os.path.expanduser(raw_path or os.getcwd()))
+    result = _run(["git", "-C", path, "rev-parse", "--show-toplevel"])
+    if result.returncode or not result.stdout.strip():
+        raise ValueError(f"{_tilde(path)} is not a Git checkout; pass its path to `t repo add <path>`")
+    path = os.path.realpath(result.stdout.strip())
+    git_dir = _run(["git", "-C", path, "rev-parse", "--absolute-git-dir"])
+    common = _run(["git", "-C", path, "rev-parse", "--git-common-dir"])
+    if git_dir.returncode or common.returncode:
+        raise ValueError("could not verify the checkout's Git directory")
+    if os.path.realpath(os.path.join(path, common.stdout.strip())) != os.path.realpath(git_dir.stdout.strip()):
+        raise ValueError("this is a linked worktree; register the main checkout instead")
+    root = os.path.realpath(cfg.worktree_root)
+    if path == root or path.startswith(root + os.sep):
+        raise ValueError("per-session worktrees are managed by `t session open`; register the main checkout instead")
+    return path
+
+
+def _repo_add_target(cfg, raw_path, alias=None):
+    path = _repo_checkout_path(cfg, raw_path)
+    if alias is None:
+        alias = next((key for key, value in sorted(cfg.repos.items())
+                      if os.path.realpath(value) == path), os.path.basename(path))
+    if not _CONFIG_ALIAS.fullmatch(alias) or alias in ("__add__", "__back__"):
+        raise ValueError("use letters, numbers, dots, underscores or hyphens for the repo alias")
+    whence = None if alias in cfg.repos else _new_sh_whence(alias)
+    status, message = _new_alias_check(alias, path, {}, cfg.repos, whence)
+    if status == "error":
+        raise ValueError(message)
+    return alias, path
+
+
+def cmd_repo_add(cfg, args):
+    try:
+        if not args.dry_run:
+            _host_refresh_config()
+            cfg = Config()
+        local = _current_local_rc()
+        before = _config_read(local)
+        alias, path = _repo_add_target(cfg, args.path, args.alias)
+        if cfg.repos.get(alias) and os.path.realpath(cfg.repos[alias]) == path:
+            print(f"Already registered: {alias} → {_tilde(path)}")
+            return 0
+        after = _config_text(before, {f"DEV_REPOS[{alias}]": path}, _config_state(cfg))
+        if args.dry_run:
+            print(f"Would register: {alias} → {_tilde(path)}")
+            return 0
+        _config_write(local, before, after)
+        _host_refresh_config()
+    except (OSError, ValueError) as exc:
+        print(f"t repo add: {exc}", file=sys.stderr)
+        return 1
+    print(f"Registered: {alias} → {_tilde(path)}")
+    if not os.environ.get("T_SETUP_SHIM"):
+        print("run `source ~/.zshrc` (or open a new shell) to use the new alias")
+    return 0
+
+
 def cmd_repos(cfg, args):
-    """List registered checkouts; only the shell plugin can change directory."""
+    """Manage registered checkouts; only the shell plugin can change directory."""
+    if args.action == "add":
+        return cmd_repo_add(cfg, args)
     if args.action == "cd":
         print("t repos cd: run this from a shell with the t plugin loaded", file=sys.stderr)
         return 1
     if args.action == "ls":
         if not cfg.repos:
-            print("No repositories registered. Run t setup to register one.")
+            print("No repositories registered. Run `t repo add <path>` or `t config setup`.")
             return 0
         print("\n".join(_table_lines(("REPO", "CHECKOUT"),
                                     [(alias, _tilde(path)) for alias, path in sorted(cfg.repos.items())])))
@@ -2897,9 +2969,9 @@ def cmd_setup(cfg, args):
     host_keys = set(f_hosts) | set(cfg.hosts)
     host_targets = {_unquote(v) for v in f_hosts.values()} | set(cfg.hosts.values())
 
-    # scan roots: args or ~/code; drop missing / worktree-rooted ones with a note
+    # scan roots: args or ~/config; drop missing / worktree-rooted ones with a note
     roots, wt_root = [], os.path.realpath(cfg.worktree_root)
-    for d in (args.dirs or [os.path.join(HOME, "code")]):
+    for d in (args.dirs or [os.path.join(HOME, "config")]):
         d = os.path.abspath(os.path.expanduser(d))
         real = os.path.realpath(d)
         if not os.path.isdir(d):
@@ -5579,7 +5651,7 @@ def cmd_install(cfg, args):
 
 
 def _install_then_setup(cfg, args, rc, chain=True):
-    """After the agents: are there git checkouts under ~/code that DEV_REPOS does not
+    """After the agents: are there git checkouts under ~/config that DEV_REPOS does not
     know? Then the machine is not onboarded yet — a fresh box goes install.sh → t
     install → t setup, and the third step was the one nobody remembered — so open `t
     setup` right here (its own wizard; q leaves it, and what it registers it also
@@ -5590,11 +5662,11 @@ def _install_then_setup(cfg, args, rc, chain=True):
             local_text = fh.read()
     except OSError:
         local_text = ""
-    cands = _setup_unregistered(cfg, local_text, [os.path.join(HOME, "code")])
+    cands = _setup_unregistered(cfg, local_text, [os.path.join(HOME, "config")])
     if not cands:
         return rc
     st = Style()
-    what = f"{len(cands)} git repo(s) under ~/code not registered yet"
+    what = f"{len(cands)} git repo(s) under ~/config not registered yet"
     if not chain:
         print(f"{st.c}→{st.r} {what} — run: t setup")
         return rc
@@ -9394,7 +9466,7 @@ COMMAND_GROUPS = {
     "repo": {
         "list": ("repos", "ls"), "cd": ("repos", "cd"),
         "locate": ("repos", "path"), "create": ("new",),
-        "clone": ("checkout",),
+        "clone": ("checkout",), "add": ("repos", "add"),
     },
     "cursor": {"list": ("cursor", "ls"), "resume": ("cursor", "resume"),
                "send": ("cursor", "send")},
@@ -9582,6 +9654,12 @@ Run `t help issue <verb>` for flags and arguments.
              "  t hosts default mini\n"
              "  t hosts run mini t session list\n"
              "  t hosts remove mini\n" if group == "hosts" else "")
+    if group == "repo":
+        extra = ("\nEXAMPLES\n  t repo add [path] [--alias NAME]\n"
+                 "  t repo add ~/config/my-project\n"
+                 "  t repo add    # use the current checkout, including from a subdirectory\n"
+                 "\nAdd infers the checkout directory name; --alias sets a short name.\n"
+                 "Use `t config setup [dirs ...]` to select several checkouts (default ~/config).\n")
     return _wrap_help(f"USAGE\n  t {group} <verb> [arguments] [flags]\n\n"
             f"{GROUP_DESCRIPTIONS[group]}.\n\nCOMMANDS\n" + "\n".join(rows) +
             f"\n{extra}\nRun `t help {group} <verb>` for flags and arguments.\n")
@@ -9602,7 +9680,7 @@ def _command_description(group, action):
                     "open-app": "Move a Codex slot between CLI and desktop"},
         "repo": {"list": "List registered repositories", "cd": "Enter a checkout",
                  "locate": "Print a checkout path", "create": "Create a GitHub repository",
-                 "clone": "Clone and register a repository"},
+                 "clone": "Clone and register a repository", "add": "Register an existing checkout"},
         "cursor": {"list": "List chats", "resume": "Resume a chat", "send": "Move a chat"},
         "hosts": {"list": "List registered SSH hosts", "show": "Show a host's target and defaults",
                  "add": "Register a remote SSH host", "edit": "Change a host's SSH target",
@@ -10203,6 +10281,13 @@ REMOTE SESSIONS
     p._group_parsers["repos"] = sp
     repos_sub = sp.add_subparsers(dest="action", metavar="<command>")
     repos_sub.add_parser("ls", help="list registered aliases and checkout paths")
+    repo_add = repos_sub.add_parser("add", help="register an existing local checkout",
+        description="Register an existing Git checkout without cloning or changing its files, branch, "
+            "remotes or host settings. Omit path to use the current checkout (including from a subdirectory). "
+            "The alias defaults to its directory name; --alias overrides it. Repeating the command is safe.")
+    repo_add.add_argument("path", nargs="?", help="existing checkout path (default: current checkout)")
+    repo_add.add_argument("--alias", help="short name (default: existing alias or checkout directory name)")
+    repo_add.add_argument("--dry-run", action="store_true", help="show registration without changing settings")
     repo_cd = repos_sub.add_parser("cd", help="enter a checkout (zsh plugin only)")
     repo_cd.add_argument("repo", help="registered repository alias")
     repo_path = repos_sub.add_parser("path", help="print a checkout's absolute path")
@@ -10224,7 +10309,7 @@ REMOTE SESSIONS
 
     sp = sub.add_parser("setup", help="register local repos and ssh hosts in T_LOCAL_RC",
         description="Interactive onboarding for this machine's per-machine config: a stepped "
-            "inline wizard over every git checkout found under the scan dirs (default ~/code) "
+            "inline wizard over every git checkout found under the scan dirs (default ~/config) "
             "and every ~/.ssh/config host on ONE list, with already-registered entries shown "
             "locked under a ✓. space toggles, e renames in place (the current name sits "
             "pre-filled in the input), a (or the '+ add a host' row) adds a host by hand; enter "
@@ -10235,7 +10320,7 @@ REMOTE SESSIONS
             "comment out registered repos whose path no longer exists (the fresh-install "
             "placeholders) and to set TBEAM_HOST. Run it from the shell — the t() shim reloads "
             "your config afterward so the new cd shortcuts and host shorthands go live.")
-    sp.add_argument("dirs", nargs="*", help="directories to scan for git repos (default: ~/code)")
+    sp.add_argument("dirs", nargs="*", help="directories to scan for git repos (default: ~/config)")
     sp.add_argument("--dry-run", action="store_true",
                     help="print what would be offered/appended, change nothing")
     hg = sp.add_mutually_exclusive_group()
