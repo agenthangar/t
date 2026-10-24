@@ -2,7 +2,7 @@
 test_install_migration.py drives install.sh: real scripts under a sandbox $HOME with
 stub `ps` / `tmux` binaries on PATH that answer from fixtures and log their argv.
 
-Today this covers bin/claude-stamp-tmux, the SessionStart hook every "which slot is
+Today this covers bin/t-session-start, the SessionStart hook every "which slot is
 running what" answer depends on (registry, opened stamp, origin stamp, tmux stamp).
 The zsh `_dev_agent_*` seam lands here next. Coverage is scoped to bin/t and
 pyproject.toml, so these subprocess tests do not move the ratchet.
@@ -26,7 +26,7 @@ import time
 import pytest
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
-HOOK = REPO_ROOT / "bin" / "claude-stamp-tmux"
+HOOK = REPO_ROOT / "bin" / "t-session-start"
 
 PS_STUB = r"""#!/bin/bash
 # ps -o comm= -p <pid> | ps -o ppid= -p <pid>, answered from $FAKE_PS ("pid ppid comm").
@@ -2670,7 +2670,8 @@ def test_open_new_codex_keeps_defaults_and_uses_private_backend(zsh, settings, a
     assert not any('app-server' in c or 'restart' in c for c in calls)
 
 
-def test_installed_symlink_hook_records_history_without_plugin_environment(sandbox, tmp_path):
+@pytest.mark.parametrize("hook_name", ["t-session-start", "claude-stamp-tmux"])
+def test_installed_symlink_hook_records_history_without_plugin_environment(sandbox, tmp_path, hook_name):
     home, env = sandbox
     env = {key: value for key, value in env.items() if not key.startswith('COV_CORE_')}
     env.pop('T_HOME', None)
@@ -2684,11 +2685,11 @@ def test_installed_symlink_hook_records_history_without_plugin_environment(sandb
                     ['git', '-C', str(repo), 'commit', '--allow-empty', '-m', 'Initial'],
                     ['git', '-C', str(repo), 'remote', 'add', 'origin', 'https://github.com/example/project.git']):
         subprocess.run(command, env=env, check=True, capture_output=True)
-    installed = home / 'bin/claude-stamp-tmux'
+    installed = home / 'bin' / hook_name
     installed.parent.mkdir()
     intermediate = home / 'links/hook'
     intermediate.parent.mkdir()
-    intermediate.symlink_to(HOOK)
+    intermediate.symlink_to(REPO_ROOT / "bin" / hook_name)
     installed.symlink_to('../links/hook')
     result = subprocess.run([str(installed)], input=json.dumps(dict(session_id='synthetic-hook-session', cwd=str(repo))),
                             env=env, capture_output=True, text=True)

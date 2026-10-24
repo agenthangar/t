@@ -4,7 +4,7 @@
 # else compares a process name to `claude` or spells its launch line. claude keeps
 # its pre-assigned id (`claude --session-id`, see _dev_new_session); codex has NO
 # such flag, so a codex slot's id arrives only through the SessionStart hook
-# (bin/claude-stamp-tmux --agent codex → CLAUDE_RESUME_ID + the pid registry), which
+# (bin/t-session-start --agent codex → CLAUDE_RESUME_ID + the pid registry), which
 # is why the hook must be trusted once under /hooks in codex (t doctor says when it
 # never fired). The agent of a LIVE slot is read off its process (comm, ground truth)
 # and only then off the DEV_AGENT tmux stamp _dev_new_session/_dev_resume_session and

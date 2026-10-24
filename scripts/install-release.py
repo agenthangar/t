@@ -24,6 +24,7 @@ VERSION = re.compile(r"v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\
 SHA256 = re.compile(r"([0-9a-fA-F]{64})[ \t]+\*?t\.tar\.gz\Z")
 OWNED_LINKS = (
     ("bin/t", "bin/t"),
+    ("bin/t-session-start", "bin/t-session-start"),
     ("bin/claude-stamp-tmux", "bin/claude-stamp-tmux"),
     ("bin/cursor-beam", "bin/cursor-beam"),
     ("claude/commands/tpush.md", ".claude/commands/tpush.md"),
@@ -80,6 +81,11 @@ def validate_tree(root, expected_version=None):
                  "bin/cursor-beam", "scripts/install-release.py"):
         if not os.access(root / name, os.X_OK):
             raise ValueError("release executable is not executable: " + name)
+    # Releases before the neutral hook name remain installable.
+    hook = root / "bin/t-session-start"
+    if hook.exists() or hook.is_symlink():
+        if hook.is_symlink() or not hook.is_file() or not os.access(hook, os.X_OK):
+            raise ValueError("release hook is not a regular executable: bin/t-session-start")
     return version
 
 

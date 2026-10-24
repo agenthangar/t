@@ -247,6 +247,10 @@ Allow selected** and CLI `/hooks` guidance when t's Codex hook is registered.
 This is informational output within the existing wizard/detail modes: no new
 picker, app launch, or hook trust mutation. Installation repeats the guidance
 for existing registrations; `t system diagnose` stays read-only.
+The agent integration helper is `t-session-start`; `claude-stamp-tmux` remains
+an equivalent compatibility entry point. Installation migrates standard legacy
+hook commands while preserving custom commands and options. This is an external
+SessionStart hook, not a new public `t` command or interactive mode.
 
 ## Changes since the visual baseline
 

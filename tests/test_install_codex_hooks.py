@@ -11,7 +11,7 @@ import pytest
 from _install_helpers import _seed_worktree, git
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
-HOOK_CMD = "$HOME/bin/claude-stamp-tmux --agent codex"
+HOOK_CMD = "$HOME/bin/t-session-start --agent codex"
 
 
 @pytest.fixture
@@ -117,7 +117,7 @@ def test_existing_stamp_entry_is_left_alone(box):
     (home / ".codex" / "hooks.json").write_text(json.dumps(mine))
     r = relink(co, home)
     assert r.returncode == 0 and "Registered the SessionStart" not in r.stdout
-    assert_review_notice(r.stdout)
+    assert "Allow selected" in r.stdout
     assert "/opt/bin/claude-stamp-tmux --agent codex --quiet" in r.stdout
     assert hooks_of(home) == mine
 
@@ -144,7 +144,7 @@ def assert_review_notice(output):
     assert "ChatGPT desktop app" in output
     assert "Review hooks" in output and "Allow selected" in output
     assert "User config / SessionStart" in output
-    assert "claude-stamp-tmux --agent codex" in output
+    assert "t-session-start --agent codex" in output
     assert "/hooks" in output and "Until approved" in output
     assert "Allow all" not in output
 

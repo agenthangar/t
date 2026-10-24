@@ -577,7 +577,7 @@ _dev_summary_for_pid() {
 #   1. Verified CURRENT Codex pane identity (title + footer + index + rollout).
 #      Codex can switch conversations without changing pid or refreshing stamps.
 #   2. The SessionStart registry entry for the claude ACTUALLY running in the pane
-#      (pid -> "sid\tcwd", written by claude-stamp-tmux). This is ground truth for
+#      (pid -> "sid\tcwd", written by t-session-start). This is ground truth for
 #      the live process and BEATS the stamp when they disagree. Guarded by a
 #      cwd == dir check so a recycled pid's stale entry is ignored.
 #   3. The tmux stamp — only if its transcript belongs to THIS slot's cwd: Claude's
@@ -641,7 +641,7 @@ _dev_session_summary() {
 # NOT inside a dev-<repo>-<slot> tmux pane) in the same tab format as
 # _dev_session_rows: "<sid>\t<cwd>\t<slot>\t<state>\t<context>\t<summary>". A
 # foreground claude is a live process with comm `claude` that isn't the claude of any
-# dev-* tmux pane. The session id + cwd come from the registry the claude-stamp-tmux
+# dev-* tmux pane. The session id + cwd come from the registry the t-session-start
 # SessionStart hook writes per live claude pid (~/.cache/claude-sessions/<pid>) — the
 # reliable pid→id link, since macOS hides another process's env and csync scrambles
 # transcript birthtimes; with the id we read the exact transcript title. A session
@@ -774,7 +774,7 @@ function fgm(label, sid,   repo, lid) {
 }'
 
 # _dev_pid_for_sid <sid> — print the live `claude` pid that owns session <sid>, via
-# the claude-stamp-tmux registry (~/.cache/claude-sessions/<pid> = "<sid>\t<cwd>").
+# the t-session-start registry (~/.cache/claude-sessions/<pid> = "<sid>\t<cwd>").
 # The reverse of _dev_fg_rows' pid→sid read: _dev_adopt_fg needs the pid to STOP the
 # foreground owner before resuming. Empty if no live pid maps to <sid> (already gone
 # → resuming is safe anyway). A `-` sid (pre-registry) never matches, by design.
