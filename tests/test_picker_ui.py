@@ -1,9 +1,11 @@
 """Exercise filter keys in real fzf without touching the user's terminal/server."""
 import os
 from pathlib import Path
+import re
 import shlex
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 
@@ -11,12 +13,53 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-pytestmark = pytest.mark.skipif(not shutil.which('fzf') or not shutil.which('tmux'),
-                                reason='real terminal picker requires fzf and tmux')
+
+
+def terminal_state(text, platform=sys.platform):
+    """Ignore Darwin's transient input-reprocessing flag, retaining all saved modes."""
+    if platform != 'darwin' or not text.startswith('gfmt1:'):
+        return text
+    # Darwin sys/termios.h: PENDIN = 0x20000000. The kernel can set it after a
+    # successful restore while pending input is being reprocessed (issue #139).
+    return re.sub(r'(?<=:)lflag=([0-9a-fA-F]+)(?=:)',
+                  lambda match: f'lflag={int(match[1], 16) & ~0x20000000:x}', text)
+
+
+SAVED_TERMINAL = ('gfmt1:cflag=4b00:iflag=2b02:lflag=5cb:oflag=3:'
+                  'eof=4:intr=3:min=1:time=0:ispeed=9600:ospeed=9600\n')
+
+
+def test_terminal_state_ignores_only_darwin_pendin():
+    pending = SAVED_TERMINAL.replace('lflag=5cb:', 'lflag=200005cb:')
+    assert terminal_state(SAVED_TERMINAL, 'darwin') == terminal_state(pending, 'darwin')
+    for platform in ('linux', 'freebsd'):
+        assert terminal_state(SAVED_TERMINAL, platform) != terminal_state(pending, platform)
+        assert terminal_state(pending, platform) == pending
+
+
+@pytest.mark.parametrize('bit', [0x1, 0x2, 0x8, 0x80, 0x100, 0x400])
+def test_terminal_state_keeps_persistent_local_flags(bit):
+    # Includes Darwin ECHO (0x8), ISIG (0x80), and ICANON (0x100).
+    changed = SAVED_TERMINAL.replace('lflag=5cb:', f'lflag={(0x5cb ^ bit) | 0x20000000:x}:')
+    assert terminal_state(SAVED_TERMINAL, 'darwin') != terminal_state(changed, 'darwin')
+
+
+@pytest.mark.parametrize('field', ['cflag', 'iflag', 'oflag', 'eof', 'intr', 'min', 'time', 'ispeed', 'ospeed'])
+def test_terminal_state_keeps_other_flags_characters_and_speeds(field):
+    changed = re.sub(rf'(?<=:){field}=([0-9a-fA-F]+)',
+                     lambda match: f'{field}={int(match[1], 16) ^ 1:x}', SAVED_TERMINAL)
+    assert terminal_state(SAVED_TERMINAL, 'darwin') != terminal_state(changed, 'darwin')
+
+
+def test_terminal_state_keeps_unknown_serializations_exact():
+    text = '2b02:3:4b00:200005cb:0:3:1c:7f:15\n'
+    assert terminal_state(text, 'darwin') == text
 
 
 @pytest.fixture
 def picker():
+    if not shutil.which('fzf') or not shutil.which('tmux'):
+        pytest.skip('real terminal picker requires fzf and tmux')
     with tempfile.TemporaryDirectory(prefix='t-picker-ui-', dir='/tmp') as directory:
         root = Path(directory)
         socket = str(root / 'tmux.sock')
@@ -103,7 +146,9 @@ def picker():
                 time.sleep(.05)
             assert (root / 'done').exists()
             assert (root / 'status').read_text() == str(status)
-            assert (root / 'terminal-before').read_text() == (root / 'terminal-after').read_text()
+            before = (root / 'terminal-before').read_text()
+            after = (root / 'terminal-after').read_text()
+            assert terminal_state(before) == terminal_state(after), (before, after)
             assert not list(root.glob('t-picker.*'))
             return (root / 'selected').read_text().splitlines()
 
