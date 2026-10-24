@@ -2600,7 +2600,8 @@
     },
     "system diagnose": {
       "patterns": [
-        "detail"
+        "detail",
+        "action"
       ],
       "renderer": "plain",
       "scope": "local installation",
@@ -2621,6 +2622,20 @@
           "tests": [
             "tests/test_update.py::test_doctor_reports_archive_release_without_checkout_probe",
             "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
+          ]
+        },
+        "repair": {
+          "argv": [
+            "system",
+            "diagnose",
+            "--repair"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_shell_setup.py::test_repair_dispatch"
           ]
         }
       }

@@ -265,3 +265,11 @@ both fzf 0.44.1 and a pinned current release in CI. Check 80×24, 44×20, and
 32×12 views, long rows, monochrome output, and terminal restoration. Keep test
 HOME/XDG paths and tmux sockets isolated; native macOS UI tests remain opt-in
 for routine local runs.
+
+`t system diagnose` (`t doctor`) is read-only: it reads startup wiring without
+executing the shell rc, does not fetch Git refs, and never opens settings or update
+prompts. `--repair` is a direct action that appends the managed zsh startup block and
+repairs a missing command link, preserving user settings and security choices. It
+prints an executable source command; other findings keep their explicit remedies.
+Successful `t agent install` runs also ensure this wiring, including no-op `-y`
+runs. Status, dry-run, cancellation, and noninteractive plans do not modify it.

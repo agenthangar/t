@@ -389,7 +389,7 @@ def test_install_then_setup_opens_setup_only_when_there_is_something_to_register
     # everything registered → silent, setup never opens
     (home / "local.zsh").write_text('DEV_REPOS[api]="$HOME/code/api"\n')
     assert t_mod._install_then_setup(cfg, args, 0) == 0
-    assert capsys.readouterr().out == "" and len(opened) == 1
+    assert "Already configured zsh integration" in capsys.readouterr().out and len(opened) == 1
 
 
 def test_install_render_empty_when_nothing_to_do(t_mod):

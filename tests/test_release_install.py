@@ -43,7 +43,7 @@ def artifact(version="v1.2.3", changed=None, extra=None):
     changed = changed or {}
     files = {name: (ROOT / name).read_bytes() for name in release.REQUIRED if name != ".t-release-version"}
     # Current installer integrations extend the backwards-compatible release minimum.
-    for name in ('libexec/t_issue.py', 'libexec/t_issue_policy.txt', 'libexec/t_history.py', 'libexec/t_session_details.py'):
+    for name in ('libexec/t_shell_setup.py', 'libexec/t_issue.py', 'libexec/t_issue_policy.txt', 'libexec/t_history.py', 'libexec/t_session_details.py'):
         files[name] = (ROOT / name).read_bytes()
     files[".t-release-version"] = (version + "\n").encode()
     files.update(changed)
@@ -70,7 +70,7 @@ def test_release_installs_without_git_and_preserves_user_settings(sandbox):
     assert not (root / ".git").exists()
     assert len([1 for _, dst in release.OWNED_LINKS if (home / dst).is_symlink()]) == 7
     assert (home / "bin/t").resolve() == root / "bin/t"
-    assert (home / ".zshrc").read_text() == "# mine\n"
+    assert (home / ".zshrc").read_text().startswith("# mine\n# >>> t shell integration >>>")
     assert (home / ".config/t/local.zsh").is_file()
     assert release.install(archive, sums, base, home) == root
 
@@ -217,3 +217,29 @@ def test_main_downloads_selected_version_and_reports_network_error(sandbox, monk
     monkeypatch.setattr(release, "download", unavailable)
     assert release.main(["--install-dir", str(base)]) == 1
     assert "offline" in capsys.readouterr().err
+
+
+def test_packaged_install_loads_function_in_fresh_shell_and_repairs_missing_rc(sandbox):
+    from test_shell_setup import env_for
+    home, base = sandbox
+    root = release.install(*artifact(), base, home)
+    env = env_for(home)
+    for command in ('t doctor', 't system diagnose'):
+        result = subprocess.run(['zsh', '-lic', 'whence -w t; '+command],
+                                env=env, cwd=home, capture_output=True, text=True, timeout=45)
+        assert result.returncode == 0, result.stderr
+        assert 't: function' in result.stdout
+        assert 't / tmux / agent session diagnostics' in result.stdout
+        assert 'Review local settings' not in result.stdout
+    (home / '.zshrc').unlink()
+    before_security = {str(p.relative_to(home)): p.read_bytes() for directory in ('.claude', '.codex')
+                       for p in (home / directory).rglob('*') if p.is_file()}
+    for command in (['doctor', '--repair'], ['system', 'diagnose', '--repair']):
+        result = subprocess.run([str(root / 'bin/t'), *command], env=env, cwd=home,
+                                capture_output=True, text=True, timeout=45)
+        assert result.returncode == 0, result.stderr
+        assert 'source '+str(home / '.zshrc') in result.stdout
+    assert (home / '.zshrc').read_text().count('# >>> t shell integration >>>') == 1
+    after_security = {str(p.relative_to(home)): p.read_bytes() for directory in ('.claude', '.codex')
+                      for p in (home / directory).rglob('*') if p.is_file()}
+    assert after_security == before_security

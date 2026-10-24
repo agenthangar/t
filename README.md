@@ -132,17 +132,26 @@ The installer verifies the release archive's SHA-256 checksum before unpacking i
 Set `XDG_DATA_HOME` or `T_INSTALL_DIR` to choose another installation location.
 You can also download and inspect the installer before running it with Python 3.
 
-Add these lines to **your own `~/.zshrc`**, then open a new terminal:
+The installer appends a marked t startup block to `${ZDOTDIR:-$HOME}/.zshrc`,
+creating the file when needed and preserving existing content. It prints an exact
+`source` command for the current terminal; a new interactive zsh loads t automatically.
+The block follows `~/bin/t`, including development worktrees and Homebrew upgrades.
+Links-only updates do not edit shell startup files.
 
-```zsh
-export PATH="$HOME/bin:$PATH"
-source "${${:-$HOME/bin/t}:A:h:h}/t.plugin.zsh"
+For an older or incomplete installation, run:
+
+```sh
+t doctor                    # read-only diagnostics; no config menu or Git fetch
+t doctor --repair           # repair zsh startup and a missing ~/bin/t link
+# Then run the exact source command printed by repair, or open a new terminal.
 ```
 
-The source expression follows the installed executable, including a development
-worktree selected with `t system update --dev` or a Homebrew upgrade.
-`t system integrate` prints it too. t does not replace your shell configuration,
-tmux settings, SSH config, or global Git defaults.
+`t system diagnose --repair` is the equivalent grouped spelling. Repair is additive
+and repeatable; an edited managed block or a conflicting `~/bin/t` is reported for
+manual review. It does not install agents, log in, change trust/permissions, or reload
+tmux. Other diagnostic findings retain their suggested explicit actions. Startup
+inspection reads the rc file without executing user shell code; after loading it,
+`whence -w t` should report `t: function`.
 
 ```sh
 t agent install            # choose and install agent CLIs; review their vendor commands

@@ -24,13 +24,13 @@ def box(tmp_path):
     return checkout, home
 
 
-def test_clean_install_owns_seven_links_and_prints_shell_snippet(box):
+def test_clean_install_owns_seven_links_and_preserves_shell_content(box):
     checkout, home = box
     (home / ".zshrc").write_text("# my shell\n")
     (home / ".tmux.conf").write_text("# my tmux\n")
     result = run_install(checkout, home)
     assert result.returncode == 0, result.stderr
-    assert 'source "$_t_source"' in result.stdout
+    assert "  source " in result.stdout
     expected = {
         "bin/t": "bin/t",
         "bin/claude-stamp-tmux": "bin/claude-stamp-tmux",
@@ -43,7 +43,7 @@ def test_clean_install_owns_seven_links_and_prints_shell_snippet(box):
     for dst, src in expected.items():
         assert (home / dst).is_symlink()
         assert (home / dst).resolve() == checkout / src
-    assert (home / ".zshrc").read_text() == "# my shell\n"
+    assert (home / ".zshrc").read_text().startswith("# my shell\n# >>> t shell integration >>>")
     assert (home / ".tmux.conf").read_text() == "# my tmux\n"
     assert (home / ".config/t/local.zsh").is_file()
     assert (home / ".claude/settings.json").is_file()

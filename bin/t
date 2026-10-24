@@ -258,7 +258,7 @@ def zsh_capture(snippet, stdin=subprocess.DEVNULL):
         r = subprocess.run(["zsh", "-lic", ZSH_PRELUDE + snippet], stdout=subprocess.PIPE,
                            stderr=subprocess.PIPE, stdin=stdin, start_new_session=True, text=True)
         if r.returncode and re.search(r"command not found: _(?:dev|t)_", r.stderr):
-            print("t: zsh integration is not loaded; source t.plugin.zsh from ~/.zshrc, then open a new shell", file=sys.stderr)
+            print("t: zsh integration is not loaded; run t doctor --repair, then source the reported rc file or open a new interactive zsh", file=sys.stderr)
         elif r.stderr:
             sys.stderr.write(r.stderr)
         return r.stdout
@@ -2366,7 +2366,11 @@ def cmd_config(cfg, args):
     zsh_capture("_t_sync_config")
     print("✓ saved local settings to T_LOCAL_RC")
     if not os.environ.get("T_SETUP_SHIM"):
-        print("run `source ~/.zshrc` (or open a new shell) to use these settings")
+        rc_file, rc_state = _shell_setup_helpers()["state"](HOME, os.environ)
+        if rc_state != "configured":
+            print("run `t doctor --repair`, then source the reported rc file to use these settings")
+        else:
+            print(f"run `source {shlex.quote(str(rc_file))}` (or open a new shell) to use these settings")
     return 0
 
 
@@ -4058,7 +4062,7 @@ _SHELL_BOUND = {"open", "pop", "push", "resume", "beam", "find", "cd", "__resolv
 def cmd_pending(cfg, args):
     print(f"t {args._verb}: this verb runs in the shell via the `t` function, not the "
           f"bin. You reached bin/t directly (e.g. `command t {args._verb}`) — run "
-          f"`t {args._verb} …` in an interactive zsh instead.", file=sys.stderr)
+          "`t doctor --repair`, then source the reported rc file and retry in interactive zsh.", file=sys.stderr)
     return 2
 
 
@@ -5132,7 +5136,9 @@ def _command_readonly(argv, *, terminal=None):
         return "--json" in options or not terminal
     if any(flag in options for flag in ("--dry-run", "--json", "--dump", "--statusline")):
         return True
-    if verb in ("help", "ls", "read", "plan", "doctor", "session-rows"):
+    if verb == "doctor":
+        return "--repair" not in options
+    if verb in ("help", "ls", "read", "plan", "session-rows"):
         return True
     if verb == "issue":
         return bool(tail and tail[0] in ("list", "status"))
@@ -5161,7 +5167,7 @@ def _t_auto_update(argv):
     operation = _canonical_argv(argv)
     # Share may write a receipt while emitting JSON; keep its machine protocol
     # free of update prompts independently of the read-only classifier.
-    if (not operation or operation[0] == "share" or operation[0] not in public or _command_readonly(argv)
+    if (not operation or operation[0] in ("share", "doctor") or operation[0] not in public or _command_readonly(argv)
             or not _t_update_interactive()):
         return None
     installation = _t_update_installation()
@@ -5547,7 +5553,7 @@ def cmd_install(cfg, args):
         lines = _install_render(steps, st)
         if not lines:
             print("nothing to do — every agent is installed and logged in")
-            return 0 if args.dry_run else _install_then_setup(cfg, args, 0, chain=False)
+            return 0 if args.dry_run or not args.yes else _install_then_setup(cfg, args, 0, chain=False)
         if args.dry_run or not args.yes:
             print("would run:" if args.dry_run else "t install would run:")
             for ln in lines:
@@ -5585,6 +5591,10 @@ def _install_then_setup(cfg, args, rc, chain=True):
     setup` right here (its own wizard; q leaves it, and what it registers it also
     trusts). chain=False (-y, no tty) only names the command: -y means no questions.
     Install's rc stands either way — quitting setup is not an install failure."""
+    if rc == 0:
+        rc = _repair_shell_setup()
+        if rc:
+            return rc
     try:
         with open(_current_local_rc(), errors="ignore") as fh:
             local_text = fh.read()
@@ -6994,6 +7004,9 @@ def _doctor_findings(facts):
     effective renderer per _effective_tui).
     """
     out = []
+    if facts.get("shell_setup") not in (None, "configured"):
+        out.append("⚠ zsh startup %s — run t doctor --repair, then source the reported rc file"
+                   % facts["shell_setup"])
     bad = [(d, s) for d, s in facts.get("links", []) if s != "ok"]
     if bad:
         out.append("⚠ %d managed link(s) not in place: %s — run t update --relink"
@@ -7065,17 +7078,47 @@ def _doctor_findings(facts):
     return out
 
 
+def _shell_setup_helpers():
+    return runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_shell_setup.py"))
+
+
+def _repair_shell_setup():
+    # Repair only shell wiring. Never run the full installer here: it also
+    # applies optional trust/policy settings and agent integrations.
+    try:
+        helper = _shell_setup_helpers()
+        binary = os.path.join(HOME, "bin", "t")
+        if not os.path.exists(binary):
+            if os.path.lexists(binary):
+                os.unlink(binary)  # broken installed symlink
+            os.makedirs(os.path.dirname(binary), exist_ok=True)
+            brew = _t_homebrew(_t_source_root())
+            root = brew["opt_libexec"] if brew else _t_source_root()
+            os.symlink(os.path.join(root, "bin", "t"), binary)
+        elif os.path.realpath(binary) != os.path.realpath(__file__):
+            raise ValueError(f"{binary} selects a different t; run that installation's doctor --repair")
+        path, changed = helper["repair"](HOME, os.environ)
+        print(f"{'Configured' if changed else 'Already configured'} zsh integration: {path}")
+        print("Load t in this zsh (or open a new interactive zsh):")
+        print(f"  source {shlex.quote(str(path))}")
+        return 0
+    except (OSError, ValueError, UnicodeError) as error:
+        print(f"t doctor --repair: {error}", file=sys.stderr)
+        return 1
+
+
 def cmd_doctor(cfg, args):
     import json
     import platform
 
+    repair_rc = _repair_shell_setup() if getattr(args, "repair", False) else 0
     st = Style()
 
     def run(cmd, timeout=8):
         """stdout on success (stripped, possibly empty), None on any failure."""
         try:
             r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                               text=True, timeout=timeout)
+                               stdin=subprocess.DEVNULL, text=True, timeout=timeout)
         except (OSError, subprocess.TimeoutExpired):
             return None
         return r.stdout.strip() if r.returncode == 0 else None
@@ -7196,11 +7239,10 @@ def cmd_doctor(cfg, args):
         head = run(["git", "-C", live_src, "log", "-1", "--format=%h %s"]) or "?"
         print("  active commit  %s" % live_src)
         print("                 %s @ %s" % (br, head))
-        fetched = run(["git", "-C", canonical, "fetch", "-q", "origin", "main"]) is not None
         behind = run(["git", "-C", canonical, "rev-list", "--count", "HEAD..origin/main"])
         if behind is not None and behind.isdigit():
             facts["behind"] = int(behind)
-            note = "" if fetched else " (as of last fetch — origin unreachable)"
+            note = " (as of last fetch; diagnostics do not fetch)"
             print("                 vs origin/main: %s%s"
                   % ("up to date" if not facts["behind"] else "behind %d" % facts["behind"], note))
     elif not release:
@@ -7231,6 +7273,13 @@ def cmd_doctor(cfg, args):
                 print("                 %s~/%s: %s%s"
                       % (st.y, os.path.relpath(d, HOME), s, st.r))
     facts["links"] = links
+    shell_rc, shell_state = _shell_setup_helpers()["state"](HOME, os.environ)
+    facts["shell_setup"] = shell_state
+    print(f"  zsh startup    {shell_rc}: {shell_state}")
+    if shell_state != "configured":
+        print("                 run: t doctor --repair")
+    else:
+        print(f"                 load in this shell: source {shlex.quote(str(shell_rc))}")
     if os.path.exists(CONFIG):
         age = int(time.time() - os.path.getmtime(CONFIG))
         print("  config bridge  %s (%dm old)" % (CONFIG.replace(HOME, "~"), age // 60))
@@ -7296,7 +7345,9 @@ def cmd_doctor(cfg, args):
     section("Findings")
     for line in _doctor_findings(facts):
         print("  " + line)
-    return 0
+    if getattr(args, "repair", False):
+        print("  Repair covers zsh startup and its command link. Other findings require the listed actions.")
+    return repair_rc
 
 
 
@@ -10331,8 +10382,9 @@ REMOTE SESSIONS
             "run over ssh -t. Re-running is safe: present entries are never re-offered — "
             "running an installer again is its own OPTIONS row (reinstall <agent>), which "
             "--reinstall pre-marks. A run that changes anything ends by syncing each "
-            "installed agent (hooks and any explicitly selected policy or auto trust), "
-            "and when ~/code holds git repos DEV_REPOS does not "
+            "installed agent (hooks and any explicitly selected policy or auto trust). "
+            "A successful run also configures zsh startup without replacing existing settings. "
+            "When ~/code holds git repos DEV_REPOS does not "
             "know yet, `t config setup` opens next (under -y it is only named).")
     sp.add_argument("agents", nargs="*", metavar="agent",
                     help=f"pre-mark only these ({', '.join(INSTALL_AGENTS)}); default: every missing one")
@@ -10398,7 +10450,7 @@ REMOTE SESSIONS
     sp.add_argument("--status", action="store_true", help="report what is trusted where; write nothing")
     sp.add_argument("-q", "--quiet", action="store_true", help="print only what changed")
 
-    sub.add_parser("doctor", help="diagnose this machine's t, tmux, and agent setup",
+    sp = sub.add_parser("doctor", help="diagnose this machine's t, tmux, and agent setup",
         description="Read-only diagnostics for when the tooling misbehaves: the active t "
             "release or Git checkout (and whether canonical main is behind origin/main), whether every "
             "install.sh-managed link is in place, tmux server options vs ~/.tmux.conf (mouse, "
@@ -10406,6 +10458,8 @@ REMOTE SESSIONS
             "fullscreen TUI — the usual answer to 'the scroll wheel does not scroll the "
             "output'), and tool versions. Ends with findings + suggested fixes. Run it on "
             "another machine with `t hosts run <host> t system diagnose`.")
+    sp.add_argument("--repair", action="store_true",
+                    help="repair zsh startup and its missing command link; preserve settings, trust and permissions")
 
     # Machine-readable / internal: callable, with explicit help, but not advertised.
     sub.add_parser("session-rows", hidden=True, help="machine-readable per-host scan (remote contract)",
