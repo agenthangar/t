@@ -217,9 +217,16 @@ def test_missing_shell_setup_is_a_finding(t_mod):
 def test_plain_doctor_in_terminal_does_not_open_config(tmp_path):
     # Real tty descriptors exercise the reported interactive case; no mocked
     # dispatcher or non-TTY config early exit can hide an accidental menu.
-    env = env_for(tmp_path)
+    home = tmp_path / 'home'
+    home.mkdir()
+    socket_root = tmp_path / 'tmux-runtime'
+    socket_root.mkdir()
+    env = env_for(home)
     env['PATH'] = '/usr/bin:/bin'
-    rc = tmp_path / '.zshrc'
+    # A real tmux client may create tmux-$UID even for read-only list-sessions.
+    # Keep its isolated runtime separate from the HOME/config snapshot.
+    env['TMUX_TMPDIR'] = str(socket_root)
+    rc = home / '.zshrc'
     rc.write_text('print CONFIG_STARTUP_EXECUTED; t config\n')
     master, slave = pty.openpty()
     process = subprocess.Popen([str(ROOT / 'bin/t'), 'doctor'], env=env, cwd=tmp_path,
@@ -248,7 +255,7 @@ def test_plain_doctor_in_terminal_does_not_open_config(tmp_path):
     output = b''.join(chunks).decode(errors='replace')
     assert 'agent session diagnostics' in output and 'Findings' in output
     assert 'Review local settings' not in output and 'CONFIG_STARTUP_EXECUTED' not in output
-    assert list(tmp_path.iterdir()) == [rc]
+    assert list(home.iterdir()) == [rc]
 
 
 @pytest.mark.parametrize('legacy', SHELL['LEGACY'])
