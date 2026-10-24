@@ -895,6 +895,17 @@ The installer adds t's hooks and the sessions MCP server without replacing unrel
 settings. `T_NO_MCP=1` and `T_NO_CODEX_HOOKS=1` opt out. The `claude-stamp-tmux` hook
 keeps its historical executable name and also supports Codex.
 
+Registering the Codex hook does not approve it. After installing or running
+`t config setup ~/code`, finish hook review in the ChatGPT desktop app:
+open **Review hooks** (or hooks in settings), select the **User config** /
+**SessionStart** entry whose command is
+`$HOME/bin/claude-stamp-tmux --agent codex`, and click **Allow selected**.
+In the Codex CLI, use `/hooks` to review and trust that entry. New or changed
+hooks are skipped until approved, so session tracking can be incomplete.
+`t config setup --dry-run ~/code` also prints this guidance when the hook is
+registered; `t system diagnose` provides the same desktop and CLI steps.
+Setup and installation leave hook approval to the app and preserve trust records.
+
 [t's original dotfiles](https://github.com/agenthangar/dotfiles) provide optional
 iCloud transcript sync, clipboard bridging, and personal shell utilities. They are
 not prerequisites. On that installation, `dots --all` updates dotfiles and t, and

@@ -226,6 +226,16 @@ install_codex_hooks() {
     python3 - "$HOME/.codex/hooks.json" '$HOME/bin/claude-stamp-tmux --agent codex' <<'PY'
 import json, os, sys
 path, command = sys.argv[1:]
+
+
+def review_notice(hook_command):
+    print("Codex hook registered; if it needs review, approval is still required.")
+    print("  In the ChatGPT desktop app, open Review hooks (or hooks in settings).")
+    print("  Select the User config / SessionStart hook: " + hook_command)
+    print("  Click Allow selected. In the Codex CLI, use /hooks to review and trust it.")
+    print("  Until approved, the hook is skipped and session tracking can be incomplete.")
+
+
 try:
     with open(path, encoding="utf-8") as file:
         data = json.load(file)
@@ -244,8 +254,10 @@ if not isinstance(groups, list):
 for group in groups:
     if not isinstance(group, dict) or not isinstance(group.get("hooks"), list):
         continue
-    if any(isinstance(hook, dict) and "claude-stamp-tmux" in str(hook.get("command", "")) for hook in group["hooks"]):
-        sys.exit(0)
+    for hook in group["hooks"]:
+        if isinstance(hook, dict) and "claude-stamp-tmux" in str(hook.get("command", "")):
+            review_notice(str(hook["command"]))
+            sys.exit(0)
 groups.append({"hooks": [{"type": "command", "command": command}]})
 os.makedirs(os.path.dirname(path), exist_ok=True)
 tmp = path + ".tmp"
@@ -254,6 +266,7 @@ with open(tmp, "w", encoding="utf-8") as file:
     file.write("\n")
 os.replace(tmp, path)
 print("Registered the SessionStart hook in " + path)
+review_notice(command)
 PY
 }
 
