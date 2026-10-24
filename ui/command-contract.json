@@ -2026,7 +2026,8 @@
       "scope": "local machine",
       "confirmation": "review",
       "tests": [
-        "tests/test_config.py::test_config_menu_save_then_cancel"
+        "tests/test_config.py::test_config_menu_save_then_cancel",
+        "tests/test_config.py::test_config_register_suggests_path_and_alias_and_can_cancel"
       ],
       "modes": {
         "default": {
@@ -2039,7 +2040,8 @@
           ],
           "read_only": false,
           "tests": [
-            "tests/test_config.py::test_config_menu_save_then_cancel"
+            "tests/test_config.py::test_config_menu_save_then_cancel",
+            "tests/test_config.py::test_config_register_suggests_path_and_alias_and_can_cancel"
           ]
         }
       }
@@ -2106,7 +2108,8 @@
       "scope": "local machine",
       "confirmation": "review",
       "tests": [
-        "tests/test_t.py::test_setup_items_full_structure"
+        "tests/test_t.py::test_setup_items_full_structure",
+        "tests/test_repo_add.py::test_setup_defaults_to_config"
       ],
       "modes": {
         "default": {
@@ -2134,7 +2137,8 @@
           "read_only": true,
           "tests": [
             "tests/test_t.py::test_setup_result_unchecked_is_empty",
-            "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
+            "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates",
+            "tests/test_repo_add.py::test_setup_defaults_to_config"
           ]
         }
       }
@@ -2620,6 +2624,63 @@
           "read_only": true,
           "tests": [
             "tests/test_update.py::test_doctor_reports_archive_release_without_checkout_probe",
+            "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
+          ]
+        }
+      }
+    },
+    "repo add": {
+      "patterns": [
+        "action",
+        "detail"
+      ],
+      "renderer": "plain",
+      "scope": "explicit or current local checkout",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_repo_add.py::test_add_existing_checkout_and_repeat"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "repo",
+            "add",
+            "."
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_repo_add.py::test_add_existing_checkout_and_repeat"
+          ]
+        },
+        "current": {
+          "argv": [
+            "repo",
+            "add"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_repo_add.py::test_add_existing_checkout_and_repeat"
+          ]
+        },
+        "dry_run": {
+          "argv": [
+            "repo",
+            "add",
+            ".",
+            "--dry-run"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_repo_add.py::test_add_dry_run_does_not_write",
             "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
           ]
         }

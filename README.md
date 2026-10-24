@@ -146,7 +146,8 @@ tmux settings, SSH config, or global Git defaults.
 
 ```sh
 t agent install            # choose and install agent CLIs; review their vendor commands
-t config setup             # register local repositories and optional SSH hosts
+t repo add ~/config/my-project  # register a checkout you already have
+t config setup             # select checkouts under ~/config and optional SSH hosts
 t session open my-project  # start an isolated worktree + tmux slot
 t session list             # see your running sessions
 ```
@@ -323,6 +324,7 @@ for a host's login shell.
 | `t session view-plan` / `t session paste` | View a Claude session plan or pass an attachment |
 | `t session open-app [push\|pull] [repo] [slot]` | Advanced Codex handoff options for macOS, including preview, plan, and thread selection; `t app` is the short form |
 | `t repo list` / `t repo locate <repo>` / `t repo cd <repo>` | List names and paths, print a checkout path, or enter it in the shell |
+| `t repo add [path] [--alias NAME]` | Register an existing checkout; omit path to use the current checkout |
 | `t repo create` / `t repo clone <github-url> [alias]` | Create a repository or clone and register an existing one |
 | `t cursor list` / `t cursor resume [id]` / `t cursor send [id]` | List, resume, or move Cursor CLI chats |
 | `t hosts run <host> <command>` | Run a command through the host's login zsh |
@@ -756,6 +758,17 @@ These defaults apply to new tmux and foreground sessions. Changing models resets
 an unsupported speed to Standard. Existing `DEV_FAST[codex]=1` settings still mean
 Fast; named `fast` and `ultrafast` values are also supported. Claude keeps its
 Fast mode setting. `t config show` displays the saved speed for each tool.
+
+To register an existing checkout quickly, run `t repo add /path/to/my-project`,
+or run `t repo add` from anywhere inside it. The checkout directory name becomes
+its alias; `--alias NAME` overrides it. Repeating the command reuses the existing
+registration. `--dry-run` previews it. Add changes only local registration; it
+preserves branches, files and remotes and does not clone onto other hosts.
+
+`t config setup` scans `~/config` by default; pass another folder explicitly,
+for example `t config setup ~/code`. In `t config open` → Repositories → Register
+repo, the path starts at `~/config` and the alias is suggested from the checkout.
+Changes in that menu stay pending until you review and save.
 
 To change a repository alias, open `t config open` → Repositories → select the
 repository → Short name, then Save changes. Its tool, branch, and worktree

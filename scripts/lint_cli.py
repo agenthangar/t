@@ -32,7 +32,7 @@ ISSUE_VERBS = {"list", "status", "start", "open"}
 LEGACY_GROUP_VERBS = {
     "session": {"open", "list", "close", "restart", "push", "pop", "resume", "history", "cd",
                 "move", "read", "view-plan", "paste", "search", "open-app"},
-    "repo": {"list", "cd", "locate", "create", "clone"},
+    "repo": {"list", "cd", "locate", "create", "clone", "add"},
     "cursor": {"list", "resume", "send"},
     "hosts": {"list", "show", "add", "edit", "remove", "default", "run"},
     "agentcore": {"invoke", "stop"},
