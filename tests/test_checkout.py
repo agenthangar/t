@@ -1,6 +1,7 @@
 """Local GitHub checkout and registration, using disposable homes and Git repos."""
 
 import argparse
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -407,3 +408,50 @@ def test_setup_rejects_second_repo_with_same_worktree_slot_name(t_mod, box, tmp_
     assert t_mod.cmd_setup(cfg, setup_args) == 1
     assert "worktree slots would collide" in capsys.readouterr().err
     assert local.read_text() == "# private settings stay here\n"
+
+
+@pytest.mark.parametrize("mode", ["apply", "empty", "noop", "dry_run"])
+def test_setup_explains_desktop_hook_review(t_mod, box, monkeypatch, capsys, mode):
+    cfg, home, local = box
+    repo = home / "code" / "repo"
+    git("init", "-q", "-b", "main", repo)
+    cfg.hosts = {}
+    cfg.worktree_root = str(home / "code/.worktrees")
+    codex = home / ".codex"
+    codex.mkdir()
+    hook = codex / "hooks.json"
+    hook.write_text(json.dumps({"hooks": {"SessionStart": [{"hooks": [{
+        "type": "command", "command": "$HOME/bin/claude-stamp-tmux --agent codex"
+    }]}]}}))
+    config = codex / "config.toml"
+    config.write_text('[hooks.state."unrelated"]\ntrusted_hash = "sha256:other"\n')
+    before = (hook.read_bytes(), config.read_bytes(), local.read_bytes())
+    monkeypatch.setattr(t_mod, "_parse_ssh_hosts", lambda path: [])
+    monkeypatch.setattr(t_mod.sys.stdin, "isatty", lambda: mode != "dry_run")
+    monkeypatch.setattr(t_mod.sys.stdout, "isatty", lambda: mode != "dry_run")
+
+    def select(items, taken, trailer):
+        for item in items:
+            if item.get("kind") == "repo" and item.get("t") == "toggle":
+                item["checked"] = mode == "apply"
+        return True
+
+    monkeypatch.setattr(t_mod, "_setup_wizard", select)
+    if mode == "noop":
+        cfg.repos = {"repo": str(repo)}
+        monkeypatch.setattr(t_mod, "_selectable", lambda items: [])
+    setup_args = argparse.Namespace(dirs=[str(home / "code")], dry_run=mode == "dry_run",
+                                    hosts=None, no_hosts=True, instructions=False,
+                                    no_instructions=True)
+    assert t_mod.cmd_setup(cfg, setup_args) == 0
+    output = capsys.readouterr().out
+    assert "ChatGPT desktop app" in output
+    assert "Review hooks" in output and "Allow selected" in output
+    assert "User config / SessionStart" in output and "/hooks" in output
+    assert "claude-stamp-tmux --agent codex" in output
+    assert "Trust all" not in output and "Allow all" not in output
+    assert (hook.read_bytes(), config.read_bytes()) == before[:2]
+    if mode != "apply":
+        assert local.read_bytes() == before[2]
+    else:
+        assert "DEV_REPOS[repo]" in local.read_text()

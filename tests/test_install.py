@@ -266,7 +266,8 @@ def test_install_render_marks_and_host_trailer(t_mod):
     lines = t_mod._install_render(steps, _St())
     assert lines[0] == "= claude already logged in"
     assert lines[1] == "+ brew install --cask codex"
-    assert lines[2].startswith("  ⚠ then start codex")
+    assert lines[2].startswith("  ⚠ review t's hooks prompt")
+    assert "ChatGPT desktop app" in lines[2] and "Allow selected" in lines[2]
     assert lines[3] == "+ codex login"
     assert lines[4].startswith("✗ cursor login: not installed")
     # the hosts get every agent named for install OR login: a login the local box did
@@ -459,9 +460,9 @@ def test_doctor_findings_missing_agent_is_not_a_finding(t_mod):
 
 def test_doctor_findings_codex_hook_states(t_mod):
     out = t_mod._doctor_findings({"codex_hook": "none"})
-    assert any("no t SessionStart hook" in l and "t update --relink" in l for l in out)
+    assert any("no t SessionStart hook" in l and "t system integrate" in l for l in out)
     out = t_mod._doctor_findings({"codex_hook": "registered", "codex_hook_trusted": False})
-    assert any("not trusted yet" in l and "Trust all and continue" in l for l in out)
+    assert any("not trusted yet" in l and "Allow selected" in l for l in out)
     # trusted, or trust unknown (config unreadable) → quiet
     assert t_mod._doctor_findings({"codex_hook": "registered", "codex_hook_trusted": True}) == ["✓ nothing suspicious found"]
     assert t_mod._doctor_findings({"codex_hook": "registered", "codex_hook_trusted": None}) == ["✓ nothing suspicious found"]
@@ -479,3 +480,13 @@ def test_codex_hook_trusted_reads_the_config_record(t_mod, tmp_path):
     # a trust record for some OTHER hook source is not ours
     cfg.write_text('[hooks.state."/repo/.codex/config.toml:pre_tool_use:0:0"]\ntrusted_hash = "sha256:x"\n')
     assert t_mod._codex_hook_trusted(str(cfg)) is False
+
+
+@pytest.mark.parametrize("contents", [None, "invalid JSON", '{}'])
+def test_setup_hook_notice_ignores_absent_or_unregistered_hooks(t_mod, tmp_path, monkeypatch, capsys, contents):
+    monkeypatch.setattr(t_mod, "HOME", str(tmp_path))
+    if contents is not None:
+        (tmp_path / ".codex").mkdir()
+        (tmp_path / ".codex/hooks.json").write_text(contents)
+    t_mod._setup_hook_notice()
+    assert capsys.readouterr().out == ""
