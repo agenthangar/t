@@ -50,12 +50,26 @@ def test_clean_install_owns_seven_links_and_prints_shell_snippet(box):
     assert not (home / ".ssh").exists()
 
 
-def test_links_only_is_idempotent_and_does_not_seed_local_config(box):
+@pytest.mark.parametrize("codex_hooks", [False, True])
+def test_links_only_is_idempotent_and_does_not_seed_local_config(box, codex_hooks):
     checkout, home = box
-    first = run_install(checkout, home, T_LINKS_ONLY="1")
-    second = run_install(checkout, home, T_LINKS_ONLY="1")
+    # Exercise both paths on CI regardless of whether its host has Codex installed.
+    if codex_hooks:
+        (home / ".codex").mkdir()
+        (home / ".codex/config.toml").write_text('model = "gpt-6"\n')
+    options = {"T_LINKS_ONLY": "1", "T_NO_CODEX_HOOKS": "" if codex_hooks else "1"}
+    first = run_install(checkout, home, **options)
+    hooks = home / ".codex/hooks.json"
+    before = hooks.read_bytes() if codex_hooks else None
+    second = run_install(checkout, home, **options)
     assert first.returncode == second.returncode == 0
-    assert second.stdout == ""
+    if codex_hooks:
+        assert "Review hooks" in second.stdout and "Allow selected" in second.stdout
+        assert "Registered the SessionStart hook" not in second.stdout
+        assert hooks.read_bytes() == before
+    else:
+        assert second.stdout == ""
+        assert not hooks.exists()
     assert not (home / ".config/t/local.zsh").exists()
     assert not (home / ".claude/settings.json").exists()
     assert git("config", "--local", "--get", "core.hooksPath", cwd=checkout, check=False).returncode != 0
