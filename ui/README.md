@@ -235,6 +235,14 @@ worktree, association evidence and continuation commands. Multiple real owners
 still require selection. Status/JSON remains read-only, with additive `mentions`,
 `owners` and `association` fields; incidental mentions never become launch blockers.
 
+`t repo add [path] [--alias NAME]` is a direct local registration action. Without
+a path it resolves the current checkout, including from a subdirectory. It never
+opens a picker; `--dry-run` is read-only detail output. Repeated registration is
+a no-op. Linked/session worktrees and conflicting aliases or checkout directory
+names are rejected. The config repository menu asks for a path (default
+`~/config`), suggests its directory name as the alias, and retains review before
+save. `t config setup [dirs ...]` defaults to scanning `~/config`.
+
 ## Changes since the visual baseline
 
 Review these behavior changes when applying the v0.4.2 standard. Later changes

@@ -295,18 +295,22 @@ def test_config_hosts_add_edit_and_default(t_mod, config_cli, monkeypatch):
 
 def test_config_repos_edit_overrides_unregister_and_add(t_mod, config_cli, monkeypatch, tmp_path):
     cfg, local = config_cli
+    import subprocess
+    web = tmp_path / "web"
+    subprocess.run(["git", "init", "-q", str(web)], check=True)
+    monkeypatch.setattr(t_mod, "_new_sh_whence", lambda alias: None)
     cfg.repos = {"api": "/old/api", "retired": "/old/retired"}
     cfg.agents = {"retired": "codex"}
     cfg.branches = {"retired": "main"}
     cfg.worktree = {"retired": "0"}
     ui = Menu(["repos", "api", "tool", "codex", "worktree", "0",
                "branch", "custom", "path", "back", "retired", "remove",
-               "__add__", "__back__", "save"], ["dev/custom", str(tmp_path / "new api"), "web", "/code/web"])
+               "__add__", "__back__", "save"], ["dev/custom", str(tmp_path / "new api"), str(web), "web"])
     monkeypatch.setattr(t_mod, "_RailUI", lambda: ui)
     assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == 0
     text = local.read_text()
     assert "DEV_AGENT[api]=codex" in text and "DEV_WORKTREE[api]=0" in text
-    assert "DEV_BRANCHES[api]=dev/custom" in text and "DEV_REPOS[web]=/code/web" in text
+    assert "DEV_BRANCHES[api]=dev/custom" in text and f"DEV_REPOS[web]={web}" in text
     for key in ("DEV_REPOS", "DEV_AGENT", "DEV_BRANCHES", "DEV_WORKTREE"):
         assert f"unset '{key}[retired]'" in text
 
@@ -321,6 +325,29 @@ def test_config_worktree_defaults_and_beam_clear(t_mod, config_cli, monkeypatch,
     text = local.read_text()
     assert "DEV_WORKTREE_DEFAULT=0" in text and "DEV_BRANCH=dev/shared" in text
     assert "unset TBEAM_HOST" in text
+
+
+def test_config_register_suggests_path_and_alias_and_can_cancel(t_mod, config_cli, monkeypatch, tmp_path):
+    import subprocess
+    cfg, local = config_cli
+    repo = tmp_path / "config" / "scripts"
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    monkeypatch.setattr(t_mod, "HOME", str(tmp_path))
+    monkeypatch.setattr(t_mod, "_new_sh_whence", lambda alias: None)
+    ui = Menu(["__add__", "__back__"], [str(repo), "scripts"])
+    seen = []
+    original = ui.cooked_input
+    def read(prompt, **kwargs):
+        seen.append(kwargs["prefill"])
+        return original(prompt, **kwargs)
+    ui.cooked_input = read
+    t_mod._config_repos(ui, cfg)
+    assert seen == [str(tmp_path / "config"), "scripts"]
+    assert cfg.repos == {"scripts": str(repo)}
+    assert local.read_text() == "# keep me\n"
+    ui = Menu(["__add__", "__add__", "__back__"], ["", str(repo), ""])
+    t_mod._config_repos(ui, cfg)
+    assert cfg.repos == {"scripts": str(repo)}
 
 
 def test_config_repo_short_name_saves_overrides_and_reloads(t_mod, config_cli, monkeypatch):

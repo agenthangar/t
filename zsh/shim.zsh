@@ -49,6 +49,7 @@ t() {
       cd) shell_verb=repos_cd ;;
       create) shell_verb=new ;;
       clone) shell_verb=checkout ;;
+      add) shell_verb=repo_add ;;
     esac
     [[ -n $shell_verb ]] && shell_args=("${@:3}")
   elif [[ $verb == config && -n $action ]]; then
@@ -86,7 +87,7 @@ t() {
   # checks its own commands; prompting here for those would ask twice.
   local check_update=
   case "$shell_verb" in
-    open|pop|push|resume|find|cd|beam|setup|config|host_config|new|checkout|install|integrate)
+    open|pop|push|resume|find|cd|beam|setup|config|host_config|repo_add|new|checkout|install|integrate)
       check_update=1 ;;
     repos_cd) check_update=1 ;;
     repos) [[ ${shell_args[1]} == cd ]] && check_update=1 ;;
@@ -122,10 +123,13 @@ t() {
     repos)
       if [[ ${shell_args[1]} == cd ]]; then
         _t_repos_cd "${shell_args[@]:1}"
+      elif [[ ${shell_args[1]} == add ]]; then
+        _t_install repos "$@"
       else
         command t "$@"
       fi ;;
     repos_cd) _t_repos_cd "${shell_args[@]}" ;;
+    repo_add) _t_install repos "$@" ;;
     beam)   _t_beam_xlate "${shell_args[@]}" ;;     # → _t_beam (host moves from --host to a positional)
     # setup runs in the bin (it only edits ${T_LOCAL_RC}), but on success the
     # SHELL must reload so the new cd aliases, host shorthand functions, and the
@@ -782,7 +786,7 @@ _t() {
   fi
   case $group in
     session) actions=(open list close restart push pop resume history cd move read view-plan paste search open-app) ;;
-    repo) actions=(list cd locate create clone) ;;
+    repo) actions=(list cd locate create clone add) ;;
     cursor) actions=(list resume send) ;;
     agentcore) actions=(invoke stop) ;;
     hosts) actions=(list show add edit remove default run) ;;
@@ -931,6 +935,10 @@ _t() {
       else _files -/; fi ;;   # scan-dir arguments
     config/*)
       _values 'flag' -h --help ;;
+    repo/add)
+      if [[ ${words[CURRENT-1]} == --alias ]]; then _message 'local alias'
+      elif [[ ${words[CURRENT]} == -* ]]; then _values 'flag' --alias --dry-run -h --help
+      else _files -/; fi ;;
     repo/create)
       if (( CURRENT == first )) && [[ ${words[CURRENT]} != -* ]]; then _message 'repo name'
       else _values 'flag' --owner --public --private --alias --hosts --no-hosts -y --yes --dry-run -h --help; fi ;;

@@ -369,7 +369,7 @@ def test_setup_unregistered_is_what_t_setup_would_offer(t_mod, tmp_path):
 def test_install_then_setup_opens_setup_only_when_there_is_something_to_register(t_mod, tmp_path, monkeypatch, capsys):
     import argparse
     home = tmp_path / "home"
-    (home / "code" / "api" / ".git").mkdir(parents=True)
+    (home / "config" / "api" / ".git").mkdir(parents=True)
     monkeypatch.setattr(t_mod, "HOME", str(home))
     # An installed t may cache its real local config in CONFIG. Select the
     # sandbox explicitly so the caller's bridge cannot leak into this test.
@@ -380,14 +380,14 @@ def test_install_then_setup_opens_setup_only_when_there_is_something_to_register
     args = argparse.Namespace(hosts="mini", no_hosts=False)
     # -y / no tty: name the command, ask nothing
     assert t_mod._install_then_setup(cfg, args, 0, chain=False) == 0
-    assert "1 git repo(s) under ~/code not registered yet — run: t setup" in capsys.readouterr().out
+    assert "1 git repo(s) under ~/config not registered yet — run: t setup" in capsys.readouterr().out
     assert opened == []
     # interactive: open it, hand it the same host choice — and install's rc stands
     assert t_mod._install_then_setup(cfg, args, 1) == 1
     assert "opening t setup" in capsys.readouterr().out
     assert len(opened) == 1 and opened[0].hosts == "mini" and opened[0].dirs == [] and not opened[0].dry_run
     # everything registered → silent, setup never opens
-    (home / "local.zsh").write_text('DEV_REPOS[api]="$HOME/code/api"\n')
+    (home / "local.zsh").write_text('DEV_REPOS[api]="$HOME/config/api"\n')
     assert t_mod._install_then_setup(cfg, args, 0) == 0
     assert capsys.readouterr().out == "" and len(opened) == 1
 

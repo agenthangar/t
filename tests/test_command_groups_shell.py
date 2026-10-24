@@ -225,6 +225,23 @@ def test_host_management_reloads_targets_defaults_and_shortcuts(tmp_path):
     assert result.stdout.splitlines()[-1] == "personal-function"
 
 
+def test_repo_add_reloads_checkout_and_shortcut(tmp_path):
+    result = shell(tmp_path, '''
+        mkdir -p "$HOME/config/my-scripts"
+        git -C "$HOME/config/my-scripts" init -q
+        t repo add "$HOME/config/my-scripts" --alias scripts
+        print -r -- "added:$DEV_REPOS[scripts]:${+aliases[scripts]}"
+        t repo cd scripts
+        print -r -- "cwd:$PWD"
+        t repo add
+    ''', bin_text=f"#!/bin/sh\nexec {shlex.quote(sys.executable)} {shlex.quote(str(ROOT / 'bin/t'))} \"$@\"\n")
+    assert result.returncode == 0, result.stderr
+    repo = tmp_path / "home/config/my-scripts"
+    assert f"added:{repo}:1" in result.stdout
+    assert f"cwd:{repo}" in result.stdout
+    assert "Already registered: scripts" in result.stdout
+
+
 @pytest.mark.skipif(not shutil.which("zsh"), reason="zsh is required")
 def test_host_completion_covers_plural_aliases_targets_and_flags(tmp_path):
     result = shell(tmp_path, '''
@@ -301,6 +318,7 @@ def test_shell_dispatch_matches_python_command_registry(tmp_path, t_mod):
         ("config", "open"): "install:config", ("config", "show"): "install:config",
         ("config", "edit"): "install:config", ("config", "setup"): "install:setup",
         ("repo", "create"): "bin", ("repo", "clone"): "install:checkout",
+        ("repo", "add"): "install:repos",
         ("agent", "install"): "install:install",
         ("system", "integrate"): "bin", ("system", "update"): "bin",
     }
@@ -314,7 +332,7 @@ def test_shell_dispatch_matches_python_command_registry(tmp_path, t_mod):
             args = ("sentinel",) if (group, action) in {
                 ("session", "open"), ("session", "resume"), ("session", "cd"),
                 ("session", "move"), ("repo", "cd"), ("repo", "create"),
-                ("repo", "clone"),
+                ("repo", "clone"), ("repo", "add"),
             } else ()
             words = (*prefix, *args)
             commands.append("t " + shlex.join(words))
