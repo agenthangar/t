@@ -2,6 +2,18 @@
 
 `t` is a Python CLI plus a zsh plugin for agent sessions and isolated Git worktrees.
 
+Release versioning is patch-first during pre-1.0 development. Routine fixes,
+polish, installation improvements, and incremental additions increment only
+the patch component. Reserve minor increments for explicitly chosen substantial
+milestones; 1.0 is an explicit stability commitment. Version components are
+unbounded integers: v0.1.9 is followed by v0.1.10, not v0.2.0. Preserve published
+versions and tags; continue from the highest published stable version (the next
+routine release after v0.6.0 is v0.6.1), rather than renumbering history.
+The Releases workflow checks main nightly and publishes a patch only when there
+are unreleased commits and required Linux CI passed for the exact target commit.
+Do not bypass that gate or automatically infer a minor/major bump from commit
+messages. See [the release policy](docs/releases.md) for operation and recovery.
+
 Before changing a public command, read [the command and terminal contract](ui/README.md)
 and [the command inventory](ui/command-contract.json). Classify every new command
 and conditional mode; compatibility aliases inherit the canonical entry. Use

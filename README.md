@@ -839,6 +839,11 @@ Custom rules and existing explicit choices are preserved. `T_NO_TRUST`,
 
 ### Updates and development
 
+Releases follow a [patch-first pre-1.0 policy](docs/releases.md): routine changes
+increment the patch number (`0.1.9` → `0.1.10`), while substantial milestones
+receive an explicitly chosen minor version. Nightly automation publishes a new
+patch when main has unreleased commits and passing Linux CI, then updates Homebrew.
+
 ```sh
 t --version       # installed release, or developer checkout revision
 t system update --check   # check now for a newer release
