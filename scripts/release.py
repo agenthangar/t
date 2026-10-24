@@ -164,12 +164,12 @@ def publish(repo, tag, sha, previous, automatic, directory):
             changes = run("git", "log", "--format=- %s (%h)", f"refs/tags/{previous}..{sha}")
             notes = (f"{marker(sha)}\n\nPatch release from tested main commit `{sha}`.\n\n"
                      f"{changes}\n\nFull changes: https://github.com/{repo}/compare/{previous}...{tag}\n")
-            with tempfile.TemporaryDirectory() as temporary:
-                path = Path(temporary) / "notes.md"
-                path.write_text(notes)
-                run("gh", "release", "create", tag, "--repo", repo, "--draft",
-                    "--target", sha, "--title", f"t {tag}", "--notes-file", str(path))
-            release = next(r for r in releases(repo) if r["tag_name"] == tag)
+            # The list endpoint can lag behind creation. Use the POST response,
+            # which includes the new draft and its asset metadata, directly.
+            release = json.loads(run(
+                "gh", "api", "--method", "POST", f"repos/{repo}/releases",
+                "-f", f"tag_name={tag}", "-f", f"target_commitish={sha}",
+                "-f", f"name=t {tag}", "-f", f"body={notes}", "-F", "draft=true"))
     if not release or release["prerelease"]:
         raise ValueError("Expected a stable release")
     if release["draft"]:
