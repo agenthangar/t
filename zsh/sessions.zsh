@@ -879,7 +879,7 @@ _dev_adopt_fg() {
       echo "warning: foreground owner ($pid) didn't exit; resuming anyway — transcript may interleave." >&2
   fi
   cd "$cwd" || return 1
-  if [[ $agent == codex ]]; then codex resume "$sid" --no-daemon; else claude -r "$sid"; fi
+  eval "$(_dev_agent_resume_cmd "$agent" "$sid")"
 }
 
 # _dev_attach_fg <handle> — ATTACH IN PLACE an fg-row session that actually lives in a
@@ -2543,7 +2543,8 @@ _t_dev() {
     esac
     [[ $agent == codex ]] && model_args+=(--no-daemon)
     _dev_with_launch_locks "$dir" '' _dev_foreground_new "$dir" || return 1
-    "$agent" "${model_args[@]}"   # keep the claude()/codex() wrappers and their t push sentinel
+    local executable; executable=$(_dev_agent_executable "$agent") || return 1
+    "$executable" "${model_args[@]}"   # keep PATH wrappers and their t push sentinel
     return $?
   fi
 

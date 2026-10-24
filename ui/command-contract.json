@@ -670,7 +670,9 @@
         "tests/test_offline_open.py::test_fresh_cli_open_with_offline_host",
         "tests/test_offline_open.py::test_desktop_claim_offline_allows_fresh_or_reserved_local_slot",
         "tests/test_offline_open.py::test_desktop_offline_reopen_retains_local_owner_checks",
-        "tests/test_plugin.py::test_open_app_creates_worktree_without_starting_tmux_or_cli"
+        "tests/test_plugin.py::test_open_app_creates_worktree_without_starting_tmux_or_cli",
+        "tests/test_native_agent_shell.py::test_native_agent_generated_commands_execute_with_quoted_arguments",
+        "tests/test_agent_seam.py::test_zsh_foreground_uses_native_agent_outside_path"
       ],
       "modes": {
         "default": {
@@ -726,7 +728,8 @@
           "full_details": "ctrl-/",
           "search": "full_details"
         }
-      }
+      },
+      "native_agents": "Terminal session launch/resume uses the native ~/.local/bin fallback, preserving PATH and shell wrappers; no global PATH changes."
     },
     "session list": {
       "patterns": [
@@ -947,7 +950,9 @@
       "tests": [
         "tests/test_resume_multiselect.py::test_resume_multi_opens_selected_live_slot_and_revives_dead_slot",
         "tests/test_worktree_labels.py::test_python_and_shell_resolve_same_numeric_identity",
-        "tests/test_agent_seam.py::test_zsh_resume_session_uses_the_agent_resume_line"
+        "tests/test_agent_seam.py::test_zsh_resume_session_uses_the_agent_resume_line",
+        "tests/test_native_agent_shell.py::test_native_agent_generated_commands_execute_with_quoted_arguments",
+        "tests/test_agent_seam.py::test_zsh_foreground_uses_native_agent_outside_path"
       ],
       "modes": {
         "default": {
@@ -1018,7 +1023,8 @@
           ],
           "notes": "Explicit terminal destination; preserves existing saved resume behavior."
         }
-      }
+      },
+      "native_agents": "Terminal session launch/resume uses the native ~/.local/bin fallback, preserving PATH and shell wrappers; no global PATH changes."
     },
     "session history": {
       "patterns": [
@@ -2418,8 +2424,11 @@
           "read_only": false,
           "tests": [
             "tests/test_tui.py::test_install_review_defaults_to_enter",
-            "tests/test_shell_setup.py::test_interactive_install_reviews_shell_repair_when_agents_present"
-          ]
+            "tests/test_shell_setup.py::test_interactive_install_reviews_shell_repair_when_agents_present",
+            "tests/test_agent_executable.py::test_install_walk_executes_detected_native_agent_outside_path",
+            "tests/test_agent_executable.py::test_install_walk_finds_binary_created_after_review"
+          ],
+          "notes": "Resolve native agent executables outside PATH immediately before reviewed login/update steps; unavailable executables fail with a repair hint."
         },
         "dry_run": {
           "argv": [
@@ -2734,9 +2743,10 @@
           "read_only": false,
           "terminal": true,
           "tests": [
-            "tests/test_onboarding_entry.py::test_config_onboard_repeats_discovery_without_new_top_level_command"
+            "tests/test_onboarding_entry.py::test_config_onboard_repeats_discovery_without_new_top_level_command",
+            "tests/test_onboarding_pty.py::test_setup_logs_into_native_agent_outside_path"
           ],
-          "notes": "Select agents, local checkouts, organization repositories and optional hosts; review before integration, cloning, and registration. Optional gh install/login has its own explicit choice."
+          "notes": "Select agents, local checkouts, organization repositories and optional hosts; review before integration, cloning, and registration. Optional gh install/login has its own explicit choice. Resolve native agent executables outside PATH for reviewed login steps; failed steps remain resumable."
         },
         "nonterminal": {
           "argv": [
@@ -3130,8 +3140,10 @@
           ],
           "read_only": false,
           "tests": [
-            "tests/test_onboarding_entry.py::test_bare_terminal_routes_fresh_and_returning_accounts"
-          ]
+            "tests/test_onboarding_entry.py::test_bare_terminal_routes_fresh_and_returning_accounts",
+            "tests/test_onboarding_pty.py::test_setup_logs_into_native_agent_outside_path"
+          ],
+          "notes": "Resolve native agent executables outside PATH for reviewed login steps; failed steps remain resumable."
         },
         "returning": {
           "argv": [],

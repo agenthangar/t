@@ -4302,6 +4302,16 @@ def _install_status_ok(agent, rc, out):
     return bool(re.search(r"logged in|login successful|signed in", text, re.I))
 
 
+def _install_agent_executable(agent):
+    """Resolve the executable the installer and probe support, without changing PATH."""
+    name = _INSTALL_AGENTS[agent]["bin"]
+    exe = shutil.which(name)
+    if exe:
+        return exe
+    exe = os.path.join(HOME, ".local", "bin", name)
+    return exe if os.path.isfile(exe) and os.access(exe, os.X_OK) else None
+
+
 def _install_probe(agents=INSTALL_AGENTS):
     """{agent: {bin, version, logged_in}} for this machine: `--version` and the status
     command per agent, ~0.3s in all. A binary only on the interactive PATH
@@ -4309,8 +4319,8 @@ def _install_probe(agents=INSTALL_AGENTS):
     out = {}
     for a in agents:
         spec = _INSTALL_AGENTS[a]
-        exe = shutil.which(spec["bin"]) or os.path.join(HOME, ".local", "bin", spec["bin"])
-        if not os.path.exists(exe):
+        exe = _install_agent_executable(a)
+        if not exe:
             out[a] = {"bin": None, "path": None, "version": None, "logged_in": None}
             continue
         r = _run([exe, "--version"], timeout=20)
@@ -5453,10 +5463,29 @@ def _install_walk(steps, close=False):
             else:
                 print(f"✓ {s['label']}")
             continue
+        cmd = s["cmd"]
+        if kind in ("login", "update"):
+            # A native installer may just have created ~/.local/bin/<agent>,
+            # without changing this process's PATH. Re-resolve after it runs.
+            exe = _install_agent_executable(agent)
+            if not exe:
+                print(f"{st.b}✗ {s['label']}{st.r} — {_INSTALL_AGENTS[agent]['bin']} "
+                      f"is missing or not executable; run `t agent install {agent}` "
+                      "to repair it, then retry")
+                failed += 1
+                continue
+            cmd = list(cmd)
+            cmd[2 if cmd[0] == "env" else 0] = exe
         if s["interactive"]:
-            rc = subprocess.call(s["cmd"])
+            try:
+                rc = subprocess.call(cmd)
+            except OSError as exc:
+                print(f"{st.b}✗ {s['label']}{st.r} — could not start the agent: {exc}; "
+                      f"check its executable and run `t agent install {agent} --reinstall`, then retry")
+                failed += 1
+                continue
         else:
-            r = _run(s["cmd"], timeout=900)
+            r = _run(cmd, timeout=900)
             rc = r.returncode
             if rc != 0:
                 tail = [ln.strip() for ln in (r.stderr or r.stdout or "").splitlines()
@@ -5468,6 +5497,8 @@ def _install_walk(steps, close=False):
                 skipped_login.add(agent)
             if s["interactive"]:
                 print(f"{st.b}✗ {s['label']}{st.r} (rc {rc})")
+            if kind in ("login", "update") and rc in (126, 127):
+                print(f"  Check the agent executable and run `t agent install {agent} --reinstall`, then retry")
             continue
         print(f"✓ {s['label']}")
         if s.get("warn"):

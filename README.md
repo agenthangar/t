@@ -118,6 +118,9 @@ Homebrew installs the formula without changing your home directory. Run `t` in a
 terminal for guided setup: choose agents, review shell and agent integrations,
 select repositories, and start a session. Missing agent tools are optional installs.
 The review shows the commands and configuration changes before applying them.
+Setup and terminal session launch find native agents in `~/.local/bin` before that
+directory is on your shell's `PATH`. Selected agents are prompted to sign in
+when needed.
 Shell links follow Homebrew's stable `opt` path across upgrades; there is no manual
 shell configuration step before starting your first session.
 

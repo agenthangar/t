@@ -907,7 +907,7 @@ _t_resume() {
   if [[ -n $no_tmux ]]; then
     _dev_with_launch_locks "$cwd" "$sid" _dev_foreground_resume_preflight "$sid" "$cwd" || return 1
     cd "$cwd" || return 1
-    if [[ $agent == codex ]]; then codex resume "$sid" --no-daemon; else claude -r "$sid"; fi
+    eval "$(_dev_agent_resume_cmd "$agent" "$sid")"
     return $?
   fi
 
@@ -1016,7 +1016,7 @@ _t_find() {
     || { echo "Session's directory no longer exists and could not be rebuilt: $cwd" >&2; return 1; }
   cwd=$resolved
   echo "Resuming claude -r ${sid[1,8]}… in $cwd"
-  cd "$cwd" && claude -r "$sid"
+  cd "$cwd" && eval "$(_dev_agent_resume_cmd claude "$sid")"
 }
 
 # _claude_sessions_semantic <query> — fzf-pick a session by what it's ABOUT.
@@ -2099,10 +2099,14 @@ codex()  { _dev_agent_wrap codex "$@" }
 # claude, so the two never disagree about who resumes what.
 _dev_agent_wrap() {
   local agent="$1"; shift
+  local executable; executable=$(_dev_agent_executable "$agent" binary) || {
+    print -u2 -r -- "t: '$agent' is not installed here — run: t agent install $agent"
+    return 127
+  }
   _dev_auto_trust "$PWD"
   local sentinel="${TMPDIR:-/tmp}/claude-tpush-attach.$$"
   rm -f "$sentinel"
-  CLAUDE_TPUSH_ATTACH="$sentinel" command "$agent" "$@"
+  CLAUDE_TPUSH_ATTACH="$sentinel" command "$executable" "$@"
   local rc=$?
   if [[ -s "$sentinel" ]]; then
     local payload="$(<"$sentinel")"
@@ -2380,7 +2384,7 @@ _t_pop() {
       echo "warning: $session's $agent ($cpid) didn't exit; resuming anyway — transcript may interleave." >&2
   fi
   cd "$dir" || return 1
-  if [[ $agent == codex ]]; then codex resume "$sid" --no-daemon; else claude -r "$sid"; fi
+  eval "$(_dev_agent_resume_cmd "$agent" "$sid")"
 }
 
 # _tbeam_sync_transcript <cwd> <host> — copy a session's transcript dir to <host>
@@ -2589,7 +2593,15 @@ _tbeam_land() {
   cd "$land" 2>/dev/null || { echo "tbeam: $land not found on ${HOST:-this host}" >&2; return 1; }
   if [[ "$TB_MODE" == fg ]]; then                # owns this ssh TTY; dies with it
     _dev_with_launch_locks "$land" "$TB_SID" _dev_foreground_resume_preflight "$TB_SID" "$land" || return 1
-    if [[ $agent == codex ]]; then exec codex resume "$TB_SID" --no-daemon; else exec claude -r "$TB_SID"; fi
+    local executable; executable=$(_dev_agent_executable "$agent" binary) || {
+      print -u2 -r -- "t: '$agent' is not installed here — run: t agent install $agent"
+      return 127
+    }
+    if [[ $agent == codex ]]; then
+      exec "$executable" resume "$TB_SID" --no-daemon
+    else
+      exec "$executable" -r "$TB_SID"
+    fi
   fi
   local repo slot session
   read -r repo slot < <(_dev_slot_for_cwd "$land")
