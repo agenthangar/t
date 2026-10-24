@@ -301,7 +301,7 @@ def test_installer_success_without_binary_offers_guidance(onboarding, discovery,
     monkeypatch.setattr(onboarding.subprocess, "run", lambda _: SimpleNamespace(returncode=0))
     dialog = Choices(["install"])
     assert onboarding._organizations(dialog, discovery) == []
-    assert "https://cli.github.com" in dialog.notices[-1]
+    assert dialog.notices[-1] == "Install GitHub CLI from https://cli.github.com, then run t config onboard."
 
 
 def test_plain_dialog_selection_review_and_abort(onboarding, monkeypatch, capsys):
