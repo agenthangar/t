@@ -1,36 +1,85 @@
-name: Release assets
+name: Releases
 on:
+  schedule:
+    # 01:17 Pacific standard time / 02:17 Pacific daylight time.
+    - cron: '17 9 * * *'
   release:
     types: [published]
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing release tag to verify
-        required: true
+        description: Existing stable release to verify (blank publishes the next patch if needed)
+        required: false
         type: string
 permissions:
   contents: read
+concurrency:
+  group: releases
+  cancel-in-progress: false
 jobs:
-  archive:
+  plan:
+    if: github.event_name == 'release' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
+      # GitHub only lists drafts to callers with push access. Planning is read-only.
       contents: write
+      actions: read
+    outputs:
+      tag: ${{ steps.plan.outputs.tag }}
+      sha: ${{ steps.plan.outputs.sha }}
+      previous: ${{ steps.plan.outputs.previous }}
+      automatic: ${{ steps.plan.outputs.automatic }}
+      controller: ${{ steps.plan.outputs.controller }}
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.tag || github.event.release.tag_name }}
+          ref: main
+          fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Build tagged runtime archive
+      - name: Select a tested release commit
+        id: plan
         env:
-          RELEASE_TAG: ${{ inputs.tag || github.event.release.tag_name }}
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_TAG: ${{ inputs.tag || github.event.release.tag_name }}
+        run: |
+          python3 scripts/release.py plan --tag "$REQUESTED_TAG"
+          echo "controller=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+  archive:
+    needs: plan
+    if: needs.plan.outputs.tag != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    env:
+      RELEASE_TAG: ${{ needs.plan.outputs.tag }}
+      RELEASE_SHA: ${{ needs.plan.outputs.sha }}
+      PREVIOUS_TAG: ${{ needs.plan.outputs.previous }}
+      AUTOMATIC_RELEASE: ${{ needs.plan.outputs.automatic }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.plan.outputs.controller }}
+          persist-credentials: false
+      # Keep the controller from main when rebuilding an older release tag.
+      - run: cp scripts/release.py "$RUNNER_TEMP/t-release.py"
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build pinned runtime archive
         run: python3 scripts/build-release.py "$RELEASE_TAG"
       - name: Verify archive installation in an isolated home
         run: |
           python3 - <<'PY'
-          import importlib.util, os, pathlib, tempfile
+          import importlib.util, os, pathlib, subprocess, tempfile
           spec = importlib.util.spec_from_file_location('release_installer', 'scripts/install-release.py')
           installer = importlib.util.module_from_spec(spec)
           spec.loader.exec_module(installer)
@@ -38,44 +87,29 @@ jobs:
               home = pathlib.Path(directory) / 'home'
               home.mkdir()
               os.environ.update(HOME=str(home), XDG_CONFIG_HOME=str(home / '.config'),
+                                XDG_DATA_HOME=str(home / '.local/share'),
+                                XDG_STATE_HOME=str(home / '.local/state'),
+                                XDG_CACHE_HOME=str(home / '.cache'),
                                 T_NO_MCP='1', T_NO_CODEX_HOOKS='1', T_NO_PERMISSIONS='1',
-                                T_NO_TRUST='1', TMUX='')
+                                T_NO_TRUST='1', TMUX='', TMUX_TMPDIR=str(home / 'tmux'))
+              tag = os.environ['RELEASE_TAG']
               root = installer.install(pathlib.Path('dist/t.tar.gz').read_bytes(),
                                        pathlib.Path('dist/SHA256SUMS').read_bytes(),
-                                       home / '.local/share/t', home)
+                                       home / '.local/share/t', home, tag)
               assert (home / 'bin/t').resolve() == root / 'bin/t'
               assert all((home / rel).is_symlink() for _, rel in installer.OWNED_LINKS)
+              assert subprocess.check_output([str(root / 'bin/t'), '--version'], text=True).strip() == 't ' + tag
           PY
-      - name: Verify or upload immutable assets
+      - name: Upload immutable assets and publish prepared drafts
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.tag || github.event.release.tag_name }}
         run: |
-          mkdir -p /tmp/t-published-assets
-          assets="$(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name')"
-          have_archive=0
-          have_checksums=0
-          grep -Fxq t.tar.gz <<< "$assets" && have_archive=1
-          grep -Fxq SHA256SUMS <<< "$assets" && have_checksums=1
-          if [ "$have_archive" != "$have_checksums" ]; then
-            echo "Release has only one of t.tar.gz and SHA256SUMS; refusing an incomplete asset set" >&2
-            exit 1
-          fi
-          if [ "$have_archive" = 0 ]; then
-            gh release upload "$RELEASE_TAG" dist/t.tar.gz dist/SHA256SUMS
-          else
-            gh release download "$RELEASE_TAG" -p t.tar.gz -p SHA256SUMS -D /tmp/t-published-assets
-            (cd /tmp/t-published-assets && sha256sum -c SHA256SUMS)
-            python3 - <<'PY'
-          import gzip
-          from pathlib import Path
-          published = gzip.decompress(Path('/tmp/t-published-assets/t.tar.gz').read_bytes())
-          tagged = gzip.decompress(Path('dist/t.tar.gz').read_bytes())
-          if published != tagged:
-              raise SystemExit('Published archive content differs from the tagged Git tree')
-          PY
-          fi
-
+          args=()
+          if [ "$AUTOMATIC_RELEASE" = true ]; then args+=(--automatic); fi
+          python3 "$RUNNER_TEMP/t-release.py" publish \
+            --tag "$RELEASE_TAG" --sha "$RELEASE_SHA" --previous "$PREVIOUS_TAG" "${args[@]}"
+      # GITHUB_TOKEN-created releases do not trigger another release event.
+      # Dispatch the tap here, for both nightly and manually published releases.
       - name: Get tap dispatch token
         id: tap
         uses: actions/create-github-app-token@v3
