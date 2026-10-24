@@ -79,7 +79,7 @@ class Rail:
     def raw(self):
         pass
     def pick(self, label, rows, **kwargs):
-        assert rows[-1][0] == '__discover__'
+        assert rows[-1][0] == 0
         return self.choice
     def restore(self):
         type(self).restored += 1
@@ -101,14 +101,14 @@ def test_session_entry_reuses_guarded_shell_launcher(t_mod, monkeypatch, tmp_pat
     assert Rail.restored == 1
 
 
-@pytest.mark.parametrize('choice,expected', [(None, 130), ('__discover__', 0)])
+@pytest.mark.parametrize('choice,expected', [(None, 130), (0, 0)])
 def test_session_entry_can_cancel_or_rediscover(t_mod, monkeypatch, choice, expected):
     monkeypatch.setattr(t_mod, '_RailUI', Rail)
     monkeypatch.setattr(Rail, 'choice', choice)
     calls = []
     monkeypatch.setattr(t_mod, '_onboarding', lambda: {'run': lambda c, a, **kw: calls.append(kw) or 0})
     assert t_mod._onboarding_start(SimpleNamespace(repos={})) == expected
-    assert calls == ([{'force': True}] if choice else [])
+    assert calls == ([{'force': True}] if choice == 0 else [])
 
 
 @pytest.mark.parametrize('answer', ['1', 'q', '999', EOFError(), KeyboardInterrupt()])
@@ -136,3 +136,12 @@ def test_session_entry_restores_raw_failure_and_reports_launch_failure(t_mod, mo
     monkeypatch.setattr(t_mod.subprocess, 'run', fail)
     assert t_mod._onboarding_start(SimpleNamespace(repos={'project': str(tmp_path)})) == 1
     assert BrokenRail.restored > 0
+
+
+def test_repository_alias_cannot_collide_with_discovery_action(t_mod, monkeypatch, tmp_path):
+    monkeypatch.setattr(t_mod, '_RailUI', Rail)
+    monkeypatch.setattr(Rail, 'choice', '__discover__')
+    calls = []
+    monkeypatch.setattr(t_mod.subprocess, 'run', lambda argv: calls.append(argv) or SimpleNamespace(returncode=0))
+    assert t_mod._onboarding_start(SimpleNamespace(repos={'__discover__': str(tmp_path)})) == 0
+    assert '_t_open __discover__ --local' in calls[0][2]

@@ -10721,7 +10721,7 @@ def _onboarding_start(cfg, agent=None):
     """Choose a checkout and enter the existing ownership-checked session path."""
     choices = [(alias, alias) for alias, path in sorted(cfg.repos.items())
                if os.path.isdir(path)]
-    choices.append(("__discover__", "Find repositories and hosts…"))
+    choices.append((0, "Find repositories and hosts…"))
     ui = None
     try:
         try:
@@ -10746,7 +10746,7 @@ def _onboarding_start(cfg, agent=None):
             ui.restore()
     if selected is None:
         return 130
-    if selected == "__discover__":
+    if selected == 0:
         return _onboarding()["run"](cfg, globals(), force=True)
     # Source the matching plugin explicitly: a fresh install is usable in this
     # terminal before the parent shell has reloaded its newly configured rc.
