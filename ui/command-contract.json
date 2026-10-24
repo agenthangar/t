@@ -2710,6 +2710,50 @@
           ]
         }
       }
+    },
+    "config onboard": {
+      "patterns": [
+        "wizard",
+        "detail"
+      ],
+      "renderer": "rail",
+      "scope": "local account, selected GitHub organizations, and Tailscale peers",
+      "confirmation": "review",
+      "tests": [
+        "tests/test_onboarding_entry.py::test_config_onboard_repeats_discovery_without_new_top_level_command"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "config",
+            "onboard"
+          ],
+          "patterns": [
+            "wizard"
+          ],
+          "read_only": false,
+          "terminal": true,
+          "tests": [
+            "tests/test_onboarding_entry.py::test_config_onboard_repeats_discovery_without_new_top_level_command"
+          ],
+          "notes": "Select agents, local checkouts, organization repositories and optional hosts; review before integration, cloning, and registration. Optional gh install/login has its own explicit choice."
+        },
+        "nonterminal": {
+          "argv": [
+            "config",
+            "onboard"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_onboarding_entry.py::test_explicit_commands_never_offer_onboarding"
+          ],
+          "notes": "Print terminal requirement and return 1, without discovery or changes."
+        }
+      }
     }
   },
   "display_schemas": {
@@ -3072,6 +3116,48 @@
         "tests/test_agent_seam.py::test_installed_symlink_hook_records_history_without_plugin_environment",
         "tests/test_standalone_install.py::test_install_migrates_standard_hook_names_preserving_options_and_trust"
       ]
+    }
+  },
+  "entrypoints": {
+    "bare_t": {
+      "renderer": "rail",
+      "modes": {
+        "first_run": {
+          "argv": [],
+          "terminal": true,
+          "patterns": [
+            "wizard"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_onboarding_entry.py::test_bare_terminal_routes_fresh_and_returning_accounts"
+          ]
+        },
+        "returning": {
+          "argv": [],
+          "terminal": true,
+          "patterns": [
+            "single",
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_onboarding_entry.py::test_session_entry_reuses_guarded_shell_launcher"
+          ],
+          "notes": "Choose an existing registered checkout or rerun discovery; reuse session ownership checks."
+        },
+        "nonterminal": {
+          "argv": [],
+          "terminal": false,
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_onboarding_entry.py::test_bare_nonterminal_stays_help_without_loading_config"
+          ]
+        }
+      }
     }
   }
 }

@@ -55,7 +55,7 @@ t() {
   elif [[ $verb == config && -n $action ]]; then
     shell_verb=
     case $action in
-      open|show|edit) shell_verb=config; shell_args=("${@:3}") ;;
+      open|show|edit|onboard) shell_verb=config; shell_args=("${@:3}") ;;
       setup) shell_verb=setup; shell_args=("${@:3}") ;;
       -*) shell_verb=config ;;
     esac
@@ -790,7 +790,7 @@ _t() {
     cursor) actions=(list resume send) ;;
     agentcore) actions=(invoke stop) ;;
     hosts) actions=(list show add edit remove default run) ;;
-    config) actions=(open show edit setup) ;;
+    config) actions=(open show edit setup onboard) ;;
     profile) actions=(init edit show apply) ;;
     policy) actions=(check show apply) ;;
     agent) actions=(login install status trust) ;;

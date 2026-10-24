@@ -111,14 +111,36 @@ With Homebrew:
 
 ```sh
 brew install agenthangar/tap/t
-"$(brew --prefix agenthangar/tap/t)/bin/t" system integrate
+t
 ```
 
-Homebrew installs the formula without changing your home directory. `t system integrate`
-explicitly links the command, helper scripts, and agent prompts into your account
-and adds optional agent hooks. The links target Homebrew's stable `opt` path, so
-they keep working when the Cellar version changes. Use the full path above if an
-older `~/bin/t` is already ahead of Homebrew on your PATH.
+Homebrew installs the formula without changing your home directory. Run `t` in a
+terminal for guided setup: choose agents, review shell and agent integrations,
+select repositories, and start a session. Missing agent tools are optional installs.
+The review shows the commands and configuration changes before applying them.
+Shell links follow Homebrew's stable `opt` path across upgrades; there is no manual
+shell configuration step before starting your first session.
+
+Setup discovers primary checkouts under `~/code`, `~/config`, and the current
+directory, skipping session worktrees. It can also offer to install GitHub CLI
+and run `gh auth login`. With GitHub connected, choose organizations and repositories
+to clone. Nothing is selected for cloning by default; destinations are shown as
+`~/code/<organization>-<repository>` to avoid worktree-name collisions. Existing
+matching clones are detected and preserved.
+
+Available Tailscale peers are offered as optional remote hosts. Registration does
+not connect to a host, configure SSH, install t remotely, or grant access; SSH must
+already be available before using a remote host. All setup steps can be skipped
+or canceled. Completed actions remain in place if a later step fails.
+
+Returning users run `t` to choose a work session. Run `t config onboard` (or choose
+**Find repositories and hosts** from the session entry screen) to discover newly
+cloned repositories, connect GitHub, or add hosts later. Discovery runs during
+setup, not in the background. Explicit commands, help, lists, status, and machine
+output never start onboarding. Bare `t` without a terminal prints help.
+
+If an older installation shadows Homebrew, `type -a t` identifies which copy your
+shell is running. `t system integrate` remains available for explicit maintenance.
 
 Or install a versioned release directly:
 
@@ -366,6 +388,7 @@ settings without connecting to it or installing software there.
 | `t login` / `t agent login` | Review and run logins for logged-out or expiring tools; see [login behavior](docs/login.md) |
 | `t agent install` / `t agent status` / `t agent trust <dir>` | Install agents, inspect their status, or trust a folder |
 | `t system integrate` / `t system update` / `t system diagnose` | Link t into this account, update it, or diagnose the installation |
+| `t config onboard` | Repeat guided setup and discover agents, repositories, and hosts |
 | `t help [noun [verb]]` / `t help agents` / `t help aliases` | Read command help, agent support, and compatibility aliases |
 
 The sessions MCP entry point (`t mcp`) is used for registration and tool serving;

@@ -2394,6 +2394,8 @@ def cmd_repos(cfg, args):
 
 
 def cmd_config(cfg, args):
+    if getattr(args, "onboard", False):
+        return _onboarding()["run"](cfg, globals(), force=True)
     if args.show:
         print("\n".join(_config_summary(cfg.agent_default, cfg.models, cfg.agents)))
         for agent in AGENTS:
@@ -5195,7 +5197,9 @@ def _command_readonly(argv, *, terminal=None):
     """
     words = _canonical_argv(argv)
     if not words:
-        return True
+        if terminal is None:
+            terminal = sys.stdin.isatty() and sys.stdout.isatty()
+        return not terminal
     verb, tail = words[0], words[1:]
     if verb == "on":
         return False
@@ -5236,6 +5240,10 @@ def _command_readonly(argv, *, terminal=None):
         return bool(tail and (tail[0] in ("list", "show") or
                             (tail[0] == "default" and len(tail) == 1)))
     if verb in ("config", "instructions"):
+        if verb == "config" and "--onboard" in options:
+            if terminal is None:
+                terminal = sys.stdin.isatty() and sys.stdout.isatty()
+            return not terminal
         return "--show" in options
     if verb == "permissions":
         return "--apply" not in options
@@ -9558,7 +9566,8 @@ COMMAND_GROUPS = {
              "run": ("on",)},
     "agentcore": {"invoke": ("agentcore", "invoke"), "stop": ("agentcore", "stop")},
     "config": {"open": ("config",), "show": ("config", "--show"),
-               "edit": ("config", "--edit"), "setup": ("setup",)},
+               "edit": ("config", "--edit"), "setup": ("setup",),
+               "onboard": ("config", "--onboard")},
     "profile": {"init": ("instructions", "--init"),
                 "edit": ("instructions", "--edit"),
                 "show": ("instructions", "--show"),
@@ -9620,7 +9629,7 @@ def _canonical_error(argv):
         return f"t {group}: unknown action {action!r}; choose from {', '.join(COMMAND_GROUPS[group])}"
     if group == "profile" and action == "apply" and (len(argv) < 3 or argv[2].startswith("-")):
         return "t profile apply: a registered repository is required"
-    mode_flags = {"config": {"--show", "--edit"},
+    mode_flags = {"config": {"--show", "--edit", "--onboard"},
                   "profile": {"--init", "--edit", "--show", "--apply"},
                   "policy": {"--show", "--apply"}}
     if group == "agent" and action in ("install", "status"):
@@ -9635,6 +9644,7 @@ def _canonical_error(argv):
 def _root_help():
     help_text = """USAGE
   t <noun> <verb> [arguments] [flags]
+  t                       Guided setup or open a work session
 
 WORK
   session   Open, find, and move work sessions
@@ -9660,6 +9670,7 @@ FLAGS
   --version      Show version
 
 EXAMPLES
+  t config onboard        Discover agents, repos, and hosts again
   t session open api       Open or reattach an api session
   t session list --remote  List sessions across machines
   t repo list              List registered repositories
@@ -9770,7 +9781,8 @@ def _command_description(group, action):
                  "default": "Show, set, or clear the session move default",
                  "run": "Run a remote command or shell"},
         "config": {"open": "Open the settings menu", "show": "Print current settings",
-                   "edit": "Edit local configuration", "setup": "Register repos and hosts"},
+                   "edit": "Edit local configuration", "setup": "Register repos and hosts",
+                   "onboard": "Guided setup: agents, GitHub repos, and hosts"},
         "profile": {"init": "Create an instruction profile", "edit": "Edit the profile",
                     "show": "Print the profile", "apply": "Apply it to a repository"},
         "policy": {"check": "Check pending changes", "show": "Show translated rules",
@@ -10388,6 +10400,8 @@ REMOTE SESSIONS
     cg = sp.add_mutually_exclusive_group()
     cg.add_argument("--show", action="store_true", help="print current settings without opening the menu")
     cg.add_argument("--edit", action="store_true", help="open T_LOCAL_RC in VISUAL/EDITOR directly")
+    cg.add_argument("--onboard", action="store_true",
+                    help="review guided setup, discover local/GitHub repos and Tailscale hosts; terminal only")
 
     sp = sub.add_parser("setup", help="register local repos and ssh hosts in T_LOCAL_RC",
         description="Interactive onboarding for this machine's per-machine config: a stepped "
@@ -10699,6 +10713,67 @@ def _print_command_help(target, words, canonical, *, detailed=False):
         target.prog = old_prog
 
 
+def _onboarding():
+    return runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_onboarding.py"))
+
+
+def _onboarding_start(cfg, agent=None):
+    """Choose a checkout and enter the existing ownership-checked session path."""
+    choices = [(alias, alias) for alias, path in sorted(cfg.repos.items())
+               if os.path.isdir(path)]
+    choices.append((0, "Find repositories and hosts…"))
+    ui = None
+    try:
+        try:
+            ui = _RailUI()
+            ui.raw()
+        except Exception:
+            if ui is not None:
+                ui.restore()
+            ui = None
+        if ui is not None:
+            selected = ui.pick("Open a work session", choices, values=cfg.repos)
+        else:
+            for index, (_, label) in enumerate(choices, 1):
+                print(f"  {index}. {label}")
+            answer = input("Choose a repository (number, or q to cancel): ").strip()
+            selected = (choices[int(answer) - 1][0]
+                        if answer.isdecimal() and 1 <= int(answer) <= len(choices) else None)
+    except (KeyboardInterrupt, EOFError):
+        selected = None
+    finally:
+        if ui is not None:
+            ui.restore()
+    if selected is None:
+        return 130
+    if selected == 0:
+        return _onboarding()["run"](cfg, globals(), force=True)
+    # Source the matching plugin explicitly: a fresh install is usable in this
+    # terminal before the parent shell has reloaded its newly configured rc.
+    plugin = os.path.join(_t_source_root(), "t.plugin.zsh")
+    args = [selected, "--local"]
+    if agent in AGENTS:
+        args += ["--new", "--" + agent]
+    snippet = (ZSH_PRELUDE + "source " + shlex.quote(plugin) +
+               " && _t_open " + shlex.join(args))
+    try:
+        return subprocess.run(["zsh", "-lic", snippet]).returncode
+    except OSError as error:
+        print(f"t: could not open a session: {error}", file=sys.stderr)
+        return 1
+
+
+def _bare_entry():
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        print(_root_help(), end="")
+        return 0
+    cfg = Config()
+    onboarding = _onboarding()
+    if onboarding["needed"](cfg, globals()):
+        return onboarding["run"](cfg, globals())
+    return _onboarding_start(cfg)
+
+
 def main(argv):
     argv = _hosts_argv(argv)
     if argv == ["__share"]:
@@ -10748,7 +10823,9 @@ def main(argv):
         _app_plan_serve(_app_plan_path(argv[1]))
         return 0
     parser = build_parser()
-    if not argv or argv in (["-h"], ["--help"]):
+    if not argv:
+        return _bare_entry()
+    if argv in (["-h"], ["--help"]):
         print(_root_help(), end="")
         return 0
     if argv and argv[0] == "help":
