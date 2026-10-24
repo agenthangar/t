@@ -7195,9 +7195,13 @@ def cmd_doctor(cfg, args):
 
     def run(cmd, timeout=8):
         """stdout on success (stripped, possibly empty), None on any failure."""
+        # Recent gh versions create a telemetry device ID even for --version.
+        # Keep this diagnostic probe read-only without changing user settings.
+        env = ({**os.environ, "GH_TELEMETRY": "disabled", "GH_NO_UPDATE_NOTIFIER": "1"}
+               if cmd[0] == "gh" else None)
         try:
             r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                               stdin=subprocess.DEVNULL, text=True, timeout=timeout)
+                               stdin=subprocess.DEVNULL, text=True, timeout=timeout, env=env)
         except (OSError, subprocess.TimeoutExpired):
             return None
         return r.stdout.strip() if r.returncode == 0 else None
@@ -10548,7 +10552,8 @@ REMOTE SESSIONS
             "install.sh-managed link is in place, tmux server options vs ~/.tmux.conf (mouse, "
             "focus-events, history-limit), which panes capture the mouse themselves (Claude's "
             "fullscreen TUI — the usual answer to 'the scroll wheel does not scroll the "
-            "output'), and tool versions. Ends with findings + suggested fixes. Run it on "
+            "output'), and tool versions (with GitHub CLI telemetry and update checks disabled). "
+            "Ends with findings + suggested fixes. Run it on "
             "another machine with `t hosts run <host> t system diagnose`.")
     sp.add_argument("--repair", action="store_true",
                     help="repair zsh startup and its missing command link; preserve settings, trust and permissions")

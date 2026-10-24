@@ -2626,6 +2626,7 @@
           "read_only": true,
           "tests": [
             "tests/test_update.py::test_doctor_reports_archive_release_without_checkout_probe",
+            "tests/test_shell_setup.py::test_plain_doctor_in_terminal_does_not_open_config",
             "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
           ]
         },

@@ -142,7 +142,7 @@ Links-only updates do not edit shell startup files.
 For an older or incomplete installation, run:
 
 ```sh
-t doctor                    # read-only diagnostics; no config menu or Git fetch
+t doctor                    # read-only diagnostics; no config menu, Git fetch, or gh telemetry
 t doctor --repair           # repair zsh startup and a missing ~/bin/t link
 # Then run the exact source command printed by repair, or open a new terminal.
 ```

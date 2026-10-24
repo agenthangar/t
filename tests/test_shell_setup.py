@@ -214,7 +214,8 @@ def test_missing_shell_setup_is_a_finding(t_mod):
     assert t_mod._doctor_findings({'shell_setup': 'configured'}) == ['✓ nothing suspicious found']
 
 
-def test_plain_doctor_in_terminal_does_not_open_config(tmp_path):
+@pytest.mark.parametrize('argv', [['doctor'], ['system', 'diagnose']])
+def test_plain_doctor_in_terminal_does_not_open_config(tmp_path, argv):
     # Real tty descriptors exercise the reported interactive case; no mocked
     # dispatcher or non-TTY config early exit can hide an accidental menu.
     home = tmp_path / 'home'
@@ -222,14 +223,31 @@ def test_plain_doctor_in_terminal_does_not_open_config(tmp_path):
     socket_root = tmp_path / 'tmux-runtime'
     socket_root.mkdir()
     env = env_for(home)
-    env['PATH'] = '/usr/bin:/bin'
+    # Exercise a gh version probe with the same startup side effects as recent
+    # GitHub CLI releases, regardless of which tools this machine has installed.
+    tools = tmp_path / 'tools'
+    tools.mkdir()
+    gh = tools / 'gh'
+    gh.write_text("""#!/bin/sh
+if [ "$GH_TELEMETRY" != disabled ] || [ "$GH_NO_UPDATE_NOTIFIER" != 1 ]; then
+    mkdir -p "$XDG_STATE_HOME/gh"
+    printf 'probe state' > "$XDG_STATE_HOME/gh/state"
+fi
+printf 'gh version 2.103.2\\n'
+""")
+    gh.chmod(0o755)
+    env['PATH'] = str(tools) + ':/usr/bin:/bin'
+    env['GH_TELEMETRY'] = 'enabled'  # doctor must override this for its probe
+    env['GH_NO_UPDATE_NOTIFIER'] = '0'
+    # Apple's system Python caches stdlib bytecode under HOME before t starts.
+    env['PYTHONDONTWRITEBYTECODE'] = '1'
     # A real tmux client may create tmux-$UID even for read-only list-sessions.
     # Keep its isolated runtime separate from the HOME/config snapshot.
     env['TMUX_TMPDIR'] = str(socket_root)
     rc = home / '.zshrc'
     rc.write_text('print CONFIG_STARTUP_EXECUTED; t config\n')
     master, slave = pty.openpty()
-    process = subprocess.Popen([str(ROOT / 'bin/t'), 'doctor'], env=env, cwd=tmp_path,
+    process = subprocess.Popen([str(ROOT / 'bin/t'), *argv], env=env, cwd=tmp_path,
                                stdin=slave, stdout=slave, stderr=slave, start_new_session=True)
     os.close(slave)
     chunks = []
@@ -255,7 +273,9 @@ def test_plain_doctor_in_terminal_does_not_open_config(tmp_path):
     output = b''.join(chunks).decode(errors='replace')
     assert 'agent session diagnostics' in output and 'Findings' in output
     assert 'Review local settings' not in output and 'CONFIG_STARTUP_EXECUTED' not in output
+    assert 'gh 2.103.2' in output
     assert list(home.iterdir()) == [rc]
+    assert rc.read_text() == 'print CONFIG_STARTUP_EXECUTED; t config\n'
 
 
 @pytest.mark.parametrize('legacy', SHELL['LEGACY'])

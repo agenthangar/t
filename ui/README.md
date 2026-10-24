@@ -276,7 +276,9 @@ for routine local runs.
 
 `t system diagnose` (`t doctor`) is read-only: it reads startup wiring without
 executing the shell rc, does not fetch Git refs, and never opens settings or update
-prompts. `--repair` is a direct action that appends the managed zsh startup block and
+prompts. Its GitHub CLI version probe disables telemetry and update checks so it
+does not create GitHub CLI state. `--repair` is a direct action that appends the
+managed zsh startup block and
 repairs a missing command link, preserving user settings and security choices. It
 prints an executable source command; other findings keep their explicit remedies.
 Missing shell setup is a preselected row in `t agent install`, including when no
