@@ -271,5 +271,6 @@ executing the shell rc, does not fetch Git refs, and never opens settings or upd
 prompts. `--repair` is a direct action that appends the managed zsh startup block and
 repairs a missing command link, preserving user settings and security choices. It
 prints an executable source command; other findings keep their explicit remedies.
-Successful `t agent install` runs also ensure this wiring, including no-op `-y`
-runs. Status, dry-run, cancellation, and noninteractive plans do not modify it.
+Missing shell setup is a preselected row in `t agent install`, including when no
+agent changes are needed. It appears in the review and `-y` plan; deselection,
+status, dry-run, cancellation, and noninteractive plans do not modify it.

@@ -141,7 +141,7 @@ def test_install_items_no_login_unmarks_logins(t_mod):
     assert any(it.get("kind") == "login" and it["alias"] == "codex" for it in items)
 
 
-@pytest.mark.parametrize('answer,expected,prompts', [('n', 0, 6), (None, 130, 1)])
+@pytest.mark.parametrize('answer,expected,prompts', [('n', 0, 7), (None, 130, 1)])
 def test_plain_install_fallback_distinguishes_empty_selection_from_eof(
         t_mod, monkeypatch, answer, expected, prompts):
     monkeypatch.setattr(t_mod.sys.stdin, 'isatty', lambda: True)
@@ -389,7 +389,7 @@ def test_install_then_setup_opens_setup_only_when_there_is_something_to_register
     # everything registered → silent, setup never opens
     (home / "local.zsh").write_text('DEV_REPOS[api]="$HOME/code/api"\n')
     assert t_mod._install_then_setup(cfg, args, 0) == 0
-    assert "Already configured zsh integration" in capsys.readouterr().out and len(opened) == 1
+    assert capsys.readouterr().out == "" and len(opened) == 1
 
 
 def test_install_render_empty_when_nothing_to_do(t_mod):

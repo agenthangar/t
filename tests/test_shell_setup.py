@@ -1,6 +1,9 @@
 """Fresh-home install/repair and read-only diagnostic regressions for #160."""
 import argparse
 import os
+import pty
+import select
+import time
 from pathlib import Path
 import runpy
 import subprocess
@@ -82,7 +85,10 @@ def test_repair_dispatch(t_mod, monkeypatch, argv):
 
 
 @pytest.mark.parametrize('argv', [['doctor'], ['system', 'diagnose']])
-def test_diagnostics_are_read_only(t_mod, monkeypatch, tmp_path, capsys, argv):
+@pytest.mark.parametrize('terminal', [False, True])
+def test_diagnostics_are_read_only(t_mod, monkeypatch, tmp_path, capsys, argv, terminal):
+    monkeypatch.setattr(t_mod.sys.stdin, 'isatty', lambda: terminal)
+    monkeypatch.setattr(t_mod.sys.stdout, 'isatty', lambda: terminal)
     monkeypatch.setattr(t_mod, 'HOME', str(tmp_path))
     monkeypatch.setattr(t_mod, 'CONFIG', str(tmp_path / 'config'))
     monkeypatch.setenv('ZDOTDIR', str(tmp_path))
@@ -141,7 +147,7 @@ def test_successful_noop_install_repairs_but_plan_and_failure_do_not(t_mod, tmp_
     monkeypatch.setattr(t_mod.sys.stdout, 'isatty', lambda: False)
     cfg = argparse.Namespace(hosts={}, repos={})
     for argv in (['install'], ['install', '--dry-run'], ['install', '--status']):
-        assert t_mod.cmd_install(cfg, t_mod.build_parser().parse_args(argv)) == 0
+        assert t_mod.cmd_install(cfg, t_mod.build_parser().parse_args(argv)) == (1 if argv == ['install'] else 0)
         assert not (tmp_path / '.zshrc').exists()
     assert t_mod._install_then_setup(cfg, argparse.Namespace(), 1, chain=False) == 1
     assert not (tmp_path / '.zshrc').exists()
@@ -206,3 +212,86 @@ def test_missing_shell_setup_is_a_finding(t_mod):
     assert len(findings) == 1 and 't doctor --repair' in findings[0]
     assert 'nothing suspicious' not in findings[0]
     assert t_mod._doctor_findings({'shell_setup': 'configured'}) == ['✓ nothing suspicious found']
+
+
+def test_plain_doctor_in_terminal_does_not_open_config(tmp_path):
+    # Real tty descriptors exercise the reported interactive case; no mocked
+    # dispatcher or non-TTY config early exit can hide an accidental menu.
+    env = env_for(tmp_path)
+    env['PATH'] = '/usr/bin:/bin'
+    rc = tmp_path / '.zshrc'
+    rc.write_text('print CONFIG_STARTUP_EXECUTED; t config\n')
+    master, slave = pty.openpty()
+    process = subprocess.Popen([str(ROOT / 'bin/t'), 'doctor'], env=env, cwd=tmp_path,
+                               stdin=slave, stdout=slave, stderr=slave, start_new_session=True)
+    os.close(slave)
+    chunks = []
+    deadline = time.monotonic() + 30
+    try:
+        while time.monotonic() < deadline:
+            if select.select([master], [], [], 0.1)[0]:
+                try:
+                    chunk = os.read(master, 65536)
+                except OSError:  # Linux reports EIO after the last slave closes.
+                    break
+                if not chunk:
+                    break
+                chunks.append(chunk)
+            elif process.poll() is not None:
+                break
+        assert process.wait(timeout=1) == 0, b''.join(chunks).decode(errors='replace')
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+        os.close(master)
+    output = b''.join(chunks).decode(errors='replace')
+    assert 'agent session diagnostics' in output and 'Findings' in output
+    assert 'Review local settings' not in output and 'CONFIG_STARTUP_EXECUTED' not in output
+    assert list(tmp_path.iterdir()) == [rc]
+
+
+@pytest.mark.parametrize('legacy', SHELL['LEGACY'])
+def test_legacy_setup_preserved_and_loaded_once(tmp_path, legacy):
+    home = tmp_path / 'home'
+    home.mkdir()
+    (home / 'bin').mkdir()
+    (home / 'bin/t').symlink_to(ROOT / 'bin/t')
+    rc = home / '.zshrc'
+    rc.write_text(legacy + '\n')
+    config = home / '.config/t/local.zsh'
+    config.parent.mkdir(parents=True)
+    config.write_text('print loaded >> "$HOME/loads"\n')
+    env = env_for(home)
+    assert SHELL['state'](home, env)[1] == 'configured'
+    assert SHELL['repair'](home, env) == (rc, False)
+    assert rc.read_text() == legacy + '\n'
+    shell = subprocess.run(['zsh', '-lic', 'whence -w t'], env=env, cwd=home,
+                           capture_output=True, text=True, timeout=10)
+    assert shell.returncode == 0 and 't: function' in shell.stdout, shell.stderr
+    assert (home / 'loads').read_text().splitlines() == ['loaded']
+
+
+@pytest.mark.parametrize('confirm', [True, False])
+def test_interactive_install_reviews_shell_repair_when_agents_present(t_mod, tmp_path, monkeypatch, confirm):
+    monkeypatch.setattr(t_mod, 'HOME', str(tmp_path))
+    monkeypatch.setenv('ZDOTDIR', str(tmp_path))
+    monkeypatch.setattr(t_mod, 'CONFIG', str(tmp_path / 'config'))
+    monkeypatch.setattr(t_mod, 'ZSHRC_LOCAL', str(tmp_path / 'local.zsh'))
+    monkeypatch.setattr(t_mod.sys.stdin, 'isatty', lambda: True)
+    monkeypatch.setattr(t_mod.sys.stdout, 'isatty', lambda: True)
+    monkeypatch.setattr(t_mod, '_install_probe', lambda: {
+        a: {'version': '1.2.3', 'logged_in': True, 'bin': a, 'path': a}
+        for a in t_mod.INSTALL_AGENTS})
+    def review(items, plan):
+        shell = next(item for item in items if item.get('kind') == 'shell')
+        assert shell['checked']
+        assert [step['step'] for step in plan()] == ['shell']
+        assert 'preserve existing settings' in plan()[0]['label']
+        return confirm
+    monkeypatch.setattr(t_mod, '_install_wizard', review)
+    monkeypatch.setattr(t_mod, '_install_relink', lambda: pytest.fail('unrequested agent integrations'))
+    cfg = argparse.Namespace(hosts={}, repos={})
+    args = t_mod.build_parser().parse_args(['install', '--no-hosts'])
+    assert t_mod.cmd_install(cfg, args) == (0 if confirm else 130)
+    assert (tmp_path / '.zshrc').exists() == confirm

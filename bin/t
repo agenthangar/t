@@ -4750,6 +4750,8 @@ def _install_result(items):
             sel["update"] = True
         elif it["kind"] == "host":
             sel["hosts"].append(it["alias"])
+        elif it["kind"] == "shell":
+            sel["shell"] = True
     return sel
 
 
@@ -4834,6 +4836,8 @@ def _install_plan(sel, probed, os_name, has_brew, headless, hosts):
                     f"{a} login: not installed and not selected for install")
     if any(s["do"] == "run" for s in steps):
         rec("sync", "run", "refresh t links, hooks, and selected agent integrations")
+    if sel.get("shell"):
+        rec("shell", "run", "configure zsh startup and its command link (preserve existing settings)")
     redo = list(sel.get("reinstall", ()))
     agents = [a for a in INSTALL_AGENTS if a in sel["install"] or a in sel["login"] or a in redo]
     for alias, target in hosts:
@@ -5349,8 +5353,8 @@ def _install_walk(steps, close=False):
             print(f"{st.b}✗ {s['label']}{st.r}")
             failed += s["do"] == "error"
             continue
-        if kind == "sync":
-            rc = _install_relink()
+        if kind in ("sync", "shell"):
+            rc = _install_relink() if kind == "sync" else _repair_shell_setup()
             if rc:
                 failed += 1
                 print(f"{st.b}✗ {s['label']}{st.r} (rc {rc})")
@@ -5541,6 +5545,13 @@ def cmd_install(cfg, args):
     want = args.agents or None
     items = _install_items(probed, want, hosts, update=args.update, no_login=args.no_login,
                            reinstall=args.reinstall)
+    shell_rc, shell_state = _shell_setup_helpers()["state"](HOME, os.environ)
+    binary = os.path.join(HOME, "bin", "t")
+    if shell_state != "configured" or os.path.realpath(binary) != os.path.realpath(__file__):
+        items += [{"t": "spacer", "sec": "shell"},
+                  {"t": "header", "sec": "shell", "label": "SHELL SETUP"},
+                  {"t": "toggle", "sec": "shell", "kind": "shell", "alias": "zsh integration",
+                   "value": f"{shell_rc} · preserve existing settings", "checked": True}]
     os_name = "darwin" if sys.platform == "darwin" else "linux"
     has_brew, headless = bool(shutil.which("brew")), _install_headless(os.environ, args.headless)
 
@@ -5591,10 +5602,6 @@ def _install_then_setup(cfg, args, rc, chain=True):
     setup` right here (its own wizard; q leaves it, and what it registers it also
     trusts). chain=False (-y, no tty) only names the command: -y means no questions.
     Install's rc stands either way — quitting setup is not an install failure."""
-    if rc == 0:
-        rc = _repair_shell_setup()
-        if rc:
-            return rc
     try:
         with open(_current_local_rc(), errors="ignore") as fh:
             local_text = fh.read()

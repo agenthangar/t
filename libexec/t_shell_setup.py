@@ -15,6 +15,22 @@ fi
 # <<< t shell integration <<<
 '''
 
+# Exact startup forms documented before managed blocks were introduced. Do not
+# append another source: local.zsh is arbitrary user code and must run once.
+LEGACY = (
+    'export PATH="$HOME/bin:$PATH"\nsource "${${:-$HOME/bin/t}:A:h:h}/t.plugin.zsh"',
+    '''export PATH="$HOME/bin:$PATH"
+if [[ -L "$HOME/bin/t" ]]; then
+  _t_source="$(dirname "$(dirname "$(readlink "$HOME/bin/t")")")/t.plugin.zsh"
+  [[ -f "$_t_source" ]] && source "$_t_source"
+  unset _t_source
+fi''',
+)
+
+
+def configured(text):
+    return BLOCK in text or any(snippet in text for snippet in LEGACY)
+
 
 def rc_path(home, env):
     return Path(env.get('ZDOTDIR') or home) / '.zshrc'
@@ -28,7 +44,7 @@ def state(home, env):
         return path, 'missing'
     except (OSError, UnicodeError):
         return path, 'unreadable'
-    if BLOCK in text:
+    if configured(text):
         return path, 'configured'
     if BEGIN in text or END in text:
         return path, 'modified managed block'
@@ -51,7 +67,7 @@ def repair(home, env):
         fcntl.flock(file, fcntl.LOCK_EX)
         file.seek(0)
         text = file.read()
-        if BLOCK in text:
+        if configured(text):
             return path, False
         if BEGIN in text or END in text:
             raise ValueError(f'{path}: modified managed block; review it before repairing')

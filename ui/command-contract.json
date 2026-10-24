@@ -2410,7 +2410,8 @@
           ],
           "read_only": false,
           "tests": [
-            "tests/test_tui.py::test_install_review_defaults_to_enter"
+            "tests/test_tui.py::test_install_review_defaults_to_enter",
+            "tests/test_shell_setup.py::test_interactive_install_reviews_shell_repair_when_agents_present"
           ]
         },
         "dry_run": {
