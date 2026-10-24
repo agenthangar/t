@@ -58,4 +58,6 @@ the tap dispatch; no additional credential is required.
   tag invocation above. An unchanged main does not generate a replacement release.
 
 The implementation is in [scripts/release.py](../scripts/release.py). Its planning
-command is read-only; publishing is confined to the workflow's write-permitted job.
+command is read-only; publishing is confined to the archive job. The planner's
+token also needs push access because GitHub only lists drafts to push-capable
+callers, which is necessary to resume an interrupted release.

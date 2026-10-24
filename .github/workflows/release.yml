@@ -21,7 +21,8 @@ jobs:
     if: github.event_name == 'release' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      # GitHub only lists drafts to callers with push access. Planning is read-only.
+      contents: write
       actions: read
     outputs:
       tag: ${{ steps.plan.outputs.tag }}

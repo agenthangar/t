@@ -179,6 +179,8 @@ def publish(repo, tag, sha, previous, automatic, directory):
         raise ValueError("Published tag targets a different commit")
     sync_assets(repo, tag, release, Path(directory))
     if automatic and release["draft"]:
+        if latest_stable(releases(repo))["tag_name"] != previous:
+            raise ValueError("A newer release appeared during upload; refusing to replace latest")
         if (run("git", "ls-remote", "--tags", "origin", f"refs/tags/{tag}")
                 and api(repo, f"commits/{tag}")["sha"] != sha):
             raise ValueError("Release tag moved to a different commit; refusing to publish")

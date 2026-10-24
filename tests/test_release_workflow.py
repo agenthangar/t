@@ -262,6 +262,19 @@ def test_publication_rechecks_ci_and_competing_release(host, artifact):
     assert host["calls"] == []
 
 
+def test_manual_milestone_during_upload_keeps_latest(host, artifact, monkeypatch):
+    original = release.sync_assets
+
+    def sync(*args):
+        original(*args)
+        host["items"].append(record("v0.7.0", host["head"]))
+
+    monkeypatch.setattr(release, "sync_assets", sync)
+    with pytest.raises(ValueError, match="during upload"):
+        publish(host, artifact)
+    assert "edit" not in [c[2] for c in host["calls"]]
+
+
 def test_wrong_checkout_and_minor_bump_cannot_be_published(host, artifact):
     with pytest.raises(ValueError, match="planned release commit"):
         release.publish("test/repo", "v0.6.1", host["base"], "v0.6.0", True, artifact)
