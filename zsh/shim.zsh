@@ -964,7 +964,9 @@ _t() {
       else _files -/; fi ;;
     policy/check|policy/apply)
       _values 'flag' --defaults -h --help ;;
-    policy/show|agent/status|system/integrate|system/diagnose)
+    system/diagnose)
+      _values 'flag' --repair -h --help ;;
+    policy/show|agent/status|system/integrate)
       _values 'flag' -h --help ;;
     system/update)
       _values 'flag' --dev --local --relink --check -h --help ;;

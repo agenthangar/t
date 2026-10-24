@@ -340,6 +340,8 @@ def test_release_update_missing_script_is_actionable(t_mod, tmp_path, monkeypatc
 
 
 def test_doctor_reports_archive_release_without_checkout_probe(t_mod, tmp_path, monkeypatch, capsys):
+    shell_helpers = t_mod._shell_setup_helpers()
+    monkeypatch.setattr(t_mod, "_shell_setup_helpers", lambda: shell_helpers)
     root = _release_tree(tmp_path)
     home = tmp_path / "home"
     home.mkdir()

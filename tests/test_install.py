@@ -141,7 +141,7 @@ def test_install_items_no_login_unmarks_logins(t_mod):
     assert any(it.get("kind") == "login" and it["alias"] == "codex" for it in items)
 
 
-@pytest.mark.parametrize('answer,expected,prompts', [('n', 0, 6), (None, 130, 1)])
+@pytest.mark.parametrize('answer,expected,prompts', [('n', 0, 7), (None, 130, 1)])
 def test_plain_install_fallback_distinguishes_empty_selection_from_eof(
         t_mod, monkeypatch, answer, expected, prompts):
     monkeypatch.setattr(t_mod.sys.stdin, 'isatty', lambda: True)

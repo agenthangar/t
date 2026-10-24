@@ -282,3 +282,14 @@ both fzf 0.44.1 and a pinned current release in CI. Check 80×24, 44×20, and
 32×12 views, long rows, monochrome output, and terminal restoration. Keep test
 HOME/XDG paths and tmux sockets isolated; native macOS UI tests remain opt-in
 for routine local runs.
+
+`t system diagnose` (`t doctor`) is read-only: it reads startup wiring without
+executing the shell rc, does not fetch Git refs, and never opens settings or update
+prompts. Its GitHub CLI version probe disables telemetry and update checks so it
+does not create GitHub CLI state. `--repair` is a direct action that appends the
+managed zsh startup block and
+repairs a missing command link, preserving user settings and security choices. It
+prints an executable source command; other findings keep their explicit remedies.
+Missing shell setup is a preselected row in `t agent install`, including when no
+agent changes are needed. It appears in the review and `-y` plan; deselection,
+status, dry-run, cancellation, and noninteractive plans do not modify it.
