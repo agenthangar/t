@@ -13,7 +13,7 @@ VERSION = re.compile(r"v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\
 EXACT = {
     ".t-install-version", "install.sh", "t.plugin.zsh", "local.zsh.example",
     "LICENSE", "README.md",
-    "bin/t", "bin/claude-stamp-tmux", "bin/cursor-beam",
+    "bin/t", "bin/t-session-start", "bin/claude-stamp-tmux", "bin/cursor-beam",
     "claude/settings.json.example", "claude/commands/tpush.md",
     "claude/commands/tpop.md", "codex/prompts/tpush.md",
     "codex/prompts/tpop.md", "scripts/install-release.py", "ui/fzf.sh",

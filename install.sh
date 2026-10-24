@@ -77,7 +77,7 @@ valid_source() {
     [[ -f "$root/.t-install-version" ]] || return 1
     [[ "$(cat "$root/.t-install-version")" == 1 ]] || return 1
     for asset in install.sh t.plugin.zsh local.zsh.example \
-        claude/settings.json.example bin/t bin/claude-stamp-tmux bin/cursor-beam \
+        claude/settings.json.example bin/t bin/t-session-start bin/claude-stamp-tmux bin/cursor-beam \
         libexec/t_issue.py libexec/t_issue_policy.txt libexec/t_history.py libexec/t_session_details.py \
         libexec/t_share.py libexec/t_share_sessions.py \
         libexec/t_share_context.py libexec/t_share_flow.py libexec/t_share_launch.py libexec/t_share_ui.py zsh/share.zsh \
@@ -122,6 +122,7 @@ link() {
 
 link_all() {
     link "$T_LINK_SRC/bin/t" "$HOME/bin/t"
+    link "$T_LINK_SRC/bin/t-session-start" "$HOME/bin/t-session-start"
     link "$T_LINK_SRC/bin/claude-stamp-tmux" "$HOME/bin/claude-stamp-tmux"
     link "$T_LINK_SRC/bin/cursor-beam" "$HOME/bin/cursor-beam"
     link "$T_LINK_SRC/claude/commands/tpush.md" "$HOME/.claude/commands/tpush.md"
@@ -191,13 +192,23 @@ changed = False
 hooks = data.setdefault("hooks", {})
 if isinstance(hooks, dict):
     groups = hooks.setdefault("SessionStart", [])
-    if isinstance(groups, list) and not any(
-        isinstance(h, dict) and "claude-stamp-tmux" in str(h.get("command", ""))
-        for g in groups if isinstance(g, dict) and isinstance(g.get("hooks"), list)
-        for h in g["hooks"]
-    ):
-        groups.append({"hooks": [{"type": "command", "command": "$HOME/bin/claude-stamp-tmux"}]})
-        changed = True
+    if isinstance(groups, list):
+        found = False
+        for group in groups:
+            if not isinstance(group, dict) or not isinstance(group.get("hooks"), list):
+                continue
+            for hook in group["hooks"]:
+                if not isinstance(hook, dict):
+                    continue
+                command = hook.get("command", "")
+                if command in ("$HOME/bin/claude-stamp-tmux", os.path.expanduser("~/bin/claude-stamp-tmux")):
+                    hook["command"] = "$HOME/bin/t-session-start"
+                    changed = True
+                if any(name in str(hook.get("command", "")) for name in ("t-session-start", "claude-stamp-tmux")):
+                    found = True
+        if not found:
+            groups.append({"hooks": [{"type": "command", "command": "$HOME/bin/t-session-start"}]})
+            changed = True
 if not os.environ.get("T_NO_MCP"):
     permissions = data.setdefault("permissions", {})
     if isinstance(permissions, dict):
@@ -223,7 +234,7 @@ install_codex_hooks() {
     command -v codex >/dev/null 2>&1 || [[ -f "$HOME/.codex/config.toml" || -f "$HOME/.codex/auth.json" ]] || return 0
     # Codex executes hook commands through a shell; keep $HOME literal for portability.
     # shellcheck disable=SC2016
-    python3 - "$HOME/.codex/hooks.json" '$HOME/bin/claude-stamp-tmux --agent codex' <<'PY'
+    python3 - "$HOME/.codex/hooks.json" '$HOME/bin/t-session-start --agent codex' <<'PY'
 import json, os, sys
 path, command = sys.argv[1:]
 
@@ -251,22 +262,33 @@ if not isinstance(hooks, dict):
 groups = hooks.setdefault("SessionStart", [])
 if not isinstance(groups, list):
     sys.exit(0)
+registered = None
+changed = False
 for group in groups:
     if not isinstance(group, dict) or not isinstance(group.get("hooks"), list):
         continue
     for hook in group["hooks"]:
-        if isinstance(hook, dict) and "claude-stamp-tmux" in str(hook.get("command", "")):
-            review_notice(str(hook["command"]))
-            sys.exit(0)
-groups.append({"hooks": [{"type": "command", "command": command}]})
+        if not isinstance(hook, dict):
+            continue
+        if hook.get("command") in ("$HOME/bin/claude-stamp-tmux --agent codex",
+                                    os.path.expanduser("~/bin/claude-stamp-tmux") + " --agent codex"):
+            hook["command"] = command
+            changed = True
+        if any(name in str(hook.get("command", "")) for name in ("t-session-start", "claude-stamp-tmux")):
+            registered = registered or str(hook["command"])
+if registered and not changed:
+    review_notice(registered)
+    sys.exit(0)
+if not registered:
+    groups.append({"hooks": [{"type": "command", "command": command}]})
 os.makedirs(os.path.dirname(path), exist_ok=True)
 tmp = path + ".tmp"
 with open(tmp, "w", encoding="utf-8") as file:
     json.dump(data, file, indent=2)
     file.write("\n")
 os.replace(tmp, path)
-print("Registered the SessionStart hook in " + path)
-review_notice(command)
+print(("Updated" if registered else "Registered") + " the SessionStart hook in " + path)
+review_notice(registered or command)
 PY
 }
 

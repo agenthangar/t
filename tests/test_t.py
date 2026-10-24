@@ -767,7 +767,9 @@ def test_parse_install_links_matches_the_real_install_sh(t_mod):
     root = os.path.dirname(os.path.dirname(os.path.abspath(t_mod.__file__)))
     with open(os.path.join(root, "install.sh")) as f:
         pairs = t_mod._parse_install_links(f.read())
-    assert len(pairs) == 7
+    assert len(pairs) == 8
+    assert ("bin/t-session-start", "$HOME/bin/t-session-start") in pairs
+    assert ("bin/claude-stamp-tmux", "$HOME/bin/claude-stamp-tmux") in pairs
     dsts = [d for _, d in pairs]
     assert "$HOME/bin/t" in dsts
     assert "$HOME/.codex/prompts/tpush.md" in dsts

@@ -24,7 +24,7 @@ def box(tmp_path):
     return checkout, home
 
 
-def test_clean_install_owns_seven_links_and_prints_shell_snippet(box):
+def test_clean_install_owns_eight_links_and_prints_shell_snippet(box):
     checkout, home = box
     (home / ".zshrc").write_text("# my shell\n")
     (home / ".tmux.conf").write_text("# my tmux\n")
@@ -33,6 +33,7 @@ def test_clean_install_owns_seven_links_and_prints_shell_snippet(box):
     assert 'source "$_t_source"' in result.stdout
     expected = {
         "bin/t": "bin/t",
+        "bin/t-session-start": "bin/t-session-start",
         "bin/claude-stamp-tmux": "bin/claude-stamp-tmux",
         "bin/cursor-beam": "bin/cursor-beam",
         ".claude/commands/tpush.md": "claude/commands/tpush.md",
@@ -130,7 +131,8 @@ def test_homebrew_links_use_stable_opt_path_across_cellar_upgrade(tmp_path):
     result = run_install(first, home, T_LINKS_ONLY="1", T_LINK_DEV="1")
     assert result.returncode == 0, result.stderr
     links = {
-        "bin/t": "bin/t", "bin/claude-stamp-tmux": "bin/claude-stamp-tmux",
+        "bin/t": "bin/t", "bin/t-session-start": "bin/t-session-start",
+        "bin/claude-stamp-tmux": "bin/claude-stamp-tmux",
         "bin/cursor-beam": "bin/cursor-beam",
         ".claude/commands/tpush.md": "claude/commands/tpush.md",
         ".claude/commands/tpop.md": "claude/commands/tpop.md",
@@ -179,7 +181,7 @@ def test_existing_claude_settings_are_merged_without_losing_foreign_keys(box):
     data = json.loads(settings.read_text())
     assert data["model"] == "mine"
     assert data["hooks"]["Stop"] == [{"hooks": [{"type": "command", "command": "say done"}]}]
-    assert data["hooks"]["SessionStart"][0]["hooks"][0]["command"] == "$HOME/bin/claude-stamp-tmux"
+    assert data["hooks"]["SessionStart"][0]["hooks"][0]["command"] == "$HOME/bin/t-session-start"
     assert data["permissions"]["allow"] == ["Bash(git status)"]  # MCP opt-out in helper
     before = settings.read_text()
     assert run_install(checkout, home).returncode == 0
@@ -222,3 +224,36 @@ def test_live_main_hook_blocks_canonical_but_allows_worktree(box):
     git("worktree", "add", "-q", "-b", "dev/t-1", str(dev), cwd=checkout)
     allowed = subprocess.run([str(hook)], cwd=dev, env=env, capture_output=True, text=True)
     assert allowed.returncode == 0
+
+
+@pytest.mark.parametrize("absolute", [False, True])
+def test_install_migrates_standard_hook_names_preserving_options_and_trust(box, absolute):
+    checkout, home = box
+    prefix = str(home) if absolute else "$HOME"
+    old = prefix + "/bin/claude-stamp-tmux"
+    config = home / ".codex/config.toml"
+    config.parent.mkdir()
+    config.write_text('[hooks.state."legacy"]\ntrusted_hash = "sha256:unchanged"\n')
+    trust = config.read_bytes()
+    paths = [(home / ".claude/settings.json", ""), (home / ".codex/hooks.json", " --agent codex")]
+    expected = []
+    for path, flags in paths:
+        path.parent.mkdir(exist_ok=True)
+        custom = {"type": "command", "command": "/opt/bin/claude-stamp-tmux" + flags + " --quiet"}
+        hook = {"type": "command", "command": old + flags, "timeout": 12, "statusMessage": "Session tracking"}
+        data = {"description": "keep me", "hooks": {
+            "SessionStart": [{"matcher": "startup|resume", "hooks": [hook, custom]}],
+            "Stop": [{"hooks": [{"type": "command", "command": "other-tool"}]}]}}
+        path.write_text(json.dumps(data))
+        hook["command"] = "$HOME/bin/t-session-start" + flags
+        expected.append(data)
+    result = run_install(checkout, home, T_LINKS_ONLY="1")
+    assert result.returncode == 0, result.stderr
+    assert "Updated the SessionStart hook" in result.stdout
+    for (path, _), data in zip(paths, expected):
+        assert json.loads(path.read_text()) == data
+    assert config.read_bytes() == trust
+    before = [path.read_bytes() for path, _ in paths]
+    assert run_install(checkout, home, T_LINKS_ONLY="1").returncode == 0
+    assert [path.read_bytes() for path, _ in paths] == before
+    assert config.read_bytes() == trust
