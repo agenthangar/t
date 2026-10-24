@@ -34,6 +34,8 @@ def relink(co, home, **extra):
     env = {
         **{key: value for key, value in os.environ.items() if not key.startswith('COV_CORE_')},
         "HOME": str(home),
+        "XDG_CONFIG_HOME": str(home / ".config"),
+        "XDG_DATA_HOME": str(home / ".local" / "share"),
         "T_LINKS_ONLY": "1",
         "T_NO_MCP": "1",
         "T_NO_PERMISSIONS": "1",
@@ -62,6 +64,7 @@ def test_seeds_hooks_json_when_codex_home_exists(box):
     r = relink(co, home)
     assert r.returncode == 0, r.stderr
     assert "Registered the SessionStart hook" in r.stdout
+    assert_review_notice(r.stdout)
     data = hooks_of(home)
     assert data == {"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": HOOK_CMD}]}]}}
 
@@ -73,18 +76,20 @@ def test_no_codex_home_no_hooks_file(box):
     # link_all creates ~/.codex/prompts on every machine; that alone must not seed hooks
     assert (home / ".codex" / "prompts" / "tpush.md").is_symlink()
     assert not (home / ".codex" / "hooks.json").exists()
+    assert "Review hooks" not in r.stdout
     for path in [home / '.codex/AGENTS.md', home / '.claude/CLAUDE.md']:
         assert 'Record its URL before editing code' in path.read_text()
 
 
-def test_second_run_is_a_silent_noop(box):
+def test_second_run_preserves_hooks_and_repeats_review_guidance(box):
     co, home = box
     _codex_home(home)
     relink(co, home)
     before = (home / ".codex" / "hooks.json").read_text()
     r = relink(co, home)
     assert r.returncode == 0
-    assert "SessionStart" not in r.stdout
+    assert "Registered the SessionStart" not in r.stdout
+    assert_review_notice(r.stdout)
     assert (home / ".codex" / "hooks.json").read_text() == before
 
 
@@ -111,7 +116,9 @@ def test_existing_stamp_entry_is_left_alone(box):
                                                     "command": "/opt/bin/claude-stamp-tmux --agent codex --quiet"}]}]}}
     (home / ".codex" / "hooks.json").write_text(json.dumps(mine))
     r = relink(co, home)
-    assert r.returncode == 0 and "SessionStart" not in r.stdout
+    assert r.returncode == 0 and "Registered the SessionStart" not in r.stdout
+    assert_review_notice(r.stdout)
+    assert "/opt/bin/claude-stamp-tmux --agent codex --quiet" in r.stdout
     assert hooks_of(home) == mine
 
 
@@ -127,5 +134,29 @@ def test_invalid_json_is_never_repaired(box):
 def test_opt_out_env(box):
     co, home = box
     _codex_home(home)
-    assert relink(co, home, T_NO_CODEX_HOOKS="1").returncode == 0
+    r = relink(co, home, T_NO_CODEX_HOOKS="1")
+    assert r.returncode == 0
+    assert "Review hooks" not in r.stdout
     assert not (home / ".codex" / "hooks.json").exists()
+
+
+def assert_review_notice(output):
+    assert "ChatGPT desktop app" in output
+    assert "Review hooks" in output and "Allow selected" in output
+    assert "User config / SessionStart" in output
+    assert "claude-stamp-tmux --agent codex" in output
+    assert "/hooks" in output and "Until approved" in output
+    assert "Allow all" not in output
+
+
+def test_install_never_changes_hook_approval_records(box):
+    co, home = box
+    _codex_home(home)
+    config = home / ".codex" / "config.toml"
+    text = 'model = "gpt-6"\n[hooks.state."other"]\ntrusted_hash = "sha256:other"\n'
+    config.write_text(text)
+    for _ in range(2):
+        r = relink(co, home)
+        assert r.returncode == 0, r.stderr
+        assert_review_notice(r.stdout)
+        assert config.read_text() == text

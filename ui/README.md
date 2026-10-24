@@ -242,6 +242,11 @@ a no-op. Linked/session worktrees and conflicting aliases or checkout directory
 names are rejected. The config repository menu asks for a path (default
 `~/config`), suggests its directory name as the alias, and retains review before
 save. `t config setup [dirs ...]` defaults to scanning `~/config`.
+Successful setup (including no-op and dry-run) prints desktop **Review hooks →
+Allow selected** and CLI `/hooks` guidance when t's Codex hook is registered.
+This is informational output within the existing wizard/detail modes: no new
+picker, app launch, or hook trust mutation. Installation repeats the guidance
+for existing registrations; `t system diagnose` stays read-only.
 
 ## Changes since the visual baseline
 

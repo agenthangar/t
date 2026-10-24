@@ -3022,6 +3022,7 @@ def cmd_setup(cfg, args):
             if cands and instruction_mode == "apply":
                 print("→ seed selected repos' AGENTS.md from the configured instruction profile")
         if args.dry_run:
+            _setup_hook_notice()
             return 0
         print("\nt setup is interactive — run it from a terminal (or use --dry-run)",
               file=sys.stderr)
@@ -3038,6 +3039,7 @@ def cmd_setup(cfg, args):
     if not _selectable(items):   # no toggles at all → nothing the screen could do
         print("nothing to offer — every discovered repo and host is already registered")
         print("(add an unlisted host by hand: REMOTE_HOSTS[alias]=user@host in T_LOCAL_RC)")
+        _setup_hook_notice()
         return 0
     all_keys = taken_keys | host_keys
     wizard_ran = True
@@ -3071,6 +3073,7 @@ def cmd_setup(cfg, args):
     if not add_repos and not add_hosts and not tbeam_target:
         if not stale_ok and not wizard_ran:   # the wizard showed "nothing selected"
             print("nothing selected — nothing written")
+        _setup_hook_notice()
         return 0
 
     block = _setup_block(add_repos, add_hosts, tbeam_target, time.strftime("%Y-%m-%d"))
@@ -3093,6 +3096,7 @@ def cmd_setup(cfg, args):
         _hosts_land(cfg, add_repos, args.hosts)
     if not os.environ.get("T_SETUP_SHIM"):
         print("run `source ~/.zshrc` (or open a new shell) to make the new shortcuts live")
+    _setup_hook_notice()
     return 0
 
 
@@ -4160,6 +4164,15 @@ def cmd_pending(cfg, args):
 # are (the cursor-beam keychain precedent). Hosts run the same verb over `ssh -t`
 # with -y, so a device-code login there prompts through the TTY.
 
+_CODEX_HOOK_REVIEW = (
+    "In the ChatGPT desktop app, open Review hooks (or hooks in settings), "
+    "select the User config / SessionStart hook running "
+    "claude-stamp-tmux --agent codex, then click Allow selected. "
+    "In the Codex CLI, use /hooks to review and trust that hook. "
+    "Until approved, the hook is skipped and session tracking can be incomplete."
+)
+
+
 INSTALL_AGENTS = ("claude", "codex", "cursor")
 
 _CURL_CLAUDE = "curl -fsSL https://claude.ai/install.sh | bash"
@@ -4190,8 +4203,7 @@ _INSTALL_AGENTS = {
         "login_headless": ["codex", "login", "--device-auth"],
         "status": ["codex", "login", "status"],
         "update": ["codex", "update"],
-        "note": ("then start codex once and accept its hooks prompt ('Trust all and "
-                 "continue') — t doctor checks"),
+        "note": "review t's hooks prompt after installation. " + _CODEX_HOOK_REVIEW,
     },
     "cursor": {
         "glyph": "◆",
@@ -5785,6 +5797,13 @@ def _codex_hook_state(path):
     return "none"
 
 
+def _setup_hook_notice():
+    """Registration is not approval; the app owns trust for the current definition."""
+    if _codex_hook_state(os.path.join(HOME, ".codex", "hooks.json")) == "registered":
+        print("\nCodex hook registered; if it needs review, approval is still required.")
+        print("  " + _CODEX_HOOK_REVIEW)
+
+
 # ─── doctor — read-only setup diagnostics ─────────────────────────────────────
 # Born from a real debugging session: "scroll wheel doesn't work" turned out to be
 # four stacked facts (stale live checkout, missing ~/.tmux.conf link, tmux server
@@ -7136,11 +7155,9 @@ def _doctor_findings(facts):
             out.append("⚠ %s is installed but not logged in — run t install %s" % (a, a))
     if facts.get("codex_hook") == "none":
         out.append("⚠ codex has no t SessionStart hook in ~/.codex/hooks.json — run "
-                   "t update --relink, then accept it under /hooks in codex")
+                   "t system integrate. " + _CODEX_HOOK_REVIEW)
     elif facts.get("codex_hook") == "registered" and facts.get("codex_hook_trusted") is False:
-        out.append("· the codex hook is registered but not trusted yet — start codex once and "
-                   "pick 'Trust all and continue' at its hooks prompt (until then a codex slot "
-                   "has no id: t ls cannot title it and t pop/push cannot target it)")
+        out.append("· the codex hook is registered but not trusted yet. " + _CODEX_HOOK_REVIEW)
     pend = [(a, r) for a, r in sorted((facts.get("perm_sync") or {}).items())
             if r.get("state") == "pending"]
     if pend:
@@ -7268,9 +7285,11 @@ def cmd_doctor(cfg, args):
         codex_trusted = _codex_hook_trusted(os.path.join(HOME, ".codex", "config.toml"))
         print("  codex hook %s" % {"registered": "registered in ~/.codex/hooks.json · %s"
                                    % ("trusted" if codex_trusted else
-                                      "NOT trusted yet — start codex once and accept its hooks prompt"),
-                                   "none": "NOT registered — run t update --relink",
+                                      "approval not confirmed"),
+                                   "none": "NOT registered — run t system integrate",
                                    None: "~/.codex/hooks.json unreadable"}[codex_hook])
+        if codex_hook == "registered":
+            print("  " + _CODEX_HOOK_REVIEW)
     # the tracked allow list vs each agent's own config — the same report `t permissions` prints
     perm_sync = None
     try:
@@ -10381,7 +10400,10 @@ REMOTE SESSIONS
             "re-running is safe — registered entries are never re-offered). Also offers to "
             "comment out registered repos whose path no longer exists (the fresh-install "
             "placeholders) and to set TBEAM_HOST. Run it from the shell — the t() shim reloads "
-            "your config afterward so the new cd shortcuts and host shorthands go live.")
+            "your config afterward so the new cd shortcuts and host shorthands go live. "
+            "When t's Codex hook is registered, also shows how to approve it in the "
+            "ChatGPT desktop app (Review hooks → Allow selected) or Codex CLI (/hooks). "
+            "Setup does not grant hook approval.")
     sp.add_argument("dirs", nargs="*", help="directories to scan for git repos (default: ~/config)")
     sp.add_argument("--dry-run", action="store_true",
                     help="print what would be offered/appended, change nothing")

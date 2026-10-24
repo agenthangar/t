@@ -2109,7 +2109,8 @@
       "confirmation": "review",
       "tests": [
         "tests/test_t.py::test_setup_items_full_structure",
-        "tests/test_repo_add.py::test_setup_defaults_to_config"
+        "tests/test_repo_add.py::test_setup_defaults_to_config",
+        "tests/test_checkout.py::test_setup_explains_desktop_hook_review"
       ],
       "modes": {
         "default": {
@@ -2141,7 +2142,8 @@
             "tests/test_repo_add.py::test_setup_defaults_to_config"
           ]
         }
-      }
+      },
+      "hook_review": "Explain ChatGPT desktop Review hooks / Allow selected and Codex CLI /hooks; never grant hook trust."
     },
     "profile init": {
       "patterns": [
@@ -2401,7 +2403,8 @@
       "scope": "local installed agents and optional hosts",
       "confirmation": "enter",
       "tests": [
-        "tests/test_install.py::test_install_plan_full_matrix"
+        "tests/test_install.py::test_install_plan_full_matrix",
+        "tests/test_install_codex_hooks.py::test_install_never_changes_hook_approval_records"
       ],
       "modes": {
         "default": {
@@ -2433,7 +2436,8 @@
             "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
           ]
         }
-      }
+      },
+      "hook_review": "Explain ChatGPT desktop Review hooks / Allow selected and Codex CLI /hooks; never grant hook trust."
     },
     "agent status": {
       "patterns": [
@@ -2543,7 +2547,8 @@
       "scope": "local installation",
       "confirmation": "when_interrupting",
       "tests": [
-        "tests/test_update.py::test_integrate_runs_full_release_installer"
+        "tests/test_update.py::test_integrate_runs_full_release_installer",
+        "tests/test_install_codex_hooks.py::test_install_never_changes_hook_approval_records"
       ],
       "modes": {
         "default": {
@@ -2559,7 +2564,8 @@
             "tests/test_update.py::test_integrate_runs_full_release_installer"
           ]
         }
-      }
+      },
+      "hook_review": "Explain ChatGPT desktop Review hooks / Allow selected and Codex CLI /hooks; never grant hook trust."
     },
     "system update": {
       "patterns": [
@@ -2612,7 +2618,8 @@
       "scope": "local installation",
       "confirmation": "none",
       "tests": [
-        "tests/test_update.py::test_doctor_reports_archive_release_without_checkout_probe"
+        "tests/test_update.py::test_doctor_reports_archive_release_without_checkout_probe",
+        "tests/test_install.py::test_doctor_findings_codex_hook_states"
       ],
       "modes": {
         "default": {
@@ -2644,7 +2651,8 @@
             "tests/test_shell_setup.py::test_repair_dispatch"
           ]
         }
-      }
+      },
+      "hook_review": "Explain ChatGPT desktop Review hooks / Allow selected and Codex CLI /hooks; never grant hook trust."
     },
     "repo add": {
       "patterns": [
