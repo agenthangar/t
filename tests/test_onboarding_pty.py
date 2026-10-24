@@ -136,3 +136,51 @@ raise SystemExit(t.main([]))
     else:
         assert result == 130, output
         assert sorted(p.name for p in home.iterdir()) == ['code']
+
+
+@pytest.mark.parametrize('size', [(80, 24), (32, 12)])
+def test_setup_logs_into_native_agent_outside_path(tmp_path, size):
+    home, env = sandbox(tmp_path)
+    # The native installer uses this location even before the user's next shell
+    # has loaded its PATH changes. Exercise real probing and interactive login.
+    env['PATH'] = '/usr/bin:/bin'
+    agent = home / '.local/bin/claude'
+    agent.parent.mkdir(parents=True)
+    agent.write_text('''#!/bin/sh
+case "$*" in
+  --version) printf '1.0.0\\n' ;;
+  'auth status') printf '{"loggedIn":false}\\n'; exit 1 ;;
+  'auth login')
+    printf 'Test sign-in: '
+    read -r answer
+    [ "$answer" = continue ] || exit 1
+    printf '%s\\n' "$0" > "$HOME/login-executable"
+    ;;
+  *) exit 2 ;;
+esac
+''')
+    agent.chmod(0o755)
+    harness = tmp_path / 'entry.py'
+    harness.write_text('''import importlib.machinery, importlib.util, sys
+loader = importlib.machinery.SourceFileLoader('entry', sys.argv[1])
+spec = importlib.util.spec_from_loader('entry', loader)
+t = importlib.util.module_from_spec(spec)
+loader.exec_module(t)
+t.cmd_integrate = lambda *args: 0
+helper = t._onboarding()
+discovery = {
+ 'discover_local': lambda *args: [],
+ 'github_auth_state': lambda: 'authenticated', 'github_orgs': lambda: ([], []),
+ 'tailscale_hosts': lambda: ([], [])}
+helper['run'].__globals__['_discovery'] = lambda api: discovery
+t._onboarding = lambda: helper
+raise SystemExit(t.main([]))
+''')
+    actions = [('Welcome to t', b'\r'), ('Choose agents', b'\r'),
+               ('Review setup', b'y'), ('Test sign-in:', b'continue\r')]
+    result, output = run_terminal([sys.executable, str(harness), str(ROOT / 'bin/t')],
+                                  env, tmp_path, size, actions)
+    assert result == 0, output
+    assert 'Setup complete' in output
+    assert (home / 'login-executable').read_text().strip() == str(agent)
+    assert json.loads((home / '.config/t/onboarding.json').read_text())['version'] == 1

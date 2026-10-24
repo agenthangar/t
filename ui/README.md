@@ -61,6 +61,11 @@ Bare nonterminal `t` prints help without loading configuration or doing discover
 nonterminal `t config onboard` prints the terminal requirement and returns 1.
 Explicit commands never trigger onboarding. These modes are recorded in the
 inventory's `entrypoints.bare_t` and `commands.config onboard` entries.
+Agent login and update steps resolve the executable again when they run, including
+native installations in `~/.local/bin`. Missing executables report a step failure
+and leave setup resumable; they never bypass the reviewed installation choices.
+Terminal session launch and resume use the native-directory fallback while preserving
+PATH and shell-wrapper precedence, argument quoting, and ownership checks.
 
 Config quitting with pending edits offers Keep editing (default), Review and
 save, and Discard changes and exit. Review screens keep their primary action

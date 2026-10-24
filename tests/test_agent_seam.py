@@ -742,6 +742,67 @@ def test_zsh_foreground_uses_the_selected_tools_model_and_effort(zsh, agent):
     assert r.stdout.endswith(f"ARG\n--model\nmodel[1m]\n{effort_args}\n"), r.stdout
 
 
+@pytest.mark.parametrize("agent", ["claude", "codex"])
+@pytest.mark.parametrize("resume", [False, True])
+def test_zsh_foreground_uses_native_agent_outside_path(zsh, tmp_path, agent, resume):
+    checkout = zsh.home / "code/web"
+    checkout.mkdir(parents=True)
+    native = zsh.home / ".local/bin" / agent
+    native.parent.mkdir(parents=True)
+    native.write_text('#!/bin/sh\nprintf "NATIVE\\n%s\\n" "$0"; printf "<%s>\\n" "$@"\n')
+    native.chmod(0o755)
+    command = ("_t_pop web 3" if resume else
+               f"DEV_AGENT_DEFAULT={agent}; DEV_WORKTREE[web]=0; "
+               "_dev_repo_prepare() { :; }; _t_dev web new --fg")
+    result = zsh(command, PATH=f"{tmp_path / 'stubbin'}:/usr/bin:/bin",
+                 LANG="en_US.UTF-8",
+                 FAKE_HAS_SESSION="1" if resume else "", FAKE_DEV_AGENT=agent,
+                 FAKE_RESUME_ID="saved-id", FAKE_SESSION_PATH=str(checkout))
+    assert result.returncode == 0, result.stderr
+    expected = ["NATIVE", str(native)]
+    if resume:
+        expected += ["<resume>", "<saved-id>"] if agent == "codex" else ["<-r>", "<saved-id>"]
+    elif agent == "claude":
+        expected += ["<>"]
+    if agent == "codex":
+        expected += ["<--no-daemon>"]
+    assert result.stdout.splitlines()[-len(expected):] == expected, result.stdout
+
+
+@pytest.mark.parametrize("agent", ["claude", "codex"])
+@pytest.mark.parametrize("allow", [False, True])
+def test_zsh_foreground_landing_execs_native_agent_after_ownership_check(zsh, tmp_path, agent, allow):
+    checkout = zsh.home / "code/checkout with spaces"
+    checkout.mkdir(parents=True)
+    native = zsh.home / ".local/bin" / agent
+    native.parent.mkdir(parents=True)
+    native.write_text('#!/bin/sh\nprintf "NATIVE\\n%s\\n" "$0"; printf "<%s>\\n" "$@"\n')
+    native.chmod(0o755)
+    code = '''
+      _dev_beam_land_cwd() { print -r -- "$1"; }
+      _dev_worktree_beam_sync() { :; }
+      _dev_with_launch_locks() { shift 2; "$@"; }
+      _dev_foreground_resume_preflight() { print OWNERSHIP-CHECK; return ''' + ("0" if allow else "1") + '''; }
+      _tbeam_land
+      print -r -- "AFTER:$?"
+    '''
+    result = zsh(code, PATH=f"{tmp_path / 'stubbin'}:/usr/bin:/bin", LANG="en_US.UTF-8",
+                 TB_CWD=str(checkout), TB_SID="saved id; $(touch unexpected)",
+                 TB_MODE="fg", TB_AGENT=agent)
+    assert result.returncode == 0, result.stderr
+    expected = ["OWNERSHIP-CHECK"]
+    if allow:
+        expected += ["NATIVE", str(native)]
+        expected += ["<resume>"] if agent == "codex" else ["<-r>"]
+        expected += ["<saved id; $(touch unexpected)>"]
+        if agent == "codex":
+            expected += ["<--no-daemon>"]
+    else:
+        expected += ["AFTER:1"]
+    assert result.stdout.splitlines() == expected
+    assert not (checkout / "unexpected").exists()
+
+
 def test_zsh_model_shell_quoting_and_config_bridge(zsh):
     model = 'model; touch "$HOME/should-not-exist"'
     # Direct manual config edits bypass the menu's ID validation. Quote those too.

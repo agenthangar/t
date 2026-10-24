@@ -71,9 +71,23 @@ _dev_agent_of_session() {
   _dev_agent_valid "$a" || a=claude
   print -r -- "$a"
 }
+# Keep shell functions and PATH-selected binaries ahead of native installations.
+# Native installers can finish before a new shell adds ~/.local/bin to PATH.
+_dev_agent_executable() {
+  local executable
+  if [[ $2 == binary ]]; then
+    executable=$(whence -p "$1") && { print -r -- "$executable"; return 0; }
+  else
+    command -v "$1" >/dev/null 2>&1 && { print -r -- "$1"; return 0; }
+  fi
+  _dev_agent_valid "$1" || return 1
+  executable="$HOME/.local/bin/$1"
+  [[ -f $executable && -x $executable ]] || return 1
+  print -r -- "$executable"
+}
 # _dev_agent_check <agent> — the binary is here, or say how to get it.
 _dev_agent_check() {
-  command -v "$1" >/dev/null 2>&1 && return 0
+  _dev_agent_executable "$1" >/dev/null && return 0
   print -u2 -r -- "t: '$1' is not installed here — run: t agent install $1"
   return 1
 }
@@ -83,7 +97,8 @@ _dev_agent_check() {
 _dev_agent_new_cmd() {
   local agent="$1" model="${DEV_MODEL[$1]:-}"
   local effort="${DEV_EFFORT[$1]:-}"
-  local -a launch_args=("$agent")
+  local executable; executable=$(_dev_agent_executable "$agent") || executable=$agent
+  local -a launch_args=("$executable")
   [[ $agent == claude && -n $2 ]] && launch_args+=(--session-id "$2")
   [[ -n $model ]] && launch_args+=(--model "$model")
   if [[ -n $effort ]]; then
@@ -111,10 +126,12 @@ _dev_agent_new_cmd() {
 # _dev_agent_resume_cmd <agent> <sid> — the pane command that resumes conversation <sid>.
 _dev_agent_resume_cmd() {
   local agent=$1 sid=$2; shift 2
+  [[ $agent == codex ]] || agent=claude
+  local executable; executable=$(_dev_agent_executable "$agent") || executable=$agent
   local -a args
   case "$agent" in
-    codex) args=(codex resume "$sid" "$@" --no-daemon) ;;
-    *) args=(claude -r "$sid" "$@") ;;
+    codex) args=("$executable" resume "$sid" "$@" --no-daemon) ;;
+    *) args=("$executable" -r "$sid" "$@") ;;
   esac
   print -r -- "${(j: :)${(@q)args}}"
 }
