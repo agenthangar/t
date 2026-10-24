@@ -4,6 +4,7 @@ import copy
 import gzip
 import hashlib
 import importlib.util
+import json
 from pathlib import Path
 import subprocess
 
@@ -66,14 +67,20 @@ def host(tmp_path, monkeypatch):
         if args[0] != "gh":
             return original_run(*args)
         state["calls"].append(args)
+        if args[1] == "api":
+            assert args[2:5] == ("--method", "POST", "repos/test/repo/releases")
+            fields = dict(args[i + 1].split("=", 1) for i, value in enumerate(args)
+                          if value in ("-f", "-F"))
+            assert fields["draft"] == "true"
+            item = record(fields["tag_name"], fields["target_commitish"],
+                          draft=True, body=fields["body"])
+            assert not any(r["tag_name"] == item["tag_name"] for r in state["items"])
+            state["items"].append(item)
+            return json.dumps(item)
         assert args[1] == "release"
         action, tag = args[2:4]
         item = next((r for r in state["items"] if r["tag_name"] == tag), None)
-        if action == "create":
-            assert item is None and "--draft" in args
-            state["items"].append(record(tag, args[args.index("--target") + 1],
-                                         draft=True, body=Path(args[-1]).read_text()))
-        elif action == "upload":
+        if action == "upload":
             for filename in args[6:]:
                 path = Path(filename)
                 assert (tag, path.name) not in state["assets"]
@@ -95,6 +102,10 @@ def host(tmp_path, monkeypatch):
     monkeypatch.setattr(release, "api", api)
     monkeypatch.setattr(release, "run", run)
     return state
+
+
+def actions(host):
+    return ["create" if c[1] == "api" else c[2] for c in host["calls"]]
 
 
 @pytest.mark.parametrize("old,new", [("v0.6.0", "v0.6.1"), ("v0.1.9", "v0.1.10"),
@@ -181,12 +192,20 @@ def publish(host, artifact):
 
 def test_publish_complete_draft_once_and_retry_without_mutation(host, artifact):
     publish(host, artifact)
-    assert [c[2] for c in host["calls"]] == ["create", "upload", "edit"]
+    assert actions(host) == ["create", "upload", "edit"]
     assert host["git"]("rev-parse", "v0.6.1") == host["head"]
     assert release.plan("test/repo") == {}
     host["calls"].clear()
     publish(host, artifact)
-    assert [c[2] for c in host["calls"]] == ["download", "download"]
+    assert actions(host) == ["download", "download"]
+
+
+def test_new_draft_need_not_appear_in_release_list_immediately(host, artifact, monkeypatch):
+    before_creation = copy.deepcopy(host["items"])
+    monkeypatch.setattr(release, "releases", lambda repo: copy.deepcopy(before_creation))
+    publish(host, artifact)
+    assert actions(host) == ["create", "upload", "edit"]
+    assert not host["items"][-1]["draft"]
 
 
 @pytest.mark.parametrize("existing", [[], ["t.tar.gz"], ["SHA256SUMS"], ["t.tar.gz", "SHA256SUMS"]])
@@ -199,7 +218,7 @@ def test_resume_partial_uploads_without_overwriting(host, artifact, existing):
     publish(host, artifact)
     assert not item["draft"]
     assert len(host["assets"]) == 2
-    assert "create" not in [c[2] for c in host["calls"]]
+    assert "create" not in actions(host)
 
 
 def test_bad_existing_archive_is_never_replaced_or_published(host, artifact):
@@ -209,7 +228,7 @@ def test_bad_existing_archive_is_never_replaced_or_published(host, artifact):
     host["assets"]["v0.6.1", "t.tar.gz"] = gzip.compress(b"different tree")
     with pytest.raises(ValueError, match="differs"):
         publish(host, artifact)
-    assert [c[2] for c in host["calls"]] == ["download"]
+    assert actions(host) == ["download"]
     assert item["draft"]
 
 
@@ -220,7 +239,7 @@ def test_bad_existing_checksum_blocks_publication(host, artifact):
     host["assets"]["v0.6.1", "SHA256SUMS"] = b"0" * 64 + b"  t.tar.gz\n"
     with pytest.raises(ValueError, match="checksums"):
         publish(host, artifact)
-    assert [c[2] for c in host["calls"]] == ["download"]
+    assert actions(host) == ["download"]
 
 
 def test_new_remote_tag_cannot_be_reused_after_planning(host, artifact):
@@ -272,7 +291,7 @@ def test_manual_milestone_during_upload_keeps_latest(host, artifact, monkeypatch
     monkeypatch.setattr(release, "sync_assets", sync)
     with pytest.raises(ValueError, match="during upload"):
         publish(host, artifact)
-    assert "edit" not in [c[2] for c in host["calls"]]
+    assert "edit" not in actions(host)
 
 
 def test_wrong_checkout_and_minor_bump_cannot_be_published(host, artifact):
