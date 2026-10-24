@@ -9643,8 +9643,8 @@ def _canonical_error(argv):
 
 def _root_help():
     help_text = """USAGE
-  t                       Guided setup or open a work session
   t <noun> <verb> [arguments] [flags]
+  t                       Guided setup or open a work session
 
 WORK
   session   Open, find, and move work sessions
