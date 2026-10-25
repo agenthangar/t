@@ -14,8 +14,9 @@ without color. Align labels on wide terminals and stack them below 60 columns.
 Clip text before applying color and count physical rows when repainting; at
 80×24, 44×20, and 32×12 interactive screens the focused row and primary action
 must remain visible.
-The 60-column breakpoint applies to `_RailUI` inline menus. Printed tables
+The 60-column breakpoint applies to `_RailUI` inline menus. Most printed tables
 switch to labeled, wrapped cells when their actual columns no longer fit.
+Session lists instead keep one physical row per session, as described below.
 
 ## Command types
 
@@ -197,6 +198,20 @@ an ISO 8601 UTC timestamp or `-`; legacy rows and the seven-field ownership
 protocol remain valid. This remains a read-only list mode. History's DATE
 continues to describe retained activity.
 
+`t session list` overrides the shared table's narrow layout: first clip WORKING ON
+to the available space, then omit UI and MODEL if the other columns cannot fit.
+Compact rows show S (the same status marks without spaces), HOST for remote lists,
+SESSION (SLOT at the smallest width), TASK, and LAST TURN. Shorten timestamps to
+local `MM-DD HH:MM`, or `HH:MM` when necessary. Count Unicode display columns and
+mark clipped values with an ellipsis. Lists stay read-only and never open a picker.
+Redirected output retains all columns and complete values: `t ls | cat` or
+`t ls -r | cat`. For example, at 32 columns a remote row can look like:
+
+```text
+  S   HOST SLOT   TASK LAST TURN
+  ●✓↻ mini api-17 Fix… 09:41
+```
+
 The filtered multi-selection mode of `t session open` also puts LAST TURN last.
 Its row formatter reserves space for the timestamp before clipping working-on
 text, using the shared Unicode width helpers. Narrow rows use local `MM-DD HH:MM`
@@ -213,7 +228,7 @@ header, controls, and focused row visible.
 Printed history appends DATE, BRANCH, PRS, and the full conversation ID after these
 shared columns, retaining
 historical details when no preview is available. Wide tables align these columns. When the actual columns do not fit, printed
-lists switch to labeled, wrapped cells and preserve complete values. Redirected
+history lists switch to labeled, wrapped cells and preserve complete values. Redirected
 output remains untruncated. History picker rows stay on one physical line;
 compact layouts put status and meaningful working-on text first. Date, branch,
 and technical identity must not displace that text. Verify the 80×24, 44×20, and

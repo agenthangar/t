@@ -656,7 +656,49 @@ def _session_table_lines(rows, remote=False):
         values = helpers["session_cells"](row, _agent_glyph(row.get("agent", "claude")), remote)
         values.append(helpers["format_last_turn"](row.get("last_turn_started_at")))
         cells.append(values)
-    return _table_lines(headings, cells)
+    if not sys.stdout.isatty() or not cells:
+        return _table_lines(headings, cells)
+
+    width = _columns()
+    clip = helpers["clip_columns"]
+    # A long task should consume spare space, not turn every session into a card.
+    widths = [max(_display_width(label), *(_display_width(row[i]) for row in cells))
+              for i, label in enumerate(headings)]
+    task_width = width - sum(widths[:-2]) - widths[-1] - 2 * len(widths)
+    if task_width >= len("WORKING ON"):
+        widths[-2] = min(widths[-2], task_width)
+        gap = "  "
+    else:
+        # Keep the actionable identity, ownership marks and task on one line.
+        # Remote hosts remain separate so equal slot names can be distinguished.
+        headings = ["S"] + (["HOST"] if remote else []) + ["SESSION", "TASK", "LAST TURN"]
+        cells = [[row[0].replace(" ", "")] + ([row[3]] if remote else []) +
+                 [row[-3], row[-2], row[-1][5:16] if row[-1] != "-" else "-"]
+                 for row in cells]
+        widths = [max(_display_width(label), *(_display_width(row[i]) for row in cells))
+                  for i, label in enumerate(headings)]
+        widths[-3] = min(widths[-3], 12)
+        if remote:
+            widths[1] = min(widths[1], 8)
+        widths[-2] = 4
+        gap = " "
+        available = width - 2 - (len(widths) - 1)
+        for i, minimum in [(-3, 6), *([(1, 4)] if remote else [])]:
+            widths[i] -= min(max(0, sum(widths) - available), max(0, widths[i] - minimum))
+        if widths[-3] < len("SESSION"):
+            headings[-3] = "SLOT"
+        if sum(widths) > available:
+            cells = [row[:-1] + [row[-1][-5:]] for row in cells]
+            widths[-1] = len("LAST TURN")
+        widths[-2] += max(0, available - sum(widths))
+
+    lines = []
+    for row in [headings, *cells]:
+        fitted = [clip(cell, size) for cell, size in zip(row, widths)]
+        line = "  " + gap.join(cell + " " * (size - _display_width(cell))
+                                 for cell, size in zip(fitted, widths)).rstrip()
+        lines.append(clip(line, width))
+    return lines
 
 
 def _render_local(rows, scope, st, has_remote=False):
@@ -10131,7 +10173,9 @@ REMOTE SESSIONS
             "repo your cwd is in by default (`t session list <repo>` scopes to a named repo from anywhere); "
             "`-a` widens to every repo, and `-r` spans every "
             "$REMOTE_HOSTS machine in one table with a HOST column. LAST TURN shows the latest "
-            "turn initiation in local time with its timezone (- when unknown), not last activity. Read-only — attach with "
+            "turn initiation in local time with its timezone (- when unknown), not last activity. "
+            "Narrow terminals keep one row per session, shorten task text and timestamps, and omit UI/model "
+            "when needed. Pipe to cat for complete values. Read-only — attach with "
             "`t session open`, move with `t session move`.")
     sp.add_argument("repo", nargs="?", help="scope to this repo from any directory (default: the repo cwd is in)")
     sp.add_argument("-r", "--remote", action="store_true", help="span every $REMOTE_HOSTS host")
