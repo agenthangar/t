@@ -713,7 +713,10 @@ uses the viewer's local time with date, seconds, and timezone (for example,
 turn-start event or a Claude user prompt, not subsequent tool or assistant activity.
 Older Codex transcripts can fall back to a user-message event. `-` means unknown;
 inactive desktop slots can show their last recorded conversation's turn. Narrow
-terminals wrap labeled cells without dropping the timestamp.
+terminals keep one row per session: task text is clipped, UI/model columns are
+omitted when necessary, and LAST TURN uses `MM-DD HH:MM` (or `HH:MM` at the smallest
+widths). Compact status marks appear under S; remote lists retain HOST.
+Use `t ls | cat` or `t ls -r | cat` for all columns and complete values.
 UI shows `▣ desktop` or `› cli`; model keeps the agent icon and the last
 recorded model name (`-` when unavailable). Inactive desktop slots show their
 last recorded conversation title. Status uses `● ✓` for a loaded conversation

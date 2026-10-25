@@ -772,6 +772,28 @@
             "tests/test_command_behavior.py::test_session_last_turn_display_contract"
           ]
         }
+      },
+      "display_layout": {
+        "overrides": "session_information.table",
+        "wide": "aligned_columns",
+        "narrow": "compact_columns",
+        "physical_row": "single_line",
+        "priority": [
+          "status",
+          "host_when_remote",
+          "session",
+          "working_on",
+          "last_turn"
+        ],
+        "short_timestamps": [
+          "MM-DD HH:MM",
+          "HH:MM"
+        ],
+        "redirected": "untruncated",
+        "tests": [
+          "tests/test_command_behavior.py::test_session_table_keeps_status_and_identity_in_small_view",
+          "tests/test_command_behavior.py::test_session_table_clips_only_task_when_other_columns_fit"
+        ]
       }
     },
     "session close": {
