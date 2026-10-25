@@ -445,7 +445,8 @@
             "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
           ]
         }
-      }
+      },
+      "progress": "Terminal-only discovery stages on stderr; no progress in redirected output, JSON, or remote protocols."
     },
     "issue status": {
       "patterns": [
@@ -509,7 +510,8 @@
           ]
         }
       },
-      "notes": "Show association evidence and complete live-session details; separate incidental mentions from owners. Version 1 JSON adds mentions and workspace owners/association without changing read-only behavior."
+      "notes": "Show association evidence and complete live-session details; separate incidental mentions from owners. Version 1 JSON adds mentions and workspace owners/association without changing read-only behavior.",
+      "progress": "Terminal-only discovery stages on stderr; no progress in redirected output, JSON, or remote protocols."
     },
     "issue start": {
       "patterns": [
@@ -608,7 +610,8 @@
           ]
         }
       },
-      "notes": "Unavailable hosts and unconfigured optional providers warn and skip. Known owners and local checks remain enforced. Recover a unique explicitly linked GitHub PR automatically; review ambiguous PRs/branches. Fetch published commits into a fresh worktree and recheck before launch."
+      "notes": "Unavailable hosts and unconfigured optional providers warn and skip. Known owners and local checks remain enforced. Recover a unique explicitly linked GitHub PR automatically; review ambiguous PRs/branches. Fetch published commits into a fresh worktree and recheck before launch.",
+      "progress": "Terminal-only discovery stages on stderr; no progress in redirected output, JSON, or remote protocols."
     },
     "issue open": {
       "patterns": [
@@ -653,7 +656,8 @@
             "tests/test_issue_open.py::test_open_explicit_target_uses_gh_browser"
           ]
         }
-      }
+      },
+      "progress": "Terminal-only discovery stages on stderr; no progress in redirected output, JSON, or remote protocols."
     },
     "session open": {
       "patterns": [
@@ -729,7 +733,8 @@
           "search": "full_details"
         }
       },
-      "native_agents": "Terminal session launch/resume uses the native ~/.local/bin fallback, preserving PATH and shell wrappers; no global PATH changes."
+      "native_agents": "Terminal session launch/resume uses the native ~/.local/bin fallback, preserving PATH and shell wrappers; no global PATH changes.",
+      "progress": "Terminal-only discovery stages on stderr; no progress in redirected output, JSON, or remote protocols."
     },
     "session list": {
       "patterns": [
@@ -772,7 +777,8 @@
             "tests/test_command_behavior.py::test_session_last_turn_display_contract"
           ]
         }
-      }
+      },
+      "progress": "Terminal-only discovery stages on stderr; no progress in redirected output, JSON, or remote protocols."
     },
     "session close": {
       "patterns": [
@@ -824,7 +830,8 @@
           ],
           "confirmation": "when_interrupting"
         }
-      }
+      },
+      "progress": "Terminal-only discovery stages on stderr; no progress in redirected output, JSON, or remote protocols."
     },
     "session restart": {
       "patterns": [
@@ -1024,7 +1031,19 @@
           "notes": "Explicit terminal destination; preserves existing saved resume behavior."
         }
       },
-      "native_agents": "Terminal session launch/resume uses the native ~/.local/bin fallback, preserving PATH and shell wrappers; no global PATH changes."
+      "native_agents": "Terminal session launch/resume uses the native ~/.local/bin fallback, preserving PATH and shell wrappers; no global PATH changes.",
+      "discovery": {
+        "cache": "source_validated_saved_metadata",
+        "ownership": "fresh",
+        "snapshot": "per_invocation",
+        "progress": "terminal_stages",
+        "tests": [
+          "tests/test_candidates.py::test_unchanged_candidates_skip_reads_and_writes",
+          "tests/test_candidates.py::test_database_wal_and_missing_paths",
+          "tests/test_candidates.py::test_resume_takes_one_snapshot_and_fresh_owners_each_time"
+        ]
+      },
+      "progress": "Terminal-only discovery stages on stderr; no progress in redirected output, JSON, or remote protocols."
     },
     "session history": {
       "patterns": [
@@ -1129,7 +1148,8 @@
           ]
         }
       },
-      "display_schema": "history_information"
+      "display_schema": "history_information",
+      "progress": "Terminal-only discovery stages on stderr; no progress in redirected output, JSON, or remote protocols."
     },
     "session cd": {
       "patterns": [

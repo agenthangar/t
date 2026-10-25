@@ -373,51 +373,25 @@ sys.exit(0 if valid else 1)
 PYCODE
 }
 
-# _codex_rollout_scan <cwd> — rollouts whose session_meta says <cwd>, newest first,
-# from the date tree itself: the index only learns a rollout when codex next touches
-# it (verified: a copied-in rollout is resumable and gets indexed ON resume), so a
-# rollout that csync / `t resume -r` / a beam just synced in would otherwise be
-# invisible to `t resume` until then. One first-line read per rollout, cached by
-# inode in ~/.cache/claude-sessions/rollout-cwd.json so a settled tree costs a stat
-# per file; a missing tree prints nothing.
+# Saved discovery is cached by file identity/size/nanosecond timestamps and the
+# SQLite database plus WAL. Ownership lookups above remain uncached.
 _codex_rollout_scan() {
-  local root="${CODEX_HOME:-$HOME/.codex}/sessions"
-  [[ -d $root ]] || return 0
-  python3 - "$root" "$1" "${XDG_CACHE_HOME:-$HOME/.cache}/claude-sessions/rollout-cwd.json" <<'PY' 2>/dev/null
-import glob, json, os, sys
-root, want, cache = sys.argv[1:4]
-try:
-    with open(cache) as fh: known = json.load(fh)
-except (OSError, ValueError): known = {}
-out, changed = [], False
-for p in glob.glob(os.path.join(root, '*', '*', '*', 'rollout-*.jsonl')):
-    try: st = os.stat(p)
-    except OSError: continue
-    k = known.get(p)
-    # entry = [inode, cwd, kind]; kind 'sub' marks a subagent thread's rollout (see
-    # _codex_threads) — a 2-element entry is from before that field and is re-read once
-    if not (isinstance(k, list) and len(k) == 3 and k[0] == st.st_ino):
-        cwd, kind = '', ''
-        try:
-            with open(p, 'rb') as fh: first = fh.readline(65536).decode('utf-8', 'replace')
-            d = json.loads(first)
-            if d.get('type') == 'session_meta':
-                pl = d.get('payload') or {}
-                cwd = pl.get('cwd') or ''
-                if pl.get('thread_source') == 'subagent' or isinstance(pl.get('source'), dict) and 'subagent' in pl['source']:
-                    kind = 'sub'
-        except (OSError, ValueError, AttributeError): pass
-        known[p] = k = [st.st_ino, cwd, kind]; changed = True
-    if k[1] == want and not k[2]: out.append((st.st_mtime, p))
-if changed:
-    try:
-        os.makedirs(os.path.dirname(cache), exist_ok=True)
-        tmp = '%s.%d.tmp' % (cache, os.getpid())
-        with open(tmp, 'w') as fh: json.dump(known, fh)
-        os.replace(tmp, cache)
-    except OSError: pass
-for _, p in sorted(out, reverse=True): sys.stdout.write(p + '\n')
-PY
+  python3 "$T_HOME/libexec/t_candidates.py" rollouts "$1"
+}
+_codex_candidate_rows() {
+  python3 "$T_HOME/libexec/t_candidates.py" candidates
+}
+# Populate the caller's invocation-scoped index once, so slot lookups do not
+# walk the entire snapshot again. A failed discovery retains the direct fallback.
+_codex_candidate_snapshot() {
+  local rows cwd tx
+  rows=$(_codex_candidate_rows) || return 1
+  _T_CODEX_CANDIDATES=()
+  while IFS=$'\t' read -r cwd tx; do
+    [[ -n $cwd && -n $tx ]] || continue
+    _T_CODEX_CANDIDATES[$cwd]+="$tx"$'\n'
+  done <<< "$rows"
+  _T_CODEX_CANDIDATES_READY=1
 }
 # _dev_agent_transcripts_for_cwd <agent> <cwd> — every transcript recorded in <cwd>,
 # newest first, one path per line (claude: the project dir by mtime; codex: the sqlite
@@ -427,13 +401,13 @@ _dev_agent_transcripts_for_cwd() {
   setopt local_options null_glob bare_glob_qual
   local agent="$1" cwd="$2" row p
   if [[ $agent == codex ]]; then
-    local -A seen
-    for row in ${(f)"$(_codex_threads_for_cwd "$cwd")"}; do
-      p=${${row#*$'\t'}%%$'\t'*}; [[ -f $p && -z ${seen[$p]:-} ]] && { seen[$p]=1; print -r -- "$p"; }
-    done
-    for p in ${(f)"$(_codex_rollout_scan "$cwd")"}; do
-      [[ -z ${seen[$p]:-} ]] && { seen[$p]=1; print -r -- "$p"; }
-    done
+    if [[ ${_T_CODEX_CANDIDATES_READY:-} == 1 ]]; then
+      for p in "${(@f)_T_CODEX_CANDIDATES[$cwd]}"; do
+        [[ -f $p ]] && print -r -- "$p"
+      done
+    else
+      python3 "$T_HOME/libexec/t_candidates.py" candidates "$cwd"
+    fi
     return 0
   fi
   local -a tx=( "$HOME/.claude/projects/${cwd//[^A-Za-z0-9]/-}"/*.jsonl(Nom) )

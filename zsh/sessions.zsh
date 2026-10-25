@@ -1,3 +1,12 @@
+# Opt-in at a terminal command boundary; scanner wire output stays untouched.
+# Plain stage messages need no background job, terminal rewrite, or cleanup trap.
+_t_progress() {
+  if [[ ${_T_PROGRESS:-0} == 1 && -t 2 ]]; then
+    print -u2 -r -- "  t: $*…"
+  fi
+  return 0
+}
+
 # the session's pane, else return 1. tpaste polls this after launching a fresh
 # session so it knows when the path can be delivered.
 _tpaste_claude_ready() {
@@ -1193,6 +1202,7 @@ _dev_session_rows() {
     _dev_session_rows --transcripts | python3 "$T_HOME/libexec/t_session_details.py"
     return
   fi
+  _t_progress "Checking local sessions"
   setopt local_options null_glob bare_glob_qual
   # Two passes, because the expensive part is per-transcript and batches. Pass 1
   # asks tmux and the process table (ONE list-sessions carrying name+path+attached,
@@ -1362,6 +1372,7 @@ _dev_rows_all() {
   # ZSH_PRELUDE (top-level `setopt no_monitor`, which persists to exit). The `$(…)`
   # subshell callers below already run job-control-off, so they never warn either.
   setopt local_options no_monitor no_notify
+  _t_progress "Checking local sessions and ${#REMOTE_HOSTS} remote host(s)"
   local tmpd; tmpd=$(mktemp -d) || return 1
   ( _dev_session_rows "$@" > "$tmpd/.local" 2>/dev/null
     print -r -- $? > "$tmpd/.local.rc" ) &
@@ -1830,6 +1841,8 @@ _dev_kill_pick() {
 # Keyed on session NAMES, not DEV_REPOS, so it also reaches orphaned sessions
 # whose repo alias is gone. With no slot, the detailed picker selects targets.
 _dev_kill() {
+  local _T_PROGRESS=0
+  [[ -t 1 && -t 2 ]] && _T_PROGRESS=1
   local repo="$1" slot="$2" force="$3"
 
   # Bare and repo-only invocations are interactive batch selectors. An explicit
@@ -2232,6 +2245,8 @@ _t_issue_launch() {
 # is per-repo (DEV_BRANCHES[repo], else $DEV_BRANCH). User-facing help lives in bin/t
 # (`t open -h`); the t() shim routes -h there, so this helper takes none of its own.
 _t_dev() {
+  local _T_PROGRESS=0
+  [[ -t 1 && -t 2 ]] && _T_PROGRESS=1
   local no_tmux= force= remote= all= local_only= agent_over=
   local -a pos
   local arg

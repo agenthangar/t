@@ -130,6 +130,14 @@ with `done` and editable prompts with `cooked_input`.
 
 ## Session information and history
 
+Saved candidate discovery uses a disposable source-validated cache and one snapshot
+per resume invocation. File identity, size, nanosecond timestamps, and SQLite WAL
+changes invalidate cached metadata. Live ownership is never taken from this cache.
+Terminal commands may print plain stage progress to stderr before slow discovery;
+redirected output, JSON, and remote scanner protocols remain free of progress.
+This adds no command, picker, prompt, or conditional selection mode.
+
+
 Desktop handoff refusals identify a verified conflicting conversation and give
 release instructions with the exact retry command before stopping the selected
 CLI. Keep missing-preview notices distinct from ownership failures. Retrying

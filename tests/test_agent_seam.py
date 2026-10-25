@@ -1393,7 +1393,8 @@ def test_zsh_codex_subagent_threads_are_not_conversations(zsh):
     ino = paths[sub].stat().st_ino
     cache.write_text(json.dumps({str(paths[sub]): [ino, wt], str(paths[SID]): [paths[SID].stat().st_ino, wt]}))
     assert zsh(f"_codex_rollout_scan {wt}").stdout.splitlines() == [str(paths[SID])]
-    assert json.loads(cache.read_text())[str(paths[sub])] == [ino, wt, "sub"]
+    current, = cache.parent.glob("candidates-*.json")
+    assert json.loads(current.read_text())["rollouts"][str(paths[sub])][1:] == [wt, True]
 
 
 def test_zsh_self_sid_and_agent(zsh, tmp_path):
@@ -1477,8 +1478,8 @@ def test_zsh_rollout_scan_finds_unindexed_rollouts_and_caches(zsh):
     os.utime(synced, (2_000_000_000, 2_000_000_000))
     r = zsh(f"_codex_rollout_scan {wt}")
     assert r.stdout.splitlines() == [str(synced)]                   # only this cwd's rollouts
-    cache = zsh.home / ".cache" / "claude-sessions" / "rollout-cwd.json"
-    assert cache.exists() and str(other) in json.loads(cache.read_text())
+    cache, = (zsh.home / ".cache" / "claude-sessions").glob("candidates-*.json")
+    assert str(other) in json.loads(cache.read_text())["rollouts"]
     # the union view: index rows first, then the scan's extra, no duplicates
     r = zsh(f"_dev_agent_transcripts_for_cwd codex {wt}")
     assert r.stdout.splitlines() == [str(paths["aaaaaaaa-0000-0000-0000-000000000001"]), str(synced)]
