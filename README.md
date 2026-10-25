@@ -420,6 +420,54 @@ The sessions MCP entry point (`t mcp`) is used for registration and tool serving
 it is not part of the everyday interactive command set. Agent capabilities vary:
 see [Agent support](#agents) or `t help agents`.
 
+Send a new objective to a live local Claude or Codex terminal slot with:
+
+```sh
+t session goal api 3 'Finish the login tests, then report the remaining failures'
+t session goal api 3 'Investigate the timeout before making further changes' --json
+```
+
+Both repository and slot are required. This submits an instruction to the exact
+current conversation; it does not claim the agent has adopted or completed it.
+Inspect the session's composer for drafts or dialogs before sending input.
+Desktop, foreground, and remote instruction delivery are not supported.
+
+The sessions MCP server exposes `open_session`, `resume_session`, `kill_session`,
+`restart_session`, `send_instructions`, `pause_session`, and `set_session_goal`,
+alongside its three discovery tools. Lifecycle tools take explicit `repo` and
+numeric `slot`; close also requires `confirm: true`. Open and resume use the
+existing ownership/worktree checks and leave the CLI slot detached, with an
+attachment command in the result. Resume restores the newest saved conversation;
+to continue a paused live turn, send an instruction such as "Continue the current
+objective". Instruction, pause, and goal tools require the full current
+`session_id` and refuse stale owners or the calling agent. Use
+`session_command` with `{"command":"list"}` to retrieve current IDs for both agents.
+
+`session_command` covers every `t session` verb, using `command` and an array of
+literal CLI `arguments`. For example:
+
+```json
+{"command":"goal","arguments":["api","3","Finish the login tests"]}
+```
+
+List returns structured session rows, history returns JSON, read dumps output,
+and cd returns the resolved directory. Terminal-dependent workflows (push, pop,
+move, interactive search/paste, and conditional lifecycle modes) return
+`terminal_required` with the exact command, without starting work or a picker.
+Explicit `open-app` uses the existing desktop handoff checks.
+
+Pause requests the default Escape interrupt key; it does not suspend processes,
+stop background subagents, or guarantee queued work remains paused. Goal is a
+conversational objective change, not an agent-native goal API. Delivery results
+report `acknowledged: false`; inspect subsequent agent output to verify the effect.
+Only the original three lookup tools are automatically allowed. Installing or
+running `t mcp --install` replaces the old blanket `mcp__sessions` permission with
+those lookup rules, preserving custom per-tool rules and deny/ask settings.
+
+Slow terminal session/host scans and saved-history discovery show a small spinner
+after a short delay. It clears before results, pickers, or errors; redirected,
+JSON, MCP, and remote scanner output stays free of progress animation.
+
 ### Existing spellings
 
 Older scripts and habits continue to work. Use `t help aliases` for the full list;

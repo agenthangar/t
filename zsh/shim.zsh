@@ -785,7 +785,7 @@ _t() {
     return
   fi
   case $group in
-    session) actions=(open list close restart push pop resume history cd move read view-plan paste search open-app) ;;
+    session) actions=(open list close restart push pop resume history cd move read view-plan paste search open-app goal) ;;
     repo) actions=(list cd locate create clone add) ;;
     cursor) actions=(list resume send) ;;
     agentcore) actions=(invoke stop) ;;
@@ -877,6 +877,12 @@ _t() {
       elif (( CURRENT == first )); then _values 'repo' ${(k)DEV_REPOS}
       elif (( CURRENT == first + 1 )); then _message 'local slot number'
       else _values 'flag' --dry-run -h --help; fi ;;
+    session/goal)
+      if [[ ${words[CURRENT]} == -* ]]; then _values 'flag' --json -h --help
+      elif (( CURRENT == first )); then _values 'repo' ${(k)DEV_REPOS}
+      elif (( CURRENT == first + 1 )); then _message 'local slot number'
+      elif (( CURRENT == first + 2 )); then _message 'new objective (quote as one argument)'
+      else _values 'flag' --json -h --help; fi ;;
     cursor/list|cursor/resume|cursor/send)
       if [[ ${words[CURRENT-1]} == --host || ${words[CURRENT-1]} == --from ]]; then
         _values 'host' ${(k)REMOTE_HOSTS}

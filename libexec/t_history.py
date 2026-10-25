@@ -1,5 +1,5 @@
 """Private, durable conversation history and guarded exact-conversation resume."""
-from contextlib import closing, contextmanager
+from contextlib import closing, contextmanager, nullcontext
 import ast
 import datetime
 import fcntl
@@ -1201,13 +1201,14 @@ class HistoryCommand:
 
     def execute(self, args):
         alias, slot = self.scope(args.target)
-        self.discover(alias)
-        if args.refresh:
-            self.refresh(alias)
-        try:
-            owners = self.owners()
-        except HistoryError:
-            owners = []
+        with self.api.get("_spinner", lambda *a, **kw: nullcontext())("Loading conversation history", machine=args.json):
+            self.discover(alias)
+            if args.refresh:
+                self.refresh(alias)
+            try:
+                owners = self.owners()
+            except HistoryError:
+                owners = []
         rows = self.records(alias, slot, owners)
         tty = sys.stdin.isatty() and sys.stdout.isatty()
         if not slot and tty and not args.json:

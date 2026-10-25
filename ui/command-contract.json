@@ -2859,6 +2859,53 @@
           "notes": "Print terminal requirement and return 1, without discovery or changes."
         }
       }
+    },
+    "session goal": {
+      "patterns": [
+        "action",
+        "machine"
+      ],
+      "renderer": "plain",
+      "scope": "explicit local repository and slot",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_mcp_controls.py::test_goal_command_and_contract"
+      ],
+      "modes": {
+        "json": {
+          "argv": [
+            "session",
+            "goal",
+            "api",
+            "1",
+            "Finish the tests",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_mcp_controls.py::test_goal_command_and_contract"
+          ]
+        },
+        "default": {
+          "argv": [
+            "session",
+            "goal",
+            "api",
+            "1",
+            "Finish the tests"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_mcp_controls.py::test_goal_command_and_contract"
+          ]
+        }
+      }
     }
   },
   "display_schemas": {

@@ -24,6 +24,29 @@ def box(tmp_path):
     return checkout, home
 
 
+def test_install_migrates_mcp_blanket_to_read_tools(box, tmp_path):
+    checkout, home = box
+    settings = home / '.claude/settings.json'
+    settings.parent.mkdir(parents=True)
+    settings.write_text(json.dumps({'permissions': {'allow': ['Bash(ls)', 'mcp__sessions'],
+                                                    'ask': ['Bash(rm *)']}}))
+    bins = tmp_path / 'fake-bin'
+    bins.mkdir()
+    claude = bins / 'claude'
+    claude.write_text('#!/bin/sh\nexit 0\n')
+    claude.chmod(0o755)
+    env = dict(T_NO_MCP='', PATH=f'{bins}:{os.environ["PATH"]}')
+    outcome = run_install(checkout, home, **env)
+    assert outcome.returncode == 0, outcome.stderr
+    perms = json.loads(settings.read_text())['permissions']
+    assert perms['allow'] == ['Bash(ls)', 'mcp__sessions__find_sessions',
+                             'mcp__sessions__list_sessions', 'mcp__sessions__session_detail']
+    assert perms['ask'] == ['Bash(rm *)']
+    before = settings.read_bytes()
+    assert run_install(checkout, home, **env).returncode == 0
+    assert settings.read_bytes() == before
+
+
 def test_clean_install_owns_eight_links_and_preserves_shell_content(box):
     checkout, home = box
     (home / ".zshrc").write_text("# my shell\n")
