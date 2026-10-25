@@ -1181,11 +1181,12 @@
         "single"
       ],
       "renderer": "mixed",
-      "scope": "explicit/inferred repository or all local/remote sessions",
+      "scope": "named/current repository or all local CLI conversations for send; explicit/auto-discovered remote sessions for receive",
       "confirmation": "none",
       "tests": [
         "tests/test_command_groups_shell.py::test_grouped_shell_commands_keep_arguments_and_caller_shell",
-        "tests/test_worktree_labels.py::test_python_and_shell_resolve_same_numeric_identity"
+        "tests/test_worktree_labels.py::test_python_and_shell_resolve_same_numeric_identity",
+        "tests/test_move_picker.py::test_move_picker_uses_current_sessions"
       ],
       "modes": {
         "default": {
@@ -1194,13 +1195,14 @@
             "move"
           ],
           "patterns": [
-            "single",
             "single"
           ],
           "read_only": false,
           "tests": [
-            "tests/test_command_groups_shell.py::test_grouped_shell_commands_keep_arguments_and_caller_shell"
-          ]
+            "tests/test_move_picker.py::test_move_picker_uses_current_sessions",
+            "tests/test_move_picker.py::test_move_picker_cancel_empty_and_nonterminal"
+          ],
+          "notes": "Shared single picker uses current session-list rows, never saved history. Named/current repo scopes send; --all widens it. Preserves exact conversation, cwd and agent, and rechecks identity before moving."
         },
         "explicit": {
           "argv": [
@@ -1216,8 +1218,59 @@
           ],
           "read_only": false,
           "tests": [
-            "tests/test_command_groups_shell.py::test_grouped_shell_commands_keep_arguments_and_caller_shell"
+            "tests/test_command_groups_shell.py::test_grouped_shell_commands_keep_arguments_and_caller_shell",
+            "tests/test_move_picker.py::test_explicit_and_current_targets_bypass_picker"
           ]
+        },
+        "pick": {
+          "argv": [
+            "session",
+            "move",
+            "--pick",
+            "--host",
+            "build"
+          ],
+          "patterns": [
+            "single"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_move_picker.py::test_move_picker_uses_current_sessions"
+          ],
+          "notes": "Force current-session selection even inside an agent."
+        },
+        "all": {
+          "argv": [
+            "session",
+            "move",
+            "--all",
+            "--host",
+            "build"
+          ],
+          "patterns": [
+            "single"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_move_picker.py::test_move_picker_uses_current_sessions"
+          ],
+          "notes": "Current CLI sessions across all local repositories."
+        },
+        "current": {
+          "argv": [
+            "session",
+            "move",
+            "--host",
+            "build"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_move_picker.py::test_explicit_and_current_targets_bypass_picker"
+          ],
+          "notes": "Inside an agent, an omitted target without --pick/--all moves the current conversation directly."
         }
       }
     },

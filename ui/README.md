@@ -142,6 +142,18 @@ the existing guarded desktop handoff; live slots never substitute their current
 conversation. Remote owners, incompatible flags, unsupported agents, and multiple
 marks fail before launching. `--cli` explicitly selects the ordinary resume route.
 
+`session move` sends a current local CLI conversation through a shared single
+picker when no slot or conversation ID is supplied. It uses the session-list
+inventory and formatter, including attached and detached Claude/Codex sessions;
+saved history, unknown IDs, and desktop reservations are not candidates. A named
+repository or the current checkout scopes the picker; outside a checkout it
+shows all repositories, and `--all` widens the scope. Enter selects one exact
+conversation, worktree, and agent; recheck that identity before transfer.
+Esc/Ctrl-C cancels with 130 and an empty inventory is a successful no-op.
+Without a terminal/fzf, require an explicit target. Inside an agent, the implicit
+current conversation remains a direct action; `--pick` opens selection instead.
+Explicit slot/ID sends and `--from`/`--here` receives retain their guarded routes.
+
 New worktree folders include the repository basename (`t/t-12`); numeric slot
 arguments, tmux identity, JSON slot fields and history associations are unchanged.
 Existing `t/12` folders and recorded conversation paths remain valid. Both
