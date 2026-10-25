@@ -10308,8 +10308,14 @@ REMOTE SESSIONS
     sp.add_argument("slot", nargs="?", help="slot number; a lone slot implies the cwd repo")
 
     sp = sub.add_parser("beam", help="move a session between machines (send, or --from to receive)",
-        description="Move a Claude session between machines (a cross-host push/pop). By default "
+        description="Move a Claude or Codex session between machines (a cross-host push/pop). By default "
             "SENDS the resolved session to --host (default $TBEAM_HOST) and resumes it there; "
+            "without a slot or --session ID, pick a current local CLI conversation, scoped to "
+            "the named or current repository (all repositories outside a checkout; --all widens "
+            "the scope). The picker includes attached and detached sessions, not saved history "
+            "or desktop reservations. Inside an agent, no target moves that conversation; "
+            "--pick opens the current-session picker instead. Selection requires a terminal "
+            "and fzf; scripts must name a target. "
             "`--from HOST` (or `--here` to auto-detect the host) RECEIVES — pulls a session "
             "living on another host down into a local slot. It is a move, not a copy: the "
             "origin's live owner is stopped so exactly one machine owns the conversation. The "
@@ -10321,7 +10327,7 @@ REMOTE SESSIONS
     sp.add_argument("--here", action="store_true", help="RECEIVE (auto-host): pull it back here, auto-detecting which host it is on")
     sp.add_argument("--fg", action="store_true", help="resume in the foreground, no tmux slot")
     sp.add_argument("-d", "--detach", action="store_true", help="leave it running there; print attach hint")
-    sp.add_argument("-p", "--pick", action="store_true", help="force the picker")
+    sp.add_argument("-p", "--pick", action="store_true", help="pick a current local session, including when inside an agent")
     sp.add_argument("-a", "--all", action="store_true", help="picker across every project")
     sp.add_argument("-s", "--session", help="target a session by id or unique prefix")
 

@@ -357,7 +357,7 @@ for a host's login shell.
 | `t session push` / `t session pop` | Move between foreground and detached tmux |
 | `t session resume` / `t session search <query>` | Find and resume saved conversations; search finds Claude transcripts by content, then resumes the selected one |
 | `t session cd [repo] [slot]` / `t session read <repo> [slot]` | Enter a worktree or read its terminal log (`--dump` writes plain output) |
-| `t session move <repo> [slot] --host <host>` | Move a session to a host; `--from <host>` pulls it here |
+| `t session move [repo] [slot] --host <host>` | Pick a current session or move an explicit slot; `--from <host>` pulls it here |
 | `t session view-plan` / `t session paste` | View a Claude session plan or pass an attachment |
 | `t session open-app [push\|pull] [repo] [slot]` | Advanced Codex handoff options for macOS, including preview, plan, and thread selection; `t app` is the short form |
 | `t repo list` / `t repo locate <repo>` / `t repo cd <repo>` | List names and paths, print a checkout path, or enter it in the shell |
@@ -379,6 +379,15 @@ For example, `t hosts add mini chris@mini.local --default` registers `mini` and
 makes it the default destination for `t session move`. Configure SSH keys,
 ports, and jump hosts in `~/.ssh/config`; registering a host saves local
 settings without connecting to it or installing software there.
+
+`t session move --host mini` opens a single-selection picker of current local
+Claude and Codex CLI conversations in the current repository (all repositories
+outside a checkout). Use `t session move --all --host mini` to widen the scope,
+or `t session move api --host mini` to select within `api`. Attached and detached
+sessions are included; saved history and desktop reservations are excluded.
+`t session move api 2 --host mini` bypasses selection. Inside an agent, an omitted
+target moves that conversation; add `--pick` to choose another current session.
+Scripts must supply a slot or `--session ID`.
 
 ### Configuration and tools
 

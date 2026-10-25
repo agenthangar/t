@@ -2614,7 +2614,61 @@ _tbeam_land() {
   print -r -- "$session"                        # last line: caller reads it for the hint
 }
 
-# _t_beam — the `t beam` verb: move a Claude session between machines. Like `t push`, but across
+# Pick a current local conversation using the session-list inventory and renderer.
+# Return the raw row so the exact ID, worktree, and agent survive presentation.
+# An empty inventory succeeds without a row; cancellation never starts a resume.
+_t_move_pick() {
+  local repo="$1" slot="$2" scope="${DEV_REPOS[$1]:-}" rows row display selected label
+  local -a fields candidates format_args chosen
+  rows=$(_dev_session_rows --details) || return 1
+  for row in "${(@f)rows}"; do
+    fields=("${(@ps:\t:)row}")
+    (( $#fields >= 7 )) || continue
+    [[ $fields[1] != - && $fields[4] == (attached|detached) ]] || continue
+    [[ -z $scope ]] || _dev_dir_in_scope "$fields[2]" "$scope" || continue
+    [[ -z $slot || $fields[3] == "$repo-$slot" ]] || continue
+    candidates+=("$row")
+  done
+  (( $#candidates )) || {
+    print -u2 -- "t session move: no current CLI conversations${repo:+ for '$repo'} to move"
+    return 0
+  }
+  # stdout is captured; stdin still identifies the caller's terminal.
+  if [[ ! -t 0 ]] || ! command -v fzf >/dev/null 2>&1; then
+    print -u2 -- 't session move: selection requires a terminal and fzf; name a repo and slot or --session ID'
+    return 1
+  fi
+  [[ -n $repo ]] && format_args+=(--repo)
+  display=$(print -rl -- "${candidates[@]}" | awk 'NF {print "local\t" $0}' \
+    | COLUMNS=${COLUMNS:-80} python3 "$T_HOME/bin/t" __session-picker-rows --last-turn "${format_args[@]}") || return 1
+  selected=$(print -r -- "$display" | _t_fzf_single move 'Current local sessions' \
+    --delimiter=$'\t' --with-nth=5,4 --no-hscroll --prompt="move ${repo:+$repo }> " \
+    --preview='printf "%s\n" {4}') || return $?
+  [[ -n $selected ]] || return 130
+  fields=("${(@ps:\t:)selected}"); label=$fields[2]
+  for row in "${candidates[@]}"; do
+    fields=("${(@ps:\t:)row}")
+    [[ $fields[3] == "$label" ]] || continue
+    chosen=("${fields[@]}")
+    break
+  done
+  # Refuse a vanished/reused slot before any transfer can stop an owner.
+  rows=$(_dev_session_rows --details) || return 1
+  for row in "${(@f)rows}"; do
+    fields=("${(@ps:\t:)row}")
+    if (( $#chosen >= 7 && $#fields >= 7 )) &&
+       [[ $fields[1] == "$chosen[1]" && $fields[2] == "$chosen[2]" &&
+          $fields[3] == "$chosen[3]" && $fields[7] == "$chosen[7]" &&
+          $fields[4] == (attached|detached) ]]; then
+      print -r -- "$row"
+      return 0
+    fi
+  done
+  print -u2 -- 't session move: selected session changed or closed; select it again'
+  return 1
+}
+
+# _t_beam — the `t beam` verb: move a session between machines. Like `t push`, but across
 # machines — and a MOVE, not a copy: after the session lands on the far side the origin's live
 # owner is stopped so exactly one claude owns the id (the invariant `t push`/`t pop` protect).
 # Both directions live here: by default it SENDS THIS conversation (or an fzf pick) to a host
@@ -2740,7 +2794,7 @@ _t_beam() {
   command -v rsync >/dev/null 2>&1 || { echo "tbeam: rsync not found" >&2; return 1; }
 
   # Resolve the session id + its working dir (mirrors tpush). Four ways:
-  #   • <repo> [slot] — a dev slot, resolved like tplan/tpop: tmux session →
+  #   • <repo> <slot> — a dev slot, resolved like tplan/tpop: tmux session →
   #     its stamped CLAUDE_RESUME_ID (newest-transcript fallback for pre-hook
   #     sessions). The origin is a local dev slot, so this is a MOVE that
   #     kill-sessions it once landed (the self_move=… block below).
@@ -2752,21 +2806,14 @@ _t_beam() {
   #     (the repo prefix is stripped above); its origin is a foreground claude, so
   #     the kill-block below stops it by pid instead of kill-session.
   #   • inside Claude (no -p) — THIS conversation + $PWD.
-  #   • otherwise — fzf-pick (scoped to $PWD; -a for every repo).
+  #   • otherwise — pick a current local session (cwd repo; -a for every repo).
   # self_move = "the origin is THIS foreground claude" (true current-session
   # move): only then do we SIGTERM ourselves to complete the move. For any other
   # origin (a dev slot) we kill-session it instead — see the two blocks below.
   local sid cwd self_move= agent=claude self_sid
   self_sid=$(_dev_self_sid)
-  if [[ -n $repo_arg ]]; then
+  if [[ -n $repo_arg && -n $slot_arg && -z $pick ]]; then
     local slot=$slot_arg
-    if [[ -z $slot ]]; then                         # first existing slot for repo
-      local n=1
-      while (( n <= 20 )); do
-        tmux has-session -t "=dev-${repo_arg}-${n}:" 2>/dev/null && { slot=$n; break; }
-        (( n++ ))
-      done
-    fi
     local session="dev-${repo_arg}-${slot}"
     tmux has-session -t "=$session:" 2>/dev/null || { echo "tbeam: no such session: $session" >&2; return 1; }
     # Authoritative id (registry-first, stamp validated against the slot's repo) —
@@ -2799,16 +2846,18 @@ _t_beam() {
       cwd=$(_tbeam_transcript_cwd "$tx[1]")
     fi
     [[ -n $cwd ]] || { echo "tbeam: couldn't read the working dir for $sid" >&2; return 1; }
-  elif [[ -n $self_sid && -z $pick ]]; then
+  elif [[ -n $self_sid && -z $pick && -z $repo_arg ]]; then
     sid=$self_sid; cwd=$PWD                         # current-session mode (claude or codex)
     agent=$(_dev_self_agent); agent=${agent:-claude}
   else
-    local row filter="$PWD"
-    [[ -n $all ]] && filter=""                      # --all: every project
-    row=$(_claude_sessions_fzf "$filter") || return $?
-    [[ -n $row ]] || return 130
-    sid=${row%%$'\t'*}
-    cwd=${${row#*$'\t'}%%$'\t'*}
+    local row
+    local -a fields
+    [[ -n $repo_arg ]] || repo_arg=$(_t_infer_repo)
+    [[ -n $all ]] && { repo_arg=; slot_arg=; }
+    row=$(_t_move_pick "$repo_arg" "$slot_arg") || return $?
+    [[ -n $row ]] || return 0
+    fields=("${(@ps:\t:)row}")
+    sid=$fields[1]; cwd=$fields[2]; agent=$fields[7]
   fi
   if _dev_app_slot_reserved "$cwd"; then
     print -u2 -- "tbeam: $cwd is reserved for the Codex desktop app; close it and release the reservation before moving its conversation"
