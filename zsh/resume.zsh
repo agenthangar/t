@@ -434,7 +434,7 @@ _t_resume() {
       fi
       if [[ $_T_CODEX_CANDIDATES_READY != 1 ]]; then
         _t_progress "Finding saved conversations"
-        _codex_candidate_snapshot
+        _t_with_progress "Finding saved conversations" _codex_candidate_snapshot
       fi
       # Scan both immutable layouts, including swept numeric folders.
       for wt in "${(@f)$(_dev_worktree_paths "$repo" "$n")}"; do

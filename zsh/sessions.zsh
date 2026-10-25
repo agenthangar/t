@@ -7,6 +7,38 @@ _t_progress() {
   return 0
 }
 
+# Keep the operation in this shell; only the animation runs in the background.
+# Callers opt in before capturing scanner stdout. Nested scans share one spinner.
+_t_with_progress() {
+  local label=$1; shift
+  if [[ ${_T_PROGRESS:-0} != 1 || ${_T_SPINNING:-0} == 1 || ! -t 2 || $TERM == dumb ]]; then
+    "$@"
+    return $?
+  fi
+  setopt local_options no_monitor no_notify
+  local _T_SPINNING=1 spin_pid spin_err
+  spin_err=$(mktemp "${TMPDIR:-/tmp}/t-progress.XXXXXX") || { "$@"; return $?; }
+  (
+    trap 'exit 0' TERM INT HUP
+    command sleep 0.25
+    local frame=1 width=$(( ${COLUMNS:-80} - 7 ))
+    local -a frames=(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏)
+    while true; do
+      printf '\r\033[2K  %s %.*s' "$frames[$frame]" "$width" "$label" >&2
+      (( frame = frame % 10 + 1 ))
+      command sleep 0.12
+    done
+  ) &
+  spin_pid=$!
+  { "$@" 2>"$spin_err" } always {
+    kill "$spin_pid" 2>/dev/null
+    wait "$spin_pid" 2>/dev/null
+    printf '\r\033[2K' >&2
+    cat "$spin_err" >&2
+    rm -f "$spin_err"
+  }
+}
+
 # the session's pane, else return 1. tpaste polls this after launching a fresh
 # session so it knows when the path can be delivered.
 _tpaste_claude_ready() {
@@ -1196,13 +1228,16 @@ _dev_desktop_threads() {
 }
 
 _dev_session_rows() {
+  _t_with_progress 'Checking local sessions' _dev_session_rows_impl "$@"
+}
+
+_dev_session_rows_impl() {
   # Rich display rows opt into a trailing model field. Ownership consumers keep
   # the established seven-field contract and its authoritative targeting ids.
   if [[ ${1:-} == --details ]]; then
     _dev_session_rows --transcripts | python3 "$T_HOME/libexec/t_session_details.py"
     return
   fi
-  _t_progress "Checking local sessions"
   setopt local_options null_glob bare_glob_qual
   # Two passes, because the expensive part is per-transcript and batches. Pass 1
   # asks tmux and the process table (ONE list-sessions carrying name+path+attached,
@@ -1363,6 +1398,10 @@ sys.exit(result.returncode)
 }
 
 _dev_rows_all() {
+  _t_with_progress 'Checking sessions and remote hosts' _dev_rows_all_impl "$@"
+}
+
+_dev_rows_all_impl() {
   # no_monitor/no_notify: this fans out with `&` + `wait`; in a monitor-mode shell that
   # would print in-run job-control notices ("[2] 67794", "exit 1 …", "done"). Silences
   # them for a *direct* interactive call. local_options restores the caller's settings
@@ -1372,10 +1411,11 @@ _dev_rows_all() {
   # ZSH_PRELUDE (top-level `setopt no_monitor`, which persists to exit). The `$(…)`
   # subshell callers below already run job-control-off, so they never warn either.
   setopt local_options no_monitor no_notify
-  _t_progress "Checking local sessions and ${#REMOTE_HOSTS} remote host(s)"
   local tmpd; tmpd=$(mktemp -d) || return 1
+  local -a scan_pids
   ( _dev_session_rows "$@" > "$tmpd/.local" 2>/dev/null
     print -r -- $? > "$tmpd/.local.rc" ) &
+  scan_pids+=($!)
   local scan=_dev_session_rows remote_scan
   [[ ${1:-} == --details ]] && scan+=' --details'
   remote_scan="zsh -lic ${(q)scan}"
@@ -1384,8 +1424,12 @@ _dev_rows_all() {
     ( _dev_remote_scan_with_timeout "${REMOTE_HOSTS[$h]}" "$remote_scan" "${T_REMOTE_SCAN_TIMEOUT:-15}" \
         > "$tmpd/$h" 2>/dev/null
       print -r -- $? > "$tmpd/$h.rc" ) &
+    scan_pids+=($!)
   done
-  wait
+  # A caller may own a progress animation (or another background job). Wait
+  # only for this fan-out; a blanket wait would also wait for the spinner.
+  local scan_pid
+  for scan_pid in $scan_pids; do wait "$scan_pid"; done
 
   local host file rc line failed=0
   for host in local ${(k)REMOTE_HOSTS}; do
@@ -1499,6 +1543,13 @@ _dev_list_remote() {
 # prompted "Claude is live there" for the very sessions ls calls idle.
 _dev_kill_one() {
   local session="$1" force="$2" agent
+  if [[ ${T_MCP_DETACHED:-0} == 1 ]]; then
+    local self_sid=$(_dev_self_sid) owner_sid=$(_dev_session_sid "$session")
+    if [[ ( -n $self_sid && $self_sid == $owner_sid ) || $(_dev_tmux_session_of_pid $$) == $session ]]; then
+      print -u2 -- 't mcp: cannot close the calling agent'
+      return 1
+    fi
+  fi
   agent=$(_dev_agent_of_session "$session")
   if [[ -z "$force" ]] && _dev_session_has_claude "$session" \
        && ! _dev_agent_at_welcome "$agent" "$session"; then
@@ -1996,6 +2047,7 @@ _dev_kill() {
   if ! tmux has-session -t "=$session:" 2>/dev/null; then
     # Live on another host? Tear it down there (shared fallback; remote `t kill` still
     # confirms unless -y). Same remote detection pop/plan get; -r forces it explicitly.
+    [[ ${T_MCP_DETACHED:-0} != 1 ]] || { print -u2 -- "t mcp: no local session: $session"; return 1; }
     _dev_session_remote_fallback "$session" kill ${force:+-y}; local remote_rc=$?
     (( remote_rc == 1 )) || return $remote_rc
     echo "No session: $session"
@@ -2436,7 +2488,7 @@ _t_dev() {
     if [[ -n $no_tmux ]]; then
       _t_pop "$app_session"
     else
-      tmux attach-session -t "=$app_session:"
+      _t_session_attach "$app_session"
     fi
     return
   fi
@@ -2640,7 +2692,7 @@ _t_dev() {
     # resume logging if it stopped (e.g. after server restart)
     tmux pipe-pane -t "=$session:" -o "cat >> $logfile"
     _dev_recovery_watch "$session"
-    tmux attach-session -t "=$session:" || {
+    _t_session_attach "$session" || {
       print -u2 -- "t open: could not attach $session; inspect $logfile"
       return 1
     }
@@ -2660,10 +2712,20 @@ _t_dev() {
     local agent_note=; [[ $agent != claude ]] && agent_note=" · $agent"
     echo "Starting $session in $dir$agent_note (logging to $logfile)"
     _dev_new_session "$session" "$dir" "$branch" "$skip_prepare" "$agent" || return 1
-    tmux attach-session -t "=$session:" || {
+    _t_session_attach "$session" || {
       print -u2 -- "t open: $session did not remain available; inspect $logfile"
       return 1
     }
+  fi
+}
+
+# MCP lifecycle calls leave the existing or newly created slot detached.
+_t_session_attach() {
+  if [[ ${T_MCP_DETACHED:-0} == 1 ]]; then
+    tmux has-session -t "=$1:" || return 1
+    print -r -- "Available: $1 (detached control; existing viewers unchanged)"
+  else
+    tmux attach-session -t "=$1:"
   fi
 }
 

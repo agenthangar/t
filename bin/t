@@ -44,6 +44,7 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+import threading
 import time
 import unicodedata
 from contextlib import closing, contextmanager, nullcontext, redirect_stdout
@@ -242,6 +243,45 @@ def _progress(message, *, machine=False):
         print(f"  t: {message}…", file=sys.stderr, flush=True)
 
 
+_SPINNER_ACTIVE = False
+
+
+@contextmanager
+def _spinner(message, *, machine=False):
+    """Animate only a quiet wait, never a picker, passthrough, or data stream."""
+    global _SPINNER_ACTIVE
+    enabled = (not machine and not _SPINNER_ACTIVE and sys.stdout.isatty() and sys.stderr.isatty()
+               and os.environ.get("TERM") != "dumb"
+               and not {'--json', '--dump', '--statusline'} & set(sys.argv[1:]))
+    if not enabled:
+        yield
+        return
+    stopped = threading.Event()
+    painted = threading.Event()
+    stream = sys.stderr
+    def animate():
+        frame = 0
+        while not stopped.wait(0.12 if frame else 0.25):
+            width = shutil.get_terminal_size((80, 24)).columns
+            label = _session_display_helpers()["clip_columns"](message, max(0, width - 7))
+            stream.write("\r\033[2K  %s %s" % ("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"[frame % 10], label))
+            stream.flush()
+            painted.set()
+            frame += 1
+    worker = threading.Thread(target=animate, daemon=True)
+    _SPINNER_ACTIVE = True
+    worker.start()
+    try:
+        yield
+    finally:
+        stopped.set()
+        worker.join()
+        _SPINNER_ACTIVE = False
+        if painted.is_set():
+            stream.write("\r\033[2K")
+            stream.flush()
+
+
 def zsh_capture(snippet, stdin=subprocess.DEVNULL):
     """Run a zsh login+interactive snippet, return stdout (stderr passes through).
 
@@ -261,8 +301,9 @@ def zsh_capture(snippet, stdin=subprocess.DEVNULL):
     JSON-RPC wire, so it passed DEVNULL explicitly; that is now the default.)
     """
     try:
-        r = subprocess.run(["zsh", "-lic", ZSH_PRELUDE + snippet], stdout=subprocess.PIPE,
-                           stderr=subprocess.PIPE, stdin=stdin, start_new_session=True, text=True)
+        with _spinner("Checking sessions and hosts"):
+            r = subprocess.run(["zsh", "-lic", ZSH_PRELUDE + snippet], stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE, stdin=stdin, start_new_session=True, text=True)
         if r.returncode and re.search(r"command not found: _(?:dev|t)_", r.stderr):
             print("t: zsh integration is not loaded; run t doctor --repair, then source the reported rc file or open a new interactive zsh", file=sys.stderr)
         elif r.stderr:
@@ -5260,6 +5301,8 @@ def _command_readonly(argv, *, terminal=None):
             terminal = sys.stdin.isatty() and sys.stdout.isatty()
         return not terminal
     verb, tail = words[0], words[1:]
+    if verb == "__session-goal":
+        return False  # --json formats the delivery receipt; it still sends input.
     if verb == "on":
         return False
     options = tail[:tail.index("--")] if "--" in tail else tail
@@ -9192,7 +9235,7 @@ def _plan_head_lines(path, n=40):
 
 # ── the tools ──
 
-_MCP_SERVER_INFO = {"name": "sessions", "version": "1"}
+_MCP_SERVER_INFO = {"name": "sessions", "version": "2"}
 _MCP_PROTOCOL_FALLBACK = "2025-06-18"
 _MCP_INSTRUCTIONS = (
     "Claude Code session awareness for this machine: its tmux dev slots, foreground "
@@ -9203,8 +9246,10 @@ _MCP_INSTRUCTIONS = (
     "yourself from the excerpts and titles, then session_detail for the winner. Slots are "
     "named <repo>-<n> (tmux session dev-<repo>-<n>, worktree ~/code/.worktrees/<basename>/"
     "<basename>-<n> (legacy <n> retained), branch dev/<basename>-<n>); a live one is attached with `t open <repo> <n>`, a "
-    "dead one revived with `t resume <repo> <n>` — tell the user those commands rather than running them. A result flagged "
-    "this_session is the conversation you are in.")
+    "dead one revived with `t resume <repo> <n>`. Use session controls only for user-requested actions, "
+    "with explicit targets. session_command exposes every public session verb and returns a terminal "
+    "handoff for modes requiring a terminal. Instruction/goal delivery is not agent acknowledgement. "
+    "A result flagged this_session is the conversation you are in; do not interrupt or close yourself.")
 
 _MCP_TOOLS = [
     {"name": "find_sessions",
@@ -9353,7 +9398,18 @@ _MCP_HANDLERS = {"find_sessions": _tool_find, "list_sessions": _tool_list,
                  "session_detail": _tool_detail}
 
 
+def _mcp_controls():
+    return runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_mcp_controls.py"))
+
+
+def _mcp_tools():
+    """Load control declarations only for MCP, not every CLI invocation."""
+    return _MCP_TOOLS + _mcp_controls()["tool_specs"]()
+
+
 def _mcp_call(cfg, state, name, args):
+    if name not in _MCP_HANDLERS:
+        return _mcp_controls()["call"](cfg, name, args, globals())
     return _MCP_HANDLERS[name](cfg, _mcp_context(cfg, state), args or {})
 
 
@@ -9436,7 +9492,7 @@ def _mcp_serve(cfg):
             sys.stdout.write(json.dumps(_mcp_error(None, -32700, "parse error")) + "\n")
             sys.stdout.flush()
             continue
-        resp = _mcp_handle(msg, _MCP_TOOLS, call, _MCP_SERVER_INFO, _MCP_INSTRUCTIONS)
+        resp = _mcp_handle(msg, _mcp_tools(), call, _MCP_SERVER_INFO, _MCP_INSTRUCTIONS)
         if resp is not None:
             sys.stdout.write(json.dumps(resp, ensure_ascii=False) + "\n")
             sys.stdout.flush()
@@ -9456,21 +9512,16 @@ def _mcp_registered(claude_json):
     return bool(isinstance(servers, dict) and "sessions" in servers)
 
 
-# Registration alone still leaves every tool call behind a permission prompt, and a
-# prompt per lookup makes the server useless mid-turn — the model asks "which slot had
-# X?" three times in a row and stalls three times. This server is ours and read-only
-# (three lookups over local transcripts and tmux, spawned by `t mcp`
-# from this very checkout), so the allow rule is seeded BY DEFAULT: the blanket
-# server-wide form, so a tool added to `t mcp` later is covered the day it ships.
-# Deliberate consequence: a future WRITE-capable sessions tool would inherit the
-# allowance — narrow this to explicit `mcp__sessions__<tool>` rules if that ever lands.
+# Mutating tools must not inherit the old server-wide lookup permission.
 _MCP_ALLOW_RULE = "mcp__sessions"
+_MCP_READ_RULES = ["mcp__sessions__" + name for name in
+                   ("find_sessions", "list_sessions", "session_detail")]
 
 
 def _mcp_allow_state(settings):
     """How ~/.claude/settings.json permits the sessions tools:
 
-    "server" — the blanket `mcp__sessions` rule (what we seed),
+    "server" — the legacy blanket `mcp__sessions` rule (migrated on install),
     "tools"  — only per-tool `mcp__sessions__<name>` rules, i.e. a deliberate
                hand-narrowing, so it counts as configured and is never widened
                back out from under you,
@@ -9493,11 +9544,8 @@ def _mcp_allow_state(settings):
 
 
 def _mcp_allow_write(settings):
-    """Append the blanket allow rule. Add-only, the same stance as the registration
-    itself: a hand-narrowed per-tool set, a deny/ask rule, or an unreadable file is
-    left exactly as found. Written tmp + os.replace because Claude Code owns this
-    file at runtime. True only when the file actually changed."""
-    if _mcp_allow_state(settings) != "none":
+    """Seed read tools or narrow the legacy blanket. Preserve custom per-tool rules."""
+    if _mcp_allow_state(settings) not in ("none", "server"):
         return False
     try:
         with open(settings, encoding="utf-8") as fh:
@@ -9512,7 +9560,8 @@ def _mcp_allow_write(settings):
     allow = perms.setdefault("allow", [])
     if not isinstance(allow, list):
         return False
-    allow.append(_MCP_ALLOW_RULE)
+    allow[:] = [rule for rule in allow if rule != _MCP_ALLOW_RULE]
+    allow.extend(rule for rule in _MCP_READ_RULES if rule not in allow)
     tmp = settings + ".tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
         json.dump(data, fh, indent=2)
@@ -9550,8 +9599,8 @@ def _mcp_allow_announce(settings):
     """Seed the allow rule and say so — the manual twin of install.sh's merge, so
     `t mcp --install` on a box `dots` has not reached is a complete setup."""
     if _mcp_allow_write(settings):
-        print("allowed %s in %s (its tools no longer prompt)"
-              % (_MCP_ALLOW_RULE, settings.replace(HOME, "~")))
+        print("allowed session lookups in %s; session controls retain approval"
+              % settings.replace(HOME, "~"))
     elif _mcp_allow_state(settings) == "tools":
         print("leaving the per-tool %s__* allow rules in %s alone"
               % (_MCP_ALLOW_RULE, settings.replace(HOME, "~")))
@@ -9561,7 +9610,7 @@ def cmd_mcp(cfg, args):
     if args.install:
         return _mcp_install()
     if args.list_tools:
-        for t in _MCP_TOOLS:
+        for t in _mcp_tools():
             print("%-16s %s" % (t["name"], t["description"].split(". ")[0] + "."))
         return 0
     if args.reindex:
@@ -9570,9 +9619,9 @@ def cmd_mcp(cfg, args):
         return 0
     if args.call:
         name, rest = args.call[0], args.call[1:]
-        if name not in _MCP_HANDLERS:
+        if name not in {tool['name'] for tool in _mcp_tools()}:
             print("t mcp --call: unknown tool %r — one of: %s"
-                  % (name, ", ".join(_MCP_HANDLERS)), file=sys.stderr)
+                  % (name, ", ".join(tool['name'] for tool in _mcp_tools())), file=sys.stderr)
             return 2
         try:
             params = json.loads(rest[0]) if rest else {}
@@ -9581,13 +9630,30 @@ def cmd_mcp(cfg, args):
             return 2
         try:
             result = _mcp_call(cfg, {}, name, params)
-        except ValueError as e:
+        except (ValueError, OSError, subprocess.TimeoutExpired) as e:
             print("t mcp --call: %s" % e, file=sys.stderr)
             return 1
         json.dump(result, sys.stdout, ensure_ascii=False, indent=1, default=str)
         print()
         return 0
     return _mcp_serve(cfg)
+
+
+def cmd_session_goal(cfg, args):
+    try:
+        if args.repo not in cfg.repos or not args.slot.isdigit() or int(args.slot) < 1:
+            raise ValueError('name a registered repository and a positive slot number')
+        row = _slot_select(cfg, _parse_rows(zsh_capture("_dev_session_rows")),
+                           args.repo, args.slot, os.getcwd(), "session goal")
+        repo, slot = row['slot'].rsplit('-', 1)
+        result = _mcp_controls()['call'](cfg, 'set_session_goal', {
+            'repo': repo, 'slot': int(slot), 'session_id': row['sid'], 'goal': args.goal})
+        print(json.dumps(result) if args.json else
+              f"Goal submitted to {repo}-{slot}; agent acknowledgement is not yet verified.")
+        return 0
+    except (ValueError, OSError, subprocess.TimeoutExpired) as error:
+        print(f"t session goal: {error}", file=sys.stderr)
+        return 1
 
 
 def cmd_agentcore(cfg, args):
@@ -9634,6 +9700,7 @@ COMMAND_GROUPS = {
         "resume": ("resume",), "history": ("history",), "cd": ("cd",), "move": ("beam",),
         "read": ("read",), "view-plan": ("plan",), "paste": ("paste",),
         "search": ("find",), "open-app": ("app",),
+        "goal": ("__session-goal",),
     },
     "repo": {
         "list": ("repos", "ls"), "cd": ("repos", "cd"),
@@ -9835,6 +9902,11 @@ Run `t help issue <verb>` for flags and arguments.
                  "  t repo add    # use the current checkout, including from a subdirectory\n"
                  "\nAdd infers the checkout directory name; --alias sets a short name.\n"
                  "Use `t config setup [dirs ...]` to select several checkouts (default ~/config).\n")
+    if group == "session":
+        extra = ("\nTARGETS\n  t session <verb> [repo] [slot] [flags]\n"
+                 "  Most verbs infer the repository from the current checkout; open and resume can select sessions.\n"
+                 "  Goal requires explicit REPO SLOT GOAL and never opens a picker.\n"
+                 "\nEXAMPLE\n  t session goal api 3 'Finish the login tests'\n")
     return _wrap_help(f"USAGE\n  t {group} <verb> [arguments] [flags]\n\n"
             f"{GROUP_DESCRIPTIONS[group]}.\n\nCOMMANDS\n" + "\n".join(rows) +
             f"\n{extra}\nRun `t help {group} <verb>` for flags and arguments.\n")
@@ -9852,7 +9924,8 @@ def _command_description(group, action):
                     "move": "Move a session between machines", "read": "Read slot output",
                     "view-plan": "Show a Claude session plan", "paste": "Paste a recent file path",
                     "search": "Search and resume a saved conversation",
-                    "open-app": "Move a Codex slot between CLI and desktop"},
+                    "open-app": "Move a Codex slot between CLI and desktop",
+                    "goal": "Send a new objective to a live agent"},
         "repo": {"list": "List registered repositories", "cd": "Enter a checkout",
                  "locate": "Print a checkout path", "create": "Create a GitHub repository",
                  "clone": "Clone and register a repository", "add": "Register an existing checkout"},
@@ -10707,11 +10780,24 @@ REMOTE SESSIONS
     lp.add_argument("url")
     lp.add_argument("name")
     lp.add_argument("alias")
-    mp = sub.add_parser("mcp", hidden=True, help="(internal) stdio MCP server: which session is working on what",
+    gp = sub.add_parser("__session-goal", hidden=True, help="send a new objective to a live agent",
+        description="Send a new objective to a local Claude or Codex tmux session. "
+                    "Usage: t session goal REPO SLOT GOAL [--json]. REPO and SLOT are explicit; "
+                    "there is no inference or picker. The exact live conversation is rechecked before "
+                    "delivery. This submits an instruction; it does not confirm adoption or interrupt "
+                    "the current turn. Inspect unsent drafts/dialogs first. Desktop and foreground "
+                    "sessions are unsupported. Example: t session goal api 3 'Finish the login tests'.")
+    gp.add_argument("repo", help="registered repository alias")
+    gp.add_argument("slot", help="local slot number")
+    gp.add_argument("goal", help="new objective, quoted as one argument")
+    gp.add_argument("--json", action="store_true", help="print a structured delivery result")
+
+    mp = sub.add_parser("mcp", hidden=True, help="(internal) stdio MCP server: session discovery and control",
         description="Internal: the stdio MCP server Claude Code spawns, registered at user "
             "scope as `sessions` by install.sh (or `t mcp --install`). Exposes the live slots, "
             "keyword search over every saved transcript's prompts, and per-session detail, "
-            "so any Claude session can answer \"which session was working on X?\". "
+            "plus explicit session controls and the full session command family through session_command. "
+            "Controls require user authorization; only the three lookup tools are automatically allowed. "
             "Not for direct use except through the flags below.")
     mp.add_argument("--install", action="store_true",
                     help="register with Claude Code (user scope) if not already")
@@ -10739,6 +10825,7 @@ IMPLEMENTED = {
     "login": cmd_login, "install": cmd_install, "integrate": cmd_integrate,
     "permissions": cmd_permissions, "trust": cmd_trust,
     "app": cmd_app, "restart": cmd_restart,
+    "__session-goal": cmd_session_goal,
     "config": cmd_config,
     "repos": cmd_repos,
     "hosts": cmd_hosts,

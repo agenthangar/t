@@ -138,6 +138,21 @@ Terminal commands may print plain stage progress to stderr before slow discovery
 redirected output, JSON, and remote scanner protocols remain free of progress.
 This adds no command, picker, prompt, or conditional selection mode.
 
+Quiet session/host scans and saved-history discovery additionally use a delayed
+spinner on stderr. Python uses `_spinner`; shell scans use `_t_with_progress`
+with terminal-boundary opt-in. Nested scans share one animation. Clear the line
+in a finally/always block on success, failure, and cancellation, before rendering
+results or opening a picker. Never animate over prompts, passthrough output,
+redirected output, JSON, MCP, or remote protocols; dumb terminals remain plain.
+
+`session goal REPO SLOT GOAL [--json]` is an explicit direct action. It requires
+both targets, never infers or picks, and submits a new objective to a verified
+local Claude/Codex tmux conversation. JSON formats the delivery receipt and is
+still a mutation. Goal does not imply interruption, adoption, or completion.
+MCP uses the same operation; its session command gateway returns a terminal
+handoff descriptor for modes that need interactive control. Detached MCP opens
+and resumes retain the shared lifecycle checks and never attach a terminal.
+
 
 Desktop handoff refusals identify a verified conflicting conversation and give
 release instructions with the exact retry command before stopping the selected

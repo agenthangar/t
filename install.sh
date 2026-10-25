@@ -214,12 +214,17 @@ if not os.environ.get("T_NO_MCP"):
     permissions = data.setdefault("permissions", {})
     if isinstance(permissions, dict):
         allow = permissions.setdefault("allow", [])
-        if isinstance(allow, list) and not any(
-            isinstance(rule, str) and (rule == "mcp__sessions" or rule.startswith("mcp__sessions__"))
-            for rule in allow
-        ):
-            allow.append("mcp__sessions")
-            changed = True
+        if isinstance(allow, list):
+            legacy = "mcp__sessions" in allow
+            custom = any(isinstance(rule, str) and rule.startswith("mcp__sessions__") for rule in allow)
+            if legacy or not custom:
+                allow[:] = [rule for rule in allow if rule != "mcp__sessions"]
+                for name in ("find_sessions", "list_sessions", "session_detail"):
+                    rule = "mcp__sessions__" + name
+                    if rule not in allow:
+                        allow.append(rule)
+                changed = True
+
 if changed:
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as file:

@@ -31,7 +31,7 @@ ISSUE_VERBS = {"list", "status", "start", "open"}
 # accepted verbs so extending one requires an intentional contract review.
 LEGACY_GROUP_VERBS = {
     "session": {"open", "list", "close", "restart", "push", "pop", "resume", "history", "cd",
-                "move", "read", "view-plan", "paste", "search", "open-app"},
+                "move", "read", "view-plan", "paste", "search", "open-app", "goal"},
     "repo": {"list", "cd", "locate", "create", "clone", "add"},
     "cursor": {"list", "resume", "send"},
     "hosts": {"list", "show", "add", "edit", "remove", "default", "run"},

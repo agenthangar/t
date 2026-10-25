@@ -1890,7 +1890,7 @@ def test_tool_detail_assembles_everything(t_mod, tmp_path, monkeypatch):
 # ─── mcp: framing ──────────────────────────────────────────────────────────────
 
 def _handle(t_mod, msg, call=None):
-    return t_mod._mcp_handle(msg, t_mod._MCP_TOOLS, call or (lambda n, a: {"ok": n, "args": a}),
+    return t_mod._mcp_handle(msg, t_mod._mcp_tools(), call or (lambda n, a: {"ok": n, "args": a}),
                              t_mod._MCP_SERVER_INFO, t_mod._MCP_INSTRUCTIONS)
 
 
@@ -1909,8 +1909,9 @@ def test_mcp_handle_initialize_echoes_version_and_instructions(t_mod):
 def test_mcp_handle_misc_methods(t_mod):
     assert _handle(t_mod, {"id": 1, "method": "ping"})["result"] == {}
     tools = _handle(t_mod, {"id": 2, "method": "tools/list"})["result"]["tools"]
-    assert [t["name"] for t in tools] == ["find_sessions", "list_sessions", "session_detail"]
-    assert all(set(t) == {"name", "description", "inputSchema"} for t in tools)
+    assert [t["name"] for t in tools][:3] == ["find_sessions", "list_sessions", "session_detail"]
+    assert {t["name"] for t in tools[3:]} == {"open_session", "resume_session", "kill_session", "restart_session", "send_instructions", "pause_session", "set_session_goal", "session_command"}
+    assert all({"name", "description", "inputSchema"} <= set(t) for t in tools)
     assert _handle(t_mod, {"id": 3, "method": "prompts/list"})["result"] == {"prompts": []}
     assert _handle(t_mod, {"id": 4, "method": "resources/list"})["result"] == {"resources": []}
     assert _handle(t_mod, {"method": "notifications/initialized"}) is None
@@ -1981,7 +1982,7 @@ def test_mcp_allow_write_is_add_only_and_idempotent(t_mod, tmp_path):
     p.write_text(json.dumps({"model": "opus", "permissions": {"allow": ["Bash(ls)"]}}))
     assert t_mod._mcp_allow_write(str(p)) is True
     data = json.loads(p.read_text())
-    assert data["permissions"]["allow"] == ["Bash(ls)", "mcp__sessions"]
+    assert data["permissions"]["allow"] == ["Bash(ls)", *t_mod._MCP_READ_RULES]
     assert data["model"] == "opus"                          # everything else survives
     assert t_mod._mcp_allow_write(str(p)) is False          # runs on every dots
     assert not list(tmp_path.glob("*.tmp"))                 # tmp + os.replace, nothing left
@@ -1990,7 +1991,7 @@ def test_mcp_allow_write_is_add_only_and_idempotent(t_mod, tmp_path):
     q = tmp_path / "bare.json"
     q.write_text(json.dumps({"model": "opus"}))
     assert t_mod._mcp_allow_write(str(q)) is True
-    assert json.loads(q.read_text())["permissions"]["allow"] == ["mcp__sessions"]
+    assert json.loads(q.read_text())["permissions"]["allow"] == t_mod._MCP_READ_RULES
 
 
 def test_mcp_allow_write_never_widens_a_hand_narrowed_set(t_mod, tmp_path):
@@ -2020,7 +2021,7 @@ def test_sessions_mcp_is_allowed_by_default_in_the_shipped_setup(t_mod):
     import os
     root = os.path.dirname(os.path.dirname(os.path.abspath(t_mod.__file__)))
     with open(os.path.join(root, "claude", "settings.json.example")) as f:
-        assert t_mod._MCP_ALLOW_RULE in json.load(f)["permissions"]["allow"]
+        assert json.load(f)["permissions"]["allow"] == t_mod._MCP_READ_RULES
     with open(os.path.join(root, "install.sh")) as f:
         sh = f.read()
     assert "merge_claude_settings" in sh

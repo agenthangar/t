@@ -5,6 +5,6 @@
     ]
   },
   "permissions": {
-    "allow": [ "mcp__sessions" ]
+    "allow": [ "mcp__sessions__find_sessions", "mcp__sessions__list_sessions", "mcp__sessions__session_detail" ]
   }
 }
