@@ -120,17 +120,59 @@ def test_tables_align_plain_columns_and_do_not_truncate_redirects(t_mod, monkeyp
     assert t_mod._table_lines(('REPO', 'CHECKOUT'), []) == ['  REPO  CHECKOUT']
 
 
-def test_session_table_keeps_status_and_identity_in_small_view(t_mod, monkeypatch):
+@pytest.mark.parametrize('width', [80, 44, 32])
+@pytest.mark.parametrize('remote', [False, True])
+def test_session_table_keeps_status_and_identity_in_small_view(t_mod, monkeypatch, width, remote):
     monkeypatch.setattr(t_mod.sys.stdout, 'isatty', lambda: True)
-    monkeypatch.setattr(t_mod, '_columns', lambda: 32)
+    monkeypatch.setattr(t_mod, '_columns', lambda: width)
     rows = [dict(host='mini', slot='api-17', state='app', context='active', agent='codex',
-                 model='model-test', summary='#12 merged, still in progress')]
-    lines = t_mod._session_table_lines(rows, remote=True)
+                 model='model-test', summary='Fix 漢字 e\u0301 ' * 20 + '#12 merged, still in progress',
+                 last_turn_started_at='2026-10-23T16:41:07Z')]
+    rows.append(dict(rows[0], slot='web-3', state='detached', context='', summary='Review UI'))
+    lines = t_mod._session_table_lines(rows, remote=remote)
     text = '\n'.join(lines)
-    assert all(len(line) <= 32 for line in lines)
-    assert all(value in text for value in ('● ✓ ↻', 'desktop', 'api-17', 'mini', 'model-test'))
+    assert len(lines) == len(rows) + 1
+    assert all(t_mod._display_width(line) <= width for line in lines)
+    assert all(value in text.replace(' ', '') for value in ('●✓↻', 'api-17', 'web-3', 'Fix', '…'))
+    assert lines[0].endswith('LAST TURN')
+    stamp = t_mod._session_display_helpers()['format_last_turn'](rows[0]['last_turn_started_at'])
+    rendered_stamp = next(value for value in (stamp, stamp[5:16], stamp[11:16]) if lines[1].endswith(value))
+    last_column = t_mod._display_width(lines[0][:-len('LAST TURN')])
+    assert all(t_mod._display_width(line[:-len(rendered_stamp)]) == last_column for line in lines[1:])
+    if remote:
+        assert 'HOST' in lines[0] and 'mini' in text
+    assert '\x1b' not in text
     rows[0].update(state='detached', context='', summary='')
     assert '○' in '\n'.join(t_mod._session_table_lines(rows))
+
+
+def test_session_table_clips_only_task_when_other_columns_fit(t_mod, monkeypatch):
+    monkeypatch.setattr(t_mod.sys.stdout, 'isatty', lambda: True)
+    monkeypatch.setattr(t_mod, '_columns', lambda: 120)
+    row = dict(host='mini', slot='api-17', state='app', context='active', agent='codex',
+               model='model-test', summary='漢字 e\u0301 ' * 100, last_turn_started_at='2026-10-23T16:41:07Z')
+    lines = t_mod._session_table_lines([row], remote=True)
+    assert len(lines) == 2
+    assert all(t_mod._display_width(line) <= 120 for line in lines)
+    assert all(value in lines[1] for value in ('desktop', 'model-test', 'mini', 'api-17', '…'))
+    assert lines[1].endswith(t_mod._session_display_helpers()['format_last_turn'](row['last_turn_started_at']))
+    monkeypatch.setattr(t_mod.sys.stdout, 'isatty', lambda: False)
+    assert row['summary'] in t_mod._session_table_lines([row], remote=True)[1]
+    monkeypatch.setattr(t_mod.sys.stdout, 'isatty', lambda: True)
+    assert t_mod._session_table_lines([]) == ['  STATUS  UI  MODEL  SESSION  WORKING ON  LAST TURN']
+
+
+@pytest.mark.parametrize('width', [20, 32, 44])
+def test_session_table_bounds_long_remote_identities(t_mod, monkeypatch, width):
+    monkeypatch.setattr(t_mod.sys.stdout, 'isatty', lambda: True)
+    monkeypatch.setattr(t_mod, '_columns', lambda: width)
+    rows = [dict(host='very-long-host', slot='漢字-repository-123', state='attached', context='active',
+                 agent='codex', model='long-model', summary='Fix rendering #12 merged, still in progress',
+                 last_turn_started_at='2026-10-23T16:41:07Z')]
+    lines = t_mod._session_table_lines(rows, remote=True)
+    assert len(lines) == 2
+    assert all(t_mod._display_width(line) <= width for line in lines)
+    assert '…' in lines[1]
 
 
 def test_table_width_counts_wide_and_combining_characters(t_mod):
@@ -244,7 +286,7 @@ def _table_contract_cells(text, labels):
 
 @pytest.mark.parametrize('width', [None, 80, 44, 32])
 def test_session_and_history_display_follow_shared_schema(history, t_mod, tmp_path, monkeypatch, capsys, width):
-    """The contract must describe real ls and history output, including wrapped cells."""
+    """Shared full values survive redirects; terminal layouts follow each command."""
     common = CONTRACT['display_schemas']['session_information']
     schema = CONTRACT['display_schemas']['history_information']
     row, owner = _history_display_fixture(tmp_path, owned=True)
@@ -275,13 +317,17 @@ def test_session_and_history_display_follow_shared_schema(history, t_mod, tmp_pa
     assert schema['layouts']['table']['columns'][:len(labels)] == labels
     for label in schema['layouts']['table']['columns']:
         assert label in retained
+    full_live = 'STATUS' in live
     for label in labels:
-        assert label in live and label in retained
+        assert label in retained
+        if full_live:
+            assert label in live
     live_cells = _table_contract_cells(live, labels)
     retained_cells = _table_contract_cells(retained, schema['layouts']['table']['columns'])
     for label, value in (('UI', 'cli'), ('HOST', owner['host']), ('SESSION', owner['slot']),
                          ('MODEL', owner['model']), ('WORKING ON', owner['summary'])):
-        assert ''.join(value.split()) in ''.join(live_cells[label].split())
+        if width is None:
+            assert ''.join(value.split()) in ''.join(live_cells[label].split())
         assert ''.join(value.split()) in ''.join(retained_cells[label].split())
     assert row['associations'][0]['branch'] in retained_cells['BRANCH']
     assert '#12[MERGED]' in retained_cells['PRS']
@@ -292,6 +338,9 @@ def test_session_and_history_display_follow_shared_schema(history, t_mod, tmp_pa
         if mark != common['status_marks']['detached']:
             assert mark in live and mark in retained
     if width is not None:
+        assert len(live.splitlines()) == 2
+        assert all(t_mod._display_width(line) <= width for line in live.splitlines())
+        assert CONTRACT['commands']['session list']['display_layout']['physical_row'] == 'single_line'
         assert all(t_mod._display_width(line) <= width for line in retained.splitlines() if line.startswith('  '))
 
 
@@ -308,17 +357,26 @@ def test_session_last_turn_display_contract(t_mod, monkeypatch, width, remote):
     labels = ['STATUS', 'UI', 'MODEL'] + (['HOST'] if remote else []) + ['SESSION', 'WORKING ON', extension['label']]
     assert labels[-1] == extension['label'] and extension['position'] == 'last'
     output = '\n'.join(t_mod._session_table_lines([row], remote=remote))
+    compact = 'STATUS' not in output
+    if compact:
+        labels = ['S'] + (['HOST'] if remote else []) + [('SLOT' if 'SLOT' in output else 'SESSION'), 'TASK', 'LAST TURN']
     cells = _table_contract_cells(output, labels)
     expected = t_mod._session_display_helpers()['format_last_turn'](row['last_turn_started_at'])
+    if compact:
+        expected = expected[5:16]
+        if remote and width == 32:
+            expected = expected[-5:]
     assert ''.join(cells[extension['label']].split()) == ''.join(expected.split())
-    assert cells['WORKING ON'] == 'Fix login'
+    task = cells['TASK' if compact else 'WORKING ON']
+    assert task == 'Fix login' or (task.endswith('…') and 'Fix login'.startswith(task[:-1]))
     if width is not None:
         assert all(t_mod._display_width(line) <= width for line in output.splitlines())
     # Pre-extension hosts remain readable and never substitute general activity.
     legacy, = t_mod._parse_rows(wire.rsplit('\t', 1)[0])
     legacy['updated_at'] = '2026-10-23T16:41:07Z'
     output = '\n'.join(t_mod._session_table_lines([legacy], remote=remote))
-    assert _table_contract_cells(output, labels)[extension['label']] == extension['unknown']
+    assert output.splitlines()[0].endswith(extension['label'])
+    assert output.splitlines()[1].endswith(extension['unknown'])
 
 
 def test_history_display_contract_preserves_unknowns_preview_and_json(history, t_mod, tmp_path, monkeypatch, capsys):
