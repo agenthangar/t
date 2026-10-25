@@ -236,6 +236,12 @@ class Config:
 
 # ─── shell-out helpers ─────────────────────────────────────────────────────────
 
+def _progress(message, *, machine=False):
+    """Terminal-only stage feedback; never write into a data stream."""
+    if not machine and sys.stdout.isatty() and sys.stderr.isatty():
+        print(f"  t: {message}…", file=sys.stderr, flush=True)
+
+
 def zsh_capture(snippet, stdin=subprocess.DEVNULL):
     """Run a zsh login+interactive snippet, return stdout (stderr passes through).
 
@@ -508,6 +514,7 @@ def cmd_ls(cfg, args):
         print(e, file=sys.stderr)
         return 1
     st = Style()
+    _progress("Checking local sessions and remote hosts" if args.remote else "Checking local sessions")
     if args.remote:
         rows = _scope_filter(_parse_rows(zsh_capture("_dev_rows_all --details"), host_prefixed=True), scope, wt_scope)
         if not rows:
@@ -9589,6 +9596,7 @@ def cmd_agentcore(cfg, args):
 
 
 def cmd_history(cfg, args):
+    _progress("Loading conversation history", machine=getattr(args, "json", False))
     helper = runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_history.py"))
     history = helper["HistoryCommand"](cfg, globals())
     try:
@@ -9601,6 +9609,7 @@ def cmd_history(cfg, args):
 
 
 def cmd_issue(cfg, args):
+    _progress("Checking issues and session ownership", machine=getattr(args, "json", False))
     helper = runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_issue.py"))
     return helper["run"](cfg, args, globals())
 
@@ -10276,7 +10285,9 @@ REMOTE SESSIONS
             "ambiguous per-slot — use `t session push -p` there). Agents: a claude conversation "
             "and a codex thread are offered alike — every row carries its agent's icon and name "
             f"({_agent_legend()}) — each revived by its own binary; a cursor chat has no dev slot "
-            "— `t cursor list` / `t cursor resume <id>`.")
+            "— `t cursor list` / `t cursor resume <id>`. Saved discovery reuses unchanged "
+            "metadata and refreshes when source files change; live ownership is always checked. "
+            "Terminal progress messages identify discovery stages while waiting.")
     sp.add_argument("repo", nargs="?", help="DEV_REPOS key; defaults to the repo your cwd is in")
     sp.add_argument("slot", nargs="?", help="slot number; a lone slot implies the cwd repo")
     sp.add_argument("-f", "--fg", action="store_true", help="resume inline in THIS terminal (no tmux slot)")

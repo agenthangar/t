@@ -43,7 +43,7 @@ def artifact(version="v1.2.3", changed=None, extra=None):
     changed = changed or {}
     files = {name: (ROOT / name).read_bytes() for name in release.REQUIRED if name != ".t-release-version"}
     # Current installer integrations extend the backwards-compatible release minimum.
-    for name in ('bin/t-session-start', 'libexec/t_shell_setup.py', 'libexec/t_onboarding.py', 'libexec/t_discovery.py', 'libexec/t_issue.py', 'libexec/t_issue_policy.txt', 'libexec/t_history.py', 'libexec/t_session_details.py'):
+    for name in ('bin/t-session-start', 'libexec/t_shell_setup.py', 'libexec/t_onboarding.py', 'libexec/t_discovery.py', 'libexec/t_issue.py', 'libexec/t_issue_policy.txt', 'libexec/t_history.py', 'libexec/t_candidates.py', 'libexec/t_session_details.py'):
         files[name] = (ROOT / name).read_bytes()
     files[".t-release-version"] = (version + "\n").encode()
     files.update(changed)

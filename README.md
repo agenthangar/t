@@ -275,6 +275,19 @@ the error gives the CLI selection command to index that exact conversation first
 Older histories without a verifiable writer-lock contract are refused until a
 current Codex CLI owns them and can perform the guarded handoff.
 
+Saved Codex candidates are cached under `${XDG_CACHE_HOME:-~/.cache}/claude-sessions`.
+Repeated `t resume` calls reuse unchanged metadata; each invocation checks for new,
+changed, removed, or replaced rollouts and index/WAL changes. One discovery snapshot
+serves every worktree in a resume scan. Other saved-conversation lookups reuse the
+same cache. Live ownership is checked afresh before resume; deleting the disposable
+`candidates-*.json` files simply rebuilds them on the next lookup.
+
+For example, run `t resume my-project --days all` again after cancelling the picker:
+unchanged discovery metadata is reused, while new conversations appear immediately.
+Terminal progress messages identify ownership checks, saved-candidate discovery,
+and metadata loading. Open/close session scans, session lists, history, and issue
+commands also report discovery stages. Redirected output and JSON remain quiet.
+
 `t open`, `t resume`, and `t kill` share the compact resume picker design:
 **Space/Tab marks ✓ and Enter acts on the selection**. **Ctrl-A** shows all
 sessions; **Ctrl-F** restores the default filters. **Ctrl-T** toggles attached

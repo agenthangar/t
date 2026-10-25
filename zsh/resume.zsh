@@ -63,6 +63,8 @@ _t_resume_on_host() {
 # explicitly because a bare "#N" was indistinguishable from a session with no PR.
 # User-facing help lives in bin/t (`t resume -h`); the t() shim routes -h there.
 _t_resume() {
+  local _T_PROGRESS=0
+  [[ -t 1 && -t 2 ]] && _T_PROGRESS=1
   setopt local_options null_glob bare_glob_qual
   local a no_tmux= app= cli= all_flag= remote_flag= live_flag= days=30 _expect_days= on_host= _expect_host=; local -a pos
   for a in "$@"; do
@@ -174,6 +176,7 @@ _t_resume() {
     done
     for _h in ${(ko)REMOTE_HOSTS}; do
       _tgt=${REMOTE_HOSTS[$_h]}
+      _t_progress "Fetching saved conversations from $_h"
       rsync -a --update --timeout=10 -e "ssh -o ConnectTimeout=3 -o BatchMode=yes" \
         "${(@)_incs}" --exclude='*' \
         "$_tgt:$HOME/.claude/projects/" "$HOME/.claude/projects/" 2>/dev/null
@@ -213,6 +216,7 @@ _t_resume() {
   # path, same rule as _dev_remote_resolve so a `dev-dot-2` on mini matches
   # `dev-dotfiles-2` here — both key one dir); the alias is captured so an attach
   # needs no second scan.
+  _t_progress "Checking conversation owners"
   local all_rows= remote_rows= live_all= live_scan_rc=0
   if [[ -n $app ]] || (( ${#REMOTE_HOSTS} )); then
     live_all=$(_dev_rows_all); live_scan_rc=$?
@@ -313,6 +317,10 @@ _t_resume() {
   for _hcf in "$HOME"/.cache/t/hostnames/*(N); do
     host_alias[$(<$_hcf)]=${_hcf:t}
   done
+  # One validated discovery snapshot for every slot/layout in this invocation.
+  # Dynamically scoped locals disappear on return; later commands validate again.
+  local -A _T_CODEX_CANDIDATES
+  local _T_CODEX_CANDIDATES_READY=0
   for repo in $repos; do
     _rdir=${DEV_REPOS[$repo]}; _rbase=${_rdir:t}
     remote_live_host=(); remote_live_alias=(); remote_live_sum=(); remote_live_agent=(); remote_live_state=()
@@ -424,6 +432,10 @@ _t_resume() {
         cands+=(9999999999$'\t'"$repo"$'\t'"$n"$'\t'-$'\t'"${stale_path:-$wt}"$'\t'"● active"$'\t'"${local_sum[${_stale#dev-}]:-(live session)}"$'\t'here$'\t'-$'\t'-$'\t'"${local_agent[${_stale#dev-}]:-$(_dev_agent_of_session "$_stale")}")
         continue
       fi
+      if [[ $_T_CODEX_CANDIDATES_READY != 1 ]]; then
+        _t_progress "Finding saved conversations"
+        _codex_candidate_snapshot
+      fi
       # Scan both immutable layouts, including swept numeric folders.
       for wt in "${(@f)$(_dev_worktree_paths "$repo" "$n")}"; do
         # every conversation either agent recorded in this worktree: claude's project
@@ -490,6 +502,7 @@ _t_resume() {
   # ONE batched metadata read for every surviving candidate (title + last PR URL),
   # warm-cached per transcript and incremental for the ones still being appended to.
   if (( $#pending )); then
+    _t_progress "Loading metadata for $#pending saved conversation(s)"
     for _p in "${(@)pending}"; do _mpaths+=("${${(@ps:\t:)_p}[5]}"); done
     _mrows=("${(@f)$(_transcript_meta_batch "${(@)_mpaths}")}")
     for _mr in "${(@)_mrows}"; do
