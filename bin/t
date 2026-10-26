@@ -9844,7 +9844,8 @@ LEARN MORE
   t help aliases           Show compatibility aliases
 
 OPTIONAL STARTUP ADVISORIES
-  export T_VULNERABILITY_CHECK=1   Enable cached local cloudflared checks in bare t
+  Cached local cloudflared checks in interactive bare t.
+  export T_VULNERABILITY_CHECK=1   Enable
   unset T_VULNERABILITY_CHECK     Disable; no automatic remediation
 """
     return _wrap_help(help_text)
