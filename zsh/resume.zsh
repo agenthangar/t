@@ -1,3 +1,5 @@
+_t_resume_rsync() { rsync "$@" 2>/dev/null; }
+
 _t_resume_on_host() {
   local host="$1" sid="$2" wt="$3" agent="$4" mode="$5"
   local target="${REMOTE_HOSTS[$host]:-$host}"
@@ -177,17 +179,17 @@ _t_resume() {
     for _h in ${(ko)REMOTE_HOSTS}; do
       _tgt=${REMOTE_HOSTS[$_h]}
       _t_progress "Fetching saved conversations from $_h"
-      rsync -a --update --timeout=10 -e "ssh -o ConnectTimeout=3 -o BatchMode=yes" \
+      _t_with_progress "Fetching saved conversations from $_h" _t_resume_rsync -a --update --timeout=10 -e "ssh -o ConnectTimeout=3 -o BatchMode=yes" \
         "${(@)_incs}" --exclude='*' \
-        "$_tgt:$HOME/.claude/projects/" "$HOME/.claude/projects/" 2>/dev/null
+        "$_tgt:$HOME/.claude/projects/" "$HOME/.claude/projects/"
       _prc=$?
       # codex rollouts: the whole date tree (small, append-only files; union rule);
       # rc 23 = no ~/.codex/sessions there. A pulled rollout shows in the scan via
       # _codex_rollout_scan before codex has indexed it.
       if (( _prc == 0 || _prc == 23 )); then
-        rsync -a --update --timeout=10 -e "ssh -o ConnectTimeout=3 -o BatchMode=yes" \
+        _t_with_progress "Fetching saved conversations from $_h" _t_resume_rsync -a --update --timeout=10 -e "ssh -o ConnectTimeout=3 -o BatchMode=yes" \
           --include='*/' --include='rollout-*.jsonl' --include='rollout-*.origin' --exclude='*' \
-          "$_tgt:$HOME/.codex/sessions/" "${CODEX_HOME:-$HOME/.codex}/sessions/" 2>/dev/null
+          "$_tgt:$HOME/.codex/sessions/" "${CODEX_HOME:-$HOME/.codex}/sessions/"
       fi
       if (( _prc == 0 || _prc == 23 )); then
         echo "⟳ pulled ${_h}'s latest transcripts" >&2
@@ -504,7 +506,7 @@ _t_resume() {
   if (( $#pending )); then
     _t_progress "Loading metadata for $#pending saved conversation(s)"
     for _p in "${(@)pending}"; do _mpaths+=("${${(@ps:\t:)_p}[5]}"); done
-    _mrows=("${(@f)$(_transcript_meta_batch "${(@)_mpaths}")}")
+    _mrows=("${(@f)$(_t_with_progress "Loading conversation metadata" _transcript_meta_batch "${(@)_mpaths}")}")
     for _mr in "${(@)_mrows}"; do
       [[ -n $_mr ]] || continue
       # Peeled with parameter expansion, NOT a split: title and pr are both
@@ -2391,8 +2393,7 @@ _t_pop() {
   [[ -n $pane_pid ]] && cpid=$(pgrep -P "$pane_pid" 2>/dev/null | head -1)   # claude = pane shell's child
   tmux kill-session -t "=$session:"
   if [[ -n $cpid ]]; then
-    local n=0
-    while kill -0 "$cpid" 2>/dev/null && (( n++ < 100 )); do sleep 0.05; done   # wait ≤5s for it to die
+    _t_wait_for_exit "$cpid"
     kill -0 "$cpid" 2>/dev/null && \
       echo "warning: $session's $agent ($cpid) didn't exit; resuming anyway — transcript may interleave." >&2
   fi
@@ -2921,8 +2922,7 @@ _t_beam() {
       local fgpid; fgpid=$(_dev_pid_for_sid "$sid")
       if [[ -n $fgpid ]]; then
         kill -TERM "$fgpid" 2>/dev/null
-        local n=0
-        while kill -0 "$fgpid" 2>/dev/null && (( n++ < 100 )); do sleep 0.05; done
+        _t_wait_for_exit "$fgpid"
         if kill -0 "$fgpid" 2>/dev/null; then
           # Owner ignored SIGTERM (or is wedged) — warn rather than claim success,
           # mirroring _dev_adopt_fg: the remote is about to take over, so two live

@@ -138,8 +138,10 @@ Terminal commands may print plain stage progress to stderr before slow discovery
 redirected output, JSON, and remote scanner protocols remain free of progress.
 This adds no command, picker, prompt, or conditional selection mode.
 
-Quiet session/host scans and saved-history discovery additionally use a delayed
-spinner on stderr. Python uses `_spinner`; shell scans use `_t_with_progress`
+Quiet blocking work (provider calls, repository/setup probes, updates, AgentCore,
+sharing, and session/history discovery) uses a delayed
+spinner on stderr. Python uses the shared `libexec/t_progress.py` `_spinner`
+context/decorator; shell scans use `_t_with_progress`
 with terminal-boundary opt-in. Nested scans share one animation. Clear the line
 in a finally/always block on success, failure, and cancellation, before rendering
 results or opening a picker. Never animate over prompts, passthrough output,
@@ -363,3 +365,16 @@ prints an executable source command; other findings keep their explicit remedies
 Missing shell setup is a preselected row in `t agent install`, including when no
 agent changes are needed. It appears in the review and `-y` plan; deselection,
 status, dry-run, cancellation, and noninteractive plans do not modify it.
+
+## Progress enforcement
+
+Run `python3 scripts/lint_progress.py` alongside CLI lint. CI requires every
+Python subprocess, network request, and sleep site to use `_spinner` or have a
+reviewed reason in `ui/progress-contract.json`. Interactive tools own their
+terminal, streamed installers provide their own output, and background/protocol
+workers remain quiet. The inventory also protects shared shell scanner and
+resume progress seams. Add coverage when introducing another slow shell phase.
+
+For example, `t issue list`, `t history --refresh`, and `t system update --check`
+show a delayed wheel during quiet discovery in a terminal; their redirected
+output stays clean. Spinners clear before results, errors, or selection.

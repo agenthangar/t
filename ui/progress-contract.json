@@ -1,0 +1,181 @@
+{
+  "description": "Quiet blocking operations use _spinner; reviewed terminal, protocol, and background exceptions remain explicit. New blocking sites fail CI until classified. Shell progress is enforced at shared scanner and resume seams.",
+  "exceptions": {
+    "bin/t:cmd_read:subprocess.Popen": {
+      "kind": "passthrough",
+      "reason": "The pager owns terminal input and streaming output."
+    },
+    "bin/t:_try_remote_delegate:subprocess.run": {
+      "kind": "passthrough",
+      "reason": "The delegated shell command owns its terminal and progress."
+    },
+    "bin/t:_instructions_edit:subprocess.run": {
+      "kind": "passthrough",
+      "reason": "The editor owns the terminal."
+    },
+    "bin/t:_ConfigRPC.__enter__:subprocess.Popen": {
+      "kind": "background",
+      "reason": "Starts the config RPC server asynchronously; no foreground wait."
+    },
+    "bin/t:_config_editor:subprocess.call": {
+      "kind": "passthrough",
+      "reason": "The configured editor owns the terminal."
+    },
+    "bin/t:_login_run:subprocess.run": {
+      "kind": "passthrough",
+      "reason": "Interactive login or streamed installer output owns the terminal."
+    },
+    "bin/t:_login_run:subprocess.Popen": {
+      "kind": "passthrough",
+      "reason": "Interactive login or streamed installer output owns the terminal."
+    },
+    "bin/t:_install_relink:subprocess.run": {
+      "kind": "passthrough",
+      "reason": "Installer output is streamed to the terminal."
+    },
+    "bin/t:_t_relink:subprocess.run": {
+      "kind": "passthrough",
+      "reason": "Installer output is streamed to the terminal."
+    },
+    "bin/t:cmd_integrate:subprocess.run": {
+      "kind": "passthrough",
+      "reason": "Installer output is streamed to the terminal."
+    },
+    "bin/t:cmd_update:subprocess.run": {
+      "kind": "passthrough",
+      "reason": "Git, Homebrew, and installer output is streamed to the terminal."
+    },
+    "bin/t:_install_walk:subprocess.call": {
+      "kind": "passthrough",
+      "reason": "Installation steps stream output and may prompt."
+    },
+    "bin/t:_live_rows.tmux:subprocess.run": {
+      "kind": "protocol",
+      "reason": "MCP scanner returns session wire data without terminal chrome."
+    },
+    "bin/t:_live_rows:subprocess.run": {
+      "kind": "protocol",
+      "reason": "MCP scanner returns session wire data without terminal chrome."
+    },
+    "bin/t:_git_brief.run:subprocess.run": {
+      "kind": "protocol",
+      "reason": "MCP context collection returns machine data."
+    },
+    "bin/t:_mcp_install:subprocess.run": {
+      "kind": "passthrough",
+      "reason": "Agent CLI integration output is streamed."
+    },
+    "bin/t:_onboarding_start:subprocess.run": {
+      "kind": "passthrough",
+      "reason": "Session shell launcher owns the terminal."
+    },
+    "libexec/t_history.py:HistoryCommand.pick:subprocess.run": {
+      "kind": "passthrough",
+      "reason": "Shared fzf picker owns the terminal."
+    },
+    "libexec/t_history.py:HistoryCommand.attach:subprocess.call": {
+      "kind": "passthrough",
+      "reason": "Opens the selected browser or terminal client."
+    },
+    "libexec/t_issue.py:IssueCommand.open_issues:subprocess.call": {
+      "kind": "passthrough",
+      "reason": "Opens the selected browser or terminal client."
+    },
+    "libexec/t_issue.py:IssueCommand.pick_rows:subprocess.run": {
+      "kind": "passthrough",
+      "reason": "Shared fzf picker owns the terminal."
+    },
+    "libexec/t_issue.py:IssueCommand.attach:subprocess.call": {
+      "kind": "passthrough",
+      "reason": "Opens the selected browser or terminal client."
+    },
+    "libexec/t_issue.py:IssueCommand.attach_many:subprocess.call": {
+      "kind": "passthrough",
+      "reason": "Opens the selected browser or terminal client."
+    },
+    "libexec/t_mcp_controls.py:deliver:subprocess.run": {
+      "kind": "protocol",
+      "reason": "MCP goal delivery preserves machine response output."
+    },
+    "libexec/t_mcp_controls.py:shell_run:subprocess.run": {
+      "kind": "protocol",
+      "reason": "MCP shell gateway preserves wire output."
+    },
+    "libexec/t_mcp_controls.py:session_command:subprocess.run": {
+      "kind": "protocol",
+      "reason": "MCP command gateway captures child response for the client."
+    },
+    "libexec/t_onboarding.py:_organizations:subprocess.run": {
+      "kind": "passthrough",
+      "reason": "Explicit interactive gh install/login owns the terminal."
+    },
+    "libexec/t_recovery.py:run:subprocess.run": {
+      "kind": "protocol",
+      "reason": "Recovery helper subprocesses run in the recovery control protocol."
+    },
+    "libexec/t_recovery.py:watch:time.sleep": {
+      "kind": "background",
+      "reason": "Detached recovery watcher intentionally polls for the lifetime of a session."
+    },
+    "libexec/t_recovery.py:start:subprocess.Popen": {
+      "kind": "background",
+      "reason": "Spawns the detached recovery watcher without waiting."
+    },
+    "libexec/t_recovery.py:_cursor_restart:time.sleep": {
+      "kind": "protocol",
+      "reason": "Recovery control request; diagnostics belong to the recovery UI."
+    },
+    "libexec/t_recovery.py:respond:subprocess.run": {
+      "kind": "passthrough",
+      "reason": "Recovery opens the selected terminal client."
+    },
+    "libexec/t_share_launch.py:attach:subprocess.run": {
+      "kind": "passthrough",
+      "reason": "Attaches tmux or opens a terminal client."
+    },
+    "libexec/t_share_ui.py:ShareUI.conversations:subprocess.run": {
+      "kind": "passthrough",
+      "reason": "Shared fzf picker owns terminal control."
+    },
+    "libexec/t_updates.py:schedule:subprocess.Popen": {
+      "kind": "background",
+      "reason": "Detached update check has no foreground wait."
+    },
+    "bin/t:_RailUI.read_key:select.select": {
+      "kind": "passthrough",
+      "reason": "Inline UI event loop waits for user input."
+    },
+    "bin/t:_login_run:select.select": {
+      "kind": "passthrough",
+      "reason": "Interactive login forwards terminal input and output."
+    }
+  },
+  "shell": [
+    {
+      "file": "zsh/sessions.zsh",
+      "required": [
+        "_t_with_progress 'Checking local sessions' _dev_session_rows_impl",
+        "_t_with_progress 'Checking sessions and remote hosts' _dev_rows_all_impl",
+        "_t_with_progress 'Waiting for the previous agent to exit' _t_wait_for_exit_impl",
+        "_t_with_progress 'Waiting for the agent to accept input' _t_paste_wait_ready",
+        "_t_wait_for_exit \"$pid\""
+      ]
+    },
+    {
+      "file": "zsh/resume.zsh",
+      "required": [
+        "_t_with_progress \"Finding saved conversations\" _codex_candidate_snapshot",
+        "_t_with_progress \"Loading conversation metadata\" _transcript_meta_batch",
+        "_t_with_progress \"Fetching saved conversations from $_h\" _t_resume_rsync",
+        "_t_wait_for_exit \"$cpid\"",
+        "_t_wait_for_exit \"$fgpid\""
+      ]
+    },
+    {
+      "file": "zsh/worktree.zsh",
+      "required": [
+        "_t_with_progress 'Preparing session worktree' _dev_worktree_create_impl"
+      ]
+    }
+  ]
+}

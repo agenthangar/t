@@ -15,6 +15,8 @@ import sys
 import tempfile
 import uuid
 
+_spinner = runpy.run_path(str(Path(__file__).with_name("t_progress.py")))["spinner"]
+
 VERSION = 1
 MAX_CONTENT = 10 * 1024 * 1024
 MAX_WIRE = 64 * 1024 * 1024
@@ -276,6 +278,7 @@ def dispatch(request, store=None):
     raise ShareError('unsupported share operation; update t on both hosts')
 
 
+@_spinner('Contacting share host')
 def remote(target, request):
     if not isinstance(target, str) or not target or target.startswith('-') or any(c.isspace() or ord(c) < 32 for c in target):
         raise ShareError('invalid configured SSH target')

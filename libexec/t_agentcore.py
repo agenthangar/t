@@ -5,6 +5,7 @@ import fcntl
 import hashlib
 import json
 import os
+import runpy
 from pathlib import Path
 import re
 import shutil
@@ -12,6 +13,8 @@ import subprocess
 import sys
 import tempfile
 import uuid
+
+_spinner = runpy.run_path(str(Path(__file__).with_name("t_progress.py")))["spinner"]
 
 MAX_PAYLOAD = 100_000_000
 ARN = re.compile(r'arn:(aws(?:-[a-z]+)*):bedrock-agentcore:([a-z0-9-]+):[0-9]{12}:runtime/[A-Za-z][A-Za-z0-9_]{0,47}-[A-Za-z0-9]{10}')
@@ -92,6 +95,7 @@ def command(executable, config, args, temporary):
     return argv
 
 
+@_spinner('Waiting for AgentCore')
 def call_aws(argv, config, timeout):
     env = {k: v for k, v in os.environ.items() if not k.startswith('COV_CORE_')}
     env.update(AWS_MAX_ATTEMPTS='1', AWS_PAGER='', AWS_CLI_AUTO_PROMPT='off')

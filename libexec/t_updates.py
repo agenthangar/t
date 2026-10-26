@@ -10,6 +10,7 @@ import hashlib
 import json
 import math
 import os
+import runpy
 from pathlib import Path
 import re
 import subprocess
@@ -17,6 +18,8 @@ import sys
 import tempfile
 import time
 import urllib.request
+
+_spinner = runpy.run_path(str(Path(__file__).with_name("t_progress.py")))["spinner"]
 
 INTERVAL = 24 * 60 * 60
 RETRY = 60 * 60
@@ -34,6 +37,7 @@ def _valid_gap(gap):
             and 0 < gap["count"] <= 1000000)
 
 
+@_spinner('Checking Homebrew updates')
 def _homebrew_gap(identity):
     """Compare main with the actual tap version, only for this project's checkout."""
     if identity["kind"] != "git" or identity["remote"] not in PROJECT_REMOTES:
@@ -184,6 +188,7 @@ def _write(path, data):
             os.unlink(tmp)
 
 
+@_spinner('Checking updates')
 def _run(args, cwd=None, timeout=12):
     env = {k: v for k, v in os.environ.items() if not k.startswith("COV_CORE_")}
     env.update(GIT_TERMINAL_PROMPT="0", GCM_INTERACTIVE="Never")
@@ -222,6 +227,7 @@ def _git(identity):
     return latest if ancestor.returncode == 0 else None
 
 
+@_spinner('Checking releases')
 def _release(identity):
     request = urllib.request.Request(API, headers={"Accept": "application/vnd.github+json", "User-Agent": "t-update-check"})
     with urllib.request.urlopen(request, timeout=8) as response:

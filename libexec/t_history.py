@@ -20,6 +20,8 @@ import tempfile
 import time
 import uuid
 
+_spinner = runpy.run_path(str(Path(__file__).with_name("t_progress.py")))["spinner"]
+
 VERSION = 1
 PARSER_VERSION = 4
 _DISPLAY = runpy.run_path(str(Path(__file__).with_name('t_session_details.py')))
@@ -45,6 +47,7 @@ def clean(value):
     return ' '.join(re.sub(r'[\x00-\x1f\x7f-\x9f]', ' ', str(value or '')).split())
 
 
+@_spinner('Loading history metadata')
 def run(argv, *, cwd=None, timeout=30, optional=False):
     env = {k: v for k, v in os.environ.items() if not k.startswith('COV_CORE_')}
     try:
@@ -1008,14 +1011,15 @@ class HistoryCommand:
                 os.chmod(path, 0o600)
                 held.append(stream)
                 deadline = time.monotonic() + 15
-                while True:
-                    try:
-                        fcntl.lockf(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                        break
-                    except BlockingIOError:
-                        if time.monotonic() >= deadline:
-                            raise HistoryError('timed out waiting for conversation/workspace ownership claim')
-                        time.sleep(.05)
+                with _spinner("Waiting for conversation ownership"):
+                    while True:
+                        try:
+                            fcntl.lockf(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                            break
+                        except BlockingIOError:
+                            if time.monotonic() >= deadline:
+                                raise HistoryError('timed out waiting for conversation/workspace ownership claim')
+                            time.sleep(.05)
             yield
         finally:
             for stream in reversed(held):

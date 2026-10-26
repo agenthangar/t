@@ -2,6 +2,7 @@
 import fcntl
 import json
 import os
+import runpy
 from pathlib import Path
 import re
 import shlex
@@ -11,6 +12,8 @@ import sys
 import tempfile
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
+
+_spinner = runpy.run_path(str(Path(__file__).with_name("t_progress.py")))["spinner"]
 
 
 class IssueError(ValueError):
@@ -84,6 +87,7 @@ def private_write(path, text, *, mode=0o600):
             pending.unlink(missing_ok=True)
 
 
+@_spinner('Checking issues and providers')
 def command(argv, *, cwd=None, timeout=45):
     env = {k: v for k, v in os.environ.items() if not k.startswith('COV_CORE_')}
     env.update(GH_PROMPT_DISABLED='1', GIT_TERMINAL_PROMPT='0')
@@ -234,6 +238,7 @@ def user_text(payload):
     return ''
 
 
+@_spinner('Checking Cursor')
 def cursor_get(path):
     key = os.environ.get('CURSOR_API_KEY')
     if not key:
@@ -687,6 +692,7 @@ class IssueCommand:
                 owner['host'] = host
         return matches
 
+    @_spinner('Checking issue ownership')
     def scan(self, issue, host_only=False):
         report = dict(version=1, issue=issue['url'], matches=[], mentions=[], incomplete=[], checked=[])
         checks = [('local', lambda: self.local(issue), False)]

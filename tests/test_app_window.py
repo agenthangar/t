@@ -219,6 +219,6 @@ def test_app_pid_does_not_guess_after_failure_or_multiple_instances(window_modul
 
 def test_wait_for_handles_delayed_window(window_module, monkeypatch):
     waiting = window_module["wait_for"]
-    monkeypatch.setattr(waiting.__globals__["time"], "sleep", lambda _: None)
+    monkeypatch.setattr(window_module["time"], "sleep", lambda _: None)
     responses = iter([None, None, "new window"])
     assert waiting(lambda: next(responses), "timeout") == "new window"

@@ -13,6 +13,10 @@ import time
 from contextlib import closing
 from urllib.parse import quote
 
+import runpy
+from pathlib import Path
+_spinner = runpy.run_path(str(Path(__file__).with_name("t_progress.py")))["spinner"]
+
 
 _RETRY = "Retry: t app pull."
 _UUID = re.compile(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}\Z")
@@ -67,6 +71,7 @@ def _owners(bundle, processes):
     return app, daemon
 
 
+@_spinner('Waiting for conversation service')
 def _read_response(process, request_id, deadline, buffer=b""):
     while True:
         if b"\n" in buffer:
@@ -407,6 +412,7 @@ def preflight_cli_release(sid, cwd, *, codex_home, rollout, unknown=None,
                          f"its CLI: {exc}") from exc
 
 
+@_spinner('Waiting for conversation release')
 def wait_cli_released(sid, cwd, *, codex_home, rollout, contract=None,
                       timeout=75, interval=0.2, on_wait=None,
                       retry="Retry: t open <repo> <slot> --app.", unknown=None, run=None):
@@ -496,6 +502,7 @@ def assert_workspace_released(codex_home, cwd, *, retry="Retry: t kill <repo> <s
                          + str(exc) + ". " + retry) from exc
 
 
+@_spinner('Restoring conversation')
 def unarchive_thread(sid, cwd, *, codex_home, rollout, process_cwd=None):
     """Restore one saved thread through a private stdio backend, never proxy."""
     if not _UUID.fullmatch(sid):

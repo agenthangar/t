@@ -154,6 +154,10 @@ _dev_repo_slots() {
 # worktree — should not happen with one branch per slot) it prints nothing and returns
 # 1 so the caller can refuse. Runs git against the repo's (possibly shared) .git via -C.
 _dev_worktree_create() {
+  _t_with_progress 'Preparing session worktree' _dev_worktree_create_impl "$@"
+}
+
+_dev_worktree_create_impl() {
   local repo="$1" slot="$2"
   local repodir="${DEV_REPOS[$repo]}"
   local wt br; wt="$(_dev_worktree_path "$repo" "$slot")" || return 1

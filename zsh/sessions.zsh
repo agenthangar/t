@@ -39,6 +39,28 @@ _t_with_progress() {
   }
 }
 
+# Quiet readiness waits keep feedback separate from the subsequent client attach.
+_t_wait_for_exit() {
+  local _T_PROGRESS=0
+  [[ -t 1 && -t 2 ]] && _T_PROGRESS=1
+  _t_with_progress 'Waiting for the previous agent to exit' _t_wait_for_exit_impl "$@"
+}
+
+_t_wait_for_exit_impl() {
+  local pid=$1 n=0
+  while kill -0 "$pid" 2>/dev/null && (( n++ < 100 )); do sleep 0.05; done
+}
+
+_t_paste_wait_ready() {
+  local session=$1 waited=0
+  while (( waited < 30 )); do
+    _tpaste_claude_ready "$session" && break
+    sleep 1
+    (( waited++ ))
+  done
+  sleep 1
+}
+
 # the session's pane, else return 1. tpaste polls this after launching a fresh
 # session so it knows when the path can be delivered.
 _tpaste_claude_ready() {
@@ -62,6 +84,8 @@ _tpaste_claude_ready() {
 # default). User-facing help lives in bin/t (`t paste -h`) — the shim routes -h there, so this
 # helper takes none of its own.
 _t_paste() {
+  local _T_PROGRESS=0
+  [[ -t 1 && -t 2 ]] && _T_PROGRESS=1
   # The picker is the default; -n/--newest forces the no-prompt fast path.
   # -p/--pick is kept as a no-op so old muscle memory/scripts still work.
   local newest=0 arg
@@ -172,15 +196,7 @@ _t_paste() {
 
   # wait (up to ~30s) for Claude's process to take over the pane; if the
   # readiness check never matches this degrades to a plain 30s wait
-  local waited=0
-  while (( waited < 30 )); do
-    _tpaste_claude_ready "$session" && break
-    sleep 1
-    (( waited++ ))
-  done
-  # brief settle: the node process exists a beat before its input box mounts,
-  # and keystrokes sent into that gap get dropped
-  sleep 1
+  _t_with_progress 'Waiting for the agent to accept input' _t_paste_wait_ready "$session"
 
   tmux send-keys -t "=$session:" "$src"
   echo "Queued path in $session — attaching; press Enter to send to Claude."
@@ -914,8 +930,7 @@ _dev_adopt_fg() {
   local pid; pid=$(_dev_pid_for_sid "$sid")
   if [[ -n $pid ]]; then
     kill -TERM "$pid" 2>/dev/null
-    local n=0
-    while kill -0 "$pid" 2>/dev/null && (( n++ < 100 )); do sleep 0.05; done
+    _t_wait_for_exit "$pid"
     kill -0 "$pid" 2>/dev/null && \
       echo "warning: foreground owner ($pid) didn't exit; resuming anyway — transcript may interleave." >&2
   fi

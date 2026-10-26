@@ -9,10 +9,13 @@ import hashlib
 import datetime
 import json
 import os
+import runpy
 from pathlib import Path
 import re
 import sqlite3
 import subprocess
+
+_spinner = runpy.run_path(str(Path(__file__).with_name("t_progress.py")))["spinner"]
 
 
 UUID = re.compile(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}\Z")
@@ -185,6 +188,7 @@ def resolve(address):
     raise ValueError("conversation does not exist here: " + address)
 
 
+@_spinner('Waiting for command')
 def _process(pid):
     if not str(pid).isdigit():
         return None
@@ -211,6 +215,7 @@ def _ancestors():
         pid = item["ppid"]
 
 
+@_spinner('Waiting for command')
 def _cursor_identity(ancestors):
     pane = os.environ.get("TMUX_PANE", "")
     tmux = os.environ.get("TMUX", "")
