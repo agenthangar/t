@@ -388,3 +388,8 @@ Interactive bare `t` optionally displays cached installed-tool advisories when
 `T_VULNERABILITY_CHECK=1`, then schedules a detached refresh. This informational
 startup mode never prompts or remediates. Nonterminal bare `t` and explicit
 commands remain unchanged. See [coverage and privacy](../docs/vulnerabilities.md).
+
+`t system advisories status` (also the default mode) is read-only and prints
+cached repository-tool coverage and worker state. `enable --interval-hours N`
+and `disable` are explicit direct actions for the per-user periodic worker,
+without pickers, OS service registration, remediation or update prompts.

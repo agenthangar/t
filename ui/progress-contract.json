@@ -153,13 +153,13 @@
       "kind": "background",
       "reason": "Opt-in detached advisory worker; foreground never waits for probes or network."
     },
-    "libexec/t_vulnerabilities.py:collect:subprocess.run": {
-      "kind": "background",
-      "reason": "Opt-in detached advisory worker; foreground never waits for probes or network."
-    },
     "libexec/t_vulnerabilities.py:startup:subprocess.Popen": {
       "kind": "background",
       "reason": "Opt-in detached advisory worker; foreground never waits for probes or network."
+    },
+    "libexec/t_advisory_service.py:enable:subprocess.Popen": {
+      "kind": "background",
+      "reason": "Explicit opt-in starts a detached periodic worker without waiting for advisory requests."
     }
   },
   "shell": [

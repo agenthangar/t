@@ -794,7 +794,7 @@ _t() {
     profile) actions=(init edit show apply) ;;
     policy) actions=(check show apply) ;;
     agent) actions=(login install status trust) ;;
-    system) actions=(integrate update diagnose) ;;
+    system) actions=(integrate update diagnose advisories) ;;
   esac
   [[ $group == hosts && ( $action == delete || $action == rm ) ]] && action=remove
   if (( ${#actions} )) && (( CURRENT == first - 1 )); then
@@ -970,6 +970,10 @@ _t() {
       else _files -/; fi ;;
     policy/check|policy/apply)
       _values 'flag' --defaults -h --help ;;
+    system/advisories)
+      if [[ ${words[CURRENT-1]} == --interval-hours ]]; then _message 'refresh interval in hours (1–720)'
+      elif (( CURRENT == first )); then _values 'action' enable disable status
+      else _values 'flag' --interval-hours -h --help; fi ;;
     system/diagnose)
       _values 'flag' --repair -h --help ;;
     policy/show|agent/status|system/integrate)

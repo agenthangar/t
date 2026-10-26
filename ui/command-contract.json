@@ -2911,6 +2911,75 @@
           ]
         }
       }
+    },
+    "system advisories": {
+      "patterns": [
+        "detail",
+        "action"
+      ],
+      "renderer": "plain",
+      "scope": "registered local repositories and installed tools on this instance",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_advisory_service.py::test_cli_dispatch"
+      ],
+      "modes": {
+        "status": {
+          "argv": [
+            "system",
+            "advisories",
+            "status"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_advisory_service.py::test_cli_dispatch"
+          ]
+        },
+        "enable": {
+          "argv": [
+            "system",
+            "advisories",
+            "enable"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_advisory_service.py::test_cli_dispatch"
+          ]
+        },
+        "disable": {
+          "argv": [
+            "system",
+            "advisories",
+            "disable"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_advisory_service.py::test_cli_dispatch"
+          ]
+        },
+        "default": {
+          "argv": [
+            "system",
+            "advisories"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_advisory_service.py::test_cli_dispatch"
+          ]
+        }
+      }
     }
   },
   "display_schemas": {
@@ -3329,10 +3398,10 @@
             "tests/test_vulnerabilities.py::test_cache_repeated_startup_and_offline",
             "tests/test_vulnerabilities.py::test_disabled"
           ],
-          "notes": "Only T_VULNERABILITY_CHECK=1: print bounded cached local cloudflared findings to stderr and schedule a detached refresh; never block on probes/network or remediate."
+          "notes": "Only T_VULNERABILITY_CHECK=1: print bounded cached repository-tool findings to stderr and schedule a detached refresh; never block on probes/network or remediate."
         }
       },
-      "notes": "Interactive startup optionally displays cached cloudflared advisories and schedules detached refresh when T_VULNERABILITY_CHECK=1; nonterminal bare t stays side-effect free."
+      "notes": "Interactive startup optionally displays cached repository-tool advisories and schedules detached refresh when T_VULNERABILITY_CHECK=1; nonterminal bare t stays side-effect free."
     }
   },
   "progress_contract": "ui/progress-contract.json"

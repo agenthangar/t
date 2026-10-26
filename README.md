@@ -1098,6 +1098,11 @@ MIT — [license](LICENSE). Built by [AgentHangar](https://agenthangar.ai).
 ### Opt-in startup advisory checks
 
 Set `export T_VULNERABILITY_CHECK=1` before interactive bare `t` to display cached
-local cloudflared advisories and refresh them in the background. Unset it to
+repository-related installed-tool advisories and refresh them in the background. Unset it to
 disable. This limited check never upgrades software or changes services; see
 [coverage, cache behavior and privacy](docs/vulnerabilities.md).
+
+Periodic checks are separately opt-in: `t system advisories enable` starts a
+per-user background worker; `status` reads results and `disable` stops it.
+No boot service is installed. See the advisory documentation for supported
+package identities, unknown coverage, local notices and OSV request metadata.

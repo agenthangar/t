@@ -1,14 +1,14 @@
-"""Opt-in, local installed-tool advisories; no remediation or repository inspection."""
+"""Opt-in, local installed-tool advisories; no remediation or repository code execution."""
 import contextlib
 import fcntl
 import http.client
+import hashlib
 import json
 import math
 import os
 from pathlib import Path
-import platform
 import re
-import shutil
+import runpy
 import stat
 import subprocess
 import sys
@@ -18,28 +18,14 @@ import urllib.request
 
 DAY = 86400
 RETRY = 3600
-API = 'https://api.github.com/repos/cloudflare/cloudflared/security-advisories?per_page=100'
-CERT = 'https://blog.cloudflare.com/emudhra-certificate-compromise/'
-VERSION = r'\d{1,4}\.\d{1,3}\.\d{1,3}'
+API = 'https://api.osv.dev/v1/query'
+SCHEMA = 2
+CACHE_LIMIT = 1048576
+MAX_QUERIES = 50
 
 
-def version(value):
-    if not isinstance(value, str) or not re.fullmatch(VERSION, value):
-        raise ValueError('unsupported version')
-    return tuple(map(int, value.split('.')))
-
-
-def matches(installed, expression):
-    """Only numeric AND ranges are supported; never guess at unknown syntax."""
-    result = True
-    for part in expression.split(','):
-        match = re.fullmatch(r'\s*(<=|>=|<|>|=)\s*(' + VERSION + r')\s*', part)
-        if not match:
-            raise ValueError('unsupported affected range')
-        left, right = version(installed), version(match[2])
-        result &= {'<': left < right, '<=': left <= right, '>': left > right,
-                   '>=': left >= right, '=': left == right}[match[1]]
-    return result
+def inventory():
+    return runpy.run_path(str(Path(__file__).with_name('t_tool_inventory.py')))['inventory']()
 
 
 def cache_path():
@@ -56,13 +42,13 @@ def read(path):
         fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
         with os.fdopen(fd, 'r') as stream:
             info = os.fstat(stream.fileno())
-            if not stat.S_ISREG(info.st_mode) or info.st_size > 131072:
+            if not stat.S_ISREG(info.st_mode) or info.st_size > CACHE_LIMIT:
                 return {}
-            raw = stream.read(131073)
-        if len(raw) > 131072:
+            raw = stream.read(CACHE_LIMIT + 1)
+        if len(raw) > CACHE_LIMIT:
             return {}
         data = json.loads(raw)
-        if (not isinstance(data, dict) or data.get('schema') != 1
+        if (not isinstance(data, dict) or data.get('schema') != SCHEMA
                 or not isinstance(data.get('lines'), list)
                 or not all(isinstance(x, str) and len(x) < 2048 for x in data['lines'])
                 or not isinstance(data.get('last_success', []), list)
@@ -86,92 +72,116 @@ def write(path, data):
             os.unlink(name)
 
 
-def fetch():
-    request = urllib.request.Request(API, headers={'User-Agent': 't-advisory-check',
-                                                  'Accept': 'application/vnd.github+json'})
+def fetch(identity):
+    # Only normalized public package identity/version leaves the machine.
+    ecosystem, name, version = identity
+    request = urllib.request.Request(API, data=json.dumps({
+        'package': {'ecosystem': ecosystem, 'name': name}, 'version': version}).encode(),
+        headers={'User-Agent': 't-advisory-check', 'Content-Type': 'application/json'})
     with urllib.request.urlopen(request, timeout=8) as response:
         raw = response.read(1048577)
-        if len(raw) > 1048576 or response.headers.get('Link'):
-            raise ValueError('advisory response incomplete')
+        if len(raw) > 1048576:
+            raise ValueError('advisory response too large')
     data = json.loads(raw)
-    if not isinstance(data, list) or not all(isinstance(x, dict) for x in data):
-        raise ValueError('invalid advisory response')
-    return data
+    if (not isinstance(data, dict) or set(data) - {'vulns', 'next_page_token'} or data.get('next_page_token')
+            or not isinstance(data.get('vulns', []), list)):
+        raise ValueError('advisory response invalid/incomplete')
+    return data.get('vulns', [])
 
 
-def evaluate(installed, system, advisories):
+def normalize(name, ecosystem):
+    return re.sub(r'[-_.]+', '-', name).lower() if ecosystem in ('PyPI', 'crates.io') else name
+
+
+def evaluate(identity, advisories):
+    """OSV performs ecosystem version matching; verify exact returned package identity.
+
+    Report source ranges/fixes verbatim, not an invented cross-ecosystem comparison.
+    OSV matches are candidates: platform/build conditions still need vendor review.
+    """
+    ecosystem, name, version = identity
     lines = []
-    # Vendor remediation recommendation, not a claim that every older build is exploitable.
-    if system in ('Linux', 'Darwin') and version(installed) < version('2026.10.2'):
-        lines.append(f'cloudflared {installed}: vendor recommends 2026.10.2 or newer for '
-                     f'the eMudhra certificate incident (older builds); review/update: {CERT}')
     for advisory in advisories:
-        ghsa = advisory.get('ghsa_id', '')
-        if not isinstance(ghsa, str) or not re.fullmatch(r'GHSA-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}', ghsa):
+        if not isinstance(advisory, dict):
+            raise ValueError('invalid advisory')
+        identifier = advisory.get('id')
+        if not isinstance(identifier, str) or not re.fullmatch(r'[A-Za-z0-9:_.-]{1,100}', identifier):
             raise ValueError('invalid advisory identifier')
-        url = 'https://github.com/cloudflare/cloudflared/security/advisories/' + ghsa
-        if advisory.get('withdrawn_at'):
+        if advisory.get('withdrawn'):
             continue
-        vulnerabilities = advisory.get('vulnerabilities')
-        if not isinstance(vulnerabilities, list) or not vulnerabilities:
-            lines.append(f'cloudflared {installed}: {ghsa}: coverage unknown; review {url}')
+        affected = advisory.get('affected')
+        if not isinstance(affected, list):
+            raise ValueError('advisory identity unavailable')
+        matching = []
+        for item in affected:
+            package = item.get('package', {}) if isinstance(item, dict) else {}
+            candidate = package.get('name') if isinstance(package, dict) else None
+            if (isinstance(candidate, str) and package.get('ecosystem') == ecosystem
+                    and normalize(candidate, ecosystem) == normalize(name, ecosystem)):
+                matching.append(item)
+        if not matching:
+            raise ValueError('advisory package identity mismatch')
+        ranges = []
+        conditions = []
+        for item in matching:
+            if item.get('ranges'):
+                ranges.append(json.dumps(item['ranges'], ensure_ascii=True, separators=(',', ':')))
+            elif item.get('versions'):
+                ranges.append('listed versions ' + json.dumps(item['versions']))
+            if item.get('ecosystem_specific'):
+                conditions.append(json.dumps(item['ecosystem_specific'], ensure_ascii=True))
+        detail = '; '.join(ranges) or 'affected/fixed range unknown'
+        if len(detail) > 450:
+            detail = detail[:450] + ' [truncated; see source]'
+        condition = '; '.join(conditions)
+        if len(condition) > 150:
+            condition = condition[:150] + ' [truncated; see source]'
+        condition = ('; conditions ' + condition) if conditions else ''
+        lines.append(f'{identifier}: OSV version match (review platform/build applicability); '
+                     f'source ranges {detail}{condition}; review/update: https://osv.dev/vulnerability/{identifier}')
+    return lines or ['No known findings in OSV for this package/version; not a security verdict.']
+
+
+def collect(cancelled=lambda: False):
+    rows, notes = inventory()
+    lines = list(notes)
+    results = {}
+    error = False
+    deadline = time.monotonic() + 120
+    for item in rows:
+        label = f"{item['binary'][:150]} ({', '.join(item['provenance'])[:180]})"
+        if item['status'] != 'mapped':
+            lines.append(f"{label}: unsupported/unknown — {item['reason']}; {item['path']}")
             continue
-        for item in vulnerabilities:
-            if not isinstance(item, dict):
-                raise ValueError('invalid advisory package')
-            package = item.get('package') or {}
-            # Preserve upstream platform labels exactly. Do not reinterpret an
-            # empty ecosystem as all operating systems (older cloudflared GHSA).
-            if not isinstance(package, dict):
-                raise ValueError('invalid advisory package')
-            ecosystem = package.get('ecosystem')
-            if ecosystem == 'windows 32-bit' and system in ('Linux', 'Darwin'):
-                continue
-            affected = item.get('vulnerable_version_range')
-            fixed = item.get('patched_versions')
-            if ecosystem not in ('Linux', 'macOS') or package.get('name') != 'cloudflared':
-                lines.append(f'cloudflared {installed}: {ghsa}: platform/package coverage unknown; review {url}')
-                continue
-            if ecosystem != {'Linux': 'Linux', 'Darwin': 'macOS'}.get(system):
-                continue
-            try:
-                hit = matches(installed, affected)
-                if fixed is not None:
-                    version(fixed)
-            except (ValueError, TypeError, AttributeError):
-                lines.append(f'cloudflared {installed}: {ghsa}: version coverage unknown; review {url}')
-                continue
-            if hit:
-                lines.append(f'cloudflared {installed}: {ghsa}, affected {affected}; '
-                             f'fixed {fixed or "unknown"}; review/update: {url}')
-    return lines or [f'cloudflared {installed}: no known findings in the checked sources; not a system security verdict.']
+        identity = (item['ecosystem'], item['name'], item['version'])
+        if cancelled():
+            lines.append("Check stopped; remaining coverage unknown.")
+            error = True
+            break
+        if identity not in results:
+            if len(results) >= MAX_QUERIES or time.monotonic() >= deadline:
+                result = ['Unavailable: request/time budget exceeded; coverage incomplete.']
+                error = True
+            else:
+                try:
+                    result = evaluate(identity, fetch(identity))
+                except (OSError, ValueError, http.client.HTTPException):
+                    result = ['OSV unavailable or incomplete; coverage unknown (retry in one hour).']
+                    error = True
+            results[identity] = result
+        prefix = f"{label}: {identity[0]}:{identity[1]} installed {identity[2]}"
+        lines.extend(f'{prefix} — {result}' for result in results[identity])
+    lines.append('Coverage: supported repo metadata and mapped installed binaries only; other tools remain unknown.')
+    # Bound cached reports and terminal content even with unusually large metadata.
+    if len(lines) > 300:
+        lines = lines[:299] + ['Report truncated; additional results unavailable in this view.']
+        error = True
+    return [''.join(c for c in line if c.isprintable()).encode('ascii', 'backslashreplace').decode()[:1400]
+            for line in lines], error
 
 
-def collect():
-    system = platform.system()
-    if system not in ('Linux', 'Darwin'):
-        return ['Unsupported platform; installed tools not checked.'], False
-    executable = shutil.which('cloudflared')
-    if not executable:
-        return ['cloudflared not found on PATH; other tools are not covered.'], False
-    result = subprocess.run([executable, '--version'], capture_output=True, text=True,
-                            timeout=3, check=False, cwd='/')
-    match = re.fullmatch(r'cloudflared version (' + VERSION + r')(?: \(built [^\r\n]*\))?\s*', result.stdout)
-    if result.returncode or not match:
-        return ['cloudflared version unknown; unable to match advisories.'], True
-    installed = match[1]
-    # Keep the source-reviewed incident recommendation even when offline.
-    try:
-        advisories = fetch()
-    except (OSError, ValueError, http.client.HTTPException):
-        lines = evaluate(installed, system, [])
-        lines = [line for line in lines if 'no known findings' not in line]
-        return lines + [f'cloudflared {installed}: GitHub advisories unavailable; coverage incomplete (retry in one hour).'], True
-    return evaluate(installed, system, advisories), False
-
-
-def check():
-    if os.environ.get('T_VULNERABILITY_CHECK') != '1':
+def check(force=False, interval=DAY, cancelled=None, authorized=False):
+    if not authorized and os.environ.get('T_VULNERABILITY_CHECK') != '1':
         return
     path = cache_path()
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -182,11 +192,11 @@ def check():
             return
         now = time.time()
         old = read(path)
-        if now <= old.get('expires', 0) <= now + DAY:
-            return
+        if not force and now <= old.get('expires', 0) <= now + 30 * DAY:
+            return old
         try:
-            lines, error = collect()
-        except (OSError, ValueError, subprocess.SubprocessError):
+            lines, error = collect(cancelled) if cancelled is not None else collect()
+        except (OSError, ValueError, RecursionError, subprocess.SubprocessError):
             lines, error = ['Check failed; installed-tool coverage unknown (retry in one hour).'], True
         if error and old:
             previous = old.get('last_success', old['lines'] if not old.get('error') else [])
@@ -195,9 +205,11 @@ def check():
         else:
             previous = []
 
-        write(path, {'schema': 1, 'checked': now, 'expires': now + (RETRY if error else DAY),
-                     'lines': lines, 'error': error,
-                     'last_success': previous[:20] if error else lines[:20]})
+        data = {'schema': SCHEMA, 'checked': now, 'expires': now + (min(RETRY, interval) if error else interval),
+                'lines': lines, 'error': error,
+                'last_success': previous[:20] if error else lines[:20]}
+        write(path, data)
+        return data
 
 
 def startup():
@@ -209,12 +221,24 @@ def startup():
         now = time.time()
         fresh = now <= data.get('expires', 0) <= now + DAY
         label = 'cached' if fresh else 'stale' if data else 'pending'
-        print(f't advisories ({label}; local cloudflared only):', file=sys.stderr)
+        print(f't advisories ({label}; repo-related installed tools):', file=sys.stderr)
         if data:
             print(f'  Last attempt: {time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(data["checked"]))}', file=sys.stderr)
-        for line in data.get('lines', ['No results yet; background check requested.']):
-            # Remote/cache text must never inject terminal control sequences.
-            print('  ' + ''.join(c for c in line if c.isprintable()), file=sys.stderr)
+        report = data.get('lines', ['No results yet; background check requested.'])
+        fingerprint = hashlib.sha256(json.dumps(report).encode()).hexdigest()
+        seen_path = cache_path().with_suffix('.displayed.json')
+        changed = not data or read(seen_path).get('lines') != [fingerprint]
+        if changed:
+            for line in report[:10]:
+                # Remote/cache text must never inject terminal control sequences.
+                print('  ' + ''.join(c for c in line if c.isprintable()), file=sys.stderr)
+            if len(report) > 10:
+                print('  Full report: t system advisories status', file=sys.stderr)
+            if data:
+                write(seen_path, {'schema': SCHEMA, 'checked': now, 'expires': now + DAY,
+                                  'lines': [fingerprint]})
+        else:
+            print('  No changed advisory results; full report: t system advisories status', file=sys.stderr)
         if not fresh:
             env = {k: v for k, v in os.environ.items() if not k.startswith('COV_CORE_')}
             subprocess.Popen([sys.executable, str(Path(__file__).resolve())],

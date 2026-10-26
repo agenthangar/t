@@ -14,61 +14,14 @@ def isolated(tmp_path, monkeypatch):
     monkeypatch.setenv('T_VULNERABILITY_CHECK', '1')
 
 
+
+
 def test_disabled(monkeypatch, capsys):
     monkeypatch.delenv('T_VULNERABILITY_CHECK')
     monkeypatch.setattr(v, 'cache_path', lambda: pytest.fail('disabled cache access'))
     v.startup()
     v.check()
     assert not capsys.readouterr().err
-
-
-@pytest.mark.parametrize('installed,expr,expected', [('2026.10.1','< 2026.10.2',True), ('2026.10.2','< 2026.10.2',False), ('2026.10.10','>=2026.10.2, <2027.0.0',True), ('2023.3.0','<=2023.3.0',True), ('2023.3.1','=2023.3.0',False), ('2023.3.1','>2023.3.0',True)])
-def test_matching(installed,expr,expected):
-    assert v.matches(installed,expr) is expected
-
-
-@pytest.mark.parametrize('bad', ['v2026.10.2', '2026.10.2-rc1', '', None])
-def test_unknown_version(bad):
-    with pytest.raises(ValueError): v.version(bad)
-
-
-def advisory(ecosystem='Linux', affected='<2026.10.2', fixed='2026.10.2'):
-    return {'ghsa_id':'GHSA-aaaa-bbbb-cccc', 'vulnerabilities':[{'package':{'ecosystem':ecosystem,'name':'cloudflared'}, 'vulnerable_version_range':affected,'patched_versions':fixed}]}
-
-
-def test_platforms_and_boundaries():
-    assert 'vendor recommends' in v.evaluate('2026.10.1','Darwin',[])[0]
-    assert 'no known findings' in v.evaluate('2026.10.2','Linux',[])[0]
-    assert 'fixed 2026.10.2' in v.evaluate('2026.10.1','Linux',[advisory()])[-1]
-    assert 'no known findings' in v.evaluate('2026.10.2','Linux',[advisory('windows 32-bit')])[0]
-    assert 'no known findings' in v.evaluate('2026.10.2','Darwin',[advisory()])[0]
-    assert 'coverage unknown' in v.evaluate('2026.10.2','Linux',[advisory('')])[0]
-    for a in [advisory(affected='*'), advisory(fixed='bad')]:
-        assert 'coverage unknown' in v.evaluate('2026.10.2','Linux',[a])[0]
-    assert 'coverage unknown' in v.evaluate('2026.10.2','Linux',[{'ghsa_id':'GHSA-aaaa-bbbb-cccc'}])[0]
-    a=advisory(); a['withdrawn_at']='date'
-    assert 'no known findings' in v.evaluate('2026.10.1','Windows',[a])[0]
-    with pytest.raises(ValueError): v.evaluate('2026.10.2','Linux',[{}])
-    a=advisory(); a['vulnerabilities']=[None]
-    with pytest.raises(ValueError): v.evaluate('2026.10.2','Linux',[a])
-
-
-def test_collect(monkeypatch):
-    monkeypatch.setattr(v.platform,'system',lambda:'Windows')
-    assert 'Unsupported' in v.collect()[0][0]
-    monkeypatch.setattr(v.platform,'system',lambda:'Linux')
-    monkeypatch.setattr(v.shutil,'which',lambda _:None)
-    assert 'not found' in v.collect()[0][0]
-    monkeypatch.setattr(v.shutil,'which',lambda _:'/fake/cloudflared')
-    monkeypatch.setattr(v.subprocess,'run',lambda *a,**k:SimpleNamespace(stdout='unexpected',returncode=0))
-    assert v.collect()[1]
-    monkeypatch.setattr(v.subprocess,'run',lambda *a,**k:SimpleNamespace(stdout='cloudflared version 2026.10.1 (built today)\n',returncode=0))
-    monkeypatch.setattr(v,'fetch',lambda:[])
-    assert not v.collect()[1]
-    monkeypatch.setattr(v,'fetch',lambda:(_ for _ in ()).throw(OSError()))
-    lines,error=v.collect()
-    assert error and 'vendor recommends' in lines[0] and 'unavailable' in lines[-1]
-
 
 def test_cache_repeated_startup_and_offline(monkeypatch,capsys):
     now=[100000]
@@ -88,7 +41,6 @@ def test_cache_repeated_startup_and_offline(monkeypatch,capsys):
     data=v.read(v.cache_path())
     assert 'finding' in data['lines'] and data['expires']==now[0]+v.RETRY
 
-
 def test_pending_errors_lock(monkeypatch,capsys):
     monkeypatch.setattr(v.subprocess,'Popen',lambda *a,**k:(_ for _ in ()).throw(OSError()))
     v.startup()
@@ -97,45 +49,14 @@ def test_pending_errors_lock(monkeypatch,capsys):
     v.check()
     assert not v.cache_path().exists()
 
-
 def test_cache_validation(tmp_path,monkeypatch):
     monkeypatch.setenv('XDG_CACHE_HOME','relative')
     monkeypatch.setenv('HOME',str(tmp_path))
     assert v.cache_path()==tmp_path/'.cache/t/vulnerabilities.json'
     p=tmp_path/'bad'
-    for value in ['bad', '[]', '{"schema":1}', 'x'*131073]:
+    for value in ['bad', '[]', '{"schema":1}', 'x'*(v.CACHE_LIMIT+1)]:
         p.write_text(value); assert v.read(p)=={}
     p.write_bytes(b'\xff'); assert v.read(p)=={}
-
-
-@pytest.mark.parametrize('payload,headers', [(b'{}',{}),(b'[]',{'Link':'next'}),(b'x'*1048577,{}),(b'[1]',{})])
-def test_fetch_invalid(monkeypatch,payload,headers):
-    class Response:
-        def __enter__(self): return self
-        def __exit__(self,*a): pass
-        def read(self,n): return payload
-    r=Response(); r.headers=headers
-    monkeypatch.setattr(v.urllib.request,'urlopen',lambda *a,**k:r)
-    with pytest.raises(ValueError): v.fetch()
-
-
-def test_fetch_success(monkeypatch):
-    from io import BytesIO
-    response=BytesIO(b'[]'); response.headers={}
-    monkeypatch.setattr(v.urllib.request,'urlopen',lambda *a,**k:response)
-    assert v.fetch()==[]
-
-
-def test_bad_package_and_offline_current(monkeypatch):
-    a=advisory(); a['vulnerabilities'][0]['package']='bad'
-    with pytest.raises(ValueError): v.evaluate('2026.10.2','Linux',[a])
-    monkeypatch.setattr(v.platform,'system',lambda:'Linux')
-    monkeypatch.setattr(v.shutil,'which',lambda _:'/fake/cloudflared')
-    monkeypatch.setattr(v.subprocess,'run',lambda *a,**k:SimpleNamespace(stdout='cloudflared version 2026.10.2',returncode=0))
-    monkeypatch.setattr(v,'fetch',lambda:(_ for _ in ()).throw(OSError()))
-    lines,error=v.collect()
-    assert error and not any('no known findings' in line for line in lines)
-
 
 @pytest.mark.parametrize('terminal,enabled,expected', [(False,True,0),(True,False,0),(True,True,1)])
 def test_bare_startup_boundary(t_mod,monkeypatch,terminal,enabled,expected):
@@ -149,7 +70,6 @@ def test_bare_startup_boundary(t_mod,monkeypatch,terminal,enabled,expected):
     monkeypatch.setattr(t_mod,'_onboarding_start',lambda cfg:0)
     assert t_mod._bare_entry()==0
     assert len(calls)==expected
-
 
 def test_concurrent_workers_and_repeated_failures(monkeypatch):
     from concurrent.futures import ThreadPoolExecutor
@@ -172,12 +92,6 @@ def test_concurrent_workers_and_repeated_failures(monkeypatch):
     v.check(); now+=v.RETRY+1; v.check()
     assert v.read(v.cache_path())['lines']==['offline','Previous results (stale):','original finding']
 
-
-def test_null_advisory_id():
-    with pytest.raises(ValueError):
-        v.evaluate('2026.10.2','Linux',[{'ghsa_id':None}])
-
-
 def test_first_error_never_becomes_previous_success(monkeypatch):
     now=[100000]
     monkeypatch.setattr(v.time,'time',lambda:now[0])
@@ -186,12 +100,10 @@ def test_first_error_never_becomes_previous_success(monkeypatch):
     data=v.read(v.cache_path())
     assert data['last_success']==[] and data['lines']==['offline']
 
-
 def test_help_documents_opt_in_and_disable(t_mod):
     help_text=t_mod._root_help()
     assert 'export T_VULNERABILITY_CHECK=1' in help_text
     assert 'unset T_VULNERABILITY_CHECK' in help_text
-
 
 def test_cache_rejects_special_files_and_symlinks(tmp_path):
     import os
@@ -203,21 +115,114 @@ def test_cache_rejects_special_files_and_symlinks(tmp_path):
     assert v.read(link)=={}
     assert v.read(tmp_path)=={}
 
-
 def test_cache_read_stays_bounded_if_file_grows(tmp_path,monkeypatch):
     p=tmp_path/'growing'
-    p.write_text('x'*131073)
+    p.write_text('x'*(v.CACHE_LIMIT+1))
     monkeypatch.setattr(v.os,'fstat',lambda fd:SimpleNamespace(st_mode=0o100600,st_size=1))
     assert v.read(p)=={}
 
 
-def test_incomplete_http_response_is_cached_as_unavailable(monkeypatch):
-    monkeypatch.setattr(v.platform,'system',lambda:'Linux')
-    monkeypatch.setattr(v.shutil,'which',lambda _:'/fake/cloudflared')
-    monkeypatch.setattr(v.subprocess,'run',lambda *a,**k:SimpleNamespace(stdout='cloudflared version 2026.10.1',returncode=0))
-    monkeypatch.setattr(v,'fetch',lambda:(_ for _ in ()).throw(v.http.client.IncompleteRead(b'partial')))
-    v.check()
-    data=v.read(v.cache_path())
-    assert data['error'] and data['expires']-data['checked']==v.RETRY
-    assert 'vendor recommends' in data['lines'][0]
-    assert 'unavailable' in data['lines'][-1]
+def sample(name='eslint',ecosystem='npm',version='8.0.0',binary='eslint',path='/repo/node_modules/eslint/bin.js'):
+    return {'binary':binary,'path':path,'provenance':['repo api package-lock + installed metadata'],
+            'name':name,'ecosystem':ecosystem,'version':version,'status':'mapped'}
+
+
+def advisory(name='eslint',ecosystem='npm'):
+    return {'id':'GHSA-aaaa-bbbb-cccc','affected':[{'package':{'name':name,'ecosystem':ecosystem},
+            'ranges':[{'type':'SEMVER','events':[{'introduced':'0'},{'fixed':'8.1.0'}]}]}]}
+
+
+def test_matching_delegates_version_semantics_to_osv_and_verifies_identity():
+    for identity in [('npm','eslint','8.0.0'),('PyPI','some-tool','1.0rc1'),('crates.io','ripgrep','14.0.0')]:
+        a=advisory(identity[1],identity[0])
+        a['affected'][0]['ecosystem_specific']={'os':['Windows'],'arch':['x86']}
+        result=v.evaluate(identity,[a])[0]
+        assert 'OSV version match' in result and 'fixed' in result and 'Windows' in result
+        assert 'https://osv.dev/vulnerability/GHSA-' in result
+    assert 'No known findings' in v.evaluate(('npm','eslint','8.0.0'),[])[0]
+    assert 'No known findings' in v.evaluate(('npm','eslint','8.0.0'),[{**advisory(),'withdrawn':'2026-01-01'}])[0]
+    assert v.evaluate(('PyPI','some-tool','1.0'),[advisory('Some_Tool','PyPI')])
+    for bad in [{},None,advisory('other'),{**advisory(),'affected':None}]:
+        with pytest.raises(ValueError):v.evaluate(('npm','eslint','8.0.0'),[bad])
+    a=advisory();a['affected'][0].pop('ranges');a['affected'][0]['versions']=['8.0.0']
+    assert 'listed versions' in v.evaluate(('npm','eslint','8.0.0'),[a])[0]
+
+
+def test_inventory_query_dedup_and_unsupported_never_sent(monkeypatch):
+    rows=[sample(),sample(binary='eslint2',path='/other/bin'),sample('black','PyPI','23.0','black')]
+    rows.append({**sample('private'), 'status':'unsupported','reason':'private source'})
+    monkeypatch.setattr(v,'inventory',lambda:(rows,[]))
+    calls=[]
+    monkeypatch.setattr(v,'fetch',lambda identity:calls.append(identity) or [])
+    lines,error=v.collect()
+    assert not error and len(calls)==2
+    assert ('npm','eslint','8.0.0') in calls
+    assert any('unsupported/unknown' in line for line in lines)
+    assert any('installed 23.0' in line for line in lines)
+
+
+def test_offline_and_bad_response_cached_honestly(monkeypatch):
+    monkeypatch.setattr(v,'inventory',lambda:([sample()],[]))
+    for error in [OSError(),v.http.client.IncompleteRead(b'partial'),ValueError()]:
+        monkeypatch.setattr(v,'fetch',lambda _,error=error:(_ for _ in ()).throw(error))
+        data=v.check(force=True)
+        assert data['error'] and data['expires']-data['checked']==v.RETRY
+        assert any('unavailable' in line for line in data['lines'])
+        assert not any('No known findings' in line for line in data['lines'])
+
+
+def test_budgets_cancel_and_report_limit(monkeypatch):
+    monkeypatch.setattr(v,'inventory',lambda:([sample()],[]))
+    monkeypatch.setattr(v,'fetch',lambda _:pytest.fail('must not request'))
+    assert v.collect(cancelled=lambda:True)[1]
+    monkeypatch.setattr(v,'MAX_QUERIES',0)
+    assert 'budget' in v.collect()[0][0]
+    monkeypatch.setattr(v,'inventory',lambda:([],['unknown']*601))
+    lines,error=v.collect();assert error and len(lines)==300
+    monkeypatch.setattr(v,'inventory',lambda:(_ for _ in ()).throw(ValueError()))
+    assert v.check(force=True)['error']
+
+
+def test_request_contains_only_package_identity(monkeypatch):
+    from io import BytesIO
+    seen=[]
+    def request(req,timeout):
+        seen.append((req,timeout));return BytesIO(b'{"vulns":[]}')
+    monkeypatch.setattr(v.urllib.request,'urlopen',request)
+    assert v.fetch(('PyPI','black','23.1.0'))==[]
+    assert json.loads(seen[0][0].data)=={'package':{'ecosystem':'PyPI','name':'black'},'version':'23.1.0'}
+    assert seen[0][1]==8 and seen[0][0].full_url=='https://api.osv.dev/v1/query'
+    assert 'Authorization' not in seen[0][0].headers
+
+
+@pytest.mark.parametrize('payload',[b'[]',b'{"next_page_token":"next"}',b'{"vulns":{}}',b'x'*1048577])
+def test_fetch_incomplete_or_invalid(monkeypatch,payload):
+    from io import BytesIO
+    monkeypatch.setattr(v.urllib.request,'urlopen',lambda *a,**k:BytesIO(payload))
+    with pytest.raises(ValueError):v.fetch(('npm','eslint','8.0.0'))
+
+
+def test_schema_change_invalidates_cloudflared_only_cache():
+    path=v.cache_path();path.parent.mkdir(parents=True)
+    v.write(path,{'schema':1,'checked':1,'expires':9999999999,'lines':['old cloudflared result']})
+    assert v.read(path)=={}
+
+
+def test_startup_announces_only_changed_results(monkeypatch,capsys):
+    monkeypatch.setattr(v,'collect',lambda:(['tool: OSV version match finding'],False))
+    v.check();v.startup()
+    assert 'version match finding' in capsys.readouterr().err
+    v.startup()
+    assert 'No changed advisory results' in capsys.readouterr().err
+    monkeypatch.setattr(v,'collect',lambda:(['tool: OSV version match changed'],False))
+    v.check(force=True);v.startup()
+    assert 'version match changed' in capsys.readouterr().err
+
+
+def test_long_source_details_are_explicitly_truncated():
+    a=advisory()
+    a['affected'][0]['ranges']=[{'type':'ECOSYSTEM','events':[{'fixed':str(n)} for n in range(100)]}]
+    a['affected'][0]['ecosystem_specific']={'platforms':['Windows','Linux']*50}
+    line=v.evaluate(('npm','eslint','8.0.0'),[a])[0]
+    assert line.count('[truncated; see source]')==2
+    assert line.endswith('https://osv.dev/vulnerability/GHSA-aaaa-bbbb-cccc')
