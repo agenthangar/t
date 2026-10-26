@@ -176,3 +176,12 @@ def test_concurrent_workers_and_repeated_failures(monkeypatch):
 def test_null_advisory_id():
     with pytest.raises(ValueError):
         v.evaluate('2026.10.2','Linux',[{'ghsa_id':None}])
+
+
+def test_first_error_never_becomes_previous_success(monkeypatch):
+    now=[100000]
+    monkeypatch.setattr(v.time,'time',lambda:now[0])
+    monkeypatch.setattr(v,'collect',lambda:(['offline'],True))
+    v.check(); now[0]+=v.RETRY+1; v.check()
+    data=v.read(v.cache_path())
+    assert data['last_success']==[] and data['lines']==['offline']

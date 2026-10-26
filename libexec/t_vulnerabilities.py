@@ -180,9 +180,10 @@ def check():
             lines, error = ['Check failed; installed-tool coverage unknown (retry in one hour).'], True
         if error and old:
             previous = old.get('last_success', old['lines'] if not old.get('error') else [])
-            lines += ['Previous results (stale):'] + previous[:20]
+            if previous:
+                lines += ['Previous results (stale):'] + previous[:20]
         else:
-            previous = lines
+            previous = []
 
         write(path, {'schema': 1, 'checked': now, 'expires': now + (RETRY if error else DAY),
                      'lines': lines, 'error': error,
