@@ -9842,6 +9842,10 @@ LEARN MORE
   t help <noun> [verb]      Show command details
   t help agents            Show agent support
   t help aliases           Show compatibility aliases
+
+OPTIONAL STARTUP ADVISORIES
+  export T_VULNERABILITY_CHECK=1   Enable cached local cloudflared checks in bare t
+  unset T_VULNERABILITY_CHECK     Disable; no automatic remediation
 """
     return _wrap_help(help_text)
 
