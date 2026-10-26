@@ -191,3 +191,21 @@ def test_help_documents_opt_in_and_disable(t_mod):
     help_text=t_mod._root_help()
     assert 'export T_VULNERABILITY_CHECK=1' in help_text
     assert 'unset T_VULNERABILITY_CHECK' in help_text
+
+
+def test_cache_rejects_special_files_and_symlinks(tmp_path):
+    import os
+    fifo=tmp_path/'fifo'
+    os.mkfifo(fifo)
+    assert v.read(fifo)=={}
+    link=tmp_path/'link'
+    link.symlink_to(fifo)
+    assert v.read(link)=={}
+    assert v.read(tmp_path)=={}
+
+
+def test_cache_read_stays_bounded_if_file_grows(tmp_path,monkeypatch):
+    p=tmp_path/'growing'
+    p.write_text('x'*131073)
+    monkeypatch.setattr(v.os,'fstat',lambda fd:SimpleNamespace(st_mode=0o100600,st_size=1))
+    assert v.read(p)=={}

@@ -8,6 +8,7 @@ from pathlib import Path
 import platform
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -49,9 +50,17 @@ def cache_path():
 
 def read(path):
     try:
-        if path.stat().st_size > 131072:
+        # Never wait on a FIFO/device, follow a cache symlink, or read beyond
+        # the limit if another writer replaces/grows the file after opening.
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+        with os.fdopen(fd, 'r') as stream:
+            info = os.fstat(stream.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_size > 131072:
+                return {}
+            raw = stream.read(131073)
+        if len(raw) > 131072:
             return {}
-        data = json.loads(path.read_text())
+        data = json.loads(raw)
         if (not isinstance(data, dict) or data.get('schema') != 1
                 or not isinstance(data.get('lines'), list)
                 or not all(isinstance(x, str) and len(x) < 2048 for x in data['lines'])
