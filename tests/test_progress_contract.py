@@ -50,14 +50,14 @@ def test_progress_exception_review_and_shell_seams(tmp_path):
     assert 'stale progress exception' in LINT['check'](tmp_path)[0]
 
 
-@pytest.mark.parametrize('mode', ['normal', 'fast', 'nested', 'dumb', 'json', 'redirected'])
+@pytest.mark.parametrize('mode', ['normal', 'fast', 'nested', 'dumb', 'json', 'quiet', 'redirected'])
 def test_shared_spinner_gates_and_cleanup(monkeypatch, mode):
     class Stream(io.StringIO):
         def isatty(self): return mode != 'redirected'
     out, err = Stream(), Stream()
     monkeypatch.setattr('sys.stdout', out)
     monkeypatch.setattr('sys.stderr', err)
-    monkeypatch.setattr('sys.argv', ['t', '--json'] if mode == 'json' else ['t'])
+    monkeypatch.setattr('sys.argv', ['t', '--' + mode] if mode in ('json', 'quiet') else ['t'])
     monkeypatch.setenv('TERM', 'dumb' if mode == 'dumb' else 'xterm')
     first = runpy.run_path(str(ROOT / 'libexec/t_progress.py'))['spinner']
     second = runpy.run_path(str(ROOT / 'libexec/t_progress.py'))['spinner']
