@@ -1094,3 +1094,10 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) and [AGENTS.md](AGENTS.md) before changi
 session ownership, worktree cleanup, or the remote protocol.
 
 MIT — [license](LICENSE). Built by [AgentHangar](https://agenthangar.ai).
+
+### Opt-in startup advisory checks
+
+Set `export T_VULNERABILITY_CHECK=1` before interactive bare `t` to display cached
+local cloudflared advisories and refresh them in the background. Unset it to
+disable. This limited check never upgrades software or changes services; see
+[coverage, cache behavior and privacy](docs/vulnerabilities.md).

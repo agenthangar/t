@@ -10959,6 +10959,8 @@ def _bare_entry():
     if not (sys.stdin.isatty() and sys.stdout.isatty()):
         print(_root_help(), end="")
         return 0
+    if os.environ.get("T_VULNERABILITY_CHECK") == "1":
+        runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_vulnerabilities.py"))["startup"]()
     cfg = Config()
     onboarding = _onboarding()
     if onboarding["needed"](cfg, globals()):

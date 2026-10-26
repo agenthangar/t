@@ -383,3 +383,8 @@ resume progress seams. Add coverage when introducing another slow shell phase.
 For example, `t issue list`, `t history --refresh`, and `t system update --check`
 show a delayed wheel during quiet discovery in a terminal; their redirected
 output stays clean. Spinners clear before results, errors, or selection.
+
+Interactive bare `t` optionally displays cached installed-tool advisories when
+`T_VULNERABILITY_CHECK=1`, then schedules a detached refresh. This informational
+startup mode never prompts or remediates. Nonterminal bare `t` and explicit
+commands remain unchanged. See [coverage and privacy](../docs/vulnerabilities.md).

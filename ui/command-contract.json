@@ -3316,7 +3316,8 @@
             "tests/test_onboarding_entry.py::test_bare_nonterminal_stays_help_without_loading_config"
           ]
         }
-      }
+      },
+      "notes": " Interactive startup optionally displays cached cloudflared advisories and schedules detached refresh when T_VULNERABILITY_CHECK=1; nonterminal bare t stays side-effect free."
     }
   },
   "progress_contract": "ui/progress-contract.json"
