@@ -286,7 +286,7 @@ def test_config_hosts_remove_save_and_cancel(t_mod, config_cli, monkeypatch):
 def test_config_hosts_add_edit_and_default(t_mod, config_cli, monkeypatch):
     cfg, local = config_cli
     ui = Menu(["hosts", "__add__", "lab", "beam", "lab", "target", "__back__", "save"],
-              ["lab", "old.example", "new.example"])
+              ["old.example", "lab", "new.example"])
     monkeypatch.setattr(t_mod, "_RailUI", lambda: ui)
     assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == 0
     text = local.read_text()
@@ -613,3 +613,69 @@ def test_config_tui_enables_and_displays_automatic_trust(t_mod, tmp_path, monkey
     bridge.write_text('T_AUTO_TRUST=1\n')
     monkeypatch.setattr(t_mod, 'CONFIG', str(bridge))
     assert t_mod.Config().auto_trust == '1'
+
+
+@pytest.mark.parametrize('target,taken,expected', [
+    ('alice@mini.example', {}, 'mini'),
+    ('mini.example', {'mini', 'mini-2'}, 'mini-3'),
+    ('__add__', {}, '__add__-2'),
+    ('::', {}, 'host'),
+    ('fd7a::1', {}, 'fd7a--1'),
+])
+def test_host_short_name_suggestions(t_mod, target, taken, expected):
+    assert t_mod._host_short_name(target, taken) == expected
+
+
+def test_config_host_first_add_prefills_short_name(t_mod, config_cli):
+    cfg, _ = config_cli
+    ui = Menu(['__add__', '__back__'])
+    prompts = []
+    def answer(prompt, prefill=''):
+        prompts.append((prompt, prefill))
+        return 'alice@mini.example' if len(prompts) == 1 else prefill
+    ui.cooked_input = answer
+    t_mod._config_hosts(ui, cfg)
+    assert prompts[1][1] == 'mini'
+    assert cfg.hosts == {'mini': 'alice@mini.example'}
+
+
+@pytest.mark.parametrize('save', [True, False])
+def test_config_host_rename_review_save_or_discard(t_mod, config_cli, monkeypatch, save):
+    cfg, local = config_cli
+    cfg.hosts = {'old': 'alice@mini.example'}
+    cfg.beam_host = 'old'
+    cfg.mini_host = 'alice@mini.example'
+    before = local.read_text()
+    ui = Menu(['hosts', 'old', 'alias', '__back__'] + (['save'] if save else ['cancel', 'discard']), ['mini'])
+    monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
+    assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == (0 if save else 130)
+    assert cfg.hosts == {'old': 'alice@mini.example'}
+    if save:
+        text = local.read_text()
+        assert "unset 'REMOTE_HOSTS[old]'" in text
+        assert 'REMOTE_HOSTS[mini]=alice@mini.example' in text
+        assert 'export TBEAM_HOST=mini' in text
+        assert 'MINI_HOST' not in text
+    else:
+        assert local.read_text() == before
+
+
+@pytest.mark.parametrize('name', ['bad name', '__add__', '__back__', 'taken'])
+def test_config_host_rename_rejects_invalid_or_taken(t_mod, config_cli, name):
+    cfg, _ = config_cli
+    cfg.hosts = {'old': 'old.example', 'taken': 'other.example'}
+    ui = Menu(['old', 'alias', '__back__'], [name])
+    t_mod._config_hosts(ui, cfg)
+    assert cfg.hosts == {'old': 'old.example', 'taken': 'other.example'}
+
+
+def test_config_host_rename_preserves_target_defaults_and_same_name(t_mod, config_cli):
+    cfg, _ = config_cli
+    cfg.hosts = {'old': 'old.example'}
+    cfg.beam_host, cfg.mini_host = 'old.example', 'old'
+    t_mod._config_rename_host(cfg, 'old', 'old')
+    t_mod._config_rename_host(cfg, 'old', 'new')
+    assert cfg.hosts == {'new': 'old.example'}
+    assert (cfg.beam_host, cfg.mini_host) == ('old.example', 'new')
+    with pytest.raises(ValueError, match='Use letters'):
+        t_mod._config_rename_host(cfg, 'new', 'bad name')
