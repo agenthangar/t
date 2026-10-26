@@ -393,6 +393,12 @@ makes it the default destination for `t session move`. Configure SSH keys,
 ports, and jump hosts in `~/.ssh/config`; registering a host saves local
 settings without connecting to it or installing software there.
 
+In `t config`, choose Hosts → Add host and enter an SSH target such as
+`alice@mini.example`; the short name is prefilled as `mini` (with a numeric suffix
+if needed). To rename a registered host, choose Hosts → host → Short name,
+then Save changes. SSH targets and default-host references are preserved.
+First-run onboarding also generates unique short names for selected hosts.
+
 `t session move --host mini` opens a single-selection picker of current local
 Claude and Codex CLI conversations in the current repository (all repositories
 outside a checkout). Use `t session move --all --host mini` to widen the scope,
