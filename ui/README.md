@@ -68,6 +68,11 @@ and leave setup resumable; they never bypass the reviewed installation choices.
 Terminal session launch and resume use the native-directory fallback while preserving
 PATH and shell-wrapper precedence, argument quoting, and ownership checks.
 
+Config proposes unique host short names from SSH targets, including the first
+manual addition. Onboarding also generates unique short names for selected peers.
+Hosts → host → Short name edits an existing alias while preserving its SSH target
+and default-host references. Changes remain staged until review and save.
+
 Config quitting with pending edits offers Keep editing (default), Review and
 save, and Discard changes and exit. Review screens keep their primary action
 visible while scrolling.

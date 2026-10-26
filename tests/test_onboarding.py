@@ -239,7 +239,7 @@ def test_existing_clones_and_hosts_are_deduplicated(onboarding, account, discove
     plan = onboarding._collect(account.cfg, account.api, dialog, discovery)
     assert plan["clones"] == []
     assert plan["repos"] == []
-    assert plan["hosts"] == [{"alias": "other.tail.test", "target": "other.tail.test"}]
+    assert plan["hosts"] == [{"alias": "taken-2", "target": "other.tail.test"}]
     assert any("Already cloned: acme/web" in notice for notice in dialog.notices)
     assert "limited access" in dialog.notices and "discovery notice" in dialog.notices
     labels = [row[1] for label, rows, _ in dialog.labels if label.startswith("Clone") for row in rows]
@@ -370,3 +370,14 @@ def test_duplicate_ipv6_host_alias_is_disambiguated(onboarding, account, discove
     discovery['tailscale_hosts'] = lambda: ([{'alias': 'mini', 'target': 'fd7a:115c:a1e0::1'}], [])
     plan = onboarding._collect(account.cfg, account.api, Choices([[], [0]]), discovery)
     assert plan['hosts'] == [{'alias': 'mini-3', 'target': 'fd7a:115c:a1e0::1'}]
+
+
+def test_first_run_hosts_get_unique_short_names(onboarding, account, discovery):
+    discovery['tailscale_hosts'] = lambda: ([
+        {'alias': 'mini.example', 'target': 'mini.tail.test'},
+        {'alias': 'mini.other', 'target': 'other.tail.test'},
+        {'alias': '__back__', 'target': 'third.tail.test'},
+    ], [])
+    plan = onboarding._collect(account.cfg, account.api, Choices([[], [0, 1, 2]]), discovery)
+    assert [host['alias'] for host in plan['hosts']] == ['mini', 'mini-2', '__back__-2']
+    assert account.cfg.hosts == {}

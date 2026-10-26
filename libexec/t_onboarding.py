@@ -252,15 +252,7 @@ def _collect(cfg, api, dialog, discovery):
     for host in hosts:
         if host["target"] in targets:
             continue
-        alias = host["alias"]
-        if alias in aliases:
-            alias = host["target"]
-        if not api["_CONFIG_ALIAS"].fullmatch(alias) or alias in aliases:
-            base, number = host["alias"], 2
-            alias = f"{base}-{number}"
-            while alias in aliases:
-                number += 1
-                alias = f"{base}-{number}"
+        alias = api["_host_short_name"](host["alias"], aliases)
         aliases.add(alias)
         targets.add(host["target"])
         available.append({**host, "alias": alias})

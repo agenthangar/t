@@ -2137,6 +2137,30 @@ def _config_input(ui, label, current="", kind="text"):
     return value
 
 
+def _host_short_name(target, taken):
+    """Suggest a valid, unique short name without changing the SSH target."""
+    base = target.rsplit("@", 1)[-1].split(".", 1)[0]
+    base = re.sub(r"[^A-Za-z0-9_-]", "-", base).strip("-") or "host"
+    used = set(taken) | {"__add__", "__back__"}
+    alias, number = base, 2
+    while alias in used:
+        alias, number = f"{base}-{number}", number + 1
+    return alias
+
+
+def _config_rename_host(cfg, alias, new_alias):
+    if not _CONFIG_ALIAS.fullmatch(new_alias):
+        raise ValueError("Use letters, numbers, dots, underscores or hyphens for the short name.")
+    if new_alias in ("__add__", "__back__") or (new_alias != alias and new_alias in cfg.hosts):
+        raise ValueError("That short name is already in use or reserved.")
+    target = cfg.hosts.pop(alias)
+    cfg.hosts[new_alias] = target
+    if cfg.beam_host == alias:
+        cfg.beam_host = new_alias
+    if cfg.mini_host == alias:
+        cfg.mini_host = new_alias
+
+
 def _config_hosts(ui, cfg):
     while True:
         rows = [(h, h) for h in sorted(cfg.hosts)]
@@ -2145,22 +2169,30 @@ def _config_hosts(ui, cfg):
         if host in (None, "__back__"):
             return
         if host == "__add__":
-            alias = _config_input(ui, "host alias", kind="alias")
+            target = _config_input(ui, "SSH target", kind="host")
+            if target is None:
+                continue
+            alias = _config_input(ui, "short name", _host_short_name(target, cfg.hosts), "alias")
             if alias is None:
                 continue
             if alias in cfg.hosts or alias in ("__add__", "__back__"):
                 ui.done("invalid", "That alias is already in use or reserved.")
                 continue
-            target = _config_input(ui, "SSH target", kind="host")
-            if target is not None:
-                cfg.hosts[alias] = target
+            cfg.hosts[alias] = target
             continue
-        action = ui.pick(f"Host · {host}", [("target", "SSH target"),
+        action = ui.pick(f"Host · {host}", [("alias", "Short name"), ("target", "SSH target"),
                           ("beam", "Use as default beam host"), ("remove", "Remove host"),
-                          ("back", "Back")], values={"target": cfg.hosts[host]}, accents={"remove": "w"})
+                          ("back", "Back")], values={"alias": host, "target": cfg.hosts[host]}, accents={"remove": "w"})
         if action == "remove":
             _config_remove_host(cfg, host)
             ui.done("removed", f"{host} (pending Save changes)")
+        elif action == "alias":
+            value = _config_input(ui, "short name", host, "alias")
+            if value is not None:
+                try:
+                    _config_rename_host(cfg, host, value)
+                except ValueError as exc:
+                    ui.done("invalid", str(exc))
         elif action == "beam":
             cfg.beam_host = cfg.hosts[host]
         elif action == "target":
@@ -9916,7 +9948,7 @@ def _command_description(group, action):
                  "remove": "Unregister a host (delete / rm also work)",
                  "default": "Show, set, or clear the session move default",
                  "run": "Run a remote command or shell"},
-        "config": {"open": "Open the settings menu", "show": "Print current settings",
+        "config": {"open": "Open settings; edit repository and host short names", "show": "Print current settings",
                    "edit": "Edit local configuration", "setup": "Register repos and hosts",
                    "onboard": "Guided setup: agents, GitHub repos, and hosts"},
         "profile": {"init": "Create an instruction profile", "edit": "Edit the profile",
