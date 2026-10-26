@@ -97,14 +97,14 @@ def evaluate(installed, system, advisories):
                      f'the eMudhra certificate incident (older builds); review/update: {CERT}')
     for advisory in advisories:
         ghsa = advisory.get('ghsa_id', '')
-        if not re.fullmatch(r'GHSA-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}', ghsa):
+        if not isinstance(ghsa, str) or not re.fullmatch(r'GHSA-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}', ghsa):
             raise ValueError('invalid advisory identifier')
         url = 'https://github.com/cloudflare/cloudflared/security/advisories/' + ghsa
         if advisory.get('withdrawn_at'):
             continue
         vulnerabilities = advisory.get('vulnerabilities')
         if not isinstance(vulnerabilities, list) or not vulnerabilities:
-            lines.append(f'{ghsa}: coverage unknown; review {url}')
+            lines.append(f'cloudflared {installed}: {ghsa}: coverage unknown; review {url}')
             continue
         for item in vulnerabilities:
             if not isinstance(item, dict):
@@ -120,7 +120,7 @@ def evaluate(installed, system, advisories):
             affected = item.get('vulnerable_version_range')
             fixed = item.get('patched_versions')
             if ecosystem not in ('Linux', 'macOS') or package.get('name') != 'cloudflared':
-                lines.append(f'{ghsa}: platform/package coverage unknown; review {url}')
+                lines.append(f'cloudflared {installed}: {ghsa}: platform/package coverage unknown; review {url}')
                 continue
             if ecosystem != {'Linux': 'Linux', 'Darwin': 'macOS'}.get(system):
                 continue
@@ -129,7 +129,7 @@ def evaluate(installed, system, advisories):
                 if fixed is not None:
                     version(fixed)
             except (ValueError, TypeError, AttributeError):
-                lines.append(f'{ghsa}: version coverage unknown; review {url}')
+                lines.append(f'cloudflared {installed}: {ghsa}: version coverage unknown; review {url}')
                 continue
             if hit:
                 lines.append(f'cloudflared {installed}: {ghsa}, affected {affected}; '

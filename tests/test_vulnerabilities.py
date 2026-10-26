@@ -171,3 +171,8 @@ def test_concurrent_workers_and_repeated_failures(monkeypatch):
     monkeypatch.setattr(v,'collect',lambda:(['offline'],True))
     v.check(); now+=v.RETRY+1; v.check()
     assert v.read(v.cache_path())['lines']==['offline','Previous results (stale):','original finding']
+
+
+def test_null_advisory_id():
+    with pytest.raises(ValueError):
+        v.evaluate('2026.10.2','Linux',[{'ghsa_id':None}])
