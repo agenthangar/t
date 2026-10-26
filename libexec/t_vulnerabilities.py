@@ -176,8 +176,14 @@ def collect(cancelled=lambda: False):
     if len(lines) > 300:
         lines = lines[:299] + ['Report truncated; additional results unavailable in this view.']
         error = True
-    return [''.join(c for c in line if c.isprintable()).encode('ascii', 'backslashreplace').decode()[:1400]
-            for line in lines], error
+    bounded = []
+    for line in lines:
+        line = ''.join(c for c in line if c.isprintable()).encode('ascii', 'backslashreplace').decode()
+        if len(line) > 1400:
+            link = re.search(r'https://osv.dev/vulnerability/[A-Za-z0-9:_.-]+$', line)
+            line = line[:1100] + ' [truncated; see source] ' + (link[0] if link else '')
+        bounded.append(line)
+    return bounded, error
 
 
 def check(force=False, interval=DAY, cancelled=None, authorized=False):
@@ -225,7 +231,7 @@ def startup():
         if data:
             print(f'  Last attempt: {time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(data["checked"]))}', file=sys.stderr)
         report = data.get('lines', ['No results yet; background check requested.'])
-        fingerprint = hashlib.sha256(json.dumps(report).encode()).hexdigest()
+        fingerprint = hashlib.sha256(json.dumps(sorted(report)).encode()).hexdigest()
         seen_path = cache_path().with_suffix('.displayed.json')
         changed = not data or read(seen_path).get('lines') != [fingerprint]
         if changed:

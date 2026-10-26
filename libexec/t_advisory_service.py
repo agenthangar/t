@@ -94,7 +94,7 @@ def record_changes(data):
         events = []
     if findings or old.get('findings'):
         events = (events + [{'at': data['checked'], 'message': 'Findings changed; review current coverage (removal is not proof of remediation).',
-                             'findings': findings[:20]}])[-20:]
+                             'findings': findings[:20]}])[-10:]
     save('notices.json', {'fingerprint': digest, 'findings': findings[:20], 'events': events})
 
 

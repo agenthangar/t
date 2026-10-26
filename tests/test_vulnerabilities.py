@@ -226,3 +226,20 @@ def test_long_source_details_are_explicitly_truncated():
     line=v.evaluate(('npm','eslint','8.0.0'),[a])[0]
     assert line.count('[truncated; see source]')==2
     assert line.endswith('https://osv.dev/vulnerability/GHSA-aaaa-bbbb-cccc')
+
+
+def test_long_provenance_keeps_actionable_link_and_reports_truncation(monkeypatch):
+    item=sample();item['provenance']=['\u6f22'*180]
+    monkeypatch.setattr(v,'inventory',lambda:([item],[]))
+    monkeypatch.setattr(v,'fetch',lambda _: [advisory()])
+    lines,_=v.collect()
+    assert '[truncated; see source]' in lines[0]
+    assert lines[0].endswith('https://osv.dev/vulnerability/GHSA-aaaa-bbbb-cccc')
+
+
+def test_startup_does_not_reannounce_reordered_results(monkeypatch,capsys):
+    monkeypatch.setattr(v,'collect',lambda:(['first','second'],False))
+    v.check();v.startup();capsys.readouterr()
+    monkeypatch.setattr(v,'collect',lambda:(['second','first'],False))
+    v.check(force=True);v.startup()
+    assert 'No changed advisory results' in capsys.readouterr().err
