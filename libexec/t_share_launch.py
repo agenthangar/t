@@ -7,12 +7,15 @@ agent's initial prompt. Launch never attaches to or stops the source agent.
 
 import fcntl
 import os
+import runpy
 from pathlib import Path
 import re
 import shlex
 import subprocess
 import tempfile
 import uuid
+
+_spinner = runpy.run_path(str(Path(__file__).with_name("t_progress.py")))["spinner"]
 
 
 MAX_CONTEXT = 10 * 1024 * 1024
@@ -28,6 +31,7 @@ class LaunchError(ValueError):
     pass
 
 
+@_spinner('Waiting for command')
 def _run(argv, *, timeout=120, env=None):
     try:
         result = subprocess.run(argv, capture_output=True, text=True, timeout=timeout,
@@ -122,6 +126,7 @@ def preview(cfg, source, agent="claude"):
                 source_address=source.get("address", ""), source_title=source.get("title", ""))
 
 
+@_spinner('Waiting for command')
 def _session_state(session):
     try:
         result = subprocess.run(["tmux", "has-session", "-t", "=" + session + ":"],
@@ -166,6 +171,7 @@ def _remote_slots(cfg, repo, base):
     return occupied
 
 
+@_spinner('Waiting for command')
 def _fresh_numeric_slot(cfg, plan, occupied):
     repo = plan["repo"]
     canonical = cfg.repos[repo]

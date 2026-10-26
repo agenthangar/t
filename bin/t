@@ -243,43 +243,15 @@ def _progress(message, *, machine=False):
         print(f"  t: {message}…", file=sys.stderr, flush=True)
 
 
-_SPINNER_ACTIVE = False
-
-
 @contextmanager
 def _spinner(message, *, machine=False):
-    """Animate only a quiet wait, never a picker, passthrough, or data stream."""
-    global _SPINNER_ACTIVE
-    enabled = (not machine and not _SPINNER_ACTIVE and sys.stdout.isatty() and sys.stderr.isatty()
-               and os.environ.get("TERM") != "dumb"
-               and not {'--json', '--dump', '--statusline'} & set(sys.argv[1:]))
-    if not enabled:
+    if machine or not sys.stdout.isatty() or not sys.stderr.isatty():
         yield
         return
-    stopped = threading.Event()
-    painted = threading.Event()
-    stream = sys.stderr
-    def animate():
-        frame = 0
-        while not stopped.wait(0.12 if frame else 0.25):
-            width = shutil.get_terminal_size((80, 24)).columns
-            label = _session_display_helpers()["clip_columns"](message, max(0, width - 7))
-            stream.write("\r\033[2K  %s %s" % ("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"[frame % 10], label))
-            stream.flush()
-            painted.set()
-            frame += 1
-    worker = threading.Thread(target=animate, daemon=True)
-    _SPINNER_ACTIVE = True
-    worker.start()
-    try:
+    helper = runpy.run_path(os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))),
+                                        "libexec", "t_progress.py"))
+    with helper["spinner"](message, machine=machine):
         yield
-    finally:
-        stopped.set()
-        worker.join()
-        _SPINNER_ACTIVE = False
-        if painted.is_set():
-            stream.write("\r\033[2K")
-            stream.flush()
 
 
 def zsh_capture(snippet, stdin=subprocess.DEVNULL):
@@ -313,6 +285,7 @@ def zsh_capture(snippet, stdin=subprocess.DEVNULL):
         return ""
 
 
+@_spinner('Running command')
 def _run(cmd, cwd=None, timeout=None):
     """subprocess.run with captured text output that never raises: a missing binary
     reads as rc 127 and a timeout as rc 124, both with the reason in .stderr, so
@@ -1902,6 +1875,7 @@ class _ConfigRPC:
         self.process.stdin.write((json.dumps(message) + "\n").encode())
         self.process.stdin.flush()
 
+    @_spinner('Looking up models')
     def receive(self, wanted):
         import select
         while True:
@@ -3247,6 +3221,7 @@ def cmd_setup(cfg, args):
 NEW_OWNER = os.environ.get("T_NEW_OWNER", "")
 
 
+@_spinner('Waiting for command')
 def _new_default_owner():
     """A new user's repositories belong to their authenticated GitHub account."""
     if NEW_OWNER:
@@ -3702,6 +3677,7 @@ def _new_sh_owners():
             o.stdout.split() if o.returncode == 0 else [])
 
 
+@_spinner('Waiting for command')
 def _new_sh_whence(alias):
     """`whence -w <alias>` in a login+interactive zsh (so functions/aliases from .zshrc
     count), run DETACHED — stdin /dev/null + its own session. This is called from
@@ -4466,6 +4442,7 @@ def _login_timestamp(value, divisor=1):
         return None
 
 
+@_spinner('Waiting for command')
 def _login_keychain(service):
     """Read one vendor-owned item in memory; never log security's output."""
     result = subprocess.run(["/usr/bin/security", "find-generic-password", "-s", service, "-w"],
@@ -5112,6 +5089,7 @@ def _install_relink():
     return r.returncode
 
 
+@_spinner('Checking repository')
 def _t_git(repo, *args):
     try:
         p = subprocess.run(["git", "-C", repo, *args], capture_output=True,
@@ -6862,6 +6840,7 @@ def _trust_claude_plan(data, paths):
     return [p for p in paths if (projects.get(p) or {}).get("hasTrustDialogAccepted") is not True]
 
 
+@_spinner('Waiting for configuration lock')
 def _trust_lock(lock, wait=3.0, stale=30.0):
     """Take Claude's config lock the way proper-lockfile does — mkdir <file>.lock.
     True: held (the caller rmdirs it). False: a lock older than `stale` is in the way —
@@ -7374,6 +7353,7 @@ def cmd_doctor(cfg, args):
     repair_rc = _repair_shell_setup() if getattr(args, "repair", False) else 0
     st = Style()
 
+    @_spinner('Waiting for command')
     def run(cmd, timeout=8):
         """stdout on success (stripped, possibly empty), None on any failure."""
         # Recent gh versions create a telemetry device ID even for --version.
@@ -8295,6 +8275,7 @@ def _app_plan_serve(path, token=None, port=0):
             server.handle_request()
 
 
+@_spinner('Starting plan preview')
 def _app_plan_start(path):
     key = hashlib.sha256(path.encode()).hexdigest()
     cache = os.path.join(_cache_root(), "app-plan-servers", key + ".json")
@@ -10392,7 +10373,7 @@ REMOTE SESSIONS
             f"({_agent_legend()}) — each revived by its own binary; a cursor chat has no dev slot "
             "— `t cursor list` / `t cursor resume <id>`. Saved discovery reuses unchanged "
             "metadata and refreshes when source files change; live ownership is always checked. "
-            "Terminal progress messages identify discovery stages while waiting.")
+            "Delayed progress wheels identify quiet discovery stages while waiting.")
     sp.add_argument("repo", nargs="?", help="DEV_REPOS key; defaults to the repo your cwd is in")
     sp.add_argument("slot", nargs="?", help="slot number; a lone slot implies the cwd repo")
     sp.add_argument("-f", "--fg", action="store_true", help="resume inline in THIS terminal (no tmux slot)")

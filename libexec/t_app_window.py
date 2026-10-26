@@ -6,7 +6,11 @@ the new AX window reference alive so each handoff can focus that exact window.
 
 import ctypes
 import os
+from pathlib import Path
+import runpy
 import time
+
+_spinner = runpy.run_path(str(Path(__file__).with_name("t_progress.py")))["spinner"]
 
 
 class StaleElement(ValueError):
@@ -118,6 +122,7 @@ class Accessibility:
             self.cf.CFRelease(key)
 
 
+@_spinner('Waiting for desktop')
 def wait_for(probe, message, timeout=15):
     deadline = time.monotonic() + timeout
     while True:

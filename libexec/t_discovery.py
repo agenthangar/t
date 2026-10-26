@@ -7,11 +7,14 @@ Only ``clone_repo`` writes, after the caller has reviewed its exact destination.
 import ipaddress
 import json
 import os
+import runpy
 from pathlib import Path
 import re
 import shutil
 import subprocess
 from urllib.parse import urlsplit
+
+_spinner = runpy.run_path(str(Path(__file__).with_name("t_progress.py")))["spinner"]
 
 
 _OWNER = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\Z")
@@ -20,6 +23,7 @@ _HOST = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9.-]{0,252})\Z")
 _SKIP_DIRS = {"node_modules", "vendor", "venv", "__pycache__"}
 
 
+@_spinner('Discovering repositories and tools')
 def _run(args, timeout=15):
     env = os.environ.copy()
     for key in ("GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE"):
@@ -77,6 +81,7 @@ def _checkout(path):
             "identity": github_identity(origin.stdout) if origin else ""}
 
 
+@_spinner('Discovering local repositories')
 def discover_local(roots, excluded=(), max_depth=3, max_directories=5000):
     """Find primary checkouts once, without traversing hidden/generated trees.
 

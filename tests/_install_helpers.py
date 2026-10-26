@@ -10,7 +10,7 @@ INSTALL_SH = REPO_ROOT / "install.sh"
 ASSETS = (
     ".t-install-version", "install.sh", "t.plugin.zsh", "local.zsh.example",
     "bin/t", "bin/t-session-start", "bin/claude-stamp-tmux", "bin/cursor-beam",
-    "libexec/t_shell_setup.py", "libexec/t_onboarding.py", "libexec/t_discovery.py",
+    "libexec/t_progress.py", "libexec/t_shell_setup.py", "libexec/t_onboarding.py", "libexec/t_discovery.py",
     "libexec/t_mcp_controls.py", "libexec/t_issue.py", "libexec/t_issue_policy.txt", "libexec/t_history.py", "libexec/t_candidates.py", "libexec/t_session_details.py",
     "libexec/t_share.py", "libexec/t_share_sessions.py",
     "libexec/t_share_context.py", "libexec/t_share_flow.py", "libexec/t_share_launch.py", "libexec/t_share_ui.py",

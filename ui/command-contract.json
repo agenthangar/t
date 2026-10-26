@@ -3318,5 +3318,6 @@
         }
       }
     }
-  }
+  },
+  "progress_contract": "ui/progress-contract.json"
 }

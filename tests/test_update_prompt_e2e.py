@@ -25,6 +25,8 @@ def test_release_prompt_updates_then_reexecs_original_argv(tmp_path):
     binary = release / "bin" / "t"
     shutil.copy2(ROOT / "bin" / "t", binary)
     shutil.copy2(ROOT / "libexec" / "t_updates.py", release / "libexec" / "t_updates.py")
+    for helper in ("t_progress.py", "t_session_details.py"):
+        shutil.copy2(ROOT / "libexec" / helper, release / "libexec" / helper)
     (release / ".t-release-version").write_text("v1.2.3\n")
     (release / ".t-install-version").write_text("1\n")
     live = home / "bin" / "t"
