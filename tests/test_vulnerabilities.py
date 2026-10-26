@@ -209,3 +209,15 @@ def test_cache_read_stays_bounded_if_file_grows(tmp_path,monkeypatch):
     p.write_text('x'*131073)
     monkeypatch.setattr(v.os,'fstat',lambda fd:SimpleNamespace(st_mode=0o100600,st_size=1))
     assert v.read(p)=={}
+
+
+def test_incomplete_http_response_is_cached_as_unavailable(monkeypatch):
+    monkeypatch.setattr(v.platform,'system',lambda:'Linux')
+    monkeypatch.setattr(v.shutil,'which',lambda _:'/fake/cloudflared')
+    monkeypatch.setattr(v.subprocess,'run',lambda *a,**k:SimpleNamespace(stdout='cloudflared version 2026.10.1',returncode=0))
+    monkeypatch.setattr(v,'fetch',lambda:(_ for _ in ()).throw(v.http.client.IncompleteRead(b'partial')))
+    v.check()
+    data=v.read(v.cache_path())
+    assert data['error'] and data['expires']-data['checked']==v.RETRY
+    assert 'vendor recommends' in data['lines'][0]
+    assert 'unavailable' in data['lines'][-1]

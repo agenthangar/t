@@ -1,6 +1,7 @@
 """Opt-in, local installed-tool advisories; no remediation or repository inspection."""
 import contextlib
 import fcntl
+import http.client
 import json
 import math
 import os
@@ -162,7 +163,7 @@ def collect():
     # Keep the source-reviewed incident recommendation even when offline.
     try:
         advisories = fetch()
-    except (OSError, ValueError):
+    except (OSError, ValueError, http.client.HTTPException):
         lines = evaluate(installed, system, [])
         lines = [line for line in lines if 'no known findings' not in line]
         return lines + [f'cloudflared {installed}: GitHub advisories unavailable; coverage incomplete (retry in one hour).'], True
