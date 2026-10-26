@@ -229,7 +229,7 @@ def test_long_source_details_are_explicitly_truncated():
 
 
 def test_long_provenance_keeps_actionable_link_and_reports_truncation(monkeypatch):
-    item=sample();item['provenance']=['\u6f22'*180]
+    item=sample();item['provenance']=['\U0001f916'*180]
     monkeypatch.setattr(v,'inventory',lambda:([item],[]))
     monkeypatch.setattr(v,'fetch',lambda _: [advisory()])
     lines,_=v.collect()
