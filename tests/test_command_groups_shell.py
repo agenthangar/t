@@ -400,6 +400,21 @@ def test_login_spellings_forward_without_shell_session_actions(tmp_path):
 
 
 @pytest.mark.skipif(not shutil.which("zsh"), reason="zsh is required")
+def test_update_completion_includes_all_for_canonical_and_alias(tmp_path):
+    result = shell(tmp_path, '''
+        _values() { print -r -- "values:${(j:,:)argv[2,-1]}"; }
+        local -a words
+        words=(t system update --) CURRENT=4; _t
+        words=(t update --) CURRENT=3; _t
+    ''')
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == [
+        'values:--all,--dev,--local,--relink,--check,-h,--help',
+        'values:--all,--dev,--local,--relink,--check,-h,--help',
+    ]
+
+
+@pytest.mark.skipif(not shutil.which("zsh"), reason="zsh is required")
 def test_advisory_service_completion(tmp_path):
     result = shell(tmp_path, '''
         _values() { print -r -- "values:${(j:,:)argv[2,-1]}"; }

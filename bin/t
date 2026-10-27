@@ -5505,7 +5505,53 @@ def cmd_advisories(cfg, args):
         return 1
 
 
+def _t_update_ssh_argv(target):
+    if not _BARE_HOST.fullmatch(target or "") or target.startswith("-"):
+        raise ValueError("use an SSH config name, address or user@host for the target")
+    # Updaters can need a terminal (for example Homebrew sudo), while redirected
+    # runs must not allocate one. Authentication never blocks the remaining hosts.
+    tty = "-t" if sys.stdin.isatty() and sys.stdout.isatty() else "-T"
+    inner = "T_NO_UPDATE_CHECK=1 t update"
+    return ["ssh", tty, "-o", "ConnectTimeout=5", "-o", "BatchMode=yes",
+            target, f"zsh -lic {shlex.quote(inner)}"]
+
+
+def _t_update_all(cfg, args):
+    # Snapshot before updating this installation; aliases sharing an exact SSH
+    # target represent one machine. Do not probe/discover or recursively fan out.
+    hosts = []
+    seen = set()
+    for alias, target in sorted(cfg.hosts.items()):
+        if target not in seen:
+            hosts.append((alias, target))
+            seen.add(target)
+    local_args = argparse.Namespace(**{**vars(args), "all": False})
+    failed = False
+    for alias, target in [("local", None), *hosts]:
+        label = "local" if target is None else f"{alias} ({target})"
+        print(f"t update --all: updating {label}", flush=True)
+        try:
+            rc = (cmd_update(cfg, local_args) if target is None else
+                  subprocess.run(_t_update_ssh_argv(target)).returncode)
+        except KeyboardInterrupt:
+            rc = 130
+        except (OSError, ValueError) as error:
+            print(f"t update --all: {label}: {error}", file=sys.stderr)
+            rc = 1
+        if rc in (130, -signal.SIGINT):
+            print(f"t update --all: {label}: cancelled; remaining updates stopped", flush=True)
+            return 130
+        print(f"t update --all: {label}: " +
+              (f"failed (exit {rc})" if rc else "updated"), flush=True)
+        failed = failed or bool(rc)
+    if not hosts:
+        print("t update --all: no registered remote hosts; local installation only")
+    return 1 if failed else 0
+
+
 def cmd_update(cfg, args):
+    if getattr(args, "all", False):
+        return _t_update_all(cfg, args)
     if getattr(args, "check", False):
         try:
             installation, state = _t_check_update(force=True)
@@ -10823,8 +10869,12 @@ REMOTE SESSIONS
             "checkout, fetch and fast-forward canonical main before relinking. --relink "
             "repeats the selected source without fetching; --dev selects a t worktree "
             "from a Git checkout. --local [PATH] switches any installation to a local "
-            "t checkout, updating canonical main and relinking user commands.")
+            "t checkout, updating canonical main and relinking user commands. --all "
+            "updates this machine and every registered SSH host sequentially; failures "
+            "are reported while other hosts continue. Ctrl-C stops remaining updates.")
     group = sp.add_mutually_exclusive_group()
+    group.add_argument("--all", action="store_true",
+                       help="update this machine and all registered SSH hosts (no recursive fan-out)")
     group.add_argument("--dev", action="store_true", help="select the t session worktree containing $PWD (Git checkout only)")
     group.add_argument("--relink", action="store_true", help="relink the currently selected source")
     group.add_argument("--check", action="store_true", help="check for a newer version without installing it")

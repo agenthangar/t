@@ -5,7 +5,100 @@ import json
 import os
 import pathlib
 import subprocess
+import shlex
+import signal
 import pytest
+
+
+@pytest.mark.parametrize("prefix", [["system", "update"], ["update"]])
+def test_update_all_alias_and_exclusive_modes(t_mod, prefix):
+    parser = t_mod.build_parser()
+    assert parser.parse_args(t_mod._canonical_argv([*prefix, "--all"])).all
+    for mode in ("--local", "--dev", "--relink", "--check"):
+        with pytest.raises(SystemExit) as error:
+            parser.parse_args(t_mod._canonical_argv([*prefix, "--all", mode]))
+        assert error.value.code == 2
+
+
+def _batch_update(t_mod, monkeypatch, hosts, outcomes):
+    monkeypatch.setattr(t_mod, "_t_source_root", lambda: "/release")
+    monkeypatch.setattr(t_mod, "_t_homebrew", lambda root: None)
+    monkeypatch.setattr(t_mod, "_t_release_version", lambda root: "v0.6.0")
+    monkeypatch.setattr(t_mod.os.path, "isfile", lambda path: True)
+    calls = []
+
+    def run(argv):
+        calls.append(argv)
+        result = outcomes[len(calls) - 1]
+        if isinstance(result, BaseException):
+            raise result
+        return argparse.Namespace(returncode=result)
+
+    monkeypatch.setattr(t_mod.subprocess, "run", run)
+    cfg = argparse.Namespace(hosts=hosts)
+    args = t_mod.build_parser().parse_args(["update", "--all"])
+    return cfg, args, calls
+
+
+def test_update_all_runs_local_then_registered_hosts(t_mod, monkeypatch, capsys):
+    cfg, args, calls = _batch_update(t_mod, monkeypatch,
+        {"z": "me@last", "b": "same", "a": "same"}, [0, 0, 0])
+    assert t_mod.cmd_update(cfg, args) == 0
+    assert calls[0] == [t_mod.sys.executable, "/release/scripts/install-release.py"]
+    assert [argv[-2] for argv in calls[1:]] == ["same", "me@last"]
+    assert all(shlex.split(argv[-1]) == ["zsh", "-lic", "T_NO_UPDATE_CHECK=1 t update"]
+               for argv in calls[1:])
+    output = capsys.readouterr().out
+    assert "local: updated" in output and "a (same): updated" in output
+    assert "b (same)" not in output
+
+
+def test_update_all_no_hosts(t_mod, monkeypatch, capsys):
+    cfg, args, calls = _batch_update(t_mod, monkeypatch, {}, [0])
+    assert t_mod.cmd_update(cfg, args) == 0
+    assert len(calls) == 1
+    assert "no registered remote hosts" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("outcomes", [[17, 0, 0], [0, 255, 0],
+                                     [0, OSError("missing ssh"), 0],
+                                     [OSError("missing updater"), 0, 0]])
+def test_update_all_failures_continue(t_mod, monkeypatch, capsys, outcomes):
+    cfg, args, calls = _batch_update(t_mod, monkeypatch, {"a": "offline", "b": "online"}, outcomes)
+    assert t_mod.cmd_update(cfg, args) == 1
+    assert len(calls) == 3
+    output = capsys.readouterr().out
+    assert "failed (exit " in output and "b (online): updated" in output
+
+
+@pytest.mark.parametrize("cancel", [130, -signal.SIGINT, KeyboardInterrupt()])
+@pytest.mark.parametrize("local", [False, True])
+def test_update_all_cancellation_stops_batch(t_mod, monkeypatch, capsys, cancel, local):
+    outcomes = [cancel] if local else [0, cancel]
+    cfg, args, calls = _batch_update(t_mod, monkeypatch, {"a": "first", "b": "last"}, outcomes)
+    assert t_mod.cmd_update(cfg, args) == 130
+    assert len(calls) == (1 if local else 2)
+    assert "remaining updates stopped" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("tty", [False, True])
+def test_update_ssh_argv_preserves_login_shell_and_target(t_mod, monkeypatch, tty):
+    monkeypatch.setattr(t_mod.sys.stdin, "isatty", lambda: tty)
+    monkeypatch.setattr(t_mod.sys.stdout, "isatty", lambda: tty)
+    argv = t_mod._t_update_ssh_argv("me@host-name")
+    assert argv[:6] == ["ssh", "-t" if tty else "-T", "-o", "ConnectTimeout=5", "-o", "BatchMode=yes"]
+    assert argv[-2] == "me@host-name"
+    shell, mode, command = shlex.split(argv[-1])
+    assert (shell, mode) == ("zsh", "-lic")
+    assert shlex.split(command) == ["T_NO_UPDATE_CHECK=1", "t", "update"]
+
+
+@pytest.mark.parametrize("target", ["-oProxyCommand=bad", "host; touch /tmp/bad", "", "me@host name"])
+def test_update_all_invalid_host_continues(t_mod, monkeypatch, capsys, target):
+    cfg, args, calls = _batch_update(t_mod, monkeypatch, {"a": target, "b": "good"}, [0, 0])
+    assert t_mod.cmd_update(cfg, args) == 1
+    assert len(calls) == 2 and calls[-1][-2] == "good"
+    assert "use an SSH config name" in capsys.readouterr().err
 
 
 def git(repo, *args):
