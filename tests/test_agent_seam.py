@@ -2788,6 +2788,8 @@ def test_session_startup_is_quiet_and_logged(zsh, tmp_path, mode, agent, fails):
         f'#!/bin/sh\nexec {shlex.quote(tmux)} -L {shlex.quote(socket)} "$@"\n')
     cwd = zsh.home / 'repo with spaces'
     cwd.mkdir()
+    # Ubuntu global zshrc otherwise prompts about CI-owned completion paths.
+    (zsh.home / ".zshenv").write_text("skip_global_compinit=1\n")
     # A real login shell loads wrappers, but must never display its prompt or
     # the internal command. All configuration belongs to this disposable HOME.
     (zsh.home / '.zshrc').write_text(

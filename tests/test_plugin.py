@@ -401,6 +401,7 @@ def test_repo_launch_and_reattach_on_isolated_tmux(tmp_path, launch, repo):
     local = (f'DEV_REPOS[{repo}]="$HOME/code/{repo}"\n'
              f'DEV_WORKTREE[{repo}]=0\n')
     home.mkdir(parents=True, exist_ok=True)
+    (home / ".zshenv").write_text("skip_global_compinit=1\n")
     (home / '.zshrc').write_text(
         f'source {shlex.quote(str(ROOT / "t.plugin.zsh"))}\n'
         '_dev_repo_prepare() { :; }\n')
