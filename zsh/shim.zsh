@@ -974,6 +974,6 @@ _t() {
     policy/show|agent/status|system/integrate)
       _values 'flag' -h --help ;;
     system/update)
-      _values 'flag' --dev --local --relink --check -h --help ;;
+      _values 'flag' --all --dev --local --relink --check -h --help ;;
   esac
 }

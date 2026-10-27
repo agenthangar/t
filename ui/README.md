@@ -41,6 +41,11 @@ empty result or no-op returns 0; a launched tool's exit status is preserved.
 In a batch, cancellation stops the remaining actions; already completed actions
 are kept and reported. Cancellation never rolls back completed work or attaches
 to another target automatically.
+`t system update --all` is a direct batch action: update locally, then registered
+SSH targets in alias order (duplicate targets run once), streaming each updater's
+output. Report each result and continue after failures, including unreachable
+hosts; return nonzero if any fail. Ctrl-C stops the batch with 130. No registered
+hosts means a local-only update. Remote updates never fan out recursively.
 With no usable terminal, require explicit input or use the command's documented
 read-only or plan output. If raw mode fails but a terminal still exists, use a
 plain prompt. Read-only modes must bypass automatic update prompts before the
