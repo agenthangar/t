@@ -24,7 +24,7 @@ def test_declared_commands(t_mod):
     lint = lint_module()
     assert lint.check_command_patterns(t_mod.build_parser(), t_mod.COMMAND_GROUPS, CONTRACT) == []
     assert set(CONTRACT["commands"]) == ({
-        f"{group} {verb}" for group, verbs in t_mod.COMMAND_GROUPS.items() for verb in verbs}
+        " ".join(path) for path, _ in t_mod._command_routes()}
         | {"share", "share targets", "share inbox", "share read"})
 
 
