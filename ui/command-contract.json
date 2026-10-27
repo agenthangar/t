@@ -691,14 +691,13 @@
           "read_only": false,
           "tests": [
             "tests/test_open_picker.py::test_bare_open_inside_worktree_shows_every_detail_and_repo",
-            "tests/test_picker_ui.py::test_open_new_shortcut_invokes_existing_flow_in_small_viewports",
-            "tests/test_open_picker.py::test_open_new_shortcut_preserves_repo_and_opening_flags",
-            "tests/test_open_picker.py::test_open_new_shortcut_preserves_failure_and_cancellation",
-            "tests/test_open_picker.py::test_open_last_turn_layout_and_details",
-            "tests/test_picker_ui.py::test_open_last_turn_stays_visible_without_changing_selection",
-            "tests/test_open_picker.py::test_open_picker_does_not_run_callers_exit_hook_in_subshell"
+            "tests/test_open_picker.py::test_open_picker_does_not_run_callers_exit_hook_in_subshell",
+            "tests/test_open_picker.py::test_open_hides_attached_and_loaded_desktop_by_default",
+            "tests/test_open_picker.py::test_open_compact_layout_and_search",
+            "tests/test_picker_ui.py::test_all_session_filter_keys_visible_at_every_size",
+            "tests/test_picker_ui.py::test_open_simple_rows_and_focused_marks"
           ],
-          "notes": "Alt-N starts the existing --new flow with the original repository and opening flags, even with no matching rows; marks are discarded. Ctrl-N remains navigation. LAST TURN is the final column, using transcript-backed local time or - when unknown; narrow rows use MM-DD HH:MM and Ctrl-/ preserves the full timestamp. Display columns have a non-selectable aligned header preserved across filter changes; compact open headers use SESSION/WORKING ON or S/TASK and retain LAST TURN last."
+          "notes": "Hide attached CLI and loaded desktop rows by default; Ctrl-T toggles attached, Ctrl-A shows all, and Ctrl-F restores defaults. Every filter key remains visible on narrow terminals. Solid selection marks remain distinct from focus and active-context marks. Session and task columns are prioritized without LAST TURN, preview controls, or a new-session shortcut; --new remains a direct action. Full task and metadata remain searchable; column headers persist across filters."
         },
         "explicit": {
           "argv": [
@@ -715,22 +714,6 @@
             "tests/test_open_picker.py::test_explicit_open_target_bypasses_picker"
           ],
           "notes": "Fresh unused local slots and locally reserved desktop reopens tolerate unavailable remote hosts. Desktop claims scan once and still reject known remote owners and failed local ownership checks. Unreserved existing workspaces and saved-conversation handoffs retain strict ownership checks."
-        }
-      },
-      "display_extensions": {
-        "last_turn_started_at": {
-          "label": "LAST TURN",
-          "position": "last",
-          "type": "string",
-          "meaning": "Latest evidenced turn initiation, not last activity; local date/time with seconds and timezone.",
-          "unknown": "-",
-          "wire_format": "ISO 8601 UTC",
-          "tests": [
-            "tests/test_open_picker.py::test_open_last_turn_layout_and_details"
-          ],
-          "narrow_format": "MM-DD HH:MM",
-          "full_details": "ctrl-/",
-          "search": "full_details"
         }
       },
       "native_agents": "Terminal session launch/resume uses the native ~/.local/bin fallback, preserving PATH and shell wrappers; no global PATH changes.",

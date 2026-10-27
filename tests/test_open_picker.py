@@ -27,9 +27,6 @@ rows = sys.stdin.read().splitlines()
 open(os.environ['PICKER_LOG'], 'w').write('\n'.join(rows))
 Path(os.environ['PICKER_LOG'] + '.all').write_text(Path(os.environ['T_PICKER_ALL']).read_text())
 Path(os.environ['PICKER_LOG'] + '.header').write_text(Path(os.environ['T_PICKER_CURRENT_HEADER']).read_text())
-if os.environ.get('PICK_NEW'):
-    Path(os.environ['T_PICKER_NEW']).touch()
-    sys.exit(130)
 for index, action in enumerate(filter(None, os.environ.get('PICK_ACTIONS', '').split(','))):
     subprocess.run(['sh', os.environ['T_PICKER_TOGGLE'], action], check=True)
     Path(os.environ['PICKER_LOG'] + '.header').write_text(Path(os.environ['T_PICKER_CURRENT_HEADER']).read_text())
@@ -46,11 +43,8 @@ if selected == ['']:
     return dict(PICKER_LOG=str(tmp_path / "picker.log"), PICK_LABELS=selection)
 
 
-@pytest.mark.parametrize('new', [False, True])
-def test_open_picker_does_not_run_callers_exit_hook_in_subshell(zsh, tmp_path, new):
+def test_open_picker_does_not_run_callers_exit_hook_in_subshell(zsh, tmp_path):
     env = picker_stub(tmp_path)
-    if new:
-        env['PICK_NEW'] = '1'
     result = zsh(ROWS + r'''
       autoload -Uz add-zsh-hook
       terminal_save() { print -u2 -- "SESSION_SAVE subshell=$ZSH_SUBSHELL"; }
@@ -81,14 +75,12 @@ def test_bare_open_inside_worktree_shows_every_detail_and_repo(zsh, tmp_path):
     display = [row.split('\t')[-1].rstrip() for row in rows]
     assert all('STATUS' not in row for row in display)
     heading = (tmp_path / 'picker.log.header').read_text().splitlines()[-1]
-    assert heading.split() == ['REPO', 'SLOT', 'AGENT', 'UI', 'STATUS', 'MODEL', 'WORKING', 'ON', 'LAST', 'TURN']
-    assert heading.index('LAST TURN') == display[0].index('2026-10-23')
+    assert heading.split() == ['REPO', 'SLOT', 'AGENT', 'UI', 'STATUS', 'MODEL', 'WORKING', 'ON']
     assert '● ✓ ↻' in display[0] and '› cli' in display[0]
     assert '⬡ codex' in display[0] and 'gpt-test-astra' in display[0]
     assert 'First task · #12 merged, still in progress' in display[0]
-    assert display[0].endswith('2026-10-23 16:41:07 UTC')
+    assert '2026-10-23' not in display[0]
     assert '▣ desktop' in display[1] and 'No conversation recorded' in display[1]
-    assert display[1].endswith('  -')
     assert '(idle — no conversation)' in display[2]
     assert 'claude-test-model' in display[3] and 'Foreground task' in display[3]
     assert 'CLI api 2 --local' in result.stdout
@@ -181,7 +173,7 @@ def test_open_hotkeys_show_all_and_restore_defaults(zsh, tmp_path, args, actions
     assert 'CLI ' + selected.replace('-', ' ') + ' --local' in result.stdout
     header = (tmp_path / 'picker.log.header').read_text()
     assert 'Ctrl-T attached: ' + attached in header
-    assert header.splitlines()[-1].endswith('LAST TURN')
+    assert header.splitlines()[-1].endswith('WORKING ON')
 
 
 def test_open_attached_toggle_can_hide_after_show_all(zsh, tmp_path):
@@ -216,7 +208,7 @@ def test_open_remote_picker_retains_model_and_selected_host(zsh, tmp_path):
     rows = (tmp_path / 'picker.log').read_text()
     assert 'mini' in rows and 'studio' in rows and 'claude-test-model' in rows
     assert 'Local hidden' not in rows
-    assert rows.splitlines()[0].rstrip().endswith('2026-10-23 16:41:07 UTC')
+    assert 'Last turn' not in rows and '2026-10-23' not in rows
     assert 'TAB t open web 4 --cli --host studio' in result.stdout
     assert 'REMOTE mini alias 2 --cli' in result.stdout
 
@@ -271,108 +263,39 @@ def test_open_batch_tab_failure_reports_exact_attach_command(zsh):
     assert 'OPEN api 2 --cli --local' in result.stdout
 
 
-@pytest.mark.parametrize('args,default_mode,expected', [
-    ('', 'cli', 'CLI new'),
-    ('api', 'cli', 'CLI api new'),
-    ('api --cli --local --attached', 'app', 'CLI api --local new'),
-    ('api --app', 'cli', 'APP api --app --new'),
-    ('api', 'app', 'APP api --new'),
-    ('api -r --cli', 'cli', 'REMOTE mini api --cli --new'),
-])
-def test_open_new_shortcut_preserves_repo_and_opening_flags(zsh, tmp_path, args, default_mode, expected):
-    env = picker_stub(tmp_path)
-    result = zsh(ROWS + r'''
-      DEV_OPEN_MODE_DEFAULT=$OPEN_MODE
-      _t_infer_repo() { print api; }
-      _dev_rows_all() { _dev_session_rows "$@" | awk '{print "mini\t" $0}'; }
-      _dev_default_host() { print mini; }
-      _t_dev() { print -r -- "CLI $*"; }
-      _t_open_app() { print -r -- "APP $*"; }
-      _dev_remote_open() { print -r -- "REMOTE $*"; }
-      _t_open ''' + args, _tty=True, PICK_NEW='1', OPEN_MODE=default_mode, **env)
-    assert result.returncode == 0, result.stdout
-    assert expected in result.stdout
-    assert result.stdout.count(expected) == 1
-
-
-@pytest.mark.parametrize('new_status', [2, 130])
-def test_open_new_shortcut_preserves_failure_and_cancellation(zsh, tmp_path, new_status):
-    env = picker_stub(tmp_path)
-    result = zsh(ROWS + r'''
-      _t_dev() { print -r -- "NEW $*"; return $NEW_STATUS; }
-      _t_open api --cli
-    ''', _tty=True, PICK_NEW='1', NEW_STATUS=str(new_status), **env)
-    assert result.returncode == new_status, result.stdout
-    assert result.stdout.count('NEW api new') == 1
-
-
-def test_legacy_open_new_shortcut_starts_fresh_instead_of_remote_attach(zsh, tmp_path):
-    env = picker_stub(tmp_path)
-    (zsh.home / 'code/api').mkdir(parents=True)
-    result = zsh(ROWS + r'''
-      REMOTE_HOSTS[offline]=offline
-      _dev_rows_all() { return 1; }
-      _dev_remote_resolve() { print -u2 UNEXPECTED_REMOTE_ATTACH; return 1; }
-      _dev_slot_fresh() { return 0; }
-      _dev_worktree_enabled() { return 1; }
-      _dev_agent_check() { return 0; }
-      _dev_repo_prepare() { :; }
-      _dev_auto_trust() { :; }
-      _dev_with_launch_locks() { return 0; }
-      _dev_new_session() { print -r -- "LAUNCHED $*"; }
-      _t_dev api
-    ''', _tty=True, PICK_NEW='1', **env)
-    assert result.returncode == 0, result.stdout
-    assert 'LAUNCHED dev-api-1' in result.stdout
-    assert 'UNEXPECTED' not in result.stdout
-
-
-def test_open_help_describes_new_shortcut(t_mod):
-    parser = t_mod.build_parser()
-    help_text = parser._subparsers._group_actions[0].choices['open'].format_help()
-    assert 'Alt-N new session' in help_text
-    assert 'LAST TURN is the final column' in parser._subparsers._group_actions[0].choices['open'].help_details
+def test_open_help_describes_simple_picker(t_mod):
+    parser = t_mod.build_parser()._subparsers._group_actions[0].choices['open']
+    help_text = parser.format_help() + parser.help_details
+    assert 'Ctrl-T toggles attached' in help_text
+    assert '--new' in help_text
+    assert 'Alt-N' not in help_text and 'LAST TURN' not in help_text
+    assert 'Ctrl-/' not in help_text
 
 
 @pytest.mark.parametrize('width', [200, 120, 80, 44, 32])
 @pytest.mark.parametrize('remote,scoped', [(False, False), (True, False), (False, True), (True, True)])
-def test_open_last_turn_layout_and_details(t_mod, monkeypatch, capsys, width, remote, scoped):
+def test_open_compact_layout_and_search(t_mod, monkeypatch, capsys, width, remote, scoped):
     import io
-    import json
-    from pathlib import Path
-    contract = json.loads((Path(__file__).parents[1] / 'ui/command-contract.json').read_text())
-    extension = contract['commands']['session open']['display_extensions']['last_turn_started_at']
-    assert extension['position'] == 'last' and extension['full_details'] == 'ctrl-/'
-    title = 'Fix 界面 login e\u0301 with a long task description that must remain in full details'
+    title = 'Fix 界面 login e\u0301 with a long task description that must remain searchable'
     raw = (f'mini\tsid\t/code/api\tapi-2\tattached\tactive\t{title}\tcodex\tgpt-test-astra\t2026-10-23T16:41:07Z\n'
            'local\t-\t/code/web\tweb-4\tapp\tnone\tNo conversation recorded\tcodex\t-\n')
     monkeypatch.setattr(t_mod.sys, 'stdin', io.StringIO(raw))
     monkeypatch.setattr(t_mod, '_columns', lambda: width)
-    args = ['__session-picker-rows', '--last-turn', '--header'] + (['--remote'] if remote else []) + (['--repo'] if scoped else [])
+    args = ['__session-picker-rows', '--compact', '--header'] + (['--remote'] if remote else []) + (['--repo'] if scoped else [])
     assert t_mod.main(args) == 0
     heading, *lines = capsys.readouterr().out.splitlines()
     first, unknown = [line.split('\t') for line in lines]
-    stamp = t_mod._session_display_helpers()['format_last_turn']('2026-10-23T16:41:07Z')
     assert first[:3] == ['mini', 'api-2', 'attached']
     assert len(first) == len(unknown) == 5
-    # Full details follow this viewport in fzf's searchable presentation (5,4).
-    assert t_mod._display_width(first[4]) == t_mod._display_width(unknown[4]) == width
-    first[4], unknown[4] = first[4].rstrip(), unknown[4].rstrip()
-    assert title in first[3] and first[3].endswith('Last turn: ' + stamp)
-    assert 'gpt-test-astra' in first[3]
-    if remote:
-        assert 'mini' in first[3]
-    assert unknown[3].endswith('Last turn: -') and unknown[4].endswith('  -')
-    shown_stamp = stamp[5:16] if width < 60 else stamp
-    assert first[4].endswith(shown_stamp)
-    assert heading.endswith('LAST TURN')
-    assert t_mod._display_width(heading[:-len('LAST TURN')]) == t_mod._display_width(first[4][:-len(shown_stamp)])
+    assert title in first[3] and 'gpt-test-astra' in first[3]
+    assert 'Last turn' not in first[3] and '2026-10-23' not in first[4]
+    assert 'LAST TURN' not in heading
     assert t_mod._display_width(heading) <= width - 12
-    assert ('WORKING ON' if width >= 80 else 'TASK') in heading
-    assert first[4].index('Fix') < first[4].index(shown_stamp)
-    assert t_mod._display_width(first[4][:-len(shown_stamp)]) == t_mod._display_width(unknown[4][:-1])
-    assert all(t_mod._display_width(row[4]) <= width - 10 for row in (first, unknown))
+    assert 'WORKING ON' in heading or 'TASK' in heading
+    assert 'Fix' in first[4]
+    assert all(t_mod._display_width(row[4].rstrip()) <= width - 12 for row in (first, unknown))
     if width < 120:
         assert first[4].startswith('●')
+        assert 'api-2' in first[4]
     if width >= 120:
         assert '⬡ codex' in first[4] and '› cli' in first[4]

@@ -89,7 +89,7 @@ def test_issue_picker_uses_shared_multiselect_and_preserves_full_rows(tmp_path):
     assert 'ctrl-f:execute-silent(sh "$T_PICKER_TOGGLE" default)+reload-sync(cat "$T_PICKER_CURRENT")' in args
     assert 'transform-header(cat "$T_PICKER_CURRENT_HEADER")' in args
     assert "--preview-window=hidden:wrap:down:40%" in args
-    assert "Enter start · Esc · Space/Tab mark ✓ · Ctrl-/ details" in (tmp_path / "default-header").read_text()
+    assert "Enter start · Esc · Space/Tab mark ■ · Ctrl-/ details" in (tmp_path / "default-header").read_text()
     assert "Open issues · Ctrl-A show all · Ctrl-F defaults · 1 hidden" in (tmp_path / "default-header").read_text()
     assert "All issues · Ctrl-A show all · Ctrl-F defaults" in (tmp_path / "all-header").read_text()
     assert list(tmp_path.glob("t-picker.*")) == []

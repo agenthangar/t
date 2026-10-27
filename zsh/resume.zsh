@@ -2654,7 +2654,7 @@ _t_move_pick() {
   fi
   [[ -n $repo ]] && format_args+=(--repo)
   display=$(print -rl -- "${candidates[@]}" | awk 'NF {print "local\t" $0}' \
-    | COLUMNS=${COLUMNS:-80} python3 "$T_HOME/bin/t" __session-picker-rows --last-turn "${format_args[@]}") || return 1
+    | COLUMNS=${COLUMNS:-80} python3 "$T_HOME/bin/t" __session-picker-rows --compact "${format_args[@]}") || return 1
   selected=$(print -r -- "$display" | _t_fzf_single move 'Current local sessions' \
     --delimiter=$'\t' --with-nth=5,4 --no-hscroll --prompt="move ${repo:+$repo }> " \
     --preview='printf "%s\n" {4}') || return $?

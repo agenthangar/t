@@ -72,7 +72,9 @@ def picker():
             return subprocess.run(['tmux', '-S', socket, *args], env=env, text=True,
                                   capture_output=True, check=check)
 
-        def start(empty=False, width=90, height=26, mode='open', shell='/bin/sh', *, hostile_opts=False, profile='filtered'):
+        def start(empty=False, width=90, height=26, mode='open', shell='/bin/sh', *, hostile_opts=False, profile='filtered', monochrome=False):
+            if monochrome:
+                env['NO_COLOR'] = '1'
             rows = ('local\tapi-2\tdetached\tapi  2  ⬡ codex  ○  Alpha completed task\n'
                     'local\tweb-4\tapp\tweb  4  ⬡ codex  ▣  Beta full task detail END-OF-TITLE\n'
                     'local\tapi-7\tattached\tapi  7  ✱ claude  ●  Pending task\n')
@@ -184,7 +186,7 @@ def test_filter_toggle_preserves_query_and_removes_hidden_marks(picker):
 
 def test_empty_filter_can_reveal_rows_and_narrow_preview_keeps_details(picker):
     start, wait, keys, finish = picker
-    start(empty=True, width=48)
+    start(empty=True, width=48, mode='resume')
     wait('0/0 (0)')
     keys('C-a')
     wait('3/3 (0)')
@@ -313,33 +315,18 @@ def test_primary_action_and_focused_row_visible_in_small_viewports(picker, width
 
 
 @pytest.mark.parametrize('width,height', [(80, 24), (44, 20), (32, 12)])
-def test_open_new_shortcut_invokes_existing_flow_in_small_viewports(picker, width, height):
+@pytest.mark.parametrize('mode,key,label', [('open', 'C-t', 'attached'), ('resume', 'C-l', 'live'), ('kill', 'C-p', 'pending')])
+def test_all_session_filter_keys_visible_at_every_size(picker, width, height, mode, key, label):
     start, wait, keys, finish = picker
-    start(profile='public-open', width=width, height=height)
-    screen = wait('Alt-N new')
-    assert 'Enter open · Esc' in screen
-    assert '▸' in screen
-    keys('Space')
-    wait('1/1 (1)')
-    assert finish('M-n') == ['api new']
-
-
-@pytest.mark.parametrize('empty', [False, True])
-def test_open_new_shortcut_with_no_matches_or_hidden_rows(picker, empty):
-    start, wait, keys, finish = picker
-    start(profile='public-open', empty=empty)
-    wait('Alt-N new')
-    if empty:
-        wait('0/0 (0)')
-    else:
-        wait('1/1 (0)')
-        keys('-l', 'no-such-session')
-        wait('0/1 (0)')
-    keys('C-a')
-    wait('Ctrl-T attached: shown')
-    keys('C-f')
-    wait('Ctrl-T attached: hidden')
-    assert finish('M-n') == ['api new']
+    start(mode=mode, width=width, height=height)
+    screen = wait('▸')
+    assert 'Ctrl-A' in screen and 'Ctrl-F' in screen
+    assert ('Ctrl-' + key[-1].upper() + ' ' + label + ': hidden') in screen
+    if mode == 'kill':
+        assert 'Ctrl-T attached: hidden' in screen
+    keys(key)
+    wait(label + ': shown')
+    assert finish('Escape', status=130) == []
 
 
 @pytest.mark.parametrize('key', ['Escape', 'C-c'])
@@ -350,14 +337,6 @@ def test_open_abort_does_not_start_or_attach_sessions(picker, key):
     keys('Space')
     wait('1/1 (1)')
     assert finish(key, status=130) == []
-
-
-@pytest.mark.parametrize('source', ['env', 'file'])
-def test_open_new_shortcut_overrides_hostile_options(picker, source):
-    start, wait, keys, finish = picker
-    start(profile='public-open', hostile_opts=source)
-    wait('1/1 (0)')
-    assert finish('M-n') == ['api new']
 
 
 def test_open_ctrl_n_still_navigates_and_enter_opens_selection(picker):
@@ -372,21 +351,37 @@ def test_open_ctrl_n_still_navigates_and_enter_opens_selection(picker):
 
 
 @pytest.mark.parametrize('width,height', [(80, 24), (44, 20), (32, 12)])
-def test_open_last_turn_stays_visible_without_changing_selection(picker, t_mod, width, height):
+@pytest.mark.parametrize('monochrome', [False, True])
+def test_open_simple_rows_and_focused_marks(picker, width, height, monochrome):
     start, wait, keys, finish = picker
-    start(profile='public-open', width=width, height=height)
-    wait('1/1 (0)')
-    wait('LAST TURN')
-    keys('C-a')
+    start(profile='public-open', width=width, height=height, monochrome=monochrome)
+    screen = wait('1/1 (0)')
+    assert 'Ctrl-T attached: hidden' in screen
+    assert 'LAST TURN' not in screen and 'details' not in screen and 'Alt-N' not in screen
+    keys('C-t')
     wait('2/2 (0)')
-    stamp = t_mod._session_display_helpers()['format_last_turn']('2026-10-23T16:41:07Z')
-    screen = wait(stamp if width >= 60 else stamp[5:16])
-    assert 'Fir' in screen and 'Enter open' in screen
-    assert 'LAST TURN' in screen
-    header_line = next(line for line in screen.splitlines() if 'LAST TURN' in line and 'local time' not in line)
-    data_line = next(line for line in screen.splitlines() if (stamp if width >= 60 else stamp[5:16]) in line)
-    assert header_line.index('LAST TURN') == data_line.index(stamp if width >= 60 else stamp[5:16])
-    # This part of the task is clipped from the compact row, but still searchable.
+    keys('Up', 'Space', 'Up')
+    screen = wait('2/2 (1)')
+    focused = next(line for line in screen.splitlines() if '▸' in line)
+    assert '■' in focused and 'Fir' in focused
+    keys('Space', 'Up')
+    screen = wait('2/2 (0)')
+    focused = next(line for line in screen.splitlines() if '▸' in line)
+    assert '■' not in focused and 'Fir' in focused
+    # The full task remains searchable beyond the compact display.
     keys('-l', 'progress')
     wait('1/2 (0)')
     assert finish() == ['api 2 --local']
+
+
+@pytest.mark.parametrize('empty', [False, True])
+@pytest.mark.parametrize('source', ['env', 'file'])
+def test_open_removed_shortcuts_never_launch_or_preview(picker, empty, source):
+    start, wait, keys, finish = picker
+    start(profile='public-open', empty=empty, hostile_opts=source)
+    count = '0/0 (0)' if empty else '1/1 (0)'
+    wait(count)
+    keys('M-n', 'C-_')
+    screen = wait(count)
+    assert 'Alt-N' not in screen and 'details' not in screen
+    assert finish('Escape', status=130) == []

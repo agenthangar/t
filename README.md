@@ -289,23 +289,16 @@ and metadata loading. Open/close session scans, session lists, history, and issu
 commands also report discovery stages. Redirected output and JSON remain quiet.
 
 `t open`, `t resume`, and `t kill` share the compact resume picker design:
-**Space/Tab marks ✓ and Enter acts on the selection**. **Ctrl-A** shows all
-sessions; **Ctrl-F** restores the default filters. **Ctrl-T** toggles attached
-sessions in `t open` and `t kill`, **Ctrl-L** toggles live sessions in `t resume`,
-and **Ctrl-P** toggles pending work in `t kill`. Each key keeps your search. The
-header shows the active filters and hidden count. **Ctrl-/** opens a wrapped
-full-detail preview.
-In `t open`, **Alt-N** starts the existing `--new` flow with the same repository
-and opening flags, even when filtering leaves no matches. For example, run
-`t open api` and press Alt-N to start a new session in `api`. Marked sessions are
-not opened by this shortcut; Esc/Ctrl-C still cancels without starting work.
-Rows keep agent, interface, status, model, session and task/PR details; resume
-also keeps recency and origin.
-`t open` adds the same last-turn initiation timestamp as `t ls` in its final
-column. For example, a row ends with `Fix login  2026-10-23 09:41:07 PDT`.
-Narrow rows use `MM-DD HH:MM` in local time and shorten task text to keep the
-timestamp visible. **Ctrl-/** retains the complete task and timestamp with date,
-seconds, and timezone. Missing timestamps display `-`, including older remote hosts.
+**Space/Tab marks ■ and Enter acts on the selection**. The solid selection mark
+stays visible on the focused row and is distinct from the active-context ✓.
+**Ctrl-A** shows all sessions; **Ctrl-F** restores the default filters.
+**Ctrl-T** toggles attached sessions in `t open` and `t kill`, **Ctrl-L** toggles
+live sessions in `t resume`, and **Ctrl-P** toggles pending work in `t kill`.
+Every filter key stays visible at narrow terminal widths. Each key keeps your
+search; the header shows active filters and the hidden count.
+The open picker keeps session and task text prominent, without a last-turn
+column, details preview, or new-session shortcut. Start fresh explicitly with
+`t open api --new`. Resume and close retain **Ctrl-/** for full details.
 Search still matches the full task and metadata when a compact row shortens them.
 
 The default views are unattached sessions for `t open`, inactive conversations
