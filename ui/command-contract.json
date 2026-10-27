@@ -676,7 +676,8 @@
         "tests/test_offline_open.py::test_desktop_offline_reopen_retains_local_owner_checks",
         "tests/test_plugin.py::test_open_app_creates_worktree_without_starting_tmux_or_cli",
         "tests/test_native_agent_shell.py::test_native_agent_generated_commands_execute_with_quoted_arguments",
-        "tests/test_agent_seam.py::test_zsh_foreground_uses_native_agent_outside_path"
+        "tests/test_agent_seam.py::test_zsh_foreground_uses_native_agent_outside_path",
+        "tests/test_agent_seam.py::test_session_startup_is_quiet_and_logged"
       ],
       "modes": {
         "default": {
@@ -723,7 +724,8 @@
         }
       },
       "native_agents": "Terminal session launch/resume uses the native ~/.local/bin fallback, preserving PATH and shell wrappers; no global PATH changes.",
-      "progress": "Terminal-only discovery stages on stderr; no progress in redirected output, JSON, or remote protocols."
+      "progress": "Terminal-only discovery stages on stderr; no progress in redirected output, JSON, or remote protocols.",
+      "notes": "Terminal launches run without echoing internal shell commands or exit instructions; agent output and diagnostics remain visible."
     },
     "session list": {
       "patterns": [
@@ -971,7 +973,8 @@
         "tests/test_worktree_labels.py::test_python_and_shell_resolve_same_numeric_identity",
         "tests/test_agent_seam.py::test_zsh_resume_session_uses_the_agent_resume_line",
         "tests/test_native_agent_shell.py::test_native_agent_generated_commands_execute_with_quoted_arguments",
-        "tests/test_agent_seam.py::test_zsh_foreground_uses_native_agent_outside_path"
+        "tests/test_agent_seam.py::test_zsh_foreground_uses_native_agent_outside_path",
+        "tests/test_agent_seam.py::test_session_startup_is_quiet_and_logged"
       ],
       "modes": {
         "default": {
@@ -1057,7 +1060,8 @@
           "tests/test_candidates.py::test_resume_takes_one_snapshot_and_fresh_owners_each_time"
         ]
       },
-      "progress": "Terminal-only discovery stages on stderr; no progress in redirected output, JSON, or remote protocols."
+      "progress": "Terminal-only discovery stages on stderr; no progress in redirected output, JSON, or remote protocols.",
+      "notes": "Terminal launches run without echoing internal shell commands or exit instructions; agent output and diagnostics remain visible."
     },
     "session history": {
       "patterns": [

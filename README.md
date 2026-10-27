@@ -189,6 +189,7 @@ t session open my-project  # start an isolated worktree + tmux slot
 t session list             # see your running sessions
 ```
 
+Sessions open directly into the agent without displaying internal shell commands.
 Detach from tmux with `Ctrl-b d`; reattach with `t session open my-project 1`.
 
 New slot worktrees use an identifiable directory such as

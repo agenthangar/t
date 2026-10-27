@@ -67,6 +67,8 @@ native installations in `~/.local/bin`. Missing executables report a step failur
 and leave setup resumable; they never bypass the reviewed installation choices.
 Terminal session launch and resume use the native-directory fallback while preserving
 PATH and shell-wrapper precedence, argument quoting, and ownership checks.
+Fresh and resumed tmux panes start without echoing internal launch commands or
+exit instructions. Agent output is logged from startup; failures retain diagnostics.
 
 Config proposes unique host short names from SSH targets, including the first
 manual addition. Onboarding also generates unique short names for selected peers.

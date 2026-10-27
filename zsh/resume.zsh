@@ -2016,7 +2016,7 @@ _dev_resume_session_claimed() {
   mkdir -p "$HOME/.tmux-logs"
   # No fixed geometry / window-size latest: fit the active client so attaching from
   # a phone doesn't pan a too-wide window (see _dev_new_session for the full why).
-  tmux new-session -d -s "$session" -c "$dir" || return 1
+  tmux new-session -d -s "$session" -c "$dir" sleep 86400 || return 1
   tmux set-option -t "=$session:" window-size latest 2>/dev/null || { tmux kill-session -t "=$session:"; return 1; }
   tmux pipe-pane -t "=$session:" -o "cat >> $logfile" || { tmux kill-session -t "=$session:"; return 1; }
   # Record the resumed id on the session so `tpop` can pull the exact same
@@ -2024,13 +2024,12 @@ _dev_resume_session_claimed() {
   # transcript, but this is the precise signal when we know it).
   tmux set-environment -t "=$session" CLAUDE_RESUME_ID "$sid" || { tmux kill-session -t "=$session:"; return 1; }
   tmux set-environment -t "=$session" DEV_AGENT "$agent" || { tmux kill-session -t "=$session:"; return 1; }
-  # `; exit` so quitting Claude tears the session down rather than leaving an idle
-  # shell (see _dev_new_session for the full rationale).
+  # Run without typing the internal command into the pane (see _dev_new_session).
   local resume_command; resume_command=$(_dev_agent_resume_cmd "$agent" "$sid")
   if [[ $5 == history && $agent == codex ]]; then
     resume_command=$(_dev_agent_resume_cmd "$agent" "$sid" --cd "$dir")
   fi
-  tmux send-keys -t "=$session:" "$resume_command; exit" Enter || { tmux kill-session -t "=$session:"; return 1; }
+  _dev_start_session_command "$session" "$resume_command" || { tmux kill-session -t "=$session:"; return 1; }
   _dev_launch_startup_check "$session" "$logfile" || return 1
   _dev_history_record "$sid" "$agent" "$dir" resume
   _dev_recovery_watch "$session"
