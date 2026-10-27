@@ -981,10 +981,20 @@ patch when main has unreleased commits and passing Linux CI, then updates Homebr
 t --version       # installed release, or developer checkout revision
 t system update --check   # check now for a newer release
 t system update           # latest tagged release; Git installs update main instead
+t system update --all     # this machine, then every registered SSH host
 t system update --relink  # repair links from the selected source, without fetching
 t system update --local   # switch to the registered/local t checkout and update main
 t system update --local ~/code/t  # select a checkout explicitly, including from Homebrew
 ```
+
+`--all` updates this machine first, then each registered host from `t hosts list`
+in alias order. Each machine uses its existing Homebrew, release, or Git updater.
+SSH authentication must already work without a password prompt. Unreachable
+hosts and failed updates are reported while the remaining hosts continue; any
+failure returns a nonzero status. Ctrl-C returns 130 and stops the remaining
+updates, preserving completed work. With no registered hosts, only this machine
+is updated. `t update --all` is the equivalent compatibility alias. `--all`
+cannot be combined with `--check`, `--local`, `--dev`, or `--relink`.
 
 When you use `t` interactively, it checks for a newer version in the background
 about once a day (retrying sooner after a failed check). A later command offers
