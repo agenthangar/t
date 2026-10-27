@@ -292,7 +292,10 @@ SH
     _t_picker_second_key=
     case $T_PICKER_SESSION_FILTERS in
       resume) _t_picker_first_key=ctrl-l:first ;;
-      open) _t_picker_first_key=ctrl-t:first ;;
+      open)
+        _t_picker_first_key=ctrl-t:first
+        [ -z "${T_PICKER_FILTER_HELPER:-}" ] || _t_picker_second_key=ctrl-u:unattached
+        ;;
       kill) _t_picker_first_key=ctrl-t:first; _t_picker_second_key=ctrl-p:second ;;
     esac
     for _t_picker_spec in ctrl-a:all ctrl-f:default "$_t_picker_first_key" "$_t_picker_second_key"; do

@@ -10153,8 +10153,8 @@ def build_parser():
   %(prog)s api 2               Attach to api's slot 2
 
 select several sessions:
-  Space/Tab check; Enter open. Ctrl-T attached; Ctrl-F unattached/default.
-  Ctrl-A all; Ctrl-G agent; Ctrl-P progress. Columns: t help open.
+  Space/Tab check; Enter open. Ctrl-T attached; Ctrl-U unattached.
+  Ctrl-F defaults; Ctrl-A all. Column filters: t help open.
 
 desktop → CLI:
   %(prog)s api 2 --cli
@@ -10170,12 +10170,13 @@ Run `t help open` for session targeting, defaults, and remote details.""",
   Use `t open <repo> fg` to select that repo's foreground sessions.
   Bare t open lists sessions across all local repos, even from a worktree.
   t open <repo> filters. Attached CLI and loaded desktop rows are hidden;
-  Ctrl-T attached only; Ctrl-F unattached (default); Ctrl-A all.
+  Ctrl-T attached only; Ctrl-U unattached only; Ctrl-F defaults; Ctrl-A all.
   Column value pickers: Ctrl-G agent, Ctrl-P progress, Ctrl-D CLI/desktop,
   Ctrl-B model, Ctrl-O host, Ctrl-R repo, Ctrl-V session/slot, Ctrl-E context,
   Ctrl-W task. Enter applies; Esc keeps the filter; All clears that column.
   Filters combine within the current snapshot and keep your search.
-  Ctrl-A and Ctrl-F clear column filters. Narrow headers use ^ for Ctrl.
+  Ctrl-T/Ctrl-U keep column filters; Ctrl-A/Ctrl-F clear them.
+  Ctrl-F resets to unattached. Narrow headers use ^ for Ctrl.
   Status: ● attached/loaded; ○ unattached/unloaded; ✓ loaded context.
   ↻ marks work continued after a merged PR, not current agent computation.
   Unattached and unmarked do not mean finished. The gutter ✓ marks selection.

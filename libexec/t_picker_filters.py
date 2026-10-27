@@ -96,8 +96,10 @@ def open_header(mask, filters, hidden, columns, width):
     compact = width <= 36
     key = lambda text: text.replace('Ctrl-', '^') if compact else text
     lines = ['Enter open/Esc · Space/Tab ✓'] if compact else pack(['Enter open · Esc', 'Space/Tab mark ✓'], width)
-    controls = ['Ctrl-T attached', 'Ctrl-F unattached', 'Ctrl-A all']
-    controls += [f'{hotkey} {label}' for hotkey, label in OPEN_FACETS.values()]
+    controls = ['Ctrl-T attached', 'Ctrl-U unattached', 'Ctrl-F defaults', 'Ctrl-A all']
+    # Put the short UI control in the remaining space beside defaults/all.
+    facets = sorted(OPEN_FACETS, key=lambda name: compact and name != 'interface')
+    controls += [f'{OPEN_FACETS[name][0]} {OPEN_FACETS[name][1]}' for name in facets]
     lines += pack([key(control) for control in controls] + (['^ = Ctrl'] if compact else []), width)
     view = {0: 'unattached', 1: 'all', 2: 'attached'}[mask]
     active = [f'{OPEN_FACETS[name][1]}={value}' for name, value in filters.items() if value is not None]
@@ -152,6 +154,8 @@ def render(directory, profile, action, width, columns='', facet=None):
         filters = dict.fromkeys(names)
     elif action == 'first' and profile == 'open':
         mask = 2  # Attached-only; repeated presses are idempotent.
+    elif action == 'unattached' and profile == 'open':
+        mask = 0  # Switch attachment without resetting column choices.
     elif action == 'pick' and profile == 'open' and facet in names:
         chosen = pick_value(directory, facet, records, filters[facet])
         if chosen is not None:
