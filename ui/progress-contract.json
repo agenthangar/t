@@ -49,6 +49,10 @@
       "kind": "passthrough",
       "reason": "Git, Homebrew, and installer output is streamed to the terminal."
     },
+    "bin/t:_t_update_all:subprocess.run": {
+      "kind": "passthrough",
+      "reason": "Remote update output is streamed to the terminal."
+    },
     "bin/t:_install_walk:subprocess.call": {
       "kind": "passthrough",
       "reason": "Installation steps stream output and may prompt."

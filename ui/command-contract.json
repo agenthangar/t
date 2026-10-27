@@ -2154,7 +2154,8 @@
     },
     "config open": {
       "patterns": [
-        "wizard"
+        "wizard",
+        "single"
       ],
       "renderer": "rail",
       "scope": "local machine",
@@ -2180,6 +2181,24 @@
             "tests/test_config.py::test_config_host_rename_review_save_or_discard"
           ],
           "notes": "Suggest unique host short names on addition; allow host renaming with defaults preserved and review before saving."
+        },
+        "host_add": {
+          "argv": [
+            "config",
+            "open"
+          ],
+          "patterns": [
+            "wizard",
+            "single"
+          ],
+          "read_only": false,
+          "terminal": true,
+          "tests": [
+            "tests/test_config_hosts_pty.py::test_config_add_host_refreshes_and_only_writes_after_review",
+            "tests/test_config.py::test_config_add_host_back_returns_to_hosts_without_changes",
+            "tests/test_config.py::test_config_add_host_unavailable_discovery_keeps_manual_entry"
+          ],
+          "notes": "Hosts > Add host scans current online Unix Tailscale peers on each entry and explicit Refresh, excludes registered/pending endpoints, and stages a selected peer until Save review. Manual SSH entry stays available; Back returns to Hosts. No SSH connection or remote installation."
         }
       }
     },
@@ -2713,7 +2732,7 @@
         "detail"
       ],
       "renderer": "plain",
-      "scope": "local installation",
+      "scope": "local installation; --all includes registered SSH hosts",
       "confirmation": "when_interrupting",
       "tests": [
         "tests/test_update.py::test_update_local_switches_packaged_install_to_updated_main"
@@ -2745,6 +2764,22 @@
           "tests": [
             "tests/test_update_prompt.py::test_manual_check_uses_packaged_helper_without_installing",
             "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
+          ]
+        },
+        "all": {
+          "argv": [
+            "system",
+            "update",
+            "--all"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_update.py::test_update_all_runs_local_then_registered_hosts",
+            "tests/test_update.py::test_update_all_failures_continue",
+            "tests/test_update.py::test_update_all_cancellation_stops_batch"
           ]
         }
       }
@@ -2854,7 +2889,8 @@
     "config onboard": {
       "patterns": [
         "wizard",
-        "detail"
+        "detail",
+        "multi"
       ],
       "renderer": "rail",
       "scope": "local account, selected GitHub organizations, and Tailscale peers",
@@ -2877,9 +2913,12 @@
           "tests": [
             "tests/test_onboarding_entry.py::test_config_onboard_repeats_discovery_without_new_top_level_command",
             "tests/test_onboarding_pty.py::test_setup_logs_into_native_agent_outside_path",
-            "tests/test_onboarding.py::test_first_run_hosts_get_unique_short_names"
+            "tests/test_onboarding.py::test_first_run_hosts_get_unique_short_names",
+            "tests/test_onboarding_pty.py::test_hosts_back_preserves_pending_choices_until_review",
+            "tests/test_onboarding_pty.py::test_review_back_skips_empty_steps_and_ctrl_c_cancels",
+            "tests/test_onboarding_pty.py::test_agent_login_selection_survives_review_back_and_can_be_skipped"
           ],
-          "notes": "Select agents, local checkouts, organization repositories and optional hosts; review before integration, cloning, and registration. Optional gh install/login has its own explicit choice. Resolve native agent executables outside PATH for reviewed login steps; failed steps remain resumable."
+          "notes": "Select agents, local checkouts, organization repositories and optional hosts; review before integration, cloning, and registration. Optional gh install/login has its own explicit choice. Resolve native agent executables outside PATH for reviewed login steps; failed steps remain resumable. Choice q/Esc navigates back with current selections retained; review n/Esc returns to the last applicable choice. Review q, welcome q/Esc, and Ctrl-C cancel. Empty steps are skipped; completed GitHub install/login is not repeated. Agent sign-in uses a separate optional checklist with no initial marks; skipping sign-in still allows installation. Only chosen sign-ins run after review."
         },
         "nonterminal": {
           "argv": [
@@ -2895,6 +2934,24 @@
             "tests/test_onboarding_entry.py::test_explicit_commands_never_offer_onboarding"
           ],
           "notes": "Print terminal requirement and return 1, without discovery or changes."
+        },
+        "agent_logins": {
+          "argv": [
+            "config",
+            "onboard"
+          ],
+          "patterns": [
+            "wizard",
+            "multi"
+          ],
+          "read_only": false,
+          "terminal": true,
+          "tests": [
+            "tests/test_onboarding_pty.py::test_agent_login_selection_survives_review_back_and_can_be_skipped",
+            "tests/test_onboarding.py::test_missing_agent_can_be_installed_with_or_without_login",
+            "tests/test_onboarding_pty.py::test_setup_shows_authenticated_codex_without_requesting_login"
+          ],
+          "notes": "After default-agent selection, offer only chosen unauthenticated agents for optional sign-in. No logins are marked by default; Enter with no marks skips sign-in. Back retains eligible selections. Review and execute only explicitly selected logins; installation can proceed independently. Authenticated agents have compact logged-in labels in agent selection, read-only context beside remaining login choices, and an Already logged in summary in review; they never become selectable login actions."
         }
       }
     },
@@ -3600,9 +3657,13 @@
           "read_only": false,
           "tests": [
             "tests/test_onboarding_entry.py::test_bare_terminal_routes_fresh_and_returning_accounts",
-            "tests/test_onboarding_pty.py::test_setup_logs_into_native_agent_outside_path"
+            "tests/test_onboarding_pty.py::test_setup_logs_into_native_agent_outside_path",
+            "tests/test_onboarding_pty.py::test_hosts_back_preserves_pending_choices_until_review",
+            "tests/test_onboarding_pty.py::test_review_back_skips_empty_steps_and_ctrl_c_cancels",
+            "tests/test_onboarding_pty.py::test_agent_login_selection_survives_review_back_and_can_be_skipped",
+            "tests/test_onboarding_pty.py::test_setup_shows_authenticated_codex_without_requesting_login"
           ],
-          "notes": "Resolve native agent executables outside PATH for reviewed login steps; failed steps remain resumable."
+          "notes": "Resolve native agent executables outside PATH for reviewed login steps; failed steps remain resumable. Choice q/Esc navigates back with current selections retained; review n/Esc returns to the last applicable choice. Review q, welcome q/Esc, and Ctrl-C cancel. Empty steps are skipped; completed GitHub install/login is not repeated. Agent sign-in uses a separate optional checklist with no initial marks; skipping sign-in still allows installation. Only chosen sign-ins run after review. Authenticated agents have compact logged-in labels in agent selection, read-only context beside remaining login choices, and an Already logged in summary in review; they never become selectable login actions."
         },
         "returning": {
           "argv": [],

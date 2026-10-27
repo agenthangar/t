@@ -119,8 +119,11 @@ terminal for guided setup: choose agents, review shell and agent integrations,
 select repositories, and start a session. Missing agent tools are optional installs.
 The review shows the commands and configuration changes before applying them.
 Setup and terminal session launch find native agents in `~/.local/bin` before that
-directory is on your shell's `PATH`. Selected agents are prompted to sign in
-when needed.
+directory is on your shell's `PATH`. Choose agent sign-ins separately: select
+Claude, Codex, or both, or leave the checklist empty to skip. Only selected
+sign-ins run after review; you can install an agent now and run `t login` later.
+Agents already signed in are labeled **logged in** and listed separately from
+the optional login choices, with their status repeated in review.
 Shell links follow Homebrew's stable `opt` path across upgrades; there is no manual
 shell configuration step before starting your first session.
 
@@ -134,7 +137,10 @@ matching clones are detected and preserved.
 Available Tailscale peers are offered as optional remote hosts. Registration does
 not connect to a host, configure SSH, install t remotely, or grant access; SSH must
 already be available before using a remote host. All setup steps can be skipped
-or canceled. Completed actions remain in place if a later step fails.
+or canceled. On a choice screen, `q` or Esc goes back and keeps your choices,
+including checkboxes changed before pressing Enter. At review, `n` or Esc goes
+back; `q` cancels setup. Ctrl-C cancels from any screen. Completed actions remain
+in place if a later step fails.
 
 Returning users run `t` to choose a work session. Run `t config onboard` (or choose
 **Find repositories and hosts** from the session entry screen) to discover newly
@@ -424,7 +430,13 @@ makes it the default destination for `t session move`. Configure SSH keys,
 ports, and jump hosts in `~/.ssh/config`; registering a host saves local
 settings without connecting to it or installing software there.
 
-In `t config`, choose Hosts → Add host and enter an SSH target such as
+In `t config open` → **Hosts** → **Add host**, t scans for new online Tailscale
+hosts each time you open the picker. Choose **Refresh Tailscale hosts** to check
+again while the menu is open, or **Enter SSH host manually** for another target.
+Registered and pending hosts are excluded by their known names and addresses.
+Choosing a peer stages its registration; review **Save changes** to apply it.
+
+For manual entry, enter an SSH target such as
 `alice@mini.example`; the short name is prefilled as `mini` (with a numeric suffix
 if needed). To rename a registered host, choose Hosts → host → Short name,
 then Save changes. SSH targets and default-host references are preserved.
@@ -1020,10 +1032,20 @@ patch when main has unreleased commits and passing Linux CI, then updates Homebr
 t --version       # installed release, or developer checkout revision
 t system update --check   # check now for a newer release
 t system update           # latest tagged release; Git installs update main instead
+t system update --all     # this machine, then every registered SSH host
 t system update --relink  # repair links from the selected source, without fetching
 t system update --local   # switch to the registered/local t checkout and update main
 t system update --local ~/code/t  # select a checkout explicitly, including from Homebrew
 ```
+
+`--all` updates this machine first, then each registered host from `t hosts list`
+in alias order. Each machine uses its existing Homebrew, release, or Git updater.
+SSH authentication must already work without a password prompt. Unreachable
+hosts and failed updates are reported while the remaining hosts continue; any
+failure returns a nonzero status. Ctrl-C returns 130 and stops the remaining
+updates, preserving completed work. With no registered hosts, only this machine
+is updated. `t update --all` is the equivalent compatibility alias. `--all`
+cannot be combined with `--check`, `--local`, `--dev`, or `--relink`.
 
 When you use `t` interactively, it checks for a newer version in the background
 about once a day (retrying sooner after a failed check). A later command offers
