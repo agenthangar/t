@@ -187,8 +187,12 @@ def github_repos(org):
     return sorted(unique.values(), key=lambda row: row["full_name"].lower()), warnings
 
 
-def tailscale_hosts():
-    """Online Unix peers are candidates, not evidence that SSH is authorized."""
+def tailscale_hosts(*, include_addresses=False):
+    """Online Unix peers are candidates, not evidence that SSH is authorized.
+
+    Optional endpoint metadata lets callers match existing DNS/IP registrations
+    without resolving names or connecting to the peer.
+    """
     # The macOS App Store variant bundles the CLI in its app executable.
     # https://tailscale.com/docs/reference/tailscale-cli?tab=macos
     bundled = "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
@@ -231,8 +235,25 @@ def tailscale_hosts():
             continue
         alias = str(peer.get("HostName") or target.split(".")[0])
         alias = re.sub(r"[^A-Za-z0-9_-]", "-", alias).strip("-") or "host"
-        unique.setdefault(target.lower(), {"alias": alias, "target": target,
-                                           "online": True, "os": str(peer["OS"])})
+        row = unique.setdefault(target.lower(), {"alias": alias, "target": target,
+                                                "online": True, "os": str(peer["OS"])})
+        if include_addresses:
+            addresses = row.setdefault("addresses", [target])
+            candidates = []
+            for name in (peer.get("DNSName"), peer.get("HostName")):
+                if isinstance(name, str) and _HOST.fullmatch(name.rstrip(".")):
+                    candidates.append(name.rstrip("."))
+            for address in peer.get("TailscaleIPs", []) if isinstance(peer.get("TailscaleIPs"), list) else []:
+                if isinstance(address, str):
+                    try:
+                        candidates.append(str(ipaddress.ip_address(address)))
+                    except ValueError:
+                        pass
+            seen = {address.lower() for address in addresses}
+            for address in candidates:
+                if address.lower() not in seen:
+                    addresses.append(address)
+                    seen.add(address.lower())
     return sorted(unique.values(), key=lambda row: row["target"]), []
 
 
