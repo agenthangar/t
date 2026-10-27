@@ -2631,8 +2631,9 @@ def test_open_local_multi_picker(zsh, tmp_path, tabs):
     args = log.read_text()
     assert "--multi" in args and "space:toggle+down" in args
     assert "Enter open · Esc · Space/Tab mark ✓" in args
-    assert "Ctrl-A show all · Ctrl-F defaults" in args
-    assert "Ctrl-T attached: hidden" in args
+    for control in ("Ctrl-T attached", "Ctrl-F unattached", "Ctrl-A all"):
+        assert control in args
+    assert "View: unattached (default)" in args
 
 
 def test_open_picker_cancel_does_not_create_session(zsh, tmp_path):

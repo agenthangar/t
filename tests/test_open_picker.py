@@ -162,8 +162,8 @@ def test_picker_formatter_preserves_full_metadata_and_legacy_rows(t_mod, monkeyp
     assert fallback[0].split('\t')[3].startswith('api  -  ✱ claude')
 
 
-@pytest.mark.parametrize('args,actions,selected,attached', [('', 'all', 'api-2', 'shown'),
-                                                            ('--attached', 'default', 'web-6', 'hidden')])
+@pytest.mark.parametrize('args,actions,selected,attached', [('', 'all', 'api-2', 'all'),
+                                                            ('--attached', 'default', 'web-6', 'unattached')])
 def test_open_hotkeys_show_all_and_restore_defaults(zsh, tmp_path, args, actions, selected, attached):
     env = picker_stub(tmp_path, selected)
     result = zsh(ROWS + r'''
@@ -172,21 +172,21 @@ def test_open_hotkeys_show_all_and_restore_defaults(zsh, tmp_path, args, actions
     assert result.returncode == 0, result.stdout
     assert 'CLI ' + selected.replace('-', ' ') + ' --local' in result.stdout
     header = (tmp_path / 'picker.log.header').read_text()
-    assert 'Ctrl-T attached: ' + attached in header
+    assert 'View: ' + attached in header
     assert header.splitlines()[-1].endswith('WORKING ON')
 
 
-def test_open_attached_toggle_can_hide_after_show_all(zsh, tmp_path):
-    env = picker_stub(tmp_path, 'web-6')
+def test_open_attached_view_selects_only_attached_after_show_all(zsh, tmp_path):
+    env = picker_stub(tmp_path, 'api-2')
     result = zsh(ROWS + r'''
       _t_dev() { print -r -- "CLI $*"; }
       _t_open
     ''', _tty=True, PICK_ACTIONS='all,first', **env)
     assert result.returncode == 0, result.stdout
-    assert 'CLI web 6 --local' in result.stdout
+    assert 'CLI api 2 --local' in result.stdout
     assert 'api-2' in (tmp_path / 'picker.log.step0').read_text()
-    assert 'api-2' not in (tmp_path / 'picker.log.step1').read_text()
-    assert 'Ctrl-T attached: hidden' in (tmp_path / 'picker.log.header').read_text()
+    assert 'web-6' not in (tmp_path / 'picker.log.step1').read_text()
+    assert 'View: attached' in (tmp_path / 'picker.log.header').read_text()
 
 
 def test_open_remote_picker_retains_model_and_selected_host(zsh, tmp_path):
@@ -266,7 +266,7 @@ def test_open_batch_tab_failure_reports_exact_attach_command(zsh):
 def test_open_help_describes_simple_picker(t_mod):
     parser = t_mod.build_parser()._subparsers._group_actions[0].choices['open']
     help_text = parser.format_help() + parser.help_details
-    assert 'Ctrl-T toggles attached' in help_text
+    assert 'Ctrl-T attached only' in help_text
     assert '--new' in help_text
     assert 'Alt-N' not in help_text and 'LAST TURN' not in help_text
     assert 'Ctrl-/' not in help_text
