@@ -289,23 +289,45 @@ and metadata loading. Open/close session scans, session lists, history, and issu
 commands also report discovery stages. Redirected output and JSON remain quiet.
 
 `t open`, `t resume`, and `t kill` share the compact resume picker design:
-**Space/Tab marks ✓ and Enter acts on the selection**. **Ctrl-A** shows all
-sessions; **Ctrl-F** restores the default filters. **Ctrl-T** toggles attached
-sessions in `t open` and `t kill`, **Ctrl-L** toggles live sessions in `t resume`,
-and **Ctrl-P** toggles pending work in `t kill`. Each key keeps your search. The
-header shows the active filters and hidden count. **Ctrl-/** opens a wrapped
-full-detail preview.
-In `t open`, **Alt-N** starts the existing `--new` flow with the same repository
-and opening flags, even when filtering leaves no matches. For example, run
-`t open api` and press Alt-N to start a new session in `api`. Marked sessions are
-not opened by this shortcut; Esc/Ctrl-C still cancels without starting work.
-Rows keep agent, interface, status, model, session and task/PR details; resume
-also keeps recency and origin.
-`t open` adds the same last-turn initiation timestamp as `t ls` in its final
-column. For example, a row ends with `Fix login  2026-10-23 09:41:07 PDT`.
-Narrow rows use `MM-DD HH:MM` in local time and shorten task text to keep the
-timestamp visible. **Ctrl-/** retains the complete task and timestamp with date,
-seconds, and timezone. Missing timestamps display `-`, including older remote hosts.
+**Space/Tab marks ✓ and Enter acts on the selection**. A plain green checkmark
+stays readable on the darker cyan focused row, without a colored block.
+In `t open`, **Ctrl-T** shows attached sessions only, **Ctrl-F** restores
+unattached sessions (the default), and **Ctrl-A** shows all sessions. All/default
+also clears column filters. Every column has a searchable value picker:
+
+| Key | Filter |
+| --- | --- |
+| Ctrl-G | Agent |
+| Ctrl-P | In-progress marker |
+| Ctrl-D | CLI/desktop interface |
+| Ctrl-B | Recorded model |
+| Ctrl-O | Host |
+| Ctrl-R | Repository |
+| Ctrl-V | Session/slot |
+| Ctrl-E | Context status |
+| Ctrl-W | Task (working on) |
+
+Enter applies a value; Esc keeps the current filter. “All (clear filter)” clears
+that column. Filters combine and keep your search. Narrow headers abbreviate
+Ctrl as `^`, retain every shortcut, and show the active filter count; opening a
+column picker shows its current value. Filters use the current snapshot without
+expanding repository scope or fetching new sessions.
+
+`●` means a CLI terminal is attached or a desktop conversation is loaded;
+`○` means unattached/unloaded. A `✓` **inside** the row means an agent has loaded
+conversation context, independently of terminal attachment. It does not mean the
+agent is generating. `↻` means work continued after a merged PR (edits or commits
+not known to have landed); “not marked” is not proof that work is finished.
+The separate `✓` in the left selection gutter means you marked that row to open.
+
+Resume and close retain their existing controls: Ctrl-L toggles live resume
+sessions; Ctrl-T toggles attached close sessions; Ctrl-P toggles pending close
+work. Ctrl-G cycles agents, Ctrl-O hosts, Ctrl-R repositories, and Ctrl-D the
+close interface. Ctrl-A shows all and Ctrl-F resets these filters. Resume never
+invents a historical interface.
+The open picker keeps session and task text prominent, without a last-turn
+column, details preview, or new-session shortcut. Start fresh explicitly with
+`t open api --new`. Resume and close retain **Ctrl-/** for full details.
 Search still matches the full task and metadata when a compact row shortens them.
 
 The default views are unattached sessions for `t open`, inactive conversations

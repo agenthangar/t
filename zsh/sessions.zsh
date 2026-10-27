@@ -1856,7 +1856,7 @@ _dev_kill_pick() {
   fi
 
   local picked
-  picked=$(T_PICKER_COLUMNS="$columns" T_PICKER_SESSION_FILTERS=kill T_PICKER_WITH_ATTACHED="$with_attached" \
+  picked=$(T_PICKER_SOURCE_ROWS="$rows" T_PICKER_COLUMNS="$columns" T_PICKER_SESSION_FILTERS=kill T_PICKER_WITH_ATTACHED="$with_attached" \
     T_PICKER_WITH_PENDING="$with_pending" _t_fzf_filtered "$safe_display" "$display" kill \
     'unattached · no pending work' "$(_dev_agent_legend)" '' \
     --prompt="kill ${repo:+$repo }> " --preview='printf "%s\n" {4}') || return $?
@@ -2512,11 +2512,7 @@ _t_dev() {
   if [[ -z $slot && -z $no_tmux && -t 0 && -t 1 ]] && command -v fzf >/dev/null 2>&1; then
     local open_rc
     _t_open_picker "$repo" "" "" 1; open_rc=$?
-    if (( open_rc == 3 )); then
-      slot=new
-    else
-      (( open_rc == 2 )) || return $open_rc
-    fi
+    (( open_rc == 2 )) || return $open_rc
   fi
 
   # Remote-aware open (auto half): <repo> is a valid key now (cwd-defaulted if bare) and

@@ -669,7 +669,7 @@ _t_resume() {
      f=("${(@ps:\t:)visible[1]}") && [[ $f[7] == - || -t 1 ]]; then
     pick=${visible[1]}
   elif [[ -t 0 && -t 1 ]] && command -v fzf >/dev/null; then
-    pick=$(T_PICKER_SESSION_FILTERS=resume _t_fzf_filtered "$(print -rl -- "${(@)inactive}")" \
+    pick=$(T_PICKER_SOURCE_ROWS="${(F)cands}" T_PICKER_SESSION_FILTERS=resume _t_fzf_filtered "$(print -rl -- "${(@)inactive}")" \
       "$(print -rl -- "${(@)cands}")" resume inactive "$legend" "$show_all" \
       --delimiter=$'\t' --with-nth=-1 --no-hscroll \
       --prompt="$fprompt") || return $?
@@ -2654,7 +2654,7 @@ _t_move_pick() {
   fi
   [[ -n $repo ]] && format_args+=(--repo)
   display=$(print -rl -- "${candidates[@]}" | awk 'NF {print "local\t" $0}' \
-    | COLUMNS=${COLUMNS:-80} python3 "$T_HOME/bin/t" __session-picker-rows --last-turn "${format_args[@]}") || return 1
+    | COLUMNS=${COLUMNS:-80} python3 "$T_HOME/bin/t" __session-picker-rows --compact "${format_args[@]}") || return 1
   selected=$(print -r -- "$display" | _t_fzf_single move 'Current local sessions' \
     --delimiter=$'\t' --with-nth=5,4 --no-hscroll --prompt="move ${repo:+$repo }> " \
     --preview='printf "%s\n" {4}') || return $?

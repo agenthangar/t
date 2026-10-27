@@ -8,7 +8,7 @@ changing a command; update both when its behavior changes.
 
 The visual baseline is the Homebrew v0.4.2 release (`40aaea8`): cyan section
 headings and current values, green primary/add actions, amber warnings/removal,
-two-space outer margins, a pointer and reverse-video focus row, and a footer
+two-space outer margins, a pointer and a dark cyan focus row with light text, and a footer
 showing the next action and keys. Focus and marks must remain distinguishable
 without color. Align labels on wide terminals and stack them below 60 columns.
 Clip text before applying color and count physical rows when repainting; at
@@ -88,20 +88,49 @@ dev sessions   ● attached/loaded · ✓ active context · ↻ still in progres
 
   reattach: t open <repo> <slot>
 
-Enter open · Esc · Space/Tab mark ✓ · Ctrl-/ details
-Ctrl-A show all · Ctrl-F defaults · 2 hidden
-Alt-N new · Ctrl-T attached: hidden
-  SESSION  WORKING ON  LAST TURN
-▸ ○ api-2  Fix login   2026-10-23 09:41:07 PDT
+Enter open · Esc · Space/Tab mark ✓
+Ctrl-T attached · Ctrl-F unattached · Ctrl-A all
+Ctrl-G agent · Ctrl-P progress · Ctrl-D UI · Ctrl-B model
+Ctrl-O host · Ctrl-R repo · Ctrl-V session · Ctrl-E context · Ctrl-W task
+View: unattached (default) · 2 hidden
+  SESSION  WORKING ON
+▸✓ ○ api-2  Fix login
 ```
 
 The rows above illustrate hierarchy and controls, not a fixed column schema.
 List commands print normally; picker headers and marks appear only for selection.
 
-The open picker adds Alt-N to start its existing `--new` flow with the original
-repository and opening flags. It discards marks and works with no matching rows.
-Ctrl-N remains navigation. The shared filtered open profile returns 3 for this
-explicit action; cancellation continues to return 130 without starting work.
+The open picker hides attached CLI and loaded desktop sessions by default.
+Ctrl-T selects attached-only; Ctrl-F restores unattached; Ctrl-A shows all.
+The compatibility --attached flag starts with all rows. There is no
+new-session shortcut or details preview in this picker; use `t open --new`.
+A plain green ✓ selection marker stays readable on the dark cyan focus row;
+never paint a reversed-color block behind it. The marker occupies its own gutter
+beside the focus pointer, separate from status marks in the row.
+The open picker exposes searchable value selection for each column: Ctrl-G
+agent, Ctrl-P progress, Ctrl-D interface, Ctrl-B model, Ctrl-O host, Ctrl-R repo,
+Ctrl-V session/slot, Ctrl-E context, and Ctrl-W task. Use the shared single-picker
+profile; Enter applies, Esc keeps the filter, and an explicit All option clears
+one column. Column filters combine with attachment views. Ctrl-A clears all
+filters and shows every snapshot row; Ctrl-F clears all filters and restores
+unattached. Ctrl-T selects attached-only without clearing column filters.
+
+Resume and close retain cycling Ctrl-G agent, Ctrl-O host/origin, Ctrl-R repo,
+and (close only) Ctrl-D interface, with their existing state toggles. Resume
+never invents a historical UI. Every column value comes from raw metadata,
+not truncated display text. The progress value exactly follows the ↻ marker:
+work continued after a merged PR; its absence is not completion evidence.
+A row's ✓ means loaded conversation context, independent of attachment and
+current computation; the selection gutter ✓ marks an action target.
+
+Query and visible selection identity survive supported reloads; hidden marks
+are removed. Old fzf clears marks on filter actions. These remain filtered/multi
+modes, not new commands or discovery operations. Every shortcut and a focused
+row remain visible at 80×24, 44×20, and 32×12. Short terminals use a borderless
+full-height view, including nested value pickers. Open's narrow header uses ^
+for Ctrl and shows the active filter count; full values are available in the
+column pickers. Filter metadata comes from the same private snapshot as the
+rows. A named repository and prior discovery limits remain in force.
 
 The kill multi-picker's Enter action confirms every marked session (or the
 focused row), including live local and remote agents; do not prompt again per
@@ -234,18 +263,13 @@ Redirected output retains all columns and complete values: `t ls | cat` or
   ●✓↻ mini api-17 Fix… 09:41
 ```
 
-The filtered multi-selection mode of `t session open` also puts LAST TURN last.
-Its row formatter reserves space for the timestamp before clipping working-on
-text, using the shared Unicode width helpers. Narrow rows use local `MM-DD HH:MM`
-and compact session/status metadata; Ctrl-/ details retain the complete working-on
-text and full timestamp. The shared picker controls and hidden host/session/state
-identity fields remain unchanged. Search includes the full task and metadata even
-when compact rows shorten their presentation. Explicit targets still bypass selection.
-Open and close pickers label their displayed columns in a non-selectable header
-that stays aligned when filters change. Open uses SESSION and WORKING ON in compact
-views, shortened to S and TASK at the smallest width; LAST TURN stays last.
-On short terminals the shared profile removes vertical margins to keep the column
-header, controls, and focused row visible.
+The filtered multi-selection mode of `t session open` prioritizes session identity
+and working-on text. It omits LAST TURN, previews, and the new-session shortcut.
+Compact rows use the shared Unicode width helpers; full task text and metadata
+remain searchable. Hidden host/session/state identity fields remain unchanged.
+Explicit targets still bypass selection. Open and close pickers label displayed
+columns in a non-selectable header preserved across filter changes. Narrow
+filtered views use full height and smaller margins to retain controls and rows.
 
 Printed history appends DATE, BRANCH, PRS, and the full conversation ID after these
 shared columns, retaining

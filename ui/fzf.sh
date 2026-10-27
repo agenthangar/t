@@ -5,9 +5,10 @@
 # `exit` in zsh runs the caller's inherited zshexit hooks (including Terminal.app's
 # session saver) inside the picker subshell.
 _t_fzf() {
+  [ -z "${NO_COLOR:-}" ] || set -- "$@" --color=bw
   command fzf --height=60% --layout=reverse --border=rounded --margin=1,2 \
-    --pointer='▸' --marker='✓' \
-    --color='fg+:black,bg+:cyan,hl:cyan,hl+:black:underline,pointer:black,marker:green,header:cyan,prompt:cyan,border:bright-black' \
+    --pointer='▸' --marker='✓ ' \
+    --color='fg+:white,bg+:#005f5f,hl:cyan,hl+:white:underline,pointer:white,marker:#87ffaf:bold,header:cyan,prompt:cyan,border:bright-black' \
     "$@"
   _t_fzf_rc=$?
   # fzf uses 1 for an empty selection and 130 for Esc/Ctrl-C. Both are an
@@ -35,6 +36,10 @@ _t_fzf_single() (
   _t_fzf_action=$1 _t_fzf_legend=$2
   shift 2
   _t_fzf_content_options "$@" || return $?
+  _t_fzf_size=$(stty size 2>/dev/null </dev/tty) || _t_fzf_size=
+  if [ -n "$_t_fzf_size" ] && [ "${_t_fzf_size%% *}" -gt 0 ] && [ "${_t_fzf_size%% *}" -le 14 ]; then
+    set -- --height=100% --margin=0 --border=none "$@"
+  fi
   _t_fzf_header="Enter $_t_fzf_action · Esc"
   [ -z "$_t_fzf_legend" ] || _t_fzf_header="$_t_fzf_header
 $_t_fzf_legend"
@@ -111,13 +116,14 @@ SH
 # Session callers opt into independent controls with T_PICKER_SESSION_FILTERS.
 # Kill also supplies the two single-filter views via T_PICKER_WITH_ATTACHED and
 # T_PICKER_WITH_PENDING. All callers use Ctrl-A for all and Ctrl-F for defaults.
-# The open profile returns 3 on Alt-N, requesting the caller's new-session flow.
 _t_fzf_filtered() (
   _t_picker_default=$1 _t_picker_all=$2 _t_picker_action=$3
   _t_picker_label=$4 _t_picker_legend=$5 _t_picker_show_all=$6
   _t_picker_with_attached=${T_PICKER_WITH_ATTACHED:-}
   _t_picker_with_pending=${T_PICKER_WITH_PENDING:-}
   _t_picker_columns=${T_PICKER_COLUMNS:-}
+  _t_picker_source=${T_PICKER_SOURCE_ROWS:-}
+  unset T_PICKER_SOURCE_ROWS
   _t_picker_margin=1,2
   unset T_PICKER_WITH_ATTACHED T_PICKER_WITH_PENDING
   shift 6
@@ -137,14 +143,32 @@ _t_fzf_filtered() (
   export T_PICKER_DEFAULT="$_t_picker_dir/default" T_PICKER_ALL="$_t_picker_dir/all"
   export T_PICKER_STATE="$_t_picker_dir/show-all" T_PICKER_TOGGLE="$_t_picker_dir/toggle"
   export T_PICKER_CURRENT="$_t_picker_dir/current" T_PICKER_CURRENT_HEADER="$_t_picker_dir/current-header"
-  export T_PICKER_NEW="$_t_picker_dir/new"
   export T_PICKER_HEADER_DEFAULT="$_t_picker_dir/header-default" T_PICKER_HEADER_ALL="$_t_picker_dir/header-all"
   : > "$T_PICKER_DEFAULT"
   : > "$T_PICKER_ALL"
   [ -z "$_t_picker_default" ] || printf '%s\n' "$_t_picker_default" > "$T_PICKER_DEFAULT"
   [ -z "$_t_picker_all" ] || printf '%s\n' "$_t_picker_all" > "$T_PICKER_ALL"
   _t_picker_hidden=$(( $(wc -l < "$T_PICKER_ALL") - $(wc -l < "$T_PICKER_DEFAULT") ))
-  _t_picker_controls="Enter $_t_picker_action · Esc · Space/Tab mark ✓ · Ctrl-/ details"
+  _t_picker_controls="Enter $_t_picker_action · Esc · Space/Tab mark ✓"
+  _t_picker_preview_bind=,ctrl-/:toggle-preview
+  if [ "${T_PICKER_SESSION_FILTERS:-}" = open ]; then
+    _t_picker_preview_bind=,ctrl-/:ignore,alt-n:ignore
+    set -- --preview= "$@"
+  else
+    _t_picker_controls="$_t_picker_controls · Ctrl-/ details"
+  fi
+  _t_picker_compact=
+  _t_picker_filter_separator=' · '
+  if [ -n "$_t_picker_size" ] && [ "${_t_picker_size#* }" -gt 0 ] && [ "${_t_picker_size#* }" -le 60 ]; then
+    _t_picker_compact=1
+    _t_picker_filter_separator='
+'
+    _t_picker_legend=
+    _t_picker_margin=0,1
+    _t_picker_controls="Enter $_t_picker_action · Esc
+Space/Tab mark ✓"
+    set -- --height=100% "$@"
+  fi
   printf '%s\n%s\n' "$_t_picker_controls" \
     "$_t_picker_label · Ctrl-A show all · Ctrl-F defaults · $_t_picker_hidden hidden" > "$T_PICKER_HEADER_DEFAULT"
   printf '%s\n%s\n' "$_t_picker_controls" \
@@ -178,13 +202,18 @@ _t_fzf_filtered() (
       [ $(( _t_picker_mask & 2 )) = 0 ] || _t_picker_second=shown
       case $T_PICKER_SESSION_FILTERS in
         resume) _t_picker_filters="Ctrl-L live: $_t_picker_first" ;;
-        open) _t_picker_filters="Alt-N new · Ctrl-T attached: $_t_picker_first" ;;
-        kill) _t_picker_filters="Ctrl-T attached: $_t_picker_first · Ctrl-P pending: $_t_picker_second" ;;
+        open) _t_picker_filters="Ctrl-T attached: $_t_picker_first" ;;
+        kill) _t_picker_filters="Ctrl-T attached: $_t_picker_first${_t_picker_filter_separator}Ctrl-P pending: $_t_picker_second" ;;
       esac
       _t_picker_hidden=$(( $(wc -l < "$T_PICKER_ALL") - $(wc -l < "$_t_picker_dir/rows-$_t_picker_mask") ))
       printf '%s\n%s\n%s\n' "$_t_picker_controls" \
         "Ctrl-A show all · Ctrl-F defaults · $_t_picker_hidden hidden" \
         "$_t_picker_filters" > "$_t_picker_dir/header-$_t_picker_mask"
+      if [ -n "$_t_picker_compact" ]; then
+        printf '%s\n%s\n%s\n' "$_t_picker_controls" \
+          "Ctrl-A all · Ctrl-F reset" "$_t_picker_filters" > "$_t_picker_dir/header-$_t_picker_mask"
+        printf '%s hidden\n' "$_t_picker_hidden" >> "$_t_picker_dir/header-$_t_picker_mask"
+      fi
       [ -z "$_t_picker_legend" ] || printf '%s\n' "$_t_picker_legend" >> "$_t_picker_dir/header-$_t_picker_mask"
       [ -z "$_t_picker_columns" ] || printf '%s\n' "$_t_picker_columns" >> "$_t_picker_dir/header-$_t_picker_mask"
     done
@@ -197,7 +226,25 @@ _t_fzf_filtered() (
   case "$(command fzf --help </dev/null 2>/dev/null)" in
     *--id-nth*) set -- --id-nth=1,2,3 "$@"; T_PICKER_CLEAR_MARKS= ;;
   esac
+  if [ -n "$_t_picker_source" ]; then
+    printf '%s\n' "$_t_picker_source" > "$_t_picker_dir/source"
+    T_PICKER_HEADER_WIDTH=${_t_picker_size#* }
+    [ "${T_PICKER_HEADER_WIDTH:-0}" -gt 0 ] || T_PICKER_HEADER_WIDTH=${COLUMNS:-80}
+    T_PICKER_HEADER_WIDTH=$(( T_PICKER_HEADER_WIDTH - 12 ))
+    if [ -n "$_t_picker_size" ] && [ "${_t_picker_size%% *}" -gt 0 ] && [ "${_t_picker_size%% *}" -le 14 ]; then
+      set -- --height=100% --border=none "$@"
+      _t_picker_margin=0
+      T_PICKER_HEADER_WIDTH=$(( ${_t_picker_size#* } - 4 ))
+    fi
+    export T_PICKER_HEADER_WIDTH
+    export T_PICKER_FILTER_HELPER="$T_HOME/libexec/t_picker_filters.py"
+  else
+    unset T_PICKER_FILTER_HELPER
+  fi
   cat > "$T_PICKER_TOGGLE" <<'SH'
+if [ -n "${T_PICKER_FILTER_HELPER:-}" ]; then
+  exec python3 "$T_PICKER_FILTER_HELPER" "$@"
+fi
 if [ -n "$T_PICKER_SESSION_MASK" ]; then
   current=0
   [ ! -s "$T_PICKER_STATE" ] || read -r current < "$T_PICKER_STATE"
@@ -230,6 +277,10 @@ SH
   fi
   cp "$_t_picker_input" "$T_PICKER_CURRENT"
   cp "$_t_picker_header" "$T_PICKER_CURRENT_HEADER"
+  if [ -n "${T_PICKER_FILTER_HELPER:-}" ]; then
+    sh "$T_PICKER_TOGGLE" current || return $?
+    _t_picker_header=$T_PICKER_CURRENT_HEADER
+  fi
   # Generic transform was added after fzf 0.44. The three actions below are
   # supported by Ubuntu 24.04's fzf: update files, reload rows, then read the
   # matching header. execute-silent finishes before the following actions run.
@@ -250,18 +301,26 @@ SH
       _t_picker_bind="${_t_picker_bind}${_t_picker_bind:+,}${_t_picker_key}:${T_PICKER_CLEAR_MARKS}execute-silent(sh \"\$T_PICKER_TOGGLE\" $_t_picker_action)+reload-sync(cat \"\$T_PICKER_CURRENT\")+transform-header(cat \"\$T_PICKER_CURRENT_HEADER\")"
     done
   fi
-  if [ "${T_PICKER_SESSION_FILTERS:-}" = open ]; then
-    # No row placeholder: new must also work with zero matches or hidden rows.
-    # Abort discards marks instead of accidentally opening existing sessions.
-    # shellcheck disable=SC2016
-    _t_picker_bind="$_t_picker_bind"',alt-n:execute-silent(: > "$T_PICKER_NEW")+abort'
+  if [ -n "${T_PICKER_FILTER_HELPER:-}" ]; then
+    _t_picker_facets='ctrl-g:agent ctrl-d:interface ctrl-o:host ctrl-r:repo'
+    _t_picker_execute=execute-silent
+    _t_picker_pick=
+    if [ "$T_PICKER_SESSION_FILTERS" = open ]; then
+      _t_picker_facets='ctrl-g:agent ctrl-p:progress ctrl-d:interface ctrl-b:model ctrl-o:host ctrl-r:repo ctrl-v:session ctrl-e:context ctrl-w:task'
+      _t_picker_execute=execute
+      _t_picker_pick='pick '
+    fi
+    for _t_picker_spec in $(printf '%s\n' "$_t_picker_facets"); do
+      [ "$T_PICKER_SESSION_FILTERS" != resume ] || [ "$_t_picker_spec" != ctrl-d:interface ] || continue
+      _t_picker_key=${_t_picker_spec%:*} _t_picker_action=${_t_picker_spec#*:}
+      _t_picker_bind="${_t_picker_bind},${_t_picker_key}:${T_PICKER_CLEAR_MARKS}${_t_picker_execute}(sh \"\$T_PICKER_TOGGLE\" ${_t_picker_pick:-}$_t_picker_action)+reload-sync(cat \"\$T_PICKER_CURRENT\")+transform-header(cat \"\$T_PICKER_CURRENT_HEADER\")"
+    done
   fi
   _t_fzf --multi --no-hscroll --margin="$_t_picker_margin" --delimiter="$(printf '\t')" --with-nth=-1 \
-    --bind='enter:accept,esc:abort,ctrl-c:abort,space:toggle+down,tab:toggle+down,shift-tab:up,ctrl-/:toggle-preview' \
+    --bind="enter:accept,esc:abort,ctrl-c:abort,space:toggle+down,tab:toggle+down,shift-tab:up${_t_picker_preview_bind}" \
     --bind="$_t_picker_bind" \
     --preview='printf "%s\n" {-1}' --preview-window='hidden:wrap:down:40%' \
     --header="$(cat "$_t_picker_header")" "$@" < "$T_PICKER_CURRENT"
   _t_picker_rc=$?
-  [ ! -f "$T_PICKER_NEW" ] || return 3
   return "$_t_picker_rc"
 )

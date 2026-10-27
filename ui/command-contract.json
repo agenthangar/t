@@ -6,7 +6,7 @@
     "detail": "Read-only labeled values; no work starts or prompt appears.",
     "single": "One focused target chosen with Enter in the shared picker or inline menu.",
     "multi": "Space/Tab marks searchable rows; Enter accepts marks or the focused row.",
-    "filtered": "Shared Ctrl-A all and Ctrl-F defaults; session filters add Ctrl-T, Ctrl-L, or Ctrl-P.",
+    "filtered": "Shared Ctrl-A all and Ctrl-F defaults. Open has attached-only/unattached/all views and a searchable value picker for every session column; other session views retain their state toggles and cycling facets. Filters narrow the same snapshot and never rediscover.",
     "wizard": "Stage edits and review before applying with the shared Rail UI.",
     "review": "Show selected install actions before running; Enter applies the reviewed plan.",
     "action": "Run an explicit target without unnecessary selection; confirm interruption when needed.",
@@ -691,14 +691,19 @@
           "read_only": false,
           "tests": [
             "tests/test_open_picker.py::test_bare_open_inside_worktree_shows_every_detail_and_repo",
-            "tests/test_picker_ui.py::test_open_new_shortcut_invokes_existing_flow_in_small_viewports",
-            "tests/test_open_picker.py::test_open_new_shortcut_preserves_repo_and_opening_flags",
-            "tests/test_open_picker.py::test_open_new_shortcut_preserves_failure_and_cancellation",
-            "tests/test_open_picker.py::test_open_last_turn_layout_and_details",
-            "tests/test_picker_ui.py::test_open_last_turn_stays_visible_without_changing_selection",
-            "tests/test_open_picker.py::test_open_picker_does_not_run_callers_exit_hook_in_subshell"
+            "tests/test_open_picker.py::test_open_picker_does_not_run_callers_exit_hook_in_subshell",
+            "tests/test_open_picker.py::test_open_hides_attached_and_loaded_desktop_by_default",
+            "tests/test_open_picker.py::test_open_compact_layout_and_search",
+            "tests/test_picker_ui.py::test_all_session_filter_keys_visible_at_every_size",
+            "tests/test_picker_ui.py::test_open_simple_rows_and_focused_marks",
+            "tests/test_picker_filters.py::test_every_filter_key_survives_long_values",
+            "tests/test_picker_ui.py::test_session_pickers_display_every_filter_key",
+            "tests/test_picker_ui.py::test_public_open_facet_keys_combine_and_clear_hidden_marks",
+            "tests/test_picker_ui.py::test_open_each_column_opens_searchable_value_picker",
+            "tests/test_picker_ui.py::test_open_attachment_views_are_exclusive_and_idempotent",
+            "tests/test_picker_filters.py::test_open_header_keeps_every_column_shortcut_visible"
           ],
-          "notes": "Alt-N starts the existing --new flow with the original repository and opening flags, even with no matching rows; marks are discarded. Ctrl-N remains navigation. LAST TURN is the final column, using transcript-backed local time or - when unknown; narrow rows use MM-DD HH:MM and Ctrl-/ preserves the full timestamp. Display columns have a non-selectable aligned header preserved across filter changes; compact open headers use SESSION/WORKING ON or S/TASK and retain LAST TURN last."
+          "notes": "Default is unattached CLI and unloaded desktop sessions. Ctrl-T selects attached-only, Ctrl-F restores unattached/default and clears column filters, Ctrl-A shows all and clears filters. Dedicated searchable value pickers: Ctrl-G agent, Ctrl-P progress, Ctrl-D interface, Ctrl-B model, Ctrl-O host, Ctrl-R repository, Ctrl-V session/slot, Ctrl-E context, Ctrl-W task. Progress follows the displayed continued-work marker, not current computation or completion. Filters combine within the snapshot, preserve search, and clear hidden marks. Plain selection checks remain separate from row context marks. Retain compact session/task rows without LAST TURN, preview, or new-session controls. Every shortcut and a focused row remain visible at narrow sizes, abbreviating Ctrl as ^ and active values as a count; the value picker shows the current value."
         },
         "explicit": {
           "argv": [
@@ -715,22 +720,6 @@
             "tests/test_open_picker.py::test_explicit_open_target_bypasses_picker"
           ],
           "notes": "Fresh unused local slots and locally reserved desktop reopens tolerate unavailable remote hosts. Desktop claims scan once and still reject known remote owners and failed local ownership checks. Unreserved existing workspaces and saved-conversation handoffs retain strict ownership checks."
-        }
-      },
-      "display_extensions": {
-        "last_turn_started_at": {
-          "label": "LAST TURN",
-          "position": "last",
-          "type": "string",
-          "meaning": "Latest evidenced turn initiation, not last activity; local date/time with seconds and timezone.",
-          "unknown": "-",
-          "wire_format": "ISO 8601 UTC",
-          "tests": [
-            "tests/test_open_picker.py::test_open_last_turn_layout_and_details"
-          ],
-          "narrow_format": "MM-DD HH:MM",
-          "full_details": "ctrl-/",
-          "search": "full_details"
         }
       },
       "native_agents": "Terminal session launch/resume uses the native ~/.local/bin fallback, preserving PATH and shell wrappers; no global PATH changes.",
@@ -830,10 +819,11 @@
           "tests": [
             "tests/test_kill_multiselect.py::test_kill_picker_starts_with_only_proven_safe_rows",
             "tests/test_kill_multiselect.py::test_kill_picker_dispatches_multiple_cli_and_desktop_rows",
-            "tests/test_kill_multiselect.py::test_picker_enter_stops_live_agents_without_reading_confirmation"
+            "tests/test_kill_multiselect.py::test_picker_enter_stops_live_agents_without_reading_confirmation",
+            "tests/test_picker_filters.py::test_every_filter_key_survives_long_values"
           ],
           "confirmation": "enter",
-          "notes": "Displayed columns have a non-selectable aligned header preserved across filter changes."
+          "notes": "Displayed columns have a non-selectable aligned header preserved across filter changes. Independent Ctrl-G agent, Ctrl-O host/origin, and Ctrl-R repository facets; open/close also support Ctrl-D interface. All/default clears facets, preserves search, and removes hidden marks. No additional discovery or scope expansion."
         },
         "explicit": {
           "argv": [
@@ -995,8 +985,10 @@
           ],
           "read_only": false,
           "tests": [
-            "tests/test_resume_multiselect.py::test_resume_multi_opens_selected_live_slot_and_revives_dead_slot"
-          ]
+            "tests/test_resume_multiselect.py::test_resume_multi_opens_selected_live_slot_and_revives_dead_slot",
+            "tests/test_picker_filters.py::test_every_filter_key_survives_long_values"
+          ],
+          "notes": "Independent Ctrl-G agent, Ctrl-O host/origin, and Ctrl-R repository facets; open/close also support Ctrl-D interface. All/default clears facets, preserves search, and removes hidden marks. No additional discovery or scope expansion."
         },
         "explicit": {
           "argv": [
