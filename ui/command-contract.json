@@ -3257,7 +3257,8 @@
       "scope": "named/current repository, or all repositories outside a checkout; chosen SSH host(s)",
       "confirmation": "enter",
       "tests": [
-        "tests/test_remote_commands.py::test_remote_move_selects_current_cross_host_identity_and_destination"
+        "tests/test_remote_commands.py::test_remote_move_selects_current_cross_host_identity_and_destination",
+        "tests/test_host_resilience.py::test_remote_move_source_picker_keeps_reachable_candidates"
       ],
       "modes": {
         "default": {
@@ -3274,7 +3275,7 @@
           "tests": [
             "tests/test_remote_commands.py::test_remote_move_selects_current_cross_host_identity_and_destination"
           ],
-          "notes": "Single host picker waits for Enter even with one host; missing session uses shared selection on the source/target host. Cancellation returns 130."
+          "notes": "Single host picker waits for Enter even with one host; missing session uses shared selection on the source/target host. Cancellation returns 130. Source browsing skips unavailable peers while retaining reachable candidates; selected-source and transfer ownership checks remain strict."
         },
         "explicit": {
           "argv": [

@@ -393,7 +393,7 @@ Fresh local opens may continue after incomplete remote discovery when the local
 slot is unused. Reopening a locally reserved desktop workspace also tolerates
 unavailable hosts after checking local ownership. Desktop claims scan remote
 owners once; known remote owners still block, and local terminal writers still
-prevent reopening. Open, close, and resume pickers retain reachable rows when a
+prevent reopening. Open, close, resume, and remote move source pickers retain reachable rows when a
 registered host is unavailable. Saved CLI and desktop resumes warn that skipped
 ownership could not be verified, then continue through local locks and known-owner
 checks on reachable hosts. Failed local scans remain fatal. Other unreserved

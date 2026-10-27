@@ -235,3 +235,28 @@ def test_remote_transcript_pull_continues_and_caches_only_success(zsh, failure):
         if failure != 'hostname':
             assert 'a transcript fetch failed' in result.stderr
             assert "pulled a's latest transcripts" not in result.stderr
+
+
+@pytest.mark.parametrize('local_failure', [False, True])
+def test_remote_move_source_picker_keeps_reachable_candidates(zsh, tmp_path, local_failure):
+    picker = tmp_path / 'stubbin/fzf'
+    picker.write_text('#!/bin/sh\ncat\n')
+    picker.chmod(0o755)
+    result = zsh(SCANS + r'''
+      _dev_session_rows() { [[ $LOCAL_FAILURE == 0 ]]; }
+      _t_fzf_single() { print -u2 PICKER_OPENED; cat >&2; return 130; }
+      ssh() { print -u2 UNEXPECTED_SSH; return 99; }
+      _t_remote move api --host offline
+    ''', _tty=True, LOCAL_FAILURE=str(int(local_failure)))
+    assert result.returncode == (1 if local_failure else 130), result.stdout
+    assert 'offline unreachable' in result.stdout
+    assert ('PICKER_OPENED' in result.stdout) == (not local_failure)
+    if not local_failure:
+        assert 'online' in result.stdout and 'api-4' in result.stdout
+    assert 'UNEXPECTED_SSH' not in result.stdout
+
+
+def test_remote_move_explicit_unavailable_source_still_fails(zsh):
+    result = zsh(SCANS + '_dev_session_rows() { :; }; _t_remote_move_rows offline')
+    assert result.returncode == 1
+    assert not result.stdout
