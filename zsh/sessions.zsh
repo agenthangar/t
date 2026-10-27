@@ -2191,6 +2191,14 @@ _dev_foreground_new() {
   _dev_launch_preflight "dev-foreground-new" "$dir" ''
 }
 
+# Called only after a new pane has been claimed and configured. respawn retains
+# pipe-pane logging, so even the first agent output is captured. Disable macOS
+# shell-session save/restore only in this child, leaving the caller untouched.
+_dev_start_session_command() {
+  tmux respawn-pane -k -t "=$1:" env SHELL_SESSIONS_DISABLE=1 \
+    zsh -lic "setopt no_monitor no_notify; $2"
+}
+
 _dev_new_session() {
   _dev_with_launch_locks "$2" '' _dev_new_session_claimed "$@"
 }
@@ -2212,7 +2220,7 @@ _dev_new_session_claimed() {
   # client is active, so it fits the phone on attach. (latest is tmux's default,
   # but we set it explicitly so it holds on machines with a different default.)
   # The trailing colon keeps dots in repo names out of tmux window/pane parsing.
-  tmux new-session -d -s "$session" -c "$dir" || return 1
+  tmux new-session -d -s "$session" -c "$dir" sleep 86400 || return 1
   tmux set-option -t "=$session:" window-size latest 2>/dev/null || { tmux kill-session -t "=$session:"; return 1; }
   tmux pipe-pane -t "=$session:" -o "cat >> $logfile" || { tmux kill-session -t "=$session:"; return 1; }
   # Which agent occupies the slot, for every later reader (_dev_agent_of_session). Only
@@ -2225,10 +2233,9 @@ _dev_new_session_claimed() {
   if [[ $agent == claude ]]; then
     tmux set-environment -t "=$session" CLAUDE_RESUME_ID "$sid" || { tmux kill-session -t "=$session:"; return 1; }
   fi
-  # `; exit` so quitting Claude closes the pane's shell and tears down the
-  # (single-window) tmux session instead of leaving an idle prompt behind. Fires
-  # on any exit (clean or crash); crash output survives in the pipe-pane logfile
-  # (`t read`). `t pop` kill-sessions the slot itself, so the exit is moot there.
+  # Keep the pane quiet while logging and metadata are installed. Replace only
+  # this newly created placeholder with a command shell: no prompt, typed launch
+  # command, or visible `; exit`. The shell exits when the agent returns.
   local prep="_dev_repo_prepare ${(q)branch}; "
   [[ -n $skip_prepare ]] && prep=    # worktree mode: <dir> is already on its branch
   # Share-only launches can enter a tmux server that inherited the source
@@ -2237,7 +2244,7 @@ _dev_new_session_claimed() {
     local clear_identity='unset CLAUDECODE CLAUDE_CODE_SESSION_ID CLAUDE_RESUME_ID CODEX_THREAD_ID CODEX_SESSION_ID CURSOR_SESSION_ID CURSOR_AGENT T_ISSUE_TOKEN; '
     prep="${clear_identity}${prep}"
   fi
-  tmux send-keys -t "=$session:" "${prep}$(_dev_agent_new_cmd "$agent" "$sid" "$6"); exit" Enter || { tmux kill-session -t "=$session:"; return 1; }
+  _dev_start_session_command "$session" "${prep}$(_dev_agent_new_cmd "$agent" "$sid" "$6")" || { tmux kill-session -t "=$session:"; return 1; }
   _dev_launch_startup_check "$session" "$logfile" || return 1
   [[ $agent == claude ]] && _dev_history_record "$sid" "$agent" "$dir" launch
   _dev_recovery_watch "$session"

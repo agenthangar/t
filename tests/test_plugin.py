@@ -369,7 +369,7 @@ def test_repo_launch_and_reattach_on_isolated_tmux(tmp_path, launch, repo):
     socket = "t-dotted-" + uuid.uuid4().hex
     env = {k: v for k, v in os.environ.items() if not k.startswith("COV_CORE_")}
     home = tmp_path / "home"
-    env.update(HOME=str(home), XDG_CONFIG_HOME=str(home / ".config"),
+    env.update(HOME=str(home), ZDOTDIR=str(home), XDG_CONFIG_HOME=str(home / ".config"),
                XDG_CACHE_HOME=str(home / ".cache"), XDG_STATE_HOME=str(home / ".local" / "state"))
     env.pop("TMUX", None)
     command = [shutil.which("tmux"), "-L", socket, "-f", os.devnull]
@@ -388,11 +388,7 @@ def test_repo_launch_and_reattach_on_isolated_tmux(tmp_path, launch, repo):
         command {shlex.join(command)} has-session "$@"
         return
       fi
-      if [[ $1 == new-session ]]; then
-        command {shlex.join(command)} "$@" 'exec zsh -f'
-      else
-        command {shlex.join(command)} "$@"
-      fi
+      command {shlex.join(command)} "$@"
     }}
     _dev_agent_check() {{ return 0; }}
     _dev_agent_new_cmd() {{ print -r -- {shlex.quote(launch_command)}; }}
@@ -404,6 +400,11 @@ def test_repo_launch_and_reattach_on_isolated_tmux(tmp_path, launch, repo):
                    else f'_dev_resume_session {session} "$HOME/code/{repo}" thread-1 codex')
     local = (f'DEV_REPOS[{repo}]="$HOME/code/{repo}"\n'
              f'DEV_WORKTREE[{repo}]=0\n')
+    home.mkdir(parents=True, exist_ok=True)
+    (home / ".zshenv").write_text("skip_global_compinit=1\n")
+    (home / '.zshrc').write_text(
+        f'source {shlex.quote(str(ROOT / "t.plugin.zsh"))}\n'
+        '_dev_repo_prepare() { :; }\n')
     try:
         if "." in repo:
             # Older tmux replaces dots with underscores at creation, so it

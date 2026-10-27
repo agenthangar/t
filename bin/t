@@ -10308,7 +10308,7 @@ def build_parser():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""examples:
   %(prog)s                     Browse sessions across repos
-  %(prog)s --codex --new        Start a new Codex session
+  %(prog)s --codex --new        Start Codex directly
   %(prog)s api 2               Attach to api's slot 2
 
 select several sessions:
