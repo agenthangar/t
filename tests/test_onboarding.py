@@ -32,6 +32,7 @@ def account(t_mod, tmp_path, monkeypatch):
                _current_local_rc=lambda: str(local),
                _shell_setup_helpers=lambda: {"state": lambda *_: (home / ".zshrc", "missing")},
                _host_refresh_config=lambda: events.append("refresh"),
+               _host_verify_targets=lambda targets: pytest.fail('unexpected native SSH'),
                _run=lambda *args, **kwargs: SimpleNamespace(returncode=1, stdout=""),
                _install_probe=lambda: {
                    "claude": {"version": "1", "logged_in": True},
@@ -158,7 +159,7 @@ def test_complete_flow_reviews_before_cloning_and_registers_selection(onboarding
                      github_repos=lambda _: ([{"full_name": "acme/web"}], []),
                      tailscale_hosts=lambda: ([{"alias": "mini", "target": "mini.tail.test"}], []))
     dialog = Choices(["setup", ["claude", "codex"], "codex", ["codex"], [path], ["acme"], ["acme/web"],
-                      ["mini.tail.test"], "start"])
+                      ["mini.tail.test"], "later", "start"])
     interactive(monkeypatch, onboarding, dialog, discovery)
 
     def clone(name, target):
@@ -179,6 +180,33 @@ def test_complete_flow_reviews_before_cloning_and_registers_selection(onboarding
     assert "codex" in account.local.read_text()
     assert json.loads(onboarding._marker().read_text())["agent"] == "codex"
     assert dialog.closed
+
+
+@pytest.mark.parametrize('action', ['verify', 'later', 'interrupt', 'cancel'])
+def test_onboarding_verification_is_offered_after_saved_review(onboarding, account, monkeypatch, discovery, action):
+    plan = {'agent': '', 'steps': [], 'repos': [], 'clones': [], 'aliases': {},
+            'hosts': [{'alias': 'mini', 'target': 'mini.tail.test'},
+                      {'alias': 'duplicate', 'target': 'mini.tail.test'}]}
+    dialog = Choices(['setup', onboarding.Aborted() if action == 'cancel' else
+                      'verify' if action == 'interrupt' else action])
+    interactive(monkeypatch, onboarding, dialog, discovery)
+    monkeypatch.setattr(onboarding, '_collect', lambda *args, **kwargs: plan)
+    calls = []
+    def verify(targets):
+        assert account.local.exists() and 'mini.tail.test' in account.local.read_text()
+        assert dialog.reviewed and dialog.suspensions == 2
+        calls.append(targets)
+        if action == 'interrupt':
+            raise KeyboardInterrupt
+    account.api['_host_verify_targets'] = verify
+    assert onboarding.run(account.cfg, account.api) == (130 if action in ('interrupt', 'cancel') else 0)
+    assert calls == ([['mini.tail.test']] if action in ('verify', 'interrupt') else [])
+    assert account.cfg.hosts == {'mini': 'mini.tail.test', 'duplicate': 'mini.tail.test'}
+    assert 'Verify SSH now / Later' in '\n'.join(dialog.reviewed[0])
+    assert json.loads(onboarding._marker().read_text())['version'] == 1
+    assert dialog.closed
+    if action in ('interrupt', 'cancel'):
+        assert any('Settings saved' in notice for notice in dialog.notices)
 
 
 def test_empty_selection_can_finish_and_review_can_return_to_choices(onboarding, account, monkeypatch, discovery):

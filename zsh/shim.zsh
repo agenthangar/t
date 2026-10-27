@@ -431,7 +431,7 @@ _t_open_picker() {
   scope_rel=$(_dev_homerel "$scope")
   wt_rel=$(_dev_homerel "${DEV_WORKTREE_ROOT}/${scope:t}")
   if [[ -n $remote ]]; then
-    rows=$(_dev_rows_all --details) || return 1
+    rows=$(_dev_rows_all --best-effort --details) || return $?
     format_args=(--remote)
   else
     rows=$(_dev_session_rows --details) || return 1

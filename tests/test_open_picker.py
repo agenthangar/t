@@ -194,7 +194,7 @@ def test_open_remote_picker_retains_model_and_selected_host(zsh, tmp_path):
     result = zsh(r'''
       REMOTE_HOSTS[mini]=mini
       _dev_rows_all() {
-        [[ $1 == --details ]] || return 1
+        [[ $1 == --best-effort && $2 == --details ]] || return 1
         printf 'mini\tsid1\t%s\talias-2\tattached\tactive\tRemote first\tcodex\tgpt-test-astra\t2026-10-23T16:41:07Z\n' "$HOME/code/api"
         printf 'studio\tsid2\t%s\tweb-4\tdetached\tactive\tRemote second\tclaude\tclaude-test-model\n' "$HOME/code/web"
         printf 'local\tsid3\t%s\tapi-3\tdetached\tactive\tLocal hidden\tcodex\tgpt-test-astra\n' "$HOME/code/api"

@@ -74,7 +74,9 @@ applicable choice; review q, welcome q/Esc, and Ctrl-C cancel. Revisiting choice
 retains discovery results and does not repeat completed GitHub install/sign-in.
 Selections follow repository paths, GitHub names, and host targets; changing
 organizations removes unavailable clone selections. A Tailscale peer is a candidate, not proof
-of SSH access; registration never starts a remote command. Reuse existing guarded
+of SSH access. After reviewed registration is saved, offer Verify SSH now or Later
+for added or changed targets. Restore the terminal before handing native host
+fingerprint and authentication prompts to OpenSSH. Reuse existing guarded
 session launch and registration paths. Cancellation returns 130 and preserves any
 already completed actions; completion is recorded only after successful setup.
 Bare nonterminal `t` prints help without loading configuration or doing discovery;
@@ -106,6 +108,15 @@ distinct peers with the same short hostname and propose unused aliases. Unavaila
 Tailscale leaves manual entry usable. Selection stages changes until config's
 Save review; discovery never connects to a peer. Explicit `t hosts add <alias>
 <target>` and read-only commands do not discover or prompt.
+
+The save review mentions optional SSH verification. After saving, Verify SSH now
+checks each distinct added or changed target with OpenSSH's native fingerprint
+confirmation; Later connects to none. Alias renames, default-only changes,
+unchanged targets, and discarded edits never trigger verification. Refused or
+unavailable targets produce amber warnings and keep their registrations, then
+the next verification runs. Ctrl-C stops with 130 and reports that configuration
+was already saved. Native SSH owns the restored terminal for each check; no
+fingerprint is automatically accepted. Onboarding uses the same reviewed offer.
 
 ### Representative screens
 
@@ -368,15 +379,21 @@ Fresh local opens may continue after incomplete remote discovery when the local
 slot is unused. Reopening a locally reserved desktop workspace also tolerates
 unavailable hosts after checking local ownership. Desktop claims scan remote
 owners once; known remote owners still block, and local terminal writers still
-prevent reopening. Unreserved existing workspaces and saved-conversation handoffs
-keep strict ownership checks. Picker helpers return without running the caller's
+prevent reopening. Open, close, and resume pickers retain reachable rows when a
+registered host is unavailable. Saved CLI and desktop resumes warn that skipped
+ownership could not be verified, then continue through local locks and known-owner
+checks on reachable hosts. Failed local scans remain fatal. Other unreserved
+workspace claims and live transfers retain strict ownership checks.
+Warnings are amber on capable stderr terminals and plain with NO_COLOR, dumb
+terminals, or redirected stderr; scanner and machine stdout stay unchanged.
+Picker helpers return without running the caller's
 shell exit hooks or saving its history. All Codex
 CLI starts and resumes use an invocation-local backend (`--no-daemon`).
 These are direct-action behaviors within the existing open/resume modes.
 
 Issue starts warn and skip unavailable registered hosts and unconfigured optional
-cloud providers. Their saved CLI resume route retains local checks and known owners
-while tolerating unavailable hosts; standalone resume and desktop handoffs stay strict.
+cloud providers. Saved resume routes retain local checks and known owners while
+tolerating unavailable hosts, including standalone CLI and desktop resumes.
 A unique explicitly referenced or issue-linked GitHub PR is a direct action: recover
 its published commit in a fresh local worktree and reuse the PR. Ambiguous PRs and
 branches use the existing single-owner picker; branch recovery does not require a PR.

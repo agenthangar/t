@@ -2351,6 +2351,59 @@ def _config_worktrees(ui, cfg):
                 setattr(cfg, attr, value)
 
 
+def _host_new_targets(before, after):
+    """SSH identity follows the actual target, never a registration's short name."""
+    known = set(before.values())
+    return list(dict.fromkeys(target for target in after.values() if target not in known))
+
+
+def _host_verify_targets(targets):
+    """Let native OpenSSH own fingerprint approval and authentication on the TTY."""
+    for target in targets:
+        try:
+            result = subprocess.run(["ssh", "-T", "-o", "ConnectTimeout=5", "-o", "BatchMode=no",
+                                     "-o", "StrictHostKeyChecking=ask", "--", target, "true"])
+            if result.returncode in (130, -signal.SIGINT):
+                raise KeyboardInterrupt
+            if not result.returncode:
+                continue
+            detail = f"SSH exited {result.returncode}"
+        except OSError as exc:
+            detail = str(exc)
+        st = Style(tty=sys.stderr.isatty() and os.environ.get("TERM") != "dumb" and "NO_COLOR" not in os.environ)
+        print(f"{st.w}SSH verification incomplete for {target}: {detail}. "
+              f"Registration is saved; retry with ssh {shlex.quote(target)} true.{st.r}", file=sys.stderr)
+
+
+def _host_verify_offer(targets):
+    """Called only by interactive config, after its reviewed settings are saved."""
+    if not targets or not (sys.stdin.isatty() and sys.stdout.isatty()):
+        return
+    ui = None
+    try:
+        ui = _RailUI()
+        ui.raw()
+    except Exception:
+        if ui is not None:
+            ui.restore()
+        answer = input("Settings saved. Verify SSH now? [y verify / Enter later] ").strip().lower()
+        if answer in ("q", "\x1b"):
+            raise KeyboardInterrupt
+        if answer in ("y", "yes"):
+            _host_verify_targets(targets)
+        return
+    try:
+        answer = ui.pick("Verify saved SSH hosts?", [("verify", "Verify SSH now"), ("later", "Later")],
+                         values={"verify": ", ".join(targets)}, accents={"verify": "g"})
+        ui.commit([])
+    finally:
+        ui.restore()
+    if answer is None:
+        raise KeyboardInterrupt
+    if answer == "verify":
+        _host_verify_targets(targets)
+
+
 def _config_wizard(cfg):
     ui = _RailUI()
     edited = copy.deepcopy(cfg)
@@ -2403,6 +2456,10 @@ def _config_wizard(cfg):
                 changes = _config_diff(initial, _config_state(edited))
                 try:
                     lines = [f"      {st.c}{_config_assignment(k, v)}{st.r}" for k, v in changes.items()]
+                    targets = _host_new_targets(cfg.hosts, edited.hosts)
+                    if targets:
+                        lines.append("      After saving, offer native SSH verification (Verify SSH now / Later):")
+                        lines.extend(f"      {target} · OpenSSH asks before trusting an unknown key" for target in targets)
                 except ValueError as exc:
                     ui.done("invalid", str(exc))
                     continue
@@ -2562,6 +2619,7 @@ def cmd_config(cfg, args):
         print("t config: open this menu in a terminal; t config --show prints current settings",
               file=sys.stderr)
         return 1
+    targets = []
     try:
         before = _config_read(_current_local_rc())
         result = "edit" if getattr(args, "edit", False) else _config_wizard(cfg)
@@ -2580,6 +2638,7 @@ def cmd_config(cfg, args):
                 return 0
             after = _config_text(before, changes, current)
             _config_write(_current_local_rc(), before, after)
+            targets = _host_new_targets(cfg.hosts, result.hosts)
     except (OSError, ValueError) as exc:
         print(f"t config: {exc}", file=sys.stderr)
         return 1
@@ -2587,6 +2646,11 @@ def cmd_config(cfg, args):
         return 130
     zsh_capture("_t_sync_config")
     print("✓ saved local settings to T_LOCAL_RC")
+    try:
+        _host_verify_offer(targets)
+    except (EOFError, KeyboardInterrupt):
+        print("Settings saved; SSH verification canceled.", file=sys.stderr)
+        return 130
     if not os.environ.get("T_SETUP_SHIM"):
         rc_file, rc_state = _shell_setup_helpers()["state"](HOME, os.environ)
         if rc_state != "configured":
@@ -10245,7 +10309,9 @@ def build_parser():
              "Missing source/session and destination use single pickers. Explicit targets skip selection. "
              "The source must be able to SSH and rsync to the destination. Failed ownership checks stop the move."),
             ("resume", "Discover and resume saved history ON the chosen host. "
-             "This differs from session resume --host, which sends locally discovered history there.")):
+             "This differs from session resume --host, which sends locally discovered history there. "
+             "Owner scans warn and skip unavailable peers; known local and reachable-host owners "
+             "still block duplicate resumes.")):
         leaf = remote_sub.add_parser(action, help=description, description=description + " "
             "Use [repo] [slot], infer the current checkout, or browse all repositories outside one. "
             "Without --host choose a registered SSH host with Enter. Selection requires a terminal and fzf; "
@@ -10553,6 +10619,8 @@ REMOTE SESSIONS
             f"({_agent_legend()}) — each revived by its own binary; a cursor chat has no dev slot "
             "— `t cursor list` / `t cursor resume <id>`. Saved discovery reuses unchanged "
             "metadata and refreshes when source files change; live ownership is always checked. "
+            "Owner scans warn and skip unavailable peers; known local and reachable-host owners "
+            "still block duplicate resumes. "
             "Delayed progress wheels identify quiet discovery stages while waiting.")
     sp.add_argument("repo", nargs="?", help="DEV_REPOS key; defaults to the repo your cwd is in")
     sp.add_argument("slot", nargs="?", help="slot number; a lone slot implies the cwd repo")
@@ -10754,8 +10822,9 @@ REMOTE SESSIONS
             "add, edit or remove hosts (Add host discovers new Tailscale peers and offers Refresh or manual entry); "
             "register or unregister repos and set their tool, branch "
             "and worktree overrides; choose the default beam host and worktree defaults. "
-            "Save changes reviews then writes a managed block in T_LOCAL_RC. Removed "
-            "hosts stop participating in remote t commands; unregistering repos keeps their files "
+            "Save changes reviews then writes a managed block in T_LOCAL_RC. "
+            "New or changed SSH targets then offer Verify SSH now or Later; native OpenSSH asks before trusting keys. "
+            "Removed hosts stop participating in remote t commands; unregistering repos keeps their files "
             "and sessions. Tool/model/effort/speed defaults apply to fresh tmux and --fg sessions only. "
             "Open local config in editor covers all custom shell settings (VISUAL/EDITOR, else vi). "
             "For a reusable AGENTS.md profile, run `t profile init`.")
@@ -10764,7 +10833,7 @@ REMOTE SESSIONS
     cg.add_argument("--edit", action="store_true", help="open T_LOCAL_RC in VISUAL/EDITOR directly")
     cg.add_argument("--onboard", action="store_true",
                     help="review guided setup, see signed-in agents and choose optional sign-ins, discover local/GitHub repos "
-                         "and Tailscale hosts; terminal only. "
+                         "and Tailscale hosts; offer native SSH verification after saving, or defer until later; terminal only. "
                          "Choices: q/Esc back; review: n/Esc back, q quit; Ctrl-C cancels")
 
     sp = sub.add_parser("setup", help="register local repos and ssh hosts in T_LOCAL_RC",

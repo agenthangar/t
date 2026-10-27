@@ -677,7 +677,8 @@
         "tests/test_plugin.py::test_open_app_creates_worktree_without_starting_tmux_or_cli",
         "tests/test_native_agent_shell.py::test_native_agent_generated_commands_execute_with_quoted_arguments",
         "tests/test_agent_seam.py::test_zsh_foreground_uses_native_agent_outside_path",
-        "tests/test_agent_seam.py::test_session_startup_is_quiet_and_logged"
+        "tests/test_agent_seam.py::test_session_startup_is_quiet_and_logged",
+        "tests/test_host_resilience.py::test_remote_session_pickers_keep_reachable_rows_with_offline_peer"
       ],
       "modes": {
         "default": {
@@ -720,7 +721,7 @@
           "tests": [
             "tests/test_open_picker.py::test_explicit_open_target_bypasses_picker"
           ],
-          "notes": "Fresh unused local slots and locally reserved desktop reopens tolerate unavailable remote hosts. Desktop claims scan once and still reject known remote owners and failed local ownership checks. Unreserved existing workspaces and saved-conversation handoffs retain strict ownership checks."
+          "notes": "Fresh unused local slots and locally reserved desktop reopens tolerate unavailable remote hosts. Desktop claims scan once and still reject known remote owners and failed local ownership checks. Unreserved existing workspace claims retain strict ownership checks; explicit session resume warns and skips unavailable hosts while checking known owners."
         }
       },
       "native_agents": "Terminal session launch/resume uses the native ~/.local/bin fallback, preserving PATH and shell wrappers; no global PATH changes.",
@@ -805,7 +806,8 @@
       "tests": [
         "tests/test_kill_multiselect.py::test_kill_picker_starts_with_only_proven_safe_rows",
         "tests/test_app_close.py::test_close_python_preflight_allows_unassociated_writer",
-        "tests/test_desktop_close.py::test_desktop_close_scopes_unknown_locks_and_rechecks_new_ownership"
+        "tests/test_desktop_close.py::test_desktop_close_scopes_unknown_locks_and_rechecks_new_ownership",
+        "tests/test_host_resilience.py::test_remote_session_pickers_keep_reachable_rows_with_offline_peer"
       ],
       "modes": {
         "default": {
@@ -974,7 +976,9 @@
         "tests/test_agent_seam.py::test_zsh_resume_session_uses_the_agent_resume_line",
         "tests/test_native_agent_shell.py::test_native_agent_generated_commands_execute_with_quoted_arguments",
         "tests/test_agent_seam.py::test_zsh_foreground_uses_native_agent_outside_path",
-        "tests/test_agent_seam.py::test_session_startup_is_quiet_and_logged"
+        "tests/test_agent_seam.py::test_session_startup_is_quiet_and_logged",
+        "tests/test_host_resilience.py::test_partial_resume_checks_selected_saved_writer_and_starts",
+        "tests/test_host_resilience.py::test_remote_resume_worker_opens_picker_despite_an_unavailable_peer"
       ],
       "modes": {
         "default": {
@@ -991,7 +995,7 @@
             "tests/test_resume_multiselect.py::test_resume_multi_opens_selected_live_slot_and_revives_dead_slot",
             "tests/test_picker_filters.py::test_every_filter_key_survives_long_values"
           ],
-          "notes": "Independent Ctrl-G agent, Ctrl-O host/origin, and Ctrl-R repository facets; open/close also support Ctrl-D interface. All/default clears facets, preserves search, and removes hidden marks. No additional discovery or scope expansion."
+          "notes": "Independent Ctrl-G agent, Ctrl-O host/origin, and Ctrl-R repository facets; open/close also support Ctrl-D interface. All/default clears facets, preserves search, and removes hidden marks. No additional discovery or scope expansion. Unavailable registered hosts warn and are skipped; discovery retains local and reachable rows. Saved resumes retain local locks and known-owner checks, but cannot verify ownership on unavailable hosts. Local scan failures remain fatal."
         },
         "explicit": {
           "argv": [
@@ -2159,7 +2163,9 @@
     "config open": {
       "patterns": [
         "wizard",
-        "single"
+        "single",
+        "action",
+        "passthrough"
       ],
       "renderer": "rail",
       "scope": "local machine",
@@ -2167,7 +2173,9 @@
       "tests": [
         "tests/test_config.py::test_config_menu_save_then_cancel",
         "tests/test_config.py::test_config_register_suggests_path_and_alias_and_can_cancel",
-        "tests/test_config.py::test_config_host_rename_review_save_or_discard"
+        "tests/test_config.py::test_config_host_rename_review_save_or_discard",
+        "tests/test_config.py::test_config_verification_delta_is_offered_after_save_and_sync",
+        "tests/test_config_hosts_pty.py::test_saved_host_verification_uses_native_cooked_terminal"
       ],
       "modes": {
         "default": {
@@ -2202,7 +2210,27 @@
             "tests/test_config.py::test_config_add_host_back_returns_to_hosts_without_changes",
             "tests/test_config.py::test_config_add_host_unavailable_discovery_keeps_manual_entry"
           ],
-          "notes": "Hosts > Add host scans current online Unix Tailscale peers on each entry and explicit Refresh, excludes registered/pending endpoints, and stages a selected peer until Save review. Manual SSH entry stays available; Back returns to Hosts. No SSH connection or remote installation."
+          "notes": "Hosts > Add host scans current online Unix Tailscale peers on each entry and explicit Refresh, excludes registered/pending endpoints, and stages a selected peer until Save review. Manual SSH entry stays available; Back returns to Hosts. Discovery never connects. After reviewed registration is saved, offer Verify SSH now or Later for distinct added or changed target strings. Native OpenSSH owns the restored terminal and asks for host fingerprint confirmation; never auto-accept trust. Refused/unavailable checks warn and continue, preserving registration. Ctrl-C stops with 130 and retains saved changes; alias/default-only edits never connect."
+        },
+        "host_verification": {
+          "argv": [
+            "config",
+            "open"
+          ],
+          "patterns": [
+            "wizard",
+            "single",
+            "action",
+            "passthrough"
+          ],
+          "read_only": false,
+          "terminal": true,
+          "tests": [
+            "tests/test_config.py::test_config_verification_delta_is_offered_after_save_and_sync",
+            "tests/test_config.py::test_config_discovered_host_requires_review_and_can_be_discarded",
+            "tests/test_config_hosts_pty.py::test_saved_host_verification_uses_native_cooked_terminal"
+          ],
+          "notes": "After reviewed registration is saved, offer Verify SSH now or Later for distinct added or changed target strings. Native OpenSSH owns the restored terminal and asks for host fingerprint confirmation; never auto-accept trust. Refused/unavailable checks warn and continue, preserving registration. Ctrl-C stops with 130 and retains saved changes; alias/default-only edits never connect."
         }
       }
     },
@@ -2894,7 +2922,10 @@
       "patterns": [
         "wizard",
         "detail",
-        "multi"
+        "multi",
+        "single",
+        "action",
+        "passthrough"
       ],
       "renderer": "rail",
       "scope": "local account, selected GitHub organizations, and Tailscale peers",
@@ -2910,7 +2941,10 @@
             "onboard"
           ],
           "patterns": [
-            "wizard"
+            "wizard",
+            "single",
+            "action",
+            "passthrough"
           ],
           "read_only": false,
           "terminal": true,
@@ -2920,9 +2954,10 @@
             "tests/test_onboarding.py::test_first_run_hosts_get_unique_short_names",
             "tests/test_onboarding_pty.py::test_hosts_back_preserves_pending_choices_until_review",
             "tests/test_onboarding_pty.py::test_review_back_skips_empty_steps_and_ctrl_c_cancels",
-            "tests/test_onboarding_pty.py::test_agent_login_selection_survives_review_back_and_can_be_skipped"
+            "tests/test_onboarding_pty.py::test_agent_login_selection_survives_review_back_and_can_be_skipped",
+            "tests/test_onboarding.py::test_onboarding_verification_is_offered_after_saved_review"
           ],
-          "notes": "Select agents, local checkouts, organization repositories and optional hosts; review before integration, cloning, and registration. Optional gh install/login has its own explicit choice. Resolve native agent executables outside PATH for reviewed login steps; failed steps remain resumable. Choice q/Esc navigates back with current selections retained; review n/Esc returns to the last applicable choice. Review q, welcome q/Esc, and Ctrl-C cancel. Empty steps are skipped; completed GitHub install/login is not repeated. Agent sign-in uses a separate optional checklist with no initial marks; skipping sign-in still allows installation. Only chosen sign-ins run after review."
+          "notes": "Select agents, local checkouts, organization repositories and optional hosts; review before integration, cloning, and registration. Optional gh install/login has its own explicit choice. Resolve native agent executables outside PATH for reviewed login steps; failed steps remain resumable. Choice q/Esc navigates back with current selections retained; review n/Esc returns to the last applicable choice. Review q, welcome q/Esc, and Ctrl-C cancel. Empty steps are skipped; completed GitHub install/login is not repeated. Agent sign-in uses a separate optional checklist with no initial marks; skipping sign-in still allows installation. Only chosen sign-ins run after review. After reviewed registration is saved, offer Verify SSH now or Later for distinct added or changed target strings. Native OpenSSH owns the restored terminal and asks for host fingerprint confirmation; never auto-accept trust. Refused/unavailable checks warn and continue, preserving registration. Ctrl-C stops with 130 and retains saved changes; alias/default-only edits never connect."
         },
         "nonterminal": {
           "argv": [
@@ -3223,7 +3258,9 @@
       "scope": "named/current repository, or all repositories outside a checkout; chosen SSH host(s)",
       "confirmation": "enter",
       "tests": [
-        "tests/test_remote_commands.py::test_remote_open_resume_delegate_quoted_worker_and_status"
+        "tests/test_remote_commands.py::test_remote_open_resume_delegate_quoted_worker_and_status",
+        "tests/test_host_resilience.py::test_partial_resume_checks_selected_saved_writer_and_starts",
+        "tests/test_host_resilience.py::test_remote_resume_worker_opens_picker_despite_an_unavailable_peer"
       ],
       "modes": {
         "default": {
@@ -3242,7 +3279,7 @@
           "tests": [
             "tests/test_remote_commands.py::test_remote_host_picker_requires_explicit_enter_and_cancel"
           ],
-          "notes": "Single host picker waits for Enter even with one host; missing session uses shared selection on the source/target host. Cancellation returns 130."
+          "notes": "Single host picker waits for Enter even with one host; missing session uses shared selection on the source/target host. Cancellation returns 130. Unavailable registered hosts warn and are skipped; discovery retains local and reachable rows. Saved resumes retain local locks and known-owner checks, but cannot verify ownership on unavailable hosts. Local scan failures remain fatal."
         },
         "explicit": {
           "argv": [
@@ -3656,7 +3693,10 @@
           "argv": [],
           "terminal": true,
           "patterns": [
-            "wizard"
+            "wizard",
+            "single",
+            "action",
+            "passthrough"
           ],
           "read_only": false,
           "tests": [
@@ -3665,9 +3705,10 @@
             "tests/test_onboarding_pty.py::test_hosts_back_preserves_pending_choices_until_review",
             "tests/test_onboarding_pty.py::test_review_back_skips_empty_steps_and_ctrl_c_cancels",
             "tests/test_onboarding_pty.py::test_agent_login_selection_survives_review_back_and_can_be_skipped",
-            "tests/test_onboarding_pty.py::test_setup_shows_authenticated_codex_without_requesting_login"
+            "tests/test_onboarding_pty.py::test_setup_shows_authenticated_codex_without_requesting_login",
+            "tests/test_onboarding.py::test_onboarding_verification_is_offered_after_saved_review"
           ],
-          "notes": "Resolve native agent executables outside PATH for reviewed login steps; failed steps remain resumable. Choice q/Esc navigates back with current selections retained; review n/Esc returns to the last applicable choice. Review q, welcome q/Esc, and Ctrl-C cancel. Empty steps are skipped; completed GitHub install/login is not repeated. Agent sign-in uses a separate optional checklist with no initial marks; skipping sign-in still allows installation. Only chosen sign-ins run after review. Authenticated agents have compact logged-in labels in agent selection, read-only context beside remaining login choices, and an Already logged in summary in review; they never become selectable login actions."
+          "notes": "Resolve native agent executables outside PATH for reviewed login steps; failed steps remain resumable. Choice q/Esc navigates back with current selections retained; review n/Esc returns to the last applicable choice. Review q, welcome q/Esc, and Ctrl-C cancel. Empty steps are skipped; completed GitHub install/login is not repeated. Agent sign-in uses a separate optional checklist with no initial marks; skipping sign-in still allows installation. Only chosen sign-ins run after review. Authenticated agents have compact logged-in labels in agent selection, read-only context beside remaining login choices, and an Already logged in summary in review; they never become selectable login actions. After reviewed registration is saved, offer Verify SSH now or Later for distinct added or changed target strings. Native OpenSSH owns the restored terminal and asks for host fingerprint confirmation; never auto-accept trust. Refused/unavailable checks warn and continue, preserving registration. Ctrl-C stops with 130 and retains saved changes; alias/default-only edits never connect."
         },
         "returning": {
           "argv": [],

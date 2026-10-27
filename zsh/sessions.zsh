@@ -1412,6 +1412,15 @@ sys.exit(result.returncode)
 ' "$target" "$remote_command" "$limit"
 }
 
+# Warnings belong on stderr; scanner stdout remains the unstyled wire protocol.
+_t_warn() {
+  if [[ -t 2 && ${TERM:-dumb} != dumb && ${+NO_COLOR} == 0 ]]; then
+    print -u2 -r -- $'\e[33m'"warning: $*"$'\e[0m'
+  else
+    print -u2 -r -- "warning: $*"
+  fi
+}
+
 _dev_rows_all() {
   _t_with_progress 'Checking sessions and remote hosts' _dev_rows_all_impl "$@"
 }
@@ -1426,53 +1435,68 @@ _dev_rows_all_impl() {
   # ZSH_PRELUDE (top-level `setopt no_monitor`, which persists to exit). The `$(…)`
   # subshell callers below already run job-control-off, so they never warn either.
   setopt local_options no_monitor no_notify
+  # Selection and explicit resume may use a partial inventory. Other ownership
+  # checks keep the strict default; unavailable hosts cannot prove an ID idle.
+  local best_effort=
+  [[ ${1:-} == --best-effort ]] && { best_effort=1; shift; }
   local tmpd; tmpd=$(mktemp -d) || return 1
   local -a scan_pids
-  ( _dev_session_rows "$@" > "$tmpd/.local" 2>/dev/null
-    print -r -- $? > "$tmpd/.local.rc" ) &
+  {
+  ( local scan_rc=0
+    _dev_session_rows "$@" > "$tmpd/.local" 2>/dev/null || scan_rc=$?
+    print -r -- $scan_rc > "$tmpd/.local.rc" ) &
   scan_pids+=($!)
   local scan=_dev_session_rows remote_scan
   [[ ${1:-} == --details ]] && scan+=' --details'
   remote_scan="zsh -lic ${(q)scan}"
   local h
   for h in ${(k)REMOTE_HOSTS}; do
-    ( _dev_remote_scan_with_timeout "${REMOTE_HOSTS[$h]}" "$remote_scan" "${T_REMOTE_SCAN_TIMEOUT:-15}" \
-        > "$tmpd/$h" 2>/dev/null
-      print -r -- $? > "$tmpd/$h.rc" ) &
+    ( local scan_rc=0
+      _dev_remote_scan_with_timeout "${REMOTE_HOSTS[$h]}" "$remote_scan" "${T_REMOTE_SCAN_TIMEOUT:-15}" \
+        > "$tmpd/$h" 2>/dev/null || scan_rc=$?
+      print -r -- $scan_rc > "$tmpd/$h.rc" ) &
     scan_pids+=($!)
   done
   # A caller may own a progress animation (or another background job). Wait
   # only for this fan-out; a blanket wait would also wait for the spinner.
   local scan_pid
-  for scan_pid in $scan_pids; do wait "$scan_pid"; done
+  local wait_rc
+  for scan_pid in $scan_pids; do
+    wait_rc=0
+    wait "$scan_pid" || wait_rc=$?
+    (( wait_rc == 130 )) && return 130
+  done
+  scan_pids=()
 
-  local host file rc line failed=0
+  local host file rc line failed=0 local_failed=0
   for host in local ${(k)REMOTE_HOSTS}; do
     if [[ $host == local ]]; then
       file="$tmpd/.local"
       rc=$(< "$tmpd/.local.rc" 2>/dev/null)
+      [[ $rc == 130 ]] && return 130
       if [[ $rc != 0 ]]; then
-        print -u2 -r -- "dev: local session scan failed (rc=${rc:-unknown})"
-        failed=1
+        _t_warn "dev: local session scan failed (rc=${rc:-unknown})"
+        local_failed=1
         continue
       fi
     else
       file="$tmpd/$host"
       rc=$(< "$tmpd/$host.rc" 2>/dev/null)
+      [[ $rc == 130 ]] && return 130
       if [[ -z $rc || $rc == 255 ]]; then          # ssh-level failure = unreachable
-        print -u2 -r -- "dev: $host unreachable — skipped"
+        _t_warn "dev: $host unreachable — skipped"
         failed=1
         continue
       elif [[ $rc == 124 ]]; then
-        print -u2 -r -- "dev: $host session scan timed out — skipped"
+        _t_warn "dev: $host session scan timed out — skipped"
         failed=1
         continue
       elif [[ $rc == 127 ]]; then                  # command or shell integration missing
-        print -u2 -r -- "dev: $host scan failed (rc=127; install or update t's shell integration there) — skipped"
+        _t_warn "dev: $host scan failed (rc=127; install or update t's shell integration there) — skipped"
         failed=1
         continue
       elif [[ $rc != 0 ]]; then                    # reachable, but the scan errored
-        print -u2 -r -- "dev: $host scan failed (rc=$rc) — skipped"
+        _t_warn "dev: $host scan failed (rc=$rc) — skipped"
         failed=1
         continue
       fi
@@ -1482,8 +1506,15 @@ _dev_rows_all_impl() {
       printf '%s\t%s\n' "$host" "$line"
     done < "$file"
   done
-  rm -rf "$tmpd"
-  (( ! failed ))
+  if (( failed )) && [[ -n $best_effort && ${_T_RESUME_ALLOW_UNAVAILABLE:-} == 1 ]]; then
+    _t_warn 't resume: ownership on unavailable hosts could not be verified; checking local and reachable owners only'
+  fi
+  (( ! local_failed && ( ! failed || ${#best_effort} ) ))
+  } always {
+    # Also reap the scan workers if selection was interrupted while waiting.
+    for scan_pid in $scan_pids; do kill "$scan_pid" 2>/dev/null || :; done
+    rm -rf "$tmpd"
+  }
 }
 
 # _dev_list_remote — `dev ls -r`: _dev_list across THIS machine AND every
@@ -1498,7 +1529,7 @@ _dev_rows_all_impl() {
 # Read-only itself.
 _dev_list_remote() {
   local scope="$1"
-  local rows; rows=$(_dev_rows_all)
+  local rows; rows=$(_dev_rows_all --best-effort) || return $?
   # Scope to the current repo dir (rows carry cwd in field 3; repos share the same
   # ~/code path on every machine, so a local scope filters remote rows too). Worktree
   # paths ($DEV_WORKTREE_ROOT/<basename>/...) count as the repo too (wt clause); the
@@ -1786,7 +1817,7 @@ _dev_kill_pick() {
   local repo="$1" force="$2" remote_only="$3"
   local rows
   if [[ -n $remote_only ]]; then
-    rows=$(_dev_rows_all --details) || return 1
+    rows=$(_dev_rows_all --best-effort --details) || return $?
   else
     rows=$(_dev_session_rows --details | awk -F'\t' 'NF >= 7 {print "local\t" $0}') || return 1
   fi
@@ -1864,7 +1895,7 @@ _dev_kill_pick() {
   # Enter in the kill picker authorizes the complete selection. Keep all
   # ownership checks, but do not ask again for each local or remote target.
   force=1
-  local rc=0 prepo slot
+  local rc=0 prepo slot action_rc
   for line in "${(@f)picked}"; do
     host=${line%%$'\t'*}
     line=${line#*$'\t'}
@@ -1872,8 +1903,9 @@ _dev_kill_pick() {
     line=${line#*$'\t'}
     state=${line%%$'\t'*}
     if [[ $host == local ]]; then
+      action_rc=0
       if [[ $label == *:* ]]; then
-        _dev_kill_fg "$label" "$force" || rc=1
+        _dev_kill_fg "$label" "$force" || action_rc=$?
       else
         prepo=${label%-*}; slot=${label##*-}
         # Recheck the local owner before dispatching: _dev_kill's explicit-slot
@@ -1882,8 +1914,10 @@ _dev_kill_pick() {
              && { [[ $state != app ]] || ! _dev_app_slot_reserved "$(_dev_worktree_path "$prepo" "$slot")"; }; then
           print -u2 -- "t kill: $label is no longer here"; rc=1; continue
         fi
-        _dev_kill "$prepo" "$slot" "$force" || rc=1
+        _dev_kill "$prepo" "$slot" "$force" || action_rc=$?
       fi
+      (( action_rc == 130 )) && return 130
+      (( action_rc )) && rc=1
     else
       target="${REMOTE_HOSTS[$host]:-}"
       [[ -n $target ]] || { print -u2 -- "t kill: host '$host' is no longer configured"; rc=1; continue; }
@@ -1896,8 +1930,11 @@ _dev_kill_pick() {
       [[ -n $force ]] && rcmd+=' -y'
       print -r -- "→ Killing $host:$label"
       _term_title "$host: kill $label"
-      ssh -t "$target" "zsh -lic ${(qq)rcmd}" || rc=1
+      action_rc=0
+      ssh -t "$target" "zsh -lic ${(qq)rcmd}" || action_rc=$?
       _term_title ''
+      (( action_rc == 130 )) && return 130
+      (( action_rc )) && rc=1
     fi
   done
   return $rc
@@ -2159,14 +2196,25 @@ _dev_launch_preflight() {
     fi
   done < <(_dev_fg_rows 2>/dev/null)
   [[ -n $sid ]] || return 0
-  rows=$(_dev_rows_all); rc=$?
+  local -a scan_args
+  # Only the explicit resume flow tolerates unavailable hosts. Fresh launches,
+  # transfer ownership checks, and other callers retain strict discovery.
+  [[ ${_T_RESUME_ALLOW_UNAVAILABLE:-} == 1 ]] && scan_args+=(--best-effort)
+  rc=0
+  rows=$(_dev_rows_all "${scan_args[@]}") || rc=$?
+  (( rc == 130 )) && return 130
   if (( rc )); then
-    print -u2 -- 't: saved conversation ownership is unknown because a local or configured host scan failed'
+    _t_warn 't: saved conversation ownership is unknown because a local or configured host scan failed'
     return 1
   fi
   while IFS=$'\t' read -r host row_sid row_cwd row_name; do
     if [[ $row_sid == $sid ]]; then
       print -u2 -- "t: saved conversation is already live in $row_name on $host"
+      return 1
+    fi
+    if [[ ${_T_RESUME_ALLOW_UNAVAILABLE:-} == 1 && -n $row_cwd &&
+          $(_dev_homerel "$row_cwd") == $(_dev_homerel "$dir") ]]; then
+      print -u2 -- "t: saved conversation worktree is already live in $row_name on $host"
       return 1
     fi
   done <<< "$rows"

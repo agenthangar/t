@@ -134,9 +134,11 @@ to clone. Nothing is selected for cloning by default; destinations are shown as
 `~/code/<organization>-<repository>` to avoid worktree-name collisions. Existing
 matching clones are detected and preserved.
 
-Available Tailscale peers are offered as optional remote hosts. Registration does
-not connect to a host, configure SSH, install t remotely, or grant access; SSH must
-already be available before using a remote host. All setup steps can be skipped
+Available Tailscale peers are offered as optional remote hosts. After reviewed
+registration is saved, choose **Verify SSH now** or **Later**. Verification runs
+OpenSSH in your terminal so you can review and accept its native host fingerprint
+prompt; it does not install t or configure access remotely. Failed or refused
+verification keeps the registration and continues to the next host. All setup steps can be skipped
 or canceled. On a choice screen, `q` or Esc goes back and keeps your choices,
 including checkboxes changed before pressing Enter. At review, `n` or Esc goes
 back; `q` cancels setup. Ctrl-C cancels from any screen. Completed actions remain
@@ -380,10 +382,11 @@ behavior. Start a fresh Codex session in the current repo with
 Opening and resuming serialize local tmux launches for the same worktree and
 conversation, including repository aliases. Foreground launches recheck ownership
 before invoking the agent. A failed tmux launch reports the failure instead
-of sending a second launch into an existing pane. When a configured remote host
-cannot be checked, t refuses an unverified saved-session revival; retry after
-the host is reachable. An existing verified local session still attaches. To
-deliberately start a different conversation locally, use
+of sending a second launch into an existing pane. Unavailable registered hosts
+produce highlighted warnings while resume and session pickers continue with
+local and reachable hosts. Saved resumes still check known owners and local
+launch locks; ownership on an unavailable host cannot be verified. A failed local
+ownership scan still stops the launch. To start a fresh conversation locally, use
 `t session open my-project --here --new --cli`.
 Remote ownership scans time out after 15 seconds rather than waiting indefinitely
 for a host's login shell.
@@ -436,6 +439,11 @@ hosts each time you open the picker. Choose **Refresh Tailscale hosts** to check
 again while the menu is open, or **Enter SSH host manually** for another target.
 Registered and pending hosts are excluded by their known names and addresses.
 Choosing a peer stages its registration; review **Save changes** to apply it.
+After saving added or changed SSH targets, choose **Verify SSH now** or **Later**.
+Verification uses the normal OpenSSH fingerprint prompt, once per distinct target;
+renaming an alias or changing the default host does not connect. Ctrl-C stops the
+remaining verifications and keeps the saved configuration. Explicit `t hosts add`
+and `t hosts edit` remain noninteractive.
 
 For manual entry, enter an SSH target such as
 `alice@mini.example`; the short name is prefilled as `mini` (with a numeric suffix
@@ -613,8 +621,10 @@ Fresh local slots can open while a configured remote host is offline, for exampl
 `t session open my-project --new --codex --cli` or
 `t session open my-project --new --app`. Known remote owners are still respected;
 `t session open my-project 3 --app` can also reopen a locally reserved desktop
-workspace when another host is offline, after checking local ownership. Other
-existing workspaces and saved-conversation handoffs require verified ownership.
+workspace when another host is offline, after checking local ownership. Saved
+CLI and desktop resumes warn and continue checking local and reachable owners;
+known owners still block conflicting launches. Other existing workspace claims
+and live transfers retain their ownership checks.
 
 Codex CLI starts and resumes (including `--fg` and transfers) use `--no-daemon`.
 Each session uses its own backend, avoiding feature-setting conflicts with
