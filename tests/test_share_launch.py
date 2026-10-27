@@ -443,8 +443,9 @@ def test_guarded_shell_launcher_starts_fake_agent_with_private_initial_prompt(
     body = tmux.read_text()
     tmux.write_text(body.replace(
         'case "$1" in',
-        'if [[ "$1" == send-keys ]]; then\n'
-        '  (cd "$FAKE_SESSION_CWD" && env CLAUDECODE=old CODEX_THREAD_ID=old T_ISSUE_TOKEN=old CLAUDE_RESUME_ID=old zsh -f -c "$4")\n'
+        'if [[ "$1" == send-keys || "$1" == respawn-pane ]]; then\n'
+        '  launch="$4"; [[ "$1" == respawn-pane ]] && launch="$9"\n'
+        '  (cd "$FAKE_SESSION_CWD" && env CLAUDECODE=old CODEX_THREAD_ID=old T_ISSUE_TOKEN=old CLAUDE_RESUME_ID=old zsh -f -c "$launch")\n'
         'fi\n'
         'case "$1" in',
         1,
@@ -480,7 +481,7 @@ def test_guarded_shell_launcher_starts_fake_agent_with_private_initial_prompt(
     assert "FULL PRIVATE CONTEXT" not in zsh.log.read_text()
     assert "$(cat --" in zsh.log.read_text()
     assert env_log.read_text().strip() == "unset|unset|unset|unset"
-    send_command = next(line for line in zsh.log.read_text().splitlines() if "send-keys" in line)
+    send_command = next(line for line in zsh.log.read_text().splitlines() if "send-keys" in line or "respawn-pane" in line)
     assert "CLAUDE_RESUME_ID" in send_command
     if agent == "claude":
         assert "--session-id" in argv
