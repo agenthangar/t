@@ -420,6 +420,7 @@ def test_codex_history_launch_sets_destination_cd_and_private_backend(history, t
     commands = tmp_path / 'commands'
     script = f'''
 source {ROOT}/zsh/agent.zsh
+source {ROOT}/zsh/sessions.zsh
 source {ROOT}/zsh/resume.zsh
 _dev_issue_preparing() {{ return 1; }}
 _dev_launch_preflight() {{ return 0; }}
@@ -427,13 +428,17 @@ _dev_auto_trust() {{ return 0; }}
 _dev_launch_startup_check() {{ return 0; }}
 _dev_history_record() {{ return 0; }}
 _dev_recovery_watch() {{ return 0; }}
-tmux() {{ [[ $1 == send-keys ]] && print -r -- "$*" > {commands}; return 0; }}
+tmux() {{ [[ $1 == respawn-pane ]] && print -r -- "$*" > {commands}; return 0; }}
 _dev_resume_session_claimed dev-repo-2 '{tmp_path}/destination 2' selected codex history
 '''
-    result = subprocess.run(['zsh', '-fc', script], text=True, capture_output=True)
+    env = {key: value for key, value in os.environ.items() if not key.startswith('COV_CORE_')}
+    env.update(HOME=str(tmp_path), ZDOTDIR=str(tmp_path),
+               XDG_CACHE_HOME=str(tmp_path / 'cache'), XDG_CONFIG_HOME=str(tmp_path / 'config'),
+               XDG_STATE_HOME=str(tmp_path / 'state'), XDG_DATA_HOME=str(tmp_path / 'data'))
+    result = subprocess.run(['zsh', '-fc', script], text=True, capture_output=True, env=env)
     assert result.returncode == 0, result.stderr
     assert 'codex resume selected --cd' in commands.read_text()
-    assert 'destination\\ 2 --no-daemon; exit' in commands.read_text()
+    assert 'destination\\ 2 --no-daemon' in commands.read_text()
 
 
 def test_newer_remote_source_wins_stale_local_and_updates_exact_indexed_rollout(app, history, tmp_path, monkeypatch):
