@@ -397,3 +397,20 @@ def test_login_spellings_forward_without_shell_session_actions(tmp_path):
         "bin:<login><--ignore><codex><--dry-run>",
         "bin:<agent><login><claude><--within-hours><2>",
     ]
+
+
+@pytest.mark.skipif(not shutil.which("zsh"), reason="zsh is required")
+def test_advisory_service_completion(tmp_path):
+    result = shell(tmp_path, '''
+        _values() { print -r -- "values:${(j:,:)argv[2,-1]}"; }
+        _message() { print -r -- "message:$1"; }
+        local -a words
+        words=(t system advisories '') CURRENT=4; _t
+        words=(t system advisories enable --) CURRENT=5; _t
+        words=(t system advisories enable --interval-hours '') CURRENT=6; _t
+    ''')
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == [
+        'values:enable,disable,status', 'values:--interval-hours,-h,--help',
+        'message:refresh interval in hours (1–720)',
+    ]
