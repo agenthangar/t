@@ -5300,6 +5300,8 @@ def _command_readonly(argv, *, terminal=None):
             terminal = sys.stdin.isatty() and sys.stdout.isatty()
         return not terminal
     verb, tail = words[0], words[1:]
+    if verb == "__advisories":
+        return not tail or tail[0] == "status"
     if verb == "__session-goal":
         return False  # --json formats the delivery receipt; it still sends input.
     if verb == "on":
@@ -5418,6 +5420,21 @@ def cmd_integrate(cfg, args):
         return subprocess.run([installer], env=env).returncode
     except OSError as error:
         print(f"t integrate: could not start installer: {error}", file=sys.stderr)
+        return 1
+
+
+def cmd_advisories(cfg, args):
+    helper = runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_advisory_service.py"))
+    try:
+        if args.service_action == "enable":
+            print(helper["enable"](args.interval_hours))
+        elif args.service_action == "disable":
+            print(helper["disable"]())
+        else:
+            print(helper["status"]())
+        return 0
+    except (OSError, ValueError) as error:
+        print(f"t advisories: {error}", file=sys.stderr)
         return 1
 
 
@@ -9728,7 +9745,7 @@ COMMAND_GROUPS = {
     "agent": {"login": ("login",), "install": ("install",), "status": ("install", "--status"),
               "trust": ("trust",)},
     "system": {"integrate": ("integrate",), "update": ("update",),
-               "diagnose": ("doctor",)},
+               "diagnose": ("doctor",), "advisories": ("__advisories",)},
 }
 
 GROUP_DESCRIPTIONS = {
@@ -9831,6 +9848,11 @@ LEARN MORE
   t help <noun> [verb]      Show command details
   t help agents            Show agent support
   t help aliases           Show compatibility aliases
+
+OPTIONAL STARTUP ADVISORIES
+  Cached repo-related binary checks in interactive bare t.
+  export T_VULNERABILITY_CHECK=1   Enable
+  unset T_VULNERABILITY_CHECK     Disable; no automatic remediation
 """
     return _wrap_help(help_text)
 
@@ -9947,7 +9969,7 @@ def _command_description(group, action):
         "agent": {"login": "Log in logged-out or expiring agents", "install": "Install and log in agent CLIs", "status": "Show agent state",
                   "trust": "Trust a folder in installed agents"},
         "system": {"integrate": "Link t and its hooks", "update": "Update t",
-                   "diagnose": "Diagnose the local setup"},
+                   "diagnose": "Diagnose the local setup", "advisories": "Manage periodic advisory checks"},
     }
     return descriptions[group][action]
 
@@ -10717,6 +10739,14 @@ REMOTE SESSIONS
             "your home directory; run this once after brew install. The installer prints "
             "the zsh source snippet for your shell configuration.")
 
+    sp = sub.add_parser("__advisories", hidden=True, help="manage periodic repository-tool advisories",
+        description="Explicitly enable/disable the per-user advisory worker or read cached status. "
+                    "No boot service is installed. Reads registered repo tool metadata and queries "
+                    "public package identities at OSV; never executes repo scripts or upgrades tools.")
+    sp.add_argument("service_action", choices=("enable", "disable", "status"), nargs="?", default="status")
+    sp.add_argument("--interval-hours", type=int, default=24, metavar="HOURS",
+                    help="enable interval, 1–720 hours (default 24); errors retry hourly")
+
     sp = sub.add_parser("update", help="update the installed t via Homebrew, release, or Git checkout",
         description="For Homebrew, upgrade the formula and keep any existing user links. "
             "For a versioned release, install the latest published release. For a Git "
@@ -10823,6 +10853,7 @@ REMOTE SESSIONS
 
 
 IMPLEMENTED = {
+    "__advisories": cmd_advisories,
     "issue": cmd_issue,
     "history": cmd_history,
     "share": cmd_share,
@@ -10956,6 +10987,8 @@ def _bare_entry():
     if not (sys.stdin.isatty() and sys.stdout.isatty()):
         print(_root_help(), end="")
         return 0
+    if os.environ.get("T_VULNERABILITY_CHECK") == "1":
+        runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_vulnerabilities.py"))["startup"]()
     cfg = Config()
     onboarding = _onboarding()
     if onboarding["needed"](cfg, globals()):

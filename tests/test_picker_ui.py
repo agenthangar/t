@@ -419,6 +419,8 @@ def test_public_open_facet_keys_combine_and_clear_hidden_marks(picker):
     keys('C-g')
     wait('agent >')
     keys('-l', 'codex')
+    # Wait for asynchronous filtering before accepting the highlighted value.
+    wait('1/')
     keys('Enter')
     wait('1/1 (0)')
     wait('agent=codex')
@@ -437,6 +439,8 @@ def test_public_open_facet_keys_combine_and_clear_hidden_marks(picker):
     keys('C-d')
     wait('UI >')
     keys('-l', 'desktop')
+    # Wait for asynchronous filtering before accepting the highlighted value.
+    wait('1/')
     keys('Enter')
     wait('0/0 (0)')
     keys('C-a')
@@ -468,6 +472,8 @@ def test_open_each_column_opens_searchable_value_picker(picker, key, label, quer
     keys(key)
     wait(label + ' >')
     keys('-l', query)
+    # Wait for asynchronous filtering before accepting the highlighted value.
+    wait('1/')
     keys('Enter')
     wait(f'{count}/{count} (0)')
     keys(key)
@@ -477,6 +483,8 @@ def test_open_each_column_opens_searchable_value_picker(picker, key, label, quer
     keys(key)
     wait(label + ' >')
     keys('-l', 'All (clear filter)')
+    # Wait for asynchronous filtering before accepting the highlighted value.
+    wait('1/')
     keys('Enter')
     wait('4/4 (0)')
     assert finish('Escape', status=130) == []
