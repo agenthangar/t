@@ -6,7 +6,7 @@
     "detail": "Read-only labeled values; no work starts or prompt appears.",
     "single": "One focused target chosen with Enter in the shared picker or inline menu.",
     "multi": "Space/Tab marks searchable rows; Enter accepts marks or the focused row.",
-    "filtered": "Shared Ctrl-A all and Ctrl-F defaults; session filters add Ctrl-T, Ctrl-L, or Ctrl-P.",
+    "filtered": "Shared Ctrl-A all and Ctrl-F defaults; session state filters use Ctrl-T, Ctrl-L, or Ctrl-P. Ctrl-G cycles agents, Ctrl-O hosts/origins, Ctrl-R repositories; open/close also offer Ctrl-D interface. Facets narrow the same snapshot and never rediscover.",
     "wizard": "Stage edits and review before applying with the shared Rail UI.",
     "review": "Show selected install actions before running; Enter applies the reviewed plan.",
     "action": "Run an explicit target without unnecessary selection; confirm interruption when needed.",
@@ -695,9 +695,12 @@
             "tests/test_open_picker.py::test_open_hides_attached_and_loaded_desktop_by_default",
             "tests/test_open_picker.py::test_open_compact_layout_and_search",
             "tests/test_picker_ui.py::test_all_session_filter_keys_visible_at_every_size",
-            "tests/test_picker_ui.py::test_open_simple_rows_and_focused_marks"
+            "tests/test_picker_ui.py::test_open_simple_rows_and_focused_marks",
+            "tests/test_picker_filters.py::test_every_filter_key_survives_long_values",
+            "tests/test_picker_ui.py::test_session_pickers_display_every_filter_key",
+            "tests/test_picker_ui.py::test_public_open_facet_keys_combine_and_clear_hidden_marks"
           ],
-          "notes": "Hide attached CLI and loaded desktop rows by default; Ctrl-T toggles attached, Ctrl-A shows all, and Ctrl-F restores defaults. Every filter key remains visible on narrow terminals. Solid selection marks remain distinct from focus and active-context marks. Session and task columns are prioritized without LAST TURN, preview controls, or a new-session shortcut; --new remains a direct action. Full task and metadata remain searchable; column headers persist across filters."
+          "notes": "Hide attached CLI and loaded desktop rows by default; Ctrl-T toggles attached, Ctrl-A shows all, and Ctrl-F restores defaults. Every filter key remains visible on narrow terminals. Plain checkmarks on a dark cyan focused row remain distinct from focus and active-context marks. Session and task columns are prioritized without LAST TURN, preview controls, or a new-session shortcut; --new remains a direct action. Full task and metadata remain searchable; column headers persist across filters. Independent Ctrl-G agent, Ctrl-O host/origin, and Ctrl-R repository facets; open/close also support Ctrl-D interface. All/default clears facets, preserves search, and removes hidden marks. No additional discovery or scope expansion."
         },
         "explicit": {
           "argv": [
@@ -813,10 +816,11 @@
           "tests": [
             "tests/test_kill_multiselect.py::test_kill_picker_starts_with_only_proven_safe_rows",
             "tests/test_kill_multiselect.py::test_kill_picker_dispatches_multiple_cli_and_desktop_rows",
-            "tests/test_kill_multiselect.py::test_picker_enter_stops_live_agents_without_reading_confirmation"
+            "tests/test_kill_multiselect.py::test_picker_enter_stops_live_agents_without_reading_confirmation",
+            "tests/test_picker_filters.py::test_every_filter_key_survives_long_values"
           ],
           "confirmation": "enter",
-          "notes": "Displayed columns have a non-selectable aligned header preserved across filter changes."
+          "notes": "Displayed columns have a non-selectable aligned header preserved across filter changes. Independent Ctrl-G agent, Ctrl-O host/origin, and Ctrl-R repository facets; open/close also support Ctrl-D interface. All/default clears facets, preserves search, and removes hidden marks. No additional discovery or scope expansion."
         },
         "explicit": {
           "argv": [
@@ -978,8 +982,10 @@
           ],
           "read_only": false,
           "tests": [
-            "tests/test_resume_multiselect.py::test_resume_multi_opens_selected_live_slot_and_revives_dead_slot"
-          ]
+            "tests/test_resume_multiselect.py::test_resume_multi_opens_selected_live_slot_and_revives_dead_slot",
+            "tests/test_picker_filters.py::test_every_filter_key_survives_long_values"
+          ],
+          "notes": "Independent Ctrl-G agent, Ctrl-O host/origin, and Ctrl-R repository facets; open/close also support Ctrl-D interface. All/default clears facets, preserves search, and removes hidden marks. No additional discovery or scope expansion."
         },
         "explicit": {
           "argv": [

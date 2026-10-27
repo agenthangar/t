@@ -8,7 +8,7 @@ changing a command; update both when its behavior changes.
 
 The visual baseline is the Homebrew v0.4.2 release (`40aaea8`): cyan section
 headings and current values, green primary/add actions, amber warnings/removal,
-two-space outer margins, a pointer and reverse-video focus row, and a footer
+two-space outer margins, a pointer and a dark cyan focus row with light text, and a footer
 showing the next action and keys. Focus and marks must remain distinguishable
 without color. Align labels on wide terminals and stack them below 60 columns.
 Clip text before applying color and count physical rows when repainting; at
@@ -88,11 +88,13 @@ dev sessions   ● attached/loaded · ✓ active context · ↻ still in progres
 
   reattach: t open <repo> <slot>
 
-Enter open · Esc · Space/Tab mark ■
+Enter open · Esc · Space/Tab mark ✓
 Ctrl-A show all · Ctrl-F defaults · 2 hidden
 Ctrl-T attached: hidden
+Ctrl-G agent: all · Ctrl-D UI: all
+Ctrl-O host: all · Ctrl-R repo: all
   SESSION  WORKING ON
-▸■○ api-2  Fix login
+▸✓ ○ api-2  Fix login
 ```
 
 The rows above illustrate hierarchy and controls, not a fixed column schema.
@@ -101,9 +103,19 @@ List commands print normally; picker headers and marks appear only for selection
 The open picker hides attached CLI and loaded desktop sessions by default.
 Ctrl-T toggles those rows; --attached starts with them visible. There is no
 new-session shortcut or details preview in this picker; use `t open --new`.
-A solid ■ selection marker stays visible beside the focus pointer, separately
-from active-context ✓. All filtered session views display each dedicated filter
-key on its own line on narrow terminals, retaining the hidden count and query.
+A plain green ✓ selection marker stays readable on the dark cyan focus row;
+never paint a reversed-color block behind it. The marker occupies its own gutter
+beside the focus pointer, separate from status marks in the row.
+Session pickers expose Ctrl-G agent, Ctrl-O host/origin, and Ctrl-R repository.
+Open and close also expose Ctrl-D interface; resume never invents a historical UI.
+Each facet cycles all → recorded values → all, independently of the state keys.
+Ctrl-A shows all snapshot rows and clears facets; Ctrl-F clears facets and
+restores default state filters. Query and visible selection identity survive
+reloads; hidden marks are removed. These are filtered/multi modes, not new
+commands or discovery operations. Every key and value must remain visible at
+80×24, 44×20, and 32×12; short terminals use a borderless full-height view.
+Filter metadata comes from the same private raw snapshot as the rows, never
+from task text. A named repository and prior discovery limits remain in force.
 
 The kill multi-picker's Enter action confirms every marked session (or the
 focused row), including live local and remote agents; do not prompt again per
