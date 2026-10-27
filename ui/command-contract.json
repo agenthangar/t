@@ -6,7 +6,7 @@
     "detail": "Read-only labeled values; no work starts or prompt appears.",
     "single": "One focused target chosen with Enter in the shared picker or inline menu.",
     "multi": "Space/Tab marks searchable rows; Enter accepts marks or the focused row.",
-    "filtered": "Shared Ctrl-A all and Ctrl-F defaults; session state filters use Ctrl-T, Ctrl-L, or Ctrl-P. Ctrl-G cycles agents, Ctrl-O hosts/origins, Ctrl-R repositories; open/close also offer Ctrl-D interface. Facets narrow the same snapshot and never rediscover.",
+    "filtered": "Shared Ctrl-A all and Ctrl-F defaults. Open has attached-only/unattached/all views and a searchable value picker for every session column; other session views retain their state toggles and cycling facets. Filters narrow the same snapshot and never rediscover.",
     "wizard": "Stage edits and review before applying with the shared Rail UI.",
     "review": "Show selected install actions before running; Enter applies the reviewed plan.",
     "action": "Run an explicit target without unnecessary selection; confirm interruption when needed.",
@@ -698,9 +698,12 @@
             "tests/test_picker_ui.py::test_open_simple_rows_and_focused_marks",
             "tests/test_picker_filters.py::test_every_filter_key_survives_long_values",
             "tests/test_picker_ui.py::test_session_pickers_display_every_filter_key",
-            "tests/test_picker_ui.py::test_public_open_facet_keys_combine_and_clear_hidden_marks"
+            "tests/test_picker_ui.py::test_public_open_facet_keys_combine_and_clear_hidden_marks",
+            "tests/test_picker_ui.py::test_open_each_column_opens_searchable_value_picker",
+            "tests/test_picker_ui.py::test_open_attachment_views_are_exclusive_and_idempotent",
+            "tests/test_picker_filters.py::test_open_header_keeps_every_column_shortcut_visible"
           ],
-          "notes": "Hide attached CLI and loaded desktop rows by default; Ctrl-T toggles attached, Ctrl-A shows all, and Ctrl-F restores defaults. Every filter key remains visible on narrow terminals. Plain checkmarks on a dark cyan focused row remain distinct from focus and active-context marks. Session and task columns are prioritized without LAST TURN, preview controls, or a new-session shortcut; --new remains a direct action. Full task and metadata remain searchable; column headers persist across filters. Independent Ctrl-G agent, Ctrl-O host/origin, and Ctrl-R repository facets; open/close also support Ctrl-D interface. All/default clears facets, preserves search, and removes hidden marks. No additional discovery or scope expansion."
+          "notes": "Default is unattached CLI and unloaded desktop sessions. Ctrl-T selects attached-only, Ctrl-F restores unattached/default and clears column filters, Ctrl-A shows all and clears filters. Dedicated searchable value pickers: Ctrl-G agent, Ctrl-P progress, Ctrl-D interface, Ctrl-B model, Ctrl-O host, Ctrl-R repository, Ctrl-V session/slot, Ctrl-E context, Ctrl-W task. Progress follows the displayed continued-work marker, not current computation or completion. Filters combine within the snapshot, preserve search, and clear hidden marks. Plain selection checks remain separate from row context marks. Retain compact session/task rows without LAST TURN, preview, or new-session controls. Every shortcut and a focused row remain visible at narrow sizes, abbreviating Ctrl as ^ and active values as a count; the value picker shows the current value."
         },
         "explicit": {
           "argv": [

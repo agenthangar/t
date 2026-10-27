@@ -136,11 +136,11 @@ def picker():
             tmux('-f', '/dev/null', 'new-session', '-d', '-x', str(width), '-y', str(height),
                  shell + ' ' + shlex.quote(str(root / 'run.sh')))
 
-        def wait(text):
+        def wait(text, absent=()):
             deadline = time.monotonic() + 5
             while time.monotonic() < deadline:
                 screen = tmux('capture-pane', '-p', check=False).stdout
-                if text in screen:
+                if text in screen and not any(value in screen for value in absent):
                     return screen
                 time.sleep(.05)
             pytest.fail(f'Picker never displayed {text!r}:\n{screen}')
@@ -360,9 +360,9 @@ def test_open_simple_rows_and_focused_marks(picker, width, height, monochrome):
     start, wait, keys, finish = picker
     start(profile='public-open', width=width, height=height, monochrome=monochrome)
     screen = wait('1/1 (0)')
-    assert 'Ctrl-T attached: hidden' in screen
+    assert 'View: unattached' in screen
     assert 'LAST TURN' not in screen and 'details' not in screen and 'Alt-N' not in screen
-    keys('C-t')
+    keys('C-a')
     wait('2/2 (0)')
     keys('Up', 'Space', 'Up')
     screen = wait('2/2 (1)')
@@ -397,10 +397,16 @@ def test_session_pickers_display_every_filter_key(picker, width, height, profile
     start, wait, keys, finish = picker
     start(profile=profile, width=width, height=height)
     screen = wait('2/2 (0)')
-    for key in ('Ctrl-T', 'Ctrl-G', 'Ctrl-D', 'Ctrl-O', 'Ctrl-R', 'Ctrl-A', 'Ctrl-F'):
-        assert key in screen, screen
-    assert 'UI: all' in screen and 'repo: all' in screen and 'host: all' in screen
-    if profile == 'public-kill':
+    if profile == 'public-open-all':
+        for key in ('T', 'G', 'D', 'O', 'R', 'A', 'F', 'P', 'B', 'V', 'E', 'W'):
+            assert 'Ctrl-' + key in screen or '^' + key in screen, screen
+        assert 'View: unattached' in screen
+        if width <= 44:
+            assert '^ = Ctrl' in screen
+    else:
+        for key in ('Ctrl-T', 'Ctrl-G', 'Ctrl-D', 'Ctrl-O', 'Ctrl-R', 'Ctrl-A', 'Ctrl-F'):
+            assert key in screen, screen
+        assert 'UI: all' in screen and 'repo: all' in screen and 'host: all' in screen
         assert 'Ctrl-P pending: hidden' in screen
     assert '▸' in screen and 'hidden' in screen
     assert finish('Escape', status=130) == []
@@ -411,29 +417,76 @@ def test_public_open_facet_keys_combine_and_clear_hidden_marks(picker):
     start(profile='public-open-all')
     wait('2/2 (0)')
     keys('C-g')
-    wait('agent: claude')
+    wait('agent >')
+    keys('-l', 'codex')
+    keys('Enter')
     wait('1/1 (0)')
-    keys('C-d', 'C-d')
-    wait('UI: desktop')
+    wait('agent=codex')
+    keys('C-t')
+    wait('View: attached')
+    wait('1/1 (0)')
+    keys('Space')
+    wait('1/1 (1)')
+    keys('C-d')
+    wait('UI >')
+    keys('-l', 'desktop')
+    keys('Enter')
     wait('0/0 (0)')
-    keys('C-g')
-    wait('agent: codex')
-    wait('1/1 (0)')
-    keys('C-o', 'C-r')
-    wait('host: local')
-    wait('repo: api')
-    keys('C-f')
-    wait('2/2 (0)')
+    keys('C-a')
+    wait('4/4 (0)')
     keys('-l', 'First')
+    wait('1/4 (0)')
+    keys('C-f')
     wait('0/2 (0)')
     keys('C-t')
-    wait('1/4 (0)')
-    keys('Space')
-    wait('1/4 (1)')
-    keys('C-d', 'C-d')
-    wait('0/1 (0)')
-    keys('C-a')
-    screen = wait('1/4 (0)')
+    screen = wait('1/2 (0)')
     assert 'open > First' in screen
-    assert 'agent: all' in screen and 'UI: all' in screen
     assert finish() == ['api 2 --local']
+
+
+@pytest.mark.parametrize('width,height', [(80, 24), (32, 12)])
+@pytest.mark.parametrize('key,label,query,count', [
+    ('C-g', 'agent', 'codex', 2), ('C-p', 'progress', 'in progress', 1),
+    ('C-d', 'UI', 'desktop', 1), ('C-b', 'model', 'gpt-test-astra', 1),
+    ('C-o', 'host', 'local', 4), ('C-r', 'repo', 'api', 2),
+    ('C-v', 'session', 'api-2', 1), ('C-e', 'context', 'active', 2),
+    ('C-w', 'task', 'First task', 1),
+])
+def test_open_each_column_opens_searchable_value_picker(picker, key, label, query, count, width, height):
+    start, wait, keys, finish = picker
+    start(profile='public-open-all', width=width, height=height)
+    wait('2/2 (0)')
+    keys('C-a')
+    wait('4/4 (0)')
+    keys(key)
+    wait(label + ' >')
+    keys('-l', query)
+    keys('Enter')
+    wait(f'{count}/{count} (0)')
+    keys(key)
+    wait(label + ' >')
+    keys('Escape')
+    wait(f'{count}/{count} (0)')
+    keys(key)
+    wait(label + ' >')
+    keys('-l', 'All (clear filter)')
+    keys('Enter')
+    wait('4/4 (0)')
+    assert finish('Escape', status=130) == []
+
+
+def test_open_attachment_views_are_exclusive_and_idempotent(picker):
+    start, wait, keys, finish = picker
+    start(profile='public-open-all')
+    wait('2/2 (0)')
+    keys('C-t')
+    screen = wait('View: attached', absent=('api-4',))
+    assert 'api-2' in screen and 'api-4' not in screen
+    keys('C-t')
+    wait('View: attached')
+    keys('C-a')
+    wait('4/4 (0)')
+    keys('C-f')
+    screen = wait('View: unattached', absent=('api-2',))
+    assert 'api-4' in screen and 'api-2' not in screen
+    assert finish('Escape', status=130) == []

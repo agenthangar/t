@@ -36,6 +36,10 @@ _t_fzf_single() (
   _t_fzf_action=$1 _t_fzf_legend=$2
   shift 2
   _t_fzf_content_options "$@" || return $?
+  _t_fzf_size=$(stty size 2>/dev/null </dev/tty) || _t_fzf_size=
+  if [ -n "$_t_fzf_size" ] && [ "${_t_fzf_size%% *}" -gt 0 ] && [ "${_t_fzf_size%% *}" -le 14 ]; then
+    set -- --height=100% --margin=0 --border=none "$@"
+  fi
   _t_fzf_header="Enter $_t_fzf_action · Esc"
   [ -z "$_t_fzf_legend" ] || _t_fzf_header="$_t_fzf_header
 $_t_fzf_legend"
@@ -239,7 +243,7 @@ Space/Tab mark ✓"
   fi
   cat > "$T_PICKER_TOGGLE" <<'SH'
 if [ -n "${T_PICKER_FILTER_HELPER:-}" ]; then
-  exec python3 "$T_PICKER_FILTER_HELPER" "$1"
+  exec python3 "$T_PICKER_FILTER_HELPER" "$@"
 fi
 if [ -n "$T_PICKER_SESSION_MASK" ]; then
   current=0
@@ -298,10 +302,18 @@ SH
     done
   fi
   if [ -n "${T_PICKER_FILTER_HELPER:-}" ]; then
-    for _t_picker_spec in ctrl-g:agent ctrl-d:interface ctrl-o:host ctrl-r:repo; do
+    _t_picker_facets='ctrl-g:agent ctrl-d:interface ctrl-o:host ctrl-r:repo'
+    _t_picker_execute=execute-silent
+    _t_picker_pick=
+    if [ "$T_PICKER_SESSION_FILTERS" = open ]; then
+      _t_picker_facets='ctrl-g:agent ctrl-p:progress ctrl-d:interface ctrl-b:model ctrl-o:host ctrl-r:repo ctrl-v:session ctrl-e:context ctrl-w:task'
+      _t_picker_execute=execute
+      _t_picker_pick='pick '
+    fi
+    for _t_picker_spec in $(printf '%s\n' "$_t_picker_facets"); do
       [ "$T_PICKER_SESSION_FILTERS" != resume ] || [ "$_t_picker_spec" != ctrl-d:interface ] || continue
       _t_picker_key=${_t_picker_spec%:*} _t_picker_action=${_t_picker_spec#*:}
-      _t_picker_bind="${_t_picker_bind},${_t_picker_key}:${T_PICKER_CLEAR_MARKS}execute-silent(sh \"\$T_PICKER_TOGGLE\" $_t_picker_action)+reload-sync(cat \"\$T_PICKER_CURRENT\")+transform-header(cat \"\$T_PICKER_CURRENT_HEADER\")"
+      _t_picker_bind="${_t_picker_bind},${_t_picker_key}:${T_PICKER_CLEAR_MARKS}${_t_picker_execute}(sh \"\$T_PICKER_TOGGLE\" ${_t_picker_pick:-}$_t_picker_action)+reload-sync(cat \"\$T_PICKER_CURRENT\")+transform-header(cat \"\$T_PICKER_CURRENT_HEADER\")"
     done
   fi
   _t_fzf --multi --no-hscroll --margin="$_t_picker_margin" --delimiter="$(printf '\t')" --with-nth=-1 \

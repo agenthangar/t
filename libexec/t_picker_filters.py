@@ -2,12 +2,20 @@
 import json
 import os
 from pathlib import Path
+import re
+import subprocess
 import sys
 
 from t_session_details import clip_columns, display_width
 
 FACETS = {'agent': ('Ctrl-G', 'agent'), 'interface': ('Ctrl-D', 'UI'),
           'host': ('Ctrl-O', 'host'), 'repo': ('Ctrl-R', 'repo')}
+
+OPEN_FACETS = {'agent': ('Ctrl-G', 'agent'), 'progress': ('Ctrl-P', 'progress'),
+               'interface': ('Ctrl-D', 'UI'), 'model': ('Ctrl-B', 'model'),
+               'host': ('Ctrl-O', 'host'), 'repo': ('Ctrl-R', 'repo'),
+               'session': ('Ctrl-V', 'session'), 'context': ('Ctrl-E', 'context'),
+               'task': ('Ctrl-W', 'task')}
 
 
 def metadata(source, profile):
@@ -28,6 +36,11 @@ def metadata(source, profile):
             repo = slot.partition(':')[0] if ':' in slot else slot.rpartition('-')[0] or slot
             result[(host, slot, state)] = dict(agent=fields[7] if len(fields) > 7 else 'claude',
                 interface='desktop' if state == 'app' else 'cli', host=host, repo=repo)
+            if profile == 'open':
+                result[(host, slot, state)].update(
+                    model=fields[8] if len(fields) > 8 and fields[8] not in ('', '-') else 'unknown',
+                    session=slot, context=fields[5] or 'unknown', task=fields[6] or '(no task)',
+                    progress='in progress' if re.search(r'#\d+ merged, still in progress', fields[6]) else 'not marked')
     return result
 
 
@@ -49,6 +62,8 @@ def pack(parts, width):
 
 
 def header(profile, mask, filters, hidden, columns, width):
+    if profile == 'open':
+        return open_header(mask, filters, hidden, columns, width)
     controls = [f'Enter {profile} · Esc', 'Space/Tab mark ✓']
     if width <= 36 and profile in ('open', 'kill'):
         controls = [f'Enter {profile}/Esc · Space/Tab ✓']
@@ -77,10 +92,56 @@ def header(profile, mask, filters, hidden, columns, width):
     return '\n'.join(lines) + '\n'
 
 
-def render(directory, profile, action, width, columns=''):
+def open_header(mask, filters, hidden, columns, width):
+    compact = width <= 36
+    key = lambda text: text.replace('Ctrl-', '^') if compact else text
+    lines = ['Enter open/Esc · Space/Tab ✓'] if compact else pack(['Enter open · Esc', 'Space/Tab mark ✓'], width)
+    controls = ['Ctrl-T attached', 'Ctrl-F unattached', 'Ctrl-A all']
+    controls += [f'{hotkey} {label}' for hotkey, label in OPEN_FACETS.values()]
+    lines += pack([key(control) for control in controls] + (['^ = Ctrl'] if compact else []), width)
+    view = {0: 'unattached', 1: 'all', 2: 'attached'}[mask]
+    active = [f'{OPEN_FACETS[name][1]}={value}' for name, value in filters.items() if value is not None]
+    if compact:
+        # Keep every shortcut and one session row visible even at 32×12.
+        lines += pack([f'View: {view}', f'{len(active)} filters'], width)
+        suffix = f' · {hidden} hidden'
+        lines.append(clip_columns(columns or '^ = Ctrl', width - display_width(suffix)) + suffix)
+    else:
+        lines += pack([f'View: {view}' + (' (default)' if mask == 0 else ''), f'{hidden} hidden'], width)
+        if active:
+            lines.append(clip_columns('Filters: ' + ' · '.join(active), width))
+        if columns:
+            lines.append(clip_columns(columns, width))
+    return '\n'.join(lines) + '\n'
+
+
+def pick_value(directory, name, records, current):
+    """A shared single picker chooses an exact recorded value; Esc leaves it alone."""
+    values = [None] + sorted({record[name] for record in records.values()})
+    options = directory / 'values'
+    options.write_text(''.join(f'{index}\t{value if value is not None else "All (clear filter)"}\n'
+                               for index, value in enumerate(values)))
+    label = OPEN_FACETS[name][1]
+    legend = f'Current {label}: {current if current is not None else "all"}'
+    if name == 'progress':
+        legend += '\nIn progress = work continued after a merged PR; not marked is not proof of completion.'
+    result = subprocess.run(['sh', '-c',
+        '. "$1"; _t_fzf_single "apply filter" "$3" '
+        '--delimiter="$(printf "\\t")" --with-nth=2 --prompt="$4 > " '
+        '< "$2"',
+        'sh', str(Path(__file__).resolve().parents[1] / 'ui/fzf.sh'), str(options), legend, label], text=True, stdout=subprocess.PIPE, check=False)
+    if result.returncode in (1, 130):
+        return None
+    if result.returncode:
+        raise RuntimeError('column filter picker failed')
+    return (values[int(result.stdout.split('\t', 1)[0])],)
+
+
+def render(directory, profile, action, width, columns='', facet=None):
     directory = Path(directory)
     records = metadata((directory / 'source').read_text(), profile)
-    names = [name for name in FACETS if profile != 'resume' or name != 'interface']
+    names = list(OPEN_FACETS) if profile == 'open' else [
+        name for name in FACETS if profile != 'resume' or name != 'interface']
     state_file = directory / 'facets.json'
     filters = json.loads(state_file.read_text()) if state_file.exists() else dict.fromkeys(names)
     mask_file = directory / 'show-all'
@@ -89,6 +150,12 @@ def render(directory, profile, action, width, columns=''):
     if action in ('all', 'default'):
         mask = maximum if action == 'all' else 0
         filters = dict.fromkeys(names)
+    elif action == 'first' and profile == 'open':
+        mask = 2  # Attached-only; repeated presses are idempotent.
+    elif action == 'pick' and profile == 'open' and facet in names:
+        chosen = pick_value(directory, facet, records, filters[facet])
+        if chosen is not None:
+            filters[facet] = chosen[0]
     elif action in ('first', 'second'):
         mask ^= 1 if action == 'first' else 2
     elif action in names:
@@ -96,9 +163,13 @@ def render(directory, profile, action, width, columns=''):
         filters[action] = values[(values.index(filters[action]) + 1) % len(values)]
     elif action != 'current':
         raise ValueError('unknown picker filter: ' + action)
-    if mask > maximum:
+    if mask > (2 if profile == 'open' else maximum):
         raise ValueError('unsupported state filter')
-    rows = (directory / f'rows-{mask}').read_text().splitlines()
+    if profile == 'open' and mask == 2:
+        unattached = set((directory / 'rows-0').read_text().splitlines())
+        rows = [row for row in (directory / 'all').read_text().splitlines() if row not in unattached]
+    else:
+        rows = (directory / f'rows-{mask}').read_text().splitlines()
     selected = choose(rows, records, filters)
     total = len((directory / 'all').read_text().splitlines())
     (directory / 'current').write_text(''.join(row + '\n' for row in selected))
@@ -109,4 +180,5 @@ def render(directory, profile, action, width, columns=''):
 
 if __name__ == '__main__':
     render(os.environ['T_PICKER_VIEWS'], os.environ['T_PICKER_SESSION_FILTERS'], sys.argv[1],
-           int(os.environ['T_PICKER_HEADER_WIDTH']), os.environ.get('T_PICKER_COLUMNS', ''))
+           int(os.environ['T_PICKER_HEADER_WIDTH']), os.environ.get('T_PICKER_COLUMNS', ''),
+           sys.argv[2] if len(sys.argv) > 2 else None)

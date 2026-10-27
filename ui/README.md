@@ -89,10 +89,10 @@ dev sessions   ● attached/loaded · ✓ active context · ↻ still in progres
   reattach: t open <repo> <slot>
 
 Enter open · Esc · Space/Tab mark ✓
-Ctrl-A show all · Ctrl-F defaults · 2 hidden
-Ctrl-T attached: hidden
-Ctrl-G agent: all · Ctrl-D UI: all
-Ctrl-O host: all · Ctrl-R repo: all
+Ctrl-T attached · Ctrl-F unattached · Ctrl-A all
+Ctrl-G agent · Ctrl-P progress · Ctrl-D UI · Ctrl-B model
+Ctrl-O host · Ctrl-R repo · Ctrl-V session · Ctrl-E context · Ctrl-W task
+View: unattached (default) · 2 hidden
   SESSION  WORKING ON
 ▸✓ ○ api-2  Fix login
 ```
@@ -101,21 +101,36 @@ The rows above illustrate hierarchy and controls, not a fixed column schema.
 List commands print normally; picker headers and marks appear only for selection.
 
 The open picker hides attached CLI and loaded desktop sessions by default.
-Ctrl-T toggles those rows; --attached starts with them visible. There is no
+Ctrl-T selects attached-only; Ctrl-F restores unattached; Ctrl-A shows all.
+The compatibility --attached flag starts with all rows. There is no
 new-session shortcut or details preview in this picker; use `t open --new`.
 A plain green ✓ selection marker stays readable on the dark cyan focus row;
 never paint a reversed-color block behind it. The marker occupies its own gutter
 beside the focus pointer, separate from status marks in the row.
-Session pickers expose Ctrl-G agent, Ctrl-O host/origin, and Ctrl-R repository.
-Open and close also expose Ctrl-D interface; resume never invents a historical UI.
-Each facet cycles all → recorded values → all, independently of the state keys.
-Ctrl-A shows all snapshot rows and clears facets; Ctrl-F clears facets and
-restores default state filters. Query and visible selection identity survive
-reloads; hidden marks are removed. These are filtered/multi modes, not new
-commands or discovery operations. Every key and value must remain visible at
-80×24, 44×20, and 32×12; short terminals use a borderless full-height view.
-Filter metadata comes from the same private raw snapshot as the rows, never
-from task text. A named repository and prior discovery limits remain in force.
+The open picker exposes searchable value selection for each column: Ctrl-G
+agent, Ctrl-P progress, Ctrl-D interface, Ctrl-B model, Ctrl-O host, Ctrl-R repo,
+Ctrl-V session/slot, Ctrl-E context, and Ctrl-W task. Use the shared single-picker
+profile; Enter applies, Esc keeps the filter, and an explicit All option clears
+one column. Column filters combine with attachment views. Ctrl-A clears all
+filters and shows every snapshot row; Ctrl-F clears all filters and restores
+unattached. Ctrl-T selects attached-only without clearing column filters.
+
+Resume and close retain cycling Ctrl-G agent, Ctrl-O host/origin, Ctrl-R repo,
+and (close only) Ctrl-D interface, with their existing state toggles. Resume
+never invents a historical UI. Every column value comes from raw metadata,
+not truncated display text. The progress value exactly follows the ↻ marker:
+work continued after a merged PR; its absence is not completion evidence.
+A row's ✓ means loaded conversation context, independent of attachment and
+current computation; the selection gutter ✓ marks an action target.
+
+Query and visible selection identity survive supported reloads; hidden marks
+are removed. Old fzf clears marks on filter actions. These remain filtered/multi
+modes, not new commands or discovery operations. Every shortcut and a focused
+row remain visible at 80×24, 44×20, and 32×12. Short terminals use a borderless
+full-height view, including nested value pickers. Open's narrow header uses ^
+for Ctrl and shows the active filter count; full values are available in the
+column pickers. Filter metadata comes from the same private snapshot as the
+rows. A named repository and prior discovery limits remain in force.
 
 The kill multi-picker's Enter action confirms every marked session (or the
 focused row), including live local and remote agents; do not prompt again per
