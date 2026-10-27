@@ -4221,7 +4221,7 @@ def cmd_new_land(cfg, args):
 # the bin here means it was invoked DIRECTLY (e.g. `command t open`, or a context with no
 # t() function) — which cannot perform the shell action.
 
-_SHELL_BOUND = {"open", "pop", "push", "resume", "beam", "find", "cd", "__resolve"}
+_SHELL_BOUND = {"remote", "open", "pop", "push", "resume", "beam", "find", "cd", "__resolve"}
 
 
 def cmd_pending(cfg, args):
@@ -9711,6 +9711,8 @@ def cmd_share(cfg, args):
 # shell-bound dispatch in zsh/; the Python parser remains the source of flag
 # definitions for both public commands and compatibility aliases.
 COMMAND_GROUPS = {
+    "remote": {"open": ("remote", "open"), "move": ("remote", "move"),
+               "resume": ("remote", "resume")},
     "issue": {"list": ("issue", "list"), "status": ("issue", "status"),
               "start": ("issue", "start"), "open": ("issue", "open")},
     "session": {
@@ -9749,6 +9751,7 @@ COMMAND_GROUPS = {
 }
 
 GROUP_DESCRIPTIONS = {
+    "remote": "Open, move, and resume sessions on SSH hosts",
     "issue": "List GitHub issues, inspect work, start agents, or open issues in a browser",
     "agentcore": "Submit work to an existing Amazon Bedrock AgentCore runtime",
     "session": "Open, find, and move work sessions",
@@ -9816,6 +9819,7 @@ def _root_help():
 
 WORK
   session   Open, find, and move work sessions
+  remote    Open, move, and resume sessions on SSH hosts
   issue     List, inspect, work on, and open GitHub issues
   share     Share context between agent conversations
   repo      List and manage repositories
@@ -9926,6 +9930,16 @@ Run `t help issue <verb>` for flags and arguments.
                  "  t repo add    # use the current checkout, including from a subdirectory\n"
                  "\nAdd infers the checkout directory name; --alias sets a short name.\n"
                  "Use `t config setup [dirs ...]` to select several checkouts (default ~/config).\n")
+    if group == "remote":
+        extra = ("\nTARGETS\n  t remote open [repo] [slot] [--host HOST] [--new]\n"
+                 "  t remote move [repo] [slot] [--session ID] [--from SOURCE] [--host DEST]\n"
+                 "  t remote resume [repo] [slot] [--host HOST] [--days N]\n"
+                 "\nInfer the repository from the current checkout, or browse all repositories outside one.\n"
+                 "Omitted hosts use a single host picker; move first selects a current CLI session.\n"
+                 "Open attaches on the chosen host; --new explicitly starts a fresh session.\n"
+                 "Resume discovers saved history on the chosen host. Session resume --host instead\n"
+                 "sends locally discovered history there. Move sends directly from source to destination;\n"
+                 "the source must be able to SSH and rsync to the destination.\n")
     if group == "session":
         extra = ("\nTARGETS\n  t session <verb> [repo] [slot] [flags]\n"
                  "  Most verbs infer the repository from the current checkout; open and resume can select sessions.\n"
@@ -9938,6 +9952,8 @@ Run `t help issue <verb>` for flags and arguments.
 
 def _command_description(group, action):
     descriptions = {
+        "remote": {"open": "Open a session on a chosen host", "move": "Move a current conversation between hosts",
+                   "resume": "Resume saved history on a chosen host"},
         "issue": {"list": "List repository issues", "status": "Inspect existing issue work",
                   "start": "Continue or start work on issues", "open": "Open issues in your browser"},
         "agentcore": {"invoke": "Submit JSON or continue a runtime session", "stop": "Stop a runtime session"},
@@ -10105,6 +10121,36 @@ def build_parser():
             "An issue URL includes its repository. Each selected issue opens in your configured browser.")
     issue_open.add_argument("target", nargs="*", help="issue numbers, repository and numbers, or GitHub issue URLs")
     issue_open.add_argument("--repo", help="registered repository alias or GitHub owner/name")
+
+    remote = sub.add_parser("remote", help="open, move, and resume sessions on SSH hosts",
+        description="Choose SSH hosts and sessions, or name explicit targets to skip selection.")
+    remote_sub = remote.add_subparsers(dest="action", metavar="<verb>")
+    p._group_parsers["remote"] = remote
+    for action, description in (
+            ("open", "Open an existing session on the chosen host; --new starts a fresh session."),
+            ("move", "Move a current local or remote CLI conversation directly to another host. "
+             "Missing source/session and destination use single pickers. Explicit targets skip selection. "
+             "The source must be able to SSH and rsync to the destination. Failed ownership checks stop the move."),
+            ("resume", "Discover and resume saved history ON the chosen host. "
+             "This differs from session resume --host, which sends locally discovered history there.")):
+        leaf = remote_sub.add_parser(action, help=description, description=description + " "
+            "Use [repo] [slot], infer the current checkout, or browse all repositories outside one. "
+            "Without --host choose a registered SSH host with Enter. Selection requires a terminal and fzf; "
+            "scripts must provide explicit targets. Cancellation returns 130.")
+        leaf.add_argument("repo", nargs="?", help="repository alias (default: current checkout or all)")
+        leaf.add_argument("slot", nargs="?", help="slot number; a lone number uses the current repository")
+        leaf.add_argument("--host", help="destination SSH host alias or target; omitted: host picker")
+        if action == "open":
+            leaf.add_argument("--new", action="store_true", help="start a fresh session on the chosen host")
+        elif action == "resume":
+            leaf.add_argument("--days", default="30", help="saved-history age in days, or all (default: 30)")
+        else:
+            leaf.add_argument("--from", dest="from_host", help="source SSH host; local selects this machine")
+            leaf.add_argument("-s", "--session", help="exact conversation ID, bypassing session selection when unique")
+            leaf.add_argument("-a", "--all", action="store_true", help="browse current conversations in every repository")
+            mode = leaf.add_mutually_exclusive_group()
+            mode.add_argument("-d", "--detach", action="store_true", help="leave the destination detached; required without a terminal")
+            mode.add_argument("-f", "--fg", action="store_true", help="run in the destination SSH foreground")
 
     share = sub.add_parser("share", help="share context with another agent conversation",
         description="Continue your current conversation with Claude, Codex, or Cursor. "
@@ -10385,7 +10431,9 @@ REMOTE SESSIONS
             "only that same local owner can be handed off. Other owners are refused. "
             "A conversation is live by its ID too: one resumed into ANOTHER slot (or run as "
             "a foreground session) is shown as a row pointing at that owner — never resumed "
-            "a second time. --host H revives the pick on H instead of here. "
+            "a second time. --host H sends locally discovered saved history to H. "
+            "Live selections on another host are refused before any batch action; use remote move. "
+            "Use remote resume --host H to discover saved history on H instead. "
             "Worktree-per-session repos only (a shared tree's transcripts are "
             "ambiguous per-slot — use `t session push -p` there). Agents: a claude conversation "
             "and a codex thread are offered alike — every row carries its agent's icon and name "
@@ -10435,11 +10483,14 @@ REMOTE SESSIONS
             "`--from HOST` (or `--here` to auto-detect the host) RECEIVES — pulls a session "
             "living on another host down into a local slot. It is a move, not a copy: the "
             "origin's live owner is stopped so exactly one machine owns the conversation. The "
-            "repo must exist at the same path on both hosts.")
+            "repo must exist at the same path on both hosts. Combine --from SOURCE --host DEST "
+            "for a direct remote-to-remote move: SOURCE must be able to SSH and rsync to DEST. "
+            "Without an explicit source slot or ID, select a current conversation on SOURCE. "
+            "Use --detach for scripts; failures stopping the source or pushing code stop the move.")
     sp.add_argument("repo", nargs="?", help="DEV_REPOS key; defaults to the repo your cwd is in")
     sp.add_argument("slot", nargs="?", help="slot number; a lone slot implies the cwd repo")
     sp.add_argument("--host", help="SEND destination machine (default: $TBEAM_HOST)")
-    sp.add_argument("--from", dest="from_host", metavar="HOST", help="RECEIVE: pull <repo> [slot] from HOST to this machine")
+    sp.add_argument("--from", dest="from_host", metavar="HOST", help="source host; alone receives here, with --host sends directly to that destination")
     sp.add_argument("--here", action="store_true", help="RECEIVE (auto-host): pull it back here, auto-detecting which host it is on")
     sp.add_argument("--fg", action="store_true", help="resume in the foreground, no tmux slot")
     sp.add_argument("-d", "--detach", action="store_true", help="leave it running there; print attach hint")

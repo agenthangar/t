@@ -43,6 +43,9 @@ t() {
       *) shell_verb= ;;
     esac
     [[ -n $shell_verb ]] && shell_args=("${@:3}")
+  elif [[ $verb == remote ]]; then
+    shell_verb=
+    [[ $action == (open|move|resume) ]] && { shell_verb=remote; shell_args=("${@:2}"); }
   elif [[ $verb == repo ]]; then
     shell_verb=
     case $action in
@@ -77,7 +80,7 @@ t() {
     shell_verb=
   fi
   # Forward bin-owned groups and their help. Bare config keeps its settings menu.
-  [[ $verb == session || $verb == repo || $verb == cursor || $verb == hosts ||
+  [[ $verb == session || $verb == remote || $verb == repo || $verb == cursor || $verb == hosts ||
      $verb == profile || $verb == policy || $verb == agent || $verb == system ||
      ( $verb == config && -n $action ) ]] && [[ -z $shell_verb ]] && {
     command t "$@"; return
@@ -87,7 +90,7 @@ t() {
   # checks its own commands; prompting here for those would ask twice.
   local check_update=
   case "$shell_verb" in
-    open|pop|push|resume|find|cd|beam|setup|config|host_config|repo_add|new|checkout|install|integrate)
+    open|pop|push|resume|find|cd|beam|remote|setup|config|host_config|repo_add|new|checkout|install|integrate)
       check_update=1 ;;
     repos_cd) check_update=1 ;;
     repos) [[ ${shell_args[1]} == cd ]] && check_update=1 ;;
@@ -130,7 +133,8 @@ t() {
       fi ;;
     repos_cd) _t_repos_cd "${shell_args[@]}" ;;
     repo_add) _t_install repos "$@" ;;
-    beam)   _t_beam_xlate "${shell_args[@]}" ;;     # → _t_beam (host moves from --host to a positional)
+    remote) _t_remote "${shell_args[@]}" ;;
+    beam)   _t_beam_xlate "${shell_args[@]}" ;;     # → guarded local/remote transfer
     # setup runs in the bin (it only edits ${T_LOCAL_RC}), but on success the
     # SHELL must reload so the new cd aliases, host shorthand functions, and the
     # _t_sync_config cache go live at once (precedent: dots reloads every run).
@@ -277,12 +281,12 @@ _t_cd() {
 # The host paths dispatch via _dev_remote_open with the original gh-style args (minus
 # --host / -r), so H's own `t open` re-parses them from ITS $PWD.
 _t_open() {
-  local -a a rest mode_pos; local arg want_host= host= remote= isnew= local_only= app= cli= cli_intent= include_attached=
+  local -a a rest mode_pos; local arg want_host= has_host= host= remote= isnew= local_only= app= cli= cli_intent= include_attached=
   for arg in "$@"; do
     if [[ -n $want_host ]]; then host=$arg; want_host=; continue; fi
     case "$arg" in
-      --host)   want_host=1; continue ;;
-      --host=*) host=${arg#--host=}; continue ;;
+      --host)   has_host=1; want_host=1; continue ;;
+      --host=*) has_host=1; host=${arg#--host=}; continue ;;
     esac
     rest+=("$arg")
     case "$arg" in
@@ -298,7 +302,7 @@ _t_open() {
       *)                 a+=("$arg"); [[ $arg == -* ]] && cli_intent=1 ;;
     esac
   done
-  [[ -n $want_host ]] && { echo "t open: --host requires a value" >&2; return 2; }
+  [[ -n $want_host || ( -n $has_host && -z $host ) || $host == -* ]] && { echo "t open: --host requires a value" >&2; return 2; }
   [[ -n $app && -n $cli ]] && { echo "t open: --app and --cli are mutually exclusive" >&2; return 2; }
 
   # A slot-less interactive open browses the same complete rows as `t ls`.
@@ -682,21 +686,8 @@ _t_open_app_claim() {
   }
 }
 
-# _t_beam_xlate — map gh-grammar `t beam [repo] [slot] [--host H] [flags]` onto the
-# _t_beam impl's `[repo [slot]] [host]` positional grammar (--host's value moves to the
-# end as the trailing host positional); -f/--fg/-d/-p/-a/-s and --from <h> (the receive
-# flag) pass through unchanged — _t_beam parses --from itself.
-_t_beam_xlate() {
-  local -a a; local arg host want_host=
-  for arg in "$@"; do
-    if [[ -n $want_host ]]; then host=$arg; want_host=; continue; fi
-    case "$arg" in
-      --host) want_host=1 ;;
-      *)      a+=("$arg") ;;
-    esac
-  done
-  _t_beam "${a[@]}" ${host:+"$host"}
-}
+# Compatibility seam: the guarded move parser consumes --host directly.
+_t_beam_xlate() { _t_beam "$@"; }
 
 # help — show this command list, grouped by purpose
 # Each command's name + description are parsed live from the leading
@@ -717,7 +708,7 @@ _t_beam_xlate() {
 # key for `on`), and slot/flags after. Pulls live from the ${(k)DEV_REPOS} /
 # ${(k)REMOTE_HOSTS} arrays so it stays current with ${T_LOCAL_RC}.
 _t() {
-  local -a nouns=(session issue share repo cursor hosts agentcore config profile policy agent system login help)
+  local -a nouns=(session issue share remote repo cursor hosts agentcore config profile policy agent system login help)
   if (( CURRENT == 2 )); then
     _describe -t nouns 't command group' nouns
     return
@@ -780,6 +771,7 @@ _t() {
     return
   fi
   case $group in
+    remote) actions=(open move resume) ;;
     session) actions=(open list close restart push pop resume history cd move read view-plan paste search open-app goal) ;;
     repo) actions=(list cd locate create clone add) ;;
     cursor) actions=(list resume send) ;;
@@ -829,6 +821,20 @@ _t() {
     esac
   fi
   case "$group/$action" in
+    remote/open|remote/move|remote/resume)
+      case ${words[CURRENT-1]} in
+        --host|--from) _values 'host' ${(k)REMOTE_HOSTS} ;;
+        --session|-s) _message 'conversation ID' ;;
+        --days) _message 'number of days or all' ;;
+        *)
+          if [[ ${words[CURRENT]} == -* ]]; then
+            local -a remote_flags=(--host -h --help)
+            case $action in open) remote_flags+=(--new) ;; move) remote_flags+=(--from --session --all --detach --fg) ;; resume) remote_flags+=(--days) ;; esac
+            _values 'flag' $remote_flags
+          elif (( CURRENT == first )); then _values 'repo' ${(k)DEV_REPOS}
+          else _message 'slot'; fi ;;
+      esac ;;
+
     agentcore/invoke|agentcore/stop)
       case ${words[CURRENT-1]} in
         --payload|--output) _files ;;

@@ -158,7 +158,7 @@ _dev_app_slot_reserved() {{ return 1; }}
 _dev_codex_rollout_integrity() {{ return 0; }}
 _tbeam_kill_owner() {{ print -u2 UNEXPECTED_STOP; return 99; }}
 _dev_worktree_beam_push() {{ print -u2 UNEXPECTED_PUSH; return 99; }}
-_t_beam -s exact-id test-host
+_t_beam -s exact-id test-host --detach
 ''')
     assert result.returncode != 0
     assert 'source was not stopped' in result.stderr
