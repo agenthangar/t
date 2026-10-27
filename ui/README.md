@@ -245,6 +245,32 @@ Explicit slot/ID sends and `--from`/`--here` receives retain their guarded route
 
 New worktree folders include the repository basename (`t/t-12`); numeric slot
 arguments, tmux identity, JSON slot fields and history associations are unchanged.
+`remote open`, `remote move`, and `remote resume` require explicit verbs. Missing
+hosts use `_t_fzf_single`, displaying alias and SSH target; Enter chooses exactly
+one, including when only one host exists. Esc/Ctrl-C returns 130 without starting
+work. Missing selections require a terminal and fzf; scripts name their targets.
+An empty current-session inventory returns 0. Remote workers suppress nested
+automatic update prompts.
+
+`remote move` uses a single shared current-session picker over local and registered
+remote CLI owners, including attached sessions and excluding desktop/unknown IDs.
+Repository scope uses home-relative checkout/worktree paths across hosts. Duplicate
+slot labels retain their host identity. Explicit source plus slot/ID bypasses the
+session picker; an explicit target without source resolves a unique snapshot or
+requires selection when ambiguous. Destination selection excludes every alias of
+the source target, and never silently chooses the default host. Recheck host, ID,
+path, label, agent and live ownership after both selections and on the source before
+stopping it. Failed scans or transfer steps fail closed. `session move --from A
+--host B` delegates the whole guarded send to A over `zsh -lic`, using controller
+resolved SSH targets. The controller never briefly resumes the conversation.
+
+`remote open` selects current sessions on the chosen host and never starts fresh
+from an empty picker; `--new` is explicit. `remote resume` selects saved history
+on the chosen host using the existing filtered resume picker. `session resume
+--host H` instead sends locally discovered history to H. Live rows attach only
+when their owner matches H (including host aliases); a mismatch gives an exact
+`remote move` instruction before any batch mutation. Desktop resume stays local.
+
 Existing `t/12` folders and recorded conversation paths remain valid. Both
 layouts appear in list and navigation results. Ambiguous simultaneous layouts
 must fail with an inspection/history hint before a slot mutation. Transfers

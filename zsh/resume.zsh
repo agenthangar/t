@@ -1,3 +1,18 @@
+# A destination on resume applies to saved history. Live owners may only attach
+# on that same host; moving an owner uses the guarded move transaction.
+_t_resume_host_check() {
+  local owner=${1#fg:} destination=${2:-${_T_RESUME_OWNER_HOST:-}} repo=$3 slot=$4
+  owner=${owner#app:}
+  [[ -n $destination && -n $owner && $owner != - ]] || return 0
+  local owner_target="${REMOTE_HOSTS[$owner]:-$owner}"
+  local destination_target="${REMOTE_HOSTS[$destination]:-$destination}"
+  [[ $owner == here && $destination == here ]] && return 0
+  [[ $owner != here && $destination != here && $owner_target == "$destination_target" ]] && return 0
+  local destination_hint=${_T_RESUME_DESTINATION_HOST:-$destination}
+  print -u2 -- "t session resume: $repo $slot is live on $owner; move it with: t remote move $repo $slot --from ${owner/here/local} --host $destination_hint"
+  return 1
+}
+
 _t_resume_rsync() { rsync "$@" 2>/dev/null; }
 
 _t_resume_on_host() {
@@ -5,7 +20,8 @@ _t_resume_on_host() {
   local target="${REMOTE_HOSTS[$host]:-$host}"
   command -v rsync >/dev/null 2>&1 || { echo "t resume --host: rsync not found" >&2; return 1; }
   if ! _dev_worktree_beam_push "$wt" "$host" >&2; then
-    echo "⚠ couldn't fully commit/push $wt — $host may resume with stale code (the edits stay here)" >&2
+    echo "t resume --host: could not commit/push $wt; conversation was not resumed on $host" >&2
+    return 1
   fi
   _tbeam_sync_transcript "$wt" "$target" "$agent" "$sid" >&2 || return 1
   local env="TB_CWD=${(q)wt} TB_SID=${(q)sid} TB_AGENT=${(q)agent}"
@@ -99,7 +115,7 @@ _t_resume() {
   fi
   # --host <h>: revive the pick ON <h> instead of here — the dead conversation is
   # carried there by the `t beam` send machinery (_t_resume_on_host below).
-  if [[ -n $_expect_host || ( -n ${(M)@:#--host*} && -z $on_host ) ]]; then
+  if [[ -n $_expect_host || $on_host == -* || ( -n ${(M)@:#--host*} && -z $on_host ) ]]; then
     echo "t resume: --host takes a host (one of: ${(k)REMOTE_HOSTS:-none configured})." >&2; return 1
   fi
   local repo="${pos[1]:-}" slot="${pos[2]:-}"
@@ -244,6 +260,7 @@ _t_resume() {
       local_wt=$(_dev_worktree_path "$repo" "$slot") || return 1
       local_owner=${live[${local_wt:A}]:-}
       if [[ -n $local_owner ]] || tmux has-session -t "=dev-${repo}-${slot}:" 2>/dev/null; then
+        _t_resume_host_check here "$on_host" "$repo" "$slot" || return 1
         print -u2 -- "Slot $slot is live locally ($local_owner) — attaching."
         _t_dev "$repo" "$slot" --local
         return
@@ -368,6 +385,7 @@ _t_resume() {
       busy=${live[${wt:A}]:-}
       if [[ -n $busy && -z $app ]]; then
         if [[ -n $slot ]]; then
+          _t_resume_host_check here "$on_host" "$repo" "$n" || return 1
           echo "Slot $n is live ($busy) — attaching (resume only revives dead slots)."
           _t_dev "$repo" "$n"
           return
@@ -395,6 +413,7 @@ _t_resume() {
           continue
         fi
         if [[ -n $slot ]]; then
+          _t_resume_host_check "$rhost" "$on_host" "$repo" "$n" || return 1
           echo "Slot $n is live on $rhost — attaching (resume only revives dead slots)."
           _dev_remote_attach "$rhost"$'\t'"${remote_live_alias[$n]}"$'\t'"$n" ""
           return
@@ -425,6 +444,7 @@ _t_resume() {
       if [[ -n $_stale && -z $app ]]; then
         stale_path=$(tmux display-message -p -t "=$_stale:" '#{session_path}' 2>/dev/null)
         if [[ -n $slot ]]; then
+          _t_resume_host_check here "$on_host" "$repo" "$n" || return 1
           echo "Slot $n is live ($_stale${stale_path:+ in $stale_path}) — attaching (resume only revives dead slots)."
           _t_dev "$repo" "$n"
           return
@@ -664,7 +684,7 @@ _t_resume() {
   # _t_dev / _dev_remote_attach, both of which need a terminal to attach; fall
   # through to the listing branch so the message matches the multi-candidate
   # no-fzf case instead of failing hard from inside the attach helper.
-  if (( $#visible == 1 )) && \
+  if [[ ${_T_RESUME_REQUIRE_PICKER:-} != 1 ]] && (( $#visible == 1 )) && \
      { (( ! hidden_live || $#cands == 1 )) || [[ ! -t 0 || ! -t 1 ]]; } && \
      f=("${(@ps:\t:)visible[1]}") && [[ $f[7] == - || -t 1 ]]; then
     pick=${visible[1]}
@@ -705,6 +725,12 @@ _t_resume() {
   # marked for a slot an earlier mark just took can't have the tmux name —
   # both become hints, not errors, so one stray mark never aborts the batch.
   local -a picks; picks=("${(@f)pick}")
+  # Check the whole selection before the first revive or attachment.
+  for pick in "${(@)picks}"; do
+    f=("${(@ps:\t:)pick}")
+    _t_resume_host_check "${f[7]:-}" "$on_host" "$f[1]" "$f[2]" || return 1
+  done
+  pick=$picks[1]
   if (( $#picks > 1 )); then
     if [[ -n $app ]]; then
       print -u2 -- 't resume --app opens ONE saved conversation — mark a single row.'
@@ -825,7 +851,7 @@ _t_resume() {
       if [[ -t 0 && -t 1 ]]; then
         ssh -t "${REMOTE_HOSTS[$on_host]:-$on_host}" "zsh -lic ${(q):-tmux attach -t $mp_first_session}"
       else
-        echo "Attach with: t session open ${${mp_first_session#dev-}%-*} ${mp_first_session##*-}"
+        echo "Attach with: t session open ${${mp_first_session#dev-}%-*} ${mp_first_session##*-} --host $on_host"
       fi
       return
     fi
@@ -902,7 +928,7 @@ _t_resume() {
       echo "t resume --host: landing on $on_host failed: ${landed:-no output}" >&2
       return 1
     }
-    echo "Landed in $landed on $on_host — attach with: t session open ${${landed#dev-}%-*} ${landed##*-}"
+    echo "Landed in $landed on $on_host — attach with: t session open ${${landed#dev-}%-*} ${landed##*-} --host $on_host"
     return 0
   fi
 
@@ -2511,6 +2537,8 @@ _tbeam_kill_owner() {
       source_agent=$(_dev_agent_of_session "$s")
       _dev_history_record "$sid" "$source_agent" "$source_dir" handoff
       tmux kill-session -t "=$s:" 2>/dev/null && { print -r -- "$s"; return 0; }
+      print -u2 -- "tbeam: could not stop $s; destination was not started"
+      return 2
     fi
   done
   return 1
@@ -2602,7 +2630,7 @@ _tbeam_land() {
       local _br _bs; _br=$(_dev_repo_of_dir "$TB_CWD"); _bs=${_br#*$'\t'}; _br=${_br%%$'\t'*}
       [[ -n $_br && -n $_bs ]] && _dev_worktree_enabled "$_br" && _dev_worktree_create "$_br" "$_bs" "$TB_CWD" >/dev/null || return 1
     fi
-    _dev_worktree_beam_sync "$TB_CWD"
+    _dev_worktree_beam_sync "$TB_CWD" || return 1
   fi
   cd "$land" 2>/dev/null || { echo "tbeam: $land not found on ${HOST:-this host}" >&2; return 1; }
   if [[ "$TB_MODE" == fg ]]; then                # owns this ssh TTY; dies with it
@@ -2694,7 +2722,7 @@ _t_move_pick() {
 _t_beam() {
   # while/shift (not for-in) so -s/--session can consume the following token as
   # its value; the `=`-joined forms (-s=… / --session=…) work too.
-  local fg= detach= pick= all= host= sid_arg= from_host= here=
+  local fg= detach= pick= all= host= sid_arg= from_host= here= host_arg=
   local -a pos=()
   while (( $# )); do
     case "$1" in
@@ -2702,16 +2730,51 @@ _t_beam() {
       -d|--detach)          detach=1 ;;
       -p|--pick)            pick=1 ;;
       -a|--all)             pick=1; all=1 ;;
-      -s|--session|--id)    shift; sid_arg="$1" ;;
-      -s=*|--session=*|--id=*) sid_arg="${1#*=}" ;;
-      --from)               shift; from_host="$1" ;;
-      --from=*)             from_host="${1#*=}" ;;
+      -s|--session|--id)    (( $# > 1 )) && [[ -n $2 && $2 != -* ]] || { print -u2 "tbeam: --session requires a value"; return 2; }; shift; sid_arg="$1" ;;
+      -s=*|--session=*|--id=*) sid_arg="${1#*=}"; [[ -n $sid_arg ]] || { print -u2 "tbeam: --session requires a value"; return 2; } ;;
+      --from)               (( $# > 1 )) && [[ -n $2 && $2 != -* ]] || { print -u2 "tbeam: --from requires a value"; return 2; }; shift; from_host="$1" ;;
+      --from=*)             from_host="${1#*=}"; [[ -n $from_host ]] || { print -u2 "tbeam: --from requires a value"; return 2; } ;;
+      --host)               (( $# > 1 )) && [[ -n $2 && $2 != -* ]] || { print -u2 "tbeam: --host requires a value"; return 2; }; shift; host_arg="$1" ;;
+      --host=*)             host_arg="${1#*=}"; [[ -n $host_arg ]] || { print -u2 "tbeam: --host requires a value"; return 2; } ;;
       --here)               here=1 ;;
       -*)                   echo "tbeam: unknown flag $1" >&2; return 1 ;;
       *)                    pos+=("$1") ;;
     esac
     shift
   done
+
+  [[ -z $here || -z $host_arg ]] || { print -u2 'tbeam: --here and --host are mutually exclusive'; return 2; }
+  [[ -z $fg || -z $detach ]] || { print -u2 'tbeam: --fg and --detach are mutually exclusive'; return 2; }
+  # The controller resolves aliases once. The source owns the stop/push/sync/land
+  # transaction and connects directly to the destination; nothing resumes here.
+  if [[ -n $from_host && -n $host_arg ]]; then
+    local source_target="${REMOTE_HOSTS[$from_host]:-$from_host}"
+    local destination_target="${REMOTE_HOSTS[$host_arg]:-$host_arg}"
+    [[ $source_target != "$destination_target" ]] || { print -u2 'tbeam: source and destination are the same host'; return 2; }
+    local -a relay=("${pos[@]}")
+    if [[ ${relay[1]:-} == <-> ]]; then
+      local relay_repo; relay_repo=$(_t_infer_repo) || { print -u2 'tbeam: name the repository for a numeric slot'; return 1; }
+      relay=("$relay_repo" "${relay[@]}")
+    elif (( ! $#relay )) && [[ -z $all ]]; then
+      local relay_repo; relay_repo=$(_t_infer_repo) && relay+=("$relay_repo")
+    fi
+    relay+=(--host "$destination_target")
+    [[ -n $sid_arg ]] && relay+=(--session "$sid_arg")
+    [[ -n $fg ]] && relay+=(--fg)
+    [[ -n $detach ]] && relay+=(--detach)
+    [[ -n $pick ]] && relay+=(--pick)
+    [[ -n $all ]] && relay+=(--all)
+    local relay_cmd="T_NO_UPDATE_CHECK=1 _T_BEAM_HOST_IS_TARGET=1 T_MOVE_EXPECT_ROW=${(q)${T_MOVE_EXPECT_ROW:-}} _t_beam ${(j: :)${(@q)relay}}"
+    # Selection on the source needs its own terminal, including detached moves.
+    if [[ -t 0 && -t 1 ]]; then
+      ssh -t "$source_target" "zsh -lic ${(q)relay_cmd}"
+    else
+      [[ -n $sid_arg || ${relay[2]:-} == <-> ]] || { print -u2 'tbeam: source selection requires a terminal; name a repo and slot or --session ID'; return 1; }
+      [[ -n $detach ]] || { print -u2 'tbeam: nonterminal moves require --detach'; return 1; }
+      ssh "$source_target" "zsh -lic ${(q)relay_cmd}"
+    fi
+    return
+  fi
 
   # RECEIVE (auto-host): --here is "bring it back" without naming the host — it
   # auto-detects which $REMOTE_HOSTS box the slot is live on (the same probe `t open`
@@ -2771,6 +2834,13 @@ _t_beam() {
   # an optional explicit host. (This is the SEND path; the OTHER way — pull a session
   # FROM a host onto this machine — is `--from <host>`, handled just above.)
   local repo_arg= slot_arg=
+  # With an explicit destination, positionals are repository/slot targets.
+  # Validate on the source host, after relay, so a typo never becomes a host
+  # positional and silently falls back to an unrelated current-session picker.
+  if [[ -n $host_arg && -n ${pos[1]} && ${pos[1]} != <-> && ${pos[1]} != *:* &&
+        -z ${DEV_REPOS[${pos[1]}]:-} ]]; then
+    print -u2 -- "tbeam: unknown repository: ${pos[1]}"; return 1
+  fi
   if [[ -n ${pos[1]} && -n ${DEV_REPOS[${pos[1]}]} ]]; then
     repo_arg=${pos[1]}
     if [[ ${pos[2]} == <-> ]]; then    # numeric → slot, then optional host
@@ -2800,7 +2870,8 @@ _t_beam() {
   else
     host=${pos[1]}
   fi
-  host="${host:-${TBEAM_HOST:-}}"
+  host="${host_arg:-${host:-${TBEAM_HOST:-}}}"
+  [[ ${_T_BEAM_HOST_IS_TARGET:-} == 1 ]] || host="${REMOTE_HOSTS[$host]:-$host}"
   if [[ -z "$host" ]]; then
     echo "tbeam: no host given and TBEAM_HOST is unset (set it in ${T_LOCAL_RC})" >&2
     return 1
@@ -2873,6 +2944,18 @@ _t_beam() {
     fields=("${(@ps:\t:)row}")
     sid=$fields[1]; cwd=$fields[2]; agent=$fields[7]
   fi
+  if [[ -n ${T_MOVE_EXPECT_ROW:-} ]]; then
+    local current_rows matched= current_row
+    current_rows=$(_dev_session_rows --details) || return 1
+    for current_row in "${(@f)current_rows}"; do
+      local -a expected_fields=("${(@ps:\t:)T_MOVE_EXPECT_ROW}") current_fields=("${(@ps:\t:)current_row}")
+      if [[ $sid == "$expected_fields[1]" && $cwd == "$expected_fields[2]" && $agent == "$expected_fields[7]" &&
+            $current_fields[1] == "$sid" && $current_fields[2] == "$cwd" &&
+            $current_fields[3] == "$expected_fields[3]" && $current_fields[7] == "$agent" &&
+            $current_fields[4] == (attached|detached) ]]; then matched=1; break; fi
+    done
+    [[ -n $matched ]] || { print -u2 't remote move: selected session changed or closed; select it again'; return 1; }
+  fi
   if _dev_app_slot_reserved "$cwd"; then
     print -u2 -- "tbeam: $cwd is reserved for the Codex desktop app; close it and release the reservation before moving its conversation"
     return 1
@@ -2880,6 +2963,8 @@ _t_beam() {
   [[ $agent != codex ]] || _dev_codex_rollout_integrity "$sid" || return 1
   [[ $sid == "$self_sid" && -n $self_sid ]] && self_move=1
   [[ -n $self_sid ]] && detach=1                    # no TTY in an agent's tool subprocess to ssh -t into
+  [[ -z $fg || -z $detach ]] || { print -u2 "tbeam: --fg needs a terminal; cannot combine with --detach or run inside an agent"; return 1; }
+  [[ -t 0 && -t 1 || -n $detach ]] || { print -u2 'tbeam: nonterminal moves require --detach'; return 1; }
   # Resume-through-sync for the picker is handled on the FAR side: _tbeam_land materializes
   # a missing per-session worktree from its branch before resuming. Don't rebuild it here —
   # the send path only needs the cwd as a path string (for the transcript rsync + TB_CWD),
@@ -2910,7 +2995,8 @@ _t_beam() {
   #     branch), mirroring tpush's auto-exit. No race here either: claude is
   #     blocked executing this very command, so it can't edit files mid-beam.
   if [[ -z $self_move ]]; then
-    local killed; killed=$(TB_SID=$sid _tbeam_kill_owner)
+    local killed stop_rc; killed=$(TB_SID=$sid _tbeam_kill_owner); stop_rc=$?
+    (( stop_rc < 2 )) || return 1
     if [[ $killed == dev-* ]]; then
       echo "✂ Stopped the local copy ($killed) — moved to $host"
     else
@@ -2924,10 +3010,9 @@ _t_beam() {
         kill -TERM "$fgpid" 2>/dev/null
         _t_wait_for_exit "$fgpid"
         if kill -0 "$fgpid" 2>/dev/null; then
-          # Owner ignored SIGTERM (or is wedged) — warn rather than claim success,
-          # mirroring _dev_adopt_fg: the remote is about to take over, so two live
-          # claudes may briefly share the id and the transcript can interleave.
-          echo "warning: local foreground copy (pid $fgpid) didn't exit; $host resuming anyway — transcript may interleave." >&2
+          # A surviving writer must never race the destination resume.
+          echo "tbeam: local foreground copy (pid $fgpid) did not exit; destination was not started." >&2
+          return 1
         else
           echo "✂ Stopped the local foreground copy (pid $fgpid) — moved to $host"
         fi
@@ -2935,7 +3020,8 @@ _t_beam() {
     fi
   fi
   if ! _dev_worktree_beam_push "$cwd" "$host"; then   # carry uncommitted worktree edits ahead of the move
-    echo "⚠ couldn't fully commit/push $cwd — $host may resume with stale code (the edits stay here)" >&2
+    echo "tbeam: could not commit/push $cwd; destination was not started" >&2
+    return 1
   fi
   _tbeam_sync_transcript "$cwd" "$host" "$agent" "$sid" || return 1
 
@@ -2953,14 +3039,16 @@ _t_beam() {
   fi
 
   # tmux mode, detached: capture the landed session name, print an attach hint.
-  local session
-  session=$(ssh "$host" "TB_CWD=${(q)cwd} TB_SID=${(q)sid} TB_AGENT=${(q)agent} TB_MODE=tmux zsh -lic _tbeam_land" | tail -1)
-  [[ -n $session ]] || { echo "tbeam: landing on $host failed." >&2; return 1; }
+  local session=
+  local landing_output landing_rc
+  landing_output=$(ssh "$host" "TB_CWD=${(q)cwd} TB_SID=${(q)sid} TB_AGENT=${(q)agent} TB_MODE=tmux zsh -lic _tbeam_land"); landing_rc=$?
+  session=${landing_output##*$'\n'}
+  (( landing_rc == 0 )) && [[ $session == dev-?*-<-> ]] || { echo "tbeam: landing on $host failed." >&2; return 1; }
   echo "✓ Running on $host as $session"
   local rest=${session#dev-} repo slot
   slot=${rest##*-}; repo=${rest%-*}
   if [[ -n "${DEV_REPOS[$repo]}" ]]; then
-    echo "  Attach: t session open $repo $slot    (or pull it back: t session move $repo $slot --from $host)"
+    echo "  Attach: t session open $repo $slot --host $host    (or pull it back: t session move $repo $slot --from $host)"
   else
     echo "  Attach: ssh $host -t \"zsh -lic 'tmux attach -t $session'\""
   fi

@@ -1043,6 +1043,26 @@
             "tests/test_resume_app.py::test_resume_cli_retains_terminal_route"
           ],
           "notes": "Explicit terminal destination; preserves existing saved resume behavior."
+        },
+        "host": {
+          "argv": [
+            "session",
+            "resume",
+            "api",
+            "2",
+            "--host",
+            "build"
+          ],
+          "patterns": [
+            "action",
+            "filtered",
+            "multi"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_commands.py::test_resume_host_conflict_is_preflight"
+          ],
+          "notes": "Sends locally discovered saved history to build; any selected live owner on another host is refused before batch mutation with exact remote move guidance. Matching aliases attach in place."
         }
       },
       "native_agents": "Terminal session launch/resume uses the native ~/.local/bin fallback, preserving PATH and shell wrappers; no global PATH changes.",
@@ -1305,6 +1325,27 @@
             "tests/test_move_picker.py::test_explicit_and_current_targets_bypass_picker"
           ],
           "notes": "Inside an agent, an omitted target without --pick/--all moves the current conversation directly."
+        },
+        "relay": {
+          "argv": [
+            "session",
+            "move",
+            "api",
+            "2",
+            "--from",
+            "mini",
+            "--host",
+            "build",
+            "--detach"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_commands.py::test_session_move_relays_directly_with_resolved_aliases"
+          ],
+          "notes": "Controller resolves both host aliases and delegates guarded send to source zsh -lic. Source connects directly to destination via SSH/rsync. Failed stop/push/sync/landing blocks launch; no temporary local resume."
         }
       }
     },
@@ -3029,6 +3070,216 @@
           ]
         }
       }
+    },
+    "remote open": {
+      "patterns": [
+        "single",
+        "action",
+        "filtered",
+        "multi"
+      ],
+      "renderer": "mixed",
+      "scope": "named/current repository, or all repositories outside a checkout; chosen SSH host(s)",
+      "confirmation": "enter",
+      "tests": [
+        "tests/test_remote_commands.py::test_remote_open_resume_delegate_quoted_worker_and_status"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "open"
+          ],
+          "patterns": [
+            "single",
+            "filtered",
+            "multi",
+            "action"
+          ],
+          "read_only": false,
+          "terminal": true,
+          "tests": [
+            "tests/test_remote_commands.py::test_remote_host_picker_requires_explicit_enter_and_cancel"
+          ],
+          "notes": "Single host picker waits for Enter even with one host; missing session uses shared selection on the source/target host. Cancellation returns 130. Empty current-session inventory returns 0 and never starts fresh."
+        },
+        "explicit": {
+          "argv": [
+            "remote",
+            "open",
+            "api",
+            "2",
+            "--host",
+            "build"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_commands.py::test_remote_open_resume_delegate_quoted_worker_and_status"
+          ],
+          "notes": "Explicit targets skip selection and retain ownership/worktree checks; scripts require explicit selections."
+        },
+        "new": {
+          "argv": [
+            "remote",
+            "open",
+            "api",
+            "--host",
+            "build",
+            "--new"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_commands.py::test_remote_open_resume_delegate_quoted_worker_and_status"
+          ]
+        }
+      }
+    },
+    "remote move": {
+      "patterns": [
+        "single",
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "named/current repository, or all repositories outside a checkout; chosen SSH host(s)",
+      "confirmation": "enter",
+      "tests": [
+        "tests/test_remote_commands.py::test_remote_move_selects_current_cross_host_identity_and_destination"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "move"
+          ],
+          "patterns": [
+            "single",
+            "action"
+          ],
+          "read_only": false,
+          "terminal": true,
+          "tests": [
+            "tests/test_remote_commands.py::test_remote_move_selects_current_cross_host_identity_and_destination"
+          ],
+          "notes": "Single host picker waits for Enter even with one host; missing session uses shared selection on the source/target host. Cancellation returns 130."
+        },
+        "explicit": {
+          "argv": [
+            "remote",
+            "move",
+            "api",
+            "2",
+            "--host",
+            "build",
+            "--from",
+            "mini",
+            "--detach"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_commands.py::test_remote_move_selects_current_cross_host_identity_and_destination"
+          ],
+          "notes": "Explicit targets skip selection and retain ownership/worktree checks; scripts require explicit selections."
+        },
+        "all": {
+          "argv": [
+            "remote",
+            "move",
+            "--all"
+          ],
+          "patterns": [
+            "single",
+            "action"
+          ],
+          "read_only": false,
+          "terminal": true,
+          "tests": [
+            "tests/test_remote_commands.py::test_remote_move_selects_current_cross_host_identity_and_destination"
+          ],
+          "notes": "Current local and remote CLI sessions; include attached, exclude desktop and unknown IDs. Preserve host identity and recheck after destination selection and on source."
+        }
+      }
+    },
+    "remote resume": {
+      "patterns": [
+        "single",
+        "action",
+        "filtered",
+        "multi"
+      ],
+      "renderer": "mixed",
+      "scope": "named/current repository, or all repositories outside a checkout; chosen SSH host(s)",
+      "confirmation": "enter",
+      "tests": [
+        "tests/test_remote_commands.py::test_remote_open_resume_delegate_quoted_worker_and_status"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "resume"
+          ],
+          "patterns": [
+            "single",
+            "filtered",
+            "multi",
+            "action"
+          ],
+          "read_only": false,
+          "terminal": true,
+          "tests": [
+            "tests/test_remote_commands.py::test_remote_host_picker_requires_explicit_enter_and_cancel"
+          ],
+          "notes": "Single host picker waits for Enter even with one host; missing session uses shared selection on the source/target host. Cancellation returns 130."
+        },
+        "explicit": {
+          "argv": [
+            "remote",
+            "resume",
+            "api",
+            "2",
+            "--host",
+            "build"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_commands.py::test_remote_open_resume_delegate_quoted_worker_and_status"
+          ],
+          "notes": "Explicit targets skip selection and retain ownership/worktree checks; scripts require explicit selections."
+        },
+        "days": {
+          "argv": [
+            "remote",
+            "resume",
+            "api",
+            "--host",
+            "build",
+            "--days",
+            "all"
+          ],
+          "patterns": [
+            "filtered",
+            "multi",
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_commands.py::test_remote_open_resume_delegate_quoted_worker_and_status"
+          ],
+          "notes": "Discover history ON build with the established saved-history protocol; session resume --host sends locally discovered history instead."
+        }
+      }
     }
   },
   "display_schemas": {
@@ -3123,10 +3374,10 @@
         }
       ],
       "status_marks": {
-        "attached": "\u25cf",
-        "detached": "\u25cb",
-        "active_context": "\u2713",
-        "still_in_progress": "\u21bb"
+        "attached": "●",
+        "detached": "○",
+        "active_context": "✓",
+        "still_in_progress": "↻"
       },
       "layouts": {
         "table": {
@@ -3370,8 +3621,8 @@
         "tests/test_command_behavior.py::test_history_display_contract_preserves_unknowns_preview_and_json"
       ],
       "status_marks": {
-        "saved": "\u00b7",
-        "archived": "\u25a1",
+        "saved": "·",
+        "archived": "□",
         "missing": "!"
       }
     }

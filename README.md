@@ -404,7 +404,10 @@ for a host's login shell.
 | `t session push` / `t session pop` | Move between foreground and detached tmux |
 | `t session resume` / `t session search <query>` | Find and resume saved conversations; search finds Claude transcripts by content, then resumes the selected one |
 | `t session cd [repo] [slot]` / `t session read <repo> [slot]` | Enter a worktree or read its terminal log (`--dump` writes plain output) |
-| `t session move [repo] [slot] --host <host>` | Pick a current session or move an explicit slot; `--from <host>` pulls it here |
+| `t session move [repo] [slot] --host <host>` | Pick a current session or move an explicit slot; `--from <host>` pulls it here or sends directly with `--host` |
+| `t remote open [repo] [slot] [--host <host>]` | Choose a host and attach to an existing session; `--new` starts fresh |
+| `t remote resume [repo] [slot] [--host <host>]` | Choose a host and resume saved history discovered there |
+| `t remote move [repo] [slot] [--from <source>] [--host <dest>]` | Choose a current local/remote conversation and its destination |
 | `t session view-plan` / `t session paste` | View a Claude session plan or pass an attachment |
 | `t session open-app [push\|pull] [repo] [slot]` | Advanced Codex handoff options for macOS, including preview, plan, and thread selection; `t app` is the short form |
 | `t repo list` / `t repo locate <repo>` / `t repo cd <repo>` | List names and paths, print a checkout path, or enter it in the shell |
@@ -446,7 +449,43 @@ or `t session move api --host mini` to select within `api`. Attached and detache
 sessions are included; saved history and desktop reservations are excluded.
 `t session move api 2 --host mini` bypasses selection. Inside an agent, an omitted
 target moves that conversation; add `--pick` to choose another current session.
-Scripts must supply a slot or `--session ID`.
+Scripts must supply a slot or `--session ID` and `--detach`.
+
+Use the `remote` family to choose where to work:
+
+```sh
+t remote open                         # choose a host, then an existing session there
+t remote open api 2 --host mini        # attach to this slot on mini
+t remote open api --host mini --new    # start fresh on mini
+t remote resume api --host mini        # choose saved history discovered on mini
+t remote move                         # choose a current session, then its destination
+t remote move api 2 --from mini --host cloud
+t session move api 2 --from mini --host cloud --detach
+```
+
+Omitting `--host` opens a single host picker showing aliases and SSH targets;
+even one configured host waits for Enter. `remote move` includes current local
+and registered remote Claude/Codex CLI sessions, retains host identity when slot
+names repeat, and rechecks the selected conversation before moving. A named or
+current repository scopes selection; outside a checkout it spans all repositories.
+`--all` widens the move picker. Explicit `--from` plus a slot or `--session ID`
+skips session selection. Esc/Ctrl-C cancels with status 130; an empty current
+session inventory does nothing. Nonterminal invocations require explicit choices.
+
+Combining `--from SOURCE --host DEST` moves directly from SOURCE to DEST through
+the source's guarded transfer path. SOURCE needs working SSH and rsync access to
+DEST, and both must have compatible `t` installations and repository paths.
+The controller never resumes a temporary local copy. Failed ownership, stop,
+worktree push, transcript sync, or landing checks stop the transfer. If a failure
+occurs after stopping the source, its transcript and worktree remain there for
+recovery; the destination is not launched with stale code.
+
+`remote open` browses on the chosen host; an empty inventory does not create a
+session. `--new` explicitly requests a fresh session. `remote resume --host H`
+discovers saved history on H, while `session resume --host H` carries locally
+discovered history to H. A live selection with a different `--host` is refused
+before any batch action and provides an exact `remote move` command. Matching
+host aliases may attach to the existing owner. Desktop resume remains local.
 
 ### Configuration and tools
 
