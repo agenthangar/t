@@ -118,7 +118,7 @@ def test_every_filter_key_survives_long_values(filters, width, profile):
 def test_open_header_keeps_every_column_shortcut_visible(filters, width):
     text = filters.header('open', 0, dict(agent='codex-long-界面'), 17, 'SESSION  TASK', width)
     assert all(filters.display_width(line) <= width for line in text.splitlines())
-    for letter in ('T', 'F', 'A', 'G', 'P', 'D', 'B', 'O', 'R', 'V', 'E', 'W'):
+    for letter in ('T', 'U', 'F', 'A', 'G', 'P', 'D', 'B', 'O', 'R', 'V', 'E', 'W'):
         assert ('^' + letter if width <= 36 else 'Ctrl-' + letter) in text
     assert 'View: unattached' in text and '17 hidden' in text
     if width <= 36:
@@ -140,6 +140,10 @@ def test_open_exclusive_views_combine_column_choices_and_clear(filters, tmp_path
     assert render('all') == ROWS
     monkeypatch.setattr(filters, 'pick_value', lambda *args: ('codex',))
     assert render('pick', 'agent') == ROWS[::2]
+    assert render('first') == []
+    assert render('unattached') == ROWS[::2]
+    assert render('unattached') == ROWS[::2]
+    assert json.loads((root / 'facets.json').read_text())['agent'] == 'codex'
     assert render('first') == []
     monkeypatch.setattr(filters, 'pick_value', lambda *args: None)
     assert render('pick', 'agent') == []  # Esc leaves the existing filter alone.

@@ -291,12 +291,17 @@ commands also report discovery stages. Redirected output and JSON remain quiet.
 `t open`, `t resume`, and `t kill` share the compact resume picker design:
 **Space/Tab marks ✓ and Enter acts on the selection**. A plain green checkmark
 stays readable on the darker cyan focused row, without a colored block.
-In `t open`, **Ctrl-T** shows attached sessions only, **Ctrl-F** restores
-unattached sessions (the default), and **Ctrl-A** shows all sessions. All/default
-also clears column filters. Every column has a searchable value picker:
+In `t open`, **Ctrl-T** shows attached sessions only and **Ctrl-U** shows
+unattached sessions, preserving your other filters. **Ctrl-F** restores defaults
+(unattached, with column filters cleared); **Ctrl-A** shows all and clears filters.
+The attachment views and column filters have these shortcuts:
 
 | Key | Filter |
 | --- | --- |
+| Ctrl-T | Attached only |
+| Ctrl-U | Unattached only (preserve other filters) |
+| Ctrl-F | Defaults (unattached, clear other filters) |
+| Ctrl-A | All (clear filters) |
 | Ctrl-G | Agent |
 | Ctrl-P | In-progress marker |
 | Ctrl-D | CLI/desktop interface |
@@ -307,7 +312,8 @@ also clears column filters. Every column has a searchable value picker:
 | Ctrl-E | Context status |
 | Ctrl-W | Task (working on) |
 
-Enter applies a value; Esc keeps the current filter. “All (clear filter)” clears
+Column shortcuts open a searchable value picker. Enter applies a value;
+Esc keeps the current filter. “All (clear filter)” clears
 that column. Filters combine and keep your search. Narrow headers abbreviate
 Ctrl as `^`, retain every shortcut, and show the active filter count; opening a
 column picker shows its current value. Filters use the current snapshot without
