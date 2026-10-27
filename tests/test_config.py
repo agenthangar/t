@@ -231,6 +231,9 @@ def test_host_verification_offer_skips_empty_or_nonterminal(t_mod, monkeypatch):
 
 @pytest.fixture
 def config_cli(t_mod, tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude"))
     monkeypatch.setattr(t_mod, "CONFIG", str(tmp_path / "config.sh"))
     local = tmp_path / "local"
     local.write_text("# keep me\n")

@@ -118,6 +118,20 @@ the next verification runs. Ctrl-C stops with 130 and reports that configuration
 was already saved. Native SSH owns the restored terminal for each check; no
 fingerprint is automatically accepted. Onboarding uses the same reviewed offer.
 
+Config includes Agent workflow globally and in each repository submenu. Changes to
+stage models, efforts, enabled state and inheritance remain pending until the
+shared review and save. Use recommended defaults explicitly activates an unsaved
+account. The terminal editor is `t config edit --workflow [--repo ALIAS]`; it edits
+only the selected JSON scope and validates before publication. Repository `null`
+resets inheritance. Preserve editor exit status; unchanged and invalid edits write
+nothing. `t config show --workflow [--repo ALIAS]` is read-only effective detail
+with its inheritance source, including recommended defaults for unsaved accounts.
+Neither show mode opens a picker, starts an editor, nor prompts for updates.
+Bare config edit retains its local-shell editor. Edit reusable instructions uses
+the existing profile editor. Saving a workflow updates account-local native Codex
+and Claude instructions with preflight and concurrent-edit checks; it never writes
+tracked repository instructions.
+
 ### Representative screens
 
 ```text

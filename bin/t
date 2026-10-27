@@ -33,6 +33,7 @@ import os
 import plistlib
 import re
 import runpy
+from pathlib import Path
 import secrets
 import select
 import shlex
@@ -2258,6 +2259,74 @@ def _config_hosts(ui, cfg):
                     cfg.mini_host = target
 
 
+def _workflow():
+    return runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_workflow.py"))
+
+
+def _workflow_session(cfg):
+    if not hasattr(cfg, "_workflow_document"):
+        helper = _workflow()
+        document, before = helper["load"]()
+        cfg._workflow_document = document
+        cfg._workflow_initial = copy.deepcopy(document)
+        cfg._workflow_before = before
+        cfg._workflow_activate = False
+    return cfg._workflow_document
+
+
+def _workflow_pending(cfg):
+    return int(hasattr(cfg, "_workflow_document") and
+               (cfg._workflow_activate or cfg._workflow_document != cfg._workflow_initial))
+
+
+def _config_workflow(ui, cfg, repo=None):
+    helper = _workflow()
+    _workflow_session(cfg)
+    repository = os.path.realpath(cfg.repos[repo]) if repo else None
+    while True:
+        policy = helper["effective"](cfg._workflow_document, repository)
+        inherited = repository and repository not in cfg._workflow_document["repositories"]
+        rows = [("enabled", "Staged workflow"), ("edit", "Edit workflow in terminal editor")]
+        if repository:
+            rows.append(("inherit", "Inherit global workflow"))
+        else:
+            rows += [("defaults", "Use recommended defaults"), ("profile", "Edit reusable instructions")]
+        rows.append(("back", "Back"))
+        values = {"enabled": ("enabled" if policy["enabled"] else "disabled") + (" · inherited" if inherited else ""),
+                  "edit": " · ".join(policy[stage]["model"] for stage in ("planning", "implementation", "review"))}
+        choice = ui.pick("Agent workflow" + (f" · {repo}" if repo else " · global"), rows, values=values)
+        if choice in (None, "back"):
+            return
+        if choice == "inherit":
+            cfg._workflow_document = helper["update"](cfg._workflow_document, None, repository)
+        elif choice == "defaults":
+            cfg._workflow_document["global"] = copy.deepcopy(helper["DEFAULT"])
+            cfg._workflow_activate = cfg._workflow_before is None
+        elif choice == "enabled":
+            value = ui.pick("Staged workflow", [("1", "Enabled"), ("0", "Disabled")],
+                            default=0 if policy["enabled"] else 1)
+            if value is not None:
+                policy["enabled"] = value == "1"
+                cfg._workflow_document = helper["update"](cfg._workflow_document, policy, repository)
+                cfg._workflow_activate = cfg._workflow_before is None
+        else:
+            ui.restore()
+            try:
+                if choice == "profile":
+                    _instructions_init()
+                    rc = _instructions_edit()
+                else:
+                    rc, document = helper["edit"](cfg._workflow_document, repository)
+                    if not rc:
+                        cfg._workflow_document = document
+                if rc:
+                    ui.done("editor", f"Editor exited with status {rc}; workflow unchanged.")
+            except (OSError, ValueError) as exc:
+                ui.done("invalid", str(exc))
+            finally:
+                ui.raw()
+
+
 def _config_repos(ui, cfg):
     repo = None
     while True:
@@ -2293,7 +2362,7 @@ def _config_repos(ui, cfg):
             continue
         action = ui.pick(f"Repository · {repo}", [
             ("alias", "Short name"), ("mode", "Opening mode"),
-            ("path", "Path"), ("tool", "Tool"), ("branch", "Shared-tree branch"), ("worktree", "Worktrees"),
+            ("path", "Path"), ("tool", "Tool"), ("workflow", "Agent workflow"), ("branch", "Shared-tree branch"), ("worktree", "Worktrees"),
             ("remove", "Unregister (keep files and sessions)"), ("back", "Back")],
             values={"mode": {"cli": "CLI", "app": "Desktop app (Codex, macOS)"}.get(cfg.open_mode.get(repo), "inherit default"), "alias": repo, "path": _tilde(cfg.repos[repo]), "tool": cfg.agents.get(repo) or "inherit default",
                     "branch": cfg.branches.get(repo) or "inherit default",
@@ -2311,6 +2380,8 @@ def _config_repos(ui, cfg):
                     repo = value
                 except ValueError as exc:
                     ui.done("invalid", str(exc))
+        elif action == "workflow":
+            _config_workflow(ui, cfg, repo)
         elif action == "path":
             value = _config_input(ui, "repo path", cfg.repos[repo], "path")
             if value is not None:
@@ -2406,6 +2477,7 @@ def _host_verify_offer(targets):
 
 def _config_wizard(cfg):
     ui = _RailUI()
+    _workflow_session(cfg)
     edited = copy.deepcopy(cfg)
     initial = _config_state(cfg)
     catalogs = {}
@@ -2424,9 +2496,9 @@ def _config_wizard(cfg):
                 if edited.fast.get(a) == "1":
                     values[a] += " · fast"
             rows += [("hosts", "Hosts"), ("repos", "Repositories"), ("beam", "Default beam host"),
-                     ("worktrees", "Worktrees & branches"), ("edit", "Open config in editor"),
+                     ("worktrees", "Worktrees & branches"), ("workflow", "Agent workflow"), ("edit", "Open config in editor"),
                      ("save", "Save changes"), ("cancel", "Cancel")]
-            pending = len(_config_diff(initial, _config_state(edited)))
+            pending = len(_config_diff(initial, _config_state(edited))) + _workflow_pending(edited)
             values.update({"hosts": f"{len(edited.hosts)} registered",
                            "repos": ", ".join(sorted(edited.repos)) or "none registered",
                            "beam": edited.beam_host or "none", "save": f"{pending} pending"})
@@ -2448,7 +2520,7 @@ def _config_wizard(cfg):
                     return None
             last = choice
             if choice == "edit":
-                if _config_diff(initial, _config_state(edited)):
+                if pending:
                     ui.done("pending", "Save or cancel your menu changes before opening the editor.")
                     continue
                 return "edit"
@@ -2463,7 +2535,10 @@ def _config_wizard(cfg):
                 except ValueError as exc:
                     ui.done("invalid", str(exc))
                     continue
-                if changes:
+                if _workflow_pending(edited):
+                    lines += ["      Agent workflow and native Codex/Claude instructions:"]
+                    lines += ["      " + line for line in _workflow()["encode"](edited._workflow_document).splitlines()]
+                if changes or _workflow_pending(edited):
                     answer = ui.page("Review local settings", lines, ("enter", "y", "n", "q", "esc", "abort"),
                                      keys="y save · n / esc / q back", primary=("enter", "SAVE CHANGES", f"{pending} pending"))
                     if answer not in ("enter", "y"):
@@ -2473,6 +2548,8 @@ def _config_wizard(cfg):
                 _config_hosts(ui, edited)
             elif choice == "repos":
                 _config_repos(ui, edited)
+            elif choice == "workflow":
+                _config_workflow(ui, edited)
             elif choice == "worktrees":
                 _config_worktrees(ui, edited)
             elif choice == "beam":
@@ -2599,8 +2676,41 @@ def cmd_repos(cfg, args):
 
 
 def cmd_config(cfg, args):
-    if getattr(args, "onboard", False):
+    if getattr(args, "onboard", False) and not (getattr(args, "workflow", False) or getattr(args, "workflow_repo", None)):
         return _onboarding()["run"](cfg, globals(), force=True)
+    if getattr(args, "workflow", False) or getattr(args, "workflow_repo", None):
+        try:
+            if not getattr(args, "workflow", False) or not (args.show or getattr(args, "edit", False)):
+                raise ValueError("use t config show --workflow or t config edit --workflow [--repo ALIAS]")
+            repository = None
+            alias = getattr(args, "workflow_repo", None)
+            if alias:
+                if alias not in cfg.repos:
+                    raise ValueError(f"unknown registered repository {alias!r}")
+                repository = os.path.realpath(cfg.repos[alias])
+            helper = _workflow()
+            document, before = helper["load"]()
+            if args.show:
+                print(helper["encode"]({"scope": repository or "global",
+                      "source": "repository override" if repository in document["repositories"] else "global" if before else "recommended defaults (not saved)",
+                      "workflow": helper["effective"](document, repository)}), end="")
+                return 0
+            if not sys.stdin.isatty() or not sys.stdout.isatty():
+                raise ValueError("open the workflow editor in a terminal")
+            rc, after = helper["edit"](document, repository)
+            if rc:
+                return rc
+            if after == document:
+                print("Workflow unchanged — nothing written")
+            else:
+                helper["save"](after, before)
+                print("✓ saved agent workflow and native instructions")
+            return 0
+        except (OSError, ValueError) as exc:
+            print(f"t config: {exc}", file=sys.stderr)
+            return 1
+        except KeyboardInterrupt:
+            return 130
     if args.show:
         print("\n".join(_config_summary(cfg.agent_default, cfg.models, cfg.agents)))
         for agent in AGENTS:
@@ -2614,6 +2724,15 @@ def cmd_config(cfg, args):
         for alias, repo_path in sorted(cfg.repos.items()):
             print(f"Repo {alias}: {repo_path} · tool: {cfg.agents.get(alias) or 'inherit'} · "
                   f"opening mode: {cfg.open_mode.get(alias) or 'inherit'} · branch: {cfg.branches.get(alias) or 'inherit'} · worktrees: {cfg.worktree.get(alias) or 'inherit'}")
+        try:
+            helper = _workflow()
+            document, stored = helper["load"]()
+            print("Agent workflow: " + ("enabled" if document["global"]["enabled"] else "disabled") +
+                  ("" if stored else " · recommended defaults (not saved)") +
+                  f" · {len(document['repositories'])} repository overrides; t config show --workflow for details")
+        except (OSError, ValueError) as exc:
+            print(f"t config: {exc}", file=sys.stderr)
+            return 1
         return 0
     if not sys.stdin.isatty() or not sys.stdout.isatty():
         print("t config: open this menu in a terminal; t config --show prints current settings",
@@ -2625,6 +2744,7 @@ def cmd_config(cfg, args):
         result = "edit" if getattr(args, "edit", False) else _config_wizard(cfg)
         if result is None:
             return 130
+        shell_changed, workflow_changed = result == "edit", False
         if result == "edit":
             rc = _config_editor()
             if rc:
@@ -2633,17 +2753,34 @@ def cmd_config(cfg, args):
         else:
             current = _config_state(cfg)
             changes = _config_diff(current, _config_state(result))
-            if not changes:
+            shell_changed = bool(changes)
+            workflow_changed = _workflow_pending(result)
+            if not changes and not workflow_changed:
                 print("Settings unchanged — nothing written")
                 return 0
             after = _config_text(before, changes, current)
-            _config_write(_current_local_rc(), before, after)
+            if workflow_changed:
+                helper = _workflow()
+                extra = []
+                if changes:
+                    target = Path(os.path.realpath(_current_local_rc()))
+                    local_before = helper["snapshot"](target)
+                    if (local_before[0] if local_before else "") != before:
+                        raise ValueError("local config changed while editing; retry")
+                    extra.append((target, local_before, after))
+                helper["save"](result._workflow_document, result._workflow_before, extra)
+            else:
+                _config_write(_current_local_rc(), before, after)
             targets = _host_new_targets(cfg.hosts, result.hosts)
     except (OSError, ValueError) as exc:
         print(f"t config: {exc}", file=sys.stderr)
         return 1
     except KeyboardInterrupt:
         return 130
+    if workflow_changed:
+        print("✓ saved agent workflow and native instructions")
+    if not shell_changed:
+        return 0
     zsh_capture("_t_sync_config")
     print("✓ saved local settings to T_LOCAL_RC")
     try:
@@ -10827,10 +10964,15 @@ REMOTE SESSIONS
             "Removed hosts stop participating in remote t commands; unregistering repos keeps their files "
             "and sessions. Tool/model/effort/speed defaults apply to fresh tmux and --fg sessions only. "
             "Open local config in editor covers all custom shell settings (VISUAL/EDITOR, else vi). "
+            "Agent workflow configures global or repository staged-model instructions. "
+            "Use `t config edit --workflow [--repo ALIAS]` for its JSON editor and "
+            "`t config show --workflow [--repo ALIAS]` for read-only effective values. "
             "For a reusable AGENTS.md profile, run `t profile init`.")
     cg = sp.add_mutually_exclusive_group()
     cg.add_argument("--show", action="store_true", help="print current settings without opening the menu")
     cg.add_argument("--edit", action="store_true", help="open T_LOCAL_RC in VISUAL/EDITOR directly")
+    sp.add_argument("--workflow", action="store_true", help="show or edit staged agent workflow preferences")
+    sp.add_argument("--repo", dest="workflow_repo", metavar="ALIAS", help="registered repository override for --workflow; omit for global")
     cg.add_argument("--onboard", action="store_true",
                     help="review guided setup, see signed-in agents and choose optional sign-ins, discover local/GitHub repos "
                          "and Tailscale hosts; offer native SSH verification after saving, or defer until later; terminal only. "
@@ -11151,11 +11293,12 @@ def _print_command_help(target, words, canonical, *, detailed=False):
         }
         if action in mode_actions.get(group, set()):
             args = " <repo>" if (group, action) == ("profile", "apply") else ""
-            flags = " [--defaults]" if group == "policy" and action in ("check", "apply") else ""
+            flags = " [--defaults]" if group == "policy" and action in ("check", "apply") else " [--workflow [--repo ALIAS]]" if group == "config" and action in ("show", "edit") else ""
             print(f"usage: t {group} {action}{args}{flags} [-h]\n\n"
                   f"{_command_description(group, action)}.\n\n"
                   "options:\n  -h, --help  show this help message and exit" +
-                  ("\n  --defaults  seed agent defaults where absent" if flags else ""))
+                  ("\n  --defaults  seed agent defaults where absent" if flags == " [--defaults]" else
+                   "\n  --workflow  show or edit staged agent workflow preferences\n  --repo ALIAS  registered repository override; omit for global" if flags else ""))
             return
     if words == canonical:
         target.print_help()

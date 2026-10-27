@@ -172,6 +172,10 @@
     "libexec/t_advisory_service.py:enable:subprocess.Popen": {
       "kind": "background",
       "reason": "Explicit opt-in starts a detached periodic worker without waiting for advisory requests."
+    },
+    "libexec/t_workflow.py:edit:subprocess.call": {
+      "kind": "passthrough",
+      "reason": "The configured terminal editor owns input and rendering until it exits."
     }
   },
   "shell": [

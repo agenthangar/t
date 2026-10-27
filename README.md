@@ -839,6 +839,38 @@ It registers only on this machine and leaves the GitHub repository and its setti
 unchanged. If the remote has no `main` branch, checkout succeeds with a warning:
 `t session open` needs a fetched `origin/main` to create task worktrees.
 
+Configure the staged model workflow in `t config open` → **Agent workflow**.
+Choose **Use recommended defaults** to activate planning with `gpt-6-astra`,
+implementation with `gpt-6.1-sol`, and review with `gpt-6-astra`, or enable/disable
+and customize each stage. Planning and implementation effort default to complexity-based
+choices; review defaults to one supported effort level below planning. Repository
+settings include **Agent workflow** for a complete override or **Inherit global workflow**.
+These choices stay pending until **Save changes**; cancellation discards them.
+
+Use `t config edit --workflow` for the global workflow's JSON terminal editor,
+or `t config edit --workflow --repo api` for a registered repository override.
+Set `enabled`, and each stage's `model` and `effort`. Planning and implementation
+accept `auto` or an explicit effort (`minimal`, `low`, `medium`, `high`, `xhigh`,
+`max`, `ultra`); review accepts an explicit effort or `one-level-lower`.
+Set a repository editor's whole document to `null` to inherit global settings.
+The editor uses `VISUAL`, then `EDITOR`, then `vi`; unchanged edits, invalid JSON,
+and unsuccessful editor exits publish nothing. Bare `t config edit` still edits
+local shell configuration. **Edit reusable instructions** opens the existing
+`t profile edit` profile for prose customization.
+
+`t config show --workflow [--repo api]` prints effective values and their source
+without writing or prompting. Unsaved accounts show recommended defaults until
+explicitly activated. Preferences live in `${XDG_CONFIG_HOME:-~/.config}/t/workflow.json`.
+Saving synchronizes a separate managed block in Codex's `AGENTS.md` (and existing
+nonempty `AGENTS.override.md`) and Claude's `CLAUDE.md`, honoring `CODEX_HOME` and
+`CLAUDE_CONFIG_DIR`. Personal prose and t's public-issue block are preserved;
+malformed managed blocks, symlinks, and concurrent edits are refused. Repository
+overrides follow the canonical checkout and its linked worktrees, including new
+worktrees. These agent instructions apply in terminal and desktop sessions; t
+does not switch models or enforce their execution. Task instructions and
+repository rules remain authoritative. Reinstalling refreshes saved workflows
+without activating the defaults for other accounts.
+
 For preferred agent instructions, run `t profile init` to create an editable
 profile at `${XDG_CONFIG_HOME:-~/.config}/t/instructions.md`, then
 `t profile edit` to tailor its model, local preview, and pull request sections.

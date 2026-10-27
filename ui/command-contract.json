@@ -2175,7 +2175,8 @@
         "tests/test_config.py::test_config_register_suggests_path_and_alias_and_can_cancel",
         "tests/test_config.py::test_config_host_rename_review_save_or_discard",
         "tests/test_config.py::test_config_verification_delta_is_offered_after_save_and_sync",
-        "tests/test_config_hosts_pty.py::test_saved_host_verification_uses_native_cooked_terminal"
+        "tests/test_config_hosts_pty.py::test_saved_host_verification_uses_native_cooked_terminal",
+        "tests/test_workflow.py::test_menu_workflow_save_and_cancel"
       ],
       "modes": {
         "default": {
@@ -2190,7 +2191,8 @@
           "tests": [
             "tests/test_config.py::test_config_menu_save_then_cancel",
             "tests/test_config.py::test_config_register_suggests_path_and_alias_and_can_cancel",
-            "tests/test_config.py::test_config_host_rename_review_save_or_discard"
+            "tests/test_config.py::test_config_host_rename_review_save_or_discard",
+            "tests/test_workflow.py::test_menu_workflow_save_and_cancel"
           ],
           "notes": "Suggest unique host short names on addition; allow host renaming with defaults preserved and review before saving."
         },
@@ -2242,7 +2244,8 @@
       "scope": "local machine",
       "confirmation": "none",
       "tests": [
-        "tests/test_config.py::test_config_bridge_reads_model_defaults"
+        "tests/test_config.py::test_config_bridge_reads_model_defaults",
+        "tests/test_workflow.py::test_cli_workflow_show_edit_and_validation"
       ],
       "modes": {
         "default": {
@@ -2258,18 +2261,52 @@
             "tests/test_config.py::test_config_bridge_reads_model_defaults",
             "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
           ]
+        },
+        "workflow": {
+          "argv": [
+            "config",
+            "show",
+            "--workflow"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_workflow.py::test_cli_workflow_show_edit_and_validation"
+          ],
+          "notes": "Read-only effective workflow and inheritance source; never writes, prompts, or opens an editor."
+        },
+        "workflow_repository": {
+          "argv": [
+            "config",
+            "show",
+            "--workflow",
+            "--repo",
+            "api"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_workflow.py::test_cli_workflow_show_edit_and_validation"
+          ],
+          "notes": "Read-only effective workflow and inheritance source; never writes, prompts, or opens an editor."
         }
       }
     },
     "config edit": {
       "patterns": [
-        "wizard"
+        "wizard",
+        "action"
       ],
       "renderer": "rail",
       "scope": "local machine",
       "confirmation": "review",
       "tests": [
-        "tests/test_command_groups_shell.py::test_legacy_and_grouped_config_edits_reload_the_caller"
+        "tests/test_command_groups_shell.py::test_legacy_and_grouped_config_edits_reload_the_caller",
+        "tests/test_workflow.py::test_cli_workflow_show_edit_and_validation"
       ],
       "modes": {
         "default": {
@@ -2284,6 +2321,38 @@
           "tests": [
             "tests/test_command_groups_shell.py::test_legacy_and_grouped_config_edits_reload_the_caller"
           ]
+        },
+        "workflow": {
+          "argv": [
+            "config",
+            "edit",
+            "--workflow"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_workflow.py::test_cli_workflow_show_edit_and_validation"
+          ],
+          "notes": "Global staged workflow preferences; --repo selects an explicit registered canonical checkout override. Editor validates JSON before saving preferences and native instructions. Unchanged or invalid edits write nothing."
+        },
+        "workflow_repository": {
+          "argv": [
+            "config",
+            "edit",
+            "--workflow",
+            "--repo",
+            "api"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_workflow.py::test_cli_workflow_show_edit_and_validation"
+          ],
+          "notes": "Global staged workflow preferences; --repo selects an explicit registered canonical checkout override. Editor validates JSON before saving preferences and native instructions. Unchanged or invalid edits write nothing."
         }
       }
     },
