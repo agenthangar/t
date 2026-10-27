@@ -2672,7 +2672,7 @@
         "detail"
       ],
       "renderer": "plain",
-      "scope": "local installation",
+      "scope": "local installation; --all includes registered SSH hosts",
       "confirmation": "when_interrupting",
       "tests": [
         "tests/test_update.py::test_update_local_switches_packaged_install_to_updated_main"
@@ -2704,6 +2704,22 @@
           "tests": [
             "tests/test_update_prompt.py::test_manual_check_uses_packaged_helper_without_installing",
             "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
+          ]
+        },
+        "all": {
+          "argv": [
+            "system",
+            "update",
+            "--all"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_update.py::test_update_all_runs_local_then_registered_hosts",
+            "tests/test_update.py::test_update_all_failures_continue",
+            "tests/test_update.py::test_update_all_cancellation_stops_batch"
           ]
         }
       }
