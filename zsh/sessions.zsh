@@ -2512,11 +2512,7 @@ _t_dev() {
   if [[ -z $slot && -z $no_tmux && -t 0 && -t 1 ]] && command -v fzf >/dev/null 2>&1; then
     local open_rc
     _t_open_picker "$repo" "" "" 1; open_rc=$?
-    if (( open_rc == 3 )); then
-      slot=new
-    else
-      (( open_rc == 2 )) || return $open_rc
-    fi
+    (( open_rc == 2 )) || return $open_rc
   fi
 
   # Remote-aware open (auto half): <repo> is a valid key now (cwd-defaulted if bare) and

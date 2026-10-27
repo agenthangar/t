@@ -88,20 +88,22 @@ dev sessions   ● attached/loaded · ✓ active context · ↻ still in progres
 
   reattach: t open <repo> <slot>
 
-Enter open · Esc · Space/Tab mark ✓ · Ctrl-/ details
+Enter open · Esc · Space/Tab mark ■
 Ctrl-A show all · Ctrl-F defaults · 2 hidden
-Alt-N new · Ctrl-T attached: hidden
-  SESSION  WORKING ON  LAST TURN
-▸ ○ api-2  Fix login   2026-10-23 09:41:07 PDT
+Ctrl-T attached: hidden
+  SESSION  WORKING ON
+▸■○ api-2  Fix login
 ```
 
 The rows above illustrate hierarchy and controls, not a fixed column schema.
 List commands print normally; picker headers and marks appear only for selection.
 
-The open picker adds Alt-N to start its existing `--new` flow with the original
-repository and opening flags. It discards marks and works with no matching rows.
-Ctrl-N remains navigation. The shared filtered open profile returns 3 for this
-explicit action; cancellation continues to return 130 without starting work.
+The open picker hides attached CLI and loaded desktop sessions by default.
+Ctrl-T toggles those rows; --attached starts with them visible. There is no
+new-session shortcut or details preview in this picker; use `t open --new`.
+A solid ■ selection marker stays visible beside the focus pointer, separately
+from active-context ✓. All filtered session views display each dedicated filter
+key on its own line on narrow terminals, retaining the hidden count and query.
 
 The kill multi-picker's Enter action confirms every marked session (or the
 focused row), including live local and remote agents; do not prompt again per
@@ -234,18 +236,13 @@ Redirected output retains all columns and complete values: `t ls | cat` or
   ●✓↻ mini api-17 Fix… 09:41
 ```
 
-The filtered multi-selection mode of `t session open` also puts LAST TURN last.
-Its row formatter reserves space for the timestamp before clipping working-on
-text, using the shared Unicode width helpers. Narrow rows use local `MM-DD HH:MM`
-and compact session/status metadata; Ctrl-/ details retain the complete working-on
-text and full timestamp. The shared picker controls and hidden host/session/state
-identity fields remain unchanged. Search includes the full task and metadata even
-when compact rows shorten their presentation. Explicit targets still bypass selection.
-Open and close pickers label their displayed columns in a non-selectable header
-that stays aligned when filters change. Open uses SESSION and WORKING ON in compact
-views, shortened to S and TASK at the smallest width; LAST TURN stays last.
-On short terminals the shared profile removes vertical margins to keep the column
-header, controls, and focused row visible.
+The filtered multi-selection mode of `t session open` prioritizes session identity
+and working-on text. It omits LAST TURN, previews, and the new-session shortcut.
+Compact rows use the shared Unicode width helpers; full task text and metadata
+remain searchable. Hidden host/session/state identity fields remain unchanged.
+Explicit targets still bypass selection. Open and close pickers label displayed
+columns in a non-selectable header preserved across filter changes. Narrow
+filtered views use full height and smaller margins to retain controls and rows.
 
 Printed history appends DATE, BRANCH, PRS, and the full conversation ID after these
 shared columns, retaining
