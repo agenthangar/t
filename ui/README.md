@@ -52,9 +52,23 @@ Bare `t` in a terminal is a first-run wizard or, for configured accounts, a
 repository/session entry screen. The wizard uses `_RailUI` and cooked prompts if
 raw mode is unavailable. `t config onboard` explicitly repeats discovery. Choose
 agents, local checkouts, GitHub organizations/repos, and optional Tailscale peers;
-review commands and configuration changes before applying. GitHub CLI installation
+review commands and configuration changes before applying. Agent sign-in is a
+separate optional checklist after default-agent selection, with no initial marks.
+Only selected, unauthenticated agents are eligible; installing an agent does not
+require signing in. Agent selection uses compact `logged in` labels for authenticated
+agents, visible even at 32 columns. The login checklist shows selected authenticated
+agents as non-selectable context, and review repeats their status. With no eligible
+logins, continue directly to the next applicable step. Back preserves eligible login marks and removes selections
+for agents no longer chosen. Review lists only selected sign-ins and points to
+`t login` for deferred sign-in. GitHub CLI installation
 and sign-in are separate explicit choices before authenticated discovery. Clone
-and remote-host selections start empty. A Tailscale peer is a candidate, not proof
+and remote-host selections start empty. Within setup, q/Esc goes back to the
+previous applicable choice screen, preserving current marks even before Enter;
+empty and inapplicable steps are skipped. Review n/Esc returns to the last
+applicable choice; review q, welcome q/Esc, and Ctrl-C cancel. Revisiting choices
+retains discovery results and does not repeat completed GitHub install/sign-in.
+Selections follow repository paths, GitHub names, and host targets; changing
+organizations removes unavailable clone selections. A Tailscale peer is a candidate, not proof
 of SSH access; registration never starts a remote command. Reuse existing guarded
 session launch and registration paths. Cancellation returns 130 and preserves any
 already completed actions; completion is recorded only after successful setup.
@@ -76,6 +90,15 @@ and default-host references. Changes remain staged until review and save.
 Config quitting with pending edits offers Keep editing (default), Review and
 save, and Discard changes and exit. Review screens keep their primary action
 visible while scrolling.
+
+Config → Hosts → Add host runs fresh Tailscale discovery on each entry and
+offers an explicit Refresh action. The shared single picker shows online Unix
+peers plus manual SSH entry and Back. Match registered and pending targets against
+validated peer names and IP addresses, including `user@host` registrations; retain
+distinct peers with the same short hostname and propose unused aliases. Unavailable
+Tailscale leaves manual entry usable. Selection stages changes until config's
+Save review; discovery never connects to a peer. Explicit `t hosts add <alias>
+<target>` and read-only commands do not discover or prompt.
 
 ### Representative screens
 

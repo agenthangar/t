@@ -141,3 +141,26 @@ def test_dirty_config_ctrl_c_aborts_and_restores_terminal(t_mod, monkeypatch, tm
     assert t_mod.cmd_config(cfg, t_mod.build_parser().parse_args(['config'])) == 130
     assert ui.restored
     assert local.read_text() == '# keep me\n'
+
+
+@pytest.mark.parametrize('key', ['q', 'esc'])
+@pytest.mark.parametrize('multi,keys,expected', [(True, ['space'], ['a']),
+                                                (False, ['j'], 'b')])
+def test_picker_back_snapshots_current_choices_without_accepting(t_mod, key, multi, keys, expected):
+    ui = make_ui(t_mod, [*keys, key])
+    snapshots = []
+    assert ui.pick('Setup', [('a', 'Alpha'), ('b', 'Beta')], multi=multi,
+                   on_back=snapshots.append, back_label='back') is None
+    assert snapshots == [expected]
+    assert any('q/esc back' in line for frame in ui.frames for line in frame)
+    assert any('ctrl-c cancel' in line for frame in ui.frames for line in frame)
+
+
+def test_picker_ctrl_c_cancels_without_back_callback(t_mod):
+    ui = make_ui(t_mod, ['space', 'abort'])
+    snapshots = []
+    with pytest.raises(KeyboardInterrupt):
+        ui.pick('Setup', [('a', 'Alpha')], multi=True, on_back=snapshots.append,
+                back_label='cancel')
+    assert snapshots == []
+    assert any('q/esc cancel' in line for frame in ui.frames for line in frame)
