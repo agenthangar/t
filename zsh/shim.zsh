@@ -790,7 +790,7 @@ _t() {
       return
     fi
     if [[ $group == config && ${words[CURRENT]} == -* ]]; then
-      _values 'legacy flag' --show --edit -h --help
+      _values 'legacy flag' --show --edit --workflow --repo -h --help
       return
     fi
     _describe -t actions 't action' actions
@@ -940,6 +940,9 @@ _t() {
     config/setup)
       if [[ ${words[CURRENT]} == -* ]]; then _values 'flag' --hosts --no-hosts --instructions --no-instructions --dry-run -h --help
       else _files -/; fi ;;   # scan-dir arguments
+    config/show|config/edit|config/--show|config/--edit)
+      if [[ ${words[CURRENT-1]} == --repo ]]; then _values 'repo' ${(k)DEV_REPOS}
+      else _values 'flag' --workflow --repo -h --help; fi ;;
     config/*)
       _values 'flag' -h --help ;;
     repo/add)

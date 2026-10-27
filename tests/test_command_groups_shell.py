@@ -429,3 +429,17 @@ def test_advisory_service_completion(tmp_path):
         'values:enable,disable,status', 'values:--interval-hours,-h,--help',
         'message:refresh interval in hours (1–720)',
     ]
+
+
+@pytest.mark.skipif(not shutil.which("zsh"), reason="zsh is required")
+def test_workflow_completion_offers_scopes_and_registered_repos(tmp_path):
+    result = shell(tmp_path, '''
+        DEV_REPOS=(api /tmp/api)
+        _values() { print -r -- "values:${(j:,:)argv[2,-1]}"; }
+        local -a words
+        words=(t config show --) CURRENT=4; _t
+        words=(t config edit --workflow --repo '') CURRENT=6; _t
+        words=(t config --show --workflow --repo '') CURRENT=6; _t
+    ''')
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == ["values:--workflow,--repo,-h,--help", "values:api", "values:api"]

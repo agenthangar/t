@@ -280,3 +280,25 @@ def test_install_migrates_standard_hook_names_preserving_options_and_trust(box, 
     assert run_install(checkout, home, T_LINKS_ONLY="1").returncode == 0
     assert [path.read_bytes() for path, _ in paths] == before
     assert config.read_bytes() == trust
+
+
+def test_install_refreshes_only_explicitly_configured_agent_workflow(box):
+    checkout, home = box
+    native = home / '.codex/AGENTS.md'
+    assert run_install(checkout, home).returncode == 0
+    assert '<!-- t agent-workflow: begin -->' not in native.read_text()
+    assert not (home / '.config/t/workflow.json').exists()
+    policy = {'enabled': True, 'planning': {'model': 'chosen-planner', 'effort': 'high'},
+              'implementation': {'model': 'chosen-coder', 'effort': 'medium'},
+              'review': {'model': 'chosen-reviewer', 'effort': 'one-level-lower'}}
+    saved = home / '.config/t/workflow.json'
+    saved.write_text(json.dumps({'version': 1, 'global': policy, 'repositories': {}}))
+    original = native.read_text()
+    result = run_install(checkout, home)
+    assert result.returncode == 0, result.stderr
+    assert native.read_text().startswith(original)
+    assert 'chosen-planner' in native.read_text()
+    assert 'chosen-coder' in (home / '.claude/CLAUDE.md').read_text()
+    assert native.read_text().count('<!-- t public-issues: begin -->') == 1
+    assert native.read_text().count('<!-- t agent-workflow: begin -->') == 1
+    assert not (checkout / 'AGENTS.md').exists()
