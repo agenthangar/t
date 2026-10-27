@@ -586,10 +586,10 @@ def _session_picker_columns(rows, prefixes, statuses, width, heading):
     available = max(1, width - 12)
     prefix_width = max(_display_width(heading), *map(_display_width, prefixes))
     if width < 100 or prefix_width + 18 > available:
-        prefixes = [f"{status.strip()} {row['slot']}" for row, status in zip(rows, statuses)]
+        prefixes = [f"{status.replace(' ', '')} {row['slot']}" for row, status in zip(rows, statuses)]
         heading = 'SESSION'
         prefix_width = max(len(heading), *map(_display_width, prefixes))
-        prefix_width = min(prefix_width, max(1, available // 2 - 2))
+        prefix_width = min(prefix_width, max(1, available - 10))
     heading = clip(heading, prefix_width)
     summary_width = max(1, available - prefix_width - 2)
     task_heading = 'WORKING ON' if summary_width >= 10 else 'TASK'

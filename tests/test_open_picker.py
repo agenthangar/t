@@ -296,5 +296,6 @@ def test_open_compact_layout_and_search(t_mod, monkeypatch, capsys, width, remot
     assert all(t_mod._display_width(row[4].rstrip()) <= width - 12 for row in (first, unknown))
     if width < 120:
         assert first[4].startswith('●')
+        assert 'api-2' in first[4]
     if width >= 120:
         assert '⬡ codex' in first[4] and '› cli' in first[4]
