@@ -121,12 +121,15 @@ fingerprint is automatically accepted. Onboarding uses the same reviewed offer.
 Config includes Agent workflow globally and in each repository submenu. Changes to
 stage models, efforts, enabled state and inheritance remain pending until the
 shared review and save. Use recommended defaults explicitly activates an unsaved
-account. The terminal editor is `t config edit --workflow [--repo ALIAS]`; it edits
+account. The terminal editor is `t config workflow edit [--repo ALIAS]`; it edits
 only the selected JSON scope and validates before publication. Repository `null`
 resets inheritance. Preserve editor exit status; unchanged and invalid edits write
-nothing. `t config show --workflow [--repo ALIAS]` is read-only effective detail
-with its inheritance source, including recommended defaults for unsaved accounts.
-Neither show mode opens a picker, starts an editor, nor prompts for updates.
+nothing. `t config workflow list [--repo ALIAS]` is a read-only stage/model/effort table with scope, enabled state, and inheritance
+source, including recommended defaults for unsaved accounts. Add `--json` for
+machine output. Global is the default; `--repo` explicitly selects a registered
+alias, without checkout inference or a picker. List never starts an editor or
+prompts for updates. Bare `t config workflow` shows subgroup help. Hidden
+`config show/edit --workflow` compatibility forms retain their existing behavior.
 Bare config edit retains its local-shell editor. Edit reusable instructions uses
 the existing profile editor. Saving a workflow updates account-local native Codex
 and Claude instructions with preflight and concurrent-edit checks; it never writes
