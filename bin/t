@@ -10132,7 +10132,7 @@ def build_parser():
 
 select several sessions:
   Space/Tab marks ■; Enter opens; Ctrl-A shows all; Ctrl-F restores defaults.
-  Ctrl-T toggles attached sessions; use --new to start a new session.
+  Ctrl-T toggles attached; --new starts fresh.
 
 desktop → CLI:
   %(prog)s api 2 --cli
