@@ -5,7 +5,7 @@ import pytest
 
 def test_registry_covers_the_public_groups(t_mod):
     assert tuple(t_mod.COMMAND_GROUPS) == (
-        "issue", "session", "repo", "cursor", "hosts", "agentcore", "config", "profile", "policy", "agent", "system")
+        "remote", "issue", "session", "repo", "cursor", "hosts", "agentcore", "config", "profile", "policy", "agent", "system")
     for group, actions in t_mod.COMMAND_GROUPS.items():
         for action, legacy in actions.items():
             assert t_mod._canonical_argv([group, action, "payload"]) == [*legacy, "payload"]

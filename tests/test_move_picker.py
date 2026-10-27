@@ -18,7 +18,7 @@ SETUP = r'''
     printf -- '-\t%s\tapi-5\tdetached\tidle\tNo conversation\tclaude\t-\n' "$HOME/code/api"
   }
   rsync() { print -u2 UNEXPECTED_RSYNC; return 99; }
-  ssh() { print -r -- "SSH $*"; }
+  ssh() { print -u2 -r -- "SSH $*"; [[ $* == *_tbeam_land ]] && print dev-api-2; return 0; }
   _dev_worktree_remote_accept() { print -r -- "ACCEPT $*"; }
   _dev_app_slot_reserved() { return 1; }
   _dev_codex_rollout_integrity() { print -r -- "INTEGRITY $*"; }
