@@ -73,6 +73,7 @@ def picker():
                                   capture_output=True, check=check)
 
         def start(empty=False, width=90, height=26, mode='open', shell='/bin/sh', *, hostile_opts=False, profile='filtered', monochrome=False):
+            env.pop('NO_COLOR', None)
             if monochrome:
                 env['NO_COLOR'] = '1'
             rows = ('local\tapi-2\tdetached\tapi  2  ⬡ codex  ○  Alpha completed task\n'
@@ -107,7 +108,7 @@ def picker():
                 picker_cmd = '_t_fzf_multi open "Saved sessions" --delimiter="$(printf "\\t")" --with-nth=-1 --prompt="multi > " < "$HOME/default"'
             prefix = f'. {shlex.quote(str(ROOT / "ui/fzf.sh"))}\n'
             redirect = ' > "$HOME/selected"'
-            if profile == 'public-open':
+            if profile in ('public-open', 'public-open-all', 'public-kill'):
                 from test_open_picker import ROWS
                 shell = 'zsh -f'
                 env.update(T_NO_UPDATE_CHECK='1', T_NO_AUTORELOAD='1',
@@ -121,7 +122,10 @@ def picker():
                           + raw + '\n'
                           '_t_dev() { print -r -- "$*" >> "$HOME/selected"; }\n'
                           ': > "$HOME/selected"\n')
-                picker_cmd = 't open api --cli'
+                picker_cmd = 't open --cli' if profile == 'public-open-all' else 't open api --cli'
+                if profile == 'public-kill':
+                    prefix += 'cd "$HOME"\n_dev_kill_completed_labels() { print -rl api-4 web-6; }\n'
+                    picker_cmd = '_dev_kill_pick'
                 redirect = ''  # Public dispatch must see a real terminal on stdout.
             script = (prefix + 'stty -g > "$HOME/terminal-before"\n'
                       + picker_cmd + redirect + '\n'
@@ -363,11 +367,11 @@ def test_open_simple_rows_and_focused_marks(picker, width, height, monochrome):
     keys('Up', 'Space', 'Up')
     screen = wait('2/2 (1)')
     focused = next(line for line in screen.splitlines() if '▸' in line)
-    assert '■' in focused and 'Fir' in focused
+    assert re.search(r'▸\s?✓', focused) and 'Fir' in focused
     keys('Space', 'Up')
     screen = wait('2/2 (0)')
     focused = next(line for line in screen.splitlines() if '▸' in line)
-    assert '■' not in focused and 'Fir' in focused
+    assert not re.search(r'▸\s?✓', focused) and 'Fir' in focused
     # The full task remains searchable beyond the compact display.
     keys('-l', 'progress')
     wait('1/2 (0)')
@@ -385,3 +389,51 @@ def test_open_removed_shortcuts_never_launch_or_preview(picker, empty, source):
     screen = wait(count)
     assert 'Alt-N' not in screen and 'details' not in screen
     assert finish('Escape', status=130) == []
+
+
+@pytest.mark.parametrize('width,height', [(80, 24), (44, 20), (32, 12)])
+@pytest.mark.parametrize('profile', ['public-open-all', 'public-kill'])
+def test_session_pickers_display_every_filter_key(picker, width, height, profile):
+    start, wait, keys, finish = picker
+    start(profile=profile, width=width, height=height)
+    screen = wait('2/2 (0)')
+    for key in ('Ctrl-T', 'Ctrl-G', 'Ctrl-D', 'Ctrl-O', 'Ctrl-R', 'Ctrl-A', 'Ctrl-F'):
+        assert key in screen, screen
+    assert 'UI: all' in screen and 'repo: all' in screen and 'host: all' in screen
+    if profile == 'public-kill':
+        assert 'Ctrl-P pending: hidden' in screen
+    assert '▸' in screen and 'hidden' in screen
+    assert finish('Escape', status=130) == []
+
+
+def test_public_open_facet_keys_combine_and_clear_hidden_marks(picker):
+    start, wait, keys, finish = picker
+    start(profile='public-open-all')
+    wait('2/2 (0)')
+    keys('C-g')
+    wait('agent: claude')
+    wait('1/1 (0)')
+    keys('C-d', 'C-d')
+    wait('UI: desktop')
+    wait('0/0 (0)')
+    keys('C-g')
+    wait('agent: codex')
+    wait('1/1 (0)')
+    keys('C-o', 'C-r')
+    wait('host: local')
+    wait('repo: api')
+    keys('C-f')
+    wait('2/2 (0)')
+    keys('-l', 'First')
+    wait('0/2 (0)')
+    keys('C-t')
+    wait('1/4 (0)')
+    keys('Space')
+    wait('1/4 (1)')
+    keys('C-d', 'C-d')
+    wait('0/1 (0)')
+    keys('C-a')
+    screen = wait('1/4 (0)')
+    assert 'open > First' in screen
+    assert 'agent: all' in screen and 'UI: all' in screen
+    assert finish() == ['api 2 --local']

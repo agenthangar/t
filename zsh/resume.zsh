@@ -669,7 +669,7 @@ _t_resume() {
      f=("${(@ps:\t:)visible[1]}") && [[ $f[7] == - || -t 1 ]]; then
     pick=${visible[1]}
   elif [[ -t 0 && -t 1 ]] && command -v fzf >/dev/null; then
-    pick=$(T_PICKER_SESSION_FILTERS=resume _t_fzf_filtered "$(print -rl -- "${(@)inactive}")" \
+    pick=$(T_PICKER_SOURCE_ROWS="${(F)cands}" T_PICKER_SESSION_FILTERS=resume _t_fzf_filtered "$(print -rl -- "${(@)inactive}")" \
       "$(print -rl -- "${(@)cands}")" resume inactive "$legend" "$show_all" \
       --delimiter=$'\t' --with-nth=-1 --no-hscroll \
       --prompt="$fprompt") || return $?

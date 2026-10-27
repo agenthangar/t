@@ -2229,7 +2229,7 @@ def test_zsh_resume_picker_shows_the_display_column_for_every_row(zsh, tmp_path)
     assert {row[4:12] for row in rows} == {"✱ claude", "⬡ codex "}
     # the fzf header spells the full legend — every supported tool, not just the ones on screen
     header = (tmp_path / "fzf.log.header").read_text().splitlines()
-    assert header[0] == "Enter resume · Esc · Space/Tab mark ■ · Ctrl-/ details"
+    assert header[0] == "Enter resume · Esc · Space/Tab mark ✓ · Ctrl-/ details"
     assert header[1].startswith("Ctrl-A show all · Ctrl-F defaults")
     assert header[2] == "Ctrl-L live: shown"
     assert header[3].startswith("✱ claude · ⬡ codex · ◆ cursor")
@@ -2627,7 +2627,7 @@ def test_open_local_multi_picker(zsh, tmp_path, tabs):
     assert "new-session" not in calls and "dev-web-3" not in calls
     args = log.read_text()
     assert "--multi" in args and "space:toggle+down" in args
-    assert "Enter open · Esc · Space/Tab mark ■" in args
+    assert "Enter open · Esc · Space/Tab mark ✓" in args
     assert "Ctrl-A show all · Ctrl-F defaults" in args
     assert "Ctrl-T attached: hidden" in args
 

@@ -464,7 +464,7 @@ _t_open_picker() {
     [[ -n ${hidden[$fields[1]/$fields[2]]:-} ]] || visible+=("$row")
   done
   filtered="${(F)visible}"
-  selected=$(T_PICKER_COLUMNS="$columns" T_PICKER_SESSION_FILTERS=open _t_fzf_filtered "$filtered" "$rows" open unattached \
+  selected=$(T_PICKER_SOURCE_ROWS="${(F)candidates}" T_PICKER_COLUMNS="$columns" T_PICKER_SESSION_FILTERS=open _t_fzf_filtered "$filtered" "$rows" open unattached \
     "" "$include_attached" --prompt="open ${repo:+$repo }> " \
     --with-nth=5,4) || return $?
   [[ -n $selected ]] || return 130

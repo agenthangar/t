@@ -1856,7 +1856,7 @@ _dev_kill_pick() {
   fi
 
   local picked
-  picked=$(T_PICKER_COLUMNS="$columns" T_PICKER_SESSION_FILTERS=kill T_PICKER_WITH_ATTACHED="$with_attached" \
+  picked=$(T_PICKER_SOURCE_ROWS="$rows" T_PICKER_COLUMNS="$columns" T_PICKER_SESSION_FILTERS=kill T_PICKER_WITH_ATTACHED="$with_attached" \
     T_PICKER_WITH_PENDING="$with_pending" _t_fzf_filtered "$safe_display" "$display" kill \
     'unattached · no pending work' "$(_dev_agent_legend)" '' \
     --prompt="kill ${repo:+$repo }> " --preview='printf "%s\n" {4}') || return $?

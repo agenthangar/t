@@ -289,13 +289,20 @@ and metadata loading. Open/close session scans, session lists, history, and issu
 commands also report discovery stages. Redirected output and JSON remain quiet.
 
 `t open`, `t resume`, and `t kill` share the compact resume picker design:
-**Space/Tab marks ■ and Enter acts on the selection**. The solid selection mark
-stays visible on the focused row and is distinct from the active-context ✓.
+**Space/Tab marks ✓ and Enter acts on the selection**. A plain green checkmark
+stays readable on the darker cyan focused row, without a colored block.
 **Ctrl-A** shows all sessions; **Ctrl-F** restores the default filters.
 **Ctrl-T** toggles attached sessions in `t open` and `t kill`, **Ctrl-L** toggles
 live sessions in `t resume`, and **Ctrl-P** toggles pending work in `t kill`.
-Every filter key stays visible at narrow terminal widths. Each key keeps your
-search; the header shows active filters and the hidden count.
+**Ctrl-G** cycles agents, **Ctrl-D** cycles CLI/desktop in open/close,
+**Ctrl-O** cycles hosts, and **Ctrl-R** cycles repositories. For example, in
+`t open`, press Ctrl-G to choose Claude or Codex, then Ctrl-D to choose an interface.
+Each key cycles back to all; Ctrl-A and Ctrl-F clear these choices as well as
+restoring the corresponding state filters. Filters combine and keep your search.
+Every key and its current value remain visible at narrow terminal widths.
+These filters narrow the current snapshot; they do not expand an explicit
+repository scope or fetch new sessions. Resume filters host/origin, repository,
+and agent; it does not invent a historical interface.
 The open picker keeps session and task text prominent, without a last-turn
 column, details preview, or new-session shortcut. Start fresh explicitly with
 `t open api --new`. Resume and close retain **Ctrl-/** for full details.
