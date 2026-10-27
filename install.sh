@@ -79,7 +79,7 @@ valid_source() {
     for asset in install.sh t.plugin.zsh local.zsh.example \
         claude/settings.json.example bin/t bin/t-session-start bin/claude-stamp-tmux bin/cursor-beam \
         libexec/t_progress.py libexec/t_shell_setup.py libexec/t_onboarding.py libexec/t_discovery.py \
-        libexec/t_issue.py libexec/t_issue_policy.txt libexec/t_history.py libexec/t_candidates.py libexec/t_session_details.py libexec/t_picker_filters.py \
+        libexec/t_workflow.py libexec/t_issue.py libexec/t_issue_policy.txt libexec/t_history.py libexec/t_candidates.py libexec/t_session_details.py libexec/t_picker_filters.py \
         libexec/t_share.py libexec/t_share_sessions.py \
         libexec/t_share_context.py libexec/t_share_flow.py libexec/t_share_launch.py libexec/t_share_ui.py zsh/share.zsh \
         claude/commands/tpush.md claude/commands/tpop.md \
@@ -136,6 +136,7 @@ link_all
 # Agent instructions apply to new tasks in both terminal and desktop sessions.
 # Preserve user prose and surface files that could not safely be integrated.
 python3 "$T_LINK_SRC/libexec/t_issue.py" --install-workflow
+python3 "$T_LINK_SRC/libexec/t_workflow.py"
 
 # Remove only the retired status line that the old dotfiles installer wrote.
 retire_statusline() {
