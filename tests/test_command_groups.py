@@ -6,9 +6,9 @@ import pytest
 def test_registry_covers_the_public_groups(t_mod):
     assert tuple(t_mod.COMMAND_GROUPS) == (
         "remote", "issue", "session", "repo", "cursor", "hosts", "agentcore", "config", "profile", "policy", "agent", "system")
-    for group, actions in t_mod.COMMAND_GROUPS.items():
-        for action, legacy in actions.items():
-            assert t_mod._canonical_argv([group, action, "payload"]) == [*legacy, "payload"]
+    for path, legacy in t_mod._command_routes():
+        assert t_mod._canonical_argv([*path, "payload"]) == [*legacy, "payload"]
+
 
 
 @pytest.mark.parametrize("argv,legacy", [
@@ -134,18 +134,18 @@ def test_explicit_grouped_update_does_not_prompt_for_another_update(t_mod, monke
 def test_every_advertised_action_has_side_effect_free_help(t_mod, monkeypatch, capsys):
     monkeypatch.setattr(t_mod, "Config", lambda: pytest.fail("help loaded configuration"))
     monkeypatch.setattr(t_mod, "_t_auto_update", lambda argv: pytest.fail("help checked updates"))
-    for group, actions in t_mod.COMMAND_GROUPS.items():
-        for action in actions:
-            assert t_mod.main(["help", group, action]) == 0
-            expected = capsys.readouterr().out
-            assert f"usage: t {group} {action}" in expected
-            assert t_mod.main([group, action, "--help"]) == 0
-            concise = capsys.readouterr().out
-            if (group, action) == ("session", "open"):
-                assert "REMOTE SESSIONS" in expected
-                assert "REMOTE SESSIONS" not in concise
-            else:
-                assert concise == expected
+    for path, _ in t_mod._command_routes():
+        assert t_mod.main(["help", *path]) == 0
+        expected = capsys.readouterr().out
+        assert f"usage: t {' '.join(path)}" in expected
+        assert t_mod.main([*path, "--help"]) == 0
+        concise = capsys.readouterr().out
+        if path == ("session", "open"):
+            assert "REMOTE SESSIONS" in expected
+            assert "REMOTE SESSIONS" not in concise
+        else:
+            assert concise == expected
+
 
 
 @pytest.mark.parametrize("words", [["open"], ["session", "open"]])
@@ -193,3 +193,34 @@ def test_literal_help_argument_stays_a_repository_name(t_mod, monkeypatch):
     monkeypatch.setitem(t_mod.IMPLEMENTED, "repos", lambda cfg, args: seen.append(args.repo) or 0)
     assert t_mod.main(["repo", "locate", "--", "--help"]) == 0
     assert seen == ["--help"]
+
+
+@pytest.mark.parametrize("argv", [
+    ["config", "workflow"], ["config", "workflow", "--help"],
+    ["help", "config", "workflow"],
+])
+def test_nested_resource_help_does_not_load_config(t_mod, monkeypatch, capsys, argv):
+    monkeypatch.setattr(t_mod, "Config", lambda: pytest.fail("subgroup help loaded config"))
+    monkeypatch.setattr(t_mod, "_t_auto_update", lambda argv: pytest.fail("subgroup help updated"))
+    assert t_mod.main(argv) == 0
+    output = capsys.readouterr().out
+    assert "t config workflow <verb>" in output
+    assert "--repo ALIAS" in output and "never inferred" in output
+
+
+@pytest.mark.parametrize("argv", [
+    ["config", "workflow", "unknown"], ["config", "workflow", "list", "--edit"],
+    ["config", "workflow", "edit", "--workflow"],
+])
+def test_nested_invalid_verbs_and_modes_fail_before_config(t_mod, monkeypatch, capsys, argv):
+    monkeypatch.setattr(t_mod, "Config", lambda: pytest.fail("invalid nested command loaded config"))
+    assert t_mod.main(argv) == 2
+    assert "t config workflow" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("flag", ["--show", "--edit", "--workflow", "--onboard"])
+def test_legacy_mode_before_workflow_subgroup_is_rejected(t_mod, monkeypatch, flag):
+    monkeypatch.setattr(t_mod, "Config", lambda: pytest.fail("conflicting command loaded config"))
+    with pytest.raises(SystemExit) as exc:
+        t_mod.main(["config", flag, "workflow", "list"])
+    assert exc.value.code == 2

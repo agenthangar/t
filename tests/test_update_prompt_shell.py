@@ -160,7 +160,8 @@ def test_machine_or_dry_run_command_does_not_prompt(tmp_path, flag):
 
 
 @pytest.mark.skipif(not shutil.which("zsh"), reason="zsh is required")
-@pytest.mark.parametrize("command", ["t config show", "t config --show", "t install --status",
+@pytest.mark.parametrize("command", ["t config show", "t config --show", "t config workflow list",
+                                     "t config workflow list --repo api", "t config workflow list --json", "t install --status",
                                      "t agent install --status"])
 def test_read_only_shell_modes_do_not_prompt(tmp_path, command):
     calls = run_shim(tmp_path, command)

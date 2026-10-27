@@ -437,9 +437,32 @@ def test_workflow_completion_offers_scopes_and_registered_repos(tmp_path):
         DEV_REPOS=(api /tmp/api)
         _values() { print -r -- "values:${(j:,:)argv[2,-1]}"; }
         local -a words
+        words=(t config workflow '') CURRENT=4; _t
+        words=(t config workflow list --) CURRENT=5; _t
+        words=(t config workflow edit --) CURRENT=5; _t
+        words=(t config workflow list --repo '') CURRENT=6; _t
+        words=(t config workflow edit --repo '') CURRENT=6; _t
         words=(t config show --) CURRENT=4; _t
         words=(t config edit --workflow --repo '') CURRENT=6; _t
-        words=(t config --show --workflow --repo '') CURRENT=6; _t
     ''')
     assert result.returncode == 0, result.stderr
-    assert result.stdout.splitlines() == ["values:--workflow,--repo,-h,--help", "values:api", "values:api"]
+    assert result.stdout.splitlines() == [
+        "values:list,edit", "values:--repo,--json,-h,--help", "values:--repo,-h,--help",
+        "values:api", "values:api", "values:-h,--help", "values:api",
+    ]
+
+
+def test_nested_workflow_dispatch_is_owned_by_binary(tmp_path):
+    result = shell(tmp_path, '''
+        _t_install() { print BAD-install; }
+        _t_reload() { print BAD-reload; }
+        t config workflow
+        t config workflow list --repo api
+        t config workflow list --json
+        t config workflow edit --repo api
+    ''')
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == [
+        "bin:<config><workflow>", "bin:<config><workflow><list><--repo><api>",
+        "bin:<config><workflow><list><--json>", "bin:<config><workflow><edit><--repo><api>",
+    ]
