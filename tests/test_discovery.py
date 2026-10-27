@@ -200,6 +200,59 @@ def test_tailscale_only_offers_online_unix_peers_without_connecting(discovery, m
     assert calls == [["tailscale", "status", "--json"]]
 
 
+def test_tailscale_optional_addresses_match_dns_short_names_and_ips(discovery, monkeypatch):
+    monkeypatch.setattr(discovery.shutil, "which", lambda _: "tailscale")
+    peer = {"ID": "build", "HostName": "build", "DNSName": "Build.Tail.Test.",
+            "OS": "linux", "Online": True,
+            "TailscaleIPs": [None, 12, "not an IP", "100.100.1.2",
+                             "fd7a:115c:a1e0:0000:0000:0000:0000:0001", "fd7a:115c:a1e0::1"]}
+    status = {"BackendState": "Running", "Self": {"ID": "self"}, "Peer": {
+        "build": peer,
+        "duplicate": {**peer, "HostName": "BUILD.", "DNSName": "build.tail.test.",
+                      "TailscaleIPs": ["100.100.1.3"]},
+        "self": {**peer, "ID": "self", "DNSName": "self.tail.test"},
+        "offline": {**peer, "Online": False, "DNSName": "offline.tail.test"},
+        "phone": {**peer, "OS": "ios", "DNSName": "phone.tail.test"},
+    }}
+    calls = []
+    monkeypatch.setattr(discovery, "_run", lambda args: calls.append(args) or reply(status))
+    plain, warnings = discovery.tailscale_hosts()
+    assert warnings == []
+    assert plain == [{"alias": "build", "target": "Build.Tail.Test", "online": True, "os": "linux"}]
+    hosts, warnings = discovery.tailscale_hosts(include_addresses=True)
+    assert warnings == []
+    assert hosts == [{**plain[0], "addresses": ["Build.Tail.Test", "build", "100.100.1.2",
+                                               "fd7a:115c:a1e0::1", "100.100.1.3"]}]
+    assert calls == [["tailscale", "status", "--json"], ["tailscale", "status", "--json"]]
+
+
+@pytest.mark.parametrize("name,addresses", [
+    ("bad host", [None, 123, "not an IP", "$(touch nope)"]),
+    ("bad\nhost", "100.100.1.2"),
+    (123, None),
+])
+def test_tailscale_address_metadata_excludes_invalid_names_and_ip_fields(
+        discovery, monkeypatch, name, addresses):
+    peer = {"ID": "peer", "HostName": name, "DNSName": "safe.tail.test.",
+            "OS": "linux", "Online": True, "TailscaleIPs": addresses}
+    monkeypatch.setattr(discovery, "_run", lambda _: reply({
+        "BackendState": "Running", "Peer": {"peer": peer}}))
+    hosts, warnings = discovery.tailscale_hosts(include_addresses=True)
+    assert warnings == []
+    assert hosts[0]["addresses"] == ["safe.tail.test"]
+
+
+def test_tailscale_address_metadata_retains_valid_ip_fallback(discovery, monkeypatch):
+    peer = {"ID": "peer", "HostName": "ip-only", "DNSName": "bad host",
+            "OS": "linux", "Online": True, "TailscaleIPs": ["100.100.1.2", "fd7a:115c:a1e0::2"]}
+    monkeypatch.setattr(discovery, "_run", lambda _: reply({
+        "BackendState": "Running", "Peer": {"peer": peer}}))
+    hosts, warnings = discovery.tailscale_hosts(include_addresses=True)
+    assert warnings == []
+    assert hosts[0]["target"] == "100.100.1.2"
+    assert hosts[0]["addresses"] == ["100.100.1.2", "ip-only", "fd7a:115c:a1e0::2"]
+
+
 @pytest.mark.parametrize("data", ["bad", "[]", '{"BackendState":"Running","Peer":[1]}'])
 def test_tailscale_invalid_and_absent_is_optional(discovery, monkeypatch, data):
     monkeypatch.setattr(discovery, "_run", lambda args: SimpleNamespace(stdout=data))

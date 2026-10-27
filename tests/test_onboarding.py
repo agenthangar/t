@@ -157,7 +157,8 @@ def test_complete_flow_reviews_before_cloning_and_registers_selection(onboarding
                      github_orgs=lambda: (["acme"], []),
                      github_repos=lambda _: ([{"full_name": "acme/web"}], []),
                      tailscale_hosts=lambda: ([{"alias": "mini", "target": "mini.tail.test"}], []))
-    dialog = Choices(["setup", ["claude", "codex"], "codex", [0], ["acme"], [0], [0], "start"])
+    dialog = Choices(["setup", ["claude", "codex"], "codex", ["codex"], [path], ["acme"], ["acme/web"],
+                      ["mini.tail.test"], "start"])
     interactive(monkeypatch, onboarding, dialog, discovery)
 
     def clone(name, target):
@@ -190,7 +191,7 @@ def test_empty_selection_can_finish_and_review_can_return_to_choices(onboarding,
 
 
 def test_review_cancellation_never_installs_or_writes(onboarding, account, monkeypatch, discovery):
-    dialog = Choices(["setup", ["codex"]])
+    dialog = Choices(["setup", ["codex"], ["codex"]])
     dialog.review = lambda _: (_ for _ in ()).throw(onboarding.Aborted())
     interactive(monkeypatch, onboarding, dialog, discovery)
     assert onboarding.run(account.cfg, account.api) == 130
@@ -201,7 +202,7 @@ def test_review_cancellation_never_installs_or_writes(onboarding, account, monke
 def test_partial_failure_keeps_completed_steps_and_no_completion_marker(onboarding, account, monkeypatch, discovery, failure):
     discovery.update(github_orgs=lambda: (["acme"], []),
                      github_repos=lambda _: ([{"full_name": "acme/web"}], []))
-    dialog = Choices(["setup", ["codex"], ["acme"], [0]])
+    dialog = Choices(["setup", ["codex"], [], ["acme"], ["acme/web"]])
     interactive(monkeypatch, onboarding, dialog, discovery)
     if failure == "install":
         account.api["_install_walk"] = lambda _: 1
@@ -235,7 +236,7 @@ def test_existing_clones_and_hosts_are_deduplicated(onboarding, account, discove
         tailscale_hosts=lambda: ([{"alias": "mini", "target": "mini.tail.test"},
                                  {"alias": "taken", "target": "other.tail.test"},
                                  {"alias": "taken", "target": "other.tail.test"}], ["discovery notice"]))
-    dialog = Choices([["claude"], [], ["acme"], [], [0]])
+    dialog = Choices([["claude"], [], ["acme"], [], ["other.tail.test"]])
     plan = onboarding._collect(account.cfg, account.api, dialog, discovery)
     assert plan["clones"] == []
     assert plan["repos"] == []
@@ -368,7 +369,7 @@ def test_aliases_normalize_paths_and_registered_roots_are_discovered(onboarding,
 def test_duplicate_ipv6_host_alias_is_disambiguated(onboarding, account, discovery):
     account.cfg.hosts = {'mini': 'old.tail.test', 'mini-2': 'another.tail.test'}
     discovery['tailscale_hosts'] = lambda: ([{'alias': 'mini', 'target': 'fd7a:115c:a1e0::1'}], [])
-    plan = onboarding._collect(account.cfg, account.api, Choices([[], [0]]), discovery)
+    plan = onboarding._collect(account.cfg, account.api, Choices([[], ["fd7a:115c:a1e0::1"]]), discovery)
     assert plan['hosts'] == [{'alias': 'mini-3', 'target': 'fd7a:115c:a1e0::1'}]
 
 
@@ -378,6 +379,337 @@ def test_first_run_hosts_get_unique_short_names(onboarding, account, discovery):
         {'alias': 'mini.other', 'target': 'other.tail.test'},
         {'alias': '__back__', 'target': 'third.tail.test'},
     ], [])
-    plan = onboarding._collect(account.cfg, account.api, Choices([[], [0, 1, 2]]), discovery)
+    plan = onboarding._collect(account.cfg, account.api, Choices([[], ["mini.tail.test", "other.tail.test", "third.tail.test"]]), discovery)
     assert [host['alias'] for host in plan['hosts']] == ['mini', 'mini-2', '__back__-2']
     assert account.cfg.hosts == {}
+def test_back_skips_empty_steps_and_keeps_pending_host_marks(onboarding, account, discovery):
+    discovery['tailscale_hosts'] = lambda: ([{'alias': 'mini', 'target': 'mini.tail.test'}], [])
+    dialog = Choices([['claude', 'codex'], 'codex', [], onboarding.Back(['mini.tail.test']),
+                      onboarding.Back([]), 'claude', [], ['mini.tail.test']])
+    plan = onboarding._collect(account.cfg, account.api, dialog, discovery)
+    assert plan['agent'] == 'claude'
+    assert plan['hosts'] == [{'alias': 'mini', 'target': 'mini.tail.test'}]
+    assert [label.split()[0] for label, _, _ in dialog.labels] == [
+        'Choose', 'Default', 'Select', 'Optional', 'Select', 'Default', 'Select', 'Optional']
+    assert dialog.labels[5][2]['default'] == 1
+    assert dialog.labels[-1][2]['marked'] == [0]
+    assert account.events == []
+
+
+def test_back_revalidates_default_when_agent_is_deselected(onboarding, account, discovery):
+    discovery['tailscale_hosts'] = lambda: ([{'alias': 'mini', 'target': 'mini.tail.test'}], [])
+    dialog = Choices([['claude', 'codex'], 'codex', [], onboarding.Back([]),
+                      onboarding.Back([]), onboarding.Back('codex'), ['claude'], []])
+    plan = onboarding._collect(account.cfg, account.api, dialog, discovery)
+    assert plan['agent'] == 'claude'
+    assert plan['selected'] == ['claude']
+    assert plan['steps'] == []
+    assert dialog.labels[-2][2]['marked'] == [0, 1]
+
+
+@pytest.mark.parametrize('selected,expected_marks', [(['acme/web'], []), (['beta/web'], [0])])
+def test_changing_orgs_preserves_clone_identity_not_row_number(
+        onboarding, account, discovery, selected, expected_marks):
+    calls = []
+    discovery.update(
+        github_orgs=lambda: (['acme', 'beta'], []),
+        github_repos=lambda org: calls.append(org) or ([{'full_name': f'{org}/web'}], []),
+        tailscale_hosts=lambda: ([{'alias': 'mini', 'target': 'mini.tail.test'}], []))
+    retained = ['beta/web'] if expected_marks else []
+    dialog = Choices([[], ['acme', 'beta'], selected, onboarding.Back([]),
+                      onboarding.Back(selected), ['beta'], retained, []])
+    plan = onboarding._collect(account.cfg, account.api, dialog, discovery)
+    clones = [entry for entry in dialog.labels if entry[0].startswith('Clone')]
+    assert clones[-1][1] == [('beta/web', 'beta/web → /clones/beta-web')]
+    assert clones[-1][2]['marked'] == expected_marks
+    assert [repo['full_name'] for repo in plan['clones']] == retained
+    assert calls == ['acme', 'beta']
+    assert account.events == []
+
+
+def test_completed_github_install_login_and_discovery_are_cached_on_back(
+        onboarding, account, discovery, monkeypatch):
+    states = iter(['missing', 'unavailable'])
+    calls = []
+    discovery.update(
+        github_auth_state=lambda: calls.append('auth') or next(states),
+        github_install_command=lambda: ['brew', 'install', 'gh'],
+        github_orgs=lambda: calls.append('orgs') or (['acme'], []),
+        discover_local=lambda *_: calls.append('local') or [],
+        tailscale_hosts=lambda: calls.append('hosts') or ([{'alias': 'mini', 'target': 'mini.tail.test'}], []))
+    monkeypatch.setattr(onboarding.subprocess, 'run',
+                        lambda argv: calls.append(argv) or SimpleNamespace(returncode=0))
+    dialog = Choices([[], 'install', 'login', [], onboarding.Back(['mini.tail.test']),
+                      onboarding.Back([]), [], [], ['mini.tail.test']])
+    plan = onboarding._collect(account.cfg, account.api, dialog, discovery)
+    assert plan['hosts'] == [{'alias': 'mini', 'target': 'mini.tail.test'}]
+    assert calls == ['local', 'auth', ['brew', 'install', 'gh'], 'auth',
+                     ['gh', 'auth', 'login', '--hostname', 'github.com'], 'orgs', 'hosts']
+    assert len([label for label, _, _ in dialog.labels if label.startswith('Install GitHub')]) == 1
+    assert len([label for label, _, _ in dialog.labels if label.startswith('Connect GitHub')]) == 1
+    assert account.events == []
+
+
+@pytest.mark.parametrize('auth,action', [('missing', 'install'), ('unavailable', 'login')])
+def test_github_skip_can_be_changed_after_back(onboarding, account, discovery, monkeypatch, auth, action):
+    states = iter([auth, 'authenticated'])
+    discovery.update(github_auth_state=lambda: next(states),
+                     github_install_command=lambda: ['brew', 'install', 'gh'],
+                     github_orgs=lambda: (['acme'], []),
+                     tailscale_hosts=lambda: ([{'alias': 'mini', 'target': 'mini.tail.test'}], []))
+    calls = []
+    monkeypatch.setattr(onboarding.subprocess, 'run',
+                        lambda argv: calls.append(argv) or SimpleNamespace(returncode=0))
+    dialog = Choices([[], 'skip', onboarding.Back([]), action, [], []])
+    onboarding._collect(account.cfg, account.api, dialog, discovery)
+    assert dialog.labels[3][2]['default'] == 1
+    assert calls == ([['brew', 'install', 'gh']] if action == 'install' else
+                     [['gh', 'auth', 'login', '--hostname', 'github.com']])
+
+
+def test_first_choice_back_returns_to_welcome_and_retains_edits(onboarding, account, discovery, monkeypatch):
+    dialog = Choices(['setup', onboarding.Back(['codex']), 'setup', ['codex'], []])
+    interactive(monkeypatch, onboarding, dialog, discovery)
+    assert onboarding.run(account.cfg, account.api) == 0
+    assert [label for label, _, _ in dialog.labels].count('Welcome to t') == 2
+    assert dialog.labels[-2][2]['marked'] == [1]
+    assert json.loads(onboarding._marker().read_text())['agent'] == 'codex'
+
+
+def test_back_to_welcome_can_cancel_without_applying(onboarding, account, discovery, monkeypatch):
+    dialog = Choices(['setup', onboarding.Back([]), onboarding.Aborted()])
+    interactive(monkeypatch, onboarding, dialog, discovery)
+    assert onboarding.run(account.cfg, account.api) == 130
+    assert account.events == []
+    assert not onboarding._marker().exists()
+
+
+def test_plain_dialog_back_preserves_selection_and_explains_keys(onboarding, monkeypatch):
+    dialog = onboarding.Dialog({'_RailUI': lambda: (_ for _ in ()).throw(OSError())})
+    prompts = []
+    responses = iter(['q', '\x1b', '', 'n'])
+    monkeypatch.setattr('builtins.input', lambda prompt: prompts.append(prompt) or next(responses))
+    rows = [('a', 'Alpha'), ('b', 'Beta')]
+    with pytest.raises(onboarding.Back) as error:
+        dialog.choose('Multi', rows, multi=True, marked=[1], back=True)
+    assert error.value.selection == ['b']
+    with pytest.raises(onboarding.Back) as error:
+        dialog.choose('Single', rows, default=1, back=True)
+    assert error.value.selection == 'b'
+    assert dialog.choose('Single', rows, default=1, back=True) == 'b'
+    assert not dialog.review([])
+    assert all('Ctrl-C cancels' in prompt for prompt in prompts)
+    assert 'q goes back' in prompts[0] and 'n back / q quit' in prompts[-1]
+
+
+@pytest.mark.parametrize('selection', [['b'], 'b', None])
+def test_rail_dialog_back_keeps_picker_snapshot(onboarding, selection):
+    def pick(*args, **kwargs):
+        assert kwargs['back_label'] == 'back'
+        if selection is not None:
+            kwargs['on_back'](selection)
+        return None
+
+    rail = SimpleNamespace(raw=lambda: None, pick=pick)
+    dialog = onboarding.Dialog({'_RailUI': lambda: rail})
+    with pytest.raises(onboarding.Back) as error:
+        dialog.choose('Selection', [('a', 'Alpha'), ('b', 'Beta')], multi=True, back=True)
+    assert error.value.selection == selection
+
+
+@pytest.mark.parametrize('key,aborts', [('esc', False), ('abort', True), ('q', True)])
+def test_review_escape_goes_back_but_quit_and_ctrl_c_cancel(onboarding, key, aborts):
+    rail = SimpleNamespace(raw=lambda: None, page=lambda *args, **kwargs: key, cols=lambda: 80)
+    dialog = onboarding.Dialog({'_RailUI': lambda: rail})
+    if aborts:
+        with pytest.raises(onboarding.Aborted):
+            dialog.review([])
+    else:
+        assert not dialog.review([])
+
+
+def test_back_from_login_after_install_does_not_repeat_installer(
+        onboarding, account, discovery, monkeypatch):
+    states = iter(['missing', 'unavailable'])
+    discovery.update(github_auth_state=lambda: next(states),
+                     github_install_command=lambda: ['brew', 'install', 'gh'],
+                     discover_local=lambda *_: [{'path': '/code/api'}])
+    calls = []
+    monkeypatch.setattr(onboarding.subprocess, 'run',
+                        lambda argv: calls.append(argv) or SimpleNamespace(returncode=0))
+    dialog = Choices([[], ['/code/api'], 'install', onboarding.Back(), [], 'login'])
+    plan = onboarding._collect(account.cfg, account.api, dialog, discovery)
+    assert plan['repos'] == []
+    assert [label.split()[0] for label, _, _ in dialog.labels] == [
+        'Choose', 'Register', 'Install', 'Connect', 'Register', 'Connect']
+    assert dialog.labels[-2][2]['marked'] == [0]
+    assert calls == [['brew', 'install', 'gh'],
+                     ['gh', 'auth', 'login', '--hostname', 'github.com']]
+
+
+@pytest.mark.parametrize('logins', [[], ['claude'], ['codex'], ['claude', 'codex']])
+def test_agent_logins_are_explicit_empty_by_default_and_only_apply_after_review(
+        onboarding, account, discovery, logins):
+    account.api['_install_probe'] = lambda: {
+        agent: {'version': '1', 'logged_in': False}
+        for agent in account.api['INSTALL_AGENTS']}
+    dialog = Choices([['claude', 'codex'], 'claude', logins])
+    plan = onboarding._collect(account.cfg, account.api, dialog, discovery)
+    label, rows, options = dialog.labels[-1]
+    assert label == 'Select agent logins (none selected by default)'
+    assert rows == [('claude', 'claude'), ('codex', 'codex')]
+    assert options['multi'] and options['marked'] == []
+    assert plan['logins'] == logins
+    assert plan['skipped_logins'] == [agent for agent in ('claude', 'codex') if agent not in logins]
+    assert [step['step'] for step in plan['steps']] == ['login:' + agent for agent in logins]
+    assert account.events == [] and not onboarding._marker().exists() and not account.local.exists()
+    review = '\n'.join(onboarding._review(plan, account.api))
+    assert ('claude auth login' in review) == ('claude' in logins)
+    assert ('codex login' in review) == ('codex' in logins)
+    assert ('Run t login when ready.' in review) == bool(plan['skipped_logins'])
+    assert account.events == []
+    assert onboarding._apply(account.cfg, account.api, discovery, plan) == 0
+    applied = [event[1] for event in account.events if isinstance(event, tuple) and event[0] == 'install']
+    assert applied == ([plan['steps']] if logins else [])
+
+
+@pytest.mark.parametrize('logins', [[], ['codex']])
+def test_missing_agent_can_be_installed_with_or_without_login(onboarding, account, discovery, logins):
+    dialog = Choices([['codex'], logins])
+    plan = onboarding._collect(account.cfg, account.api, dialog, discovery)
+    assert dialog.labels[-1][1] == [('codex', 'codex')]
+    assert dialog.labels[-1][2]['marked'] == []
+    assert [step['step'] for step in plan['steps']] == (
+        ['install:codex', 'login:codex'] if logins else ['install:codex'])
+    assert [step['step'] for step in plan['steps'] if step['interactive']] == (
+        ['login:codex'] if logins else [])
+    assert onboarding._apply(account.cfg, account.api, discovery, plan) == 0
+    assert next(event[1] for event in account.events if isinstance(event, tuple)) == plan['steps']
+
+
+def test_authenticated_agents_skip_the_login_screen(onboarding, account, discovery):
+    dialog = Choices([['claude']])
+    plan = onboarding._collect(account.cfg, account.api, dialog, discovery)
+    assert [label for label, _, _ in dialog.labels] == ['Choose agents to use (missing tools will be installed)']
+    assert plan['logins'] == plan['skipped_logins'] == plan['steps'] == []
+
+
+def test_pending_login_marks_survive_back_before_enter(onboarding, account, discovery):
+    account.api['_install_probe'] = lambda: {
+        agent: {'version': '1', 'logged_in': False}
+        for agent in account.api['INSTALL_AGENTS']}
+    dialog = Choices([['claude', 'codex'], 'codex', onboarding.Back(['codex']), 'claude', ['codex']])
+    plan = onboarding._collect(account.cfg, account.api, dialog, discovery)
+    assert plan['agent'] == 'claude' and plan['logins'] == ['codex']
+    assert dialog.labels[-1][2]['marked'] == [1]
+    assert account.events == []
+
+
+def test_review_back_drops_login_for_deselected_agent_and_retains_other_choice(
+        onboarding, account, discovery):
+    account.api['_install_probe'] = lambda: {
+        agent: {'version': '1', 'logged_in': False}
+        for agent in account.api['INSTALL_AGENTS']}
+    state = {}
+    first = onboarding._collect(account.cfg, account.api,
+                                Choices([['claude', 'codex'], 'codex', ['claude', 'codex']]), discovery, state)
+    assert first['logins'] == ['claude', 'codex']
+    dialog = Choices([onboarding.Back(['claude', 'codex']), onboarding.Back('codex'),
+                      ['codex'], ['codex']])
+    plan = onboarding._collect(account.cfg, account.api, dialog, discovery, state, back=True)
+    assert dialog.labels[-1][1] == [('codex', 'codex')]
+    assert dialog.labels[-1][2]['marked'] == [0]
+    assert plan['selected'] == plan['logins'] == ['codex']
+    assert [step['step'] for step in plan['steps']] == ['login:codex']
+    assert account.events == []
+
+
+def test_agent_plan_rejects_logins_for_unselected_or_authenticated_agents(onboarding, account):
+    assert onboarding._agent_plan(account.api, ['claude'], account.api['_install_probe'](),
+                                  ['claude', 'codex', 'cursor']) == []
+
+
+@pytest.mark.parametrize('logins', [[], ['claude']])
+def test_authenticated_codex_is_visible_but_not_offered_for_login(onboarding, account, discovery, logins):
+    account.api['_install_probe'] = lambda: {
+        agent: {'version': '1', 'logged_in': agent == 'codex'}
+        for agent in account.api['INSTALL_AGENTS']}
+    dialog = Choices([['claude', 'codex'], 'claude', logins])
+    plan = onboarding._collect(account.cfg, account.api, dialog, discovery)
+    agent_rows = dict(dialog.labels[0][1])
+    assert agent_rows['codex'] == 'codex · logged in'
+    assert agent_rows['claude'] == 'claude · installed'
+    label, rows, options = dialog.labels[-1]
+    assert label == 'Select agent logins (none selected by default)'
+    assert rows == [('claude', 'claude')]
+    assert options['context'] == 'Already logged in: codex'
+    assert options['marked'] == []
+    assert plan['authenticated'] == ['codex']
+    assert plan['logins'] == logins
+    assert [step['step'] for step in plan['steps']] == ['login:' + agent for agent in logins]
+    review = '\n'.join(onboarding._review(plan, account.api))
+    assert 'Already logged in: codex' in review
+    assert 'codex login' not in review
+    assert account.events == [] and not onboarding._marker().exists()
+
+
+@pytest.mark.parametrize('selected', [['codex'], ['claude', 'codex']])
+def test_all_authenticated_agents_have_status_without_an_extra_login_screen(
+        onboarding, account, discovery, selected):
+    account.api['_install_probe'] = lambda: {
+        agent: {'version': '1', 'logged_in': True}
+        for agent in account.api['INSTALL_AGENTS']}
+    dialog = Choices([selected, 'codex'] if len(selected) > 1 else [selected])
+    plan = onboarding._collect(account.cfg, account.api, dialog, discovery)
+    assert not any(label.startswith('Select agent logins') for label, _, _ in dialog.labels)
+    assert all(dict(dialog.labels[0][1])[agent] == f'{agent} · logged in' for agent in selected)
+    assert plan['authenticated'] == selected
+    assert plan['logins'] == plan['skipped_logins'] == plan['steps'] == []
+    assert 'Already logged in: ' + ', '.join(selected) in '\n'.join(onboarding._review(plan, account.api))
+    assert account.events == []
+
+
+def test_deselecting_authenticated_agent_clears_login_context_and_review(onboarding, account, discovery):
+    account.api['_install_probe'] = lambda: {
+        agent: {'version': '1', 'logged_in': agent == 'codex'}
+        for agent in account.api['INSTALL_AGENTS']}
+    state = {}
+    first = onboarding._collect(account.cfg, account.api,
+                                Choices([['claude', 'codex'], 'codex', ['claude']]), discovery, state)
+    assert first['authenticated'] == ['codex']
+    dialog = Choices([onboarding.Back(['claude']), onboarding.Back('codex'), ['claude'], ['claude']])
+    plan = onboarding._collect(account.cfg, account.api, dialog, discovery, state, back=True)
+    login_options = [options for label, _, options in dialog.labels if label.startswith('Select agent logins')]
+    assert login_options[0]['context'] == 'Already logged in: codex'
+    assert login_options[-1]['context'] == ''
+    assert plan['authenticated'] == []
+    assert plan['selected'] == plan['logins'] == ['claude']
+    review = '\n'.join(onboarding._review(plan, account.api))
+    assert 'Already logged in:' not in review and 'codex login' not in review
+    assert account.events == []
+
+
+def test_rail_login_context_is_read_only_section_not_a_choice(onboarding):
+    calls = []
+    def pick(label, rows, **options):
+        calls.append((label, rows, options))
+        return ['claude']
+    rail = SimpleNamespace(raw=lambda: None, pick=pick)
+    dialog = onboarding.Dialog({'_RailUI': lambda: rail})
+    assert dialog.choose('Logins', [('claude', 'claude')], multi=True,
+                         context='Already logged in: codex') == ['claude']
+    _, rows, options = calls[0]
+    assert rows == [('claude', 'claude')]
+    assert options['sections'] == {'claude': 'Already logged in: codex'}
+    assert options['marked'] == ()
+
+
+def test_plain_login_context_is_displayed_without_a_selection_number(onboarding, monkeypatch, capsys):
+    dialog = onboarding.Dialog({'_RailUI': lambda: (_ for _ in ()).throw(OSError())})
+    monkeypatch.setattr('builtins.input', lambda _: '1')
+    assert dialog.choose('Logins', [('claude', 'claude')], multi=True,
+                         context='Already logged in: codex') == ['claude']
+    output = capsys.readouterr().out
+    assert 'Already logged in: codex' in output
+    assert '1. claude' in output and '2.' not in output
+    assert output.index('Already logged in: codex') < output.index('1. claude')

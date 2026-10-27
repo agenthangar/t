@@ -26,6 +26,7 @@ import fcntl
 import glob
 import hashlib
 import html
+import ipaddress
 import json
 import math
 import os
@@ -2150,6 +2151,77 @@ def _config_rename_host(cfg, alias, new_alias):
         cfg.mini_host = new_alias
 
 
+def _host_discovery():
+    helper = runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_discovery.py"))
+    return helper["tailscale_hosts"](include_addresses=True)
+
+
+def _host_endpoint(target):
+    host = target.rsplit("@", 1)[-1].strip("[]").rstrip(".").lower()
+    try:
+        return str(ipaddress.ip_address(host))
+    except ValueError:
+        return host
+
+
+def _host_candidates(peers, registered):
+    """Offer new peers without overwriting aliases or duplicating known endpoints."""
+    endpoints = {_host_endpoint(target) for target in registered.values()}
+    aliases = set(registered) | {"__add__", "__back__"}
+    result, seen = [], set()
+    for peer in peers:
+        target = peer["target"]
+        addresses = {_host_endpoint(address) for address in [target, *peer.get("addresses", [])]}
+        if endpoints.intersection(addresses) or _host_endpoint(target) in seen:
+            continue
+        alias = _host_short_name(peer["alias"], aliases)
+        result.append({"alias": alias, "target": target})
+        aliases.add(alias)
+        seen.add(_host_endpoint(target))
+    return result
+
+
+def _config_add_host(ui, cfg):
+    while True:
+        try:
+            peers, warnings = _host_discovery()
+        except (OSError, ValueError):
+            peers, warnings = [], ["Tailscale discovery is unavailable; enter a host manually or refresh."]
+        for warning in warnings:
+            ui.done("Tailscale", warning)
+        candidates = _host_candidates(peers, cfg.hosts)
+        if not candidates and not warnings:
+            ui.done("Tailscale", "No new online Tailscale hosts found.")
+        choices = {"tailscale:" + host["target"]: host for host in candidates}
+        rows = [(key, host["alias"]) for key, host in choices.items()]
+        rows += [("__manual__", "Enter SSH host manually"),
+                 ("__refresh__", "Refresh Tailscale hosts"), ("__back__", "Back")]
+        choice = ui.pick("Add host", rows,
+                         values={key: host["target"] for key, host in choices.items()},
+                         sections={next(iter(choices)): "Online Tailscale peers · SSH not verified",
+                                   "__manual__": "Other choices"} if choices else {},
+                         accents={"__manual__": "g"}, primary=("enter", "SELECT", ""))
+        if choice in (None, "__back__"):
+            return
+        if choice == "__refresh__":
+            continue
+        if choice == "__manual__":
+            target = _config_input(ui, "SSH target", kind="host")
+            if target is None:
+                return
+            alias = _config_input(ui, "short name", _host_short_name(target, cfg.hosts), "alias")
+            if alias is None:
+                return
+            if alias in cfg.hosts or alias in ("__add__", "__back__"):
+                ui.done("invalid", "That alias is already in use or reserved.")
+                return
+        else:
+            alias, target = choices[choice]["alias"], choices[choice]["target"]
+        cfg.hosts[alias] = target
+        ui.done("added", f"{alias} → {target} (pending Save changes)")
+        return
+
+
 def _config_hosts(ui, cfg):
     while True:
         rows = [(h, h) for h in sorted(cfg.hosts)]
@@ -2158,16 +2230,7 @@ def _config_hosts(ui, cfg):
         if host in (None, "__back__"):
             return
         if host == "__add__":
-            target = _config_input(ui, "SSH target", kind="host")
-            if target is None:
-                continue
-            alias = _config_input(ui, "short name", _host_short_name(target, cfg.hosts), "alias")
-            if alias is None:
-                continue
-            if alias in cfg.hosts or alias in ("__add__", "__back__"):
-                ui.done("invalid", "That alias is already in use or reserved.")
-                continue
-            cfg.hosts[alias] = target
+            _config_add_host(ui, cfg)
             continue
         action = ui.pick(f"Host · {host}", [("alias", "Short name"), ("target", "SSH target"),
                           ("beam", "Use as default beam host"), ("remove", "Remove host"),
@@ -2737,13 +2800,15 @@ class _RailUI:
         self.commit([f"  {color}◇  {label}{st.r}", f"      {value}", ""])
 
     def pick(self, label, rows, multi=False, default=0, marked=None,
-             values=None, sections=None, accents=None, primary=None, shortcuts=None):
+             values=None, sections=None, accents=None, primary=None, shortcuts=None,
+             on_back=None, back_label=None):
         """Single/multiple selection on the shared row/frame template.
         Sections are not selectable; optional shortcuts return an action key."""
         values, sections, accents = values or {}, sections or {}, accents or {}
         cur = max(0, min(default or 0, len(rows) - 1))
         marks = set(marked or ())
-        keys = "↑↓/jk move" + (" · space mark" if multi else "") + " · enter select · q back"
+        keys = "↑↓/jk move" + (" · space mark" if multi else "") + " · enter select"
+        keys += (f" · q/esc {back_label} · ctrl-c cancel" if back_label else " · q back")
         flash = ""
         while True:
             display = []
@@ -2773,6 +2838,8 @@ class _RailUI:
             elif k == "abort":
                 raise KeyboardInterrupt
             elif k in ("q", "esc"):
+                if on_back is not None:
+                    on_back([rows[i][0] for i in sorted(marks)] if multi else rows[cur][0])
                 return None
             else:
                 flash = "No binding for that key"
@@ -10633,7 +10700,8 @@ REMOTE SESSIONS
     sp = sub.add_parser("config", help="manage local settings: tools, models, effort, Fast/Ultrafast speed, repos and hosts",
         description="Arrow-key settings hub for this machine: default tool, plus model, effort and speed submenus; "
             "query each CLI for current models and their supported effort levels; "
-            "add, edit or remove hosts; register or unregister repos and set their tool, branch "
+            "add, edit or remove hosts (Add host discovers new Tailscale peers and offers Refresh or manual entry); "
+            "register or unregister repos and set their tool, branch "
             "and worktree overrides; choose the default beam host and worktree defaults. "
             "Save changes reviews then writes a managed block in T_LOCAL_RC. Removed "
             "hosts stop participating in remote t commands; unregistering repos keeps their files "
@@ -10644,7 +10712,9 @@ REMOTE SESSIONS
     cg.add_argument("--show", action="store_true", help="print current settings without opening the menu")
     cg.add_argument("--edit", action="store_true", help="open T_LOCAL_RC in VISUAL/EDITOR directly")
     cg.add_argument("--onboard", action="store_true",
-                    help="review guided setup, discover local/GitHub repos and Tailscale hosts; terminal only")
+                    help="review guided setup, see signed-in agents and choose optional sign-ins, discover local/GitHub repos "
+                         "and Tailscale hosts; terminal only. "
+                         "Choices: q/Esc back; review: n/Esc back, q quit; Ctrl-C cancels")
 
     sp = sub.add_parser("setup", help="register local repos and ssh hosts in T_LOCAL_RC",
         description="Interactive onboarding for this machine's per-machine config: a stepped "

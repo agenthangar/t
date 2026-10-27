@@ -138,6 +138,7 @@ def config_cli(t_mod, tmp_path, monkeypatch):
         {"model": "test-model", "serviceTiers": [{"id": "priority"}], "supportedReasoningEfforts": [{"reasoningEffort": "high"},
                                                                {"reasoningEffort": "ultra"}]}])
     monkeypatch.setattr(t_mod, "zsh_capture", lambda snippet: "")
+    monkeypatch.setattr(t_mod, "_host_discovery", lambda: ([], []))
     return t_mod.Config(), local
 
 
@@ -285,12 +286,198 @@ def test_config_hosts_remove_save_and_cancel(t_mod, config_cli, monkeypatch):
 
 def test_config_hosts_add_edit_and_default(t_mod, config_cli, monkeypatch):
     cfg, local = config_cli
-    ui = Menu(["hosts", "__add__", "lab", "beam", "lab", "target", "__back__", "save"],
+    ui = Menu(["hosts", "__add__", "__manual__", "lab", "beam", "lab", "target", "__back__", "save"],
               ["old.example", "lab", "new.example"])
     monkeypatch.setattr(t_mod, "_RailUI", lambda: ui)
     assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == 0
     text = local.read_text()
     assert "REMOTE_HOSTS[lab]=new.example" in text and "export TBEAM_HOST=new.example" in text
+
+
+def test_host_discovery_loads_current_peers_with_alternative_endpoints(t_mod, monkeypatch):
+    results = iter([([], []), ([{'alias': 'new', 'target': 'new.tail.test',
+                               'addresses': ['100.64.0.3']}], [])])
+    calls = []
+    def discover(*, include_addresses):
+        assert include_addresses is True
+        return next(results)
+    monkeypatch.setattr(t_mod.runpy, 'run_path',
+                        lambda path: calls.append(path) or {'tailscale_hosts': discover})
+    assert t_mod._host_discovery() == ([], [])
+    assert t_mod._host_discovery()[0][0]['addresses'] == ['100.64.0.3']
+    assert len(calls) == 2 and all(path.endswith('/libexec/t_discovery.py') for path in calls)
+
+
+@pytest.mark.parametrize("target", [
+    "mini.tail.test", "user@MINI.TAIL.TEST.", "mini", "dev@100.64.0.3",
+    "user@[FD7A:115C:A1E0::1]",
+])
+def test_host_candidates_exclude_registered_peer_endpoints(t_mod, target):
+    peers = [{"alias": "mini", "target": "mini.tail.test",
+              "addresses": ["mini.tail.test", "mini", "100.64.0.3", "fd7a:115c:a1e0::1"]},
+             {"alias": "new", "target": "new.tail.test", "addresses": ["100.64.0.4"]}]
+    registered = {"existing": target}
+    assert t_mod._host_candidates(peers, registered) == [{"alias": "new", "target": "new.tail.test"}]
+    assert registered == {"existing": target}
+
+
+def test_host_candidates_disambiguate_aliases_without_overwriting(t_mod):
+    peers = [{"alias": "mini", "target": "first.tail.test",
+              "addresses": ["mini", "100.64.0.3"]},
+             {"alias": "mini", "target": "second.tail.test",
+              "addresses": ["mini", "100.64.0.4"]},
+             {"alias": "__add__", "target": "third.tail.test"},
+             {"alias": "__back__", "target": "fourth.tail.test"}]
+    registered = {"mini": "old.tail.test", "mini-2": "older.tail.test"}
+    candidates = t_mod._host_candidates(peers, registered)
+    assert [host['alias'] for host in candidates[:2]] == ['mini-3', 'mini-4']
+    assert len({host['alias'] for host in candidates}) == len(candidates)
+    assert all(host['alias'] not in {*registered, '__add__', '__back__'} for host in candidates)
+    assert [host['target'] for host in candidates] == [host['target'] for host in peers]
+    assert registered == {"mini": "old.tail.test", "mini-2": "older.tail.test"}
+
+
+def test_config_add_host_discovers_new_peers_each_visit(t_mod, config_cli, monkeypatch):
+    cfg, local = config_cli
+    first = {"alias": "first", "target": "first.tail.test"}
+    second = {"alias": "second", "target": "second.tail.test"}
+    results = iter([([first], []), ([first, second], [])])
+    calls, displayed = [], []
+    monkeypatch.setattr(t_mod, "_host_discovery", lambda: calls.append('discover') or next(results))
+    ui = Menu(['__add__', 'tailscale:first.tail.test', '__add__',
+               'tailscale:second.tail.test', '__back__'])
+    pick = ui.pick
+    def record(label, rows, **kwargs):
+        if label == 'Add host':
+            displayed.append(dict(rows))
+        return pick(label, rows, **kwargs)
+    ui.pick = record
+    t_mod._config_hosts(ui, cfg)
+    assert calls == ['discover', 'discover']
+    assert 'tailscale:first.tail.test' in displayed[0]
+    assert 'tailscale:first.tail.test' not in displayed[1]
+    assert 'tailscale:second.tail.test' in displayed[1]
+    assert cfg.hosts == {'first': 'first.tail.test', 'second': 'second.tail.test'}
+    assert local.read_text() == '# keep me\n'
+
+
+def test_config_add_host_refresh_finds_peer_that_appears_while_open(t_mod, config_cli, monkeypatch):
+    cfg, local = config_cli
+    results = iter([([], []), ([{'alias': 'new', 'target': 'new.tail.test'}], [])])
+    calls = []
+    monkeypatch.setattr(t_mod, '_host_discovery', lambda: calls.append('discover') or next(results))
+    ui = Menu(['__add__', '__refresh__', 'tailscale:new.tail.test', '__back__'])
+    t_mod._config_hosts(ui, cfg)
+    assert calls == ['discover', 'discover']
+    assert cfg.hosts == {'new': 'new.tail.test'}
+    assert local.read_text() == '# keep me\n'
+
+
+@pytest.mark.parametrize('back', [None, '__back__'])
+def test_config_add_host_back_returns_to_hosts_without_changes(t_mod, config_cli, monkeypatch, back):
+    cfg, local = config_cli
+    monkeypatch.setattr(t_mod, '_host_discovery',
+                        lambda: ([{'alias': 'new', 'target': 'new.tail.test'}], []))
+    ui = Menu(['__add__', back, '__back__'])
+    t_mod._config_hosts(ui, cfg)
+    assert cfg.hosts == {} and local.read_text() == '# keep me\n'
+
+
+@pytest.mark.parametrize('save', [False, True])
+def test_config_discovered_host_requires_review_and_can_be_discarded(t_mod, config_cli, monkeypatch, save):
+    cfg, local = config_cli
+    before = local.read_bytes()
+    monkeypatch.setattr(t_mod, '_host_discovery',
+                        lambda: ([{'alias': 'new', 'target': 'new.tail.test'}], []))
+    tail = ['save'] if save else ['cancel', 'discard']
+    ui = Menu(['hosts', '__add__', 'tailscale:new.tail.test', '__back__', *tail])
+    reviews = []
+    def review(label, lines, *args, **kwargs):
+        assert local.read_bytes() == before
+        assert cfg.hosts == {}, 'staged host leaked into original config'
+        reviews.append(label)
+        assert any('REMOTE_HOSTS[new]' in line and 'new.tail.test' in line for line in lines)
+        return 'enter'
+    ui.page = review
+    monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
+    assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == (0 if save else 130)
+    assert ui.restored
+    if save:
+        assert reviews == ['Review local settings']
+        assert t_mod._local_entries(local.read_text())[1] == {'new': 'new.tail.test'}
+    else:
+        assert reviews == [] and local.read_bytes() == before
+    assert cfg.hosts == {}
+
+
+def test_config_host_review_back_then_discard_never_writes(t_mod, config_cli, monkeypatch):
+    cfg, local = config_cli
+    before = local.read_bytes()
+    monkeypatch.setattr(t_mod, '_host_discovery',
+                        lambda: ([{'alias': 'new', 'target': 'new.tail.test'}], []))
+    ui = Menu(['hosts', '__add__', 'tailscale:new.tail.test', '__back__',
+               'save', 'cancel', 'discard'], pages=['esc'])
+    monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
+    assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == 130
+    assert local.read_bytes() == before and cfg.hosts == {} and ui.restored
+
+
+def test_config_add_host_unavailable_discovery_keeps_manual_entry(t_mod, config_cli, monkeypatch):
+    cfg, local = config_cli
+    message = 'Tailscale is not connected; hosts can be added later.'
+    monkeypatch.setattr(t_mod, '_host_discovery', lambda: ([], [message]))
+    ui = Menu(['__add__', '__manual__', '__back__'], ['user@lab.local', 'lab'])
+    notices = []
+    ui.done = lambda label, value: notices.append(value)
+    t_mod._config_hosts(ui, cfg)
+    assert message in notices
+    assert cfg.hosts == {'lab': 'user@lab.local'}
+    assert local.read_text() == '# keep me\n'
+
+
+def test_config_add_host_discovery_error_keeps_manual_entry(t_mod, config_cli, monkeypatch):
+    cfg, local = config_cli
+    def unavailable():
+        raise OSError('Tailscale stopped while refreshing')
+    monkeypatch.setattr(t_mod, '_host_discovery', unavailable)
+    ui = Menu(['__add__', '__manual__', '__back__'], ['user@lab.local', 'lab'])
+    t_mod._config_hosts(ui, cfg)
+    assert cfg.hosts == {'lab': 'user@lab.local'}
+    assert local.read_text() == '# keep me\n'
+
+
+@pytest.mark.parametrize('inputs', [('',), ('lab.local', ''), ('lab.local', 'taken'), ('lab.local', '__back__')])
+def test_config_manual_host_cancel_or_conflict_keeps_existing_hosts(t_mod, config_cli, inputs):
+    cfg, local = config_cli
+    cfg.hosts = {'taken': 'old.tail.test'}
+    ui = Menu(['__add__', '__manual__', '__back__'], inputs)
+    t_mod._config_hosts(ui, cfg)
+    assert cfg.hosts == {'taken': 'old.tail.test'}
+    assert local.read_text() == '# keep me\n'
+
+
+def test_config_host_discovery_interrupt_restores_terminal_without_writes(t_mod, config_cli, monkeypatch):
+    cfg, local = config_cli
+    def interrupt():
+        raise KeyboardInterrupt
+    monkeypatch.setattr(t_mod, '_host_discovery', interrupt)
+    ui = Menu(['hosts', '__add__'])
+    monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
+    assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == 130
+    assert ui.restored and cfg.hosts == {} and local.read_text() == '# keep me\n'
+
+
+def test_explicit_host_commands_and_config_show_never_discover(t_mod, config_cli, monkeypatch):
+    cfg, local = config_cli
+    monkeypatch.setattr(t_mod, '_host_discovery', lambda: pytest.fail('explicit command discovered peers'))
+    monkeypatch.setattr(t_mod, '_host_refresh_config', lambda: None)
+    monkeypatch.setattr(t_mod, 'Config', lambda: cfg)
+    assert t_mod.cmd_hosts(cfg, SimpleNamespace(action='add', alias='lab', target='lab.local')) == 0
+    before = local.read_bytes()
+    assert t_mod.cmd_hosts(cfg, SimpleNamespace(action='list', json=True)) == 0
+    assert t_mod.cmd_hosts(cfg, SimpleNamespace(action='show', alias='lab')) == 0
+    assert t_mod.cmd_config(cfg, SimpleNamespace(show=True)) == 0
+    assert local.read_bytes() == before
 
 
 def test_config_repos_edit_overrides_unregister_and_add(t_mod, config_cli, monkeypatch, tmp_path):
@@ -628,7 +815,7 @@ def test_host_short_name_suggestions(t_mod, target, taken, expected):
 
 def test_config_host_first_add_prefills_short_name(t_mod, config_cli):
     cfg, _ = config_cli
-    ui = Menu(['__add__', '__back__'])
+    ui = Menu(['__add__', '__manual__', '__back__'])
     prompts = []
     def answer(prompt, prefill=''):
         prompts.append((prompt, prefill))
