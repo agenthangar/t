@@ -1060,7 +1060,8 @@ _t_remote_host_pick() {
 }
 
 # A source constraint limits scans, so unrelated offline hosts cannot obscure
-# an explicitly named source. Unscoped scans fail closed on any failed host.
+# an explicitly named source. Unscoped browsing keeps reachable candidates;
+# selected-source rechecks and actual transfer ownership checks stay strict.
 _t_remote_move_rows() {
   local source=$1 rows
   if [[ $source == local ]]; then
@@ -1069,7 +1070,7 @@ _t_remote_move_rows() {
     local worker='_dev_session_rows --details'
     rows=$(_dev_remote_scan_with_timeout "${REMOTE_HOSTS[$source]:-$source}" "zsh -lic ${(q)worker}" "${T_REMOTE_SCAN_TIMEOUT:-15}") || return 1
   else
-    _dev_rows_all --details
+    _dev_rows_all --best-effort --details
     return
   fi
   [[ -n $rows ]] && print -r -- "$rows" | awk -v h="$source" 'NF {print h "\t" $0}'

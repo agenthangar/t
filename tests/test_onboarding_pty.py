@@ -267,6 +267,8 @@ def test_hosts_back_preserves_pending_choices_until_review(tmp_path, size, back_
                ('Review setup', b'n'), ('Optional Tailscale', back_key),
                ('Clone repositories', b'\r'), ('Optional Tailscale', b'\r'),
                ('Review setup', b'y' if accept else b'q')]
+    if accept:
+        actions += [('Verify saved SSH hosts?', b'j\r')]
     result, output = run_terminal(command, env, tmp_path, size, actions)
     assert result == (0 if accept else 130), output
     applied = tmp_path / 'applied.json'

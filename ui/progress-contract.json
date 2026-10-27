@@ -25,6 +25,10 @@
       "kind": "passthrough",
       "reason": "The configured editor owns the terminal."
     },
+    "bin/t:_host_verify_targets:subprocess.run": {
+      "kind": "passthrough",
+      "reason": "Opt-in native OpenSSH owns the restored terminal for host-key approval and password prompts; a spinner would interfere with its input and output."
+    },
     "bin/t:_login_run:subprocess.run": {
       "kind": "passthrough",
       "reason": "Interactive login or streamed installer output owns the terminal."

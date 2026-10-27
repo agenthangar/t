@@ -121,6 +121,114 @@ class Menu:
         self.out.write("\n".join(lines))
 
 
+@pytest.mark.parametrize('before,after,expected', [
+    ({'old': 'alice@mini'}, {'renamed': 'alice@mini'}, []),
+    ({'old': 'mini'}, {'old': 'mini'}, []),
+    ({'old': 'mini'}, {}, []),
+    ({'old': 'mini'}, {'old': 'mini.tail', 'other': 'mini.tail'}, ['mini.tail']),
+    ({'old': 'mini'}, {'new': 'alice@mini', 'ip': '100.64.0.2'}, ['alice@mini', '100.64.0.2']),
+])
+def test_host_verification_uses_new_actual_targets(t_mod, before, after, expected):
+    assert t_mod._host_new_targets(before, after) == expected
+
+
+@pytest.mark.parametrize('tty,term,no_color', [(False, 'xterm', False), (True, 'xterm', False),
+                                             (True, 'dumb', False), (True, 'xterm', True)])
+def test_native_host_verification_inherits_streams_and_continues_after_failure(
+        t_mod, monkeypatch, capsys, tty, term, no_color):
+    monkeypatch.setenv('TERM', term)
+    if no_color:
+        monkeypatch.setenv('NO_COLOR', '')
+    else:
+        monkeypatch.delenv('NO_COLOR', raising=False)
+    calls = []
+    def run(argv, **kwargs):
+        assert kwargs == {}, 'native SSH must inherit terminal input/output'
+        calls.append(argv)
+        if argv[-2] == 'offline':
+            raise OSError('network unavailable')
+        return SimpleNamespace(returncode=255 if argv[-2] == 'refused' else 0)
+    monkeypatch.setattr(t_mod.subprocess, 'run', run)
+    monkeypatch.setattr(t_mod.sys.stderr, 'isatty', lambda: tty)
+    t_mod._host_verify_targets(['refused', 'offline', 'user@good'])
+    assert calls == [['ssh', '-T', '-o', 'ConnectTimeout=5', '-o', 'BatchMode=no',
+                      '-o', 'StrictHostKeyChecking=ask', '--', target, 'true']
+                     for target in ['refused', 'offline', 'user@good']]
+    err = capsys.readouterr().err
+    assert 'SSH exited 255' in err and 'network unavailable' in err
+    assert 'Registration is saved' in err and 'user@good' not in err
+    colored = tty and term != 'dumb' and not no_color
+    assert ('\x1b[' in err) == colored
+    if colored:
+        assert '\x1b[33m' in err
+
+
+@pytest.mark.parametrize('status', [130, -2, None])
+def test_native_host_verification_interrupt_stops_batch(t_mod, monkeypatch, status):
+    calls = []
+    def run(argv):
+        calls.append(argv[-2])
+        if status is None:
+            raise KeyboardInterrupt
+        return SimpleNamespace(returncode=status)
+    monkeypatch.setattr(t_mod.subprocess, 'run', run)
+    with pytest.raises(KeyboardInterrupt):
+        t_mod._host_verify_targets(['first', 'second'])
+    assert calls == ['first']
+
+
+@pytest.mark.parametrize('answer', ['verify', 'later', None])
+def test_post_save_offer_restores_ui_before_native_ssh(t_mod, monkeypatch, answer):
+    ui = Menu([answer])
+    monkeypatch.setattr(t_mod.sys.stdin, 'isatty', lambda: True)
+    monkeypatch.setattr(t_mod.sys.stdout, 'isatty', lambda: True)
+    monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
+    calls = []
+    def verify(targets):
+        assert ui.restored
+        calls.append(targets)
+    monkeypatch.setattr(t_mod, '_host_verify_targets', verify)
+    if answer is None:
+        with pytest.raises(KeyboardInterrupt):
+            t_mod._host_verify_offer(['new'])
+    else:
+        t_mod._host_verify_offer(['new'])
+    assert ui.restored
+    assert calls == ([['new']] if answer == 'verify' else [])
+
+
+@pytest.mark.parametrize('answer,expected', [('y', True), ('', False), ('q', None)])
+def test_verification_offer_uses_plain_prompt_if_raw_unavailable(t_mod, monkeypatch, answer, expected):
+    monkeypatch.setattr(t_mod.sys.stdin, 'isatty', lambda: True)
+    monkeypatch.setattr(t_mod.sys.stdout, 'isatty', lambda: True)
+    ui = Menu([])
+    def fail():
+        raise OSError('raw unavailable')
+    ui.raw = fail
+    monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
+    monkeypatch.setattr('builtins.input', lambda _: answer)
+    calls = []
+    monkeypatch.setattr(t_mod, '_host_verify_targets', calls.append)
+    if expected is None:
+        with pytest.raises(KeyboardInterrupt):
+            t_mod._host_verify_offer(['new'])
+    else:
+        t_mod._host_verify_offer(['new'])
+    assert calls == ([['new']] if expected else [])
+    assert ui.restored
+
+
+def test_host_verification_offer_skips_empty_or_nonterminal(t_mod, monkeypatch):
+    monkeypatch.setattr(t_mod.sys.stdin, 'isatty', lambda: False)
+    def forbidden():
+        pytest.fail('machine mode opened a picker')
+    monkeypatch.setattr(t_mod, '_RailUI', forbidden)
+    t_mod._host_verify_offer(['new'])
+    monkeypatch.setattr(t_mod.sys.stdin, 'isatty', lambda: True)
+    monkeypatch.setattr(t_mod.sys.stdout, 'isatty', lambda: True)
+    t_mod._host_verify_offer([])
+
+
 @pytest.fixture
 def config_cli(t_mod, tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
@@ -142,7 +250,38 @@ def config_cli(t_mod, tmp_path, monkeypatch):
                                                                {"reasoningEffort": "ultra"}]}])
     monkeypatch.setattr(t_mod, "zsh_capture", lambda snippet: "")
     monkeypatch.setattr(t_mod, "_host_discovery", lambda: ([], []))
+    monkeypatch.setattr(t_mod, "_host_verify_targets", lambda targets: pytest.fail('unexpected native SSH'))
     return t_mod.Config(), local
+
+
+@pytest.mark.parametrize('change,expected', [
+    ('rename', []), ('default', []), ('target', ['mini.tail.test']),
+    ('duplicate', ['mini.tail.test']),
+])
+def test_config_verification_delta_is_offered_after_save_and_sync(t_mod, config_cli, monkeypatch, change, expected):
+    import copy
+    cfg, local = config_cli
+    cfg.hosts = {'mini': 'mini'}
+    edited = copy.deepcopy(cfg)
+    if change == 'rename':
+        edited.hosts = {'renamed': 'mini'}
+    elif change == 'default':
+        edited.beam_host = 'mini'
+    else:
+        edited.hosts = {'mini': 'mini.tail.test'}
+        if change == 'duplicate':
+            edited.hosts['another'] = 'mini.tail.test'
+    monkeypatch.setattr(t_mod, '_config_wizard', lambda cfg: edited)
+    synced = []
+    monkeypatch.setattr(t_mod, 'zsh_capture', synced.append)
+    offers = []
+    def offer(targets):
+        assert synced == ['_t_sync_config']
+        assert local.read_text() != '# keep me\n'
+        offers.append(targets)
+    monkeypatch.setattr(t_mod, '_host_verify_offer', offer)
+    assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == 0
+    assert offers == [expected]
 
 
 def test_local_config_resolves_env_cache_then_fallback(t_mod, tmp_path, monkeypatch):
@@ -289,7 +428,7 @@ def test_config_hosts_remove_save_and_cancel(t_mod, config_cli, monkeypatch):
 
 def test_config_hosts_add_edit_and_default(t_mod, config_cli, monkeypatch):
     cfg, local = config_cli
-    ui = Menu(["hosts", "__add__", "__manual__", "lab", "beam", "lab", "target", "__back__", "save"],
+    ui = Menu(["hosts", "__add__", "__manual__", "lab", "beam", "lab", "target", "__back__", "save", "later"],
               ["old.example", "lab", "new.example"])
     monkeypatch.setattr(t_mod, "_RailUI", lambda: ui)
     assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == 0
@@ -392,7 +531,7 @@ def test_config_discovered_host_requires_review_and_can_be_discarded(t_mod, conf
     before = local.read_bytes()
     monkeypatch.setattr(t_mod, '_host_discovery',
                         lambda: ([{'alias': 'new', 'target': 'new.tail.test'}], []))
-    tail = ['save'] if save else ['cancel', 'discard']
+    tail = ['save', 'later'] if save else ['cancel', 'discard']
     ui = Menu(['hosts', '__add__', 'tailscale:new.tail.test', '__back__', *tail])
     reviews = []
     def review(label, lines, *args, **kwargs):
@@ -400,6 +539,7 @@ def test_config_discovered_host_requires_review_and_can_be_discarded(t_mod, conf
         assert cfg.hosts == {}, 'staged host leaked into original config'
         reviews.append(label)
         assert any('REMOTE_HOSTS[new]' in line and 'new.tail.test' in line for line in lines)
+        assert any('Verify SSH now / Later' in line for line in lines)
         return 'enter'
     ui.page = review
     monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
@@ -473,6 +613,7 @@ def test_config_host_discovery_interrupt_restores_terminal_without_writes(t_mod,
 def test_explicit_host_commands_and_config_show_never_discover(t_mod, config_cli, monkeypatch):
     cfg, local = config_cli
     monkeypatch.setattr(t_mod, '_host_discovery', lambda: pytest.fail('explicit command discovered peers'))
+    monkeypatch.setattr(t_mod, '_host_verify_offer', lambda targets: pytest.fail('explicit command prompted for SSH'))
     monkeypatch.setattr(t_mod, '_host_refresh_config', lambda: None)
     monkeypatch.setattr(t_mod, 'Config', lambda: cfg)
     assert t_mod.cmd_hosts(cfg, SimpleNamespace(action='add', alias='lab', target='lab.local')) == 0

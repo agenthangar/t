@@ -399,6 +399,9 @@ def _review(plan, api):
         lines.append(f"Clone {repo['full_name']} → {repo['path']} and register {plan['aliases'][repo['path']]}")
     for host in plan["hosts"]:
         lines.append(f"Register host {host['alias']} → {host['target']} (no remote commands)")
+    if plan["hosts"]:
+        lines.append("After saving, offer native SSH verification (Verify SSH now / Later). "
+                     "OpenSSH asks before trusting an unknown key; verification runs only true.")
     lines.append("Existing checkouts are preserved. Completed steps are kept if a later step fails.")
     return lines
 
@@ -463,6 +466,7 @@ def run(cfg, api, *, force=False):
     if not force and not needed(cfg, api):
         return api["_onboarding_start"](cfg, None)
     dialog = Dialog(api)
+    settings_saved = False
     try:
         state, discovery = {}, None
         welcome, back = True, False
@@ -484,11 +488,18 @@ def run(cfg, api, *, force=False):
             if dialog.review(_review(plan, api)):
                 break
             back = True
+        targets = api["_host_new_targets"](cfg.hosts, {host["alias"]: host["target"] for host in plan["hosts"]})
         with dialog.suspended():
             result = _apply(cfg, api, discovery, plan)
         if result:
             dialog.notice("Setup is incomplete. Completed steps were kept; run t again to resume.")
             return result
+        settings_saved = True
+        if targets:
+            action = dialog.choose("Verify saved SSH hosts?", [("verify", "Verify SSH now"), ("later", "Later")])
+            if action == "verify":
+                with dialog.suspended():
+                    api["_host_verify_targets"](targets)
         dialog.notice("Setup complete. Run t config onboard to discover new repositories or hosts.")
         api["_host_refresh_config"]()
         cfg = api["Config"]()
@@ -499,7 +510,8 @@ def run(cfg, api, *, force=False):
                     return api["_onboarding_start"](cfg, plan["agent"])
         return 0
     except (Aborted, EOFError, KeyboardInterrupt):
-        dialog.notice("Setup canceled. Any previously completed steps were kept.")
+        dialog.notice("Setup canceled. Settings saved; completed steps were kept." if settings_saved else
+                      "Setup canceled. Any previously completed steps were kept.")
         return 130
     except (OSError, ValueError) as exc:
         dialog.notice(f"Setup could not finish: {exc}. Run t config onboard to retry.")

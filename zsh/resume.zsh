@@ -19,19 +19,22 @@ _t_resume_on_host() {
   local host="$1" sid="$2" wt="$3" agent="$4" mode="$5"
   local target="${REMOTE_HOSTS[$host]:-$host}"
   command -v rsync >/dev/null 2>&1 || { echo "t resume --host: rsync not found" >&2; return 1; }
-  if ! _dev_worktree_beam_push "$wt" "$host" >&2; then
+  _dev_worktree_beam_push "$wt" "$host" >&2 || {
+    local push_rc=$?
+    (( push_rc == 130 )) && return 130
     echo "t resume --host: could not commit/push $wt; conversation was not resumed on $host" >&2
-    return 1
-  fi
-  _tbeam_sync_transcript "$wt" "$target" "$agent" "$sid" >&2 || return 1
-  local env="TB_CWD=${(q)wt} TB_SID=${(q)sid} TB_AGENT=${(q)agent}"
+    return $push_rc
+  }
+  _tbeam_sync_transcript "$wt" "$target" "$agent" "$sid" >&2 || return $?
+  local env="TB_CWD=${(q)wt} TB_SID=${(q)sid} TB_AGENT=${(q)agent} TB_RESUME_ALLOW_UNAVAILABLE=1"
   case $mode in
     fg)     ssh -t "$target" "$env TB_MODE=fg zsh -lic _tbeam_land" ;;
     attach) ssh -t "$target" "$env TB_MODE=tmux TB_ATTACH=1 zsh -lic _tbeam_land" ;;
-    *)      local out; out=$(ssh -o BatchMode=yes "$target" "$env TB_MODE=tmux zsh -lic _tbeam_land" 2>&1)
-            local rc=$?
+    *)      local out rc=0
+            out=$(ssh -o BatchMode=yes "$target" "$env TB_MODE=tmux zsh -lic _tbeam_land" 2>&1) || rc=$?
             print -r -- "${out##*$'\n'}"
-            (( rc == 0 )) && [[ ${out##*$'\n'} == dev-* ]] ;;
+            (( rc == 0 )) || return $rc
+            [[ ${out##*$'\n'} == dev-* ]] ;;
   esac
 }
 
@@ -81,6 +84,10 @@ _t_resume_on_host() {
 # explicitly because a bare "#N" was indistinguishable from a session with no PR.
 # User-facing help lives in bin/t (`t resume -h`); the t() shim routes -h there.
 _t_resume() {
+  # A resume keeps known ownership checks and launch locks, but an unavailable
+  # peer warns instead of vetoing independent local/reachable work. Dynamic
+  # scope keeps this policy out of unrelated launches and transfer preflight.
+  local _T_RESUME_ALLOW_UNAVAILABLE=1
   local _T_PROGRESS=0
   [[ -t 1 && -t 2 ]] && _T_PROGRESS=1
   setopt local_options null_glob bare_glob_qual
@@ -186,7 +193,7 @@ _t_resume() {
     # whose nomatch ABORTS on a glob with no hits (rc 1 — read as "unreachable"
     # for any repo with no sessions on that host). One rsync per host covers
     # every scan target; rc 23 = source dir absent there (no claude yet) — fine.
-    local _h _tgt _enc _prc
+    local _h _tgt _enc _prc _codex_rc _host_name
     local -a _incs
     for repo in $repos; do
       _enc=${${:-${DEV_WORKTREE_ROOT}/${DEV_REPOS[$repo]:t}}//[^A-Za-z0-9]/-}
@@ -195,28 +202,35 @@ _t_resume() {
     for _h in ${(ko)REMOTE_HOSTS}; do
       _tgt=${REMOTE_HOSTS[$_h]}
       _t_progress "Fetching saved conversations from $_h"
+      _prc=0; _codex_rc=0
       _t_with_progress "Fetching saved conversations from $_h" _t_resume_rsync -a --update --timeout=10 -e "ssh -o ConnectTimeout=3 -o BatchMode=yes" \
         "${(@)_incs}" --exclude='*' \
-        "$_tgt:$HOME/.claude/projects/" "$HOME/.claude/projects/"
-      _prc=$?
+        "$_tgt:$HOME/.claude/projects/" "$HOME/.claude/projects/" || _prc=$?
+      (( _prc == 130 )) && return 130
       # codex rollouts: the whole date tree (small, append-only files; union rule);
       # rc 23 = no ~/.codex/sessions there. A pulled rollout shows in the scan via
       # _codex_rollout_scan before codex has indexed it.
       if (( _prc == 0 || _prc == 23 )); then
         _t_with_progress "Fetching saved conversations from $_h" _t_resume_rsync -a --update --timeout=10 -e "ssh -o ConnectTimeout=3 -o BatchMode=yes" \
           --include='*/' --include='rollout-*.jsonl' --include='rollout-*.origin' --exclude='*' \
-          "$_tgt:$HOME/.codex/sessions/" "${CODEX_HOME:-$HOME/.codex}/sessions/"
+          "$_tgt:$HOME/.codex/sessions/" "${CODEX_HOME:-$HOME/.codex}/sessions/" || _codex_rc=$?
+        (( _codex_rc == 130 )) && return 130
       fi
-      if (( _prc == 0 || _prc == 23 )); then
+      if (( (_prc == 0 || _prc == 23) && (_codex_rc == 0 || _codex_rc == 23) )); then
         echo "⟳ pulled ${_h}'s latest transcripts" >&2
         # Cache the host's short hostname (once) so the origin column below can
         # translate a `<sid>.origin` stamp back to the friendly $REMOTE_HOSTS key.
         if [[ ! -s $HOME/.cache/t/hostnames/$_h ]]; then
           mkdir -p "$HOME/.cache/t/hostnames" 2>/dev/null
-          ssh -o ConnectTimeout=3 -o BatchMode=yes "$_tgt" hostname -s 2>/dev/null > "$HOME/.cache/t/hostnames/$_h"
+          if _host_name=$(ssh -o ConnectTimeout=3 -o BatchMode=yes "$_tgt" hostname -s 2>/dev/null); then
+            [[ -n $_host_name ]] && print -r -- "$_host_name" > "$HOME/.cache/t/hostnames/$_h"
+          else
+            (( $? == 130 )) && return 130
+          fi
         fi
       else
-        echo "t resume -r: $_h unreachable (rc=$_prc) — skipped; its newest transcripts may be missing here." >&2
+        (( _prc == 0 || _prc == 23 )) && _prc=$_codex_rc
+        _t_warn "t resume -r: $_h transcript fetch failed (rc=$_prc) — skipped; its newest transcripts may be missing here."
       fi
     done
   fi
@@ -237,10 +251,12 @@ _t_resume() {
   _t_progress "Checking conversation owners"
   local all_rows= remote_rows= live_all= live_scan_rc=0
   if [[ -n $app ]] || (( ${#REMOTE_HOSTS} )); then
-    live_all=$(_dev_rows_all); live_scan_rc=$?
+    live_all=$(_dev_rows_all --best-effort) || live_scan_rc=$?
   else
-    live_all=$(_dev_session_rows 2>/dev/null | awk -F'\t' '{print "local\t" $0}')
+    live_all=$(_dev_session_rows 2>/dev/null) || live_scan_rc=$?
+    live_all=$(print -r -- "$live_all" | awk -F'\t' 'NF {print "local\t" $0}')
   fi
+  (( live_scan_rc == 130 )) && return 130
   # Issue starts explicitly tolerate unavailable hosts. Revalidate local rows
   # separately so a local scanner failure cannot be mistaken for an offline host.
   if (( live_scan_rc )) && [[ ${_T_ISSUE_SKIP_UNAVAILABLE:-} == 1 && -z $app && -n $slot ]]; then
@@ -251,7 +267,7 @@ _t_resume() {
     }
     live_all=$(print -r -- "$live_all" | awk -F'\t' '$1 != "local"')$'\n'$(
       print -r -- "$issue_local_rows" | awk -F'\t' 'NF {print "local\t" $0}')
-    print -u2 -- 't issue start: warning: unavailable hosts skipped; continuing with known owners'
+    _t_warn 't issue start: unavailable hosts skipped; continuing with known owners'
     live_scan_rc=0
   fi
   if (( live_scan_rc )); then
@@ -266,7 +282,7 @@ _t_resume() {
         return
       fi
     fi
-    print -u2 -- 't resume: remote ownership could not be verified; no saved conversation was resumed. Retry when configured hosts are reachable.'
+    _t_warn 't resume: ownership could not be verified because local discovery failed; no saved conversation was resumed. Retry after checking the local shell integration.'
     return 1
   fi
   all_rows=$(print -r -- "$live_all" | awk -F'\t' 'NF && $4 !~ /:/')
@@ -741,7 +757,7 @@ _t_resume() {
       return 1
     fi
     local -A mp_taken
-    local mp_first_repo= mp_first_slot= mp_first_session= mp_cwd mp_session mp_loc mp_pair mp_agent
+    local mp_first_repo= mp_first_slot= mp_first_session= mp_cwd mp_session mp_loc mp_pair mp_agent mp_rc
     local mp_live_first= mp_live_cmd= mp_live_alias= mp_live_repo= mp_live_slot= mp_live_loc=
     local -a mp_rest mp_unopened mp_live mp_live_fields
     for pick in "${(@)picks}"; do
@@ -774,7 +790,8 @@ _t_resume() {
         mp_taken[$repo/$slot]=1
         echo "Resuming ${sid:0:8} ($repo $slot) on $on_host"
         mp_session=$(_t_resume_on_host "$on_host" "$sid" "$wt" "$mp_agent" detach) || {
-          echo "· $repo $slot: landing on $on_host failed — ${mp_session:-no output}" >&2; continue; }
+          mp_rc=$?; (( mp_rc == 130 )) && return 130
+          _t_warn "$repo $slot: landing on $on_host failed — ${mp_session:-no output}; skipped"; continue; }
         if [[ -z $mp_first_repo ]]; then
           mp_first_repo=$repo; mp_first_slot=$slot; mp_first_session=$mp_session
         else
@@ -790,7 +807,8 @@ _t_resume() {
       mp_session="dev-${repo}-${slot}"
       echo "Resuming ${sid:0:8} in $mp_session ($mp_cwd)"
       _dev_resume_session "$mp_session" "$mp_cwd" "$sid" "$mp_agent" || {
-        print -u2 -- "· $repo $slot: launch failed; this conversation was not resumed."
+        mp_rc=$?; (( mp_rc == 130 )) && return 130
+        _t_warn "$repo $slot: launch failed; this conversation was not resumed — skipped"
         unset 'mp_taken[$repo/$slot]'
         continue
       }
@@ -899,7 +917,8 @@ _t_resume() {
   # here would mint a second owner of the session id (see the scan note above).
   if [[ $loc == fg:* ]]; then
     echo "That conversation is live as foreground $lalias — attaching."
-    _dev_open_fg "$lalias"
+    if [[ $loc == fg:here ]]; then _dev_open_fg "$lalias"
+    else _dev_remote_open "${loc#fg:}" "$lalias" --cli; fi
     return
   elif [[ $loc == app:* ]]; then
     print -u2 -- "t resume: slot $slot is reserved for the Codex desktop app on ${loc#app:}; close and release it there before resuming"
@@ -946,7 +965,7 @@ _t_resume() {
   }
 
   if [[ -n $no_tmux ]]; then
-    _dev_with_launch_locks "$cwd" "$sid" _dev_foreground_resume_preflight "$sid" "$cwd" || return 1
+    _dev_with_launch_locks "$cwd" "$sid" _dev_foreground_resume_preflight "$sid" "$cwd" || return $?
     cd "$cwd" || return 1
     eval "$(_dev_agent_resume_cmd "$agent" "$sid")"
     return $?
@@ -954,7 +973,12 @@ _t_resume() {
 
   local session="dev-${repo}-${slot}"
   echo "Resuming ${sid:0:8} in $session ($cwd)"
-  _dev_resume_session "$session" "$cwd" "$sid" "$agent" || return 1
+  _dev_resume_session "$session" "$cwd" "$sid" "$agent" || {
+    local resume_rc=$?
+    (( resume_rc == 130 )) && return 130
+    _t_warn "$repo $slot: launch failed; this conversation was not resumed"
+    return $resume_rc
+  }
   if [[ -z $TMUX && -t 0 && -t 1 ]]; then
     tmux attach-session -t "=$session:"
   else
@@ -966,6 +990,7 @@ _t_resume() {
 # A saved selection never borrows the current slot's identity or attaches remotely.
 _t_resume_app_check() {
   emulate -L zsh
+  local _T_RESUME_ALLOW_UNAVAILABLE=1
   local repo=$1 slot=$2 sid=$3 dir=$4 resolved rows host row_sid row_cwd label state context summary agent
   local owner= cli_owner= expects_cli= name owner_dir alias number
   resolved=$(_dev_worktree_path "$repo" "$slot") || return 1
@@ -975,8 +1000,10 @@ _t_resume_app_check() {
   if _dev_issue_preparing "$dir" || [[ -f ${dir:h}/.${dir:t}.history-reservation ]]; then
     print -u2 -- 't resume --app: workspace preparation is in progress; retry when it completes'; return 1
   fi
-  rows=$(_dev_rows_all) || {
-    print -u2 -- 't resume --app: ownership could not be verified; retry when all hosts are reachable'; return 1
+  rows=$(_dev_rows_all --best-effort) || {
+    local scan_rc=$?
+    (( scan_rc == 130 )) && return 130
+    _t_warn 't resume --app: local ownership could not be verified; retry after checking the local shell integration'; return 1
   }
   while IFS=$'\t' read -r host row_sid row_cwd label state context summary agent; do
     [[ -n $host ]] || continue
@@ -2036,7 +2063,7 @@ _dev_resume_session_claimed() {
   if (( ${+functions[_dev_issue_preparing]} )) && _dev_issue_preparing "$dir"; then
     print -u2 't: issue launch is reserved; rerun t issue start <issue> to recover it'; return 1
   fi
-  _dev_launch_preflight "$session" "$dir" "$sid" || return 1
+  _dev_launch_preflight "$session" "$dir" "$sid" || return $?
   _dev_auto_trust "$dir"
   local logfile="$HOME/.tmux-logs/${session}.log"
   mkdir -p "$HOME/.tmux-logs"
@@ -2609,6 +2636,9 @@ PY
 # first-class dev-<repo>-<slot> that dev/tread/tpop already understand. fg mode
 # just resumes the conversation in this ssh session's foreground.
 _tbeam_land() {
+  # Only saved resume senders opt into partial discovery; transfer senders keep
+  # the strict ownership policy used before stopping a live source.
+  local _T_RESUME_ALLOW_UNAVAILABLE=${TB_RESUME_ALLOW_UNAVAILABLE:-}
   # Where does it land? Usually TB_CWD — the origin's per-session worktree path, same root
   # on every host — but when THIS host's same-numbered slot is another session's (live,
   # dirty, or diverged: the collision case), _dev_beam_land_cwd relands into a fresh slot,
@@ -2633,7 +2663,7 @@ _tbeam_land() {
   fi
   cd "$land" 2>/dev/null || { echo "tbeam: $land not found on ${HOST:-this host}" >&2; return 1; }
   if [[ "$TB_MODE" == fg ]]; then                # owns this ssh TTY; dies with it
-    _dev_with_launch_locks "$land" "$TB_SID" _dev_foreground_resume_preflight "$TB_SID" "$land" || return 1
+    _dev_with_launch_locks "$land" "$TB_SID" _dev_foreground_resume_preflight "$TB_SID" "$land" || return $?
     local executable; executable=$(_dev_agent_executable "$agent" binary) || {
       print -u2 -r -- "t: '$agent' is not installed here — run: t agent install $agent"
       return 127
@@ -2648,7 +2678,7 @@ _tbeam_land() {
   read -r repo slot < <(_dev_slot_for_cwd "$land")
   [[ -n $repo && -n $slot ]] || { echo "tbeam: couldn't map $land to a dev slot" >&2; return 1; }
   session="dev-${repo}-${slot}"
-  _dev_resume_session "$session" "$land" "$TB_SID" "$agent" || return 1
+  _dev_resume_session "$session" "$land" "$TB_SID" "$agent" || return $?
   if [[ -n $TB_ATTACH ]]; then
     exec tmux attach -t "=$session:"              # drop the ssh caller straight in
   fi
