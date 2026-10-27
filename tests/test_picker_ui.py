@@ -398,7 +398,7 @@ def test_session_pickers_display_every_filter_key(picker, width, height, profile
     start(profile=profile, width=width, height=height)
     screen = wait('2/2 (0)')
     if profile == 'public-open-all':
-        for key in ('T', 'G', 'D', 'O', 'R', 'A', 'F', 'P', 'B', 'V', 'E', 'W'):
+        for key in ('T', 'U', 'G', 'D', 'O', 'R', 'A', 'F', 'P', 'B', 'V', 'E', 'W'):
             assert 'Ctrl-' + key in screen or '^' + key in screen, screen
         assert 'View: unattached' in screen
         if width <= 44:
@@ -428,6 +428,12 @@ def test_public_open_facet_keys_combine_and_clear_hidden_marks(picker):
     wait('1/1 (0)')
     keys('Space')
     wait('1/1 (1)')
+    keys('C-u')
+    screen = wait('View: unattached', absent=('api-2',))
+    assert 'agent=codex' in screen and 'api-4' in screen
+    wait('1/1 (0)')
+    keys('C-t')
+    wait('View: attached', absent=('api-4',))
     keys('C-d')
     wait('UI >')
     keys('-l', 'desktop')
@@ -487,7 +493,7 @@ def test_open_attachment_views_are_exclusive_and_idempotent(picker):
     wait('View: attached')
     keys('C-a')
     wait('4/4 (0)')
-    keys('C-f')
+    keys('C-u')
     screen = wait('View: unattached', absent=('api-2',))
     assert 'api-4' in screen and 'api-2' not in screen
     assert finish('Escape', status=130) == []

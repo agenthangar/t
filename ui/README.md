@@ -89,7 +89,7 @@ dev sessions   ● attached/loaded · ✓ active context · ↻ still in progres
   reattach: t open <repo> <slot>
 
 Enter open · Esc · Space/Tab mark ✓
-Ctrl-T attached · Ctrl-F unattached · Ctrl-A all
+Ctrl-T attached · Ctrl-U unattached · Ctrl-F defaults · Ctrl-A all
 Ctrl-G agent · Ctrl-P progress · Ctrl-D UI · Ctrl-B model
 Ctrl-O host · Ctrl-R repo · Ctrl-V session · Ctrl-E context · Ctrl-W task
 View: unattached (default) · 2 hidden
@@ -101,7 +101,8 @@ The rows above illustrate hierarchy and controls, not a fixed column schema.
 List commands print normally; picker headers and marks appear only for selection.
 
 The open picker hides attached CLI and loaded desktop sessions by default.
-Ctrl-T selects attached-only; Ctrl-F restores unattached; Ctrl-A shows all.
+Ctrl-T selects attached-only; Ctrl-U selects unattached-only. Both preserve
+column filters. Ctrl-F restores defaults; Ctrl-A shows all.
 The compatibility --attached flag starts with all rows. There is no
 new-session shortcut or details preview in this picker; use `t open --new`.
 A plain green ✓ selection marker stays readable on the dark cyan focus row;
@@ -113,7 +114,7 @@ Ctrl-V session/slot, Ctrl-E context, and Ctrl-W task. Use the shared single-pick
 profile; Enter applies, Esc keeps the filter, and an explicit All option clears
 one column. Column filters combine with attachment views. Ctrl-A clears all
 filters and shows every snapshot row; Ctrl-F clears all filters and restores
-unattached. Ctrl-T selects attached-only without clearing column filters.
+unattached. Ctrl-T and Ctrl-U switch attachment without clearing column filters.
 
 Resume and close retain cycling Ctrl-G agent, Ctrl-O host/origin, Ctrl-R repo,
 and (close only) Ctrl-D interface, with their existing state toggles. Resume
