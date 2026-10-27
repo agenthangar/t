@@ -65,8 +65,11 @@ def run_terminal(command, env, cwd, size, actions):
                         break
                     output += chunk
                 break
-        assert process.poll() is not None, output.decode(errors='replace')
-        assert index == len(actions), output.decode(errors='replace')
+        pending = repr(actions[index]) if index < len(actions) else 'process exit'
+        diagnostic = (f'Completed {index}/{len(actions)} terminal actions; waiting for {pending}\n'
+                      + output.decode(errors='replace'))
+        assert process.poll() is not None, diagnostic
+        assert index == len(actions), diagnostic
         after = termios.tcgetattr(slave)
         flags = termios.ECHO | termios.ICANON | termios.ISIG | termios.IEXTEN
         assert after[3] & flags == before[3] & flags, 'terminal mode was not restored'
@@ -204,6 +207,13 @@ loader.exec_module(t)
 t._install_probe = lambda: {a: {
     'version': '1' if sys.argv[4] == 'agents' and a in t.AGENTS else '',
     'logged_in': a in sys.argv[5].split(',')} for a in t.INSTALL_AGENTS}
+read_key = t._RailUI.read_key
+def ready_read_key(self):
+    self.test_read_number = getattr(self, 'test_read_number', 0) + 1
+    self.out.write(f'<test-read-ready:{self.test_read_number}>')
+    self.out.flush()
+    return read_key(self)
+t._RailUI.read_key = ready_read_key
 helper = t._onboarding()
 scope = helper['run'].__globals__
 empty = sys.argv[3] == 'empty'
@@ -280,7 +290,10 @@ def test_hosts_back_preserves_pending_choices_until_review(tmp_path, size, back_
 def test_review_back_skips_empty_steps_and_ctrl_c_cancels(tmp_path, size, back_key):
     home, env = sandbox(tmp_path)
     actions = [('Welcome to t', b'\r'), ('Choose agents', b'\r'),
-               ('Review setup', back_key), ('Choose agents', b'\x03')]
+               ('Review setup', back_key),
+               # A title can arrive before the frame finishes rendering. Wait
+               # for the next input read after Back before delivering SIGINT.
+               ('<test-read-ready:4>', b'\x03')]
     result, output = run_terminal(navigation_harness(tmp_path, empty=True), env, tmp_path, size, actions)
     assert result == 130, output
     assert 'Setup canceled' in output
