@@ -10132,7 +10132,7 @@ def build_parser():
 
 select several sessions:
   Space/Tab check; Enter open. Ctrl-T attached; Ctrl-U unattached.
-  Ctrl-F defaults; Ctrl-A all; Ctrl-G agent; Ctrl-P progress. Columns: t help open.
+  Ctrl-F defaults; Ctrl-A all. Column filters: t help open.
 
 desktop → CLI:
   %(prog)s api 2 --cli
