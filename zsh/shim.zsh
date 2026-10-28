@@ -592,8 +592,14 @@ _t_open_app() {
     return 1
   }
   if [[ -z $slot ]]; then
+    local _T_OPEN_REMOTE_APP_READY= _T_OPEN_REMOTE_APP_ROWS= _T_OPEN_REMOTE_APP_RC=0
+    if (( ${#REMOTE_HOSTS} )); then
+      _T_OPEN_REMOTE_APP_ROWS=$(_dev_rows_all)
+      _T_OPEN_REMOTE_APP_RC=$?
+      _T_OPEN_REMOTE_APP_READY=1
+    fi
     local n=1
-    while ! _dev_slot_fresh "$repo" "$n"; do (( n++ )); done
+    while ! _dev_slot_fresh_unreserved "$repo" "$n"; do (( n++ )); done
     slot=$n
   fi
   # Aliases pointing at one canonical checkout share slot ownership. Handoff the
@@ -723,6 +729,10 @@ _t() {
     group=${words[3]} action=${words[4]} first=5
   fi
   local -a actions
+  # Normalize only the action position; repository names and option values stay literal.
+  if [[ $action == ls && ( $group == issue || $group == session || $group == repo || $group == cursor || $group == hosts ) ]]; then
+    action=list
+  fi
   if [[ $group == issue ]]; then
     if (( CURRENT == 3 )); then
       local -a issue_actions=(list status start open)
@@ -801,7 +811,7 @@ _t() {
       _values 'workflow verb' list edit
     elif [[ ${words[CURRENT-1]} == --repo ]]; then
       _values 'repo' ${(k)DEV_REPOS}
-    elif [[ ${words[4]} == list ]]; then
+    elif [[ ${words[4]} == list || ${words[4]} == ls ]]; then
       _values 'flag' --repo --json -h --help
     elif [[ ${words[4]} == edit ]]; then
       _values 'flag' --repo -h --help
@@ -810,7 +820,7 @@ _t() {
   fi
   # Old spellings remain usable once typed, but are not offered at top level.
   case $group in
-    open|ls|kill|restart|push|pop|resume|history|cd|beam|read|plan|paste|find|app)
+    open|ls|list|kill|restart|push|pop|resume|history|cd|beam|read|plan|paste|find|app)
       action=$group; group=session; first=3 ;;
     repos)
       group=repo; first=4

@@ -390,6 +390,10 @@ with `t share` as the context sharing command.
 Contributors can find the behavior, keyboard, and appearance rules in the
 [command and terminal contract](ui/README.md).
 
+`ls` and `list` are interchangeable at every list command: for example,
+`t session ls`, `t issue ls`, and `t config workflow ls`. The root shortcuts
+`t ls` and `t list` both list sessions; `t repos ls` and `t repos list` list repositories.
+
 The older spellings still work; `t help aliases` lists them. Bare `t config`
 continues to open its interactive menu.
 
@@ -491,8 +495,12 @@ t remote move api 2 --from mini --host cloud
 t session move api 2 --from mini --host cloud --detach
 ```
 
-Omitting `--host` opens a single host picker showing aliases and SSH targets;
-even one configured host waits for Enter. `remote move` includes current local
+Omitting `--host` opens a single host picker whose heading names the action:
+open an existing session, start a new session, resume saved work, or move a session.
+For open, the selected host runs the session. For resume, it supplies the saved
+conversations and runs the resumed session. For move, it is the destination;
+the picker also names the current source host. Aliases and SSH targets appear
+below the action heading, and even one configured host waits for Enter. `remote move` includes current local
 and registered remote Claude/Codex CLI sessions, retains host identity when slot
 names repeat, and rechecks the selected conversation before moving. A named or
 current repository scopes selection; outside a checkout it spans all repositories.
@@ -638,7 +646,9 @@ verified.
 
 Fresh local slots can open while a configured remote host is offline, for example
 `t session open my-project --new --codex --cli` or
-`t session open my-project --new --app`. Known remote owners are still respected;
+`t session open my-project --new --app`. Automatic fresh-slot allocation skips
+known remote desktop reservations and chooses the next locally unused slot from
+one discovery snapshot. Explicit slot requests still refuse conflicting owners;
 `t session open my-project 3 --app` can also reopen a locally reserved desktop
 workspace when another host is offline, after checking local ownership. Saved
 CLI and desktop resumes warn and continue checking local and reachable owners;

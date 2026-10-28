@@ -3,7 +3,12 @@
 Every public `t` command and conditional mode has an entry in
 [`command-contract.json`](command-contract.json). That inventory is the source of
 truth for classification and contract tests. Compatibility aliases inherit the
-canonical command's entry. Read this guide and the inventory before adding or
+canonical command's entry. Every `list` verb also accepts `ls`, including nested
+resources such as `t config workflow ls`. Root `t ls`/`t list` list sessions;
+legacy `t repos ls`/`t repos list` list repositories. Aliases share the same
+read-only behavior, options, help, and completion; canonical help and completion
+choices retain `list`. Normalize only command words, preserving payloads and
+forwarded arguments. Read this guide and the inventory before adding or
 changing a command; update both when its behavior changes.
 
 The visual baseline is the Homebrew v0.4.2 release (`40aaea8`): cyan section
@@ -284,7 +289,13 @@ Explicit slot/ID sends and `--from`/`--here` receives retain their guarded route
 
 New worktree folders include the repository basename (`t/t-12`); numeric slot
 arguments, tmux identity, JSON slot fields and history associations are unchanged.
-`remote open`, `remote move`, and `remote resume` require explicit verbs. Missing
+`remote open`, `remote move`, and `remote resume` require explicit verbs.
+Host picker headings state the action: Open a session on which host?, Start a
+new session on which host? with `--new`, Resume saved work on which host?, and
+Move this session to which host?. Resume explains that it browses that host's
+saved conversations; the selected host also runs the resumed session. Move
+labels the destination and current source host. Aliases and SSH targets remain
+subordinate to the action heading. Missing
 hosts use `_t_fzf_single`, displaying alias and SSH target; Enter chooses exactly
 one, including when only one host exists. Esc/Ctrl-C returns 130 without starting
 work. Missing selections require a terminal and fzf; scripts name their targets.
@@ -410,6 +421,8 @@ projection are additive metadata. They must not replace raw identity or evidence
 JSON and non-TTY listings never select or resume; JSON has no ANSI styling,
 presentation headers, or prompts.
 
+Automatic fresh-slot allocation skips known remote desktop reservations from
+one discovery snapshot; explicit slot requests still refuse conflicting owners.
 Fresh local opens may continue after incomplete remote discovery when the local
 slot is unused. Reopening a locally reserved desktop workspace also tolerates
 unavailable hosts after checking local ownership. Desktop claims scan remote
