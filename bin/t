@@ -2636,8 +2636,8 @@ def _config_wizard(cfg):
                 values[a] = f"{edited.models.get(a) or 'tool default'} · {edited.efforts.get(a) or 'default'} effort"
                 if edited.fast.get(a) == "1":
                     values[a] += " · fast"
-            rows += [("local", "Local worker & models ›"), ("hosts", "Hosts"), ("repos", "Repositories"), ("beam", "Default beam host"),
-                     ("worktrees", "Worktrees & branches"), ("workflow", "Agent workflow"), ("edit", "Open config in editor"),
+            rows += [("hosts", "Hosts"), ("repos", "Repositories"), ("beam", "Default beam host"),
+                     ("worktrees", "Worktrees & branches"), ("workflow", "Agent workflow"), ("local", "Local worker & models ›"), ("edit", "Open config in editor"),
                      ("save", "Save changes"), ("cancel", "Cancel")]
             pending = len(_config_diff(initial, _config_state(edited))) + _workflow_pending(edited)
             values.update({"hosts": f"{len(edited.hosts)} registered",
