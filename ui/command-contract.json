@@ -999,7 +999,8 @@
         "tests/test_resume_repositories.py::test_cancel_remoteonly_picker_never_prepares_or_registers",
         "tests/test_resume_repositories.py::test_remoteonly_prepare_refreshes_actual_alias_before_host_route",
         "tests/test_app_handoff.py::test_handoff_scopes_unindexed_writers_using_rollout_metadata",
-        "tests/test_history_resume.py::test_private_saved_resume_reports_ownership_refusal_and_cleans_up"
+        "tests/test_history_resume.py::test_private_saved_resume_reports_ownership_refusal_and_cleans_up",
+        "tests/test_resume_auth.py::test_resume_auth_warning_precedes_empty_or_selection"
       ],
       "modes": {
         "default": {
@@ -1109,7 +1110,7 @@
         ]
       },
       "progress": "Terminal-only discovery stages on stderr; no progress in redirected output, JSON, or remote protocols.",
-      "notes": "Terminal launches run without echoing internal shell commands or exit instructions; agent output and diagnostics remain visible. Saved Codex resume resolves unindexed held sibling locks through validated session_meta workspace identity in active and archived rollouts. Unknown, invalid or unreadable evidence fails closed; ownership refusals return a concise retry diagnostic without a traceback."
+      "notes": "Terminal launches run without echoing internal shell commands or exit instructions; agent output and diagnostics remain visible. Saved Codex resume resolves unindexed held sibling locks through validated session_meta workspace identity in active and archived rollouts. Unknown, invalid or unreadable evidence fails closed; ownership refusals return a concise retry diagnostic without a traceback. Confirmed missing/invalid GitHub authentication warns once per affected host before selection, including empty and automatic results, without blocking available conversations; persistent compact picker warning survives filter/sort/reset/all. Remedy: gh auth login --hostname github.com on the named host. Network/rate-limit/permission failures and missing gh do not trigger auth warnings."
     },
     "session history": {
       "patterns": [
@@ -3289,7 +3290,8 @@
       "tests": [
         "tests/test_remote_commands.py::test_remote_open_resume_delegate_quoted_worker_and_status",
         "tests/test_host_resilience.py::test_partial_resume_checks_selected_saved_writer_and_starts",
-        "tests/test_host_resilience.py::test_remote_resume_worker_opens_picker_despite_an_unavailable_peer"
+        "tests/test_host_resilience.py::test_remote_resume_worker_opens_picker_despite_an_unavailable_peer",
+        "tests/test_resume_auth.py::test_resume_auth_warning_precedes_empty_or_selection"
       ],
       "modes": {
         "default": {
@@ -3368,7 +3370,8 @@
           ],
           "notes": "Explicit --all is forwarded to the selected host so its login directory cannot narrow discovery. A locally resolvable repository is forwarded by GitHub identity and resolved to the selected host alias; otherwise a literal host alias is preserved."
         }
-      }
+      },
+      "notes": " Confirmed missing/invalid GitHub authentication warns once per affected host before selection, including empty and automatic results, without blocking available conversations; persistent compact picker warning survives filter/sort/reset/all. Remedy: gh auth login --hostname github.com on the named host. Network/rate-limit/permission failures and missing gh do not trigger auth warnings."
     },
     "config workflow list": {
       "patterns": [
