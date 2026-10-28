@@ -65,7 +65,10 @@ export function TerminalPane({
         for (const _ of pending) void native.terminalAck(id);
         term.focus();
       })
-      .catch(report);
+      .catch((error) => {
+        report(error);
+        if (!disposed) exit.current();
+      });
     const input = term.onData((data) => {
       if (id) void native.terminalWrite(id, data).catch(report);
     });

@@ -13,11 +13,9 @@ import {
   X,
   TerminalSquare,
   Search,
-  ArrowUpRight,
   Check,
   AlertCircle,
   Play,
-  GitBranch,
   Server,
 } from "lucide-react";
 import { request, reconnect } from "./transport";
@@ -35,6 +33,8 @@ import {
 } from "./protocol";
 import "./style.css";
 import { ResultView } from "./ResultView";
+import { SessionList } from "./SessionList";
+import { sessionStatus, enrichSession } from "./sessionView";
 import { CoreForm, coreParams, target } from "./CoreForm";
 type Tab = {
   id: string;
@@ -233,6 +233,14 @@ function App() {
   };
   const attach = (session: Session) =>
     guarded(async () => {
+      if (session.state === "app")
+        throw new Error(
+          "This session runs in an external app; embedded terminal attachment is unavailable.",
+        );
+      if (sessionStatus(session, snapshot.remoteStatus).label === "Unverified")
+        throw new Error(
+          "Reconnect and refresh this host before opening its terminal.",
+        );
       setSelected(session);
       const existing = tabs.find(
         (t) => t.session && key(t.session) === key(session) && !t.ended,
@@ -274,22 +282,27 @@ function App() {
     );
     setPrepared(undefined);
     setResult(undefined);
+    const creating =
+      capability.coreMethod === "sessions.open" ||
+      capability.method === "session.open";
     setCwd(
-      selected?.cwd ||
+      (!creating ? selected?.cwd : undefined) ||
         snapshot.repositories.find((r) => r.alias === scope)?.path ||
         "",
     );
     setCoreValues({
-      ...target(selected),
-      sid: String(selected?.sid || ""),
+      ...target(creating ? undefined : selected),
+      sid: String(!creating ? selected?.sid || "" : ""),
       repo:
-        selected?.repo ||
+        (!creating ? selected?.repo : undefined) ||
         (scope === "all" ? snapshot.repositories[0]?.alias : scope) ||
         "",
       new: "true",
       agent: "",
       targets: "",
-      host: selected?.host || "local",
+      host:
+        (creating ? (host === "all" ? "local" : host) : selected?.host) ||
+        "local",
     });
     setPalette(false);
   };
@@ -423,12 +436,16 @@ function App() {
           snapshot.repositories.find((r) => r.alias === scope)?.path || "\0",
         )) &&
       (host === "all" || (s.host || "local") === host) &&
-      `${title(s)} ${s.repo} ${s.branch} ${s.agent}`
+      `${title(s)} ${s.repo} ${s.branch} ${s.agent} ${s.host || "local"}`
         .toLowerCase()
-        .includes(query.toLowerCase()),
+        .includes(query.trim().toLowerCase()),
   );
   const current = tabs.find((t) => t.id === active);
-  const details = current?.session || selected;
+  const details = selected || current?.session;
+  const detailsUnavailable =
+    !!details &&
+    sessionStatus(details, snapshot.remoteStatus).label === "Unverified";
+  const detailsExternal = details?.state === "app";
   return (
     <div className="workspace">
       <aside className="sidebar">
@@ -436,14 +453,14 @@ function App() {
           <span className="brand-mark">
             t<span>.</span>
           </span>
-          <span>Workspace</span>
-          <span className="version">BETA</span>
+          <span>Sessions</span>
+          <span className="version">Beta</span>
         </div>
         <button className="palette-trigger" onClick={() => setPalette(true)}>
           <Search size={15} />
           Find or run a command <kbd>⌘ K</kbd>
         </button>
-        <div className="nav-heading">WORKSPACE</div>
+        <div className="nav-heading">Workspace</div>
         <button
           className={`nav-row ${scope === "all" ? "selected" : ""}`}
           onClick={() => setScope("all")}
@@ -452,7 +469,7 @@ function App() {
           All sessions<span className="count">{snapshot.sessions.length}</span>
         </button>
         <div className="nav-heading">
-          REPOSITORIES
+          Repositories
           <button
             aria-label="Register repository"
             onClick={() => {
@@ -489,7 +506,7 @@ function App() {
           </p>
         )}
         <div className="nav-heading">
-          HOSTS
+          Hosts
           <button
             aria-label="Manage hosts"
             onClick={() =>
@@ -600,268 +617,229 @@ function App() {
           <section className="sessions-panel">
             <div className="section-title">
               <div>
-                <p className="eyebrow">YOUR AGENT SESSIONS</p>
-                <h1>{scope === "all" ? "Everything in motion" : scope}</h1>
-                <p>One workspace. Every thread, worktree, and host.</p>
+                <h1>{scope === "all" ? "Session manager" : scope}</h1>
+                <p>
+                  {host === "all"
+                    ? "Across your registered hosts"
+                    : host === "local"
+                      ? "On this Mac"
+                      : `On ${host}`}{" "}
+                  · Select a task to inspect; open its terminal to continue.
+                </p>
               </div>
               <span className="total">
                 {filtered.length}{" "}
                 {filtered.length === 1 ? "session" : "sessions"}
               </span>
             </div>
-            <div className="session-search">
-              <Search size={16} />
-              <input
-                aria-label="Filter sessions"
-                placeholder="Filter by task, branch, or agent…"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-              />
-              <span>⌘ K commands</span>
-            </div>
-            <div className="session-list">
-              {status === "loading" && !snapshot.sessions.length ? (
-                <div className="empty">
-                  <RefreshCw size={28} className="spin" />
-                  <h2>Reading your workspace</h2>
-                  <p>Discovering sessions through the shared t core.</p>
-                </div>
-              ) : filtered.length ? (
-                filtered.map((s) => (
-                  <button
-                    key={key(s)}
-                    className={`session-card ${selected && key(selected) === key(s) ? "focused" : ""}`}
-                    onClick={() => {
-                      setSelected(s);
-                      void request<Record<string, unknown>>("sessions.detail", {
-                        session: s.sid || `${target(s).repo}-${target(s).slot}`,
-                      })
-                        .then((detail) =>
-                          setSelected((current) =>
-                            current && key(current) === key(s)
-                              ? { ...current, ...detail }
-                              : current,
-                          ),
-                        )
-                        .catch(() => {});
-                    }}
-                    onDoubleClick={() => void attach(s)}
-                  >
-                    <div className="session-icon">
-                      <TerminalSquare size={19} />
-                    </div>
-                    <div className="session-copy">
-                      <strong>{title(s)}</strong>
-                      <div>
-                        <span className="repo-tag">
-                          {s.repo ||
-                            String(s.cwd || "")
-                              .split("/")
-                              .pop() ||
-                            "Unregistered"}
-                        </span>
-                        <span>{s.agent || "agent"}</span>
-                        {s.model && s.model !== "-" && <span>{s.model}</span>}
-                      </div>
-                      <p>
-                        <GitBranch size={12} />
-                        {s.branch || `Slot ${s.slot}`}
-                        <span>·</span>
-                        {s.host || "local"}
-                      </p>
-                    </div>
-                    <div className="session-state">
-                      <span className={`state ${s.state || ""}`}>
-                        <i />
-                        {s.state || "unknown"}
-                      </span>
-                      <span
-                        className="attach-label"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          void attach(s);
-                        }}
-                      >
-                        Attach <ArrowUpRight size={12} />
-                      </span>
-                    </div>
-                  </button>
-                ))
-              ) : (
-                <div className="empty">
-                  <TerminalSquare size={32} />
-                  <h2>
-                    {query ? "No matching sessions" : "A clear workspace"}
-                  </h2>
-                  <p>
-                    {query
-                      ? "Try another task, branch, or agent."
-                      : "Start a session or resume an existing thread. Your real sessions will appear here."}
-                  </p>
-                  <button
-                    className="secondary"
-                    onClick={() => setPalette(true)}
-                  >
-                    Explore commands <Command size={14} />
-                  </button>
-                </div>
-              )}
-            </div>
-            <div
-              className="panel-divider"
-              role="separator"
-              aria-label="Resize terminal panel"
-              aria-orientation="horizontal"
-              aria-valuenow={terminalHeight}
-              tabIndex={0}
-              onKeyDown={(e) => {
-                if (e.key === "ArrowUp" || e.key === "ArrowDown") {
-                  e.preventDefault();
-                  setTerminalHeight((v) =>
-                    Math.max(
-                      25,
-                      Math.min(65, v + (e.key === "ArrowUp" ? 5 : -5)),
-                    ),
-                  );
-                }
-              }}
-              onPointerDown={(e) => {
-                const start = e.clientY;
-                const initial = terminalHeight;
-                const height = e.currentTarget.parentElement!.clientHeight;
-                const move = (event: PointerEvent) =>
-                  setTerminalHeight(
-                    Math.max(
-                      25,
-                      Math.min(
-                        65,
-                        initial + ((start - event.clientY) / height) * 100,
-                      ),
-                    ),
-                  );
-                const stop = () => {
-                  window.removeEventListener("pointermove", move);
-                  window.removeEventListener("pointerup", stop);
-                };
-                window.addEventListener("pointermove", move);
-                window.addEventListener("pointerup", stop);
-              }}
-            />
-            <div
-              className="terminal-area"
-              style={{ height: `${terminalHeight}%` }}
-            >
-              <div
-                className="terminal-tabs"
-                role="tablist"
-                aria-label="Session terminals"
-              >
-                <span className="terminal-heading">
-                  <TerminalSquare size={14} />
-                  TERMINAL
-                </span>
-                {tabs.map((tab) => (
-                  <div
-                    key={tab.id}
-                    className={`terminal-tab ${active === tab.id ? "active" : ""}`}
-                  >
-                    <button
-                      id={`tab-${tab.id}`}
-                      role="tab"
-                      aria-selected={active === tab.id}
-                      onClick={() => setActive(tab.id)}
-                    >
-                      {tab.ended && <i />}
-                      {tab.name}
-                    </button>
-                    <button
-                      aria-label={`Detach ${tab.name}`}
-                      onClick={() => {
-                        setTabs((v) => v.filter((t) => t.id !== tab.id));
-                        if (active === tab.id)
-                          setActive(
-                            tabs.find((t) => t.id !== tab.id)?.id || "",
-                          );
-                      }}
-                    >
-                      <X size={13} />
-                    </button>
-                  </div>
-                ))}
-                {current?.ended && current.session && (
-                  <button
-                    className="reconnect-button"
-                    onClick={() => void attach(current.session!)}
-                  >
-                    Reconnect
-                  </button>
-                )}
+            {snapshot.remoteStatus?.some((r) => r.status === "incomplete") && (
+              <p className="remote-notice" role="status">
+                Some hosts could not be verified:{" "}
+                {snapshot.remoteStatus
+                  .filter((r) => r.status === "incomplete")
+                  .map((r) => r.host)
+                  .join(", ")}
+                . Their session state may be incomplete.
+              </p>
+            )}
+            {status === "loading" && !snapshot.sessions.length ? (
+              <div className="empty">
+                <RefreshCw size={24} className="spin" />
+                <h2>Reading your sessions</h2>
+                <p>Checking the shared core.</p>
               </div>
-              <div className="terminal-content">
-                {tabs.map((tab) => (
-                  <div
-                    key={tab.id}
-                    role="tabpanel"
-                    aria-labelledby={`tab-${tab.id}`}
-                    className="terminal-wrapper"
-                    style={{ display: active === tab.id ? "flex" : "none" }}
-                  >
-                    <TerminalPane
-                      token={tab.token}
-                      onExit={(code) => {
-                        setTabs((v) =>
-                          v.map((t) =>
-                            t.id === tab.id ? { ...t, ended: true } : t,
+            ) : (
+              <SessionList
+                sessions={filtered}
+                snapshot={snapshot}
+                selected={selected}
+                attached={
+                  new Set(
+                    tabs
+                      .filter((t) => t.session && !t.ended)
+                      .map((t) => key(t.session!)),
+                  )
+                }
+                busy={busy}
+                query={query}
+                onQuery={setQuery}
+                onOpen={(s) => void attach(s)}
+                onSelect={(s) => {
+                  setSelected(s);
+                  if (s.host && s.host !== "local") return;
+                  void request<Record<string, unknown>>("sessions.detail", {
+                    session: s.sid || `${target(s).repo}-${target(s).slot}`,
+                  })
+                    .then((detail) =>
+                      setSelected((current) =>
+                        current && key(current) === key(s)
+                          ? enrichSession(current, detail)
+                          : current,
+                      ),
+                    )
+                    .catch(() => {});
+                }}
+              />
+            )}
+            {tabs.length > 0 && (
+              <>
+                <div
+                  className="panel-divider"
+                  role="separator"
+                  aria-label="Resize terminal panel"
+                  aria-orientation="horizontal"
+                  aria-valuenow={terminalHeight}
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+                      e.preventDefault();
+                      setTerminalHeight((v) =>
+                        Math.max(
+                          25,
+                          Math.min(65, v + (e.key === "ArrowUp" ? 5 : -5)),
+                        ),
+                      );
+                    }
+                  }}
+                  onPointerDown={(e) => {
+                    const start = e.clientY;
+                    const initial = terminalHeight;
+                    const height = e.currentTarget.parentElement!.clientHeight;
+                    const move = (event: PointerEvent) =>
+                      setTerminalHeight(
+                        Math.max(
+                          25,
+                          Math.min(
+                            65,
+                            initial + ((start - event.clientY) / height) * 100,
                           ),
-                        );
-                        if (tab.operationId)
-                          void request<Operation>("operations.reconcile", {
-                            operationId: tab.operationId,
-                          })
-                            .then((op) => {
-                              if (
-                                op.state === "completed" ||
-                                op.state === "partial"
-                              )
-                                setPending((v) =>
-                                  v.filter((id) => id !== tab.operationId),
-                                );
-                            })
-                            .catch((e) => setError(String(e)));
-                        void refresh();
-                      }}
-                    />
-                  </div>
-                ))}
-                {!tabs.length && (
-                  <div className="terminal-empty">
-                    <TerminalSquare size={25} />
-                    <div>
-                      <strong>A terminal, right where you work</strong>
-                      <p>
-                        Select a session and attach to continue. Closing a tab
-                        only detaches this window.
-                      </p>
-                    </div>
-                    {selected && (
-                      <button
-                        className="terminal-attach"
-                        disabled={busy}
-                        onClick={() => void attach(selected)}
+                        ),
+                      );
+                    const stop = () => {
+                      window.removeEventListener("pointermove", move);
+                      window.removeEventListener("pointerup", stop);
+                    };
+                    window.addEventListener("pointermove", move);
+                    window.addEventListener("pointerup", stop);
+                  }}
+                />
+                <div
+                  className="terminal-area"
+                  style={{ height: `${terminalHeight}%` }}
+                >
+                  <div
+                    className="terminal-tabs"
+                    role="tablist"
+                    aria-label="Session terminals"
+                  >
+                    <span className="terminal-heading">
+                      <TerminalSquare size={14} />
+                      Terminal
+                    </span>
+                    {tabs.map((tab) => (
+                      <div
+                        key={tab.id}
+                        className={`terminal-tab ${active === tab.id ? "active" : ""}`}
                       >
-                        <Play size={14} />
-                        Attach session
+                        <button
+                          id={`tab-${tab.id}`}
+                          role="tab"
+                          aria-selected={active === tab.id}
+                          onClick={() => setActive(tab.id)}
+                        >
+                          {tab.ended && <i />}
+                          {tab.name}
+                        </button>
+                        <button
+                          aria-label={`Detach ${tab.name}`}
+                          onClick={() => {
+                            setTabs((v) => v.filter((t) => t.id !== tab.id));
+                            if (active === tab.id)
+                              setActive(
+                                tabs.find((t) => t.id !== tab.id)?.id || "",
+                              );
+                          }}
+                        >
+                          <X size={13} />
+                        </button>
+                      </div>
+                    ))}
+                    {current?.ended && current.session && (
+                      <button
+                        className="reconnect-button"
+                        onClick={() => void attach(current.session!)}
+                      >
+                        Reconnect
                       </button>
                     )}
                   </div>
-                )}
-              </div>
-            </div>
+                  <div className="terminal-content">
+                    {tabs.map((tab) => (
+                      <div
+                        key={tab.id}
+                        role="tabpanel"
+                        aria-labelledby={`tab-${tab.id}`}
+                        className="terminal-wrapper"
+                        style={{ display: active === tab.id ? "flex" : "none" }}
+                      >
+                        <TerminalPane
+                          token={tab.token}
+                          onExit={(code) => {
+                            setTabs((v) =>
+                              v.map((t) =>
+                                t.id === tab.id ? { ...t, ended: true } : t,
+                              ),
+                            );
+                            if (tab.operationId)
+                              void request<Operation>("operations.reconcile", {
+                                operationId: tab.operationId,
+                              })
+                                .then((op) => {
+                                  if (
+                                    op.state === "completed" ||
+                                    op.state === "partial"
+                                  )
+                                    setPending((v) =>
+                                      v.filter((id) => id !== tab.operationId),
+                                    );
+                                })
+                                .catch((e) => setError(String(e)));
+                            void refresh();
+                          }}
+                        />
+                      </div>
+                    ))}
+                    {!tabs.length && (
+                      <div className="terminal-empty">
+                        <TerminalSquare size={25} />
+                        <div>
+                          <strong>A terminal, right where you work</strong>
+                          <p>
+                            Select a session and attach to continue. Closing a
+                            tab only detaches this window.
+                          </p>
+                        </div>
+                        {selected && (
+                          <button
+                            className="terminal-attach"
+                            disabled={busy}
+                            onClick={() => void attach(selected)}
+                          >
+                            <Play size={14} />
+                            Attach session
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </>
+            )}
           </section>
-          {inspector && (
+          {inspector && details && (
             <aside className="inspector">
               <div className="inspector-title">
-                SESSION DETAILS
+                Session details
                 <span>{details ? "Selected" : "No selection"}</span>
               </div>
               {details ? (
@@ -873,12 +851,14 @@ function App() {
                     <h2>{title(details)}</h2>
                     <span className="state">
                       <i />
-                      {details.state || "unknown"}
+                      {sessionStatus(details, snapshot.remoteStatus).label}
                     </span>
                   </div>
                   <dl>
                     {[
                       ["Repository", details.repo],
+                      ["Runtime state", details.state],
+                      ["Context", details.context],
                       ["Branch", details.branch],
                       ["Worktree", details.cwd],
                       ["Slot", details.slot],
@@ -889,19 +869,25 @@ function App() {
                       ["Pull request", details.pr],
                     ].map(([label, value]) => (
                       <React.Fragment key={String(label)}>
-                        <dt>{label}</dt>
+                        <dt>{String(label)}</dt>
                         <dd>{String(value || "—")}</dd>
                       </React.Fragment>
                     ))}
                   </dl>
                   <button
                     className="primary full"
-                    disabled={busy}
+                    disabled={busy || detailsUnavailable || detailsExternal}
                     onClick={() => void attach(details)}
                   >
                     <TerminalSquare size={15} />
                     Attach terminal
                   </button>
+                  {detailsExternal && (
+                    <p className="attachment-note">
+                      This session runs in an external app. Embedded terminal
+                      attachment is unavailable.
+                    </p>
+                  )}
                   <div className="detail-actions">
                     {[
                       "resume",
@@ -916,6 +902,7 @@ function App() {
                       return c ? (
                         <button
                           key={verb}
+                          disabled={detailsUnavailable || busy}
                           onClick={() =>
                             chooseAction(c, [
                               ...(details.repo ? [details.repo] : []),
@@ -929,6 +916,16 @@ function App() {
                       ) : null;
                     })}
                   </div>
+                  <p className="attachment-note">
+                    {tabs.some(
+                      (t) =>
+                        t.session &&
+                        key(t.session) === key(details) &&
+                        !t.ended,
+                    )
+                      ? "Terminal attached in this window."
+                      : "Terminal detached. Opening a terminal does not create a new session."}
+                  </p>
                   <p className="safety-note">
                     Session ownership and worktree safety are checked by the
                     shared core before every action.

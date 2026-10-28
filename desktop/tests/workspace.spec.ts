@@ -11,6 +11,10 @@ async function setup(
   page: import("@playwright/test").Page,
   scenario: {
     applyFailure?: boolean;
+    register?: boolean;
+    terminalFailure?: boolean;
+    conflictingDetail?: boolean;
+    remoteDetail?: boolean;
     terminalReady?: boolean;
     issueResults?: "mixed" | "unavailable";
   } = {},
@@ -22,6 +26,7 @@ async function setup(
       (window as any).fixtureIssueResults = scenario.issueResults;
       let appliedMethod = "sessions.open";
       let sequence = 0;
+      let terminalAttempts = 0;
       const tokenize = (value: any): any => {
         if (!value || typeof value !== "object") return value;
         if (value.kind === "terminal" && value.argv)
@@ -41,6 +46,9 @@ async function setup(
                 ...golden.snapshot,
                 repositories: [
                   { alias: "fixture", path: "/tmp/t-desktop-fixture" },
+                  ...(scenario.register
+                    ? [{ alias: "other", path: "/tmp/t-desktop-other" }]
+                    : []),
                 ],
                 hosts: [{ alias: "build", target: "fixture@example.test" }],
                 sessions: [
@@ -52,12 +60,69 @@ async function setup(
                     title: "Fixture · Build a shared workspace",
                     agent: "codex",
                     model: "gpt-test",
-                    state: "live",
+                    state: "attached",
+                    context: "active",
                     branch: "dev/fixture-1",
                     host: "local",
                     cwd: "/tmp/t-desktop-fixture",
                   },
+                  ...(scenario.register
+                    ? [
+                        {
+                          repo: "other",
+                          slot: "2",
+                          summary: "Review database migration",
+                          agent: "claude",
+                          state: "detached",
+                          context: "idle",
+                          host: scenario.remoteDetail ? "build" : "local",
+                          sid: scenario.remoteDetail
+                            ? "remote-sid"
+                            : "database-sid",
+                          cwd: "/tmp/t-desktop-other",
+                        },
+                        {
+                          repo: "fixture",
+                          slot: "3",
+                          summary: "Check unavailable build",
+                          agent: "codex",
+                          state: "attached",
+                          context: "active",
+                          host: "build",
+                          cwd: "/tmp/t-desktop-build",
+                        },
+                        {
+                          repo: "fixture",
+                          slot: "4",
+                          summary: "External app review",
+                          agent: "codex",
+                          state: "app",
+                          context: "active",
+                          host: "local",
+                          cwd: "/tmp/t-desktop-app",
+                        },
+                      ]
+                    : []),
                 ],
+                ...(scenario.register
+                  ? {
+                      remoteStatus: scenario.remoteDetail
+                        ? []
+                        : [{ host: "build", status: "incomplete" }],
+                    }
+                  : {}),
+              };
+            if (args.method === "sessions.detail" && scenario.conflictingDetail)
+              return {
+                repo: "wrong",
+                slot: "99",
+                host: "remote-wrong",
+                sid: "wrong-sid",
+                cwd: "/wrong",
+                state: "dead",
+                context: "saved",
+                agent: "wrong-agent",
+                branch: "enriched-branch",
               };
             if (args.method === "sessions.search") return golden.search;
             if (args.method === "issues.list") {
@@ -101,6 +166,8 @@ async function setup(
             return { state: "completed" };
           }
           if (command === "pty_open") {
+            if (scenario.terminalFailure && terminalAttempts++ === 0)
+              throw new Error("Fixture attachment expired");
             setTimeout(
               () =>
                 args.onEvent.onmessage({
@@ -387,3 +454,186 @@ for (const scenario of ["mixed", "unavailable"] as const) {
     }
   });
 }
+
+test("session register filters real runtime state and keeps external/unverified attachment unavailable", async ({
+  page,
+}) => {
+  await setup(page, { register: true });
+  for (const width of [1320, 1024, 736, 320]) {
+    await page.setViewportSize({ width, height: 860 });
+    for (const theme of ["light", "dark"]) {
+      await page.evaluate((theme) => {
+        document.documentElement.dataset.theme = theme;
+      }, theme);
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= innerWidth,
+        ),
+      ).toBe(true);
+      await expect(page.locator(".workspace")).toHaveCount(1);
+      await expect(page.locator("header.toolbar")).toHaveCount(1);
+      await expect(page.locator("main > footer")).toHaveCount(1);
+      await page.evaluate(
+        () =>
+          new Promise((resolve) =>
+            requestAnimationFrame(() => requestAnimationFrame(resolve)),
+          ),
+      );
+      await page.screenshot({
+        path: `test-results/session-register-${width}-${theme}.png`,
+        fullPage: width < 520,
+        animations: "disabled",
+      });
+    }
+  }
+  await page.setViewportSize({ width: 1320, height: 860 });
+  await expect(page.locator(".terminal-area")).toHaveCount(0);
+  await expect(page.locator(".session-row")).toHaveCount(4);
+  await expect(
+    page.getByRole("button", { name: /Needs attention/ }),
+  ).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /Working/ })).toHaveCount(0);
+  await page.getByRole("button", { name: /Tmux detached/ }).click();
+  await expect(page.locator(".session-row")).toHaveCount(1);
+  await expect(page.locator(".session-row")).toContainText(
+    "Review database migration",
+  );
+  await page
+    .getByRole("button", { name: /All sessions/ })
+    .last()
+    .click();
+  await expect(
+    page.getByRole("button", {
+      name: "Open terminal for Check unavailable build",
+    }),
+  ).toBeDisabled();
+  await expect(
+    page.getByRole("button", { name: "Open terminal for External app review" }),
+  ).toBeDisabled();
+  await page.getByRole("button", { name: "By repository" }).click();
+  await expect(page.locator(".repo-group")).toHaveCount(2);
+  await page.getByLabel("Filter sessions").fill("build");
+  await expect(page.locator(".session-row")).toHaveCount(2);
+});
+test("inspector lifecycle target follows selected row while another terminal is attached", async ({
+  page,
+}) => {
+  await setup(page, { register: true });
+  await page
+    .getByRole("button", {
+      name: "Open terminal for Fixture · Build a shared workspace",
+    })
+    .click();
+  await page
+    .getByRole("button", { name: "Review database migration", exact: true })
+    .click();
+  await expect(page.locator(".inspector h2")).toHaveText(
+    "Review database migration",
+  );
+  await page
+    .locator(".detail-actions")
+    .getByRole("button", { name: "Close", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Review command", exact: true })
+    .click();
+  const calls = await page.evaluate(() => (window as any).fixtureCalls);
+  expect(
+    calls.find((c: any) => c.method === "sessions.close").params,
+  ).toMatchObject({ repo: "other", slot: "2" });
+});
+test("new session uses current repository scope instead of an earlier selected row", async ({
+  page,
+}) => {
+  await setup(page, { register: true });
+  await page
+    .getByRole("button", {
+      name: "Fixture · Build a shared workspace",
+      exact: true,
+    })
+    .click();
+  await page
+    .locator(".sidebar")
+    .getByRole("button", { name: "other 1", exact: true })
+    .click();
+  await page.getByRole("button", { name: "New session", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Review command", exact: true })
+    .click();
+  const calls = await page.evaluate(() => (window as any).fixtureCalls);
+  expect(
+    calls.find((c: any) => c.method === "sessions.open").params,
+  ).toMatchObject({ repo: "other", new: true });
+});
+test("failed attachment can reconnect with a fresh token", async ({ page }) => {
+  await setup(page, { terminalFailure: true });
+  await page
+    .getByRole("button", {
+      name: "Open terminal for Fixture · Build a shared workspace",
+    })
+    .click();
+  await expect(page.getByRole("alert")).toContainText(
+    "Fixture attachment expired",
+  );
+  await page.getByRole("button", { name: "Reconnect", exact: true }).click();
+  await expect(page.locator(".terminal-tab")).toHaveCount(2);
+  const calls = await page.evaluate(() => (window as any).fixtureCalls);
+  expect(calls.filter((c: any) => c.method === "sessions.attach")).toHaveLength(
+    2,
+  );
+});
+
+test("conflicting transcript detail cannot retarget a selected live session", async ({
+  page,
+}) => {
+  await setup(page, { register: true, conflictingDetail: true });
+  await page
+    .getByRole("button", { name: "Review database migration", exact: true })
+    .click();
+  await expect(page.locator(".inspector")).toContainText("enriched-branch");
+  await expect(page.locator(".inspector")).not.toContainText("wrong-agent");
+  await page
+    .locator(".detail-actions")
+    .getByRole("button", { name: "Close", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Review command", exact: true })
+    .click();
+  const calls = await page.evaluate(() => (window as any).fixtureCalls);
+  expect(
+    calls.find((c: any) => c.method === "sessions.close").params,
+  ).toMatchObject({ repo: "other", slot: "2" });
+  expect(
+    calls.find((c: any) => c.method === "sessions.close").params.host,
+  ).not.toBe("remote-wrong");
+});
+
+test("remote selection skips local transcript enrichment and retains remote lifecycle target", async ({
+  page,
+}) => {
+  await setup(page, {
+    register: true,
+    remoteDetail: true,
+    conflictingDetail: true,
+  });
+  await page
+    .getByRole("button", { name: "Review database migration", exact: true })
+    .click();
+  await expect(page.locator(".inspector h2")).toHaveText(
+    "Review database migration",
+  );
+  await page
+    .locator(".detail-actions")
+    .getByRole("button", { name: "Close", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Review command", exact: true })
+    .click();
+  const calls = await page.evaluate(() => (window as any).fixtureCalls);
+  expect(calls.filter((c: any) => c.method === "sessions.detail")).toHaveLength(
+    0,
+  );
+  expect(
+    calls.find((c: any) => c.method === "sessions.close").params,
+  ).toMatchObject({ repo: "other", slot: "2", host: "build" });
+});

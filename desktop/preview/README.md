@@ -29,4 +29,6 @@ All identities, paths, issues, activity, and sessions are synthetic. New session
 
 The preview demonstrates a session manager that can inform both desktop and future Swift iOS views. It does not implement the shared backend or an iOS app. Native clients should consume the shared session contract rather than this demo's embedded sample data.
 
-Manual checks: search and repository/host/status filtering; both views and sorting; selection separate from task inspection; new task whitespace validation; close/restart confirmation naming targets; unreachable actions disabled; one simulated terminal attachment and detach; light/dark theme; keyboard dialog dismissal; layouts at 320, 736, and 1024 pixels.
+The attention quick filter demonstrates explicitly reported activity using sample data. Production also distinguishes actual tmux attachment state from this window's terminal attachment; see the [design rationale](../../docs/session-manager-design.md).
+
+Manual checks: attention quick filter; search and repository/host/status filtering; both views and sorting; selection separate from task inspection; new task whitespace validation; close/restart confirmation naming targets; unreachable actions disabled; one simulated terminal attachment and detach; light/dark theme; keyboard dialog dismissal; layouts at 320, 736, and 1024 pixels.
