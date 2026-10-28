@@ -461,3 +461,43 @@ def test_combined_config_save_is_one_transaction(workflow, t_mod, tmp_path, monk
         assert w.config_path().exists() and sync == ['_t_sync_config']
         output = capsys.readouterr().out
         assert 'saved agent workflow and native instructions' in output and 'T_LOCAL_RC' in output
+
+
+def test_nested_workflow_commands(workflow, t_mod, monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(t_mod, '_workflow', lambda: vars(workflow))
+    cfg = SimpleNamespace(repos={'api': str(tmp_path / 'api')})
+    monkeypatch.setattr(t_mod, 'Config', lambda: cfg)
+    # Exercise the real update classifier: list must skip the prompt.
+    monkeypatch.setattr(t_mod, '_t_offer_update', lambda: pytest.fail('list prompted for update'))
+    assert t_mod.main(['config', 'workflow', 'list']) == 0
+    output = capsys.readouterr().out
+    assert 'Scope: global' in output and 'recommended defaults (not saved)' in output
+    assert 'Enabled: yes' in output and all(word in output for word in ('STAGE', 'MODEL', 'EFFORT', 'planning', 'implementation', 'review'))
+    assert not workflow.config_path().exists()
+    for flags in ([], ['--repo', 'api']):
+        assert t_mod.main(['config', 'workflow', 'list', *flags, '--json']) == 0
+        result = json.loads(capsys.readouterr().out)
+        assert result['workflow'] == workflow.DEFAULT
+        assert result['scope'] == (str(tmp_path / 'api') if flags else 'global')
+        assert t_mod.main(['config', 'show', '--workflow', *flags]) == 0
+        assert json.loads(capsys.readouterr().out) == result
+    document = workflow.defaults()
+    document['global']['enabled'] = False
+    document['repositories'][str(tmp_path / 'api')] = dict(workflow.DEFAULT)
+    workflow.save(document, None)
+    assert t_mod.main(['config', 'workflow', 'list']) == 0
+    assert 'Enabled: no' in capsys.readouterr().out
+    assert t_mod.main(['config', 'workflow', 'list', '--repo', 'api']) == 0
+    output = capsys.readouterr().out
+    assert 'Source: repository override' in output and 'Enabled: yes' in output
+    assert t_mod.main(['config', 'workflow', 'list', '--repo', 'missing']) == 1
+    assert 'unknown registered repository' in capsys.readouterr().err
+    monkeypatch.setattr(t_mod, '_t_auto_update', lambda argv: None)
+    monkeypatch.setattr(t_mod.sys.stdin, 'isatty', lambda: True)
+    monkeypatch.setattr(t_mod.sys.stdout, 'isatty', lambda: True)
+    seen = []
+    monkeypatch.setattr(workflow, 'edit', lambda doc, repo: (seen.append(repo) or 19, doc))
+    assert t_mod.main(['config', 'workflow', 'edit', '--repo', 'api']) == 19
+    assert seen == [str(tmp_path / 'api')]
+    assert not t_mod._command_readonly(['config', 'workflow', 'edit'])
+    assert t_mod._command_readonly(['config', 'workflow', 'list', '--repo', 'api'])

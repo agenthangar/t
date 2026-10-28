@@ -777,7 +777,7 @@ _t() {
     cursor) actions=(list resume send) ;;
     agentcore) actions=(invoke stop) ;;
     hosts) actions=(list show add edit remove default run) ;;
-    config) actions=(open show edit setup onboard) ;;
+    config) actions=(open show edit setup onboard workflow) ;;
     profile) actions=(init edit show apply) ;;
     policy) actions=(check show apply) ;;
     agent) actions=(login install status trust) ;;
@@ -790,10 +790,22 @@ _t() {
       return
     fi
     if [[ $group == config && ${words[CURRENT]} == -* ]]; then
-      _values 'legacy flag' --show --edit --workflow --repo -h --help
+      _values 'flag' -h --help
       return
     fi
     _describe -t actions 't action' actions
+    return
+  fi
+  if [[ $group == config && $action == workflow ]]; then
+    if (( CURRENT == 4 )); then
+      _values 'workflow verb' list edit
+    elif [[ ${words[CURRENT-1]} == --repo ]]; then
+      _values 'repo' ${(k)DEV_REPOS}
+    elif [[ ${words[4]} == list ]]; then
+      _values 'flag' --repo --json -h --help
+    elif [[ ${words[4]} == edit ]]; then
+      _values 'flag' --repo -h --help
+    fi
     return
   fi
   # Old spellings remain usable once typed, but are not offered at top level.
@@ -942,7 +954,7 @@ _t() {
       else _files -/; fi ;;   # scan-dir arguments
     config/show|config/edit|config/--show|config/--edit)
       if [[ ${words[CURRENT-1]} == --repo ]]; then _values 'repo' ${(k)DEV_REPOS}
-      else _values 'flag' --workflow --repo -h --help; fi ;;
+      else _values 'flag' -h --help; fi ;;
     config/*)
       _values 'flag' -h --help ;;
     repo/add)

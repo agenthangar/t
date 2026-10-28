@@ -36,7 +36,7 @@ LEGACY_GROUP_VERBS = {
     "cursor": {"list", "resume", "send"},
     "hosts": {"list", "show", "add", "edit", "remove", "default", "run"},
     "agentcore": {"invoke", "stop"},
-    "config": {"open", "show", "edit", "setup", "onboard"},
+    "config": {"open", "show", "edit", "setup", "onboard", "workflow"},
     "profile": {"init", "edit", "show", "apply"},
     "policy": {"check", "show", "apply"},
     "agent": {"login", "install", "status", "trust"},
@@ -47,6 +47,38 @@ LEGACY_GROUP_VERBS = {
 def _subparsers(parser):
     return next((action for action in parser._actions
                  if isinstance(action, argparse._SubParsersAction)), None)
+
+
+def command_routes(groups, prefix=()):
+    """Flatten resource subgroups without treating them as command leaves."""
+    for name, value in groups.items():
+        path = (*prefix, name)
+        if isinstance(value, dict):
+            yield from command_routes(value, path)
+        else:
+            yield path, value
+
+
+def check_subgroups(parser, groups, prefix=()):
+    """Nested resource registries must own matching native parser children."""
+    errors = []
+    for name, value in groups.items():
+        if not isinstance(value, dict):
+            continue
+        path = (*prefix, name)
+        parent = parser
+        for word in path:
+            children = _subparsers(parent) if parent else None
+            parent = children._name_parser_map.get(word) if children else None
+        if prefix:
+            children = _subparsers(parent) if parent else None
+            if children is None or set(children.choices) != set(value):
+                errors.append(f"{' '.join(path)} subgroup must own a matching nested verb parser")
+            for leaf_path, route in command_routes(value, path):
+                if tuple(route) != leaf_path:
+                    errors.append(f"{' '.join(leaf_path)} nested resource must route to its own parser")
+        errors.extend(check_subgroups(parser, value, path))
+    return errors
 
 
 def check_issue_picker(source):
@@ -111,12 +143,18 @@ def check_issue_help(help_text):
 def check_group_help(group_help, command_groups):
     """Every canonical command must remain discoverable in its group menu."""
     errors = []
-    for group, verbs in command_groups.items():
-        menu = group_help(group)
-        for verb in verbs:
-            if (not re.search(rf"(?m)^  {re.escape(verb)}\s+\S", menu)
-                    and f"t {group} {verb}" not in " ".join(menu.split())):
-                errors.append(f"{group} {verb} is missing from command-group help")
+    def visit(groups, prefix=()):
+        for group, verbs in groups.items():
+            if not isinstance(verbs, dict):
+                continue
+            path = (*prefix, group)
+            menu = group_help(" ".join(path))
+            for verb in verbs:
+                if (not re.search(rf"(?m)^  {re.escape(verb)}\s+\S", menu)
+                        and f"t {' '.join(path)} {verb}" not in " ".join(menu.split())):
+                    errors.append(f"{' '.join(path)} {verb} is missing from command-group help")
+            visit(verbs, path)
+    visit(command_groups)
     return errors
 
 
@@ -169,22 +207,24 @@ def check(parser, command_groups, instructions):
     for group, verbs in LEGACY_GROUP_VERBS.items():
         if set(command_groups.get(group, {})) != verbs:
             errors.append(f"{group} compatibility verb registry changed; review its CLI contract")
+    errors.extend(check_subgroups(parser, command_groups))
+    for path, route in command_routes(command_groups):
+        name = " ".join(path)
+        target = top._name_parser_map.get(route[0]) if route else None
+        if target is None:
+            errors.append(f"{name} routes to a missing command parser")
+            continue
+        for word in route[1:]:
+            if word.startswith("-"):
+                if word not in target._option_string_actions:
+                    errors.append(f"{name} routes to an unknown option {word}")
+            else:
+                nested_route = _subparsers(target)
+                if nested_route is None or word not in nested_route._name_parser_map:
+                    errors.append(f"{name} routes to an unknown parser verb {word}")
+                    break
+                target = nested_route._name_parser_map[word]
     for group, actions in command_groups.items():
-        for verb, route in actions.items():
-            target = top._name_parser_map.get(route[0]) if route else None
-            if target is None:
-                errors.append(f"{group} {verb} routes to a missing command parser")
-                continue
-            for word in route[1:]:
-                if word.startswith("-"):
-                    if word not in target._option_string_actions:
-                        errors.append(f"{group} {verb} routes to an unknown option {word}")
-                else:
-                    nested_route = _subparsers(target)
-                    if nested_route is None or word not in nested_route._name_parser_map:
-                        errors.append(f"{group} {verb} routes to an unknown parser verb {word}")
-                        break
-                    target = nested_route._name_parser_map[word]
         if group == "issue" or group in LEGACY_GROUP_VERBS:
             continue
         noun = top._name_parser_map.get(group)
@@ -194,7 +234,7 @@ def check(parser, command_groups, instructions):
             continue
         positional = [action for action in noun._actions if not action.option_strings
                       and not isinstance(action, argparse._SubParsersAction)]
-        if positional or any(tuple(route[:2]) != (group, verb) for verb, route in actions.items()):
+        if positional or any(tuple(route) != path for path, route in command_routes(actions, (group,))):
             errors.append(f"new public group {group} must require a verb before target arguments")
     issue = top._name_parser_map.get("issue")
     issue_sub = _subparsers(issue) if issue else None
@@ -231,6 +271,29 @@ def check(parser, command_groups, instructions):
                 return False, None
         return True, args
 
+    workflow_registry = command_groups.get("config", {}).get("workflow", {})
+    if not isinstance(workflow_registry, dict) or set(workflow_registry) != {"list", "edit"}:
+        errors.append("config workflow registry must expose list and edit")
+    config = top._name_parser_map.get("config")
+    config_sub = _subparsers(config) if config else None
+    workflow = config_sub._name_parser_map.get("workflow") if config_sub else None
+    workflow_sub = _subparsers(workflow) if workflow else None
+    for verb in ("list", "edit"):
+        leaf = workflow_sub._name_parser_map.get(verb) if workflow_sub else None
+        option = leaf._option_string_actions.get("--repo") if leaf else None
+        if option is None or option.dest != "workflow_repo" or option.metavar != "ALIAS":
+            errors.append(f"config workflow {verb} must expose consistent --repo ALIAS")
+        for scope in ([], ["--repo", "api"]):
+            words = ["config", "workflow", verb, *scope]
+            valid, args = accepts(words)
+            if not valid or args.verb != "config" or getattr(args, "workflow_action", None) != verb:
+                errors.append("workflow parser rejected or misrouted required form: " + " ".join(words))
+    valid, args = accepts(["config", "workflow", "list", "--json"])
+    if not valid or not getattr(args, "json", False):
+        errors.append("config workflow list must expose --json")
+    for phrase in ("nested resources before verbs", "flags select scope or format", "t config workflow list", "t config workflow edit"):
+        if phrase not in instructions:
+            errors.append("AGENTS.md must document " + phrase)
     for words in (["issue", "list"], ["issue", "list", "--all", "--json"],
                   ["issue", "list", "-a"], ["issue", "list", "repo", "--state", "all", "--json"],
                   ["issue", "list", "--repo", "repo"],
@@ -286,7 +349,8 @@ def check_command_patterns(parser, command_groups, contract, *, root=ROOT):
     patterns = contract.get("patterns", {})
     if set(patterns) != allowed:
         errors.append("command patterns must define the ten approved behavior types")
-    routes = ({f"{group} {verb}" for group, verbs in command_groups.items() for verb in verbs}
+    registry_routes = {" ".join(path): route for path, route in command_routes(command_groups)}
+    routes = (set(registry_routes)
               | {SHARE_COMMAND, "share targets", "share inbox", "share read"})
     top = _subparsers(parser)
     commands = contract.get("commands", {})
@@ -307,7 +371,7 @@ def check_command_patterns(parser, command_groups, contract, *, root=ROOT):
     for name in sorted(routes & set(commands)):
         entry = commands[name]
         words = name.split()
-        route = command_groups[words[0]][words[1]] if len(words) == 2 and words[0] != SHARE_COMMAND else tuple(words)
+        route = registry_routes.get(name, tuple(words))
         leaf = top._name_parser_map.get(route[0]) if top else None
         for word in route[1:]:
             if word.startswith("-"):
@@ -337,6 +401,9 @@ def check_command_patterns(parser, command_groups, contract, *, root=ROOT):
             argv = spec.get("argv", [])
             if not isinstance(argv, list) or argv[:len(words)] != words or not accepts(argv):
                 errors.append(f"{name} {mode} example does not parse as its canonical command")
+            if words[-1] == "list" and (not spec.get("read_only") or "list" not in mode_patterns and "machine" not in mode_patterns
+                                             or mode_patterns & {"single", "multi", "filtered", "wizard", "review", "action"}):
+                errors.append(f"{name} {mode} list must be read-only list or machine output without selection")
             for reference in spec.get("tests", []):
                 errors.extend(_check_test_reference(reference, root))
             if not spec.get("tests"):

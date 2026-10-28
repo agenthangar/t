@@ -2264,45 +2264,12 @@
             "tests/test_config.py::test_config_bridge_reads_model_defaults",
             "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
           ]
-        },
-        "workflow": {
-          "argv": [
-            "config",
-            "show",
-            "--workflow"
-          ],
-          "patterns": [
-            "detail"
-          ],
-          "read_only": true,
-          "tests": [
-            "tests/test_workflow.py::test_cli_workflow_show_edit_and_validation"
-          ],
-          "notes": "Read-only effective workflow and inheritance source; never writes, prompts, or opens an editor."
-        },
-        "workflow_repository": {
-          "argv": [
-            "config",
-            "show",
-            "--workflow",
-            "--repo",
-            "api"
-          ],
-          "patterns": [
-            "detail"
-          ],
-          "read_only": true,
-          "tests": [
-            "tests/test_workflow.py::test_cli_workflow_show_edit_and_validation"
-          ],
-          "notes": "Read-only effective workflow and inheritance source; never writes, prompts, or opens an editor."
         }
       }
     },
     "config edit": {
       "patterns": [
-        "wizard",
-        "action"
+        "wizard"
       ],
       "renderer": "rail",
       "scope": "local machine",
@@ -2324,38 +2291,6 @@
           "tests": [
             "tests/test_command_groups_shell.py::test_legacy_and_grouped_config_edits_reload_the_caller"
           ]
-        },
-        "workflow": {
-          "argv": [
-            "config",
-            "edit",
-            "--workflow"
-          ],
-          "patterns": [
-            "action"
-          ],
-          "read_only": false,
-          "tests": [
-            "tests/test_workflow.py::test_cli_workflow_show_edit_and_validation"
-          ],
-          "notes": "Global staged workflow preferences; --repo selects an explicit registered canonical checkout override. Editor validates JSON before saving preferences and native instructions. Unchanged or invalid edits write nothing."
-        },
-        "workflow_repository": {
-          "argv": [
-            "config",
-            "edit",
-            "--workflow",
-            "--repo",
-            "api"
-          ],
-          "patterns": [
-            "action"
-          ],
-          "read_only": false,
-          "tests": [
-            "tests/test_workflow.py::test_cli_workflow_show_edit_and_validation"
-          ],
-          "notes": "Global staged workflow preferences; --repo selects an explicit registered canonical checkout override. Editor validates JSON before saving preferences and native instructions. Unchanged or invalid edits write nothing."
         }
       }
     },
@@ -3392,6 +3327,127 @@
             "tests/test_remote_commands.py::test_remote_open_resume_delegate_quoted_worker_and_status"
           ],
           "notes": "Discover history ON build with the established saved-history protocol; session resume --host sends locally discovered history instead."
+        }
+      }
+    },
+    "config workflow list": {
+      "patterns": [
+        "list",
+        "machine"
+      ],
+      "renderer": "plain",
+      "scope": "global by default; explicit registered repository alias with --repo; no inference or selection",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_workflow.py::test_nested_workflow_commands"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "config",
+            "workflow",
+            "list"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_workflow.py::test_nested_workflow_commands"
+          ]
+        },
+        "repository": {
+          "argv": [
+            "config",
+            "workflow",
+            "list",
+            "--repo",
+            "api"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_workflow.py::test_nested_workflow_commands"
+          ]
+        },
+        "json": {
+          "argv": [
+            "config",
+            "workflow",
+            "list",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_workflow.py::test_nested_workflow_commands"
+          ]
+        },
+        "repository_json": {
+          "argv": [
+            "config",
+            "workflow",
+            "list",
+            "--repo",
+            "api",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_workflow.py::test_nested_workflow_commands"
+          ]
+        }
+      }
+    },
+    "config workflow edit": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "external",
+      "scope": "global by default; explicit registered repository alias with --repo; no inference or selection",
+      "confirmation": "external",
+      "tests": [
+        "tests/test_workflow.py::test_nested_workflow_commands"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "config",
+            "workflow",
+            "edit"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_workflow.py::test_nested_workflow_commands"
+          ],
+          "terminal": true
+        },
+        "repository": {
+          "argv": [
+            "config",
+            "workflow",
+            "edit",
+            "--repo",
+            "api"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_workflow.py::test_nested_workflow_commands"
+          ],
+          "terminal": true
         }
       }
     }

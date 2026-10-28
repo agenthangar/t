@@ -23,7 +23,15 @@ contract tests with the implementation. Lists and status are read-only and
 must never open a picker or an automatic update prompt. Run
 `python3 scripts/lint_cli.py` to check these rules.
 
-Keep public commands in noun/verb families. For issue work, expose `t issue list`
+Keep public commands in noun/verb families, with nested resources before verbs
+when a family has multiple resources. For example, use `t config workflow list`
+and `t config workflow edit`; flags select scope or format (`--repo ALIAS`,
+`--json`), not the resource or action. Retain old resource/mode flags only as
+hidden compatibility aliases, never as canonical examples or completion choices.
+The CLI lint must check nested registry leaves, parser routes, inventory, help,
+read-only list behavior, and this guidance.
+
+For issue work, expose `t issue list`
 to browse a repository, `t issue status` for read-only ownership discovery,
 `t issue start` to continue or start work, and `t issue open` to open issues in
 the user's browser. Reuse the shared session picker for

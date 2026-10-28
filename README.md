@@ -854,8 +854,8 @@ choices; review defaults to one supported effort level below planning. Repositor
 settings include **Agent workflow** for a complete override or **Inherit global workflow**.
 These choices stay pending until **Save changes**; cancellation discards them.
 
-Use `t config edit --workflow` for the global workflow's JSON terminal editor,
-or `t config edit --workflow --repo api` for a registered repository override.
+Use `t config workflow edit` for the global workflow's JSON terminal editor,
+or `t config workflow edit --repo api` for a registered repository override.
 Set `enabled`, and each stage's `model` and `effort`. Planning and implementation
 accept `auto` or an explicit effort (`minimal`, `low`, `medium`, `high`, `xhigh`,
 `max`, `ultra`); review accepts an explicit effort or `one-level-lower`.
@@ -865,9 +865,13 @@ and unsuccessful editor exits publish nothing. Bare `t config edit` still edits
 local shell configuration. **Edit reusable instructions** opens the existing
 `t profile edit` profile for prose customization.
 
-`t config show --workflow [--repo api]` prints effective values and their source
-without writing or prompting. Unsaved accounts show recommended defaults until
+`t config workflow list [--repo api]` prints a stage/model/effort table with enabled
+state, scope, and inheritance source. Add `--json` for machine output. Global is
+the default; a registered `--repo` alias explicitly selects a repository without
+checkout inference or a picker. Unsaved accounts show recommended defaults until
 explicitly activated. Preferences live in `${XDG_CONFIG_HOME:-~/.config}/t/workflow.json`.
+Hidden `t config show --workflow` and `t config edit --workflow` compatibility
+forms remain available; the former retains its JSON output.
 Saving synchronizes a separate managed block in Codex's `AGENTS.md` (and existing
 nonempty `AGENTS.override.md`) and Claude's `CLAUDE.md`, honoring `CODEX_HOME` and
 `CLAUDE_CONFIG_DIR`. Personal prose and t's public-issue block are preserved;
