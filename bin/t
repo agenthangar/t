@@ -10484,6 +10484,15 @@ def _wrap_help(body):
                 indent = "  " if line.startswith("  ") else ""
                 lines.append(textwrap.fill(line.strip(), width=width, initial_indent=indent,
                                            subsequent_indent=indent, break_long_words=False, break_on_hyphens=False))
+    # Lay out plain text first: escapes must never participate in width decisions.
+    style = Style(tty=(sys.stdout.isatty() and "NO_COLOR" not in os.environ
+                       and os.environ.get("TERM") != "dumb"
+                       and os.environ.get("CLICOLOR") != "0"))
+    for index, line in enumerate(lines):
+        heading = re.match(r"^(usage:|[A-Z][A-Z ()/+-]*:?)($|(?<=:) )", line)
+        if heading:
+            label = heading.group(1)
+            lines[index] = style.b + style.c + label + style.r + line[len(label):]
     return "\n".join(lines) + "\n"
 
 
@@ -10662,7 +10671,7 @@ def _aliases_help():
                 for path, route in _command_routes()
                 if path[-1] == "list" and (*path[:-1], "ls") != route)
     rows.append("  t list                     t session list")
-    return "COMPATIBILITY ALIASES\n" + "\n".join(rows) + "\n\nLegacy flags remain available.\n"
+    return _wrap_help("COMPATIBILITY ALIASES\n" + "\n".join(rows) + "\n\nLegacy flags remain available.\n")
 
 class _CommandSubparsers(argparse._SubParsersAction):
     """Keep public choices separate from the complete dispatch table."""
@@ -10702,6 +10711,9 @@ class _CommandParser(argparse.ArgumentParser):
         self.help_details = kwargs.pop("help_details", None)
         kwargs["formatter_class"] = _HelpFormatter
         super().__init__(*args, **kwargs)
+        # Python 3.14 argparse otherwise colors body text before our layout pass.
+        if hasattr(self, "color"):
+            self.color = False
         self._positionals.title = "arguments"
         self._optionals.title = "options"
         self.register("action", "parsers", _CommandSubparsers)
@@ -12300,7 +12312,7 @@ def main(argv):
             print(_root_help(), end="")
             return 0
         if words == ["agents"]:
-            print("AGENT SUPPORT\n" + "\n".join(_agent_parity_render()))
+            print(_wrap_help("AGENT SUPPORT\n" + "\n".join(_agent_parity_render())), end="")
             return 0
         if words == ["aliases"]:
             print(_aliases_help(), end="")
