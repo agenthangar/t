@@ -32,13 +32,16 @@ def test_resume_quick_help_and_structured_details(t_mod, monkeypatch, capsys, wo
     assert len(quick.splitlines()) <= 45 if width >= 80 else True
     assert max(map(len, quick.splitlines())) <= min(width, 80)
     assert 't help ' + ' '.join(words) in ' '.join(quick.split())
+    assert 'browse local and remote repositories' in ' '.join(quick.split())
+    assert 'cloned only after selection' in ' '.join(quick.split())
     for flag in ('--app', '--cli', '--fg', '--all', '--live', '--remote', '--days', '--host', '--help'):
         assert flag in quick
     assert t_mod.main(['help', *words]) == 0
     detail = capsys.readouterr().out
     for heading in ('PICKER CONTROLS', 'LIVE OWNERS AND DESKTOP', 'REMOTE HISTORY', 'REQUIREMENTS AND DISCOVERY'):
         assert heading in detail
-    for retained in ('Alt-T', 'Alt-V', 'Ctrl-/', 'only a selected remote transcript', 'never resumed a second time'):
+    for retained in ('Alt-T', 'Alt-V', 'Ctrl-/', 'only a selected remote transcript', 'never resumed a second time',
+                     'registered only after selection'):
         assert retained in ' '.join(detail.split())
     assert len(detail) > len(quick)
 

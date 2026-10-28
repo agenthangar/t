@@ -10516,7 +10516,7 @@ Run `t help issue <verb>` for flags and arguments.
     if group == "remote":
         extra = ("\nTARGETS\n  t remote open [repo] [slot] [--host HOST] [--new]\n"
                  "  t remote move [repo] [slot] [--session ID] [--from SOURCE] [--host DEST]\n"
-                 "  t remote resume [repo] [slot] [--host HOST] [--days N]\n"
+                 "  t remote resume [repo] [slot] [--host HOST] [--days N] [--all]\n"
                  "\nInfer the repository from the current checkout, or browse all repositories outside one.\n"
                  "Omitted hosts use a picker labeled for opening, starting fresh, resuming, or moving.\n"
                  "Open's chosen host runs the session; --new explicitly starts fresh there.\n"
@@ -10827,6 +10827,7 @@ TARGETS
             leaf.add_argument("--new", action="store_true", help="start a fresh session on the chosen host")
         elif action == "resume":
             leaf.add_argument("--days", default="30", help="saved-history age in days, or all (default: 30)")
+            leaf.add_argument("-a", "--all", action="store_true", help="browse all repositories on the selected host")
         else:
             leaf.add_argument("--from", dest="from_host", help="source SSH host; local selects this machine")
             leaf.add_argument("-s", "--session", help="exact conversation ID, bypassing session selection when unique")
@@ -11202,9 +11203,10 @@ EXPLICIT PUSH AND PULL
 
     sp = sub.add_parser("resume", help="revive a dead slot's saved conversation",
         description='Resume saved Claude or Codex conversations in fresh slots and attach. Infer the current '
-            'repository; outside one, browse all. Select with Enter; Space/Tab marks several conversations. '
-            'Live selections attach to their existing owner. Ownership checks prevent duplicate resumes. Use '
-            't remote resume to browse history on another host.',
+            'repository; outside one, browse local and remote repositories. Enter selects; Space/Tab marks '
+            'several. Live selections attach to their owner; ownership checks prevent duplicate resumes. '
+            'Missing local repositories are cloned only after selection. Use t remote resume to browse '
+            'history on another host.',
         epilog="""EXAMPLES
   %(prog)s                   Browse the current repository
   %(prog)s api 2             Resume api slot 2
@@ -11221,7 +11223,7 @@ EXPLICIT PUSH AND PULL
   branch first, then resumes the pick in a fresh dev slot and attaches.
 
   Names default to the cwd repo; outside any repo dir a bare `t session resume`
-  scans every worktree repo.
+  discovers local and registered-host repositories.
 
   One inactive candidate is taken when there are no excluded live rows; otherwise
   fzf picks (an explicit slot with no TTY takes the newest).
@@ -11261,7 +11263,8 @@ LIVE OWNERS AND DESKTOP
 
 REMOTE HISTORY
   Registered hosts refresh by repository identity on every scan; only a selected
-  remote transcript is downloaded. --host H sends the selected saved history to H.
+  remote transcript is downloaded. A missing local repository is cloned and
+  registered only after selection. --host H sends the selected saved history to H.
 
   Live selections on another host are refused before any batch action; use remote
   move.
@@ -11284,13 +11287,14 @@ REQUIREMENTS AND DISCOVERY
   still block duplicate resumes.
 
   Delayed progress wheels identify quiet discovery stages while waiting.""")
+
     sp.add_argument("repo", nargs="?", help="DEV_REPOS key; defaults to the repo your cwd is in")
     sp.add_argument("slot", nargs="?", help="slot number; a lone slot implies the cwd repo")
     sp.add_argument("-f", "--fg", action="store_true", help="resume inline in this terminal (no tmux slot)")
     sp.add_argument("--app", action="store_true",
         help="open one exact Codex conversation in the local macOS app; refuses other owners, agents, multiple picks, --cli, --fg, and --host")
     sp.add_argument("--cli", action="store_true", help="resume in the terminal (the default)")
-    sp.add_argument("-a", "--all", action="store_true", help="scan every worktree repo (the default outside a repo dir)")
+    sp.add_argument("-a", "--all", action="store_true", help="discover local and remote-only repositories (default outside a repo dir)")
     sp.add_argument("-l", "--live", action="store_true",
         help="start with all sessions shown; Ctrl-F restores the inactive-only view (live rows attach on pick)")
     sp.add_argument("-r", "--remote", action="store_true",
@@ -12106,16 +12110,42 @@ def main(argv):
                 for row in history.resume_candidates(argv[1:]):
                     print(row)
             else:
-                if len(argv) != 5 or argv[1] not in history.cfg.repos or argv[4] not in ('launch', 'prepare'):
+                if len(argv) not in (5, 6) or argv[4] not in ('launch', 'prepare'):
                     raise helper['HistoryError']('invalid saved conversation selection')
                 alias, sid, agent = argv[1:4]
-                rows = [row for row in history.records(alias) if row['sid'] == sid and row['agent'] == agent]
+                identity = argv[5] if len(argv) == 6 else alias
+                if identity == '-':
+                    identity = alias
+                if identity not in history.cfg.repos and not helper['REPO_IDENTITY'].fullmatch(identity):
+                    raise helper['HistoryError']('invalid saved repository identity')
+                rows = [row for row in history.records(identity) if row['sid'] == sid and row['agent'] == agent]
                 if len(rows) != 1:
                     raise helper['HistoryError']('saved conversation changed; select it again')
                 print(history.resume(alias, rows[0], detached=True, prepare_only=argv[4] == 'prepare'))
             return 0
         except helper['HistoryCancelled']:
             return 130
+        except helper['HistoryError'] as error:
+            print('t resume: ' + str(error), file=sys.stderr)
+            return 1
+        finally:
+            history.store.close()
+    if argv and argv[0] in ('__history-catalog', '__repo-identity', '__resume-alias'):
+        helper = runpy.run_path(os.path.join(_t_source_root(), 'libexec', 't_history.py'))
+        history = helper['HistoryCommand'](Config(), globals())
+        try:
+            if argv == ['__history-catalog']:
+                print(json.dumps(history.local_catalog()))
+            elif len(argv) == 2 and argv[0] == '__repo-identity' and argv[1] in history.cfg.repos:
+                print(history.identity(argv[1]))
+            elif len(argv) == 2 and argv[0] == '__resume-alias':
+                alias = history.repository_alias(argv[1])
+                if not alias and not helper['REPO_IDENTITY'].fullmatch(argv[1]):
+                    raise helper['HistoryError']('invalid saved repository identity')
+                print(alias or argv[1])
+            else:
+                raise helper['HistoryError']('invalid repository discovery request')
+            return 0
         except helper['HistoryError'] as error:
             print('t resume: ' + str(error), file=sys.stderr)
             return 1
@@ -12132,7 +12162,7 @@ def main(argv):
         history = helper["HistoryCommand"](cfg, globals())
         try:
             for alias in cfg.repos:
-                if history.identity(alias) == argv[1]:
+                if history.same_repository(history.identity(alias), argv[1]):
                     history.discover(alias)
                     print(json.dumps(history.export(alias)))
                     return 0

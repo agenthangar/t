@@ -197,6 +197,17 @@ one column. Column filters combine with attachment views. Ctrl-A clears all
 filters and shows every snapshot row; Ctrl-F clears all filters and restores
 unattached. Ctrl-T and Ctrl-U switch attachment without clearing column filters.
 
+All-repository resume discovery (`t session resume --all`, or outside a checkout)
+includes local registrations, repositories registered only on reachable hosts,
+and orphan Codex rollouts with exact Git repository metadata. Discovery transfers
+metadata only; canceling the picker never clones, registers, or downloads a
+transcript. Selecting a saved conversation can clone and register its missing
+local repository through the normal checkout safety checks. Repository aliases
+and paths may differ across hosts. GitHub transfers require authenticated matching
+repository IDs; names and directory basenames alone never establish equivalence.
+`t remote resume --all --host HOST` explicitly keeps this scope on the chosen host.
+An explicit or inferred locally registered repository resolves there by identity.
+
 Resume and close retain cycling Ctrl-G agent, Ctrl-O host/origin, Ctrl-R repo,
 and (close only) Ctrl-D interface, with their existing state toggles. Resume
 never invents a historical UI. Resume uses actual user-turn timestamps, newest
