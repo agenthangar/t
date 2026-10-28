@@ -560,3 +560,14 @@ commands remain unchanged. See [coverage and privacy](../docs/vulnerabilities.md
 cached repository-tool coverage and worker state. `enable --interval-hours N`
 and `disable` are explicit direct actions for the per-user periodic worker,
 without pickers, OS service registration, remediation or update prompts.
+
+### Local model setup
+
+`t config local` and the settings hub's **Local worker & models** entry use the
+shared Rail UI to review prerequisite installation, model downloads, and Codex MCP
+registration. Pending hub edits must be saved or discarded before opening setup.
+`t config local --model NAME --yes` applies explicit setup without prompting;
+`--disable --yes` disables delegation while retaining models and registration.
+`t config local --show` is a read-only detail mode: no server startup, download,
+registration, picker, or automatic update prompt. Cancelling review returns 130.
+Completed installation steps remain after a later failure so setup can be retried.

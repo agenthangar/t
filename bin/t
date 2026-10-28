@@ -2636,7 +2636,7 @@ def _config_wizard(cfg):
                 values[a] = f"{edited.models.get(a) or 'tool default'} · {edited.efforts.get(a) or 'default'} effort"
                 if edited.fast.get(a) == "1":
                     values[a] += " · fast"
-            rows += [("hosts", "Hosts"), ("repos", "Repositories"), ("beam", "Default beam host"),
+            rows += [("local", "Local worker & models ›"), ("hosts", "Hosts"), ("repos", "Repositories"), ("beam", "Default beam host"),
                      ("worktrees", "Worktrees & branches"), ("workflow", "Agent workflow"), ("edit", "Open config in editor"),
                      ("save", "Save changes"), ("cancel", "Cancel")]
             pending = len(_config_diff(initial, _config_state(edited))) + _workflow_pending(edited)
@@ -2660,6 +2660,11 @@ def _config_wizard(cfg):
                     ui.done("cancelled", "nothing written")
                     return None
             last = choice
+            if choice == "local":
+                if pending:
+                    ui.done("pending", "Save or discard pending settings before local worker setup.")
+                    continue
+                return "local"
             if choice == "edit":
                 if pending:
                     ui.done("pending", "Save or cancel your menu changes before opening the editor.")
@@ -2894,7 +2899,21 @@ def _cmd_workflow(cfg, args):
         return 130
 
 
+def _local_worker():
+    return runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_local_worker.py"))
+
+
+def _local_setup(args):
+    helper = runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_local_setup.py"))
+    return helper["run"](args, globals())
+
+
 def cmd_config(cfg, args):
+    if getattr(args, "local", False):
+        return _local_setup(args)
+    if getattr(args, "local_model", None) or getattr(args, "disable_local", False) or getattr(args, "yes", False):
+        print("local model options require t config local", file=sys.stderr)
+        return 1
     workflow_action = getattr(args, "workflow_action", None)
     if workflow_action:
         args.workflow = True
@@ -2909,6 +2928,7 @@ def cmd_config(cfg, args):
         for agent in AGENTS:
             print(f"{agent} effort: {cfg.efforts.get(agent) or 'tool default'}")
             print(f"{agent} speed: {_config_speed_label(cfg.fast.get(agent))}")
+        print(f"Local worker: t config local --show (setup: t config local)")
         print(f"Default opening mode: {cfg.open_mode_default}")
         print(f"Default beam host: {cfg.beam_host or 'none'}")
         print(f"Worktrees: {cfg.worktree_default} · root: {cfg.worktree_root} · shared-tree branch: {cfg.branch}")
@@ -2937,6 +2957,8 @@ def cmd_config(cfg, args):
         result = "edit" if getattr(args, "edit", False) else _config_wizard(cfg)
         if result is None:
             return 130
+        if result == "local":
+            return _local_setup(args)
         shell_changed, workflow_changed = result == "edit", False
         if result == "edit":
             rc = _config_editor()
@@ -10133,6 +10155,15 @@ def _mcp_allow_announce(settings):
 
 
 def cmd_mcp(cfg, args):
+    if getattr(args, "local_worker", False):
+        helper = _local_worker()
+        if args.list_tools:
+            print("\n".join(tool["name"] for tool in helper["tool_specs"]()))
+            return 0
+        if args.install or args.reindex or args.call:
+            print("local worker supports stdio or --list-tools only", file=sys.stderr)
+            return 1
+        return helper["serve"](globals())
     if args.install:
         return _mcp_install()
     if args.list_tools:
@@ -10244,7 +10275,7 @@ COMMAND_GROUPS = {
     "agentcore": {"invoke": ("agentcore", "invoke"), "stop": ("agentcore", "stop")},
     "config": {"open": ("config",), "show": ("config", "--show"),
                "edit": ("config", "--edit"), "setup": ("setup",),
-               "onboard": ("config", "--onboard"),
+               "onboard": ("config", "--onboard"), "local": ("config", "--local"),
                "workflow": {"list": ("config", "workflow", "list"),
                             "edit": ("config", "workflow", "edit"),
                             **{verb: ("config", "workflow", verb) for verb in ("add", "use", "exclude", "inherit")},
@@ -10353,6 +10384,8 @@ def _canonical_error(argv):
         mode_flags["agent"] = {"--status"}
     payload = argv[2:argv.index("--")] if "--" in argv[2:] else argv[2:]
     conflict = mode_flags.get(group, set()).intersection(payload)
+    if group == "config" and action == "local":
+        conflict.discard("--show")
     if conflict:
         return f"t {group} {action}: mode flags belong to the action name: {', '.join(sorted(conflict))}"
     return None
@@ -10568,7 +10601,8 @@ def _command_description(group, action):
         "config": {"open": "Open settings; edit repository and host short names", "show": "Print current settings",
                    "edit": "Edit local configuration", "setup": "Register repos and hosts",
                    "onboard": "Guided setup: agents, GitHub repos, and hosts",
-                   "workflow": "Manage named staged agent workflows and Markdown instructions"},
+                   "workflow": "Manage named staged agent workflows and Markdown instructions",
+                   "local": "Set up local models and Codex worker delegation (--show for status)"},
         "profile": {"init": "Create an instruction profile", "edit": "Edit the profile",
                     "show": "Print the profile", "apply": "Apply it to a repository"},
         "policy": {"check": "Check pending changes", "show": "Show translated rules",
@@ -11265,6 +11299,10 @@ REMOTE SESSIONS
     cg = sp.add_mutually_exclusive_group()
     cg.add_argument("--show", action="store_true", help="print current settings without opening the menu")
     cg.add_argument("--edit", action="store_true", help="open T_LOCAL_RC in VISUAL/EDITOR directly")
+    sp.add_argument("--local", action="store_true", help="set up Ollama, local models and Codex worker MCP")
+    sp.add_argument("--model", dest="local_model", help="Ollama model to download for t config local")
+    sp.add_argument("--disable", dest="disable_local", action="store_true", help="disable local delegation, keeping models")
+    sp.add_argument("-y", "--yes", action="store_true", help="apply explicit local model setup without prompting")
     sp.add_argument("--workflow", action="store_true", help=argparse.SUPPRESS)
     sp.add_argument("--repo", dest="workflow_repo", metavar="ALIAS", help=argparse.SUPPRESS)
     cg.add_argument("--onboard", action="store_true",
@@ -11542,6 +11580,7 @@ REMOTE SESSIONS
             "plus explicit session controls and the full session command family through session_command. "
             "Controls require user authorization; only the three lookup tools are automatically allowed. "
             "Not for direct use except through the flags below.")
+    mp.add_argument("--local-worker", action="store_true", help="serve bounded local Codex/Ollama worker tools")
     mp.add_argument("--install", action="store_true",
                     help="register with Claude Code (user scope) if not already")
     mp.add_argument("--list-tools", action="store_true", help="print the tool names")
@@ -11604,6 +11643,18 @@ def _print_command_help(target, words, canonical, *, detailed=False):
         words = words[:2]
     elif words:
         words = words[:1]
+    if words == ["config", "local"]:
+        print("usage: t config local [--show | --model NAME | --disable] [--yes] [-h]\n\n"
+              "Set up local Codex workers: install prerequisites, download a model and register MCP.\n"
+              "With no flags, review choices in the settings UI.\n\n"
+              "options:\n  --show       print saved settings and prerequisite paths; no processes or writes\n"
+              "  --model NAME select an Ollama model (for example gpt-oss:20b)\n"
+              "  --disable    disable delegation; keep models and MCP registration\n"
+              "  -y, --yes    apply an explicit model or disable choice without prompting\n"
+              "  -h, --help   show this help\n\n"
+              "examples:\n  t config local\n  t config local --model gpt-oss:20b --yes\n"
+              "  t config local --show\n\nSee docs/local-workers.md for worker tools and limits.")
+        return
     if len(words) == 2 and words[0] in COMMAND_GROUPS:
         group, action = words
         mode_actions = {

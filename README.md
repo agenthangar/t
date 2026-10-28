@@ -525,6 +525,13 @@ host aliases may attach to the existing owner. Desktop resume remains local.
 
 ### Configuration and tools
 
+For local coding delegation, open **t config → Local worker & models** or run
+`t config local`. Review installation of Codex/Ollama, select and download a local
+model, and connect the worker to Codex through MCP. The lead keeps its conversation;
+workers use isolated repository snapshots and return findings, patches, and test
+evidence. `t config local --show` is read-only. See [local workers](docs/local-workers.md)
+for setup, cancellation, limits, and automated setup examples.
+
 | Command | Purpose |
 | --- | --- |
 | `t config open` / `t config show` / `t config edit` | Open the settings menu, print settings, or edit its source |

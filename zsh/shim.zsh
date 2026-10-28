@@ -786,7 +786,7 @@ _t() {
     cursor) actions=(list resume send) ;;
     agentcore) actions=(invoke stop) ;;
     hosts) actions=(list show add edit remove default run) ;;
-    config) actions=(open show edit setup onboard workflow) ;;
+    config) actions=(open show edit setup onboard workflow local) ;;
     profile) actions=(init edit show apply) ;;
     policy) actions=(check show apply) ;;
     agent) actions=(login install status trust) ;;
@@ -968,6 +968,9 @@ _t() {
     config/show|config/edit|config/--show|config/--edit)
       if [[ ${words[CURRENT-1]} == --repo ]]; then _values 'repo' ${(k)DEV_REPOS}
       else _values 'flag' -h --help; fi ;;
+    config/local)
+      if [[ ${words[CURRENT-1]} == --model ]]; then _message 'Ollama model name'
+      else _values 'flag' --model --show --disable -y --yes -h --help; fi ;;
     config/*)
       _values 'flag' -h --help ;;
     repo/add)
