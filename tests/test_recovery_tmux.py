@@ -487,7 +487,8 @@ def test_real_unverified_notice_is_visible_and_dismissible(terminal, width):
         os.close(master)
 
 
-def test_real_verified_offer_follows_dismissed_unverified_notice(terminal, monkeypatch):
+@pytest.mark.parametrize("dismiss_key", [b"q", b"\x1b", b"\r"])
+def test_real_verified_offer_follows_dismissed_unverified_notice(terminal, monkeypatch, dismiss_key):
     mod, tmux, command, env, home = terminal
     (home / ".zshrc").write_text(f'''
 _dev_agent_of_session() {{ print codex; }}
@@ -522,11 +523,20 @@ _t_restart_slot() {{ print -r -- "$*" > "$HOME/accepted"; }}
         until(lambda: visible_title(b"RECOVERY NEEDS ATTENTION"))
         visible.clear()
         known_owner[0] = True
-        watcher.poll()
-        assert not list(mod.cache(socket).glob("*.offer"))
-        os.write(master, b"q")
+        for _ in range(3):
+            watcher.poll()
+            assert mod.notice_path(socket, pane["pane"]).exists()
+            assert not list(mod.cache(socket).glob("*.offer"))
+        os.write(master, dismiss_key)
         until(lambda: watcher.poll() and visible_title(b"CONNECTION FAILED"),
               detail=lambda: repr(bytes(visible[-1000:])))
+        if tmux("display-message", "-p", "#{version}").stdout.strip() == "3.8":
+            assert not list(mod.cache(socket).glob("*.closed"))
+            real_time = mod.time.time
+            monkeypatch.setattr(mod.time, "time", lambda: real_time() + 3600)
+            watcher.poll()
+            assert list(mod.cache(socket).glob("*.offer"))  # Still visible, not expired.
+            monkeypatch.setattr(mod.time, "time", real_time)
         os.write(master, b"q")
         until(lambda: not list(mod.cache(socket).glob("*.offer")))
         assert not (home / "accepted").exists()
@@ -698,3 +708,40 @@ _dev_app_slot_reserved() {{ return 1; }}
     finally:
         daemon.terminate()
         daemon.wait(timeout=5)
+
+
+@pytest.mark.parametrize("disappears", ["client", "pane"])
+def test_real_unverified_notice_cleans_up_after_viewer_or_pane_disappears(terminal, disappears):
+    mod, tmux, command, env, home = terminal
+    assert tmux("new-session", "-d", "-s", "dev-api-1", "sleep 60").returncode == 0
+    socket = tmux("display-message", "-p", "-t", "=dev-api-1:", "#{socket_path}").stdout.strip()
+    pane = mod.panes(socket)[0]
+    master, slave = pty.openpty()
+    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
+    client = subprocess.Popen(command + ["attach-session", "-t", "=dev-api-1"], env=env,
+                              stdin=slave, stdout=slave, stderr=slave, start_new_session=True)
+    os.close(slave)
+    os.set_blocking(master, False)
+    try:
+        until(lambda: mod.clients(socket, pane["pane"]))
+        assert mod.unverified_notice(socket, pane["pane"])
+        visible = bytearray()
+        def shown():
+            if select.select([master], [], [], .05)[0]:
+                visible.extend(os.read(master, 65536))
+            return b"RECOVERY NEEDS ATTENTION" in visible
+        until(shown)
+        assert mod.notice_path(socket, pane["pane"]).exists()
+        if disappears == "client":
+            viewer = mod.clients(socket, pane["pane"])[0]
+            tmux("detach-client", "-t", viewer)
+        else:
+            tmux("kill-pane", "-t", pane["pane"])
+        watcher = mod.Watcher(socket)
+        until(lambda: (watcher.poll(), not mod.notice_path(socket, pane["pane"]).exists())[1])
+        assert not (home / "accepted").exists()
+    finally:
+        if client.poll() is None:
+            client.kill()
+            client.wait(timeout=5)
+        os.close(master)

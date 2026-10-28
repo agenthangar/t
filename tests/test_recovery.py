@@ -249,8 +249,9 @@ def test_offer_never_types_into_agent_and_targets_viewer(recovery, target, monke
     monkeypatch.setattr(recovery, "tmux", lambda *a: events.append(a) or result())
     assert recovery.offer(target, ERROR)
     assert events[0][1:3] == ("display-message", "-p")
-    assert events[1][1:3] == ("run-shell", "-b")
-    menu = shlex.split(events[1][3])
+    launch = next(event for event in events if event[1] == "run-shell")
+    assert launch[1:3] == ("run-shell", "-b")
+    menu = shlex.split(launch[3])
     assert menu[3:8] == ["display-menu", "-c", "/dev/pts/4", "-t", "%4"]
     assert "t: CONNECTION FAILED" in menu
     assert "Save draft and restart" in menu
@@ -895,3 +896,64 @@ def test_startup_detection_owner_and_callback(recovery, target, monkeypatch, sta
     assert recovery.respond(target['socket'], token, True) == 0
     monkeypatch.setattr(recovery, 'process', lambda p: {'start': target['start'], 'args': 'codex resume ' + SID})
     assert recovery.owner(target['socket'], pane, startup=True) == {}
+
+
+@pytest.mark.parametrize("version,popup", [("3.7a", False), ("3.8", True), ("3.9", True), ("4.0", True), ("", False)])
+def test_notice_uses_waiting_popup_only_after_menu_lifetime_changed(recovery, target, monkeypatch, version, popup):
+    calls = []
+    def tmux(socket, command, *args):
+        calls.append((command, *args))
+        if command == "display-message":
+            return result(version if args[-1] == "#{version}" else "40")
+        return result()
+    monkeypatch.setattr(recovery, "tmux", tmux)
+    monkeypatch.setattr(recovery, "clients", lambda *a: ["viewer"])
+    assert recovery.unverified_notice(target["socket"], target["pane"])
+    launch = next(call[2] for call in calls if call[0] == "run-shell")
+    argv = shlex.split(launch)
+    assert argv[3] == ("display-popup" if popup else "display-menu")
+    assert "rm -f --" in launch and str(recovery.notice_path(target["socket"], target["pane"])) in launch
+    if popup:
+        assert "-E" in argv
+        assert "Save draft and restart" not in launch
+        assert "os.read(0,1)" in launch
+
+
+@pytest.mark.parametrize("disappears", ["client", "pane"])
+def test_watcher_removes_notice_marker_when_scope_disappears(recovery, target, monkeypatch, disappears):
+    path = recovery.notice_path(target["socket"], target["pane"])
+    recovery.write_json(path, {"pane":target["pane"], "viewer":"viewer"})
+    monkeypatch.setattr(recovery, "panes", lambda *a: [] if disappears == "pane" else [target])
+    monkeypatch.setattr(recovery, "clients", lambda *a: [])
+    monkeypatch.setattr(recovery, "pane_failure", lambda *a: "")
+    watcher = recovery.Watcher(target["socket"])
+    watcher.unverified.add(target["pane"])
+    watcher.poll()
+    assert not path.exists()
+    assert target["pane"] not in watcher.unverified
+
+
+@pytest.mark.parametrize("version,closed", [("3.7a", True), ("3.8", False)])
+def test_verified_menu_does_not_expire_while_unobservably_visible(recovery, target, monkeypatch, version, closed):
+    calls = []
+    def tmux(socket, command, *args):
+        calls.append((command, *args))
+        return result(version if command == "display-message" and args[-1] == "#{version}" else "80")
+    monkeypatch.setattr(recovery, "tmux", tmux)
+    monkeypatch.setattr(recovery, "clients", lambda *a: ["viewer"])
+    assert recovery.offer(target, ERROR)
+    first = next(recovery.cache(target["socket"]).glob("*.offer"))
+    launch = next(call[2] for call in calls if call[0] == "run-shell")
+    assert "display-menu" in launch
+    assert ("touch --" in launch) == closed
+    assert recovery.offer(target, ERROR)
+    offers = list(recovery.cache(target["socket"]).glob("*.offer"))
+    assert len(offers) == 1 and offers[0] != first and not first.exists()
+    monkeypatch.setattr(recovery, "panes", lambda *a: [target])
+    monkeypatch.setattr(recovery, "pane_failure", lambda *a: "")
+    monkeypatch.setattr(recovery.time, "time", lambda: 10 ** 12)
+    recovery.Watcher(target["socket"]).poll()
+    assert offers[0].exists()  # No arbitrary age-based expiry without real close.
+    monkeypatch.setattr(recovery, "clients", lambda *a: [])
+    recovery.Watcher(target["socket"]).poll()
+    assert not offers[0].exists()

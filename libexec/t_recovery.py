@@ -242,7 +242,29 @@ def recovery_menu(socket, pane, viewer, title, lines, actions, cleanup=None, clo
             "-H", "fg=colour232,bg=colour214,bold", "-C", str(selected), "--"]
     for item in items:
         menu.extend(item)
-    # tmux owns the input wait so an unanswered panel never stalls the monitor.
+    # tmux 3.8 menus return before dismissal. A notice has no restart action,
+    # so use a process-backed popup whose lifetime includes Escape/client loss.
+    # Keep older tmux's blocking menu path and verified action menus unchanged.
+    version = tmux(socket, "display-message", "-p", "#{version}") if cleanup is not None or closed is not None else None
+    parsed = re.match(r"(\d+)\.(\d+)", version.stdout.strip()) if version else None
+    asynchronous_menu = parsed and tuple(map(int, parsed.groups())) >= (3, 8)
+    if asynchronous_menu:
+        # 3.8's verified menu has no observable close event. Keep its single-use
+        # offer while this viewer/pane exists, rather than expiring a visible UI.
+        closed = None
+    if cleanup is not None and asynchronous_menu:
+        text = "\n".join(textwrap.fill(line, width=max(16, width - 4)) for line in lines)
+        text += "\n\nDismiss: press any key"
+        prompt = ("import os,termios,tty; print(" + repr(text) + ",flush=True); "
+                  "attrs=termios.tcgetattr(0); tty.setcbreak(0); "
+                  "os.read(0,1); termios.tcsetattr(0,termios.TCSADRAIN,attrs)")
+        menu = ["tmux", "-S", socket, "display-popup", "-c", viewer, "-t", pane,
+                "-T", title, "-x", "C", "-y", "C", "-w", str(width + 2),
+                "-h", str(len(text.splitlines()) + 4), "-b", "double",
+                "-s", "fg=colour234,bg=colour230", "-S", "fg=colour214,bg=colour230,bold",
+                "-E", shlex.join([sys.executable, "-c", prompt])]
+    # The monitor launches the client-scoped UI asynchronously. Cleanup follows
+    # actual close for the popup and the older blocking menu implementation.
     command = shlex.join(menu)
     if cleanup is not None:
         command += "; " + shlex.join(["rm", "-f", "--", str(cleanup)])
@@ -257,6 +279,13 @@ def offer(target, error, viewer=None):
     if not viewers or (viewer is not None and viewer not in viewers):
         return False
     viewer = viewer or viewers[0]
+    # A replacement invalidates this viewer's previous token for the same pane.
+    # Escape may leave one inert token on tmux 3.8; never accumulate replacements.
+    for previous in cache(socket).glob("*.offer"):
+        old = read_json(previous)
+        if old.get("pane") == target["pane"] and old.get("viewer") == viewer:
+            previous.unlink(missing_ok=True)
+            previous.with_suffix(".closed").unlink(missing_ok=True)
     token = uuid.uuid4().hex
     path = cache(socket) / (token + ".offer")
     write_json(path, {**target, "viewer": viewer, "error": error, "created": time.time()})
@@ -300,7 +329,7 @@ def unverified_notice(socket, pane, viewer=None):
     if not viewers or (viewer is not None and viewer not in viewers):
         return False
     path = notice_path(socket, pane)
-    write_json(path, {})
+    write_json(path, {"pane": pane, "viewer": viewer or viewers[0]})
     shown = recovery_menu(socket, pane, viewer or viewers[0], "t: RECOVERY NEEDS ATTENTION", [
         "t detected an agent error.",
         "t cannot verify this conversation.",
@@ -453,8 +482,17 @@ class Watcher:
                 closed.with_suffix(".offer").unlink(missing_ok=True)
                 closed.unlink(missing_ok=True)
         for path in cache(self.socket).glob("*.offer"):
-            if read_json(path).get("pane") not in active:
+            offered = read_json(path)
+            pane_id = offered.get("pane")
+            if pane_id not in active or (offered.get("viewer") and offered["viewer"] not in clients(self.socket, pane_id)):
                 path.unlink(missing_ok=True)
+                path.with_suffix(".closed").unlink(missing_ok=True)
+        for path in cache(self.socket).glob("*.notice"):
+            notice = read_json(path)
+            pane_id = notice.get("pane") or "%" + path.stem.removeprefix("pane-")
+            if pane_id not in active or (notice.get("viewer") and notice["viewer"] not in clients(self.socket, pane_id)):
+                path.unlink(missing_ok=True)
+                self.unverified.discard(pane_id)
         for path in cache(self.socket).glob("*.status"):
             pane_id = read_json(path).get("pane")
             if pane_id and pane_id not in active:
