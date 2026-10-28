@@ -15,6 +15,7 @@ import os
 import pathlib
 import pty
 import re
+from _picker_helpers import semantic_chrome
 import select
 import shlex
 import shutil
@@ -2228,12 +2229,12 @@ def test_zsh_resume_picker_shows_the_display_column_for_every_row(zsh, tmp_path)
     assert all(row.startswith(" 3  ") or row.startswith(" 4  ") for row in rows)
     assert {row[4:12] for row in rows} == {"✱ claude", "⬡ codex "}
     # The header exposes every available filter; agent names remain in the rows.
-    header = (tmp_path / "fzf.log.header").read_text().splitlines()
+    header = semantic_chrome((tmp_path / "fzf.log.header").read_text()).splitlines()
     assert header[0] == "Enter resume · Esc · Space/Tab mark ✓ · Ctrl-/ details"
-    assert header[1] == "Ctrl-L live: shown"
     controls = "\n".join(header)
+    assert 'FILTERS' in header and 'Ctrl-L live: shown' in controls
     for control in ("Ctrl-G agent: all", "Ctrl-O host: all", "Ctrl-R repo: all",
-                    "Ctrl-A show all", "Ctrl-F defaults", "0 hidden"):
+                    "Ctrl-A all", "Ctrl-F defaults", "0 hidden"):
         assert control in controls
     assert "Ctrl-D" not in controls  # Resume has no historical interface metadata.
 
@@ -2628,12 +2629,12 @@ def test_open_local_multi_picker(zsh, tmp_path, tabs):
     calls = zsh.log.read_text()
     assert "attach-session -t =dev-api-2:" in calls
     assert "new-session" not in calls and "dev-web-3" not in calls
-    args = log.read_text()
+    args = semantic_chrome(log.read_text())
     assert "--multi" in args and "space:toggle+down" in args
     assert "Enter open · Esc · Space/Tab mark ✓" in args
     for control in ("Ctrl-T attached", "Ctrl-U unattached", "Ctrl-F defaults", "Ctrl-A all"):
         assert control in args
-    assert "View: unattached (default)" in args
+    assert "View: unattached" in args and 'FILTERS' in args
 
 
 def test_open_picker_cancel_does_not_create_session(zsh, tmp_path):

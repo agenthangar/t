@@ -2,6 +2,7 @@
 import json
 
 import pytest
+from _picker_helpers import semantic_chrome
 
 from test_agent_seam import zsh  # noqa: F401 — isolated HOME, process table and tmux
 
@@ -73,7 +74,9 @@ def test_move_picker_uses_current_sessions(zsh, tmp_path, args, location, inside
     log = json.loads((tmp_path / 'picker.json').read_text())
     assert [row.split('\t')[1] for row in log['rows']] == expected
     assert '--no-multi' in log['args']
-    assert '--header=Enter move · Esc\nCurrent local sessions' in log['args']
+    header = semantic_chrome(next(arg for arg in log['args'] if arg.startswith('--header=')))
+    assert header.startswith('--header=MOVE\nEnter move · Esc\n')
+    assert 'Current local sessions' in header and header.endswith('\n ')
     assert 'UNEXPECTED' not in result.stdout
     sid, agent = ('codex-id', 'codex') if label == 'api-2' else (
         ('claude-id', 'claude') if label == 'api-3' else ('fg-id', 'claude'))

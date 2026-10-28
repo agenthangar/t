@@ -317,11 +317,13 @@ class Style:
         """tty=False forces plain text — for a label a picker measures and truncates
         by len(), where an escape sequence would count as width."""
         tty = sys.stdout.isatty() if tty is None else tty
+        tty = tty and "NO_COLOR" not in os.environ and os.environ.get("TERM") != "dumb"
         self.g = "\033[32m" if tty else ""
         self.c = "\033[36m" if tty else ""
         self.y = "\033[2m" if tty else ""
         self.b = "\033[1m" if tty else ""
         self.w = "\033[33m" if tty else ""
+        self.focus = "\033[48;5;23m\033[97m" if tty else ""
         self.rev = "\033[7m" if tty else ""
         self.r = "\033[0m" if tty else ""
 
@@ -383,7 +385,7 @@ _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 
 def _vis_len(s):
     """Columns a styled line takes on screen: its length with the SGR escapes out."""
-    return len(_ANSI_RE.sub("", s))
+    return _display_width(_ANSI_RE.sub("", s))
 
 
 def _term_rows(line, cols):
@@ -586,16 +588,18 @@ def _slot_line(r, st, name_w, avail, host_w=None, model_w=7):
             f"{host}{r['slot']:<{name_w}} {st.y}{summary}{st.r}")
 
 
-def _session_picker_columns(rows, prefixes, statuses, width, heading):
+def _session_picker_columns(rows, prefixes, statuses, width, heading, remote=False):
     """Keep session identity and task text visible in the open picker."""
     clip = _session_display_helpers()["clip_columns"]
-    available = max(1, width - 12)
+    available = max(1, width - (6 if width <= 60 else 12))
     prefix_width = max(_display_width(heading), *map(_display_width, prefixes))
     if width < 100 or prefix_width + 18 > available:
-        prefixes = [f"{status.replace(' ', '')} {row['slot']}" for row, status in zip(rows, statuses)]
-        heading = 'SESSION'
+        prefixes = [f"{status} " +
+                    (f"{row['host']}/" if remote else "") + row['slot']
+                    for row, status in zip(rows, statuses)]
+        heading = 'STATE ' + ('HOST/SESSION' if remote else 'SESSION')
         prefix_width = max(len(heading), *map(_display_width, prefixes))
-        prefix_width = min(prefix_width, max(1, available - 10))
+        prefix_width = min(prefix_width, max(1, available - (5 if remote else 10)))
     heading = clip(heading, prefix_width)
     summary_width = max(1, available - prefix_width - 2)
     task_heading = 'WORKING ON' if summary_width >= 10 else 'TASK'
@@ -648,7 +652,7 @@ def _session_picker_rows(rows, remote=False, scoped=False, compact=False, header
         out.append("\t".join((row["host"], row["slot"], row["state"], details, display)))
     if compact:
         width = _columns()
-        heading, displays = _session_picker_columns(rows, prefixes, statuses, width, prefix_heading)
+        heading, displays = _session_picker_columns(rows, prefixes, statuses, width, prefix_heading, remote=remote)
         # fzf searches only presented fields. The open picker presents 5,4,
         # keeping full details searchable beyond the no-hscroll viewport.
         displays = [display + ' ' * max(0, width - _display_width(display)) for display in displays]
@@ -2830,7 +2834,7 @@ class _RailUI:
         self.st, self.out = Style(), sys.stdout
         self.fd = sys.stdin.fileno()
         self.old_attrs = termios.tcgetattr(self.fd)
-        self.rail = f"  {self.st.y}│{self.st.r}"
+        self.rail = "  "
         self.painted = [0]   # screen ROWS of the block currently on screen (0 = nothing to erase)
 
     def cols(self):
@@ -2842,14 +2846,26 @@ class _RailUI:
 
     def intro(self, title, note):
         st = self.st
-        self.out.write(f"\n  {st.b}{st.c}{title}{st.r}\n      {st.y}{note}{st.r}\n\n")
+        self.out.write(f"\n  {st.b}{st.c}{self.clip(title, self.cols() - 4)}{st.r}\n")
+        for line in _wrap_columns(note, max(4, self.cols() - 4)):
+            self.out.write(f"  {st.y}{line}{st.r}\n")
+        self.out.write("\n")
+
+    def clip(self, text, width):
+        return _session_display_helpers()["clip_columns"](str(text), max(1, width))
+
+    def labels(self, text):
+        helper = runpy.run_path(os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))),
+                                            "libexec", "t_picker_theme.py"))
+        return helper["key_labels"](text, compact=self.lines() <= 14 or self.cols() <= 40)
+
 
     def head(self, label, hint="", marker=None):
         st = self.st
-        mark = marker or f"{st.c}◆{st.r}"
-        lines = [f"  {mark}  {st.b}{_truncate(label, self.cols() - 5)}{st.r}"]
+        mark = marker or ""
+        lines = [f"  {mark}{st.b}{st.c}{self.clip(label, self.cols() - 4)}{st.r}"]
         if hint:
-            lines.append(f"      {st.y}{hint}{st.r}")
+            lines.extend(f"  {st.y}{line}{st.r}" for line in _wrap_columns(hint, self.cols() - 4))
         return lines
 
     def chrome(self, label, keys, primary=None, flash=""):
@@ -2857,61 +2873,66 @@ class _RailUI:
         st, width = self.st, self.cols()
         head = self.head(label) + [self.rail]
         hints, current = [], ""
-        for part in keys.split(" · "):
+        for part in self.labels(keys).split(" · "):
             candidate = f"{current} · {part}" if current else part
-            if len(candidate) > width - 6 and current:
-                hints.append(current)
+            if _display_width(candidate) > width - 4 and current:
+                hints.extend(_wrap_columns(current, width - 4))
                 current = part
             else:
                 current = candidate
         if current:
-            hints.append(current)
-        footer = [self.rail] + [f"      {st.y}{hint}{st.r}" for hint in hints]
-        if self.lines() < 12:
+            hints.extend(_wrap_columns(current, width - 4))
+        footer = [self.rail] + [f"  {st.y}{hint}{st.r}" for hint in hints]
+        if self.lines() <= 14:
             head = head[:1]
-            footer = [f"      {st.y}↑↓/jk · ↵ · q{st.r}"]
+            footer = [f"  {st.y}{hint}{st.r}" for hint in hints]
+        if self.lines() <= 10:
+            brief = self.labels("↑↓/jk · space ✓ · enter · q/esc · Ctrl-C")
+            footer = [f"  {st.y}{line}{st.r}" for line in _wrap_columns(brief, width - 4)]
         if primary:
             key, action, detail = primary
-            text = _truncate(f" {key}  {action} ", width - 6)
-            if self.lines() < 12:
-                footer = [f"      {st.g}{st.b}{st.rev}{text}{st.r}"]
+            text = self.clip(self.labels(f"{key}  {action}"), width - 4)
+            if self.lines() <= 14:
+                footer += [f"  {st.g}{st.b}{text}{st.r}"]
             else:
-                footer += [f"      {st.g}{st.b}{st.rev}{text}{st.r}" +
-                           (f"  {st.g}{detail}{st.r}" if detail and len(text) + len(detail) + 8 <= width else "")]
+                footer += [f"  {st.g}{st.b}{text}{st.r}" +
+                           (f"  {st.g}{detail}{st.r}" if detail and _display_width(text + detail) + 8 <= width else "")]
         if flash:
-            footer.append(f"      {st.w}{_truncate(flash, width - 6)}{st.r}")
+            footer.append(f"      {st.w}{self.clip(flash, width - 6)}{st.r}")
         return head, footer
 
     def section(self, label):
         st = self.st
         title, separator, detail = label.partition(" · ")
         text = title.upper() + separator + detail
-        return f"{self.rail}   {st.b}{st.c}{_truncate(text, self.cols() - 6)}{st.r}"
+        return f"{self.rail}   {st.b}{st.c}{self.clip(text, self.cols() - 6)}{st.r}"
 
     def row(self, label, value=None, *, selected=False, mark=None, label_width=0, accent=""):
         """Style only after clipping plain text: ANSI codes never count as columns."""
         st, width = self.st, self.cols()
         pre = f"{st.c}▸{st.r}" if selected else " "
+        mark = "✓" if mark in ("◼", "✓") else " " if mark in ("◻", "☐") else mark
         box = f"{st.g if mark == '✓' else st.c}{mark}{st.r} " if mark else ""
         avail = max(4, width - 8 - (2 if mark else 0))
         color = getattr(st, accent, "")
         value = str(value) if value is not None else None
         stacked = value is not None and width < 60
         if value is not None and not stacked:
-            left_width = min(24, label_width or len(label))
-            left = _truncate(label, left_width).ljust(left_width)
-            right = _truncate(value, max(1, avail - left_width - 3))
+            left_width = min(24, label_width or _display_width(label))
+            left = self.clip(label, left_width)
+            left += " " * max(0, left_width - _display_width(left))
+            right = self.clip(value, max(1, avail - left_width - 3))
             plain = f"{left}   {right}"
             body = f"{color}{left}{st.r}   {st.c}{right}{st.r}"
         else:
-            plain = _truncate(label, avail)
+            plain = self.clip(label, avail)
             body = f"{color}{plain}{st.r}"
         if selected:
-            body = f"{st.b}{st.rev}{plain.ljust(avail)}{st.r}"
+            body = f"{st.focus}{plain}{' ' * max(0, avail - _display_width(plain))}{st.r}"
         lines = [f"{self.rail}  {pre} {box}{body}"]
         if stacked:
-            detail = _truncate(value, width - 10)
-            style = st.b + st.rev if selected else st.c
+            detail = self.clip(value, width - 10)
+            style = st.focus if selected else st.c
             lines.append(f"{self.rail}      {style}{detail}{st.r}")
         return lines
 
@@ -2920,11 +2941,14 @@ class _RailUI:
         Used by simple pickers and editable setup/install lists alike."""
         st = self.st
         head, footer = self.chrome(label, keys, primary, flash)
-        height = max(2, self.lines() - sum(_term_rows(x, self.cols()) for x in head + footer) - 3)
+        heights = [_term_rows(line, self.cols()) for line, _ in display]
+        budget = max(2, self.lines() - sum(_term_rows(x, self.cols()) for x in head + footer) - 1)
         focused = [i for i, (_, key) in enumerate(display) if key == current and key is not None] or [0]
-        lo = max(0, min(focused[0] - height // 2, len(display) - height))
-        lo = max(lo, focused[-1] - height + 1)
-        hi = min(len(display), lo + height)
+        lo = max(0, focused[0] - budget // 2)
+        lo, hi = _page_window(heights, lo, budget)
+        while focused[-1] >= hi and lo < focused[0]:
+            lo += 1
+            lo, hi = _page_window(heights, lo, budget)
         lines = list(head)
         if lo:
             lines.append(f"{self.rail}   {st.y}↑ more above{st.r}")
@@ -3031,7 +3055,7 @@ class _RailUI:
         flash = ""
         while True:
             display = []
-            label_width = max((len(text) for key, text in rows if key in values), default=0)
+            label_width = max((_display_width(text) for key, text in rows if key in values), default=0)
             for n, (key, text) in enumerate(rows):
                 if key in sections:
                     if display:
@@ -10596,7 +10620,8 @@ Run `t help open` for session targeting, defaults, and remote details.""",
   <repo>:<id>, <repo>:p<pid>, or a session ID. A session in tmux attaches
   in place; a foreground Claude session moves into this terminal.
   Use `t open <repo> fg` to select that repo's foreground sessions.
-  Bare t open lists sessions across all local repos, even from a worktree.
+  Bare t open browses all repos on local and registered remote hosts,
+  even from a worktree. --local limits browsing to this machine.
   t open <repo> filters. Attached CLI and loaded desktop rows are hidden;
   Ctrl-T attached only; Ctrl-U unattached only; Ctrl-F defaults; Ctrl-A all.
   Column value pickers: Ctrl-G agent, Ctrl-P progress, Ctrl-D CLI/desktop,
@@ -10611,7 +10636,7 @@ Run `t help open` for session targeting, defaults, and remote details.""",
   --attached starts with all rows.
   Explicit slots still open directly. Compact resume-style rows retain agent,
   UI, status, model, session and task details, including idle/desktop rows.
-  Column headers stay visible; narrow rows prioritize session and task.
+  Column headers stay visible; narrow rows prioritize host/session and task.
   Space/Tab marks ✓ independently of focus; Enter opens marked rows.
   Use --new to start a new session. The first CLI opens here, others use tabs;
   desktop rows open in the app. Remote pickers add HOST. --fg opens one.
@@ -10638,7 +10663,8 @@ REMOTE SESSIONS
   Fresh local slots can open when a configured host is offline. Existing
   workspaces still require verified ownership before a new owner starts.
   --local (also --here) skips that lookup; combine with --fg to run here.
-  --remote attaches to a live remote slot; add --new to start one on the
+  Browsing includes local and registered remote hosts by default.
+  --remote also attaches to a live remote slot; add --new to start one on the
   default host (the alphabetically first REMOTE_HOSTS key).
   --host HOST chooses a host explicitly, for either opening or attaching.""")
     sp._positionals.title = "arguments"
@@ -10701,8 +10727,9 @@ REMOTE SESSIONS
         description="List dev sessions: whether each is attached, and whether it "
             "has an active conversation loaded (vs. parked on the startup splash). Scoped to the "
             "repo your cwd is in by default (`t session list <repo>` scopes to a named repo from anywhere); "
-            "`-a` widens to every repo, and `-r` spans every "
-            "$REMOTE_HOSTS machine in one table with a HOST column. "
+            "`-a` widens to every repo. By default, list spans every "
+            "$REMOTE_HOSTS machine plus this machine in one table with a HOST column. "
+            "Use `-l`/`--local` to list only this machine; `-r`/`--remote` retains the default. "
             "Unavailable hosts warn on stderr in amber on capable terminals (plain with NO_COLOR, "
             "TERM=dumb, or redirected stderr); local and reachable sessions remain listed. "
             "LAST TURN shows the latest turn initiation in local time with its timezone (- when unknown), not last activity. "
@@ -10710,7 +10737,11 @@ REMOTE SESSIONS
             "when needed. Pipe to cat for complete values. Read-only — attach with "
             "`t session open`, move with `t session move`.")
     sp.add_argument("repo", nargs="?", help="scope to this repo from any directory (default: the repo cwd is in)")
-    sp.add_argument("-r", "--remote", action="store_true", help="span every $REMOTE_HOSTS host")
+    location = sp.add_mutually_exclusive_group()
+    location.add_argument("-r", "--remote", dest="remote", action="store_true", default=True,
+                          help="include registered remote hosts (default)")
+    location.add_argument("-l", "--local", dest="remote", action="store_false",
+                          help="list this machine only")
     sp.add_argument("-a", "--all", action="store_true", help="every repo (not just the current)")
 
     sp = sub.add_parser("kill", help="tear down a session",

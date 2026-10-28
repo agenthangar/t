@@ -75,7 +75,7 @@ def test_bare_open_inside_worktree_shows_every_detail_and_repo(zsh, tmp_path):
     display = [row.split('\t')[-1].rstrip() for row in rows]
     assert all('STATUS' not in row for row in display)
     heading = (tmp_path / 'picker.log.header').read_text().splitlines()[-1]
-    assert heading.split() == ['REPO', 'SLOT', 'AGENT', 'UI', 'STATUS', 'MODEL', 'WORKING', 'ON']
+    assert heading.split() == ['REPO', 'SLOT', 'AGENT', 'HOST', 'UI', 'STATUS', 'MODEL', 'WORKING', 'ON']
     assert '● ✓ ↻' in display[0] and '› cli' in display[0]
     assert '⬡ codex' in display[0] and 'gpt-test-astra' in display[0]
     assert 'First task · #12 merged, still in progress' in display[0]
@@ -197,7 +197,7 @@ def test_open_remote_picker_retains_model_and_selected_host(zsh, tmp_path):
         [[ $1 == --best-effort && $2 == --details ]] || return 1
         printf 'mini\tsid1\t%s\talias-2\tattached\tactive\tRemote first\tcodex\tgpt-test-astra\t2026-10-23T16:41:07Z\n' "$HOME/code/api"
         printf 'studio\tsid2\t%s\tweb-4\tdetached\tactive\tRemote second\tclaude\tclaude-test-model\n' "$HOME/code/web"
-        printf 'local\tsid3\t%s\tapi-3\tdetached\tactive\tLocal hidden\tcodex\tgpt-test-astra\n' "$HOME/code/api"
+        printf 'local\tsid3\t%s\tapi-3\tdetached\tactive\tLocal included\tcodex\tgpt-test-astra\n' "$HOME/code/api"
       }
       _dev_remote_open() { print -r -- "REMOTE $*"; }
       _dev_open_tab() { print -r -- "TAB $*"; }
@@ -207,7 +207,7 @@ def test_open_remote_picker_retains_model_and_selected_host(zsh, tmp_path):
     assert result.returncode == 0, result.stdout
     rows = (tmp_path / 'picker.log').read_text()
     assert 'mini' in rows and 'studio' in rows and 'claude-test-model' in rows
-    assert 'Local hidden' not in rows
+    assert 'Local included' in rows
     assert 'Last turn' not in rows and '2026-10-23' not in rows
     assert 'TAB t open web 4 --cli --host studio' in result.stdout
     assert 'REMOTE mini alias 2 --cli' in result.stdout
@@ -290,12 +290,60 @@ def test_open_compact_layout_and_search(t_mod, monkeypatch, capsys, width, remot
     assert title in first[3] and 'gpt-test-astra' in first[3]
     assert 'Last turn' not in first[3] and '2026-10-23' not in first[4]
     assert 'LAST TURN' not in heading
-    assert t_mod._display_width(heading) <= width - 12
+    available = width - (6 if width <= 60 else 12)
+    assert t_mod._display_width(heading) <= available
     assert 'WORKING ON' in heading or 'TASK' in heading
     assert 'Fix' in first[4]
-    assert all(t_mod._display_width(row[4].rstrip()) <= width - 12 for row in (first, unknown))
+    assert all(t_mod._display_width(row[4].rstrip()) <= available for row in (first, unknown))
     if width < 120:
         assert first[4].startswith('●')
         assert 'api-2' in first[4]
+        assert '● ✓' in first[4]
+        if remote:
+            assert 'mini/api-2' in first[4]
     if width >= 120:
         assert '⬡ codex' in first[4] and '› cli' in first[4]
+
+
+def test_open_local_override_never_scans_remote(zsh, tmp_path):
+    env = picker_stub(tmp_path, 'web-6')
+    result = zsh(ROWS + r'''
+      _dev_rows_all() { print -u2 UNEXPECTED_REMOTE; return 1; }
+      _t_dev() { print -r -- "CLI $*"; }
+      _t_open --local
+    ''', _tty=True, **env)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'UNEXPECTED_REMOTE' not in result.stdout + result.stderr
+    assert 'CLI web 6 --local' in result.stdout
+
+
+@pytest.mark.parametrize('flag', ['', '-r'])
+def test_open_default_and_remote_keep_local_and_remote_duplicate_slots(zsh, tmp_path, flag):
+    env = picker_stub(tmp_path, 'api-2')
+    result = zsh(r'''
+      _dev_rows_all() {
+        printf 'local\tsid1\t%s\tapi-2\tdetached\tactive\tLocal task\tcodex\tmodel\n' "$HOME/code/api"
+        printf 'mini\tsid2\t%s\tapi-2\tdetached\tactive\tRemote task\tcodex\tmodel\n' "$HOME/code/api"
+      }
+      _t_dev() { print -r -- "CLI $*"; }
+      _dev_open_tab() { print -r -- "TAB $*"; }
+      _t_open ''' + flag, _tty=True, **env)
+    assert result.returncode == 0, result.stdout + result.stderr
+    rows = (tmp_path / 'picker.log').read_text().splitlines()
+    assert [row.split('\t')[:2] for row in rows] == [['local', 'api-2'], ['mini', 'api-2']]
+    assert 'CLI api 2 --local' in result.stdout
+    assert 'TAB t open api 2 --cli --host mini' in result.stdout
+
+
+@pytest.mark.parametrize('width', [32, 44, 80])
+def test_air_status_cells_keep_host_and_slot_aligned(t_mod, monkeypatch, width):
+    monkeypatch.setattr(t_mod, '_columns', lambda: width)
+    rows = [dict(host='local', slot='api-2', state=state, context=context,
+                 summary=summary, agent='codex', model='-') for state, context, summary in
+            [('detached', 'none', 'Idle'), ('detached', 'active', 'Working'),
+             ('attached', 'active', '#42 merged, still in progress')]]
+    heading, *rendered = t_mod._session_picker_rows(rows, remote=True, compact=True, header=True)
+    displays = [row.split('\t')[-1] for row in rendered]
+    assert len({t_mod._display_width(line[:line.index('local/api-2')]) for line in displays}) == 1
+    assert all('local/api-2' in line for line in displays)
+    assert 'STATE' in heading

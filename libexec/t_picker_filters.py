@@ -7,6 +7,7 @@ import subprocess
 import sys
 
 from t_session_details import clip_columns, display_width
+from t_picker_theme import key_labels, paint
 
 FACETS = {'agent': ('Ctrl-G', 'agent'), 'interface': ('Ctrl-D', 'UI'),
           'host': ('Ctrl-O', 'host'), 'repo': ('Ctrl-R', 'repo')}
@@ -64,57 +65,54 @@ def pack(parts, width):
 def header(profile, mask, filters, hidden, columns, width):
     if profile == 'open':
         return open_header(mask, filters, hidden, columns, width)
-    controls = [f'Enter {profile} · Esc', 'Space/Tab mark ✓']
-    if width <= 36 and profile in ('open', 'kill'):
-        controls = [f'Enter {profile}/Esc · Space/Tab ✓']
-    if profile != 'open' and width > 36:
-        controls.append('Ctrl-/ details')
-    lines = pack(controls, width)
+    compact = width <= 40 or int(os.environ.get('T_PICKER_HEADER_HEIGHT') or '24') <= 14
+    controls = [f'Enter {profile} · Esc', 'Space/Tab ✓' if compact else 'Space/Tab mark ✓', 'Ctrl-/ details']
     state = lambda bit: 'shown' if mask & bit else 'hidden'
     toggles = ([f'Ctrl-L live: {state(1)}'] if profile == 'resume' else
                [f'Ctrl-T attached: {state(1)}'])
     if profile == 'kill':
         toggles.append(f'Ctrl-P pending: {state(2)}')
-    lines += pack(toggles, width)
-    lines += pack([f'{FACETS[name][0]} {FACETS[name][1]}: {value or "all"}'
-                   for name, value in filters.items()], width)
-    if width <= 36:
-        lines += pack(['Ctrl-A all', 'Ctrl-F reset'], width)
-        if columns:
-            suffix = f' · {hidden} hidden'
-            lines.append(clip_columns(columns, width - display_width(suffix)) + suffix)
-        else:
-            lines.append(f'{hidden} hidden')
-    else:
-        lines += pack(['Ctrl-A show all', 'Ctrl-F defaults', f'{hidden} hidden'], width)
-        if columns:
-            lines.append(clip_columns(columns, width))
+    facets = [f'{FACETS[name][0]} {FACETS[name][1]}' + (('*' if value is not None else '') if compact else f': {value or "all"}')
+              for name, value in filters.items()]
+    return air_header(controls, toggles + facets + ['Ctrl-A all', 'Ctrl-F defaults'],
+                      f'{hidden} hidden', columns, width, compact, sum(value is not None for value in filters.values()))
+
+
+def air_header(actions, controls, state, columns, width, compact, active=0):
+    labels = lambda parts: [key_labels(part, compact=compact) for part in parts]
+    lines = [paint(line, 'action') for line in pack(labels(actions), width)]
+    if not compact:
+        lines += ['', paint('FILTERS', 'heading')]
+    lines += [paint(line) for line in pack(labels(controls), width)]
+    state_parts = state.split(' · ')
+    if compact:
+        # Put the hidden count beside columns to keep view + active-filter count
+        # readable without spending another row on the smallest terminals.
+        if state_parts[0].startswith('View:'):
+            hidden = state_parts[1]
+            suffix = ' · ' + hidden
+            columns = clip_columns(columns, max(1, width - display_width(suffix))) + suffix if columns else hidden
+        state_parts = ([state_parts[0] + f' {active} filters'] if state_parts[0].startswith('View:') else
+                       [state_parts[0], f'{active} filters'])
+    lines += [paint(line, 'heading') for line in pack(state_parts, width)]
+    if not compact:
+        lines.append('')
+    if columns:
+        lines.append(paint(clip_columns(columns, width)))
     return '\n'.join(lines) + '\n'
 
 
 def open_header(mask, filters, hidden, columns, width):
-    compact = width <= 36
-    key = lambda text: text.replace('Ctrl-', '^') if compact else text
-    lines = ['Enter open/Esc · Space/Tab ✓'] if compact else pack(['Enter open · Esc', 'Space/Tab mark ✓'], width)
+    compact = width <= 40 or int(os.environ.get('T_PICKER_HEADER_HEIGHT') or '24') <= 14
+    actions = ['Enter open/Esc · Space/Tab ✓'] if compact else ['Enter open · Esc', 'Space/Tab mark ✓']
     controls = ['Ctrl-T attached', 'Ctrl-U unattached', 'Ctrl-F defaults', 'Ctrl-A all']
-    # Put the short UI control in the remaining space beside defaults/all.
-    facets = sorted(OPEN_FACETS, key=lambda name: compact and name != 'interface')
-    controls += [f'{OPEN_FACETS[name][0]} {OPEN_FACETS[name][1]}' for name in facets]
-    lines += pack([key(control) for control in controls] + (['^ = Ctrl'] if compact else []), width)
+    controls += [f'{key} {label}' for key, label in OPEN_FACETS.values()]
     view = {0: 'unattached', 1: 'all', 2: 'attached'}[mask]
     active = [f'{OPEN_FACETS[name][1]}={value}' for name, value in filters.items() if value is not None]
-    if compact:
-        # Keep every shortcut and one session row visible even at 32×12.
-        lines += pack([f'View: {view}', f'{len(active)} filters'], width)
-        suffix = f' · {hidden} hidden'
-        lines.append(clip_columns(columns or '^ = Ctrl', width - display_width(suffix)) + suffix)
-    else:
-        lines += pack([f'View: {view}' + (' (default)' if mask == 0 else ''), f'{hidden} hidden'], width)
-        if active:
-            lines.append(clip_columns('Filters: ' + ' · '.join(active), width))
-        if columns:
-            lines.append(clip_columns(columns, width))
-    return '\n'.join(lines) + '\n'
+    state = f'View: {view} · {hidden} hidden'
+    if active:
+        state += (' · ' + str(len(active)) + ' filters') if compact else ' · ' + ' · '.join(active)
+    return air_header(actions, controls, state, columns, width, compact, len(active))
 
 
 def pick_value(directory, name, records, current):

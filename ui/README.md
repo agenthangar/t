@@ -6,11 +6,21 @@ truth for classification and contract tests. Compatibility aliases inherit the
 canonical command's entry. Read this guide and the inventory before adding or
 changing a command; update both when its behavior changes.
 
-The visual baseline is the Homebrew v0.4.2 release (`40aaea8`): cyan section
+The Air design applies to every searchable picker and inline menu: airy cyan section
 headings and current values, green primary/add actions, amber warnings/removal,
 two-space outer margins, a pointer and a dark cyan focus row with light text, and a footer
 showing the next action and keys. Focus and marks must remain distinguishable
-without color. Align labels on wide terminals and stack them below 60 columns.
+without color. Headings are cyan, hints muted, and focused text light on dark cyan.
+Keep the green checkmark in its own gutter beside the pointer, with spaces between
+status icons inside rows. Give controls and results a blank separating row when
+height permits. Use FILTERS only for actual filter controls; other pickers use their
+action or resource title. Reduce spacing, borders and margins on short screens
+before losing controls or focus, including wide 120×12 terminals.
+
+Display native Mac labels (`⌃T`, `↩ Return`, `⎋ Esc`, `⇥ Tab`) on macOS;
+other hosts use `Ctrl-T`, `Enter`, `Esc`, `Tab`. Compact headers use the short
+Mac symbols or `^T` on other systems. Only labels change: bindings remain the
+same control keys, Return, Escape and Tab. Align labels on wide terminals and stack them below 60 columns.
 Clip text before applying color and count physical rows when repainting; at
 80×24, 44×20, and 32×12 interactive screens the focused row and primary action
 must remain visible.
@@ -158,6 +168,13 @@ View: unattached (default) · 2 hidden
 The rows above illustrate hierarchy and controls, not a fixed column schema.
 List commands print normally; picker headers and marks appear only for selection.
 
+The open picker browses local and registered remote hosts by default; `--local`
+limits discovery to this machine. `-r`/`--remote` retains inclusive browsing.
+Fresh sessions and explicit targets retain their existing location routing.
+Session lists (`t ls` / `t session list`) also include remote hosts by default;
+`-l`/`--local` lists only this machine. Repository scope and `--all` are independent
+of host scope. Lists remain read-only and never open a picker.
+
 The open picker hides attached CLI and loaded desktop sessions by default.
 Ctrl-T selects attached-only; Ctrl-U selects unattached-only. Both preserve
 column filters. Ctrl-F restores defaults; Ctrl-A shows all.
@@ -186,8 +203,8 @@ Query and visible selection identity survive supported reloads; hidden marks
 are removed. Old fzf clears marks on filter actions. These remain filtered/multi
 modes, not new commands or discovery operations. Every shortcut and a focused
 row remain visible at 80×24, 44×20, and 32×12. Short terminals use a borderless
-full-height view, including nested value pickers. Open's narrow header uses ^
-for Ctrl and shows the active filter count; full values are available in the
+full-height view, including nested value pickers. Open's narrow header uses compact platform key labels and keeps the attachment
+view and hidden count; full values are available in the
 column pickers. Filter metadata comes from the same private snapshot as the
 rows. A named repository and prior discovery limits remain in force.
 
@@ -208,9 +225,9 @@ within the existing close modes, with no new prompt or command.
 | Surface | Implementation | Responsibility |
 | --- | --- | --- |
 | Inline menus and reviews | `Style` and `_RailUI` in `bin/t` | Layout, scrolling, focus, page, footer, cooked prompt, terminal restoration |
-| Searchable selection | `_t_fzf_single`, `_t_fzf_multi`, `_t_fzf_filtered`, and `_t_fzf_paginated` in `ui/fzf.sh` | Theme, marks, header controls, filtering or pagination, preview, cancellation |
+| Searchable selection | `_t_fzf_single`, `_t_fzf_multi`, `_t_fzf_filtered`, and `_t_fzf_paginated` in `ui/fzf.sh` | Air theme and platform key labels, marks, header controls, filtering or pagination, preview, cancellation |
 
-Source `ui/fzf.sh` and select the profile matching the command mode. Callers
+Set `T_HOME` to the package root, source `ui/fzf.sh`, and select the profile matching the command mode. Callers
 provide row data, action text, and previews; they must not replace required
 bindings, marks, or legends. The profiles preserve `FZF_DEFAULT_OPTS`, while
 scoping the cyan/green theme to `t` pickers. All terminal state changes must
@@ -447,13 +464,14 @@ an equivalent compatibility entry point. Installation migrates standard legacy
 hook commands while preserving custom commands and options. This is an external
 SessionStart hook, not a new public `t` command or interactive mode.
 
-## Changes since the visual baseline
+## Changes since the v0.4.2 visual baseline
 
 Review these behavior changes when applying the v0.4.2 standard. Later changes
 should be added here with their disposition before becoming a precedent.
 
 | Change | Disposition |
 | --- | --- |
+| Shared Air design ([#219](https://github.com/agenthangar/t/issues/219)) | Apply cyan sections, muted hints, explicit focus, separate green check gutters and platform key labels across all fzf profiles and inline flows. |
 | Batch `open`, `kill`, and issue starts ([#68](https://github.com/agenthangar/t/pull/68), [#93](https://github.com/agenthangar/t/pull/93)) | Retain multi-selection and one-live-owner checks. |
 | Richer rows, interface/model columns, and detail previews ([#85](https://github.com/agenthangar/t/pull/85)) | Retain within the baseline spacing and focus design. |
 | Reversible filters and dedicated keys ([#94](https://github.com/agenthangar/t/pull/94), [#102](https://github.com/agenthangar/t/pull/102)) | Adopt the filter controls above. |

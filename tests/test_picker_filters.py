@@ -18,6 +18,7 @@ ROWS = ['local\tapi-1\tdetached\tclaude desktop task',
 @pytest.fixture
 def filters(monkeypatch):
     monkeypatch.syspath_prepend(str(ROOT / 'libexec'))
+    monkeypatch.setenv('NO_COLOR', '')
     return load_script(ROOT / 'libexec/t_picker_filters.py', 'picker_filters')
 
 
@@ -106,12 +107,17 @@ def test_every_filter_key_survives_long_values(filters, width, profile):
         facets['interface'] = 'desktop'
     text = filters.header(profile, 0, facets, 17, 'SESSION  WORKING ON', width)
     assert all(filters.display_width(line) <= width for line in text.splitlines())
+    from t_picker_theme import key_labels
+    label = lambda text: key_labels(text, compact=width <= 40)
     for key in ('Ctrl-G', 'Ctrl-O', 'Ctrl-R', 'Ctrl-A', 'Ctrl-F'):
-        assert key in text
-    assert ('Ctrl-D' in text) == (profile != 'resume')
+        assert label(key) in text
+    assert (label('Ctrl-D') in text) == (profile != 'resume')
     assert '17 hidden' in text
-    assert 'Ctrl-L live: hidden' in text if profile == 'resume' else 'Ctrl-T attached: hidden' in text
-    assert ('Ctrl-P' in text) == (profile == 'kill')
+    if width <= 40:
+        assert f'{len(facets)} filters' in text
+        assert label('Ctrl-G agent*') in text
+    assert label('Ctrl-L live: hidden') in text if profile == 'resume' else label('Ctrl-T attached: hidden') in text
+    assert (label('Ctrl-P') in text) == (profile == 'kill')
 
 
 @pytest.mark.parametrize('width', [28, 32, 68])
@@ -119,10 +125,11 @@ def test_open_header_keeps_every_column_shortcut_visible(filters, width):
     text = filters.header('open', 0, dict(agent='codex-long-界面'), 17, 'SESSION  TASK', width)
     assert all(filters.display_width(line) <= width for line in text.splitlines())
     for letter in ('T', 'U', 'F', 'A', 'G', 'P', 'D', 'B', 'O', 'R', 'V', 'E', 'W'):
-        assert ('^' + letter if width <= 36 else 'Ctrl-' + letter) in text
+        from t_picker_theme import key_labels
+        assert key_labels('Ctrl-' + letter, compact=width <= 40) in text
     assert 'View: unattached' in text and '17 hidden' in text
     if width <= 36:
-        assert '^ = Ctrl' in text and '1 filters' in text
+        assert 'Space/' in text and '1 filters' in text
         assert len(text.splitlines()) <= 9
     else:
         assert 'agent=codex-long-界面' in text
@@ -183,3 +190,50 @@ def test_progress_value_picker_explains_marker_and_reports_failure(filters, tmp_
     monkeypatch.setattr(filters.subprocess, 'run', run)
     with pytest.raises(RuntimeError, match='picker failed'):
         filters.pick_value(tmp_path, 'progress', filters.metadata(SOURCE, 'open'), None)
+
+
+@pytest.mark.parametrize('platform', ['darwin', 'linux'])
+@pytest.mark.parametrize('width,height', [(27, 12), (32, 12), (44, 20), (68, 24), (120, 12)])
+@pytest.mark.parametrize('active', [False, True])
+def test_air_headers_preserve_keys_width_and_state(filters, monkeypatch, platform, width, height, active):
+    import re
+    import t_picker_theme as theme
+    monkeypatch.setattr(theme.sys, 'platform', platform)
+    monkeypatch.setenv('T_PICKER_HEADER_HEIGHT', str(height))
+    monkeypatch.setenv('TERM', 'xterm-256color')
+    monkeypatch.delenv('NO_COLOR', raising=False)
+    facets = dict.fromkeys(filters.OPEN_FACETS)
+    if active:
+        facets['agent'] = 'codex'
+    text = filters.open_header(0, facets, 2, 'SESSION  TASK', width)
+    plain = re.sub(r'\x1b\[[0-9;]*m', '', text)
+    assert all(filters.display_width(line) <= width for line in plain.splitlines())
+    compact = width <= 40 or height <= 14
+    assert all(theme.key_labels('Ctrl-' + letter, compact=compact) in plain for letter in 'TUFAGDBORPVEW')
+    assert '2 hidden' in plain and 'View: unattached' in plain
+    if compact:
+        assert f'{int(active)} filters' in plain
+    assert '\x1b[36m' in text and '\x1b[90m' in text
+    if height <= 14:
+        assert len(plain.splitlines()) <= 9
+    else:
+        assert 'FILTERS' in plain and '\n\n' in plain
+    monkeypatch.setenv('NO_COLOR', '')
+    assert '\x1b' not in filters.open_header(1, facets, 0, '', width)
+
+
+def test_air_theme_labels_and_generic_chrome(filters, monkeypatch):
+    import t_picker_theme as theme
+    assert theme.key_labels('Ctrl-T Enter Esc Tab', 'darwin') == '⌃T ↩ Return ⎋ Esc ⇥ Tab'
+    assert theme.key_labels('Ctrl-T Enter Esc Tab', 'linux') == 'Ctrl-T Enter Esc Tab'
+    assert theme.key_labels('Ctrl-T Enter Esc Tab', 'linux', compact=True) == '^T Enter Esc Tab'
+    monkeypatch.setenv('T_PICKER_HEADER_WIDTH', '24')
+    text = theme.chrome('Enter choose · Esc · Space/Tab mark ✓\nLong 界面 日本語 legend', 'choose')
+    assert all(filters.display_width(line) <= 24 for line in text.splitlines())
+    assert text.startswith('CHOOSE\n') and text.endswith('\n \n')
+    assert not theme.chrome('Enter choose\n\nEsc', 'choose', compact=True).startswith('CHOOSE')
+    monkeypatch.delenv('NO_COLOR')
+    monkeypatch.setenv('TERM', 'dumb')
+    assert '\x1b' not in theme.paint('FILTERS', 'heading')
+    monkeypatch.setenv('TERM', 'xterm')
+    assert theme.paint('') == ''

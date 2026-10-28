@@ -66,7 +66,7 @@ def picker():
         env = {k: v for k, v in os.environ.items() if not k.startswith('COV_CORE_')}
         env.update(HOME=directory, ZDOTDIR=directory, XDG_CONFIG_HOME=directory, XDG_CACHE_HOME=directory,
                    XDG_STATE_HOME=directory, TMPDIR=directory, TMUX='', SHELL='/bin/sh',
-                   TERM='xterm-256color', FZF_DEFAULT_OPTS='', FZF_DEFAULT_OPTS_FILE='/dev/null')
+                   TERM='xterm-256color', T_HOME=str(ROOT), FZF_DEFAULT_OPTS='', FZF_DEFAULT_OPTS_FILE='/dev/null')
 
         def tmux(*args, check=True):
             return subprocess.run(['tmux', '-S', socket, *args], env=env, text=True,
@@ -140,6 +140,12 @@ def picker():
             deadline = time.monotonic() + 5
             while time.monotonic() < deadline:
                 screen = tmux('capture-pane', '-p', check=False).stdout
+                # Compare semantic controls across native OS labels. Exact label
+                # spellings and width budgets have separate renderer coverage.
+                screen = screen.replace('↩ Return', 'Enter').replace('↩', 'Enter')
+                screen = screen.replace('⎋ Esc', 'Esc').replace('⎋', 'Esc')
+                screen = screen.replace('⇥ Tab', 'Tab').replace('⇥', 'Tab')
+                screen = re.sub(r'[⌃^]([A-Z/])', r'Ctrl-\1', screen)
                 if text in screen and not any(value in screen for value in absent):
                     return screen
                 time.sleep(.05)
@@ -195,7 +201,8 @@ def test_empty_filter_can_reveal_rows_and_narrow_preview_keeps_details(picker):
     keys('C-a')
     wait('3/3 (0)')
     keys('Space', 'C-_')
-    wait('END-OF-TITLE')
+    screen = wait('D-OF-TITLE')
+    assert 'detail EN' in screen  # full details wrap at the new borderless width
     keys('Tab')
     wait('3/3 (2)')
     assert [row.split('\t')[1] for row in finish()] == ['api-2', 'web-4']
@@ -367,11 +374,11 @@ def test_open_simple_rows_and_focused_marks(picker, width, height, monochrome):
     keys('Up', 'Space', 'Up')
     screen = wait('2/2 (1)')
     focused = next(line for line in screen.splitlines() if '▸' in line)
-    assert re.search(r'▸\s?✓', focused) and 'Fir' in focused
+    assert re.search(r'▸\s?✓', focused) and 'Fi' in focused
     keys('Space', 'Up')
     screen = wait('2/2 (0)')
     focused = next(line for line in screen.splitlines() if '▸' in line)
-    assert not re.search(r'▸\s?✓', focused) and 'Fir' in focused
+    assert not re.search(r'▸\s?✓', focused) and 'Fi' in focused
     # The full task remains searchable beyond the compact display.
     keys('-l', 'progress')
     wait('1/2 (0)')
@@ -401,12 +408,10 @@ def test_session_pickers_display_every_filter_key(picker, width, height, profile
         for key in ('T', 'U', 'G', 'D', 'O', 'R', 'A', 'F', 'P', 'B', 'V', 'E', 'W'):
             assert 'Ctrl-' + key in screen or '^' + key in screen, screen
         assert 'View: unattached' in screen
-        if width <= 44:
-            assert '^ = Ctrl' in screen
     else:
         for key in ('Ctrl-T', 'Ctrl-G', 'Ctrl-D', 'Ctrl-O', 'Ctrl-R', 'Ctrl-A', 'Ctrl-F'):
             assert key in screen, screen
-        assert 'UI: all' in screen and 'repo: all' in screen and 'host: all' in screen
+        assert all(label in screen for label in ('UI', 'repo', 'host'))
         assert 'Ctrl-P pending: hidden' in screen
     assert '▸' in screen and 'hidden' in screen
     assert finish('Escape', status=130) == []
@@ -505,3 +510,19 @@ def test_open_attachment_views_are_exclusive_and_idempotent(picker):
     screen = wait('View: unattached', absent=('api-2',))
     assert 'api-4' in screen and 'api-2' not in screen
     assert finish('Escape', status=130) == []
+
+
+@pytest.mark.parametrize('width,height', [(80, 24), (44, 20), (32, 12), (120, 12)])
+def test_air_open_keeps_controls_focus_and_nested_filters(picker, width, height):
+    start, wait, keys, finish = picker
+    start(profile='public-open-all', width=width, height=height)
+    screen = wait('2/2 (0)')
+    assert '▸' in screen and ('api-4' in screen or re.search(r'api\s+4\b', screen))
+    assert all('Ctrl-' + letter in screen for letter in 'TUFAGDBORPVEW')
+    keys('C-g')
+    wait('agent >')
+    keys('-l', 'claude')
+    wait('1/')
+    keys('Enter')
+    wait('1/1 (0)')
+    assert finish() == ['web 6 --local']

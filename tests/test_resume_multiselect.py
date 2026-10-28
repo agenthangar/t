@@ -2,6 +2,7 @@
 
 import pathlib
 import re
+from _picker_helpers import semantic_chrome
 
 from test_agent_seam import zsh  # noqa: F401 — sandboxed shell fixture
 
@@ -261,5 +262,5 @@ def test_resume_live_hotkey_hides_live_without_losing_saved_rows(zsh, tmp_path):
     filtered = pathlib.Path(f"{log}.step0").read_text()
     assert "Live work" in initial and "Dead work" in initial
     assert "Live work" not in filtered and "Dead work" in filtered
-    assert "Ctrl-L live: hidden" in pathlib.Path(f"{log}.header0").read_text()
+    assert "Ctrl-L live: hidden" in semantic_chrome(pathlib.Path(f"{log}.header0").read_text())
     assert "send-keys" not in (zsh.log.read_text() if zsh.log.exists() else "")

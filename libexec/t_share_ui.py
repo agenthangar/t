@@ -173,6 +173,7 @@ class ShareUI:
                     "--no-hscroll", "--preview=cat -- {-1}",
                     "--preview-window=hidden:wrap:down:40%"]
             env = {key: value for key, value in os.environ.items() if not key.startswith("COV_CORE_")}
+            env["T_HOME"] = str(self.api["_t_source_root"]())
             if self.rail is not None:
                 self.rail.restore()
             try:

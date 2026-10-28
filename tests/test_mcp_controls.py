@@ -211,7 +211,7 @@ def test_generic_read_help_and_conditional_modes(controls, cfg, t_mod, monkeypat
     monkeypatch.setattr(controls, 'shell_run', lambda *a, **kw: '/some/worktree\n')
     assert controls.session_command(cfg, {'command': 'cd', 'arguments': ['api', '1']}, vars(t_mod))['cwd'] == '/some/worktree'
     monkeypatch.setattr(t_mod, '_ls_scope', lambda *a: ('', ''))
-    monkeypatch.setattr(controls, 'shell_run', lambda *a, **kw: f'{SID}\t/repo\tapi-1\tdetached\tactive\ttask\tcodex\n')
+    monkeypatch.setattr(controls, 'shell_run', lambda *a, **kw: f'local\t{SID}\t/repo\tapi-1\tdetached\tactive\ttask\tcodex\n')
     rows = controls.session_command(cfg, {'command': 'list'}, vars(t_mod))['sessions']
     assert rows[0]['sid'] == SID and rows[0]['agent'] == 'codex'
 

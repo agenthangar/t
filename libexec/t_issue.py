@@ -422,6 +422,7 @@ class IssueCommand:
                     argv += ['--preview=cat -- ' + shlex.quote(directory) + '/detail-{2}',
                              '--preview-window=down,35%,wrap']
             env = {k: v for k, v in os.environ.items() if not k.startswith('COV_CORE_')}
+            env['T_HOME'] = str(self.root)
             env['T_PICKER_ALL_LABEL'] = ('Registered repositories' if noun == 'repositories' else
                                          'All issues' if multi else 'Existing work')
             result = subprocess.run(argv, env=env, stdout=subprocess.PIPE, text=True)

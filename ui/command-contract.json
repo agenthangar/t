@@ -4,8 +4,8 @@
   "patterns": {
     "list": "Direct read-only aligned rows, scope, and empty state; never launches a picker.",
     "detail": "Read-only labeled values; no work starts or prompt appears.",
-    "single": "One focused target chosen with Enter in the shared picker or inline menu.",
-    "multi": "Space/Tab marks searchable rows; Enter accepts marks or the focused row.",
+    "single": "Air shared picker or inline menu: cyan headings, muted hints, explicit dark cyan focus; Enter selects one target. Native macOS key labels change presentation only.",
+    "multi": "Air shared picker or inline checklist: green check in its own gutter beside focus pointer. Space/Tab marks searchable rows; Enter accepts marks or focused row. Width and height preserve controls and focused identity.",
     "filtered": "Shared Ctrl-A all and Ctrl-F defaults. Open has attached-only/unattached/all views and a searchable value picker for every session column; other session views retain their state toggles and cycling facets. Filters narrow the same snapshot and never rediscover.",
     "wizard": "Stage edits and review before applying with the shared Rail UI.",
     "review": "Show selected install actions before running; Enter applies the reviewed plan.",
@@ -705,7 +705,7 @@
             "tests/test_picker_ui.py::test_open_attachment_views_are_exclusive_and_idempotent",
             "tests/test_picker_filters.py::test_open_header_keeps_every_column_shortcut_visible"
           ],
-          "notes": "Default is unattached CLI and unloaded desktop sessions. Ctrl-T selects attached-only and Ctrl-U selects unattached-only, both preserving column filters. Ctrl-F restores unattached/default and clears column filters; Ctrl-A shows all and clears filters. Dedicated searchable value pickers: Ctrl-G agent, Ctrl-P progress, Ctrl-D interface, Ctrl-B model, Ctrl-O host, Ctrl-R repository, Ctrl-V session/slot, Ctrl-E context, Ctrl-W task. Progress follows the displayed continued-work marker, not current computation or completion. Filters combine within the snapshot, preserve search, and clear hidden marks. Plain selection checks remain separate from row context marks. Retain compact session/task rows without LAST TURN, preview, or new-session controls. Every shortcut and a focused row remain visible at narrow sizes, abbreviating Ctrl as ^ and active values as a count; the value picker shows the current value."
+          "notes": "Browse local and registered remote hosts by default; --local restricts discovery without changing explicit-target or fresh-session routing. Default is unattached CLI and unloaded desktop sessions. Ctrl-T selects attached-only and Ctrl-U selects unattached-only, both preserving column filters. Ctrl-F restores unattached/default and clears column filters; Ctrl-A shows all and clears filters. Dedicated searchable value pickers: Ctrl-G agent, Ctrl-P progress, Ctrl-D interface, Ctrl-B model, Ctrl-O host, Ctrl-R repository, Ctrl-V session/slot, Ctrl-E context, Ctrl-W task. Progress follows the displayed continued-work marker, not current computation or completion. Filters combine within the snapshot, preserve search, and clear hidden marks. Plain selection checks remain separate from row context marks. Retain compact session/task rows without LAST TURN, preview, or new-session controls. Every shortcut and a focused row remain visible at narrow sizes, abbreviating Ctrl as ^ and active values as a count; the value picker shows the current value."
         },
         "explicit": {
           "argv": [
@@ -722,6 +722,21 @@
             "tests/test_open_picker.py::test_explicit_open_target_bypasses_picker"
           ],
           "notes": "Fresh unused local slots and locally reserved desktop reopens tolerate unavailable remote hosts. Desktop claims scan once and still reject known remote owners and failed local ownership checks. Unreserved existing workspace claims retain strict ownership checks; explicit session resume warns and skips unavailable hosts while checking known owners."
+        },
+        "local": {
+          "argv": [
+            "session",
+            "open",
+            "--local"
+          ],
+          "patterns": [
+            "multi",
+            "filtered"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_open_picker.py::test_open_local_override_never_scans_remote"
+          ]
         }
       },
       "native_agents": "Terminal session launch/resume uses the native ~/.local/bin fallback, preserving PATH and shell wrappers; no global PATH changes.",
@@ -752,7 +767,8 @@
           "tests": [
             "tests/test_t.py::test_ls_scope_defaults_to_cwd_repo",
             "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
-          ]
+          ],
+          "notes": "Include local and registered remote hosts by default; repository scope and --all remain independent. Unavailable hosts warn; lists never prompt."
         },
         "remote": {
           "argv": [
@@ -768,6 +784,20 @@
             "tests/test_host_resilience.py::test_python_remote_list_replays_captured_warnings"
           ],
           "notes": "Unavailable hosts warn on stderr while local/reachable rows remain listed. Warnings are amber only on capable stderr terminals; NO_COLOR (including empty), TERM=dumb, and redirected stderr keep warnings plain. Redirecting stdout alone does not disable stderr color."
+        },
+        "local": {
+          "argv": [
+            "session",
+            "list",
+            "--local"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_t.py::test_ls_default_includes_remote_and_local_override"
+          ]
         }
       },
       "display_schema": "session_information",
@@ -3894,5 +3924,52 @@
       "notes": "Interactive startup optionally displays cached repository-tool advisories and schedules detached refresh when T_VULNERABILITY_CHECK=1; nonterminal bare t stays side-effect free."
     }
   },
-  "progress_contract": "ui/progress-contract.json"
+  "progress_contract": "ui/progress-contract.json",
+  "visual_design": {
+    "name": "Air",
+    "shared_helpers": [
+      "libexec/t_picker_theme.py",
+      "ui/fzf.sh",
+      "bin/t:_RailUI"
+    ],
+    "macos_labels": [
+      "⌃T",
+      "↩ Return",
+      "⎋ Esc",
+      "⇥ Tab"
+    ],
+    "other_labels": [
+      "Ctrl-T",
+      "Enter",
+      "Esc",
+      "Tab"
+    ],
+    "labels_only": true,
+    "focus": "light text on dark cyan with a separate pointer",
+    "selection": "plain green check in an independent gutter",
+    "header": "cyan section or resource title, muted hints, blank gap before results when height permits",
+    "terminal_sizes": [
+      [
+        80,
+        24
+      ],
+      [
+        44,
+        20
+      ],
+      [
+        32,
+        12
+      ],
+      [
+        120,
+        12
+      ]
+    ],
+    "tests": [
+      "tests/test_picker_filters.py::test_air_headers_preserve_keys_width_and_state",
+      "tests/test_tui.py::test_air_unicode_check_gutter_and_physical_frame_budget",
+      "tests/test_picker_ui.py::test_air_open_keeps_controls_focus_and_nested_filters"
+    ]
+  }
 }

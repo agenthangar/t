@@ -306,11 +306,12 @@ _t_open() {
   [[ -n $app && -n $cli ]] && { echo "t open: --app and --cli are mutually exclusive" >&2; return 2; }
 
   # A slot-less interactive open browses the same complete rows as `t ls`.
-  # Bare means every local repo, even from a worktree; a named repo filters.
+  # Bare means every repo across local/remote hosts; a named repo filters.
   # Explicit slots, fresh sessions, agent flags and foreground requests retain
   # their direct paths. Resolve the picker before the configured opening mode,
   # since each existing row already knows whether it belongs to CLI or desktop.
-  local picker_ok=1 picker_repo= picker_rc
+  local picker_ok=1 picker_repo= picker_rc picker_remote=1
+  [[ -n $local_only ]] && picker_remote=
   if [[ -z $host && -z $isnew && -t 0 && -t 1 ]] && command -v fzf >/dev/null 2>&1; then
     for arg in "${rest[@]}"; do
       case $arg in
@@ -329,7 +330,7 @@ _t_open() {
         print -u2 -- 't open: --local/--here and -r/--remote are mutually exclusive'
         return 2
       fi
-      _t_open_picker "$picker_repo" "$remote" "$app" "$cli" "$include_attached"; picker_rc=$?
+      _t_open_picker "$picker_repo" "$picker_remote" "$app" "$cli" "$include_attached"; picker_rc=$?
       (( picker_rc == 2 )) || return $picker_rc
       # No existing rows: use the ordinary fresh-session/default-host path.
     fi
@@ -440,7 +441,6 @@ _t_open_picker() {
   for row in "${(@f)rows}"; do
     fields=("${(@ps:\t:)row}")
     (( $#fields >= 7 )) || continue
-    [[ -n $remote && $fields[1] == local ]] && continue
     if [[ -n $scope ]]; then
       cwd_rel=$(_dev_homerel "$fields[3]")
       [[ $cwd_rel == $scope_rel || $cwd_rel == $scope_rel/* ||
@@ -944,7 +944,7 @@ _t() {
       _values 'flag' --json -h --help ;;
     session/list)
       if (( CURRENT == first )) && [[ ${words[CURRENT]} != -* ]]; then _values 'repo' ${(k)DEV_REPOS}
-      else _values 'flag' -r --remote -a --all -h --help; fi ;;
+      else _values 'flag' -r --remote -l --local -a --all -h --help; fi ;;
     session/push)
       _values 'flag' -p --pick -a --all -h --help ;;
     session/search)

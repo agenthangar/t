@@ -297,9 +297,13 @@ Terminal progress messages identify ownership checks, saved-candidate discovery,
 and metadata loading. Open/close session scans, session lists, history, and issue
 commands also report discovery stages. Redirected output and JSON remain quiet.
 
-`t open`, `t resume`, and `t kill` share the compact resume picker design:
+`t open`, `t resume`, and `t kill` share the Air picker design:
 **Space/Tab marks ✓ and Enter acts on the selection**. A plain green checkmark
-stays readable on the darker cyan focused row, without a colored block.
+stays readable in its own gutter beside the pointer on the dark cyan focused row.
+All searchable pickers and inline menus share cyan headings, muted hints and
+spacing that adapts to terminal width and height. macOS shows native key labels
+such as `⌃T`, `↩ Return`, `⎋ Esc` and `⇥ Tab`; other systems show Ctrl-T,
+Enter, Esc and Tab. The shortcuts below work on both.
 In `t open`, **Ctrl-T** shows attached sessions only and **Ctrl-U** shows
 unattached sessions, preserving your other filters. **Ctrl-F** restores defaults
 (unattached, with column filters cleared); **Ctrl-A** shows all and clears filters.
@@ -324,7 +328,7 @@ The attachment views and column filters have these shortcuts:
 Column shortcuts open a searchable value picker. Enter applies a value;
 Esc keeps the current filter. “All (clear filter)” clears
 that column. Filters combine and keep your search. Narrow headers abbreviate
-Ctrl as `^`, retain every shortcut, and show the active filter count; opening a
+keys to Mac symbols or `^` for Ctrl on other systems, retaining every shortcut; opening a
 column picker shows its current value. Filters use the current snapshot without
 expanding repository scope or fetching new sessions.
 
@@ -918,7 +922,10 @@ inactive desktop slots can show their last recorded conversation's turn. Narrow
 terminals keep one row per session: task text is clipped, UI/model columns are
 omitted when necessary, and LAST TURN uses `MM-DD HH:MM` (or `HH:MM` at the smallest
 widths). Compact status marks appear under S; remote lists retain HOST.
-Use `t ls | cat` or `t ls -r | cat` for all columns and complete values.
+Open browsing and `t ls` include local and registered remote hosts by default.
+Use `t open --local` or `t ls --local` for this machine only. `-r` remains supported.
+Fresh-session and explicit-target routing are unchanged.
+Use `t ls | cat` for all columns and complete values.
 `t ls -r` warns on stderr when a host is unavailable and still lists local and
 reachable sessions. Warnings are amber on capable stderr terminals, including
 with `t ls -r | cat`; `NO_COLOR`, `TERM=dumb`, or redirected stderr keeps them plain.

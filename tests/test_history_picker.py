@@ -284,7 +284,7 @@ finally:
             subprocess.run(['tmux', '-S', socket, 'kill-server'], env=env, capture_output=True, timeout=10)
 
 
-@pytest.mark.parametrize('width,height', [(44, 20), (32, 12)])
+@pytest.mark.parametrize('width,height', [(44, 20), (32, 12), (120, 12)])
 def test_paginated_history_keeps_action_and_focused_row_visible_on_small_terminals(
         history, tmp_path, width, height):
     import shutil
@@ -324,12 +324,13 @@ finally:
             tmux('set-option', '-t', 'picker', 'remain-on-exit', 'on')
             deadline = time.monotonic() + 10
             captured = ''
+            enter_label = '↩ Return' if sys.platform == 'darwin' and height > 14 else '↩' if sys.platform == 'darwin' else 'Enter'
             while time.monotonic() < deadline:
                 captured = tmux('capture-pane', '-p', '-t', 'picker')
-                if 'Enter resume' in captured and '▸' in captured and 'Conversat' in captured:
+                if enter_label + ' resume' in captured and '▸' in captured and 'Conversat' in captured:
                     break
                 time.sleep(.05)
-            assert 'Enter resume' in captured and '▸' in captured and 'Conversat' in captured, captured
+            assert enter_label + ' resume' in captured and '▸' in captured and 'Conversat' in captured, captured
             tmux('send-keys', '-t', 'picker', 'Escape')
             deadline = time.monotonic() + 10
             while not result.exists() and time.monotonic() < deadline:

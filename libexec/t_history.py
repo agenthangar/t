@@ -862,7 +862,7 @@ class HistoryCommand:
                     str(header), str(rows_file), helper, helper + ' details {1}', query,
                     'history ' + alias + '> '],
                     stdout=subprocess.PIPE, text=True,
-                    env={k: v for k, v in os.environ.items() if not k.startswith('COV_CORE_')})
+                    env={**{k: v for k, v in os.environ.items() if not k.startswith('COV_CORE_')}, 'T_HOME': str(self.root)})
             if result.returncode in (1, 130):
                 return None, 'cancel', query
             if result.returncode:
