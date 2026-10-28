@@ -177,17 +177,15 @@ _dev_remote_resolve() {
   printf '%s\t%s\t%s\n' "$host" "${hostslot%-*}" "${hostslot##*-}"
 }
 
-# _term_title <text> — set the terminal/tab title via an OSC escape. When Terminal.app
-# honors it, it STOPS auto-titling from the foreground process's argv — which is why
-# a remote attach otherwise reads as the raw `ssh -t mini zsh -lic dev\ dotfiles\ 2`
-# (nothing set a title, so Terminal fell back to the ssh command line). Empty <text>
-# clears it so process tracking resumes. No-op when stdout is not a tty (cmd | cat).
-# CAVEAT: a Terminal profile (or recent macOS) that composes the title from "active
-# process name AND arguments" appends the ssh argv REGARDLESS of this OSC. The robust
-# defense is therefore the ssh-call quoting itself: every remote `ssh -t … zsh -lic
-# ${(qq)rcmd}` uses (qq) (single-quote), NOT (q) (backslash) — so even when the argv
-# leaks into the title it reads one quoted command rather than escaped spaces.
-_term_title() { [[ -t 1 ]] && printf '\e]0;%s\a' "$1" }
+# _term_title <text> — bounded, control-free OSC title on capable terminals.
+# Empty text clears the explicit title. Some terminal profiles independently
+# append foreground argv; single-quote the outer remote worker command as well.
+_term_title() {
+  [[ -t 1 && ${TERM:-dumb} != dumb && -z ${T_TITLE_QUIET:-} ]] || return 0
+  local title=$1
+  title=${title//[[:cntrl:]]/}
+  printf '\e]0;%s\a' "${title[1,160]}"
+}
 
 # _term_reset_mouse — disable every terminal mouse-tracking + bracketed-paste mode.
 # WHY: a remote attach (`t open`/`t beam`/`on`, all `ssh -t … zsh -lic`) runs a TUI
@@ -1221,8 +1219,13 @@ _t_remote() {
         worker="$resume_environment _t_resume ${(j: :)${(@q)worker_args}}"
       fi
     fi
-    if [[ -t 0 && -t 1 ]]; then ssh -t "$target" "zsh -lic ${(q)worker}"
-    else ssh "$target" "zsh -lic ${(q)worker}"; fi
+    _term_title "$host: t remote $action"
+    {
+      if [[ -t 0 && -t 1 ]]; then ssh -t "$target" "zsh -lic ${(qq)worker}"
+      else ssh "$target" "zsh -lic ${(qq)worker}"; fi
+    } always {
+      _term_title ''
+    }
     return
   fi
   # Explicit source + exact target uses the existing guarded source resolver.

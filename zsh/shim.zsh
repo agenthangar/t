@@ -13,7 +13,40 @@
 #     subprocess cannot. No resolve protocol is needed: the shim just calls them.
 # `t help <verb>` and `t <verb> -h` show the bin's gh-style help. Full per-verb
 # help + the verb list live in bin/t.
+# Keep the title lifecycle in the calling shell: dispatch may change its cwd.
 t() {
+  emulate -L zsh
+  local title_active= arg label=t
+  case ${1:-} in
+    _*|session-rows|land|new-land|kill-owner|mcp|todo) _t_dispatch "$@"; return ;;
+  esac
+  local machine=
+  for arg in "$@"; do
+    case $arg in --json|--dump|-d|--statusline|--raw|--quiet) machine=1 ;; esac
+  done
+  [[ "$*" == 'config workflow instructions show'* || "$*" == 'share read'* ]] && machine=1
+  if [[ -t 1 && ${TERM:-dumb} != dumb && -z $machine && -z ${T_TITLE_ACTIVE:-} ]]; then
+    case ${1:-} in
+      session|remote|issue|repo|cursor|hosts|agentcore|config|profile|policy|agent|system)
+        label+=" $1"
+        case ${2:-} in
+          open|move|resume|list|ls|status|start|close|restart|push|pop|history|cd|read|view-plan|paste|search|open-app|goal|locate|create|clone|add|show|edit|remove|delete|rm|default|run|invoke|stop|setup|onboard|local|workflow|init|apply|check|login|install|trust|integrate|update|diagnose|advisories) label+=" $2" ;;
+        esac ;;
+      open|ls|list|kill|restart|push|pop|resume|history|cd|beam|read|plan|paste|find|app|on|setup|install|login|trust|update|doctor|help|share|checkout|new|instructions|permissions|config) label+=" $1" ;;
+    esac
+    _term_title "$label"
+    title_active=1
+  fi
+  local -x T_TITLE_QUIET=${T_TITLE_QUIET:-$machine}
+  local -x T_TITLE_ACTIVE=${T_TITLE_ACTIVE:-$title_active}
+  {
+    _t_dispatch "$@"
+  } always {
+    [[ -n $title_active ]] && _term_title ''
+  }
+}
+
+_t_dispatch() {
   emulate -L zsh
   # Help belongs to the executable, including nested command help. A remote
   # command's own --help is data and must pass through unchanged.
