@@ -705,7 +705,16 @@ def check_listing_aliases(module):
     return errors
 
 
-def help_surfaces(module, parser):
+class _HelpOutput(io.StringIO):
+    def __init__(self, tty=False):
+        super().__init__()
+        self.tty = tty
+
+    def isatty(self):
+        return self.tty
+
+
+def help_surfaces(module, parser, *, detailed=False, tty=False):
     """Enumerate registry commands, native descendants, and compatibility spellings."""
     paths = {(), ("list",), ("hosts", "delete"), ("hosts", "rm")}
 
@@ -722,6 +731,9 @@ def help_surfaces(module, parser):
         paths.update(path[:end] for end in range(1, len(path) + 1))
         if path[-1] == "list":
             paths.add((*path[:-1], "ls"))
+    if detailed:
+        yield ("help", "agents"), module._wrap_help("AGENT SUPPORT\n" + "\n".join(module._agent_parity_render())), None
+        yield ("help", "aliases"), module._aliases_help(), None
     for path in sorted(paths):
         if not path:
             yield path, module._root_help(), None
@@ -735,19 +747,19 @@ def help_surfaces(module, parser):
         if target is None:
             yield path, "", None
             continue
-        with contextlib.redirect_stdout(io.StringIO()) as output:
-            rendered_parser = module._print_command_help(target, list(path), canonical)
+        with contextlib.redirect_stdout(_HelpOutput(tty)) as output:
+            rendered_parser = module._print_command_help(target, list(path), canonical, detailed=detailed)
         yield path, output.getvalue(), rendered_parser
 
 
-def check_help_page(name, body, parser, policy, *, width=80):
+def check_help_page(name, body, parser, policy, *, width=80, detailed=False):
     """Validate visible content, with actionable failures rather than truncation."""
     errors = []
     label = "t " + name if name else "t"
     lines = body.splitlines()
     if not lines or not re.match(r"(?:usage:|USAGE)", lines[0]):
         errors.append(f"{label} help must start with usage")
-    if width == 80:
+    if width == 80 and not detailed:
         budget = policy["command_line_limits"].get(name, policy["max_lines"])
         if len(lines) > budget:
             errors.append(f"{label} help has {len(lines)} lines (limit {budget}); move explanations to help_details")
@@ -760,12 +772,12 @@ def check_help_page(name, body, parser, policy, *, width=80):
             errors.append(f"{label} help line {number} needs at least two spaces of indentation")
         if line.rstrip(":").upper() in policy["headings"] and line != line.upper():
             errors.append(f"{label} help headings must use uppercase: {line!r}")
-        if re.fullmatch(r"[A-Z][A-Z ()/]+:?", line) and line.rstrip(":") not in policy["headings"]:
+        if not detailed and re.fullmatch(r"[A-Z][A-Z ()/]+:?", line) and line.rstrip(":") not in policy["headings"]:
             errors.append(f"{label} help uses unrecognized heading {line!r}")
     normalized = " ".join(body.split())
     if name and f"usage: {label} " not in normalized and f"USAGE {label} " not in normalized:
         errors.append(f"{label} help must show its complete command path in usage")
-    if "t help " not in normalized:
+    if not detailed and "t help " not in normalized:
         errors.append(f"{label} help needs a discoverable 't help' details pointer")
     example_match = re.search(r"(?m)^EXAMPLES:?\n(.*?)(?=\n[A-Z][A-Z ()/]+:?\n|\Z)", body, re.S)
     if example_match:
@@ -789,26 +801,71 @@ def check_help_page(name, body, parser, policy, *, width=80):
     return errors
 
 
+def check_help_color(name, plain, rendered, *, enabled):
+    """Compare exact layout and independently require color on heading labels only."""
+    # OSC titles affect the terminal tab, not help text or its color policy.
+    rendered = re.sub(r"\x1b\]0;[^\x00-\x1f\x7f-\x9f]*\x07", "", rendered)
+    errors = []
+    ansi = re.compile(r"\x1b\[[0-9;]*m")
+    if ansi.sub("", rendered) != plain:
+        errors.append(f"t {name} help color changed plain text or layout")
+    expected = []
+    for line in plain.splitlines(keepends=True):
+        heading = re.match(r"^(usage:|[A-Z][A-Z ()/+-]*:?)($|(?<=:) )", line.rstrip("\n"))
+        if heading and enabled:
+            label = heading.group(1)
+            line = "\033[1m\033[36m" + label + "\033[0m" + line[len(label):]
+        expected.append(line)
+    if rendered != "".join(expected):
+        errors.append(f"t {name} help must use bold cyan headings only" if enabled
+                      else f"t {name} help must not emit ANSI when color is disabled")
+    return errors
+
+
 def check_help_style(module, parser, contract):
-    """Render every public help surface at the contract's terminal widths."""
+    """Render every quick/detailed surface with controlled terminal and color state."""
     policy = contract.get("help_style")
     if not isinstance(policy, dict):
         return ["command inventory must define the help_style contract"]
     errors = []
     original = module.shutil.get_terminal_size
+    environment = dict(module.os.environ)
     try:
         for width in policy["widths"]:
             module.shutil.get_terminal_size = lambda fallback=(80, 24): module.os.terminal_size((width, 24))
-            surfaces = {path: (body, target) for path, body, target in help_surfaces(module, parser)}
-            for path, (body, target) in surfaces.items():
-                errors.extend(check_help_page(" ".join(path), body, target, policy, width=width))
-                if width == 80 and len(path) > 1 and path[-1] not in ("ls", "delete", "rm"):
-                    parent_body = surfaces[path[:-1]][0]
-                    if not re.search(r"(?m)^ {2,}" + ("(?:list|ls)" if path[-1] == "list" else re.escape(path[-1])) + r"(?:\s|$)", parent_body) and (
-                            "t " + " ".join(path) not in " ".join(parent_body.split())):
-                        errors.append(f"t {' '.join(path)} must be discoverable in parent help")
+            for detailed in (False, True):
+                module.os.environ.update(TERM="xterm-256color")
+                for key in ("NO_COLOR", "CLICOLOR"):
+                    module.os.environ.pop(key, None)
+                with contextlib.redirect_stdout(_HelpOutput()):
+                    surfaces = {path: (body, target) for path, body, target in
+                                help_surfaces(module, parser, detailed=detailed)}
+                for path, (body, target) in surfaces.items():
+                    if path not in (("help", "agents"), ("help", "aliases")):
+                        errors.extend(check_help_page(" ".join(path), body, target, policy,
+                                                      width=width, detailed=detailed))
+                    if not detailed and width == 80 and len(path) > 1 and path[-1] not in ("ls", "delete", "rm"):
+                        parent_body = surfaces[path[:-1]][0]
+                        if not re.search(r"(?m)^ {2,}" + ("(?:list|ls)" if path[-1] == "list" else re.escape(path[-1])) + r"(?:\s|$)", parent_body) and (
+                                "t " + " ".join(path) not in " ".join(parent_body.split())):
+                            errors.append(f"t {' '.join(path)} must be discoverable in parent help")
+                for tty, overrides in ((True, {}), (False, {}), (True, {"NO_COLOR": ""}),
+                                       (True, {"NO_COLOR": "1"}), (True, {"TERM": "dumb"}),
+                                       (True, {"CLICOLOR": "0"}), (False, {"CLICOLOR": "1"})):
+                    module.os.environ.update(TERM="xterm-256color")
+                    for key in ("NO_COLOR", "CLICOLOR"):
+                        module.os.environ.pop(key, None)
+                    module.os.environ.update(overrides)
+                    with contextlib.redirect_stdout(_HelpOutput(tty)):
+                        colored = {path: body for path, body, _ in
+                                   help_surfaces(module, parser, detailed=detailed, tty=tty)}
+                    for path, (plain, _) in surfaces.items():
+                        errors.extend(check_help_color(" ".join(path), plain, colored.get(path, ""),
+                                                       enabled=tty and not overrides))
     finally:
         module.shutil.get_terminal_size = original
+        module.os.environ.clear()
+        module.os.environ.update(environment)
     return list(dict.fromkeys(errors))
 
 

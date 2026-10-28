@@ -133,3 +133,79 @@ def test_detailed_help_rendering_does_not_mutate_reused_parsers(t_mod):
     with contextlib.redirect_stdout(io.StringIO()):
         t_mod._print_command_help(parser, ['resume'], ['resume'], detailed=True)
     assert parser.format_help() == before
+
+
+@pytest.mark.parametrize('mutation', ['missing', 'wrong_color', 'no_bold', 'no_reset', 'body', 'layout'])
+def test_help_color_lint_rejects_regressions(mutation):
+    lint = lint_module()
+    plain = 'usage: t demo\n\nOPTIONS:\n  --flag  Body\n'
+    colored = '\033[1m\033[36musage:\033[0m t demo\n\n\033[1m\033[36mOPTIONS:\033[0m\n  --flag  Body\n'
+    assert lint.check_help_color('demo', plain, colored, enabled=True) == []
+    if mutation == 'missing':
+        colored = plain
+    elif mutation == 'wrong_color':
+        colored = colored.replace('[36m', '[32m')
+    elif mutation == 'no_bold':
+        colored = colored.replace('\033[1m', '')
+    elif mutation == 'no_reset':
+        colored = colored.replace('\033[0m', '')
+    elif mutation == 'body':
+        colored = colored.replace('Body', '\033[36mBody\033[0m')
+    else:
+        colored = colored.replace('  --flag', '    --flag')
+    assert lint.check_help_color('demo', plain, colored, enabled=True)
+    if mutation != 'missing':
+        assert lint.check_help_color('demo', plain, colored, enabled=False)
+
+
+@pytest.mark.parametrize('tty,overrides', [
+    (True, {}), (False, {}), (True, {'NO_COLOR': ''}), (True, {'NO_COLOR': '1'}),
+    (True, {'TERM': 'dumb'}), (True, {'CLICOLOR': '0'}), (False, {'CLICOLOR': '1'}),
+])
+def test_help_output_honors_stdout_and_environment(t_mod, monkeypatch, tty, overrides):
+    lint = lint_module()
+    for key in ('NO_COLOR', 'CLICOLOR'):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv('TERM', 'xterm-256color')
+    for key, value in overrides.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr(t_mod, 'Config', lambda: pytest.fail('help loaded config'))
+    monkeypatch.setattr(t_mod, '_t_auto_update', lambda argv: pytest.fail('help updated'))
+    # stderr being a terminal never enables color for redirected stdout.
+    monkeypatch.setattr(t_mod.sys, 'stderr', lint._HelpOutput(True))
+    parser = t_mod.build_parser()
+    for words in (['--help'], ['session', 'resume', '-h'], ['help', 'session', 'resume'],
+                  ['help', 'agents'], ['help', 'aliases'], ['session', 'resume', '-h']):
+        with contextlib.redirect_stdout(lint._HelpOutput(False)) as output:
+            assert t_mod.main(words) == 0
+        plain = output.getvalue()
+        with contextlib.redirect_stdout(lint._HelpOutput(tty)) as output:
+            assert t_mod.main(words) == 0
+        assert lint.check_help_color(' '.join(words), plain, output.getvalue(),
+                                     enabled=tty and not overrides) == []
+    with contextlib.redirect_stdout(lint._HelpOutput(True)):
+        detailed = {path: body for path, body, _ in lint.help_surfaces(t_mod, parser, detailed=True, tty=True)}
+    assert ('help', 'agents') in detailed and ('help', 'aliases') in detailed
+    if tty and not overrides:
+        assert '\033[1m\033[36mPICKER CONTROLS\033[0m' in detailed[('session', 'resume')]
+
+
+def test_help_color_lint_detects_detail_and_topic_omissions(t_mod, monkeypatch):
+    lint = lint_module()
+    wrap = t_mod._wrap_help
+    def broken_wrap(body):
+        rendered = wrap(body)
+        return rendered.replace('\033[1m\033[36mAGENT SUPPORT\033[0m', 'AGENT SUPPORT').replace(
+            '\033[1m\033[36mPICKER CONTROLS\033[0m', 'PICKER CONTROLS')
+    monkeypatch.setattr(t_mod, '_wrap_help', broken_wrap)
+    errors = lint.check_help_style(t_mod, t_mod.build_parser(), CONTRACT)
+    assert any('t help agents help must use bold cyan' in error for error in errors)
+    assert any('t session resume help must use bold cyan' in error for error in errors)
+
+
+def test_help_color_lint_accepts_titles_but_not_other_controls():
+    lint = lint_module()
+    plain = 'USAGE\n  t help\n'
+    rendered = '\x1b]0;t help\x07' + plain + '\x1b]0;\x07'
+    assert lint.check_help_color('help', plain, rendered, enabled=False) == []
+    assert lint.check_help_color('help', plain, '\x1b[2J' + rendered, enabled=False)
