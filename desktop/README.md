@@ -4,6 +4,10 @@ A macOS desktop workspace for the same sessions, ownership checks, repositories,
 configuration, and worktrees as the `t` CLI. This application is distinct from
 `t app`, which opens the external agent application.
 
+Open the [standalone browser preview](preview/index.html) to explore the session
+manager with sample data. [Preview instructions](preview/README.md) cover local
+viewing and private access over Tailscale.
+
 Production starts with real shared-core discovery. It does not seed example
 repositories or sessions. All fixture transports live in `tests/` and run only
 under headless Playwright; no fixture switch is shipped in the application.
