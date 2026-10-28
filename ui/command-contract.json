@@ -3346,13 +3346,16 @@
             "build"
           ],
           "patterns": [
+            "filtered",
+            "multi",
             "action"
           ],
           "read_only": false,
           "tests": [
-            "tests/test_remote_commands.py::test_remote_open_resume_delegate_quoted_worker_and_status"
+            "tests/test_remote_commands.py::test_remote_open_resume_delegate_quoted_worker_and_status",
+            "tests/test_resume_history.py::test_explicit_slot_browses_live_and_saved_conversations_before_acting"
           ],
-          "notes": "Explicit targets skip selection and retain ownership/worktree checks; scripts require explicit selections."
+          "notes": "An explicit host skips host selection. An explicit slot scopes the shared filtered conversation picker on that host and waits for selection in a terminal, even for one live or saved row. Cancellation returns 130 before attachment or launch. Ownership/worktree checks and nonterminal newest-saved selection remain in effect."
         },
         "days": {
           "argv": [
