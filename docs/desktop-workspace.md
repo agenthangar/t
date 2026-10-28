@@ -2,6 +2,10 @@
 
 Work tracked in [issue #110](https://github.com/agenthangar/t/issues/110).
 
+For the future native SwiftUI iOS client, see the [mobile client boundary](mobile-client-architecture.md)
+and [executable Swift contract proof](../clients/swift/README.md). The current
+desktop helper and PTYs are local; an authenticated mobile gateway remains to be built.
+
 `t Workspace` is a Tauri/React desktop shell over the existing Python and zsh
 session core. `t app` retains its external agent-app behavior. The desktop does
 not maintain a separate owner table, allocate independent worktrees, or require
