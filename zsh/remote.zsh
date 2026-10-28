@@ -1186,7 +1186,14 @@ _t_remote() {
       if [[ -n $repo && -n ${DEV_REPOS[$repo]:-} ]]; then
         repository_identity=$(python3 "$T_HOME/bin/t" __repo-identity "$repo") || return $?
       fi
-      worker="T_NO_UPDATE_CHECK=1 _T_RESUME_REPO_IDENTITY=${(q)repository_identity} _T_RESUME_REQUIRE_PICKER=1 _T_RESUME_OWNER_HOST=here _T_RESUME_DESTINATION_HOST=${(q)target} _t_resume ${(j: :)${(@q)worker_args}}"
+      local resume_environment="T_NO_UPDATE_CHECK=1 _T_RESUME_REPO_IDENTITY=${(q)repository_identity} _T_RESUME_REQUIRE_PICKER=1 _T_RESUME_OWNER_HOST=here _T_RESUME_DESTINATION_HOST=${(q)target}"
+      if [[ -n $repository_identity ]]; then
+        # Resolve on the target before invoking its shell function. Older t
+        # versions may ignore the identity environment and reuse a foreign alias.
+        worker="t_resume_repo=\$(command t __resume-alias ${(q)repository_identity}) && $resume_environment _t_resume \"\$t_resume_repo\" ${(j: :)${(@q)worker_args[2,-1]}}"
+      else
+        worker="$resume_environment _t_resume ${(j: :)${(@q)worker_args}}"
+      fi
     fi
     if [[ -t 0 && -t 1 ]]; then ssh -t "$target" "zsh -lic ${(q)worker}"
     else ssh "$target" "zsh -lic ${(q)worker}"; fi

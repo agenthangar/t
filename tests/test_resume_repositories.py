@@ -272,7 +272,8 @@ def test_remote_resume_forwards_local_repository_identity(zsh):
     assert result.returncode == 0, result.stderr
     worker = shlex.split(result.stdout.split('SSH user@peer|', 1)[1].splitlines()[0])[2]
     assert '_T_RESUME_REPO_IDENTITY=org/project' in shlex.split(worker)
-    assert shlex.split(worker)[-3:] == ['_t_resume', 'api', '3']
+    assert shlex.split(worker)[-3:] == ['_t_resume', '$t_resume_repo', '3']
+    assert 'command t __resume-alias org/project' in worker
 
 
 @pytest.mark.parametrize('path', ['relative', '/bad\npath', '/bad\x00path'])
@@ -445,3 +446,29 @@ def test_materialization_atomic_registration_refuses_intervening_config_edit(app
     assert local_rc.read_text() == changed
     assert destination.is_dir() and not app.cfg.repos
     assert not [event for event in events if event[0] == 'sync']
+
+
+@pytest.mark.parametrize('legacy', [True, False])
+def test_remote_resume_identity_bridge_blocks_legacy_alias_collision(zsh, tmp_path, legacy):
+    dispatch = zsh('REMOTE_HOSTS=(peer user@peer); '
+                   'python3() { [[ $2 == __repo-identity ]] && print org/project; }; '
+                   'ssh() { print -r -- "SSH ${(j:|:)@}"; }; t remote resume api 3 --host peer')
+    assert dispatch.returncode == 0, dispatch.stderr
+    worker = shlex.split(dispatch.stdout.split('SSH user@peer|', 1)[1].splitlines()[0])[2]
+    stubdir = tmp_path / 'target-bin'
+    stubdir.mkdir()
+    binary = stubdir / 't'
+    binary.write_text('#!/bin/sh\n' + ('exit 2\n' if legacy else
+        '[ "$1" = __resume-alias ] && [ "$2" = org/project ] || exit 2\nprintf "host-key\\n"\n'))
+    binary.chmod(0o755)
+    target = zsh('PATH=' + shlex.quote(str(stubdir)) + ':$PATH; '
+                 'DEV_REPOS=(api /unrelated/repository); '
+                 '_t_resume() { print -r -- "TARGET_RESUME $*"; }; '
+                 'eval ' + shlex.quote(worker))
+    if legacy:
+        assert target.returncode == 2
+        assert 'TARGET_RESUME' not in target.stdout
+    else:
+        assert target.returncode == 0, target.stderr
+        assert 'TARGET_RESUME host-key 3' in target.stdout
+        assert 'TARGET_RESUME api' not in target.stdout
