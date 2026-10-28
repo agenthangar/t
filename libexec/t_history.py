@@ -1520,7 +1520,7 @@ class HistoryCommand:
             return f'dev-{alias}-{slot}'
         return self.attach(dict(host='local', slot=f'{alias}-{slot}', sid=row['sid'], agent=row['agent'], cwd=destination, state='active'))
 
-    def resume_candidates(self, aliases):
+    def resume_candidates(self, aliases, slot=None):
         """Private adapter: display aliases and immutable selection keys differ."""
         all_repositories = aliases == ['--all'] or not aliases
         if all_repositories:
@@ -1550,7 +1550,10 @@ class HistoryCommand:
                 if key in seen or not row.get('title') or not row.get('sources') or not row.get('associations'):
                     continue
                 seen.add(key)
-                association = max(row['associations'], key=lambda a: a.get('observed', 0))
+                associations = [a for a in row['associations'] if slot is None or a.get('slot') == slot]
+                if not associations:
+                    continue
+                association = max(associations, key=lambda a: a.get('observed', 0))
                 source = max(row['sources'], key=lambda s: (s.get('updated', 0), s.get('size', 0)))
                 updated = int(row.get('updated', 0))
                 when = datetime.datetime.fromtimestamp(updated).strftime('%b %d %H:%M')

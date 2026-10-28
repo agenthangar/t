@@ -1029,12 +1029,20 @@
             "1"
           ],
           "patterns": [
-            "action"
+            "filtered",
+            "multi"
           ],
           "read_only": false,
           "tests": [
-            "tests/test_resume_multiselect.py::test_resume_multi_opens_selected_live_slot_and_revives_dead_slot"
-          ]
+            "tests/test_resume_history.py::test_explicit_slot_browses_live_and_saved_conversations_before_acting",
+            "tests/test_resume_history.py::test_explicit_slot_requires_selection_even_with_one_conversation",
+            "tests/test_resume_history.py::test_explicit_slot_saved_selection_preserves_busy_owner",
+            "tests/test_resume_history.py::test_explicit_slot_live_selection_attaches_exact_owner",
+            "tests/test_history_data.py::test_resume_candidates_match_any_recorded_slot_association",
+            "tests/test_progress_contract.py::test_spinner_never_runs_callers_session_save_hooks",
+            "tests/test_picker_cancellation.py::test_picker_signal_preserves_callers_exit_hooks_and_cleans_files"
+          ],
+          "notes": "Explicit slots scope the shared filtered multi-picker to every recorded association with that slot, including conversations later moved elsewhere. Interactive requests wait for selection even for one row, initially showing live and saved work; Ctrl-F restores inactive defaults. Cancellation returns 130 before any attachment or launch. Selecting a live row attaches to its owner; independent saved work uses guarded allocation. Without a terminal, newest-saved selection is retained. Existing --days limits apply. Spinner children never run inherited caller exit hooks."
         },
         "desktop": {
           "argv": [

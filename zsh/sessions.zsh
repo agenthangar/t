@@ -19,6 +19,12 @@ _t_with_progress() {
   local _T_SPINNING=1 spin_pid spin_err
   spin_err=$(mktemp "${TMPDIR:-/tmp}/t-progress.XXXXXX") || { "$@"; return $?; }
   (
+    # This disposable child exits on every completed operation. Inherited
+    # zshexit hooks (including Terminal.app's session/history saver) belong to
+    # the caller, not the spinner. Keep the caller's hooks and history intact.
+    zshexit_functions=()
+    unfunction zshexit 2>/dev/null || :
+    trap - EXIT
     trap 'exit 0' TERM INT HUP
     command sleep 0.25
     local frame=1 width=$(( ${COLUMNS:-80} - 7 ))

@@ -1925,6 +1925,7 @@ def test_remote_desktop_reservation_blocks_local_slot_without_becoming_attachabl
         'REMOTE_HOSTS[mini]=unused; DEV_WORKTREE_ROOT=/Users/local/code/.worktrees; '
         '_dev_homerel() { case $1 in */code/api) print -r -- code/api;; */code/.worktrees) print -r -- code/.worktrees;; esac; }; '
         f'_dev_rows_all() {{ print -r -- {shlex.quote(row)}; }}; '
+        '_t_resume_history_candidates() { :; }; '
         'print -r -- "owner=$(_dev_remote_app_owner api 3)"; '
         '_dev_remote_resolve api 3 >/dev/null 2>&1; print -r -- "attachable=$?"; '
         '_t_dev api 3 --codex; print -r -- "cli=$?"; '
@@ -1940,7 +1941,7 @@ def test_remote_desktop_reservation_blocks_local_slot_without_becoming_attachabl
     assert r.stderr.count("reserved by the Codex desktop app on mini") == (4 if sys.platform == "darwin" else 3)
     if sys.platform != "darwin":
         assert "requires macOS" in r.stderr
-    assert "reserved for the Codex desktop app on mini" in r.stderr
+    assert "◉ desktop on mini" in r.stderr
     assert not zsh.log.exists() or "new-session" not in zsh.log.read_text()
 
 
@@ -2293,8 +2294,10 @@ def test_zsh_resume_never_resumes_a_conversation_live_in_another_slot(zsh, tmp_p
     r = zsh(live + "_t_resume api 3; echo rc=$?")
     assert "rc=1" in r.stdout and "● in api-5" in r.stderr, (r.stdout, r.stderr)
     assert "send-keys" not in zsh.log.read_text()
-    # under a TTY the sole (live) row auto-picks → attach the OWNER's slot
-    r = zsh(live + "_t_resume api 3; echo rc=$?", _tty=True)
+    # Under a TTY even the sole live row waits for selection, then attaches
+    # the OWNER's slot rather than starting a second conversation.
+    r = zsh(live + "_t_resume api 3; echo rc=$?", _tty=True,
+            FZF_LOG=str(tmp_path / 'resume-picker.log'), FZF_PICK='Audit balances')
     assert "ATTACH api 5" in r.stdout and "send-keys" not in zsh.log.read_text(), r.stdout
     # scan mode: hidden like any live row, and counted
     r = zsh(live + "_t_resume api; echo rc=$?")
