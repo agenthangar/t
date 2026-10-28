@@ -98,7 +98,7 @@ def resume_turns(source, home, codex_home, owners=''):
             turn = row[11]
         when = format_last_turn(turn)
         row[4] = 'Last: ' + when if row[6] == '-' else row[4] + ' · Last: ' + when
-        result.append('\t'.join(row[:10] + [turn]))
+        result.append('\t'.join(row[:10] + [turn] + ([row[12]] if len(row) > 12 else ['-'])))
     records = metadata('\n'.join(row + '\t' for row in result), 'resume')
     return sort_resume(result, records)
 

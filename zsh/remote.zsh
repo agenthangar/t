@@ -1143,7 +1143,7 @@ _t_remote() {
       --from=*) [[ $action == move ]] || return 2; source=${arg#*=}; [[ -n $source ]] || return 2 ;;
       --session=*|-s=*) [[ $action == move ]] || return 2; sid=${arg#*=}; [[ -n $sid ]] || return 2 ;;
       --days=*) [[ $action == resume ]] || return 2; flags+=("$arg") ;;
-      -a|--all) [[ $action == move ]] || return 2; all=1 ;;
+      -a|--all) [[ $action == (move|resume) ]] || return 2; all=1 ;;
       --new) [[ $action == open ]] || return 2; flags+=(--new) ;;
       -d|--detach|-f|--fg) [[ $action == move ]] || return 2; flags+=("$arg") ;;
       -*) print -u2 "t remote $action: unknown flag $arg"; return 2 ;;
@@ -1158,7 +1158,7 @@ _t_remote() {
   elif [[ -z $repo && -z $all ]]; then
     repo=$(_t_infer_repo)
   fi
-  [[ -z $all || ( -z $repo && -z $slot ) ]] || { print -u2 't remote move: --all cannot be combined with a repository or slot'; return 2; }
+  [[ -z $all || ( -z $repo && -z $slot ) ]] || { print -u2 "t remote $action: --all cannot be combined with a repository or slot"; return 2; }
   [[ $host != local ]] || { print -u2 't remote: --host names a remote SSH host; use t session move --from HOST to receive here'; return 2; }
   # An exact conversation ID is global unless a repository was explicit.
   [[ -z $sid || $#pos != 0 ]] || repo=
@@ -1173,6 +1173,7 @@ _t_remote() {
     [[ -n $repo ]] && worker_args+=("$repo")
     [[ -n $slot ]] && worker_args+=("$slot")
     worker_args+=("${flags[@]}")
+    [[ -n $all ]] && worker_args+=(--all)
     local worker
     if [[ $action == open ]]; then
       worker_args=("$repo")
@@ -1181,7 +1182,11 @@ _t_remote() {
       worker="T_NO_UPDATE_CHECK=1 _t_remote_open_local ${(j: :)${(@q)worker_args}}"
     else
       [[ -n $slot || ( -t 0 && -t 1 ) ]] || { print -u2 't remote resume: history selection requires a terminal; name a repo and slot'; return 1; }
-      worker="T_NO_UPDATE_CHECK=1 _T_RESUME_REQUIRE_PICKER=1 _T_RESUME_OWNER_HOST=here _T_RESUME_DESTINATION_HOST=${(q)target} _t_resume ${(j: :)${(@q)worker_args}}"
+      local repository_identity=
+      if [[ -n $repo && -n ${DEV_REPOS[$repo]:-} ]]; then
+        repository_identity=$(python3 "$T_HOME/bin/t" __repo-identity "$repo") || return $?
+      fi
+      worker="T_NO_UPDATE_CHECK=1 _T_RESUME_REPO_IDENTITY=${(q)repository_identity} _T_RESUME_REQUIRE_PICKER=1 _T_RESUME_OWNER_HOST=here _T_RESUME_DESTINATION_HOST=${(q)target} _t_resume ${(j: :)${(@q)worker_args}}"
     fi
     if [[ -t 0 && -t 1 ]]; then ssh -t "$target" "zsh -lic ${(q)worker}"
     else ssh "$target" "zsh -lic ${(q)worker}"; fi
