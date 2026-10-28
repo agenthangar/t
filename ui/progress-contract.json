@@ -194,7 +194,7 @@
       "required": [
         "_t_with_progress \"Finding saved conversations\" _codex_candidate_snapshot",
         "_t_with_progress \"Loading conversation metadata\" _transcript_meta_batch",
-        "_t_with_progress \"Fetching saved conversations from $_h\" _t_resume_rsync",
+        "_t_with_progress \"Finding saved conversations across hosts\" _t_resume_history_candidates",
         "_t_wait_for_exit \"$cpid\"",
         "_t_wait_for_exit \"$fgpid\""
       ]

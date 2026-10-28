@@ -260,3 +260,11 @@ def test_resume_header_retains_sort_controls_and_row_space(filters, width):
     assert 'Sort: last turn' in text
     if width <= 36:
         assert len(text.splitlines()) <= 9
+
+
+def test_resume_remote_history_retains_exported_turn_without_local_transcript(filters, tmp_path):
+    row = 'repo\t4\tsaved\t/other/home/tree\told date\tSaved task\t-\thistory\tremote\tcodex\t-\t2026-10-28T10:11:12Z'
+    result = filters.resume_turns(row, str(tmp_path), str(tmp_path))
+    assert result[0].split('\t')[10] == '2026-10-28T10:11:12Z'
+    invalid = row.replace('2026-10-28T10:11:12Z', 'invalid')
+    assert filters.resume_turns(invalid, str(tmp_path), str(tmp_path))[0].split('\t')[10] == '-'

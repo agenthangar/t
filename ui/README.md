@@ -303,10 +303,19 @@ stopping it. Failed scans or transfer steps fail closed. `session move --from A
 --host B` delegates the whole guarded send to A over `zsh -lic`, using controller
 resolved SSH targets. The controller never briefly resumes the conversation.
 
+`session resume` refreshes saved metadata on registered hosts by repository identity
+on every scan; `--remote` remains a compatibility option. The picker includes
+canonical checkouts, swept Codex rollouts and renamed roots whose recorded Git
+origin exactly matches the configured repository. Only the selected transcript
+is downloaded and verified. A different live conversation in the historical
+slot does not hide saved work: inactive selections receive a safely allocated
+workspace when their original workspace cannot be reused. Exact live IDs attach
+to their existing owner. Local paths and remote aliases need not match.
+
 `remote open` selects current sessions on the chosen host and never starts fresh
 from an empty picker; `--new` is explicit. `remote resume` selects saved history
 on the chosen host using the existing filtered resume picker. `session resume
---host H` instead sends locally discovered history to H. Live rows attach only
+--host H` sends the selected saved history to H. Live rows attach only
 when their owner matches H (including host aliases); a mismatch gives an exact
 `remote move` instruction before any batch mutation. Desktop resume stays local.
 

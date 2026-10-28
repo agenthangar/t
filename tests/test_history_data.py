@@ -726,3 +726,86 @@ def test_cold_cache_pr_display_never_contacts_provider_without_explicit_refresh(
     app.branch_prs([row])
     app.pr_states([row])
     assert row['prs'] == [dict(repo='org/repo', number=1, url='https://github.com/org/repo/pull/1')]
+
+
+@pytest.mark.parametrize('workspace,expected_slot', [
+    ('/old/code/.worktrees/renamed/renamed-42', '42'),
+    ('/other/home/worktrees/previous/19', '19'),
+    ('/old/code/renamed', ''),
+])
+def test_discover_renamed_codex_workspace_by_exact_repository(app, history, workspace, expected_slot):
+    rows = codex_rows(workspace, sid='renamed')
+    rows[0]['payload']['git']['repository_url'] = 'git@github.com:ORG/REPO.git'
+    transcript_file(Path(os.environ['CODEX_HOME']) / 'sessions/rollout-renamed.jsonl', rows)
+    app.discover('repo')
+    found = app.records('repo')
+    assert len(found) == 1
+    assert found[0]['associations'][0]['workspace'] == workspace
+    assert found[0]['associations'][0]['slot'] == expected_slot
+
+
+@pytest.mark.parametrize('remote', ['', 'https://github.com/other/repo', 'https://github.com/org/repository'])
+def test_discover_rejects_unrelated_renamed_workspace(app, remote):
+    rows = codex_rows('/old/code/.worktrees/renamed/19')
+    rows[0]['payload']['git']['repository_url'] = remote
+    transcript_file(Path(os.environ['CODEX_HOME']) / 'sessions/rollout-unrelated.jsonl', rows)
+    app.discover('repo')
+    assert app.records('repo') == []
+
+
+def test_discover_rejects_conflicting_repository_even_under_current_path(app):
+    rows = codex_rows(Path(app.cfg.worktree_root) / 'repo/19')
+    rows[0]['payload']['git']['repository_url'] = 'https://github.com/other/repo'
+    transcript_file(Path(os.environ['CODEX_HOME']) / 'sessions/rollout-conflicting.jsonl', rows)
+    app.discover('repo')
+    assert app.records('repo') == []
+
+
+def test_transcript_rejects_conflicting_repository_metadata(history, tmp_path):
+    rows = codex_rows('/old/repo/19')
+    rows[0]['payload']['git']['repository_url'] = 'https://github.com/org/repo'
+    other = json.loads(json.dumps(rows[0]))
+    other['payload']['git']['repository_url'] = 'https://github.com/other/repo'
+    path = transcript_file(tmp_path / 'rollout-conflicting.jsonl', rows + [other])
+    with pytest.raises(history.HistoryError, match='repository identities'):
+        history.transcript(path, 'codex')
+
+
+def test_resume_candidates_refresh_all_hosts_and_deduplicate_sources(app, store, monkeypatch):
+    row = conversation(associations=[dict(workspace='/different/home/trees/old/old-42', slot='42', host='remote')],
+                       sources=[dict(host='remote', path='/different/home/.codex/sessions/rollout-same-sid.jsonl')])
+    events = []
+    monkeypatch.setattr(app, 'discover', lambda alias, **kwargs: events.append(('local', alias)))
+    def refresh(alias):
+        events.append(('remote', alias))
+        store.merge(row)
+        store.merge({**row, 'sources': [dict(host='local', path='/local/rollout-same-sid.jsonl')]})
+    monkeypatch.setattr(app, 'refresh', refresh)
+    rows = list(app.resume_candidates(['repo']))
+    assert events == [('local', 'repo'), ('remote', 'repo')]
+    assert len(rows) == 1
+    fields = rows[0].split('\t')
+    assert fields[1:5] == ['repo', '42', 'same-sid', '/different/home/trees/old/old-42']
+    assert fields[7:] == ['remote', 'codex', '-']
+    with pytest.raises(ValueError, match='unknown repository'):
+        list(app.resume_candidates(['missing']))
+
+
+@pytest.mark.parametrize('child_source', [{'source': {'subagent': {'thread_spawn': {}}}}, {'thread_source': 'subagent'}])
+def test_resume_discovery_excludes_child_rollouts_and_keeps_turn_evidence(app, child_source):
+    rows = codex_rows('/old/trees/repo/repo-4', sid='main')
+    rows[0]['payload']['git']['repository_url'] = 'https://github.com/org/repo'
+    rows.append({'type': 'event_msg', 'timestamp': '2026-10-28T10:11:12Z',
+                 'payload': {'type': 'task_started'}})
+    path = Path(os.environ['CODEX_HOME']) / 'sessions/rollout-main.jsonl'
+    transcript_file(path, rows)
+    child = json.loads(json.dumps(rows))
+    child[0]['payload'].update(id='child', **child_source)
+    transcript_file(path.with_name('rollout-child.jsonl'), child)
+    app.discover('repo', metadata_only=True)
+    found = app.records('repo')
+    assert [row['sid'] for row in found] == ['main']
+    assert found[0]['last_turn'] == '2026-10-28T10:11:12Z'
+    # A full history scan must use its separate cache and retain the same turn.
+    app.discover('repo')
+    assert app.records('repo')[0]['last_turn'] == found[0]['last_turn']
