@@ -74,9 +74,8 @@ _t_resume_history_launch() {
 # `t resume` scans EVERY worktree repo (the
 # `t ls` unscoped convention) with a repo column in the picker; -a/--all forces that
 # widening from anywhere (the `t ls -a` flag). -r/--remote PULLS the latest
-# transcripts from every $REMOTE_HOSTS host first (direct rsync — csync is periodic
-# and needs a prompt on the far side, so "resume what just died on the other
-# machine" cannot wait for it), then scans as usual. LIVE slots — local or on a
+# transcripts from every $REMOTE_HOSTS host first by direct rsync, then scans
+# as usual. LIVE slots — local or on a
 # $REMOTE_HOSTS host — are retained but filtered from the initial picker view.
 # Ctrl-A reveals all, Ctrl-L toggles live rows, Ctrl-F restores the inactive
 # defaults; -l/--live starts with all
@@ -2506,8 +2505,7 @@ _t_pop() {
 # ~/.claude/projects/<cwd-with-non-alnum-as-dashes>/ (/ and . alike → -, so a
 # worktree path under .worktrees encodes to --worktrees), and `claude -r <sid>` on the
 # far side can only resume what's already on its disk — so the bytes must land
-# first. csync/iCloud is the background convergence path; this is the immediate,
-# deterministic push for "beam it *now*".
+# first. This direct push makes the conversation available immediately.
 #
 # Conflict policy (the one real knob): rsync --update, no --delete. Newer mtime
 # wins per file, nothing is removed. The machine you're beaming FROM holds the

@@ -960,8 +960,8 @@ def cmd_read(cfg, args):
                     args.repo, logfile = k, sib
                     break
     if not os.path.isfile(logfile):
-        # No log here — the slot may live on a remote host (the tmux log is host-local;
-        # csync syncs transcripts, not ~/.tmux-logs). Try delegating the read to that
+        # No log here — the slot may live on a remote host (tmux logs are host-local).
+        # Try delegating the read to that
         # host over ssh -t, which renders the remote log in less through the ssh TTY.
         # On a fully bare `t read` (no repo, no slot), probe for ANY of the inferred
         # repo's remote slots (empty slot → _dev_remote_resolve picks / fzf-picks) so a
@@ -6225,7 +6225,6 @@ _AGENT_PARITY = [
     ("t session resume (saved conversations)", "✓", "✓ (rollouts and thread index)", "→ t cursor resume"),
     ("t session move / --from", "✓", "✓ (rollout + .origin)", "→ t cursor send [id] --host / --from"),
     ("t session open-app (desktop + browser preview)", "✗ Codex conversations only", "✓ local macOS slot → same thread", "✗"),
-    ("csync (iCloud union of transcripts)", "✓ projects + plans", "✓ codex-sessions", "✓ cursor-chats"),
     ("SessionStart stamps (registry · opened · origin)", "✓ settings.json hook",
      "✓ hooks.json (trust once at startup)", "✗ no hook wired"),
     ("t session view-plan", "✓", "✗ codex keeps no plan files (says so)", "✗"),
@@ -7963,7 +7962,7 @@ def cmd_doctor(cfg, args):
 # ─── todo — retired ─────────────────────────────────────────────────────────────
 #
 # `t todo` (a per-slot task list with a /todo command, a statusline bar, a
-# list_todos MCP tool and a csync pair) was retired in September 2026. The verb
+# list_todos MCP tool) was retired in September 2026. The verb
 # is answered in main() (no subparser — `t -h` does not list it) so an old habit,
 # alias, or a lagging statusline setting gets one quiet line instead of argparse's
 # "invalid choice". The lists it kept
@@ -9117,7 +9116,7 @@ def _index_update(path, cache_dir):
     the cache last saw it. None when the transcript cannot be stat'ed.
 
     Reset to a full rescan when the cache is missing/corrupt, from an older schema,
-    for a different inode (csync's rsync writes a NEW file), or claims more bytes than
+    for a different inode (a file transfer can replace the file), or claims more bytes than
     exist (truncation). The delta is read line by line — never fh.read(): a cold ff
     transcript is 100+ MB — and a final line without its newline is NOT consumed, so a
     half-written record is re-read next time instead of parsed in halves."""
@@ -9599,8 +9598,7 @@ def _git_brief(path):
 
 
 def _plan_head_lines(path, n=40):
-    """First n lines of a plan file, or None when it is not here (plans are per-host:
-    csync syncs them only periodically)."""
+    """First n lines of a plan file, or None when it is not here (plans are per-host)."""
     try:
         n = max(1, int(n))
         with open(path, encoding="utf-8", errors="replace") as fh:

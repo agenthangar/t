@@ -358,8 +358,8 @@ _dev_remote_open() {
 # live on a $REMOTE_HOSTS host, run `t <verb> <repo> <slot> [extra]` there over ssh -t
 # and return 0 (handled); else return 1 so the caller falls back to its local path.
 # Needed because a beamed/remote slot's artifacts are host-local — the plan .md lives
-# in ~/.claude/plans and the tmux log in ~/.tmux-logs on the slot's host, neither of
-# which csync syncs — so the verb must run THERE. Host auto-inferred (_dev_remote_
+# in ~/.claude/plans and the tmux log in ~/.tmux-logs on the slot's host,
+# so the verb must run THERE. Host auto-inferred (_dev_remote_
 # resolve); no TTY → print a hint and still return 0 (do not fall through to a local
 # "No such session"). Mirrors _t_dev's auto-detect attach, but for non-attach verbs.
 _dev_remote_delegate() {
@@ -763,7 +763,7 @@ _t_plan() {
     if ! tmux has-session -t "=$session:" 2>/dev/null; then
       # Not live here — maybe beamed to / started on another host. Delegate the whole
       # `t plan` over there (shared _dev_session_remote_fallback): the plan .md lives in
-      # that host's ~/.claude/plans (csync syncs transcripts, not plan files), so it
+      # that host's ~/.claude/plans, so it
       # must be rendered on the slot's host.
       _dev_session_remote_fallback "$session" plan; local remote_rc=$?
       (( remote_rc == 1 )) || return $remote_rc

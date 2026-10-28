@@ -1459,7 +1459,7 @@ def test_zsh_repo_slots_sees_codex_only_slots(zsh):
     assert zsh("_dev_repo_slots api").stdout.split() == ["7", "12"]
 
 
-# ─── across machines: the rollout scan, the beam sync, csync's codex pair ────────
+# ─── across machines: the rollout scan and direct beam transfer ───────────────
 
 RSYNC_STUB = "#!/bin/bash\nprintf '%s\\n' \"$*\" >> \"$RSYNC_LOG\"\nexit 0\n"
 

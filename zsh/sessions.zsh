@@ -391,8 +391,8 @@ _dev_pid_tree_claude_pid() {
 #   ~/.cache/claude-sessions/meta/<hash>, so a DEAD transcript is never re-read and a
 #   LIVE one re-reads only the bytes appended since last time. Transcripts are
 #   append-only .jsonl, which is what makes a resumable offset correct; the cache is
-#   keyed on st_ino and invalidated whenever the inode changes (csync's rsync writes
-#   a NEW file, so a synced-in transcript rescans in full) or the file is shorter
+#   keyed on st_ino and invalidated whenever the inode changes (a file transfer
+#   can replace a transcript, requiring a full rescan) or the file is shorter
 #   than the recorded offset (truncation/rewrite). The offset always stops at the
 #   last complete newline, so a half-written final line is re-read next time rather
 #   than parsed in halves.
@@ -704,8 +704,8 @@ _dev_session_summary() {
 # foreground claude is a live process with comm `claude` that isn't the claude of any
 # dev-* tmux pane. The session id + cwd come from the registry the t-session-start
 # SessionStart hook writes per live claude pid (~/.cache/claude-sessions/<pid>) — the
-# reliable pid→id link, since macOS hides another process's env and csync scrambles
-# transcript birthtimes; with the id we read the exact transcript title. A session
+# reliable pid→id link, since macOS hides another process's env and file transfers
+# can change transcript birthtimes; with the id we read the exact transcript title. A session
 # started BEFORE the hook recorded it has no entry → cwd via `lsof`, summary
 # "(foreground claude)". The slot label is "<repo>:fg" (repo from cwd, else basename).
 # The claude THIS shell runs under is skipped so a session doesn't list itself; dead-pid
@@ -1238,8 +1238,8 @@ _dev_list() {
 # ✓ glyph draws; summary = the "what it's working on" line). No glyphs/colors/headers
 # — it's meant to be *collected* (locally and over ssh, like _claude_session_rows)
 # and re-rendered. This is the per-host scan behind `dev ls -r`: live dev slots are
-# what genuinely differ machine-to-machine (transcripts already converge via csync),
-# so the cross-host view lists these, not transcripts.
+# what differ machine-to-machine, so the cross-host view lists current owners
+# rather than saved transcripts.
 # Loaded desktop conversations, read without starting or contacting an app-server.
 _dev_desktop_threads() {
   [[ $OSTYPE == darwin* && -r ${CODEX_HOME:-$HOME/.codex}/state_5.sqlite ]] || return 0
