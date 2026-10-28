@@ -228,21 +228,24 @@ def run_worker(job, base, model, timeout, cancel):
     workspace = job / 'workspace'
     env = environment(job / 'home')
     env.update(OLLAMA_HOST=base, CODEX_OSS_BASE_URL=base + '/v1')
+    assignment = json.loads((job / 'assignment.json').read_text())
     prompt = (
         'You are a local worker in an isolated repository snapshot. Complete only the assignment below. '
+        f'Your working directory is {workspace}. Use this directory for every command. '
         'Do not delegate, access the network, install dependencies, commit, push, or publish. '
         'Repository release/PR instructions are the lead agent responsibility. '
         'For investigate mode do not edit project files. For patch mode make the smallest change. '
+        'Use the exec_command shell tool to read files, edit with Python or shell, and run checks. '
+        'Do not call apply_patch: this local provider does not expose that tool. '
         'Run available targeted checks. Report findings, changes, commands and exit outcomes, '
         'and remaining uncertainties honestly. Do not claim checks you did not run.\n\n'
-        + (job / 'assignment.json').read_text()
+        + json.dumps({'mode': assignment['mode'], 'assignment': assignment['assignment']})
     )
     # Isolated trust config: project-local configuration stays untrusted.
     (job / 'home/.codex/config.toml').write_text('')
     output = job / 'answer.txt'
     (job / 'prompt.txt').write_text(prompt)
     command = codex_command(workspace, output, model)
-    assignment = json.loads((job / 'assignment.json').read_text())
     if assignment['mode'] == 'investigate':
         command[command.index('workspace-write')] = 'read-only'
     started = time.monotonic()

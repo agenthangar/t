@@ -164,8 +164,12 @@ def test_worker_command_and_process_timeout(worker, repo, tmp_path, monkeypatch)
     job = tmp_path / 'job'
     job.mkdir()
     worker.snapshot(repo, job / 'workspace')
-    (job / 'assignment.json').write_text('{"mode":"investigate","assignment":"inspect"}')
+    (job / 'assignment.json').write_text(json.dumps({'mode': 'investigate', 'assignment': 'inspect',
+                                                    'workspace': '/private/lead-repository'}))
     assert worker.run_worker(job, 'http://127.0.0.1:1234', 'test', .1, threading.Event()) == 'timed_out'
+    prompt = (job / 'prompt.txt').read_text()
+    assert '/private/lead-repository' not in prompt
+    assert str(job / 'workspace') in prompt
     cancel = threading.Event(); cancel.set()
     assert worker.run_worker(job, 'http://127.0.0.1:1234', 'test', 10, cancel) == 'cancelled'
     binary.write_text('#!/bin/sh\nexit 1\n')
