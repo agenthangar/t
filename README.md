@@ -1248,7 +1248,7 @@ registered; `t system diagnose` provides the same desktop and CLI steps.
 Setup and installation leave hook approval to the app and preserve trust records.
 
 [t's original dotfiles](https://github.com/agenthangar/dotfiles) provide optional
-iCloud transcript sync, clipboard bridging, and personal shell utilities. They are
+clipboard bridging and personal shell utilities. They are
 not prerequisites. On that installation, `dots --all` updates dotfiles and t, and
 the adapter preserves existing personal permission/trust choices.
 
@@ -1266,7 +1266,6 @@ checked in CI; optional dotfiles integrations are identified explicitly.
   t session resume (saved conversations)                      ✓                                          ✓ (rollouts and thread index)                                  → t cursor resume
   t session move / --from                                     ✓                                          ✓ (rollout + .origin)                                          → t cursor send [id] --host / --from
   t session open-app (desktop + browser preview)              ✗ Codex conversations only                 ✓ local macOS slot → same thread                               ✗
-  csync (iCloud union of transcripts)                         ✓ projects + plans                         ✓ codex-sessions                                               ✓ cursor-chats
   SessionStart stamps (registry · opened · origin)            ✓ settings.json hook                       ✓ hooks.json (trust once at startup)                           ✗ no hook wired
   t session view-plan                                         ✓                                          ✗ codex keeps no plan files (says so)                          ✗
   /tpush · /tpop slash commands                               ✓ ~/.claude/commands                       ✓ ~/.codex/prompts                                             ✗
