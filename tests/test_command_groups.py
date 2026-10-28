@@ -35,7 +35,7 @@ def test_root_help_is_identical_and_has_only_public_groups(t_mod, monkeypatch, c
     assert t_mod.main(argv) == 0
     output = capsys.readouterr().out
     assert output == t_mod._root_help()
-    assert all(section in output for section in ("WORK", "CONFIGURATION", "TOOLS", "FLAGS", "EXAMPLES", "LEARN MORE"))
+    assert all(section in output for section in ("WORK", "CONFIGURATION", "TOOLS", "OPTIONS", "EXAMPLES", "LEARN MORE"))
     assert "t open" not in output and "session-rows" not in output
     assert max(map(len, output.splitlines())) <= 72
 
@@ -145,8 +145,7 @@ def test_every_advertised_action_has_side_effect_free_help(t_mod, monkeypatch, c
         if path == ("session", "open"):
             assert "REMOTE SESSIONS" in expected
             assert "REMOTE SESSIONS" not in concise
-        else:
-            assert concise == expected
+        assert expected.startswith(concise.split("\nLEARN MORE", 1)[0].rstrip())
 
 
 
@@ -162,7 +161,7 @@ def test_open_help_is_concise_with_discoverable_details(t_mod, monkeypatch, caps
     concise = capsys.readouterr().out
     assert len(concise.split()) < 200
     assert max(map(len, concise.splitlines())) <= width
-    assert "agent (fresh slots):" in concise and "location:" in concise
+    assert "AGENT (FRESH SLOTS):" in concise and "LOCATION:" in concise
     assert "--codex --new" in concise and "t help open" in concise
     normalized = " ".join(concise.split())
     assert "Follow its release instructions if the desktop conversation is still loaded" in normalized

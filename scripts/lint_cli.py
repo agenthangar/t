@@ -705,6 +705,113 @@ def check_listing_aliases(module):
     return errors
 
 
+def help_surfaces(module, parser):
+    """Enumerate registry commands, native descendants, and compatibility spellings."""
+    paths = {(), ("list",), ("hosts", "delete"), ("hosts", "rm")}
+
+    def visit(current, prefix=()):
+        children = _subparsers(current)
+        if children:
+            for name, child in children.choices.items():
+                path = (*prefix, name)
+                paths.add(path)
+                visit(child, path)
+
+    visit(parser)
+    for path, _ in command_routes(module.COMMAND_GROUPS):
+        paths.update(path[:end] for end in range(1, len(path) + 1))
+        if path[-1] == "list":
+            paths.add((*path[:-1], "ls"))
+    for path in sorted(paths):
+        if not path:
+            yield path, module._root_help(), None
+            continue
+        public, node = module._command_path(list(path))
+        if list(path) == public and isinstance(node, dict):
+            yield path, module._group_help(" ".join(path)), None
+            continue
+        canonical = [word for word in module._canonical_argv(list(path)) if not word.startswith("-")]
+        target = module._help_parser(parser, canonical, strict=True)
+        if target is None:
+            yield path, "", None
+            continue
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            rendered_parser = module._print_command_help(target, list(path), canonical)
+        yield path, output.getvalue(), rendered_parser
+
+
+def check_help_page(name, body, parser, policy, *, width=80):
+    """Validate visible content, with actionable failures rather than truncation."""
+    errors = []
+    label = "t " + name if name else "t"
+    lines = body.splitlines()
+    if not lines or not re.match(r"(?:usage:|USAGE)", lines[0]):
+        errors.append(f"{label} help must start with usage")
+    if width == 80:
+        budget = policy["command_line_limits"].get(name, policy["max_lines"])
+        if len(lines) > budget:
+            errors.append(f"{label} help has {len(lines)} lines (limit {budget}); move explanations to help_details")
+    for number, line in enumerate(lines, 1):
+        if len(line) > width and max(map(len, line.split()), default=0) <= width - 2:
+            errors.append(f"{label} help line {number} exceeds {width} columns; wrap without splitting tokens")
+        if "\t" in line or line.rstrip() != line:
+            errors.append(f"{label} help line {number} uses tabs or trailing whitespace")
+        if line.startswith(" ") and len(line) - len(line.lstrip()) < 2:
+            errors.append(f"{label} help line {number} needs at least two spaces of indentation")
+        if line.rstrip(":").upper() in policy["headings"] and line != line.upper():
+            errors.append(f"{label} help headings must use uppercase: {line!r}")
+        if re.fullmatch(r"[A-Z][A-Z ()/]+:?", line) and line.rstrip(":") not in policy["headings"]:
+            errors.append(f"{label} help uses unrecognized heading {line!r}")
+    normalized = " ".join(body.split())
+    if name and f"usage: {label} " not in normalized and f"USAGE {label} " not in normalized:
+        errors.append(f"{label} help must show its complete command path in usage")
+    if "t help " not in normalized:
+        errors.append(f"{label} help needs a discoverable 't help' details pointer")
+    example_match = re.search(r"(?m)^EXAMPLES:?\n(.*?)(?=\n[A-Z][A-Z ()/]+:?\n|\Z)", body, re.S)
+    if example_match:
+        count = len(re.findall(r"(?m)^  t ", example_match[1]))
+        if count > policy["max_examples"]:
+            errors.append(f"{label} help has {count} examples (limit {policy['max_examples']})")
+    if parser is not None:
+        summary = parser.description or ""
+        if not summary.strip():
+            errors.append(f"{label} help needs a short command summary")
+        if len(summary.split()) > policy["max_summary_words"]:
+            errors.append(f"{label} summary exceeds {policy['max_summary_words']} words; move detail to help_details")
+        for action in parser._actions:
+            if isinstance(action, argparse._SubParsersAction) or action.help == argparse.SUPPRESS:
+                continue
+            if action.help and len(action.help.split()) > policy["max_argument_words"]:
+                errors.append(f"{label} argument {action.dest} exceeds {policy['max_argument_words']} help words")
+            for option in action.option_strings:
+                if not re.search(r"(?<![\w-])" + re.escape(option) + r"(?![\w-])", normalized):
+                    errors.append(f"{label} help is missing public option {option}")
+    return errors
+
+
+def check_help_style(module, parser, contract):
+    """Render every public help surface at the contract's terminal widths."""
+    policy = contract.get("help_style")
+    if not isinstance(policy, dict):
+        return ["command inventory must define the help_style contract"]
+    errors = []
+    original = module.shutil.get_terminal_size
+    try:
+        for width in policy["widths"]:
+            module.shutil.get_terminal_size = lambda fallback=(80, 24): module.os.terminal_size((width, 24))
+            surfaces = {path: (body, target) for path, body, target in help_surfaces(module, parser)}
+            for path, (body, target) in surfaces.items():
+                errors.extend(check_help_page(" ".join(path), body, target, policy, width=width))
+                if width == 80 and len(path) > 1 and path[-1] not in ("ls", "delete", "rm"):
+                    parent_body = surfaces[path[:-1]][0]
+                    if not re.search(r"(?m)^ {2,}" + ("(?:list|ls)" if path[-1] == "list" else re.escape(path[-1])) + r"(?:\s|$)", parent_body) and (
+                            "t " + " ".join(path) not in " ".join(parent_body.split())):
+                        errors.append(f"t {' '.join(path)} must be discoverable in parent help")
+    finally:
+        module.shutil.get_terminal_size = original
+    return list(dict.fromkeys(errors))
+
+
 def main():
     loader = SourceFileLoader("t_cli_lint", str(ROOT / "bin/t"))
     spec = importlib.util.spec_from_loader(loader.name, loader)
@@ -721,6 +828,7 @@ def main():
         errors.append(f"cannot read command inventory: {exc}")
     else:
         errors.extend(check_command_patterns(module.build_parser(), module.COMMAND_GROUPS, contract))
+        errors.extend(check_help_style(module, module.build_parser(), contract))
     errors.extend(check_picker_boundaries())
     for path in (ROOT / "AGENTS.md", ROOT / "CONTRIBUTING.md"):
         if "ui/command-contract.json" not in path.read_text():
@@ -728,7 +836,7 @@ def main():
     for error in errors:
         print("CLI contract: " + error, file=sys.stderr)
     if not errors:
-        print("CLI noun/verb and issue action contract passed")
+        print("CLI command, help style, and issue action contract passed")
     return int(bool(errors))
 
 
