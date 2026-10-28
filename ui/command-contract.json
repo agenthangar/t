@@ -2257,6 +2257,24 @@
             "tests/test_config_hosts_pty.py::test_saved_host_verification_uses_native_cooked_terminal"
           ],
           "notes": "After reviewed registration is saved, offer Verify SSH now or Later for distinct added or changed target strings. Native OpenSSH owns the restored terminal and asks for host fingerprint confirmation; never auto-accept trust. Refused/unavailable checks warn and continue, preserving registration. Ctrl-C stops with 130 and retains saved changes; alias/default-only edits never connect."
+        },
+        "workflow_preferences": {
+          "argv": [
+            "config",
+            "open"
+          ],
+          "patterns": [
+            "wizard",
+            "single"
+          ],
+          "read_only": false,
+          "terminal": true,
+          "tests": [
+            "tests/test_workflow.py::test_behavior_menu_save_or_discard",
+            "tests/test_workflow.py::test_behavior_menu_noop_clear_and_excluded_edit",
+            "tests/test_workflow.py::test_behavior_menu_narrow_screens"
+          ],
+          "notes": "Agent workflow separates the overall Workflow switch from Model stages. Stage settings are retained when disabled. The shared RailUI Behavior preferences submenu offers worktree isolated/current, preview UI changes/on request, validation relevant/full and delivery review/PR/authorized auto-merge. No preference clears the selected key; none are enabled by default. Edits remain pending until Save, including edits beneath exclusion. Explain task/repository/custom Markdown/behavior/model-stage precedence; preserve raw Markdown and the advanced JSON editor."
         }
       }
     },
@@ -3379,7 +3397,8 @@
       "scope": "global by default; explicit registered repository alias with --repo; no inference or selection",
       "confirmation": "none",
       "tests": [
-        "tests/test_workflow.py::test_nested_workflow_commands"
+        "tests/test_workflow.py::test_nested_workflow_commands",
+        "tests/test_workflow.py::test_behavior_list_and_raw_show_are_read_only"
       ],
       "modes": {
         "default": {
@@ -3460,7 +3479,8 @@
             "tests/test_workflow.py::test_named_workflow_commands"
           ]
         }
-      }
+      },
+      "notes": "Read-only output includes model-stage state, behavior preferences and source, custom Markdown presence and precedence. No picker, model discovery, prompts or storage writes. Named catalogue includes the same summaries; instructions show preserves exact raw Markdown."
     },
     "config workflow edit": {
       "patterns": [
@@ -3521,7 +3541,8 @@
             "tests/test_workflow.py::test_named_workflow_commands"
           ]
         }
-      }
+      },
+      "notes": "Optional v2 policy fields stages_enabled (default true) and behaviors (default absent) preserve old policies. Strictly validate known worktree/preview/validation/delivery enums. Invalid and unchanged edits write nothing; disabled and excluded workflows suppress stages, behavior preferences and custom Markdown."
     },
     "config workflow add": {
       "patterns": [
@@ -4292,6 +4313,13 @@
       "LOCATION",
       "SELECTION",
       "DESKTOP TO CLI"
-    ]
+    ],
+    "color": {
+      "headings": "bold cyan",
+      "scope": "all quick and detailed help, including agent support and compatibility aliases",
+      "enabled": "stdout is a TTY; NO_COLOR absent; TERM != dumb; CLICOLOR != 0",
+      "body": "plain",
+      "layout": "ANSI-stripped colored output exactly equals plain output, including newlines; style after wrapping"
+    }
   }
 }
