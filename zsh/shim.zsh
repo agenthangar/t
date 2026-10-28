@@ -826,12 +826,16 @@ _t() {
   fi
   if [[ $group == config && $action == workflow ]]; then
     if (( CURRENT == first )); then
-      _values 'workflow verb' list ls edit
+      _values 'workflow verb' list ls add use exclude inherit edit instructions
     elif [[ ${words[CURRENT-1]} == --repo ]]; then
       _values 'repo' "${(@f)$(_dev_repo_selectors)}"
-    elif [[ ${words[first]} == (list|ls) ]]; then
-      _values 'flag' --repo --json -h --help
-    elif [[ ${words[first]} == edit ]]; then
+    elif [[ ${words[first]} == instructions ]] && (( CURRENT == first + 1 )); then
+      _values 'instructions verb' show edit
+    elif [[ ${words[first]} == list || ${words[first]} == ls ]]; then
+      _values 'flag' --repo --all --json -h --help
+    elif [[ ${words[first]} == add ]]; then
+      _values 'flag' --from -h --help
+    else
       _values 'flag' --repo -h --help
     fi
     return

@@ -176,6 +176,10 @@
     "libexec/t_workflow.py:edit:subprocess.call": {
       "kind": "passthrough",
       "reason": "The configured terminal editor owns input and rendering until it exits."
+    },
+    "libexec/t_workflow.py:edit_instructions:subprocess.call": {
+      "kind": "passthrough",
+      "reason": "The configured terminal editor owns input and rendering until it exits."
     }
   },
   "shell": [

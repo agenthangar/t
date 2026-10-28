@@ -876,38 +876,77 @@ It registers only on this machine and leaves the GitHub repository and its setti
 unchanged. If the remote has no `main` branch, checkout succeeds with a warning:
 `t session open` needs a fetched `origin/main` to create task worktrees.
 
-Configure the staged model workflow in `t config open` → **Agent workflow**.
-Choose **Use recommended defaults** to activate planning with `gpt-6-astra`,
-implementation with `gpt-6.1-sol`, and review with `gpt-6-astra`, or enable/disable
-and customize each stage. Planning and implementation effort default to complexity-based
-choices; review defaults to one supported effort level below planning. Repository
-settings include **Agent workflow** for a complete override or **Inherit global workflow**.
-These choices stay pending until **Save changes**; cancellation discards them.
-The implementation stage also asks agents to inherit the parent's current speed
+Configure named staged workflows in `t config open` → **Agent workflow**. Choose
+**Use recommended defaults** to activate planning with `gpt-6-astra`, implementation
+with `gpt-6.1-sol`, and review with `gpt-6-astra`. **Edit default workflow** and
+**Edit named workflow** give each stage separate model and reasoning-effort controls.
+Model choices include the current and recommended values, a live Codex catalogue,
+a custom ID, and explicit refresh. Current, recommended and custom models remain
+usable offline. Changing a workflow model preserves its selected effort and does
+not change the agent's launch defaults. Planning and implementation accept `auto`
+or an explicit effort (`minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `ultra`);
+review accepts an explicit effort or `one-level-lower`.
+
+Create and assign reusable workflows directly:
+
+```sh
+t config workflow add careful             # copy the current default, without selecting it
+t config workflow add quick --from careful
+t config workflow use careful              # select the global default
+t config workflow use quick --repo api     # api follows the shared quick definition
+t config workflow exclude --repo api       # disable only api; remember its source
+t config workflow inherit --repo api       # remove api's override; follow global
+t config workflow list --all               # list named definitions and usage
+```
+
+Repository settings offer **Choose named workflow**, **Customize only this
+repository**, **Exclude workflow for this repository**, and **Use global default**.
+Editing a named definition affects all its consumers; a repository customization
+is an independent inline copy. Exclusion retains the source and suppresses both
+the staged rules and its Markdown instructions. Selecting a named workflow clears
+exclusion. **Resume workflow for this repository** restores the retained source,
+including repository-only customizations. Menu choices stay pending until
+**Save changes**; discard publishes nothing.
+
+Use **Instructions · edit Markdown** inside a workflow to write ordinary headings,
+bullets and prose in your editor. No JSON is needed. The equivalent commands are:
+
+```sh
+t config workflow instructions edit careful
+t config workflow instructions show careful
+t config workflow instructions edit --repo api
+```
+
+Omitting both `NAME` and `--repo` selects the current global default. `show` prints
+only the original Markdown, including for an excluded repository. Editing with
+`--repo` creates a repository-only copy only when text actually changes; exclusion
+remains in effect. Named workflows carry their instructions when copied or assigned.
+**Edit reusable instructions** still opens the separate `t profile edit` profile.
+
+The implementation stage asks agents to inherit the parent's current speed
 (including Fast or Ultrafast), independently of model and reasoning effort, and
-recheck it at delegation or a supported subsequent-turn boundary. This is agent
-policy: actual selection and inheritance depend on the runtime's exposed controls
-or documented behavior. [Codex documents that subagents follow the root session's
-service-tier preference](https://learn.chatgpt.com/docs/agent-configuration/subagents#custom-agent-file-schema).
-Agents must disclose unsupported or unverifiable speed;
-the policy does not promise an immediate change during an active turn.
+recheck it at delegation or a supported subsequent-turn boundary. Actual selection
+and inheritance depend on the runtime's exposed controls or documented behavior.
+[Codex documents that subagents follow the root session's service-tier preference](https://learn.chatgpt.com/docs/agent-configuration/subagents#custom-agent-file-schema).
+Agents must disclose unsupported or unverifiable speed; the policy does not promise
+an immediate change during an active turn.
 
-Use `t config workflow edit` for the global workflow's JSON terminal editor,
-or `t config workflow edit --repo api` for a registered repository override.
-Set `enabled`, and each stage's `model` and `effort`. Planning and implementation
-accept `auto` or an explicit effort (`minimal`, `low`, `medium`, `high`, `xhigh`,
-`max`, `ultra`); review accepts an explicit effort or `one-level-lower`.
-Set a repository editor's whole document to `null` to inherit global settings.
-The editor uses `VISUAL`, then `EDITOR`, then `vi`; unchanged edits, invalid JSON,
-and unsuccessful editor exits publish nothing. Bare `t config edit` still edits
-local shell configuration. **Edit reusable instructions** opens the existing
-`t profile edit` profile for prose customization.
+`t config workflow edit [NAME]` is the advanced JSON editor for a shared definition;
+`--repo api` edits an independent repository policy. NAME and `--repo` cannot be
+combined. Set a repository editor's whole document to `null` to inherit the global
+settings. Both editors use `VISUAL`, then `EDITOR`, then `vi`; unchanged or invalid
+edits and unsuccessful editor exits publish nothing. Bare `t config edit` still
+edits local shell configuration.
 
-`t config workflow list [--repo api]` prints a stage/model/effort table with enabled
-state, scope, and inheritance source. Add `--json` for machine output. Global is
-the default; a registered `--repo` alias explicitly selects a repository without
-checkout inference or a picker. Unsaved accounts show recommended defaults until
-explicitly activated. Preferences live in `${XDG_CONFIG_HOME:-~/.config}/t/workflow.json`.
+`t config workflow list [--repo api]` prints scope, source, exclusion, and the
+effective stage/model/effort table. Add `--json` for machine output. `--all` lists
+the named catalogue and usage; it cannot combine with `--repo`. A registered
+`--repo` alias explicitly selects a repository without checkout inference or a
+picker. Unsaved accounts show recommended defaults until explicitly activated.
+Preferences live in `${XDG_CONFIG_HOME:-~/.config}/t/workflow.json`. Existing v1
+preferences load as a `standard` named workflow and independent repository policies;
+reading or reinstalling preserves the original file. The next explicit change
+saves the v2 named-workflow format.
 Hidden `t config show --workflow` and `t config edit --workflow` compatibility
 forms remain available; the former retains its JSON output.
 Saving synchronizes a separate managed block in Codex's `AGENTS.md` (and existing

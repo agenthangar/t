@@ -113,7 +113,7 @@ def test_slot_controls_refs_read_and_goal_use_actual_alias(t_mod, cfg, selector,
 ])
 def test_workflow_scope_resolves_name_without_saving(t_mod, cfg, argv, monkeypatch, capsys):
     helper = runpy.run_path(str(ROOT / "libexec/t_workflow.py"))
-    helper["load"] = lambda: ({"global": helper["DEFAULT"], "repositories": {}, "version": 1}, None)
+    helper["load"] = lambda: (helper["defaults"](), None)
     helper["save"] = lambda *args: pytest.fail("read-only workflow saved")
     monkeypatch.setattr(t_mod, "_workflow", lambda: helper)
     args = t_mod.build_parser().parse_args(argv)
@@ -198,3 +198,36 @@ def test_repo_selector_route_inventory_tracks_every_public_parser_boundary(t_mod
             found.add(" ".join(path))
     assert found == tracked
     assert all(contract["repository_selectors"][path] for path in tracked)
+
+
+@pytest.mark.parametrize("tail", [
+    ["use", "application"], ["exclude"], ["inherit"], ["edit"],
+    ["instructions", "show"], ["instructions", "edit"],
+])
+@pytest.mark.parametrize("ambiguous", [False, True])
+def test_named_workflow_routes_resolve_only_repo_selector(t_mod, cfg, tail, ambiguous, monkeypatch, capsys):
+    if ambiguous:
+        cfg.repos["other"] = "/other/application"
+    document = {"repositories": {}}
+    seen = []
+    def action(doc, verb, name, repository, source):
+        seen.append((repository, name))
+        return doc
+    def edit(doc, repository, name=None):
+        seen.append((repository, name))
+        return 0, doc
+    def instructions(doc, repository, name):
+        seen.append((repository, name))
+        return "literal application instructions"
+    helper = dict(load=lambda: (document, None), action=action, edit=edit,
+                  edit_instructions=edit, instructions=instructions)
+    monkeypatch.setattr(t_mod, "_workflow", lambda: helper)
+    monkeypatch.setattr(t_mod.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(t_mod.sys.stdout, "isatty", lambda: True)
+    args = t_mod.build_parser().parse_args(["config", "workflow", *tail, "--repo", "application"])
+    assert t_mod.cmd_config(cfg, args) == (1 if ambiguous else 0)
+    if ambiguous:
+        assert not seen
+        assert "ambiguous repository" in capsys.readouterr().err
+    else:
+        assert seen == [(cfg.repos["app"], "application" if tail[0] == "use" else None)]

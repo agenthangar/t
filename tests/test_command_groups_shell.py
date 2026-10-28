@@ -447,7 +447,7 @@ def test_workflow_completion_offers_scopes_and_registered_repos(tmp_path):
     ''')
     assert result.returncode == 0, result.stderr
     assert result.stdout.splitlines() == [
-        "values:list,ls,edit", "values:--repo,--json,-h,--help", "values:--repo,-h,--help",
+        "values:list,ls,add,use,exclude,inherit,edit,instructions", "values:--repo,--all,--json,-h,--help", "values:--repo,-h,--help",
         "values:api", "values:api", "values:-h,--help", "values:api",
     ]
 
