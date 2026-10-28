@@ -275,7 +275,7 @@ It uses the existing guarded CLI-to-desktop handoff when that same conversation
 is running locally. A different conversation in the slot, a remote or foreground
 owner, unverifiable ownership, unsupported agent, or multiple marked rows stops
 the operation without substituting another conversation. `--app` conflicts with
-`--cli`, `--fg`, and `--host`; `--remote` may still fetch saved histories first.
+`--cli`, `--fg`, and `--host`; registered hosts contribute saved metadata by default.
 Without a terminal, an explicit slot selects its newest saved conversation as
 usual. Use `--days all` to include older histories. Desktop delivery remains an
 OS open request, not proof that the app loaded the conversation.
@@ -283,6 +283,18 @@ Copied histories must already be indexed by the local Codex installation; otherw
 the error gives the CLI selection command to index that exact conversation first.
 Older histories without a verifiable writer-lock contract are refused until a
 current Codex CLI owns them and can perform the guarded handoff.
+
+`t resume` includes saved conversations from every registered host by default.
+Discovery matches repository identity, so host aliases, home directories and
+worktree roots can differ. Canonical checkouts, swept Codex rollouts, and renamed
+workspaces with the exact recorded Git origin also appear. `--remote` remains a
+compatibility option. Only a selected remote transcript is downloaded and its
+identity is checked before use; unavailable hosts retain cached history.
+
+An inactive conversation remains selectable when its historical slot now runs
+another conversation. It resumes in a safely allocated workspace; the existing
+owner and its files stay intact. Selecting an exact live conversation attaches
+to that owner. `--fg`, `--app`, and `--host` retain their selected destinations.
 
 Saved Codex candidates are cached under `${XDG_CACHE_HOME:-~/.cache}/claude-sessions`.
 Repeated `t resume` calls reuse unchanged metadata; each invocation checks for new,
@@ -1202,7 +1214,7 @@ checked in CI; optional dotfiles integrations are identified explicitly.
   t agent install (login · update · reinstall)                ✓                                          ✓                                                              ✓
   dev slots: t session open / list / close / read / paste     ✓                                          ✓ t session open --codex · DEV_AGENT                           ✗ no slot — t cursor list
   t session push / pop                                        ✓                                          ✓                                                              ✗ no slot
-  t session resume (dead slots)                               ✓                                          ✓ (its sqlite thread index)                                    → t cursor resume
+  t session resume (saved conversations)                      ✓                                          ✓ (rollouts and thread index)                                  → t cursor resume
   t session move / --from                                     ✓                                          ✓ (rollout + .origin)                                          → t cursor send [id] --host / --from
   t session open-app (desktop + browser preview)              ✗ Codex conversations only                 ✓ local macOS slot → same thread                               ✗
   csync (iCloud union of transcripts)                         ✓ projects + plans                         ✓ codex-sessions                                               ✓ cursor-chats

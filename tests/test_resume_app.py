@@ -318,23 +318,22 @@ def test_saved_old_metadata_handoff_waits_for_its_writer(t_mod, app_command, app
 
 def test_resume_app_remote_history_fetch_keeps_local_destination(zsh, tmp_path):
     cwd, rollout = saved_rollout(zsh)
-    # Simulate the existing rsync seam delivering a history from an idle host.
-    source = tmp_path / 'remote-rollout.jsonl'
-    rollout.rename(source)
+    before = rollout.read_bytes()
+    # Remote discovery contributes metadata; preparation returns a verified local
+    # workspace, never an implicit desktop destination on the remote source.
+    rollout.unlink()
     app_stub(tmp_path)
-    rsync = tmp_path / 'stubbin/rsync'
-    rsync.write_text('#!/bin/sh\n' +
-        f'cp {shlex.quote(str(source))} {shlex.quote(str(rollout))}\nprintf "%s\\n" "$*" >> "$HOME/rsync-log"\n')
-    rsync.chmod(0o755)
-    cache = zsh.home / '.cache/t/hostnames'
-    cache.mkdir(parents=True)
-    (cache / 'mini').write_text('mini\n')
-    result = zsh('OSTYPE=darwin; REMOTE_HOSTS[mini]=mini.local; _dev_rows_all() { :; }; '
-                 '_t_resume api 3 --remote --app')
+    row = "\t".join([str(int(__import__('time').time())), 'api', '3', SID,
+                      '/remote/home/old/old-3', 'Oct 28 12:00', 'Remote history', 'mini', 'codex'])
+    setup = ('OSTYPE=darwin; REMOTE_HOSTS[mini]=mini.local; _dev_rows_all() { :; }; '
+             '_t_resume_history_candidates() { print -r -- ' + shlex.quote(row) + '; }; '
+             '_t_resume_history_launch() { print -u2 -- "PREPARE $*"; print -r -- ' +
+             shlex.quote('dev-api-3\t' + str(cwd)) + '; }; ')
+    result = zsh(setup + '_t_resume api 3 --remote --app')
     assert result.returncode == 0, result.stderr
     assert f'APP _app-resume api 3 {SID} {cwd}' in result.stdout
-    assert 'mini.local:' in (zsh.home / 'rsync-log').read_text()
-    assert rollout.read_bytes() == source.read_bytes()
+    assert f'PREPARE api {SID} codex prepare' in result.stderr
+    assert before and not rollout.exists()
 
 
 @pytest.mark.parametrize('repo', ['api', 'push', 'pull'])
