@@ -3419,6 +3419,22 @@
           "tests": [
             "tests/test_workflow.py::test_nested_workflow_commands"
           ]
+        },
+        "catalogue": {
+          "argv": [
+            "config",
+            "workflow",
+            "list",
+            "--all",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_workflow.py::test_named_workflow_commands"
+          ]
         }
       }
     },
@@ -3427,7 +3443,7 @@
         "action"
       ],
       "renderer": "external",
-      "scope": "global by default; explicit registered repository alias with --repo; no inference or selection",
+      "scope": "current global default or named shared definition; explicit --repo for repository-only inline policy",
       "confirmation": "external",
       "tests": [
         "tests/test_workflow.py::test_nested_workflow_commands"
@@ -3462,6 +3478,193 @@
           "read_only": false,
           "tests": [
             "tests/test_workflow.py::test_nested_workflow_commands"
+          ],
+          "terminal": true
+        },
+        "named": {
+          "argv": [
+            "config",
+            "workflow",
+            "edit",
+            "quick"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "terminal": true,
+          "tests": [
+            "tests/test_workflow.py::test_named_workflow_commands"
+          ]
+        }
+      }
+    },
+    "config workflow add": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "plain",
+      "scope": "explicit named workflow or registered --repo alias; no inference or selection",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_workflow.py::test_named_workflow_commands"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "config",
+            "workflow",
+            "add",
+            "quick"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_workflow.py::test_named_workflow_commands"
+          ]
+        }
+      }
+    },
+    "config workflow use": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "plain",
+      "scope": "explicit named workflow or registered --repo alias; no inference or selection",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_workflow.py::test_named_workflow_commands"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "config",
+            "workflow",
+            "use",
+            "quick"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_workflow.py::test_named_workflow_commands"
+          ]
+        }
+      }
+    },
+    "config workflow exclude": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "plain",
+      "scope": "explicit named workflow or registered --repo alias; no inference or selection",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_workflow.py::test_named_workflow_commands"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "config",
+            "workflow",
+            "exclude",
+            "--repo",
+            "api"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_workflow.py::test_named_workflow_commands"
+          ]
+        }
+      }
+    },
+    "config workflow inherit": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "plain",
+      "scope": "explicit named workflow or registered --repo alias; no inference or selection",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_workflow.py::test_named_workflow_commands"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "config",
+            "workflow",
+            "inherit",
+            "--repo",
+            "api"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_workflow.py::test_named_workflow_commands"
+          ]
+        }
+      }
+    },
+    "config workflow instructions show": {
+      "patterns": [
+        "detail"
+      ],
+      "renderer": "plain",
+      "scope": "current default or named workflow; explicit --repo alias for repository scope; no inference",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_workflow.py::test_instructions_commands"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "config",
+            "workflow",
+            "instructions",
+            "show"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_workflow.py::test_instructions_commands"
+          ]
+        }
+      }
+    },
+    "config workflow instructions edit": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "external",
+      "scope": "current default or named workflow; explicit --repo alias for repository scope; no inference",
+      "confirmation": "external",
+      "tests": [
+        "tests/test_workflow.py::test_instructions_commands"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "config",
+            "workflow",
+            "instructions",
+            "edit"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_workflow.py::test_instructions_commands"
           ],
           "terminal": true
         }
