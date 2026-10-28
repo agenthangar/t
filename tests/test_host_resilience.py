@@ -1,6 +1,13 @@
 """Unavailable hosts warn while resume keeps local locks and known-owner checks."""
+import io
+import shlex
+import subprocess
+import sys
+from contextlib import nullcontext
+
 import pytest
 
+from conftest import REPO_ROOT
 from test_agent_seam import zsh  # noqa: F401
 from test_resume_app import saved_rollout, SID, OTHER
 
@@ -13,6 +20,89 @@ SCANS = r'''
     printf 'online-id\t%s\tapi-4\tdetached\tactive\tReachable\tcodex\n' "$HOME/code/.worktrees/api/4"
   }
 '''
+
+
+@pytest.mark.parametrize('stderr_tty,stdout_tty,term,no_color,color', [
+    (True, True, 'xterm-256color', None, True),
+    (True, False, 'xterm-256color', None, True),
+    (False, True, 'xterm-256color', None, False),
+    (True, True, 'dumb', None, False),
+    (True, True, 'xterm-256color', '', False),
+    (True, True, 'xterm-256color', '1', False),
+])
+@pytest.mark.parametrize('returncode', [0, 1, 255])
+def test_capture_replays_only_warning_lines(t_mod, monkeypatch, stderr_tty, stdout_tty,
+                                          term, no_color, color, returncode):
+    class Stream(io.StringIO):
+        def __init__(self, tty):
+            super().__init__()
+            self.tty = tty
+
+        def isatty(self):
+            return self.tty
+
+    out, err = Stream(stdout_tty), Stream(stderr_tty)
+    monkeypatch.setattr(t_mod.sys, 'stdout', out)
+    monkeypatch.setattr(t_mod.sys, 'stderr', err)
+    monkeypatch.setenv('TERM', term)
+    monkeypatch.delenv('NO_COLOR', raising=False)
+    if no_color is not None:
+        monkeypatch.setenv('NO_COLOR', no_color)
+    diagnostics = 'ssh: diagnostic\nwarning: first\n\n warning: indented\nwarning:second\nwarning: final'
+    rows = 'local\tlocal-id\t/work/api\tapi-3\tdetached\tnone\tLocal\tcodex\n'
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return subprocess.CompletedProcess(argv, returncode, rows, diagnostics)
+
+    monkeypatch.setattr(t_mod.subprocess, 'run', run)
+    # Exercise the real replay boundary, with no progress output mixed in.
+    monkeypatch.setattr(t_mod, '_spinner', lambda *a, **kw: nullcontext())
+    assert t_mod.zsh_capture('_dev_rows_all --details') == rows
+    expected = diagnostics
+    if color:
+        for warning in ('warning: first', 'warning: final'):
+            expected = expected.replace(warning, '\x1b[33m' + warning + '\x1b[0m')
+    assert err.getvalue() == expected
+    assert out.getvalue() == ''
+    assert calls[0][0] == ['zsh', '-lic', t_mod.ZSH_PRELUDE + '_dev_rows_all --details']
+    assert calls[0][1] == dict(stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                              stdin=subprocess.DEVNULL, start_new_session=True, text=True)
+
+
+@pytest.mark.parametrize('mode,color', [('tty', True), ('stdout_redirected', True),
+                                        ('stderr_redirected', False), ('plain', False),
+                                        ('dumb', False), ('no_color', False)])
+def test_python_remote_list_replays_captured_warnings(zsh, tmp_path, mode, color):
+    # The real CLI spawns a login shell: give that shell only fixture integration.
+    (zsh.home / '.zshrc').write_text(
+        f'source {shlex.quote(str(REPO_ROOT / "t.plugin.zsh"))}\n' + SCANS + r'''
+_dev_session_rows() {
+  printf 'local-id\t%s\tapi-3\tdetached\tnone\tLocal\tcodex\n' "$HOME/code/.worktrees/api/3"
+}
+''')
+    output_file, error_file = tmp_path / 'rows.txt', tmp_path / 'warnings.txt'
+    command = f'{shlex.quote(sys.executable)} {shlex.quote(str(REPO_ROOT / "bin/t"))} session list -r -a'
+    if mode == 'stdout_redirected':
+        command += f' > {shlex.quote(str(output_file))}'
+    if mode == 'stderr_redirected':
+        command += f' 2> {shlex.quote(str(error_file))}'
+    env = {'TERM': 'dumb' if mode == 'dumb' else 'xterm-256color'}
+    if mode == 'no_color':
+        env['NO_COLOR'] = ''
+    result = zsh(command + '; print rc=$?', _tty=mode != 'plain', **env)
+    text = result.stdout + result.stderr
+    if error_file.exists():
+        text += error_file.read_text()
+    assert 'rc=0' in text
+    assert 'warning: dev: offline unreachable — skipped' in text
+    assert ('\x1b[33mwarning: dev: offline' in text) == color
+    rows = output_file.read_text() if output_file.exists() else result.stdout
+    assert 'api-3' in rows and 'api-4' in rows
+    assert 'Local' in rows and 'Reachable' in rows
+    if output_file.exists():
+        assert '\x1b' not in rows and 'warning:' not in rows
 
 
 @pytest.mark.parametrize('mode,expected', [('', 1), ('--best-effort', 0)])

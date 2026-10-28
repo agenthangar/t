@@ -412,6 +412,9 @@ checks on reachable hosts. Failed local scans remain fatal. Other unreserved
 workspace claims and live transfers retain strict ownership checks.
 Warnings are amber on capable stderr terminals and plain with NO_COLOR, dumb
 terminals, or redirected stderr; scanner and machine stdout stay unchanged.
+This includes unavailable-host warnings from `t session list -r` (`t ls -r`):
+local and reachable sessions remain listed. Redirecting stdout alone keeps
+warnings amber when stderr is still a capable terminal.
 Picker helpers return without running the caller's
 shell exit hooks or saving its history. All Codex
 CLI starts and resumes use an invocation-local backend (`--no-daemon`).

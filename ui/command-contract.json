@@ -753,6 +753,21 @@
             "tests/test_t.py::test_ls_scope_defaults_to_cwd_repo",
             "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
           ]
+        },
+        "remote": {
+          "argv": [
+            "session",
+            "list",
+            "-r"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_host_resilience.py::test_python_remote_list_replays_captured_warnings"
+          ],
+          "notes": "Unavailable hosts warn on stderr while local/reachable rows remain listed. Warnings are amber only on capable stderr terminals; NO_COLOR (including empty), TERM=dumb, and redirected stderr keep warnings plain. Redirecting stdout alone does not disable stderr color."
         }
       },
       "display_schema": "session_information",
