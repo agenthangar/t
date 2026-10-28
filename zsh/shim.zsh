@@ -706,8 +706,7 @@ _t_beam_xlate() { _t_beam "$@"; }
 # (zsh's own help is `run-help` / ESC-h; this doesn't touch it.)
 # --- tab completion for our commands -------------------------------------
 # compinit already ran at the top of this file, so compdef is available here.
-# These helper names start with `_` so the `help` parser above skips them. (csync
-# takes no args, so it needs no completion.)
+# These helper names start with `_` so the `help` parser above skips them.
 #
 # `_t` — subcommand-aware completion for the single `t` command: verbs at position
 # 1; then the per-verb positional (a DEV_REPOS key for repo verbs, a REMOTE_HOSTS
@@ -808,12 +807,16 @@ _t() {
   fi
   if [[ $group == config && $action == workflow ]]; then
     if (( CURRENT == 4 )); then
-      _values 'workflow verb' list edit
+      _values 'workflow verb' list add use exclude inherit edit instructions
     elif [[ ${words[CURRENT-1]} == --repo ]]; then
       _values 'repo' ${(k)DEV_REPOS}
+    elif [[ ${words[4]} == instructions && CURRENT == 5 ]]; then
+      _values 'instructions verb' show edit
     elif [[ ${words[4]} == list || ${words[4]} == ls ]]; then
-      _values 'flag' --repo --json -h --help
-    elif [[ ${words[4]} == edit ]]; then
+      _values 'flag' --repo --all --json -h --help
+    elif [[ ${words[4]} == add ]]; then
+      _values 'flag' --from -h --help
+    else
       _values 'flag' --repo -h --help
     fi
     return

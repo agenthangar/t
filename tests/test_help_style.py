@@ -63,7 +63,8 @@ def test_nested_and_mode_help_share_layout_without_side_effects(t_mod, monkeypat
 @pytest.mark.parametrize('change,expected', [
     ('summary', 'summary exceeds'), ('option', 'argument host exceeds'),
     ('page', 'lines (limit'), ('missing_option', 'missing public option --host'),
-    ('heading', 'unrecognized heading'), ('examples', '4 examples'),
+    ('heading', 'unrecognized heading'), ('heading_case', 'headings must use uppercase'),
+    ('examples', '4 examples'),
     ('indent', 'two spaces'), ('whitespace', 'trailing whitespace'),
     ('usage', 'start with usage'), ('pointer', 'details pointer'),
 ])
@@ -81,6 +82,8 @@ def test_help_lint_rejects_rendered_style_regressions(t_mod, change, expected):
         body = body.replace('--host', '--missing')
     elif change == 'heading':
         body += '\nSURPRISE\n'
+    elif change == 'heading_case':
+        body = body.replace('EXAMPLES', 'examples:')
     elif change == 'examples':
         body = body.replace('EXAMPLES\n', 'EXAMPLES\n  t resume api 3\n')
     elif change == 'indent':

@@ -123,22 +123,40 @@ the next verification runs. Ctrl-C stops with 130 and reports that configuration
 was already saved. Native SSH owns the restored terminal for each check; no
 fingerprint is automatically accepted. Onboarding uses the same reviewed offer.
 
-Config includes Agent workflow globally and in each repository submenu. Changes to
-stage models, efforts, enabled state and inheritance remain pending until the
-shared review and save. Use recommended defaults explicitly activates an unsaved
-account. The terminal editor is `t config workflow edit [--repo ALIAS]`; it edits
-only the selected JSON scope and validates before publication. Repository `null`
-resets inheritance. Preserve editor exit status; unchanged and invalid edits write
-nothing. `t config workflow list [--repo ALIAS]` is a read-only stage/model/effort table with scope, enabled state, and inheritance
-source, including recommended defaults for unsaved accounts. Add `--json` for
-machine output. Global is the default; `--repo` explicitly selects a registered
-alias, without checkout inference or a picker. List never starts an editor or
-prompts for updates. Bare `t config workflow` shows subgroup help. Hidden
-`config show/edit --workflow` compatibility forms retain their existing behavior.
-Bare config edit retains its local-shell editor. Edit reusable instructions uses
-the existing profile editor. Saving a workflow updates account-local native Codex
-and Claude instructions with preflight and concurrent-edit checks; it never writes
-tracked repository instructions.
+Config includes Agent workflow globally and in each repository submenu. The global
+menu chooses a named default, adds or edits shared workflows, or activates recommended
+defaults. Each workflow exposes Planning, Implementation and Review with separate
+model and effort controls, plus Instructions for ordinary Markdown in VISUAL/EDITOR.
+Models load lazily from Codex once per menu session; current, recommended and custom
+values remain available offline, with explicit Refresh. Changing a model preserves
+its effort and never changes launch defaults. Shared-definition editing explains
+its affected repository consumers. Repository menus display their source and offer
+named assignment, repository-only customization, explicit exclusion retaining the
+source, resuming that retained source, or inheritance. All menu changes remain pending until review and Save;
+unchanged selections, canceled editors and discarded changes write nothing.
+
+`t config workflow add NAME [--from NAME]` copies without selecting, `use NAME
+[--repo ALIAS]` selects and clears exclusion, `exclude --repo ALIAS` preserves its
+source but suppresses the entire workflow, and `inherit --repo ALIAS` removes the
+override. These direct actions work without a terminal. `list [--repo ALIAS] [--json]`
+is a read-only stage/model/effort table with source and exclusion. `list --all [--json]`
+is the named catalogue and usage; reject --all with --repo. `edit [NAME] [--repo ALIAS]`
+is the advanced JSON editor; reject NAME with --repo. Omitted selectors target the
+current global default. Repository `null` resets inheritance.
+
+`t config workflow instructions show [NAME] [--repo ALIAS]` prints only raw Markdown,
+without prompts, model discovery or writes. `instructions edit` uses a private .md
+file in VISUAL/EDITOR, preserves formatting and editor status, and rejects embedded
+managed-block markers. Repository edits create an inline policy only after an actual
+change and preserve exclusion; inspection includes the stored prose when excluded.
+Excluded or disabled scopes suppress their prose in generated native instructions.
+
+Global is the default scope; --repo explicitly selects a registered alias with no
+checkout inference or picker. Bare subgroups show help. Hidden config show/edit
+--workflow compatibility forms retain their behavior. Bare config edit retains its
+local-shell editor. Saving updates account-local Codex and Claude instructions with
+preflight and concurrent-edit checks, never tracked repository instructions. v1
+policies migrate in memory without writing on reads or installer synchronization.
 
 ### Representative screens
 

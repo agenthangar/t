@@ -30,12 +30,15 @@ def config_path():
 
 
 def defaults():
-    return {'version': 1, 'global': copy.deepcopy(DEFAULT), 'repositories': {}}
+    return {'version': 2, 'default': 'standard', 'workflows': {'standard': copy.deepcopy(DEFAULT)}, 'repositories': {}}
 
 
 def validate_policy(value):
-    if not isinstance(value, dict) or set(value) != set(DEFAULT):
+    if not isinstance(value, dict) or set(value) - {'instructions'} != set(DEFAULT):
         raise ValueError('workflow requires enabled, planning, implementation and review')
+    instructions = value.get('instructions', '')
+    if not isinstance(instructions, str) or BEGIN in instructions or END in instructions:
+        raise ValueError('workflow instructions must be Markdown text without managed workflow markers')
     if type(value['enabled']) is not bool:
         raise ValueError('workflow enabled must be true or false')
     for stage in ('planning', 'implementation', 'review'):
@@ -51,19 +54,55 @@ def validate_policy(value):
     return value
 
 
+def validate_name(name):
+    if not isinstance(name, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,63}', name):
+        raise ValueError('workflow name must be 1–64 letters, digits, underscores or hyphens, starting with a letter or digit')
+    return name
+
+
 def validate(value):
-    if not isinstance(value, dict) or set(value) != {'version', 'global', 'repositories'}:
-        raise ValueError('workflow document requires version, global and repositories')
-    if type(value['version']) is not int or value['version'] != 1:
-        raise ValueError('unsupported workflow version; expected 1')
-    validate_policy(value['global'])
+    """Validate and return v2 in memory, without rewriting legacy preferences."""
+    if not isinstance(value, dict) or type(value.get('version')) is not int:
+        raise ValueError('workflow document requires version, default, workflows and repositories')
+    legacy = value['version'] == 1
+    expected = {'version', 'global', 'repositories'} if legacy else {'version', 'default', 'workflows', 'repositories'}
+    if set(value) != expected:
+        raise ValueError('workflow document requires version, default, workflows and repositories (or legacy global)')
+    if value['version'] not in (1, 2):
+        raise ValueError('unsupported workflow version; expected 1 or 2')
     if not isinstance(value['repositories'], dict):
         raise ValueError('workflow repositories must be an object')
-    for path, policy in value['repositories'].items():
+    if legacy:
+        validate_policy(value['global'])
+    else:
+        if not isinstance(value['workflows'], dict) or not value['workflows']:
+            raise ValueError('workflow workflows must be a nonempty object')
+        for name, policy in value['workflows'].items():
+            validate_name(name)
+            validate_policy(policy)
+        validate_name(value['default'])
+        if value['default'] not in value['workflows']:
+            raise ValueError('default workflow must name an existing workflow')
+    for path, entry in value['repositories'].items():
         if not isinstance(path, str) or not os.path.isabs(path) or os.path.realpath(path) != path or any(ord(c) < 32 or ord(c) == 127 for c in path):
             raise ValueError('repository workflow keys must be canonical absolute checkout paths')
-        validate_policy(policy)
-    return value
+        if legacy:
+            validate_policy(entry)
+            continue
+        if not isinstance(entry, dict) or not entry or set(entry) - {'workflow', 'inline', 'excluded'} or ('workflow' in entry and 'inline' in entry):
+            raise ValueError('repository workflow requires one workflow or inline source, and optional excluded: true')
+        if 'excluded' in entry and entry['excluded'] is not True:
+            raise ValueError('repository excluded must be true')
+        if 'workflow' in entry:
+            validate_name(entry['workflow'])
+            if entry['workflow'] not in value['workflows']:
+                raise ValueError('repository workflow must name an existing workflow')
+        if 'inline' in entry:
+            validate_policy(entry['inline'])
+    if legacy:
+        return {'version': 2, 'default': 'standard', 'workflows': {'standard': copy.deepcopy(value['global'])},
+                'repositories': {path: {'inline': copy.deepcopy(policy)} for path, policy in value['repositories'].items()}}
+    return copy.deepcopy(value)
 
 
 def decode(text):
@@ -91,7 +130,7 @@ def snapshot(path):
     if not stat.S_ISREG(info.st_mode):
         raise ValueError(f'{path}: refusing a symlink or nonregular file')
     fd = os.open(path, os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0))
-    with os.fdopen(fd, encoding='utf-8') as stream:
+    with os.fdopen(fd, encoding='utf-8', newline='') as stream:
         opened = os.fstat(stream.fileno())
         text = stream.read()
     identity = lambda entry: (entry.st_dev, entry.st_ino, entry.st_mode, entry.st_size, entry.st_mtime_ns, entry.st_ctime_ns)
@@ -105,36 +144,104 @@ def load():
     return (validate(decode(before[0])) if before else defaults()), before
 
 
+def source(document, repository=None):
+    entry = document['repositories'].get(repository, {})
+    return 'repository override' if 'inline' in entry else entry.get('workflow', document['default'])
+
+
+def resolved(document, repository=None):
+    entry = document['repositories'].get(repository, {})
+    policy = copy.deepcopy(entry.get('inline', document['workflows'][entry.get('workflow', document['default'])]))
+    return policy
+
+
 def effective(document, repository=None):
-    return copy.deepcopy(document['repositories'].get(repository, document['global']))
+    policy = resolved(document, repository)
+    if document['repositories'].get(repository, {}).get('excluded'):
+        policy['enabled'] = False
+    return policy
 
 
-def scoped(document, repository=None):
-    """A repository's null value is an explicit request to inherit the global policy."""
-    return copy.deepcopy(document['repositories'].get(repository)) if repository else copy.deepcopy(document['global'])
+def scoped(document, repository=None, name=None):
+    if repository:
+        entry = document['repositories'].get(repository, {})
+        return copy.deepcopy(entry.get('inline'))
+    return copy.deepcopy(document['workflows'][name or document['default']])
 
 
-def update(document, value, repository=None):
-    after = copy.deepcopy(document)
+def update(document, value, repository=None, name=None):
+    after = validate(document)
     if repository and value is None:
         after['repositories'].pop(repository, None)
     else:
         validate_policy(value)
         if repository:
-            after['repositories'][repository] = value
+            after['repositories'][repository] = {'inline': copy.deepcopy(value),
+                **({'excluded': True} if after['repositories'].get(repository, {}).get('excluded') else {})}
         else:
-            after['global'] = value
+            target = name or after['default']
+            if target not in after['workflows']:
+                raise ValueError(f'unknown workflow {target!r}')
+            after['workflows'][target] = copy.deepcopy(value)
     return validate(after)
 
 
-def edit(document, repository=None):
-    """Edit only a scope, preserving editor status and never publishing on failure."""
+def action(document, verb, name=None, repository=None, from_name=None):
+    after = validate(document)
+    if name is not None:
+        validate_name(name)
+    if verb == 'add':
+        if name in after['workflows']:
+            raise ValueError(f'workflow {name!r} already exists')
+        original = from_name or after['default']
+        if original not in after['workflows']:
+            raise ValueError(f'unknown workflow {original!r}')
+        after['workflows'][name] = copy.deepcopy(after['workflows'][original])
+    elif verb == 'use':
+        if name not in after['workflows']:
+            raise ValueError(f'unknown workflow {name!r}')
+        if repository:
+            after['repositories'][repository] = {'workflow': name}
+        else:
+            after['default'] = name
+    elif verb in ('exclude', 'include', 'inherit'):
+        if not repository:
+            raise ValueError(f'{verb} requires --repo ALIAS')
+        if verb == 'exclude':
+            after['repositories'].setdefault(repository, {})['excluded'] = True
+        elif verb == 'include':
+            entry = after['repositories'].get(repository, {})
+            entry.pop('excluded', None)
+            if not entry:
+                after['repositories'].pop(repository, None)
+        else:
+            after['repositories'].pop(repository, None)
+    else:
+        raise ValueError(f'unknown workflow action {verb!r}')
+    return validate(after)
+
+
+def catalogue(document):
+    return {'default': document['default'], 'workflows': {
+        name: {'workflow': copy.deepcopy(policy), 'default': name == document['default'],
+               'repositories': sorted(path for path in document['repositories']
+                                      if source(document, path) == name),
+               'excluded_repositories': sorted(path for path, entry in document['repositories'].items()
+                                               if source(document, path) == name and entry.get('excluded'))}
+        for name, policy in sorted(document['workflows'].items())}}
+
+
+def edit(document, repository=None, name=None):
+    """Edit one policy, preserving editor status and publishing only actual changes."""
+    if name and repository:
+        raise ValueError('workflow name and --repo cannot be combined')
+    if name and name not in document['workflows']:
+        raise ValueError(f'unknown workflow {name!r}')
     argv = shlex.split(os.environ.get('VISUAL') or os.environ.get('EDITOR') or 'vi')
     if not argv:
         raise ValueError('set VISUAL or EDITOR to an editor command')
-    initial = scoped(document, repository)
-    # New overrides start with the effective values so they are easy to customize.
-    shown = effective(document, repository) if initial is None else initial
+    initial = scoped(document, repository, name)
+    shown = resolved(document, repository) if initial is None else initial
     with tempfile.TemporaryDirectory(prefix='t-workflow-') as directory:
         path = Path(directory) / 'workflow.json'
         fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
@@ -149,13 +256,46 @@ def edit(document, repository=None):
         value = decode(edited[0])
         if value == shown:
             return 0, document
-        return 0, update(document, value, repository)
+        return 0, update(document, value, repository, name)
+
+
+def instructions(document, repository=None, name=None):
+    if name and repository:
+        raise ValueError('workflow name and --repo cannot be combined')
+    if name and name not in document['workflows']:
+        raise ValueError(f'unknown workflow {name!r}')
+    policy = document['workflows'][name] if name else resolved(document, repository)
+    return policy.get('instructions', '')
+
+
+def edit_instructions(document, repository=None, name=None):
+    shown = instructions(document, repository, name)
+    argv = shlex.split(os.environ.get('VISUAL') or os.environ.get('EDITOR') or 'vi')
+    if not argv:
+        raise ValueError('set VISUAL or EDITOR to an editor command')
+    with tempfile.TemporaryDirectory(prefix='t-workflow-') as directory:
+        path = Path(directory) / 'instructions.md'
+        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        with os.fdopen(fd, 'w', encoding='utf-8') as stream:
+            stream.write(shown)
+        rc = subprocess.call([*argv, str(path)])
+        if rc:
+            return rc, document
+        edited = snapshot(path)
+        if edited is None:
+            raise ValueError('editor removed instructions file; nothing saved')
+        if edited[0] == shown:
+            return 0, document
+        policy = scoped(document, repository, name) or resolved(document, repository)
+        policy['instructions'] = edited[0]
+        return 0, update(document, policy, repository, name)
 
 
 def _stage_text(policy):
     if not policy['enabled']:
         return ('The staged model workflow is disabled for this scope. Do not require '
-                'these stages or delegation solely because of t preferences; follow the task and repository rules.')
+                'these stages or delegation solely because of t preferences. Do not apply inherited '
+                't workflow instructions for this scope; follow the task and repository rules.')
     plan, implement, review = (policy[s] for s in ('planning', 'implementation', 'review'))
     planning = ('medium for straightforward additions, high for substantial features, '
                 'and xhigh or higher for complex architecture or new applications') if plan['effort'] == 'auto' else plan['effort']
@@ -163,6 +303,7 @@ def _stage_text(policy):
                       'and high or higher when implementation complexity warrants it') if implement['effort'] == 'auto' else implement['effort']
     reviewing = ('one supported reasoning-effort level below the planning stage, using the '
                  'lowest supported level if planning is already at the minimum') if review['effort'] == 'one-level-lower' else review['effort']
+    prose = policy.get('instructions', '')
     return (f'For new features, updated designs and new buildouts, use this staged workflow. '
             f'Routine questions and small maintenance edits do not require all three stages.\n'
             f'1. Plan with {plan["model"]}; reasoning effort: {planning}. Produce an actionable '
@@ -184,17 +325,19 @@ def _stage_text(policy):
             f'This workflow authorizes sub-agent delegation with explicit model and reasoning settings. '
             f'Preserve the plan, acceptance criteria and implementation evidence in each handoff. '
             f'If a model or model switching is unavailable, disclose that limitation and the actual '
-            f'model used; never claim a stage ran with a model it did not.')
+            f'model used; never claim a stage ran with a model it did not.' +
+            ('\n\n' + prose if prose else ''))
 
 
 def render(document):
-    validate(document)
+    document = validate(document)
     text = ('Agent workflow preferences supplied by t. These managed defaults supersede older '
             'general staged-model defaults in personal instructions. Explicit task instructions '
             'and repository-specific rules remain authoritative. These are instructions for the '
             'agent, not runtime model switching or enforcement by t.\n\n'
-            'Global default (unless a repository scope below matches):\n' + _stage_text(document['global']))
-    for repository, policy in sorted(document['repositories'].items()):
+            'Global default (unless a repository scope below matches):\n' + _stage_text(effective(document)))
+    for repository in sorted(document['repositories']):
+        policy = effective(document, repository)
         text += ('\n\nRepository scope: ' + json.dumps(repository, ensure_ascii=False) + '.\n'
                  'Apply this complete override in that canonical checkout and all its linked '
                  'worktrees, including worktrees created later. Resolve the current checkout with '
@@ -281,9 +424,9 @@ def publish(changes):
             pending.unlink(missing_ok=True)
 
 
-def save(document, before, extra=()):
+def save(document, before, extra=(), preserve_storage=False):
     """Publish explicit preferences and native instruction updates under one lock."""
-    validate(document)
+    document = validate(document)
     path = config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     lock = path.with_suffix('.lock')
@@ -293,14 +436,14 @@ def save(document, before, extra=()):
         if snapshot(path) != before:
             raise ValueError('workflow configuration changed while editing; retry')
         changes = native_changes(document)
-        publish([*changes, *extra, (path, before, encode(document))])
+        publish([*changes, *extra, (path, before, before[0] if preserve_storage and before else encode(document))])
 
 
 def sync():
     """Installer refreshes only accounts with explicitly saved preferences."""
     document, before = load()
     if before is not None:
-        save(document, before)
+        save(document, before, preserve_storage=True)
     return 0
 
 
