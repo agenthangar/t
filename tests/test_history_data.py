@@ -248,6 +248,8 @@ def test_remote_refresh_quotes_zsh_metadata_export_and_preserves_offline_cache(h
     app.cfg.hosts = {'remote': 'user@example', 'offline': 'offline.example'}
     calls = []
     def command(argv, **kwargs):
+        if argv[0] == 'gh':
+            return ''
         calls.append(argv)
         assert argv[0] == 'ssh'
         assert kwargs['timeout'] == 20
@@ -786,7 +788,7 @@ def test_resume_candidates_refresh_all_hosts_and_deduplicate_sources(app, store,
     assert len(rows) == 1
     fields = rows[0].split('\t')
     assert fields[1:5] == ['repo', '42', 'same-sid', '/different/home/trees/old/old-42']
-    assert fields[7:] == ['remote', 'codex', '-']
+    assert fields[7:] == ['remote', 'codex', '-', 'org/repo']
     with pytest.raises(ValueError, match='unknown repository'):
         list(app.resume_candidates(['missing']))
 

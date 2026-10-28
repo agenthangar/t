@@ -245,6 +245,9 @@ def test_remote_close_cancellation_stops_remaining_marks(zsh, tmp_path):
 
 def test_remote_resume_worker_opens_picker_despite_an_unavailable_peer(zsh, tmp_path):
     cwd, _ = saved_rollout(zsh)
+    # This simulated target must run this checkout's identity bridge, not an
+    # unrelated installed t inherited from the developer's PATH.
+    (tmp_path / 'stubbin/t').symlink_to(REPO_ROOT / 'bin/t')
     picker = tmp_path / 'stubbin/fzf'
     picker.write_text('#!/bin/sh\ncat\n')
     picker.chmod(0o755)
