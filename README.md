@@ -891,6 +891,10 @@ Configure named staged workflows in `t config open` → **Agent workflow**. Choo
 **Use recommended defaults** to activate planning with `gpt-6-astra`, implementation
 with `gpt-6.1-sol`, and review with `gpt-6-astra`. **Edit default workflow** and
 **Edit named workflow** give each stage separate model and reasoning-effort controls.
+**Workflow** enables or suppresses the entire workflow. **Model stages** separately
+turns staged model selection and delegation on or off while retaining the selected
+models and efforts. Markdown and behavior preferences still apply when only model
+stages are off.
 Model choices include the current and recommended values, a live Codex catalogue,
 a custom ID, and explicit refresh. Current, recommended and custom models remain
 usable offline. Changing a workflow model preserves its selected effort and does
@@ -913,11 +917,33 @@ t config workflow list --all               # list named definitions and usage
 Repository settings offer **Choose named workflow**, **Customize only this
 repository**, **Exclude workflow for this repository**, and **Use global default**.
 Editing a named definition affects all its consumers; a repository customization
-is an independent inline copy. Exclusion retains the source and suppresses both
-the staged rules and its Markdown instructions. Selecting a named workflow clears
+is an independent inline copy. Exclusion retains the source and suppresses all
+model stages, behavior preferences and Markdown instructions. Selecting a named workflow clears
 exclusion. **Resume workflow for this repository** restores the retained source,
 including repository-only customizations. Menu choices stay pending until
 **Save changes**; discard publishes nothing.
+
+**Behavior preferences** provides optional choices within each workflow:
+
+| Setting | Choices |
+| --- | --- |
+| Worktree | Reuse an appropriate isolated worktree or create one before implementation; use the current worktree subject to repository safety rules |
+| Local preview | Run the available preview and inspect UI changes; preview only when explicitly requested unless higher-priority instructions require it |
+| Validation | Relevant documented checks; full documented validation suite |
+| Delivery | Leave changes uncommitted for review; commit, push and open a PR; enable supported, authorized auto-merge under repository policy and monitor completion |
+
+Every setting also offers **No preference**, which removes that choice without
+instructing the agent to do its opposite. No behavior is selected by default.
+Preview and validation instructions require accurate reporting of limitations and
+results. Opening a PR alone does not authorize a merge. These preferences guide
+agents; they do not enforce execution or grant permission beyond the task.
+
+The host instruction hierarchy stays unchanged: explicit task instructions and
+repository rules remain authoritative. A selected repository assignment or inline
+policy replaces the global workflow rather than combining with it. Within that
+workflow, custom Markdown takes precedence over behavior preferences, which take
+precedence over generic model-stage guidance. `t` preserves Markdown as written;
+it does not try to interpret or detect conflicting prose.
 
 Use **Instructions · edit Markdown** inside a workflow to write ordinary headings,
 bullets and prose in your editor. No JSON is needed. The equivalent commands are:
@@ -949,8 +975,9 @@ settings. Both editors use `VISUAL`, then `EDITOR`, then `vi`; unchanged or inva
 edits and unsuccessful editor exits publish nothing. Bare `t config edit` still
 edits local shell configuration.
 
-`t config workflow list [--repo api]` prints scope, source, exclusion, and the
-effective stage/model/effort table. Add `--json` for machine output. `--all` lists
+`t config workflow list [--repo api]` prints scope, source, exclusion, model-stage
+state, behavior preferences, custom-text presence, precedence and the effective
+stage/model/effort table. Add `--json` for machine output. `--all` lists
 the named catalogue and usage; it cannot combine with `--repo`. A registered
 `--repo` alias explicitly selects a repository without checkout inference or a
 picker. Unsaved accounts show recommended defaults until explicitly activated.
@@ -958,6 +985,11 @@ Preferences live in `${XDG_CONFIG_HOME:-~/.config}/t/workflow.json`. Existing v1
 preferences load as a `standard` named workflow and independent repository policies;
 reading or reinstalling preserves the original file. The next explicit change
 saves the v2 named-workflow format.
+Existing v2 policies also remain valid without the optional `stages_enabled`
+boolean (defaults to true) or `behaviors` object (defaults to no preferences).
+Advanced JSON accepts `worktree: isolated|current`, `preview: ui_changes|on_request`,
+`validation: relevant|full`, and `delivery: review|pull_request|auto_merge` inside
+`behaviors`; unknown keys and values are rejected before any write.
 Hidden `t config show --workflow` and `t config edit --workflow` compatibility
 forms remain available; the former retains its JSON output.
 Saving synchronizes a separate managed block in Codex's `AGENTS.md` (and existing
