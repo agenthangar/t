@@ -527,3 +527,23 @@ def test_root_listing_alias_completion_keeps_help_position(tmp_path):
     ''')
     assert result.returncode == 0, result.stderr
     assert result.stdout.splitlines() == ["values:api"] * 4
+
+
+@pytest.mark.parametrize('command', [
+    'session', 'repo', 'cursor', 'hosts', 'issue', 'config workflow', '',
+])
+def test_list_alias_completion_and_shell_forwarding(tmp_path, command):
+    result = shell(tmp_path, f'''
+        _values() {{ print -r -- "values:${{(j:,:)argv[2,-1]}}"; }}
+        _message() {{ print -r -- "message:$*"; }}
+        local -a words
+        words=(t {command} list --) CURRENT=$#words; _t
+        words=(t {command} ls --) CURRENT=$#words; _t
+        t {command} list --repo ls
+        t {command} ls --repo ls
+    ''')
+    assert result.returncode == 0, result.stderr
+    lines = result.stdout.splitlines()
+    assert lines[0] == lines[1]
+    assert lines[-2] == 'bin:' + ''.join(f'<{word}>' for word in [*command.split(), 'list', '--repo', 'ls'])
+    assert lines[-1] == 'bin:' + ''.join(f'<{word}>' for word in [*command.split(), 'ls', '--repo', 'ls'])

@@ -372,6 +372,17 @@ def check_command_patterns(parser, command_groups, contract, *, root=ROOT):
         entry = commands[name]
         words = name.split()
         route = registry_routes.get(name, tuple(words))
+        if words[-1] == "list":
+            alias = [*words[:-1], "ls"]
+            with contextlib.redirect_stderr(io.StringIO()):
+                try:
+                    canonical_args = vars(parser.parse_args(words))
+                    alias_args = vars(parser.parse_args(alias))
+                except SystemExit:
+                    errors.append(f"{name} must accept the ls alias")
+                else:
+                    if canonical_args != alias_args:
+                        errors.append(f"{name} ls alias must share the list parser route")
         leaf = top._name_parser_map.get(route[0]) if top else None
         for word in route[1:]:
             if word.startswith("-"):

@@ -614,8 +614,14 @@ _t_open_app() {
     return 1
   }
   if [[ -z $slot ]]; then
+    local _T_OPEN_REMOTE_APP_READY= _T_OPEN_REMOTE_APP_ROWS= _T_OPEN_REMOTE_APP_RC=0
+    if (( ${#REMOTE_HOSTS} )); then
+      _T_OPEN_REMOTE_APP_ROWS=$(_dev_rows_all)
+      _T_OPEN_REMOTE_APP_RC=$?
+      _T_OPEN_REMOTE_APP_READY=1
+    fi
     local n=1
-    while ! _dev_slot_fresh "$repo" "$n"; do (( n++ )); done
+    while ! _dev_slot_fresh_unreserved "$repo" "$n"; do (( n++ )); done
     slot=$n
   fi
   # Aliases pointing at one canonical checkout share slot ownership. Handoff the

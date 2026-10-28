@@ -4,7 +4,11 @@
 _dev_remote_app_check() {
   local repo=$1 slot=$2 allow_incomplete=$3 dir=${DEV_REPOS[$1]:-}
   local rows scan_rc owner host state
-  rows=$(_dev_rows_all); scan_rc=$?
+  if [[ ${_T_OPEN_REMOTE_APP_READY:-} == 1 ]]; then
+    rows=$_T_OPEN_REMOTE_APP_ROWS; scan_rc=$_T_OPEN_REMOTE_APP_RC
+  else
+    rows=$(_dev_rows_all); scan_rc=$?
+  fi
   owner=$(print -r -- "$rows" | awk -F'\t' \
     -v d="$(_dev_homerel "$dir")" -v s="$slot" \
     -v wtr="$(_dev_homerel "${DEV_WORKTREE_ROOT:-}")" -v b="${dir:t}" '
@@ -49,7 +53,11 @@ _dev_remote_app_owner() {
   [[ -n $dir ]] || return 1
   base=${dir:t}; wtr=${DEV_WORKTREE_ROOT:-}
   local rows result scan_rc
-  rows=$(_dev_rows_all); scan_rc=$?
+  if [[ ${_T_OPEN_REMOTE_APP_READY:-} == 1 ]]; then
+    rows=$_T_OPEN_REMOTE_APP_ROWS; scan_rc=$_T_OPEN_REMOTE_APP_RC
+  else
+    rows=$(_dev_rows_all); scan_rc=$?
+  fi
   result=$(print -r -- "$rows" | awk -F'\t' \
     -v d="$(_dev_homerel "$dir")" -v s="$slot" \
     -v wtr="$(_dev_homerel "$wtr")" -v b="$base" '
@@ -67,6 +75,17 @@ _dev_remote_app_owner() {
     return 3
   fi
   return 1
+}
+
+# Automatic allocation keeps the local freshness contract and skips positive
+# remote desktop claims from the invocation's shared discovery snapshot. Unknown
+# hosts do not reserve every unused local slot.
+_dev_slot_fresh_unreserved() {
+  _dev_slot_fresh "$1" "$2" || return 1
+  (( ${#REMOTE_HOSTS} )) || return 0
+  local owner
+  owner=$(_dev_remote_app_owner "$1" "$2" 1)
+  [[ -z $owner ]]
 }
 
 # Optional fifth argument has the same fresh-slot-only meaning.
@@ -1055,7 +1074,14 @@ _pr_state_flush() {
 # Shared host selection keeps aliases and SSH targets visible. Even one host
 # requires Enter; a configured default is a suggestion, never a selection.
 _t_remote_host_pick() {
-  local excluded=${1:-} host target rows= selected
+  local excluded=${1:-} purpose=${2:-open} source=${3:-} host target rows= selected heading
+  case $purpose in
+    new) heading='Start a new session on which host?' ;;
+    resume) heading=$'Resume saved work on which host?\nBrowse this host’s saved conversations' ;;
+    move) heading="Move this session to which host?"$'\n'"Destination host · current host: $source" ;;
+    *) heading='Open a session on which host?' ;;
+  esac
+  heading+=$'\nSSH hosts · alias and target'
   (( ${#REMOTE_HOSTS} )) || { print -u2 't remote: no hosts configured; run t hosts add <alias> <target>'; return 1; }
   [[ -t 0 ]] && command -v fzf >/dev/null 2>&1 || {
     print -u2 't remote: host selection requires a terminal and fzf; use --host HOST'; return 1;
@@ -1066,7 +1092,7 @@ _t_remote_host_pick() {
     rows+="$host"$'\t'"$target"$'\n'
   done
   [[ -n $rows ]] || { print -u2 't remote: no other destination hosts configured; run t hosts add <alias> <target>'; return 1; }
-  selected=$(print -rn -- "$rows" | _t_fzf_single host 'SSH hosts · alias and target' --delimiter=$'\t' --prompt='host> ') || return $?
+  selected=$(print -rn -- "$rows" | _t_fzf_single host "$heading" --delimiter=$'\t' --prompt='host> ') || return $?
   [[ -n $selected ]] || return 130
   host=${selected%%$'\t'*}
   [[ -n ${REMOTE_HOSTS[$host]:-} ]] || return 1
@@ -1159,7 +1185,11 @@ _t_remote() {
   # An exact conversation ID is global unless a repository was explicit.
   [[ -z $sid || $#pos != 0 ]] || repo=
   if [[ $action != move ]]; then
-    [[ -n $host ]] || { host=$(_t_remote_host_pick) || return $?; }
+    if [[ -z $host ]]; then
+      local purpose=$action
+      [[ $action == open && ${(M)flags:#--new} != '' ]] && purpose=new
+      host=$(_t_remote_host_pick '' "$purpose") || return $?
+    fi
     target=${REMOTE_HOSTS[$host]:-$host}
     local -a worker_args
     [[ -n $repo ]] && worker_args+=("$repo")
@@ -1230,7 +1260,7 @@ _t_remote() {
     source=$chosen[1]; sid=$chosen[2]
   fi
   source_target=${REMOTE_HOSTS[$source]:-$source}
-  [[ -n $host ]] || { host=$(_t_remote_host_pick "$source_target") || return $?; }
+  [[ -n $host ]] || { host=$(_t_remote_host_pick "$source_target" move "$source") || return $?; }
   target=${REMOTE_HOSTS[$host]:-$host}
   [[ $source_target != "$target" ]] || { print -u2 't remote move: source and destination are the same host'; return 2; }
   if (( $#chosen )); then
