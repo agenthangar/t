@@ -2,6 +2,13 @@
 name = "t-desktop"
 version = "0.1.0"
 edition = "2021"
+[features]
+custom-protocol = ["tauri/custom-protocol"]
+native-proof = []
+[[example]]
+name = "native-proof"
+path = "../tests/native/main.rs"
+required-features = ["native-proof"]
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 [dependencies]

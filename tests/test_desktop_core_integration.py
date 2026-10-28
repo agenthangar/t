@@ -466,10 +466,50 @@ def test_prepared_mutation_refuses_replacement_live_owner(lifecycle, method, res
     assert _launches(base) == launches
 
 
-def test_prepared_restart_preserves_unchanged_conversation(lifecycle):
+def _user_pane_hook(base, env, scope):
+    flags = ["-g"] if scope == "global" else ["-p", "-t", "%0"]
+    command = "set-option -p -t %0 @user-pane-hook ran"
+    if scope == "pane-blocking":
+        command = 'run-shell "sleep .3"; ' + command
+    assert _tmux(base, env, "set-hook", *flags, "pane-created[1]",
+                 command).returncode == 0
+    return flags, _tmux(base, env, "show-hooks", *flags, "pane-created").stdout
+
+
+def _assert_restart_hook_cleanup(base, env, user_hook=None):
+    assert _tmux(base, env, "show-options", "-p", "-v", "-t", "%0",
+                 "@t_core_restart_generation").returncode != 0
+    if user_hook is None or "-g" in user_hook[0]:
+        assert _tmux(base, env, "show-hooks", "-p", "-t", "%0", "pane-created").stdout == ""
+    if user_hook:
+        flags, before = user_hook
+        assert _tmux(base, env, "show-hooks", *flags, "pane-created").stdout == before
+        _until(lambda: _tmux(base, env, "show-options", "-p", "-v", "-t", "%0", "@user-pane-hook").stdout.strip() == "ran")
+        if "-g" in flags:
+            assert _tmux(base, env, "show-hooks", "-p", "-t", "%0", "pane-created").stdout == ""
+
+
+@pytest.mark.parametrize("hook_scope", [None, "pane", "global"], ids=["no-user-hook", "pane-hook", "global-hook"])
+@pytest.mark.parametrize("clear_exited_pid", [False, True], ids=["native-tmux", "cleared-exited-pid"])
+def test_prepared_restart_preserves_unchanged_conversation(lifecycle, clear_exited_pid, hook_scope):
     base, env = lifecycle
+    if clear_exited_pid:
+        # Some tmux/platform combinations retain pane_pid after exit; macOS
+        # clears it. Exercise the cleared format on every host, using real tmux
+        # for the pane, process exit, atomic if-shell guard, and respawn.
+        wrapper = base / "bin" / "tmux"
+        source = wrapper.read_text()
+        command = shlex.join(shlex.split(source.splitlines()[-1])[1:-1])
+        source = source.rsplit("exec ", 1)[0] + (
+            'if [ "$1" = if-shell ] && [ "$2" = -F ]; then\n'
+            '  target="$4"\n  condition="$5"\n'
+            "  condition=$(printf %s \"$condition\" | sed 's/#{pane_pid}/#{?pane_dead,,#{pane_pid}}/g')\n"
+            '  shift 5\n  exec ' + command + ' if-shell -F -t "$target" "$condition" "$@"\n'
+            'fi\nexec ' + command + ' "$@"\n')
+        wrapper.write_text(source)
     _apply(base, env, _prepare(base, env, repo="repo", slot=1, agent="claude"))
     _until(lambda: _launches(base))
+    user_hook = _user_pane_hook(base, env, hook_scope) if hook_scope else None
     original_identity, original_sid = _slot_identity(base, env)
     _save_claude_thread(base, original_sid)
     operation = _prepare(base, env, "sessions.restart", repo="repo", slot=1, sid=original_sid)
@@ -482,3 +522,44 @@ def test_prepared_restart_preserves_unchanged_conversation(lifecycle):
     assert current_identity.split("\t")[3] != original_identity.split("\t")[3]
     assert restarted["result"]["session"] == "dev-repo-1"
     assert restarted["attachment"]["validation"]["identity"] == current_identity
+    _assert_restart_hook_cleanup(base, env, user_hook)
+
+
+@pytest.mark.parametrize("replacement_exits", [False, True], ids=["live-replacement", "exited-replacement"])
+@pytest.mark.parametrize("hook_scope", ["global", "pane-blocking"])
+def test_reviewed_restart_rejects_same_pane_respawn_after_stopping_owner(lifecycle, replacement_exits, hook_scope):
+    base, env = lifecycle
+    _apply(base, env, _prepare(base, env, repo="repo", slot=1, agent="claude"))
+    _until(lambda: _launches(base))
+    user_hook = _user_pane_hook(base, env, hook_scope)
+    original_identity, sid = _slot_identity(base, env)
+    _save_claude_thread(base, sid)
+    operation = _prepare(base, env, "sessions.restart", repo="repo", slot=1, sid=sid)
+    wrapper = base / "bin" / "tmux"
+    source = wrapper.read_text()
+    command = shlex.join(shlex.split(source.splitlines()[-1])[1:-1])
+    injected = base / "replacement-injected"
+    replacement = "sleep .05" if replacement_exits else "sleep 60"
+    # Replace the dead process AFTER the old client has exited, immediately
+    # before the final atomic guard. Keep the exact pane, cwd, and SID; only
+    # the pane-created generation can distinguish this new process lifetime.
+    source = source.rsplit("exec ", 1)[0] + (
+        'if [ "$1" = if-shell ] && [ "$2" = -F ]; then\n'
+        '  case "$5" in *pane_dead*)\n'
+        '    if [ ! -e ' + shlex.quote(str(injected)) + ' ]; then\n'
+        '      touch ' + shlex.quote(str(injected)) + '\n'
+        '      ' + command + ' respawn-pane -t %0 ' + shlex.quote(replacement) + '\n'
+        + ('      while [ "$(' + command + " display-message -p -t %0 '#{pane_dead}')\" != 1 ]; do sleep .01; done\n" if replacement_exits else "") +
+        '    fi ;;\n  esac\nfi\nexec ' + command + ' "$@"\n')
+    wrapper.write_text(source)
+    applied = _call(base, env, "operations.apply", {"operationId": operation})
+    assert applied["error"]["code"] == "unknown_outcome", applied
+    assert injected.exists()
+    current_identity, current_sid = _slot_identity(base, env)
+    assert current_identity.split("\t")[:3] == original_identity.split("\t")[:3]
+    assert current_sid == sid
+    assert len(_launches(base)) == 1, "the reviewed conversation was incorrectly resumed"
+    assert _tmux(base, env, "display-message", "-p", "-t", "%0", "#{pane_dead}").stdout.strip() == str(int(replacement_exits))
+    assert _call(base, env, "operations.reconcile", {"operationId": operation})["result"]["state"] == "unknown"
+    assert _call(base, env, "operations.apply", {"operationId": operation})["error"]["code"] == "already_applied"
+    _assert_restart_hook_cleanup(base, env, user_hook)

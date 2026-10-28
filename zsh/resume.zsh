@@ -1425,7 +1425,7 @@ _t_restart_slot() {
   emulate -L zsh
   local session="$1" dir="$2" sid="$3" agent="$4" mode="$5" expected_pid="${6:-}" expected_dead="${7:-}" expected_owner="${8:-}"
   [[ -z $expected_owner ]] || _dev_core_owner_matches "$session" "$expected_owner" "$sid" "$agent" "$expected_pid" || return 75
-  local pane cpid up attempt snapshot old_remain actual_dir launch screen invalid_cwd=0
+  local pane cpid up attempt snapshot old_remain actual_dir launch screen invalid_cwd=0 core_generation core_hook_cleanup core_hook_parent
   local cache="${XDG_CACHE_HOME:-$HOME/.cache}/t/restart" lock
   # Do not reuse a process snapshot captured by another command in this shell.
   local _DEV_PS_AT=0
@@ -1577,7 +1577,32 @@ _t_restart_slot() {
     old_remain=$(tmux show-options -A -p -v -t "$pane" remain-on-exit) || return 1
     if [[ -n $expected_owner ]]; then
       local -a owner_identity; owner_identity=("${(@ps:\t:)expected_owner}")
-      _dev_core_tmux_effect "$expected_owner" "set-environment -t ${(q)owner_identity[2]} CLAUDE_RESUME_ID ${(q)sid}; set-environment -t ${(q)owner_identity[2]} DEV_AGENT ${(q)agent}; set-option -p -t ${(q)pane} remain-on-exit on" || return 75
+      [[ -z $(tmux show-options -p -v -t "$pane" @t_core_restart_generation 2>/dev/null) ]] || return 1
+      # Temporarily wrap the whole effective array: invalidation MUST precede
+      # every user hook, including a blocking pane-local hook. Preserve the
+      # original local array exactly so inherited hooks remain inherited later.
+      # set-hook -R resolves the effective pane hook and would recurse here.
+      local hook_line hook_name hook_value local_hooks
+      local_hooks=$(tmux show-options -p -t "$pane" pane-created)
+      core_hook_cleanup="set-hook -pu -t ${(q)pane} pane-created"
+      if [[ -n $local_hooks ]]; then
+        [[ $local_hooks != pane-created ]] || core_hook_cleanup+="; set-hook -p -t ${(q)pane} pane-created ''"
+        while IFS= read -r hook_line; do
+          hook_name=${hook_line%% *}
+          [[ $hook_name == 'pane-created['*']' ]] || continue
+          hook_value=$(tmux show-options -pv -t "$pane" "$hook_name") || return 1
+          core_hook_cleanup+="; set-hook -p -t ${(q)pane} ${(q)hook_name} ${(q)hook_value}"
+        done <<< "$local_hooks"
+      fi
+      while IFS= read -r hook_line; do
+        hook_name=${hook_line%% *}; hook_name=${hook_name%\*}
+        [[ $hook_name == 'pane-created['*']' ]] || continue
+        hook_value=$(tmux show-options -Apv -t "$pane" "$hook_name") || return 1
+        [[ -z $hook_value ]] || core_hook_parent+="; $hook_value"
+      done <<< "$(tmux show-options -Ap -t "$pane" pane-created)"
+      core_generation="$$-$RANDOM-$RANDOM"
+      local generation_hook="set-option -p -t ${(q)pane} @t_core_restart_generation changed-$core_generation$core_hook_parent"
+      _dev_core_tmux_effect "$expected_owner" "set-environment -t ${(q)owner_identity[2]} CLAUDE_RESUME_ID ${(q)sid}; set-environment -t ${(q)owner_identity[2]} DEV_AGENT ${(q)agent}; set-option -p -t ${(q)pane} remain-on-exit on; set-option -p -t ${(q)pane} @t_core_restart_generation $core_generation; set-hook -p -t ${(q)pane} pane-created ${(q)generation_hook}" || return 75
     else
       tmux set-environment -t "=$session" CLAUDE_RESUME_ID "$sid" || return 1
       tmux set-environment -t "=$session" DEV_AGENT "$agent" || return 1
@@ -1594,7 +1619,10 @@ _t_restart_slot() {
         # No -k: tmux must refuse if anything is still running in this pane.
         if [[ -n $expected_owner ]]; then
           local core_launch="zsh -lic ${(q)launch}"
-          _dev_core_tmux_effect "$expected_owner" "respawn-pane -t ${(q)pane} -c ${(q)dir} ${(q)core_launch}; set-option -p -t ${(q)pane} remain-on-exit ${(q)old_remain}"
+          # We already stopped the old client. A failed post-stop guard is an
+          # uncertain outcome, never a pre-effect rejection safe to replay.
+          [[ $(tmux display-message -p -t "=$session:" '#{session_path}') == $dir ]] || return 1
+          _dev_core_tmux_effect "$expected_owner" "respawn-pane -t ${(q)pane} -c ${(q)dir} ${(q)core_launch}; set-option -p -t ${(q)pane} remain-on-exit ${(q)old_remain}" "$core_generation" "$sid" "$agent" || return 1
         else
           tmux respawn-pane -t "$pane" -c "$dir" "zsh -lic ${(q)launch}" || return 1
           tmux set-option -p -t "$pane" remain-on-exit "$old_remain"
@@ -1606,6 +1634,12 @@ _t_restart_slot() {
     print -u2 -- 't restart: the old client or its pane has not exited; no second client was started. Inspect with t session open.'
     return 1
   } always {
+    if [[ -n $core_generation ]]; then
+      # Only clean our marker on the captured server/session/pane generation.
+      # A replacement server reusing numeric pane IDs must remain untouched.
+      local cleanup_condition="#{&&:#{==:#{pid},$owner_identity[1]},#{&&:#{==:#{session_id},$owner_identity[2]},#{&&:#{==:#{pane_id},$owner_identity[3]},#{||:#{==:#{@t_core_restart_generation},$core_generation},#{==:#{@t_core_restart_generation},changed-$core_generation}}}}}"
+      tmux if-shell -F -t "$pane" "$cleanup_condition" "$core_hook_cleanup; set-option -pu -t ${(q)pane} @t_core_restart_generation" '' 2>/dev/null
+    fi
     rmdir "$lock" 2>/dev/null
   }
 }

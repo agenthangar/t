@@ -1503,9 +1503,16 @@ _dev_core_owner_matches() {
 }
 
 _dev_core_tmux_effect() {
-  local expected="$1" command="$2" output
+  local expected="$1" command="$2" generation="${3:-}" output process_condition
   local -a identity; identity=("${(@ps:\t:)expected}")
-  local condition="#{&&:#{==:#{pid},$identity[1]},#{&&:#{==:#{session_id},$identity[2]},#{&&:#{==:#{pane_id},$identity[3]},#{==:#{pane_pid},$identity[4]}}}}"
+  process_condition="#{==:#{pane_pid},$identity[4]}"
+  if [[ -n $generation ]]; then
+    # macOS tmux clears pane_pid when its process exits. Only the post-stop
+    # respawn path may accept that state. A pane-local hook changes this marker
+    # on ANY intervening respawn, including a replacement that has also exited.
+    process_condition="#{&&:#{==:#{pane_dead},1},#{&&:#{==:#{@t_core_restart_generation},$generation},#{&&:#{==:#{CLAUDE_RESUME_ID},$4},#{&&:#{==:#{DEV_AGENT},$5},#{||:$process_condition,#{==:#{pane_pid},}}}}}}"
+  fi
+  local condition="#{&&:#{==:#{pid},$identity[1]},#{&&:#{==:#{session_id},$identity[2]},#{&&:#{==:#{pane_id},$identity[3]},$process_condition}}}"
   output=$(tmux if-shell -F -t "$identity[2]" "$condition" "$command" 'display-message -p T_CORE_STALE') || return 75
   [[ $output != T_CORE_STALE ]] || return 75
 }

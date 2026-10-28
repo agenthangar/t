@@ -12,6 +12,15 @@ use std::{
     time::Duration,
 };
 use tauri::{ipc::Channel, Emitter, Manager, State};
+// Native verification is compiled only into an explicit debug example. The
+// production entry point never registers its reporting command or evaluates it.
+#[cfg(all(debug_assertions, feature = "native-proof"))]
+#[path = "../../tests/native/proof.rs"]
+mod native_proof;
+#[cfg(all(debug_assertions, feature = "native-proof"))]
+pub fn run_native_proof() {
+    native_proof::run();
+}
 const METHODS: &[&str] = &[
     "initialize",
     "workspace.snapshot",

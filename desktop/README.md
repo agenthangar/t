@@ -73,6 +73,26 @@ These fixtures are temporary and never ship in the app; tmux and shared-core
 imports remain real, with an isolated socket and empty configuration. It never launches the UI or uses
 the developer's tmux socket.
 
+For explicitly requested native verification, build the separate debug example
+and run its opt-in test from the repository root:
+
+```sh
+cargo build --locked --manifest-path desktop/src-tauri/Cargo.toml --example native-proof --features native-proof,custom-protocol
+python3 -m pytest tests/test_workspace_native_macos.py --run-macos-ui --no-cov
+```
+
+This opens a native window with the production compiled React assets. The runner
+creates temporary HOME/XDG/configuration, process-discovery adapters, a private
+tmux socket, and a synthetic agent. It verifies rendered session rows through
+real WebView → Rust IPC → Python helper requests, typed prepare/apply, one-use
+attachment tokens, real PTY input/output/resize, and detach preserving the agent.
+It invokes controls through IPC; React forms and xterm interactions have separate
+browser tests. No Accessibility permission is needed. Direct example launch
+refuses to run without the runner's sandbox marker. Reporting/evaluation code is
+limited to an explicit debug feature and separate example; the production entry
+point registers no test command or automation switch. These tests remain disabled
+without `--run-macos-ui`.
+
 ## Interaction and recovery
 
 Select a session for details; double-click or Attach to open its exact tmux
