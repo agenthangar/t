@@ -612,6 +612,13 @@ arguments, public options, and at most three practical examples; each argument
 or option explanation has at most 24 words. Keep defaults, repository inference,
 selection behavior, and ownership requirements visible where they affect use.
 Use uppercase section headings and at least two spaces of indentation for rows.
+All help headings use bold cyan in a color-capable stdout terminal, including
+root, group, command, detailed, agent-support, and alias-reference help. Only
+heading labels are styled; an inline `usage:` label resets before the command.
+Body text and commands stay plain. Color is disabled when stdout is redirected,
+`NO_COLOR` is present (even empty), `TERM=dumb`, or `CLICOLOR=0`; `CLICOLOR=1`
+does not force color into redirected output. Wrap plain text before styling:
+removing ANSI escapes must reproduce plain output exactly, including newlines.
 
 Quick help fits within 60 physical lines at 80 columns; resume fits within 45.
 Cap output at 80 columns and wrap at 44 and 32 columns without breaking command
@@ -624,6 +631,8 @@ and alias-reference topics have no quick-help line limit.
 
 The executable budgets live in `command-contract.json` under `help_style`.
 `scripts/lint_cli.py` renders root, group, nested native parser, canonical,
-mode-specific, and alias help at all three widths. CI rejects oversized summaries,
+mode-specific, alias, detailed, and special-topic help at all three widths.
+CI checks exact bold cyan heading styling, plain body text, all color opt-outs,
+and identical visible text and layout with color enabled. CI rejects oversized summaries,
 option text, pages, missing public options, and undiscoverable commands. Add or
 update help regression tests with each public command change.
