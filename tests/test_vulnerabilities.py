@@ -100,8 +100,9 @@ def test_first_error_never_becomes_previous_success(monkeypatch):
     data=v.read(v.cache_path())
     assert data['last_success']==[] and data['lines']==['offline']
 
-def test_help_documents_opt_in_and_disable(t_mod):
-    help_text=t_mod._root_help()
+def test_help_documents_opt_in_and_disable(t_mod, capsys):
+    assert t_mod.main(["help", "system", "advisories"]) == 0
+    help_text=capsys.readouterr().out
     assert 'export T_VULNERABILITY_CHECK=1' in help_text
     assert 'unset T_VULNERABILITY_CHECK' in help_text
 

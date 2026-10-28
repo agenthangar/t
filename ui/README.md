@@ -542,3 +542,28 @@ commands remain unchanged. See [coverage and privacy](../docs/vulnerabilities.md
 cached repository-tool coverage and worker state. `enable --interval-hours N`
 and `disable` are explicit direct actions for the per-user periodic worker,
 without pickers, OS service registration, remediation or update prompts.
+
+## Help style
+
+Every public command, resource group, conditional mode, and compatibility alias
+uses the shared quick-reference layout. `-h` and `--help` are equivalent and
+side-effect free. Start with usage and a summary of at most 60 words. Show
+arguments, public options, and at most three practical examples; each argument
+or option explanation has at most 24 words. Keep defaults, repository inference,
+selection behavior, and ownership requirements visible where they affect use.
+Use uppercase section headings and at least two spaces of indentation for rows.
+
+Quick help fits within 60 physical lines at 80 columns; resume fits within 45.
+Cap output at 80 columns and wrap at 44 and 32 columns without breaking command
+names, flags, paths, or other tokens. A single unbreakable token may exceed the
+terminal width. Never truncate help or hide usable options to meet a budget.
+Each page points to `t help <command>` for further information. Keep longer
+explanations in explicit paragraphs and topical sections in `help_details`,
+using the existing parser and renderer. Detailed topics and the agent-support
+and alias-reference topics have no quick-help line limit.
+
+The executable budgets live in `command-contract.json` under `help_style`.
+`scripts/lint_cli.py` renders root, group, nested native parser, canonical,
+mode-specific, and alias help at all three widths. CI rejects oversized summaries,
+option text, pages, missing public options, and undiscoverable commands. Add or
+update help regression tests with each public command change.

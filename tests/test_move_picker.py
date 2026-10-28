@@ -151,6 +151,10 @@ def test_explicit_and_current_targets_bypass_picker(zsh, args):
 
 def test_move_help_explains_current_picker_and_scope(t_mod, capsys):
     assert t_mod.main(['session', 'move', '--help']) == 0
+    quick = ' '.join(capsys.readouterr().out.split())
+    assert 'scripts require an explicit target and --detach' in quick.lower()
+    assert 't help session move' in quick
+    assert t_mod.main(['help', 'session', 'move']) == 0
     help_text = ' '.join(capsys.readouterr().out.split())
     for text in ('current local CLI conversation', 'named or current repository',
                  'all repositories outside a checkout', 'not saved history',

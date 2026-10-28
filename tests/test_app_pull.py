@@ -39,9 +39,14 @@ def test_app_help_explains_how_to_return_to_cli(t_mod, monkeypatch, capsys, pref
     monkeypatch.setattr(t_mod, "Config", lambda: pytest.fail("help loaded configuration"))
     assert t_mod.main([*prefix, "--help"]) == 0
     output = " ".join(capsys.readouterr().out.split())
-    assert "follow its release instructions if needed" in output
-    assert "open handles the handoff" in output
-    assert "t open <repo> <slot> --cli" in output
+    assert "t session open REPO SLOT --app or --cli" in output
+    assert "Desktop release and writer checks" in output
+    assert "t help " + " ".join(prefix) in output
+    assert t_mod.main(["help", *prefix]) == 0
+    details = " ".join(capsys.readouterr().out.split())
+    assert "follow its release instructions if needed" in details
+    assert "open handles the handoff" in details
+    assert "t open <repo> <slot> --cli" in details
 
 
 def test_app_without_repository_exposes_both_directions(t_mod, app_slot):
