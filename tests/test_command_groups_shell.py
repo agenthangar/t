@@ -43,14 +43,14 @@ def test_grouped_shell_commands_keep_arguments_and_caller_shell(tmp_path):
         _t_push() { print -r -- "push:${(j:,:)@}"; }
         _t_find() { print -r -- "find:${(j:,:)@}"; }
         _t_beam_xlate() { print -r -- "move:${(j:,:)@}"; }
-        _t_repos_cd() { print -r -- "repo-cd:${(j:,:)@}"; }
+        _t_repo_cd() { print -r -- "repo-cd:${(j:,:)@}"; }
         t session open api 4 --fg
         t session push api 4
         t session search "a search query"
         t session move api 4 --host mini
         t repo cd api
         t open api 4
-        t repos cd api
+        t repo cd api
     ''')
     assert result.returncode == 0, result.stderr
     assert result.stdout.splitlines() == [
@@ -318,7 +318,7 @@ def test_shell_dispatch_matches_python_command_registry(tmp_path, t_mod):
         ("config", "open"): "install:config", ("config", "show"): "install:config",
         ("config", "edit"): "install:config", ("config", "setup"): "install:setup",
         ("repo", "create"): "bin", ("repo", "clone"): "install:checkout",
-        ("repo", "add"): "install:repos",
+        ("repo", "add"): "install:repo",
         ("agent", "install"): "install:install",
         ("system", "integrate"): "bin", ("system", "update"): "bin",
     }
@@ -345,7 +345,7 @@ def test_shell_dispatch_matches_python_command_registry(tmp_path, t_mod):
         _t_cd() { print -r -- handler:cd; }
         _t_beam_xlate() { print -r -- handler:move; }
         _t_find() { print -r -- handler:search; }
-        _t_repos_cd() { print -r -- handler:repo-cd; }
+        _t_repo_cd() { print -r -- handler:repo-cd; }
         _t_install() { print -r -- "handler:install:$1"; }
         _t_reload() { print -r -- reloaded; }
     ''' + "\n".join(commands)
@@ -383,7 +383,7 @@ def test_completion_actions_match_python_command_registry(tmp_path, t_mod):
     for group, line in zip(groups, lines):
         assert "actions=( " in line and line.endswith(" )"), (group, line)
         offered = set(line.partition("actions=( ")[2].removesuffix(" )").split())
-        assert offered == set(t_mod.COMMAND_GROUPS[group]), (group, offered)
+        assert offered == set(t_mod.COMMAND_GROUPS[group]) | ({"ls"} if "list" in t_mod.COMMAND_GROUPS[group] else set()), (group, offered)
 
 
 @pytest.mark.skipif(not shutil.which("zsh"), reason="zsh is required")
@@ -447,7 +447,7 @@ def test_workflow_completion_offers_scopes_and_registered_repos(tmp_path):
     ''')
     assert result.returncode == 0, result.stderr
     assert result.stdout.splitlines() == [
-        "values:list,add,use,exclude,inherit,edit,instructions", "values:--repo,--all,--json,-h,--help", "values:--repo,-h,--help",
+        "values:list,ls,add,use,exclude,inherit,edit,instructions", "values:--repo,--all,--json,-h,--help", "values:--repo,-h,--help",
         "values:api", "values:api", "values:-h,--help", "values:api",
     ]
 
@@ -468,8 +468,69 @@ def test_nested_workflow_dispatch_is_owned_by_binary(tmp_path):
     ]
 
 
+@pytest.mark.parametrize("prefix", ["session", "repo", "cursor", "hosts", "issue", "config workflow", ""])
+def test_listing_alias_completion_matches_including_help(tmp_path, prefix):
+    code = '''
+        DEV_REPOS=(help /tmp/help ls /tmp/ls list /tmp/list)
+        _values() { print -r -- "values:${(j:,:)argv[2,-1]}"; }
+        _message() { print -r -- "message:$1"; }
+        local -a words
+    '''
+    for help_word in ("", "help "):
+        for verb in ("ls", "list"):
+            command = f"t {help_word}{prefix} {verb} --"
+            code += f"words=({command}); CURRENT=${{#words}}; _t\n"
+    result = shell(tmp_path, code)
+    assert result.returncode == 0, result.stderr
+    lines = result.stdout.splitlines()
+    assert len(lines) == 4, result.stdout
+    assert lines[0] == lines[1] == lines[2] == lines[3]
+    if prefix in ("hosts", "issue", "config workflow"):
+        assert "--json" in lines[0]
+
+
+def test_workflow_ls_help_completion_preserves_repo_values(tmp_path):
+    result = shell(tmp_path, '''
+        DEV_REPOS=(help /tmp/help ls /tmp/ls list /tmp/list)
+        _values() { print -r -- "values:${(j:,:)argv[2,-1]}"; }
+        local -a words
+        words=(t help config workflow ls --repo '') CURRENT=7; _t
+    ''')
+    assert result.returncode == 0, result.stderr
+    assert set(result.stdout.strip().removeprefix("values:").split(',')) == {"help", "ls", "list"}
+
+
+def test_removed_repos_shell_family_cannot_navigate_or_register(tmp_path):
+    result = shell(tmp_path, '''
+        _t_repo_cd() { print BAD-navigation; }
+        _t_install() { print BAD-registration; }
+        old=$PWD
+        t repos cd api; print -r -- "cd-status:$?"
+        t repos add .; print -r -- "add-status:$?"
+        [[ $old == $PWD ]] || print BAD-cwd
+    ''', bin_text=f"#!/bin/sh\nexec {shlex.quote(sys.executable)} {shlex.quote(str(ROOT / 'bin/t'))} \"$@\"\n")
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == ["cd-status:2", "add-status:2"]
+    assert result.stderr.count("unknown command 'repos'") == 2
+
+
+def test_root_listing_alias_completion_keeps_help_position(tmp_path):
+    result = shell(tmp_path, '''
+        DEV_REPOS=(api /tmp/api)
+        _values() { print -r -- "values:${(j:,:)argv[2,-1]}"; }
+        _message() { print -r -- "message:$1"; }
+        local -a words
+        words=(t ls '') CURRENT=3; _t
+        words=(t list '') CURRENT=3; _t
+        words=(t help ls '') CURRENT=4; _t
+        words=(t help list '') CURRENT=4; _t
+    ''')
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == ["values:api"] * 4
+
+
 @pytest.mark.parametrize('command', [
-    'session', 'repo', 'cursor', 'hosts', 'issue', 'config workflow', '', 'repos',
+    'session', 'repo', 'cursor', 'hosts', 'issue', 'config workflow', '',
 ])
 def test_list_alias_completion_and_shell_forwarding(tmp_path, command):
     result = shell(tmp_path, f'''

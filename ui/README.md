@@ -3,13 +3,17 @@
 Every public `t` command and conditional mode has an entry in
 [`command-contract.json`](command-contract.json). That inventory is the source of
 truth for classification and contract tests. Compatibility aliases inherit the
-canonical command's entry. Every `list` verb also accepts `ls`, including nested
-resources such as `t config workflow ls`. Root `t ls`/`t list` list sessions;
-legacy `t repos ls`/`t repos list` list repositories. Aliases share the same
-read-only behavior, options, help, and completion; canonical help and completion
-choices retain `list`. Normalize only command words, preserving payloads and
-forwarded arguments. Read this guide and the inventory before adding or
-changing a command; update both when its behavior changes.
+canonical command's entry. `ls` and `list` are interchangeable in every listing
+family (including `config workflow`); root `t list` aliases `t ls`. Resolve only
+command words, preserving option values, repository names, and delegated commands.
+The old `t repos` family is removed; use `t repo` verbs. Existing repository selectors
+accept registered aliases and unambiguous checkout directory names, with exact
+aliases taking precedence. Ambiguous names fail before selection or mutation.
+Remote opens resolve against the selected host’s registrations. Remote resumes
+resolve local aliases/names through verified repository identity; unknown
+target-only selectors remain literal.
+Repository creation names, paths and delegated payloads remain literal. Read this
+guide and the inventory before adding or changing a command; update both when its behavior changes.
 
 The visual baseline is the Homebrew v0.4.2 release (`40aaea8`): cyan section
 headings and current values, green primary/add actions, amber warnings/removal,

@@ -168,7 +168,7 @@ def test_checker_failures_do_not_block_commands(t_mod, terminal, offer, monkeypa
     assert t_mod._t_auto_update(["open", "api", "1"]) is None
 
 
-@pytest.mark.parametrize("argv", [[], ["help"], ["ls"], ["repos", "ls"], ["update"], ["on", "host", "t", "ls"],
+@pytest.mark.parametrize("argv", [[], ["help"], ["ls"], ["repo", "list"], ["update"], ["on", "host", "t", "ls"],
                                       ["mcp"], ["__recovery"], ["app", "--dry-run"],
                                       ["ls", "--json"], ["config", "--dump"], ["ls", "--statusline"]])
 def test_protocol_and_explicit_update_commands_skip_prompt(t_mod, terminal, monkeypatch, argv):
@@ -229,7 +229,7 @@ def test_manual_check_uses_packaged_helper_without_installing(t_mod, tmp_path, m
 
 def test_main_help_and_internal_protocols_bypass_dispatch(t_mod, monkeypatch, capsys):
     monkeypatch.setattr(t_mod, "_t_auto_update", lambda argv: pytest.fail("help must not prompt"))
-    for argv in ([], ["help"], ["repos"], ["cursor"], ["ls", "--help"]):
+    for argv in ([], ["help"], ["repo"], ["cursor"], ["ls", "--help"]):
         assert t_mod.main(argv) == 0
     monkeypatch.setattr(t_mod, "_t_offer_update", lambda: 10)
     assert t_mod.main(["__update-prompt"]) == 10

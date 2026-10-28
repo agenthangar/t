@@ -21,6 +21,7 @@ import time
 import uuid
 
 _spinner = runpy.run_path(str(Path(__file__).with_name("t_progress.py")))["spinner"]
+_resolve_repo = runpy.run_path(str(Path(__file__).with_name("t_repos.py")))["resolve_repo"]
 
 VERSION = 1
 PARSER_VERSION = 6
@@ -908,6 +909,10 @@ class HistoryCommand:
         slot = target[1] if len(target) == 2 else inferred_slot if not target else ''
         if len(target) == 1 and target[0].isdigit():
             repo, slot = inferred_repo, target[0]
+        try:
+            repo = _resolve_repo(self.cfg.repos, repo) or repo
+        except ValueError as error:
+            raise HistoryError(str(error)) from error
         if repo not in self.cfg.repos:
             raise HistoryError('cannot infer repository; specify a registered repository alias')
         if slot and not re.fullmatch(r'[1-9][0-9]*', slot):

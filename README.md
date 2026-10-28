@@ -390,9 +390,14 @@ with `t share` as the context sharing command.
 Contributors can find the behavior, keyboard, and appearance rules in the
 [command and terminal contract](ui/README.md).
 
-`ls` and `list` are interchangeable at every list command: for example,
-`t session ls`, `t issue ls`, and `t config workflow ls`. The root shortcuts
-`t ls` and `t list` both list sessions; `t repos ls` and `t repos list` list repositories.
+Every existing-repository argument accepts its registered short alias or checkout
+directory name. For example, with `app=/path/to/application`, `t session cd app 2`
+and `t session cd application 2` enter the same worktree. Exact aliases take
+precedence; if several different checkouts have the same directory name, use an
+explicit alias. Remote opens resolve names on the selected host. Remote resumes
+use verified repository identity for local matches; target-only names resolve on
+the selected host.
+New aliases, paths, search text and delegated commands keep their literal meaning.
 
 The older spellings still work; `t help aliases` lists them. Bare `t config`
 continues to open its interactive menu.
@@ -591,6 +596,11 @@ Slow terminal session/host scans and saved-history discovery show a small spinne
 after a short delay. It clears before results, pickers, or errors; redirected,
 JSON, MCP, and remote scanner output stays free of progress animation.
 
+`ls` and `list` are interchangeable for `session`, `repo`, `cursor`, `hosts`,
+`issue`, and `config workflow`. Root `t ls` and `t list` both list sessions.
+The old `t repos` family has been removed; use `t repo list`, `t repo locate`,
+`t repo cd`, and `t repo add`.
+
 ### Existing spellings
 
 Older scripts and habits continue to work. Use `t help aliases` for the full list;
@@ -600,7 +610,7 @@ these are the common migrations:
 | --- | --- |
 | `t open`, `t ls`, `t kill`, `t beam` | `t session open`, `t session list`, `t session close`, `t session move` |
 | `t push`, `t pop`, `t find`, `t plan`, `t app` | `t session push`, `t session pop`, `t session search`, `t session view-plan`, `t session open-app` |
-| `t repos ls/path/cd`, `t new`, `t checkout` | `t repo list/locate/cd`, `t repo create`, `t repo clone` |
+| `t new`, `t checkout` | `t repo create`, `t repo clone` |
 | `t setup` | `t config setup` |
 | `t instructions --init/--edit/--show`; `t instructions <repo> --apply` | `t profile init/edit/show`; `t profile apply <repo>` |
 | `t permissions`, `t permissions --show/--apply` | `t policy check`, `t policy show/apply` |
@@ -755,7 +765,7 @@ t issue open                         # select issues to open interactively
 t issue open https://github.com/owner/repo/issues/123
 ```
 
-Every verb accepts a registered repository alias or GitHub `owner/repo`, either
+Every verb accepts a registered repository alias, checkout directory name, or GitHub `owner/repo`, either
 positionally or with `--repo`. `list` shows the current checkout's issues, or
 issues from all registered GitHub repositories when run outside a checkout;
 `-a`/`--all` widens the list from inside a checkout. Its `REPO`, `ISSUE`,
@@ -962,7 +972,7 @@ Set `T_AGENT_INSTRUCTIONS` to use another template file. `t repo clone` and `t c
 offer to seed `AGENTS.md` from the profile when run interactively; use
 `--instructions` to apply it in a script or `--no-instructions` to skip the offer.
 Noninteractive runs skip seeding unless you explicitly pass `--instructions`.
-You can later run `t profile apply <repo>` for a registered alias. t updates
+You can later run `t profile apply <repo>` for a registered alias or checkout directory name. t updates
 only its marked block, preserves the rest of `AGENTS.md`, and refuses malformed
 markers or a symlink. Review the resulting diff and commit it when ready; t never
 commits or pushes these instructions for you.

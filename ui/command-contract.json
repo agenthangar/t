@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "description": "Development-only public command appearance and interaction inventory; aliases inherit canonical routes in bin/t COMMAND_GROUPS.",
+  "description": "Development-only public command appearance and interaction inventory; ls/list aliases inherit canonical routes in bin/t COMMAND_GROUPS, including config workflow and root list/ls; the repos family is removed. Existing-repository selectors accept registered aliases or unambiguous checkout directory names; exact aliases retain precedence and remote open/resume resolve on the selected host.",
   "patterns": {
     "list": "Direct read-only aligned rows, scope, and empty state; never launches a picker.",
     "detail": "Read-only labeled values; no work starts or prompt appears.",
@@ -1580,7 +1580,7 @@
       "scope": "registered repository or checkout",
       "confirmation": "none",
       "tests": [
-        "tests/test_t.py::test_repos_lists_short_names_and_paths"
+        "tests/test_t.py::test_repo_lists_short_names_and_paths"
       ],
       "modes": {
         "default": {
@@ -1593,7 +1593,7 @@
           ],
           "read_only": true,
           "tests": [
-            "tests/test_t.py::test_repos_lists_short_names_and_paths",
+            "tests/test_t.py::test_repo_lists_short_names_and_paths",
             "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
           ]
         }
@@ -3234,7 +3234,7 @@
           "tests": [
             "tests/test_remote_commands.py::test_remote_move_selects_current_cross_host_identity_and_destination"
           ],
-          "notes": "Single host picker waits for Enter even with one host; missing session uses shared selection on the source/target host. Cancellation returns 130. Source browsing skips unavailable peers while retaining reachable candidates; selected-source and transfer ownership checks remain strict. Host picker says Move this session to which host? and Destination host · current host: SOURCE; selected host is the destination. SSH alias/target context is subordinate to the action heading."
+          "notes": "Single host picker waits for Enter even with one host; missing session uses shared selection on the source/target host. Cancellation returns 130. Source browsing skips unavailable peers while retaining reachable candidates; selected-source and transfer ownership checks remain strict. Host picker says Move this session to which host? and Destination host \u00b7 current host: SOURCE; selected host is the destination. SSH alias/target context is subordinate to the action heading."
         },
         "explicit": {
           "argv": [
@@ -3308,7 +3308,7 @@
           "tests": [
             "tests/test_remote_commands.py::test_remote_host_picker_requires_explicit_enter_and_cancel"
           ],
-          "notes": "Single host picker waits for Enter even with one host; missing session uses shared selection on the source/target host. Cancellation returns 130. Unavailable registered hosts warn and are skipped; discovery retains local and reachable rows. Saved resumes retain local locks and known-owner checks, but cannot verify ownership on unavailable hosts. Local scan failures remain fatal. Host picker says Resume saved work on which host? and Browse this host’s saved conversations; selected host supplies saved history and runs the resumed session. SSH alias/target context is subordinate to the action heading."
+          "notes": "Single host picker waits for Enter even with one host; missing session uses shared selection on the source/target host. Cancellation returns 130. Unavailable registered hosts warn and are skipped; discovery retains local and reachable rows. Saved resumes retain local locks and known-owner checks, but cannot verify ownership on unavailable hosts. Local scan failures remain fatal. Host picker says Resume saved work on which host? and Browse this host\u2019s saved conversations; selected host supplies saved history and runs the resumed session. SSH alias/target context is subordinate to the action heading."
         },
         "explicit": {
           "argv": [
@@ -3787,10 +3787,10 @@
         }
       ],
       "status_marks": {
-        "attached": "●",
-        "detached": "○",
-        "active_context": "✓",
-        "still_in_progress": "↻"
+        "attached": "\u25cf",
+        "detached": "\u25cb",
+        "active_context": "\u2713",
+        "still_in_progress": "\u21bb"
       },
       "layouts": {
         "table": {
@@ -4034,8 +4034,8 @@
         "tests/test_command_behavior.py::test_history_display_contract_preserves_unknowns_preview_and_json"
       ],
       "status_marks": {
-        "saved": "·",
-        "archived": "□",
+        "saved": "\u00b7",
+        "archived": "\u25a1",
         "missing": "!"
       }
     }
@@ -4126,6 +4126,46 @@
     }
   },
   "progress_contract": "ui/progress-contract.json",
+  "repository_selectors": {
+    "remote open": "target host shell worker",
+    "remote move": "source host shell worker or local source scope",
+    "remote resume": "target host shell worker",
+    "issue list": "libexec/t_issue.py repository",
+    "issue status": "libexec/t_issue.py repository",
+    "issue start": "libexec/t_issue.py repository",
+    "issue open": "libexec/t_issue.py repository",
+    "session open": "_t_open/_t_dev",
+    "session list": "_ls_scope",
+    "session close": "_dev_kill",
+    "session restart": "_slot_select",
+    "session pop": "_t_pop",
+    "session resume": "_t_resume",
+    "session history": "HistoryCommand.scope",
+    "session cd": "_t_cd",
+    "session move": "_t_beam",
+    "session read": "cmd_read",
+    "session view-plan": "_t_plan",
+    "session paste": "_t_paste",
+    "session open-app": "_slot_select",
+    "session goal": "cmd_session_goal",
+    "repo cd": "_t_repo_cd",
+    "repo locate": "cmd_repo",
+    "config open": "cmd_config workflow_repo compatibility",
+    "config show": "cmd_config workflow_repo compatibility",
+    "config edit": "cmd_config workflow_repo compatibility",
+    "config onboard": "cmd_config workflow_repo compatibility",
+    "config workflow list": "cmd_config workflow_repo",
+    "config workflow edit": "cmd_config workflow_repo",
+    "profile init": "cmd_instructions",
+    "profile edit": "cmd_instructions",
+    "profile show": "cmd_instructions",
+    "profile apply": "cmd_instructions",
+    "config workflow use": "_cmd_workflow workflow_repo",
+    "config workflow exclude": "_cmd_workflow workflow_repo",
+    "config workflow inherit": "_cmd_workflow workflow_repo",
+    "config workflow instructions show": "_cmd_workflow workflow_repo",
+    "config workflow instructions edit": "_cmd_workflow workflow_repo"
+  },
   "command_aliases": {
     "list_verbs": {
       "canonical": "list",
@@ -4136,9 +4176,7 @@
     },
     "legacy": {
       "list": "session list",
-      "ls": "session list",
-      "repos list": "repo list",
-      "repos ls": "repo list"
+      "ls": "session list"
     }
   },
   "help_style": {
