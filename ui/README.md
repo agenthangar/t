@@ -217,6 +217,14 @@ does not veto every close. Selected and known same-worktree writers still block;
 shared backend processes and lock files remain untouched. These are safety rules
 within the existing close modes, with no new prompt or command.
 
+Saved Codex resume and handoffs also resolve unindexed held sibling locks from
+validated `session_meta` identity in active and archived rollouts. A verified
+different workspace does not block resume; selected and same-workspace writers
+still block, including equivalent real paths and any matching workspace among
+multiple metadata records. Unknown, invalid or unreadable ownership evidence
+prevents resume. Ownership refusals print a concise
+diagnostic and retry guidance without a traceback or success descriptor.
+
 ## Shared implementations
 
 | Surface | Implementation | Responsibility |

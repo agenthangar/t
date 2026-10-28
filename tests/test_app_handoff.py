@@ -426,10 +426,11 @@ def test_cli_pid_must_hold_exact_selected_lock(handoff, target, tmp_path):
                                 **options(target, cli_pid=owner))
 
 
+@pytest.mark.parametrize("index", ["state_5.sqlite", "state_6.sqlite"])
 @pytest.mark.parametrize("sibling_cwd,allowed", [("same", False), ("other", True)])
 def test_other_held_thread_is_checked_by_exact_home_db(handoff, target, tmp_path,
-                                                      sibling_cwd, allowed):
-    db = sqlite3.connect(target["home"] / "state_5.sqlite")
+                                                      sibling_cwd, allowed, index):
+    db = sqlite3.connect(target["home"] / index)
     db.execute("create table threads (id text, cwd text, archived integer)")
     sibling = str(target["cwd"]) if sibling_cwd == "same" else str(tmp_path / "other")
     db.execute("insert into threads values (?, ?, 0)", (OTHER, sibling))
@@ -734,12 +735,12 @@ def test_bad_or_incomplete_sibling_index_fails_closed(handoff, target, tmp_path)
     db.symlink_to(target["rollout"])
     run, _ = process_table()
     with locked(path, tmp_path):
-        with pytest.raises(ValueError, match="could not be matched"):
+        with pytest.raises(ValueError, match="ownership index"):
             handoff.assert_released(None, SID, str(target["cwd"]), run, **options(target))
     db.unlink()
     db.write_text("not sqlite")
     with locked(path, tmp_path):
-        with pytest.raises(ValueError, match="could not be matched"):
+        with pytest.raises(ValueError, match="ownership index"):
             handoff.assert_released(None, SID, str(target["cwd"]), run, **options(target))
 
 
@@ -891,58 +892,81 @@ def test_workspace_close_handles_missing_archives_without_ignoring_owners(
     assert target['rollout'].exists()
 
 
-@pytest.mark.parametrize('metadata', ['none', 'same', 'other', 'archived_same'])
-def test_close_scopes_unindexed_writers_using_rollout_metadata(handoff, target, tmp_path, metadata):
+@pytest.mark.parametrize('for_close', [False, True])
+@pytest.mark.parametrize('metadata', ['none', 'same', 'other', 'archived_same', 'realpath_same', 'conflicting'])
+def test_handoff_scopes_unindexed_writers_using_rollout_metadata(handoff, target, tmp_path, metadata, for_close):
     with sqlite3.connect(target['home'] / 'state_5.sqlite') as db:
         db.execute('create table threads (id text, cwd text)')
+    if metadata == 'realpath_same':
+        (tmp_path / 'alias').symlink_to(target['cwd'], target_is_directory=True)
     if metadata != 'none':
         folder = target['home'] / ('archived_sessions' if metadata == 'archived_same' else 'sessions')
         folder.mkdir(exist_ok=True)
         path = folder / f'rollout-{OTHER}.jsonl'
         path.write_text(json.dumps({'type': 'session_meta', 'payload': {
-            'id': OTHER, 'cwd': str(tmp_path / 'elsewhere' if metadata == 'other' else target['cwd'])}}) + '\n')
+            'id': OTHER, 'cwd': str(tmp_path / 'elsewhere' if metadata in ('other', 'conflicting') else
+                                   tmp_path / 'alias' if metadata == 'realpath_same' else target['cwd'])}}) + '\n')
+        if metadata == 'conflicting':
+            archive = target['home'] / 'archived_sessions'
+            archive.mkdir()
+            (archive / path.name).write_text(json.dumps({'type': 'session_meta', 'payload': {
+                'id': OTHER, 'cwd': str(target['cwd'])}}) + '\n')
     lock = target['locks'] / f'{OTHER}.lock'
     lock.touch()
     run, calls = process_table('44 /opt/bin/codex app-server')
     with locked(lock, tmp_path):
-        if metadata in ('same', 'archived_same'):
+        if metadata in ('same', 'archived_same', 'realpath_same', 'conflicting'):
             with pytest.raises(ValueError, match='another Codex conversation in this worktree'):
                 handoff.assert_released(None, SID, str(target['cwd']), run,
-                                        **options(target, for_close=True))
+                                        **options(target, for_close=for_close))
+        elif metadata == 'none' and not for_close:
+            with pytest.raises(ValueError, match='could not be matched to its worktree'):
+                handoff.assert_released(None, SID, str(target['cwd']), run,
+                                        **options(target))
         else:
             handoff.assert_released(None, SID, str(target['cwd']), run,
-                                    **options(target, for_close=True))
+                                    **options(target, for_close=for_close))
             assert not calls  # No control RPC or process signaling to the shared backend.
         assert handoff._lock_held(str(lock)) is True
     assert target['rollout'].exists()
 
 
-@pytest.mark.parametrize('problem', ['absent', 'symlink', 'corrupt', 'missing_table', 'invalid_cwd'])
-def test_close_does_not_confuse_unreadable_indexes_with_unindexed_writers(
-        handoff, target, tmp_path, problem):
+@pytest.mark.parametrize('for_close', [False, True])
+@pytest.mark.parametrize('problem', ['absent', 'symlink', 'corrupt', 'missing_table', 'invalid_cwd', 'unreadable'])
+def test_handoff_does_not_confuse_unreadable_indexes_with_unindexed_writers(
+        handoff, target, tmp_path, monkeypatch, problem, for_close):
     dbpath = target['home'] / 'state_5.sqlite'
     if problem == 'symlink':
         dbpath.symlink_to(target['rollout'])
     elif problem == 'corrupt':
         dbpath.write_text('not sqlite')
-    elif problem in ('missing_table', 'invalid_cwd'):
+    elif problem in ('missing_table', 'invalid_cwd', 'unreadable'):
         with sqlite3.connect(dbpath) as db:
-            db.execute('create table threads (id text, cwd text)' if problem == 'invalid_cwd'
+            db.execute('create table threads (id text, cwd text)' if problem in ('invalid_cwd', 'unreadable')
                        else 'create table unrelated (id text)')
             if problem == 'invalid_cwd':
                 db.execute('insert into threads values (?,?)', (OTHER, 'relative'))
+    if problem == 'unreadable':
+        monkeypatch.setattr(handoff.sqlite3, 'connect', lambda *a, **k: (_ for _ in ()).throw(sqlite3.OperationalError('denied')))
+    path = target['home'] / 'sessions' / f'rollout-{OTHER}.jsonl'
+    path.write_text(json.dumps({'type': 'session_meta', 'payload': {
+        'id': OTHER, 'cwd': str(tmp_path / 'elsewhere')}}) + '\n')
     lock = target['locks'] / f'{OTHER}.lock'
     lock.touch()
     run, _ = process_table()
     with locked(lock, tmp_path):
-        with pytest.raises(ValueError, match='ownership index|invalid workspace metadata'):
-            handoff.assert_released(None, SID, str(target['cwd']), run,
-                                    **options(target, for_close=True))
+        if problem == 'absent' and not for_close:
+            handoff.assert_released(None, SID, str(target['cwd']), run, **options(target))
+        else:
+            with pytest.raises(ValueError, match='ownership index|invalid workspace metadata'):
+                handoff.assert_released(None, SID, str(target['cwd']), run,
+                                        **options(target, for_close=for_close))
         assert handoff._lock_held(str(lock)) is True
 
 
-@pytest.mark.parametrize('problem', ['symlink', 'bad_json', 'wrong_id', 'relative_cwd', 'wrong_type'])
-def test_close_rejects_invalid_unindexed_rollout_evidence(handoff, target, tmp_path, problem):
+@pytest.mark.parametrize('for_close', [False, True])
+@pytest.mark.parametrize('problem', ['symlink', 'bad_json', 'wrong_id', 'relative_cwd', 'wrong_type', 'unreadable'])
+def test_handoff_rejects_invalid_unindexed_rollout_evidence(handoff, target, tmp_path, monkeypatch, problem, for_close):
     with sqlite3.connect(target['home'] / 'state_5.sqlite') as db:
         db.execute('create table threads (id text, cwd text)')
     path = target['home'] / 'sessions' / f'rollout-{OTHER}.jsonl'
@@ -954,13 +978,20 @@ def test_close_rejects_invalid_unindexed_rollout_evidence(handoff, target, tmp_p
         path.write_text(json.dumps({'type': 'message' if problem == 'wrong_type' else 'session_meta',
                                    'payload': {'id': SID if problem == 'wrong_id' else OTHER,
                                                'cwd': 'relative' if problem == 'relative_cwd' else str(target['cwd'])}}))
+    if problem == 'unreadable':
+        original_open = open
+        def denied(filename, *args, **kwargs):
+            if str(filename) == str(path):
+                raise PermissionError('denied')
+            return original_open(filename, *args, **kwargs)
+        monkeypatch.setattr(handoff, 'open', denied, raising=False)
     lock = target['locks'] / f'{OTHER}.lock'
     lock.touch()
     run, _ = process_table()
     with locked(lock, tmp_path):
         with pytest.raises(ValueError):
             handoff.assert_released(None, SID, str(target['cwd']), run,
-                                    **options(target, for_close=True))
+                                    **options(target, for_close=for_close))
 
 
 @pytest.mark.parametrize('problem', ['file', 'symlink', 'unreadable'])
