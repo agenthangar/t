@@ -72,6 +72,10 @@ _dev_remote_app_owner() {
 # Optional fifth argument has the same fresh-slot-only meaning.
 _dev_remote_resolve() {
   local repo="$1" slot="$2" multi="${3:-}" quiet_empty="${4:-}"
+  local _repo_selector _repo_selector_rc
+  _repo_selector=$(_dev_resolve_repo "$repo"); _repo_selector_rc=$?
+  (( _repo_selector_rc == 2 )) && return 2
+  (( _repo_selector_rc == 0 )) && repo=$_repo_selector
   # _dev_rows_all columns: host(1) sid(2) cwd(3) slot(4) state(5) context(6) summary(7)
   local all_rows rows scan_rc
   all_rows=$(_dev_rows_all); scan_rc=$?
@@ -214,6 +218,12 @@ _dev_default_host() {
 # scan). Moving a session between machines is `tbeam`, not this. <fg> forwards `-f`.
 _dev_remote() {
   local repo="$1" slot="$2" fg="$3"
+  if [[ -n ${DEV_REPOS[$repo]:-} || ! ( $repo == <-> ) ]]; then
+    local _repo_selector _repo_selector_rc
+    _repo_selector=$(_dev_resolve_repo "$repo"); _repo_selector_rc=$?
+    (( _repo_selector_rc == 2 )) && return 2
+    (( _repo_selector_rc == 0 )) && repo=$_repo_selector
+  fi
   # Repo-aware: a lone slot-shaped arg (`t open -r 4`) means slot 4 of the repo $PWD is
   # in — mirroring the local `t open 4` and `t kill -r 4` (see _dev_remote_kill). Without
   # this the bare `4` is mis-read as a remote repo alias and never matches. Only triggers
@@ -473,6 +483,12 @@ _dev_remote_fg_open() {
 # prompt — unless <force>/-y — works through the TTY). The mirror of a local dev kill.
 _dev_remote_kill() {
   local repo="$1" slot="$2" force="$3"
+  if [[ -n ${DEV_REPOS[$repo]:-} || ! ( $repo == <-> || $repo == all ) ]]; then
+    local _repo_selector _repo_selector_rc
+    _repo_selector=$(_dev_resolve_repo "$repo"); _repo_selector_rc=$?
+    (( _repo_selector_rc == 2 )) && return 2
+    (( _repo_selector_rc == 0 )) && repo=$_repo_selector
+  fi
   # Repo-aware: `t kill -r 4` / `t kill -r all` mean the repo $PWD is in, mirroring
   # the local `t kill` slot-only forms (see _dev_kill / _t_infer_repo). Without this
   # the raw `4`/`all` would be resolved as a remote repo alias.
@@ -568,18 +584,12 @@ _dev_remote_kill() {
 _dev_pull() {
   local host="$1" target="$2" repo="$3" slot="$4" fg="$5"
   command -v rsync >/dev/null 2>&1 || { echo "dev: rsync not found" >&2; return 1; }
-  local rows; rows=$(ssh "$target" "zsh -lic _dev_session_rows" 2>/dev/null)
-  [[ -n $rows ]] || { echo "dev: no live sessions on $host (check that t is installed and up to date there)" >&2; return 1; }
-  # Match the slot column (field 3 = "<repo>-<num>"): exact when slot given, else the
-  # repo's first live slot. Empty fields can't collapse — _dev_session_rows sentinels.
-  local row
-  if [[ -n $slot ]]; then
-    row=$(print -r -- "$rows" | awk -F'\t' -v w="${repo}-${slot}" '$3==w {print; exit}')
-    [[ -n $row ]] || { echo "dev: no live slot dev-${repo}-${slot} on $host" >&2; return 1; }
-  else
-    row=$(print -r -- "$rows" | awk -F'\t' -v w="${repo}-" 'index($3,w)==1 {print; exit}')
-    [[ -n $row ]] || { echo "dev: no live slot for '$repo' on $host" >&2; return 1; }
-  fi
+  local worker; worker=$(_dev_repo_rows_command "$repo" "$slot")
+  local rows; rows=$(ssh "$target" "zsh -lic ${(q)worker}") || return $?
+  [[ -n $rows ]] || { echo "dev: no live sessions for '$repo${slot:+ $slot}' on $host (check that t is installed and up to date there)" >&2; return 1; }
+  # The source resolved the selector against its own registrations. Keep its
+  # immutable label and path, including sibling aliases for the same checkout.
+  local row=${rows%%$'\n'*}
   local sid=${row%%$'\t'*}
   local cwd=${${row#*$'\t'}%%$'\t'*}
   local fslot=${${${row#*$'\t'}#*$'\t'}%%$'\t'*}
@@ -718,6 +728,10 @@ _t_plan() {
         slot=$repo
         repo=$(_t_infer_repo "$slot") || { echo "Not inside a DEV_REPOS dir — name the repo (t session view-plan <repo> $slot)." >&2; return 1; }
       fi
+  local _repo_selector _repo_selector_rc
+  _repo_selector=$(_dev_resolve_repo "$repo"); _repo_selector_rc=$?
+  (( _repo_selector_rc == 2 )) && return 2
+  (( _repo_selector_rc == 0 )) && repo=$_repo_selector
       if [[ -z "$slot" ]]; then                    # first existing slot for repo
         local n=1
         while (( n <= 20 )); do
@@ -1063,12 +1077,16 @@ _t_remote_host_pick() {
 # an explicitly named source. Unscoped browsing keeps reachable candidates;
 # selected-source rechecks and actual transfer ownership checks stay strict.
 _t_remote_move_rows() {
-  local source=$1 rows
+  local source=$1 repo=$2 rows
   if [[ $source == local ]]; then
     rows=$(_dev_session_rows --details) || return 1
   elif [[ -n $source ]]; then
     local worker='_dev_session_rows --details'
-    rows=$(_dev_remote_scan_with_timeout "${REMOTE_HOSTS[$source]:-$source}" "zsh -lic ${(q)worker}" "${T_REMOTE_SCAN_TIMEOUT:-15}") || return 1
+    [[ -n $repo ]] && worker=$(_dev_repo_rows_command "$repo")
+    rows=$(_dev_remote_scan_with_timeout "${REMOTE_HOSTS[$source]:-$source}" "zsh -lic ${(q)worker}" "${T_REMOTE_SCAN_TIMEOUT:-15}" "${repo:+1}")
+    local scan_rc=$?
+    (( scan_rc == 2 )) && return 2
+    (( scan_rc == 0 )) || return 1
   else
     _dev_rows_all --best-effort --details
     return
@@ -1081,6 +1099,10 @@ _t_remote_move_rows() {
 # fresh-session defaults when the inventory is empty.
 _t_remote_open_local() {
   local repo=$1; shift
+  local _repo_selector _repo_selector_rc
+  _repo_selector=$(_dev_resolve_repo "$repo"); _repo_selector_rc=$?
+  (( _repo_selector_rc == 2 )) && return 2
+  (( _repo_selector_rc == 0 )) && repo=$_repo_selector
   [[ -z $repo || -n ${DEV_REPOS[$repo]:-} ]] || {
     print -u2 -- "t remote open: unknown repository: $repo"; return 1
   }
@@ -1161,9 +1183,19 @@ _t_remote() {
   if [[ -n $source && ( -n $sid || -n $slot ) ]]; then
     chosen=()
   else
-    rows=$(_t_remote_move_rows "$source") || { print -u2 't remote move: ownership scan failed; no conversation was moved'; return 1; }
-    scope=${DEV_REPOS[$repo]:-}
-    [[ -z $repo || -n $scope ]] || { print -u2 "t remote move: unknown repository: $repo"; return 1; }
+    if [[ -z $source || $source == local ]]; then
+      local _repo_selector _repo_selector_rc
+      _repo_selector=$(_dev_resolve_repo "$repo"); _repo_selector_rc=$?
+      (( _repo_selector_rc == 2 )) && return 2
+      (( _repo_selector_rc == 0 )) && repo=$_repo_selector
+    fi
+    rows=$(_t_remote_move_rows "$source" "$repo"); local source_rc=$?
+    (( source_rc == 2 )) && return 2
+    (( source_rc == 0 )) || { print -u2 't remote move: ownership scan failed; no conversation was moved'; return 1; }
+    if [[ -z $source || $source == local ]]; then
+      scope=${DEV_REPOS[$repo]:-}
+      [[ -z $repo || -n $scope ]] || { print -u2 "t remote move: unknown repository: $repo"; return 1; }
+    fi
     scope_rel=$(_dev_homerel "$scope"); wt_rel=$(_dev_homerel "${DEV_WORKTREE_ROOT}/${scope:t}")
     for row in "${(@f)rows}"; do
       fields=("${(@ps:\t:)row}")

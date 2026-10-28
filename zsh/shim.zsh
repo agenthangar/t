@@ -155,7 +155,12 @@ _t_repo_cd() {
     print -u2 -- 'usage: t repo cd <repo>'
     return 2
   fi
-  local repo=$1 dir=${DEV_REPOS[$1]-}
+  local repo=$1 dir
+  local _repo_selector _repo_selector_rc
+  _repo_selector=$(_dev_resolve_repo "$repo"); _repo_selector_rc=$?
+  (( _repo_selector_rc == 2 )) && return 2
+  (( _repo_selector_rc == 0 )) && repo=$_repo_selector
+  dir=${DEV_REPOS[$repo]-}
   if [[ -z $dir ]]; then
     print -u2 -- "t repo cd: unknown repo '$repo' (known: ${(j:, :)${(ok)DEV_REPOS}})"
     return 1
@@ -209,6 +214,10 @@ _t_cd() {
     repo=$(_t_infer_repo "$slot") || {
       echo "t cd: not inside a DEV_REPOS repo — name one: t cd <repo> $slot" >&2; return 1 }
   fi
+  local _repo_selector _repo_selector_rc
+  _repo_selector=$(_dev_resolve_repo "$repo"); _repo_selector_rc=$?
+  (( _repo_selector_rc == 2 )) && return 2
+  (( _repo_selector_rc == 0 )) && repo=$_repo_selector
   if [[ -n $repo && -z ${DEV_REPOS[$repo]:-} ]]; then
     echo "t cd: unknown repo '$repo' (known: ${(k)DEV_REPOS})" >&2; return 1
   fi
@@ -308,8 +317,13 @@ _t_open() {
         --cli|--app|--attached|-l|--local|--here|-r|--remote) ;;
         -*) picker_ok= ;;
         *)
-          if [[ -z $picker_repo && -n ${DEV_REPOS[$arg]:-} ]]; then
-            picker_repo=$arg
+          local picker_alias; picker_rc=1
+          if [[ $arg != <-> || -n ${DEV_REPOS[$arg]:-} ]]; then
+            picker_alias=$(_dev_resolve_repo "$arg"); picker_rc=$?
+          fi
+          (( picker_rc == 2 )) && return 2
+          if [[ -z $picker_repo && $picker_rc == 0 ]]; then
+            picker_repo=$picker_alias
           else
             picker_ok=
           fi ;;
@@ -332,6 +346,13 @@ _t_open() {
       [[ $arg == -* ]] || mode_pos+=("$arg")
     done
     local mode_repo=${mode_pos[1]:-} mode_slot=${mode_pos[2]:-}
+    local mode_alias mode_rc
+    mode_rc=1
+    if [[ -n ${DEV_REPOS[$mode_repo]:-} || ! ( $mode_repo == <-> || $mode_repo == new ) ]]; then
+      mode_alias=$(_dev_resolve_repo "$mode_repo"); mode_rc=$?
+    fi
+    (( mode_rc == 2 )) && return 2
+    (( mode_rc == 0 )) && mode_repo=$mode_alias
     # Foreground selectors and conversation IDs continue through CLI routing.
     if [[ ( -n ${DEV_REPOS[$mode_repo]:-} || -z $mode_repo || $mode_repo == <-> || $mode_repo == new ) &&
           ( -z $mode_slot || $mode_slot == <-> || $mode_slot == new ) ]]; then
@@ -409,13 +430,19 @@ _t_open() {
     _dev_remote_open "$host" "${rest[@]}"
     return
   fi
+  local _T_OPEN_REPO_ARGUMENT=1
   _t_dev "${a[@]}"
 }
 
 # Complete current-session picker. Return 2 when there are no candidates, or 3
 # for an explicit new-session request. Cancellation/failure must not start work.
 _t_open_picker() {
-  local repo="$1" remote="$2" app="$3" cli="$4" rows row selected scope="${DEV_REPOS[$1]:-}"
+  local repo="$1" remote="$2" app="$3" cli="$4" rows row selected scope
+  local _repo_selector _repo_selector_rc
+  _repo_selector=$(_dev_resolve_repo "$repo"); _repo_selector_rc=$?
+  (( _repo_selector_rc == 2 )) && return 2
+  (( _repo_selector_rc == 0 )) && repo=$_repo_selector
+  scope=${DEV_REPOS[$repo]:-}
   local -a fields candidates format_args
   local include_attached="$5" filtered
   local scope_rel wt_rel cwd_rel
@@ -554,6 +581,10 @@ _t_open_app() {
   (( ${#pos} <= 2 )) || { print -u2 -- 't open --app: expected a repo and optional slot number'; return 2; }
   repo=${pos[1]:-}; slot=${pos[2]:-}
   if [[ $repo == <-> && -z $slot ]]; then slot=$repo; repo=; fi
+  local _repo_selector _repo_selector_rc
+  _repo_selector=$(_dev_resolve_repo "$repo"); _repo_selector_rc=$?
+  (( _repo_selector_rc == 2 )) && return 2
+  (( _repo_selector_rc == 0 )) && repo=$_repo_selector
   [[ -z $repo ]] && inferred=1
   [[ -n $repo ]] || repo=$(_t_infer_repo "$slot")
   [[ -n $repo && -n ${DEV_REPOS[$repo]:-} && -d ${DEV_REPOS[$repo]} ]] || {
@@ -729,11 +760,11 @@ _t() {
         open) _values 'flag' --repo -h --help ;;
       esac
     elif [[ ${words[CURRENT-1]} == --repo ]]; then
-      _values 'repository' ${(k)DEV_REPOS}
+      _values 'repository' "${(@f)$(_dev_repo_selectors)}"
     elif [[ $action == list && ${words[CURRENT-1]} == --state ]]; then
       _values 'issue state' open closed all
     elif [[ $action == list || $action == start || $action == status || $action == open ]]; then
-      _values 'repository or issue number' ${(k)DEV_REPOS}
+      _values 'repository or issue number' "${(@f)$(_dev_repo_selectors)}"
     fi
     return
   fi
@@ -792,7 +823,7 @@ _t() {
     if (( CURRENT == first )); then
       _values 'workflow verb' list ls edit
     elif [[ ${words[CURRENT-1]} == --repo ]]; then
-      _values 'repo' ${(k)DEV_REPOS}
+      _values 'repo' "${(@f)$(_dev_repo_selectors)}"
     elif [[ ${words[first]} == (list|ls) ]]; then
       _values 'flag' --repo --json -h --help
     elif [[ ${words[first]} == edit ]]; then
@@ -831,7 +862,7 @@ _t() {
             local -a remote_flags=(--host -h --help)
             case $action in open) remote_flags+=(--new) ;; move) remote_flags+=(--from --session --all --detach --fg) ;; resume) remote_flags+=(--days) ;; esac
             _values 'flag' $remote_flags
-          elif (( CURRENT == first )); then _values 'repo' ${(k)DEV_REPOS}
+          elif (( CURRENT == first )); then _values 'repo' "${(@f)$(_dev_repo_selectors)}"
           else _message 'slot'; fi ;;
       esac ;;
 
@@ -846,7 +877,7 @@ _t() {
       esac ;;
 
     repo/list|repo/cd|repo/locate)
-      if (( CURRENT == first )) && [[ $action == cd || $action == locate ]]; then _values 'repo' ${(k)DEV_REPOS}
+      if (( CURRENT == first )) && [[ $action == cd || $action == locate ]]; then _values 'repo' "${(@f)$(_dev_repo_selectors)}"
       else _values 'flag' -h --help; fi ;;
     session/open-app)
       local -a app_flags=(--url --no-preview --plan --no-plan --reuse-window --dry-run -h --help)
@@ -860,8 +891,8 @@ _t() {
       elif [[ ${words[CURRENT-1]} == --thread ]]; then _message 'saved conversation ID'
       elif [[ ${words[CURRENT]} == -* ]]; then _values 'flag' $app_flags
       elif (( CURRENT == first )); then
-        if [[ $app_direction == push || $app_direction == pull ]]; then _values 'repo' ${(k)DEV_REPOS}
-        else _values 'direction or repo' push pull ${(k)DEV_REPOS}; fi
+        if [[ $app_direction == push || $app_direction == pull ]]; then _values 'repo' "${(@f)$(_dev_repo_selectors)}"
+        else _values 'direction or repo' push pull "${(@f)$(_dev_repo_selectors)}"; fi
       elif (( CURRENT == first + 1 )); then _message 'local slot number'
       else _values 'flag' $app_flags; fi ;;
     session/history)
@@ -871,16 +902,16 @@ _t() {
       elif [[ ${words[CURRENT]} == -* ]] || (( CURRENT > first + 1 )) \
            || { (( CURRENT == first + 1 )) && [[ ${words[first]} == <-> ]]; }; then
         _values 'flag' "${history_flags[@]}"
-      elif (( CURRENT == first )); then _values 'repo or slot' ${(k)DEV_REPOS} 1 2 3 4
+      elif (( CURRENT == first )); then _values 'repo or slot' "${(@f)$(_dev_repo_selectors)}" 1 2 3 4
       else _message 'local slot number'; fi ;;
     session/restart)
       if [[ ${words[CURRENT]} == -* ]]; then _values 'flag' --dry-run -h --help
-      elif (( CURRENT == first )); then _values 'repo' ${(k)DEV_REPOS}
+      elif (( CURRENT == first )); then _values 'repo' "${(@f)$(_dev_repo_selectors)}"
       elif (( CURRENT == first + 1 )); then _message 'local slot number'
       else _values 'flag' --dry-run -h --help; fi ;;
     session/goal)
       if [[ ${words[CURRENT]} == -* ]]; then _values 'flag' --json -h --help
-      elif (( CURRENT == first )); then _values 'repo' ${(k)DEV_REPOS}
+      elif (( CURRENT == first )); then _values 'repo' "${(@f)$(_dev_repo_selectors)}"
       elif (( CURRENT == first + 1 )); then _message 'local slot number'
       elif (( CURRENT == first + 2 )); then _message 'new objective (quote as one argument)'
       else _values 'flag' --json -h --help; fi ;;
@@ -911,7 +942,7 @@ _t() {
           resume) flags+=(-f --fg --app --cli -a --all -l --live -r --remote --days --host) ;;
         esac
         _values 'flag' "${flags[@]}"
-      elif (( CURRENT == first )); then _values 'repo' ${(k)DEV_REPOS}
+      elif (( CURRENT == first )); then _values 'repo' "${(@f)$(_dev_repo_selectors)}"
       else _values 'slot' 1 2 3 4; fi ;;
     hosts/run)
       (( CURRENT == first )) && _values 'host' ${(k)REMOTE_HOSTS} || _normal ;;
@@ -931,7 +962,7 @@ _t() {
     hosts/list)
       _values 'flag' --json -h --help ;;
     session/list)
-      if (( CURRENT == first )) && [[ ${words[CURRENT]} != -* ]]; then _values 'repo' ${(k)DEV_REPOS}
+      if (( CURRENT == first )) && [[ ${words[CURRENT]} != -* ]]; then _values 'repo' "${(@f)$(_dev_repo_selectors)}"
       else _values 'flag' -r --remote -a --all -h --help; fi ;;
     session/push)
       _values 'flag' -p --pick -a --all -h --help ;;
@@ -941,7 +972,7 @@ _t() {
       if [[ ${words[CURRENT]} == -* ]]; then _values 'flag' --hosts --no-hosts --instructions --no-instructions --dry-run -h --help
       else _files -/; fi ;;   # scan-dir arguments
     config/show|config/edit|config/--show|config/--edit)
-      if [[ ${words[CURRENT-1]} == --repo ]]; then _values 'repo' ${(k)DEV_REPOS}
+      if [[ ${words[CURRENT-1]} == --repo ]]; then _values 'repo' "${(@f)$(_dev_repo_selectors)}"
       else _values 'flag' -h --help; fi ;;
     config/*)
       _values 'flag' -h --help ;;
@@ -962,7 +993,7 @@ _t() {
       _values 'flag' -h --help ;;
     profile/apply)
       if [[ ${words[CURRENT]} == -* ]]; then _values 'flag' -h --help
-      else _values 'repo' ${(k)DEV_REPOS}; fi ;;
+      else _values 'repo' "${(@f)$(_dev_repo_selectors)}"; fi ;;
     agent/login)
       if [[ ${words[CURRENT]} == -* ]]; then _values 'flag' --ignore --within-hours --force --headless -y --yes --dry-run --status -h --help
       else _values 'agent' claude codex cursor; fi ;;

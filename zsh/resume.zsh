@@ -144,6 +144,10 @@ _t_resume() {
     repo=$(_t_infer_repo) || all_mode=1
   fi
 
+  local _repo_selector _repo_selector_rc
+  _repo_selector=$(_dev_resolve_repo "$repo"); _repo_selector_rc=$?
+  (( _repo_selector_rc == 2 )) && return 2
+  (( _repo_selector_rc == 0 )) && repo=$_repo_selector
   # The scan targets: one named/inferred repo, or (all-repos mode) every
   # worktree-enabled repo deduped by canonical dir — `dot` and `dotfiles` key one
   # dir, so it is scanned once under its canonical alias (_dev_repo_of_dir's
@@ -2354,6 +2358,10 @@ _t_pop() {
       slot=$repo
       repo=$(_t_infer_repo "$slot") || { echo "Not inside a DEV_REPOS dir — name the repo (t session pop <repo> $slot)."; return 1; }
     fi
+  local _repo_selector _repo_selector_rc
+  _repo_selector=$(_dev_resolve_repo "$repo"); _repo_selector_rc=$?
+  (( _repo_selector_rc == 2 )) && return 2
+  (( _repo_selector_rc == 0 )) && repo=$_repo_selector
     # Same-dir sibling aliases (see _dev_kill): a `dev-dot-2` answers `t pop
     # dotfiles 2` when `dot` and `dotfiles` both key ~/code/dotfiles. Without this
     # the lookup misses the local slot and _dev_session_remote_fallback can pop
@@ -2688,7 +2696,12 @@ _tbeam_land() {
 # Return the raw row so the exact ID, worktree, and agent survive presentation.
 # An empty inventory succeeds without a row; cancellation never starts a resume.
 _t_move_pick() {
-  local repo="$1" slot="$2" scope="${DEV_REPOS[$1]:-}" rows row display selected label
+  local repo="$1" slot="$2" scope rows row display selected label
+  local _repo_selector _repo_selector_rc
+  _repo_selector=$(_dev_resolve_repo "$repo"); _repo_selector_rc=$?
+  (( _repo_selector_rc == 2 )) && return 2
+  (( _repo_selector_rc == 0 )) && repo=$_repo_selector
+  scope=${DEV_REPOS[$repo]:-}
   local -a fields candidates format_args chosen
   rows=$(_dev_session_rows --details) || return 1
   for row in "${(@f)rows}"; do
@@ -2862,6 +2875,13 @@ _t_beam() {
   # an optional explicit host. (This is the SEND path; the OTHER way — pull a session
   # FROM a host onto this machine — is `--from <host>`, handled just above.)
   local repo_arg= slot_arg=
+  local move_alias move_rc
+  move_rc=1
+  if [[ ${pos[1]:-} != <-> || -n ${DEV_REPOS[${pos[1]}]:-} ]]; then
+    move_alias=$(_dev_resolve_repo "${pos[1]:-}"); move_rc=$?
+  fi
+  (( move_rc == 2 )) && return 2
+  (( move_rc == 0 )) && pos[1]=$move_alias
   # With an explicit destination, positionals are repository/slot targets.
   # Validate on the source host, after relay, so a typo never becomes a host
   # positional and silently falls back to an unrelated current-session picker.

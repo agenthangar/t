@@ -378,6 +378,13 @@ with `t share` as the context sharing command.
 Contributors can find the behavior, keyboard, and appearance rules in the
 [command and terminal contract](ui/README.md).
 
+Every existing-repository argument accepts its registered short alias or checkout
+directory name. For example, with `app=/path/to/application`, `t session cd app 2`
+and `t session cd application 2` enter the same worktree. Exact aliases take
+precedence; if several different checkouts have the same directory name, use an
+explicit alias. Names resolve on the selected host for remote opens and resumes.
+New aliases, paths, search text and delegated commands keep their literal meaning.
+
 The older spellings still work; `t help aliases` lists them. Bare `t config`
 continues to open its interactive menu.
 
@@ -736,7 +743,7 @@ t issue open                         # select issues to open interactively
 t issue open https://github.com/owner/repo/issues/123
 ```
 
-Every verb accepts a registered repository alias or GitHub `owner/repo`, either
+Every verb accepts a registered repository alias, checkout directory name, or GitHub `owner/repo`, either
 positionally or with `--repo`. `list` shows the current checkout's issues, or
 issues from all registered GitHub repositories when run outside a checkout;
 `-a`/`--all` widens the list from inside a checkout. Its `REPO`, `ISSUE`,
@@ -894,7 +901,7 @@ Set `T_AGENT_INSTRUCTIONS` to use another template file. `t repo clone` and `t c
 offer to seed `AGENTS.md` from the profile when run interactively; use
 `--instructions` to apply it in a script or `--no-instructions` to skip the offer.
 Noninteractive runs skip seeding unless you explicitly pass `--instructions`.
-You can later run `t profile apply <repo>` for a registered alias. t updates
+You can later run `t profile apply <repo>` for a registered alias or checkout directory name. t updates
 only its marked block, preserves the rest of `AGENTS.md`, and refuses malformed
 markers or a symlink. Review the resulting diff and commit it when ready; t never
 commits or pushes these instructions for you.

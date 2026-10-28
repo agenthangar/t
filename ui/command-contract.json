@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "description": "Development-only public command appearance and interaction inventory; ls/list aliases inherit canonical routes in bin/t COMMAND_GROUPS, including config workflow and root list/ls; the repos family is removed.",
+  "description": "Development-only public command appearance and interaction inventory; ls/list aliases inherit canonical routes in bin/t COMMAND_GROUPS, including config workflow and root list/ls; the repos family is removed. Existing-repository selectors accept registered aliases or unambiguous checkout directory names; exact aliases retain precedence and remote open/resume resolve on the selected host.",
   "patterns": {
     "list": "Direct read-only aligned rows, scope, and empty state; never launches a picker.",
     "detail": "Read-only labeled values; no work starts or prompt appears.",
@@ -3897,5 +3897,40 @@
       "notes": "Interactive startup optionally displays cached repository-tool advisories and schedules detached refresh when T_VULNERABILITY_CHECK=1; nonterminal bare t stays side-effect free."
     }
   },
-  "progress_contract": "ui/progress-contract.json"
+  "progress_contract": "ui/progress-contract.json",
+  "repository_selectors": {
+    "remote open": "target host shell worker",
+    "remote move": "source host shell worker or local source scope",
+    "remote resume": "target host shell worker",
+    "issue list": "libexec/t_issue.py repository",
+    "issue status": "libexec/t_issue.py repository",
+    "issue start": "libexec/t_issue.py repository",
+    "issue open": "libexec/t_issue.py repository",
+    "session open": "_t_open/_t_dev",
+    "session list": "_ls_scope",
+    "session close": "_dev_kill",
+    "session restart": "_slot_select",
+    "session pop": "_t_pop",
+    "session resume": "_t_resume",
+    "session history": "HistoryCommand.scope",
+    "session cd": "_t_cd",
+    "session move": "_t_beam",
+    "session read": "cmd_read",
+    "session view-plan": "_t_plan",
+    "session paste": "_t_paste",
+    "session open-app": "_slot_select",
+    "session goal": "cmd_session_goal",
+    "repo cd": "_t_repo_cd",
+    "repo locate": "cmd_repo",
+    "config open": "cmd_config workflow_repo compatibility",
+    "config show": "cmd_config workflow_repo compatibility",
+    "config edit": "cmd_config workflow_repo compatibility",
+    "config onboard": "cmd_config workflow_repo compatibility",
+    "config workflow list": "cmd_config workflow_repo",
+    "config workflow edit": "cmd_config workflow_repo",
+    "profile init": "cmd_instructions",
+    "profile edit": "cmd_instructions",
+    "profile show": "cmd_instructions",
+    "profile apply": "cmd_instructions"
+  }
 }

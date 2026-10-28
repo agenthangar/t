@@ -6,8 +6,12 @@ truth for classification and contract tests. Compatibility aliases inherit the
 canonical command's entry. `ls` and `list` are interchangeable in every listing
 family (including `config workflow`); root `t list` aliases `t ls`. Resolve only
 command words, preserving option values, repository names, and delegated commands.
-The old `t repos` family is removed; use `t repo` verbs. Read this guide and the inventory before adding or
-changing a command; update both when its behavior changes.
+The old `t repos` family is removed; use `t repo` verbs. Existing repository selectors
+accept registered aliases and unambiguous checkout directory names, with exact
+aliases taking precedence. Ambiguous names fail before selection or mutation.
+Remote open/resume selectors resolve against the selected host’s registrations.
+Repository creation names, paths and delegated payloads remain literal. Read this
+guide and the inventory before adding or changing a command; update both when its behavior changes.
 
 The visual baseline is the Homebrew v0.4.2 release (`40aaea8`): cyan section
 headings and current values, green primary/add actions, amber warnings/removal,
