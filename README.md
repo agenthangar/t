@@ -865,6 +865,14 @@ and customize each stage. Planning and implementation effort default to complexi
 choices; review defaults to one supported effort level below planning. Repository
 settings include **Agent workflow** for a complete override or **Inherit global workflow**.
 These choices stay pending until **Save changes**; cancellation discards them.
+The implementation stage also asks agents to inherit the parent's current speed
+(including Fast or Ultrafast), independently of model and reasoning effort, and
+recheck it at delegation or a supported subsequent-turn boundary. This is agent
+policy: actual selection and inheritance depend on the runtime's exposed controls
+or documented behavior. [Codex documents that subagents follow the root session's
+service-tier preference](https://learn.chatgpt.com/docs/agent-configuration/subagents#custom-agent-file-schema).
+Agents must disclose unsupported or unverifiable speed;
+the policy does not promise an immediate change during an active turn.
 
 Use `t config workflow edit` for the global workflow's JSON terminal editor,
 or `t config workflow edit --repo api` for a registered repository override.
@@ -893,6 +901,8 @@ worktrees. These agent instructions apply in terminal and desktop sessions; t
 does not switch models or enforce their execution. Task instructions and
 repository rules remain authoritative. Reinstalling refreshes saved workflows
 without activating the defaults for other accounts.
+Existing sessions must reload the updated instructions, or start a new session,
+before relying on a changed workflow policy.
 
 For preferred agent instructions, run `t profile init` to create an editable
 profile at `${XDG_CONFIG_HOME:-~/.config}/t/instructions.md`, then
