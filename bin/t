@@ -6199,7 +6199,7 @@ _AGENT_PARITY = [
     ("t agent install (login · update · reinstall)", "✓", "✓", "✓"),
     ("dev slots: t session open / list / close / read / paste", "✓", "✓ t session open --codex · DEV_AGENT", "✗ no slot — t cursor list"),
     ("t session push / pop", "✓", "✓", "✗ no slot"),
-    ("t session resume (dead slots)", "✓", "✓ (its sqlite thread index)", "→ t cursor resume"),
+    ("t session resume (saved conversations)", "✓", "✓ (rollouts and thread index)", "→ t cursor resume"),
     ("t session move / --from", "✓", "✓ (rollout + .origin)", "→ t cursor send [id] --host / --from"),
     ("t session open-app (desktop + browser preview)", "✗ Codex conversations only", "✓ local macOS slot → same thread", "✗"),
     ("csync (iCloud union of transcripts)", "✓ projects + plans", "✓ codex-sessions", "✓ cursor-chats"),
@@ -10792,7 +10792,8 @@ REMOTE SESSIONS
     sp = sub.add_parser("resume", help="revive a dead slot's saved conversation",
         description="Revive a DEAD dev slot's conversation (`t session open` on a dead slot "
             "deliberately starts fresh — this brings the chat back). Offers EVERY conversation "
-            "saved in the slot's own per-session worktree (one global newest-first list by "
+            "associated with the repository across registered hosts, including swept and renamed "
+            "workspaces and the canonical checkout (one global newest-first list by "
             "last user turn — never grouped by repo; unknown turn times last; conversationless stubs "
             "skipped), rebuilding a reaped worktree from its branch first, then resumes the pick "
             "in a fresh dev slot and attaches. Names default to "
@@ -10818,9 +10819,10 @@ REMOTE SESSIONS
             "only that same local owner can be handed off. Other owners are refused. "
             "A conversation is live by its ID too: one resumed into ANOTHER slot (or run as "
             "a foreground session) is shown as a row pointing at that owner — never resumed "
-            "a second time. --host H sends locally discovered saved history to H. "
+            "a second time. Registered hosts refresh by repository identity on every scan; "
+            "only a selected remote transcript is downloaded. --host H sends the selected saved history to H. "
             "Live selections on another host are refused before any batch action; use remote move. "
-            "Use remote resume --host H to discover saved history on H instead. "
+            "Use remote resume --host H to run the picker on H. "
             "Worktree-per-session repos only (a shared tree's transcripts are "
             "ambiguous per-slot — use `t session push -p` there). Agents: a claude conversation "
             "and a codex thread are offered alike — every row carries its agent's icon and name "
@@ -10841,8 +10843,7 @@ REMOTE SESSIONS
     sp.add_argument("-l", "--live", action="store_true",
         help="start with all sessions shown; Ctrl-F restores the inactive-only view (live rows attach on pick)")
     sp.add_argument("-r", "--remote", action="store_true",
-        help="pull the latest transcripts from every $REMOTE_HOSTS host first (direct rsync; "
-             "csync is periodic and needs a shell on the far side), then scan as usual")
+        help="compatibility option: registered hosts are included by default; fetch only selected transcripts")
     sp.add_argument("--days", metavar="N", default="30",
         help="recency window for conversations (default 30; 'all' for everything)")
     sp.add_argument("--host", metavar="H",
@@ -11465,6 +11466,29 @@ def _bare_entry():
 
 def main(argv):
     argv = _hosts_argv(argv)
+    if argv and argv[0] in ('__resume-candidates', '__resume-saved'):
+        helper = runpy.run_path(os.path.join(_t_source_root(), 'libexec', 't_history.py'))
+        history = helper['HistoryCommand'](Config(), globals())
+        try:
+            if argv[0] == '__resume-candidates':
+                for row in history.resume_candidates(argv[1:]):
+                    print(row)
+            else:
+                if len(argv) != 5 or argv[1] not in history.cfg.repos or argv[4] not in ('launch', 'prepare'):
+                    raise helper['HistoryError']('invalid saved conversation selection')
+                alias, sid, agent = argv[1:4]
+                rows = [row for row in history.records(alias) if row['sid'] == sid and row['agent'] == agent]
+                if len(rows) != 1:
+                    raise helper['HistoryError']('saved conversation changed; select it again')
+                print(history.resume(alias, rows[0], detached=True, prepare_only=argv[4] == 'prepare'))
+            return 0
+        except helper['HistoryCancelled']:
+            return 130
+        except helper['HistoryError'] as error:
+            print('t resume: ' + str(error), file=sys.stderr)
+            return 1
+        finally:
+            history.store.close()
     if argv == ["__share"]:
         helper = runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_share.py"))
         return helper["internal"]()

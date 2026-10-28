@@ -297,39 +297,29 @@ def test_partial_resume_batch_skips_saved_failure_and_attaches_live_mark(zsh, tm
     assert cwd.exists()
 
 
-@pytest.mark.parametrize('failure', ['claude', 'codex', 'hostname', 'cancel'])
-def test_remote_transcript_pull_continues_and_caches_only_success(zsh, failure):
+@pytest.mark.parametrize('cancel', [False, True])
+@pytest.mark.parametrize('flag', ['', '--remote'])
+def test_remote_saved_metadata_refresh_is_default_and_cancellable(zsh, cancel, flag):
     saved_rollout(zsh)
     result = zsh(r'''
       REMOTE_HOSTS[a]=a; REMOTE_HOSTS[b]=b
       _dev_rows_all() { :; }
       _dev_ensure_session_cwd() { print -r -- "$1"; }
       _dev_resume_session() { :; }
-      _t_resume_rsync() {
-        print -r -- "$*" >> "$HOME/pulls"
-        if [[ $* == *a:* ]]; then
-          [[ $FAILURE == claude && $* == *.claude/* ]] && return 255
-          [[ $FAILURE == codex && $* == *.codex/* ]] && return 12
-          [[ $FAILURE == cancel ]] && return 130
-        fi
+      _t_resume_history_candidates() {
+        print -u2 METADATA_REFRESH
+        [[ $CANCEL == 1 ]] && return 130
+        print -u2 't history: a unavailable; retained cached history'
         return 0
       }
-      ssh() { [[ $FAILURE == hostname && $* == *' a '* ]] && return 255; print verified; }
+      _t_resume_rsync() { print -u2 UNEXPECTED_BULK_PULL; return 99; }
       setopt errexit
-      _t_resume api 3 --remote --days all
-    ''', FAILURE=failure)
-    pulls = (zsh.home / 'pulls').read_text()
-    if failure == 'cancel':
-        assert result.returncode == 130
-        assert 'b:' not in pulls
-    else:
-        assert result.returncode == 0, result.stdout + result.stderr
-        assert 'b:' in pulls
-        assert not (zsh.home / '.cache/t/hostnames/a').exists()
-        assert (zsh.home / '.cache/t/hostnames/b').read_text() == 'verified\n'
-        if failure != 'hostname':
-            assert 'a transcript fetch failed' in result.stderr
-            assert "pulled a's latest transcripts" not in result.stderr
+      _t_resume api 3 --days all ''' + flag, CANCEL=str(int(cancel)))
+    assert result.returncode == (130 if cancel else 0), result.stdout + result.stderr
+    assert 'METADATA_REFRESH' in result.stderr
+    assert 'UNEXPECTED_BULK_PULL' not in result.stderr
+    if not cancel:
+        assert 'a unavailable; retained cached history' in result.stderr
 
 
 @pytest.mark.parametrize('local_failure', [False, True])

@@ -94,6 +94,8 @@ def resume_turns(source, home, codex_home, owners=''):
     result = []
     for row, detail in zip(rows, details):
         turn = detail.split('\t')[-1]
+        if row[7] == 'history' and len(row) > 11 and turn_epoch(row[11]) != float('-inf'):
+            turn = row[11]
         when = format_last_turn(turn)
         row[4] = 'Last: ' + when if row[6] == '-' else row[4] + ' · Last: ' + when
         result.append('\t'.join(row[:10] + [turn]))

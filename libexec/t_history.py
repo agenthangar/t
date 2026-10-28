@@ -23,7 +23,7 @@ import uuid
 _spinner = runpy.run_path(str(Path(__file__).with_name("t_progress.py")))["spinner"]
 
 VERSION = 1
-PARSER_VERSION = 4
+PARSER_VERSION = 6
 _DISPLAY = runpy.run_path(str(Path(__file__).with_name('t_session_details.py')))
 display_width = _DISPLAY['display_width']
 clip_columns = _DISPLAY['clip_columns']
@@ -86,6 +86,8 @@ def validate(record):
         raise HistoryError('invalid conversation identity')
     if not isinstance(record.get('updated', 0), (int, float)) or not math.isfinite(record.get('updated', 0)) or not 0 <= record.get('updated', 0) <= 253402300799:
         raise HistoryError('invalid history timestamp')
+    if 'last_turn' in record:
+        record['last_turn'] = _DISPLAY['_turn_timestamp'](record['last_turn'])
     for field in ('model', 'model_source', 'summary', 'summary_source', 'interface'):
         if field in record and not isinstance(record[field], str):
             raise HistoryError('invalid recorded display metadata')
@@ -174,15 +176,17 @@ class Store:
                 identity = key_for(value)
                 unique[identity] = {**unique.get(identity, {}), **value} if field == 'sources' else value
             merged[field] = list(unique.values())
+        merged['last_turn'] = max(old.get('last_turn', '-'), record.get('last_turn', '-'))
         merged['updated'] = max(old.get('updated', 0), record.get('updated', 0))
         self.db.execute('insert or replace into conversations values (?,?)', (key, json.dumps(merged)))
         self.db.commit()
         return merged
 
-    def scan(self, path, agent):
+    def scan(self, path, agent, *, metadata_only=False):
         info = path.stat()
         stamp = json.dumps([info.st_ino, info.st_size, info.st_mtime_ns])
-        old = self.db.execute('select stamp,record from scans where path=?', (str(path),)).fetchone()
+        key = str(path) + ('#resume' if metadata_only else '')
+        old = self.db.execute('select stamp,record from scans where path=?', (key,)).fetchone()
         cached = json.loads(old[1]) if old else None
         if old and old[0] == stamp and cached.get('_scan', {}).get('parser') == PARSER_VERSION:
             return cached
@@ -191,8 +195,9 @@ class Store:
         previous = cached if cached and cached.get('_scan', {}).get('parser') == PARSER_VERSION else None
         if previous and previous.get('_scan', {}).get('inode') != info.st_ino:
             previous = None
-        value = transcript(path, agent, previous)
-        self.db.execute('insert or replace into scans values (?,?,?)', (str(path), stamp, json.dumps(value)))
+        value = transcript(path, agent, previous, metadata_only=True) if metadata_only else transcript(path, agent, previous)
+        value['last_turn'] = _DISPLAY['transcript_last_turn'](path, agent)
+        self.db.execute('insert or replace into scans values (?,?,?)', (key, stamp, json.dumps(value)))
         self.db.commit()
         return value
 
@@ -334,7 +339,7 @@ def tool_pr_command(command):
     return out
 
 
-def transcript(path, agent, previous=None):
+def transcript(path, agent, previous=None, *, metadata_only=False):
     record = dict(agent=agent, sid='', title='', summary='', summary_source='unknown', model='-', model_source='unknown', interface='unknown', updated=0, associations=[], prs=[], mentions=[])
     state = previous.get('_scan', {}) if previous else {}
     if previous and state.get('offset', 0) <= path.stat().st_size:
@@ -374,7 +379,10 @@ def transcript(path, agent, previous=None):
                     git = payload.get('git') or {}
                     if isinstance(git, dict):
                         branch, commit = git.get('branch', ''), git.get('commit_hash', '')
-                        record['recorded_repo'] = slug(git.get('repository_url', ''))
+                        repository = slug(git.get('repository_url', ''))
+                        if record.get('recorded_repo') and repository and record['recorded_repo'] != repository:
+                            raise HistoryError('transcript contains conflicting repository identities')
+                        record['recorded_repo'] = repository or record.get('recorded_repo')
                 elif agent == 'claude':
                     incoming_sid = row.get('sessionId') or record['sid']
                     if record['sid'] and incoming_sid != record['sid']:
@@ -401,6 +409,8 @@ def transcript(path, agent, previous=None):
                     record['title'] = clean(text)[:200]
                 if role == 'user' and text.strip() and not text.lstrip().startswith(('<', '# AGENTS.md instructions')):
                     record.update(summary=record['title'] or clean(text), summary_source='transcript', summary_updated=record['updated'])
+                if metadata_only:
+                    continue
                 if role in ('user', 'assistant'):
                     record['mentions'].extend(pr_refs(text))
                 # Structured tool invocations establish association; conversational
@@ -480,6 +490,15 @@ def page_rows(rows, query='', limit=50, page=1):
 def association_matches(association, cfg, alias):
     repo, slot = cfg.repo_of_dir(association.get('workspace', ''))
     return (slot or '') if repo and os.path.realpath(cfg.repos[repo]) == os.path.realpath(cfg.repos[alias]) else None
+
+
+def recorded_slot(workspace):
+    """A historical path can identify a slot, but never a current destination."""
+    path = Path(workspace)
+    match = re.fullmatch(re.escape(path.parent.name) + r'-([1-9][0-9]*)', path.name)
+    if match:
+        return match[1]
+    return path.name if re.fullmatch(r'[1-9][0-9]*', path.name) else ''
 
 
 def history_display(row, alias=''):
@@ -630,6 +649,7 @@ class HistoryCommand:
         self.host = socket.gethostname().split('.')[0]
         self.reservation_token = uuid.uuid4().hex
         self.reservation = None
+        self.discovery_identities = {}
 
     def shell(self, snippet):
         return ['zsh', '-lic', 'setopt no_monitor no_notify; source ' + shlex.quote(str(Path(self.root) / 't.plugin.zsh')) + '; ' + snippet]
@@ -655,7 +675,7 @@ class HistoryCommand:
     def ingest(self, value, alias, source=None, host='local'):
         value = dict(value)
         value.pop('_scan', None)
-        identity = self.identity(alias)
+        identity = self.discovery_identities.get(alias) or self.identity(alias)
         if value.get('recorded_repo') and value['recorded_repo'] != identity:
             return
         if not identity.startswith('local:'):
@@ -665,12 +685,14 @@ class HistoryCommand:
             association = dict(original)
             slot = association_matches(association, self.cfg, alias)
             if slot is None:
-                continue
+                if value.get('agent') != 'codex' or value.get('recorded_repo') != identity:
+                    continue
+                slot = recorded_slot(association.get('workspace', ''))
             association.update(slot=slot, host=host)
             associations.append(association)
         if not associations:
             return
-        value.update(repo=self.identity(alias), associations=associations)
+        value.update(repo=identity, associations=associations)
         if source:
             value['sources'] = [dict(host=host, path=str(source), available=Path(source).is_file(), updated=value.get('updated') or Path(source).stat().st_mtime, size=Path(source).stat().st_size)]
             value['updated'] = max(value.get('updated', 0), Path(source).stat().st_mtime)
@@ -679,7 +701,9 @@ class HistoryCommand:
         except HistoryError:
             pass
 
-    def discover(self, alias):
+    def discover(self, alias, *, metadata_only=False):
+        identity = self.identity(alias)
+        self.discovery_identities[alias] = identity
         home = Path.home()
         codex = Path(os.environ.get('CODEX_HOME') or home / '.codex')
         for directory, pattern, agent in [(home / '.claude/projects', '*/*.jsonl', 'claude'),
@@ -694,13 +718,18 @@ class HistoryCommand:
                     try:
                         with path.open() as stream:
                             first = json.loads(stream.readline())
-                        cwd = first.get('payload', {}).get('cwd', '')
-                        if association_matches(dict(workspace=cwd), self.cfg, alias) is None:
+                        payload = first.get('payload', {})
+                        if payload.get('thread_source') == 'subagent' or isinstance(payload.get('source'), dict) and 'subagent' in payload['source']:
+                            continue
+                        cwd = payload.get('cwd', '')
+                        git = first.get('payload', {}).get('git') or {}
+                        recorded_repo = slug(git.get('repository_url', '')) if isinstance(git, dict) else None
+                        if association_matches(dict(workspace=cwd), self.cfg, alias) is None and recorded_repo != identity:
                             continue
                     except (OSError, ValueError, AttributeError):
                         continue
                 try:
-                    value = self.store.scan(path, agent)
+                    value = self.store.scan(path, agent, metadata_only=True) if metadata_only else self.store.scan(path, agent)
                 except (HistoryError, OSError):
                     continue
                 if value.get('sid'):
@@ -753,7 +782,7 @@ class HistoryCommand:
                 print(f't history: {host} unavailable; retained cached history', file=sys.stderr)
 
     def owners(self, all_hosts=False):
-        snippet = '_DEV_PS_AT=0; _DEV_PS_COMM=(); ' + ('_dev_rows_all' if all_hosts else "_dev_session_rows --details | awk 'NF {print \"local\\t\" $0}'")
+        snippet = '_DEV_PS_AT=0; _DEV_PS_COMM=(); ' + ('_dev_rows_all --best-effort' if all_hosts else "_dev_session_rows --details | awk 'NF {print \"local\\t\" $0}'")
         text = run(self.shell(snippet))
         return self.api['_parse_rows'](text, host_prefixed=True)
 
@@ -1157,11 +1186,13 @@ class HistoryCommand:
             self.publish_transcript(target, data, row)
         return target
 
-    def resume(self, alias, row):
+    def resume(self, alias, row, *, detached=False, prepare_only=False):
         owners = self.owners(True)
         matches = [o for o in owners if o['sid'] == row['sid'] and o['agent'] == row['agent']]
         if len(matches) > 1:
             raise HistoryError('conversation has multiple reported owners; resolve ownership before resuming')
+        if matches and detached:
+            raise HistoryError('conversation became live; select its current owner again')
         if matches:
             return self.attach(matches[0])
         source = self.source(row)
@@ -1194,14 +1225,36 @@ class HistoryCommand:
                     self.install_transcript(row, source, destination)
                     # Python holds the same POSIX cwd/SID locks as the zsh wrapper;
                     # use the claimed helper, never recursively acquire those locks.
-                    snippet = 'T_HISTORY_TOKEN=' + shlex.quote(self.reservation_token) + ' _dev_resume_session_claimed ' + shlex.join([f'dev-{alias}-{slot}', destination, row['sid'], row['agent'], 'history'])
-                    run(self.shell(snippet))
+                    snippet = '_T_RESUME_ALLOW_UNAVAILABLE=1 T_HISTORY_TOKEN=' + shlex.quote(self.reservation_token) + ' _dev_resume_session_claimed ' + shlex.join([f'dev-{alias}-{slot}', destination, row['sid'], row['agent'], 'history'])
+                    if not prepare_only:
+                        run(self.shell(snippet))
                 self.store.merge({**row, 'associations': [dict(workspace=destination, host='local', slot=slot, commit=revision, branch=run(['git', '-C', destination, 'branch', '--show-current']).strip(), generation=generation(destination), evidence='resume', observed=time.time())]})
             finally:
                 if self.reservation:
                     self.reservation.unlink(missing_ok=True)
                     self.reservation = None
+        if prepare_only:
+            return f'dev-{alias}-{slot}\t{destination}'
+        if detached:
+            return f'dev-{alias}-{slot}'
         return self.attach(dict(host='local', slot=f'{alias}-{slot}', sid=row['sid'], agent=row['agent'], cwd=destination, state='active'))
+
+    def resume_candidates(self, aliases):
+        """Private adapter for the existing filtered multi-resume picker."""
+        for alias in aliases:
+            if alias not in self.cfg.repos:
+                raise HistoryError('unknown repository: ' + alias)
+            self.discover(alias, metadata_only=True)
+            self.refresh(alias)
+            for row in self.records(alias):
+                if not row.get('title') or not row.get('sources'):
+                    continue
+                association = max(row['associations'], key=lambda a: a.get('observed', 0))
+                source = max(row['sources'], key=lambda s: (s.get('updated', 0), s.get('size', 0)))
+                updated = int(row.get('updated', 0))
+                when = datetime.datetime.fromtimestamp(updated).strftime('%b %d %H:%M')
+                yield '\t'.join(map(str, [updated, alias, association.get('slot') or '-', row['sid'],
+                    association['workspace'], when, clean(row['title']), source.get('host') or '-', row['agent'], row.get('last_turn', '-')]))
 
     def execute(self, args):
         alias, slot = self.scope(args.target)
