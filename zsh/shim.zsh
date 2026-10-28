@@ -49,7 +49,7 @@ t() {
   elif [[ $verb == repo ]]; then
     shell_verb=
     case $action in
-      cd) shell_verb=repos_cd ;;
+      cd) shell_verb=repo_cd ;;
       create) shell_verb=new ;;
       clone) shell_verb=checkout ;;
       add) shell_verb=repo_add ;;
@@ -92,8 +92,7 @@ t() {
   case "$shell_verb" in
     open|pop|push|resume|find|cd|beam|remote|setup|config|host_config|repo_add|new|checkout|install|integrate)
       check_update=1 ;;
-    repos_cd) check_update=1 ;;
-    repos) [[ ${shell_args[1]} == cd ]] && check_update=1 ;;
+    repo_cd) check_update=1 ;;
   esac
   # Read-only shell-dispatched modes must display immediately, even when the
   # installed command has an available update. Bin-owned modes check there.
@@ -123,16 +122,8 @@ t() {
     push)   _t_push "${shell_args[@]}" ;;           # → sentinel handoff; claude() wrapper spawns post-exit
     find)   _t_find "${shell_args[@]}" ;;           # → rank/pick then cd + claude -r here
     cd)     _t_cd "${shell_args[@]}" ;;             # → cd THIS shell into a slot's worktree
-    repos)
-      if [[ ${shell_args[1]} == cd ]]; then
-        _t_repos_cd "${shell_args[@]:1}"
-      elif [[ ${shell_args[1]} == add ]]; then
-        _t_install repos "$@"
-      else
-        command t "$@"
-      fi ;;
-    repos_cd) _t_repos_cd "${shell_args[@]}" ;;
-    repo_add) _t_install repos "$@" ;;
+    repo_cd) _t_repo_cd "${shell_args[@]}" ;;
+    repo_add) _t_install repo "$@" ;;
     remote) _t_remote "${shell_args[@]}" ;;
     beam)   _t_beam_xlate "${shell_args[@]}" ;;     # → guarded local/remote transfer
     # setup runs in the bin (it only edits ${T_LOCAL_RC}), but on success the
@@ -158,19 +149,19 @@ t() {
 
 # Enter a registered checkout, including aliases such as `t` that cannot be
 # generated as shell shortcuts because they name the command itself.
-_t_repos_cd() {
+_t_repo_cd() {
   emulate -L zsh
   if (( $# != 1 )); then
-    print -u2 -- 'usage: t repos cd <repo>'
+    print -u2 -- 'usage: t repo cd <repo>'
     return 2
   fi
   local repo=$1 dir=${DEV_REPOS[$1]-}
   if [[ -z $dir ]]; then
-    print -u2 -- "t repos cd: unknown repo '$repo' (known: ${(j:, :)${(ok)DEV_REPOS}})"
+    print -u2 -- "t repo cd: unknown repo '$repo' (known: ${(j:, :)${(ok)DEV_REPOS}})"
     return 1
   fi
   if [[ ! -d $dir ]]; then
-    print -u2 -- "t repos cd: checkout does not exist: $dir"
+    print -u2 -- "t repo cd: checkout does not exist: $dir"
     return 1
   fi
   builtin cd -- "$dir"
@@ -722,10 +713,11 @@ _t() {
     fi
     group=${words[3]} action=${words[4]} first=5
   fi
+  [[ $action == ls && $group == (session|repo|cursor|hosts|issue) ]] && action=list
   local -a actions
   if [[ $group == issue ]]; then
-    if (( CURRENT == 3 )); then
-      local -a issue_actions=(list status start open)
+    if (( CURRENT == first - 1 )); then
+      local -a issue_actions=(list ls status start open)
       _describe -t actions 'issue action' issue_actions
       return
     fi
@@ -772,11 +764,11 @@ _t() {
   fi
   case $group in
     remote) actions=(open move resume) ;;
-    session) actions=(open list close restart push pop resume history cd move read view-plan paste search open-app goal) ;;
-    repo) actions=(list cd locate create clone add) ;;
-    cursor) actions=(list resume send) ;;
+    session) actions=(open list ls close restart push pop resume history cd move read view-plan paste search open-app goal) ;;
+    repo) actions=(list ls cd locate create clone add) ;;
+    cursor) actions=(list ls resume send) ;;
     agentcore) actions=(invoke stop) ;;
-    hosts) actions=(list show add edit remove default run) ;;
+    hosts) actions=(list ls show add edit remove default run) ;;
     config) actions=(open show edit setup onboard workflow) ;;
     profile) actions=(init edit show apply) ;;
     policy) actions=(check show apply) ;;
@@ -797,26 +789,22 @@ _t() {
     return
   fi
   if [[ $group == config && $action == workflow ]]; then
-    if (( CURRENT == 4 )); then
-      _values 'workflow verb' list edit
+    if (( CURRENT == first )); then
+      _values 'workflow verb' list ls edit
     elif [[ ${words[CURRENT-1]} == --repo ]]; then
       _values 'repo' ${(k)DEV_REPOS}
-    elif [[ ${words[4]} == list ]]; then
+    elif [[ ${words[first]} == (list|ls) ]]; then
       _values 'flag' --repo --json -h --help
-    elif [[ ${words[4]} == edit ]]; then
+    elif [[ ${words[first]} == edit ]]; then
       _values 'flag' --repo -h --help
     fi
     return
   fi
   # Old spellings remain usable once typed, but are not offered at top level.
   case $group in
-    open|ls|kill|restart|push|pop|resume|history|cd|beam|read|plan|paste|find|app)
+    ls|list) action=list; group=session; (( first-- )) ;;
+    open|kill|restart|push|pop|resume|history|cd|beam|read|plan|paste|find|app)
       action=$group; group=session; first=3 ;;
-    repos)
-      group=repo; first=4
-      [[ $action == ls ]] && action=list
-      [[ $action == path ]] && action=locate
-      (( CURRENT == 3 )) && { _values 'action' ls cd path; return; } ;;
     new) group=repo; action=create; first=3 ;;
     checkout) group=repo; action=clone; first=3 ;;
     on) group=hosts; action=run; first=3 ;;

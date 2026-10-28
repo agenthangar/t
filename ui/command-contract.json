@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "description": "Development-only public command appearance and interaction inventory; aliases inherit canonical routes in bin/t COMMAND_GROUPS.",
+  "description": "Development-only public command appearance and interaction inventory; ls/list aliases inherit canonical routes in bin/t COMMAND_GROUPS, including config workflow and root list/ls; the repos family is removed.",
   "patterns": {
     "list": "Direct read-only aligned rows, scope, and empty state; never launches a picker.",
     "detail": "Read-only labeled values; no work starts or prompt appears.",
@@ -1571,7 +1571,7 @@
       "scope": "registered repository or checkout",
       "confirmation": "none",
       "tests": [
-        "tests/test_t.py::test_repos_lists_short_names_and_paths"
+        "tests/test_t.py::test_repo_lists_short_names_and_paths"
       ],
       "modes": {
         "default": {
@@ -1584,7 +1584,7 @@
           ],
           "read_only": true,
           "tests": [
-            "tests/test_t.py::test_repos_lists_short_names_and_paths",
+            "tests/test_t.py::test_repo_lists_short_names_and_paths",
             "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
           ]
         }

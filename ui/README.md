@@ -3,7 +3,10 @@
 Every public `t` command and conditional mode has an entry in
 [`command-contract.json`](command-contract.json). That inventory is the source of
 truth for classification and contract tests. Compatibility aliases inherit the
-canonical command's entry. Read this guide and the inventory before adding or
+canonical command's entry. `ls` and `list` are interchangeable in every listing
+family (including `config workflow`); root `t list` aliases `t ls`. Resolve only
+command words, preserving option values, repository names, and delegated commands.
+The old `t repos` family is removed; use `t repo` verbs. Read this guide and the inventory before adding or
 changing a command; update both when its behavior changes.
 
 The visual baseline is the Homebrew v0.4.2 release (`40aaea8`): cyan section

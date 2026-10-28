@@ -18,9 +18,9 @@ CONTRACT = ROOT / "ui" / "command-contract.json"
 # Existing single-word spellings remain available as compatibility shortcuts.
 # A new public command must enter a noun/verb family instead of growing this set.
 LEGACY_SHORTCUTS = frozenset({
-    "help", "open", "app", "ls", "kill", "restart", "push", "pop",
+    "help", "open", "app", "ls", "list", "kill", "restart", "push", "pop",
     "resume", "history", "cd", "beam", "read", "plan", "paste", "find", "on",
-    "repos", "setup", "new", "checkout", "instructions", "login",
+    "setup", "new", "checkout", "instructions", "login",
     "install", "integrate", "update", "permissions", "trust", "doctor",
 })
 # `t share` is the reviewed exception: sending is the root action, while
@@ -662,6 +662,27 @@ def check_picker_boundaries(*, root=ROOT):
     return errors
 
 
+def check_listing_aliases(module):
+    """Aliases resolve to a single read-only inventory route at command boundaries."""
+    errors = []
+    for path, route in module._command_routes():
+        if path[-1] != "list":
+            continue
+        alias = [*path[:-1], "ls"]
+        for payload in ([], ["--repo", "list"]):
+            if module._canonical_argv([*alias, *payload]) != [*route, *payload]:
+                errors.append(f"{' '.join(alias)} must inherit its canonical route and preserve payload")
+        for words in (list(path), alias):
+            if not module._command_readonly(words, terminal=True):
+                errors.append(f"{' '.join(words)} must remain read-only without prompts")
+    if module._canonical_argv(["list", "ls"]) != ["ls", "ls"]:
+        errors.append("root list must alias ls while preserving repository arguments")
+    top = _subparsers(module.build_parser())
+    if "repos" in top._name_parser_map or "repos" in module.IMPLEMENTED:
+        errors.append("removed repos family must not remain dispatchable")
+    return errors
+
+
 def main():
     loader = SourceFileLoader("t_cli_lint", str(ROOT / "bin/t"))
     spec = importlib.util.spec_from_loader(loader.name, loader)
@@ -669,6 +690,7 @@ def main():
     loader.exec_module(module)
     errors = check(module.build_parser(), module.COMMAND_GROUPS,
                    (ROOT / "AGENTS.md").read_text())
+    errors.extend(check_listing_aliases(module))
     errors.extend(check_issue_help(module._group_help("issue")))
     errors.extend(check_group_help(module._group_help, module.COMMAND_GROUPS))
     try:

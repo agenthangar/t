@@ -2132,38 +2132,38 @@ def test_ls_parser_accepts_optional_repo(t_mod):
     assert (a.repo, a.all) == (None, True)
 
 
-def test_repos_lists_short_names_and_paths(t_mod, capsys):
+def test_repo_lists_short_names_and_paths(t_mod, capsys):
     cfg = type("Cfg", (), {"repos": {"t": "/code/t", "api": "/code/my-api"}})()
-    assert t_mod.cmd_repos(cfg, t_mod.build_parser().parse_args(["repos", "ls"])) == 0
+    assert t_mod.cmd_repo(cfg, t_mod.build_parser().parse_args(["repo", "list"])) == 0
     assert capsys.readouterr().out.splitlines() == [
         "  REPO  CHECKOUT", "  api   /code/my-api", "  t     /code/t"]
-    assert t_mod.cmd_repos(cfg, t_mod.build_parser().parse_args(["repos", "path", "t"])) == 0
+    assert t_mod.cmd_repo(cfg, t_mod.build_parser().parse_args(["repo", "locate", "t"])) == 0
     assert capsys.readouterr().out == "/code/t\n"
-    assert t_mod.cmd_repos(cfg, t_mod.build_parser().parse_args(["repos", "path", "missing"])) == 1
+    assert t_mod.cmd_repo(cfg, t_mod.build_parser().parse_args(["repo", "locate", "missing"])) == 1
     assert "unknown repo" in capsys.readouterr().err
 
 
-def test_repos_group_help_and_command_usage(t_mod, capsys):
-    assert t_mod.main(["repos"]) == 0
+def test_repo_group_help_and_command_usage(t_mod, capsys):
+    assert t_mod.main(["repo"]) == 0
     help_text = capsys.readouterr().out
-    assert "usage: t repos [-h] <command> ..." in help_text
-    assert "ls" in help_text and "cd" in help_text and "path" in help_text
+    assert "t repo <verb>" in help_text
+    assert "list" in help_text and "cd" in help_text and "locate" in help_text
 
     parser = t_mod.build_parser()
     with pytest.raises(SystemExit) as exc:
-        parser.parse_args(["repos", "path"])
+        parser.parse_args(["repo", "locate"])
     assert exc.value.code == 2
     assert "repo" in capsys.readouterr().err
 
     with pytest.raises(SystemExit) as exc:
-        parser.parse_args(["repos", "ls", "extra"])
+        parser.parse_args(["repo", "list", "extra"])
     assert exc.value.code == 2
     assert "unrecognized arguments: extra" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("verb", [
     "open", "app", "ls", "kill", "restart", "push", "pop", "resume", "cd",
-    "beam", "read", "plan", "paste", "find", "on", "repos", "cursor",
+    "beam", "read", "plan", "paste", "find", "on", "repo", "cursor",
     "config", "setup", "new", "checkout", "instructions", "install",
     "integrate", "update", "permissions", "trust", "doctor",
 ])
@@ -2179,10 +2179,10 @@ def test_public_help_skips_config_and_handlers(t_mod, monkeypatch, capsys, verb,
 @pytest.mark.parametrize("argv,usage", [
     (["help"], "USAGE\n  t <noun> <verb>"),
     (["help", "open"], "usage: t open "),
-    (["help", "repos"], "usage: t repos "),
-    (["help", "repos", "path"], "usage: t repos path "),
+    (["help", "repo"], "USAGE\n  t repo "),
+    (["help", "repo", "locate"], "usage: t repo locate "),
     (["help", "cursor", "resume"], "usage: t cursor resume "),
-    (["repos", "cd", "t", "--help"], "usage: t repos cd "),
+    (["repo", "cd", "t", "--help"], "usage: t repo cd "),
     (["cursor", "resume", "abc", "-h"], "usage: t cursor resume "),
     (["on", "--help"], "usage: t on "),
     (["cursor"], "USAGE\n  t cursor <verb>"),
@@ -2216,8 +2216,8 @@ def test_on_forwards_remote_help_argument(t_mod, monkeypatch):
 def test_double_dash_preserves_literal_help_argument(t_mod, monkeypatch):
     seen = []
     monkeypatch.setattr(t_mod, "Config", lambda: object())
-    monkeypatch.setitem(t_mod.IMPLEMENTED, "repos", lambda cfg, args: seen.append(args.repo) or 0)
-    assert t_mod.main(["repos", "path", "--", "--help"]) == 0
+    monkeypatch.setitem(t_mod.IMPLEMENTED, "repo", lambda cfg, args: seen.append(args.repo) or 0)
+    assert t_mod.main(["repo", "locate", "--", "--help"]) == 0
     assert seen == ["--help"]
 
 

@@ -562,6 +562,11 @@ Slow terminal session/host scans and saved-history discovery show a small spinne
 after a short delay. It clears before results, pickers, or errors; redirected,
 JSON, MCP, and remote scanner output stays free of progress animation.
 
+`ls` and `list` are interchangeable for `session`, `repo`, `cursor`, `hosts`,
+`issue`, and `config workflow`. Root `t ls` and `t list` both list sessions.
+The old `t repos` family has been removed; use `t repo list`, `t repo locate`,
+`t repo cd`, and `t repo add`.
+
 ### Existing spellings
 
 Older scripts and habits continue to work. Use `t help aliases` for the full list;
@@ -571,7 +576,7 @@ these are the common migrations:
 | --- | --- |
 | `t open`, `t ls`, `t kill`, `t beam` | `t session open`, `t session list`, `t session close`, `t session move` |
 | `t push`, `t pop`, `t find`, `t plan`, `t app` | `t session push`, `t session pop`, `t session search`, `t session view-plan`, `t session open-app` |
-| `t repos ls/path/cd`, `t new`, `t checkout` | `t repo list/locate/cd`, `t repo create`, `t repo clone` |
+| `t new`, `t checkout` | `t repo create`, `t repo clone` |
 | `t setup` | `t config setup` |
 | `t instructions --init/--edit/--show`; `t instructions <repo> --apply` | `t profile init/edit/show`; `t profile apply <repo>` |
 | `t permissions`, `t permissions --show/--apply` | `t policy check`, `t policy show/apply` |

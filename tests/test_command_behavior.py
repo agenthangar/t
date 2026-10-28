@@ -36,7 +36,7 @@ def test_readonly_commands_never_offer_updates(t_mod, monkeypatch, argv, termina
 
 
 @pytest.mark.parametrize('argv', [
-    ['ls'], ['repos', 'ls'], ['repos', 'path', 'api'], ['config', '--show'],
+    ['ls'], ['repo', 'list'], ['repo', 'locate', 'api'], ['config', '--show'],
     ['install', '--status'], ['login', '--status'], ['trust', '--status'],
     ['permissions'], ['instructions', '--show'], ['doctor'], ['cursor', '--ls'],
     ['hosts', '--json'], ['update', '--check'], [],

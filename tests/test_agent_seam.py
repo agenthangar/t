@@ -384,10 +384,10 @@ def test_zsh_t_install_reloads_only_when_the_chained_setup_wrote(zsh, tmp_path):
 
 def test_zsh_group_help_never_navigates_or_moves_chat(zsh):
     path = f"{REPO_ROOT / 'bin'}:{os.environ.get('PATH', '')}"
-    for command, expected in (("t repos cd api --help", "usage: t repos cd"),
+    for command, expected in (("t repo cd api --help", "usage: t repo cd"),
                               ("t cursor", "USAGE\n  t cursor"),
                               ("t cursor resume --help", "usage: t cursor resume"),
-                              ("t help repos path", "usage: t repos path")):
+                              ("t help repo locate", "usage: t repo locate")):
         r = zsh(f'old=$PWD; {command}; echo "same=$([[ $PWD == $old ]] && echo yes)"', PATH=path)
         assert r.returncode == 0, r.stderr
         assert expected in r.stdout
@@ -710,7 +710,7 @@ def test_zsh_repos_cd_enters_checkout_named_t(zsh):
     checkout.mkdir(parents=True)
     local = zsh.home / ".zshrc.local"
     local.write_text(local.read_text() + 'DEV_REPOS[t]="$HOME/code/t"\n')
-    r = zsh('t repos cd t; pwd; t repos cd missing; echo status=$?')
+    r = zsh('t repo cd t; pwd; t repo cd missing; echo status=$?')
     assert r.returncode == 0, r.stderr
     assert r.stdout.splitlines() == [str(checkout), "status=1"]
     assert "unknown repo 'missing'" in r.stderr
