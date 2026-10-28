@@ -179,7 +179,16 @@ unattached. Ctrl-T and Ctrl-U switch attachment without clearing column filters.
 
 Resume and close retain cycling Ctrl-G agent, Ctrl-O host/origin, Ctrl-R repo,
 and (close only) Ctrl-D interface, with their existing state toggles. Resume
-never invents a historical UI. Every column value comes from raw metadata,
+never invents a historical UI. Resume uses actual user-turn timestamps, newest
+first by default, with unknown times last; live rows have no artificial priority.
+Alt-T selects last turn, Alt-R repository, Alt-G agent, Alt-O host/origin, and
+Alt-V session (natural numeric order). Text modes ascend with newest turn and
+stable identity as tie-breakers. Sorts apply within the private filtered snapshot
+and preserve query and identities. Ctrl-A clears filters and keeps the sort;
+Ctrl-F resets filters and last-turn sorting. Compact headers use M for Alt and ^
+for Ctrl. Resume disables fzf relevance sorting so searching preserves the chosen
+order. Saved transcript mtime/reopen time still controls --days eligibility.
+Every column value comes from raw metadata,
 not truncated display text. The progress value exactly follows the ↻ marker:
 work continued after a merged PR; its absence is not completion evidence.
 A row's ✓ means loaded conversation context, independent of attachment and

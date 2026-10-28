@@ -340,6 +340,13 @@ sessions; Ctrl-T toggles attached close sessions; Ctrl-P toggles pending close
 work. Ctrl-G cycles agents, Ctrl-O hosts, Ctrl-R repositories, and Ctrl-D the
 close interface. Ctrl-A shows all and Ctrl-F resets these filters. Resume never
 invents a historical interface.
+Resume sorts by the last actual user turn, newest first; unknown times come last.
+Alt-T restores that sort, Alt-R sorts by repository, Alt-G by agent, Alt-O by
+host/origin, and Alt-V by session (numeric slots sort naturally, e.g. 2 before 10).
+Text sorts ascend, then use newest turn and session identity to break ties.
+Ctrl-A clears filters while keeping the selected sort; Ctrl-F resets both.
+For example, `t resume --live` followed by Alt-R groups live and saved sessions by
+repository. Live labels remain visible alongside their last-turn time.
 The open picker keeps session and task text prominent, without a last-turn
 column, details preview, or new-session shortcut. Start fresh explicitly with
 `t open api --new`. Resume and close retain **Ctrl-/** for full details.

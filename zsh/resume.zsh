@@ -76,8 +76,8 @@ _t_resume_on_host() {
 # slot always attaches — a direct ask, not a scan.
 # -f/--fg resumes inline in THIS terminal (t pop's landing) instead of a slot.
 # Dead rows carry the two shared picker signals (see _claude_session_rows and
-# t-session-start jobs 3-4): recency/date = max(transcript mtime, last-opened
-# stamp) with ↻ marking opened-but-unwritten conversations, and a " · #N <state>"
+# t-session-start jobs 3-4): eligibility = max(transcript mtime, last-opened
+# stamp), and a " · #N <state>"
 # tag for the last PR URL in the transcript — merged/closed/open, or "?" while the
 # state is not cached yet. State stays cache-only (never a blocking gh call), so a
 # just-created PR reads "?" until the detached refresh lands it; it is rendered
@@ -407,9 +407,8 @@ _t_resume() {
           return
         fi
         # Scan: retain live local slots for Ctrl-A, while the initial view
-        # filters them (unless --live was passed). Sort
-        # key (field 1, stripped after the global sort below): a live session is
-        # "now", so the max sentinel pins it above every dead transcript.
+        # filters them (unless --live was passed). The legacy leading key is
+        # discarded; actual turn evidence orders live and saved rows together.
         live_seen[here/${busy#dev-}]=1
         [[ -n $live_flag ]] || (( hidden_live++ ))
         cands+=(9999999999$'\t'"$repo"$'\t'"$n"$'\t'-$'\t'"$wt"$'\t'"● active"$'\t'"${local_sum[${busy#dev-}]:-(live session)}"$'\t'here$'\t'-$'\t'-$'\t'"${local_agent[${busy#dev-}]:-$(_dev_agent_of_session "$busy")}")
@@ -586,7 +585,7 @@ _t_resume() {
     # (field 11 here, 10 once the sort key is stripped) gets its own display column
     # AND picks the binary a pick spawns
     _ag=$(_dev_transcript_agent "$txf")
-    cands+=("$ep"$'\t'"$repo"$'\t'"$n"$'\t'"$(_dev_transcript_sid "$txf")"$'\t'"$wt"$'\t'"$when"$'\t'"$title"$'\t'-$'\t'-$'\t'"${org[1,10]}"$'\t'"$_ag")
+    cands+=("$ep"$'\t'"$repo"$'\t'"$n"$'\t'"$(_dev_transcript_sid "$txf")"$'\t'"$wt"$'\t'"$when"$'\t'"$title"$'\t'-$'\t'-$'\t'"${org[1,10]}"$'\t'"$_ag"$'\t'"$txf")
   done
   # ONE detached refresh for the whole scan, instead of a `gh pr view` child per
   # stale row: _pr_state_refresh batches the refs by repo, so a scan that turned up
@@ -598,13 +597,12 @@ _t_resume() {
   (( hidden_live )) && [[ ! -t 0 || ! -t 1 ]] && \
     echo "(${hidden_live} live slot(s) hidden — t session resume --live lists them; t session open attaches one)" >&2
 
-  # ONE global newest-first order by session time (the leading epoch field),
-  # never grouped by repo — the loop above emits repo-by-repo, so without this
-  # all-repos mode read as blocks per repo. Live rows carry the max sentinel
-  # and pin to the top. (On) = descending numeric on the leading field, which
-  # is then stripped so the positional fields below stay 1-9.
-  cands=("${(@On)cands}")
+  # Resolve actual turn evidence once for this snapshot, then sort before any
+  # automatic choice or noninteractive listing. Mtime remains the --days gate.
   cands=("${(@)cands#*$'\t'}")
+  if (( $#cands )); then
+    cands=("${(@f)$(print -rl -- "${(@)cands}" | T_RESUME_OWNER_ROWS="$live_all" python3 "$T_HOME/libexec/t_picker_filters.py" --resume-turns)}")
+  fi
 
   if (( ! $#cands )); then
     if [[ -n $slot ]]; then
@@ -629,7 +627,8 @@ _t_resume() {
   # their host in the ● label instead); agent is the row's claude/codex — what a
   # dead pick spawns, and what a live slot is running (from the live scan, else
   # the session's own stamp). EVERY row carries all ten, sentinelled, so the
-  # positional reads below never slide. One ALIGNED display column (11) is
+  # positional reads below never slide. The optional last-turn timestamp is field
+  # 11; one ALIGNED display column (12) is
   # appended here — fzf renders raw \t fields at literal tab stops (nothing
   # lines up), so both fzf and the no-fzf listing show the same pre-padded
   # gh-style row: [repo]  slot  agent  [origin]  date|●-where  title. The agent
@@ -733,7 +732,7 @@ _t_resume() {
     return 1
   fi
   # Multi-pick (only the fzf branch can produce one — $pick then holds one row
-  # per line, in LIST order, so the first row is the newest / a pinned live one).
+  # per line, in the selected sort order).
   # Revive every marked dead row detached, then attach the FIRST revived slot —
   # a resume ends inside a session, same as a single pick; the rest open in
   # their own terminal tabs (attach-hint fallback). Live marks attach to their
