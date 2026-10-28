@@ -114,6 +114,42 @@ def test_native_preservation_overrides_and_disabled_scope(workflow, tmp_path):
     assert 'reasoning effort: xhigh' in w.render(explicit)
 
 
+def test_speed_policy_scopes_and_native_sync(workflow, tmp_path):
+    w = workflow
+    document = w.defaults()
+    enabled_repo = str(tmp_path.resolve() / 'enabled')
+    disabled_repo = str(tmp_path.resolve() / 'disabled')
+    document['repositories'][enabled_repo] = copy.deepcopy(w.DEFAULT)
+    document['repositories'][disabled_repo] = dict(w.DEFAULT, enabled=False)
+    before = copy.deepcopy(document)
+    rendered = w.render(document)
+    global_text, *scopes = rendered.split('\n\nRepository scope: ')
+    enabled_text = next(text for text in scopes if enabled_repo in text)
+    disabled_text = next(text for text in scopes if disabled_repo in text)
+    for text in (global_text, enabled_text):
+        assert "parent agent's current speed/service tier" in text
+        assert 'Fast or Ultrafast' in text
+        assert 'independently of its model and reasoning effort' in text
+        assert 'supported subsequent-turn boundary' in text
+        assert 'exposed speed controls or documented inheritance' in text
+        assert 'unsupported or cannot be verified, disclose' in text
+        assert 'never claim a verified tier or an immediate speed switch' in text
+    assert 'disabled for this scope' in disabled_text
+    assert 'speed/service tier' not in disabled_text
+    assert document == before
+    for path in native_paths():
+        path.write_text('Personal instructions\n')
+    w.save(document, None)
+    saved_texts = [path.read_text() for path in native_paths()]
+    for path in native_paths():
+        assert path.read_text().startswith('Personal instructions\n')
+        assert rendered in path.read_text()
+        path.write_text('Personal instructions\n')
+    assert w.sync() == 0
+    assert [path.read_text() for path in native_paths()] == saved_texts
+    assert w.load()[0] == before
+
+
 @pytest.mark.parametrize('text', [' ', '\n\n'])
 def test_empty_codex_override_remains_empty(workflow, text):
     override = Path(os.environ['CODEX_HOME']) / 'AGENTS.override.md'
