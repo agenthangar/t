@@ -4292,6 +4292,13 @@
       "LOCATION",
       "SELECTION",
       "DESKTOP TO CLI"
-    ]
+    ],
+    "color": {
+      "headings": "bold cyan",
+      "scope": "all quick and detailed help, including agent support and compatibility aliases",
+      "enabled": "stdout is a TTY; NO_COLOR absent; TERM != dumb; CLICOLOR != 0",
+      "body": "plain",
+      "layout": "ANSI-stripped colored output exactly equals plain output, including newlines; style after wrapping"
+    }
   }
 }
