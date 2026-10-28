@@ -524,8 +524,15 @@ def test_resume_sort_controls_keep_focused_row_and_change_order(picker, width, h
     for letter in ('T', 'R', 'G', 'O', 'V'):
         assert 'Alt-' + letter in screen or 'M-' + letter in screen
     keys('M-r')
-    screen = wait('Sort: repo')
+    # fzf 0.44 can repaint the header before completing reload-sync. Wait for
+    # its loading indicator to clear, then focus the first sorted result.
+    loading = tuple('⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏')
+    wait('Sort: repo', absent=loading)
+    keys('Up', 'Up')
+    screen = wait('Older api')
     assert 'Older api' in screen and '▸' in screen
     keys('C-f')
-    wait('Sort: last turn')
+    wait('Sort: last turn', absent=loading)
+    keys('Up', 'Up')
+    wait('Newest web')
     assert finish()[0].split('\t')[2] == 'sid1'
