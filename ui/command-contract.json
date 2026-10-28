@@ -4232,6 +4232,7 @@
     "config show": "cmd_config workflow_repo compatibility",
     "config edit": "cmd_config workflow_repo compatibility",
     "config onboard": "cmd_config workflow_repo compatibility",
+    "config local": "user-wide model setup; ignores workflow_repo inherited from the shared config parser",
     "config workflow list": "cmd_config workflow_repo",
     "config workflow edit": "cmd_config workflow_repo",
     "profile init": "cmd_instructions",
