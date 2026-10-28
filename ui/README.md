@@ -129,8 +129,16 @@ fingerprint is automatically accepted. Onboarding uses the same reviewed offer.
 
 Config includes Agent workflow globally and in each repository submenu. The global
 menu chooses a named default, adds or edits shared workflows, or activates recommended
-defaults. Each workflow exposes Planning, Implementation and Review with separate
+defaults. Each workflow exposes an overall Workflow switch and an independent
+Model stages switch. Disabling stages retains their model/effort settings and keeps
+behavior preferences and Markdown active; disabling the workflow suppresses all
+three. Active stages expose Planning, Implementation and Review with separate
 model and effort controls, plus Instructions for ordinary Markdown in VISUAL/EDITOR.
+Behavior preferences uses a shared `_RailUI` submenu for Worktree (isolated/current),
+Local preview (UI changes/on request), Validation (relevant/full documented checks),
+and Delivery (review/PR/authorized auto-merge). Every setting offers No preference,
+which removes its key; no behavior is enabled by default. Model-stage rows are hidden
+while stages are off and their stored values are preserved.
 Models load lazily from Codex once per menu session; current, recommended and custom
 values remain available offline, with explicit Refresh. Changing a model preserves
 its effort and never changes launch defaults. Shared-definition editing explains
@@ -138,12 +146,18 @@ its affected repository consumers. Repository menus display their source and off
 named assignment, repository-only customization, explicit exclusion retaining the
 source, resuming that retained source, or inheritance. All menu changes remain pending until review and Save;
 unchanged selections, canceled editors and discarded changes write nothing.
+The menu and save review explain precedence: the host instruction hierarchy is
+unchanged; explicit task and repository rules remain authoritative; one selected
+repository workflow replaces the global default; exclusion suppresses the entire
+workflow. Within a workflow, custom Markdown overrides selected behavior preferences,
+which override generic model-stage guidance. Do not parse prose for contradictions.
 
 `t config workflow add NAME [--from NAME]` copies without selecting, `use NAME
 [--repo ALIAS]` selects and clears exclusion, `exclude --repo ALIAS` preserves its
 source but suppresses the entire workflow, and `inherit --repo ALIAS` removes the
 override. These direct actions work without a terminal. `list [--repo ALIAS] [--json]`
-is a read-only stage/model/effort table with source and exclusion. `list --all [--json]`
+is a read-only stage/model/effort table with source, exclusion, model-stage state,
+behavior preferences, custom-text presence and precedence. `list --all [--json]`
 is the named catalogue and usage; reject --all with --repo. `edit [NAME] [--repo ALIAS]`
 is the advanced JSON editor; reject NAME with --repo. Omitted selectors target the
 current global default. Repository `null` resets inheritance.
@@ -153,7 +167,11 @@ without prompts, model discovery or writes. `instructions edit` uses a private .
 file in VISUAL/EDITOR, preserves formatting and editor status, and rejects embedded
 managed-block markers. Repository edits create an inline policy only after an actual
 change and preserve exclusion; inspection includes the stored prose when excluded.
-Excluded or disabled scopes suppress their prose in generated native instructions.
+Excluded or disabled scopes suppress their prose and preferences in generated native
+instructions. Disabling model stages alone explicitly suppresses t model delegation
+while retaining preferences and prose. The JSON policy optionally accepts
+`stages_enabled` (default true) and `behaviors` (default absent); older v1/v2
+documents retain their shape on reads and synchronization.
 
 Global is the default scope; --repo explicitly selects a registered alias with no
 checkout inference or picker. Bare subgroups show help. Hidden config show/edit

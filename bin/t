@@ -2331,6 +2331,29 @@ def _workflow_model(ui, cfg, helper, stage, current):
         return picked
 
 
+def _workflow_behaviors_menu(ui, helper, policy):
+    changed = copy.deepcopy(policy)
+    while True:
+        behaviors = changed.get("behaviors", {})
+        rows = [(key, spec["label"]) for key, spec in helper["BEHAVIORS"].items()] + [("back", "Back")]
+        values = {key: spec["choices"][behaviors[key]][0] if key in behaviors else "No preference"
+                  for key, spec in helper["BEHAVIORS"].items()}
+        choice = ui.pick("Behavior preferences", rows, values=values)
+        if choice in (None, "back"):
+            return changed
+        spec = helper["BEHAVIORS"][choice]
+        options = [("", "No preference")] + [(key, value[0]) for key, value in spec["choices"].items()]
+        selected = ui.pick(spec["label"], options,
+                           default=next(i for i, row in enumerate(options) if row[0] == behaviors.get(choice, "")))
+        if selected is not None and selected != behaviors.get(choice, ""):
+            if selected:
+                changed.setdefault("behaviors", {})[choice] = selected
+            else:
+                changed["behaviors"].pop(choice)
+                if not changed["behaviors"]:
+                    changed.pop("behaviors")
+
+
 def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
     title = f"Workflow · {name}" if name else "Customize only this repository"
     if name:
@@ -2338,25 +2361,34 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
                  if helper["source"](cfg._workflow_document, os.path.realpath(path)) == name]
         scope = "global default and inherited repositories" if name == cfg._workflow_document["default"] else "named assignments"
         ui.done("scope", f"Editing {name} affects {scope}" + (": " + ", ".join(users) if users else "."))
+    ui.done("precedence", helper["PRECEDENCE"])
     while True:
         document = cfg._workflow_document
         policy = (copy.deepcopy(document["workflows"][name]) if name else
                   helper["resolved"](document, repository))
-        rows = [("enabled", "Staged workflow")] + [(stage, stage.title()) for stage in ("planning", "implementation", "review")]
+        rows = [("enabled", "Workflow"), ("stages_enabled", "Model stages")]
+        if policy.get("stages_enabled", True):
+            rows += [(stage, stage.title()) for stage in ("planning", "implementation", "review")]
+        rows.append(("behaviors", "Behavior preferences"))
         rows += [("instructions", "Instructions · edit Markdown"), ("edit", "Advanced JSON editor"), ("back", "Back")]
         values = {stage: policy[stage]["model"] + " · " + policy[stage]["effort"]
                   for stage in ("planning", "implementation", "review")}
         values["enabled"] = "enabled" if policy["enabled"] else "disabled"
+        values["stages_enabled"] = "enabled" if policy.get("stages_enabled", True) else "disabled · models retained"
+        values["behaviors"] = f"{len(policy.get('behaviors', {}))} selected"
         values["instructions"] = "saved Markdown" if policy.get("instructions") else "empty"
         choice = ui.pick(title, rows, values=values)
         if choice in (None, "back"):
             return
         changed = copy.deepcopy(policy)
-        if choice == "enabled":
-            picked = ui.pick("Staged workflow", [("1", "Enabled"), ("0", "Disabled")],
-                             default=0 if policy["enabled"] else 1)
-            if picked is not None:
-                changed["enabled"] = picked == "1"
+        if choice in ("enabled", "stages_enabled"):
+            picked = ui.pick("Workflow" if choice == "enabled" else "Model stages",
+                             [("1", "Enabled"), ("0", "Disabled")],
+                             default=0 if policy.get(choice, True) else 1)
+            if picked is not None and (picked == "1") != policy.get(choice, True):
+                changed[choice] = picked == "1"
+        elif choice == "behaviors":
+            changed = _workflow_behaviors_menu(ui, helper, policy)
         elif choice in ("edit", "instructions"):
             ui.restore()
             try:
@@ -2461,9 +2493,10 @@ def _config_workflow(ui, cfg, repo=None):
 
 def _workflow_review(document):
     helper = _workflow()
-    lines = [f"Global default: {document['default']}"]
+    lines = [f"Global default: {document['default']}", helper["PRECEDENCE"]]
     for name, policy in sorted(document["workflows"].items()):
         lines.append(f"Workflow {name}: {'enabled' if policy['enabled'] else 'disabled'}")
+        lines.extend("  " + line for line in helper["summary_lines"](policy))
         lines.extend(f"  {stage.title()}: {policy[stage]['model']} · {policy[stage]['effort']}"
                      for stage in ("planning", "implementation", "review"))
         if policy.get("instructions"):
@@ -2471,6 +2504,7 @@ def _workflow_review(document):
     for path, entry in sorted(document["repositories"].items()):
         lines.append(f"Repository {path}: {helper['source'](document, path)}" +
                      (" · excluded" if entry.get("excluded") else ""))
+        lines.extend("  " + line for line in helper["summary_lines"](helper["effective"](document, path)))
         if "inline" in entry:
             lines.append(f"  Workflow: {'enabled' if entry['inline']['enabled'] else 'disabled'}")
             lines.extend(f"  {stage.title()}: {entry['inline'][stage]['model']} · {entry['inline'][stage]['effort']}"
@@ -2876,6 +2910,9 @@ def _cmd_workflow(cfg, args):
                     print("\n".join(_table_lines(("WORKFLOW", "ENABLED", "REPOSITORY ASSIGNMENTS"),
                         [(key, "yes" if item["workflow"]["enabled"] else "no", str(len(item["repositories"])))
                          for key, item in result["workflows"].items()])))
+                    for key, item in result["workflows"].items():
+                        print(key + " · " + " · ".join(helper["summary_lines"](item["workflow"])))
+                    print("Precedence: " + helper["PRECEDENCE"])
                 return 0
             entry = document["repositories"].get(repository, {})
             result = {"scope": repository or "global",
@@ -2884,6 +2921,8 @@ def _cmd_workflow(cfg, args):
                       "workflow_name": None if "inline" in entry else helper["source"](document, repository),
                       "excluded": entry.get("excluded", False),
                       "workflow": helper["effective"](document, repository)}
+            result.update(helper["policy_summary"](result["workflow"]))
+            result["preference_source"] = helper["source"](document, repository)
             if not getattr(args, "workflow_action", None) or getattr(args, "json", False):
                 print(helper["encode"](result), end="")
             else:
@@ -2891,6 +2930,9 @@ def _cmd_workflow(cfg, args):
                 print(f"Source: {result['source']}" + (f" · {result['workflow_name']}" if result['workflow_name'] else ""))
                 print("Excluded: " + ("yes" if result["excluded"] else "no"))
                 print("Enabled: " + ("yes" if result["workflow"]["enabled"] else "no"))
+                print("Preference source: " + result["preference_source"])
+                print("\n".join(helper["summary_lines"](result["workflow"])))
+                print("Precedence: " + result["precedence"])
                 print("\n".join(_table_lines(("STAGE", "MODEL", "EFFORT"),
                     [(stage, result["workflow"][stage]["model"], result["workflow"][stage]["effort"])
                      for stage in ("planning", "implementation", "review")])))
@@ -10541,6 +10583,8 @@ SCOPE
   all its consumers. --all lists named workflows; it cannot combine with --repo.
   `ls` is an alias for `list`.
   List labels inherited settings and recommended defaults that are not saved.
+  Config menus separately control model stages, behavior preferences and Markdown.
+  Task/repo rules prevail; Markdown overrides preferences, then stage guidance.
   Edits validate before saving workflow and native agent instructions.
 
 LEARN MORE
@@ -10637,7 +10681,7 @@ def _command_description(group, action):
         "config": {"open": "Open settings; edit repository and host short names", "show": "Print current settings",
                    "edit": "Edit local configuration", "setup": "Register repos and hosts",
                    "onboard": "Guided setup: agents, GitHub repos, and hosts",
-                   "workflow": "Manage named staged agent workflows and Markdown instructions",
+                   "workflow": "Manage named workflows, behavior preferences and Markdown instructions",
                    "local": "Set up local models and Codex worker delegation (--show for status)"},
         "profile": {"init": "Create an instruction profile", "edit": "Edit the profile",
                     "show": "Print the profile", "apply": "Apply it to a repository"},
@@ -11629,7 +11673,7 @@ RECEIVE AND REMOTE MOVES
   Open local config in editor covers all custom shell settings (VISUAL/EDITOR, else
   vi).
 
-  Agent workflow configures global or repository staged-model instructions.
+  Agent workflow configures model stages, behavior preferences and Markdown.
 
   Use `t config workflow edit [--repo ALIAS]` for its JSON editor and `t config
   workflow list [--repo ALIAS]` for read-only effective values.
@@ -11648,7 +11692,7 @@ RECEIVE AND REMOTE MOVES
                     help="review agents, optional sign-ins, repositories, and hosts; terminal only. Choices: q/Esc back; review: n/Esc back, q quits; Ctrl-C cancels")
 
     config_sub = sp.add_subparsers(dest="config_resource")
-    workflow = config_sub.add_parser("workflow", help="manage named staged agent workflows")
+    workflow = config_sub.add_parser("workflow", help="manage named agent workflows and behavior preferences")
     workflow_sub = workflow.add_subparsers(dest="workflow_action")
     for verb in ("list", "edit", "add", "use", "exclude", "inherit"):
         leaf = workflow_sub.add_parser(verb, help={
