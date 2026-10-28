@@ -107,10 +107,10 @@ def test_every_filter_key_survives_long_values(filters, width, profile):
     text = filters.header(profile, 0, facets, 17, 'SESSION  WORKING ON', width)
     assert all(filters.display_width(line) <= width for line in text.splitlines())
     for key in ('Ctrl-G', 'Ctrl-O', 'Ctrl-R', 'Ctrl-A', 'Ctrl-F'):
-        assert key in text
+        assert (key.replace('Ctrl-', '^') if profile == 'resume' and width <= 36 else key) in text
     assert ('Ctrl-D' in text) == (profile != 'resume')
     assert '17 hidden' in text
-    assert 'Ctrl-L live: hidden' in text if profile == 'resume' else 'Ctrl-T attached: hidden' in text
+    assert 'live: hidden' in text if profile == 'resume' else 'Ctrl-T attached: hidden' in text
     assert ('Ctrl-P' in text) == (profile == 'kill')
 
 
@@ -183,3 +183,80 @@ def test_progress_value_picker_explains_marker_and_reports_failure(filters, tmp_
     monkeypatch.setattr(filters.subprocess, 'run', run)
     with pytest.raises(RuntimeError, match='picker failed'):
         filters.pick_value(tmp_path, 'progress', filters.metadata(SOURCE, 'open'), None)
+
+
+def test_resume_sorts_preserve_snapshot_filters_and_reset_defaults(filters, tmp_path):
+    def row(repo, slot, agent, host, turn):
+        return '\t'.join([repo, slot, f'{repo}-{slot}', '/wt', 'date', 'task', '-', '-', host, agent, turn, 'Display'])
+    rows = [row('web', '10', 'codex', 'mini', '2026-10-20T10:00:00Z'),
+            row('api', '2', 'claude', '-', '2026-10-22T10:00:00Z'),
+            row('api', '10', 'codex', '-', '2026-10-21T10:00:00Z'),
+            row('api', '3', 'codex', '-', 'garbage')]
+    rows += ['api\t9\tlegacy\t/wt\tdate\ttask\t-\t-\t-\tcodex\tLegacy']
+    for name in ('source', 'all', 'rows-0', 'rows-1'):
+        (tmp_path / name).write_text('\n'.join(rows) + '\n')
+    def render(action):
+        filters.render(tmp_path, 'resume', action, 68)
+        return (tmp_path / 'current').read_text().splitlines()
+    assert render('current') == [rows[1], rows[2], rows[0], rows[3], rows[4]]
+    expected = {'repo': [1, 2, 3, 4, 0], 'agent': [1, 2, 0, 3, 4],
+                'host': [1, 2, 3, 4, 0], 'session': [1, 3, 4, 2, 0]}
+    for mode, indices in expected.items():
+        assert render('sort-' + mode) == [rows[i] for i in indices]
+        assert 'Sort: ' + filters.RESUME_SORTS[mode][1] in (tmp_path / 'current-header').read_text()
+    render('agent')  # Claude facet remains active while sort changes.
+    assert render('sort-repo') == [rows[1]]
+    assert json.loads((tmp_path / 'facets.json').read_text())['agent'] == 'claude'
+    assert render('all') == [rows[i] for i in expected['repo']]
+    assert (tmp_path / 'sort').read_text() == 'repo'
+    assert render('default') == [rows[1], rows[2], rows[0], rows[3], rows[4]]
+    assert (tmp_path / 'sort').read_text() == 'turn'
+    assert render('sort-turn') == render('current')
+    assert filters.sort_resume([], {}) == []
+    assert filters.turn_epoch(None) == float('-inf')
+    assert filters.turn_epoch('2026-10-22T10:00:00') == float('-inf')
+
+
+def test_resume_turn_enrichment_uses_exact_sources_and_never_remote_local_copy(filters, tmp_path):
+    def row(slot, sid, agent, location='-', path='-'):
+        return '\t'.join(['api', slot, sid, '/wt', '● active' if location != '-' else 'old mtime',
+                          'Task', location, '-', '-', agent, str(path)])
+    claude = tmp_path / 'exact.jsonl'
+    claude.write_text(json.dumps({'type': 'user', 'timestamp': '2026-10-20T10:00:00Z',
+                                 'message': {'content': 'First task'}}) + '\n' +
+                      json.dumps({'type': 'assistant', 'timestamp': '2026-10-25T10:00:00Z'}) + '\n')
+    codex = tmp_path / 'rollout.jsonl'
+    codex.write_text(json.dumps({'type': 'event_msg', 'timestamp': '2026-10-22T10:00:00Z',
+                                'payload': {'type': 'task_started'}}) + '\n')
+    rows = [row('1', 'claude-id', 'claude', path=claude),
+            row('2', 'codex-id', 'codex', path=codex),
+            row('3', 'codex-id', 'codex', 'mini'),
+            row('4', 'unknown', 'claude', 'here')]
+    result = filters.resume_turns('\n'.join(rows), str(tmp_path), str(tmp_path))
+    assert [r.split('\t')[1] for r in result] == ['2', '1', '3', '4']
+    assert result[0].split('\t')[10] == '2026-10-22T10:00:00Z'
+    assert result[1].split('\t')[10] == '2026-10-20T10:00:00Z'
+    assert all(r.split('\t')[10] == '-' for r in result[2:])
+    assert '● active · Last: -' in result[2]
+    assert '● active · Last: -' in result[3]
+    # A local known owner may resolve activity without upgrading the action id.
+    project = tmp_path / '.claude/projects/-wt'
+    project.mkdir(parents=True)
+    (project / 'owner-id.jsonl').write_text(claude.read_text())
+    owner = 'local\towner-id\t/wt\tapi-5\tdetached\tactive\tTask\tclaude'
+    result = filters.resume_turns(row('5', '-', 'claude', 'here'), str(tmp_path), str(tmp_path), owner)
+    assert result[0].split('\t')[2] == '-'
+    assert result[0].split('\t')[10] == '2026-10-20T10:00:00Z'
+
+
+@pytest.mark.parametrize('width', [28, 32, 68])
+def test_resume_header_retains_sort_controls_and_row_space(filters, width):
+    text = filters.header('resume', 0, dict.fromkeys(['agent', 'host', 'repo']), 2, '', width)
+    assert all(filters.display_width(line) <= width for line in text.splitlines())
+    for letter in ('T', 'R', 'G', 'O', 'V'):
+        assert ('M-' if width <= 36 else 'Alt-') + letter in text
+    for letter in ('L', 'A', 'F', 'G', 'O', 'R', '/'):
+        assert ('^' if width <= 36 else 'Ctrl-') + letter in text
+    assert 'Sort: last turn' in text
+    if width <= 36:
+        assert len(text.splitlines()) <= 9

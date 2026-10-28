@@ -2218,8 +2218,10 @@ def test_zsh_resume_picker_shows_the_display_column_for_every_row(zsh, tmp_path)
     assert "rc=130" in r.stdout.splitlines(), r.stdout                    # Esc cancels without spawning work
     rows = log.read_text().splitlines()
     assert len(rows) == 3, rows                                # the subagent thread adds no row
-    assert rows[0].split()[:5] == ["4", "✱", "claude", "●", "active"]   # the live slot pins to the top, agent named
-    dead = sorted(rows[1:])
+    # No transcript records a turn timestamp here: deterministic identity ties
+    # leave the live slot after saved slot 3 instead of pinning it to the top.
+    assert rows[-1].split()[:5] == ["4", "✱", "claude", "●", "active"]
+    dead = sorted(rows[:-1])
     assert dead[0].split()[:3] == ["3", "✱", "claude"] and dead[0].endswith("fix the login bug")
     assert dead[1].split()[:3] == ["3", "⬡", "codex"] and "Reply with exactly the word OK" in dead[1]
     assert not any(row.strip() in ("claude", "codex", "-") for row in rows)   # never a bare field
@@ -2229,11 +2231,11 @@ def test_zsh_resume_picker_shows_the_display_column_for_every_row(zsh, tmp_path)
     assert {row[4:12] for row in rows} == {"✱ claude", "⬡ codex "}
     # The header exposes every available filter; agent names remain in the rows.
     header = (tmp_path / "fzf.log.header").read_text().splitlines()
-    assert header[0] == "Enter resume · Esc · Space/Tab mark ✓ · Ctrl-/ details"
-    assert header[1] == "Ctrl-L live: shown"
     controls = "\n".join(header)
-    for control in ("Ctrl-G agent: all", "Ctrl-O host: all", "Ctrl-R repo: all",
-                    "Ctrl-A show all", "Ctrl-F defaults", "0 hidden"):
+    for control in ("Ctrl-G agent", "Ctrl-O host", "Ctrl-R repo", "Ctrl-L live",
+                    "Ctrl-A all", "Ctrl-F reset", "0 hidden", "live: shown",
+                    "Sort: last turn", "Alt-T last turn", "Alt-R repo",
+                    "Alt-G agent", "Alt-O host", "Alt-V session"):
         assert control in controls
     assert "Ctrl-D" not in controls  # Resume has no historical interface metadata.
 

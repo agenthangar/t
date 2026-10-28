@@ -1008,9 +1008,12 @@
           "read_only": false,
           "tests": [
             "tests/test_resume_multiselect.py::test_resume_multi_opens_selected_live_slot_and_revives_dead_slot",
-            "tests/test_picker_filters.py::test_every_filter_key_survives_long_values"
+            "tests/test_picker_filters.py::test_every_filter_key_survives_long_values",
+            "tests/test_picker_filters.py::test_resume_sorts_preserve_snapshot_filters_and_reset_defaults",
+            "tests/test_resume_multiselect.py::test_resume_last_turn_overrides_mtime_and_sort_hotkeys_keep_rows",
+            "tests/test_picker_ui.py::test_resume_sort_controls_keep_focused_row_and_change_order"
           ],
-          "notes": "Independent Ctrl-G agent, Ctrl-O host/origin, and Ctrl-R repository facets; open/close also support Ctrl-D interface. All/default clears facets, preserves search, and removes hidden marks. No additional discovery or scope expansion. Unavailable registered hosts warn and are skipped; discovery retains local and reachable rows. Saved resumes retain local locks and known-owner checks, but cannot verify ownership on unavailable hosts. Local scan failures remain fatal."
+          "notes": "Independent Ctrl-G agent, Ctrl-O host/origin, and Ctrl-R repository facets; open/close also support Ctrl-D interface. All/default clears facets, preserves search, and removes hidden marks. No additional discovery or scope expansion. Unavailable registered hosts warn and are skipped; discovery retains local and reachable rows. Saved resumes retain local locks and known-owner checks, but cannot verify ownership on unavailable hosts. Local scan failures remain fatal. Default order is actual last user turn newest first, unknown times last, without pinning live rows. Alt-T last turn, Alt-R repository, Alt-G agent, Alt-O host/origin, Alt-V session select immutable snapshot sorting; text modes ascend with newest turn and stable identity ties and natural numeric session slots. Ctrl-A clears filters and preserves sort; Ctrl-F restores inactive/default filters and last-turn sorting. Search preserves the selected order. Narrow headers use ^ Ctrl and M Alt."
         },
         "explicit": {
           "argv": [
