@@ -2601,6 +2601,14 @@ _t_dev() {
   local agent
   agent=$(_dev_agent_for "$repo" "$agent_over") || return 1
 
+  # Automatic fresh allocation uses one remote snapshot for every candidate and
+  # the final desktop guard. Keep explicit numbered opens on their strict path.
+  local _T_OPEN_REMOTE_APP_READY= _T_OPEN_REMOTE_APP_ROWS= _T_OPEN_REMOTE_APP_RC=0
+  if [[ -z $slot || $slot == new ]] && (( ${#REMOTE_HOSTS} )); then
+    _T_OPEN_REMOTE_APP_ROWS=$(_dev_rows_all); _T_OPEN_REMOTE_APP_RC=$?
+    _T_OPEN_REMOTE_APP_READY=1
+  fi
+
   # An explicit foreground slot must respect desktop ownership before the
   # no-tmux branch, which otherwise bypasses the ordinary slot preflight.
   if [[ -n $no_tmux && $slot == <-> ]] && (( ${#REMOTE_HOSTS} )) \
@@ -2640,7 +2648,7 @@ _t_dev() {
       local _wslot="$slot"
       if [[ -z $_wslot || $_wslot == new ]]; then
         _wslot=1
-        while ! _dev_slot_fresh "$repo" "$_wslot"; do (( _wslot++ )); done
+        while ! _dev_slot_fresh_unreserved "$repo" "$_wslot"; do (( _wslot++ )); done
       fi
       if [[ $slot != <-> ]] && (( ${#REMOTE_HOSTS} )); then
         local app_owner app_rc; app_owner=$(_dev_remote_app_owner "$repo" "$_wslot" "$allow_unverified_new"); app_rc=$?
@@ -2687,7 +2695,7 @@ _t_dev() {
   # branch — the same one the auto-pick and --fg use.
   if [[ "$slot" == new ]]; then
     local n=1
-    while ! _dev_slot_fresh "$repo" "$n"; do (( n++ )); done
+    while ! _dev_slot_fresh_unreserved "$repo" "$n"; do (( n++ )); done
     slot=$n
   fi
 
@@ -2706,7 +2714,7 @@ _t_dev() {
     while (( n <= 20 )); do
       local sname="dev-${repo}-${n}"
       if ! tmux has-session -t "=$sname:" 2>/dev/null; then
-        [[ -z $free ]] && _dev_slot_fresh "$repo" "$n" && free=$n  # lowest fresh slot → fallback
+        [[ -z $free ]] && _dev_slot_fresh_unreserved "$repo" "$n" && free=$n  # lowest fresh slot → fallback
       elif ! tmux list-clients -t "=$sname:" 2>/dev/null | grep -q .; then
         slot=$n; break                                            # existing + unattached → reattach (wins)
       fi
@@ -2718,7 +2726,7 @@ _t_dev() {
       else
         # nothing fresh in 1..20 → keep scanning unbounded, still preferring an
         # existing-but-unattached session above 20 over a fresh slot.
-        while ! _dev_slot_fresh "$repo" "$n"; do
+        while ! _dev_slot_fresh_unreserved "$repo" "$n"; do
           if tmux has-session -t "=dev-${repo}-${n}:" 2>/dev/null \
              && ! tmux list-clients -t "=dev-${repo}-${n}:" 2>/dev/null | grep -q .; then
             slot=$n; break

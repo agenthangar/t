@@ -104,6 +104,8 @@ t remote move; print rc=$?
     assert all('desktop' not in row for row in logs[0]['rows'])
     assert all(not row.startswith('alpha\t') for row in logs[1]['rows'])
     assert '--no-multi' in logs[0]['args'] and '--no-multi' in logs[1]['args']
+    assert any('Move this session to which host?' in arg and
+               'Destination host · current host: alpha' in arg for arg in logs[1]['args'])
 
 
 @pytest.mark.parametrize('which', ['session', 'host'])
@@ -334,3 +336,28 @@ _t_move_pick() { print WRONG_PICK; }
     text = output(result)
     assert 'rc=1' in text and 'unknown repository: typo' in text
     assert 'WRONG_' not in text and 'STOP ' not in text and 'SYNC ' not in text
+
+
+@pytest.mark.parametrize('action,args,heading,detail', [
+    ('open', 'api', 'Open a session on which host?', ''),
+    ('open', 'api --new', 'Start a new session on which host?', ''),
+    ('resume', 'api', 'Resume saved work on which host?', 'Browse this host’s saved conversations'),
+])
+def test_remote_host_picker_explains_action(zsh, tmp_path, action, args, heading, detail):
+    env = fake_picker(tmp_path)
+    result = zsh(HOSTS + f'ssh() {{ :; }}; t remote {action} {args}; print rc=$?', _tty=True, **env)
+    assert 'rc=0' in output(result), output(result)
+    logs = [json.loads(line) for line in (tmp_path / 'picker.jsonl').read_text().splitlines()]
+    assert len(logs) == 1
+    assert any(heading in arg and detail in arg and 'SSH hosts · alias and target' in arg
+               for arg in logs[0]['args'])
+    assert 'alpha\tuser@alpha' in logs[0]['rows']
+
+
+@pytest.mark.parametrize('action', ['open', 'resume', 'move'])
+def test_explicit_remote_host_bypasses_picker(zsh, tmp_path, action):
+    env = fake_picker(tmp_path)
+    args = '--from alpha --session exact --detach' if action == 'move' else 'api 3'
+    result = zsh(HOSTS + f'ssh() {{ :; }}; t remote {action} {args} --host beta; print rc=$?', **env)
+    assert 'rc=0' in output(result), output(result)
+    assert not (tmp_path / 'picker.jsonl').exists()

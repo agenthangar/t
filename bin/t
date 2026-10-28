@@ -10131,16 +10131,25 @@ def _command_path(argv):
     node = COMMAND_GROUPS
     path = []
     for word in argv:
-        if not isinstance(node, dict) or word not in node:
+        if not isinstance(node, dict):
+            break
+        key = "list" if word == "ls" and "list" in node else word
+        if key not in node:
             break
         path.append(word)
-        node = node[word]
+        node = node[key]
     return path, node
 
 
 def _canonical_argv(argv):
     """Translate a complete public command; preserve its payload arguments."""
     argv = _hosts_argv(argv)
+    # Legacy command boundaries are outside the public registry. Never rewrite
+    # payloads, option values, or remote command arguments named list/ls.
+    if argv[:1] == ["list"]:
+        argv[0] = "ls"
+    elif argv[:2] == ["repos", "list"]:
+        argv[1] = "ls"
     path, route = _command_path(argv)
     return [*route, *argv[len(path):]] if path and not isinstance(route, dict) else argv
 
@@ -10313,10 +10322,12 @@ Run `t help issue <verb>` for flags and arguments.
                  "  t remote move [repo] [slot] [--session ID] [--from SOURCE] [--host DEST]\n"
                  "  t remote resume [repo] [slot] [--host HOST] [--days N]\n"
                  "\nInfer the repository from the current checkout, or browse all repositories outside one.\n"
-                 "Omitted hosts use a single host picker; move first selects a current CLI session.\n"
-                 "Open attaches on the chosen host; --new explicitly starts a fresh session.\n"
-                 "Resume discovers saved history on the chosen host. Session resume --host instead\n"
-                 "sends locally discovered history there. Move sends directly from source to destination;\n"
+                 "Omitted hosts use a picker labeled for opening, starting fresh, resuming, or moving.\n"
+                 "Open's chosen host runs the session; --new explicitly starts fresh there.\n"
+                 "Resume's host supplies saved history and runs the resumed session.\n"
+                 "Move's chosen host is the destination; its picker names the current source host.\n"
+                 "Session resume --host sends locally discovered history there instead.\n"
+                 "Move sends directly from source to destination;\n"
                  "the source must be able to SSH and rsync to the destination.\n")
     if group == "session":
         extra = ("\nTARGETS\n  t session <verb> [repo] [slot] [flags]\n"
@@ -10376,6 +10387,9 @@ def _aliases_help():
         if old != " ".join(path):
             rows.append(f"  t {old:<25} t {' '.join(path)}")
     rows.extend((
+        "  t <command> ls              t <command> list (all list verbs)",
+        "  t list                      t session list (also t ls)",
+        "  t repos list                t repo list (also t repos ls)",
         "  t config show --workflow    t config workflow list --json",
         "  t config edit --workflow    t config workflow edit",
         "  t hosts --json              t hosts list --json",
@@ -10507,11 +10521,14 @@ def build_parser():
     remote_sub = remote.add_subparsers(dest="action", metavar="<verb>")
     p._group_parsers["remote"] = remote
     for action, description in (
-            ("open", "Open an existing session on the chosen host; --new starts a fresh session."),
+            ("open", "Choose the host where the session will run. Open an existing session there; "
+             "--new starts a fresh session there."),
             ("move", "Move a current local or remote CLI conversation directly to another host. "
+             "The host picker selects the destination and names the current source host. "
              "Missing source/session and destination use single pickers. Explicit targets skip selection. "
              "The source must be able to SSH and rsync to the destination. Failed ownership checks stop the move."),
-            ("resume", "Discover and resume saved history ON the chosen host. "
+            ("resume", "Choose the host whose saved conversations to browse and where the resumed session will run. "
+             "Discover and resume saved history ON the chosen host. "
              "This differs from session resume --host, which sends locally discovered history there. "
              "Owner scans warn and skip unavailable peers; known local and reachable-host owners "
              "still block duplicate resumes.")):
@@ -10521,7 +10538,9 @@ def build_parser():
             "scripts must provide explicit targets. Cancellation returns 130.")
         leaf.add_argument("repo", nargs="?", help="repository alias (default: current checkout or all)")
         leaf.add_argument("slot", nargs="?", help="slot number; a lone number uses the current repository")
-        leaf.add_argument("--host", help="destination SSH host alias or target; omitted: host picker")
+        leaf.add_argument("--host", help=(
+            "saved-history source and execution host alias or target; omitted: host picker"
+            if action == "resume" else "execution destination SSH host alias or target; omitted: host picker"))
         if action == "open":
             leaf.add_argument("--new", action="store_true", help="start a fresh session on the chosen host")
         elif action == "resume":
@@ -10635,8 +10654,10 @@ DESKTOP TO CLI
 
 REMOTE SESSIONS
   A slot live only on another host attaches there automatically.
-  Fresh local slots can open when a configured host is offline. Existing
-  workspaces still require verified ownership before a new owner starts.
+  Fresh local slots can open when a configured host is offline. Automatic
+  fresh-slot allocation skips known remote desktop reservations; an explicit
+  slot still refuses a conflicting owner. Existing workspaces still require
+  verified ownership before a new owner starts.
   --local (also --here) skips that lookup; combine with --fg to run here.
   --remote attaches to a live remote slot; add --new to start one on the
   default host (the alphabetically first REMOTE_HOSTS key).
@@ -11600,7 +11621,7 @@ def main(argv):
         return 2
     top_commands = next(a._name_parser_map for a in parser._actions
                         if isinstance(a, argparse._SubParsersAction))
-    if (argv[0] not in top_commands and argv[0] not in COMMAND_GROUPS
+    if (_canonical_argv(argv)[0] not in top_commands and argv[0] not in COMMAND_GROUPS
             and argv[0] != "todo" and not argv[0].startswith("-")):
         print(f"t: unknown command {argv[0]!r}; choose from "
               f"{', '.join(COMMAND_GROUPS)}", file=sys.stderr)
