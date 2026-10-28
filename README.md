@@ -433,7 +433,7 @@ for a host's login shell.
 | `t session cd [repo] [slot]` / `t session read <repo> [slot]` | Enter a worktree or read its terminal log (`--dump` writes plain output) |
 | `t session move [repo] [slot] --host <host>` | Pick a current session or move an explicit slot; `--from <host>` pulls it here or sends directly with `--host` |
 | `t remote open [repo] [slot] [--host <host>]` | Choose a host and attach to an existing session; `--new` starts fresh |
-| `t remote resume [repo] [slot] [--host <host>]` | Choose a host and resume saved history discovered there |
+| `t remote resume [repo] [slot] [--host <host>] [--all]` | Choose a host and resume saved history discovered there |
 | `t remote move [repo] [slot] [--from <source>] [--host <dest>]` | Choose a current local/remote conversation and its destination |
 | `t session view-plan` / `t session paste` | View a Claude session plan or pass an attachment |
 | `t session open-app [push\|pull] [repo] [slot]` | Advanced Codex handoff options for macOS, including preview, plan, and thread selection; `t app` is the short form |
@@ -490,6 +490,8 @@ t remote open                         # choose a host, then an existing session 
 t remote open api 2 --host mini        # attach to this slot on mini
 t remote open api --host mini --new    # start fresh on mini
 t remote resume api --host mini        # choose saved history discovered on mini
+t remote resume --all --host mini       # all repositories, regardless of remote login directory
+t session resume --all                  # local and remote-only repositories; clone only after selection
 t remote move                         # choose a current session, then its destination
 t remote move api 2 --from mini --host cloud
 t session move api 2 --from mini --host cloud --detach

@@ -507,8 +507,10 @@ def test_remote_archive_release_check_uses_exact_identity_without_wrong_archive_
     lock = Path(os.environ['CODEX_HOME'], 'thread-writer-locks', sid + '.lock')
     with lock.open('a') as stream:
         fcntl.flock(stream, fcntl.LOCK_EX)
-        with pytest.raises(ValueError, match='writer lock is held'):
+        with pytest.raises(history.HistoryError, match='writer lock is held') as error:
             app.codex_released(row, source)
+        assert isinstance(error.value.__cause__, ValueError)
+        assert 'then reopen history' in str(error.value)
 
 
 def test_branch_pr_attribution_requires_matching_commit_on_reused_branch(app, history, store, monkeypatch):
@@ -687,7 +689,7 @@ def test_missing_revision_resume_uses_explicit_fallback_and_changed_repo_refuses
     monkeypatch.setattr(app, 'identity', lambda alias: 'other/repo')
     with pytest.raises(history.HistoryError, match='repository identity changed'):
         app.resume('repo', row)
-    assert choices == ['repo']
+    assert choices == []
 
 
 @pytest.mark.parametrize('mode', ['cancel-slot', 'choose-slot', 'retry-refresh-cancel', 'empty', 'owners-unavailable'])
@@ -905,3 +907,47 @@ def test_private_resume_bridge_dispatches_exact_identity_and_closes_store(
         assert out.out == 'saved metadata\n'
     elif mode in ('missing', 'invalid'):
         assert out.err.startswith('t resume: ')
+
+
+@pytest.mark.parametrize('prepare_only', [False, True])
+def test_private_saved_resume_reports_ownership_refusal_and_cleans_up(
+        app, history, git_repo, store, t_mod, monkeypatch, tmp_path, capsys, prepare_only):
+    workspace = tmp_path / '9'
+    source = transcript_file(tmp_path / 'rollout-selected.jsonl', codex_rows(workspace, sid='selected'))
+    row = store.merge(saved_row(app, git_repo, workspace))
+    row['sources'] = [dict(host='local', path=str(source))]
+    monkeypatch.setattr(app, 'owners', lambda *a: [])
+    monkeypatch.setattr(app, 'records', lambda alias: [row])
+    monkeypatch.setattr(app, 'source', lambda row: source)
+    monkeypatch.setattr(app, 'install_transcript', lambda *a: pytest.fail('refused restore must not write a transcript'))
+    original_run = history.run
+    def run(argv, **kwargs):
+        assert argv[0] != 'zsh', 'refused restore must not launch'
+        return original_run(argv, **kwargs)
+    monkeypatch.setattr(history, 'run', run)
+    app.api['_run'] = lambda *a, **k: pytest.fail('refused restore must not inspect processes')
+    refusal = ValueError('another loaded Codex conversation could not be matched to its worktree. Release this conversation in its owning app or terminal, then reopen history.')
+    def refuse(*a, **k):
+        raise refusal
+    def helpers(path):
+        if str(path).endswith('t_app_handoff.py'):
+            return {'assert_released': refuse}
+        return {'HistoryCommand': lambda cfg, api: app,
+                'HistoryError': history.HistoryError, 'HistoryCancelled': history.HistoryCancelled}
+    monkeypatch.setattr(history.runpy, 'run_path', helpers)
+    monkeypatch.setattr(t_mod, 'Config', lambda: app.cfg)
+    closed = []
+    original_close = app.store.close
+    def close():
+        closed.append(True)
+        original_close()
+    monkeypatch.setattr(app.store, 'close', close)
+    assert t_mod.main(['__resume-saved', 'repo', 'selected', 'codex',
+                       'prepare' if prepare_only else 'launch']) == 1
+    out = capsys.readouterr()
+    assert out.out == ''
+    assert 't resume: ' + str(refusal) in out.err
+    assert 'Traceback' not in out.err
+    assert closed == [True]
+    assert app.reservation is None
+    assert not list(Path(app.cfg.worktree_root).glob('repo/.*history-reservation'))
