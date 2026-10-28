@@ -834,3 +834,74 @@ def test_history_does_not_reuse_slot_with_two_layouts(app, history, store, git_r
     assert old.is_dir() and (named / 'keep').read_text() == 'other conversation work'
     assert row['sid'] == 'selected'
     app.reservation.unlink()
+
+
+@pytest.mark.parametrize('prepare_only', [False, True])
+def test_saved_resume_returns_actual_fresh_owner_without_attaching(app, history, git_repo, store, monkeypatch, tmp_path, prepare_only):
+    workspace = Path('/different/home/trees/old/old-9')
+    source = transcript_file(tmp_path / 'rollout-selected.jsonl', codex_rows(workspace, sid='selected'))
+    value = saved_row(app, git_repo, workspace)
+    value['associations'][0]['slot'] = '9'
+    row = store.merge(value)
+    row['sources'] = [dict(host='local', path=str(source))]
+    monkeypatch.setattr(app, 'owners', lambda *a: [])
+    monkeypatch.setattr(app, 'attach', lambda owner: pytest.fail('detached resume must not attach'))
+    monkeypatch.setattr(app, 'codex_released', lambda *a: None)
+    original, launches = history.run, []
+    def launch(argv, **kwargs):
+        if argv[0] == 'zsh':
+            launches.append(argv)
+            return ''
+        return original(argv, **kwargs)
+    monkeypatch.setattr(history, 'run', launch)
+    result = app.resume('repo', row, detached=True, prepare_only=prepare_only)
+    assert result.split('\t')[0] == 'dev-repo-1'
+    assert bool(launches) is not prepare_only
+    if prepare_only:
+        assert Path(result.split('\t')[1]).is_dir()
+    assert not list(Path(app.cfg.worktree_root).glob('repo/.*history-reservation'))
+
+
+def test_detached_saved_resume_refuses_new_live_owner(app, history, monkeypatch):
+    monkeypatch.setattr(app, 'owners', lambda *a: [dict(sid='selected', agent='codex')])
+    with pytest.raises(history.HistoryError, match='became live'):
+        app.resume('repo', conversation(sid='selected'), detached=True)
+
+
+@pytest.mark.parametrize('mode', ['candidates', 'launch', 'prepare', 'missing', 'invalid', 'cancel'])
+def test_private_resume_bridge_dispatches_exact_identity_and_closes_store(
+        app, history, t_mod, monkeypatch, capsys, mode):
+    calls = []
+    monkeypatch.setattr(t_mod, 'Config', lambda: app.cfg)
+    monkeypatch.setattr(t_mod.runpy, 'run_path', lambda path: {
+        'HistoryCommand': lambda cfg, api: app,
+        'HistoryError': history.HistoryError, 'HistoryCancelled': history.HistoryCancelled})
+    monkeypatch.setattr(app.store, 'close', lambda: calls.append('closed'))
+    monkeypatch.setattr(app, 'records', lambda alias: [] if mode == 'missing' else
+                        [dict(sid='selected', agent='codex')])
+    def candidates(aliases):
+        assert aliases == ['repo']
+        if mode == 'cancel':
+            raise history.HistoryCancelled('cancel')
+        return ['saved metadata']
+    monkeypatch.setattr(app, 'resume_candidates', candidates)
+    def resume(alias, row, **kwargs):
+        calls.append((alias, row, kwargs))
+        return 'dev-repo-7'
+    monkeypatch.setattr(app, 'resume', resume)
+    if mode in ('candidates', 'cancel'):
+        argv = ['__resume-candidates', 'repo']
+    else:
+        argv = ['__resume-saved', 'repo', 'selected', 'codex',
+                mode if mode in ('prepare', 'invalid') else 'launch']
+    assert t_mod.main(argv) == (130 if mode == 'cancel' else 1 if mode in ('missing', 'invalid') else 0)
+    assert calls[-1] == 'closed'
+    out = capsys.readouterr()
+    if mode in ('launch', 'prepare'):
+        assert calls[0] == ('repo', dict(sid='selected', agent='codex'),
+                            dict(detached=True, prepare_only=mode == 'prepare'))
+        assert 'dev-repo-7' in out.out
+    elif mode == 'candidates':
+        assert out.out == 'saved metadata\n'
+    elif mode in ('missing', 'invalid'):
+        assert out.err.startswith('t resume: ')
