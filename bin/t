@@ -11272,7 +11272,8 @@ EXPLICIT PUSH AND PULL
         description='Resume saved Claude or Codex conversations in fresh slots and attach. Infer the current '
             'repository; outside one, browse local and remote repositories. Enter selects; Space/Tab marks '
             'several. Live selections attach to their owner; ownership checks prevent duplicate resumes. '
-            'Cross-host resumes checkpoint code and carry commits; unreachable hosts use local code.',
+            'Repositories are cloned only after selection. Cross-host resumes carry source checkpoints; '
+            'unreachable hosts use local code.',
         epilog="""EXAMPLES
   %(prog)s                   Browse the current repository
   %(prog)s api 2             Resume api slot 2
