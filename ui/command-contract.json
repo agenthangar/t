@@ -3693,6 +3693,84 @@
           "terminal": true
         }
       }
+    },
+    "config local": {
+      "patterns": [
+        "wizard",
+        "action",
+        "detail"
+      ],
+      "renderer": "mixed",
+      "scope": "local machine",
+      "confirmation": "review",
+      "tests": [
+        "tests/test_local_setup.py::test_setup_and_disable",
+        "tests/test_local_setup.py::test_status_readonly"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "config",
+            "local"
+          ],
+          "patterns": [
+            "wizard"
+          ],
+          "read_only": false,
+          "terminal": true,
+          "tests": [
+            "tests/test_local_setup.py::test_interactive_review"
+          ]
+        },
+        "explicit": {
+          "argv": [
+            "config",
+            "local",
+            "--model",
+            "gpt-oss:20b",
+            "--yes"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_setup.py::test_setup_and_disable"
+          ]
+        },
+        "disable": {
+          "argv": [
+            "config",
+            "local",
+            "--disable",
+            "--yes"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_setup.py::test_setup_and_disable"
+          ]
+        },
+        "status": {
+          "argv": [
+            "config",
+            "local",
+            "--show"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_setup.py::test_status_readonly"
+          ]
+        }
+      }
     }
   },
   "display_schemas": {
@@ -4154,6 +4232,7 @@
     "config show": "cmd_config workflow_repo compatibility",
     "config edit": "cmd_config workflow_repo compatibility",
     "config onboard": "cmd_config workflow_repo compatibility",
+    "config local": "user-wide model setup; ignores workflow_repo inherited from the shared config parser",
     "config workflow list": "cmd_config workflow_repo",
     "config workflow edit": "cmd_config workflow_repo",
     "profile init": "cmd_instructions",

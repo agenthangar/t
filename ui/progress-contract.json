@@ -180,6 +180,26 @@
     "libexec/t_workflow.py:edit_instructions:subprocess.call": {
       "kind": "passthrough",
       "reason": "The configured terminal editor owns input and rendering until it exits."
+    },
+    "libexec/t_local_setup.py:setup:subprocess.run": {
+      "kind": "passthrough",
+      "reason": "Reviewed installers, model downloads, and MCP registration stream their own progress to the restored terminal."
+    },
+    "libexec/t_local_worker.py:ollama_server:subprocess.Popen": {
+      "kind": "background",
+      "reason": "Private Ollama starts for an MCP task or an explicitly announced setup phase; no terminal output may enter the MCP wire."
+    },
+    "libexec/t_local_worker.py:ollama_server:time.sleep": {
+      "kind": "background",
+      "reason": "Bounded readiness polling for the private runtime; setup announces the phase and MCP must remain quiet."
+    },
+    "libexec/t_local_worker.py:git:subprocess.run": {
+      "kind": "protocol",
+      "reason": "Snapshot and patch operations run in the background local worker; task_status reports progress without terminal chrome."
+    },
+    "libexec/t_local_worker.py:run_worker:subprocess.Popen": {
+      "kind": "background",
+      "reason": "Starts isolated Codex; its events are task artifacts and task_status provides status over MCP."
     }
   },
   "shell": [
