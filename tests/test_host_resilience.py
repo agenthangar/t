@@ -191,12 +191,17 @@ def test_partial_resume_batch_skips_saved_failure_and_attaches_live_mark(zsh, tm
       _dev_resume_session() { print -u2 SELECTED_LAUNCH_FAILURE; return 1; }
       _t_fzf_filtered() { print -r -- "$2"; }
       _dev_open_picks() { print -r -- "ATTACH $*"; }
+      _dev_remote_attach() { print -r -- "REMOTE_ATTACH $*"; }
+      _dev_open_tab() { print -r -- "TAB $*"; }
       _t_resume api --days all --live
     ''', _tty=True, LIVE_SID=OTHER, LIVE_CWD=str(live_cwd),
         FAKE_SESSIONS='dev-api-5', FAKE_SESSION_PATH=str(live_cwd))
     assert result.returncode == 0, result.stdout
     assert 'api 3: launch failed' in result.stdout
-    assert 'ATTACH local\tapi\t5' in result.stdout
+    # Unknown turn times break ties by identity: remote slot 4 attaches first,
+    # then the local slot 5 opens in a tab. Neither action reaches real SSH/UI.
+    assert 'REMOTE_ATTACH online\tapi\t4' in result.stdout
+    assert 'TAB t open api 5 --cli --local' in result.stdout
     calls = zsh.log.read_text()
     assert 'new-session' not in calls and 'respawn-pane' not in calls
     assert cwd.exists()

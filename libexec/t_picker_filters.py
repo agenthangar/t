@@ -1,4 +1,5 @@
 """Filter a private picker snapshot without rediscovery or session actions."""
+import datetime
 import json
 import os
 from pathlib import Path
@@ -6,7 +7,7 @@ import re
 import subprocess
 import sys
 
-from t_session_details import clip_columns, display_width
+from t_session_details import clip_columns, display_width, enrich, format_last_turn
 
 FACETS = {'agent': ('Ctrl-G', 'agent'), 'interface': ('Ctrl-D', 'UI'),
           'host': ('Ctrl-O', 'host'), 'repo': ('Ctrl-R', 'repo')}
@@ -28,7 +29,8 @@ def metadata(source, profile):
             repo, slot, sid, _, _, _, location, _, origin, agent = fields[:10]
             host = (origin if origin not in ('', '-') else 'local') if location == '-' else location
             result[tuple(fields[:3])] = dict(agent=agent or 'unknown',
-                host='local' if host == 'here' else host, repo=repo)
+                host='local' if host == 'here' else host, repo=repo, session=slot,
+                turn=fields[10] if len(fields) > 11 else '-')
         else:
             if len(fields) < 7:
                 continue
@@ -42,6 +44,61 @@ def metadata(source, profile):
                     session=slot, context=fields[5] or 'unknown', task=fields[6] or '(no task)',
                     progress='in progress' if re.search(r'#\d+ merged, still in progress', fields[6]) else 'not marked')
     return result
+
+
+RESUME_SORTS = {'turn': ('Alt-T', 'last turn'), 'repo': ('Alt-R', 'repo'),
+                'agent': ('Alt-G', 'agent'), 'host': ('Alt-O', 'host'),
+                'session': ('Alt-V', 'session')}
+
+
+def natural(value):
+    return tuple((1, int(part)) if part.isdigit() else (0, part.casefold())
+                 for part in re.split(r'(\d+)', value))
+
+
+def turn_epoch(value):
+    try:
+        stamp = datetime.datetime.fromisoformat(value.replace('Z', '+00:00'))
+        return stamp.timestamp() if stamp.tzinfo else float('-inf')
+    except (AttributeError, TypeError, ValueError, OverflowError, OSError):
+        return float('-inf')
+
+
+def sort_resume(rows, records, mode='turn'):
+    def key(row):
+        identity = tuple(row.split('\t')[:3])
+        record = records.get(identity, {})
+        primary = () if mode == 'turn' else natural(record.get(mode, 'unknown'))
+        return primary, -turn_epoch(record.get('turn', '-')), identity
+    return sorted(rows, key=key)
+
+
+def resume_turns(source, home, codex_home, owners=''):
+    """Enrich one snapshot, honoring exact saved paths and local owner identities."""
+    rows = [line.split('\t') for line in source.splitlines() if line]
+    owner_ids = {}
+    for line in owners.splitlines():
+        owner = line.split('\t')
+        if len(owner) >= 8 and owner[0] == 'local' and owner[1] != '-':
+            owner_ids[(owner[2], owner[3])] = owner[1]
+    inputs = []
+    for row in rows:
+        # A remote live owner must not borrow a local transcript's activity.
+        local = row[6] in ('-', 'here', 'fg:here', 'app:here')
+        sid = row[2]
+        if sid == '-' and row[6] in ('here', 'app:here'):
+            sid = owner_ids.get((row[3], row[0] + '-' + row[1]), '-')
+        inputs.append('\t'.join([sid if local else '-', row[3], row[1],
+            'detached', 'unknown', row[5], row[9], row[10] if len(row) > 10 else '-']))
+    details = enrich(inputs, home, codex_home)
+    result = []
+    for row, detail in zip(rows, details):
+        turn = detail.split('\t')[-1]
+        when = format_last_turn(turn)
+        row[4] = 'Last: ' + when if row[6] == '-' else row[4] + ' · Last: ' + when
+        result.append('\t'.join(row[:10] + [turn]))
+    records = metadata('\n'.join(row + '\t' for row in result), 'resume')
+    return sort_resume(result, records)
 
 
 def choose(rows, records, filters):
@@ -61,7 +118,9 @@ def pack(parts, width):
     return lines
 
 
-def header(profile, mask, filters, hidden, columns, width):
+def header(profile, mask, filters, hidden, columns, width, sort='turn'):
+    if profile == 'resume':
+        return resume_header(mask, filters, hidden, columns, width, sort)
     if profile == 'open':
         return open_header(mask, filters, hidden, columns, width)
     controls = [f'Enter {profile} · Esc', 'Space/Tab mark ✓']
@@ -89,6 +148,27 @@ def header(profile, mask, filters, hidden, columns, width):
         lines += pack(['Ctrl-A show all', 'Ctrl-F defaults', f'{hidden} hidden'], width)
         if columns:
             lines.append(clip_columns(columns, width))
+    return '\n'.join(lines) + '\n'
+
+
+def resume_header(mask, filters, hidden, columns, width, sort):
+    compact = width <= 36
+    key = lambda text: text.replace('Ctrl-', '^').replace('Alt-', 'M-') if compact else text
+    controls = ['Enter/Esc' if compact else 'Enter resume/Esc', 'Space/Tab ✓', 'Ctrl-/ details',
+                'Ctrl-L live', 'Ctrl-A all', 'Ctrl-F reset']
+    controls += [f'{FACETS[name][0]} {FACETS[name][1]}' for name in filters]
+    controls += [f'{shortcut} {"turn" if compact and label == "last turn" else label}'
+                 for shortcut, label in RESUME_SORTS.values()]
+    lines = pack([key(control) for control in controls], width)
+    active = [f'{name}={value}' for name, value in filters.items() if value is not None]
+    lines += pack([f'Sort: {RESUME_SORTS[sort][1]}', f'{hidden} hidden'], width)
+    lines += pack([f'live: {"shown" if mask else "hidden"}', f'{len(active)} filters'], width)
+    if compact:
+        lines += pack(['^ Ctrl · M Alt'], width)
+    elif active:
+        lines.append(clip_columns('Filters: ' + ' · '.join(active), width))
+    if columns:
+        lines.append(clip_columns(columns, width))
     return '\n'.join(lines) + '\n'
 
 
@@ -148,10 +228,14 @@ def render(directory, profile, action, width, columns='', facet=None):
     filters = json.loads(state_file.read_text()) if state_file.exists() else dict.fromkeys(names)
     mask_file = directory / 'show-all'
     mask = int(mask_file.read_text().strip() or 0) if mask_file.exists() else 0
+    sort_file = directory / 'sort'
+    sort = sort_file.read_text().strip() if sort_file.exists() else 'turn'
     maximum = 3 if profile == 'kill' else 1
     if action in ('all', 'default'):
         mask = maximum if action == 'all' else 0
         filters = dict.fromkeys(names)
+    elif profile == 'resume' and action.startswith('sort-') and action[5:] in RESUME_SORTS:
+        sort = action[5:]
     elif action == 'first' and profile == 'open':
         mask = 2  # Attached-only; repeated presses are idempotent.
     elif action == 'unattached' and profile == 'open':
@@ -175,14 +259,24 @@ def render(directory, profile, action, width, columns='', facet=None):
     else:
         rows = (directory / f'rows-{mask}').read_text().splitlines()
     selected = choose(rows, records, filters)
+    if profile == 'resume':
+        if action == 'default':
+            sort = 'turn'
+        selected = sort_resume(selected, records, sort)
+        sort_file.write_text(sort)
     total = len((directory / 'all').read_text().splitlines())
     (directory / 'current').write_text(''.join(row + '\n' for row in selected))
-    (directory / 'current-header').write_text(header(profile, mask, filters, total - len(selected), columns, width))
+    (directory / 'current-header').write_text(header(profile, mask, filters, total - len(selected), columns, width, sort))
     mask_file.write_text(str(mask))
     state_file.write_text(json.dumps(filters))
 
 
 if __name__ == '__main__':
+    if sys.argv[1] == '--resume-turns':
+        print('\n'.join(resume_turns(sys.stdin.read(), os.environ['HOME'],
+            os.environ.get('CODEX_HOME', str(Path.home() / '.codex')),
+            os.environ.get('T_RESUME_OWNER_ROWS', ''))))
+        sys.exit(0)
     render(os.environ['T_PICKER_VIEWS'], os.environ['T_PICKER_SESSION_FILTERS'], sys.argv[1],
            int(os.environ['T_PICKER_HEADER_WIDTH']), os.environ.get('T_PICKER_COLUMNS', ''),
            sys.argv[2] if len(sys.argv) > 2 else None)

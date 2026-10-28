@@ -319,6 +319,13 @@ SH
       _t_picker_bind="${_t_picker_bind},${_t_picker_key}:${T_PICKER_CLEAR_MARKS}${_t_picker_execute}(sh \"\$T_PICKER_TOGGLE\" ${_t_picker_pick:-}$_t_picker_action)+reload-sync(cat \"\$T_PICKER_CURRENT\")+transform-header(cat \"\$T_PICKER_CURRENT_HEADER\")"
     done
   fi
+  if [ "${T_PICKER_SESSION_FILTERS:-}" = resume ]; then
+    set -- --no-sort "$@"
+    for _t_picker_spec in alt-t:turn alt-r:repo alt-g:agent alt-o:host alt-v:session; do
+      _t_picker_key=${_t_picker_spec%:*} _t_picker_action=${_t_picker_spec#*:}
+      _t_picker_bind="${_t_picker_bind},${_t_picker_key}:${T_PICKER_CLEAR_MARKS}execute-silent(sh \"\$T_PICKER_TOGGLE\" sort-$_t_picker_action)+reload-sync(cat \"\$T_PICKER_CURRENT\")+transform-header(cat \"\$T_PICKER_CURRENT_HEADER\")"
+    done
+  fi
   _t_fzf --multi --no-hscroll --margin="$_t_picker_margin" --delimiter="$(printf '\t')" --with-nth=-1 \
     --bind="enter:accept,esc:abort,ctrl-c:abort,space:toggle+down,tab:toggle+down,shift-tab:up${_t_picker_preview_bind}" \
     --bind="$_t_picker_bind" \
