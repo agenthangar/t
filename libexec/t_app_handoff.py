@@ -326,7 +326,8 @@ def _archived_released(codex_home, sid, cwd, rollout, run):
 
 
 def assert_released(bundle, sid, cwd, run, *, codex_home=None, rollout=None,
-                    archived=False, cli_pid=None, retry=_RETRY, unknown=None, for_close=False):
+                    archived=False, cli_pid=None, retry=_RETRY, unknown=None, for_close=False,
+                    ownership_cwd=None):
     """Allow only a free selected writer lock and no other writer in its cwd.
 
     The eventual `codex resume --no-daemon` takes the lock atomically. This
@@ -361,7 +362,7 @@ def assert_released(bundle, sid, cwd, run, *, codex_home=None, rollout=None,
                              "(its writer lock is held). "
                              + _release_guidance(cwd, archived, run) + retry)
         try:
-            other = _other_cwd_owner(folder, sid, cwd, codex_home, unknown=unknown,
+            other = _other_cwd_owner(folder, sid, ownership_cwd or cwd, codex_home, unknown=unknown,
                                      for_close=for_close)
         except ValueError as exc:
             raise ValueError(str(exc) + ". " + retry) from exc
