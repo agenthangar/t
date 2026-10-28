@@ -869,7 +869,7 @@ _t() {
         *)
           if [[ ${words[CURRENT]} == -* ]]; then
             local -a remote_flags=(--host -h --help)
-            case $action in open) remote_flags+=(--new) ;; move) remote_flags+=(--from --session --all --detach --fg) ;; resume) remote_flags+=(--days) ;; esac
+            case $action in open) remote_flags+=(--new) ;; move) remote_flags+=(--from --session --all --detach --fg) ;; resume) remote_flags+=(--days --all) ;; esac
             _values 'flag' $remote_flags
           elif (( CURRENT == first )); then _values 'repo' "${(@f)$(_dev_repo_selectors)}"
           else _message 'slot'; fi ;;

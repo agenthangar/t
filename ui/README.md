@@ -9,7 +9,9 @@ command words, preserving option values, repository names, and delegated command
 The old `t repos` family is removed; use `t repo` verbs. Existing repository selectors
 accept registered aliases and unambiguous checkout directory names, with exact
 aliases taking precedence. Ambiguous names fail before selection or mutation.
-Remote open/resume selectors resolve against the selected host’s registrations.
+Remote opens resolve against the selected host’s registrations. Remote resumes
+resolve local aliases/names through verified repository identity; unknown
+target-only selectors remain literal.
 Repository creation names, paths and delegated payloads remain literal. Read this
 guide and the inventory before adding or changing a command; update both when its behavior changes.
 
@@ -198,6 +200,17 @@ profile; Enter applies, Esc keeps the filter, and an explicit All option clears
 one column. Column filters combine with attachment views. Ctrl-A clears all
 filters and shows every snapshot row; Ctrl-F clears all filters and restores
 unattached. Ctrl-T and Ctrl-U switch attachment without clearing column filters.
+
+All-repository resume discovery (`t session resume --all`, or outside a checkout)
+includes local registrations, repositories registered only on reachable hosts,
+and orphan Codex rollouts with exact Git repository metadata. Discovery transfers
+metadata only; canceling the picker never clones, registers, or downloads a
+transcript. Selecting a saved conversation can clone and register its missing
+local repository through the normal checkout safety checks. Repository aliases
+and paths may differ across hosts. GitHub transfers require authenticated matching
+repository IDs; names and directory basenames alone never establish equivalence.
+`t remote resume --all --host HOST` explicitly keeps this scope on the chosen host.
+An explicit or inferred locally registered repository resolves there by identity.
 
 Resume and close retain cycling Ctrl-G agent, Ctrl-O host/origin, Ctrl-R repo,
 and (close only) Ctrl-D interface, with their existing state toggles. Resume

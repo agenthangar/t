@@ -983,7 +983,7 @@
         "multi"
       ],
       "renderer": "fzf",
-      "scope": "explicit/inferred repository or all local/remote sessions",
+      "scope": "explicit/inferred repository, or local and registered-host repository identities with --all/outside a checkout",
       "confirmation": "per_target",
       "tests": [
         "tests/test_resume_multiselect.py::test_resume_multi_opens_selected_live_slot_and_revives_dead_slot",
@@ -995,6 +995,9 @@
         "tests/test_host_resilience.py::test_partial_resume_checks_selected_saved_writer_and_starts",
         "tests/test_host_resilience.py::test_remote_resume_worker_opens_picker_despite_an_unavailable_peer",
         "tests/test_resume_history.py::test_resume_history_selects_inactive_conversation_from_busy_slot",
+        "tests/test_resume_repositories.py::test_remote_catalog_queries_distinct_targets_and_deduplicates_identity",
+        "tests/test_resume_repositories.py::test_cancel_remoteonly_picker_never_prepares_or_registers",
+        "tests/test_resume_repositories.py::test_remoteonly_prepare_refreshes_actual_alias_before_host_route",
         "tests/test_app_handoff.py::test_handoff_scopes_unindexed_writers_using_rollout_metadata",
         "tests/test_history_resume.py::test_private_saved_resume_reports_ownership_refusal_and_cleans_up"
       ],
@@ -1016,7 +1019,7 @@
             "tests/test_resume_multiselect.py::test_resume_last_turn_overrides_mtime_and_sort_hotkeys_keep_rows",
             "tests/test_picker_ui.py::test_resume_sort_controls_keep_focused_row_and_change_order"
           ],
-          "notes": "Independent Ctrl-G agent, Ctrl-O host/origin, and Ctrl-R repository facets; open/close also support Ctrl-D interface. All/default clears facets, preserves search, and removes hidden marks. No additional discovery or scope expansion. Unavailable registered hosts warn and are skipped; discovery retains local and reachable rows. Saved resumes retain local locks and known-owner checks, but cannot verify ownership on unavailable hosts. Local scan failures remain fatal. Default order is actual last user turn newest first, unknown times last, without pinning live rows. Alt-T last turn, Alt-R repository, Alt-G agent, Alt-O host/origin, Alt-V session select immutable snapshot sorting; text modes ascend with newest turn and stable identity ties and natural numeric session slots. Ctrl-A clears filters and preserves sort; Ctrl-F restores inactive/default filters and last-turn sorting. Search preserves the selected order. Narrow headers use ^ Ctrl and M Alt. Saved metadata refreshes on registered hosts by repository identity by default; --remote remains compatible. Canonical and verified renamed roots and swept rollouts are included. Exact IDs determine live ownership; independent saved conversations in occupied slots use guarded fresh allocation. Only selected transcripts are fetched."
+          "notes": "Independent Ctrl-G agent, Ctrl-O host/origin, and Ctrl-R repository facets; open/close also support Ctrl-D interface. All/default clears facets, preserves search, and removes hidden marks. No additional discovery or scope expansion. Unavailable registered hosts warn and are skipped; discovery retains local and reachable rows. Saved resumes retain local locks and known-owner checks, but cannot verify ownership on unavailable hosts. Local scan failures remain fatal. Default order is actual last user turn newest first, unknown times last, without pinning live rows. Alt-T last turn, Alt-R repository, Alt-G agent, Alt-O host/origin, Alt-V session select immutable snapshot sorting; text modes ascend with newest turn and stable identity ties and natural numeric session slots. Ctrl-A clears filters and preserves sort; Ctrl-F restores inactive/default filters and last-turn sorting. Search preserves the selected order. Narrow headers use ^ Ctrl and M Alt. Saved metadata refreshes on registered hosts by repository identity by default; --remote remains compatible. Canonical and verified renamed roots and swept rollouts are included. Exact IDs determine live ownership; independent saved conversations in occupied slots use guarded fresh allocation. Only selected transcripts are fetched. All-repository discovery includes repositories registered only on a reachable host and orphan Codex rollouts with exact Git metadata, even without local registrations. Metadata browsing and cancellation never clone or register repositories. Only a selected saved identity may create its guarded local checkout. GitHub transfers match only authenticated immutable repository IDs; selected different-name identities require fresh proof."
         },
         "explicit": {
           "argv": [
@@ -3345,6 +3348,25 @@
             "tests/test_remote_commands.py::test_remote_open_resume_delegate_quoted_worker_and_status"
           ],
           "notes": "Discover history ON build with the established saved-history protocol; session resume --host sends locally discovered history instead."
+        },
+        "all": {
+          "argv": [
+            "remote",
+            "resume",
+            "--host",
+            "build",
+            "--all"
+          ],
+          "patterns": [
+            "filtered",
+            "multi",
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_resume_repositories.py::test_remote_resume_all_forwards_explicit_scope"
+          ],
+          "notes": "Explicit --all is forwarded to the selected host so its login directory cannot narrow discovery. A locally resolvable repository is forwarded by GitHub identity and resolved to the selected host alias; otherwise a literal host alias is preserved."
         }
       }
     },

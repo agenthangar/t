@@ -689,7 +689,7 @@ def test_missing_revision_resume_uses_explicit_fallback_and_changed_repo_refuses
     monkeypatch.setattr(app, 'identity', lambda alias: 'other/repo')
     with pytest.raises(history.HistoryError, match='repository identity changed'):
         app.resume('repo', row)
-    assert choices == ['repo']
+    assert choices == []
 
 
 @pytest.mark.parametrize('mode', ['cancel-slot', 'choose-slot', 'retry-refresh-cancel', 'empty', 'owners-unavailable'])

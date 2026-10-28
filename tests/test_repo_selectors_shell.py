@@ -145,7 +145,7 @@ def test_direct_workers_resolve_before_existing_target_lookup(tmp_path):
     assert 'UNEXPECTED' not in result.stderr
 
 
-@pytest.mark.parametrize('action', ['open', 'resume'])
+@pytest.mark.parametrize('action', ['open'])
 def test_remote_target_keeps_selector_even_when_local_alias_differs(tmp_path, action):
     result = shell(tmp_path, f'''
         DEV_REPOS=(application "$HOME/code/other" app "$HOME/code/application")
@@ -306,3 +306,50 @@ def test_scoped_remote_worker_rejects_older_source_before_unfiltered_rows(tmp_pa
     assert 'update t on the source host' in result.stderr
     assert 'UNEXPECTED' not in result.stderr
     assert result.stdout == ''
+
+
+@pytest.mark.parametrize('selector,collision,expected', [
+    ('app', False, 'app'), ('application', False, 'app'),
+    ('application', True, 'application'),
+])
+def test_remote_resume_names_share_verified_local_identity(tmp_path, selector, collision, expected):
+    extra = 'DEV_REPOS[application]="$HOME/code/other"' if collision else ''
+    result = shell(tmp_path, f'''
+        DEV_REPOS=(app "$HOME/code/application")
+        {extra}
+        REMOTE_HOSTS=(far user@example)
+        python3() {{ [[ $2 == __repo-identity && $3 == {expected} ]] || return 98; print org/project; }}
+        ssh() {{ print -r -- "SSH $*"; return 17; }}
+        t remote resume {selector} 2 --host far
+    ''')
+    assert result.returncode == 17, result.stderr
+    worker = shlex.split(result.stdout.removeprefix('SSH user@example '))[2]
+    assert 'command t __resume-alias org/project' in worker
+    assert '_T_RESUME_REPO_IDENTITY=org/project' in worker
+    assert result.stderr == ''
+
+
+def test_remote_resume_target_only_name_stays_literal(tmp_path):
+    result = shell(tmp_path, '''
+        DEV_REPOS=(app "$HOME/code/application")
+        REMOTE_HOSTS=(far user@example)
+        python3() { print BAD-identity >&2; return 98; }
+        ssh() { print -r -- "SSH $*"; return 17; }
+        t remote resume remote-only 2 --host far
+    ''')
+    assert result.returncode == 17
+    worker = shlex.split(shlex.split(result.stdout.removeprefix('SSH user@example '))[2])
+    assert worker[worker.index('_t_resume') + 1] == 'remote-only'
+    assert result.stderr == ''
+
+
+def test_remote_resume_ambiguous_name_stops_before_identity_or_ssh(tmp_path):
+    result = shell(tmp_path, '''
+        DEV_REPOS=(a "$HOME/a/application" b "$HOME/b/application")
+        REMOTE_HOSTS=(far user@example)
+        python3() { print BAD-identity >&2; return 98; }
+        ssh() { print BAD-ssh >&2; return 98; }
+        t remote resume application 2 --host far
+    ''')
+    assert result.returncode == 2
+    assert 'ambiguous repository' in result.stderr and 'BAD-' not in result.stderr

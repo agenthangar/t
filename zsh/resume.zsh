@@ -45,7 +45,18 @@ _t_resume_history_candidates() {
 # Resume a retained conversation through the exact-source verifier and fresh
 # workspace allocator. Stdout contains only the actual allocated tmux owner.
 _t_resume_history_launch() {
-  python3 "$T_HOME/bin/t" __resume-saved "$1" "$2" "$3" "${4:-launch}"
+  python3 "$T_HOME/bin/t" __resume-saved "$1" "$2" "$3" "${4:-launch}" "${5:--}"
+}
+
+# Selected history may register a checkout in the Python worker. Make that exact
+# returned alias available to this shell before app/foreground/host routing.
+_t_resume_history_registered() {
+  [[ -n ${DEV_REPOS[$1]:-} ]] && return 0
+  [[ -f $T_LOCAL_RC ]] && source "$T_LOCAL_RC"
+  [[ -n ${DEV_REPOS[$1]:-} ]] || {
+    print -u2 -- 't resume: selected repository registration is unavailable; no destination launched'
+    return 1
+  }
 }
 
 # _t_resume — the `t resume` verb: revive a DEAD dev slot's last conversation.
@@ -134,7 +145,11 @@ _t_resume() {
   if [[ -n $_expect_host || $on_host == -* || ( -n ${(M)@:#--host*} && -z $on_host ) ]]; then
     echo "t resume: --host takes a host (one of: ${(k)REMOTE_HOSTS:-none configured})." >&2; return 1
   fi
-  local repo="${pos[1]:-}" slot="${pos[2]:-}"
+  local repo="${pos[1]:-}" slot="${pos[2]:-}" identity_scope=
+  if [[ -n ${_T_RESUME_REPO_IDENTITY:-} ]]; then
+    repo=$(python3 "$T_HOME/bin/t" __resume-alias "$_T_RESUME_REPO_IDENTITY") || return $?
+    [[ -n ${DEV_REPOS[$repo]:-} ]] || identity_scope=$repo
+  fi
   # Repo-aware defaults (mirrors t plan/paste): lone numeric arg is a SLOT of the
   # cwd repo; bare `t resume` infers the repo too — and OUTSIDE any DEV_REPOS dir
   # it widens to EVERY worktree repo instead of erroring (the `t ls` unscoped
@@ -172,7 +187,11 @@ _t_resume() {
       _canon=${_canon%%$'\t'*}
       _dev_worktree_enabled "$_canon" && repos+=("$_canon")
     done
-    (( $#repos )) || { echo "No worktree-enabled repos configured (configured: ${(k)DEV_REPOS})." >&2; return 1; }
+
+  elif [[ -n $identity_scope ]]; then
+    # A forwarded exact identity can browse retained history before this host
+    # has a registered checkout. Only the selected history row may create one.
+    repos=()
   else
     [[ -n ${DEV_REPOS[$repo]:-} ]] || { echo "Unknown repo: $repo (configured: ${(k)DEV_REPOS})" >&2; return 1; }
     if ! _dev_worktree_enabled "$repo"; then
@@ -490,12 +509,15 @@ _t_resume() {
     _mf=("${(@ps:\t:)_p}")
     history_seen[$_mf[2]/$(_dev_transcript_agent "$_mf[5]")/$(_dev_transcript_sid "$_mf[5]")]=1
   done
-  history_rows=$(_t_with_progress "Finding saved conversations across hosts" _t_resume_history_candidates "${(@)repos}") || history_rc=$?
+  local -a history_scope=("${(@)repos}")
+  [[ -n $all_mode ]] && history_scope=(--all)
+  [[ -n $identity_scope ]] && history_scope=("$identity_scope")
+  history_rows=$(_t_with_progress "Finding saved conversations across hosts" _t_resume_history_candidates "${(@)history_scope}") || history_rc=$?
   (( history_rc == 130 )) && return 130
   (( history_rc == 0 )) || return $history_rc
   for history_row in "${(@f)history_rows}"; do
     history_fields=("${(@ps:\t:)history_row}")
-    (( $#history_fields == 9 || $#history_fields == 10 )) || continue
+    (( $#history_fields == 9 || $#history_fields == 10 || $#history_fields == 11 )) || continue
     history_key=$history_fields[2]/$history_fields[9]/$history_fields[4]
     if [[ -n ${history_seen[$history_key]:-} ]]; then
       [[ $history_fields[8] != local ]] || continue
@@ -519,7 +541,7 @@ _t_resume() {
       (( skipped++ )); continue
     fi
     org=$history_fields[8]; [[ $org == local ]] && org=-
-    cands+=("$history_fields[1]"$'\t'"$history_fields[2]"$'\t'"$history_fields[3]"$'\t'"$history_fields[4]"$'\t'"$history_fields[5]"$'\t'"$history_fields[6]"$'\t'"$history_fields[7]"$'\t'-$'\t'history$'\t'"$org"$'\t'"$history_fields[9]"$'\t'-$'\t'"${history_fields[10]:--}")
+    cands+=("$history_fields[1]"$'\t'"$history_fields[2]"$'\t'"$history_fields[3]"$'\t'"$history_fields[4]"$'\t'"$history_fields[5]"$'\t'"$history_fields[6]"$'\t'"$history_fields[7]"$'\t'-$'\t'history$'\t'"$org"$'\t'"$history_fields[9]"$'\t'-$'\t'"${history_fields[10]:--}"$'\t'"${history_fields[11]:--}")
   done
 
   # Conversations live under ANOTHER slot's session (or a foreground one). One row
@@ -788,14 +810,16 @@ _t_resume() {
         continue
       fi
       if [[ $f[8] == history && -n $on_host ]]; then
-        mp_cwd=$(_t_resume_history_launch "$repo" "$sid" "$mp_agent" prepare) || return $?
-        mp_session=${mp_cwd%%$'\t'*}; wt=${mp_cwd#*$'\t'}; slot=${mp_session##*-}
+        mp_cwd=$(_t_resume_history_launch "$repo" "$sid" "$mp_agent" prepare "${f[12]:--}") || return $?
+        mp_session=${mp_cwd%%$'\t'*}; wt=${mp_cwd#*$'\t'}; slot=${mp_session##*-}; repo=${${mp_session#dev-}%-*}
+        _t_resume_history_registered "$repo" || return 1
       elif [[ $f[8] == history ]]; then
-        mp_session=$(_t_resume_history_launch "$repo" "$sid" "$mp_agent") || {
+        mp_session=$(_t_resume_history_launch "$repo" "$sid" "$mp_agent" launch "${f[12]:--}") || {
           mp_rc=$?; (( mp_rc == 130 )) && return 130
           _t_warn "$repo: saved conversation launch failed — skipped"; continue
         }
-        slot=${mp_session##*-}
+        slot=${mp_session##*-}; repo=${${mp_session#dev-}%-*}
+        _t_resume_history_registered "$repo" || return 1
         if [[ -z $mp_first_repo ]]; then
           mp_first_repo=$repo; mp_first_slot=$slot
         else
@@ -932,8 +956,10 @@ _t_resume() {
 
   if [[ $lalias == history && ( -n $app || -n $no_tmux || -n $on_host ) ]]; then
     local prepared
-    prepared=$(_t_resume_history_launch "$repo" "$sid" "$agent" prepare) || return $?
-    slot=${${prepared%%$'\t'*}##*-}; wt=${prepared#*$'\t'}; lalias=-
+    prepared=$(_t_resume_history_launch "$repo" "$sid" "$agent" prepare "${f[12]:--}") || return $?
+    local prepared_session=${prepared%%$'\t'*}
+    slot=${prepared_session##*-}; repo=${${prepared_session#dev-}%-*}; wt=${prepared#*$'\t'}; lalias=-
+    _t_resume_history_registered "$repo" || return 1
   fi
 
   if [[ -n $app ]]; then
@@ -966,8 +992,9 @@ _t_resume() {
 
   if [[ $lalias == history ]]; then
     local history_session
-    history_session=$(_t_resume_history_launch "$repo" "$sid" "$agent") || return $?
-    slot=${history_session##*-}
+    history_session=$(_t_resume_history_launch "$repo" "$sid" "$agent" launch "${f[12]:--}") || return $?
+    slot=${history_session##*-}; repo=${${history_session#dev-}%-*}
+    _t_resume_history_registered "$repo" || return 1
     if [[ -z $TMUX && -t 0 && -t 1 ]]; then
       tmux attach-session -t "=$history_session:"
     else

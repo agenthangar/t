@@ -153,7 +153,11 @@ def test_remote_open_resume_delegate_quoted_worker_and_status(zsh, action, args)
     words = shlex.split(command)
     assert 'T_NO_UPDATE_CHECK=1' in words
     assert ('_t_remote_open_local' if action == 'open' else '_t_resume') in words
-    assert words[-len(shlex.split(args)):] == shlex.split(args)
+    expected = shlex.split(args)
+    if action == 'resume':
+        expected[0] = '$t_resume_repo'
+        assert 'command t __resume-alias' in command
+    assert words[-len(expected):] == expected
 
 
 def test_remote_open_empty_inventory_never_creates(zsh, tmp_path):
