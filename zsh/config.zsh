@@ -1,3 +1,48 @@
+# Resolve an existing repository selector without adding synthetic registrations.
+# 0 prints its registered alias; 1 is unknown; 2 is ambiguous (with a diagnostic).
+_dev_resolve_repo() {
+  emulate -L zsh
+  local selector=$1 key configured real best= checkout=
+  local -a matches
+  [[ -n $selector ]] || return 1
+  if (( ${+DEV_REPOS[$selector]} )); then
+    print -r -- "$selector"
+    return 0
+  fi
+  for key in ${(ok)DEV_REPOS}; do
+    configured=${DEV_REPOS[$key]:a}
+    [[ ${configured:t} == "$selector" ]] || continue
+    matches+=("$key")
+    real=${DEV_REPOS[$key]:P:a}
+    if [[ -n $checkout && $real != "$checkout" ]]; then
+      checkout=ambiguous
+    elif [[ -z $checkout ]]; then
+      checkout=$real
+    fi
+    if [[ -z $best ]] || (( ${#key} < ${#best} )); then best=$key; fi
+  done
+  (( $#matches )) || return 1
+  if [[ $checkout == ambiguous ]]; then
+    print -u2 -r -- "t: ambiguous repository '$selector'; use an explicit alias: ${(j:, :)matches}"
+    return 2
+  fi
+  print -r -- "$best"
+}
+
+# Include aliases and only directory names that the resolver can select safely.
+_dev_repo_selectors() {
+  emulate -L zsh
+  local key configured name
+  local -A selectors
+  for key in ${(ok)DEV_REPOS}; do
+    selectors[$key]=1
+    configured=${DEV_REPOS[$key]:a}; name=${configured:t}
+    _dev_resolve_repo "$name" >/dev/null 2>&1 && selectors[$name]=1
+  done
+  (( $#selectors )) && print -rl -- ${(ok)selectors}
+  return 0
+}
+
 # Per-machine configuration is shell code, loaded after the public arrays exist.
 typeset -gA DEV_REPOS DEV_BRANCHES REMOTE_HOSTS DEV_WORKTREE DEV_OPEN_MODE DEV_AGENT DEV_MODEL DEV_EFFORT DEV_FAST
 typeset -ga _T_OWNED_ALIASES _T_OWNED_HOSTS

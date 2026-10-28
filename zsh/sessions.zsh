@@ -103,6 +103,10 @@ _t_paste() {
   # $PWD repo's next free slot (see _t_infer_repo).
   if [[ "$repo" == <-> && -z "$slot" ]]; then slot=$repo; repo=$(_t_infer_repo "$slot"); fi
   [[ -z "$repo" ]] && repo=$(_t_infer_repo)
+  local _repo_selector _repo_selector_rc
+  _repo_selector=$(_dev_resolve_repo "$repo"); _repo_selector_rc=$?
+  (( _repo_selector_rc == 2 )) && return 2
+  (( _repo_selector_rc == 0 )) && repo=$_repo_selector
   if [[ -z "$repo" ]]; then
     echo "Usage: tpaste [-n] [repo] [slot]   (no repo: the one \$PWD is in; repo: one of ${(k)DEV_REPOS:-(none configured — see ${T_LOCAL_RC})})"
     return 1
@@ -1242,8 +1246,44 @@ _dev_desktop_threads() {
   python3 "$T_HOME/libexec/t_desktop.py" 2>/dev/null
 }
 
+# The dedicated helper also advertises scoped-row capability to remote callers.
+_dev_session_rows_scoped() {
+  local repo=$1 slot=$2 rows row
+  local _repo_selector _repo_selector_rc
+  _repo_selector=$(_dev_resolve_repo "$repo"); _repo_selector_rc=$?
+  (( _repo_selector_rc == 2 )) && return 2
+  (( _repo_selector_rc == 0 )) && repo=$_repo_selector
+  rows=$(_dev_session_rows) || return $?
+  local -a fields
+  for row in "${(@f)rows}"; do
+    fields=("${(@ps:\t:)row}")
+    (( $#fields >= 7 )) || continue
+    [[ $fields[3] != *:* ]] || continue
+    [[ -z $slot || ${fields[3]##*-} == "$slot" ]] || continue
+    if [[ -n ${DEV_REPOS[$repo]:-} ]]; then
+      _dev_dir_in_scope "$fields[2]" "${DEV_REPOS[$repo]:a}" || continue
+    else
+      [[ $fields[3] == "$repo-"* ]] || continue
+    fi
+    print -r -- "$row"
+  done
+  return 0
+}
+
 _dev_session_rows() {
+  if [[ ${1:-} == --repo ]]; then
+    _dev_session_rows_scoped "${@:2}"
+    return $?
+  fi
   _t_with_progress 'Checking local sessions' _dev_session_rows_impl "$@"
+}
+
+# Older sources ignore unknown inventory arguments. Guard scoped scans so they
+# cannot return an unrelated owner when asked for a repository directory name.
+_dev_repo_rows_command() {
+  local worker='(( ${+functions[_dev_session_rows_scoped]} )) || { print -u2 "t: source cannot filter repository selectors; update t on the source host"; exit 1; }; _dev_session_rows --repo '
+  worker+="${(q)1} ${(q)2}"
+  print -r -- "$worker"
 }
 
 _dev_session_rows_impl() {
@@ -1398,18 +1438,18 @@ _dev_session_rows_impl() {
 # warn accordingly. local-first; within a host, _dev_session_rows' own order holds.
 # Rows are prefixed verbatim (no re-splitting), so empty fields can't collapse.
 _dev_remote_scan_with_timeout() {
-  local target=$1 remote_command=$2 limit=${3:-15}
+  local target=$1 remote_command=$2 limit=${3:-15} diagnostics=$4
   python3 -c '
 import subprocess, sys
-target, command, limit = sys.argv[1:]
+target, command, limit, diagnostics = sys.argv[1:]
 try:
     result = subprocess.run(["ssh", "-o", "ConnectTimeout=3", "-o", "BatchMode=yes",
                              target, command], timeout=float(limit), stdout=sys.stdout,
-                            stderr=subprocess.DEVNULL)
+                            stderr=None if diagnostics else subprocess.DEVNULL)
 except subprocess.TimeoutExpired:
     sys.exit(124)
 sys.exit(result.returncode)
-' "$target" "$remote_command" "$limit"
+' "$target" "$remote_command" "$limit" "$diagnostics"
 }
 
 # Warnings belong on stderr; scanner stdout remains the unstyled wire protocol.
@@ -1815,6 +1855,10 @@ _dev_kill_safe_labels() {
 # used to route the selected row to the existing kill implementation.
 _dev_kill_pick() {
   local repo="$1" force="$2" remote_only="$3"
+  local _repo_selector _repo_selector_rc
+  _repo_selector=$(_dev_resolve_repo "$repo"); _repo_selector_rc=$?
+  (( _repo_selector_rc == 2 )) && return 2
+  (( _repo_selector_rc == 0 )) && repo=$_repo_selector
   local rows
   if [[ -n $remote_only ]]; then
     rows=$(_dev_rows_all --best-effort --details) || return $?
@@ -1947,6 +1991,12 @@ _dev_kill() {
   local _T_PROGRESS=0
   [[ -t 1 && -t 2 ]] && _T_PROGRESS=1
   local repo="$1" slot="$2" force="$3"
+  if [[ -n ${DEV_REPOS[$repo]:-} || ! ( $repo == <-> || $repo == all ) ]]; then
+    local _repo_selector _repo_selector_rc
+    _repo_selector=$(_dev_resolve_repo "$repo"); _repo_selector_rc=$?
+    (( _repo_selector_rc == 2 )) && return 2
+    (( _repo_selector_rc == 0 )) && repo=$_repo_selector
+  fi
 
   # Bare and repo-only invocations are interactive batch selectors. An explicit
   # foreground handle keeps its direct path below, as do numbered slots and all.
@@ -2319,6 +2369,10 @@ _t_history_attach() {
 # helpers deliberately never reuse a parked worktree or fall back to main.
 _t_issue_prepare() {
   local repo="$1" agent="$2" start_ref="${3:-origin/main}" slot=1 wt br owner gitdir
+  local _repo_selector _repo_selector_rc
+  _repo_selector=$(_dev_resolve_repo "$repo"); _repo_selector_rc=$?
+  (( _repo_selector_rc == 2 )) && return 2
+  (( _repo_selector_rc == 0 )) && repo=$_repo_selector
   [[ -n ${DEV_REPOS[$repo]:-} ]] || return 1
   _dev_worktree_enabled "$repo" || { print -u2 't issue requires isolated worktrees'; return 1; }
   _dev_agent_check "$agent" || return 1
@@ -2402,7 +2456,7 @@ _t_dev() {
   # it's SCOPED to the repo you're in (path-based, so dot-*/dotfiles-* both show in
   # the dotfiles dir); `-a`/`--all` widens to every repo, as does standing outside
   # any DEV_REPOS dir (nothing to scope to).
-  if [[ "$repo" == list || "$repo" == ls ]]; then
+  if [[ -z ${_T_OPEN_REPO_ARGUMENT:-} && ( "$repo" == list || "$repo" == ls ) ]]; then
     local scope=; [[ -z $all ]] && scope=$(_dev_cwd_repo_dir)
     if [[ -n $remote ]]; then _dev_list_remote "$scope"; else _dev_list "$scope"; fi
     return
@@ -2412,13 +2466,20 @@ _t_dev() {
   # Operates on session NAMES, not DEV_REPOS keys, so it can also clean up
   # orphaned sessions whose repo alias no longer exists (e.g. dev-dotfiles-*).
   # With -r, kill it on its $REMOTE_HOSTS host instead (host auto-inferred).
-  if [[ "$repo" == kill ]]; then
+  if [[ -z ${_T_OPEN_REPO_ARGUMENT:-} && "$repo" == kill ]]; then
     if [[ -n $remote ]]; then
       _dev_remote_kill "${pos[2]}" "${pos[3]}" "$force"
     else
       _dev_kill "${pos[2]}" "${pos[3]}" "$force"
     fi
     return
+  fi
+
+  if [[ -n ${DEV_REPOS[$repo]:-} || ! ( $repo == <-> || $repo == new || $repo == fg ) ]]; then
+    local _repo_selector _repo_selector_rc
+    _repo_selector=$(_dev_resolve_repo "$repo"); _repo_selector_rc=$?
+    (( _repo_selector_rc == 2 )) && return 2
+    (( _repo_selector_rc == 0 )) && repo=$_repo_selector
   fi
 
   # Remote-aware open (explicit half): a slot can live on THIS machine or another.
