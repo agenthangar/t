@@ -919,6 +919,9 @@ terminals keep one row per session: task text is clipped, UI/model columns are
 omitted when necessary, and LAST TURN uses `MM-DD HH:MM` (or `HH:MM` at the smallest
 widths). Compact status marks appear under S; remote lists retain HOST.
 Use `t ls | cat` or `t ls -r | cat` for all columns and complete values.
+`t ls -r` warns on stderr when a host is unavailable and still lists local and
+reachable sessions. Warnings are amber on capable stderr terminals, including
+with `t ls -r | cat`; `NO_COLOR`, `TERM=dumb`, or redirected stderr keeps them plain.
 UI shows `▣ desktop` or `› cli`; model keeps the agent icon and the last
 recorded model name (`-` when unavailable). Inactive desktop slots show their
 last recorded conversation title. Status uses `● ✓` for a loaded conversation
