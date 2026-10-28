@@ -5,7 +5,7 @@
 # `exit` in zsh runs the caller's inherited zshexit hooks (including Terminal.app's
 # session saver) inside the picker subshell.
 _t_fzf() {
-  [ -z "${NO_COLOR:-}" ] || set -- "$@" --color=bw
+  [ -z "${NO_COLOR+x}" ] && [ "${TERM:-}" != dumb ] || set -- "$@" --color=bw
   command fzf --height=60% --layout=reverse --border=rounded --margin=1,2 \
     --pointer='▸' --marker='✓ ' \
     --color='fg+:white,bg+:#005f5f,hl:cyan,hl+:white:underline,pointer:white,marker:#87ffaf:bold,header:cyan,prompt:cyan,border:bright-black' \
@@ -115,7 +115,8 @@ SH
 # Arguments: default rows, all rows, action, filter label, legend, show-all, fzf args.
 # Session callers opt into independent controls with T_PICKER_SESSION_FILTERS.
 # Kill also supplies the two single-filter views via T_PICKER_WITH_ATTACHED and
-# T_PICKER_WITH_PENDING. All callers use Ctrl-A for all and Ctrl-F for defaults.
+# T_PICKER_WITH_PENDING. Session snapshots use Ctrl-F settings, Ctrl-A off,
+# Ctrl-L on. Generic filtered lists retain Ctrl-A all and Ctrl-F defaults.
 _t_fzf_filtered() (
   _t_picker_default=$1 _t_picker_all=$2 _t_picker_action=$3
   _t_picker_label=$4 _t_picker_legend=$5 _t_picker_show_all=$6
@@ -238,6 +239,12 @@ Space/Tab mark ✓"
     fi
     export T_PICKER_HEADER_WIDTH
     export T_PICKER_FILTER_HELPER="$T_HOME/libexec/t_picker_filters.py"
+    T_PICKER_COLOR=0
+    if [ -z "${NO_COLOR+x}" ] && [ "${TERM:-dumb}" != dumb ] && [ -t 2 ]; then
+      T_PICKER_COLOR=1
+    fi
+    export T_PICKER_COLOR
+    set -- --ansi "$@"
   else
     unset T_PICKER_FILTER_HELPER
   fi
@@ -278,6 +285,10 @@ SH
   cp "$_t_picker_input" "$T_PICKER_CURRENT"
   cp "$_t_picker_header" "$T_PICKER_CURRENT_HEADER"
   if [ -n "${T_PICKER_FILTER_HELPER:-}" ]; then
+    if [ -n "$_t_picker_show_all" ]; then
+      printf '0\n' > "$T_PICKER_STATE"
+      printf '0' > "$_t_picker_dir/filters-enabled"
+    fi
     sh "$T_PICKER_TOGGLE" current || return $?
     _t_picker_header=$T_PICKER_CURRENT_HEADER
   fi
@@ -305,18 +316,12 @@ SH
     done
   fi
   if [ -n "${T_PICKER_FILTER_HELPER:-}" ]; then
-    _t_picker_facets='ctrl-g:agent ctrl-d:interface ctrl-o:host ctrl-r:repo'
-    _t_picker_execute=execute-silent
-    _t_picker_pick=
-    if [ "$T_PICKER_SESSION_FILTERS" = open ]; then
-      _t_picker_facets='ctrl-g:agent ctrl-p:progress ctrl-d:interface ctrl-b:model ctrl-o:host ctrl-r:repo ctrl-v:session ctrl-e:context ctrl-w:task'
-      _t_picker_execute=execute
-      _t_picker_pick='pick '
-    fi
-    for _t_picker_spec in $(printf '%s\n' "$_t_picker_facets"); do
-      [ "$T_PICKER_SESSION_FILTERS" != resume ] || [ "$_t_picker_spec" != ctrl-d:interface ] || continue
+    _t_picker_bind=
+    for _t_picker_spec in ctrl-a:off ctrl-l:on ctrl-f:settings; do
       _t_picker_key=${_t_picker_spec%:*} _t_picker_action=${_t_picker_spec#*:}
-      _t_picker_bind="${_t_picker_bind},${_t_picker_key}:${T_PICKER_CLEAR_MARKS}${_t_picker_execute}(sh \"\$T_PICKER_TOGGLE\" ${_t_picker_pick:-}$_t_picker_action)+reload-sync(cat \"\$T_PICKER_CURRENT\")+transform-header(cat \"\$T_PICKER_CURRENT_HEADER\")"
+      _t_picker_execute=execute-silent
+      [ "$_t_picker_action" != settings ] || _t_picker_execute=execute
+      _t_picker_bind="${_t_picker_bind}${_t_picker_bind:+,}${_t_picker_key}:${T_PICKER_CLEAR_MARKS}${_t_picker_execute}(sh \"\$T_PICKER_TOGGLE\" $_t_picker_action)+reload-sync(cat \"\$T_PICKER_CURRENT\")+transform-header(cat \"\$T_PICKER_CURRENT_HEADER\")"
     done
   fi
   if [ "${T_PICKER_SESSION_FILTERS:-}" = resume ]; then

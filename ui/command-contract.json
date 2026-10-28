@@ -6,7 +6,7 @@
     "detail": "Read-only labeled values; no work starts or prompt appears.",
     "single": "One focused target chosen with Enter in the shared picker or inline menu.",
     "multi": "Space/Tab marks searchable rows; Enter accepts marks or the focused row.",
-    "filtered": "Shared Ctrl-A all and Ctrl-F defaults. Open has attached-only/unattached/all views and a searchable value picker for every session column; other session views retain their state toggles and cycling facets. Filters narrow the same snapshot and never rediscover.",
+    "filtered": "Session snapshots use Ctrl-F staged filter settings, Ctrl-A filters off and Ctrl-L filters on with saved state and column choices. Issue pickers retain Ctrl-A all and Ctrl-F defaults. Filters narrow the same snapshot and never rediscover.",
     "wizard": "Stage edits and review before applying with the shared Rail UI.",
     "review": "Show selected install actions before running; Enter applies the reviewed plan.",
     "action": "Run an explicit target without unnecessary selection; confirm interruption when needed.",
@@ -700,12 +700,12 @@
             "tests/test_picker_ui.py::test_open_simple_rows_and_focused_marks",
             "tests/test_picker_filters.py::test_every_filter_key_survives_long_values",
             "tests/test_picker_ui.py::test_session_pickers_display_every_filter_key",
-            "tests/test_picker_ui.py::test_public_open_facet_keys_combine_and_clear_hidden_marks",
+            "tests/test_picker_ui.py::test_public_open_settings_keep_query_restore_saved_choices_and_remove_hidden_marks",
             "tests/test_picker_ui.py::test_open_each_column_opens_searchable_value_picker",
             "tests/test_picker_ui.py::test_open_attachment_views_are_exclusive_and_idempotent",
             "tests/test_picker_filters.py::test_open_header_keeps_every_column_shortcut_visible"
           ],
-          "notes": "Default is unattached CLI and unloaded desktop sessions. Ctrl-T selects attached-only and Ctrl-U selects unattached-only, both preserving column filters. Ctrl-F restores unattached/default and clears column filters; Ctrl-A shows all and clears filters. Dedicated searchable value pickers: Ctrl-G agent, Ctrl-P progress, Ctrl-D interface, Ctrl-B model, Ctrl-O host, Ctrl-R repository, Ctrl-V session/slot, Ctrl-E context, Ctrl-W task. Progress follows the displayed continued-work marker, not current computation or completion. Filters combine within the snapshot, preserve search, and clear hidden marks. Plain selection checks remain separate from row context marks. Retain compact session/task rows without LAST TURN, preview, or new-session controls. Every shortcut and a focused row remain visible at narrow sizes, abbreviating Ctrl as ^ and active values as a count; the value picker shows the current value."
+          "notes": "Default is unattached CLI and unloaded desktop sessions. Ctrl-F opens staged filter settings for State and every session column: agent, progress, interface, model, host, repository, session/slot, context and task. Enter chooses values; Apply filters commits and enables them. Esc in a nested picker keeps its value; Esc in settings discards staged edits. Reset filters to defaults stages unattached and clears columns. Ctrl-A disables filters without changing saved choices; Ctrl-L restores them. --attached starts with filters off and defaults retained. One highlighted ON/OFF summary replaces per-facet hotkeys; narrow headers show selected column count and settings retains full values. Progress follows the displayed continued-work marker, not current computation or completion. Search is preserved and hidden marks removed. Snapshot scope, action semantics, compact rows and selection gutter remain unchanged. No LAST TURN, preview, or new-session controls."
         },
         "explicit": {
           "argv": [
@@ -842,7 +842,7 @@
             "tests/test_picker_filters.py::test_every_filter_key_survives_long_values"
           ],
           "confirmation": "enter",
-          "notes": "Displayed columns have a non-selectable aligned header preserved across filter changes. Independent Ctrl-G agent, Ctrl-O host/origin, and Ctrl-R repository facets; open/close also support Ctrl-D interface. All/default clears facets, preserves search, and removes hidden marks. No additional discovery or scope expansion."
+          "notes": "Displayed columns have a non-selectable aligned header preserved across filter changes. Ctrl-F opens staged filter settings for state, agent, host/origin and repository; close includes interface. Apply enables saved choices; nested cancellation keeps values and settings cancellation discards edits. Reset stages default state and cleared columns. Ctrl-A disables filters; Ctrl-L restores saved choices. One highlighted ON/OFF summary replaces individual facet hotkeys. Filtering preserves search and removes hidden marks without discovery or scope expansion."
         },
         "explicit": {
           "argv": [
@@ -1019,7 +1019,7 @@
             "tests/test_resume_multiselect.py::test_resume_last_turn_overrides_mtime_and_sort_hotkeys_keep_rows",
             "tests/test_picker_ui.py::test_resume_sort_controls_keep_focused_row_and_change_order"
           ],
-          "notes": "Independent Ctrl-G agent, Ctrl-O host/origin, and Ctrl-R repository facets; open/close also support Ctrl-D interface. All/default clears facets, preserves search, and removes hidden marks. No additional discovery or scope expansion. Unavailable registered hosts warn and are skipped; discovery retains local and reachable rows. Saved resumes retain local locks and known-owner checks, but cannot verify ownership on unavailable hosts. Local scan failures remain fatal. Default order is actual last user turn newest first, unknown times last, without pinning live rows. Alt-T last turn, Alt-R repository, Alt-G agent, Alt-O host/origin, Alt-V session select immutable snapshot sorting; text modes ascend with newest turn and stable identity ties and natural numeric session slots. Ctrl-A clears filters and preserves sort; Ctrl-F restores inactive/default filters and last-turn sorting. Search preserves the selected order. Narrow headers use ^ Ctrl and M Alt. Saved metadata refreshes on registered hosts by repository identity by default; --remote remains compatible. Canonical and verified renamed roots and swept rollouts are included. Exact IDs determine live ownership; independent saved conversations in occupied slots use guarded fresh allocation. Only selected transcripts are fetched. All-repository discovery includes repositories registered only on a reachable host and orphan Codex rollouts with exact Git metadata, even without local registrations. Metadata browsing and cancellation never clone or register repositories. Only a selected saved identity may create its guarded local checkout. GitHub transfers match only authenticated immutable repository IDs; selected different-name identities require fresh proof."
+          "notes": "Ctrl-F opens staged filter settings for state, agent, host/origin and repository; close includes interface. Apply enables saved choices; nested cancellation keeps values and settings cancellation discards edits. Reset stages default state and cleared columns. Ctrl-A disables filters; Ctrl-L restores saved choices. One highlighted ON/OFF summary replaces individual facet hotkeys. Filtering preserves search and removes hidden marks without discovery or scope expansion. Unavailable registered hosts warn and are skipped; discovery retains local and reachable rows. Saved resumes retain local locks and known-owner checks, but cannot verify ownership on unavailable hosts. Local scan failures remain fatal. Default order is actual last user turn newest first, unknown times last, without pinning live rows. Alt-T last turn, Alt-R repository, Alt-G agent, Alt-O host/origin, Alt-V session select immutable snapshot sorting; text modes ascend with newest turn and stable identity ties and natural numeric session slots. Filter settings, reset and on/off preserve the selected sort; Alt-T restores last-turn sorting. Search preserves the selected order. Narrow headers use ^ Ctrl and M Alt. Saved metadata refreshes on registered hosts by repository identity by default; --remote remains compatible. Canonical and verified renamed roots and swept rollouts are included. Exact IDs determine live ownership; independent saved conversations in occupied slots use guarded fresh allocation. Only selected transcripts are fetched. All-repository discovery includes repositories registered only on a reachable host and orphan Codex rollouts with exact Git metadata, even without local registrations. Metadata browsing and cancellation never clone or register repositories. Only a selected saved identity may create its guarded local checkout. GitHub transfers match only authenticated immutable repository IDs; selected different-name identities require fresh proof."
         },
         "explicit": {
           "argv": [
@@ -1141,7 +1141,7 @@
           "tests": [
             "tests/test_history_picker.py::test_real_isolated_tmux_picker_paging_global_search_refresh_and_cancel"
           ],
-          "notes": "Paginated single choice. Ctrl-F next and Ctrl-B previous page are the documented exception to filtered-picker Ctrl-F defaults."
+          "notes": "Paginated single choice. Ctrl-F next and Ctrl-B previous page are the documented exception to filtered-picker Ctrl-F settings."
         },
         "pagination": {
           "argv": [

@@ -255,13 +255,13 @@ def test_resume_live_hotkey_hides_live_without_losing_saved_rows(zsh, tmp_path):
     log = tmp_path / "fzf.log"
     result = zsh(shell + "_t_resume api --live; echo rc=$?", _tty=True,
                  FAKE_SESSIONS="dev-api-4", FAKE_SESSION_PATH=str(wt4),
-                 FZF_LOG=str(log), PICK_ACTIONS="first", PICK_CANCEL="1")
+                 FZF_LOG=str(log), PICK_ACTIONS="on", PICK_CANCEL="1")
     assert "rc=1" in result.stdout, result.stdout
     initial = pathlib.Path(f"{log}.initial").read_text()
     filtered = pathlib.Path(f"{log}.step0").read_text()
     assert "Live work" in initial and "Dead work" in initial
     assert "Live work" not in filtered and "Dead work" in filtered
-    assert "live: hidden" in pathlib.Path(f"{log}.header0").read_text()
+    assert "Filters ON: saved only" in pathlib.Path(f"{log}.header0").read_text()
     assert "send-keys" not in (zsh.log.read_text() if zsh.log.exists() else "")
 
 

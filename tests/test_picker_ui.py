@@ -367,7 +367,7 @@ def test_open_simple_rows_and_focused_marks(picker, width, height, monochrome):
     start, wait, keys, finish = picker
     start(profile='public-open', width=width, height=height, monochrome=monochrome)
     screen = wait('1/1 (0)')
-    assert 'View: unattached' in screen
+    assert 'Filters ON' in screen
     assert 'LAST TURN' not in screen and 'details' not in screen and 'Alt-N' not in screen
     keys('C-a')
     wait('2/2 (0)')
@@ -398,101 +398,92 @@ def test_open_removed_shortcuts_never_launch_or_preview(picker, empty, source):
     assert finish('Escape', status=130) == []
 
 
+def choose_setting(wait, keys, field, value):
+    keys('C-f')
+    wait('Filters >')
+    keys('-l', field + ':')
+    wait('1/')
+    keys('Enter')
+    wait(field + ' >')
+    keys('-l', value)
+    wait('1/')
+    keys('Enter')
+    wait('Filters >')
+    keys('Enter')  # Apply filters is the initial focused choice.
+
+
 @pytest.mark.parametrize('width,height', [(80, 24), (44, 20), (32, 12)])
 @pytest.mark.parametrize('profile', ['public-open-all', 'public-kill'])
 def test_session_pickers_display_every_filter_key(picker, width, height, profile):
     start, wait, keys, finish = picker
     start(profile=profile, width=width, height=height)
     screen = wait('2/2 (0)')
-    if profile == 'public-open-all':
-        for key in ('T', 'U', 'G', 'D', 'O', 'R', 'A', 'F', 'P', 'B', 'V', 'E', 'W'):
-            assert 'Ctrl-' + key in screen or '^' + key in screen, screen
-        assert 'View: unattached' in screen
-        if width <= 44:
-            assert '^ = Ctrl' in screen
-    else:
-        for key in ('Ctrl-T', 'Ctrl-G', 'Ctrl-D', 'Ctrl-O', 'Ctrl-R', 'Ctrl-A', 'Ctrl-F'):
-            assert key in screen, screen
-        assert 'UI: all' in screen and 'repo: all' in screen and 'host: all' in screen
-        assert 'Ctrl-P pending: hidden' in screen
-    assert '▸' in screen and 'hidden' in screen
+    for letter in ('A', 'F', 'L'):
+        assert 'Ctrl-' + letter in screen or '^' + letter in screen, screen
+    assert 'Ctrl-G' not in screen and '^G' not in screen
+    assert screen.count('Filters ON') == 1 and '▸' in screen and 'hidden' in screen
+    keys('C-f')
+    screen = wait('Filters >')
+    assert '▸' in screen and 'Enter choose' in screen
+    keys('Escape')
+    wait('2/2 (0)')
     assert finish('Escape', status=130) == []
 
 
-def test_public_open_facet_keys_combine_and_clear_hidden_marks(picker):
+def test_public_open_settings_keep_query_restore_saved_choices_and_remove_hidden_marks(picker):
     start, wait, keys, finish = picker
     start(profile='public-open-all')
     wait('2/2 (0)')
-    keys('C-g')
-    wait('agent >')
-    keys('-l', 'codex')
-    # Wait for asynchronous filtering before accepting the highlighted value.
-    wait('1/')
-    keys('Enter')
-    wait('1/1 (0)')
-    wait('agent=codex')
-    keys('C-t')
-    wait('View: attached', absent=('api-4',))
-    wait('api-2')
-    wait('1/1 (0)')
-    keys('Space')
-    wait('1/1 (1)')
-    keys('C-u')
-    screen = wait('View: unattached', absent=('api-2',))
-    assert 'agent=codex' in screen and 'api-4' in screen
-    wait('1/1 (0)')
-    keys('C-t')
-    wait('View: attached', absent=('api-4',))
-    keys('C-d')
-    wait('UI >')
-    keys('-l', 'desktop')
-    # Wait for asynchronous filtering before accepting the highlighted value.
-    wait('1/')
-    keys('Enter')
-    wait('0/0 (0)')
+    choose_setting(wait, keys, 'agent', 'codex')
+    screen = wait('1/1 (0)')
+    assert 'agent=codex' in screen
     keys('C-a')
     wait('4/4 (0)')
     keys('-l', 'First')
     wait('1/4 (0)')
+    keys('Space')
+    wait('1/4 (1)')
+    keys('C-l')
+    screen = wait('0/1 (0)')
+    assert 'open > First' in screen and 'agent=codex' in screen
+    keys('C-a')
+    wait('1/4 (0)')
     keys('C-f')
-    wait('0/2 (0)')
-    keys('C-t')
-    screen = wait('1/2 (0)')
-    assert 'open > First' in screen
+    wait('Filters >')
+    keys('Escape')
+    screen = wait('1/4 (0)')
+    assert 'Filters OFF' in screen and 'open > First' in screen
     assert finish() == ['api 2 --local']
 
 
 @pytest.mark.parametrize('width,height', [(80, 24), (32, 12)])
-@pytest.mark.parametrize('key,label,query,count', [
-    ('C-g', 'agent', 'codex', 2), ('C-p', 'progress', 'in progress', 1),
-    ('C-d', 'UI', 'desktop', 1), ('C-b', 'model', 'gpt-test-astra', 1),
-    ('C-o', 'host', 'local', 4), ('C-r', 'repo', 'api', 2),
-    ('C-v', 'session', 'api-2', 1), ('C-e', 'context', 'active', 2),
-    ('C-w', 'task', 'First task', 1),
+@pytest.mark.parametrize('field,query,count', [
+    ('agent', 'codex', 2), ('progress', 'in progress', 1),
+    ('UI', 'desktop', 1), ('model', 'gpt-test-astra', 1),
+    ('host', 'local', 4), ('repo', 'api', 2),
+    ('session', 'api-2', 1), ('context', 'active', 2),
+    ('task', 'First task', 1),
 ])
-def test_open_each_column_opens_searchable_value_picker(picker, key, label, query, count, width, height):
+def test_open_each_column_opens_searchable_value_picker(picker, field, query, count, width, height):
     start, wait, keys, finish = picker
     start(profile='public-open-all', width=width, height=height)
     wait('2/2 (0)')
-    keys('C-a')
+    choose_setting(wait, keys, 'State', 'all attachment states')
     wait('4/4 (0)')
-    keys(key)
-    wait(label + ' >')
-    keys('-l', query)
-    # Wait for asynchronous filtering before accepting the highlighted value.
+    choose_setting(wait, keys, field, query)
+    wait(f'{count}/{count} (0)')
+    # Cancel a nested value picker and discard the settings: no changes.
+    keys('C-f')
+    wait('Filters >')
+    keys('-l', field + ':')
     wait('1/')
     keys('Enter')
-    wait(f'{count}/{count} (0)')
-    keys(key)
-    wait(label + ' >')
+    wait(field + ' >')
+    keys('Escape')
+    wait('Filters >')
     keys('Escape')
     wait(f'{count}/{count} (0)')
-    keys(key)
-    wait(label + ' >')
-    keys('-l', 'All (clear filter)')
-    # Wait for asynchronous filtering before accepting the highlighted value.
-    wait('1/')
-    keys('Enter')
+    choose_setting(wait, keys, field, 'All (clear filter)')
     wait('4/4 (0)')
     assert finish('Escape', status=130) == []
 
@@ -501,16 +492,20 @@ def test_open_attachment_views_are_exclusive_and_idempotent(picker):
     start, wait, keys, finish = picker
     start(profile='public-open-all')
     wait('2/2 (0)')
-    keys('C-t')
-    screen = wait('View: attached', absent=('api-4',))
-    assert 'api-2' in screen and 'api-4' not in screen
-    keys('C-t')
-    wait('View: attached')
+    wait('api-4', absent=('api-2',))
+    choose_setting(wait, keys, 'State', '^attached$')
+    wait('2/2 (0)')
+    wait('api-2', absent=('api-4',))
     keys('C-a')
     wait('4/4 (0)')
-    keys('C-u')
-    screen = wait('View: unattached', absent=('api-2',))
-    assert 'api-4' in screen and 'api-2' not in screen
+    keys('C-l')
+    wait('2/2 (0)')
+    wait('api-2', absent=('api-4',))
+    keys('C-l')
+    wait('api-2', absent=('api-4',))
+    choose_setting(wait, keys, 'State', '^unattached$')
+    wait('2/2 (0)')
+    wait('api-4', absent=('api-2',))
     assert finish('Escape', status=130) == []
 
 
@@ -531,7 +526,7 @@ def test_resume_sort_controls_keep_focused_row_and_change_order(picker, width, h
     keys('Up', 'Up')
     screen = wait('Older api')
     assert 'Older api' in screen and '▸' in screen
-    keys('C-f')
+    keys('M-t')
     wait('Sort: last turn', absent=loading)
     keys('Up', 'Up')
     wait('Newest web')

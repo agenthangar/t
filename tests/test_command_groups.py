@@ -162,7 +162,7 @@ def test_open_help_is_concise_with_discoverable_details(t_mod, monkeypatch, caps
     assert len(concise.split()) < 200
     assert max(map(len, concise.splitlines())) <= width
     assert "AGENT (FRESH SLOTS):" in concise and "LOCATION:" in concise
-    assert "--codex --new" in concise and "t help open" in concise
+    assert "--codex --new" in concise and "t help " + " ".join(words) in concise
     normalized = " ".join(concise.split())
     assert "Follow its release instructions if the desktop conversation is still loaded" in normalized
     assert "t app pull" not in normalized
