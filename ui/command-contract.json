@@ -4218,5 +4218,41 @@
       "repos list": "repo list",
       "repos ls": "repo list"
     }
+  },
+  "help_style": {
+    "summary": "Quick command reference; explanations belong in structured t help topics.",
+    "widths": [
+      80,
+      44,
+      32
+    ],
+    "max_lines": 60,
+    "command_line_limits": {
+      "resume": 45,
+      "session resume": 45
+    },
+    "max_summary_words": 60,
+    "max_argument_words": 24,
+    "max_examples": 3,
+    "headings": [
+      "USAGE",
+      "WORK",
+      "CONFIGURATION",
+      "TOOLS",
+      "OPTIONS",
+      "FLAGS",
+      "EXAMPLES",
+      "EXAMPLE",
+      "LEARN MORE",
+      "COMMANDS",
+      "SCOPE",
+      "REPOSITORIES",
+      "TARGETS",
+      "ARGUMENTS",
+      "AGENT (FRESH SLOTS)",
+      "LOCATION",
+      "SELECTION",
+      "DESKTOP TO CLI"
+    ]
   }
 }

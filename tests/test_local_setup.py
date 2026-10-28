@@ -162,3 +162,6 @@ def test_local_help(t_mod, capsys):
     assert t_mod.main(['config', 'local', '--help']) == 0
     output = capsys.readouterr().out
     assert '--model NAME' in output and '--show' in output and '--yes' in output
+    assert 't help config local' in output
+    assert t_mod.main(['help', 'config', 'local']) == 0
+    assert 'docs/local-workers.md' in capsys.readouterr().out
