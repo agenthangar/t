@@ -1,5 +1,7 @@
 """Exercise filter keys in real fzf without touching the user's terminal/server."""
 import os
+import json
+import sys
 from pathlib import Path
 import shlex
 import shutil
@@ -8,6 +10,8 @@ import tempfile
 import time
 
 import pytest
+
+from _terminal_attrs import terminal_attrs_equal
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -78,10 +82,14 @@ def picker():
                           ': > "$HOME/selected"\n')
                 picker_cmd = 't open api --cli'
                 redirect = ''  # Public dispatch must see a real terminal on stdout.
-            script = (prefix + 'stty -g > "$HOME/terminal-before"\n'
+            snapshot_code = ('import json, termios; attrs = termios.tcgetattr(0); '
+                             'attrs[6] = [value[0] if isinstance(value, bytes) else value '
+                             'for value in attrs[6]]; print(json.dumps(attrs))')
+            terminal_snapshot = shlex.quote(sys.executable) + ' -c ' + shlex.quote(snapshot_code)
+            script = (prefix + terminal_snapshot + ' > "$HOME/terminal-before"\n'
                       + picker_cmd + redirect + '\n'
                       'printf "%s" "$?" > "$HOME/status"\n'
-                      'stty -g > "$HOME/terminal-after"\n'
+                      + terminal_snapshot + ' > "$HOME/terminal-after"\n'
                       'printf done > "$HOME/done"\n')
             (root / 'run.sh').write_text(script)
             tmux('-f', '/dev/null', 'new-session', '-d', '-x', str(width), '-y', str(height),
@@ -103,7 +111,9 @@ def picker():
                 time.sleep(.05)
             assert (root / 'done').exists()
             assert (root / 'status').read_text() == str(status)
-            assert (root / 'terminal-before').read_text() == (root / 'terminal-after').read_text()
+            before = json.loads((root / 'terminal-before').read_text())
+            after = json.loads((root / 'terminal-after').read_text())
+            assert terminal_attrs_equal(before, after), (before, after)
             assert not list(root.glob('t-picker.*'))
             return (root / 'selected').read_text().splitlines()
 
