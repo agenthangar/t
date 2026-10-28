@@ -721,7 +721,7 @@
           "tests": [
             "tests/test_open_picker.py::test_explicit_open_target_bypasses_picker"
           ],
-          "notes": "Fresh unused local slots and locally reserved desktop reopens tolerate unavailable remote hosts. Desktop claims scan once and still reject known remote owners and failed local ownership checks. Unreserved existing workspace claims retain strict ownership checks; explicit session resume warns and skips unavailable hosts while checking known owners."
+          "notes": "Fresh unused local slots and locally reserved desktop reopens tolerate unavailable remote hosts. Desktop claims scan once and still reject known remote owners and failed local ownership checks. Unreserved existing workspace claims retain strict ownership checks; explicit session resume warns and skips unavailable hosts while checking known owners. Automatic fresh-slot allocation skips known remote desktop reservations from one discovery snapshot; explicit slot requests still refuse conflicting owners."
         }
       },
       "native_agents": "Terminal session launch/resume uses the native ~/.local/bin fallback, preserving PATH and shell wrappers; no global PATH changes.",
@@ -3163,7 +3163,7 @@
           "tests": [
             "tests/test_remote_commands.py::test_remote_host_picker_requires_explicit_enter_and_cancel"
           ],
-          "notes": "Single host picker waits for Enter even with one host; missing session uses shared selection on the source/target host. Cancellation returns 130. Empty current-session inventory returns 0 and never starts fresh."
+          "notes": "Single host picker waits for Enter even with one host; missing session uses shared selection on the source/target host. Cancellation returns 130. Empty current-session inventory returns 0 and never starts fresh. Host picker says Open a session on which host?, or Start a new session on which host? with --new; selected host is the execution destination. SSH alias/target context is subordinate to the action heading."
         },
         "explicit": {
           "argv": [
@@ -3229,7 +3229,7 @@
           "tests": [
             "tests/test_remote_commands.py::test_remote_move_selects_current_cross_host_identity_and_destination"
           ],
-          "notes": "Single host picker waits for Enter even with one host; missing session uses shared selection on the source/target host. Cancellation returns 130. Source browsing skips unavailable peers while retaining reachable candidates; selected-source and transfer ownership checks remain strict."
+          "notes": "Single host picker waits for Enter even with one host; missing session uses shared selection on the source/target host. Cancellation returns 130. Source browsing skips unavailable peers while retaining reachable candidates; selected-source and transfer ownership checks remain strict. Host picker says Move this session to which host? and Destination host · current host: SOURCE; selected host is the destination. SSH alias/target context is subordinate to the action heading."
         },
         "explicit": {
           "argv": [
@@ -3303,7 +3303,7 @@
           "tests": [
             "tests/test_remote_commands.py::test_remote_host_picker_requires_explicit_enter_and_cancel"
           ],
-          "notes": "Single host picker waits for Enter even with one host; missing session uses shared selection on the source/target host. Cancellation returns 130. Unavailable registered hosts warn and are skipped; discovery retains local and reachable rows. Saved resumes retain local locks and known-owner checks, but cannot verify ownership on unavailable hosts. Local scan failures remain fatal."
+          "notes": "Single host picker waits for Enter even with one host; missing session uses shared selection on the source/target host. Cancellation returns 130. Unavailable registered hosts warn and are skipped; discovery retains local and reachable rows. Saved resumes retain local locks and known-owner checks, but cannot verify ownership on unavailable hosts. Local scan failures remain fatal. Host picker says Resume saved work on which host? and Browse this host’s saved conversations; selected host supplies saved history and runs the resumed session. SSH alias/target context is subordinate to the action heading."
         },
         "explicit": {
           "argv": [
@@ -3898,5 +3898,20 @@
       "notes": "Interactive startup optionally displays cached repository-tool advisories and schedules detached refresh when T_VULNERABILITY_CHECK=1; nonterminal bare t stays side-effect free."
     }
   },
-  "progress_contract": "ui/progress-contract.json"
+  "progress_contract": "ui/progress-contract.json",
+  "command_aliases": {
+    "list_verbs": {
+      "canonical": "list",
+      "aliases": [
+        "ls"
+      ],
+      "scope": "every registry leaf ending in list"
+    },
+    "legacy": {
+      "list": "session list",
+      "ls": "session list",
+      "repos list": "repo list",
+      "repos ls": "repo list"
+    }
+  }
 }
