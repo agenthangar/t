@@ -6,19 +6,19 @@
 #   2. (always) record this session in a foreground registry — one file per live
 #      claude pid, `<session_id>\t<cwd>` — so `dev ls` can map a FOREGROUND (non-tmux)
 #      claude back to its session id, and thus its real transcript title. macOS won't
-#      let `dev ls` read another process's env, and csync scrambles transcript
-#      birthtimes, so the only reliable pid→session_id link is recorded here at start.
+#      let `dev ls` read another process's env, and file transfers can change
+#      transcript birthtimes, so the reliable pid→session_id link is recorded here at start.
 #   3. (always) touch a last-OPENED stamp, `opened/<session_id>`, in the same cache
 #      dir. Resuming a conversation appends nothing to its transcript, so transcript
 #      mtime alone leaves a just-reopened session looking days old in the resume
 #      pickers; _claude_session_rows / tfind / `t resume` rank by max(transcript
 #      mtime, this stamp) and mark opened-but-unwritten rows ↻. NOT written to the
-#      transcript itself: csync's conflict policy is newest-mtime-wins, so bumping
+#      transcript itself: direct transfers preserve newer files, so bumping
 #      transcript mtime on open would let a stale copy beat a fuller one from
 #      another machine.
 #   4. (always) write an origin stamp — `<sid>.origin` = `hostname -s`, INTO the
 #      session's project dir next to its transcript, so it syncs wherever the
-#      transcript does (csync, `t resume -r`). Unlike the per-host opened/ stamp,
+#      transcript does (`t resume -r`, `t session move`). Unlike the per-host opened/ stamp,
 #      provenance must travel: it feeds `t resume`'s origin column, and re-running
 #      elsewhere re-stamps it there — origin always means "last ran on".
 #
@@ -111,8 +111,8 @@ if [[ $agent == codex && -n $tx ]]; then
 fi
 
 # Origin stamp: record WHICH MACHINE this session (last) ran on, next to its
-# transcript — `<sid>.origin` inside the project dir, so csync / `t resume -r`
-# carry it wherever the transcript syncs. Transcript .jsonl lines record no
+# transcript — `<sid>.origin` inside the project dir, so direct session transfers
+# carry it wherever the transcript goes. Transcript .jsonl lines record no
 # hostname, so this file is the only provenance `t resume` has for its host
 # column. Resuming a synced conversation on another machine re-fires this hook
 # with the same sid and re-stamps it there — origin always means "last ran on".

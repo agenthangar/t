@@ -115,7 +115,7 @@ def test_cli_lint_passes_and_detects_contract_regressions(t_mod):
                for error in lint.check(t_mod.build_parser(), groups, instructions))
 
     groups = {name: dict(actions) for name, actions in t_mod.COMMAND_GROUPS.items()}
-    groups["repo"]["list"] = ("repos", "missing")
+    groups["repo"]["list"] = ("repo", "missing")
     assert any("unknown parser verb" in error
                for error in lint.check(t_mod.build_parser(), groups, instructions))
 

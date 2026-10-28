@@ -31,8 +31,8 @@
 # the cwd (read from meta.json, else reversed from the hash) is re-rooted at
 # the destination's $HOME, the chat lands under md5 of that path, and the
 # meta.json cwd is rewritten to match. rsync is -a --update with no --delete
-# (a newer remote copy is never clobbered), and csync converges the whole
-# chats tree in the background — cursor-beam is the immediate, targeted move.
+# (a newer remote copy is never clobbered). cursor-beam transfers the selected
+# chat directly to its destination.
 # Like Claude, cursor-agent takes no lock on its store: never drive one chat
 # live on two machines at once.
 set -euo pipefail

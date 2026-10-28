@@ -275,7 +275,7 @@ It uses the existing guarded CLI-to-desktop handoff when that same conversation
 is running locally. A different conversation in the slot, a remote or foreground
 owner, unverifiable ownership, unsupported agent, or multiple marked rows stops
 the operation without substituting another conversation. `--app` conflicts with
-`--cli`, `--fg`, and `--host`; `--remote` may still fetch saved histories first.
+`--cli`, `--fg`, and `--host`; registered hosts contribute saved metadata by default.
 Without a terminal, an explicit slot selects its newest saved conversation as
 usual. Use `--days all` to include older histories. Desktop delivery remains an
 OS open request, not proof that the app loaded the conversation.
@@ -283,6 +283,18 @@ Copied histories must already be indexed by the local Codex installation; otherw
 the error gives the CLI selection command to index that exact conversation first.
 Older histories without a verifiable writer-lock contract are refused until a
 current Codex CLI owns them and can perform the guarded handoff.
+
+`t resume` includes saved conversations from every registered host by default.
+Discovery matches repository identity, so host aliases, home directories and
+worktree roots can differ. Canonical checkouts, swept Codex rollouts, and renamed
+workspaces with the exact recorded Git origin also appear. `--remote` remains a
+compatibility option. Only a selected remote transcript is downloaded and its
+identity is checked before use; unavailable hosts retain cached history.
+
+An inactive conversation remains selectable when its historical slot now runs
+another conversation. It resumes in a safely allocated workspace; the existing
+owner and its files stay intact. Selecting an exact live conversation attaches
+to that owner. `--fg`, `--app`, and `--host` retain their selected destinations.
 
 Saved Codex candidates are cached under `${XDG_CACHE_HOME:-~/.cache}/claude-sessions`.
 Repeated `t resume` calls reuse unchanged metadata; each invocation checks for new,
@@ -344,6 +356,13 @@ sessions; Ctrl-T toggles attached close sessions; Ctrl-P toggles pending close
 work. Ctrl-G cycles agents, Ctrl-O hosts, Ctrl-R repositories, and Ctrl-D the
 close interface. Ctrl-A shows all and Ctrl-F resets these filters. Resume never
 invents a historical interface.
+Resume sorts by the last actual user turn, newest first; unknown times come last.
+Alt-T restores that sort, Alt-R sorts by repository, Alt-G by agent, Alt-O by
+host/origin, and Alt-V by session (numeric slots sort naturally, e.g. 2 before 10).
+Text sorts ascend, then use newest turn and session identity to break ties.
+Ctrl-A clears filters while keeping the selected sort; Ctrl-F resets both.
+For example, `t resume --live` followed by Alt-R groups live and saved sessions by
+repository. Live labels remain visible alongside their last-turn time.
 The open picker keeps session and task text prominent, without a last-turn
 column, details preview, or new-session shortcut. Start fresh explicitly with
 `t open api --new`. Resume and close retain **Ctrl-/** for full details.
@@ -374,6 +393,15 @@ Run `t` or `t help` for a short overview, then `t help <noun>` or
 with `t share` as the context sharing command.
 Contributors can find the behavior, keyboard, and appearance rules in the
 [command and terminal contract](ui/README.md).
+
+Every existing-repository argument accepts its registered short alias or checkout
+directory name. For example, with `app=/path/to/application`, `t session cd app 2`
+and `t session cd application 2` enter the same worktree. Exact aliases take
+precedence; if several different checkouts have the same directory name, use an
+explicit alias. Remote opens resolve names on the selected host. Remote resumes
+use verified repository identity for local matches; target-only names resolve on
+the selected host.
+New aliases, paths, search text and delegated commands keep their literal meaning.
 
 The older spellings still work; `t help aliases` lists them. Bare `t config`
 continues to open its interactive menu.
@@ -414,7 +442,7 @@ for a host's login shell.
 | `t session cd [repo] [slot]` / `t session read <repo> [slot]` | Enter a worktree or read its terminal log (`--dump` writes plain output) |
 | `t session move [repo] [slot] --host <host>` | Pick a current session or move an explicit slot; `--from <host>` pulls it here or sends directly with `--host` |
 | `t remote open [repo] [slot] [--host <host>]` | Choose a host and attach to an existing session; `--new` starts fresh |
-| `t remote resume [repo] [slot] [--host <host>]` | Choose a host and resume saved history discovered there |
+| `t remote resume [repo] [slot] [--host <host>] [--all]` | Choose a host and resume saved history discovered there |
 | `t remote move [repo] [slot] [--from <source>] [--host <dest>]` | Choose a current local/remote conversation and its destination |
 | `t session view-plan` / `t session paste` | View a Claude session plan or pass an attachment |
 | `t session open-app [push\|pull] [repo] [slot]` | Advanced Codex handoff options for macOS, including preview, plan, and thread selection; `t app` is the short form |
@@ -471,13 +499,19 @@ t remote open                         # choose a host, then an existing session 
 t remote open api 2 --host mini        # attach to this slot on mini
 t remote open api --host mini --new    # start fresh on mini
 t remote resume api --host mini        # choose saved history discovered on mini
+t remote resume --all --host mini       # all repositories, regardless of remote login directory
+t session resume --all                  # local and remote-only repositories; clone only after selection
 t remote move                         # choose a current session, then its destination
 t remote move api 2 --from mini --host cloud
 t session move api 2 --from mini --host cloud --detach
 ```
 
-Omitting `--host` opens a single host picker showing aliases and SSH targets;
-even one configured host waits for Enter. `remote move` includes current local
+Omitting `--host` opens a single host picker whose heading names the action:
+open an existing session, start a new session, resume saved work, or move a session.
+For open, the selected host runs the session. For resume, it supplies the saved
+conversations and runs the resumed session. For move, it is the destination;
+the picker also names the current source host. Aliases and SSH targets appear
+below the action heading, and even one configured host waits for Enter. `remote move` includes current local
 and registered remote Claude/Codex CLI sessions, retains host identity when slot
 names repeat, and rechecks the selected conversation before moving. A named or
 current repository scopes selection; outside a checkout it spans all repositories.
@@ -501,6 +535,13 @@ before any batch action and provides an exact `remote move` command. Matching
 host aliases may attach to the existing owner. Desktop resume remains local.
 
 ### Configuration and tools
+
+For local coding delegation, open **t config → Local worker & models** or run
+`t config local`. Review installation of Codex/Ollama, select and download a local
+model, and connect the worker to Codex through MCP. The lead keeps its conversation;
+workers use isolated repository snapshots and return findings, patches, and test
+evidence. `t config local --show` is read-only. See [local workers](docs/local-workers.md)
+for setup, cancellation, limits, and automated setup examples.
 
 | Command | Purpose |
 | --- | --- |
@@ -566,6 +607,11 @@ Slow terminal session/host scans and saved-history discovery show a small spinne
 after a short delay. It clears before results, pickers, or errors; redirected,
 JSON, MCP, and remote scanner output stays free of progress animation.
 
+`ls` and `list` are interchangeable for `session`, `repo`, `cursor`, `hosts`,
+`issue`, and `config workflow`. Root `t ls` and `t list` both list sessions.
+The old `t repos` family has been removed; use `t repo list`, `t repo locate`,
+`t repo cd`, and `t repo add`.
+
 ### Existing spellings
 
 Older scripts and habits continue to work. Use `t help aliases` for the full list;
@@ -575,7 +621,7 @@ these are the common migrations:
 | --- | --- |
 | `t open`, `t ls`, `t kill`, `t beam` | `t session open`, `t session list`, `t session close`, `t session move` |
 | `t push`, `t pop`, `t find`, `t plan`, `t app` | `t session push`, `t session pop`, `t session search`, `t session view-plan`, `t session open-app` |
-| `t repos ls/path/cd`, `t new`, `t checkout` | `t repo list/locate/cd`, `t repo create`, `t repo clone` |
+| `t new`, `t checkout` | `t repo create`, `t repo clone` |
 | `t setup` | `t config setup` |
 | `t instructions --init/--edit/--show`; `t instructions <repo> --apply` | `t profile init/edit/show`; `t profile apply <repo>` |
 | `t permissions`, `t permissions --show/--apply` | `t policy check`, `t policy show/apply` |
@@ -623,7 +669,9 @@ verified.
 
 Fresh local slots can open while a configured remote host is offline, for example
 `t session open my-project --new --codex --cli` or
-`t session open my-project --new --app`. Known remote owners are still respected;
+`t session open my-project --new --app`. Automatic fresh-slot allocation skips
+known remote desktop reservations and chooses the next locally unused slot from
+one discovery snapshot. Explicit slot requests still refuse conflicting owners;
 `t session open my-project 3 --app` can also reopen a locally reserved desktop
 workspace when another host is offline, after checking local ownership. Saved
 CLI and desktop resumes warn and continue checking local and reachable owners;
@@ -728,7 +776,7 @@ t issue open                         # select issues to open interactively
 t issue open https://github.com/owner/repo/issues/123
 ```
 
-Every verb accepts a registered repository alias or GitHub `owner/repo`, either
+Every verb accepts a registered repository alias, checkout directory name, or GitHub `owner/repo`, either
 positionally or with `--repo`. `list` shows the current checkout's issues, or
 issues from all registered GitHub repositories when run outside a checkout;
 `-a`/`--all` widens the list from inside a checkout. Its `REPO`, `ISSUE`,
@@ -843,30 +891,77 @@ It registers only on this machine and leaves the GitHub repository and its setti
 unchanged. If the remote has no `main` branch, checkout succeeds with a warning:
 `t session open` needs a fetched `origin/main` to create task worktrees.
 
-Configure the staged model workflow in `t config open` → **Agent workflow**.
-Choose **Use recommended defaults** to activate planning with `gpt-6-astra`,
-implementation with `gpt-6.1-sol`, and review with `gpt-6-astra`, or enable/disable
-and customize each stage. Planning and implementation effort default to complexity-based
-choices; review defaults to one supported effort level below planning. Repository
-settings include **Agent workflow** for a complete override or **Inherit global workflow**.
-These choices stay pending until **Save changes**; cancellation discards them.
+Configure named staged workflows in `t config open` → **Agent workflow**. Choose
+**Use recommended defaults** to activate planning with `gpt-6-astra`, implementation
+with `gpt-6.1-sol`, and review with `gpt-6-astra`. **Edit default workflow** and
+**Edit named workflow** give each stage separate model and reasoning-effort controls.
+Model choices include the current and recommended values, a live Codex catalogue,
+a custom ID, and explicit refresh. Current, recommended and custom models remain
+usable offline. Changing a workflow model preserves its selected effort and does
+not change the agent's launch defaults. Planning and implementation accept `auto`
+or an explicit effort (`minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `ultra`);
+review accepts an explicit effort or `one-level-lower`.
 
-Use `t config workflow edit` for the global workflow's JSON terminal editor,
-or `t config workflow edit --repo api` for a registered repository override.
-Set `enabled`, and each stage's `model` and `effort`. Planning and implementation
-accept `auto` or an explicit effort (`minimal`, `low`, `medium`, `high`, `xhigh`,
-`max`, `ultra`); review accepts an explicit effort or `one-level-lower`.
-Set a repository editor's whole document to `null` to inherit global settings.
-The editor uses `VISUAL`, then `EDITOR`, then `vi`; unchanged edits, invalid JSON,
-and unsuccessful editor exits publish nothing. Bare `t config edit` still edits
-local shell configuration. **Edit reusable instructions** opens the existing
-`t profile edit` profile for prose customization.
+Create and assign reusable workflows directly:
 
-`t config workflow list [--repo api]` prints a stage/model/effort table with enabled
-state, scope, and inheritance source. Add `--json` for machine output. Global is
-the default; a registered `--repo` alias explicitly selects a repository without
-checkout inference or a picker. Unsaved accounts show recommended defaults until
-explicitly activated. Preferences live in `${XDG_CONFIG_HOME:-~/.config}/t/workflow.json`.
+```sh
+t config workflow add careful             # copy the current default, without selecting it
+t config workflow add quick --from careful
+t config workflow use careful              # select the global default
+t config workflow use quick --repo api     # api follows the shared quick definition
+t config workflow exclude --repo api       # disable only api; remember its source
+t config workflow inherit --repo api       # remove api's override; follow global
+t config workflow list --all               # list named definitions and usage
+```
+
+Repository settings offer **Choose named workflow**, **Customize only this
+repository**, **Exclude workflow for this repository**, and **Use global default**.
+Editing a named definition affects all its consumers; a repository customization
+is an independent inline copy. Exclusion retains the source and suppresses both
+the staged rules and its Markdown instructions. Selecting a named workflow clears
+exclusion. **Resume workflow for this repository** restores the retained source,
+including repository-only customizations. Menu choices stay pending until
+**Save changes**; discard publishes nothing.
+
+Use **Instructions · edit Markdown** inside a workflow to write ordinary headings,
+bullets and prose in your editor. No JSON is needed. The equivalent commands are:
+
+```sh
+t config workflow instructions edit careful
+t config workflow instructions show careful
+t config workflow instructions edit --repo api
+```
+
+Omitting both `NAME` and `--repo` selects the current global default. `show` prints
+only the original Markdown, including for an excluded repository. Editing with
+`--repo` creates a repository-only copy only when text actually changes; exclusion
+remains in effect. Named workflows carry their instructions when copied or assigned.
+**Edit reusable instructions** still opens the separate `t profile edit` profile.
+
+The implementation stage asks agents to inherit the parent's current speed
+(including Fast or Ultrafast), independently of model and reasoning effort, and
+recheck it at delegation or a supported subsequent-turn boundary. Actual selection
+and inheritance depend on the runtime's exposed controls or documented behavior.
+[Codex documents that subagents follow the root session's service-tier preference](https://learn.chatgpt.com/docs/agent-configuration/subagents#custom-agent-file-schema).
+Agents must disclose unsupported or unverifiable speed; the policy does not promise
+an immediate change during an active turn.
+
+`t config workflow edit [NAME]` is the advanced JSON editor for a shared definition;
+`--repo api` edits an independent repository policy. NAME and `--repo` cannot be
+combined. Set a repository editor's whole document to `null` to inherit the global
+settings. Both editors use `VISUAL`, then `EDITOR`, then `vi`; unchanged or invalid
+edits and unsuccessful editor exits publish nothing. Bare `t config edit` still
+edits local shell configuration.
+
+`t config workflow list [--repo api]` prints scope, source, exclusion, and the
+effective stage/model/effort table. Add `--json` for machine output. `--all` lists
+the named catalogue and usage; it cannot combine with `--repo`. A registered
+`--repo` alias explicitly selects a repository without checkout inference or a
+picker. Unsaved accounts show recommended defaults until explicitly activated.
+Preferences live in `${XDG_CONFIG_HOME:-~/.config}/t/workflow.json`. Existing v1
+preferences load as a `standard` named workflow and independent repository policies;
+reading or reinstalling preserves the original file. The next explicit change
+saves the v2 named-workflow format.
 Hidden `t config show --workflow` and `t config edit --workflow` compatibility
 forms remain available; the former retains its JSON output.
 Saving synchronizes a separate managed block in Codex's `AGENTS.md` (and existing
@@ -878,6 +973,8 @@ worktrees. These agent instructions apply in terminal and desktop sessions; t
 does not switch models or enforce their execution. Task instructions and
 repository rules remain authoritative. Reinstalling refreshes saved workflows
 without activating the defaults for other accounts.
+Existing sessions must reload the updated instructions, or start a new session,
+before relying on a changed workflow policy.
 
 For preferred agent instructions, run `t profile init` to create an editable
 profile at `${XDG_CONFIG_HOME:-~/.config}/t/instructions.md`, then
@@ -886,7 +983,7 @@ Set `T_AGENT_INSTRUCTIONS` to use another template file. `t repo clone` and `t c
 offer to seed `AGENTS.md` from the profile when run interactively; use
 `--instructions` to apply it in a script or `--no-instructions` to skip the offer.
 Noninteractive runs skip seeding unless you explicitly pass `--instructions`.
-You can later run `t profile apply <repo>` for a registered alias. t updates
+You can later run `t profile apply <repo>` for a registered alias or checkout directory name. t updates
 only its marked block, preserves the rest of `AGENTS.md`, and refuses malformed
 markers or a symlink. Review the resulting diff and commit it when ready; t never
 commits or pushes these instructions for you.
@@ -1177,7 +1274,7 @@ registered; `t system diagnose` provides the same desktop and CLI steps.
 Setup and installation leave hook approval to the app and preserve trust records.
 
 [t's original dotfiles](https://github.com/agenthangar/dotfiles) provide optional
-iCloud transcript sync, clipboard bridging, and personal shell utilities. They are
+clipboard bridging and personal shell utilities. They are
 not prerequisites. On that installation, `dots --all` updates dotfiles and t, and
 the adapter preserves existing personal permission/trust choices.
 
@@ -1192,10 +1289,9 @@ checked in CI; optional dotfiles integrations are identified explicitly.
   t agent install (login · update · reinstall)                ✓                                          ✓                                                              ✓
   dev slots: t session open / list / close / read / paste     ✓                                          ✓ t session open --codex · DEV_AGENT                           ✗ no slot — t cursor list
   t session push / pop                                        ✓                                          ✓                                                              ✗ no slot
-  t session resume (dead slots)                               ✓                                          ✓ (its sqlite thread index)                                    → t cursor resume
+  t session resume (saved conversations)                      ✓                                          ✓ (rollouts and thread index)                                  → t cursor resume
   t session move / --from                                     ✓                                          ✓ (rollout + .origin)                                          → t cursor send [id] --host / --from
   t session open-app (desktop + browser preview)              ✗ Codex conversations only                 ✓ local macOS slot → same thread                               ✗
-  csync (iCloud union of transcripts)                         ✓ projects + plans                         ✓ codex-sessions                                               ✓ cursor-chats
   SessionStart stamps (registry · opened · origin)            ✓ settings.json hook                       ✓ hooks.json (trust once at startup)                           ✗ no hook wired
   t session view-plan                                         ✓                                          ✗ codex keeps no plan files (says so)                          ✗
   /tpush · /tpop slash commands                               ✓ ~/.claude/commands                       ✓ ~/.codex/prompts                                             ✗

@@ -8,4 +8,5 @@ def semantic_chrome(text):
                              ('⎋ Esc', 'Esc'), ('⎋', 'Esc'),
                              ('⇥ Tab', 'Tab'), ('⇥', 'Tab')):
         text = text.replace(native, portable)
+    text = re.sub(r'(?:⌥|M-)([A-Z])', r'Alt-\1', text)
     return re.sub(r'[⌃^]([A-Z/])', r'Ctrl-\1', text)

@@ -38,6 +38,27 @@ _t_resume_on_host() {
   esac
 }
 
+_t_resume_history_candidates() {
+  python3 "$T_HOME/bin/t" __resume-candidates "$@"
+}
+
+# Resume a retained conversation through the exact-source verifier and fresh
+# workspace allocator. Stdout contains only the actual allocated tmux owner.
+_t_resume_history_launch() {
+  python3 "$T_HOME/bin/t" __resume-saved "$1" "$2" "$3" "${4:-launch}" "${5:--}"
+}
+
+# Selected history may register a checkout in the Python worker. Make that exact
+# returned alias available to this shell before app/foreground/host routing.
+_t_resume_history_registered() {
+  [[ -n ${DEV_REPOS[$1]:-} ]] && return 0
+  [[ -f $T_LOCAL_RC ]] && source "$T_LOCAL_RC"
+  [[ -n ${DEV_REPOS[$1]:-} ]] || {
+    print -u2 -- 't resume: selected repository registration is unavailable; no destination launched'
+    return 1
+  }
+}
+
 # _t_resume — the `t resume` verb: revive a DEAD dev slot's last conversation.
 # `t open` on a dead slot deliberately starts a FRESH claude (the worktree and its
 # uncommitted work are reused, but not the chat); this is the counterpart that brings
@@ -64,9 +85,8 @@ _t_resume_on_host() {
 # `t resume` scans EVERY worktree repo (the
 # `t ls` unscoped convention) with a repo column in the picker; -a/--all forces that
 # widening from anywhere (the `t ls -a` flag). -r/--remote PULLS the latest
-# transcripts from every $REMOTE_HOSTS host first (direct rsync — csync is periodic
-# and needs a prompt on the far side, so "resume what just died on the other
-# machine" cannot wait for it), then scans as usual. LIVE slots — local or on a
+# transcripts from every $REMOTE_HOSTS host first by direct rsync, then scans
+# as usual. LIVE slots — local or on a
 # $REMOTE_HOSTS host — are retained but filtered from the initial picker view.
 # Ctrl-A reveals all, Ctrl-L toggles live rows, Ctrl-F restores the inactive
 # defaults; -l/--live starts with all
@@ -76,8 +96,8 @@ _t_resume_on_host() {
 # slot always attaches — a direct ask, not a scan.
 # -f/--fg resumes inline in THIS terminal (t pop's landing) instead of a slot.
 # Dead rows carry the two shared picker signals (see _claude_session_rows and
-# t-session-start jobs 3-4): recency/date = max(transcript mtime, last-opened
-# stamp) with ↻ marking opened-but-unwritten conversations, and a " · #N <state>"
+# t-session-start jobs 3-4): eligibility = max(transcript mtime, last-opened
+# stamp), and a " · #N <state>"
 # tag for the last PR URL in the transcript — merged/closed/open, or "?" while the
 # state is not cached yet. State stays cache-only (never a blocking gh call), so a
 # just-created PR reads "?" until the detached refresh lands it; it is rendered
@@ -125,7 +145,11 @@ _t_resume() {
   if [[ -n $_expect_host || $on_host == -* || ( -n ${(M)@:#--host*} && -z $on_host ) ]]; then
     echo "t resume: --host takes a host (one of: ${(k)REMOTE_HOSTS:-none configured})." >&2; return 1
   fi
-  local repo="${pos[1]:-}" slot="${pos[2]:-}"
+  local repo="${pos[1]:-}" slot="${pos[2]:-}" identity_scope=
+  if [[ -n ${_T_RESUME_REPO_IDENTITY:-} ]]; then
+    repo=$(python3 "$T_HOME/bin/t" __resume-alias "$_T_RESUME_REPO_IDENTITY") || return $?
+    [[ -n ${DEV_REPOS[$repo]:-} ]] || identity_scope=$repo
+  fi
   # Repo-aware defaults (mirrors t plan/paste): lone numeric arg is a SLOT of the
   # cwd repo; bare `t resume` infers the repo too — and OUTSIDE any DEV_REPOS dir
   # it widens to EVERY worktree repo instead of erroring (the `t ls` unscoped
@@ -144,6 +168,10 @@ _t_resume() {
     repo=$(_t_infer_repo) || all_mode=1
   fi
 
+  local _repo_selector _repo_selector_rc
+  _repo_selector=$(_dev_resolve_repo "$repo"); _repo_selector_rc=$?
+  (( _repo_selector_rc == 2 )) && return 2
+  (( _repo_selector_rc == 0 )) && repo=$_repo_selector
   # The scan targets: one named/inferred repo, or (all-repos mode) every
   # worktree-enabled repo deduped by canonical dir — `dot` and `dotfiles` key one
   # dir, so it is scanned once under its canonical alias (_dev_repo_of_dir's
@@ -159,7 +187,11 @@ _t_resume() {
       _canon=${_canon%%$'\t'*}
       _dev_worktree_enabled "$_canon" && repos+=("$_canon")
     done
-    (( $#repos )) || { echo "No worktree-enabled repos configured (configured: ${(k)DEV_REPOS})." >&2; return 1; }
+
+  elif [[ -n $identity_scope ]]; then
+    # A forwarded exact identity can browse retained history before this host
+    # has a registered checkout. Only the selected history row may create one.
+    repos=()
   else
     [[ -n ${DEV_REPOS[$repo]:-} ]] || { echo "Unknown repo: $repo (configured: ${(k)DEV_REPOS})" >&2; return 1; }
     if ! _dev_worktree_enabled "$repo"; then
@@ -177,62 +209,12 @@ _t_resume() {
     [[ -n $p ]] && live[${p:A}]=$s
   done
 
-  # -r/--remote: PULL the scan targets' transcripts from every $REMOTE_HOSTS host
-  # FIRST (direct rsync --update per worktree project dir — union rule: newer
-  # wins, nothing deleted; $HOME is identical across machines so the project-dir
-  # encoding matches verbatim), then scan as usual. This is what "resume the
-  # conversation that just died on the other machine" needs: csync's convergence
-  # is periodic AND driven by a precmd hook, so a headless host pushes nothing to
-  # iCloud until someone opens a shell THERE — the direct pull closes that
-  # window. A pulled conversation is then an ordinary candidate (a dead session
-  # has no home host). rc 23 = remote glob matched nothing (no sessions for that
-  # repo there) — not an error.
-  if [[ -n $remote_flag ]]; then
-    (( ${#REMOTE_HOSTS} )) || { echo "t resume -r: no REMOTE_HOSTS configured (set them in ${T_LOCAL_RC})." >&2; return 1; }
-    # Include filters, not a remote glob: the far side's login shell is zsh,
-    # whose nomatch ABORTS on a glob with no hits (rc 1 — read as "unreachable"
-    # for any repo with no sessions on that host). One rsync per host covers
-    # every scan target; rc 23 = source dir absent there (no claude yet) — fine.
-    local _h _tgt _enc _prc _codex_rc _host_name
-    local -a _incs
-    for repo in $repos; do
-      _enc=${${:-${DEV_WORKTREE_ROOT}/${DEV_REPOS[$repo]:t}}//[^A-Za-z0-9]/-}
-      _incs+=(--include="${_enc}-*/" --include="${_enc}-*/**")
-    done
-    for _h in ${(ko)REMOTE_HOSTS}; do
-      _tgt=${REMOTE_HOSTS[$_h]}
-      _t_progress "Fetching saved conversations from $_h"
-      _prc=0; _codex_rc=0
-      _t_with_progress "Fetching saved conversations from $_h" _t_resume_rsync -a --update --timeout=10 -e "ssh -o ConnectTimeout=3 -o BatchMode=yes" \
-        "${(@)_incs}" --exclude='*' \
-        "$_tgt:$HOME/.claude/projects/" "$HOME/.claude/projects/" || _prc=$?
-      (( _prc == 130 )) && return 130
-      # codex rollouts: the whole date tree (small, append-only files; union rule);
-      # rc 23 = no ~/.codex/sessions there. A pulled rollout shows in the scan via
-      # _codex_rollout_scan before codex has indexed it.
-      if (( _prc == 0 || _prc == 23 )); then
-        _t_with_progress "Fetching saved conversations from $_h" _t_resume_rsync -a --update --timeout=10 -e "ssh -o ConnectTimeout=3 -o BatchMode=yes" \
-          --include='*/' --include='rollout-*.jsonl' --include='rollout-*.origin' --exclude='*' \
-          "$_tgt:$HOME/.codex/sessions/" "${CODEX_HOME:-$HOME/.codex}/sessions/" || _codex_rc=$?
-        (( _codex_rc == 130 )) && return 130
-      fi
-      if (( (_prc == 0 || _prc == 23) && (_codex_rc == 0 || _codex_rc == 23) )); then
-        echo "⟳ pulled ${_h}'s latest transcripts" >&2
-        # Cache the host's short hostname (once) so the origin column below can
-        # translate a `<sid>.origin` stamp back to the friendly $REMOTE_HOSTS key.
-        if [[ ! -s $HOME/.cache/t/hostnames/$_h ]]; then
-          mkdir -p "$HOME/.cache/t/hostnames" 2>/dev/null
-          if _host_name=$(ssh -o ConnectTimeout=3 -o BatchMode=yes "$_tgt" hostname -s 2>/dev/null); then
-            [[ -n $_host_name ]] && print -r -- "$_host_name" > "$HOME/.cache/t/hostnames/$_h"
-          else
-            (( $? == 130 )) && return 130
-          fi
-        fi
-      else
-        (( _prc == 0 || _prc == 23 )) && _prc=$_codex_rc
-        _t_warn "t resume -r: $_h transcript fetch failed (rc=$_prc) — skipped; its newest transcripts may be missing here."
-      fi
-    done
+  # Saved discovery uses the repository identity on each configured host. The
+  # metadata adapter below refreshes by default and fetches only a selected
+  # transcript, so aliases, home directories and worktree roots may differ.
+  if [[ -n $remote_flag && ${#REMOTE_HOSTS} == 0 ]]; then
+    echo "t resume -r: no REMOTE_HOSTS configured (set them in ${T_LOCAL_RC})." >&2
+    return 1
   fi
 
   # ONE live-slot scan (one-live-owner invariant): a synced transcript here does
@@ -296,9 +278,10 @@ _t_resume() {
   # is running ANYWHERE becomes a live row pointing at its owner.
   # live_sid[sid] = loc \t alias \t slot \t summary \t agent, loc = here | <host>
   # | fg:<host> (a foreground owner: alias = its `t open` label, slot = -).
-  local -A live_sid; local _lh _ls _lc _ln _lst _lctx _lsm _lag2
+  local -A live_sid live_sid_agent; local _lh _ls _lc _ln _lst _lctx _lsm _lag2
   while IFS=$'\t' read -r _lh _ls _lc _ln _lst _lctx _lsm _lag2; do
     [[ -n $_ls && $_ls != - && -n $_ln ]] || continue
+    live_sid_agent[$_ls]=${_lag2:-claude}
     [[ $_lh == local ]] && _lh=here
     if [[ $_ln == *:* ]]; then
       live_sid[$_ls]="fg:${_lh}"$'\t'"$_ln"$'\t'-$'\t'"$_lsm"$'\t'"${_lag2:-claude}"
@@ -384,7 +367,7 @@ _t_resume() {
     fi
     for n in $slots; do
       wt=$(_dev_worktree_path "$repo" "$n") || return 1
-      local candidate
+      local candidate=
       for candidate in "${(@f)$(_dev_worktree_paths "$repo" "$n")}"; do
         [[ -n ${live[${candidate:A}]:-} ]] && { wt=$candidate; break; }
       done
@@ -407,9 +390,8 @@ _t_resume() {
           return
         fi
         # Scan: retain live local slots for Ctrl-A, while the initial view
-        # filters them (unless --live was passed). Sort
-        # key (field 1, stripped after the global sort below): a live session is
-        # "now", so the max sentinel pins it above every dead transcript.
+        # filters them (unless --live was passed). The legacy leading key is
+        # discarded; actual turn evidence orders live and saved rows together.
         live_seen[here/${busy#dev-}]=1
         [[ -n $live_flag ]] || (( hidden_live++ ))
         cands+=(9999999999$'\t'"$repo"$'\t'"$n"$'\t'-$'\t'"$wt"$'\t'"● active"$'\t'"${local_sum[${busy#dev-}]:-(live session)}"$'\t'here$'\t'-$'\t'-$'\t'"${local_agent[${busy#dev-}]:-$(_dev_agent_of_session "$busy")}")
@@ -516,6 +498,52 @@ _t_resume() {
     done
   done
 
+  # Include conversations retained outside today's slot layout (canonical
+  # checkouts, renamed roots, swept rollouts and independent chats in live slots).
+  # Keep ordinary local rows on their released route; extra rows use history's
+  # guarded allocator instead of borrowing an occupied or unrelated worktree.
+  local history_rows history_rc=0 history_row history_key
+  local -a history_fields history_keep
+  local -A history_seen
+  for _p in "${(@)pending}"; do
+    _mf=("${(@ps:\t:)_p}")
+    history_seen[$_mf[2]/$(_dev_transcript_agent "$_mf[5]")/$(_dev_transcript_sid "$_mf[5]")]=1
+  done
+  local -a history_scope=("${(@)repos}")
+  [[ -n $all_mode ]] && history_scope=(--all)
+  [[ -n $identity_scope ]] && history_scope=("$identity_scope")
+  history_rows=$(_t_with_progress "Finding saved conversations across hosts" _t_resume_history_candidates "${(@)history_scope}") || history_rc=$?
+  (( history_rc == 130 )) && return 130
+  (( history_rc == 0 )) || return $history_rc
+  for history_row in "${(@f)history_rows}"; do
+    history_fields=("${(@ps:\t:)history_row}")
+    (( $#history_fields == 9 || $#history_fields == 10 || $#history_fields == 11 )) || continue
+    history_key=$history_fields[2]/$history_fields[9]/$history_fields[4]
+    if [[ -n ${history_seen[$history_key]:-} ]]; then
+      [[ $history_fields[8] != local ]] || continue
+      # A newer remote source supersedes an already discovered local copy.
+      # Leave transcript selection to history's source verifier, rather than
+      # resuming the stale file through the ordinary local route.
+      history_keep=()
+      for _p in "${(@)pending}"; do
+        _mf=("${(@ps:\t:)_p}")
+        [[ $_mf[2]/$(_dev_transcript_agent "$_mf[5]")/$(_dev_transcript_sid "$_mf[5]") == $history_key ]] || history_keep+=("$_p")
+      done
+      pending=("${(@)history_keep}")
+    fi
+    history_seen[$history_key]=1
+    [[ -z $slot || $history_fields[3] == $slot ]] || continue
+    if [[ -n ${live_sid[$history_fields[4]]:-} && ${live_sid_agent[$history_fields[4]]:-} == $history_fields[9] && -z $app ]]; then
+      sidlive+=("$history_fields[2]"$'\t'"$history_fields[4]"$'\t'"$history_fields[5]"$'\t'"${live_sid[$history_fields[4]]}")
+      continue
+    fi
+    if (( cutoff && history_fields[1] < cutoff )); then
+      (( skipped++ )); continue
+    fi
+    org=$history_fields[8]; [[ $org == local ]] && org=-
+    cands+=("$history_fields[1]"$'\t'"$history_fields[2]"$'\t'"$history_fields[3]"$'\t'"$history_fields[4]"$'\t'"$history_fields[5]"$'\t'"$history_fields[6]"$'\t'"$history_fields[7]"$'\t'-$'\t'history$'\t'"$org"$'\t'"$history_fields[9]"$'\t'-$'\t'"${history_fields[10]:--}"$'\t'"${history_fields[11]:--}")
+  done
+
   # Conversations live under ANOTHER slot's session (or a foreground one). One row
   # per owner — skipped when the owner's own slot row was already counted/emitted.
   # Filtered like any live row initially unless -l, or unless a slot was named:
@@ -586,7 +614,7 @@ _t_resume() {
     # (field 11 here, 10 once the sort key is stripped) gets its own display column
     # AND picks the binary a pick spawns
     _ag=$(_dev_transcript_agent "$txf")
-    cands+=("$ep"$'\t'"$repo"$'\t'"$n"$'\t'"$(_dev_transcript_sid "$txf")"$'\t'"$wt"$'\t'"$when"$'\t'"$title"$'\t'-$'\t'-$'\t'"${org[1,10]}"$'\t'"$_ag")
+    cands+=("$ep"$'\t'"$repo"$'\t'"$n"$'\t'"$(_dev_transcript_sid "$txf")"$'\t'"$wt"$'\t'"$when"$'\t'"$title"$'\t'-$'\t'-$'\t'"${org[1,10]}"$'\t'"$_ag"$'\t'"$txf")
   done
   # ONE detached refresh for the whole scan, instead of a `gh pr view` child per
   # stale row: _pr_state_refresh batches the refs by repo, so a scan that turned up
@@ -598,13 +626,12 @@ _t_resume() {
   (( hidden_live )) && [[ ! -t 0 || ! -t 1 ]] && \
     echo "(${hidden_live} live slot(s) hidden — t session resume --live lists them; t session open attaches one)" >&2
 
-  # ONE global newest-first order by session time (the leading epoch field),
-  # never grouped by repo — the loop above emits repo-by-repo, so without this
-  # all-repos mode read as blocks per repo. Live rows carry the max sentinel
-  # and pin to the top. (On) = descending numeric on the leading field, which
-  # is then stripped so the positional fields below stay 1-9.
-  cands=("${(@On)cands}")
+  # Resolve actual turn evidence once for this snapshot, then sort before any
+  # automatic choice or noninteractive listing. Mtime remains the --days gate.
   cands=("${(@)cands#*$'\t'}")
+  if (( $#cands )); then
+    cands=("${(@f)$(print -rl -- "${(@)cands}" | T_RESUME_OWNER_ROWS="$live_all" python3 "$T_HOME/libexec/t_picker_filters.py" --resume-turns)}")
+  fi
 
   if (( ! $#cands )); then
     if [[ -n $slot ]]; then
@@ -629,7 +656,8 @@ _t_resume() {
   # their host in the ● label instead); agent is the row's claude/codex — what a
   # dead pick spawns, and what a live slot is running (from the live scan, else
   # the session's own stamp). EVERY row carries all ten, sentinelled, so the
-  # positional reads below never slide. One ALIGNED display column (11) is
+  # positional reads below never slide. The optional last-turn timestamp is field
+  # 11; one ALIGNED display column (12) is
   # appended here — fzf renders raw \t fields at literal tab stops (nothing
   # lines up), so both fzf and the no-fzf listing show the same pre-padded
   # gh-style row: [repo]  slot  agent  [origin]  date|●-where  title. The agent
@@ -733,7 +761,7 @@ _t_resume() {
     return 1
   fi
   # Multi-pick (only the fzf branch can produce one — $pick then holds one row
-  # per line, in LIST order, so the first row is the newest / a pinned live one).
+  # per line, in the selected sort order).
   # Revive every marked dead row detached, then attach the FIRST revived slot —
   # a resume ends inside a session, same as a single pick; the rest open in
   # their own terminal tabs (attach-hint fallback). Live marks attach to their
@@ -779,6 +807,24 @@ _t_resume() {
       elif [[ -n $mp_loc && $mp_loc != - ]]; then
         [[ -n ${f[8]:-} && $f[8] != - ]] && repo=$f[8]
         mp_live+=("$mp_loc"$'\t'"$repo"$'\t'"$slot"$'\t'-)
+        continue
+      fi
+      if [[ $f[8] == history && -n $on_host ]]; then
+        mp_cwd=$(_t_resume_history_launch "$repo" "$sid" "$mp_agent" prepare "${f[12]:--}") || return $?
+        mp_session=${mp_cwd%%$'\t'*}; wt=${mp_cwd#*$'\t'}; slot=${mp_session##*-}; repo=${${mp_session#dev-}%-*}
+        _t_resume_history_registered "$repo" || return 1
+      elif [[ $f[8] == history ]]; then
+        mp_session=$(_t_resume_history_launch "$repo" "$sid" "$mp_agent" launch "${f[12]:--}") || {
+          mp_rc=$?; (( mp_rc == 130 )) && return 130
+          _t_warn "$repo: saved conversation launch failed — skipped"; continue
+        }
+        slot=${mp_session##*-}; repo=${${mp_session#dev-}%-*}
+        _t_resume_history_registered "$repo" || return 1
+        if [[ -z $mp_first_repo ]]; then
+          mp_first_repo=$repo; mp_first_slot=$slot
+        else
+          mp_rest+=("$repo $slot")
+        fi
         continue
       fi
       if [[ -n ${mp_taken[$repo/$slot]:-} ]]; then
@@ -906,6 +952,17 @@ _t_resume() {
       print -u2 -- "t resume --app: selected conversation uses $agent; only saved Codex conversations are supported. Use --cli."
       return 1
     }
+  fi
+
+  if [[ $lalias == history && ( -n $app || -n $no_tmux || -n $on_host ) ]]; then
+    local prepared
+    prepared=$(_t_resume_history_launch "$repo" "$sid" "$agent" prepare "${f[12]:--}") || return $?
+    local prepared_session=${prepared%%$'\t'*}
+    slot=${prepared_session##*-}; repo=${${prepared_session#dev-}%-*}; wt=${prepared#*$'\t'}; lalias=-
+    _t_resume_history_registered "$repo" || return 1
+  fi
+
+  if [[ -n $app ]]; then
     local app_cwd
     app_cwd=$(_dev_ensure_session_cwd "$wt") || return 1
     [[ $app_cwd == $wt ]] || { print -u2 -- 't resume --app: recorded worktree changed; no conversation was opened'; return 1; }
@@ -930,6 +987,19 @@ _t_resume() {
     return
   elif [[ -n $loc && $loc != - ]]; then
     _dev_remote_attach "$loc"$'\t'"$lalias"$'\t'"$slot" ""
+    return
+  fi
+
+  if [[ $lalias == history ]]; then
+    local history_session
+    history_session=$(_t_resume_history_launch "$repo" "$sid" "$agent" launch "${f[12]:--}") || return $?
+    slot=${history_session##*-}; repo=${${history_session#dev-}%-*}
+    _t_resume_history_registered "$repo" || return 1
+    if [[ -z $TMUX && -t 0 && -t 1 ]]; then
+      tmux attach-session -t "=$history_session:"
+    else
+      echo "Attach with: t session open $repo $slot"
+    fi
     return
   fi
 
@@ -2355,6 +2425,10 @@ _t_pop() {
       slot=$repo
       repo=$(_t_infer_repo "$slot") || { echo "Not inside a DEV_REPOS dir — name the repo (t session pop <repo> $slot)."; return 1; }
     fi
+  local _repo_selector _repo_selector_rc
+  _repo_selector=$(_dev_resolve_repo "$repo"); _repo_selector_rc=$?
+  (( _repo_selector_rc == 2 )) && return 2
+  (( _repo_selector_rc == 0 )) && repo=$_repo_selector
     # Same-dir sibling aliases (see _dev_kill): a `dev-dot-2` answers `t pop
     # dotfiles 2` when `dot` and `dotfiles` both key ~/code/dotfiles. Without this
     # the lookup misses the local slot and _dev_session_remote_fallback can pop
@@ -2458,8 +2532,7 @@ _t_pop() {
 # ~/.claude/projects/<cwd-with-non-alnum-as-dashes>/ (/ and . alike → -, so a
 # worktree path under .worktrees encodes to --worktrees), and `claude -r <sid>` on the
 # far side can only resume what's already on its disk — so the bytes must land
-# first. csync/iCloud is the background convergence path; this is the immediate,
-# deterministic push for "beam it *now*".
+# first. This direct push makes the conversation available immediately.
 #
 # Conflict policy (the one real knob): rsync --update, no --delete. Newer mtime
 # wins per file, nothing is removed. The machine you're beaming FROM holds the
@@ -2689,7 +2762,12 @@ _tbeam_land() {
 # Return the raw row so the exact ID, worktree, and agent survive presentation.
 # An empty inventory succeeds without a row; cancellation never starts a resume.
 _t_move_pick() {
-  local repo="$1" slot="$2" scope="${DEV_REPOS[$1]:-}" rows row display selected label
+  local repo="$1" slot="$2" scope rows row display selected label
+  local _repo_selector _repo_selector_rc
+  _repo_selector=$(_dev_resolve_repo "$repo"); _repo_selector_rc=$?
+  (( _repo_selector_rc == 2 )) && return 2
+  (( _repo_selector_rc == 0 )) && repo=$_repo_selector
+  scope=${DEV_REPOS[$repo]:-}
   local -a fields candidates format_args chosen
   rows=$(_dev_session_rows --details) || return 1
   for row in "${(@f)rows}"; do
@@ -2863,6 +2941,13 @@ _t_beam() {
   # an optional explicit host. (This is the SEND path; the OTHER way — pull a session
   # FROM a host onto this machine — is `--from <host>`, handled just above.)
   local repo_arg= slot_arg=
+  local move_alias move_rc
+  move_rc=1
+  if [[ ${pos[1]:-} != <-> || -n ${DEV_REPOS[${pos[1]}]:-} ]]; then
+    move_alias=$(_dev_resolve_repo "${pos[1]:-}"); move_rc=$?
+  fi
+  (( move_rc == 2 )) && return 2
+  (( move_rc == 0 )) && pos[1]=$move_alias
   # With an explicit destination, positionals are repository/slot targets.
   # Validate on the source host, after relay, so a typo never becomes a host
   # positional and silently falls back to an unrelated current-session picker.

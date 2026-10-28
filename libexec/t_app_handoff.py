@@ -194,22 +194,18 @@ def _thread_cwds(codex_home, sid, *, for_close=False):
     for db in databases:
         try:
             if not stat.S_ISREG(os.lstat(db).st_mode):
-                if for_close:
-                    raise ValueError("a Codex ownership index is not a regular file")
-                continue
+                raise ValueError("a Codex ownership index is not a regular file")
             uri = "file:" + quote(db, safe="/") + "?mode=ro"
             with closing(sqlite3.connect(uri, uri=True, timeout=0.5)) as connection:
                 rows = connection.execute("select cwd from threads where id=?", (sid,)).fetchall()
-                if for_close and any(not isinstance(row[0], str) or not os.path.isabs(row[0])
-                                     for row in rows):
+                if any(not isinstance(row[0], str) or not os.path.isabs(row[0])
+                       for row in rows):
                     raise ValueError("a Codex writer has invalid workspace metadata")
                 known.update(row[0] for row in rows
                     if isinstance(row[0], str) and os.path.isabs(row[0]))
         except (OSError, sqlite3.Error) as exc:
-            if for_close:
-                raise ValueError("could not inspect the Codex ownership index") from exc
-            continue
-    if for_close and not known:
+            raise ValueError("could not inspect the Codex ownership index") from exc
+    if not known:
         known = _rollout_cwds(codex_home, sid)
     return known
 
@@ -217,7 +213,7 @@ def _thread_cwds(codex_home, sid, *, for_close=False):
 def _other_cwd_owner(folder, sid, cwd, codex_home, *, unknown=None, for_close=False):
     """Find a known writer in cwd; optionally record unindexed live writers.
 
-    Close requires readable indexes and also checks unindexed rollout metadata.
+    All modes require readable indexes and check unindexed rollout metadata.
     A remaining unassociated lock is not evidence of ownership of every cwd.
     Handoffs retain their existing strict/diagnostic policy via ``unknown``.
     """

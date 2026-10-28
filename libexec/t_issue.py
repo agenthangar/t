@@ -14,6 +14,7 @@ from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
 _spinner = runpy.run_path(str(Path(__file__).with_name("t_progress.py")))["spinner"]
+_resolve_repo = runpy.run_path(str(Path(__file__).with_name("t_repos.py")))["resolve_repo"]
 
 
 class IssueError(ValueError):
@@ -120,6 +121,10 @@ def repository(repo, cfg, *, require_checkout=True):
     repo = repo or cfg.repo_of_dir(os.getcwd())[0]
     if not repo:
         raise IssueError('cannot infer repository; specify a registered alias or owner/repo')
+    try:
+        repo = _resolve_repo(cfg.repos, repo) or repo
+    except ValueError as error:
+        raise IssueError(str(error)) from error
     if repo in cfg.repos:
         alias = repo
         identity = slug(command(['git', '-C', cfg.repos[alias], 'remote', 'get-url', 'origin']).strip())

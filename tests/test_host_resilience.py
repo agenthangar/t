@@ -245,6 +245,9 @@ def test_remote_close_cancellation_stops_remaining_marks(zsh, tmp_path):
 
 def test_remote_resume_worker_opens_picker_despite_an_unavailable_peer(zsh, tmp_path):
     cwd, _ = saved_rollout(zsh)
+    # This simulated target must run this checkout's identity bridge, not an
+    # unrelated installed t inherited from the developer's PATH.
+    (tmp_path / 'stubbin/t').symlink_to(REPO_ROOT / 'bin/t')
     picker = tmp_path / 'stubbin/fzf'
     picker.write_text('#!/bin/sh\ncat\n')
     picker.chmod(0o755)
@@ -281,50 +284,45 @@ def test_partial_resume_batch_skips_saved_failure_and_attaches_live_mark(zsh, tm
       _dev_resume_session() { print -u2 SELECTED_LAUNCH_FAILURE; return 1; }
       _t_fzf_filtered() { print -r -- "$2"; }
       _dev_open_picks() { print -r -- "ATTACH $*"; }
+      _dev_remote_attach() { print -r -- "REMOTE_ATTACH $*"; }
+      _dev_open_tab() { print -r -- "TAB $*"; }
       _t_resume api --days all --live
     ''', _tty=True, LIVE_SID=OTHER, LIVE_CWD=str(live_cwd),
         FAKE_SESSIONS='dev-api-5', FAKE_SESSION_PATH=str(live_cwd))
     assert result.returncode == 0, result.stdout
     assert 'api 3: launch failed' in result.stdout
-    assert 'ATTACH local\tapi\t5' in result.stdout
+    # Unknown turn times break ties by identity: remote slot 4 attaches first,
+    # then the local slot 5 opens in a tab. Neither action reaches real SSH/UI.
+    assert 'REMOTE_ATTACH online\tapi\t4' in result.stdout
+    assert 'TAB t open api 5 --cli --local' in result.stdout
     calls = zsh.log.read_text()
     assert 'new-session' not in calls and 'respawn-pane' not in calls
     assert cwd.exists()
 
 
-@pytest.mark.parametrize('failure', ['claude', 'codex', 'hostname', 'cancel'])
-def test_remote_transcript_pull_continues_and_caches_only_success(zsh, failure):
+@pytest.mark.parametrize('cancel', [False, True])
+@pytest.mark.parametrize('flag', ['', '--remote'])
+def test_remote_saved_metadata_refresh_is_default_and_cancellable(zsh, cancel, flag):
     saved_rollout(zsh)
     result = zsh(r'''
       REMOTE_HOSTS[a]=a; REMOTE_HOSTS[b]=b
       _dev_rows_all() { :; }
       _dev_ensure_session_cwd() { print -r -- "$1"; }
       _dev_resume_session() { :; }
-      _t_resume_rsync() {
-        print -r -- "$*" >> "$HOME/pulls"
-        if [[ $* == *a:* ]]; then
-          [[ $FAILURE == claude && $* == *.claude/* ]] && return 255
-          [[ $FAILURE == codex && $* == *.codex/* ]] && return 12
-          [[ $FAILURE == cancel ]] && return 130
-        fi
+      _t_resume_history_candidates() {
+        print -u2 METADATA_REFRESH
+        [[ $CANCEL == 1 ]] && return 130
+        print -u2 't history: a unavailable; retained cached history'
         return 0
       }
-      ssh() { [[ $FAILURE == hostname && $* == *' a '* ]] && return 255; print verified; }
+      _t_resume_rsync() { print -u2 UNEXPECTED_BULK_PULL; return 99; }
       setopt errexit
-      _t_resume api 3 --remote --days all
-    ''', FAILURE=failure)
-    pulls = (zsh.home / 'pulls').read_text()
-    if failure == 'cancel':
-        assert result.returncode == 130
-        assert 'b:' not in pulls
-    else:
-        assert result.returncode == 0, result.stdout + result.stderr
-        assert 'b:' in pulls
-        assert not (zsh.home / '.cache/t/hostnames/a').exists()
-        assert (zsh.home / '.cache/t/hostnames/b').read_text() == 'verified\n'
-        if failure != 'hostname':
-            assert 'a transcript fetch failed' in result.stderr
-            assert "pulled a's latest transcripts" not in result.stderr
+      _t_resume api 3 --days all ''' + flag, CANCEL=str(int(cancel)))
+    assert result.returncode == (130 if cancel else 0), result.stdout + result.stderr
+    assert 'METADATA_REFRESH' in result.stderr
+    assert 'UNEXPECTED_BULK_PULL' not in result.stderr
+    if not cancel:
+        assert 'a unavailable; retained cached history' in result.stderr
 
 
 @pytest.mark.parametrize('local_failure', [False, True])

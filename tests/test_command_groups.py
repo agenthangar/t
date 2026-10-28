@@ -16,7 +16,7 @@ def test_registry_covers_the_public_groups(t_mod):
     (["session", "open", "api", "2", "--codex", "--host", "mini"],
      ["open", "api", "2", "--codex", "--host", "mini"]),
     (["session", "open-app", "api", "3"], ["app", "api", "3"]),
-    (["repo", "locate", "api"], ["repos", "path", "api"]),
+    (["repo", "locate", "api"], ["repo", "locate", "api"]),
     (["repo", "create", "name", "--dry-run"], ["new", "name", "--dry-run"]),
     (["profile", "apply", "api"], ["instructions", "--apply", "api"]),
     (["policy", "apply", "--defaults"], ["permissions", "--apply", "--defaults"]),
@@ -35,7 +35,7 @@ def test_root_help_is_identical_and_has_only_public_groups(t_mod, monkeypatch, c
     assert t_mod.main(argv) == 0
     output = capsys.readouterr().out
     assert output == t_mod._root_help()
-    assert all(section in output for section in ("WORK", "CONFIGURATION", "TOOLS", "FLAGS", "EXAMPLES", "LEARN MORE"))
+    assert all(section in output for section in ("WORK", "CONFIGURATION", "TOOLS", "OPTIONS", "EXAMPLES", "LEARN MORE"))
     assert "t open" not in output and "session-rows" not in output
     assert max(map(len, output.splitlines())) <= 72
 
@@ -104,7 +104,9 @@ def test_agent_support_and_aliases_live_under_help(t_mod, capsys):
     assert t_mod.main(["help", "agents"]) == 0
     assert "t session open" in capsys.readouterr().out
     assert t_mod.main(["help", "aliases"]) == 0
-    assert "t beam" in capsys.readouterr().out
+    aliases = capsys.readouterr().out
+    assert "t beam" in aliases
+    assert aliases.count("t cursor ls") == 1
 
 
 def test_agent_trust_status_remains_a_read_only_option(t_mod, monkeypatch):
@@ -143,8 +145,7 @@ def test_every_advertised_action_has_side_effect_free_help(t_mod, monkeypatch, c
         if path == ("session", "open"):
             assert "REMOTE SESSIONS" in expected
             assert "REMOTE SESSIONS" not in concise
-        else:
-            assert concise == expected
+        assert expected.startswith(concise.split("\nLEARN MORE", 1)[0].rstrip())
 
 
 
@@ -160,7 +161,7 @@ def test_open_help_is_concise_with_discoverable_details(t_mod, monkeypatch, caps
     concise = capsys.readouterr().out
     assert len(concise.split()) < 200
     assert max(map(len, concise.splitlines())) <= width
-    assert "agent (fresh slots):" in concise and "location:" in concise
+    assert "AGENT (FRESH SLOTS):" in concise and "LOCATION:" in concise
     assert "--codex --new" in concise and "t help open" in concise
     normalized = " ".join(concise.split())
     assert "Follow its release instructions if the desktop conversation is still loaded" in normalized
@@ -190,7 +191,7 @@ def test_literal_help_argument_stays_a_repository_name(t_mod, monkeypatch):
     seen = []
     monkeypatch.setattr(t_mod, "Config", lambda: object())
     monkeypatch.setattr(t_mod, "_t_auto_update", lambda argv: None)
-    monkeypatch.setitem(t_mod.IMPLEMENTED, "repos", lambda cfg, args: seen.append(args.repo) or 0)
+    monkeypatch.setitem(t_mod.IMPLEMENTED, "repo", lambda cfg, args: seen.append(args.repo) or 0)
     assert t_mod.main(["repo", "locate", "--", "--help"]) == 0
     assert seen == ["--help"]
 
@@ -224,3 +225,137 @@ def test_legacy_mode_before_workflow_subgroup_is_rejected(t_mod, monkeypatch, fl
     with pytest.raises(SystemExit) as exc:
         t_mod.main(["config", flag, "workflow", "list"])
     assert exc.value.code == 2
+
+
+LISTING_CASES = [
+    (("session",), ["api", "--remote"]),
+    (("repo",), []),
+    (("cursor",), ["--host", "mini"]),
+    (("hosts",), ["--json"]),
+    (("issue",), ["--repo", "ls", "--state", "all", "--json"]),
+    (("config", "workflow"), ["--repo", "list", "--json"]),
+    ((), ["help", "--remote"]),
+]
+
+
+@pytest.mark.parametrize("prefix,payload", LISTING_CASES)
+def test_listing_aliases_share_parser_handler_and_readonly(t_mod, monkeypatch, prefix, payload):
+    parser = t_mod.build_parser()
+    commands = [[*prefix, verb, *payload] for verb in ("ls", "list")]
+    assert t_mod._canonical_argv(commands[0]) == t_mod._canonical_argv(commands[1])
+    assert vars(parser.parse_args(commands[0])) == vars(parser.parse_args(commands[1]))
+    seen = []
+    monkeypatch.setattr(t_mod, "Config", lambda: object())
+    monkeypatch.setattr(t_mod, "_t_update_interactive", lambda: pytest.fail("listing checked for updates"))
+    def handler(cfg, args):
+        seen.append(vars(args))
+        return 0
+    for name in t_mod.IMPLEMENTED:
+        monkeypatch.setitem(t_mod.IMPLEMENTED, name, handler)
+    monkeypatch.setattr(t_mod, "cmd_cursor", handler)
+    for argv in commands:
+        assert t_mod._command_readonly(argv, terminal=True)
+        assert t_mod.main(argv) == 0
+    assert seen[0] == seen[1]
+
+
+@pytest.mark.parametrize("prefix,payload", LISTING_CASES)
+@pytest.mark.parametrize("verb", ["ls", "list"])
+def test_listing_alias_help_keeps_requested_spelling(t_mod, monkeypatch, capsys, prefix, payload, verb):
+    monkeypatch.setattr(t_mod, "Config", lambda: pytest.fail("alias help loaded config"))
+    words = [*prefix, verb]
+    for argv in (["help", *words], [*words, "--help"]):
+        assert t_mod.main(argv) == 0
+        assert f"usage: t {' '.join(words)}" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("argv", [
+    ["repo", "add", "ls", "--alias", "list"],
+    ["repo", "locate", "help"], ["session", "open", "list"],
+    ["config", "workflow", "edit", "--repo", "ls"],
+    ["hosts", "run", "ls", "t", "config", "workflow", "ls", "--repo", "help"],
+])
+def test_alias_resolution_preserves_payload_words(t_mod, argv):
+    path, route = t_mod._command_path(argv)
+    assert t_mod._canonical_argv(argv) == [*route, *argv[len(path):]]
+
+
+@pytest.mark.parametrize("tail", [[], ["ls"], ["list"], ["cd", "api"],
+                                  ["add", "."], ["path", "api"], ["--help"]])
+def test_removed_repos_family_is_rejected_before_side_effects(t_mod, monkeypatch, capsys, tail):
+    monkeypatch.setattr(t_mod, "Config", lambda: pytest.fail("removed family loaded config"))
+    monkeypatch.setattr(t_mod, "_t_auto_update", lambda argv: pytest.fail("removed family checked updates"))
+    assert t_mod.main(["repos", *tail]) == 2
+    assert "unknown command" in capsys.readouterr().err
+    with pytest.raises(SystemExit) as exc:
+        t_mod.build_parser().parse_args(["repos", *tail])
+    assert exc.value.code == 2
+    capsys.readouterr()
+    assert t_mod.main(["help", "repos", *tail]) == 2
+    assert "unknown command" in capsys.readouterr().err
+
+
+LIST_PATHS = [
+    ('session', 'list'), ('repo', 'list'), ('cursor', 'list'),
+    ('hosts', 'list'), ('issue', 'list'), ('config', 'workflow', 'list'),
+    ('list',),
+]
+
+
+@pytest.mark.parametrize('path', LIST_PATHS)
+def test_list_alias_parser_help_dispatch_and_readonly(t_mod, monkeypatch, capsys, path):
+    alias = [*path[:-1], 'ls']
+    canonical = list(path)
+    parser = t_mod.build_parser()
+    assert vars(parser.parse_args(alias)) == vars(parser.parse_args(canonical))
+    assert t_mod._canonical_error(alias) is None
+    assert t_mod._command_readonly(alias, terminal=True)
+    assert t_mod._command_readonly(canonical, terminal=True)
+    monkeypatch.setattr(t_mod, 'Config', lambda: pytest.fail('help loaded config'))
+    for words in (alias, canonical):
+        assert t_mod.main([*words, '--help']) == 0
+        assert f"usage: t {' '.join(words)}" in capsys.readouterr().out
+        assert t_mod.main(['help', *words]) == 0
+        assert f"usage: t {' '.join(words)}" in capsys.readouterr().out
+    monkeypatch.setattr(t_mod, 'Config', lambda: object())
+    # The real update gate must classify both spellings before prompting.
+    monkeypatch.setattr(t_mod, '_t_update_interactive', lambda: pytest.fail('list prompted for update'))
+    seen = []
+    if path[0] == 'cursor':
+        monkeypatch.setattr(t_mod, 'cmd_cursor', lambda cfg, args: seen.append(vars(args)) or 0)
+    else:
+        verb = t_mod._canonical_argv(canonical)[0]
+        monkeypatch.setitem(t_mod.IMPLEMENTED, verb, lambda cfg, args: seen.append(vars(args)) or 0)
+    assert t_mod.main(canonical) == 0
+    assert t_mod.main(alias) == 0
+    assert seen[0] == seen[1]
+
+
+def test_every_registry_list_leaf_accepts_ls(t_mod):
+    parser = t_mod.build_parser()
+    for path, route in t_mod._command_routes():
+        if path[-1] == 'list':
+            alias = [*path[:-1], 'ls']
+            assert t_mod._canonical_argv(alias) == list(route)
+            assert t_mod._canonical_error(alias) is None
+            assert vars(parser.parse_args(alias)) == vars(parser.parse_args(path))
+
+
+@pytest.mark.parametrize('words,expected', [
+    (['session', 'ls', 'list', '--repo', 'ls'], ['ls', 'list', '--repo', 'ls']),
+    (['repo', 'add', 'ls', 'list'], ['repo', 'add', 'ls', 'list']),
+    (['issue', 'ls', '--repo', 'ls'], ['issue', 'list', '--repo', 'ls']),
+    (['config', 'workflow', 'ls', '--repo', 'list'], ['config', 'workflow', 'list', '--repo', 'list']),
+    (['hosts', 'run', 'ls', 'list', 'ls'], ['on', 'ls', 'list', 'ls']),
+    (['on', 'list', 'ls'], ['on', 'list', 'ls']),
+    (['cursor', 'send', 'ls', '--from', 'list'], ['cursor', 'send', 'ls', '--from', 'list']),
+    (['cursor', '--ls', 'list'], ['cursor', '--ls', 'list']),
+    (['session', '--', 'ls'], ['session', '--', 'ls']),
+    (['config', 'workflow', '--', 'ls'], ['config', 'workflow', '--', 'ls']),
+    (['ls', '--', 'list', 'ls'], ['ls', '--', 'list', 'ls']),
+    (['repos', 'ls', '--', 'ls', 'list'], ['repos', 'ls', '--', 'ls', 'list']),
+])
+def test_list_alias_only_normalizes_command_boundaries(t_mod, words, expected):
+    original = words[:]
+    assert t_mod._canonical_argv(words) == expected
+    assert words == original

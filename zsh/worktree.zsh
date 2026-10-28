@@ -425,8 +425,8 @@ _dev_worktree_beam_sync() {
 # _dev_worktree_beam_push just carried, so the beamed edits land in the new slot); and copy
 # the sid's transcript files into the new path's project dir (`claude -r <sid>` only finds
 # transcripts under the project dir of the cwd it starts in). Copy, not move: the old
-# project dir is shared with the local sibling's conversations, and csync's union would
-# resurrect a moved file anyway — the stale duplicate is frozen and ages out.
+# project dir is shared with the local sibling's conversations; preserving the
+# original also leaves its saved history available.
 # Prints the landing cwd — <cwd> unchanged when there is no collision (incl. non-worktree
 # paths and a still-absent worktree, which the callers materialize exactly as before), the
 # new worktree when relanded. Human messages go to stderr (stdout is captured). Returns 1
@@ -677,7 +677,7 @@ _dev_stop_rooted() {
 # and `worktree remove --force` erases the whole uncommitted feature (the 2026-07-14
 # incident: five slots reaped at once, one holding a day of unpushed work). Unmerged or
 # uncommitted work is never destroyed (a killed-but-unmerged slot keeps its worktree so
-# reopening the slot resumes it). Same prompt-piggyback + stamp-gate as csync.
+# reopening the slot resumes it). A prompt hook and stamp gate limit the sweep.
 # _dev_branch_merged <repodir> <branch> [tip-ref] — true if <branch> has landed on main.
 # Prefers gh (a merged PR with this head branch — catches GitHub SQUASH-merges, which
 # leave no ancestor link so `git branch --merged`/merge-base miss them); an OPEN PR is a

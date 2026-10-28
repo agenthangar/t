@@ -3,8 +3,17 @@
 Every public `t` command and conditional mode has an entry in
 [`command-contract.json`](command-contract.json). That inventory is the source of
 truth for classification and contract tests. Compatibility aliases inherit the
-canonical command's entry. Read this guide and the inventory before adding or
-changing a command; update both when its behavior changes.
+canonical command's entry. `ls` and `list` are interchangeable in every listing
+family (including `config workflow`); root `t list` aliases `t ls`. Resolve only
+command words, preserving option values, repository names, and delegated commands.
+The old `t repos` family is removed; use `t repo` verbs. Existing repository selectors
+accept registered aliases and unambiguous checkout directory names, with exact
+aliases taking precedence. Ambiguous names fail before selection or mutation.
+Remote opens resolve against the selected host’s registrations. Remote resumes
+resolve local aliases/names through verified repository identity; unknown
+target-only selectors remain literal.
+Repository creation names, paths and delegated payloads remain literal. Read this
+guide and the inventory before adding or changing a command; update both when its behavior changes.
 
 The Air design applies to every searchable picker and inline menu: airy cyan section
 headings and current values, green primary/add actions, amber warnings/removal,
@@ -17,8 +26,8 @@ height permits. Use FILTERS only for actual filter controls; other pickers use t
 action or resource title. Reduce spacing, borders and margins on short screens
 before losing controls or focus, including wide 120×12 terminals.
 
-Display native Mac labels (`⌃T`, `↩ Return`, `⎋ Esc`, `⇥ Tab`) on macOS;
-other hosts use `Ctrl-T`, `Enter`, `Esc`, `Tab`. Compact headers use the short
+Display native Mac labels (`⌃T`, `⌥T`, `↩ Return`, `⎋ Esc`, `⇥ Tab`) on macOS;
+other hosts use `Ctrl-T`, `Alt-T`, `Enter`, `Esc`, `Tab`. Compact headers use the short
 Mac symbols or `^T` on other systems. Only labels change: bindings remain the
 same control keys, Return, Escape and Tab. Align labels on wide terminals and stack them below 60 columns.
 Clip text before applying color and count physical rows when repainting; at
@@ -128,22 +137,40 @@ the next verification runs. Ctrl-C stops with 130 and reports that configuration
 was already saved. Native SSH owns the restored terminal for each check; no
 fingerprint is automatically accepted. Onboarding uses the same reviewed offer.
 
-Config includes Agent workflow globally and in each repository submenu. Changes to
-stage models, efforts, enabled state and inheritance remain pending until the
-shared review and save. Use recommended defaults explicitly activates an unsaved
-account. The terminal editor is `t config workflow edit [--repo ALIAS]`; it edits
-only the selected JSON scope and validates before publication. Repository `null`
-resets inheritance. Preserve editor exit status; unchanged and invalid edits write
-nothing. `t config workflow list [--repo ALIAS]` is a read-only stage/model/effort table with scope, enabled state, and inheritance
-source, including recommended defaults for unsaved accounts. Add `--json` for
-machine output. Global is the default; `--repo` explicitly selects a registered
-alias, without checkout inference or a picker. List never starts an editor or
-prompts for updates. Bare `t config workflow` shows subgroup help. Hidden
-`config show/edit --workflow` compatibility forms retain their existing behavior.
-Bare config edit retains its local-shell editor. Edit reusable instructions uses
-the existing profile editor. Saving a workflow updates account-local native Codex
-and Claude instructions with preflight and concurrent-edit checks; it never writes
-tracked repository instructions.
+Config includes Agent workflow globally and in each repository submenu. The global
+menu chooses a named default, adds or edits shared workflows, or activates recommended
+defaults. Each workflow exposes Planning, Implementation and Review with separate
+model and effort controls, plus Instructions for ordinary Markdown in VISUAL/EDITOR.
+Models load lazily from Codex once per menu session; current, recommended and custom
+values remain available offline, with explicit Refresh. Changing a model preserves
+its effort and never changes launch defaults. Shared-definition editing explains
+its affected repository consumers. Repository menus display their source and offer
+named assignment, repository-only customization, explicit exclusion retaining the
+source, resuming that retained source, or inheritance. All menu changes remain pending until review and Save;
+unchanged selections, canceled editors and discarded changes write nothing.
+
+`t config workflow add NAME [--from NAME]` copies without selecting, `use NAME
+[--repo ALIAS]` selects and clears exclusion, `exclude --repo ALIAS` preserves its
+source but suppresses the entire workflow, and `inherit --repo ALIAS` removes the
+override. These direct actions work without a terminal. `list [--repo ALIAS] [--json]`
+is a read-only stage/model/effort table with source and exclusion. `list --all [--json]`
+is the named catalogue and usage; reject --all with --repo. `edit [NAME] [--repo ALIAS]`
+is the advanced JSON editor; reject NAME with --repo. Omitted selectors target the
+current global default. Repository `null` resets inheritance.
+
+`t config workflow instructions show [NAME] [--repo ALIAS]` prints only raw Markdown,
+without prompts, model discovery or writes. `instructions edit` uses a private .md
+file in VISUAL/EDITOR, preserves formatting and editor status, and rejects embedded
+managed-block markers. Repository edits create an inline policy only after an actual
+change and preserve exclusion; inspection includes the stored prose when excluded.
+Excluded or disabled scopes suppress their prose in generated native instructions.
+
+Global is the default scope; --repo explicitly selects a registered alias with no
+checkout inference or picker. Bare subgroups show help. Hidden config show/edit
+--workflow compatibility forms retain their behavior. Bare config edit retains its
+local-shell editor. Saving updates account-local Codex and Claude instructions with
+preflight and concurrent-edit checks, never tracked repository instructions. v1
+policies migrate in memory without writing on reads or installer synchronization.
 
 ### Representative screens
 
@@ -191,9 +218,29 @@ one column. Column filters combine with attachment views. Ctrl-A clears all
 filters and shows every snapshot row; Ctrl-F clears all filters and restores
 unattached. Ctrl-T and Ctrl-U switch attachment without clearing column filters.
 
+All-repository resume discovery (`t session resume --all`, or outside a checkout)
+includes local registrations, repositories registered only on reachable hosts,
+and orphan Codex rollouts with exact Git repository metadata. Discovery transfers
+metadata only; canceling the picker never clones, registers, or downloads a
+transcript. Selecting a saved conversation can clone and register its missing
+local repository through the normal checkout safety checks. Repository aliases
+and paths may differ across hosts. GitHub transfers require authenticated matching
+repository IDs; names and directory basenames alone never establish equivalence.
+`t remote resume --all --host HOST` explicitly keeps this scope on the chosen host.
+An explicit or inferred locally registered repository resolves there by identity.
+
 Resume and close retain cycling Ctrl-G agent, Ctrl-O host/origin, Ctrl-R repo,
 and (close only) Ctrl-D interface, with their existing state toggles. Resume
-never invents a historical UI. Every column value comes from raw metadata,
+never invents a historical UI. Resume uses actual user-turn timestamps, newest
+first by default, with unknown times last; live rows have no artificial priority.
+Alt-T selects last turn, Alt-R repository, Alt-G agent, Alt-O host/origin, and
+Alt-V session (natural numeric order). Text modes ascend with newest turn and
+stable identity as tie-breakers. Sorts apply within the private filtered snapshot
+and preserve query and identities. Ctrl-A clears filters and keeps the sort;
+Ctrl-F resets filters and last-turn sorting. Compact headers use M for Alt and ^
+for Ctrl. Resume disables fzf relevance sorting so searching preserves the chosen
+order. Saved transcript mtime/reopen time still controls --days eligibility.
+Every column value comes from raw metadata,
 not truncated display text. The progress value exactly follows the ↻ marker:
 work continued after a merged PR; its absence is not completion evidence.
 A row's ✓ means loaded conversation context, independent of attachment and
@@ -219,6 +266,14 @@ threads, validated rollout identity metadata. A lock with no workspace associati
 does not veto every close. Selected and known same-worktree writers still block;
 shared backend processes and lock files remain untouched. These are safety rules
 within the existing close modes, with no new prompt or command.
+
+Saved Codex resume and handoffs also resolve unindexed held sibling locks from
+validated `session_meta` identity in active and archived rollouts. A verified
+different workspace does not block resume; selected and same-workspace writers
+still block, including equivalent real paths and any matching workspace among
+multiple metadata records. Unknown, invalid or unreadable ownership evidence
+prevents resume. Ownership refusals print a concise
+diagnostic and retry guidance without a traceback or success descriptor.
 
 ## Shared implementations
 
@@ -292,7 +347,13 @@ Explicit slot/ID sends and `--from`/`--here` receives retain their guarded route
 
 New worktree folders include the repository basename (`t/t-12`); numeric slot
 arguments, tmux identity, JSON slot fields and history associations are unchanged.
-`remote open`, `remote move`, and `remote resume` require explicit verbs. Missing
+`remote open`, `remote move`, and `remote resume` require explicit verbs.
+Host picker headings state the action: Open a session on which host?, Start a
+new session on which host? with `--new`, Resume saved work on which host?, and
+Move this session to which host?. Resume explains that it browses that host's
+saved conversations; the selected host also runs the resumed session. Move
+labels the destination and current source host. Aliases and SSH targets remain
+subordinate to the action heading. Missing
 hosts use `_t_fzf_single`, displaying alias and SSH target; Enter chooses exactly
 one, including when only one host exists. Esc/Ctrl-C returns 130 without starting
 work. Missing selections require a terminal and fzf; scripts name their targets.
@@ -311,10 +372,19 @@ stopping it. Failed scans or transfer steps fail closed. `session move --from A
 --host B` delegates the whole guarded send to A over `zsh -lic`, using controller
 resolved SSH targets. The controller never briefly resumes the conversation.
 
+`session resume` refreshes saved metadata on registered hosts by repository identity
+on every scan; `--remote` remains a compatibility option. The picker includes
+canonical checkouts, swept Codex rollouts and renamed roots whose recorded Git
+origin exactly matches the configured repository. Only the selected transcript
+is downloaded and verified. A different live conversation in the historical
+slot does not hide saved work: inactive selections receive a safely allocated
+workspace when their original workspace cannot be reused. Exact live IDs attach
+to their existing owner. Local paths and remote aliases need not match.
+
 `remote open` selects current sessions on the chosen host and never starts fresh
 from an empty picker; `--new` is explicit. `remote resume` selects saved history
 on the chosen host using the existing filtered resume picker. `session resume
---host H` instead sends locally discovered history to H. Live rows attach only
+--host H` sends the selected saved history to H. Live rows attach only
 when their owner matches H (including host aliases); a mismatch gives an exact
 `remote move` instruction before any batch mutation. Desktop resume stays local.
 
@@ -409,6 +479,8 @@ projection are additive metadata. They must not replace raw identity or evidence
 JSON and non-TTY listings never select or resume; JSON has no ANSI styling,
 presentation headers, or prompts.
 
+Automatic fresh-slot allocation skips known remote desktop reservations from
+one discovery snapshot; explicit slot requests still refuse conflicting owners.
 Fresh local opens may continue after incomplete remote discovery when the local
 slot is unused. Reopening a locally reserved desktop workspace also tolerates
 unavailable hosts after checking local ownership. Desktop claims scan remote
@@ -529,3 +601,39 @@ commands remain unchanged. See [coverage and privacy](../docs/vulnerabilities.md
 cached repository-tool coverage and worker state. `enable --interval-hours N`
 and `disable` are explicit direct actions for the per-user periodic worker,
 without pickers, OS service registration, remediation or update prompts.
+
+### Local model setup
+
+`t config local` and the settings hub's **Local worker & models** entry use the
+shared Rail UI to review prerequisite installation, model downloads, and Codex MCP
+registration. Pending hub edits must be saved or discarded before opening setup.
+`t config local --model NAME --yes` applies explicit setup without prompting;
+`--disable --yes` disables delegation while retaining models and registration.
+`t config local --show` is a read-only detail mode: no server startup, download,
+registration, picker, or automatic update prompt. Cancelling review returns 130.
+Completed installation steps remain after a later failure so setup can be retried.
+
+## Help style
+
+Every public command, resource group, conditional mode, and compatibility alias
+uses the shared quick-reference layout. `-h` and `--help` are equivalent and
+side-effect free. Start with usage and a summary of at most 60 words. Show
+arguments, public options, and at most three practical examples; each argument
+or option explanation has at most 24 words. Keep defaults, repository inference,
+selection behavior, and ownership requirements visible where they affect use.
+Use uppercase section headings and at least two spaces of indentation for rows.
+
+Quick help fits within 60 physical lines at 80 columns; resume fits within 45.
+Cap output at 80 columns and wrap at 44 and 32 columns without breaking command
+names, flags, paths, or other tokens. A single unbreakable token may exceed the
+terminal width. Never truncate help or hide usable options to meet a budget.
+Each page points to `t help <command>` for further information. Keep longer
+explanations in explicit paragraphs and topical sections in `help_details`,
+using the existing parser and renderer. Detailed topics and the agent-support
+and alias-reference topics have no quick-help line limit.
+
+The executable budgets live in `command-contract.json` under `help_style`.
+`scripts/lint_cli.py` renders root, group, nested native parser, canonical,
+mode-specific, and alias help at all three widths. CI rejects oversized summaries,
+option text, pages, missing public options, and undiscoverable commands. Add or
+update help regression tests with each public command change.

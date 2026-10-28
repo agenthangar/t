@@ -33,7 +33,7 @@ def run_shim(tmp_path, command, *, prompt_rc=0, interactive=True, extra_env=None
         f'_t_reload() {{ {reload_body}; }}\n'
         '_t_cd() { print -r -- "shell:cd:$*:marker=${T_UPDATE_PROMPTED:+set}" >> "$T_TEST_LOG"; }\n'
         '_t_open() { print -r -- "shell:open:$*:marker=${T_UPDATE_PROMPTED:+set}" >> "$T_TEST_LOG"; }\n'
-        '_t_repos_cd() { print -r -- "shell:repos-cd:$*:marker=${T_UPDATE_PROMPTED:+set}" >> "$T_TEST_LOG"; }\n'
+        '_t_repo_cd() { print -r -- "shell:repo-cd:$*:marker=${T_UPDATE_PROMPTED:+set}" >> "$T_TEST_LOG"; }\n'
         f'{command}\n'
         'print -r -- "after:marker=${T_UPDATE_PROMPTED:+set}" >> "$T_TEST_LOG"\n'
     )
@@ -182,12 +182,12 @@ def test_help_and_native_commands_do_not_prompt_in_shim(tmp_path):
 
 
 @pytest.mark.skipif(not shutil.which("zsh"), reason="zsh is required")
-def test_repos_checks_only_for_shell_navigation(tmp_path):
-    calls = run_shim(tmp_path, "t repos ls; t repos cd api")
+def test_repo_checks_only_for_shell_navigation(tmp_path):
+    calls = run_shim(tmp_path, "t repo list; t repo cd api")
     assert calls == [
-        "bin:repos ls:marker=",
+        "bin:repo list:marker=",
         "bin:__update-prompt:marker=",
-        "shell:repos-cd:api:marker=set",
+        "shell:repo-cd:api:marker=set",
         "after:marker=",
     ]
 

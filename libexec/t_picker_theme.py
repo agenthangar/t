@@ -16,6 +16,7 @@ wrap_columns = runpy.run_path(str(Path(__file__).with_name("t_session_details.py
 def key_labels(text, platform=None, compact=False):
     mac = (platform or sys.platform) == 'darwin'
     text = re.sub(r'Ctrl-([A-Za-z/])', lambda m: ('⌃' if mac else '^' if compact else 'Ctrl-') + m[1].upper(), text, flags=re.IGNORECASE)
+    text = re.sub(r'Alt-([A-Za-z])', lambda m: ('⌥' if mac else 'M-' if compact else 'Alt-') + m[1].upper(), text, flags=re.IGNORECASE)
     if mac:
         for pattern, label in ((r'\b[Ee]nter\b', '↩' if compact else '↩ Return'),
                                (r'\b[Ee]sc\b', '⎋' if compact else '⎋ Esc'),

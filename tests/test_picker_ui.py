@@ -88,9 +88,16 @@ def picker():
                 default = rows.splitlines()[0] + '\n'
                 (root / 'attached').write_text('\n'.join(rows.splitlines()[:2]) + '\n')
                 (root / 'pending').write_text('\n'.join(rows.splitlines()[::2]) + '\n')
+            if profile == 'resume-rich':
+                rows = ('web\t10\tsid1\t/wt\tdate\ttask\t-\t-\tmini\tcodex\t2026-10-22T10:00:00Z\tNewest web\n'
+                        'api\t2\tsid2\t/wt\tdate\ttask\t-\t-\t-\tclaude\t2026-10-21T10:00:00Z\tOlder api\n')
+                default = rows
+                env['T_HOME'] = str(ROOT)
             (root / 'all').write_text(rows)
             (root / 'default').write_text(default)
             mode_env = 'T_PICKER_SESSION_FILTERS=' + shlex.quote(mode) + ' '
+            if profile == 'resume-rich':
+                mode_env += 'T_PICKER_SOURCE_ROWS="$(cat "$HOME/all")" '
             if mode == 'kill':
                 mode_env += 'T_PICKER_WITH_ATTACHED="$(cat "$HOME/attached")" T_PICKER_WITH_PENDING="$(cat "$HOME/pending")" '
             if hostile_opts:
@@ -145,6 +152,7 @@ def picker():
                 screen = screen.replace('↩ Return', 'Enter').replace('↩', 'Enter')
                 screen = screen.replace('⎋ Esc', 'Esc').replace('⎋', 'Esc')
                 screen = screen.replace('⇥ Tab', 'Tab').replace('⇥', 'Tab')
+                screen = re.sub(r'⌥([A-Z])', r'Alt-\1', screen)
                 screen = re.sub(r'[⌃^]([A-Z/])', r'Ctrl-\1', screen)
                 if text in screen and not any(value in screen for value in absent):
                     return screen
@@ -526,3 +534,27 @@ def test_air_open_keeps_controls_focus_and_nested_filters(picker, width, height)
     keys('Enter')
     wait('1/1 (0)')
     assert finish() == ['web 6 --local']
+
+
+@pytest.mark.parametrize('width,height', [(80, 24), (44, 20), (32, 12)])
+def test_resume_sort_controls_keep_focused_row_and_change_order(picker, width, height):
+    start, wait, keys, finish = picker
+    start(profile='resume-rich', mode='resume', width=width, height=height)
+    screen = wait('2/2 (0)')
+    assert 'Sort: last turn' in screen and 'Newest web' in screen
+    assert '▸' in screen
+    for letter in ('T', 'R', 'G', 'O', 'V'):
+        assert 'Alt-' + letter in screen or 'M-' + letter in screen
+    keys('M-r')
+    # fzf 0.44 can repaint the header before completing reload-sync. Wait for
+    # its loading indicator to clear, then focus the first sorted result.
+    loading = tuple('⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏')
+    wait('Sort: repo', absent=loading)
+    keys('Up', 'Up')
+    screen = wait('Older api')
+    assert 'Older api' in screen and '▸' in screen
+    keys('C-f')
+    wait('Sort: last turn', absent=loading)
+    keys('Up', 'Up')
+    wait('Newest web')
+    assert finish()[0].split('\t')[2] == 'sid1'

@@ -103,6 +103,10 @@ _t_paste() {
   # $PWD repo's next free slot (see _t_infer_repo).
   if [[ "$repo" == <-> && -z "$slot" ]]; then slot=$repo; repo=$(_t_infer_repo "$slot"); fi
   [[ -z "$repo" ]] && repo=$(_t_infer_repo)
+  local _repo_selector _repo_selector_rc
+  _repo_selector=$(_dev_resolve_repo "$repo"); _repo_selector_rc=$?
+  (( _repo_selector_rc == 2 )) && return 2
+  (( _repo_selector_rc == 0 )) && repo=$_repo_selector
   if [[ -z "$repo" ]]; then
     echo "Usage: tpaste [-n] [repo] [slot]   (no repo: the one \$PWD is in; repo: one of ${(k)DEV_REPOS:-(none configured — see ${T_LOCAL_RC})})"
     return 1
@@ -387,8 +391,8 @@ _dev_pid_tree_claude_pid() {
 #   ~/.cache/claude-sessions/meta/<hash>, so a DEAD transcript is never re-read and a
 #   LIVE one re-reads only the bytes appended since last time. Transcripts are
 #   append-only .jsonl, which is what makes a resumable offset correct; the cache is
-#   keyed on st_ino and invalidated whenever the inode changes (csync's rsync writes
-#   a NEW file, so a synced-in transcript rescans in full) or the file is shorter
+#   keyed on st_ino and invalidated whenever the inode changes (a file transfer
+#   can replace a transcript, requiring a full rescan) or the file is shorter
 #   than the recorded offset (truncation/rewrite). The offset always stops at the
 #   last complete newline, so a half-written final line is re-read next time rather
 #   than parsed in halves.
@@ -700,8 +704,8 @@ _dev_session_summary() {
 # foreground claude is a live process with comm `claude` that isn't the claude of any
 # dev-* tmux pane. The session id + cwd come from the registry the t-session-start
 # SessionStart hook writes per live claude pid (~/.cache/claude-sessions/<pid>) — the
-# reliable pid→id link, since macOS hides another process's env and csync scrambles
-# transcript birthtimes; with the id we read the exact transcript title. A session
+# reliable pid→id link, since macOS hides another process's env and file transfers
+# can change transcript birthtimes; with the id we read the exact transcript title. A session
 # started BEFORE the hook recorded it has no entry → cwd via `lsof`, summary
 # "(foreground claude)". The slot label is "<repo>:fg" (repo from cwd, else basename).
 # The claude THIS shell runs under is skipped so a session doesn't list itself; dead-pid
@@ -1234,16 +1238,52 @@ _dev_list() {
 # ✓ glyph draws; summary = the "what it's working on" line). No glyphs/colors/headers
 # — it's meant to be *collected* (locally and over ssh, like _claude_session_rows)
 # and re-rendered. This is the per-host scan behind `dev ls -r`: live dev slots are
-# what genuinely differ machine-to-machine (transcripts already converge via csync),
-# so the cross-host view lists these, not transcripts.
+# what differ machine-to-machine, so the cross-host view lists current owners
+# rather than saved transcripts.
 # Loaded desktop conversations, read without starting or contacting an app-server.
 _dev_desktop_threads() {
   [[ $OSTYPE == darwin* && -r ${CODEX_HOME:-$HOME/.codex}/state_5.sqlite ]] || return 0
   python3 "$T_HOME/libexec/t_desktop.py" 2>/dev/null
 }
 
+# The dedicated helper also advertises scoped-row capability to remote callers.
+_dev_session_rows_scoped() {
+  local repo=$1 slot=$2 rows row
+  local _repo_selector _repo_selector_rc
+  _repo_selector=$(_dev_resolve_repo "$repo"); _repo_selector_rc=$?
+  (( _repo_selector_rc == 2 )) && return 2
+  (( _repo_selector_rc == 0 )) && repo=$_repo_selector
+  rows=$(_dev_session_rows) || return $?
+  local -a fields
+  for row in "${(@f)rows}"; do
+    fields=("${(@ps:\t:)row}")
+    (( $#fields >= 7 )) || continue
+    [[ $fields[3] != *:* ]] || continue
+    [[ -z $slot || ${fields[3]##*-} == "$slot" ]] || continue
+    if [[ -n ${DEV_REPOS[$repo]:-} ]]; then
+      _dev_dir_in_scope "$fields[2]" "${DEV_REPOS[$repo]:a}" || continue
+    else
+      [[ $fields[3] == "$repo-"* ]] || continue
+    fi
+    print -r -- "$row"
+  done
+  return 0
+}
+
 _dev_session_rows() {
+  if [[ ${1:-} == --repo ]]; then
+    _dev_session_rows_scoped "${@:2}"
+    return $?
+  fi
   _t_with_progress 'Checking local sessions' _dev_session_rows_impl "$@"
+}
+
+# Older sources ignore unknown inventory arguments. Guard scoped scans so they
+# cannot return an unrelated owner when asked for a repository directory name.
+_dev_repo_rows_command() {
+  local worker='(( ${+functions[_dev_session_rows_scoped]} )) || { print -u2 "t: source cannot filter repository selectors; update t on the source host"; exit 1; }; _dev_session_rows --repo '
+  worker+="${(q)1} ${(q)2}"
+  print -r -- "$worker"
 }
 
 _dev_session_rows_impl() {
@@ -1398,18 +1438,18 @@ _dev_session_rows_impl() {
 # warn accordingly. local-first; within a host, _dev_session_rows' own order holds.
 # Rows are prefixed verbatim (no re-splitting), so empty fields can't collapse.
 _dev_remote_scan_with_timeout() {
-  local target=$1 remote_command=$2 limit=${3:-15}
+  local target=$1 remote_command=$2 limit=${3:-15} diagnostics=$4
   python3 -c '
 import subprocess, sys
-target, command, limit = sys.argv[1:]
+target, command, limit, diagnostics = sys.argv[1:]
 try:
     result = subprocess.run(["ssh", "-o", "ConnectTimeout=3", "-o", "BatchMode=yes",
                              target, command], timeout=float(limit), stdout=sys.stdout,
-                            stderr=subprocess.DEVNULL)
+                            stderr=None if diagnostics else subprocess.DEVNULL)
 except subprocess.TimeoutExpired:
     sys.exit(124)
 sys.exit(result.returncode)
-' "$target" "$remote_command" "$limit"
+' "$target" "$remote_command" "$limit" "$diagnostics"
 }
 
 # Warnings belong on stderr; scanner stdout remains the unstyled wire protocol.
@@ -1815,6 +1855,10 @@ _dev_kill_safe_labels() {
 # used to route the selected row to the existing kill implementation.
 _dev_kill_pick() {
   local repo="$1" force="$2" remote_only="$3"
+  local _repo_selector _repo_selector_rc
+  _repo_selector=$(_dev_resolve_repo "$repo"); _repo_selector_rc=$?
+  (( _repo_selector_rc == 2 )) && return 2
+  (( _repo_selector_rc == 0 )) && repo=$_repo_selector
   local rows
   if [[ -n $remote_only ]]; then
     rows=$(_dev_rows_all --best-effort --details) || return $?
@@ -1947,6 +1991,12 @@ _dev_kill() {
   local _T_PROGRESS=0
   [[ -t 1 && -t 2 ]] && _T_PROGRESS=1
   local repo="$1" slot="$2" force="$3"
+  if [[ -n ${DEV_REPOS[$repo]:-} || ! ( $repo == <-> || $repo == all ) ]]; then
+    local _repo_selector _repo_selector_rc
+    _repo_selector=$(_dev_resolve_repo "$repo"); _repo_selector_rc=$?
+    (( _repo_selector_rc == 2 )) && return 2
+    (( _repo_selector_rc == 0 )) && repo=$_repo_selector
+  fi
 
   # Bare and repo-only invocations are interactive batch selectors. An explicit
   # foreground handle keeps its direct path below, as do numbered slots and all.
@@ -2319,6 +2369,10 @@ _t_history_attach() {
 # helpers deliberately never reuse a parked worktree or fall back to main.
 _t_issue_prepare() {
   local repo="$1" agent="$2" start_ref="${3:-origin/main}" slot=1 wt br owner gitdir
+  local _repo_selector _repo_selector_rc
+  _repo_selector=$(_dev_resolve_repo "$repo"); _repo_selector_rc=$?
+  (( _repo_selector_rc == 2 )) && return 2
+  (( _repo_selector_rc == 0 )) && repo=$_repo_selector
   [[ -n ${DEV_REPOS[$repo]:-} ]] || return 1
   _dev_worktree_enabled "$repo" || { print -u2 't issue requires isolated worktrees'; return 1; }
   _dev_agent_check "$agent" || return 1
@@ -2402,7 +2456,7 @@ _t_dev() {
   # it's SCOPED to the repo you're in (path-based, so dot-*/dotfiles-* both show in
   # the dotfiles dir); `-a`/`--all` widens to every repo, as does standing outside
   # any DEV_REPOS dir (nothing to scope to).
-  if [[ "$repo" == list || "$repo" == ls ]]; then
+  if [[ -z ${_T_OPEN_REPO_ARGUMENT:-} && ( "$repo" == list || "$repo" == ls ) ]]; then
     local scope=; [[ -z $all ]] && scope=$(_dev_cwd_repo_dir)
     if [[ -n $remote ]]; then _dev_list_remote "$scope"; else _dev_list "$scope"; fi
     return
@@ -2412,13 +2466,20 @@ _t_dev() {
   # Operates on session NAMES, not DEV_REPOS keys, so it can also clean up
   # orphaned sessions whose repo alias no longer exists (e.g. dev-dotfiles-*).
   # With -r, kill it on its $REMOTE_HOSTS host instead (host auto-inferred).
-  if [[ "$repo" == kill ]]; then
+  if [[ -z ${_T_OPEN_REPO_ARGUMENT:-} && "$repo" == kill ]]; then
     if [[ -n $remote ]]; then
       _dev_remote_kill "${pos[2]}" "${pos[3]}" "$force"
     else
       _dev_kill "${pos[2]}" "${pos[3]}" "$force"
     fi
     return
+  fi
+
+  if [[ -n ${DEV_REPOS[$repo]:-} || ! ( $repo == <-> || $repo == new || $repo == fg ) ]]; then
+    local _repo_selector _repo_selector_rc
+    _repo_selector=$(_dev_resolve_repo "$repo"); _repo_selector_rc=$?
+    (( _repo_selector_rc == 2 )) && return 2
+    (( _repo_selector_rc == 0 )) && repo=$_repo_selector
   fi
 
   # Remote-aware open (explicit half): a slot can live on THIS machine or another.
@@ -2601,6 +2662,14 @@ _t_dev() {
   local agent
   agent=$(_dev_agent_for "$repo" "$agent_over") || return 1
 
+  # Automatic fresh allocation uses one remote snapshot for every candidate and
+  # the final desktop guard. Keep explicit numbered opens on their strict path.
+  local _T_OPEN_REMOTE_APP_READY= _T_OPEN_REMOTE_APP_ROWS= _T_OPEN_REMOTE_APP_RC=0
+  if [[ -z $slot || $slot == new ]] && (( ${#REMOTE_HOSTS} )); then
+    _T_OPEN_REMOTE_APP_ROWS=$(_dev_rows_all); _T_OPEN_REMOTE_APP_RC=$?
+    _T_OPEN_REMOTE_APP_READY=1
+  fi
+
   # An explicit foreground slot must respect desktop ownership before the
   # no-tmux branch, which otherwise bypasses the ordinary slot preflight.
   if [[ -n $no_tmux && $slot == <-> ]] && (( ${#REMOTE_HOSTS} )) \
@@ -2640,7 +2709,7 @@ _t_dev() {
       local _wslot="$slot"
       if [[ -z $_wslot || $_wslot == new ]]; then
         _wslot=1
-        while ! _dev_slot_fresh "$repo" "$_wslot"; do (( _wslot++ )); done
+        while ! _dev_slot_fresh_unreserved "$repo" "$_wslot"; do (( _wslot++ )); done
       fi
       if [[ $slot != <-> ]] && (( ${#REMOTE_HOSTS} )); then
         local app_owner app_rc; app_owner=$(_dev_remote_app_owner "$repo" "$_wslot" "$allow_unverified_new"); app_rc=$?
@@ -2687,7 +2756,7 @@ _t_dev() {
   # branch — the same one the auto-pick and --fg use.
   if [[ "$slot" == new ]]; then
     local n=1
-    while ! _dev_slot_fresh "$repo" "$n"; do (( n++ )); done
+    while ! _dev_slot_fresh_unreserved "$repo" "$n"; do (( n++ )); done
     slot=$n
   fi
 
@@ -2706,7 +2775,7 @@ _t_dev() {
     while (( n <= 20 )); do
       local sname="dev-${repo}-${n}"
       if ! tmux has-session -t "=$sname:" 2>/dev/null; then
-        [[ -z $free ]] && _dev_slot_fresh "$repo" "$n" && free=$n  # lowest fresh slot → fallback
+        [[ -z $free ]] && _dev_slot_fresh_unreserved "$repo" "$n" && free=$n  # lowest fresh slot → fallback
       elif ! tmux list-clients -t "=$sname:" 2>/dev/null | grep -q .; then
         slot=$n; break                                            # existing + unattached → reattach (wins)
       fi
@@ -2718,7 +2787,7 @@ _t_dev() {
       else
         # nothing fresh in 1..20 → keep scanning unbounded, still preferring an
         # existing-but-unattached session above 20 over a fresh slot.
-        while ! _dev_slot_fresh "$repo" "$n"; do
+        while ! _dev_slot_fresh_unreserved "$repo" "$n"; do
           if tmux has-session -t "=dev-${repo}-${n}:" 2>/dev/null \
              && ! tmux list-clients -t "=dev-${repo}-${n}:" 2>/dev/null | grep -q .; then
             slot=$n; break

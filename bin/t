@@ -57,6 +57,8 @@ from urllib.request import Request, urlopen
 
 HOME = os.path.expanduser("~")
 CONFIG = os.path.join(os.environ.get("XDG_CONFIG_HOME", os.path.join(HOME, ".config")), "t", "config.sh")
+_resolve_repo_selector = runpy.run_path(str(Path(__file__).resolve().parent.parent /
+                                           "libexec/t_repos.py"))["resolve_repo"]
 _DEFAULT_LOCAL_RC = os.path.join(os.environ.get("XDG_CONFIG_HOME", os.path.join(HOME, ".config")), "t", "local.zsh")
 ZSHRC_LOCAL = os.path.expanduser(os.environ.get("T_LOCAL_RC") or
     (_DEFAULT_LOCAL_RC if os.path.exists(_DEFAULT_LOCAL_RC) or
@@ -176,6 +178,10 @@ class Config:
             elif m.group(4) == "T_LOCAL_RC" and not os.environ.get("T_LOCAL_RC"):
                 self.local_rc = os.path.expanduser(_unquote(m.group(5)))
 
+    def resolve_repo(self, selector, *, required=False):
+        """Accept a registered alias or an unambiguous checkout directory name."""
+        return _resolve_repo_selector(self.repos, selector, required=required)
+
     def agent_for(self, alias, override=None):
         """The agent a NEW slot of `alias` runs — the Python twin of zsh _dev_agent_for:
         an explicit override (--codex / --claude) > DEV_AGENT[alias] > DEV_AGENT_DEFAULT;
@@ -217,7 +223,7 @@ class Config:
         return (min(matches, key=len), slot)
 
     def worktree_paths(self, alias, slot):
-        base = os.path.basename(self.repos[alias])
+        base = os.path.basename(os.path.normpath(self.repos[alias]))
         if not re.fullmatch(r"[0-9]+", str(slot)):
             raise ValueError("worktree slot must be numeric")
         root = os.path.join(self.worktree_root, base)
@@ -519,13 +525,14 @@ def _ls_scope(cfg, repo, all_repos, cwd):
     if repo:
         if all_repos:
             raise ValueError("t ls: a repo and --all are contradictory — pick one")
+        repo = _resolve_repo_selector(cfg.repos, repo) or repo
         if repo not in cfg.repos:
             raise ValueError("unknown repo %r — one of: %s"
                              % (repo, ", ".join(sorted(cfg.repos)) or "(none registered)"))
         scope = cfg.repos[repo]
     else:
         scope = "" if all_repos else cfg.repo_dir_for_cwd(cwd)
-    wt_scope = os.path.join(cfg.worktree_root, os.path.basename(scope)) if scope else ""
+    wt_scope = os.path.join(cfg.worktree_root, os.path.basename(os.path.normpath(scope))) if scope else ""
     return scope, wt_scope
 
 
@@ -928,6 +935,11 @@ def cmd_read(cfg, args):
             slot = _ws
     if not repo:
         repo = _infer_repo(cfg, slot or "1")
+    try:
+        repo = _resolve_repo_selector(cfg.repos, repo) or repo
+    except ValueError as error:
+        print(f"t read: {error}", file=sys.stderr)
+        return 1
     if not repo or repo not in cfg.repos:
         _read_usage(cfg)
         return 1
@@ -952,8 +964,8 @@ def cmd_read(cfg, args):
                     args.repo, logfile = k, sib
                     break
     if not os.path.isfile(logfile):
-        # No log here — the slot may live on a remote host (the tmux log is host-local;
-        # csync syncs transcripts, not ~/.tmux-logs). Try delegating the read to that
+        # No log here — the slot may live on a remote host (tmux logs are host-local).
+        # Try delegating the read to that
         # host over ssh -t, which renders the remote log in less through the ssh TTY.
         # On a fully bare `t read` (no repo, no slot), probe for ANY of the inferred
         # repo's remote slots (empty slot → _dev_remote_resolve picks / fzf-picks) so a
@@ -2287,52 +2299,189 @@ def _workflow_pending(cfg):
                (cfg._workflow_activate or cfg._workflow_document != cfg._workflow_initial))
 
 
-def _config_workflow(ui, cfg, repo=None):
-    helper = _workflow()
-    _workflow_session(cfg)
-    repository = os.path.realpath(cfg.repos[repo]) if repo else None
+def _workflow_model(ui, cfg, helper, stage, current):
+    """Read catalogue lazily; workflow choices never mutate launch defaults."""
+    if not hasattr(cfg, "_workflow_catalog"):
+        ui.done("loading", "Reading model choices from Codex…")
+        try:
+            cfg._workflow_catalog = _config_catalog("codex", _config_live_models("codex"))
+        except KeyboardInterrupt:
+            return None
+        except (OSError, ValueError) as exc:
+            cfg._workflow_catalog = []
+            ui.done("unavailable", f"Codex: {exc}. Current, recommended and custom models remain available.")
     while True:
-        policy = helper["effective"](cfg._workflow_document, repository)
-        inherited = repository and repository not in cfg._workflow_document["repositories"]
-        rows = [("enabled", "Staged workflow"), ("edit", "Edit workflow in terminal editor")]
-        if repository:
-            rows.append(("inherit", "Inherit global workflow"))
-        else:
-            rows += [("defaults", "Use recommended defaults"), ("profile", "Edit reusable instructions")]
-        rows.append(("back", "Back"))
-        values = {"enabled": ("enabled" if policy["enabled"] else "disabled") + (" · inherited" if inherited else ""),
-                  "edit": " · ".join(policy[stage]["model"] for stage in ("planning", "implementation", "review"))}
-        choice = ui.pick("Agent workflow" + (f" · {repo}" if repo else " · global"), rows, values=values)
+        recommended = helper["DEFAULT"][stage]["model"]
+        choices = {current: f"{current} (current)", recommended: f"{recommended} (recommended)"}
+        for model in cfg._workflow_catalog:
+            choices.setdefault(model["id"], model["label"])
+        rows = list(choices.items()) + [("__custom__", "Enter a custom model ID…"),
+                                        ("__refresh__", "Refresh model list")]
+        picked = ui.pick(stage.title() + " model", rows,
+                         default=next(i for i, row in enumerate(rows) if row[0] == current))
+        if picked == "__refresh__":
+            del cfg._workflow_catalog
+            return _workflow_model(ui, cfg, helper, stage, current)
+        if picked == "__custom__":
+            picked = _config_input(ui, "model ID")
+        if picked is not None:
+            policy = copy.deepcopy(helper["DEFAULT"])
+            policy[stage]["model"] = picked
+            try:
+                helper["validate_policy"](policy)
+            except ValueError as exc:
+                ui.done("invalid", str(exc))
+                continue
+        return picked
+
+
+def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
+    title = f"Workflow · {name}" if name else "Customize only this repository"
+    if name:
+        users = [alias for alias, path in sorted(cfg.repos.items())
+                 if helper["source"](cfg._workflow_document, os.path.realpath(path)) == name]
+        scope = "global default and inherited repositories" if name == cfg._workflow_document["default"] else "named assignments"
+        ui.done("scope", f"Editing {name} affects {scope}" + (": " + ", ".join(users) if users else "."))
+    while True:
+        document = cfg._workflow_document
+        policy = (copy.deepcopy(document["workflows"][name]) if name else
+                  helper["resolved"](document, repository))
+        rows = [("enabled", "Staged workflow")] + [(stage, stage.title()) for stage in ("planning", "implementation", "review")]
+        rows += [("instructions", "Instructions · edit Markdown"), ("edit", "Advanced JSON editor"), ("back", "Back")]
+        values = {stage: policy[stage]["model"] + " · " + policy[stage]["effort"]
+                  for stage in ("planning", "implementation", "review")}
+        values["enabled"] = "enabled" if policy["enabled"] else "disabled"
+        values["instructions"] = "saved Markdown" if policy.get("instructions") else "empty"
+        choice = ui.pick(title, rows, values=values)
         if choice in (None, "back"):
             return
-        if choice == "inherit":
-            cfg._workflow_document = helper["update"](cfg._workflow_document, None, repository)
-        elif choice == "defaults":
-            cfg._workflow_document["global"] = copy.deepcopy(helper["DEFAULT"])
-            cfg._workflow_activate = cfg._workflow_before is None
-        elif choice == "enabled":
-            value = ui.pick("Staged workflow", [("1", "Enabled"), ("0", "Disabled")],
-                            default=0 if policy["enabled"] else 1)
-            if value is not None:
-                policy["enabled"] = value == "1"
-                cfg._workflow_document = helper["update"](cfg._workflow_document, policy, repository)
-                cfg._workflow_activate = cfg._workflow_before is None
-        else:
+        changed = copy.deepcopy(policy)
+        if choice == "enabled":
+            picked = ui.pick("Staged workflow", [("1", "Enabled"), ("0", "Disabled")],
+                             default=0 if policy["enabled"] else 1)
+            if picked is not None:
+                changed["enabled"] = picked == "1"
+        elif choice in ("edit", "instructions"):
             ui.restore()
             try:
-                if choice == "profile":
-                    _instructions_init()
-                    rc = _instructions_edit()
+                rc, after = helper["edit_instructions" if choice == "instructions" else "edit"](document, repository, name)
+                if not rc:
+                    cfg._workflow_document = after
                 else:
-                    rc, document = helper["edit"](cfg._workflow_document, repository)
-                    if not rc:
-                        cfg._workflow_document = document
-                if rc:
                     ui.done("editor", f"Editor exited with status {rc}; workflow unchanged.")
             except (OSError, ValueError) as exc:
                 ui.done("invalid", str(exc))
             finally:
                 ui.raw()
+            continue
+        else:
+            stage = choice
+            field = ui.pick(stage.title(), [("model", "Model"), ("effort", "Reasoning effort"), ("back", "Back")],
+                            values=policy[stage])
+            if field in (None, "back"):
+                continue
+            if field == "model":
+                picked = _workflow_model(ui, cfg, helper, stage, policy[stage]["model"])
+            else:
+                special = "one-level-lower" if stage == "review" else "auto"
+                levels = [special, *helper["EFFORTS"]]
+                labels = {"auto": "Automatic by task complexity", "one-level-lower": "One level below planning"}
+                picked = ui.pick(stage.title() + " reasoning effort", [(level, labels.get(level, level)) for level in levels],
+                                 default=levels.index(policy[stage]["effort"]))
+            if picked is not None:
+                changed[stage][field] = picked
+        if changed != policy:
+            cfg._workflow_document = helper["update"](document, changed, repository, name)
+
+
+def _config_workflow(ui, cfg, repo=None):
+    helper = _workflow()
+    _workflow_session(cfg)
+    repository = os.path.realpath(cfg.repos[repo]) if repo else None
+    while True:
+        document = cfg._workflow_document
+        policy = helper["effective"](document, repository)
+        source = helper["source"](document, repository)
+        excluded = document["repositories"].get(repository, {}).get("excluded", False)
+        rows = [("choose", "Choose named workflow" if repo else "Choose global default")]
+        if repo:
+            rows += [("customize", "Customize only this repository"),
+                     ("exclude", "Resume workflow for this repository" if excluded else "Exclude workflow for this repository"),
+                     ("inherit", "Use global default"), ("edit", "Advanced JSON editor")]
+        else:
+            rows += [("customize", "Edit default workflow"), ("add", "Add named workflow"),
+                     ("manage", "Edit named workflow"), ("defaults", "Use recommended defaults"),
+                     ("profile", "Edit reusable instructions")]
+        rows.append(("back", "Back"))
+        source_label = source + (" · excluded" if excluded else " · enabled" if policy["enabled"] else " · disabled")
+        if repo and repository not in document["repositories"]:
+            source_label += " · inherited"
+        choice = ui.pick("Agent workflow" + (f" · {repo}" if repo else " · global"), rows,
+                         values={"choose": source_label})
+        if choice in (None, "back"):
+            return
+        try:
+            if choice in ("choose", "manage"):
+                selected = ui.pick("Named workflows", [("name:" + name, name) for name in sorted(document["workflows"])] + [("back", "Back")],
+                                   values={"name:" + name: "global default" if name == document["default"] else ""
+                                           for name in document["workflows"]})
+                if selected in (None, "back"):
+                    continue
+                name = selected.removeprefix("name:")
+                if choice == "manage":
+                    _workflow_policy_menu(ui, cfg, helper, name=name)
+                else:
+                    cfg._workflow_document = helper["action"](document, "use", name, repository)
+            elif choice == "customize":
+                _workflow_policy_menu(ui, cfg, helper, repository, None if repo else document["default"])
+            elif choice == "add":
+                name = _config_input(ui, "Workflow name")
+                if name is not None:
+                    cfg._workflow_document = helper["action"](document, "add", name)
+                    _workflow_policy_menu(ui, cfg, helper, name=name)
+            elif choice in ("inherit", "exclude"):
+                action = "include" if choice == "exclude" and excluded else choice
+                cfg._workflow_document = helper["action"](document, action, repository=repository)
+            elif choice == "defaults":
+                cfg._workflow_document = helper["update"](document, copy.deepcopy(helper["DEFAULT"]))
+                cfg._workflow_activate = cfg._workflow_before is None
+            else:
+                ui.restore()
+                try:
+                    if choice == "profile":
+                        _instructions_init()
+                        rc = _instructions_edit()
+                    else:
+                        rc, after = helper["edit"](document, repository)
+                        if not rc:
+                            cfg._workflow_document = after
+                    if rc:
+                        ui.done("editor", f"Editor exited with status {rc}; workflow unchanged.")
+                finally:
+                    ui.raw()
+        except (OSError, ValueError) as exc:
+            ui.done("invalid", str(exc))
+
+
+def _workflow_review(document):
+    helper = _workflow()
+    lines = [f"Global default: {document['default']}"]
+    for name, policy in sorted(document["workflows"].items()):
+        lines.append(f"Workflow {name}: {'enabled' if policy['enabled'] else 'disabled'}")
+        lines.extend(f"  {stage.title()}: {policy[stage]['model']} · {policy[stage]['effort']}"
+                     for stage in ("planning", "implementation", "review"))
+        if policy.get("instructions"):
+            lines.extend("  " + line for line in policy["instructions"].splitlines())
+    for path, entry in sorted(document["repositories"].items()):
+        lines.append(f"Repository {path}: {helper['source'](document, path)}" +
+                     (" · excluded" if entry.get("excluded") else ""))
+        if "inline" in entry:
+            lines.append(f"  Workflow: {'enabled' if entry['inline']['enabled'] else 'disabled'}")
+            lines.extend(f"  {stage.title()}: {entry['inline'][stage]['model']} · {entry['inline'][stage]['effort']}"
+                         for stage in ("planning", "implementation", "review"))
+            if entry["inline"].get("instructions"):
+                lines.extend("  " + line for line in entry["inline"]["instructions"].splitlines())
+    return lines
 
 
 def _config_repos(ui, cfg):
@@ -2504,7 +2653,7 @@ def _config_wizard(cfg):
                 if edited.fast.get(a) == "1":
                     values[a] += " · fast"
             rows += [("hosts", "Hosts"), ("repos", "Repositories"), ("beam", "Default beam host"),
-                     ("worktrees", "Worktrees & branches"), ("workflow", "Agent workflow"), ("edit", "Open config in editor"),
+                     ("worktrees", "Worktrees & branches"), ("workflow", "Agent workflow"), ("local", "Local worker & models ›"), ("edit", "Open config in editor"),
                      ("save", "Save changes"), ("cancel", "Cancel")]
             pending = len(_config_diff(initial, _config_state(edited))) + _workflow_pending(edited)
             values.update({"hosts": f"{len(edited.hosts)} registered",
@@ -2527,6 +2676,11 @@ def _config_wizard(cfg):
                     ui.done("cancelled", "nothing written")
                     return None
             last = choice
+            if choice == "local":
+                if pending:
+                    ui.done("pending", "Save or discard pending settings before local worker setup.")
+                    continue
+                return "local"
             if choice == "edit":
                 if pending:
                     ui.done("pending", "Save or cancel your menu changes before opening the editor.")
@@ -2545,7 +2699,7 @@ def _config_wizard(cfg):
                     continue
                 if _workflow_pending(edited):
                     lines += ["      Agent workflow and native Codex/Claude instructions:"]
-                    lines += ["      " + line for line in _workflow()["encode"](edited._workflow_document).splitlines()]
+                    lines += ["      " + line for line in _workflow_review(edited._workflow_document)]
                 if changes or _workflow_pending(edited):
                     answer = ui.page("Review local settings", lines, ("enter", "y", "n", "q", "esc", "abort"),
                                      keys="y save · n / esc / q back", primary=("enter", "SAVE CHANGES", f"{pending} pending"))
@@ -2661,29 +2815,127 @@ def cmd_repo_add(cfg, args):
     return 0
 
 
-def cmd_repos(cfg, args):
+def cmd_repo(cfg, args):
     """Manage registered checkouts; only the shell plugin can change directory."""
     if args.action == "add":
         return cmd_repo_add(cfg, args)
     if args.action == "cd":
-        print("t repos cd: run this from a shell with the t plugin loaded", file=sys.stderr)
+        print("t repo cd: run this from a shell with the t plugin loaded", file=sys.stderr)
         return 1
-    if args.action == "ls":
+    if args.action == "list":
         if not cfg.repos:
             print("No repositories registered. Run `t repo add <path>` or `t config setup`.")
             return 0
         print("\n".join(_table_lines(("REPO", "CHECKOUT"),
                                     [(alias, _tilde(path)) for alias, path in sorted(cfg.repos.items())])))
         return 0
-    if args.repo not in cfg.repos:
-        print(f"t repos path: unknown repo {args.repo!r} (known: "
+    try:
+        repo = _resolve_repo_selector(cfg.repos, args.repo) or args.repo
+    except ValueError as error:
+        print(f"t repo locate: {error}", file=sys.stderr)
+        return 1
+    if repo not in cfg.repos:
+        print(f"t repo locate: unknown repo {args.repo!r} (known: "
               f"{', '.join(sorted(cfg.repos)) or '(none registered)'})", file=sys.stderr)
         return 1
-    print(cfg.repos[args.repo])
+    print(cfg.repos[repo])
     return 0
 
 
+def _cmd_workflow(cfg, args):
+    try:
+        verb = getattr(args, "workflow_action", None)
+        instructions_action = getattr(args, "workflow_instructions_action", None)
+        if instructions_action:
+            verb = instructions_action
+        if not verb:
+            verb = "list" if args.show else "edit" if getattr(args, "edit", False) else None
+        if not getattr(args, "workflow", False) or not verb:
+            raise ValueError("use t config workflow list or t config workflow edit [--repo ALIAS]")
+        alias = getattr(args, "workflow_repo", None)
+        name = getattr(args, "workflow_name", None)
+        all_workflows = getattr(args, "all_workflows", False)
+        if all_workflows and alias:
+            raise ValueError("--all and --repo cannot be combined")
+        if verb in ("edit", "show") and name and alias:
+            raise ValueError("workflow name and --repo cannot be combined")
+        repository = None
+        if alias:
+            alias = _resolve_repo_selector(cfg.repos, alias) or alias
+            if alias not in cfg.repos:
+                raise ValueError(f"unknown registered repository {alias!r}")
+            repository = os.path.realpath(cfg.repos[alias])
+        helper = _workflow()
+        document, before = helper["load"]()
+        if instructions_action == "show":
+            print(helper["instructions"](document, repository, name), end="")
+            return 0
+        if verb == "list":
+            if all_workflows:
+                result = helper["catalogue"](document)
+                if getattr(args, "json", False):
+                    print(helper["encode"](result), end="")
+                else:
+                    print("Named workflows · global default: " + result["default"])
+                    print("\n".join(_table_lines(("WORKFLOW", "ENABLED", "REPOSITORY ASSIGNMENTS"),
+                        [(key, "yes" if item["workflow"]["enabled"] else "no", str(len(item["repositories"])))
+                         for key, item in result["workflows"].items()])))
+                return 0
+            entry = document["repositories"].get(repository, {})
+            result = {"scope": repository or "global",
+                      "source": ("repository override" if "inline" in entry else "repository workflow" if "workflow" in entry else
+                                 "global" if before else "recommended defaults (not saved)"),
+                      "workflow_name": None if "inline" in entry else helper["source"](document, repository),
+                      "excluded": entry.get("excluded", False),
+                      "workflow": helper["effective"](document, repository)}
+            if not getattr(args, "workflow_action", None) or getattr(args, "json", False):
+                print(helper["encode"](result), end="")
+            else:
+                print(f"Scope: {result['scope']}")
+                print(f"Source: {result['source']}" + (f" · {result['workflow_name']}" if result['workflow_name'] else ""))
+                print("Excluded: " + ("yes" if result["excluded"] else "no"))
+                print("Enabled: " + ("yes" if result["workflow"]["enabled"] else "no"))
+                print("\n".join(_table_lines(("STAGE", "MODEL", "EFFORT"),
+                    [(stage, result["workflow"][stage]["model"], result["workflow"][stage]["effort"])
+                     for stage in ("planning", "implementation", "review")])))
+            return 0
+        if verb == "edit":
+            if not sys.stdin.isatty() or not sys.stdout.isatty():
+                raise ValueError("open the workflow editor in a terminal")
+            editor = helper["edit_instructions" if instructions_action else "edit"]
+            rc, after = editor(document, repository, name) if name or instructions_action else editor(document, repository)
+            if rc:
+                return rc
+        else:
+            after = helper["action"](document, verb, name, repository, getattr(args, "workflow_from", None))
+        if after == document:
+            print("Workflow unchanged — nothing written")
+        else:
+            helper["save"](after, before)
+            print("✓ saved agent workflow and native instructions")
+        return 0
+    except (OSError, ValueError) as exc:
+        print(f"t config: {exc}", file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        return 130
+
+
+def _local_worker():
+    return runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_local_worker.py"))
+
+
+def _local_setup(args):
+    helper = runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_local_setup.py"))
+    return helper["run"](args, globals())
+
+
 def cmd_config(cfg, args):
+    if getattr(args, "local", False):
+        return _local_setup(args)
+    if getattr(args, "local_model", None) or getattr(args, "disable_local", False) or getattr(args, "yes", False):
+        print("local model options require t config local", file=sys.stderr)
+        return 1
     workflow_action = getattr(args, "workflow_action", None)
     if workflow_action:
         args.workflow = True
@@ -2692,52 +2944,13 @@ def cmd_config(cfg, args):
     if getattr(args, "onboard", False) and not (getattr(args, "workflow", False) or getattr(args, "workflow_repo", None)):
         return _onboarding()["run"](cfg, globals(), force=True)
     if getattr(args, "workflow", False) or getattr(args, "workflow_repo", None):
-        try:
-            if not getattr(args, "workflow", False) or not (args.show or getattr(args, "edit", False)):
-                raise ValueError("use t config workflow list or t config workflow edit [--repo ALIAS]")
-            repository = None
-            alias = getattr(args, "workflow_repo", None)
-            if alias:
-                if alias not in cfg.repos:
-                    raise ValueError(f"unknown registered repository {alias!r}")
-                repository = os.path.realpath(cfg.repos[alias])
-            helper = _workflow()
-            document, before = helper["load"]()
-            if args.show:
-                result = {"scope": repository or "global",
-                          "source": "repository override" if repository in document["repositories"] else "global" if before else "recommended defaults (not saved)",
-                          "workflow": helper["effective"](document, repository)}
-                if not workflow_action or getattr(args, "json", False):
-                    print(helper["encode"](result), end="")
-                else:
-                    print(f"Scope: {result['scope']}")
-                    print(f"Source: {result['source']}")
-                    print("Enabled: " + ("yes" if result["workflow"]["enabled"] else "no"))
-                    print("\n".join(_table_lines(("STAGE", "MODEL", "EFFORT"),
-                        [(stage, result["workflow"][stage]["model"], result["workflow"][stage]["effort"])
-                         for stage in ("planning", "implementation", "review")])))
-                return 0
-            if not sys.stdin.isatty() or not sys.stdout.isatty():
-                raise ValueError("open the workflow editor in a terminal")
-            rc, after = helper["edit"](document, repository)
-            if rc:
-                return rc
-            if after == document:
-                print("Workflow unchanged — nothing written")
-            else:
-                helper["save"](after, before)
-                print("✓ saved agent workflow and native instructions")
-            return 0
-        except (OSError, ValueError) as exc:
-            print(f"t config: {exc}", file=sys.stderr)
-            return 1
-        except KeyboardInterrupt:
-            return 130
+        return _cmd_workflow(cfg, args)
     if args.show:
         print("\n".join(_config_summary(cfg.agent_default, cfg.models, cfg.agents)))
         for agent in AGENTS:
             print(f"{agent} effort: {cfg.efforts.get(agent) or 'tool default'}")
             print(f"{agent} speed: {_config_speed_label(cfg.fast.get(agent))}")
+        print(f"Local worker: t config local --show (setup: t config local)")
         print(f"Default opening mode: {cfg.open_mode_default}")
         print(f"Default beam host: {cfg.beam_host or 'none'}")
         print(f"Worktrees: {cfg.worktree_default} · root: {cfg.worktree_root} · shared-tree branch: {cfg.branch}")
@@ -2749,7 +2962,7 @@ def cmd_config(cfg, args):
         try:
             helper = _workflow()
             document, stored = helper["load"]()
-            print("Agent workflow: " + ("enabled" if document["global"]["enabled"] else "disabled") +
+            print("Agent workflow: " + ("enabled" if helper["effective"](document)["enabled"] else "disabled") +
                   ("" if stored else " · recommended defaults (not saved)") +
                   f" · {len(document['repositories'])} repository overrides; t config workflow list for details")
         except (OSError, ValueError) as exc:
@@ -2766,6 +2979,8 @@ def cmd_config(cfg, args):
         result = "edit" if getattr(args, "edit", False) else _config_wizard(cfg)
         if result is None:
             return 130
+        if result == "local":
+            return _local_setup(args)
         shell_changed, workflow_changed = result == "edit", False
         if result == "edit":
             rc = _config_editor()
@@ -4488,7 +4703,12 @@ def cmd_instructions(cfg, args):
         print(f"instruction profile: {path}\n"
               "run `t instructions --init` to create it, or `t instructions <repo> --apply` to seed a repo")
         return 0
-    repo = cfg.repos.get(args.repo)
+    try:
+        alias = _resolve_repo_selector(cfg.repos, args.repo) or args.repo
+    except ValueError as error:
+        print(f"t instructions: {error}", file=sys.stderr)
+        return 1
+    repo = cfg.repos.get(alias)
     if not repo or not os.path.isdir(repo):
         print(f"t instructions: unknown registered repo '{args.repo}'", file=sys.stderr)
         return 1
@@ -5611,7 +5831,7 @@ def _command_readonly(argv, *, terminal=None):
         return not terminal
     verb, tail = words[0], words[1:]
     if words[:2] == ["config", "workflow"]:
-        return len(words) == 2 or words[2] == "list"
+        return len(words) == 2 or words[2] == "list" or (words[2:4] == ["instructions", "show"])
     if verb == "__advisories":
         return not tail or tail[0] == "status"
     if verb == "__session-goal":
@@ -5649,8 +5869,8 @@ def _command_readonly(argv, *, terminal=None):
         return True
     if verb == "issue":
         return bool(tail and tail[0] in ("list", "status"))
-    if verb == "repos":
-        return bool(tail and tail[0] in ("ls", "path"))
+    if verb == "repo":
+        return bool(tail and tail[0] in ("list", "locate"))
     if verb == "hosts":
         return bool(tail and (tail[0] in ("list", "show") or
                             (tail[0] == "default" and len(tail) == 1)))
@@ -5672,7 +5892,7 @@ def _command_readonly(argv, *, terminal=None):
 def _t_auto_update(argv):
     """Return None to continue, or replace this process with the updated CLI."""
     public = {"open", "app", "ls", "kill", "restart", "push", "pop", "resume", "history", "cd",
-              "beam", "read", "plan", "paste", "find", "cursor", "repos", "config",
+              "beam", "read", "plan", "paste", "find", "cursor", "repo", "config",
               "setup", "new", "checkout", "instructions", "install", "integrate",
               "permissions", "trust", "doctor"}
     operation = _canonical_argv(argv)
@@ -6223,10 +6443,9 @@ _AGENT_PARITY = [
     ("t agent install (login · update · reinstall)", "✓", "✓", "✓"),
     ("dev slots: t session open / list / close / read / paste", "✓", "✓ t session open --codex · DEV_AGENT", "✗ no slot — t cursor list"),
     ("t session push / pop", "✓", "✓", "✗ no slot"),
-    ("t session resume (dead slots)", "✓", "✓ (its sqlite thread index)", "→ t cursor resume"),
+    ("t session resume (saved conversations)", "✓", "✓ (rollouts and thread index)", "→ t cursor resume"),
     ("t session move / --from", "✓", "✓ (rollout + .origin)", "→ t cursor send [id] --host / --from"),
     ("t session open-app (desktop + browser preview)", "✗ Codex conversations only", "✓ local macOS slot → same thread", "✗"),
-    ("csync (iCloud union of transcripts)", "✓ projects + plans", "✓ codex-sessions", "✓ cursor-chats"),
     ("SessionStart stamps (registry · opened · origin)", "✓ settings.json hook",
      "✓ hooks.json (trust once at startup)", "✗ no hook wired"),
     ("t session view-plan", "✓", "✗ codex keeps no plan files (says so)", "✗"),
@@ -7964,7 +8183,7 @@ def cmd_doctor(cfg, args):
 # ─── todo — retired ─────────────────────────────────────────────────────────────
 #
 # `t todo` (a per-slot task list with a /todo command, a statusline bar, a
-# list_todos MCP tool and a csync pair) was retired in September 2026. The verb
+# list_todos MCP tool) was retired in September 2026. The verb
 # is answered in main() (no subparser — `t -h` does not list it) so an old habit,
 # alias, or a lagging statusline setting gets one quiet line instead of argparse's
 # "invalid choice". The lists it kept
@@ -8050,6 +8269,7 @@ def _slot_select(cfg, rows, repo, slot, cwd, verb):
     if repo is None:
         repo = implied_repo
         slot = slot or implied_slot
+    repo = _resolve_repo_selector(cfg.repos, repo) or repo
     if repo not in cfg.repos:
         usage = ("t app [push|pull] <repo> <slot>\n"
                  "  push: CLI → desktop; pull: desktop → CLI. Run `t help app` for steps."
@@ -8798,6 +9018,7 @@ def cmd_app_workspace(cwd, reopen=False):
 def cmd_app(cfg, args, *, saved=None):
     try:
         direction, repo, slot = _app_target(args)
+        repo = _resolve_repo_selector(cfg.repos, repo) or repo
         if direction == "pull":
             return cmd_app_pull(cfg, args, repo, slot)
         if args.thread:
@@ -9116,7 +9337,7 @@ def _index_update(path, cache_dir):
     the cache last saw it. None when the transcript cannot be stat'ed.
 
     Reset to a full rescan when the cache is missing/corrupt, from an older schema,
-    for a different inode (csync's rsync writes a NEW file), or claims more bytes than
+    for a different inode (a file transfer can replace the file), or claims more bytes than
     exist (truncation). The delta is read line by line — never fh.read(): a cold ff
     transcript is 100+ MB — and a final line without its newline is NOT consumed, so a
     half-written record is re-read next time instead of parsed in halves."""
@@ -9276,7 +9497,7 @@ def _session_row(cfg, rec, live_by_sid, now, cache_root=None, this_sid=None,
                          if cwd == p or cwd.startswith(p + "/")), None)
     branch = rec.get("branch")
     if not branch and key:
-        branch = "dev/%s-%s" % (os.path.basename(cfg.repos[alias]), slot)
+        branch = "dev/%s-%s" % (os.path.basename(os.path.normpath(cfg.repos[alias])), slot)
     prompts = rec.get("prompts") or []
     opened = _opened_stamp(sid, cache_root) if (cache_root and sid) else 0
     act = _activity(rec, opened)
@@ -9487,6 +9708,7 @@ def _kw_excerpts(prompts, terms, n=3, width=240):
 
 
 def _repo_path(cfg, alias):
+    alias = _resolve_repo_selector(cfg.repos, alias) or alias
     return cfg.repos.get(alias) if alias else None
 
 
@@ -9498,6 +9720,7 @@ def _find_sessions(recs, terms, live_by_sid, cfg, days=60, repo=None, limit=10, 
     cutoff = now - days * 86400 if days else 0
     want = None
     if repo:
+        repo = _resolve_repo_selector(cfg.repos, repo) or repo
         want = cfg.repos.get(repo)
         if not want:
             raise ValueError("unknown repo alias %r — one of: %s"
@@ -9525,7 +9748,7 @@ def _find_sessions(recs, terms, live_by_sid, cfg, days=60, repo=None, limit=10, 
 
 # ── one session ──
 
-_SLOT_REF_RE = re.compile(r"^([A-Za-z0-9_.-]+?)[- ](\d+)$")
+_SLOT_REF_RE = re.compile(r"^(.+?)[- ](\d+)$")
 _HEX_REF_RE = re.compile(r"^[0-9a-f-]{4,}$")
 
 
@@ -9541,8 +9764,9 @@ def _session_ref_resolve(ref, cfg, recs, live_by_sid):
         ref = ref[4:]
     by_sid = {r["sid"]: r for r in recs if r.get("sid")}
     m = _SLOT_REF_RE.match(ref)
-    if m and m.group(1) in cfg.repos:
-        alias, n = m.groups()
+    alias = _resolve_repo_selector(cfg.repos, m.group(1)) if m else None
+    if alias:
+        n = m.group(2)
         path = cfg.repos[alias]
         paths = cfg.worktree_paths(alias, n)
         for sid, info in live_by_sid.items():
@@ -9595,8 +9819,7 @@ def _git_brief(path):
 
 
 def _plan_head_lines(path, n=40):
-    """First n lines of a plan file, or None when it is not here (plans are per-host:
-    csync syncs them only periodically)."""
+    """First n lines of a plan file, or None when it is not here (plans are per-host)."""
     try:
         n = max(1, int(n))
         with open(path, encoding="utf-8", errors="replace") as fh:
@@ -9643,7 +9866,7 @@ _MCP_TOOLS = [
          "days": {"type": "integer", "default": 60,
                   "description": "only sessions active within N days; 0 = no window"},
          "repo": {"type": "string",
-                  "description": "DEV_REPOS alias to restrict to (ff, dot, cfp, …)"},
+                  "description": "Registered alias or repository directory name to restrict to"},
          "limit": {"type": "integer", "default": 10, "maximum": 30}},
          "required": ["query"]}},
     {"name": "list_sessions",
@@ -9654,7 +9877,7 @@ _MCP_TOOLS = [
          "map a slot to its worktree/branch. all_hosts also asks the other machines "
          "(slow: several seconds)."),
      "inputSchema": {"type": "object", "properties": {
-         "repo": {"type": "string", "description": "DEV_REPOS alias to restrict to"},
+         "repo": {"type": "string", "description": "Registered alias or repository directory name to restrict to"},
          "all_hosts": {"type": "boolean", "default": False}}}},
     {"name": "session_detail",
      "description": (
@@ -9698,6 +9921,7 @@ def _tool_find(cfg, ctx, args):
 
 def _tool_list(cfg, ctx, args):
     repo = args.get("repo")
+    repo = _resolve_repo_selector(cfg.repos, repo) or repo
     want = cfg.repos.get(repo) if repo else None
     if repo and not want:
         raise ValueError("unknown repo alias %r — one of: %s"
@@ -9984,6 +10208,15 @@ def _mcp_allow_announce(settings):
 
 
 def cmd_mcp(cfg, args):
+    if getattr(args, "local_worker", False):
+        helper = _local_worker()
+        if args.list_tools:
+            print("\n".join(tool["name"] for tool in helper["tool_specs"]()))
+            return 0
+        if args.install or args.reindex or args.call:
+            print("local worker supports stdio or --list-tools only", file=sys.stderr)
+            return 1
+        return helper["serve"](globals())
     if args.install:
         return _mcp_install()
     if args.list_tools:
@@ -10018,6 +10251,7 @@ def cmd_mcp(cfg, args):
 
 def cmd_session_goal(cfg, args):
     try:
+        args.repo = _resolve_repo_selector(cfg.repos, args.repo) or args.repo
         if args.repo not in cfg.repos or not args.slot.isdigit() or int(args.slot) < 1:
             raise ValueError('name a registered repository and a positive slot number')
         row = _slot_select(cfg, _parse_rows(zsh_capture("_dev_session_rows")),
@@ -10082,9 +10316,9 @@ COMMAND_GROUPS = {
         "goal": ("__session-goal",),
     },
     "repo": {
-        "list": ("repos", "ls"), "cd": ("repos", "cd"),
-        "locate": ("repos", "path"), "create": ("new",),
-        "clone": ("checkout",), "add": ("repos", "add"),
+        "list": ("repo", "list"), "cd": ("repo", "cd"),
+        "locate": ("repo", "locate"), "create": ("new",),
+        "clone": ("checkout",), "add": ("repo", "add"),
     },
     "cursor": {"list": ("cursor", "ls"), "resume": ("cursor", "resume"),
                "send": ("cursor", "send")},
@@ -10095,9 +10329,11 @@ COMMAND_GROUPS = {
     "agentcore": {"invoke": ("agentcore", "invoke"), "stop": ("agentcore", "stop")},
     "config": {"open": ("config",), "show": ("config", "--show"),
                "edit": ("config", "--edit"), "setup": ("setup",),
-               "onboard": ("config", "--onboard"),
+               "onboard": ("config", "--onboard"), "local": ("config", "--local"),
                "workflow": {"list": ("config", "workflow", "list"),
-                            "edit": ("config", "workflow", "edit")}},
+                            "edit": ("config", "workflow", "edit"),
+                            **{verb: ("config", "workflow", verb) for verb in ("add", "use", "exclude", "inherit")},
+                            "instructions": {verb: ("config", "workflow", "instructions", verb) for verb in ("show", "edit")}}},
     "profile": {"init": ("instructions", "--init"),
                 "edit": ("instructions", "--edit"),
                 "show": ("instructions", "--show"),
@@ -10155,6 +10391,8 @@ def _command_path(argv):
     node = COMMAND_GROUPS
     path = []
     for word in argv:
+        if isinstance(node, dict) and word == "ls" and "list" in node:
+            word = "list"
         if not isinstance(node, dict) or word not in node:
             break
         path.append(word)
@@ -10165,6 +10403,8 @@ def _command_path(argv):
 def _canonical_argv(argv):
     """Translate a complete public command; preserve its payload arguments."""
     argv = _hosts_argv(argv)
+    if argv and argv[0] == "list":
+        argv[0] = "ls"
     path, route = _command_path(argv)
     return [*route, *argv[len(path):]] if path and not isinstance(route, dict) else argv
 
@@ -10193,6 +10433,8 @@ def _canonical_error(argv):
         mode_flags["agent"] = {"--status"}
     payload = argv[2:argv.index("--")] if "--" in argv[2:] else argv[2:]
     conflict = mode_flags.get(group, set()).intersection(payload)
+    if group == "config" and action == "local":
+        conflict.discard("--show")
     if conflict:
         return f"t {group} {action}: mode flags belong to the action name: {', '.join(sorted(conflict))}"
     return None
@@ -10204,15 +10446,14 @@ def _root_help():
   t                       Guided setup or open a work session
 
 WORK
-  session   Open, find, and move work sessions
-  remote    Open, move, and resume sessions on SSH hosts
-  issue     List, inspect, work on, and open GitHub issues
-  share     Share context between agent conversations
-  repo      List and manage repositories
-  cursor    List, resume, and send Cursor chats
-  hosts     Manage remote SSH hosts and run commands
-  agentcore Submit work to an AgentCore runtime
-
+  session    Open, find, and move work sessions
+  remote     Open, move, and resume sessions on SSH hosts
+  issue      List, inspect, work on, and open GitHub issues
+  share      Share context between agent conversations
+  repo       List and manage repositories
+  cursor     List, resume, and send Cursor chats
+  hosts      Manage remote SSH hosts and run commands
+  agentcore  Submit work to an AgentCore runtime
 CONFIGURATION
   config    Manage local settings
   profile   Manage reusable AGENTS.md instructions
@@ -10223,34 +10464,25 @@ TOOLS
   agent     Install and configure agent CLIs
   system    Integrate, update, and diagnose t
 
-FLAGS
+OPTIONS
   -h, --help     Show help
   --version      Show version
 
 EXAMPLES
   t config onboard        Discover agents, repos, and hosts again
-  t session open api       Open or reattach an api session
+  t session open api      Open or reattach an api session
   t session list --remote  List sessions across machines
-  t repo list              List registered repositories
-  t hosts list             List registered SSH hosts
 
 LEARN MORE
   t help <noun> [verb]      Show command details
   t help agents            Show agent support
   t help aliases           Show compatibility aliases
-
-OPTIONAL STARTUP ADVISORIES
-  Cached repo-related binary checks in interactive bare t.
-  export T_VULNERABILITY_CHECK=1   Enable
-  unset T_VULNERABILITY_CHECK     Disable; no automatic remediation
 """
     return _wrap_help(help_text)
 
 
 def _wrap_help(body):
-    width = max(24, shutil.get_terminal_size(fallback=(80, 24)).columns)
-    if width >= 75:
-        return body
+    width = min(80, max(24, shutil.get_terminal_size(fallback=(80, 24)).columns))
     lines = []
     for line in body.splitlines():
         if len(line) <= width:
@@ -10264,35 +10496,70 @@ def _wrap_help(body):
                     lines.append(textwrap.fill(description, width=width,
                                                initial_indent=label + gap,
                                                subsequent_indent=" " * column,
-                                               break_long_words=False))
+                                               break_long_words=False, break_on_hyphens=False))
                 else:
-                    lines.append(label)
+                    lines.append(textwrap.fill(label.strip(), width=width,
+                                               initial_indent="  ", subsequent_indent="  ",
+                                               break_long_words=False, break_on_hyphens=False))
                     lines.append(textwrap.fill(description, width=width,
                                                initial_indent="    ", subsequent_indent="    ",
-                                               break_long_words=False))
+                                               break_long_words=False, break_on_hyphens=False))
             else:
                 indent = "  " if line.startswith("  ") else ""
                 lines.append(textwrap.fill(line.strip(), width=width, initial_indent=indent,
-                                           subsequent_indent=indent, break_long_words=False))
+                                           subsequent_indent=indent, break_long_words=False, break_on_hyphens=False))
     return "\n".join(lines) + "\n"
 
 
 def _group_help(group):
-    if group == "config workflow":
+    if group == "config workflow instructions":
         return _wrap_help("""USAGE
-  t config workflow <verb> [flags]
-  t config workflow list [--repo ALIAS] [--json]
-  t config workflow edit [--repo ALIAS]
+  t config workflow instructions show [NAME] [--repo ALIAS]
+  t config workflow instructions edit [NAME] [--repo ALIAS]
 
 COMMANDS
-  list  List effective staged agent workflow settings without prompts
-  edit  Edit the selected workflow JSON in a terminal
+  show  Print the selected workflow's Markdown instructions without prompts
+  edit  Edit Markdown with VISUAL/EDITOR; preserve formatting and validate on save
+
+SCOPE
+  Omit NAME and --repo for the global default. NAME edits a shared definition.
+  --repo selects a registered repository explicitly, without checkout inference.
+  NAME and --repo cannot be combined. Repository edits customize only that repo.
+
+LEARN MORE
+  t help config workflow instructions <verb>
+""")
+    if group == "config workflow":
+        return _wrap_help("""USAGE
+  t config workflow <verb> [arguments] [flags]
+  t config workflow list [--repo ALIAS | --all] [--json]
+  t config workflow add NAME [--from NAME]
+  t config workflow use NAME [--repo ALIAS]
+  t config workflow exclude --repo ALIAS
+  t config workflow inherit --repo ALIAS
+  t config workflow edit [NAME] [--repo ALIAS]
+  t config workflow instructions <verb> [NAME] [--repo ALIAS]
+
+COMMANDS
+  list          Print effective settings or the named catalogue with --all
+  add           Copy the current default (or --from NAME); selection stays unchanged
+  use           Choose a global default or a repository's named workflow
+  exclude       Disable the workflow for one repository, retaining its source
+  inherit       Remove the repository override and use the global default
+  edit          Advanced JSON editor for a shared definition or repository policy
+  instructions  Show or edit human-written Markdown instructions
 
 SCOPE
   Omit --repo for the global workflow. --repo selects a registered repository
-  alias explicitly; the current checkout is never inferred and no picker opens.
+  alias or directory name explicitly; the current checkout is never inferred and no picker opens.
+  NAME and --repo cannot be combined for edit. Shared definition edits affect
+  all its consumers. --all lists named workflows; it cannot combine with --repo.
+  `ls` is an alias for `list`.
   List labels inherited settings and recommended defaults that are not saved.
-  Edit validates before saving workflow and native agent instructions.
+  Edits validate before saving workflow and native agent instructions.
+
+LEARN MORE
+  t help config workflow <verb>
 """)
     if group == "issue":
         return _wrap_help("""USAGE
@@ -10305,13 +10572,14 @@ SCOPE
 List repository issues, inspect existing agent work, start agents, or open issues in a browser.
 
 REPOSITORIES
-  Use a registered alias or GitHub owner/repo; --repo works with every verb.
+  Use a registered alias, repository directory name, or GitHub owner/repo; --repo works with every verb.
   List uses the current checkout, or all registered repositories outside one.
   List --all widens the view from a checkout. Status never prompts: specify a
   repository when outside a registered checkout. Start and open can select repositories
   and issues interactively.
   An issue URL includes its repository and can replace [repo] <id>.
 
+`ls` is an alias for `list`.
 Run `t help issue <verb>` for flags and arguments.
 """)
     width = max(map(len, COMMAND_GROUPS[group]))
@@ -10322,31 +10590,35 @@ Run `t help issue <verb>` for flags and arguments.
              "Run `t hosts list` to list registered machines.\n"
              "`delete` and `rm` are aliases for `remove`.\n\nEXAMPLES\n"
              "  t hosts add mini chris@mini.local\n"
-             "  t hosts edit mini chris@new-mini.local\n"
-             "  t hosts default mini\n"
-             "  t hosts run mini t session list\n"
-             "  t hosts remove mini\n" if group == "hosts" else "")
+             "  t hosts run mini t session list\n" if group == "hosts" else "")
     if group == "repo":
         extra = ("\nEXAMPLES\n  t repo add [path] [--alias NAME]\n"
                  "  t repo add ~/config/my-project\n"
                  "  t repo add    # use the current checkout, including from a subdirectory\n"
-                 "\nAdd infers the checkout directory name; --alias sets a short name.\n"
+                 "\nCd and locate accept a registered alias or repository directory name.\n"
+                 "Add infers the checkout directory name; --alias sets a short name.\n"
                  "Use `t config setup [dirs ...]` to select several checkouts (default ~/config).\n")
     if group == "remote":
         extra = ("\nTARGETS\n  t remote open [repo] [slot] [--host HOST] [--new]\n"
                  "  t remote move [repo] [slot] [--session ID] [--from SOURCE] [--host DEST]\n"
-                 "  t remote resume [repo] [slot] [--host HOST] [--days N]\n"
-                 "\nInfer the repository from the current checkout, or browse all repositories outside one.\n"
-                 "Omitted hosts use a single host picker; move first selects a current CLI session.\n"
-                 "Open attaches on the chosen host; --new explicitly starts a fresh session.\n"
-                 "Resume discovers saved history on the chosen host. Session resume --host instead\n"
-                 "sends locally discovered history there. Move sends directly from source to destination;\n"
+                 "  t remote resume [repo] [slot] [--host HOST] [--days N] [--all]\n"
+                 "\nUse a registered alias or repository directory name on the selected host.\n"
+                 "Infer the repository from the current checkout, or browse all repositories outside one.\n"
+                 "Omitted hosts use a picker labeled for opening, starting fresh, resuming, or moving.\n"
+                 "Open's chosen host runs the session; --new explicitly starts fresh there.\n"
+                 "Resume's host supplies saved history and runs the resumed session.\n"
+                 "Move's chosen host is the destination; its picker names the current source host.\n"
+                 "Session resume --host sends locally discovered history there instead.\n"
+                 "Move sends directly from source to destination;\n"
                  "the source must be able to SSH and rsync to the destination.\n")
     if group == "session":
         extra = ("\nTARGETS\n  t session <verb> [repo] [slot] [flags]\n"
+                 "  Repositories accept a registered alias or directory name.\n"
                  "  Most verbs infer the repository from the current checkout; open and resume can select sessions.\n"
                  "  Goal requires explicit REPO SLOT GOAL and never opens a picker.\n"
                  "\nEXAMPLE\n  t session goal api 3 'Finish the login tests'\n")
+    if "list" in COMMAND_GROUPS[group]:
+        extra += "\n`ls` is an alias for `list`.\n"
     return _wrap_help(f"USAGE\n  t {group} <verb> [arguments] [flags]\n\n"
             f"{GROUP_DESCRIPTIONS[group]}.\n\nCOMMANDS\n" + "\n".join(rows) +
             f"\n{extra}\nRun `t help {group} <verb>` for flags and arguments.\n")
@@ -10380,7 +10652,8 @@ def _command_description(group, action):
         "config": {"open": "Open settings; edit repository and host short names", "show": "Print current settings",
                    "edit": "Edit local configuration", "setup": "Register repos and hosts",
                    "onboard": "Guided setup: agents, GitHub repos, and hosts",
-                   "workflow": "List or edit staged agent workflow settings"},
+                   "workflow": "Manage named staged agent workflows and Markdown instructions",
+                   "local": "Set up local models and Codex worker delegation (--show for status)"},
         "profile": {"init": "Create an instruction profile", "edit": "Edit the profile",
                     "show": "Print the profile", "apply": "Apply it to a repository"},
         "policy": {"check": "Check pending changes", "show": "Show translated rules",
@@ -10409,6 +10682,10 @@ def _aliases_help():
         "  t cursor [id] --from HOST   t cursor send [id] --from HOST",
         "  t instructions REPO --apply  t profile apply REPO",
     ))
+    rows.extend(f"  t {' '.join((*path[:-1], 'ls')):<25} t {' '.join(path)}"
+                for path, route in _command_routes()
+                if path[-1] == "list" and (*path[:-1], "ls") != route)
+    rows.append("  t list                     t session list")
     return "COMPATIBILITY ALIASES\n" + "\n".join(rows) + "\n\nLegacy flags remain available.\n"
 
 class _CommandSubparsers(argparse._SubParsersAction):
@@ -10417,6 +10694,7 @@ class _CommandSubparsers(argparse._SubParsersAction):
     def add_parser(self, name, *, hidden=False, **kwargs):
         if hidden:
             kwargs.pop("help", None)
+        kwargs.setdefault("description", kwargs.get("help"))
         parser = super().add_parser(name, **kwargs)
         # argparse initially aliases choices to the dispatch table. Detach it
         # so usage, errors, and suggestions enumerate only public commands.
@@ -10428,10 +10706,28 @@ class _CommandSubparsers(argparse._SubParsersAction):
         return parser
 
 
+class _HelpFormatter(argparse.RawDescriptionHelpFormatter):
+    """Use one predictable layout at wide and narrow terminal sizes."""
+
+    def __init__(self, prog):
+        width = min(80, max(24, shutil.get_terminal_size(fallback=(80, 24)).columns))
+        super().__init__(prog, width=width, max_help_position=24)
+
+    def start_section(self, heading):
+        super().start_section(heading.upper())
+
+    def _split_lines(self, text, width):
+        return textwrap.wrap(" ".join(text.split()), width, break_long_words=False,
+                             break_on_hyphens=False)
+
+
 class _CommandParser(argparse.ArgumentParser):
     def __init__(self, *args, **kwargs):
         self.help_details = kwargs.pop("help_details", None)
+        kwargs["formatter_class"] = _HelpFormatter
         super().__init__(*args, **kwargs)
+        self._positionals.title = "arguments"
+        self._optionals.title = "options"
         self.register("action", "parsers", _CommandSubparsers)
 
     def _check_value(self, action, value):
@@ -10449,7 +10745,9 @@ class _CommandParser(argparse.ArgumentParser):
         if self.prog == "t":
             return _root_help()
         body = super().format_help()
-        return _wrap_help(body) if self.help_details else body
+        if not getattr(self, "_detailed_help", False):
+            body += "\nLEARN MORE\n  t help " + self.prog[2:] + "\n"
+        return _wrap_help(body)
 
     def format_usage(self):
         return "usage: t <noun> <verb> [arguments] [flags]\n" if self.prog == "t" else super().format_usage()
@@ -10471,47 +10769,81 @@ def build_parser():
     p._group_parsers["issue"] = sp
     issue_list = issue_sub.add_parser("list", help="list issues in a repository",
         usage="%(prog)s [repo] [-a|--all] [--repo REPO] [--state open|closed|all] [--json]",
-        description="List GitHub issues directly, without a picker. Use a registered alias or "
+        description="List GitHub issues directly, without a picker. Use a registered alias, repository directory name, or "
             "owner/repo to scope the list. By default, use the current registered checkout, "
             "or list all registered GitHub repositories when outside one. --all widens a "
             "checkout's scope to every registered GitHub repository; --state all includes "
             "closed issues. An explicit repository and --all cannot be combined.")
     issue_list.add_argument("repository", nargs="?", metavar="repo",
-                            help="registered repository alias or GitHub owner/name")
-    issue_list.add_argument("--repo", help="repository alias or owner/repo (alternative to positional repo)")
+                            help="registered repository alias or directory name or GitHub owner/name")
+    issue_list.add_argument("--repo", help="repository alias, directory name, or owner/repo (alternative to positional repo)")
     issue_list.add_argument("-a", "--all", action="store_true", help="issues from every registered GitHub repository")
     issue_list.add_argument("--state", choices=("open", "closed", "all"), default="open",
                             help="issue state (default: open)")
     issue_list.add_argument("--json", action="store_true", help="output machine-readable issues")
     issue_status = issue_sub.add_parser("status", help="inspect existing work for an issue",
         usage="%(prog)s [repo] <id> [--repo REPO] [--json]",
-        description="Check local and remote worktrees, agent sessions, Codex Cloud, Cursor Cloud, "
-            "and GitHub without starting or attaching. Use a registered alias or owner/repo, "
-            "or omit it to use the current registered checkout. Outside a checkout, specify "
-            "the repository explicitly; status never prompts. "
-            "An issue URL includes its repository. Show session identity, agent/model, working-on "
-            "summary, branch, and continuation commands. Incidental transcript mentions are "
-            "listed separately from issue owners.")
+        description='Inspect existing issue work without starting or attaching. Omit the repository to use the '
+            'current registered checkout; outside one, specify an alias, owner/repo, or issue URL. Status '
+            'never prompts.',
+        help_details="""DETAILS
+
+  Check local and remote worktrees, agent sessions, Codex Cloud, Cursor Cloud, and
+  GitHub without starting or attaching.
+
+  Use a registered alias or owner/repo, or omit it to use the current registered
+  checkout.
+
+  Outside a checkout, specify the repository explicitly; status never prompts.
+
+  An issue URL includes its repository.
+
+  Show session identity, agent/model, working-on summary, branch, and continuation
+  commands.
+
+  Incidental transcript mentions are listed separately from issue owners.""")
     issue_status.add_argument("target", nargs="+", help="issue number, repo and number, or GitHub issue URL")
-    issue_status.add_argument("--repo", help="registered repository alias or GitHub owner/name")
+    issue_status.add_argument("--repo", help="registered repository alias or directory name or GitHub owner/name")
     issue_status.add_argument("--json", action="store_true", help="output machine-readable discovery report")
     issue_status.add_argument("--scan-host", action="store_true", help=argparse.SUPPRESS)
     issue_start = issue_sub.add_parser("start", help="continue or start work on issues",
         usage="%(prog)s [repo] [id ...] [--repo REPO] [flags]",
-        description="Find existing work before starting agents. Without an issue number, select "
-            "issues from the inferred or specified repository. Use a registered alias or "
-            "owner/repo; interactive use can select a registered repository. "
-            "An issue URL includes its repository. Multiple independent issues can "
-            "be selected. An issue with an existing owner is continued, not duplicated. "
-            "Unavailable hosts and unconfigured optional providers are warned and skipped. "
-            "A unique explicitly linked GitHub PR is recovered automatically into a fresh "
-            "local worktree; ambiguous PRs or branches require selection. Only pushed commits "
-            "are recovered. Known owners and local resume safety checks remain enforced. "
-            "Incidental transcript mentions do not claim an issue. A unique local workspace "
-            "with issue commits or an assigned conversation continues directly; local work "
-            "never requires an external-agent takeover. Ambiguous work shows session details.")
+        description='Continue existing issue work or start a new agent. Omit issues to select them interactively. Use '
+            'a repository alias, owner/repo, or issue URL; otherwise infer the current checkout. Ownership '
+            'checks prevent duplicate agents; unavailable required discovery blocks starting unless '
+            'explicitly allowed.',
+        help_details="""DETAILS
+
+  Find existing work before starting agents.
+
+  Without an issue number, select issues from the inferred or specified repository.
+
+  Use a registered alias or owner/repo; interactive use can select a registered
+  repository.
+
+  An issue URL includes its repository.
+
+  Multiple independent issues can be selected.
+
+  An issue with an existing owner is continued, not duplicated.
+
+  Unavailable hosts and unconfigured optional providers are warned and skipped.
+
+  A unique explicitly linked GitHub PR is recovered automatically into a fresh local
+  worktree; ambiguous PRs or branches require selection.
+
+  Only pushed commits are recovered.
+
+  Known owners and local resume safety checks remain enforced.
+
+  Incidental transcript mentions do not claim an issue.
+
+  A unique local workspace with issue commits or an assigned conversation continues
+  directly; local work never requires an external-agent takeover.
+
+  Ambiguous work shows session details.""")
     issue_start.add_argument("target", nargs="*", help="issue numbers, repository and numbers, or GitHub issue URLs")
-    issue_start.add_argument("--repo", help="registered repository alias or GitHub owner/name")
+    issue_start.add_argument("--repo", help="registered repository alias or directory name or GitHub owner/name")
     issue_start.add_argument("--allow-incomplete-check", action="store_true",
         help="allow other required discovery gaps (for example GitHub); never bypass local checks or known owners")
     agents = issue_start.add_mutually_exclusive_group()
@@ -10520,36 +10852,73 @@ def build_parser():
     issue_open = issue_sub.add_parser("open", help="open issues in your browser",
         usage="%(prog)s [repo] [id ...] [--repo REPO]",
         description="Open GitHub issues in your browser. Use explicit issue numbers or issue URLs, "
-            "or omit the numbers to select issues interactively. A registered alias or "
+            "or omit the numbers to select issues interactively. A registered alias, repository directory name, or "
             "GitHub owner/repo can select the repository, positionally or with --repo. "
             "An issue URL includes its repository. Each selected issue opens in your configured browser.")
     issue_open.add_argument("target", nargs="*", help="issue numbers, repository and numbers, or GitHub issue URLs")
-    issue_open.add_argument("--repo", help="registered repository alias or GitHub owner/name")
+    issue_open.add_argument("--repo", help="registered repository alias or directory name or GitHub owner/name")
 
     remote = sub.add_parser("remote", help="open, move, and resume sessions on SSH hosts",
         description="Choose SSH hosts and sessions, or name explicit targets to skip selection.")
     remote_sub = remote.add_subparsers(dest="action", metavar="<verb>")
     p._group_parsers["remote"] = remote
-    for action, description in (
-            ("open", "Open an existing session on the chosen host; --new starts a fresh session."),
-            ("move", "Move a current local or remote CLI conversation directly to another host. "
-             "Missing source/session and destination use single pickers. Explicit targets skip selection. "
-             "The source must be able to SSH and rsync to the destination. Failed ownership checks stop the move."),
-            ("resume", "Discover and resume saved history ON the chosen host. "
-             "This differs from session resume --host, which sends locally discovered history there. "
-             "Owner scans warn and skip unavailable peers; known local and reachable-host owners "
-             "still block duplicate resumes.")):
-        leaf = remote_sub.add_parser(action, help=description, description=description + " "
-            "Use [repo] [slot], infer the current checkout, or browse all repositories outside one. "
-            "Without --host choose a registered SSH host with Enter. Selection requires a terminal and fzf; "
-            "scripts must provide explicit targets. Cancellation returns 130.")
-        leaf.add_argument("repo", nargs="?", help="repository alias (default: current checkout or all)")
+    for action, summary, details in (
+        ('open', 'Choose the host where the session will run. Open an existing session there; --new starts a '
+            'fresh session there. Infer the current repository; outside one, browse all. Omit --host to '
+            'choose a host. Scripts require explicit targets.',
+         """DETAILS
+
+  Choose the host where the session will run.
+
+  Open an existing session there; --new starts a fresh session there."""),
+        ('move', 'Move a current CLI conversation directly between SSH hosts. Infer the current repository; '
+            'outside one, browse all. Omitted source, session, or destination uses a picker. Scripts '
+            'require explicit targets and --detach. The source must reach the destination over SSH and '
+            'rsync; ownership failures stop the move.',
+         """DETAILS
+
+  Move a current local or remote CLI conversation directly to another host.
+
+  The host picker selects the destination and names the current source host.
+
+  Missing source/session and destination use single pickers.
+
+  Explicit targets skip selection.
+
+  The source must be able to SSH and rsync to the destination.
+
+  Failed ownership checks stop the move."""),
+        ('resume', 'Browse saved history on the selected SSH host and resume it there. Infer the current '
+            'repository; outside one, browse all. Omit --host to select a host. Scripts require '
+            'explicit targets. Unavailable peers warn; known owners prevent duplicate resumes. To send '
+            'locally discovered history instead, use t session resume --host HOST.',
+         """DETAILS
+
+  Choose the host whose saved conversations to browse and where the resumed session will run.
+
+  Discover and resume saved history ON the chosen host.
+
+  This differs from session resume --host, which sends locally discovered history there.
+
+  Owner scans warn and skip unavailable peers; known local and reachable-host owners still block duplicate resumes.""")):
+        leaf = remote_sub.add_parser(action, help=_command_description("remote", action),
+            description=summary, help_details=details + """
+
+TARGETS
+  Use [repo] [slot], infer the current checkout, or browse all repositories outside one.
+  Without --host choose a registered SSH host with Enter.
+  Selection requires a terminal and fzf; scripts must provide explicit targets.
+  Cancellation returns 130.""")
+        leaf.add_argument("repo", nargs="?", help="repository alias or directory name (default: current checkout or all)")
         leaf.add_argument("slot", nargs="?", help="slot number; a lone number uses the current repository")
-        leaf.add_argument("--host", help="destination SSH host alias or target; omitted: host picker")
+        leaf.add_argument("--host", help=(
+            "saved-history source and execution host alias or target; omitted: host picker"
+            if action == "resume" else "execution destination SSH host alias or target; omitted: host picker"))
         if action == "open":
             leaf.add_argument("--new", action="store_true", help="start a fresh session on the chosen host")
         elif action == "resume":
             leaf.add_argument("--days", default="30", help="saved-history age in days, or all (default: 30)")
+            leaf.add_argument("-a", "--all", action="store_true", help="browse all repositories on the selected host")
         else:
             leaf.add_argument("--from", dest="from_host", help="source SSH host; local selects this machine")
             leaf.add_argument("-s", "--session", help="exact conversation ID, bypassing session selection when unique")
@@ -10599,21 +10968,19 @@ def build_parser():
         usage="%(prog)s [repo] [slot] [flags]",
         description="Open sessions. Bare: browse all repos; attached sessions are hidden.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""examples:
+        epilog="""EXAMPLES
   %(prog)s                     Browse sessions across repos
   %(prog)s --codex --new        Start Codex directly
-  %(prog)s api 2               Attach to api's slot 2
 
-select several sessions:
+SELECTION
   Space/Tab check; Enter open. Ctrl-T attached; Ctrl-U unattached.
   Ctrl-F defaults; Ctrl-A all. Column filters: t help open.
 
-desktop → CLI:
+DESKTOP TO CLI
   %(prog)s api 2 --cli
   Follow its release instructions if the desktop conversation is still loaded.
   It resumes the same conversation and attaches automatically.
-
-Run `t help open` for session targeting, defaults, and remote details.""",
+""",
         help_details="""SESSION TARGETS
   A lone slot number targets the current repo: t open 3.
   Use a SESSION name from `t session list` to open a foreground session:
@@ -10660,15 +11027,17 @@ DESKTOP TO CLI
 
 REMOTE SESSIONS
   A slot live only on another host attaches there automatically.
-  Fresh local slots can open when a configured host is offline. Existing
-  workspaces still require verified ownership before a new owner starts.
+  Fresh local slots can open when a configured host is offline. Automatic
+  fresh-slot allocation skips known remote desktop reservations; an explicit
+  slot still refuses a conflicting owner. Existing workspaces still require
+  verified ownership before a new owner starts.
   --local (also --here) skips that lookup; combine with --fg to run here.
   Browsing includes local and registered remote hosts by default.
   --remote also attaches to a live remote slot; add --new to start one on the
   default host (the alphabetically first REMOTE_HOSTS key).
   --host HOST chooses a host explicitly, for either opening or attaching.""")
     sp._positionals.title = "arguments"
-    sp.add_argument("repo", nargs="?", help="repository or session (default: browse all repos)")
+    sp.add_argument("repo", nargs="?", help="repository alias, directory name or session (default: browse all repos)")
     sp.add_argument("slot", nargs="?", help="slot number, session ID, or 'fg'")
     sp.add_argument("--new", action="store_true", help="start a fresh session")
     sp.add_argument("--attached", action="store_true", help="include attached/loaded sessions in the picker")
@@ -10684,34 +11053,66 @@ REMOTE SESSIONS
     location.add_argument("--host", help="open or attach on this host")
 
     sp = sub.add_parser("app", help="push a local Codex conversation into the app or pull it back to CLI",
-        description="Move the same local Codex conversation between desktop and CLI. "
-            "Usually, use `t open <repo> <slot> --app` or `--cli`; open handles the handoff. "
-            "To return to the CLI, run `t open <repo> <slot> --cli` on the Mac running "
-            "the desktop conversation, then follow its release instructions if needed. "
-            "Before stopping the slot's CLI, `t app [push] [repo] [slot]` checks for "
-            "a different loaded conversation in the same worktree. A refusal gives "
-            "release instructions and an exact retry command, preserving both owners. "
-            "After preflight succeeds, it stops the selected CLI, waits for its writer "
-            "to release (up to 75 seconds), and opens the SAME conversation in the "
-            "Codex desktop app on macOS, with its running web preview and referenced Markdown "
-            "plan in separate built-in browser tabs. "
-            "Use Annotation mode there to leave comments. The tmux slot stays reserved, "
-            "and the worktree and dev server keep running. A lone number means the "
-            "cwd repo; bare `t session open-app` uses the cwd worktree's slot, or the repo's only slot. "
-            "Several slots require an explicit number. Claude conversations cannot be "
-            "converted. Remote slots must be brought here first with `t session move … --here`. "
-            "Creates a new window automatically using the app's New Window menu; "
-            "macOS Accessibility access for your terminal is required. --reuse-window "
-            "uses the existing window instead. "
-            "The browser deep link requires a recent desktop app. Run from a separate "
-            "terminal if the command would stop the agent executing it. "
-            "`t app push [repo] [slot]` is the explicit form of `t app [repo] [slot]`. "
-            "`t app pull [repo] [slot]` resumes without attaching, for scripts or advanced selection. "
-            "Pull resumes the saved conversation in tmux "
-            "and releases the desktop reservation only after verifying the CLI is live. "
-            "App-created worktrees are supported; choose --thread ID when several chats share one.")
-    sp.add_argument("repo", nargs="?", metavar="push|pull|repo", help="direction or DEV_REPOS key (default: push, cwd repo)")
-    sp.add_argument("slot", nargs="?", metavar="repo|slot", help="repo key or local slot number")
+        description='Move the same local Codex conversation between desktop and CLI on macOS. Usually use t session '
+            'open REPO SLOT --app or --cli. Infer the current repository and its unambiguous slot. Desktop '
+            'release and writer checks protect both owners; remote slots must move here first. Accessibility '
+            'access is required.',
+        help_details="""DETAILS
+
+  Move the same local Codex conversation between desktop and CLI.
+
+  Usually, use `t open <repo> <slot> --app` or `--cli`; open handles the handoff.
+
+  To return to the CLI, run `t open <repo> <slot> --cli` on the Mac running the
+  desktop conversation, then follow its release instructions if needed.
+
+PUSH TO DESKTOP
+  Before stopping the slot's CLI, `t app [push] [repo] [slot]` checks for a
+  different loaded conversation in the same worktree.
+
+  A refusal gives release instructions and an exact retry command, preserving both
+  owners.
+
+  After preflight succeeds, it stops the selected CLI, waits for its writer to
+  release (up to 75 seconds), and opens the SAME conversation in the Codex desktop
+  app on macOS, with its running web preview and referenced Markdown plan in
+  separate built-in browser tabs.
+
+  Use Annotation mode there to leave comments.
+
+  The tmux slot stays reserved, and the worktree and dev server keep running.
+
+  A lone number means the cwd repo; bare `t session open-app` uses the cwd
+  worktree's slot, or the repo's only slot.
+
+  Several slots require an explicit number.
+
+  Claude conversations cannot be converted.
+
+  Remote slots must be brought here first with `t session move … --here`.
+
+WINDOWS AND ACCESSIBILITY
+  Creates a new window automatically using the app's New Window menu; macOS
+  Accessibility access for your terminal is required. --reuse-window uses the
+  existing window instead.
+
+  The browser deep link requires a recent desktop app.
+
+  Run from a separate terminal if the command would stop the agent executing it.
+
+EXPLICIT PUSH AND PULL
+  `t app push [repo] [slot]` is the explicit form of `t app [repo] [slot]`.
+
+  `t app pull [repo] [slot]` resumes without attaching, for scripts or advanced
+  selection.
+
+  Pull resumes the saved conversation in tmux and releases the desktop reservation
+  only after verifying the CLI is live.
+
+  App-created worktrees are supported; choose --thread ID when several chats share
+  one.""")
+    sp.add_argument("repo", nargs="?", metavar="push|pull|repo", help="direction, repository alias or directory name (default: push, cwd repo)")
+    sp.add_argument("slot", nargs="?", metavar="repo|slot", help="repository alias, directory name or local slot number")
     sp.add_argument("app_slot", nargs="?", metavar="slot", help="local slot number with an explicit direction")
     sp.add_argument("--thread", metavar="ID", help="saved conversation to pull from this worktree (default: handed-off thread, or its only conversation)")
     preview = sp.add_mutually_exclusive_group()
@@ -10724,19 +11125,34 @@ REMOTE SESSIONS
     sp.add_argument("--dry-run", action="store_true", help="show the proposed handoff without stopping or opening anything")
 
     sp = sub.add_parser("ls", help="list dev sessions (attached + active context)",
-        description="List dev sessions: whether each is attached, and whether it "
-            "has an active conversation loaded (vs. parked on the startup splash). Scoped to the "
-            "repo your cwd is in by default (`t session list <repo>` scopes to a named repo from anywhere); "
-            "`-a` widens to every repo. By default, list spans every "
-            "$REMOTE_HOSTS machine plus this machine in one table with a HOST column. "
-            "Use `-l`/`--local` to list only this machine; `-r`/`--remote` retains the default. "
-            "Unavailable hosts warn on stderr in amber on capable terminals (plain with NO_COLOR, "
-            "TERM=dumb, or redirected stderr); local and reachable sessions remain listed. "
-            "LAST TURN shows the latest turn initiation in local time with its timezone (- when unknown), not last activity. "
-            "Narrow terminals keep one row per session, shorten task text and timestamps, and omit UI/model "
-            "when needed. Pipe to cat for complete values. Read-only — attach with "
-            "`t session open`, move with `t session move`.")
-    sp.add_argument("repo", nargs="?", help="scope to this repo from any directory (default: the repo cwd is in)")
+        description='List live sessions without prompting. Use the current repository by default; name one explicitly '
+            'or use --all for every repository. Include registered hosts by default; --local limits the view. Unavailable hosts warn '
+            'while reachable sessions remain listed. LAST TURN shows turn initiation time. Pipe to cat for '
+            'complete values on narrow terminals.',
+        help_details="""DETAILS
+
+  List dev sessions: whether each is attached, and whether it has an active
+  conversation loaded (vs. parked on the startup splash).
+
+  Scoped to the repo your cwd is in by default (`t session list <repo>` scopes to a
+  named repo from anywhere); `-a` widens to every repo. By default, include every
+  $REMOTE_HOSTS machine in one table with a HOST column; --local limits the view
+  to this machine. --remote retains the default.
+
+  Unavailable hosts warn on stderr in amber on capable terminals (plain with
+  NO_COLOR, TERM=dumb, or redirected stderr); local and reachable sessions remain
+  listed.
+
+  LAST TURN shows the latest turn initiation in local time with its timezone (- when
+  unknown), not last activity.
+
+  Narrow terminals keep one row per session, shorten task text and timestamps, and
+  omit UI/model when needed.
+
+  Pipe to cat for complete values.
+
+  Read-only — attach with `t session open`, move with `t session move`.""")
+    sp.add_argument("repo", nargs="?", help="repository alias or directory name to scope from any directory (default: the repo cwd is in)")
     location = sp.add_mutually_exclusive_group()
     location.add_argument("-r", "--remote", dest="remote", action="store_true", default=True,
                           help="include registered remote hosts (default)")
@@ -10745,43 +11161,85 @@ REMOTE SESSIONS
     sp.add_argument("-a", "--all", action="store_true", help="every repo (not just the current)")
 
     sp = sub.add_parser("kill", help="tear down a session",
-        description="Tear down a dev session. A released Codex desktop slot can be closed "
-            "without resuming it in the CLI; its conversation and worktree are preserved. "
-            "Saved, unloaded chats and stale missing archives do not block close while the app runs. "
-            "A chat that still holds its writer lock must be stopped and archived in Codex first. "
-            "Other desktop chats can stay open. Unassociated backend locks do not block cleanup; "
-            "known writers in this worktree and unreadable ownership data still do. "
-            "Bare `t kill` picks across all local sessions; `t kill <repo>` filters to that repo. "
-            "Space/Tab marks multiple rows and Enter confirms and closes the selection without "
-            "further prompts; desktop ownership checks still apply. Initially shows only unattached sessions "
-            "with clean, merged work; pending or uncertain work stays hidden. Ctrl-T toggles "
-            "attached rows, Ctrl-P toggles pending work, Ctrl-A shows all, and Ctrl-F restores defaults. "
-            "Ctrl-G cycles agents, Ctrl-D CLI/desktop, Ctrl-O hosts, and Ctrl-R repositories; "
-            "these filters combine within the snapshot and reset with Ctrl-A or Ctrl-F. "
-            "Column headers label the picker rows; Ctrl-/ opens the full session details. "
-            "`-r` picks remote sessions with their host. "
-            "Explicit numbers default to the cwd repo, so `t session close 3` kills this repo's slot 3 "
-            "and `t session close all` kills every slot for "
-            "it. A foreground / :fg row from `t session list` (a bare `claude`, or one in a tmux "
-            "session of its own) is killed by its shown SESSION name — `t session close ff:p4242` or `t session close "
-            "<short-id>` — since it is not a dev slot. Explicit targets confirm while an agent is live "
-            "unless `-y`; `-r` kills it on its remote host instead.")
-    sp.add_argument("repo", nargs="?", help="filter to a repo, or name a foreground session; default: pick across local repos")
+        description='Close sessions while preserving saved conversations and worktrees. With no target, select across '
+            'local repositories; Space/Tab marks rows and Enter confirms the selection. An explicit live '
+            'target requires confirmation unless --yes. Desktop writers must release ownership first. Pending '
+            'work and attached sessions are initially hidden; use picker filters to show them.',
+        help_details="""DETAILS
+
+  Tear down a dev session.
+
+  A released Codex desktop slot can be closed without resuming it in the CLI; its
+  conversation and worktree are preserved.
+
+  Saved, unloaded chats and stale missing archives do not block close while the app
+  runs.
+
+  A chat that still holds its writer lock must be stopped and archived in Codex
+  first.
+
+  Other desktop chats can stay open.
+
+  Unassociated backend locks do not block cleanup; known writers in this worktree
+  and unreadable ownership data still do.
+
+  Bare `t kill` picks across all local sessions; `t kill <repo>` filters to that
+  repo.
+
+  Space/Tab marks multiple rows and Enter confirms and closes the selection without
+  further prompts; desktop ownership checks still apply.
+
+  Initially shows only unattached sessions with clean, merged work; pending or
+  uncertain work stays hidden.
+
+  Ctrl-T toggles attached rows, Ctrl-P toggles pending work, Ctrl-A shows all, and
+  Ctrl-F restores defaults.
+
+  Ctrl-G cycles agents, Ctrl-D CLI/desktop, Ctrl-O hosts, and Ctrl-R repositories;
+  these filters combine within the snapshot and reset with Ctrl-A or Ctrl-F.
+
+  Column headers label the picker rows; Ctrl-/ opens the full session details.
+
+  `-r` picks remote sessions with their host.
+
+  Explicit numbers default to the cwd repo, so `t session close 3` kills this repo's
+  slot 3 and `t session close all` kills every slot for it.
+
+  A foreground / :fg row from `t session list` (a bare `claude`, or one in a tmux
+  session of its own) is killed by its shown SESSION name — `t session close
+  ff:p4242` or `t session close <short-id>` — since it is not a dev slot.
+
+  Explicit targets confirm while an agent is live unless `-y`; `-r` kills it on its
+  remote host instead.""")
+    sp.add_argument("repo", nargs="?", help="repository alias, directory name or foreground session; default: pick across local repos")
     sp.add_argument("slot", nargs="?", help="slot number; a lone slot implies the cwd repo")
     sp.add_argument("-y", "--yes", action="store_true", help="skip the live-agent confirmation for explicit targets")
     sp.add_argument("-r", "--remote", action="store_true", help="kill it on its host instead")
 
     sp = sub.add_parser("restart", help="restart a stuck CLI in the same slot and conversation",
-        description="Recover a local Codex or Claude tmux slot after a connection failure. "
-            "An invalid-cwd failure uses the slot's worktree and an invocation-local "
-            "--no-daemon when the failure identifies the Codex daemon. "
-            "Saves pane text (including any visible unsent draft) privately, then sends TERM "
-            "to only the agent and waits for it to exit before resuming the exact conversation "
-            "in the same pane and worktree. Does not submit the saved draft. Refuses desktop "
-            "reservations and commands run inside the agent being restarted. Leaves the slot "
-            "detached unless already attached; use t session open to attach. For a remote slot, run "
-            "t hosts run <host> t session restart <repo> <slot>.")
-    sp.add_argument("repo", nargs="?", help="registered repo; defaults to the cwd repo")
+        description='Restart a stuck local CLI in the same conversation, pane, and worktree. Infer the current '
+            'repository; specify a slot if ambiguous. Privately save pane text, stop the selected agent, then '
+            'resume it. Saved drafts are never submitted. Desktop reservations and restarting the current '
+            'agent are refused.',
+        help_details="""DETAILS
+
+  Recover a local Codex or Claude tmux slot after a connection failure.
+
+  An invalid-cwd failure uses the slot's worktree and an invocation-local
+  --no-daemon when the failure identifies the Codex daemon.
+
+  Saves pane text (including any visible unsent draft) privately, then sends TERM to
+  only the agent and waits for it to exit before resuming the exact conversation in
+  the same pane and worktree.
+
+  Does not submit the saved draft.
+
+  Refuses desktop reservations and commands run inside the agent being restarted.
+
+  Leaves the slot detached unless already attached; use t session open to attach.
+
+  For a remote slot, run t hosts run <host> t session restart <repo> <slot>.""")
+    sp.add_argument("repo", nargs="?", help="repository alias or directory name; defaults to the cwd repo")
     sp.add_argument("slot", nargs="?", help="local slot number; required if ambiguous")
     sp.add_argument("--dry-run", action="store_true", help="validate and show the recovery without stopping anything")
 
@@ -10798,113 +11256,213 @@ REMOTE SESSIONS
         description="Pull a backgrounded (tmux'd) session back into THIS terminal and resume it "
             "in the foreground. Names default to the cwd repo, so `t session pop` picks this repo's slot "
             "and `t session pop api 3` pulls dev-api-3. Inverse of `t session push`.")
-    sp.add_argument("repo", nargs="?", help="DEV_REPOS key; defaults to the repo your cwd is in")
+    sp.add_argument("repo", nargs="?", help="repository alias or directory name; defaults to the repo your cwd is in")
     sp.add_argument("slot", nargs="?", help="slot number; a lone slot implies the cwd repo")
 
     sp = sub.add_parser("history", help="browse every conversation associated with a slot",
-        description="Browse local and retained slot history, including live, inactive, archived, "
-                    "and removed worktrees. A lone number infers the repository; no arguments "
-                    "infer the current slot or offer a slot picker. History never automatically "
-                    "resumes a sole conversation. Rows show the same status, interface, recorded model, "
-                    "host, session, and working-on summary as t session list. Full details retain "
-                    "dates, branches, PRs, and exact IDs; unknown historical metadata stays unknown. "
-                    "The details pane opens on larger terminals; Ctrl-/ toggles it and Shift-Up/Down "
-                    "scrolls. Search covers all pages. Enter resumes the "
-                    "selected conversation; Ctrl-F/B change page, Ctrl-R refreshes remote "
-                    "metadata, Ctrl-/ shows details, and Escape cancels. Without a terminal "
-                    "this command lists only. Remote refresh fetches metadata; only an actual "
-                    "resume fetches a selected transcript.")
-    sp.add_argument("target", nargs="*", metavar="REPO_OR_SLOT")
+        description='Browse every conversation associated with a slot. Infer the current repository and slot, or '
+            'choose a slot interactively. Search covers all pages; Enter resumes the selected conversation, '
+            'Ctrl-F/B changes page, Ctrl-R refreshes metadata, and Ctrl-/ shows details. Without a terminal, '
+            'list only. History never automatically resumes a sole result.',
+        help_details="""DETAILS
+
+  Browse local and retained slot history, including live, inactive, archived, and
+  removed worktrees.
+
+  A lone number infers the repository; no arguments infer the current slot or offer
+  a slot picker.
+
+  History never automatically resumes a sole conversation.
+
+  Rows show the same status, interface, recorded model, host, session, and
+  working-on summary as t session list.
+
+  Full details retain dates, branches, PRs, and exact IDs; unknown historical
+  metadata stays unknown.
+
+  The details pane opens on larger terminals; Ctrl-/ toggles it and Shift-Up/Down
+  scrolls.
+
+  Search covers all pages.
+
+  Enter resumes the selected conversation; Ctrl-F/B change page, Ctrl-R refreshes
+  remote metadata, Ctrl-/ shows details, and Escape cancels.
+
+  Without a terminal this command lists only.
+
+  Remote refresh fetches metadata; only an actual resume fetches a selected
+  transcript.""")
+    sp.add_argument("target", nargs="*", metavar="REPO_OR_SLOT",
+                    help="repository alias and optional slot; omit to infer or select")
     sp.add_argument("--limit", type=int, default=50, help="conversations per page (default: 50)")
     sp.add_argument("--page", type=int, default=1, help="first page to show (default: 1)")
     sp.add_argument("--refresh", action="store_true", help="refresh registered hosts' metadata and PR states")
     sp.add_argument("--json", action="store_true", help="print paginated metadata without launching")
 
     sp = sub.add_parser("resume", help="revive a dead slot's saved conversation",
-        description="Revive a DEAD dev slot's conversation (`t session open` on a dead slot "
-            "deliberately starts fresh — this brings the chat back). Offers EVERY conversation "
-            "saved in the slot's own per-session worktree (one global newest-first list by "
-            "session time — never grouped by repo; live rows on top when shown; conversationless stubs "
-            "skipped), rebuilding a reaped worktree from its branch first, then resumes the pick "
-            "in a fresh dev slot and attaches. Names default to "
-            "the cwd repo; outside any repo dir a bare `t session resume` scans every worktree repo. "
-            "One inactive candidate is taken when there are no excluded live rows; otherwise "
-            "fzf picks (an explicit slot with no TTY takes the newest). The picker MULTI-SELECTS: "
-            "Space/Tab marks rows with a ✓; Ctrl-L toggles live rows, Ctrl-G cycles agents, "
-            "Ctrl-O hosts/origins, and Ctrl-R repositories. Ctrl-A shows all, Ctrl-F "
-            "restores defaults, and Ctrl-/ shows the full wrapped row details. Every marked dead "
-            "slot revives into its own detached dev slot — the first attaches, the rest open "
-            "in NEW terminal tabs (Terminal.app/iTerm2; `t session open` hints when tabs are "
-            "impossible — ssh, unrecognized terminal, no Accessibility; --fg takes a single "
-            "pick only). "
-            "LIVE slots are excluded from the initial view but remain available through Ctrl-L "
-            "or Ctrl-A; -l/--live starts with all rows and Ctrl-F restores the inactive view. Live rows "
-            "show '● active' / '● on <host>'; picking one attaches to its existing owner "
-            "(locally or on its host) instead of resuming; naming a live slot explicitly "
-            "always attaches in CLI mode. --app instead selects ONE exact saved Codex "
-            "conversation for the local macOS app, including histories in a live slot; "
-            "only that same local owner can be handed off. Other owners are refused. "
-            "A conversation is live by its ID too: one resumed into ANOTHER slot (or run as "
-            "a foreground session) is shown as a row pointing at that owner — never resumed "
-            "a second time. --host H sends locally discovered saved history to H. "
-            "Live selections on another host are refused before any batch action; use remote move. "
-            "Use remote resume --host H to discover saved history on H instead. "
-            "Worktree-per-session repos only (a shared tree's transcripts are "
-            "ambiguous per-slot — use `t session push -p` there). Agents: a claude conversation "
-            "and a codex thread are offered alike — every row carries its agent's icon and name "
-            f"({_agent_legend()}) — each revived by its own binary; a cursor chat has no dev slot "
-            "— `t cursor list` / `t cursor resume <id>`. Saved discovery reuses unchanged "
-            "metadata and refreshes when source files change; live ownership is always checked. "
-            "Owner scans warn and skip unavailable peers; known local and reachable-host owners "
-            "still block duplicate resumes. "
-            "Delayed progress wheels identify quiet discovery stages while waiting.")
-    sp.add_argument("repo", nargs="?", help="DEV_REPOS key; defaults to the repo your cwd is in")
+        description='Resume saved Claude or Codex conversations in fresh slots and attach. Infer the current '
+            'repository; outside one, browse local and remote repositories. Enter selects; Space/Tab marks '
+            'several. Live selections attach to their owner; ownership checks prevent duplicate resumes. '
+            'Missing local repositories are cloned only after selection. Use t remote resume to browse '
+            'history on another host.',
+        epilog="""EXAMPLES
+  %(prog)s                   Browse the current repository
+  %(prog)s api 2             Resume api slot 2
+  %(prog)s --all --days all   Browse all saved history""",
+        help_details=f"""DETAILS
+
+  Revive a DEAD dev slot's conversation (`t session open` on a dead slot
+  deliberately starts fresh — this brings the chat back).
+
+  Offers EVERY conversation associated with the repository across registered hosts,
+  including swept and renamed workspaces and the canonical checkout (one global
+  newest-first list by last user turn — never grouped by repo; unknown turn times
+  last; conversationless stubs skipped), rebuilding a reaped worktree from its
+  branch first, then resumes the pick in a fresh dev slot and attaches.
+
+  Names default to the cwd repo; outside any repo dir a bare `t session resume`
+  discovers local and registered-host repositories.
+
+  One inactive candidate is taken when there are no excluded live rows; otherwise
+  fzf picks (an explicit slot with no TTY takes the newest).
+
+PICKER CONTROLS
+  The picker MULTI-SELECTS: Space/Tab marks rows with a ✓; Ctrl-L toggles live rows,
+  Ctrl-G cycles agents, Ctrl-O hosts/origins, and Ctrl-R repositories.
+
+  Alt-T sorts by last turn (newest first, the default), Alt-R by repository, Alt-G
+  by agent, Alt-O by host/origin, and Alt-V by session.
+
+  Text sorts ascend, with newest turn breaking ties.
+
+  Ctrl-A clears filters and keeps the sort; Ctrl-F restores filters and last-turn
+  sorting, and Ctrl-/ shows full row details.
+
+  Every marked dead slot revives into its own detached dev slot — the first
+  attaches, the rest open in NEW terminal tabs (Terminal.app/iTerm2; `t session
+  open` hints when tabs are impossible — ssh, unrecognized terminal, no
+  Accessibility; --fg takes a single pick only).
+
+LIVE OWNERS AND DESKTOP
+  LIVE slots are excluded from the initial view but remain available through Ctrl-L
+  or Ctrl-A; -l/--live starts with all rows and Ctrl-F restores the inactive view.
+
+  Live rows show '● active' / '● on <host>'; picking one attaches to its existing
+  owner (locally or on its host) instead of resuming; naming a live slot explicitly
+  always attaches in CLI mode. --app instead selects ONE exact saved Codex
+  conversation for the local macOS app, including histories in a live slot; only
+  that same local owner can be handed off.
+
+  Other owners are refused.
+
+  A conversation is live by its ID too: one resumed into ANOTHER slot (or run as a
+  foreground session) is shown as a row pointing at that owner — never resumed a
+  second time.
+
+REMOTE HISTORY
+  Registered hosts refresh by repository identity on every scan; only a selected
+  remote transcript is downloaded. A missing local repository is cloned and
+  registered only after selection. --host H sends the selected saved history to H.
+
+  Live selections on another host are refused before any batch action; use remote
+  move.
+
+  Use remote resume --host H to run the picker on H.
+
+REQUIREMENTS AND DISCOVERY
+  Worktree-per-session repos only (a shared tree's transcripts are ambiguous
+  per-slot — use `t session push -p` there).
+
+  Agents: a claude conversation and a codex thread are offered alike — every row
+  carries its agent's icon and name ({_agent_legend()}) — each revived by its
+  own binary; a cursor chat has no dev slot — `t cursor list` / `t cursor resume
+  <id>`.
+
+  Saved discovery reuses unchanged metadata and refreshes when source files change;
+  live ownership is always checked.
+
+  Owner scans warn and skip unavailable peers; known local and reachable-host owners
+  still block duplicate resumes.
+
+  Delayed progress wheels identify quiet discovery stages while waiting.""")
+
+    sp.add_argument("repo", nargs="?", help="repository alias or directory name; defaults to the repo your cwd is in")
     sp.add_argument("slot", nargs="?", help="slot number; a lone slot implies the cwd repo")
-    sp.add_argument("-f", "--fg", action="store_true", help="resume inline in THIS terminal (no tmux slot)")
+    sp.add_argument("-f", "--fg", action="store_true", help="resume inline in this terminal (no tmux slot)")
     sp.add_argument("--app", action="store_true",
-        help="open ONE exact saved Codex conversation in the local macOS app using guarded handoff; "
-             "refuses remote owners, other agents, multiple picks, --cli, --fg, and --host")
+        help="open one exact Codex conversation in the local macOS app; refuses other owners, agents, multiple picks, --cli, --fg, and --host")
     sp.add_argument("--cli", action="store_true", help="resume in the terminal (the default)")
-    sp.add_argument("-a", "--all", action="store_true", help="scan every worktree repo (the default outside a repo dir)")
+    sp.add_argument("-a", "--all", action="store_true", help="discover local and remote-only repositories (default outside a repo dir)")
     sp.add_argument("-l", "--live", action="store_true",
         help="start with all sessions shown; Ctrl-F restores the inactive-only view (live rows attach on pick)")
     sp.add_argument("-r", "--remote", action="store_true",
-        help="pull the latest transcripts from every $REMOTE_HOSTS host first (direct rsync; "
-             "csync is periodic and needs a shell on the far side), then scan as usual")
+        help="compatibility option: registered hosts are included by default; fetch only selected transcripts")
     sp.add_argument("--days", metavar="N", default="30",
         help="recency window for conversations (default 30; 'all' for everything)")
     sp.add_argument("--host", metavar="H",
-        help="revive the pick ON host H instead of here (the `t session move` send: worktree edits "
-             "pushed, transcript rsync'd, landed in a dev slot there and attached)")
+        help="send selected local history and worktree edits to host H, resume there, and attach")
 
     sp = sub.add_parser("cd", help="cd this shell into a dev slot's worktree",
-        description="cd the calling shell into a dev slot's worktree "
-            "($DEV_WORKTREE_ROOT/<repo>/<repo>-<slot>, or an existing numeric folder). Names default to the cwd repo, so `t session cd 3` "
-            "jumps to this repo's slot 3. With no slot: the repo's only worktree, an fzf pick "
-            "when there are several (showing each worktree's checked-out branch), or the "
-            "canonical repo dir when it has none. Bare `t session cd` picks across every worktree. "
-            "Navigation only — it never creates a worktree (`t session open` does) and never touches "
-            "tmux.")
-    sp.add_argument("repo", nargs="?", help="DEV_REPOS key; defaults to the repo your cwd is in")
+        description='Enter an existing worktree without creating one or changing tmux. A lone slot uses the current '
+            'repository. Without a slot, choose among its worktrees, use its only worktree, or enter the '
+            'canonical checkout if none exist. With no arguments, select across all worktrees.',
+        help_details="""DETAILS
+
+  cd the calling shell into a dev slot's worktree
+  ($DEV_WORKTREE_ROOT/<repo>/<repo>-<slot>, or an existing numeric folder).
+
+  Names default to the cwd repo, so `t session cd 3` jumps to this repo's slot 3.
+
+  With no slot: the repo's only worktree, an fzf pick when there are several
+  (showing each worktree's checked-out branch), or the canonical repo dir when it
+  has none.
+
+  Bare `t session cd` picks across every worktree.
+
+  Navigation only — it never creates a worktree (`t session open` does) and never
+  touches tmux.""")
+    sp.add_argument("repo", nargs="?", help="repository alias or directory name; defaults to the repo your cwd is in")
     sp.add_argument("slot", nargs="?", help="slot number; a lone slot implies the cwd repo")
 
     sp = sub.add_parser("beam", help="move a session between machines (send, or --from to receive)",
-        description="Move a Claude or Codex session between machines (a cross-host push/pop). By default "
-            "SENDS the resolved session to --host (default $TBEAM_HOST) and resumes it there; "
-            "without a slot or --session ID, pick a current local CLI conversation, scoped to "
-            "the named or current repository (all repositories outside a checkout; --all widens "
-            "the scope). The picker includes attached and detached sessions, not saved history "
-            "or desktop reservations. Inside an agent, no target moves that conversation; "
-            "--pick opens the current-session picker instead. Selection requires a terminal "
-            "and fzf; scripts must name a target. "
-            "`--from HOST` (or `--here` to auto-detect the host) RECEIVES — pulls a session "
-            "living on another host down into a local slot. It is a move, not a copy: the "
-            "origin's live owner is stopped so exactly one machine owns the conversation. The "
-            "repo must exist at the same path on both hosts. Combine --from SOURCE --host DEST "
-            "for a direct remote-to-remote move: SOURCE must be able to SSH and rsync to DEST. "
-            "Without an explicit source slot or ID, select a current conversation on SOURCE. "
-            "Use --detach for scripts; failures stopping the source or pushing code stop the move.")
-    sp.add_argument("repo", nargs="?", help="DEV_REPOS key; defaults to the repo your cwd is in")
+        description='Move a current Claude or Codex CLI conversation between machines. Infer the current repository; '
+            'outside one, browse all. Omit the target to select a session; scripts require an explicit target '
+            'and --detach. --host sends, --from receives, and both move directly between hosts. Ownership and '
+            'transfer failures stop the move.',
+        help_details="""DETAILS
+
+  Move a Claude or Codex session between machines (a cross-host push/pop).
+
+  By default SENDS the resolved session to --host (default $TBEAM_HOST) and resumes
+  it there; without a slot or --session ID, pick a current local CLI conversation,
+  scoped to the named or current repository (all repositories outside a checkout;
+  --all widens the scope).
+
+  The picker includes attached and detached sessions, not saved history or desktop
+  reservations.
+
+  Inside an agent, no target moves that conversation; --pick opens the
+  current-session picker instead.
+
+  Selection requires a terminal and fzf; scripts must name a target.
+
+RECEIVE AND REMOTE MOVES
+  `--from HOST` (or `--here` to auto-detect the host) RECEIVES — pulls a session
+  living on another host down into a local slot.
+
+  It is a move, not a copy: the origin's live owner is stopped so exactly one
+  machine owns the conversation.
+
+  The repo must exist at the same path on both hosts.
+
+  Combine --from SOURCE --host DEST for a direct remote-to-remote move: SOURCE must
+  be able to SSH and rsync to DEST.
+
+  Without an explicit source slot or ID, select a current conversation on SOURCE.
+
+  Use --detach for scripts; failures stopping the source or pushing code stop the
+  move.""")
+    sp.add_argument("repo", nargs="?", help="repository alias or directory name; defaults to the repo your cwd is in")
     sp.add_argument("slot", nargs="?", help="slot number; a lone slot implies the cwd repo")
     sp.add_argument("--host", help="SEND destination machine (default: $TBEAM_HOST)")
     sp.add_argument("--from", dest="from_host", metavar="HOST", help="source host; alone receives here, with --host sends directly to that destination")
@@ -10916,12 +11474,20 @@ REMOTE SESSIONS
     sp.add_argument("-s", "--session", help="target a session by id or unique prefix")
 
     sp = sub.add_parser("read", help="read a dev slot's scrollable tmux log",
-        description="Page a dev slot's captured tmux log (its scrollback) — handy for checking "
-            "on a backgrounded session without attaching. Defaults to `less`; `-d`/`--dump` "
-            "prints straight to stdout and `-n N`/`--tail` keeps only the last N lines (default "
-            "200, implies --dump) — both for phone terminals that can only touch-scroll native "
-            "output. Slot defaults to the cwd repo; a remote slot is read on its host.")
-    sp.add_argument("repo", nargs="?", help="DEV_REPOS key; defaults to the repo your cwd is in")
+        description='Read a slot’s captured tmux output with less. Infer the current repository; read remote slots on '
+            'their host. --dump prints directly, and --tail prints the last N lines (default: 200) without a '
+            'pager.',
+        help_details="""DETAILS
+
+  Page a dev slot's captured tmux log (its scrollback) — handy for checking on a
+  backgrounded session without attaching.
+
+  Defaults to `less`; `-d`/`--dump` prints straight to stdout and `-n N`/`--tail`
+  keeps only the last N lines (default 200, implies --dump) — both for phone
+  terminals that can only touch-scroll native output.
+
+  Slot defaults to the cwd repo; a remote slot is read on its host.""")
+    sp.add_argument("repo", nargs="?", help="repository alias or directory name; defaults to the repo your cwd is in")
     sp.add_argument("slot", nargs="?", help="slot number; a lone slot implies the cwd repo")
     sp.add_argument("-d", "--dump", action="store_true",
                     help="print to stdout (no less) so a mobile terminal can touch-scroll it")
@@ -10934,7 +11500,7 @@ REMOTE SESSIONS
             "or inside Claude the current session — then displays it word-wrapped for narrow "
             "(phone) terminals. `-a` fzf-picks across every project. A remote slot renders on "
             "its host, where the plan file lives.")
-    sp.add_argument("repo", nargs="?", help="DEV_REPOS key; defaults to the repo your cwd is in")
+    sp.add_argument("repo", nargs="?", help="repository alias or directory name; defaults to the repo your cwd is in")
     sp.add_argument("slot", nargs="?", help="slot number; a lone slot implies the cwd repo")
     sp.add_argument("-a", "--all", action="store_true", help="fzf-pick across every project")
 
@@ -10943,7 +11509,7 @@ REMOTE SESSIONS
             "input — so a screenshot taken on your phone drops straight into a desktop Claude. "
             "Takes the newest file by default; `-p` fzf-picks one, `-n` forces newest. Local-"
             "only: it reads THIS machine's iCloud, so it is not delegated to a remote slot.")
-    sp.add_argument("repo", nargs="?", help="DEV_REPOS key; defaults to the repo your cwd is in")
+    sp.add_argument("repo", nargs="?", help="repository alias or directory name; defaults to the repo your cwd is in")
     sp.add_argument("slot", nargs="?", help="slot number; a lone slot implies the cwd repo")
     sp.add_argument("-p", "--pick", action="store_true", help="fzf-pick the file instead of taking the newest")
     sp.add_argument("-n", "--newest", action="store_true", help="skip the picker; take the newest file by mtime")
@@ -11033,79 +11599,123 @@ REMOTE SESSIONS
     hd.add_argument("alias", nargs="?", help="registered host alias to use as the default")
     hd.add_argument("--clear", action="store_true", help="clear the default destination")
 
-    sp = sub.add_parser("repos", help="manage registered repositories",
+    sp = sub.add_parser("repo", help="manage registered repositories",
         description="List registered repository aliases and checkout paths, enter a checkout "
-            "from the zsh plugin, or print its absolute path. Run `t repos <command> -h` "
+            "from the zsh plugin, or print its absolute path. Run `t repo <command> -h` "
             "for command help.")
-    p._group_parsers["repos"] = sp
-    repos_sub = sp.add_subparsers(dest="action", metavar="<command>")
-    repos_sub.add_parser("ls", help="list registered aliases and checkout paths")
-    repo_add = repos_sub.add_parser("add", help="register an existing local checkout",
+    p._group_parsers["repo"] = sp
+    repo_sub = sp.add_subparsers(dest="action", metavar="<command>")
+    repo_sub.add_parser("list", help="list registered aliases and checkout paths")
+    repo_add = repo_sub.add_parser("add", help="register an existing local checkout",
         description="Register an existing Git checkout without cloning or changing its files, branch, "
             "remotes or host settings. Omit path to use the current checkout (including from a subdirectory). "
             "The alias defaults to its directory name; --alias overrides it. Repeating the command is safe.")
     repo_add.add_argument("path", nargs="?", help="existing checkout path (default: current checkout)")
     repo_add.add_argument("--alias", help="short name (default: existing alias or checkout directory name)")
     repo_add.add_argument("--dry-run", action="store_true", help="show registration without changing settings")
-    repo_cd = repos_sub.add_parser("cd", help="enter a checkout (zsh plugin only)")
-    repo_cd.add_argument("repo", help="registered repository alias")
-    repo_path = repos_sub.add_parser("path", help="print a checkout's absolute path")
-    repo_path.add_argument("repo", help="registered repository alias")
+    repo_cd = repo_sub.add_parser("cd", help="enter a checkout (zsh plugin only)")
+    repo_cd.add_argument("repo", help="registered repository alias or directory name")
+    repo_path = repo_sub.add_parser("locate", help="print a checkout's absolute path")
+    repo_path.add_argument("repo", help="registered repository alias or directory name")
 
     sp = sub.add_parser("config", help="manage local settings: tools, models, effort, Fast/Ultrafast speed, repos and hosts",
-        description="Arrow-key settings hub for this machine: default tool, plus model, effort and speed submenus; "
-            "query each CLI for current models and their supported effort levels; "
-            "add, edit or remove hosts (Add host discovers new Tailscale peers and offers Refresh or manual entry); "
-            "register or unregister repos and set their tool, branch "
-            "and worktree overrides; choose the default beam host and worktree defaults. "
-            "Save changes reviews then writes a managed block in T_LOCAL_RC. "
-            "New or changed SSH targets then offer Verify SSH now or Later; native OpenSSH asks before trusting keys. "
-            "Removed hosts stop participating in remote t commands; unregistering repos keeps their files "
-            "and sessions. Tool/model/effort/speed defaults apply to fresh tmux and --fg sessions only. "
-            "Open local config in editor covers all custom shell settings (VISUAL/EDITOR, else vi). "
-            "Agent workflow configures global or repository staged-model instructions. "
-            "Use `t config workflow edit [--repo ALIAS]` for its JSON editor and "
-            "`t config workflow list [--repo ALIAS]` for read-only effective values. "
-            "For a reusable AGENTS.md profile, run `t profile init`.")
+        description='Edit local tool, model, effort, speed, repository, host, and workflow settings. Review before '
+            'saving. New SSH targets offer optional verification after saving. Changes to defaults apply to '
+            'fresh sessions. Use t config workflow list for read-only workflow values, or t profile init for '
+            'reusable instructions.',
+        help_details="""DETAILS
+
+  Arrow-key settings hub for this machine: default tool, plus model, effort and
+  speed submenus; query each CLI for current models and their supported effort
+  levels; add, edit or remove hosts (Add host discovers new Tailscale peers and
+  offers Refresh or manual entry); register or unregister repos and set their tool,
+  branch and worktree overrides; choose the default beam host and worktree defaults.
+
+  Save changes reviews then writes a managed block in T_LOCAL_RC.
+
+  New or changed SSH targets then offer Verify SSH now or Later; native OpenSSH asks
+  before trusting keys.
+
+  Removed hosts stop participating in remote t commands; unregistering repos keeps
+  their files and sessions.
+
+  Tool/model/effort/speed defaults apply to fresh tmux and --fg sessions only.
+
+  Open local config in editor covers all custom shell settings (VISUAL/EDITOR, else
+  vi).
+
+  Agent workflow configures global or repository staged-model instructions.
+
+  Use `t config workflow edit [--repo ALIAS]` for its JSON editor and `t config
+  workflow list [--repo ALIAS]` for read-only effective values.
+
+  For a reusable AGENTS.md profile, run `t profile init`.""")
     cg = sp.add_mutually_exclusive_group()
     cg.add_argument("--show", action="store_true", help="print current settings without opening the menu")
     cg.add_argument("--edit", action="store_true", help="open T_LOCAL_RC in VISUAL/EDITOR directly")
+    sp.add_argument("--local", action="store_true", help="set up Ollama, local models and Codex worker MCP")
+    sp.add_argument("--model", dest="local_model", help="Ollama model to download for t config local")
+    sp.add_argument("--disable", dest="disable_local", action="store_true", help="disable local delegation, keeping models")
+    sp.add_argument("-y", "--yes", action="store_true", help="apply explicit local model setup without prompting")
     sp.add_argument("--workflow", action="store_true", help=argparse.SUPPRESS)
     sp.add_argument("--repo", dest="workflow_repo", metavar="ALIAS", help=argparse.SUPPRESS)
     cg.add_argument("--onboard", action="store_true",
-                    help="review guided setup, see signed-in agents and choose optional sign-ins, discover local/GitHub repos "
-                         "and Tailscale hosts; offer native SSH verification after saving, or defer until later; terminal only. "
-                         "Choices: q/Esc back; review: n/Esc back, q quit; Ctrl-C cancels")
+                    help="review agents, optional sign-ins, repositories, and hosts; terminal only. Choices: q/Esc back; review: n/Esc back, q quits; Ctrl-C cancels")
 
     config_sub = sp.add_subparsers(dest="config_resource")
-    workflow = config_sub.add_parser("workflow", help="list or edit staged agent workflow settings")
+    workflow = config_sub.add_parser("workflow", help="manage named staged agent workflows")
     workflow_sub = workflow.add_subparsers(dest="workflow_action")
-    for verb in ("list", "edit"):
-        leaf = workflow_sub.add_parser(verb, help="list effective workflow" if verb == "list" else "edit workflow JSON",
-            description="Global workflow by default; --repo explicitly selects a registered repository alias. "
-                        "No checkout inference or repository picker. " +
-                        ("Print scope, inheritance source, enabled state and stage models/efforts without prompts."
-                         if verb == "list" else "Open VISUAL/EDITOR in a terminal; validate before saving workflow and native instructions."))
-        leaf.add_argument("--repo", dest="workflow_repo", metavar="ALIAS", help="registered repository alias; omit for global")
+    for verb in ("list", "edit", "add", "use", "exclude", "inherit"):
+        leaf = workflow_sub.add_parser(verb, help={
+            "list": "list effective workflow or named catalogue", "edit": "edit workflow JSON in a terminal",
+            "add": "copy a workflow under a new name", "use": "select a named workflow",
+            "exclude": "exclude a repository from its workflow", "inherit": "restore the global default for a repository"}[verb],
+            description="Global default unless --repo selects a registered repository. No checkout inference or repository picker.")
+        if verb != "add":
+            leaf.add_argument("--repo", dest="workflow_repo", metavar="ALIAS", required=verb in ("exclude", "inherit"),
+                              help="registered repository alias or directory name; omit for global")
+        if verb in ("edit", "add", "use"):
+            leaf.add_argument("workflow_name", metavar="NAME", nargs="?" if verb == "edit" else None,
+                              help="named workflow; edit defaults to current global definition")
+        if verb == "add":
+            leaf.add_argument("--from", dest="workflow_from", metavar="NAME", help="copy this definition; default: global workflow")
         if verb == "list":
-            leaf.add_argument("--json", action="store_true", help="print effective workflow as JSON")
+            leaf.add_argument("--all", dest="all_workflows", action="store_true", help="list named catalogue and assignments")
+            leaf.add_argument("--json", action="store_true", help="print workflow values as JSON")
+    instructions = workflow_sub.add_parser("instructions", help="show or edit a workflow's Markdown instructions")
+    instructions_sub = instructions.add_subparsers(dest="workflow_instructions_action")
+    for verb in ("show", "edit"):
+        leaf = instructions_sub.add_parser(verb, help="print raw Markdown" if verb == "show" else "edit Markdown in VISUAL/EDITOR")
+        leaf.add_argument("workflow_name", nargs="?", metavar="NAME", help="named workflow; default: global workflow")
+        leaf.add_argument("--repo", dest="workflow_repo", metavar="ALIAS", help="registered repository alias or directory name; cannot combine with NAME")
 
     sp = sub.add_parser("setup", help="register local repos and ssh hosts in T_LOCAL_RC",
-        description="Interactive onboarding for this machine's per-machine config: a stepped "
-            "inline wizard over every git checkout found under the scan dirs (default ~/config) "
-            "and every ~/.ssh/config host on ONE list, with already-registered entries shown "
-            "locked under a ✓. space toggles, e renames in place (the current name sits "
-            "pre-filled in the input), a (or the '+ add a host' row) adds a host by hand; enter "
-            "then shows the exact changes as a diff — y applies, n goes back to keep editing, "
-            "q aborts. Appends to "
-            "T_LOCAL_RC (append-only; "
-            "re-running is safe — registered entries are never re-offered). Also offers to "
-            "comment out registered repos whose path no longer exists (the fresh-install "
-            "placeholders) and to set TBEAM_HOST. Run it from the shell — the t() shim reloads "
-            "your config afterward so the new cd shortcuts and host shorthands go live. "
-            "When t's Codex hook is registered, also shows how to approve it in the "
-            "ChatGPT desktop app (Review hooks → Allow selected) or Codex CLI (/hooks). "
-            "Setup does not grant hook approval.")
+        description='Register local repositories and SSH hosts through a reviewed wizard. Scan ~/config by default. '
+            'Space marks entries; Enter reviews; y applies; n returns to editing; q aborts. Existing '
+            'registrations are kept. Run from a shell so the plugin reloads settings. Setup never grants '
+            'agent hook approval.',
+        help_details="""DETAILS
+
+  Interactive onboarding for this machine's per-machine config: a stepped inline
+  wizard over every git checkout found under the scan dirs (default ~/config) and
+  every ~/.ssh/config host on ONE list, with already-registered entries shown locked
+  under a ✓. space toggles, e renames in place (the current name sits pre-filled in
+  the input), a (or the '+ add a host' row) adds a host by hand; enter then shows
+  the exact changes as a diff — y applies, n goes back to keep editing, q aborts.
+
+  Appends to T_LOCAL_RC (append-only; re-running is safe — registered entries are
+  never re-offered).
+
+  Also offers to comment out registered repos whose path no longer exists (the
+  fresh-install placeholders) and to set TBEAM_HOST.
+
+  Run it from the shell — the t() shim reloads your config afterward so the new cd
+  shortcuts and host shorthands go live.
+
+  When t's Codex hook is registered, also shows how to approve it in the ChatGPT
+  desktop app (Review hooks → Allow selected) or Codex CLI (/hooks).
+
+  Setup does not grant hook approval.""")
     sp.add_argument("dirs", nargs="*", help="directories to scan for git repos (default: ~/config)")
     sp.add_argument("--dry-run", action="store_true",
                     help="print what would be offered/appended, change nothing")
@@ -11118,18 +11728,29 @@ REMOTE SESSIONS
     ig.add_argument("--no-instructions", action="store_true", help="leave AGENTS.md untouched (default without a terminal)")
 
     sp = sub.add_parser("new", help="create a repo: ~/code/<name> + GitHub, registered here and on every host",
-        description="A wizard (the `t config setup` style — stepped, inline, nothing created until you "
-            "confirm) that makes a brand-new repo wired for `t session open`: git init ~/code/<name> on "
-            "main with an empty initial commit (the path is fixed — t session move / t session open -r need the "
-            "same path on every host); a GitHub repo <owner>/<name> pushed as origin, the owner "
-            "picked from your user + orgs (default: authenticated user), private unless you say public, "
-            "set squash-only + auto-merge + delete-branch-on-merge (what `gh pr merge --auto "
-            "--squash` needs); a DEV_REPOS[<alias>] line in T_LOCAL_RC (alias defaults to "
-            "<name>); then a clone + registration on every REMOTE_HOSTS host over ssh. Every "
-            "step is check-then-do, so re-running after a failure (gh down, a host unreachable) "
-            "resumes where it stopped — and running it on an existing repo just finishes the "
-            "wiring. Flags pre-answer wizard steps; -y takes the defaults for the rest. Run it "
-            "from the shell — the t() shim reloads your config afterward.")
+        description='Create and register a GitHub repository at ~/code/NAME, private by default. Review wizard '
+            'choices before creating files, pushing main, and cloning to registered SSH hosts. Flags '
+            'pre-answer choices; --yes accepts remaining defaults without review. Re-running safely finishes '
+            'incomplete setup. Run from a shell to reload settings.',
+        help_details="""DETAILS
+
+  A wizard (the `t config setup` style — stepped, inline, nothing created until you
+  confirm) that makes a brand-new repo wired for `t session open`: git init
+  ~/code/<name> on main with an empty initial commit (the path is fixed — t session
+  move / t session open -r need the same path on every host); a GitHub repo
+  <owner>/<name> pushed as origin, the owner picked from your user + orgs (default:
+  authenticated user), private unless you say public, set squash-only + auto-merge +
+  delete-branch-on-merge (what `gh pr merge --auto --squash` needs); a
+  DEV_REPOS[<alias>] line in T_LOCAL_RC (alias defaults to <name>); then a clone +
+  registration on every REMOTE_HOSTS host over ssh.
+
+  Every step is check-then-do, so re-running after a failure (gh down, a host
+  unreachable) resumes where it stopped — and running it on an existing repo just
+  finishes the wiring.
+
+  Flags pre-answer wizard steps; -y takes the defaults for the rest.
+
+  Run it from the shell — the t() shim reloads your config afterward.""")
     sp.add_argument("name", nargs="?", help="repo name (GitHub rules: letters, digits, . _ -)")
     sp.add_argument("--owner", metavar="OWNER", help="GitHub owner, user or org (default: authenticated user or T_NEW_OWNER)")
     vg = sp.add_mutually_exclusive_group()
@@ -11144,14 +11765,25 @@ REMOTE SESSIONS
     sp.add_argument("--dry-run", action="store_true", help="print the steps it would run, change nothing")
 
     sp = sub.add_parser("checkout", help="clone an existing GitHub repo and register it locally",
-        description="Clone an existing github.com repository to ~/code/<repo> (or --path), "
-            "then register it as DEV_REPOS[<alias>] in T_LOCAL_RC. The alias defaults "
-            "to the repository name. A matching existing clone is reused without a "
-            "fetch, reset, or pull; a conflicting destination or alias is refused. "
-            "This command does not create or edit a GitHub repository and does not "
-            "clone to remote hosts. With T_AUTO_TRUST=1, apply the usual optional "
-            "agent trust sync. t session open needs origin/main; a different default branch "
-            "gets a warning after checkout.")
+        description='Clone a GitHub repository and register it locally. Default destination: ~/code/REPO; default '
+            'alias: repository name. Reuse a matching clone without fetching or resetting; refuse conflicting '
+            'paths or aliases. No remote hosts or GitHub settings change. t session open expects origin/main; '
+            'other default branches produce a warning.',
+        help_details="""DETAILS
+
+  Clone an existing github.com repository to ~/code/<repo> (or --path), then
+  register it as DEV_REPOS[<alias>] in T_LOCAL_RC.
+
+  The alias defaults to the repository name.
+
+  A matching existing clone is reused without a fetch, reset, or pull; a conflicting
+  destination or alias is refused.
+
+  This command does not create or edit a GitHub repository and does not clone to
+  remote hosts.
+
+  With T_AUTO_TRUST=1, apply the usual optional agent trust sync. t session open
+  needs origin/main; a different default branch gets a warning after checkout.""")
     sp.add_argument("url", help="GitHub HTTPS or SSH clone URL (owner/repo)")
     sp.add_argument("alias", nargs="?", help="DEV_REPOS key (default: repository name)")
     sp.add_argument("--path", metavar="DIR", help="local clone destination (default: ~/code/<repo>)")
@@ -11167,7 +11799,7 @@ REMOTE SESSIONS
             "T_AGENT_INSTRUCTIONS). --apply updates only t's marked block in the "
             "registered repo's AGENTS.md; unrelated text is preserved. The file is "
             "never committed or pushed automatically.")
-    sp.add_argument("repo", nargs="?", help="registered DEV_REPOS alias to seed")
+    sp.add_argument("repo", nargs="?", help="registered alias or repository directory name to seed")
     mode = sp.add_mutually_exclusive_group()
     mode.add_argument("--init", action="store_true", help="create an editable starter profile if absent")
     mode.add_argument("--edit", action="store_true", help="edit the profile with VISUAL/EDITOR")
@@ -11192,28 +11824,42 @@ REMOTE SESSIONS
     sp.add_argument("--status", action="store_true", help="probe and display the plan without signing in")
 
     sp = sub.add_parser("install", help="install + log in the agent CLIs (claude, codex, cursor)",
-        description="The `t config setup`-style checklist for the agent binaries themselves: probes "
-            "which of Claude Code, Codex CLI and the Cursor CLI are installed and logged in "
-            "here, then offers the rest on ONE list — installed and logged-in entries locked "
-            "under a ✓, the missing ones pre-marked — with the vendors' install one-liners and "
-            "each agent's login command shown verbatim in a review before anything runs "
-            "(Enter runs, n goes back, q aborts). Logins are interactive (browser, or a device "
-            "code over ssh / --headless). Every REMOTE_HOSTS host is then offered the same "
-            "run over ssh -t. Re-running is safe: present entries are never re-offered — "
-            "running an installer again is its own OPTIONS row (reinstall <agent>), which "
-            "--reinstall pre-marks. A run that changes anything ends by syncing each "
-            "installed agent (hooks and any explicitly selected policy or auto trust). "
-            "A successful run also configures zsh startup without replacing existing settings. "
-            "When ~/code holds git repos DEV_REPOS does not "
-            "know yet, `t config setup` opens next (under -y it is only named).")
+        description='Install and log in agent CLIs using a checklist and command review. Missing agents start marked; '
+            'installed, authenticated entries are locked. Enter runs reviewed commands; n edits; q aborts. '
+            'Registered SSH hosts are offered next unless --no-hosts. --yes skips review. Installers preserve '
+            'existing settings; logins may open a browser.',
+        help_details="""DETAILS
+
+  The `t config setup`-style checklist for the agent binaries themselves: probes
+  which of Claude Code, Codex CLI and the Cursor CLI are installed and logged in
+  here, then offers the rest on ONE list — installed and logged-in entries locked
+  under a ✓, the missing ones pre-marked — with the vendors' install one-liners and
+  each agent's login command shown verbatim in a review before anything runs (Enter
+  runs, n goes back, q aborts).
+
+  Logins are interactive (browser, or a device code over ssh / --headless).
+
+REMOTE INSTALLATION
+  Every REMOTE_HOSTS host is then offered the same run over ssh -t.
+
+  Re-running is safe: present entries are never re-offered — running an installer
+  again is its own OPTIONS row (reinstall <agent>), which --reinstall pre-marks.
+
+AFTER INSTALLATION
+  A run that changes anything ends by syncing each installed agent (hooks and any
+  explicitly selected policy or auto trust).
+
+  A successful run also configures zsh startup without replacing existing settings.
+
+  When ~/code holds git repos DEV_REPOS does not know yet, `t config setup` opens
+  next (under -y it is only named).""")
     sp.add_argument("agents", nargs="*", metavar="agent",
                     help=f"pre-mark only these ({', '.join(INSTALL_AGENTS)}); default: every missing one")
     sp.add_argument("-y", "--yes", action="store_true", help="no list, no review: run the marks as they stand")
     sp.add_argument("--no-login", action="store_true", help="install only, skip the login steps")
     sp.add_argument("--update", action="store_true", help="also run each installed agent's updater")
     sp.add_argument("--reinstall", action="store_true",
-                    help="run the installer again for agents already here (the named ones, else "
-                         "all) — by the method each came in with: npm, brew, or the vendor script")
+                    help="reinstall named agents, or all installed agents, using their original installation method")
     sp.add_argument("--headless", action="store_true",
                     help="use the device-code logins (automatic over ssh)")
     hg = sp.add_mutually_exclusive_group()
@@ -11232,20 +11878,41 @@ REMOTE SESSIONS
     sp = sub.add_parser("__advisories", hidden=True, help="manage periodic repository-tool advisories",
         description="Explicitly enable/disable the per-user advisory worker or read cached status. "
                     "No boot service is installed. Reads registered repo tool metadata and queries "
-                    "public package identities at OSV; never executes repo scripts or upgrades tools.")
-    sp.add_argument("service_action", choices=("enable", "disable", "status"), nargs="?", default="status")
+                    "public package identities at OSV; never executes repo scripts or upgrades tools.",
+        help_details="""STARTUP ADVISORIES
+  Cached repository-tool checks run only in interactive bare t.
+  export T_VULNERABILITY_CHECK=1   Enable startup checks
+  unset T_VULNERABILITY_CHECK     Disable startup checks
+  No automatic remediation runs.
+
+PERIODIC CHECKS
+  t system advisories enable      Enable the advisory worker
+  t system advisories disable     Disable the advisory worker
+  t system advisories status      Read cached status without network requests""")
+    sp.add_argument("service_action", choices=("enable", "disable", "status"), nargs="?", default="status",
+                    help="enable or disable periodic checks; status reads cached results (default)")
     sp.add_argument("--interval-hours", type=int, default=24, metavar="HOURS",
                     help="enable interval, 1–720 hours (default 24); errors retry hourly")
 
     sp = sub.add_parser("update", help="update the installed t via Homebrew, release, or Git checkout",
-        description="For Homebrew, upgrade the formula and keep any existing user links. "
-            "For a versioned release, install the latest published release. For a Git "
-            "checkout, fetch and fast-forward canonical main before relinking. --relink "
-            "repeats the selected source without fetching; --dev selects a t worktree "
-            "from a Git checkout. --local [PATH] switches any installation to a local "
-            "t checkout, updating canonical main and relinking user commands. --all "
-            "updates this machine and every registered SSH host sequentially; failures "
-            "are reported while other hosts continue. Ctrl-C stops remaining updates.")
+        description='Update t from Homebrew, a published release, or canonical Git main. --local switches any '
+            'installation to a local checkout. --relink repeats the selected source; --dev selects the '
+            'current t worktree. --all updates this machine and registered SSH hosts, continuing after '
+            'failures. Ctrl-C stops remaining updates.',
+        help_details="""DETAILS
+
+  For Homebrew, upgrade the formula and keep any existing user links.
+
+  For a versioned release, install the latest published release.
+
+  For a Git checkout, fetch and fast-forward canonical main before relinking.
+  --relink repeats the selected source without fetching; --dev selects a t worktree
+  from a Git checkout. --local [PATH] switches any installation to a local t
+  checkout, updating canonical main and relinking user commands. --all updates this
+  machine and every registered SSH host sequentially; failures are reported while
+  other hosts continue.
+
+  Ctrl-C stops remaining updates.""")
     group = sp.add_mutually_exclusive_group()
     group.add_argument("--all", action="store_true",
                        help="update this machine and all registered SSH hosts (no recursive fan-out)")
@@ -11266,31 +11933,54 @@ REMOTE SESSIONS
     sp.add_argument("--defaults", action="store_true", help="also seed agent mode, network, and subagent defaults")
 
     sp = sub.add_parser("trust", help="trust a folder in every installed agent (claude, codex, cursor)",
-        description="Answer each agent's 'do you trust this folder?' prompt ahead of time, in "
-            "its own store: ~/.claude.json (projects[dir].hasTrustDialogAccepted), "
-            "~/.codex/config.toml ([projects.\"dir\"] trust_level), and cursor-agent's "
-            "~/.cursor/projects/<slug>/.workspace-trusted marker. Bare: the repo $PWD is in "
-            "(a per-session worktree resolves to its canonical repo, which is what claude "
-            "and codex key on; the worktree is also registered for desktop checks). Use --all for every registered "
-            "repo and its existing session worktrees. Set T_AUTO_TRUST=1 to sync trust before "
-            "terminal/desktop launches and during setup/new/install. Cursor desktop and VS Code "
-            "stores are updated when present (restart the editor afterward). "
-            "Add-only — an explicit codex `untrusted` is never flipped — "
-            "and $HOME or anything above it is refused.")
+        description='Trust the current repository in installed agents, or name folders explicitly. --all includes '
+            'registered repositories and existing worktrees. Trust is add-only: explicit Codex distrust is '
+            'preserved, and HOME or its parents are refused. T_AUTO_TRUST=1 enables optional trust sync '
+            'during launches and setup. Restart desktop editors after updating their stores.',
+        help_details="""DETAILS
+
+  Answer each agent's 'do you trust this folder?' prompt ahead of time, in its own
+  store: ~/.claude.json (projects[dir].hasTrustDialogAccepted), ~/.codex/config.toml
+  ([projects."dir"] trust_level), and cursor-agent's
+  ~/.cursor/projects/<slug>/.workspace-trusted marker.
+
+  Bare: the repo $PWD is in (a per-session worktree resolves to its canonical repo,
+  which is what claude and codex key on; the worktree is also registered for desktop
+  checks).
+
+  Use --all for every registered repo and its existing session worktrees.
+
+  Set T_AUTO_TRUST=1 to sync trust before terminal/desktop launches and during
+  setup/new/install.
+
+  Cursor desktop and VS Code stores are updated when present (restart the editor
+  afterward).
+
+  Add-only — an explicit codex `untrusted` is never flipped — and $HOME or anything
+  above it is refused.""")
     sp.add_argument("dirs", nargs="*", metavar="dir", help="folders to trust (default: the current one)")
     sp.add_argument("-a", "--all", action="store_true", help="every registered repo (DEV_REPOS)")
     sp.add_argument("--status", action="store_true", help="report what is trusted where; write nothing")
     sp.add_argument("-q", "--quiet", action="store_true", help="print only what changed")
 
     sp = sub.add_parser("doctor", help="diagnose this machine's t, tmux, and agent setup",
-        description="Read-only diagnostics for when the tooling misbehaves: the active t "
-            "release or Git checkout (and whether canonical main is behind origin/main), whether every "
-            "install.sh-managed link is in place, tmux server options vs ~/.tmux.conf (mouse, "
-            "focus-events, history-limit), which panes capture the mouse themselves (Claude's "
-            "fullscreen TUI — the usual answer to 'the scroll wheel does not scroll the "
-            "output'), and tool versions (with GitHub CLI telemetry and update checks disabled). "
-            "Ends with findings + suggested fixes. Run it on "
-            "another machine with `t hosts run <host> t system diagnose`.")
+        description='Diagnose local t links, canonical main, tmux settings, mouse capture, and tool versions. Print '
+            'findings and suggested fixes without changing settings by default. --repair restores zsh startup '
+            'and its command link while preserving settings, trust, and permissions. Use t hosts run HOST t '
+            'system diagnose for another machine.',
+        help_details="""DETAILS
+
+  Read-only diagnostics for when the tooling misbehaves: the active t release or Git
+  checkout (and whether canonical main is behind origin/main), whether every
+  install.sh-managed link is in place, tmux server options vs ~/.tmux.conf (mouse,
+  focus-events, history-limit), which panes capture the mouse themselves (Claude's
+  fullscreen TUI — the usual answer to 'the scroll wheel does not scroll the
+  output'), and tool versions (with GitHub CLI telemetry and update checks
+  disabled).
+
+  Ends with findings + suggested fixes.
+
+  Run it on another machine with `t hosts run <host> t system diagnose`.""")
     sp.add_argument("--repair", action="store_true",
                     help="repair zsh startup and its missing command link; preserve settings, trust and permissions")
 
@@ -11315,13 +12005,17 @@ REMOTE SESSIONS
     lp.add_argument("name")
     lp.add_argument("alias")
     gp = sub.add_parser("__session-goal", hidden=True, help="send a new objective to a live agent",
-        description="Send a new objective to a local Claude or Codex tmux session. "
+        description="Send a new objective to a live local Claude or Codex tmux session. "
+                    "REPO and SLOT are explicit; there is no inference or picker. "
+                    "Inspect unsent drafts and dialogs first. The exact conversation is rechecked "
+                    "before delivery. Desktop and foreground sessions are unsupported.",
+        help_details="Send a new objective to a local Claude or Codex tmux session. "
                     "Usage: t session goal REPO SLOT GOAL [--json]. REPO and SLOT are explicit; "
                     "there is no inference or picker. The exact live conversation is rechecked before "
                     "delivery. This submits an instruction; it does not confirm adoption or interrupt "
                     "the current turn. Inspect unsent drafts/dialogs first. Desktop and foreground "
                     "sessions are unsupported. Example: t session goal api 3 'Finish the login tests'.")
-    gp.add_argument("repo", help="registered repository alias")
+    gp.add_argument("repo", help="registered repository alias or directory name")
     gp.add_argument("slot", help="local slot number")
     gp.add_argument("goal", help="new objective, quoted as one argument")
     gp.add_argument("--json", action="store_true", help="print a structured delivery result")
@@ -11333,6 +12027,7 @@ REMOTE SESSIONS
             "plus explicit session controls and the full session command family through session_command. "
             "Controls require user authorization; only the three lookup tools are automatically allowed. "
             "Not for direct use except through the flags below.")
+    mp.add_argument("--local-worker", action="store_true", help="serve bounded local Codex/Ollama worker tools")
     mp.add_argument("--install", action="store_true",
                     help="register with Claude Code (user scope) if not already")
     mp.add_argument("--list-tools", action="store_true", help="print the tool names")
@@ -11362,7 +12057,7 @@ IMPLEMENTED = {
     "app": cmd_app, "restart": cmd_restart,
     "__session-goal": cmd_session_goal,
     "config": cmd_config,
-    "repos": cmd_repos,
+    "repo": cmd_repo,
     "hosts": cmd_hosts,
     "update": cmd_update,
 }
@@ -11382,23 +12077,40 @@ def _help_parser(parser, words, *, strict=False):
 
 def _print_command_help(target, words, canonical, *, detailed=False):
     """Show command help under the requested spelling, with optional details."""
-    if detailed and target.help_details:
+    if detailed:
         target = copy.deepcopy(target)
-        # The concise epilog ends with the link to this detailed page.
-        examples = target.epilog.rsplit("\n\n", 1)[0]
-        target.epilog = examples + "\n\n" + target.help_details
+        target._detailed_help = True
+        if target.help_details:
+            target.epilog = (target.epilog + "\n\n" if target.epilog else "") + target.help_details
     if words and words[0] in COMMAND_GROUPS and len(words) >= 2:
-        words = _command_path(words)[0]
+        words = words[:len(_command_path(_hosts_argv(words))[0])]
     elif words and words[0] == "share" and len(words) >= 2 and words[1] in ("targets", "inbox", "read"):
-        words = words[:2]
-    elif words and words[0] in ("repos", "cursor") and len(words) >= 2:
         words = words[:2]
     elif words:
         words = words[:1]
+    if words == ["config", "local"]:
+        mode = _CommandParser(prog="t config local",
+            usage="%(prog)s [--show | --model NAME | --disable] [--yes] [-h]",
+            description="Set up local Codex workers: install prerequisites, download a model and register MCP. "
+                        "With no flags, review choices in the settings UI.",
+            epilog="EXAMPLES\n  t config local\n  t config local --model gpt-oss:20b --yes\n"
+                   "  t config local --show",
+            help_details="DETAILS\n\n  See docs/local-workers.md for worker tools and limits. "
+                         "Refresh MCP tools or reopen Codex after setup. Workers return proposed patches "
+                         "from isolated snapshots for the lead to validate.")
+        mode.add_argument("--show", action="store_true", help="print saved settings and prerequisite paths; no processes or writes")
+        mode.add_argument("--model", metavar="NAME", help="select an Ollama model, for example gpt-oss:20b")
+        mode.add_argument("--disable", action="store_true", help="disable delegation; keep models and MCP registration")
+        mode.add_argument("-y", "--yes", action="store_true", help="apply an explicit model or disable choice without prompting")
+        if detailed:
+            mode._detailed_help = True
+            mode.epilog += "\n\n" + mode.help_details
+        mode.print_help()
+        return mode
     if len(words) == 2 and words[0] in COMMAND_GROUPS:
         group, action = words
         mode_actions = {
-            "config": {"open", "show", "edit"},
+            "config": {"open", "show", "edit", "onboard"},
             "profile": {"init", "edit", "show", "apply"},
             "policy": {"check", "show", "apply"},
             "agent": {"status"},
@@ -11406,15 +12118,31 @@ def _print_command_help(target, words, canonical, *, detailed=False):
         if action in mode_actions.get(group, set()):
             args = " <repo>" if (group, action) == ("profile", "apply") else ""
             flags = " [--defaults]" if group == "policy" and action in ("check", "apply") else ""
-            print(f"usage: t {group} {action}{args}{flags} [-h]\n\n"
-                  f"{_command_description(group, action)}.\n\n"
-                  "options:\n  -h, --help  show this help message and exit" +
-                  ("\n  --defaults  seed agent defaults where absent" if flags == " [--defaults]" else
-                   ""))
-            return
+            mode = _CommandParser(prog=f"t {group} {action}",
+                                  usage=f"%(prog)s{args}{flags} [-h]",
+                                  description=(
+                                      "Review agents, optional sign-ins, repositories, and hosts in a terminal. "
+                                      "Choices: q/Esc goes back; review: n/Esc goes back, q quits. "
+                                      "Ctrl-C cancels. Review before saving; new SSH targets offer optional verification."
+                                      if (group, action) == ("config", "onboard") else
+                                      "Edit local settings in a terminal. Review changes before saving; "
+                                      "new SSH targets offer optional verification afterward."
+                                      if (group, action) == ("config", "open") else
+                                      _command_description(group, action) + "."),
+                                  help_details=target.help_details)
+            if args:
+                mode.add_argument("repo", help="registered repository alias")
+            if flags:
+                mode.add_argument("--defaults", action="store_true",
+                                  help="seed agent defaults where absent")
+            if detailed:
+                mode._detailed_help = True
+                mode.epilog = target.help_details
+            mode.print_help()
+            return mode
     if words == canonical:
         target.print_help()
-        return
+        return target
     if words == ["agent", "install"]:
         target = copy.deepcopy(target)
         status = target._option_string_actions.pop("--status")
@@ -11426,6 +12154,7 @@ def _print_command_help(target, words, canonical, *, detailed=False):
         target.print_help()
     finally:
         target.prog = old_prog
+    return target
 
 
 def _onboarding():
@@ -11493,6 +12222,55 @@ def _bare_entry():
 
 def main(argv):
     argv = _hosts_argv(argv)
+    if argv and argv[0] in ('__resume-candidates', '__resume-saved'):
+        helper = runpy.run_path(os.path.join(_t_source_root(), 'libexec', 't_history.py'))
+        history = helper['HistoryCommand'](Config(), globals())
+        try:
+            if argv[0] == '__resume-candidates':
+                for row in history.resume_candidates(argv[1:]):
+                    print(row)
+            else:
+                if len(argv) not in (5, 6) or argv[4] not in ('launch', 'prepare'):
+                    raise helper['HistoryError']('invalid saved conversation selection')
+                alias, sid, agent = argv[1:4]
+                identity = argv[5] if len(argv) == 6 else alias
+                if identity == '-':
+                    identity = alias
+                if identity not in history.cfg.repos and not helper['REPO_IDENTITY'].fullmatch(identity):
+                    raise helper['HistoryError']('invalid saved repository identity')
+                rows = [row for row in history.records(identity) if row['sid'] == sid and row['agent'] == agent]
+                if len(rows) != 1:
+                    raise helper['HistoryError']('saved conversation changed; select it again')
+                print(history.resume(alias, rows[0], detached=True, prepare_only=argv[4] == 'prepare'))
+            return 0
+        except helper['HistoryCancelled']:
+            return 130
+        except helper['HistoryError'] as error:
+            print('t resume: ' + str(error), file=sys.stderr)
+            return 1
+        finally:
+            history.store.close()
+    if argv and argv[0] in ('__history-catalog', '__repo-identity', '__resume-alias'):
+        helper = runpy.run_path(os.path.join(_t_source_root(), 'libexec', 't_history.py'))
+        history = helper['HistoryCommand'](Config(), globals())
+        try:
+            if argv == ['__history-catalog']:
+                print(json.dumps(history.local_catalog()))
+            elif len(argv) == 2 and argv[0] == '__repo-identity' and argv[1] in history.cfg.repos:
+                print(history.identity(argv[1]))
+            elif len(argv) == 2 and argv[0] == '__resume-alias':
+                alias = history.repository_alias(argv[1])
+                if not alias and not helper['REPO_IDENTITY'].fullmatch(argv[1]):
+                    raise helper['HistoryError']('invalid saved repository identity')
+                print(alias or argv[1])
+            else:
+                raise helper['HistoryError']('invalid repository discovery request')
+            return 0
+        except helper['HistoryError'] as error:
+            print('t resume: ' + str(error), file=sys.stderr)
+            return 1
+        finally:
+            history.store.close()
     if argv == ["__share"]:
         helper = runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_share.py"))
         return helper["internal"]()
@@ -11504,7 +12282,7 @@ def main(argv):
         history = helper["HistoryCommand"](cfg, globals())
         try:
             for alias in cfg.repos:
-                if history.identity(alias) == argv[1]:
+                if history.same_repository(history.identity(alias), argv[1]):
                     history.discover(alias)
                     print(json.dumps(history.export(alias)))
                     return 0
@@ -11605,7 +12383,7 @@ def main(argv):
     top_commands = next(a._name_parser_map for a in parser._actions
                         if isinstance(a, argparse._SubParsersAction))
     if (argv[0] not in top_commands and argv[0] not in COMMAND_GROUPS
-            and argv[0] != "todo" and not argv[0].startswith("-")):
+            and argv[0] not in ("todo", "list") and not argv[0].startswith("-")):
         print(f"t: unknown command {argv[0]!r}; choose from "
               f"{', '.join(COMMAND_GROUPS)}", file=sys.stderr)
         return 2

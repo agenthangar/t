@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "description": "Development-only public command appearance and interaction inventory; aliases inherit canonical routes in bin/t COMMAND_GROUPS.",
+  "description": "Development-only public command appearance and interaction inventory; ls/list aliases inherit canonical routes in bin/t COMMAND_GROUPS, including config workflow and root list/ls; the repos family is removed. Existing-repository selectors accept registered aliases or unambiguous checkout directory names; exact aliases retain precedence and remote open/resume resolve on the selected host.",
   "patterns": {
     "list": "Direct read-only aligned rows, scope, and empty state; never launches a picker.",
     "detail": "Read-only labeled values; no work starts or prompt appears.",
@@ -721,7 +721,7 @@
           "tests": [
             "tests/test_open_picker.py::test_explicit_open_target_bypasses_picker"
           ],
-          "notes": "Fresh unused local slots and locally reserved desktop reopens tolerate unavailable remote hosts. Desktop claims scan once and still reject known remote owners and failed local ownership checks. Unreserved existing workspace claims retain strict ownership checks; explicit session resume warns and skips unavailable hosts while checking known owners."
+          "notes": "Fresh unused local slots and locally reserved desktop reopens tolerate unavailable remote hosts. Desktop claims scan once and still reject known remote owners and failed local ownership checks. Unreserved existing workspace claims retain strict ownership checks; explicit session resume warns and skips unavailable hosts while checking known owners. Automatic fresh-slot allocation skips known remote desktop reservations from one discovery snapshot; explicit slot requests still refuse conflicting owners."
         },
         "local": {
           "argv": [
@@ -1013,7 +1013,7 @@
         "multi"
       ],
       "renderer": "fzf",
-      "scope": "explicit/inferred repository or all local/remote sessions",
+      "scope": "explicit/inferred repository, or local and registered-host repository identities with --all/outside a checkout",
       "confirmation": "per_target",
       "tests": [
         "tests/test_resume_multiselect.py::test_resume_multi_opens_selected_live_slot_and_revives_dead_slot",
@@ -1023,7 +1023,13 @@
         "tests/test_agent_seam.py::test_zsh_foreground_uses_native_agent_outside_path",
         "tests/test_agent_seam.py::test_session_startup_is_quiet_and_logged",
         "tests/test_host_resilience.py::test_partial_resume_checks_selected_saved_writer_and_starts",
-        "tests/test_host_resilience.py::test_remote_resume_worker_opens_picker_despite_an_unavailable_peer"
+        "tests/test_host_resilience.py::test_remote_resume_worker_opens_picker_despite_an_unavailable_peer",
+        "tests/test_resume_history.py::test_resume_history_selects_inactive_conversation_from_busy_slot",
+        "tests/test_resume_repositories.py::test_remote_catalog_queries_distinct_targets_and_deduplicates_identity",
+        "tests/test_resume_repositories.py::test_cancel_remoteonly_picker_never_prepares_or_registers",
+        "tests/test_resume_repositories.py::test_remoteonly_prepare_refreshes_actual_alias_before_host_route",
+        "tests/test_app_handoff.py::test_handoff_scopes_unindexed_writers_using_rollout_metadata",
+        "tests/test_history_resume.py::test_private_saved_resume_reports_ownership_refusal_and_cleans_up"
       ],
       "modes": {
         "default": {
@@ -1038,9 +1044,12 @@
           "read_only": false,
           "tests": [
             "tests/test_resume_multiselect.py::test_resume_multi_opens_selected_live_slot_and_revives_dead_slot",
-            "tests/test_picker_filters.py::test_every_filter_key_survives_long_values"
+            "tests/test_picker_filters.py::test_every_filter_key_survives_long_values",
+            "tests/test_picker_filters.py::test_resume_sorts_preserve_snapshot_filters_and_reset_defaults",
+            "tests/test_resume_multiselect.py::test_resume_last_turn_overrides_mtime_and_sort_hotkeys_keep_rows",
+            "tests/test_picker_ui.py::test_resume_sort_controls_keep_focused_row_and_change_order"
           ],
-          "notes": "Independent Ctrl-G agent, Ctrl-O host/origin, and Ctrl-R repository facets; open/close also support Ctrl-D interface. All/default clears facets, preserves search, and removes hidden marks. No additional discovery or scope expansion. Unavailable registered hosts warn and are skipped; discovery retains local and reachable rows. Saved resumes retain local locks and known-owner checks, but cannot verify ownership on unavailable hosts. Local scan failures remain fatal."
+          "notes": "Independent Ctrl-G agent, Ctrl-O host/origin, and Ctrl-R repository facets; open/close also support Ctrl-D interface. All/default clears facets, preserves search, and removes hidden marks. No additional discovery or scope expansion. Unavailable registered hosts warn and are skipped; discovery retains local and reachable rows. Saved resumes retain local locks and known-owner checks, but cannot verify ownership on unavailable hosts. Local scan failures remain fatal. Default order is actual last user turn newest first, unknown times last, without pinning live rows. Alt-T last turn, Alt-R repository, Alt-G agent, Alt-O host/origin, Alt-V session select immutable snapshot sorting; text modes ascend with newest turn and stable identity ties and natural numeric session slots. Ctrl-A clears filters and preserves sort; Ctrl-F restores inactive/default filters and last-turn sorting. Search preserves the selected order. Narrow headers use ^ Ctrl and M Alt. Saved metadata refreshes on registered hosts by repository identity by default; --remote remains compatible. Canonical and verified renamed roots and swept rollouts are included. Exact IDs determine live ownership; independent saved conversations in occupied slots use guarded fresh allocation. Only selected transcripts are fetched. All-repository discovery includes repositories registered only on a reachable host and orphan Codex rollouts with exact Git metadata, even without local registrations. Metadata browsing and cancellation never clone or register repositories. Only a selected saved identity may create its guarded local checkout. GitHub transfers match only authenticated immutable repository IDs; selected different-name identities require fresh proof."
         },
         "explicit": {
           "argv": [
@@ -1130,7 +1139,7 @@
         ]
       },
       "progress": "Terminal-only discovery stages on stderr; no progress in redirected output, JSON, or remote protocols.",
-      "notes": "Terminal launches run without echoing internal shell commands or exit instructions; agent output and diagnostics remain visible."
+      "notes": "Terminal launches run without echoing internal shell commands or exit instructions; agent output and diagnostics remain visible. Saved Codex resume resolves unindexed held sibling locks through validated session_meta workspace identity in active and archived rollouts. Unknown, invalid or unreadable evidence fails closed; ownership refusals return a concise retry diagnostic without a traceback."
     },
     "session history": {
       "patterns": [
@@ -1601,7 +1610,7 @@
       "scope": "registered repository or checkout",
       "confirmation": "none",
       "tests": [
-        "tests/test_t.py::test_repos_lists_short_names_and_paths"
+        "tests/test_t.py::test_repo_lists_short_names_and_paths"
       ],
       "modes": {
         "default": {
@@ -1614,7 +1623,7 @@
           ],
           "read_only": true,
           "tests": [
-            "tests/test_t.py::test_repos_lists_short_names_and_paths",
+            "tests/test_t.py::test_repo_lists_short_names_and_paths",
             "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
           ]
         }
@@ -3189,7 +3198,7 @@
           "tests": [
             "tests/test_remote_commands.py::test_remote_host_picker_requires_explicit_enter_and_cancel"
           ],
-          "notes": "Single host picker waits for Enter even with one host; missing session uses shared selection on the source/target host. Cancellation returns 130. Empty current-session inventory returns 0 and never starts fresh."
+          "notes": "Single host picker waits for Enter even with one host; missing session uses shared selection on the source/target host. Cancellation returns 130. Empty current-session inventory returns 0 and never starts fresh. Host picker says Open a session on which host?, or Start a new session on which host? with --new; selected host is the execution destination. SSH alias/target context is subordinate to the action heading."
         },
         "explicit": {
           "argv": [
@@ -3255,7 +3264,7 @@
           "tests": [
             "tests/test_remote_commands.py::test_remote_move_selects_current_cross_host_identity_and_destination"
           ],
-          "notes": "Single host picker waits for Enter even with one host; missing session uses shared selection on the source/target host. Cancellation returns 130. Source browsing skips unavailable peers while retaining reachable candidates; selected-source and transfer ownership checks remain strict."
+          "notes": "Single host picker waits for Enter even with one host; missing session uses shared selection on the source/target host. Cancellation returns 130. Source browsing skips unavailable peers while retaining reachable candidates; selected-source and transfer ownership checks remain strict. Host picker says Move this session to which host? and Destination host · current host: SOURCE; selected host is the destination. SSH alias/target context is subordinate to the action heading."
         },
         "explicit": {
           "argv": [
@@ -3329,7 +3338,7 @@
           "tests": [
             "tests/test_remote_commands.py::test_remote_host_picker_requires_explicit_enter_and_cancel"
           ],
-          "notes": "Single host picker waits for Enter even with one host; missing session uses shared selection on the source/target host. Cancellation returns 130. Unavailable registered hosts warn and are skipped; discovery retains local and reachable rows. Saved resumes retain local locks and known-owner checks, but cannot verify ownership on unavailable hosts. Local scan failures remain fatal."
+          "notes": "Single host picker waits for Enter even with one host; missing session uses shared selection on the source/target host. Cancellation returns 130. Unavailable registered hosts warn and are skipped; discovery retains local and reachable rows. Saved resumes retain local locks and known-owner checks, but cannot verify ownership on unavailable hosts. Local scan failures remain fatal. Host picker says Resume saved work on which host? and Browse this host\u2019s saved conversations; selected host supplies saved history and runs the resumed session. SSH alias/target context is subordinate to the action heading."
         },
         "explicit": {
           "argv": [
@@ -3369,6 +3378,25 @@
             "tests/test_remote_commands.py::test_remote_open_resume_delegate_quoted_worker_and_status"
           ],
           "notes": "Discover history ON build with the established saved-history protocol; session resume --host sends locally discovered history instead."
+        },
+        "all": {
+          "argv": [
+            "remote",
+            "resume",
+            "--host",
+            "build",
+            "--all"
+          ],
+          "patterns": [
+            "filtered",
+            "multi",
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_resume_repositories.py::test_remote_resume_all_forwards_explicit_scope"
+          ],
+          "notes": "Explicit --all is forwarded to the selected host so its login directory cannot narrow discovery. A locally resolvable repository is forwarded by GitHub identity and resolved to the selected host alias; otherwise a literal host alias is preserved."
         }
       }
     },
@@ -3445,6 +3473,22 @@
           "tests": [
             "tests/test_workflow.py::test_nested_workflow_commands"
           ]
+        },
+        "catalogue": {
+          "argv": [
+            "config",
+            "workflow",
+            "list",
+            "--all",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_workflow.py::test_named_workflow_commands"
+          ]
         }
       }
     },
@@ -3453,7 +3497,7 @@
         "action"
       ],
       "renderer": "external",
-      "scope": "global by default; explicit registered repository alias with --repo; no inference or selection",
+      "scope": "current global default or named shared definition; explicit --repo for repository-only inline policy",
       "confirmation": "external",
       "tests": [
         "tests/test_workflow.py::test_nested_workflow_commands"
@@ -3490,6 +3534,271 @@
             "tests/test_workflow.py::test_nested_workflow_commands"
           ],
           "terminal": true
+        },
+        "named": {
+          "argv": [
+            "config",
+            "workflow",
+            "edit",
+            "quick"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "terminal": true,
+          "tests": [
+            "tests/test_workflow.py::test_named_workflow_commands"
+          ]
+        }
+      }
+    },
+    "config workflow add": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "plain",
+      "scope": "explicit named workflow or registered --repo alias; no inference or selection",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_workflow.py::test_named_workflow_commands"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "config",
+            "workflow",
+            "add",
+            "quick"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_workflow.py::test_named_workflow_commands"
+          ]
+        }
+      }
+    },
+    "config workflow use": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "plain",
+      "scope": "explicit named workflow or registered --repo alias; no inference or selection",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_workflow.py::test_named_workflow_commands"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "config",
+            "workflow",
+            "use",
+            "quick"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_workflow.py::test_named_workflow_commands"
+          ]
+        }
+      }
+    },
+    "config workflow exclude": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "plain",
+      "scope": "explicit named workflow or registered --repo alias; no inference or selection",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_workflow.py::test_named_workflow_commands"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "config",
+            "workflow",
+            "exclude",
+            "--repo",
+            "api"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_workflow.py::test_named_workflow_commands"
+          ]
+        }
+      }
+    },
+    "config workflow inherit": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "plain",
+      "scope": "explicit named workflow or registered --repo alias; no inference or selection",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_workflow.py::test_named_workflow_commands"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "config",
+            "workflow",
+            "inherit",
+            "--repo",
+            "api"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_workflow.py::test_named_workflow_commands"
+          ]
+        }
+      }
+    },
+    "config workflow instructions show": {
+      "patterns": [
+        "detail"
+      ],
+      "renderer": "plain",
+      "scope": "current default or named workflow; explicit --repo alias for repository scope; no inference",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_workflow.py::test_instructions_commands"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "config",
+            "workflow",
+            "instructions",
+            "show"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_workflow.py::test_instructions_commands"
+          ]
+        }
+      }
+    },
+    "config workflow instructions edit": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "external",
+      "scope": "current default or named workflow; explicit --repo alias for repository scope; no inference",
+      "confirmation": "external",
+      "tests": [
+        "tests/test_workflow.py::test_instructions_commands"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "config",
+            "workflow",
+            "instructions",
+            "edit"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_workflow.py::test_instructions_commands"
+          ],
+          "terminal": true
+        }
+      }
+    },
+    "config local": {
+      "patterns": [
+        "wizard",
+        "action",
+        "detail"
+      ],
+      "renderer": "mixed",
+      "scope": "local machine",
+      "confirmation": "review",
+      "tests": [
+        "tests/test_local_setup.py::test_setup_and_disable",
+        "tests/test_local_setup.py::test_status_readonly"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "config",
+            "local"
+          ],
+          "patterns": [
+            "wizard"
+          ],
+          "read_only": false,
+          "terminal": true,
+          "tests": [
+            "tests/test_local_setup.py::test_interactive_review"
+          ]
+        },
+        "explicit": {
+          "argv": [
+            "config",
+            "local",
+            "--model",
+            "gpt-oss:20b",
+            "--yes"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_setup.py::test_setup_and_disable"
+          ]
+        },
+        "disable": {
+          "argv": [
+            "config",
+            "local",
+            "--disable",
+            "--yes"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_setup.py::test_setup_and_disable"
+          ]
+        },
+        "status": {
+          "argv": [
+            "config",
+            "local",
+            "--show"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_setup.py::test_status_readonly"
+          ]
         }
       }
     }
@@ -3586,10 +3895,10 @@
         }
       ],
       "status_marks": {
-        "attached": "●",
-        "detached": "○",
-        "active_context": "✓",
-        "still_in_progress": "↻"
+        "attached": "\u25cf",
+        "detached": "\u25cb",
+        "active_context": "\u2713",
+        "still_in_progress": "\u21bb"
       },
       "layouts": {
         "table": {
@@ -3833,8 +4142,8 @@
         "tests/test_command_behavior.py::test_history_display_contract_preserves_unknowns_preview_and_json"
       ],
       "status_marks": {
-        "saved": "·",
-        "archived": "□",
+        "saved": "\u00b7",
+        "archived": "\u25a1",
         "missing": "!"
       }
     }
@@ -3925,6 +4234,96 @@
     }
   },
   "progress_contract": "ui/progress-contract.json",
+  "repository_selectors": {
+    "remote open": "target host shell worker",
+    "remote move": "source host shell worker or local source scope",
+    "remote resume": "target host shell worker",
+    "issue list": "libexec/t_issue.py repository",
+    "issue status": "libexec/t_issue.py repository",
+    "issue start": "libexec/t_issue.py repository",
+    "issue open": "libexec/t_issue.py repository",
+    "session open": "_t_open/_t_dev",
+    "session list": "_ls_scope",
+    "session close": "_dev_kill",
+    "session restart": "_slot_select",
+    "session pop": "_t_pop",
+    "session resume": "_t_resume",
+    "session history": "HistoryCommand.scope",
+    "session cd": "_t_cd",
+    "session move": "_t_beam",
+    "session read": "cmd_read",
+    "session view-plan": "_t_plan",
+    "session paste": "_t_paste",
+    "session open-app": "_slot_select",
+    "session goal": "cmd_session_goal",
+    "repo cd": "_t_repo_cd",
+    "repo locate": "cmd_repo",
+    "config open": "cmd_config workflow_repo compatibility",
+    "config show": "cmd_config workflow_repo compatibility",
+    "config edit": "cmd_config workflow_repo compatibility",
+    "config onboard": "cmd_config workflow_repo compatibility",
+    "config local": "user-wide model setup; ignores workflow_repo inherited from the shared config parser",
+    "config workflow list": "cmd_config workflow_repo",
+    "config workflow edit": "cmd_config workflow_repo",
+    "profile init": "cmd_instructions",
+    "profile edit": "cmd_instructions",
+    "profile show": "cmd_instructions",
+    "profile apply": "cmd_instructions",
+    "config workflow use": "_cmd_workflow workflow_repo",
+    "config workflow exclude": "_cmd_workflow workflow_repo",
+    "config workflow inherit": "_cmd_workflow workflow_repo",
+    "config workflow instructions show": "_cmd_workflow workflow_repo",
+    "config workflow instructions edit": "_cmd_workflow workflow_repo"
+  },
+  "command_aliases": {
+    "list_verbs": {
+      "canonical": "list",
+      "aliases": [
+        "ls"
+      ],
+      "scope": "every registry leaf ending in list"
+    },
+    "legacy": {
+      "list": "session list",
+      "ls": "session list"
+    }
+  },
+  "help_style": {
+    "summary": "Quick command reference; explanations belong in structured t help topics.",
+    "widths": [
+      80,
+      44,
+      32
+    ],
+    "max_lines": 60,
+    "command_line_limits": {
+      "resume": 45,
+      "session resume": 45
+    },
+    "max_summary_words": 60,
+    "max_argument_words": 24,
+    "max_examples": 3,
+    "headings": [
+      "USAGE",
+      "WORK",
+      "CONFIGURATION",
+      "TOOLS",
+      "OPTIONS",
+      "FLAGS",
+      "EXAMPLES",
+      "EXAMPLE",
+      "LEARN MORE",
+      "COMMANDS",
+      "SCOPE",
+      "REPOSITORIES",
+      "TARGETS",
+      "ARGUMENTS",
+      "AGENT (FRESH SLOTS)",
+      "LOCATION",
+      "SELECTION",
+      "DESKTOP TO CLI"
+    ]
+  },
   "visual_design": {
     "name": "Air",
     "shared_helpers": [
@@ -3934,12 +4333,14 @@
     ],
     "macos_labels": [
       "⌃T",
+      "⌥T",
       "↩ Return",
       "⎋ Esc",
       "⇥ Tab"
     ],
     "other_labels": [
       "Ctrl-T",
+      "Alt-T",
       "Enter",
       "Esc",
       "Tab"

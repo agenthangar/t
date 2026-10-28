@@ -10,6 +10,7 @@ from contextlib import redirect_stdout, redirect_stderr
 import io
 
 ROOT = Path(__file__).resolve().parent.parent
+_resolve_repo = runpy.run_path(str(ROOT / 'libexec/t_repos.py'))['resolve_repo']
 READ_TOOLS = ('find_sessions', 'list_sessions', 'session_detail')
 SESSION_VERBS = ('open', 'list', 'close', 'restart', 'push', 'pop', 'resume', 'history',
                  'cd', 'move', 'read', 'view-plan', 'paste', 'search', 'open-app', 'goal')
@@ -27,7 +28,7 @@ DESCRIPTIONS = {
 def tool_specs():
     specs = []
     for name, description in DESCRIPTIONS.items():
-        props = {'repo': {'type': 'string', 'description': 'Registered repository alias on this machine'},
+        props = {'repo': {'type': 'string', 'description': 'Registered repository alias or checkout directory name on this machine'},
                  'slot': {'type': 'integer', 'minimum': 1}}
         required = ['repo', 'slot']
         if name in ('send_instructions', 'pause_session', 'set_session_goal'):
@@ -63,6 +64,8 @@ def validate(cfg, name, args):
     if not isinstance(args, dict) or set(args) - schema['properties'].keys() or set(schema['required']) - args.keys():
         raise ValueError('provide the required tool arguments; unknown arguments are not accepted')
     repo, slot = args['repo'], args['slot']
+    if isinstance(repo, str):
+        repo = _resolve_repo(cfg.repos, repo) or repo
     if not isinstance(repo, str) or not re.fullmatch(r'[A-Za-z0-9_][A-Za-z0-9_.-]*', repo) or repo not in cfg.repos:
         raise ValueError('repo must name a registered repository')
     if type(slot) is not int or slot < 1:

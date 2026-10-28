@@ -21,9 +21,10 @@ import time
 import uuid
 
 _spinner = runpy.run_path(str(Path(__file__).with_name("t_progress.py")))["spinner"]
+_resolve_repo = runpy.run_path(str(Path(__file__).with_name("t_repos.py")))["resolve_repo"]
 
 VERSION = 1
-PARSER_VERSION = 4
+PARSER_VERSION = 6
 _DISPLAY = runpy.run_path(str(Path(__file__).with_name('t_session_details.py')))
 display_width = _DISPLAY['display_width']
 clip_columns = _DISPLAY['clip_columns']
@@ -32,6 +33,9 @@ recorded_model = _DISPLAY['recorded_model']
 AGENT_GLYPHS = {'codex': '⬡', 'claude': '✱', 'slot': '·', 'revision': '·'}
 
 SID = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,199}\Z')
+REPO_IDENTITY = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*\Z')
+REPOSITORY_PROOF_TTL = 86400
+
 PR_URL = re.compile(r'https://github\.com/([\w.-]+/[\w.-]+)/pull/([1-9][0-9]*)')
 
 
@@ -86,6 +90,8 @@ def validate(record):
         raise HistoryError('invalid conversation identity')
     if not isinstance(record.get('updated', 0), (int, float)) or not math.isfinite(record.get('updated', 0)) or not 0 <= record.get('updated', 0) <= 253402300799:
         raise HistoryError('invalid history timestamp')
+    if 'last_turn' in record:
+        record['last_turn'] = _DISPLAY['_turn_timestamp'](record['last_turn'])
     for field in ('model', 'model_source', 'summary', 'summary_source', 'interface'):
         if field in record and not isinstance(record[field], str):
             raise HistoryError('invalid recorded display metadata')
@@ -174,15 +180,17 @@ class Store:
                 identity = key_for(value)
                 unique[identity] = {**unique.get(identity, {}), **value} if field == 'sources' else value
             merged[field] = list(unique.values())
+        merged['last_turn'] = max(old.get('last_turn', '-'), record.get('last_turn', '-'))
         merged['updated'] = max(old.get('updated', 0), record.get('updated', 0))
         self.db.execute('insert or replace into conversations values (?,?)', (key, json.dumps(merged)))
         self.db.commit()
         return merged
 
-    def scan(self, path, agent):
+    def scan(self, path, agent, *, metadata_only=False):
         info = path.stat()
         stamp = json.dumps([info.st_ino, info.st_size, info.st_mtime_ns])
-        old = self.db.execute('select stamp,record from scans where path=?', (str(path),)).fetchone()
+        key = str(path) + ('#resume' if metadata_only else '')
+        old = self.db.execute('select stamp,record from scans where path=?', (key,)).fetchone()
         cached = json.loads(old[1]) if old else None
         if old and old[0] == stamp and cached.get('_scan', {}).get('parser') == PARSER_VERSION:
             return cached
@@ -191,8 +199,9 @@ class Store:
         previous = cached if cached and cached.get('_scan', {}).get('parser') == PARSER_VERSION else None
         if previous and previous.get('_scan', {}).get('inode') != info.st_ino:
             previous = None
-        value = transcript(path, agent, previous)
-        self.db.execute('insert or replace into scans values (?,?,?)', (str(path), stamp, json.dumps(value)))
+        value = transcript(path, agent, previous, metadata_only=True) if metadata_only else transcript(path, agent, previous)
+        value['last_turn'] = _DISPLAY['transcript_last_turn'](path, agent)
+        self.db.execute('insert or replace into scans values (?,?,?)', (key, stamp, json.dumps(value)))
         self.db.commit()
         return value
 
@@ -334,7 +343,7 @@ def tool_pr_command(command):
     return out
 
 
-def transcript(path, agent, previous=None):
+def transcript(path, agent, previous=None, *, metadata_only=False):
     record = dict(agent=agent, sid='', title='', summary='', summary_source='unknown', model='-', model_source='unknown', interface='unknown', updated=0, associations=[], prs=[], mentions=[])
     state = previous.get('_scan', {}) if previous else {}
     if previous and state.get('offset', 0) <= path.stat().st_size:
@@ -374,7 +383,10 @@ def transcript(path, agent, previous=None):
                     git = payload.get('git') or {}
                     if isinstance(git, dict):
                         branch, commit = git.get('branch', ''), git.get('commit_hash', '')
-                        record['recorded_repo'] = slug(git.get('repository_url', ''))
+                        repository = slug(git.get('repository_url', ''))
+                        if record.get('recorded_repo') and repository and record['recorded_repo'] != repository:
+                            raise HistoryError('transcript contains conflicting repository identities')
+                        record['recorded_repo'] = repository or record.get('recorded_repo')
                 elif agent == 'claude':
                     incoming_sid = row.get('sessionId') or record['sid']
                     if record['sid'] and incoming_sid != record['sid']:
@@ -401,6 +413,8 @@ def transcript(path, agent, previous=None):
                     record['title'] = clean(text)[:200]
                 if role == 'user' and text.strip() and not text.lstrip().startswith(('<', '# AGENTS.md instructions')):
                     record.update(summary=record['title'] or clean(text), summary_source='transcript', summary_updated=record['updated'])
+                if metadata_only:
+                    continue
                 if role in ('user', 'assistant'):
                     record['mentions'].extend(pr_refs(text))
                 # Structured tool invocations establish association; conversational
@@ -480,6 +494,15 @@ def page_rows(rows, query='', limit=50, page=1):
 def association_matches(association, cfg, alias):
     repo, slot = cfg.repo_of_dir(association.get('workspace', ''))
     return (slot or '') if repo and os.path.realpath(cfg.repos[repo]) == os.path.realpath(cfg.repos[alias]) else None
+
+
+def recorded_slot(workspace):
+    """A historical path can identify a slot, but never a current destination."""
+    path = Path(workspace)
+    match = re.fullmatch(re.escape(path.parent.name) + r'-([1-9][0-9]*)', path.name)
+    if match:
+        return match[1]
+    return path.name if re.fullmatch(r'[1-9][0-9]*', path.name) else ''
 
 
 def history_display(row, alias=''):
@@ -630,6 +653,250 @@ class HistoryCommand:
         self.host = socket.gethostname().split('.')[0]
         self.reservation_token = uuid.uuid4().hex
         self.reservation = None
+        self.discovery_identities = {}
+        self.repository_proofs = {}
+        self.fresh_repository_proofs = set()
+        self.strict_identity = False
+        self.catalog_repositories = {}
+        self.local_identities = {}
+
+    def repository_proof(self, identity):
+        """Only authenticated GitHub evidence may equate different repository names."""
+        if not REPO_IDENTITY.fullmatch(identity):
+            return None
+        identity = identity.lower()
+        if identity in self.repository_proofs and (not self.strict_identity or identity in self.fresh_repository_proofs):
+            return self.repository_proofs[identity]
+        path = self.store.directory / 'repository-proofs.json'
+        try:
+            saved = json.loads(path.read_text())
+            if not isinstance(saved, dict):
+                saved = {}
+        except (OSError, ValueError):
+            saved = {}
+        proof = saved.get(identity)
+        now = time.time()
+        def valid(value):
+            return (isinstance(value, dict) and isinstance(value.get('id'), str)
+                    and bool(re.fullmatch(r'[A-Za-z0-9_=-]+', value['id']))
+                    and isinstance(value.get('canonical'), str)
+                    and REPO_IDENTITY.fullmatch(value['canonical'])
+                    and type(value.get('verified')) in (int, float)
+                    and 0 <= now - value['verified'] < REPOSITORY_PROOF_TTL)
+        if self.strict_identity or not valid(proof):
+            proof = None
+            if self.strict_identity:
+                self.fresh_repository_proofs.add(identity)
+            try:
+                value = json.loads(run(['gh', 'repo', 'view', identity, '--json', 'id,nameWithOwner'], timeout=8, optional=True))
+                candidate = dict(id=value.get('id'), canonical=value.get('nameWithOwner', '').lower(), verified=now)
+                if valid(candidate):
+                    proof = candidate
+                    saved[identity] = proof
+                    private_write(path, saved)
+            except (ValueError, TypeError, AttributeError):
+                pass
+        self.repository_proofs[identity] = proof
+        return proof
+
+    def canonical_identity(self, identity):
+        proof = self.repository_proof(identity)
+        return proof['canonical'] if proof else identity
+
+    def same_repository(self, left, right):
+        if left == right:
+            return True
+        one, two = self.repository_proof(left), self.repository_proof(right)
+        return bool(one and two and one['id'] == two['id'])
+
+    def record_identity(self, alias):
+        return self.discovery_identities.get(alias) or self.identity(alias)
+
+    def repository_alias(self, identity):
+        for alias in self.cfg.repos:
+            if alias not in self.local_identities:
+                self.local_identities[alias] = self.identity(alias)
+        aliases = [alias for alias, repo in self.local_identities.items() if alias in self.cfg.repos and self.same_repository(repo, identity)]
+        return min(aliases, key=lambda alias: (alias != Path(self.cfg.repos[alias]).name, len(alias), alias)) if aliases else None
+
+    def local_catalog(self):
+        """Export host-local metadata, never evidence imported from another host."""
+        repositories = {}
+        for alias, path in self.cfg.repos.items():
+            identity = self.canonical_identity(self.identity(alias))
+            self.discovery_identities[alias] = identity
+            self.discover(alias, metadata_only=True)
+            repositories.setdefault(identity, dict(repo=identity, alias=alias, path=path))
+        codex = Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex')
+        for folder in ('sessions', 'archived_sessions'):
+            for path in (codex / folder).glob('**/rollout-*.jsonl'):
+                try:
+                    with path.open() as stream:
+                        first = json.loads(stream.readline())
+                    payload = first.get('payload', {})
+                    if payload.get('thread_source') == 'subagent' or isinstance(payload.get('source'), dict) and 'subagent' in payload['source']:
+                        continue
+                    raw_identity = slug((payload.get('git') or {}).get('repository_url', ''))
+                    if not raw_identity:
+                        continue
+                    identity = self.canonical_identity(raw_identity)
+                    value = self.store.scan(path, 'codex', metadata_only=True)
+                    if not value.get('sid') or not self.same_repository(value.get('recorded_repo', ''), identity):
+                        continue
+                    value.pop('_scan', None)
+                    value.update(repo=identity, archived=folder == 'archived_sessions')
+                    value['associations'] = [{**a, 'host': 'local', 'slot': recorded_slot(a['workspace'])} for a in value['associations']]
+                    value['sources'] = [dict(host='local', path=str(path), updated=path.stat().st_mtime, size=path.stat().st_size)]
+                    value['updated'] = max(value.get('updated', 0), path.stat().st_mtime)
+                    self.store.merge(value)
+                    repositories.setdefault(identity, dict(repo=identity, alias=identity, path=''))
+                except (OSError, ValueError, TypeError, AttributeError):
+                    continue
+        rows = []
+        for row in self.store.records():
+            row = dict(row)
+            row['associations'] = [a for a in row.get('associations', []) if a.get('host') == 'local']
+            row['sources'] = [source for source in row.get('sources', []) if source.get('host') == 'local']
+            row.pop('owners', None)
+            row.pop('display', None)
+            if row['associations'] and row['sources']:
+                identity = self.canonical_identity(row['repo'])
+                row['repo'] = identity
+                repositories.setdefault(identity, dict(repo=identity, alias=identity, path=''))
+                rows.append(row)
+        return dict(version=1, repositories=list(repositories.values()), conversations=rows)
+
+    def import_catalog(self, payload, host):
+        if not isinstance(payload, dict) or payload.get('version') != 1:
+            raise HistoryError('invalid remote repository catalog')
+        repositories, rows = payload.get('repositories'), payload.get('conversations')
+        if not isinstance(repositories, list) or not isinstance(rows, list):
+            raise HistoryError('invalid remote repository catalog')
+        allowed = {}
+        for repository in repositories:
+            if not isinstance(repository, dict) or not isinstance(repository.get('repo'), str):
+                raise HistoryError('invalid remote repository identity')
+            raw = repository['repo']
+            if not REPO_IDENTITY.fullmatch(raw):
+                # Machine-local identities cannot establish cross-host equivalence.
+                continue
+            if not all(isinstance(repository.get(key), str) and clean(repository[key]) == repository[key] for key in ('alias', 'path')):
+                raise HistoryError('invalid remote repository metadata')
+            identity = self.canonical_identity(raw)
+            allowed[raw] = identity
+            self.catalog_repositories.setdefault(identity, dict(repo=identity, alias=repository['alias'], path=repository['path'], host=host))
+        pending = []
+        for row in rows:
+            row = dict(row)
+            validate(row)
+            if row['repo'] not in allowed:
+                continue
+            row['repo'] = allowed[row['repo']]
+            row.pop('owners', None)
+            row.pop('display', None)
+            for field in ('associations', 'sources'):
+                if any(value.get('host') != 'local' for value in row.get(field, [])):
+                    raise HistoryError('remote catalog contains imported evidence')
+                key = 'workspace' if field == 'associations' else 'path'
+                if any(not value.get(key, '').startswith('/') or clean(value[key]) != value[key] for value in row.get(field, [])):
+                    raise HistoryError('invalid remote catalog path')
+                row[field] = [{**value, 'host': host} for value in row.get(field, [])]
+            pending.append(row)
+        for row in pending:
+            self.store.merge(row)
+
+    def discover_catalog(self):
+        local = self.local_catalog()
+        self.catalog_repositories = {r['repo']: {**r, 'host': 'local'} for r in local['repositories']}
+        targets = set()
+        for host, target in self.cfg.hosts.items():
+            if target in targets:
+                continue
+            targets.add(target)
+            try:
+                output = run(['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=3', target,
+                              'zsh -lic ' + shlex.quote('command t __history-catalog')], timeout=20)
+                self.import_catalog(json.loads(output), host)
+            except (HistoryError, ValueError, TypeError, AttributeError):
+                # Older hosts retain the scoped protocol for locally known repos.
+                for alias in self.cfg.repos:
+                    self.refresh(alias, hosts={host: target})
+        for row in self.store.records():
+            identity = self.canonical_identity(row['repo'])
+            if row.get('sources') and (REPO_IDENTITY.fullmatch(identity) or self.repository_alias(identity)):
+                self.catalog_repositories.setdefault(identity, dict(repo=identity, alias=identity, path='', host='cached'))
+        private_write(self.store.directory / 'repository-catalog.json', self.catalog_repositories)
+        return self.catalog_repositories
+
+    def worktree_enabled(self, alias=None):
+        value = getattr(self.cfg, 'worktree', {}).get(alias) or getattr(self.cfg, 'worktree_default', '1')
+        return value not in ('0', 'no', 'off', 'false')
+
+    def materialize_repository(self, identity):
+        alias = self.repository_alias(identity)
+        if not self.worktree_enabled(alias):
+            raise HistoryError('repository opts out of worktree-per-session; no checkout was created')
+        if alias:
+            return alias
+        if not REPO_IDENTITY.fullmatch(identity):
+            raise HistoryError('selected repository has no verified GitHub clone identity')
+        # Reuse checkout's collision checks and registration primitives, with no
+        # onboarding, instruction-seeding, trust, or unrelated repository actions.
+        owner, name = identity.split('/')
+        path = self.api['_new_path'](name)
+        alias = name
+        with (self.store.directory / 'repository-checkout.lock').open('a') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            try:
+                local_text = Path(self.api['_current_local_rc']()).read_text()
+            except OSError:
+                local_text = ''
+            registered, _, _ = self.api['_local_entries'](local_text)
+            whence = self.api['_new_sh_whence'](alias)
+            registration = self.api['_new_alias_check'](alias, path, registered, self.cfg.repos, whence)
+            state = self.api['_new_sh_state'](path)
+            # A matching existing canonical checkout is safe to register; linked
+            # worktrees and symlink destinations are never adopted.
+            if os.path.islink(path) or state['is_repo'] and not Path(path, '.git').is_dir():
+                raise HistoryError('repository destination is a symlink or linked worktree')
+            url = self.api['_new_clone_url'](owner, name)
+            if state['is_repo'] and self.same_repository(slug(state.get('origin_url') or '') or '', identity):
+                state = {**state, 'origin_url': url}
+            steps = self.api['_new_land_plan'](name, alias, url, path, state, registration)
+            errors = [step['label'] for step in steps if step['do'] == 'error']
+            if errors:
+                raise HistoryError('; '.join(errors))
+            for step in steps:
+                if step['do'] == 'run' and step['step'] == 'clone':
+                    Path(path).parent.mkdir(parents=True, exist_ok=True)
+                    run(step['cmd'], timeout=600)
+            actual = slug(run(['git', '-C', path, 'remote', 'get-url', 'origin']).strip())
+            if not actual or not self.same_repository(actual, identity):
+                raise HistoryError('repository identity changed before registration')
+            # Clone may take minutes. Revalidate both filesystem and registration
+            # state before publishing a local alias; never overwrite a new mapping.
+            if (os.path.islink(path) or not Path(path, '.git').is_dir()
+                    or Path(path, '.git').is_symlink()):
+                raise HistoryError('repository destination changed before registration')
+            local_rc = self.api['_current_local_rc']()
+            before = self.api['_config_read'](local_rc)
+            registered, _, _ = self.api['_local_entries'](before)
+            registration = self.api['_new_alias_check'](
+                alias, path, registered, self.cfg.repos, self.api['_new_sh_whence'](alias))
+            if registration[0] == 'error':
+                raise HistoryError(registration[1])
+            if registration[0] == 'run':
+                block = self.api['_setup_block']({alias: path}, {}, None,
+                    time.strftime('%Y-%m-%d'), tool='t session resume')
+                after = before + ('\n' if before and not before.endswith('\n') else '') + '\n' + block
+                try:
+                    self.api['_config_write'](local_rc, before, after)
+                except (OSError, ValueError) as error:
+                    raise HistoryError('repository registration changed; retry resume') from error
+                self.api['zsh_capture']('_t_sync_config')
+            self.cfg.repos[alias] = path
+            self.local_identities[alias] = identity
+        return alias
 
     def shell(self, snippet):
         return ['zsh', '-lic', 'setopt no_monitor no_notify; source ' + shlex.quote(str(Path(self.root) / 't.plugin.zsh')) + '; ' + snippet]
@@ -642,6 +909,10 @@ class HistoryCommand:
         slot = target[1] if len(target) == 2 else inferred_slot if not target else ''
         if len(target) == 1 and target[0].isdigit():
             repo, slot = inferred_repo, target[0]
+        try:
+            repo = _resolve_repo(self.cfg.repos, repo) or repo
+        except ValueError as error:
+            raise HistoryError(str(error)) from error
         if repo not in self.cfg.repos:
             raise HistoryError('cannot infer repository; specify a registered repository alias')
         if slot and not re.fullmatch(r'[1-9][0-9]*', slot):
@@ -655,8 +926,8 @@ class HistoryCommand:
     def ingest(self, value, alias, source=None, host='local'):
         value = dict(value)
         value.pop('_scan', None)
-        identity = self.identity(alias)
-        if value.get('recorded_repo') and value['recorded_repo'] != identity:
+        identity = self.discovery_identities.get(alias) or self.identity(alias)
+        if value.get('recorded_repo') and not self.same_repository(value['recorded_repo'], identity):
             return
         if not identity.startswith('local:'):
             value['prs'] = value.get('prs', []) + [dict(repo=n.get('repo') or identity, number=n['number'], url=f'https://github.com/{n.get("repo") or identity}/pull/{n["number"]}') for n in value.pop('pr_numbers', [])]
@@ -665,12 +936,14 @@ class HistoryCommand:
             association = dict(original)
             slot = association_matches(association, self.cfg, alias)
             if slot is None:
-                continue
+                if value.get('agent') != 'codex' or not self.same_repository(value.get('recorded_repo', ''), identity):
+                    continue
+                slot = recorded_slot(association.get('workspace', ''))
             association.update(slot=slot, host=host)
             associations.append(association)
         if not associations:
             return
-        value.update(repo=self.identity(alias), associations=associations)
+        value.update(repo=identity, associations=associations)
         if source:
             value['sources'] = [dict(host=host, path=str(source), available=Path(source).is_file(), updated=value.get('updated') or Path(source).stat().st_mtime, size=Path(source).stat().st_size)]
             value['updated'] = max(value.get('updated', 0), Path(source).stat().st_mtime)
@@ -679,7 +952,9 @@ class HistoryCommand:
         except HistoryError:
             pass
 
-    def discover(self, alias):
+    def discover(self, alias, *, metadata_only=False):
+        identity = self.canonical_identity(self.identity(alias))
+        self.discovery_identities[alias] = identity
         home = Path.home()
         codex = Path(os.environ.get('CODEX_HOME') or home / '.codex')
         for directory, pattern, agent in [(home / '.claude/projects', '*/*.jsonl', 'claude'),
@@ -694,13 +969,18 @@ class HistoryCommand:
                     try:
                         with path.open() as stream:
                             first = json.loads(stream.readline())
-                        cwd = first.get('payload', {}).get('cwd', '')
-                        if association_matches(dict(workspace=cwd), self.cfg, alias) is None:
+                        payload = first.get('payload', {})
+                        if payload.get('thread_source') == 'subagent' or isinstance(payload.get('source'), dict) and 'subagent' in payload['source']:
+                            continue
+                        cwd = payload.get('cwd', '')
+                        git = first.get('payload', {}).get('git') or {}
+                        recorded_repo = slug(git.get('repository_url', '')) if isinstance(git, dict) else None
+                        if association_matches(dict(workspace=cwd), self.cfg, alias) is None and not self.same_repository(recorded_repo or '', identity):
                             continue
                     except (OSError, ValueError, AttributeError):
                         continue
                 try:
-                    value = self.store.scan(path, agent)
+                    value = self.store.scan(path, agent, metadata_only=True) if metadata_only else self.store.scan(path, agent)
                 except (HistoryError, OSError):
                     continue
                 if value.get('sid'):
@@ -730,9 +1010,13 @@ class HistoryCommand:
                 rows.append(row)
         return rows
 
-    def refresh(self, alias):
-        identity = self.identity(alias)
-        for host, target in self.cfg.hosts.items():
+    def refresh(self, alias, hosts=None):
+        identity = self.record_identity(alias)
+        targets = set()
+        for host, target in (self.cfg.hosts if hosts is None else hosts).items():
+            if target in targets:
+                continue
+            targets.add(target)
             try:
                 # Metadata only: no transcript transfer or implicit remote calls on browse.
                 text = run(['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=3', target,
@@ -741,10 +1025,11 @@ class HistoryCommand:
                 if not isinstance(rows, list):
                     raise HistoryError('invalid remote history')
                 for row in rows:
-                    if row.get('repo') != identity:
+                    if not self.same_repository(row.get('repo', ''), identity):
                         continue
                     row = dict(row)
                     validate(row)
+                    row['repo'] = identity
                     row.pop('owners', None)
                     for field in ('associations', 'sources'):
                         row[field] = [{**value, 'host': host} for value in row.get(field, [])]
@@ -753,19 +1038,20 @@ class HistoryCommand:
                 print(f't history: {host} unavailable; retained cached history', file=sys.stderr)
 
     def owners(self, all_hosts=False):
-        snippet = '_DEV_PS_AT=0; _DEV_PS_COMM=(); ' + ('_dev_rows_all' if all_hosts else "_dev_session_rows --details | awk 'NF {print \"local\\t\" $0}'")
+        snippet = '_DEV_PS_AT=0; _DEV_PS_COMM=(); ' + ('_dev_rows_all --best-effort' if all_hosts else "_dev_session_rows --details | awk 'NF {print \"local\\t\" $0}'")
         text = run(self.shell(snippet))
         return self.api['_parse_rows'](text, host_prefixed=True)
 
     def records(self, alias, slot='', owners=None):
-        identity = self.identity(alias)
+        identity = self.record_identity(alias) if alias in self.cfg.repos else alias
         rows = []
         for value in self.store.records():
-            if value['repo'] != identity:
+            if not self.same_repository(value['repo'], identity):
                 continue
             row = dict(value)
+            row['repo'] = identity
             row.setdefault('title', '')
-            row['owners'] = [owner for owner in owners or [] if owner['sid'] == row['sid'] and owner['agent'] == row['agent'] and (association_matches(dict(workspace=owner.get('cwd', '')), self.cfg, alias) is not None or any(a.get('host') == owner.get('host') and os.path.normpath(a['workspace']) == os.path.normpath(owner.get('cwd') or '') for a in row['associations']))]
+            row['owners'] = [owner for owner in owners or [] if owner['sid'] == row['sid'] and owner['agent'] == row['agent'] and (alias in self.cfg.repos and association_matches(dict(workspace=owner.get('cwd', '')), self.cfg, alias) is not None or any(a.get('host') == owner.get('host') and os.path.normpath(a['workspace']) == os.path.normpath(owner.get('cwd') or '') for a in row['associations']))]
             if len(row['owners']) == 1:
                 owner = row['owners'][0]
                 metadata = {}
@@ -782,7 +1068,19 @@ class HistoryCommand:
             row['display'] = history_display(row, alias)
             if not slot or any(a.get('slot') == slot for a in row['associations']):
                 rows.append(row)
-        return rows
+        merged = {}
+        for row in rows:
+            key = row['agent'], row['sid']
+            if key in merged:
+                previous = merged[key]
+                newer = row if row.get('updated', 0) >= previous.get('updated', 0) else previous
+                combined = {**previous, **newer}
+                for field in ('associations', 'sources', 'prs', 'mentions'):
+                    combined[field] = list({json.dumps(value, sort_keys=True): value for value in previous.get(field, []) + row.get(field, [])}.values())
+                merged[key] = combined
+            else:
+                merged[key] = row
+        return list(merged.values())
 
     def branch_prs(self, rows, refresh=False):
         grouped = {}
@@ -925,7 +1223,7 @@ class HistoryCommand:
     def verify_source(self, value, row):
         if value['sid'] != row['sid'] or value.get('agent') != row['agent']:
             return False
-        if value.get('recorded_repo') and value['recorded_repo'] != row['repo']:
+        if value.get('recorded_repo') and not self.same_repository(value['recorded_repo'], row['repo']):
             return False
         workspaces = {a['workspace'] for a in row['associations']}
         return any(a['workspace'] in workspaces for a in value.get('associations', []))
@@ -951,6 +1249,8 @@ class HistoryCommand:
         return run(['git', '-C', directory, 'rev-parse', 'origin/main^{commit}']).strip()
 
     def destination(self, alias, row, revision, owners):
+        if not self.worktree_enabled(alias):
+            raise HistoryError('repository opts out of worktree-per-session; no workspace was created')
         directory = self.cfg.repos[alias]
         base = Path(directory).name
         root = Path(self.cfg.worktree_root) / base
@@ -1040,10 +1340,13 @@ class HistoryCommand:
             return
         value = transcript(source, 'codex')
         helper = runpy.run_path(str(Path(self.root) / 'libexec/t_app_handoff.py'))
-        helper['assert_released']('Codex', row['sid'], value['associations'][0]['workspace'], self.api['_run'],
-            codex_home=str(Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex')),
-            rollout=str(source), archived=bool(row.get('archived')) and source.resolve().is_relative_to((Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex') / 'archived_sessions').resolve()),
-            retry='Release this conversation in its owning app or terminal, then reopen history.')
+        try:
+            helper['assert_released']('Codex', row['sid'], value['associations'][0]['workspace'], self.api['_run'],
+                codex_home=str(Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex')),
+                rollout=str(source), archived=bool(row.get('archived')) and source.resolve().is_relative_to((Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex') / 'archived_sessions').resolve()),
+                retry='Release this conversation in its owning app or terminal, then reopen history.')
+        except ValueError as error:
+            raise HistoryError(str(error)) from error
 
     def codex_target(self, row, default):
         codex = Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex')
@@ -1157,14 +1460,23 @@ class HistoryCommand:
             self.publish_transcript(target, data, row)
         return target
 
-    def resume(self, alias, row):
+    def resume(self, alias, row, *, detached=False, prepare_only=False):
         owners = self.owners(True)
         matches = [o for o in owners if o['sid'] == row['sid'] and o['agent'] == row['agent']]
         if len(matches) > 1:
             raise HistoryError('conversation has multiple reported owners; resolve ownership before resuming')
+        if matches and detached:
+            raise HistoryError('conversation became live; select its current owner again')
         if matches:
             return self.attach(matches[0])
+        destination_alias = alias if alias in self.cfg.repos else self.repository_alias(row['repo'])
+        if not self.worktree_enabled(destination_alias):
+            raise HistoryError('repository opts out of worktree-per-session; no saved conversation resumed')
+        self.strict_identity = True
         source = self.source(row)
+        alias = self.materialize_repository(row['repo']) if alias not in self.cfg.repos else alias
+        if not self.same_repository(self.identity(alias), row['repo']):
+            raise HistoryError('repository identity changed before resume')
         association, revision = self.revision(row)
         if not revision or run(['git', '-C', self.cfg.repos[alias], 'rev-parse', '--verify', revision + '^{commit}'], optional=True).strip() != revision:
             revision = self.fallback(alias)
@@ -1188,20 +1500,62 @@ class HistoryCommand:
                     actual = run(['git', '-C', destination, 'rev-parse', 'HEAD']).strip()
                     if actual != revision:
                         raise HistoryError('destination revision changed before restore; no conversation launched')
-                    if self.identity(alias) != row['repo']:
+                    if not self.same_repository(self.identity(alias), row['repo']):
                         raise HistoryError('repository identity changed before restore')
                     self.codex_released(row, source)
                     self.install_transcript(row, source, destination)
                     # Python holds the same POSIX cwd/SID locks as the zsh wrapper;
                     # use the claimed helper, never recursively acquire those locks.
-                    snippet = 'T_HISTORY_TOKEN=' + shlex.quote(self.reservation_token) + ' _dev_resume_session_claimed ' + shlex.join([f'dev-{alias}-{slot}', destination, row['sid'], row['agent'], 'history'])
-                    run(self.shell(snippet))
+                    snippet = '_T_RESUME_ALLOW_UNAVAILABLE=1 T_HISTORY_TOKEN=' + shlex.quote(self.reservation_token) + ' _dev_resume_session_claimed ' + shlex.join([f'dev-{alias}-{slot}', destination, row['sid'], row['agent'], 'history'])
+                    if not prepare_only:
+                        run(self.shell(snippet))
                 self.store.merge({**row, 'associations': [dict(workspace=destination, host='local', slot=slot, commit=revision, branch=run(['git', '-C', destination, 'branch', '--show-current']).strip(), generation=generation(destination), evidence='resume', observed=time.time())]})
             finally:
                 if self.reservation:
                     self.reservation.unlink(missing_ok=True)
                     self.reservation = None
+        if prepare_only:
+            return f'dev-{alias}-{slot}\t{destination}'
+        if detached:
+            return f'dev-{alias}-{slot}'
         return self.attach(dict(host='local', slot=f'{alias}-{slot}', sid=row['sid'], agent=row['agent'], cwd=destination, state='active'))
+
+    def resume_candidates(self, aliases):
+        """Private adapter: display aliases and immutable selection keys differ."""
+        all_repositories = aliases == ['--all'] or not aliases
+        if all_repositories:
+            identities = list(self.discover_catalog())
+        else:
+            identities = []
+            catalog = None
+            for alias in aliases:
+                if alias in self.cfg.repos:
+                    self.discover(alias, metadata_only=True)
+                    self.refresh(alias)
+                    identities.append(self.record_identity(alias))
+                elif REPO_IDENTITY.fullmatch(alias):
+                    if catalog is None:
+                        catalog = self.discover_catalog()
+                    identities.extend(identity for identity in catalog if self.same_repository(identity, alias))
+                else:
+                    raise HistoryError('unknown repository: ' + alias)
+        seen = set()
+        for identity in identities:
+            local_alias = self.repository_alias(identity)
+            if not self.worktree_enabled(local_alias):
+                continue
+            alias = local_alias or identity
+            for row in self.records(alias):
+                key = (identity, row['agent'], row['sid'])
+                if key in seen or not row.get('title') or not row.get('sources') or not row.get('associations'):
+                    continue
+                seen.add(key)
+                association = max(row['associations'], key=lambda a: a.get('observed', 0))
+                source = max(row['sources'], key=lambda s: (s.get('updated', 0), s.get('size', 0)))
+                updated = int(row.get('updated', 0))
+                when = datetime.datetime.fromtimestamp(updated).strftime('%b %d %H:%M')
+                yield '\t'.join(map(str, [updated, alias, association.get('slot') or '-', row['sid'],
+                    association['workspace'], when, clean(row['title']), source.get('host') or '-', row['agent'], row.get('last_turn', '-'), identity]))
 
     def execute(self, args):
         alias, slot = self.scope(args.target)

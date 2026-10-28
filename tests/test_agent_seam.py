@@ -385,10 +385,10 @@ def test_zsh_t_install_reloads_only_when_the_chained_setup_wrote(zsh, tmp_path):
 
 def test_zsh_group_help_never_navigates_or_moves_chat(zsh):
     path = f"{REPO_ROOT / 'bin'}:{os.environ.get('PATH', '')}"
-    for command, expected in (("t repos cd api --help", "usage: t repos cd"),
+    for command, expected in (("t repo cd api --help", "usage: t repo cd"),
                               ("t cursor", "USAGE\n  t cursor"),
                               ("t cursor resume --help", "usage: t cursor resume"),
-                              ("t help repos path", "usage: t repos path")):
+                              ("t help repo locate", "usage: t repo locate")):
         r = zsh(f'old=$PWD; {command}; echo "same=$([[ $PWD == $old ]] && echo yes)"', PATH=path)
         assert r.returncode == 0, r.stderr
         assert expected in r.stdout
@@ -711,7 +711,7 @@ def test_zsh_repos_cd_enters_checkout_named_t(zsh):
     checkout.mkdir(parents=True)
     local = zsh.home / ".zshrc.local"
     local.write_text(local.read_text() + 'DEV_REPOS[t]="$HOME/code/t"\n')
-    r = zsh('t repos cd t; pwd; t repos cd missing; echo status=$?')
+    r = zsh('t repo cd t; pwd; t repo cd missing; echo status=$?')
     assert r.returncode == 0, r.stderr
     assert r.stdout.splitlines() == [str(checkout), "status=1"]
     assert "unknown repo 'missing'" in r.stderr
@@ -1460,7 +1460,7 @@ def test_zsh_repo_slots_sees_codex_only_slots(zsh):
     assert zsh("_dev_repo_slots api").stdout.split() == ["7", "12"]
 
 
-# ─── across machines: the rollout scan, the beam sync, csync's codex pair ────────
+# ─── across machines: the rollout scan and direct beam transfer ───────────────
 
 RSYNC_STUB = "#!/bin/bash\nprintf '%s\\n' \"$*\" >> \"$RSYNC_LOG\"\nexit 0\n"
 
@@ -2219,8 +2219,10 @@ def test_zsh_resume_picker_shows_the_display_column_for_every_row(zsh, tmp_path)
     assert "rc=130" in r.stdout.splitlines(), r.stdout                    # Esc cancels without spawning work
     rows = log.read_text().splitlines()
     assert len(rows) == 3, rows                                # the subagent thread adds no row
-    assert rows[0].split()[:5] == ["4", "✱", "claude", "●", "active"]   # the live slot pins to the top, agent named
-    dead = sorted(rows[1:])
+    # No transcript records a turn timestamp here: deterministic identity ties
+    # leave the live slot after saved slot 3 instead of pinning it to the top.
+    assert rows[-1].split()[:5] == ["4", "✱", "claude", "●", "active"]
+    dead = sorted(rows[:-1])
     assert dead[0].split()[:3] == ["3", "✱", "claude"] and dead[0].endswith("fix the login bug")
     assert dead[1].split()[:3] == ["3", "⬡", "codex"] and "Reply with exactly the word OK" in dead[1]
     assert not any(row.strip() in ("claude", "codex", "-") for row in rows)   # never a bare field
@@ -2230,11 +2232,11 @@ def test_zsh_resume_picker_shows_the_display_column_for_every_row(zsh, tmp_path)
     assert {row[4:12] for row in rows} == {"✱ claude", "⬡ codex "}
     # The header exposes every available filter; agent names remain in the rows.
     header = semantic_chrome((tmp_path / "fzf.log.header").read_text()).splitlines()
-    assert header[0] == "Enter resume · Esc · Space/Tab mark ✓ · Ctrl-/ details"
     controls = "\n".join(header)
-    assert 'FILTERS' in header and 'Ctrl-L live: shown' in controls
-    for control in ("Ctrl-G agent: all", "Ctrl-O host: all", "Ctrl-R repo: all",
-                    "Ctrl-A all", "Ctrl-F defaults", "0 hidden"):
+    for control in ("Ctrl-G agent", "Ctrl-O host", "Ctrl-R repo", "Ctrl-L live",
+                    "Ctrl-A all", "Ctrl-F reset", "0 hidden", "live: shown",
+                    "Sort: last turn", "Alt-T last turn", "Alt-R repo",
+                    "Alt-G agent", "Alt-O host", "Alt-V session"):
         assert control in controls
     assert "Ctrl-D" not in controls  # Resume has no historical interface metadata.
 
