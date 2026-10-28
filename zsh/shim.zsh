@@ -706,8 +706,7 @@ _t_beam_xlate() { _t_beam "$@"; }
 # (zsh's own help is `run-help` / ESC-h; this doesn't touch it.)
 # --- tab completion for our commands -------------------------------------
 # compinit already ran at the top of this file, so compdef is available here.
-# These helper names start with `_` so the `help` parser above skips them. (csync
-# takes no args, so it needs no completion.)
+# These helper names start with `_` so the `help` parser above skips them.
 #
 # `_t` — subcommand-aware completion for the single `t` command: verbs at position
 # 1; then the per-verb positional (a DEV_REPOS key for repo verbs, a REMOTE_HOSTS
