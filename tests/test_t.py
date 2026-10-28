@@ -1502,7 +1502,7 @@ def test_index_update_resets_on_inode_corruption_or_schema(t_mod, tmp_path, monk
     tx = _tx_file(tmp_path / "p" / "s.jsonl", _user("one"), _user("two"))
     assert t_mod._index_update(tx, str(cache))["n_prompts"] == 2
     cpath = cache / t_mod._index_key(tx)
-    # a NEW file at the same path (csync's rsync) → different inode → full rescan
+    # a NEW file at the same path (file replacement) → different inode → full rescan
     _tx_file(tmp_path / "p" / "s.new", _user("only"))
     os.replace(tmp_path / "p" / "s.new", tx)
     assert t_mod._index_update(tx, str(cache))["n_prompts"] == 1
