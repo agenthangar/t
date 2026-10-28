@@ -153,6 +153,40 @@ def _lock_dir(codex_home):
     return folder
 
 
+def _rollout_cwd(path, sid, *, exact=True):
+    """Read one bounded identity record, checking the opened file's identity."""
+    before = os.lstat(path)
+    if not stat.S_ISREG(before.st_mode):
+        raise ValueError("an unindexed Codex rollout is not a regular file")
+    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        opened = os.fstat(fd)
+        if (not stat.S_ISREG(opened.st_mode)
+                or (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino)):
+            raise ValueError("an unindexed Codex rollout changed during inspection")
+        with os.fdopen(fd, encoding="utf-8", closefd=False) as handle:
+            first = handle.readline(1024 * 1024 + 1)
+        if len(first) > 1024 * 1024:
+            raise ValueError("an unindexed Codex rollout has oversized identity metadata")
+        record = json.loads(first)
+    finally:
+        os.close(fd)
+    after = os.lstat(path)
+    if (not stat.S_ISREG(after.st_mode)
+            or (after.st_dev, after.st_ino) != (before.st_dev, before.st_ino)):
+        raise ValueError("an unindexed Codex rollout changed during inspection")
+    payload = record.get("payload") if isinstance(record, dict) else None
+    if (not isinstance(record, dict) or record.get("type") != "session_meta"
+            or not isinstance(payload, dict)):
+        raise ValueError("an unindexed Codex rollout has invalid identity metadata")
+    if not exact and payload.get("id") != sid:
+        return None
+    if (payload.get("id") != sid or not isinstance(payload.get("cwd"), str)
+            or not os.path.isabs(payload["cwd"])):
+        raise ValueError("an unindexed Codex rollout has invalid identity metadata")
+    return payload["cwd"]
+
+
 def _rollout_cwds(codex_home, sid):
     """Read only identity metadata for an unindexed writer, never chat content."""
     known = set()
@@ -168,21 +202,58 @@ def _rollout_cwds(codex_home, sid):
             raise ValueError("a Codex rollout directory is not a real directory")
         for directory, _, files in os.walk(root, onerror=unreadable):
             for name in files:
-                if not name.startswith("rollout-") or not name.endswith(sid + ".jsonl"):
-                    continue
-                path = os.path.join(directory, name)
-                if not stat.S_ISREG(os.lstat(path).st_mode):
-                    raise ValueError("an unindexed Codex rollout is not a regular file")
-                with open(path, encoding="utf-8") as handle:
-                    record = json.loads(handle.readline(1024 * 1024))
-                payload = record.get("payload") if isinstance(record, dict) else None
-                if (not isinstance(record, dict) or record.get("type") != "session_meta"
-                        or not isinstance(payload, dict) or payload.get("id") != sid
-                        or not isinstance(payload.get("cwd"), str)
-                        or not os.path.isabs(payload["cwd"])):
-                    raise ValueError("an unindexed Codex rollout has invalid identity metadata")
-                known.add(payload["cwd"])
+                if name.startswith("rollout-") and name.endswith(sid + ".jsonl"):
+                    known.add(_rollout_cwd(os.path.join(directory, name), sid))
     return known
+
+
+def _open_writer_cwds(path, sid, run):
+    """Resolve only exact thread metadata in files opened by lock holders.
+
+    Process cwd, executable and other threads on a shared backend are never
+    workspace evidence. Failed or oversized probes leave the writer unknown.
+    """
+    pids = ()
+    if run is None:
+        return set(), pids
+    try:
+        result = run(["lsof", "-nP", "-t", path], timeout=5)
+        lines = result.stdout.splitlines()
+        if (result.returncode or (result.stderr or "").strip()
+                or not lines or len(lines) > 32
+                or any(not line.isdecimal() or int(line) <= 0 for line in lines)):
+            return set(), pids
+        pids = tuple(sorted({int(line) for line in lines}))
+        result = run(["lsof", "-nP", "-p", ",".join(map(str, pids)), "-Fpn"], timeout=5)
+        if result.returncode or (result.stderr or "").strip() or len(result.stdout) > 1024 * 1024:
+            return set(), pids
+        paths = set()
+        owner = None
+        for line in result.stdout.splitlines():
+            if line.startswith("p"):
+                owner = int(line[1:]) if line[1:].isdecimal() else None
+            elif line.startswith("n") and owner in pids:
+                filename = line[1:]
+                name = os.path.basename(filename)
+                if os.path.isabs(filename) and name.startswith("rollout-") and name.endswith(".jsonl"):
+                    paths.add(filename)
+        if len(paths) > 128:
+            return set(), pids
+        cwds = {_rollout_cwd(filename, sid, exact=False) for filename in paths}
+        return cwds - {None}, pids
+    except (OSError, ValueError, UnicodeError, subprocess.SubprocessError):
+        return set(), pids
+
+
+def _unknown_writer_message(sid, pids):
+    owner = " (PID " + ", ".join(map(str, pids)) + ")" if pids else ""
+    inspect = ("Inspect holders with `ps -p " + ",".join(map(str, pids))
+               + " -o pid=,comm=` or `t session list`. " if pids else
+               "Look for this thread in Codex or `t session list`. ")
+    return (f"another loaded Codex conversation {sid}{owner} could not be matched to its worktree. "
+            + inspect +
+            "Finish and exit its identified CLI, or finish its turn and close the owning app; "
+            "allow any shared backend to release the writer, then retry resume")
 
 
 def _thread_cwds(codex_home, sid, *, for_close=False):
@@ -210,30 +281,38 @@ def _thread_cwds(codex_home, sid, *, for_close=False):
     return known
 
 
-def _other_cwd_owner(folder, sid, cwd, codex_home, *, unknown=None, for_close=False):
-    """Find a known writer in cwd; optionally record unindexed live writers.
-
-    All modes require readable indexes and check unindexed rollout metadata.
-    A remaining unassociated lock is not evidence of ownership of every cwd.
-    Handoffs retain their existing strict/diagnostic policy via ``unknown``.
-    """
+def _other_cwd_owner(folder, sid, cwd, codex_home, *, unknown=None, for_close=False, run=None):
+    """Prefer known worktree conflicts; otherwise retain the unknown policy."""
     if folder is None:
         return None
+    unresolved = []
     for entry in os.scandir(folder):
         other = entry.name.removesuffix(".lock")
         if not entry.name.endswith(".lock") or not _UUID.fullmatch(other) or other == sid:
             continue
         if not _lock_held(entry.path):
             continue
+        before = os.lstat(entry.path)
         cwds = _thread_cwds(codex_home, other, for_close=for_close)
+        pids = ()
         if not cwds:
-            if unknown is None and not for_close:
-                raise ValueError("another loaded Codex conversation could not be matched to its worktree")
+            cwds, pids = _open_writer_cwds(entry.path, other, run)
+            # A backend may publish its index or rollout while lsof is running.
+            cwds.update(_thread_cwds(codex_home, other, for_close=for_close))
+        if not _lock_held(entry.path):
+            continue
+        after = os.lstat(entry.path)
+        if (before.st_dev, before.st_ino) != (after.st_dev, after.st_ino):
+            raise ValueError("a Codex writer lock changed during inspection")
+        if not cwds:
+            unresolved.append((other, pids))
             if unknown is not None:
                 unknown.add(other)
             continue
         if any(os.path.realpath(path) == os.path.realpath(cwd) for path in cwds):
             return other
+    if unresolved and unknown is None and not for_close:
+        raise ValueError(_unknown_writer_message(*unresolved[0]))
     return None
 
 
@@ -362,7 +441,7 @@ def assert_released(bundle, sid, cwd, run, *, codex_home=None, rollout=None,
                              + _release_guidance(cwd, archived, run) + retry)
         try:
             other = _other_cwd_owner(folder, sid, cwd, codex_home, unknown=unknown,
-                                     for_close=for_close)
+                                     for_close=for_close, run=run)
         except ValueError as exc:
             raise ValueError(str(exc) + ". " + retry) from exc
         if other:
@@ -398,7 +477,7 @@ def preflight_cli_release(sid, cwd, *, codex_home, rollout, unknown=None,
             contract = "held"
         if contract is None:
             raise ValueError("the selected Codex conversation has no verifiable writer-lock contract")
-        other = _other_cwd_owner(folder, sid, cwd, codex_home, unknown=unknown)
+        other = _other_cwd_owner(folder, sid, cwd, codex_home, unknown=unknown, run=run)
         if other:
             raise ValueError("another Codex conversation in this worktree is still loaded "
                              f"({other}). " + _other_release_guidance(cwd, run) + retry)
@@ -432,7 +511,7 @@ def wait_cli_released(sid, cwd, *, codex_home, rollout, contract=None,
         deadline = time.monotonic() + timeout
         announced = False
         while True:
-            other = _other_cwd_owner(folder, sid, cwd, codex_home, unknown=unknown)
+            other = _other_cwd_owner(folder, sid, cwd, codex_home, unknown=unknown, run=run)
             if other:
                 raise ValueError("another Codex conversation in this worktree is still loaded "
                                  f"({other}). " + _other_release_guidance(cwd, run) + retry)

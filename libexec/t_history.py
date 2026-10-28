@@ -1344,7 +1344,7 @@ class HistoryCommand:
             helper['assert_released']('Codex', row['sid'], value['associations'][0]['workspace'], self.api['_run'],
                 codex_home=str(Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex')),
                 rollout=str(source), archived=bool(row.get('archived')) and source.resolve().is_relative_to((Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex') / 'archived_sessions').resolve()),
-                retry='Release this conversation in its owning app or terminal, then reopen history.')
+                retry='Retry: t session history, then select the conversation again.')
         except ValueError as error:
             raise HistoryError(str(error)) from error
 

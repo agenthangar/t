@@ -926,7 +926,7 @@ def test_handoff_scopes_unindexed_writers_using_rollout_metadata(handoff, target
         else:
             handoff.assert_released(None, SID, str(target['cwd']), run,
                                     **options(target, for_close=for_close))
-            assert not calls  # No control RPC or process signaling to the shared backend.
+            assert all(call[0] == 'lsof' for call in calls)  # Read-only inspection, no control RPC or signaling.
         assert handoff._lock_held(str(lock)) is True
     assert target['rollout'].exists()
 
@@ -979,12 +979,12 @@ def test_handoff_rejects_invalid_unindexed_rollout_evidence(handoff, target, tmp
                                    'payload': {'id': SID if problem == 'wrong_id' else OTHER,
                                                'cwd': 'relative' if problem == 'relative_cwd' else str(target['cwd'])}}))
     if problem == 'unreadable':
-        original_open = open
+        original_open = handoff.os.open
         def denied(filename, *args, **kwargs):
             if str(filename) == str(path):
                 raise PermissionError('denied')
             return original_open(filename, *args, **kwargs)
-        monkeypatch.setattr(handoff, 'open', denied, raising=False)
+        monkeypatch.setattr(handoff.os, 'open', denied)
     lock = target['locks'] / f'{OTHER}.lock'
     lock.touch()
     run, _ = process_table()
@@ -1007,3 +1007,202 @@ def test_close_rollout_search_rejects_uninspectable_directories(handoff, target,
         monkeypatch.setattr(handoff.os, 'walk', denied)
     with pytest.raises((ValueError, OSError)):
         handoff._rollout_cwds(str(target['home']), OTHER)
+
+
+def open_writer_probe(lock, paths, *, pids=(123, 456), failure=None, after_probe=None):
+    calls = []
+    def run(argv, **kwargs):
+        calls.append(argv)
+        assert argv[0] == 'lsof'
+        assert kwargs['timeout'] == 5
+        if '-t' in argv:
+            assert argv[-1] == str(lock)
+            if failure == 'owners':
+                return subprocess.CompletedProcess(argv, 2, '', 'denied')
+            if failure == 'bad_pid':
+                return subprocess.CompletedProcess(argv, 0, '123\nnot-a-pid', '')
+            return subprocess.CompletedProcess(argv, 0, '\n'.join(map(str, pids)), '')
+        assert argv == ['lsof', '-nP', '-p', ','.join(map(str, pids)), '-Fpn']
+        if failure == 'files':
+            return subprocess.CompletedProcess(argv, 1, '', 'denied')
+        if failure == 'raises':
+            raise subprocess.TimeoutExpired(argv, 5)
+        if after_probe:
+            after_probe()
+        text = f'p{pids[0]}\n' + '\n'.join('n' + str(path) for path in paths)
+        return subprocess.CompletedProcess(argv, 0, text, '')
+    return run, calls
+
+
+def unindexed_open_rollout(tmp_path, *, sid=OTHER, cwd=None, name='one'):
+    path = tmp_path / f'rollout-{name}.jsonl'
+    path.write_text(json.dumps({'type': 'session_meta', 'payload': {
+        'id': sid, 'cwd': str(cwd or tmp_path / 'elsewhere')}}) + '\nprivate transcript never needed\n')
+    return path
+
+
+@pytest.mark.parametrize('stage', ['resume', 'preflight', 'wait'])
+@pytest.mark.parametrize('workspace', ['other', 'same', 'symlink', 'conflicting'])
+def test_open_rollout_resolves_exact_unindexed_writer(handoff, target, tmp_path, stage, workspace):
+    lock = target['locks'] / f'{OTHER}.lock'
+    lock.touch()
+    alias = tmp_path / 'alias'
+    alias.symlink_to(target['cwd'], target_is_directory=True)
+    cwd = tmp_path / 'elsewhere' if workspace in ('other', 'conflicting') else alias if workspace == 'symlink' else target['cwd']
+    paths = [unindexed_open_rollout(tmp_path, cwd=cwd)]
+    if workspace == 'conflicting':
+        paths.append(unindexed_open_rollout(tmp_path, cwd=target['cwd'], name='two'))
+    run, calls = open_writer_probe(lock, paths)
+    def check():
+        if stage == 'resume':
+            return handoff.assert_released(None, SID, str(target['cwd']), run, **options(target))
+        if stage == 'preflight':
+            return handoff.preflight_cli_release(SID, str(target['cwd']), run=run, **options(target))
+        return handoff.wait_cli_released(SID, str(target['cwd']), run=run,
+                                         **options(target, contract='modern'))
+    with locked(lock, tmp_path):
+        if workspace == 'other':
+            check()
+        else:
+            with pytest.raises(ValueError, match='another Codex conversation in this worktree'):
+                check()
+        assert handoff._lock_held(str(lock)) is True
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize('problem', ['other_uuid', 'no_metadata', 'process_cwd', 'bad_json',
+                                      'relative_cwd', 'symlink', 'unreadable', 'owners',
+                                      'files', 'bad_pid', 'raises'])
+def test_open_writer_unresolved_diagnostic_is_targeted_and_private(
+        handoff, target, tmp_path, monkeypatch, problem):
+    lock = target['locks'] / f'{OTHER}.lock'
+    lock.touch()
+    path = unindexed_open_rollout(tmp_path, sid=SID if problem == 'other_uuid' else OTHER)
+    paths = [path]
+    if problem == 'no_metadata':
+        paths = []
+    elif problem == 'process_cwd':
+        paths = [tmp_path / 'elsewhere']  # Process cwd never establishes thread identity.
+    elif problem == 'bad_json':
+        path.write_text('not json\nsecret-argv')
+    elif problem == 'relative_cwd':
+        path.write_text(json.dumps({'type': 'session_meta', 'payload': {'id': OTHER, 'cwd': 'relative'}}))
+    elif problem == 'symlink':
+        link = tmp_path / 'rollout-link.jsonl'
+        link.symlink_to(path)
+        paths = [link]
+    elif problem == 'unreadable':
+        original = handoff._rollout_cwd
+        def denied(filename, *args, **kwargs):
+            if filename == str(path):
+                raise PermissionError('secret-argv')
+            return original(filename, *args, **kwargs)
+        monkeypatch.setattr(handoff, '_rollout_cwd', denied)
+    run, calls = open_writer_probe(lock, paths, failure=problem)
+    with locked(lock, tmp_path), pytest.raises(ValueError) as error:
+        handoff.assert_released(None, SID, str(target['cwd']), run, **options(target))
+    message = str(error.value)
+    assert OTHER in message and 'could not be matched to its worktree' in message
+    assert 'Finish and exit its identified CLI' in message
+    assert 'close the owning app' in message and 'shared backend' in message
+    assert 'secret-argv' not in message
+    assert ('PID 123, 456' in message) == (problem not in ('owners', 'bad_pid'))
+    assert all(call[0] != 'ps' for call in calls)
+
+
+def test_unresolved_writer_does_not_hide_later_known_conflict(handoff, target, tmp_path, monkeypatch):
+    known = 'ffffffff-eeee-dddd-cccc-bbbbbbbbbbbb'
+    for sid in (OTHER, known):
+        (target['locks'] / f'{sid}.lock').touch()
+    with sqlite3.connect(target['home'] / 'state_5.sqlite') as db:
+        db.execute('create table threads (id text, cwd text)')
+        db.execute('insert into threads values (?, ?)', (known, str(target['cwd'])))
+    scandir = handoff.os.scandir
+    def ordered(folder):
+        if folder == str(target['locks']):
+            with scandir(folder) as entries:
+                return iter(sorted(entries, key=lambda entry: entry.name))
+        return scandir(folder)
+    monkeypatch.setattr(handoff.os, 'scandir', ordered)
+    run, _ = process_table()
+    with locked(target['locks'] / f'{OTHER}.lock', tmp_path), locked(target['locks'] / f'{known}.lock', tmp_path):
+        with pytest.raises(ValueError, match=f'worktree is still loaded.*{known}'):
+            handoff.assert_released(None, SID, str(target['cwd']), run, **options(target))
+
+
+@pytest.mark.parametrize('change', ['release', 'publish', 'replace'])
+def test_writer_probe_rechecks_lock_and_new_metadata(handoff, target, tmp_path, monkeypatch, change):
+    lock = target['locks'] / f'{OTHER}.lock'
+    lock.touch()
+    replacement = tmp_path / 'replacement.lock'
+    replacement.touch()
+    def change_state():
+        if change == 'release':
+            lock.unlink()  # The held, unlinked old inode no longer claims this thread.
+        elif change == 'replace':
+            replacement.replace(lock)
+        else:
+            path = target['home'] / 'sessions' / f'rollout-{OTHER}.jsonl'
+            path.write_text(json.dumps({'type': 'session_meta', 'payload': {
+                'id': OTHER, 'cwd': str(tmp_path / 'elsewhere')}}))
+    run, _ = open_writer_probe(lock, [], after_probe=change_state)
+    with locked(lock, tmp_path), locked(replacement, tmp_path):
+        if change == 'replace':
+            with pytest.raises(ValueError, match='lock changed during inspection'):
+                handoff.assert_released(None, SID, str(target['cwd']), run, **options(target))
+        else:
+            handoff.assert_released(None, SID, str(target['cwd']), run, **options(target))
+
+
+@pytest.mark.parametrize('during', ['open', 'after_read', 'fifo'])
+def test_open_rollout_replacement_never_proves_workspace(handoff, tmp_path, monkeypatch, during):
+    path = unindexed_open_rollout(tmp_path)
+    replacement = unindexed_open_rollout(tmp_path, name='replacement')
+    original_open = handoff.os.open
+    original_lstat = handoff.os.lstat
+    calls = 0
+    if during == 'fifo':
+        replacement.unlink()
+        os.mkfifo(replacement)
+    def changing_open(filename, *args, **kwargs):
+        if during in ('open', 'fifo'):
+            replacement.replace(path)
+        return original_open(filename, *args, **kwargs)
+    def changing_lstat(filename):
+        nonlocal calls
+        calls += 1
+        if during == 'after_read' and calls == 2:
+            replacement.replace(path)
+        return original_lstat(filename)
+    monkeypatch.setattr(handoff.os, 'open', changing_open)
+    monkeypatch.setattr(handoff.os, 'lstat', changing_lstat)
+    with pytest.raises(ValueError, match='rollout changed during inspection'):
+        handoff._rollout_cwd(str(path), OTHER)
+
+
+@pytest.mark.parametrize('response', ['many_pids', 'zero_pid', 'oversized_output', 'many_files', 'other_pid'])
+def test_open_writer_probe_limits_and_pid_scope(handoff, tmp_path, response):
+    path = unindexed_open_rollout(tmp_path)
+    calls = []
+    def run(argv, **kwargs):
+        calls.append(argv)
+        if '-t' in argv:
+            text = '\n'.join(map(str, range(1, 34))) if response == 'many_pids' else '0' if response == 'zero_pid' else '123'
+        elif response == 'oversized_output':
+            text = 'x' * (1024 * 1024 + 1)
+        elif response == 'many_files':
+            text = 'p123\n' + '\n'.join(f'n/tmp/rollout-{i}.jsonl' for i in range(129))
+        else:
+            text = f'p999\nn{path}'
+        return subprocess.CompletedProcess(argv, 0, text, '')
+    cwds, pids = handoff._open_writer_cwds('/lock', OTHER, run)
+    assert not cwds
+    assert len(calls) == (1 if response in ('many_pids', 'zero_pid') else 2)
+    assert pids == (() if response in ('many_pids', 'zero_pid') else (123,))
+
+
+def test_open_writer_rejects_oversized_first_metadata_record(handoff, tmp_path):
+    path = unindexed_open_rollout(tmp_path)
+    path.write_text(' ' * (1024 * 1024 + 1))
+    with pytest.raises(ValueError, match='oversized identity metadata'):
+        handoff._rollout_cwd(str(path), OTHER)
