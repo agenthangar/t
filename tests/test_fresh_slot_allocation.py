@@ -67,3 +67,24 @@ DEV_REPOS[api]=/Users/local/code/api
 _dev_remote_app_owner api 2 1; print rc=$?
 ''')
     assert 'mini' in result.stdout and 'rc=0' in result.stdout
+
+
+def test_new_skips_t_slot_9_reserved_by_codex_desktop_on_mac(zsh):
+    """The reported `t open t --new` case must allocate 10, without --local."""
+    (zsh.home / 'code/t').mkdir(parents=True)
+    result = zsh(SETUP + r'''
+DEV_REPOS[t]="$HOME/code/t"
+REMOTE_HOSTS=(mac mac)
+_dev_slot_fresh() { (( $2 >= 9 )); }
+_dev_rows_all() {
+  print scan >> "$HOME/scans"
+  printf 'mac\tdesktop-id\t%s\tt-9\tapp\tactive\tDesktop\tcodex\n' "$HOME/code/t"
+}
+t open t --new; print rc=$?
+''')
+    refusal = ('t open: t 9 is reserved by the Codex desktop app on mac; '
+               'close it there and release the reservation before opening here')
+    assert refusal not in result.stderr, result.stdout + result.stderr
+    assert 'LAUNCH dev-t-10' in result.stdout, result.stdout + result.stderr
+    assert 'rc=0' in result.stdout
+    assert (zsh.home / 'scans').read_text().splitlines() == ['scan']
