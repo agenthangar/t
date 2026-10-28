@@ -3229,7 +3229,7 @@
           "tests": [
             "tests/test_remote_commands.py::test_remote_move_selects_current_cross_host_identity_and_destination"
           ],
-          "notes": "Single host picker waits for Enter even with one host; missing session uses shared selection on the source/target host. Cancellation returns 130. Source browsing skips unavailable peers while retaining reachable candidates; selected-source and transfer ownership checks remain strict. Host picker says Move this session to which host? and Destination host \u00b7 current host: SOURCE; selected host is the destination. SSH alias/target context is subordinate to the action heading."
+          "notes": "Single host picker waits for Enter even with one host; missing session uses shared selection on the source/target host. Cancellation returns 130. Source browsing skips unavailable peers while retaining reachable candidates; selected-source and transfer ownership checks remain strict. Host picker says Move this session to which host? and Destination host · current host: SOURCE; selected host is the destination. SSH alias/target context is subordinate to the action heading."
         },
         "explicit": {
           "argv": [
@@ -3303,7 +3303,7 @@
           "tests": [
             "tests/test_remote_commands.py::test_remote_host_picker_requires_explicit_enter_and_cancel"
           ],
-          "notes": "Single host picker waits for Enter even with one host; missing session uses shared selection on the source/target host. Cancellation returns 130. Unavailable registered hosts warn and are skipped; discovery retains local and reachable rows. Saved resumes retain local locks and known-owner checks, but cannot verify ownership on unavailable hosts. Local scan failures remain fatal. Host picker says Resume saved work on which host? and Browse this host\u2019s saved conversations; selected host supplies saved history and runs the resumed session. SSH alias/target context is subordinate to the action heading."
+          "notes": "Single host picker waits for Enter even with one host; missing session uses shared selection on the source/target host. Cancellation returns 130. Unavailable registered hosts warn and are skipped; discovery retains local and reachable rows. Saved resumes retain local locks and known-owner checks, but cannot verify ownership on unavailable hosts. Local scan failures remain fatal. Host picker says Resume saved work on which host? and Browse this host’s saved conversations; selected host supplies saved history and runs the resumed session. SSH alias/target context is subordinate to the action heading."
         },
         "explicit": {
           "argv": [
@@ -3841,10 +3841,10 @@
         }
       ],
       "status_marks": {
-        "attached": "\u25cf",
-        "detached": "\u25cb",
-        "active_context": "\u2713",
-        "still_in_progress": "\u21bb"
+        "attached": "●",
+        "detached": "○",
+        "active_context": "✓",
+        "still_in_progress": "↻"
       },
       "layouts": {
         "table": {
@@ -4088,8 +4088,8 @@
         "tests/test_command_behavior.py::test_history_display_contract_preserves_unknowns_preview_and_json"
       ],
       "status_marks": {
-        "saved": "\u00b7",
-        "archived": "\u25a1",
+        "saved": "·",
+        "archived": "□",
         "missing": "!"
       }
     }
