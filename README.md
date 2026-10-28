@@ -1204,7 +1204,7 @@ checked in CI; optional dotfiles integrations are identified explicitly.
   t agent install (login · update · reinstall)                ✓                                          ✓                                                              ✓
   dev slots: t session open / list / close / read / paste     ✓                                          ✓ t session open --codex · DEV_AGENT                           ✗ no slot — t cursor list
   t session push / pop                                        ✓                                          ✓                                                              ✗ no slot
-  t session resume (dead slots)                               ✓                                          ✓ (its sqlite thread index)                                    → t cursor resume
+  t session resume (saved conversations)                      ✓                                          ✓ (rollouts and thread index)                                  → t cursor resume
   t session move / --from                                     ✓                                          ✓ (rollout + .origin)                                          → t cursor send [id] --host / --from
   t session open-app (desktop + browser preview)              ✗ Codex conversations only                 ✓ local macOS slot → same thread                               ✗
   csync (iCloud union of transcripts)                         ✓ projects + plans                         ✓ codex-sessions                                               ✓ cursor-chats
