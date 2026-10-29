@@ -7,28 +7,35 @@ Codex displayed the intended thread.
 
 ## Ownership policy
 
-Opening and handoff checks protect the selected conversation's writer and reject
-known active conversations sharing its worktree. They inspect all held sibling
-locks, including entries after an unindexed lock. A held sibling lock without a
-thread-index row is diagnostic during these operations: it does not establish
-that the sibling is related or unrelated. Corrupt selected metadata and unsafe
-lock files remain errors.
+Opening, saved-history resume, and handoff checks protect the selected
+conversation's writer and reject known active conversations sharing its worktree.
+They inspect all held sibling locks, including entries after an unindexed lock.
+Readable indexes and validated rollout `session_meta` identify exact conversations
+and absolute workspaces. A still-unassociated lock can also be resolved through
+its verified holders' open rollout files, reading only the first metadata record.
+Any matching real workspace path blocks, including conflicting associations.
+Process working directories, executable names, other threads on a shared backend,
+and `--no-daemon` do not prove that a held writer belongs elsewhere.
 
-Close and cleanup retain strict checks for unknown writers. Releasing a desktop
-reservation can permit later worktree reuse, so the opening policy must not leak
-into those operations. Lock files used to coordinate t operations are separate
-from Codex's writer locks and do not replace Codex's own ownership claim.
+Saved resume refuses unresolved writers with the conversation UUID and verified
+holder PIDs when available. Finish and exit the identified CLI, or finish the turn
+and close the owning app; allow a shared backend to release its writer, then retry.
+Never delete locks, edit the state database, or archive an unidentified thread.
+Handoff operations using diagnostic collection and close retain their existing
+policy for unassociated locks: these alone do not establish worktree ownership.
+Unreadable indexes, corrupt metadata, and unsafe lock files remain errors. Known
+same-worktree writers block close before and after cleanup. t's operation locks
+remain separate from Codex's own writer claim.
 
-Fresh Codex launches use `--no-daemon` to avoid shared-server feature conflicts.
-Ordinary saved resumes retain the configured/default backend. Returning from
-desktop and the existing recovery action also use `--no-daemon`. A shared backend may
-retain the selected writer after its CLI exits; handoff waits up to 75 seconds,
-then leaves the worktree reserved and prints a retry command.
+Fresh and resumed Codex CLI launches use `--no-daemon` for invocation-local
+backends. This prevents new sharing; it cannot release an existing shared writer.
+A backend may retain the selected writer after its CLI exits; handoff waits up to
+75 seconds, then leaves the worktree reserved and prints a retry command.
 
 The [background-server regression cases](codex-background-server.md) also cover
 fresh-start prevention and empty desktop-slot close. Empty reservations can be
-released while the app stays open after strict worktree checks; unknown writers
-still block close. Saved, unarchived conversations retain the release requirement.
+released while the app stays open after worktree checks; known same-worktree
+writers still block close. Saved, unarchived conversations retain the release requirement.
 
 ## Automated acceptance
 
@@ -47,9 +54,9 @@ of measured binaries must be launched without inherited `COV_CORE_*` variables.
 | Fresh `--app` or configured app mode | Reserved worktree, Codex-mode workspace route, no terminal agent |
 | App → CLI → app | Same thread and worktree at each transition; correct reservation changes |
 | CLI → app → CLI | Original history survives, and only the verified source client is stopped |
-| Other held locks absent from the index | Diagnostic during handoff; selected and known worktree conflicts still block |
+| Other held locks absent from the index | Resolve exact rollout identity, including verified holders’ open files; unresolved saved resume gives targeted recovery and known worktree conflicts take priority |
 | Failed transfer or backend timeout | Worktree, edits, preview server, and reservation remain protected |
-| Close with unknown writers | Reservation is retained |
+| Close with unassociated writers | Preserve the existing close policy; known same-worktree writers retain the reservation |
 
 The native macOS test uses a disposable receiver app to verify window creation
 and exact deep-link delivery. It does not prove Codex's UI behavior. The

@@ -299,3 +299,25 @@ def test_open_compact_layout_and_search(t_mod, monkeypatch, capsys, width, remot
         assert 'api-2' in first[4]
     if width >= 120:
         assert '⬡ codex' in first[4] and '› cli' in first[4]
+
+
+@pytest.mark.parametrize('status', [0, 7])
+def test_progress_animation_keeps_exit_hooks_in_parent(zsh, status):
+    result = zsh(r'''
+      autoload -Uz add-zsh-hook
+      terminal_save() { print -u2 -- "SESSION_SAVE subshell=$ZSH_SUBSHELL"; }
+      TRAPEXIT() { print -u2 -- "EXIT_TRAP subshell=$ZSH_SUBSHELL"; }
+      add-zsh-hook zshexit terminal_save
+      _T_PROGRESS=1
+      work() { sleep 0.4; print -u2 OPERATION_DIAGNOSTIC; return ''' + str(status) + r'''; }
+      _t_with_progress 'Testing animation' work
+      print -r -- "OPERATION_RC=$?"
+    ''', _tty=True, TERM='xterm-256color')
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, output
+    assert output.count('SESSION_SAVE') == 1, output
+    assert output.count('EXIT_TRAP') == 1, output
+    assert 'SESSION_SAVE subshell=0' in output
+    assert 'EXIT_TRAP subshell=0' in output
+    assert f'OPERATION_RC={status}' in output
+    assert 'OPERATION_DIAGNOSTIC' in output

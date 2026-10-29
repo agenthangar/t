@@ -3810,6 +3810,34 @@
         }
       }
     },
+    "config workflow sync": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "plain",
+      "scope": "pending account-local revisions and registered SSH hosts; no repository inference or picker",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_workflow_sync.py::test_sync_cli_and_readonly_status"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "config",
+            "workflow",
+            "sync"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_workflow_sync.py::test_sync_cli_and_readonly_status"
+          ]
+        }
+      },
+      "notes": "Bounded retries through owning runtime control socket and nonrecursive zsh -lic SSH. Never injects turns. Current turns and native instruction reload remain unverified."
+    },
     "config workflow runners list": {
       "patterns": [
         "list",
@@ -4646,10 +4674,7 @@
     "config workflow exclude": "_cmd_workflow workflow_repo",
     "config workflow inherit": "_cmd_workflow workflow_repo",
     "config workflow instructions show": "_cmd_workflow workflow_repo",
-    "config workflow instructions edit": "_cmd_workflow workflow_repo",
-    "config workflow runners list": "_cmd_workflow_runners _runner_scope",
-    "config workflow runners edit": "_cmd_workflow_runners _runner_scope",
-    "config workflow runs start": "_cmd_workflow_runs _runner_scope and canonical checkout identity"
+    "config workflow instructions edit": "_cmd_workflow workflow_repo"
   },
   "command_aliases": {
     "list_verbs": {

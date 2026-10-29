@@ -2911,6 +2911,17 @@ def cmd_repo(cfg, args):
     return 0
 
 
+def _workflow_launch_settings(cfg, settings):
+    """Stage explicit remote defaults through the existing authoritative writer."""
+    helper = _workflow()
+    target = Path(os.path.realpath(getattr(cfg, "local_rc", None) or _current_local_rc()))
+    before = helper["snapshot"](target)
+    changes = {"DEV_MODEL[codex]" if key == "model" else "DEV_EFFORT[codex]": value
+               for key, value in settings.items()}
+    after = _config_text(before[0] if before else "", changes, _config_state(cfg))
+    return [(target, before, after)]
+
+
 def _cmd_workflow(cfg, args):
     try:
         verb = getattr(args, "workflow_action", None)
@@ -2921,6 +2932,34 @@ def _cmd_workflow(cfg, args):
             verb = "list" if args.show else "edit" if getattr(args, "edit", False) else None
         if not getattr(args, "workflow", False) or not verb:
             raise ValueError("use t config workflow list or t config workflow edit [--repo ALIAS]")
+        if verb == "sync":
+            helper = _workflow()
+            sync = helper["propagation"]()
+            if getattr(args, "workflow_receive", False):
+                print(json.dumps(sync["receive"](json.load(sys.stdin), cfg.repos,
+                                                       settings_writer=lambda settings: _workflow_launch_settings(cfg, settings))))
+            else:
+                document, stored = helper["load"]()
+                if stored and not sync["status"]()["revision"]:
+                    # Explicit sync also adopts preferences saved before this feature.
+                    settings = {key: value for key, value in
+                                (("model", getattr(cfg, "models", {}).get("codex")),
+                                 ("effort", getattr(cfg, "efforts", {}).get("codex"))) if value}
+                    context = {"repos": cfg.repos, "hosts": getattr(cfg, "hosts", {})}
+                    source = getattr(cfg, "local_rc", None)
+                    snapshot = helper["snapshot"](os.path.realpath(source)) if source else None
+                    requested = settings
+                    settings = sync["verified_settings"](snapshot[0], settings) if snapshot else {}
+                    context["unverified_main_defaults"] = sorted(set(requested) - set(settings))
+                    if snapshot and settings:
+                        context["settings_source"] = {"path": os.path.realpath(source), "hash": sync["digest"](snapshot[0])}
+                    state = sync["changed"](helper["defaults"](), document, settings=settings, context=context)
+                else:
+                    state = sync["retry"]()
+                print("Propagation: " + state["runtime"])
+                for target, value in state.get("hosts", {}).items():
+                    print(f"Host {target}: {value}")
+            return 0
         alias = getattr(args, "workflow_repo", None)
         name = getattr(args, "workflow_name", None)
         all_workflows = getattr(args, "all_workflows", False)
@@ -2942,6 +2981,7 @@ def _cmd_workflow(cfg, args):
         if verb == "list":
             if all_workflows:
                 result = helper["catalogue"](document)
+                result["propagation"] = helper["propagation"]()["status"]()
                 if getattr(args, "json", False):
                     print(helper["encode"](result), end="")
                 else:
@@ -2960,6 +3000,7 @@ def _cmd_workflow(cfg, args):
                       "workflow_name": None if "inline" in entry else helper["source"](document, repository),
                       "excluded": entry.get("excluded", False),
                       "workflow": helper["effective"](document, repository)}
+            result["propagation"] = helper["propagation"]()["status"]()
             result.update(helper["policy_summary"](result["workflow"]))
             result["preference_source"] = helper["source"](document, repository)
             if not getattr(args, "workflow_action", None) or getattr(args, "json", False):
@@ -2971,6 +3012,7 @@ def _cmd_workflow(cfg, args):
                 print("Enabled: " + ("yes" if result["workflow"]["enabled"] else "no"))
                 print("Test runners: " + helper["runners_summary"](result["workflow"]))
                 print("Preference source: " + result["preference_source"])
+                print("Propagation: " + result["propagation"]["runtime"])
                 print("\n".join(helper["summary_lines"](result["workflow"])))
                 print("Precedence: " + result["precedence"])
                 print("\n".join(_table_lines(("STAGE", "MODEL", "EFFORT"),
@@ -2989,7 +3031,7 @@ def _cmd_workflow(cfg, args):
         if after == document:
             print("Workflow unchanged — nothing written")
         else:
-            helper["save"](after, before)
+            helper["save"](after, before, propagation_context={"repos": cfg.repos, "hosts": getattr(cfg, "hosts", {})})
             print("✓ saved agent workflow and native instructions")
         return 0
     except (OSError, ValueError) as exc:
@@ -3219,6 +3261,7 @@ def cmd_config(cfg, args):
             return 130
         if result == "local":
             return _local_setup(args)
+        initial_settings = _config_state(cfg)
         shell_changed, workflow_changed = result == "edit", False
         if result == "edit":
             rc = _config_editor()
@@ -3234,8 +3277,9 @@ def cmd_config(cfg, args):
                 print("Settings unchanged — nothing written")
                 return 0
             after = _config_text(before, changes, current)
-            if workflow_changed:
-                helper = _workflow()
+            helper = _workflow()
+            main_settings = helper["propagation"]()["settings_delta"](current, _config_state(result))
+            if workflow_changed or main_settings:
                 extra = []
                 if changes:
                     target = Path(os.path.realpath(_current_local_rc()))
@@ -3243,7 +3287,12 @@ def cmd_config(cfg, args):
                     if (local_before[0] if local_before else "") != before:
                         raise ValueError("local config changed while editing; retry")
                     extra.append((target, local_before, after))
-                helper["save"](result._workflow_document, result._workflow_before, extra)
+                workflow_doc, workflow_before = (result._workflow_document, result._workflow_before) if workflow_changed else helper["load"]()
+                sync = helper["propagation"]()
+                helper["save"](workflow_doc, workflow_before, extra, main_settings=main_settings,
+                               propagation_context={"repos": result.repos, "hosts": getattr(result, "hosts", {}),
+                                                    "settings_source": {"path": os.path.realpath(_current_local_rc()),
+                                                                        "hash": sync["digest"](after)}})
             else:
                 _config_write(_current_local_rc(), before, after)
             targets = _host_new_targets(cfg.hosts, result.hosts)
@@ -3252,11 +3301,22 @@ def cmd_config(cfg, args):
         return 1
     except KeyboardInterrupt:
         return 130
+    if shell_changed:
+        zsh_capture("_t_sync_config")
+        helper = _workflow()
+        sync = helper["propagation"]()
+        updated_settings = _config_state(result) if result != "edit" else _config_state(Config())
+        settings = sync["settings_delta"](initial_settings, updated_settings)
+        if settings and result == "edit":
+            document, _ = helper["load"]()
+            sync["changed"](document, document, settings=settings,
+                            context={"repos": cfg.repos, "hosts": getattr(cfg, "hosts", {}),
+                                     "settings_source": {"path": os.path.realpath(_current_local_rc()),
+                                                         "hash": sync["digest"](_config_read(_current_local_rc()))}})
     if workflow_changed:
         print("✓ saved agent workflow and native instructions")
     if not shell_changed:
         return 0
-    zsh_capture("_t_sync_config")
     print("✓ saved local settings to T_LOCAL_RC")
     try:
         _host_verify_offer(targets)
@@ -10554,7 +10614,7 @@ COMMAND_GROUPS = {
                "onboard": ("config", "--onboard"), "local": ("config", "--local"),
                "workflow": {"list": ("config", "workflow", "list"),
                             "edit": ("config", "workflow", "edit"),
-                            **{verb: ("config", "workflow", verb) for verb in ("add", "use", "exclude", "inherit")},
+                            **{verb: ("config", "workflow", verb) for verb in ("add", "use", "exclude", "inherit", "sync")},
                             "instructions": {verb: ("config", "workflow", "instructions", verb) for verb in ("show", "edit")},
                             "runners": {verb: ("config", "workflow", "runners", verb) for verb in ("list", "edit", "setup")},
                             "runs": {verb: ("config", "workflow", "runs", verb) for verb in ("start", "list", "status", "logs", "artifacts", "cancel", "cleanup")}}},
@@ -10826,6 +10886,7 @@ LEARN MORE
   t config workflow instructions <verb> [NAME] [--repo ALIAS]
   t config workflow runners <verb> [arguments] [flags]
   t config workflow runs <verb> [arguments] [flags]
+  t config workflow sync
 
 COMMANDS
   list          Print effective settings or the named catalogue with --all
@@ -10837,6 +10898,7 @@ COMMANDS
   instructions  Show or edit human-written Markdown instructions
   runners       Configure GitHub or SSH test targets; bootstrap a private broker
   runs          Test a current worktree snapshot and inspect retained results
+  sync          Retry pending local and registered-host propagation
 
 SCOPE
   Omit --repo for the global workflow. --repo selects a registered repository
@@ -10847,7 +10909,9 @@ SCOPE
   List labels inherited settings and recommended defaults that are not saved.
   Config menus separately control model stages, behavior preferences and Markdown.
   Task/repo rules prevail; Markdown overrides preferences, then stage guidance.
-  Edits validate before saving workflow and native agent instructions.
+  Edits publish native instructions, then reconcile supported loaded sessions.
+  List reports propagation without connecting or retrying. Sync retries pending work.
+  Instruction reload and current-turn settings cannot be verified or forced.
 
 LEARN MORE
   t help config workflow <verb>
@@ -11561,6 +11625,10 @@ EXPLICIT PUSH AND PULL
 
   History never automatically resumes a sole conversation.
 
+  An unresolved Codex writer refusal names its thread and verified holder PIDs.
+  Finish and exit the identified CLI, or finish the turn and close its owning app;
+  allow any shared backend to release the writer, then retry. Never delete locks.
+
   Rows show the same status, interface, recorded model, host, session, and
   working-on summary as t session list.
 
@@ -11933,7 +12001,10 @@ RECEIVE AND REMOTE MOVES
   Removed hosts stop participating in remote t commands; unregistering repos keeps
   their files and sessions.
 
-  Tool/model/effort/speed defaults apply to fresh tmux and --fg sessions only.
+  Fresh tmux and --fg sessions use tool/model/effort/speed defaults. Explicit
+  Codex model/effort changes also reconcile supported loaded root threads for
+  subsequent turns; current turns and instruction reload remain unverified.
+  Speed is preserved. Use `t config workflow sync` to retry pending propagation.
 
   Open local config in editor covers all custom shell settings (VISUAL/EDITOR, else
   vi).
@@ -11976,6 +12047,9 @@ RECEIVE AND REMOTE MOVES
         if verb == "list":
             leaf.add_argument("--all", dest="all_workflows", action="store_true", help="list named catalogue and assignments")
             leaf.add_argument("--json", action="store_true", help="print workflow values as JSON")
+    sync = workflow_sub.add_parser("sync", help="retry pending workflow propagation without starting turns",
+                                   description="Retry pending local and registered-host reconciliation. No repository inference or picker. Native instruction reload remains unverified.")
+    sync.add_argument("--receive", dest="workflow_receive", action="store_true", help=argparse.SUPPRESS)
     instructions = workflow_sub.add_parser("instructions", help="show or edit a workflow's Markdown instructions")
     instructions_sub = instructions.add_subparsers(dest="workflow_instructions_action")
     for verb in ("show", "edit"):

@@ -826,7 +826,7 @@ _t() {
   fi
   if [[ $group == config && $action == workflow ]]; then
     if (( CURRENT == first )); then
-      _values 'workflow resource or verb' list ls add use exclude inherit edit instructions runners runs
+      _values 'workflow resource or verb' list ls add use exclude inherit edit instructions runners runs sync
     elif [[ ${words[CURRENT-1]} == --repo ]]; then
       _values 'repo' "${(@f)$(_dev_repo_selectors)}"
     elif [[ ${words[first]} == instructions ]] && (( CURRENT == first + 1 )); then
@@ -845,6 +845,8 @@ _t() {
       _values 'flag' --repo --all --json -h --help
     elif [[ ${words[first]} == add ]]; then
       _values 'flag' --from -h --help
+    elif [[ ${words[first]} == sync ]]; then
+      _values 'flag' -h --help
     else
       _values 'flag' --repo -h --help
     fi

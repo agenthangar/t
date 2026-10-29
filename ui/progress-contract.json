@@ -201,6 +201,10 @@
       "kind": "background",
       "reason": "Starts isolated Codex; its events are task artifacts and task_status provides status over MCP."
     },
+    "libexec/t_workflow_sync.py::subprocess.Popen": {
+      "kind": "background",
+      "reason": "SessionStart launches a detached try-lock retry worker and never waits for runtime or SSH reconciliation."
+    },
     "libexec/t_runner_job.py:_git:subprocess.check_output": {
       "kind": "protocol",
       "reason": "Snapshot reads Git metadata in the bounded runner protocol; the initiating CLI owns progress."

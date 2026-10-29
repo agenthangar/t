@@ -606,7 +606,11 @@ def publish(changes):
             pending.unlink(missing_ok=True)
 
 
-def save(document, before, extra=(), preserve_storage=False):
+def propagation():
+    return __import__('runpy').run_path(str(Path(__file__).with_name('t_workflow_sync.py')))
+
+
+def save(document, before, extra=(), preserve_storage=False, propagation_context=None, propagate=True, main_settings=None):
     """Publish explicit preferences and native instruction updates under one lock."""
     document = validate(document)
     path = config_path()
@@ -618,7 +622,24 @@ def save(document, before, extra=(), preserve_storage=False):
         if snapshot(path) != before:
             raise ValueError('workflow configuration changed while editing; retry')
         changes = native_changes(document)
-        publish([*changes, *extra, (path, before, before[0] if preserve_storage and before else encode(document))])
+        publication = [*changes, *extra, (path, before, before[0] if preserve_storage and before else encode(document))]
+        reconcile = propagate and not preserve_storage and (before is None or validate(decode(before[0])) != document or bool(main_settings))
+        helper = propagation() if reconcile else None
+        if helper:
+            # Intent and preferences publish together; journal failures roll back
+            # the native files too. Runtime work begins only after both locks exit.
+            with helper['locked']():
+                previous = validate(decode(before[0])) if before else defaults()
+                state = helper['desired'](previous, document, settings=main_settings, context=propagation_context)
+                journal = helper['state_path']()
+                publish([*publication, (journal, snapshot(journal), encode(state))])
+        else:
+            publish(publication)
+    if helper:
+        try:
+            helper['retry']()
+        except (OSError, ValueError):
+            print('t workflow: preferences saved; propagation pending, retry with t config workflow sync', file=sys.stderr)
 
 
 def sync():
