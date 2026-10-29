@@ -1877,7 +1877,7 @@ _t_app_pull_slot() {
   [[ $codex_home == /* && -d $codex_home ]] || {
     print -u2 -- 't app pull: the selected Codex home is unavailable'; return 1
   }
-  launch="export CODEX_HOME=${(q)codex_home}; exec codex resume ${(q)sid} --cd ${(q)dir} --no-daemon"
+  launch="export CODEX_HOME=${(q)codex_home}; exec $(CODEX_HOME="$codex_home" _dev_agent_resume_cmd codex "$sid" --cd "$dir")"
   local fg_sid fg_rest fg_cwd
   while IFS=$'\t' read -r fg_sid fg_rest; do
     fg_cwd=${fg_rest%%$'\t'*}

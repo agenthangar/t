@@ -989,6 +989,7 @@ _dev_attach_fg() {
   fi
   tsess=${sel%%$'\t'*}
   label=$(print -r -- "$sel" | awk -F'\t' '{print $5}')
+  _dev_workflow_attach "${sel##*$'\t'}"
   echo "Attaching $label in place (tmux session $tsess)"
   if [[ ! -t 1 || -n $CLAUDE_CODE_SESSION_ID ]]; then
     echo "  Attach: tmux attach -t $tsess"       # no TTY, or we are inside an agent
@@ -2375,6 +2376,7 @@ _t_history_attach() {
   [[ $actual_sid == $sid && ${actual_dir:A} == $dir && $actual_agent == $agent ]] || {
     print -u2 't history: selected owner changed; reopen history'; return 1
   }
+  _dev_workflow_attach "$agent"
   if [[ -n $TMUX ]]; then tmux switch-client -t "$immutable:"
   else tmux attach-session -t "$immutable:"; fi
 }
@@ -2870,6 +2872,7 @@ _t_dev() {
 
 # MCP lifecycle calls leave the existing or newly created slot detached.
 _t_session_attach() {
+  _dev_workflow_attach "$(_dev_agent_of_session "$1")"
   if [[ ${T_MCP_DETACHED:-0} == 1 ]]; then
     tmux has-session -t "=$1:" || return 1
     print -r -- "Available: $1 (detached control; existing viewers unchanged)"

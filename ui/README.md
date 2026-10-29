@@ -207,6 +207,25 @@ while retaining preferences and prose. The JSON policy optionally accepts
 `stages_enabled` (default true) and `behaviors` (default absent); older v1/v2
 documents remain untouched on reads and migrate when saved or synchronized.
 
+Guarded dormant Codex resume/restart and app-to-CLI handoff read the latest
+applicable explicit main model/effort checkpoint immediately before constructing
+the launch command. Those overrides replace saved thread model/effort, with
+explicit invocation overrides taking precedence. Repository exclusions (including
+linked worktrees), indexed child agents, changed source guards, and malformed
+checkpoints suppress these overrides. Speed and permissions are retained. A live
+attach preserves its existing owner, schedules a bounded service retry, and
+explains that isolated sessions require guarded resume/restart. Attaching does
+not restart a process or begin a turn. Native desktop URL reopen has no verified
+model override; its runtime/instruction refresh remains unverified.
+
+The installed package includes a pinned, licensed private Tomli fallback for
+Python 3.9 hosts. Update/install needs no network package download or system pip
+changes to parse native settings and tool inventory. The owning app-server proxy
+is a raw WebSocket tunnel: reconciliation performs the HTTP Upgrade handshake
+and masked framing, without starting another backend. Only threads loaded by
+that service are reachable; isolated `--no-daemon` owners remain pending until a
+guarded resume boundary.
+
 Successful workflow mutations publish native instruction files atomically, then
 reconcile an account-local revision outside the save lock. `t config workflow sync`
 retries pending work; later saves and SessionStart launch/resume hooks also retry.

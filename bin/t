@@ -2981,7 +2981,18 @@ def _cmd_workflow(cfg, args):
                                                        settings_writer=lambda settings: _workflow_launch_settings(cfg, settings))))
             else:
                 document, stored = helper["load"]()
-                if stored and not sync["status"]()["revision"]:
+                if stored and (not sync["status"]()["revision"] or "main_settings" not in sync["status"]()):
+                    # Upgrade a legacy journal through the bundled config bridge,
+                    # under a stable authoritative-source snapshot.
+                    refreshed = False
+                    if isinstance(cfg, Config):
+                        source_before = helper["snapshot"](os.path.realpath(cfg.local_rc))
+                        _host_refresh_config()
+                        loaded = Config()
+                        if (os.path.realpath(loaded.local_rc) != os.path.realpath(cfg.local_rc) or
+                                helper["snapshot"](os.path.realpath(cfg.local_rc)) != source_before):
+                            raise ValueError("local config changed while refreshing workflow defaults; retry")
+                        cfg, refreshed = loaded, True
                     # Explicit sync also adopts preferences saved before this feature.
                     settings = {key: value for key, value in
                                 (("model", getattr(cfg, "models", {}).get("codex")),
@@ -2990,7 +3001,7 @@ def _cmd_workflow(cfg, args):
                     source = getattr(cfg, "local_rc", None)
                     snapshot = helper["snapshot"](os.path.realpath(source)) if source else None
                     requested = settings
-                    settings = sync["verified_settings"](snapshot[0], settings) if snapshot else {}
+                    settings = settings if refreshed else sync["verified_settings"](snapshot[0], settings) if snapshot else {}
                     context["unverified_main_defaults"] = sorted(set(requested) - set(settings))
                     if snapshot and settings:
                         context["settings_source"] = {"path": os.path.realpath(source), "hash": sync["digest"](snapshot[0])}
@@ -5322,7 +5333,7 @@ def _login_cached_expiry(agent, home, env):
         config = os.path.join(root, "config.toml")
         if os.path.exists(config):
             # Parse the real config, never guess at TOML or an alternate store.
-            import tomllib
+            tomllib = _toml()
             with open(config, "rb") as file:
                 settings = tomllib.load(file)
             if settings.get("cli_auth_credentials_store", "file") != "file":
@@ -7312,16 +7323,18 @@ def _perm_codex_subagent_plan(text):
     return text + ("\n" if text else "") + "[agents]\n" + line + "\n"
 
 
+def _toml():
+    from types import SimpleNamespace
+    return SimpleNamespace(**runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_toml.py")))
+
+
 def _perm_toml_ok(text):
-    """True unless tomllib (3.11+) is here and rejects it — the mini's 3.9 cannot check."""
+    """Validate using stdlib TOML or the package's private Python 3.9 fallback."""
+    parser = _toml()
     try:
-        import tomllib
-    except ImportError:
+        parser.loads(text)
         return True
-    try:
-        tomllib.loads(text)
-        return True
-    except tomllib.TOMLDecodeError:
+    except parser.TOMLDecodeError:
         return False
 
 
@@ -11486,7 +11499,10 @@ SELECTION
 DESKTOP TO CLI
   %(prog)s api 2 --cli
   Follow its release instructions if the desktop conversation is still loaded.
-  It resumes the same conversation and attaches automatically.
+  It resumes the same conversation and attaches automatically. Guarded Codex
+  resumes apply the latest applicable explicit main model/effort over saved thread
+  values; speed and permissions stay unchanged. Live attach retains its owner;
+  isolated sessions apply changes at guarded resume/restart.
 """,
         help_details="""SESSION TARGETS
   A lone slot number targets the current repo: t open 3.

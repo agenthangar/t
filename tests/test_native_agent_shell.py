@@ -94,3 +94,61 @@ def test_native_fallback_does_not_resolve_arbitrary_paths(tmp_path):
     assert result.returncode == 1
     assert not result.stdout
     assert os.access(target, os.X_OK)
+
+
+def checkpoint(tmp_path):
+    import json,runpy
+    home=tmp_path / "home with spaces and 'quotes'";home.mkdir(exist_ok=True)
+    w=runpy.run_path(str(ROOT/'libexec/t_workflow.py'))
+    sync=runpy.run_path(str(ROOT/'libexec/t_workflow_sync.py'))
+    doc=w['defaults']()
+    config=home/'.config/t';config.mkdir(parents=True)
+    (config/'workflow.json').write_text(json.dumps(doc))
+    (config/'workflow-propagation.json').write_text(json.dumps({'revision':1,'workflow_hash':sync['digest'](doc),
+        'context':{},'main_settings':{'model':'preferred-main','effort':'medium'},'settings':{},'attempts':0,'runtime':'pending'}))
+    return home
+
+
+@pytest.mark.parametrize('explicit',[False,True])
+def test_guarded_resume_applies_checkpoint_with_explicit_override_precedence(tmp_path,explicit):
+    home=checkpoint(tmp_path);native=executable(home/'.local/bin/codex')
+    sid='33333333-3333-3333-3333-333333333333'
+    extra=' --model deliberate -c model_reasoning_effort=high' if explicit else ''
+    result=run_shell(tmp_path,f'eval "$(_dev_agent_resume_cmd codex {sid}{extra})"')
+    assert result.returncode==0,result.stderr
+    expected=([str(native),'resume',sid,'--model','deliberate','-c','model_reasoning_effort=high','--no-daemon'] if explicit else
+              [str(native),'resume',sid,'--model','preferred-main','-c','model_reasoning_effort="medium"','--no-daemon'])
+    assert result.stdout.splitlines()==expected
+    assert 'service_tier' not in result.stdout and 'permissions' not in result.stdout
+
+
+def test_live_attach_notice_does_not_launch_another_agent(tmp_path):
+    home=checkpoint(tmp_path);executable(home/'.local/bin/codex')
+    result=run_shell(tmp_path,'_dev_workflow_attach codex; print done')
+    assert result.returncode==0 and result.stdout=='done\n'
+    assert 'live attach keeps this owner' in result.stderr
+
+
+@pytest.mark.parametrize('extra',[['-c','model=deliberate'],['--config=model=deliberate'],['-mdeliberate'],['-cmodel=deliberate']])
+def test_guarded_resume_respects_all_explicit_model_forms(tmp_path,extra):
+    home=checkpoint(tmp_path);executable(home/'.local/bin/codex')
+    sid='44444444-4444-4444-4444-444444444444'
+    result=run_shell(tmp_path,f'eval "$(_dev_agent_resume_cmd codex {sid} {shlex.join(extra)})"')
+    assert result.returncode==0,result.stderr
+    assert 'preferred-main' not in result.stdout and '--model\n' not in result.stdout
+    assert result.stdout.splitlines()[3:5]==['-c','model_reasoning_effort="medium"']
+    assert result.stdout.splitlines()[5:-1]==extra
+
+
+def test_resume_selected_codex_home_checks_that_index_for_child(tmp_path):
+    import sqlite3
+    home=checkpoint(tmp_path);executable(home/'.local/bin/codex')
+    selected=tmp_path/'selected-home';selected.mkdir()
+    sid='55555555-5555-5555-5555-555555555555'
+    with sqlite3.connect(selected/'state_5.sqlite') as db:
+        db.execute('create table threads(id text,source text)');db.execute('insert into threads values(?,?)',(sid,'{"subAgent":{}}'))
+    result=run_shell(tmp_path,f'CODEX_HOME={shlex.quote(str(selected))} _dev_agent_resume_cmd codex {sid}')
+    assert result.returncode==0 and 'preferred-main' not in result.stdout
+    assert 'model_reasoning_effort' not in result.stdout
+    source=(ROOT/'zsh/resume.zsh').read_text()
+    assert '$(CODEX_HOME="$codex_home" _dev_agent_resume_cmd codex "$sid" --cd "$dir")' in source

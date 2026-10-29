@@ -123,6 +123,14 @@ _dev_agent_new_cmd() {
   [[ -n $3 ]] && brief_arg=" -- \"\$(cat -- ${(q)3})\""
   print -r -- "${(j: :)${(@q)launch_args}}${brief_arg}"
 }
+# Live attach preserves the existing owner. Retry through the supported service
+# and explain that isolated sessions apply defaults at a guarded resume/restart.
+_dev_workflow_attach() {
+  [[ $1 == codex ]] || return 0
+  local helper="${T_HOME:-${${(%):-%x}:A:h:h}}/libexec/t_workflow_sync.py"
+  [[ -f $helper ]] && python3 "$helper" --attach-status >&2 2>/dev/null
+  return 0
+}
 # _dev_agent_resume_cmd <agent> <sid> — the pane command that resumes conversation <sid>.
 _dev_agent_resume_cmd() {
   local agent=$1 sid=$2; shift 2
@@ -130,7 +138,33 @@ _dev_agent_resume_cmd() {
   local executable; executable=$(_dev_agent_executable "$agent") || executable=$agent
   local -a args
   case "$agent" in
-    codex) args=("$executable" resume "$sid" "$@" --no-daemon) ;;
+    codex)
+      local helper="${T_HOME:-${${(%):-%x}:A:h:h}}/libexec/t_workflow_sync.py"
+      local target=$PWD index explicit_model=0 explicit_effort=0
+      local -a overrides filtered
+      for (( index=1; index<=$#; index++ )); do
+        case ${argv[index]} in
+          --cd) target=${argv[index+1]:-$PWD} ;;
+          --cd=*) target=${argv[index]#--cd=} ;;
+          --model|-m|-m?*|--model=*) explicit_model=1 ;;
+          -c|--config)
+            [[ ${argv[index+1]} == model=* ]] && explicit_model=1
+            [[ ${argv[index+1]} == model_reasoning_effort=* ]] && explicit_effort=1 ;;
+          --config=model=*|-cmodel=*) explicit_model=1 ;;
+          --config=model_reasoning_effort=*|-cmodel_reasoning_effort=*) explicit_effort=1 ;;
+        esac
+      done
+      if [[ -f $helper ]]; then
+        overrides=("${(@f)$(python3 "$helper" --resume-settings "$sid" "$target" 2>/dev/null)}")
+        overrides=("${(@)overrides:#}")
+        for (( index=1; index<=${#overrides}; index+=2 )); do
+          [[ ${overrides[index]} == --model && $explicit_model == 1 ]] && continue
+          [[ ${overrides[index]} == -c && $explicit_effort == 1 ]] && continue
+          filtered+=("${overrides[index]}" "${overrides[index+1]}")
+        done
+      fi
+      args=("$executable" resume "$sid" "${filtered[@]}" "$@" --no-daemon) ;;
+
     *) args=("$executable" -r "$sid" "$@") ;;
   esac
   print -r -- "${(j: :)${(@q)args}}"

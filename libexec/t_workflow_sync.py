@@ -11,13 +11,14 @@ import os
 from pathlib import Path
 import re
 import runpy
-import select
 import shlex
 import sys
 import subprocess
 import time
 import uuid
-from contextlib import contextmanager
+from contextlib import contextmanager, closing
+from types import SimpleNamespace
+import sqlite3
 
 TIMEOUT = 3
 MAX_THREADS = 200
@@ -163,7 +164,7 @@ def desired(previous, document, *, settings=None, context=None):
     scopes = changed_scopes(previous, document)
     old = status()
     inherited_context = old.get('context', {})
-    if not settings and old.get('settings') and inherited_context.get('settings_source'):
+    if not settings and (old.get('main_settings') or old.get('settings')) and inherited_context.get('settings_source'):
         context = {**context, 'settings_source': inherited_context['settings_source']}
     remote_settings = copy.deepcopy(old.get('remote_settings', {}))
     remote_scopes = copy.deepcopy(old.get('remote_scopes', {}))
@@ -178,6 +179,7 @@ def desired(previous, document, *, settings=None, context=None):
              'coverage': 'only loaded root threads in the connected owning runtime are supported; other sessions and runtimes remain unverified',
              'instructions': 'runtime refresh unverified; native files apply when the agent reloads them',
              'scopes': scopes, 'settings': {**old.get('settings', {}), **(settings or {})},
+             'main_settings': {**old.get('main_settings', old.get('settings', {})), **(settings or {})},
              'context': context or inherited_context,
              'threads': {} if settings else old.get('threads', {}),
              'hosts': old.get('hosts', {}),
@@ -204,8 +206,11 @@ class Proxy:
                                         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                         env={k: v for k, v in os.environ.items() if not k.startswith('COV_CORE_')},
                                         start_new_session=True)
-        self.deadline, self.buffer, self.counter = time.monotonic() + TIMEOUT, b'', 0
         try:
+            self.deadline, self.counter = time.monotonic() + TIMEOUT, 0
+            transport = runpy.run_path(str(Path(__file__).with_name("t_codex_socket.py")))["WebSocket"]
+            self.socket = transport(self.process.stdout, self.process.stdin, self.deadline)
+            self.socket.handshake()
             self.call('initialize', {'clientInfo': {'name': 't-workflow-sync', 'version': '1'}})
             self.send({'method': 'initialized', 'params': {}})
         except BaseException:
@@ -214,29 +219,20 @@ class Proxy:
         return self
 
     def send(self, message):
-        self.process.stdin.write((json.dumps(message) + '\n').encode())
-        self.process.stdin.flush()
+        self.socket.send(json.dumps(message).encode('utf-8'))
 
     @_spinner("Updating conversation settings")
     def call(self, method, params):
         self.counter += 1
         self.send({'id': self.counter, 'method': method, 'params': params})
         while True:
-            if b'\n' in self.buffer:
-                line, self.buffer = self.buffer.split(b'\n', 1)
-                reply = json.loads(line)
-                if reply.get('id') == self.counter:
-                    if 'error' in reply or not isinstance(reply.get('result'), dict):
-                        raise ValueError('runtime refused request')
-                    return reply['result']
-                continue
-            remaining = self.deadline - time.monotonic()
-            if remaining <= 0 or not select.select([self.process.stdout], [], [], remaining)[0]:
-                raise ValueError('runtime timed out')
-            data = os.read(self.process.stdout.fileno(), 65536)
-            if not data or len(self.buffer) + len(data) > 1024 * 1024:
-                raise ValueError('runtime disconnected or reply too large')
-            self.buffer += data
+            reply = json.loads(self.socket.receive())
+            if not isinstance(reply, dict):
+                raise ValueError('invalid runtime response')
+            if reply.get('id') == self.counter:
+                if 'error' in reply or not isinstance(reply.get('result'), dict):
+                    raise ValueError('runtime refused request')
+                return reply['result']
 
     def __exit__(self, *_):
         self.process.terminate()
@@ -254,6 +250,55 @@ def current(state):
         return False
     source = state['context'].get('settings_source')
     return not source or digest(Path(source['path']).read_text()) == source['hash']
+
+
+def resume_settings(sid, cwd=None):
+    """Read-only launch overrides for a guarded selected dormant root conversation."""
+    if not re.fullmatch(r'[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}', sid):
+        return []
+    path = state_path()
+    if not path.exists() or path.stat().st_size > 1024 * 1024:
+        return []
+    state = status()
+    if not state['revision'] or not current(state):
+        return []
+    w = workflow()
+    document, _ = w['load']()
+    repository = None
+    if document['repositories']:
+        try:
+            raw_common = git(cwd or os.getcwd(), 'rev-parse', '--path-format=absolute', '--git-common-dir')
+            if not raw_common or not os.path.isabs(raw_common):
+                return []
+            common = os.path.realpath(raw_common)
+        except (OSError, subprocess.TimeoutExpired):
+            return []
+        if not os.path.isabs(common) or not os.path.isdir(common):
+            return []
+        repository = next((scope for scope in document['repositories']
+                           if os.path.realpath(os.path.join(scope, '.git')) == common), None)
+    if not w['effective'](document, repository)['enabled']:
+        return []
+    home = Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex')
+    # Existing pickers/launchers retain their one-owner checks. An indexed child
+    # must not inherit root-workflow overrides even if explicitly selected.
+    for database in sorted(home.glob('state_*.sqlite'), reverse=True)[:4]:
+        with closing(sqlite3.connect(database.as_uri() + '?mode=ro', uri=True, timeout=0.1)) as connection:
+            row = connection.execute('SELECT source FROM threads WHERE id=?', (sid,)).fetchone()
+        if row and 'subagent' in str(row[0]).lower():
+            return []
+        if row:
+            break
+    values = state.get('main_settings', state.get('settings', {}))
+    if not isinstance(values, dict):
+        return []
+    result = []
+    model, effort = values.get('model'), values.get('effort')
+    if isinstance(model, str) and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:/@+\[\]-]*', model):
+        result.extend(['--model', model])
+    if isinstance(effort, str) and re.fullmatch(r'[a-z][a-z0-9_-]*', effort):
+        result.extend(['-c', 'model_reasoning_effort=' + json.dumps(effort)])
+    return result
 
 
 def local(state):
@@ -372,7 +417,7 @@ def native_defaults(settings):
     if not settings:
         return [], None
     try:
-        import tomllib
+        tomllib = SimpleNamespace(**runpy.run_path(str(Path(__file__).with_name("t_toml.py"))))
         w = workflow()
         path = Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex') / 'config.toml'
         before = w['snapshot'](path)
@@ -517,12 +562,18 @@ def receive(payload, repos, settings_writer=None):
 
 if __name__ == '__main__':
     try:
-        if '--background' in sys.argv:
-            retry(boundary=True)
-        elif status()['revision']:
-            subprocess.Popen([sys.executable, str(Path(__file__).resolve()), '--background'],
-                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                             start_new_session=True,
-                             env={k: v for k, v in os.environ.items() if not k.startswith('COV_CORE_')})
-    except (OSError, ValueError, KeyError):
+        if len(sys.argv) in (3, 4) and sys.argv[1] == '--resume-settings':
+            print('\n'.join(resume_settings(sys.argv[2], sys.argv[3] if len(sys.argv) == 4 else None)), end='')
+        else:
+            state = status()
+            if '--attach-status' in sys.argv and state.get('main_settings', state.get('settings')):
+                print('Workflow defaults: live attach keeps this owner; guarded resume/restart applies applicable model/effort defaults. Live refresh remains unverified.')
+            if '--background' in sys.argv:
+                retry(boundary=True)
+            elif state['revision']:
+                subprocess.Popen([sys.executable, str(Path(__file__).resolve()), '--background'],
+                                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                 start_new_session=True,
+                                 env={k: v for k, v in os.environ.items() if not k.startswith('COV_CORE_')})
+    except (OSError, ValueError, KeyError, sqlite3.Error):
         pass  # SessionStart retries must never prevent a session from opening.

@@ -79,6 +79,7 @@ valid_source() {
     for asset in install.sh t.plugin.zsh local.zsh.example \
         claude/settings.json.example bin/t bin/t-session-start bin/claude-stamp-tmux bin/cursor-beam \
         libexec/t_progress.py libexec/t_shell_setup.py libexec/t_onboarding.py libexec/t_discovery.py \
+        libexec/t_toml.py libexec/t_codex_socket.py libexec/vendor/SHA256SUMS libexec/vendor/tomli-LICENSE libexec/vendor/tomli/__init__.py libexec/vendor/tomli/_parser.py libexec/vendor/tomli/_re.py libexec/vendor/tomli/_types.py libexec/vendor/tomli/py.typed \
         libexec/t_workflow.py libexec/t_workflow_sync.py libexec/t_issue.py libexec/t_issue_policy.txt libexec/t_resume_source.py libexec/t_history.py libexec/t_candidates.py libexec/t_session_details.py libexec/t_picker_filters.py libexec/t_repos.py \
         libexec/t_local_worker.py libexec/t_local_setup.py libexec/t_mcp_setup.py \
         libexec/t_runners.py libexec/t_runner_job.py share/runners/broker.yml share/runners/sweeper.yml \
