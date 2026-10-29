@@ -16,6 +16,8 @@ import tempfile
 
 BEGIN = '<!-- t agent-workflow: begin -->'
 END = '<!-- t agent-workflow: end -->'
+ISSUE_BEGIN = '<!-- t public-issues: begin -->'
+ISSUE_END = '<!-- t public-issues: end -->'
 EFFORTS = ('minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra')
 # One catalogue drives validation, menu choices, summaries and native instructions.
 # Absent keys mean no preference, not a directive to do the opposite.
@@ -52,15 +54,31 @@ def config_path():
     return Path(os.environ.get('XDG_CONFIG_HOME') or Path.home() / '.config').expanduser() / 't/workflow.json'
 
 
+def issue_policy():
+    return Path(__file__).with_name('t_issue_policy.txt').read_text(encoding='utf-8').strip()
+
+
+def _seed_instructions(document, texts):
+    policies = [*document['workflows'].values(),
+                *(entry['inline'] for entry in document['repositories'].values() if 'inline' in entry)]
+    for policy in policies:
+        for text in texts:
+            existing = policy.get('instructions', '')
+            if text and text not in existing:
+                policy['instructions'] = existing + ('\n\n' if existing else '') + text
+    return document
+
+
 def defaults():
-    return {'version': 2, 'default': 'standard', 'workflows': {'standard': copy.deepcopy(DEFAULT)}, 'repositories': {}}
+    return _seed_instructions({'version': 3, 'default': 'standard',
+                              'workflows': {'standard': copy.deepcopy(DEFAULT)}, 'repositories': {}}, [issue_policy()])
 
 
 def validate_policy(value):
     if not isinstance(value, dict) or set(value) - {'instructions', 'stages_enabled', 'behaviors'} != set(DEFAULT):
         raise ValueError('workflow requires enabled, planning, implementation and review')
     instructions = value.get('instructions', '')
-    if not isinstance(instructions, str) or BEGIN in instructions or END in instructions:
+    if not isinstance(instructions, str) or any(marker in instructions for marker in (BEGIN, END, ISSUE_BEGIN, ISSUE_END)):
         raise ValueError('workflow instructions must be Markdown text without managed workflow markers')
     if type(value['enabled']) is not bool:
         raise ValueError('workflow enabled must be true or false')
@@ -91,16 +109,16 @@ def validate_name(name):
     return name
 
 
-def validate(value):
-    """Validate and return v2 in memory, without rewriting legacy preferences."""
+def validate(value, *, migrate=True):
+    """Validate and migrate in memory; read-only commands never rewrite preferences."""
     if not isinstance(value, dict) or type(value.get('version')) is not int:
         raise ValueError('workflow document requires version, default, workflows and repositories')
     legacy = value['version'] == 1
     expected = {'version', 'global', 'repositories'} if legacy else {'version', 'default', 'workflows', 'repositories'}
     if set(value) != expected:
         raise ValueError('workflow document requires version, default, workflows and repositories (or legacy global)')
-    if value['version'] not in (1, 2):
-        raise ValueError('unsupported workflow version; expected 1 or 2')
+    if value['version'] not in (1, 2, 3):
+        raise ValueError('unsupported workflow version; expected 1, 2 or 3')
     if not isinstance(value['repositories'], dict):
         raise ValueError('workflow repositories must be an object')
     if legacy:
@@ -131,9 +149,12 @@ def validate(value):
         if 'inline' in entry:
             validate_policy(entry['inline'])
     if legacy:
-        return {'version': 2, 'default': 'standard', 'workflows': {'standard': copy.deepcopy(value['global'])},
-                'repositories': {path: {'inline': copy.deepcopy(policy)} for path, policy in value['repositories'].items()}}
-    return copy.deepcopy(value)
+        result = {'version': 3, 'default': 'standard', 'workflows': {'standard': copy.deepcopy(value['global'])},
+                  'repositories': {path: {'inline': copy.deepcopy(policy)} for path, policy in value['repositories'].items()}}
+    else:
+        result = copy.deepcopy(value)
+        result['version'] = 3
+    return _seed_instructions(result, [issue_policy()]) if migrate and value['version'] < 3 else result
 
 
 def decode(text):
@@ -170,9 +191,26 @@ def snapshot(path):
     return (text, identity(info))
 
 
+class WorkflowDocument(dict):
+    """JSON data with nonserialized legacy-file snapshots for safe first edits."""
+
+
 def load():
     before = snapshot(config_path())
-    return (validate(decode(before[0])) if before else defaults()), before
+    document = WorkflowDocument(validate(decode(before[0])) if before else defaults())
+    document.legacy_snapshots = {}
+    # Import customized legacy policy text before the installer removes its old
+    # managed block. This read-only migration is persisted only by an explicit save.
+    texts = []
+    for path in native_paths():
+        native = snapshot(path)
+        if native:
+            body = legacy_issue_body(native[0])
+            if ISSUE_BEGIN in native[0]:
+                document.legacy_snapshots[path] = native
+            if body and body != issue_policy() and body not in texts:
+                texts.append(body)
+    return _seed_instructions(document, texts), before
 
 
 def source(document, repository=None):
@@ -278,6 +316,8 @@ def summary_lines(policy):
         selected = summary['behaviors'].get(key)
         lines.append(spec['label'] + ': ' + (spec['choices'][selected][0] if selected else 'No preference'))
     lines.append('Custom Markdown: ' + ('present' if summary['custom_instructions'] else 'empty'))
+    lines.append('Issue-before-code rule: ' + ('included in editable Markdown' if issue_policy() in policy.get('instructions', '') else 'customized or not included'))
+    lines.append('Read/edit prose: t config workflow instructions show / edit')
     return lines
 
 
@@ -416,7 +456,19 @@ def render(document):
     return BEGIN + '\n' + text + '\n' + END
 
 
-def merge(before, block):
+def legacy_issue_body(text):
+    starts, ends = text.count(ISSUE_BEGIN), text.count(ISSUE_END)
+    if (starts, ends) not in ((0, 0), (1, 1)) or (starts and text.index(ISSUE_END) < text.index(ISSUE_BEGIN)):
+        raise ValueError('malformed t public-issues markers; repair them before saving')
+    return text[text.index(ISSUE_BEGIN) + len(ISSUE_BEGIN):text.index(ISSUE_END)].strip() if starts else ''
+
+
+def merge(before, block, legacy_instructions="", replace_legacy=False):
+    body = legacy_issue_body(before)
+    if ISSUE_BEGIN in before:
+        # A customized block not imported by this caller must never be lost.
+        preserved = body if not replace_legacy and body and body != issue_policy() and body not in block and body not in legacy_instructions else ''
+        before = before[:before.index(ISSUE_BEGIN)] + preserved + before[before.index(ISSUE_END) + len(ISSUE_END):]
     starts, ends = before.count(BEGIN), before.count(END)
     if (starts, ends) not in ((0, 0), (1, 1)) or (starts and before.index(END) < before.index(BEGIN)):
         raise ValueError('malformed t agent-workflow markers; repair them before saving')
@@ -425,7 +477,7 @@ def merge(before, block):
     return before + ('\n\n' if before else '') + block + '\n'
 
 
-def native_changes(document):
+def native_paths():
     home = Path.home()
     codex = Path(os.environ.get('CODEX_HOME') or home / '.codex').expanduser()
     claude = Path(os.environ.get('CLAUDE_CONFIG_DIR') or home / '.claude').expanduser()
@@ -433,12 +485,24 @@ def native_changes(document):
     override = codex / 'AGENTS.override.md'
     if override.exists() or override.is_symlink():
         paths.append(override)
+    return paths
+
+
+def native_changes(document):
+    paths = native_paths()
+    override = paths[0].with_name('AGENTS.override.md')
+    policies = [*document['workflows'].values(),
+                *(entry['inline'] for entry in document['repositories'].values() if 'inline' in entry)]
+    legacy_instructions = '\n'.join(policy.get('instructions', '') for policy in policies)
     changes = []
+    legacy_snapshots = getattr(document, 'legacy_snapshots', {})
     for path in paths:
         before = snapshot(path)
+        if path in legacy_snapshots and before != legacy_snapshots[path]:
+            raise ValueError(f'{path}: native instructions changed while editing; retry')
         if path == override and before and not before[0].strip():
             continue  # An empty override must not begin masking the base file.
-        changes.append((path, before, merge(before[0] if before else '', render(document))))
+        changes.append((path, before, merge(before[0] if before else '', render(document), legacy_instructions, path in legacy_snapshots)))
     return changes
 
 
@@ -510,13 +574,13 @@ def save(document, before, extra=(), preserve_storage=False, propagation_context
             raise ValueError('workflow configuration changed while editing; retry')
         changes = native_changes(document)
         publication = [*changes, *extra, (path, before, before[0] if preserve_storage and before else encode(document))]
-        reconcile = propagate and not preserve_storage and (before is None or validate(decode(before[0])) != document or bool(main_settings))
+        reconcile = propagate and not preserve_storage and (before is None or decode(before[0]) != document or bool(main_settings))
         helper = propagation() if reconcile else None
         if helper:
             # Intent and preferences publish together; journal failures roll back
             # the native files too. Runtime work begins only after both locks exit.
             with helper['locked']():
-                previous = validate(decode(before[0])) if before else defaults()
+                previous = validate(decode(before[0]), migrate=False) if before else defaults()
                 state = helper['desired'](previous, document, settings=main_settings, context=propagation_context)
                 journal = helper['state_path']()
                 publish([*publication, (journal, snapshot(journal), encode(state))])
@@ -530,10 +594,10 @@ def save(document, before, extra=(), preserve_storage=False, propagation_context
 
 
 def sync():
-    """Installer refreshes only accounts with explicitly saved preferences."""
+    """Install editable defaults once, migrate old policies, and honor later edits."""
     document, before = load()
-    if before is not None:
-        save(document, before, preserve_storage=True)
+    unchanged = before is not None and decode(before[0]) == document
+    save(document, before, preserve_storage=unchanged)
     return 0
 
 

@@ -477,16 +477,23 @@ _t_open() {
 _t_open_picker() {
   local repo="$1" remote="$2" app="$3" cli="$4" rows row selected scope
   local _repo_selector _repo_selector_rc
-  _repo_selector=$(_dev_resolve_repo "$repo"); _repo_selector_rc=$?
-  (( _repo_selector_rc == 2 )) && return 2
-  (( _repo_selector_rc == 0 )) && repo=$_repo_selector
-  scope=${DEV_REPOS[$repo]:-}
+  if [[ -z $6 ]]; then
+    _repo_selector=$(_dev_resolve_repo "$repo"); _repo_selector_rc=$?
+    (( _repo_selector_rc == 2 )) && return 2
+    (( _repo_selector_rc == 0 )) && repo=$_repo_selector
+    scope=${DEV_REPOS[$repo]:-}
+  fi
   local -a fields candidates format_args
   local include_attached="$5" filtered
   local scope_rel wt_rel cwd_rel
   scope_rel=$(_dev_homerel "$scope")
   wt_rel=$(_dev_homerel "${DEV_WORKTREE_ROOT}/${scope:t}")
-  if [[ -n $remote ]]; then
+  if [[ -n $6 ]]; then
+    rows=$(_t_remote_open_inventory "$6" "$repo"); local inventory_rc=$?
+    (( inventory_rc == 130 )) && return 130
+    (( inventory_rc == 0 )) || return 1
+    format_args=(--remote)
+  elif [[ -n $remote ]]; then
     rows=$(_dev_rows_all --best-effort --details) || return $?
     format_args=(--remote)
   else
@@ -565,7 +572,7 @@ _t_open_selected() {
       first=("${args[@]}")
     else
       cmd="t open ${(j: :)${(@q)args}}"
-      _dev_open_tab "$cmd" || print -r -- "Attach with: $cmd"
+      _dev_open_tab "$cmd" || { print -u2 -r -- "Could not open a terminal. Attach with: $cmd"; rc=1; }
     fi
   done
   if (( $#first )); then
@@ -902,16 +909,31 @@ _t() {
   fi
   case "$group/$action" in
     remote/open|remote/move|remote/resume)
+      local remote_legacy= remote_skip= remote_count=0 remote_word
+      for remote_word in "${(@)words[first,CURRENT-1]}"; do
+        if [[ -n $remote_skip ]]; then remote_skip=; continue; fi
+        case $remote_word in
+          --host) remote_legacy=1; remote_skip=1 ;;
+          --host=*) remote_legacy=1 ;;
+          --from|--session|-s|--days) remote_skip=1 ;;
+          -*) ;;
+          *) (( ++remote_count )) ;;
+        esac
+      done
       case ${words[CURRENT-1]} in
         --host|--from) _values 'host' ${(k)REMOTE_HOSTS} ;;
         --session|-s) _message 'conversation ID' ;;
         --days) _message 'number of days or all' ;;
         *)
           if [[ ${words[CURRENT]} == -* ]]; then
-            local -a remote_flags=(--host -h --help)
-            case $action in open) remote_flags+=(--new) ;; move) remote_flags+=(--from --session --all --detach --fg) ;; resume) remote_flags+=(--days --all) ;; esac
+            local -a remote_flags=(-h --help)
+            case $action in open) remote_flags+=(--new) ;; move) remote_flags+=(--host --from --session --all --detach --fg) ;; resume) remote_flags+=(--days --all) ;; esac
             _values 'flag' $remote_flags
-          elif (( CURRENT == first )); then _values 'repo' "${(@f)$(_dev_repo_selectors)}"
+          elif [[ $action != move && -z $remote_legacy ]] && (( remote_count == 0 )); then
+            _values 'host' ${(k)REMOTE_HOSTS}
+          elif { [[ $action == move || -n $remote_legacy ]] && (( remote_count == 0 )); } \
+            || { [[ $action != move && -z $remote_legacy ]] && (( remote_count == 1 )); }; then
+            _values 'repo' "${(@f)$(_dev_repo_selectors)}"
           else _message 'slot'; fi ;;
       esac ;;
 
