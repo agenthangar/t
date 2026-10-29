@@ -11312,6 +11312,10 @@ EXPLICIT PUSH AND PULL
 
   History never automatically resumes a sole conversation.
 
+  An unresolved Codex writer refusal names its thread and verified holder PIDs.
+  Finish and exit the identified CLI, or finish the turn and close its owning app;
+  allow any shared backend to release the writer, then retry. Never delete locks.
+
   Rows show the same status, interface, recorded model, host, session, and
   working-on summary as t session list.
 

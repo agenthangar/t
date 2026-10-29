@@ -294,12 +294,19 @@ shared backend processes and lock files remain untouched. These are safety rules
 within the existing close modes, with no new prompt or command.
 
 Saved Codex resume and handoffs also resolve unindexed held sibling locks from
-validated `session_meta` identity in active and archived rollouts. A verified
+validated `session_meta` identity in active and archived rollouts. If that identity
+is not indexed or discoverable there, bounded open-file inspection of the exact
+lock holders can resolve it from their open rollout metadata. Process working
+directories and other conversations on a shared backend cannot establish it. A verified
 different workspace does not block resume; selected and same-workspace writers
 still block, including equivalent real paths and any matching workspace among
 multiple metadata records. Unknown, invalid or unreadable ownership evidence
 prevents resume. Ownership refusals print a concise
-diagnostic and retry guidance without a traceback or success descriptor.
+diagnostic naming the unresolved conversation and verified holder PIDs, when
+available, without exposing process arguments. Finish and exit that CLI, or finish
+the turn and close its owning app; allow the shared backend to release its writer,
+then retry resume. Do not delete writer locks or edit ownership databases. Refusals
+include retry guidance without a traceback or success descriptor.
 
 ## Shared implementations
 
