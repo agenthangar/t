@@ -259,8 +259,8 @@ def test_open_batch_tab_failure_reports_exact_attach_command(zsh):
       _t_open() { print -r -- "OPEN $*"; }
       _t_open_selected $'local\tapi-2\tdetached\tFirst\nlocal\tapi-4\tdetached\tSecond' '' ''
     ''')
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert 'Attach with: t open api 4 --cli --local' in result.stdout
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert 'Attach with: t open api 4 --cli --local' in result.stderr
     assert 'OPEN api 2 --cli --local' in result.stdout
 
 
