@@ -272,7 +272,7 @@ def check(parser, command_groups, instructions):
         return True, args
 
     workflow_registry = command_groups.get("config", {}).get("workflow", {})
-    if not isinstance(workflow_registry, dict) or set(workflow_registry) != {"list", "edit", "add", "use", "exclude", "inherit", "instructions"}:
+    if not isinstance(workflow_registry, dict) or set(workflow_registry) != {"list", "edit", "add", "use", "exclude", "inherit", "instructions", "runners", "runs"}:
         errors.append("config workflow registry must expose named workflows and instructions")
     config = top._name_parser_map.get("config")
     config_sub = _subparsers(config) if config else None
@@ -291,7 +291,13 @@ def check(parser, command_groups, instructions):
     for words in (["add", "quick"], ["add", "quick", "--from", "standard"], ["use", "quick"],
                   ["use", "quick", "--repo", "api"], ["exclude", "--repo", "api"], ["inherit", "--repo", "api"],
                   ["edit", "quick"], ["list", "--all", "--json"], ["instructions", "show"],
-                  ["instructions", "edit", "quick"], ["instructions", "show", "--repo", "api"]):
+                  ["instructions", "edit", "quick"], ["instructions", "show", "--repo", "api"],
+                  ["runners", "list", "--json"], ["runners", "edit", "--repo", "api"],
+                  ["runners", "setup", "--github-repo", "owner/control", "--create"],
+                  ["runs", "start", "--target", "linux", "--", "python3", "-m", "pytest"],
+                  ["runs", "list", "--json"], ["runs", "status", "ID", "--json"],
+                  ["runs", "logs", "ID"], ["runs", "artifacts", "ID"],
+                  ["runs", "cancel", "ID"], ["runs", "cleanup", "ID"]):
         valid, args = accepts(["config", "workflow", *words])
         if not valid or args.verb != "config":
             errors.append("workflow parser rejected required form: " + " ".join(words))

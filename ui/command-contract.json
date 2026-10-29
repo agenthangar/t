@@ -3792,6 +3792,371 @@
           ]
         }
       }
+    },
+    "config workflow runners list": {
+      "patterns": [
+        "list",
+        "machine"
+      ],
+      "renderer": "plain",
+      "scope": "global or named workflow; explicit --repo registered alias; setup explicit private broker",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_workflow_runners.py::test_runner_cli_contract"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "config",
+            "workflow",
+            "runners",
+            "list"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_workflow_runners.py::test_runner_cli_contract"
+          ]
+        },
+        "json": {
+          "argv": [
+            "config",
+            "workflow",
+            "runners",
+            "list",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_workflow_runners.py::test_runner_cli_contract"
+          ]
+        }
+      }
+    },
+    "config workflow runners edit": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "external",
+      "scope": "global or named workflow; explicit --repo registered alias; setup explicit private broker",
+      "confirmation": "external",
+      "tests": [
+        "tests/test_workflow_runners.py::test_runner_cli_contract"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "config",
+            "workflow",
+            "runners",
+            "edit"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_workflow_runners.py::test_runner_cli_contract"
+          ],
+          "terminal": true
+        }
+      }
+    },
+    "config workflow runners setup": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "plain",
+      "scope": "global or named workflow; explicit --repo registered alias; setup explicit private broker",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_workflow_runners.py::test_runner_cli_contract"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "config",
+            "workflow",
+            "runners",
+            "setup",
+            "--github-repo",
+            "owner/private-control"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_workflow_runners.py::test_runner_cli_contract"
+          ]
+        }
+      }
+    },
+    "config workflow runs start": {
+      "patterns": [
+        "action",
+        "machine"
+      ],
+      "renderer": "plain",
+      "scope": "start snapshots the registered current checkout; other verbs use local run UUID",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_workflow_runners.py::test_runner_cli_contract"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "config",
+            "workflow",
+            "runs",
+            "start",
+            "--",
+            "python3",
+            "-m",
+            "pytest"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_workflow_runners.py::test_runner_cli_contract"
+          ]
+        },
+        "json": {
+          "argv": [
+            "config",
+            "workflow",
+            "runs",
+            "start",
+            "--json",
+            "--",
+            "python3",
+            "-m",
+            "pytest"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_workflow_runners.py::test_runner_cli_contract"
+          ]
+        }
+      }
+    },
+    "config workflow runs list": {
+      "patterns": [
+        "list",
+        "machine"
+      ],
+      "renderer": "plain",
+      "scope": "start snapshots the registered current checkout; other verbs use local run UUID",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_workflow_runners.py::test_runner_cli_contract"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "config",
+            "workflow",
+            "runs",
+            "list"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_workflow_runners.py::test_runner_cli_contract"
+          ]
+        },
+        "json": {
+          "argv": [
+            "config",
+            "workflow",
+            "runs",
+            "list",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_workflow_runners.py::test_runner_cli_contract"
+          ]
+        }
+      }
+    },
+    "config workflow runs status": {
+      "patterns": [
+        "detail",
+        "machine"
+      ],
+      "renderer": "plain",
+      "scope": "start snapshots the registered current checkout; other verbs use local run UUID",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_workflow_runners.py::test_runner_cli_contract"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "config",
+            "workflow",
+            "runs",
+            "status",
+            "11111111-1111-4111-8111-111111111111"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_workflow_runners.py::test_runner_cli_contract"
+          ]
+        },
+        "json": {
+          "argv": [
+            "config",
+            "workflow",
+            "runs",
+            "status",
+            "11111111-1111-4111-8111-111111111111",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_workflow_runners.py::test_runner_cli_contract"
+          ]
+        }
+      }
+    },
+    "config workflow runs logs": {
+      "patterns": [
+        "detail"
+      ],
+      "renderer": "plain",
+      "scope": "start snapshots the registered current checkout; other verbs use local run UUID",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_workflow_runners.py::test_runner_cli_contract"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "config",
+            "workflow",
+            "runs",
+            "logs",
+            "11111111-1111-4111-8111-111111111111"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_workflow_runners.py::test_runner_cli_contract"
+          ]
+        }
+      }
+    },
+    "config workflow runs artifacts": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "plain",
+      "scope": "start snapshots the registered current checkout; other verbs use local run UUID",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_workflow_runners.py::test_runner_cli_contract"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "config",
+            "workflow",
+            "runs",
+            "artifacts",
+            "11111111-1111-4111-8111-111111111111"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_workflow_runners.py::test_runner_cli_contract"
+          ]
+        }
+      }
+    },
+    "config workflow runs cancel": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "plain",
+      "scope": "start snapshots the registered current checkout; other verbs use local run UUID",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_workflow_runners.py::test_runner_cli_contract"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "config",
+            "workflow",
+            "runs",
+            "cancel",
+            "11111111-1111-4111-8111-111111111111"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_workflow_runners.py::test_runner_cli_contract"
+          ]
+        }
+      }
+    },
+    "config workflow runs cleanup": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "plain",
+      "scope": "start snapshots the registered current checkout; other verbs use local run UUID",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_workflow_runners.py::test_runner_cli_contract"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "config",
+            "workflow",
+            "runs",
+            "cleanup",
+            "11111111-1111-4111-8111-111111111111"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_workflow_runners.py::test_runner_cli_contract"
+          ]
+        }
+      }
     }
   },
   "display_schemas": {
@@ -4264,7 +4629,10 @@
     "config workflow exclude": "_cmd_workflow workflow_repo",
     "config workflow inherit": "_cmd_workflow workflow_repo",
     "config workflow instructions show": "_cmd_workflow workflow_repo",
-    "config workflow instructions edit": "_cmd_workflow workflow_repo"
+    "config workflow instructions edit": "_cmd_workflow workflow_repo",
+    "config workflow runners list": "_cmd_workflow_runners _runner_scope",
+    "config workflow runners edit": "_cmd_workflow_runners _runner_scope",
+    "config workflow runs start": "_cmd_workflow_runs _runner_scope and canonical checkout identity"
   },
   "command_aliases": {
     "list_verbs": {

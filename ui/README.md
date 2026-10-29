@@ -180,6 +180,23 @@ local-shell editor. Saving updates account-local Codex and Claude instructions w
 preflight and concurrent-edit checks, never tracked repository instructions. v1
 policies migrate in memory without writing on reads or installer synchronization.
 
+Test runners appear within each workflow policy. Their JSON subeditor exposes targets,
+default targets, timeout/queue deadlines and artifact paths; Show configured targets
+prints a reviewable summary. Menu changes stay staged until existing Review and Save.
+`t config workflow runners list [NAME] [--repo ALIAS] [--json]` is a local read-only
+list; `edit` opens the terminal editor, and `setup --github-repo OWNER/REPO [--create]`
+explicitly bootstraps a dedicated private broker. Configuration save never provisions.
+
+`t config workflow runs start [--repo ALIAS] -- COMMAND ...` is an explicit direct
+action using the registered current checkout or linked worktree; --repo must match.
+Repeatable --target, --os and --capability select configured targets without a picker.
+The argv after -- belongs to the test command. JSON remains machine output and does
+not make start read-only. Runs list/status/logs read only local durable receipts,
+without provider probes, cleanup, update prompts or selection. Artifacts/cancel/cleanup
+are explicit actions. One immutable current-file snapshot serves concurrent targets;
+Ctrl-C requests cancellation and returns 130, preserving honest unknown outcomes if
+provider termination cannot be confirmed. See [test runners](../docs/test-runners.md).
+
 ### Representative screens
 
 ```text

@@ -1,0 +1,56 @@
+name: Expire private t runner snapshots
+on:
+  schedule:
+    - cron: '23 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Remove expired runner releases and cancel their jobs
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import datetime, json, os, re, subprocess
+          prefix = 'repos/' + os.environ['GH_REPO']
+          def api(path,method='GET'):
+              value = subprocess.check_output(['gh','api',path,'--method',method])
+              return json.loads(value) if value.strip() else None
+          assert api(prefix)['private'] is True
+          now = datetime.datetime.now(datetime.timezone.utc)
+          page = 1
+          expired = []
+          while True:
+              rows = api(prefix+'/releases?per_page=100&page='+str(page))
+              if not rows:
+                  break
+              for row in rows:
+                  if not re.fullmatch(r't-runner-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}',row['tag_name']):
+                      continue
+                  created = datetime.datetime.fromisoformat(row['created_at'].replace('Z','+00:00'))
+                  if (now-created).total_seconds() >= 86400:
+                      expired.append(row)
+              page += 1
+          for release in expired:
+              page = 1
+              active = False
+              while True:
+                  runs = api(prefix+'/actions/workflows/t-runner.yml/runs?per_page=100&page='+str(page))['workflow_runs']
+                  if not runs:
+                      break
+                  for run in runs:
+                      if run['display_title'].startswith(release['tag_name']+'-') and run['status'] != 'completed':
+                          active = True
+                  page += 1
+              if active:
+                  continue
+              api(prefix+'/releases/'+str(release['id']),'DELETE')
+              api(prefix+'/git/refs/tags/'+release['tag_name'],'DELETE')
+          PY
