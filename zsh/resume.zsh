@@ -39,7 +39,11 @@ _t_resume_on_host() {
 }
 
 _t_resume_history_candidates() {
-  python3 "$T_HOME/bin/t" __resume-candidates "$@"
+  if [[ -n ${T_RESUME_DIAGNOSTICS_FILE:-} ]]; then
+    python3 "$T_HOME/bin/t" __resume-candidates --diagnostics-file "$T_RESUME_DIAGNOSTICS_FILE" "$@"
+  else
+    python3 "$T_HOME/bin/t" __resume-candidates "$@"
+  fi
 }
 
 # Resume a retained conversation through the exact-source verifier and fresh
@@ -478,7 +482,15 @@ _t_resume() {
   [[ -n $all_mode ]] && history_scope=(--all)
   [[ -n $identity_scope ]] && history_scope=("$identity_scope")
   [[ -n $slot ]] && history_scope+=(--slot "$slot")
-  history_rows=$(_t_with_progress "Finding saved conversations across hosts" _t_resume_history_candidates "${(@)history_scope}") || history_rc=$?
+  local auth_file auth_hosts auth_host
+  auth_file=$(mktemp "${TMPDIR:-/tmp}/t-resume-auth.XXXXXX") || return 1
+  history_rows=$(T_RESUME_DIAGNOSTICS_FILE="$auth_file" _t_with_progress "Finding saved conversations across hosts" _t_resume_history_candidates "${(@)history_scope}") || history_rc=$?
+  auth_hosts=$(<"$auth_file")
+  rm -f -- "$auth_file"
+  for auth_host in "${(@f)auth_hosts}"; do
+    [[ -n $auth_host ]] || continue
+    _t_warn "GitHub authentication failed on $auth_host; some saved conversations may be missing. Run gh auth login --hostname github.com on $auth_host, then retry."
+  done
   (( history_rc == 130 )) && return 130
   (( history_rc == 0 )) || return $history_rc
   for history_row in "${(@f)history_rows}"; do
@@ -700,7 +712,7 @@ _t_resume() {
      f=("${(@ps:\t:)visible[1]}") && [[ $f[7] == - || ( -t 0 && -t 1 ) ]]; then
     pick=${visible[1]}
   elif [[ -t 0 && -t 1 ]] && command -v fzf >/dev/null; then
-    pick=$(T_PICKER_SOURCE_ROWS="${(F)cands}" T_PICKER_SESSION_FILTERS=resume _t_fzf_filtered "$(print -rl -- "${(@)inactive}")" \
+    pick=$(T_PICKER_AUTH_HOSTS="$auth_hosts" T_PICKER_SOURCE_ROWS="${(F)cands}" T_PICKER_SESSION_FILTERS=resume _t_fzf_filtered "$(print -rl -- "${(@)inactive}")" \
       "$(print -rl -- "${(@)cands}")" resume inactive "$legend" "$show_all" \
       --delimiter=$'\t' --with-nth=-1 --no-hscroll \
       --prompt="$fprompt") || return $?

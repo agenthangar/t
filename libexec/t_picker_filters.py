@@ -268,7 +268,18 @@ def render(directory, profile, action, width, columns='', facet=None):
         sort_file.write_text(sort)
     total = len((directory / 'all').read_text().splitlines())
     (directory / 'current').write_text(''.join(row + '\n' for row in selected))
-    (directory / 'current-header').write_text(header(profile, mask, filters, total - len(selected), columns, width, sort))
+    warning = ''
+    if profile == 'resume':
+        # The invocation snapshot persists through every filter/sort/reset reload.
+        hosts = (directory / 'auth-hosts').read_text().splitlines() if (directory / 'auth-hosts').exists() else []
+        hosts = [host for host in hosts if host]
+        if hosts:
+            summary = 'GitHub auth failed: ' + ', '.join(hosts)
+            warning = clip_columns(summary, width) + '\n'
+    controls = header(profile, mask, filters, total - len(selected), columns, width, sort)
+    if warning and width <= 36:
+        controls = controls.replace('^ Ctrl · M Alt\n', '')
+    (directory / 'current-header').write_text(warning + controls)
     mask_file.write_text(str(mask))
     state_file.write_text(json.dumps(filters))
 
