@@ -466,6 +466,15 @@ is downloaded and verified. A different live conversation in the historical
 slot does not hide saved work: inactive selections receive a safely allocated
 workspace when their original workspace cannot be reused. Exact live IDs attach
 to their existing owner. Local paths and remote aliases need not match.
+An explicit slot (`t session resume api 2`, including the `t resume` alias)
+scopes the shared filtered multi-picker to all recorded associations with that
+slot, including conversations whose latest association is elsewhere. In a
+terminal it always waits for selection, even with one row, and initially shows
+live and saved rows; Ctrl-F restores inactive defaults. Cancellation returns 130
+without attaching, launching, or allocating a workspace. Without a terminal,
+an explicit slot retains newest-saved selection. Existing `--days` limits apply.
+Progress spinner and canceled picker children never run the caller's shell
+session/history exit hooks; the caller's own hooks remain unchanged.
 
 `remote open [host] [repo] [slot]` and `remote resume [host] [repo] [slot]`
 use host-first targets. Explicit `[repo] [slot] --host HOST` retains compatibility;
