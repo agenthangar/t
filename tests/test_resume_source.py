@@ -250,6 +250,7 @@ def test_reconcile_refuses_diverged_local_conversation(app, source, history, pro
 
 
 def test_transcript_transport_failure_tries_local_source(app, history, monkeypatch, tmp_path):
+    app.cfg.handoff_for = lambda agent: 't'  # Explicit custom transport.
     from test_history_data import codex_rows, transcript_file
     local = transcript_file(tmp_path / 'rollout-selected.jsonl', codex_rows('/saved/repo', sid='selected'))
     row = conversation(sid='selected', associations=[dict(workspace='/saved/repo')], sources=[
@@ -265,6 +266,7 @@ def test_transcript_transport_failure_tries_local_source(app, history, monkeypat
 
 
 def test_transcript_transport_failure_uses_validated_private_cache(app, history, monkeypatch, tmp_path):
+    app.cfg.handoff_for = lambda agent: 't'  # Explicit custom transport.
     from test_history_data import codex_rows, transcript_file
     cached = transcript_file(app.store.directory / 'transcripts/codex/rollout-selected.jsonl', codex_rows('/saved/repo', sid='selected'))
     row = conversation(sid='selected', associations=[dict(workspace='/saved/repo')], sources=[dict(host='other', path='/remote/rollout-selected.jsonl')])
