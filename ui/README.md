@@ -28,6 +28,15 @@ The 60-column breakpoint applies to `_RailUI` inline menus. Most printed tables
 switch to labeled, wrapped cells when their actual columns no longer fit.
 Session lists instead keep one physical row per session, as described below.
 
+Terminal titles use short public command labels while a command runs and clear
+on return, including failures and cancellation. Remote open/resume adds the host
+and public action before SSH starts. Existing session/tmux labels remain useful.
+Titles exclude delegated payloads, worker code and environment assignments; control
+characters are stripped and labels are bounded. Redirected output, dumb terminals,
+internal workers and JSON/raw/dump/statusline modes emit no title escapes. Terminal
+profiles may still append foreground arguments independently of OSC titles; remote
+foreground workers use single-quoted outer commands to avoid escaped-space titles.
+
 ## Command types
 
 The types compose: `t session open` can be a direct action with an explicit

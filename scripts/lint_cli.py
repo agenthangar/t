@@ -809,6 +809,8 @@ def check_help_page(name, body, parser, policy, *, width=80, detailed=False):
 
 def check_help_color(name, plain, rendered, *, enabled):
     """Compare exact layout and independently require color on heading labels only."""
+    # OSC titles affect the terminal tab, not help text or its color policy.
+    rendered = re.sub(r"\x1b\]0;[^\x00-\x1f\x7f-\x9f]*\x07", "", rendered)
     errors = []
     ansi = re.compile(r"\x1b\[[0-9;]*m")
     if ansi.sub("", rendered) != plain:

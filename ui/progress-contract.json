@@ -209,6 +209,10 @@
       "kind": "background",
       "reason": "SessionStart launches a detached try-lock retry worker and never waits for runtime or SSH reconciliation."
     },
+    "bin/t:_exec_foreground:subprocess.call": {
+      "kind": "passthrough",
+      "reason": "The foreground SSH or shell command owns terminal input and output; its parent only waits to clear the terminal title."
+    },
     "libexec/t_runner_job.py:_git:subprocess.check_output": {
       "kind": "protocol",
       "reason": "Snapshot reads Git metadata in the bounded runner protocol; the initiating CLI owns progress."
