@@ -1877,7 +1877,12 @@ _t_app_pull_slot() {
   [[ $codex_home == /* && -d $codex_home ]] || {
     print -u2 -- 't app pull: the selected Codex home is unavailable'; return 1
   }
-  launch="export CODEX_HOME=${(q)codex_home}; exec $(CODEX_HOME="$codex_home" _dev_agent_resume_cmd codex "$sid" --cd "$dir")"
+  local resume_command
+  resume_command=$(CODEX_HOME="$codex_home" _dev_agent_resume_cmd codex "$sid" --cd "$dir") || {
+    print -u2 -- 't app pull: could not prepare the guarded resume command'; return 1
+  }
+  [[ -n $resume_command ]] || { print -u2 -- 't app pull: empty guarded resume command'; return 1; }
+  launch="export CODEX_HOME=${(q)codex_home}; exec $resume_command"
   local fg_sid fg_rest fg_cwd
   while IFS=$'\t' read -r fg_sid fg_rest; do
     fg_cwd=${fg_rest%%$'\t'*}
