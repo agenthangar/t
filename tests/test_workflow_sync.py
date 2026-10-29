@@ -221,10 +221,10 @@ def test_sync_cli_and_readonly_status(sync, t_mod, monkeypatch, capsys):
     args = parser.parse_args(['config', 'workflow', 'list', '--json'])
     assert t_mod.cmd_config(cfg, args) == 0
     assert json.loads(capsys.readouterr().out)['propagation']['revision'] == 1
-    # Raw instructions still contain only user-authored prose.
+    # Raw instructions contain only editable prose, without propagation status.
     args = parser.parse_args(['config', 'workflow', 'instructions', 'show'])
     assert t_mod.cmd_config(cfg, args) == 0
-    assert capsys.readouterr().out == ''
+    assert capsys.readouterr().out == helper['instructions'](doc)
 
 
 def test_proxy_supported_wire_protocol(sync, monkeypatch):
@@ -502,7 +502,7 @@ def test_receive_global_default_uses_isolated_name(sync, monkeypatch):
     actual = w['load']()[0]
     assert actual['default'].startswith('synced-')
     assert w['effective'](actual)['instructions'] == 'incoming global'
-    assert 'instructions' not in w['effective'](actual, '/unrelated')
+    assert w['effective'](actual, '/unrelated')['instructions'] == w['issue_policy']()
 
 
 def test_multiple_scope_batches_apply_end_to_end(sync, monkeypatch, tmp_path):
@@ -687,3 +687,40 @@ def test_remote_partial_scope_retry_does_not_rewrite_accepted_launch_defaults(sy
     assert source.read_text() == 'DEV_MODEL[codex]=deliberate-choice\n'
     assert native.read_text() == 'model="deliberate-choice"\nservice_tier="ultrafast"\n'
     assert str(tmp_path) in helper['load']()[0]['repositories']
+
+
+@pytest.mark.parametrize('prose', ['', 'My deliberate issue policy replacement.'])
+def test_received_workflow_does_not_restore_removed_issue_policy(sync, monkeypatch, tmp_path, prose):
+    doc = saved(sync)
+    doc['workflows']['standard']['instructions'] = prose
+    doc['workflows']['named'] = copy.deepcopy(doc['workflows']['standard'])
+    doc['repositories']['/source/repo'] = {'workflow': 'named'}
+    monkeypatch.setattr(sync, 'identity', lambda _: 'owner/repo')
+    payload, missing = sync.portable(doc, [None, '/source/repo'])
+    assert not missing
+    sync.receive(payload, {'repo': str(tmp_path)})
+    w = sync.workflow()
+    actual = w['load']()[0]
+    assert w['instructions'](actual) == prose
+    assert w['instructions'](actual, str(tmp_path)) == prose
+    assert w['issue_policy']() not in (Path(os.environ['CODEX_HOME']) / 'AGENTS.md').read_text()
+
+
+@pytest.mark.parametrize('version', [1, 2])
+def test_issue_policy_migration_queues_effective_scopes_and_refreshes_hash(sync, tmp_path, version):
+    w = sync.workflow()
+    policy = copy.deepcopy(w['DEFAULT'])
+    repo = str(tmp_path / 'repo')
+    old = ({'version': 1, 'global': policy, 'repositories': {repo: copy.deepcopy(policy)}}
+           if version == 1 else {'version': 2, 'default': 'standard',
+                 'workflows': {'standard': policy}, 'repositories': {repo: {'workflow': 'standard'}}})
+    w['config_path']().parent.mkdir(parents=True, exist_ok=True)
+    w['config_path']().write_text(json.dumps(old))
+    w['sync']()
+    state = sync.status()
+    assert state['revision'] == 1
+    assert state['scopes'] == [None, repo]
+    assert state['workflow_hash'] == sync.digest(w['load']()[0])
+    assert state['context'] == {} and not state['settings']
+    w['sync']()
+    assert sync.status()['revision'] == 1

@@ -2145,10 +2145,10 @@ def test_remote_t_delegations_suppress_a_second_update_prompt(zsh, tmp_path):
     )
     result = zsh(snippet, _tty=True, SSH_LOG=str(log), FAKE_ROWS=rows)
     assert result.returncode == 0, result.stderr
-    assert "→ mini: t open api 3 --fg" in result.stdout
+    assert "→ mini: t open --local api 3 --fg" in result.stdout
     assert log.read_text().splitlines() == [
         "-t me@mini zsh -lic 'T_UPDATE_PROMPTED=$$ t open api 3'",
-        "-t me@mini zsh -lic 'T_UPDATE_PROMPTED=$$ t open api 3 --fg'",
+        "-t me@mini zsh -lic 'T_UPDATE_PROMPTED=$$ t open --local api 3 --fg'",
         "-t me@mini zsh -lic 'T_UPDATE_PROMPTED=$$ t plan api 3 --raw'",
         "-t me@mini zsh -lic 'T_UPDATE_PROMPTED=$$ t kill api:fg -y'",
         "-t me@mini zsh -lic 'T_UPDATE_PROMPTED=$$ t open api:fg'",
@@ -2627,7 +2627,7 @@ def test_open_local_multi_picker(zsh, tmp_path, tabs):
       print -r -- "rc=$?"
     '''.replace("TAB_RESULT", "return 0" if tabs else "return 1")
     result = zsh(snippet, _tty=True, FZF_LOG=str(log), FAKE_HAS_SESSION="1")
-    assert "rc=0" in result.stdout, result.stdout
+    assert f"rc={0 if tabs else 1}" in result.stdout, result.stdout
     assert "TAB t open alias 4 --cli --local" in result.stdout
     assert ("Attach with: t open alias 4 --cli --local" in result.stdout) == (not tabs)
     calls = zsh.log.read_text()

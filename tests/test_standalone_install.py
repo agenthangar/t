@@ -282,12 +282,12 @@ def test_install_migrates_standard_hook_names_preserving_options_and_trust(box, 
     assert config.read_bytes() == trust
 
 
-def test_install_refreshes_only_explicitly_configured_agent_workflow(box):
+def test_install_seeds_editable_defaults_and_refreshes_configured_workflow(box):
     checkout, home = box
     native = home / '.codex/AGENTS.md'
     assert run_install(checkout, home).returncode == 0
-    assert '<!-- t agent-workflow: begin -->' not in native.read_text()
-    assert not (home / '.config/t/workflow.json').exists()
+    assert '<!-- t agent-workflow: begin -->' in native.read_text()
+    assert (home / '.config/t/workflow.json').exists()
     policy = {'enabled': True, 'planning': {'model': 'chosen-planner', 'effort': 'high'},
               'implementation': {'model': 'chosen-coder', 'effort': 'medium'},
               'review': {'model': 'chosen-reviewer', 'effort': 'one-level-lower'}}
@@ -296,9 +296,9 @@ def test_install_refreshes_only_explicitly_configured_agent_workflow(box):
     original = native.read_text()
     result = run_install(checkout, home)
     assert result.returncode == 0, result.stderr
-    assert native.read_text().startswith(original)
+    assert native.read_text().split('<!-- t agent-workflow: begin -->')[0] == original.split('<!-- t agent-workflow: begin -->')[0]
     assert 'chosen-planner' in native.read_text()
     assert 'chosen-coder' in (home / '.claude/CLAUDE.md').read_text()
-    assert native.read_text().count('<!-- t public-issues: begin -->') == 1
+    assert '<!-- t public-issues: begin -->' not in native.read_text()
     assert native.read_text().count('<!-- t agent-workflow: begin -->') == 1
     assert not (checkout / 'AGENTS.md').exists()
