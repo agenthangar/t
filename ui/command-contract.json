@@ -1110,7 +1110,15 @@
         ]
       },
       "progress": "Terminal-only discovery stages on stderr; no progress in redirected output, JSON, or remote protocols.",
-      "notes": "Terminal launches run without echoing internal shell commands or exit instructions; agent output and diagnostics remain visible. Saved Codex resume resolves unindexed held sibling locks through validated session_meta workspace identity in active and archived rollouts. Unknown, invalid or unreadable evidence fails closed; ownership refusals return a concise retry diagnostic without a traceback. Confirmed missing/invalid GitHub authentication warns once per affected host before selection, including empty and automatic results, without blocking available conversations; persistent compact picker warning survives filter/sort/reset/all. Remedy: gh auth login --hostname github.com on the named host. Network/rate-limit/permission failures and missing gh do not trigger auth warnings."
+      "notes": "Terminal launches run without echoing internal shell commands or exit instructions; agent output and diagnostics remain visible. Saved Codex resume resolves unindexed held sibling locks through validated session_meta workspace identity in active and archived rollouts. Unknown, invalid or unreadable evidence fails closed; ownership refusals return a concise retry diagnostic without a traceback. Confirmed missing/invalid GitHub authentication warns once per affected host before selection, including empty and automatic results, without blocking available conversations; persistent compact picker warning survives filter/sort/reset/all. Remedy: gh auth login --hostname github.com on the named host. Network/rate-limit/permission failures and missing gh do not trigger auth warnings.",
+      "source_reconciliation": {
+        "scope": "selected cross-host saved conversations only",
+        "checkpoint": "verified source workspace; normal Git identity/hooks; tracked, staged and nonignored untracked code",
+        "transfer": "private verified bundle; no origin push or destination branch overwrite",
+        "offline": "warn and use locally available code and validated transcript",
+        "safety_refusal": "stop before launch",
+        "read_only_discovery": true
+      }
     },
     "session history": {
       "patterns": [
