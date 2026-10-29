@@ -48,6 +48,67 @@ DEFAULT = {
     'implementation': {'model': 'gpt-6.1-sol', 'effort': 'auto'},
     'review': {'model': 'gpt-6-astra', 'effort': 'one-level-lower'},
 }
+RUNNER_DEFAULT = {'default_targets': [], 'timeout_seconds': 900,
+                  'queue_timeout_seconds': 300, 'artifacts': [], 'targets': {}}
+RUNNER_LABELS = {'ubuntu-24.04': ('linux', 'x64'), 'ubuntu-22.04': ('linux', 'x64'),
+                 'macos-15': ('macos', 'arm64'), 'macos-15-intel': ('macos', 'x64'),
+                 'macos-14': ('macos', 'arm64')}
+
+
+def validate_runner_path(path):
+    if (not isinstance(path, str) or not path or len(path) > 1024 or path.startswith('/') or
+            '\\' in path or any(ord(c) < 32 or ord(c) == 127 for c in path) or
+            any(part in ('', '.', '..', '.git') for part in path.split('/'))):
+        raise ValueError('runner artifact paths must be relative paths without traversal')
+    return path
+
+
+def validate_runners(value):
+    if not isinstance(value, dict) or set(value) != set(RUNNER_DEFAULT):
+        raise ValueError('runners requires default_targets, timeout_seconds, queue_timeout_seconds, artifacts and targets')
+    for field, maximum in (('timeout_seconds', 21600), ('queue_timeout_seconds', 3600)):
+        if type(value[field]) is not int or not 1 <= value[field] <= maximum:
+            raise ValueError(f'runner {field} must be an integer between 1 and {maximum}')
+    targets = value['targets']
+    if not isinstance(targets, dict) or len(targets) > 16:
+        raise ValueError('runner targets must be an object with at most 16 entries')
+    for name, target in targets.items():
+        validate_name(name)
+        if not isinstance(target, dict):
+            raise ValueError('runner target must be an object')
+        provider = target.get('provider')
+        required = {'provider', 'os', 'arch', 'capabilities'}
+        required |= {'repository', 'label'} if provider == 'github' else {'host'} if provider == 'ssh' else set()
+        if provider not in ('github', 'ssh') or set(target) != required:
+            raise ValueError('runner target requires provider github or ssh and its connection fields')
+        if target['os'] not in ('linux', 'macos') or target['arch'] not in ('x64', 'arm64'):
+            raise ValueError('runner OS/architecture must be linux or macos and x64 or arm64; Windows is not yet supported')
+        if provider == 'github':
+            repository = target['repository']
+            if not isinstance(repository, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*', repository):
+                raise ValueError('GitHub runner repository must be OWNER/REPO')
+            if not isinstance(target['label'], str) or RUNNER_LABELS.get(target['label']) != (target['os'], target['arch']):
+                raise ValueError('GitHub runner label must match a supported OS/architecture')
+        elif not isinstance(target['host'], str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.@-]{0,252}', target['host']):
+            raise ValueError('SSH runner host must be a host alias or user@host without options')
+        capabilities = target['capabilities']
+        if not isinstance(capabilities, list) or len(capabilities) > 32:
+            raise ValueError('runner capabilities must be a list with at most 32 entries')
+        for capability in capabilities:
+            validate_name(capability)
+        if len(set(capabilities)) != len(capabilities):
+            raise ValueError('runner capabilities must be unique')
+    names = value['default_targets']
+    if not isinstance(names, list) or any(not isinstance(name, str) or name not in targets for name in names) or len(set(names)) != len(names):
+        raise ValueError('runner default_targets must name unique configured targets')
+    paths = value['artifacts']
+    if not isinstance(paths, list) or len(paths) > 32:
+        raise ValueError('runner artifacts must be a list with at most 32 paths')
+    for path in paths:
+        validate_runner_path(path)
+    if len(set(paths)) != len(paths):
+        raise ValueError('runner artifact paths must be unique')
+    return value
 
 
 def config_path():
@@ -75,13 +136,15 @@ def defaults():
 
 
 def validate_policy(value):
-    if not isinstance(value, dict) or set(value) - {'instructions', 'stages_enabled', 'behaviors'} != set(DEFAULT):
+    if not isinstance(value, dict) or set(value) - {'instructions', 'stages_enabled', 'behaviors', 'runners'} != set(DEFAULT):
         raise ValueError('workflow requires enabled, planning, implementation and review')
     instructions = value.get('instructions', '')
     if not isinstance(instructions, str) or any(marker in instructions for marker in (BEGIN, END, ISSUE_BEGIN, ISSUE_END)):
         raise ValueError('workflow instructions must be Markdown text without managed workflow markers')
     if type(value['enabled']) is not bool:
         raise ValueError('workflow enabled must be true or false')
+    if 'runners' in value:
+        validate_runners(value['runners'])
     if 'stages_enabled' in value and type(value['stages_enabled']) is not bool:
         raise ValueError('workflow stages_enabled must be true or false')
     behaviors = value.get('behaviors', {})
@@ -358,6 +421,47 @@ def instructions(document, repository=None, name=None):
     return policy.get('instructions', '')
 
 
+def runners(document, repository=None, name=None):
+    """Inspect stored runner settings without changing scope or writing defaults."""
+    if name and repository:
+        raise ValueError('workflow name and --repo cannot be combined')
+    if name and name not in document['workflows']:
+        raise ValueError(f'unknown workflow {name!r}')
+    policy = document['workflows'][name] if name else resolved(document, repository)
+    return copy.deepcopy(policy.get('runners', RUNNER_DEFAULT))
+
+
+def runners_summary(policy):
+    value = policy.get('runners', RUNNER_DEFAULT)
+    return (f"{len(value['targets'])} targets · defaults: " + ', '.join(value['default_targets'])
+            if value['targets'] else 'unconfigured')
+
+
+def edit_runners(document, repository=None, name=None):
+    shown = runners(document, repository, name)
+    argv = shlex.split(os.environ.get('VISUAL') or os.environ.get('EDITOR') or 'vi')
+    if not argv:
+        raise ValueError('set VISUAL or EDITOR to an editor command')
+    with tempfile.TemporaryDirectory(prefix='t-runners-') as directory:
+        path = Path(directory) / 'runners.json'
+        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        with os.fdopen(fd, 'w', encoding='utf-8') as stream:
+            stream.write(encode(shown))
+        rc = subprocess.call([*argv, str(path)])
+        if rc:
+            return rc, document
+        edited = snapshot(path)
+        if edited is None:
+            raise ValueError('editor removed runners file; nothing saved')
+        value = decode(edited[0])
+        validate_runners(value)
+        if value == shown:
+            return 0, document
+        policy = scoped(document, repository, name) or resolved(document, repository)
+        policy['runners'] = value
+        return 0, update(document, policy, repository, name)
+
+
 def edit_instructions(document, repository=None, name=None):
     shown = instructions(document, repository, name)
     argv = shlex.split(os.environ.get('VISUAL') or os.environ.get('EDITOR') or 'vi')
@@ -399,6 +503,15 @@ def _stage_text(policy):
         parts.append('Selected behavior preferences:\n' + '\n'.join(
             spec['label'] + ': ' + spec['choices'][behaviors[key]][1]
             for key, spec in BEHAVIORS.items() if key in behaviors))
+    if policy.get('runners', {}).get('targets'):
+        parts.append('Test runners are configured. Use `t config workflow runners list` '
+                     '(with `--repo ALIAS` for repository settings) to inspect targets. '
+                     'Use `t config workflow runs start -- COMMAND ...` to test one immutable snapshot '
+                     'of current tracked worktree edits without committing or pushing source; include intended '
+                     'untracked inputs with `--include PATH`. Select targets with `--target NAME`, '
+                     '`--os linux|macos` or `--capability NAME`. Inspect durable results with '
+                     '`t config workflow runs status ID` and `t config workflow runs logs ID`. '
+                     'Native desktop tests remain opt-in.')
     if policy.get('instructions'):
         parts.append('Custom workflow Markdown (takes precedence over behavior preferences and model-stage guidance):\n' + policy['instructions'])
     return '\n\n'.join(parts)

@@ -1,0 +1,112 @@
+name: Private t runner
+run-name: t-runner-${{ inputs.job_id }}-${{ inputs.target }}
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        required: true
+        type: string
+      target:
+        required: true
+        type: string
+      release_id:
+        required: true
+        type: string
+      labels:
+        required: true
+        type: string
+      asset_ids:
+        required: true
+        type: string
+      archive_sha256:
+        required: true
+        type: string
+      manifest_sha256:
+        required: true
+        type: string
+      timeout_minutes:
+        required: true
+        type: string
+permissions:
+  contents: write
+jobs:
+  run:
+    runs-on: ${{ fromJSON(inputs.labels) }}
+    timeout-minutes: ${{ fromJSON(inputs.timeout_minutes) }}
+    env:
+      GH_REPO: ${{ github.repository }}
+      JOB_ID: ${{ inputs.job_id }}
+      TARGET: ${{ inputs.target }}
+      RELEASE_ID: ${{ inputs.release_id }}
+      ASSET_IDS: ${{ inputs.asset_ids }}
+      ARCHIVE_SHA256: ${{ inputs.archive_sha256 }}
+      MANIFEST_SHA256: ${{ inputs.manifest_sha256 }}
+    steps:
+      - name: Validate private broker and download exact job assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64, hashlib, json, os, pathlib, re, subprocess, uuid
+          assert str(uuid.UUID(os.environ['JOB_ID'])) == os.environ['JOB_ID']
+          assert re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,63}', os.environ['TARGET'])
+          assert os.environ['RELEASE_ID'].isdigit()
+          def api(path):
+              return json.loads(subprocess.check_output(['gh','api',path]))
+          repo = api('repos/' + os.environ['GH_REPO'])
+          assert repo['private'] is True
+          release = api('repos/' + os.environ['GH_REPO'] + '/releases/' + os.environ['RELEASE_ID'])
+          tag = 't-runner-' + os.environ['JOB_ID']
+          assert release['tag_name'] == tag
+          pathlib.Path('payload').mkdir(mode=0o700)
+          asset_ids = json.loads(os.environ['ASSET_IDS'])
+          actual = {item['name']:item['id'] for item in release['assets']}
+          for asset in ['snapshot.tar','manifest.json','t_runner_job.py',os.environ['TARGET']+'.json']:
+              assert type(asset_ids[asset]) is int and actual[asset] == asset_ids[asset]
+              endpoint = 'repos/' + os.environ['GH_REPO'] + '/releases/assets/' + str(asset_ids[asset])
+              with pathlib.Path('payload',asset).open('wb') as output:
+                  subprocess.run(['gh','api',endpoint,'-H','Accept: application/octet-stream'],stdout=output,check=True)
+          for asset,expected in [('snapshot.tar',os.environ['ARCHIVE_SHA256']),('manifest.json',os.environ['MANIFEST_SHA256'])]:
+              assert re.fullmatch(r'[a-f0-9]{64}',expected)
+              assert hashlib.sha256(pathlib.Path('payload',asset).read_bytes()).hexdigest() == expected
+          protocol = api('repos/' + os.environ['GH_REPO'] + '/contents/.t-runner-protocol.json')
+          protocol = json.loads(base64.b64decode(protocol['content']))
+          assert protocol['protocol'] == 1
+          assert hashlib.sha256(pathlib.Path('payload/t_runner_job.py').read_bytes()).hexdigest() == protocol['helper_sha256']
+          PY
+      - name: Execute command in isolated job environment
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib, subprocess
+          root = pathlib.Path('payload').resolve()
+          spec = json.loads((root / (os.environ['TARGET']+'.json')).read_text())
+          args = ['python3',str(root/'t_runner_job.py'),'run','--job-dir',str(root),
+                  '--archive',str(root/'snapshot.tar'),'--manifest',str(root/'manifest.json'),
+                  '--timeout',str(spec['timeout']),'--os',spec['os'],'--arch',spec['arch'],'--token',spec['token']]
+          for value in spec['artifacts']:
+              args += ['--artifact',value]
+          code = subprocess.call(args + ['--'] + spec['command'])
+          (root/'helper-exit').write_text(str(code))
+          PY
+      - name: Retain command result and remove source payload
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import os, pathlib, shutil, subprocess
+          root = pathlib.Path('payload')
+          for name in ['result.json','output.log','artifacts.tar']:
+              source = root/name
+              if source.is_file():
+                  destination = root/(os.environ['TARGET']+'-'+name)
+                  source.replace(destination)
+                  subprocess.run(['gh','release','upload','t-runner-'+os.environ['JOB_ID'],str(destination),'--clobber'],check=True)
+          code = int((root/'helper-exit').read_text()) if (root/'helper-exit').is_file() else 1
+          shutil.rmtree(root,ignore_errors=True)
+          raise SystemExit(code if 0 <= code <= 255 else 1)
+          PY

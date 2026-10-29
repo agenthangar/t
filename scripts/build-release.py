@@ -17,6 +17,7 @@ EXACT = {
     "claude/settings.json.example", "claude/commands/tpush.md",
     "claude/commands/tpop.md", "codex/prompts/tpush.md",
     "codex/prompts/tpop.md", "scripts/install-release.py", "ui/fzf.sh",
+    "share/runners/broker.yml", "share/runners/sweeper.yml",
 }
 PREFIXES = ("libexec/", "zsh/")
 
