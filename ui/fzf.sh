@@ -233,6 +233,9 @@ Space/Tab mark ✓"
     printf '%s\n' "$_t_picker_source" > "$_t_picker_dir/source"
     if [ "${T_PICKER_SESSION_FILTERS:-}" = resume ]; then
       printf '%s\n' "${T_PICKER_AUTH_HOSTS:-}" > "$_t_picker_dir/auth-hosts"
+      # The persistent warning needs another row; fzf 0.44 otherwise exhausts
+      # its 60%-height window at 80x24 before rendering a focused session.
+      [ -z "${T_PICKER_AUTH_HOSTS:-}" ] || set -- --height=100% "$@"
     fi
     T_PICKER_HEADER_WIDTH=${_t_picker_size#* }
     [ "${T_PICKER_HEADER_WIDTH:-0}" -gt 0 ] || T_PICKER_HEADER_WIDTH=${COLUMNS:-80}
