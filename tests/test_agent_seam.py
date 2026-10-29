@@ -2236,9 +2236,8 @@ def test_zsh_resume_picker_shows_the_display_column_for_every_row(zsh, tmp_path)
     # The header exposes every available filter; agent names remain in the rows.
     header = (tmp_path / "fzf.log.header").read_text().splitlines()
     controls = "\n".join(header)
-    for control in ("Ctrl-G agent", "Ctrl-O host", "Ctrl-R repo", "Ctrl-L live",
-                    "Ctrl-A all", "Ctrl-F reset", "0 hidden", "live: shown",
-                    "Sort: last turn", "Alt-T last turn", "Alt-R repo",
+    for control in ("Ctrl-F filters", "Ctrl-A off", "Ctrl-L on", "0 hidden",
+                    "Filters OFF", "Sort: last turn", "Alt-T last turn", "Alt-R repo",
                     "Alt-G agent", "Alt-O host", "Alt-V session"):
         assert control in controls
     assert "Ctrl-D" not in controls  # Resume has no historical interface metadata.
@@ -2638,10 +2637,10 @@ def test_open_local_multi_picker(zsh, tmp_path, tabs):
     assert "new-session" not in calls and "dev-web-3" not in calls
     args = log.read_text()
     assert "--multi" in args and "space:toggle+down" in args
-    assert "Enter open · Esc · Space/Tab mark ✓" in args
-    for control in ("Ctrl-T attached", "Ctrl-U unattached", "Ctrl-F defaults", "Ctrl-A all"):
+    assert "Enter open/Esc · Space/Tab ✓" in args
+    for control in ("Ctrl-F filters", "Ctrl-A off", "Ctrl-L on"):
         assert control in args
-    assert "View: unattached (default)" in args
+    assert "Filters ON: unattached" in args
 
 
 def test_open_picker_cancel_does_not_create_session(zsh, tmp_path):

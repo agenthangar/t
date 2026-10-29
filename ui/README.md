@@ -47,9 +47,9 @@ the command name.
 | --- | --- |
 | **List** | Print a scoped, aligned table immediately. Name its scope, label columns, and give a clear empty state. No picker, confirmation, or update prompt. `t session list` and `t issue list` are examples. |
 | **Detail/status** | Print labeled facts without changing state or prompting. Preserve raw text, paths, and streams when the command explicitly exposes them. |
-| **Single selection** | Use a searchable fzf picker or an inline `_RailUI` menu with one visibly focused row. Enter chooses exactly one item; Esc/Ctrl-C cancels. An explicit target bypasses selection. A paginated single picker uses Ctrl-F for the next page, Ctrl-B for the previous page, and Ctrl-R to refresh; those keys belong to pagination rather than the filtered picker's defaults control. |
+| **Single selection** | Use a searchable fzf picker or an inline `_RailUI` menu with one visibly focused row. Enter chooses exactly one item; Esc/Ctrl-C cancels. An explicit target bypasses selection. A paginated single picker uses Ctrl-F for the next page, Ctrl-B for the previous page, and Ctrl-R to refresh; those keys belong to pagination rather than the filtered picker's settings control. |
 | **Multi-selection** | Searchable pickers use Space/Tab to mark rows and Enter to accept the marks, or the focused row if none are marked. Inline checklists use Space to toggle and Enter to submit only checked items. Show marks and the Enter action independently of color. |
-| **Filtered selection** | Show active filters and hidden count in the header. Ctrl-A shows all; Ctrl-F restores defaults. Session pickers add Ctrl-T (attached), Ctrl-L (live), or Ctrl-P (pending) where applicable. Filtering retains the search and removes hidden marks. Apply show-all/default behavior to issue pickers as well. Ctrl-/ toggles full details when rows have previews. |
+| **Filtered selection** | Show active filters and hidden count in the header. Session pickers use Ctrl-F for staged filter settings, Ctrl-A to turn filters off, and Ctrl-L to restore saved choices. State and column choices live in settings. Filtering retains the search and removes hidden marks. Issue pickers retain Ctrl-A show-all and Ctrl-F defaults. Ctrl-/ toggles full details when rows have previews. |
 | **Wizard/review** | Stage choices, then display the resulting changes before applying them. Config saves on Enter; install enters review and then runs on Enter; login runs the selected logins on its first Enter. Setup and repository creation keep their released `y` confirmation. Show the actual action in the footer. |
 | **Direct action/passthrough** | An explicit target acts without a needless picker. Retain ownership and worktree safety checks, confirmation before interrupting live work with an explicit target, and the delegated tool's input/output and exit status. |
 | **Machine output** | Preserve existing JSON, raw-value, and remote wire formats. Do not add presentation chrome, ANSI color, or prompts. The inventory identifies machine-facing modes; this does not imply universal JSON support. |
@@ -271,11 +271,9 @@ dev sessions   ● attached/loaded · ✓ active context · ↻ still in progres
 
   reattach: t open <repo> <slot>
 
-Enter open · Esc · Space/Tab mark ✓
-Ctrl-T attached · Ctrl-U unattached · Ctrl-F defaults · Ctrl-A all
-Ctrl-G agent · Ctrl-P progress · Ctrl-D UI · Ctrl-B model
-Ctrl-O host · Ctrl-R repo · Ctrl-V session · Ctrl-E context · Ctrl-W task
-View: unattached (default) · 2 hidden
+Enter open/Esc · Space/Tab ✓
+Ctrl-F filters · Ctrl-A off · Ctrl-L on
+Filters ON: unattached · 2 hidden
   SESSION  WORKING ON
 ▸✓ ○ api-2  Fix login
 ```
@@ -284,20 +282,23 @@ The rows above illustrate hierarchy and controls, not a fixed column schema.
 List commands print normally; picker headers and marks appear only for selection.
 
 The open picker hides attached CLI and loaded desktop sessions by default.
-Ctrl-T selects attached-only; Ctrl-U selects unattached-only. Both preserve
-column filters. Ctrl-F restores defaults; Ctrl-A shows all.
-The compatibility --attached flag starts with all rows. There is no
-new-session shortcut or details preview in this picker; use `t open --new`.
+Ctrl-F opens the shared single-picker Filters settings. Choose State for attached,
+unattached or all attachment states, or choose a column for searchable exact values.
+Open includes agent, progress, interface, model, host, repo, session, context and task;
+resume includes agent, host/origin and repo; close includes agent, interface, host
+and repo. Resume State includes saved-only/live; close State independently includes
+attached and pending work. An explicit All choice clears one column.
+Reset filters to defaults stages the original state and clears column choices.
+Apply filters commits staged choices and enables them; Esc discards settings changes.
+Esc in a nested value/state picker keeps its existing choice.
+
+Ctrl-A turns filters off without changing saved choices; Ctrl-L restores those
+choices. Both are idempotent. Opening settings while off retains the saved values.
+The compatibility --attached flag starts with filtering off and defaults retained.
+There is no new-session shortcut or details preview in open; use `t open --new`.
 A plain green ✓ selection marker stays readable on the dark cyan focus row;
 never paint a reversed-color block behind it. The marker occupies its own gutter
 beside the focus pointer, separate from status marks in the row.
-The open picker exposes searchable value selection for each column: Ctrl-G
-agent, Ctrl-P progress, Ctrl-D interface, Ctrl-B model, Ctrl-O host, Ctrl-R repo,
-Ctrl-V session/slot, Ctrl-E context, and Ctrl-W task. Use the shared single-picker
-profile; Enter applies, Esc keeps the filter, and an explicit All option clears
-one column. Column filters combine with attachment views. Ctrl-A clears all
-filters and shows every snapshot row; Ctrl-F clears all filters and restores
-unattached. Ctrl-T and Ctrl-U switch attachment without clearing column filters.
 
 All-repository resume discovery (`t session resume --all`, or outside a checkout)
 includes local registrations, repositories registered only on reachable hosts,
@@ -318,17 +319,15 @@ destination. Safety or checkpoint refusals stop launch; unreachable or unsupport
 source helpers warn and retain the locally available revision and transcript path.
 Lists, discovery and canceled selections never create checkpoints.
 
-Resume and close retain cycling Ctrl-G agent, Ctrl-O host/origin, Ctrl-R repo,
-and (close only) Ctrl-D interface, with their existing state toggles. Resume
-never invents a historical UI. Resume uses actual user-turn timestamps, newest
-first by default, with unknown times last; live rows have no artificial priority.
+Resume never invents a historical UI. Resume uses actual user-turn timestamps,
+newest first by default, with unknown times last; live rows have no artificial priority.
 Alt-T selects last turn, Alt-R repository, Alt-G agent, Alt-O host/origin, and
 Alt-V session (natural numeric order). Text modes ascend with newest turn and
 stable identity as tie-breakers. Sorts apply within the private filtered snapshot
-and preserve query and identities. Ctrl-A clears filters and keeps the sort;
-Ctrl-F resets filters and last-turn sorting. Compact headers use M for Alt and ^
-for Ctrl. Resume disables fzf relevance sorting so searching preserves the chosen
-order. Saved transcript mtime/reopen time still controls --days eligibility.
+and preserve query and identities. Filter settings, reset and on/off preserve sorting.
+Compact headers use M for Alt and ^ for Ctrl. Resume disables fzf relevance sorting
+so searching preserves the chosen order. Saved transcript mtime/reopen time still
+controls --days eligibility.
 Every column value comes from raw metadata,
 not truncated display text. The progress value exactly follows the ↻ marker:
 work continued after a merged PR; its absence is not completion evidence.
@@ -339,10 +338,11 @@ Query and visible selection identity survive supported reloads; hidden marks
 are removed. Old fzf clears marks on filter actions. These remain filtered/multi
 modes, not new commands or discovery operations. Every shortcut and a focused
 row remain visible at 80×24, 44×20, and 32×12. Short terminals use a borderless
-full-height view, including nested value pickers. Open's narrow header uses ^
-for Ctrl and shows the active filter count; full values are available in the
-column pickers. Filter metadata comes from the same private snapshot as the
-rows. A named repository and prior discovery limits remain in force.
+full-height view, including nested value pickers. Narrow headers use ^ for Ctrl
+and show the selected column count; full values are available in Filters. One cyan
+summary highlights enabled constraints, with explicit ON/OFF text in monochrome.
+Clip plain text before adding ANSI color. Filter metadata comes from the same
+private snapshot as the rows. A named repository and prior discovery limits remain in force.
 
 The kill multi-picker's Enter action confirms every marked session (or the
 focused row), including live local and remote agents; do not prompt again per

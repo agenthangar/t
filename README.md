@@ -344,32 +344,22 @@ commands also report discovery stages. Redirected output and JSON remain quiet.
 `t open`, `t resume`, and `t kill` share the compact resume picker design:
 **Space/Tab marks ✓ and Enter acts on the selection**. A plain green checkmark
 stays readable on the darker cyan focused row, without a colored block.
-In `t open`, **Ctrl-T** shows attached sessions only and **Ctrl-U** shows
-unattached sessions, preserving your other filters. **Ctrl-F** restores defaults
-(unattached, with column filters cleared); **Ctrl-A** shows all and clears filters.
-The attachment views and column filters have these shortcuts:
+**Ctrl-F** opens the Filters picker. Choose State or a column, select its value,
+then choose Apply filters. **Ctrl-A** turns filtering off to show the whole
+snapshot; **Ctrl-L** turns it back on with your saved choices.
 
-| Key | Filter |
-| --- | --- |
-| Ctrl-T | Attached only |
-| Ctrl-U | Unattached only (preserve other filters) |
-| Ctrl-F | Defaults (unattached, clear other filters) |
-| Ctrl-A | All (clear filters) |
-| Ctrl-G | Agent |
-| Ctrl-P | In-progress marker |
-| Ctrl-D | CLI/desktop interface |
-| Ctrl-B | Recorded model |
-| Ctrl-O | Host |
-| Ctrl-R | Repository |
-| Ctrl-V | Session/slot |
-| Ctrl-E | Context status |
-| Ctrl-W | Task (working on) |
+The settings picker includes attachment state for open, live sessions for resume,
+and attached/pending work for close. Columns include agent, host and repository;
+open also offers progress, interface, model, session, context and task, while close
+includes interface. Each value picker includes All to clear that column.
+Reset filters to defaults stages the original state and clears column choices.
+Enter chooses a setting; Esc in a value picker keeps that value, and Esc in the
+Filters picker discards all staged changes. Apply filters enables the saved choices.
 
-Column shortcuts open a searchable value picker. Enter applies a value;
-Esc keeps the current filter. “All (clear filter)” clears
-that column. Filters combine and keep your search. Narrow headers abbreviate
-Ctrl as `^`, retain every shortcut, and show the active filter count; opening a
-column picker shows its current value. Filters use the current snapshot without
+The main header shows one highlighted filter summary, with explicit ON/OFF text
+when color is unavailable. Narrow headers abbreviate Ctrl as `^` and show the
+selected column count; open Filters to see complete values. Filtering keeps your
+search and removes hidden marks. Choices use the current snapshot without
 expanding repository scope or fetching new sessions.
 
 `●` means a CLI terminal is attached or a desktop conversation is loaded;
@@ -379,16 +369,13 @@ agent is generating. `↻` means work continued after a merged PR (edits or comm
 not known to have landed); “not marked” is not proof that work is finished.
 The separate `✓` in the left selection gutter means you marked that row to open.
 
-Resume and close retain their existing controls: Ctrl-L toggles live resume
-sessions; Ctrl-T toggles attached close sessions; Ctrl-P toggles pending close
-work. Ctrl-G cycles agents, Ctrl-O hosts, Ctrl-R repositories, and Ctrl-D the
-close interface. Ctrl-A shows all and Ctrl-F resets these filters. Resume never
-invents a historical interface.
+Resume never invents a historical interface. Resume and close use the same
+Filters picker and on/off keys as open.
 Resume sorts by the last actual user turn, newest first; unknown times come last.
 Alt-T restores that sort, Alt-R sorts by repository, Alt-G by agent, Alt-O by
 host/origin, and Alt-V by session (numeric slots sort naturally, e.g. 2 before 10).
 Text sorts ascend, then use newest turn and session identity to break ties.
-Ctrl-A clears filters while keeping the selected sort; Ctrl-F resets both.
+Filter settings, reset and on/off preserve the selected sort; Alt-T restores last-turn sorting.
 For example, `t resume --live` followed by Alt-R groups live and saved sessions by
 repository. Live labels remain visible alongside their last-turn time.
 The open picker keeps session and task text prominent, without a last-turn

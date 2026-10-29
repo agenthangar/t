@@ -120,83 +120,87 @@ def pack(parts, width):
     return lines
 
 
-def header(profile, mask, filters, hidden, columns, width, sort='turn'):
-    if profile == 'resume':
-        return resume_header(mask, filters, hidden, columns, width, sort)
+def state_label(profile, mask):
     if profile == 'open':
-        return open_header(mask, filters, hidden, columns, width)
-    controls = [f'Enter {profile} · Esc', 'Space/Tab mark ✓']
-    if width <= 36 and profile in ('open', 'kill'):
-        controls = [f'Enter {profile}/Esc · Space/Tab ✓']
-    if profile != 'open' and width > 36:
-        controls.append('Ctrl-/ details')
-    lines = pack(controls, width)
-    state = lambda bit: 'shown' if mask & bit else 'hidden'
-    toggles = ([f'Ctrl-L live: {state(1)}'] if profile == 'resume' else
-               [f'Ctrl-T attached: {state(1)}'])
-    if profile == 'kill':
-        toggles.append(f'Ctrl-P pending: {state(2)}')
-    lines += pack(toggles, width)
-    lines += pack([f'{FACETS[name][0]} {FACETS[name][1]}: {value or "all"}'
-                   for name, value in filters.items()], width)
-    if width <= 36:
-        lines += pack(['Ctrl-A all', 'Ctrl-F reset'], width)
-        if columns:
-            suffix = f' · {hidden} hidden'
-            lines.append(clip_columns(columns, width - display_width(suffix)) + suffix)
-        else:
-            lines.append(f'{hidden} hidden')
-    else:
-        lines += pack(['Ctrl-A show all', 'Ctrl-F defaults', f'{hidden} hidden'], width)
-        if columns:
-            lines.append(clip_columns(columns, width))
-    return '\n'.join(lines) + '\n'
+        return {0: 'unattached', 1: 'all attachment states', 2: 'attached'}[mask]
+    if profile == 'resume':
+        return 'live included' if mask else 'saved only'
+    return ('attached included' if mask & 1 else 'unattached') + ', ' + (
+        'pending included' if mask & 2 else 'clean only')
 
 
-def resume_header(mask, filters, hidden, columns, width, sort):
-    compact = width <= 36
+def header(profile, mask, filters, hidden, columns, width, sort='turn', enabled=True, color=False):
+    compact = width <= 40
     key = lambda text: text.replace('Ctrl-', '^').replace('Alt-', 'M-') if compact else text
-    controls = ['Enter/Esc' if compact else 'Enter resume/Esc', 'Space/Tab ✓', 'Ctrl-/ details',
-                'Ctrl-L live', 'Ctrl-A all', 'Ctrl-F reset']
-    controls += [f'{FACETS[name][0]} {FACETS[name][1]}' for name in filters]
-    controls += [f'{shortcut} {"turn" if compact and label == "last turn" else label}'
-                 for shortcut, label in RESUME_SORTS.values()]
+    controls = ['Enter/Esc' if compact and profile == 'resume' else f'Enter {profile}/Esc', 'Space/Tab ✓']
+    if profile != 'open':
+        controls.append('Ctrl-/' if compact and profile == 'resume' else 'Ctrl-/ details')
     lines = pack([key(control) for control in controls], width)
+    lines += pack([key(control) for control in
+                   ['Ctrl-F filters', 'Ctrl-A off', 'Ctrl-L on']], width)
+    if profile == 'resume':
+        lines += pack([key(f'{shortcut} {"turn" if compact and label == "last turn" else label}')
+                       for shortcut, label in RESUME_SORTS.values()], width)
+        lines.append(clip_columns('Sort: ' + RESUME_SORTS[sort][1], width))
     active = [f'{name}={value}' for name, value in filters.items() if value is not None]
-    lines += pack([f'Sort: {RESUME_SORTS[sort][1]}', f'{hidden} hidden'], width)
-    lines += pack([f'live: {"shown" if mask else "hidden"}', f'{len(active)} filters'], width)
-    if compact:
-        lines += pack(['^ Ctrl · M Alt'], width)
-    elif active:
-        lines.append(clip_columns('Filters: ' + ' · '.join(active), width))
+    summary = 'Filters ' + ('ON' if enabled else 'OFF')
+    if enabled:
+        summary += ': ' + (' · '.join(active) + ' · ' if active else '') + state_label(profile, mask)
+    else:
+        summary += ' · saved choices kept'
+    suffix = f' · {hidden} hidden'
+    if compact and active and enabled:
+        summary = f'Filters ON +{len(active)}'
+    # Clip plain text first: ANSI escapes must never count toward terminal width.
+    summary = clip_columns(summary, width - display_width(suffix)) + suffix
+    lines.append(('\x1b[1;36m' + summary + '\x1b[0m') if color and enabled else summary)
     if columns:
         lines.append(clip_columns(columns, width))
     return '\n'.join(lines) + '\n'
 
 
-def open_header(mask, filters, hidden, columns, width):
-    compact = width <= 36
-    key = lambda text: text.replace('Ctrl-', '^') if compact else text
-    lines = ['Enter open/Esc · Space/Tab ✓'] if compact else pack(['Enter open · Esc', 'Space/Tab mark ✓'], width)
-    controls = ['Ctrl-T attached', 'Ctrl-U unattached', 'Ctrl-F defaults', 'Ctrl-A all']
-    # Put the short UI control in the remaining space beside defaults/all.
-    facets = sorted(OPEN_FACETS, key=lambda name: compact and name != 'interface')
-    controls += [f'{OPEN_FACETS[name][0]} {OPEN_FACETS[name][1]}' for name in facets]
-    lines += pack([key(control) for control in controls] + (['^ = Ctrl'] if compact else []), width)
-    view = {0: 'unattached', 1: 'all', 2: 'attached'}[mask]
-    active = [f'{OPEN_FACETS[name][1]}={value}' for name, value in filters.items() if value is not None]
-    if compact:
-        # Keep every shortcut and one session row visible even at 32×12.
-        lines += pack([f'View: {view}', f'{len(active)} filters'], width)
-        suffix = f' · {hidden} hidden'
-        lines.append(clip_columns(columns or '^ = Ctrl', width - display_width(suffix)) + suffix)
-    else:
-        lines += pack([f'View: {view}' + (' (default)' if mask == 0 else ''), f'{hidden} hidden'], width)
-        if active:
-            lines.append(clip_columns('Filters: ' + ' · '.join(active), width))
-        if columns:
-            lines.append(clip_columns(columns, width))
-    return '\n'.join(lines) + '\n'
+def pick_menu(directory, choices, label, legend):
+    options = directory / 'settings'
+    options.write_text(''.join(f'{index}\t{text}\n' for index, text in enumerate(choices)))
+    result = subprocess.run(['sh', '-c',
+        '. "$1"; _t_fzf_single "choose" "$3" '
+        '--delimiter="$(printf "\\t")" --with-nth=2 --prompt="$4 > " '
+        '< "$2"', 'sh', str(Path(__file__).resolve().parents[1] / 'ui/fzf.sh'),
+        str(options), legend, label], text=True, stdout=subprocess.PIPE, check=False)
+    if result.returncode in (1, 130):
+        return None
+    if result.returncode:
+        raise RuntimeError('filter settings picker failed')
+    return int(result.stdout.split('\t', 1)[0])
+
+
+def settings(directory, profile, records, mask, filters):
+    """Stage nested choices; only Apply commits, Esc keeps the original settings."""
+    filters = dict(filters)
+    names = list(filters)
+    labels = OPEN_FACETS if profile == 'open' else FACETS
+    while True:
+        choices = ['Apply filters', 'State: ' + state_label(profile, mask)]
+        choices += [labels[name][1] + ': ' + (filters[name] or 'all') for name in names]
+        choices.append('Reset filters to defaults')
+        chosen = pick_menu(directory, choices, 'Filters', 'Apply saves; Esc discards edits')
+        if chosen is None:
+            return None
+        if chosen == 0:
+            return mask, filters
+        if chosen == len(choices) - 1:
+            mask, filters = 0, dict.fromkeys(names)
+        elif chosen == 1:
+            masks = [0, 2, 1] if profile == 'open' else list(range(4 if profile == 'kill' else 2))
+            value = pick_menu(directory, [state_label(profile, value) for value in masks],
+                              'State', 'Current: ' + state_label(profile, mask))
+            if value is not None:
+                mask = masks[value]
+        else:
+            name = names[chosen - 2]
+            value = pick_value(directory, name, records, filters[name])
+            if value is not None:
+                filters[name] = value[0]
 
 
 def pick_value(directory, name, records, current):
@@ -232,8 +236,17 @@ def render(directory, profile, action, width, columns='', facet=None):
     mask = int(mask_file.read_text().strip() or 0) if mask_file.exists() else 0
     sort_file = directory / 'sort'
     sort = sort_file.read_text().strip() if sort_file.exists() else 'turn'
+    enabled_file = directory / 'filters-enabled'
+    enabled = enabled_file.read_text() == '1' if enabled_file.exists() else True
     maximum = 3 if profile == 'kill' else 1
-    if action in ('all', 'default'):
+    if action in ('off', 'on'):
+        enabled = action == 'on'
+    elif action == 'settings':
+        chosen = settings(directory, profile, records, mask, filters)
+        if chosen is not None:
+            mask, filters = chosen
+            enabled = True
+    elif action in ('all', 'default'):
         mask = maximum if action == 'all' else 0
         filters = dict.fromkeys(names)
     elif profile == 'resume' and action.startswith('sort-') and action[5:] in RESUME_SORTS:
@@ -242,7 +255,7 @@ def render(directory, profile, action, width, columns='', facet=None):
         mask = 2  # Attached-only; repeated presses are idempotent.
     elif action == 'unattached' and profile == 'open':
         mask = 0  # Switch attachment without resetting column choices.
-    elif action == 'pick' and profile == 'open' and facet in names:
+    elif action == 'pick' and facet in names:
         chosen = pick_value(directory, facet, records, filters[facet])
         if chosen is not None:
             filters[facet] = chosen[0]
@@ -255,12 +268,14 @@ def render(directory, profile, action, width, columns='', facet=None):
         raise ValueError('unknown picker filter: ' + action)
     if mask > (2 if profile == 'open' else maximum):
         raise ValueError('unsupported state filter')
-    if profile == 'open' and mask == 2:
+    if not enabled:
+        rows = (directory / 'all').read_text().splitlines()
+    elif profile == 'open' and mask == 2:
         unattached = set((directory / 'rows-0').read_text().splitlines())
         rows = [row for row in (directory / 'all').read_text().splitlines() if row not in unattached]
     else:
         rows = (directory / f'rows-{mask}').read_text().splitlines()
-    selected = choose(rows, records, filters)
+    selected = choose(rows, records, filters) if enabled else rows
     if profile == 'resume':
         if action == 'default':
             sort = 'turn'
@@ -276,10 +291,10 @@ def render(directory, profile, action, width, columns='', facet=None):
         if hosts:
             summary = 'GitHub auth failed: ' + ', '.join(hosts)
             warning = clip_columns(summary, width) + '\n'
-    controls = header(profile, mask, filters, total - len(selected), columns, width, sort)
-    if warning and width <= 36:
-        controls = controls.replace('^ Ctrl · M Alt\n', '')
+    controls = header(profile, mask, filters, total - len(selected), columns, width,
+                      sort, enabled, os.environ.get('T_PICKER_COLOR') == '1')
     (directory / 'current-header').write_text(warning + controls)
+    enabled_file.write_text('1' if enabled else '0')
     mask_file.write_text(str(mask))
     state_file.write_text(json.dumps(filters))
 

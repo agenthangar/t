@@ -101,8 +101,8 @@ def test_persistent_auth_header_survives_every_action(filters, tmp_path, width):
     for name in ['source', 'all', 'rows-0', 'rows-1']:
         (tmp_path / name).write_text(row + '\n')
     (tmp_path / 'auth-hosts').write_text('user@host.example\nsecond.example\n')
-    for action in ['current', 'agent', 'host', 'repo', 'first', 'sort-repo', 'all', 'default']:
-        filters.render(tmp_path, 'resume', action, width)
+    for action in ['current', 'agent', 'host', 'repo', 'first', 'sort-repo', 'all', 'default', 'off', 'on']:
+        filters.render(tmp_path, 'resume', action, width, 'SESSION  TASK')
         text = (tmp_path / 'current-header').read_text()
         assert text.startswith('GitHub auth failed:')
         assert 'Enter' in text

@@ -11480,8 +11480,8 @@ TARGETS
   %(prog)s --codex --new        Start Codex directly
 
 SELECTION
-  Space/Tab check; Enter open. Ctrl-T attached; Ctrl-U unattached.
-  Ctrl-F defaults; Ctrl-A all. Column filters: t help open.
+  Space/Tab check; Enter open. Ctrl-F filter settings.
+  Ctrl-A filters off; Ctrl-L filters on (restore saved choices).
 
 DESKTOP TO CLI
   %(prog)s api 2 --cli
@@ -11496,13 +11496,12 @@ DESKTOP TO CLI
   Use `t open <repo> fg` to select that repo's foreground sessions.
   Bare t open lists sessions across all local repos, even from a worktree.
   t open <repo> filters. Attached CLI and loaded desktop rows are hidden;
-  Ctrl-T attached only; Ctrl-U unattached only; Ctrl-F defaults; Ctrl-A all.
-  Column value pickers: Ctrl-G agent, Ctrl-P progress, Ctrl-D CLI/desktop,
-  Ctrl-B model, Ctrl-O host, Ctrl-R repo, Ctrl-V session/slot, Ctrl-E context,
-  Ctrl-W task. Enter applies; Esc keeps the filter; All clears that column.
-  Filters combine within the current snapshot and keep your search.
-  Ctrl-T/Ctrl-U keep column filters; Ctrl-A/Ctrl-F clear them.
-  Ctrl-F resets to unattached. Narrow headers use ^ for Ctrl.
+  Ctrl-F opens Filters: State, agent, progress, CLI/desktop, model, host,
+  repo, session/slot, context and task. Choose a value, then Apply filters.
+  All clears one column; Reset filters to defaults stages unattached and clears
+  column choices. Esc in a value picker keeps it; Esc in Filters discards changes.
+  Ctrl-A turns filters off; Ctrl-L restores saved choices. Filters keep your search.
+  Narrow headers use ^ for Ctrl; Filters shows complete saved values.
   Status: ● attached/loaded; ○ unattached/unloaded; ✓ loaded context.
   ↻ marks work continued after a merged PR, not current agent computation.
   Unattached and unmarked do not mean finished. The gutter ✓ marks selection.
@@ -11692,11 +11691,10 @@ EXPLICIT PUSH AND PULL
   Initially shows only unattached sessions with clean, merged work; pending or
   uncertain work stays hidden.
 
-  Ctrl-T toggles attached rows, Ctrl-P toggles pending work, Ctrl-A shows all, and
-  Ctrl-F restores defaults.
-
-  Ctrl-G cycles agents, Ctrl-D CLI/desktop, Ctrl-O hosts, and Ctrl-R repositories;
-  these filters combine within the snapshot and reset with Ctrl-A or Ctrl-F.
+  Ctrl-F opens Filters for attached/pending state, agent, CLI/desktop, host
+  and repository. Choose values, then Apply filters; Esc discards staged changes.
+  Reset filters to defaults stages unattached/clean and clears column choices.
+  Ctrl-A turns filtering off; Ctrl-L restores saved choices, keeping your search.
 
   Column headers label the picker rows; Ctrl-/ opens the full session details.
 
@@ -11844,16 +11842,17 @@ EXPLICIT PUSH AND PULL
   An explicit slot without a terminal takes its newest saved conversation.
 
 PICKER CONTROLS
-  The picker MULTI-SELECTS: Space/Tab marks rows with a ✓; Ctrl-L toggles live rows,
-  Ctrl-G cycles agents, Ctrl-O hosts/origins, and Ctrl-R repositories.
+  The picker MULTI-SELECTS: Space/Tab marks rows with a ✓.
+  Ctrl-F opens Filters for live state, agent, host/origin and repository.
+  Choose values, then Apply filters; Esc discards staged changes. Reset filters
+  to defaults stages saved-only and clears columns. Ctrl-A turns filtering off;
+  Ctrl-L restores saved choices. Filtering keeps your search.
 
   Alt-T sorts by last turn (newest first, the default), Alt-R by repository, Alt-G
   by agent, Alt-O by host/origin, and Alt-V by session.
 
-  Text sorts ascend, with newest turn breaking ties.
-
-  Ctrl-A clears filters and keeps the sort; Ctrl-F restores filters and last-turn
-  sorting, and Ctrl-/ shows full row details.
+  Text sorts ascend, with newest turn breaking ties. Filter settings, reset and
+  on/off preserve sorting. Ctrl-/ shows full row details.
 
   Every marked dead slot revives into its own detached dev slot — the first
   attaches, the rest open in NEW terminal tabs (Terminal.app/iTerm2; `t session

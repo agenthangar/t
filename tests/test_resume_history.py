@@ -190,7 +190,7 @@ def test_explicit_slot_shared_filters_restore_inactive_and_all_rows(zsh, tmp_pat
     )
     log = tmp_path / 'picker.log'
     result = zsh(setup + 't resume api 3', _tty=True, FZF_LOG=str(log),
-                 PICK_ACTIONS='default,all', PICK_CANCEL='1',
+                 PICK_ACTIONS='on,off', PICK_CANCEL='1',
                  FAKE_SESSIONS='dev-api-3', FAKE_SESSION_PATH=str(wt))
     assert result.returncode == 130 and 'UNEXPECTED_' not in result.stdout
     initial = log.with_suffix('.log.initial').read_text()
