@@ -201,6 +201,10 @@
       "kind": "background",
       "reason": "Starts isolated Codex; its events are task artifacts and task_status provides status over MCP."
     },
+    "libexec/t_workflow_sync.py::subprocess.Popen": {
+      "kind": "background",
+      "reason": "SessionStart launches a detached try-lock retry worker and never waits for runtime or SSH reconciliation."
+    },
     "bin/t:_exec_foreground:subprocess.call": {
       "kind": "passthrough",
       "reason": "The foreground SSH or shell command owns terminal input and output; its parent only waits to clear the terminal title."
