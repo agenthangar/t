@@ -272,7 +272,7 @@ def check(parser, command_groups, instructions):
         return True, args
 
     workflow_registry = command_groups.get("config", {}).get("workflow", {})
-    if not isinstance(workflow_registry, dict) or set(workflow_registry) != {"list", "edit", "add", "use", "exclude", "inherit", "instructions"}:
+    if not isinstance(workflow_registry, dict) or set(workflow_registry) != {"list", "edit", "add", "use", "exclude", "inherit", "sync", "instructions"}:
         errors.append("config workflow registry must expose named workflows and instructions")
     config = top._name_parser_map.get("config")
     config_sub = _subparsers(config) if config else None
@@ -288,7 +288,7 @@ def check(parser, command_groups, instructions):
             valid, args = accepts(words)
             if not valid or args.verb != "config" or getattr(args, "workflow_action", None) != verb:
                 errors.append("workflow parser rejected or misrouted required form: " + " ".join(words))
-    for words in (["add", "quick"], ["add", "quick", "--from", "standard"], ["use", "quick"],
+    for words in (["sync"], ["add", "quick"], ["add", "quick", "--from", "standard"], ["use", "quick"],
                   ["use", "quick", "--repo", "api"], ["exclude", "--repo", "api"], ["inherit", "--repo", "api"],
                   ["edit", "quick"], ["list", "--all", "--json"], ["instructions", "show"],
                   ["instructions", "edit", "quick"], ["instructions", "show", "--repo", "api"]):
