@@ -2211,7 +2211,10 @@
         "tests/test_config.py::test_config_host_rename_review_save_or_discard",
         "tests/test_config.py::test_config_verification_delta_is_offered_after_save_and_sync",
         "tests/test_config_hosts_pty.py::test_saved_host_verification_uses_native_cooked_terminal",
-        "tests/test_workflow.py::test_menu_workflow_save_and_cancel"
+        "tests/test_workflow.py::test_menu_workflow_save_and_cancel",
+        "tests/test_config.py::test_config_main_menu_shows_repo_aliases",
+        "tests/test_config.py::test_config_group_navigation_retains_focus",
+        "tests/test_config.py::test_config_grouped_menu_narrow_navigation"
       ],
       "modes": {
         "default": {
@@ -2227,9 +2230,12 @@
             "tests/test_config.py::test_config_menu_save_then_cancel",
             "tests/test_config.py::test_config_register_suggests_path_and_alias_and_can_cancel",
             "tests/test_config.py::test_config_host_rename_review_save_or_discard",
-            "tests/test_workflow.py::test_menu_workflow_save_and_cancel"
+            "tests/test_workflow.py::test_menu_workflow_save_and_cancel",
+            "tests/test_config.py::test_config_main_menu_shows_repo_aliases",
+            "tests/test_config.py::test_config_group_navigation_retains_focus",
+            "tests/test_config.py::test_config_grouped_menu_narrow_navigation"
           ],
-          "notes": "Suggest unique host short names on addition; allow host renaming with defaults preserved and review before saving."
+          "notes": "Suggest unique host short names on addition; allow host renaming with defaults preserved and review before saving. Group the hub into Session defaults, Agents & workflow, Repositories & worktrees, Remote hosts, and Finish. Keep all actions directly reachable with stable focus and Save/Discard behavior; collection/setup rows use a trailing submenu cue. Focus and Save remain visible at narrow terminal sizes."
         },
         "host_add": {
           "argv": [
