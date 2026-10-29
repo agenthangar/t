@@ -547,3 +547,26 @@ def test_list_alias_completion_and_shell_forwarding(tmp_path, command):
     assert lines[0] == lines[1]
     assert lines[-2] == 'bin:' + ''.join(f'<{word}>' for word in [*command.split(), 'list', '--repo', 'ls'])
     assert lines[-1] == 'bin:' + ''.join(f'<{word}>' for word in [*command.split(), 'ls', '--repo', 'ls'])
+
+
+def test_remote_host_first_completion_and_legacy_host_flag(tmp_path):
+    result = shell(tmp_path, '''
+        REMOTE_HOSTS=(lab user@lab)
+        DEV_REPOS=(api "$HOME/code/api")
+        _values() { print -r -- "values:$1:${(j:,:)argv[2,-1]}"; }
+        _message() { print -r -- "message:$1"; }
+        local -a words
+        words=(t remote open '') CURRENT=4; _t
+        words=(t remote resume lab '') CURRENT=5; _t
+        words=(t remote open lab api '') CURRENT=6; _t
+        words=(t remote open --host lab '') CURRENT=6; _t
+        words=(t remote open --host=lab api '') CURRENT=6; _t
+        words=(t remote resume --days 7 '') CURRENT=6; _t
+        words=(t remote move '') CURRENT=4; _t
+        words=(t remote open --) CURRENT=4; _t
+    ''')
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == [
+        'values:host:lab', 'values:repo:api', 'message:slot', 'values:repo:api',
+        'message:slot', 'values:host:lab', 'values:repo:api', 'values:flag:-h,--help,--new',
+    ]

@@ -136,7 +136,6 @@ link_all
 
 # Agent instructions apply to new tasks in both terminal and desktop sessions.
 # Preserve user prose and surface files that could not safely be integrated.
-python3 "$T_LINK_SRC/libexec/t_issue.py" --install-workflow
 python3 "$T_LINK_SRC/libexec/t_workflow.py"
 
 # Remove only the retired status line that the old dotfiles installer wrote.
