@@ -1,5 +1,7 @@
 """Aborted command pickers never launch or fall through to a fresh owner."""
 
+import sys
+
 import pytest
 
 from test_agent_seam import zsh  # noqa: F401 — isolated shell fixture
@@ -12,15 +14,26 @@ def test_picker_signal_preserves_callers_exit_hooks_and_cleans_files(zsh, tmp_pa
     temporary.mkdir()
     invocation = ('_t_fzf_filtered row row resume inactive "" ""' if profile == 'filtered'
                   else '_t_fzf_paginated "$HOME/page" "$HOME/rows" : : "" resume')
+    # Signal the actual profile worker through an executable stub; shell-local
+    # function overrides do not cross the fresh noninteractive worker boundary.
+    fzf = tmp_path / 'stubbin/fzf'
+    fzf.write_text(f'''#!{sys.executable}
+import os
+import signal
+import sys
+if '--help' in sys.argv:
+    print('--id-nth')
+    sys.exit()
+os.kill(os.getppid(), signal.SIG{signal})
+''')
+    fzf.chmod(0o755)
     result = zsh(f'''
-      zmodload zsh/system
       autoload -Uz add-zsh-hook
       terminal_save() {{ print -u2 -- "SESSION_SAVE subshell=$ZSH_SUBSHELL"; }}
       add-zsh-hook zshexit terminal_save
       zshexit() {{ print -u2 -- "DIRECT_EXIT subshell=$ZSH_SUBSHELL"; }}
       print page > "$HOME/page"
       print row > "$HOME/rows"
-      _t_fzf() {{ kill -{signal} $sysparams[pid]; }}
       {invocation}
       print -r -- "RESULT=$?"
     ''', _tty=True, TMPDIR=str(temporary))
