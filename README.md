@@ -1140,10 +1140,10 @@ Ultrafast where supported), repository choices, and hosts. Teams can share those
 workflows and agent configurations to standardize the parts of their setup that
 matter.
 
-The settings screen groups **Session defaults**, **Agents & workflow**,
-**Repositories & worktrees**, **Remote hosts**, and **Finish**. Agent workflow
-and local model setup sit beside agent settings; host registration and the default
-beam destination stay together. Rows ending in **›** open a settings collection
+The settings screen groups **Session defaults**, **Agents**, **Workflow**,
+**Repositories & worktrees**, **Remote hosts**, and **Finish**. Workflow has its
+own section, separate from agent settings and local model setup; host registration
+and the default beam destination stay together. Rows ending in **›** open a settings collection
 or setup screen. All existing choices remain directly accessible on this screen.
 
 In `t config open` → Codex → Speed, choose the tool's own setting, Standard,
