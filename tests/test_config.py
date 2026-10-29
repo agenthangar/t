@@ -349,14 +349,14 @@ def test_config_main_menu_shows_repo_aliases(t_mod, config_cli, monkeypatch):
         assert label == "Local settings"
         assert kwargs["values"]["repos"] == "api, t"
         assert [key for key, _ in rows] == [
-            "tool", "mode", "trust", *t_mod.AGENTS, "workflow", "local",
+            "tool", "mode", "trust", *t_mod.AGENTS, "local", "workflow",
             "repos", "worktrees", "hosts", "beam", "edit", "save", "cancel",
         ]
         assert kwargs["sections"] == {
-            "tool": "Session defaults", t_mod.AGENTS[0]: "Agents & workflow",
+            "tool": "Session defaults", t_mod.AGENTS[0]: "Agents", "workflow": "Workflow",
             "repos": "Repositories & worktrees", "hosts": "Remote hosts", "edit": "Finish",
         }
-        collections = {*t_mod.AGENTS, "workflow", "local", "repos", "worktrees", "hosts"}
+        collections = {*t_mod.AGENTS, "local", "workflow", "repos", "worktrees", "hosts"}
         assert {key for key, text in rows if text.endswith(" ›")} == collections
         return "cancel"
     ui.pick = pick

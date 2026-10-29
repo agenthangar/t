@@ -2237,7 +2237,7 @@
             "tests/test_config.py::test_config_group_navigation_retains_focus",
             "tests/test_config.py::test_config_grouped_menu_narrow_navigation"
           ],
-          "notes": "Suggest unique host short names on addition; allow host renaming with defaults preserved and review before saving. Group the hub into Session defaults, Agents & workflow, Repositories & worktrees, Remote hosts, and Finish. Keep all actions directly reachable with stable focus and Save/Discard behavior; collection/setup rows use a trailing submenu cue. Focus and Save remain visible at narrow terminal sizes."
+          "notes": "Suggest unique host short names on addition; allow host renaming with defaults preserved and review before saving. Group the hub into Session defaults, Agents, Workflow, Repositories & worktrees, Remote hosts, and Finish. Keep all actions directly reachable with stable focus and Save/Discard behavior; collection/setup rows use a trailing submenu cue. Focus and Save remain visible at narrow terminal sizes."
         },
         "host_add": {
           "argv": [
