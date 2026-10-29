@@ -179,7 +179,7 @@ class Config:
                 self.local_rc = os.path.expanduser(_unquote(m.group(5)))
 
     def resolve_repo(self, selector, *, required=False):
-        """Accept a registered alias or an unambiguous checkout directory name."""
+        """Accept a registered alias, checkout basename, or unambiguous local origin repository name."""
         return _resolve_repo_selector(self.repos, selector, required=required)
 
     def agent_for(self, alias, override=None):
@@ -10902,7 +10902,8 @@ COMMANDS
 
 SCOPE
   Omit --repo for the global workflow. --repo selects a registered repository
-  alias or directory name explicitly; the current checkout is never inferred and no picker opens.
+  alias, basename or origin name explicitly.
+  The current checkout is never inferred; no picker opens.
   NAME and --repo cannot be combined for edit. Shared definition edits affect
   all its consumers. --all lists named workflows; it cannot combine with --repo.
   `ls` is an alias for `list`.
@@ -10927,7 +10928,7 @@ LEARN MORE
 List repository issues, inspect existing agent work, start agents, or open issues in a browser.
 
 REPOSITORIES
-  Use a registered alias, repository directory name, or GitHub owner/repo; --repo works with every verb.
+  Use a registered alias, checkout basename, origin name, or GitHub owner/repo; --repo works with every verb.
   List uses the current checkout, or all registered repositories outside one.
   List --all widens the view from a checkout. Status never prompts: specify a
   repository when outside a registered checkout. Start and open can select repositories
@@ -10950,14 +10951,14 @@ Run `t help issue <verb>` for flags and arguments.
         extra = ("\nEXAMPLES\n  t repo add [path] [--alias NAME]\n"
                  "  t repo add ~/config/my-project\n"
                  "  t repo add    # use the current checkout, including from a subdirectory\n"
-                 "\nCd and locate accept a registered alias or repository directory name.\n"
+                 "\nCd and locate accept a registered alias, checkout basename or origin name.\n"
                  "Add infers the checkout directory name; --alias sets a short name.\n"
                  "Use `t config setup [dirs ...]` to select several checkouts (default ~/config).\n")
     if group == "remote":
         extra = ("\nTARGETS\n  t remote open [repo] [slot] [--host HOST] [--new]\n"
                  "  t remote move [repo] [slot] [--session ID] [--from SOURCE] [--host DEST]\n"
                  "  t remote resume [repo] [slot] [--host HOST] [--days N] [--all]\n"
-                 "\nUse a registered alias or repository directory name on the selected host.\n"
+                 "\nUse a registered alias, checkout basename or origin name on the selected host.\n"
                  "Infer the repository from the current checkout, or browse all repositories outside one.\n"
                  "Omitted hosts use a picker labeled for opening, starting fresh, resuming, or moving.\n"
                  "Open's chosen host runs the session; --new explicitly starts fresh there.\n"
@@ -10968,7 +10969,7 @@ Run `t help issue <verb>` for flags and arguments.
                  "the source must be able to SSH and rsync to the destination.\n")
     if group == "session":
         extra = ("\nTARGETS\n  t session <verb> [repo] [slot] [flags]\n"
-                 "  Repositories accept a registered alias or directory name.\n"
+                 "  Repositories accept an alias, checkout basename or local origin repository name.\n"
                  "  Most verbs infer the repository from the current checkout; open and resume can select sessions.\n"
                  "  Goal requires explicit REPO SLOT GOAL and never opens a picker.\n"
                  "\nEXAMPLE\n  t session goal api 3 'Finish the login tests'\n")
@@ -11127,14 +11128,14 @@ def build_parser():
     p._group_parsers["issue"] = sp
     issue_list = issue_sub.add_parser("list", help="list issues in a repository",
         usage="%(prog)s [repo] [-a|--all] [--repo REPO] [--state open|closed|all] [--json]",
-        description="List GitHub issues directly, without a picker. Use a registered alias, repository directory name, or "
+        description="List GitHub issues directly, without a picker. Use a registered alias, checkout basename, origin name, or "
             "owner/repo to scope the list. By default, use the current registered checkout, "
             "or list all registered GitHub repositories when outside one. --all widens a "
             "checkout's scope to every registered GitHub repository; --state all includes "
             "closed issues. An explicit repository and --all cannot be combined.")
     issue_list.add_argument("repository", nargs="?", metavar="repo",
-                            help="registered repository alias or directory name or GitHub owner/name")
-    issue_list.add_argument("--repo", help="repository alias, directory name, or owner/repo (alternative to positional repo)")
+                            help="registered repository alias, basename or origin name or GitHub owner/name")
+    issue_list.add_argument("--repo", help="repository alias, basename, origin name, or owner/repo (alternative to positional repo)")
     issue_list.add_argument("-a", "--all", action="store_true", help="issues from every registered GitHub repository")
     issue_list.add_argument("--state", choices=("open", "closed", "all"), default="open",
                             help="issue state (default: open)")
@@ -11161,7 +11162,7 @@ def build_parser():
 
   Incidental transcript mentions are listed separately from issue owners.""")
     issue_status.add_argument("target", nargs="+", help="issue number, repo and number, or GitHub issue URL")
-    issue_status.add_argument("--repo", help="registered repository alias or directory name or GitHub owner/name")
+    issue_status.add_argument("--repo", help="registered repository alias, basename or origin name or GitHub owner/name")
     issue_status.add_argument("--json", action="store_true", help="output machine-readable discovery report")
     issue_status.add_argument("--scan-host", action="store_true", help=argparse.SUPPRESS)
     issue_start = issue_sub.add_parser("start", help="continue or start work on issues",
@@ -11201,7 +11202,7 @@ def build_parser():
 
   Ambiguous work shows session details.""")
     issue_start.add_argument("target", nargs="*", help="issue numbers, repository and numbers, or GitHub issue URLs")
-    issue_start.add_argument("--repo", help="registered repository alias or directory name or GitHub owner/name")
+    issue_start.add_argument("--repo", help="registered repository alias, basename or origin name or GitHub owner/name")
     issue_start.add_argument("--allow-incomplete-check", action="store_true",
         help="allow other required discovery gaps (for example GitHub); never bypass local checks or known owners")
     agents = issue_start.add_mutually_exclusive_group()
@@ -11210,11 +11211,11 @@ def build_parser():
     issue_open = issue_sub.add_parser("open", help="open issues in your browser",
         usage="%(prog)s [repo] [id ...] [--repo REPO]",
         description="Open GitHub issues in your browser. Use explicit issue numbers or issue URLs, "
-            "or omit the numbers to select issues interactively. A registered alias, repository directory name, or "
+            "or omit the numbers to select issues interactively. A registered alias, checkout basename, origin name, or "
             "GitHub owner/repo can select the repository, positionally or with --repo. "
             "An issue URL includes its repository. Each selected issue opens in your configured browser.")
     issue_open.add_argument("target", nargs="*", help="issue numbers, repository and numbers, or GitHub issue URLs")
-    issue_open.add_argument("--repo", help="registered repository alias or directory name or GitHub owner/name")
+    issue_open.add_argument("--repo", help="registered repository alias, basename or origin name or GitHub owner/name")
 
     remote = sub.add_parser("remote", help="open, move, and resume sessions on SSH hosts",
         description="Choose SSH hosts and sessions, or name explicit targets to skip selection.")
@@ -11267,7 +11268,7 @@ TARGETS
   Without --host choose a registered SSH host with Enter.
   Selection requires a terminal and fzf; scripts must provide explicit targets.
   Cancellation returns 130.""")
-        leaf.add_argument("repo", nargs="?", help="repository alias or directory name (default: current checkout or all)")
+        leaf.add_argument("repo", nargs="?", help="repository alias, basename or origin name (default: current checkout or all)")
         leaf.add_argument("slot", nargs="?", help="slot number; a lone number uses the current repository")
         leaf.add_argument("--host", help=(
             "saved-history source and execution host alias or target; omitted: host picker"
@@ -11393,7 +11394,7 @@ REMOTE SESSIONS
   default host (the alphabetically first REMOTE_HOSTS key).
   --host HOST chooses a host explicitly, for either opening or attaching.""")
     sp._positionals.title = "arguments"
-    sp.add_argument("repo", nargs="?", help="repository alias, directory name or session (default: browse all repos)")
+    sp.add_argument("repo", nargs="?", help="repository alias, basename, origin name or session (default: browse all repos)")
     sp.add_argument("slot", nargs="?", help="slot number, session ID, or 'fg'")
     sp.add_argument("--new", action="store_true", help="start a fresh session")
     sp.add_argument("--attached", action="store_true", help="include attached/loaded sessions in the picker")
@@ -11467,8 +11468,8 @@ EXPLICIT PUSH AND PULL
 
   App-created worktrees are supported; choose --thread ID when several chats share
   one.""")
-    sp.add_argument("repo", nargs="?", metavar="push|pull|repo", help="direction, repository alias or directory name (default: push, cwd repo)")
-    sp.add_argument("slot", nargs="?", metavar="repo|slot", help="repository alias, directory name or local slot number")
+    sp.add_argument("repo", nargs="?", metavar="push|pull|repo", help="direction, repository alias, basename or origin name (default: push, cwd repo)")
+    sp.add_argument("slot", nargs="?", metavar="repo|slot", help="repository alias, basename, origin name or local slot number")
     sp.add_argument("app_slot", nargs="?", metavar="slot", help="local slot number with an explicit direction")
     sp.add_argument("--thread", metavar="ID", help="saved conversation to pull from this worktree (default: handed-off thread, or its only conversation)")
     preview = sp.add_mutually_exclusive_group()
@@ -11507,7 +11508,7 @@ EXPLICIT PUSH AND PULL
   Pipe to cat for complete values.
 
   Read-only — attach with `t session open`, move with `t session move`.""")
-    sp.add_argument("repo", nargs="?", help="repository alias or directory name to scope from any directory (default: the repo cwd is in)")
+    sp.add_argument("repo", nargs="?", help="repository alias, basename or origin name to scope from any directory (default: the repo cwd is in)")
     sp.add_argument("-r", "--remote", action="store_true", help="span every $REMOTE_HOSTS host")
     sp.add_argument("-a", "--all", action="store_true", help="every repo (not just the current)")
 
@@ -11562,7 +11563,7 @@ EXPLICIT PUSH AND PULL
 
   Explicit targets confirm while an agent is live unless `-y`; `-r` kills it on its
   remote host instead.""")
-    sp.add_argument("repo", nargs="?", help="repository alias, directory name or foreground session; default: pick across local repos")
+    sp.add_argument("repo", nargs="?", help="repository alias, basename, origin name or foreground session; default: pick across local repos")
     sp.add_argument("slot", nargs="?", help="slot number; a lone slot implies the cwd repo")
     sp.add_argument("-y", "--yes", action="store_true", help="skip the live-agent confirmation for explicit targets")
     sp.add_argument("-r", "--remote", action="store_true", help="kill it on its host instead")
@@ -11590,7 +11591,7 @@ EXPLICIT PUSH AND PULL
   Leaves the slot detached unless already attached; use t session open to attach.
 
   For a remote slot, run t hosts run <host> t session restart <repo> <slot>.""")
-    sp.add_argument("repo", nargs="?", help="repository alias or directory name; defaults to the cwd repo")
+    sp.add_argument("repo", nargs="?", help="repository alias, basename or origin name; defaults to the cwd repo")
     sp.add_argument("slot", nargs="?", help="local slot number; required if ambiguous")
     sp.add_argument("--dry-run", action="store_true", help="validate and show the recovery without stopping anything")
 
@@ -11607,7 +11608,7 @@ EXPLICIT PUSH AND PULL
         description="Pull a backgrounded (tmux'd) session back into THIS terminal and resume it "
             "in the foreground. Names default to the cwd repo, so `t session pop` picks this repo's slot "
             "and `t session pop api 3` pulls dev-api-3. Inverse of `t session push`.")
-    sp.add_argument("repo", nargs="?", help="repository alias or directory name; defaults to the repo your cwd is in")
+    sp.add_argument("repo", nargs="?", help="repository alias, basename or origin name; defaults to the repo your cwd is in")
     sp.add_argument("slot", nargs="?", help="slot number; a lone slot implies the cwd repo")
 
     sp = sub.add_parser("history", help="browse every conversation associated with a slot",
@@ -11748,7 +11749,7 @@ REQUIREMENTS AND DISCOVERY
 
   Delayed progress wheels identify quiet discovery stages while waiting.""")
 
-    sp.add_argument("repo", nargs="?", help="repository alias or directory name; defaults to the repo your cwd is in")
+    sp.add_argument("repo", nargs="?", help="repository alias, basename or origin name; defaults to the repo your cwd is in")
     sp.add_argument("slot", nargs="?", help="slot number; a lone slot implies the cwd repo")
     sp.add_argument("-f", "--fg", action="store_true", help="resume inline in this terminal (no tmux slot)")
     sp.add_argument("--app", action="store_true",
@@ -11783,7 +11784,7 @@ REQUIREMENTS AND DISCOVERY
 
   Navigation only — it never creates a worktree (`t session open` does) and never
   touches tmux.""")
-    sp.add_argument("repo", nargs="?", help="repository alias or directory name; defaults to the repo your cwd is in")
+    sp.add_argument("repo", nargs="?", help="repository alias, basename or origin name; defaults to the repo your cwd is in")
     sp.add_argument("slot", nargs="?", help="slot number; a lone slot implies the cwd repo")
 
     sp = sub.add_parser("beam", help="move a session between machines (send, or --from to receive)",
@@ -11824,7 +11825,7 @@ RECEIVE AND REMOTE MOVES
 
   Use --detach for scripts; failures stopping the source or pushing code stop the
   move.""")
-    sp.add_argument("repo", nargs="?", help="repository alias or directory name; defaults to the repo your cwd is in")
+    sp.add_argument("repo", nargs="?", help="repository alias, basename or origin name; defaults to the repo your cwd is in")
     sp.add_argument("slot", nargs="?", help="slot number; a lone slot implies the cwd repo")
     sp.add_argument("--host", help="SEND destination machine (default: $TBEAM_HOST)")
     sp.add_argument("--from", dest="from_host", metavar="HOST", help="source host; alone receives here, with --host sends directly to that destination")
@@ -11849,7 +11850,7 @@ RECEIVE AND REMOTE MOVES
   terminals that can only touch-scroll native output.
 
   Slot defaults to the cwd repo; a remote slot is read on its host.""")
-    sp.add_argument("repo", nargs="?", help="repository alias or directory name; defaults to the repo your cwd is in")
+    sp.add_argument("repo", nargs="?", help="repository alias, basename or origin name; defaults to the repo your cwd is in")
     sp.add_argument("slot", nargs="?", help="slot number; a lone slot implies the cwd repo")
     sp.add_argument("-d", "--dump", action="store_true",
                     help="print to stdout (no less) so a mobile terminal can touch-scroll it")
@@ -11862,7 +11863,7 @@ RECEIVE AND REMOTE MOVES
             "or inside Claude the current session — then displays it word-wrapped for narrow "
             "(phone) terminals. `-a` fzf-picks across every project. A remote slot renders on "
             "its host, where the plan file lives.")
-    sp.add_argument("repo", nargs="?", help="repository alias or directory name; defaults to the repo your cwd is in")
+    sp.add_argument("repo", nargs="?", help="repository alias, basename or origin name; defaults to the repo your cwd is in")
     sp.add_argument("slot", nargs="?", help="slot number; a lone slot implies the cwd repo")
     sp.add_argument("-a", "--all", action="store_true", help="fzf-pick across every project")
 
@@ -11871,7 +11872,7 @@ RECEIVE AND REMOTE MOVES
             "input — so a screenshot taken on your phone drops straight into a desktop Claude. "
             "Takes the newest file by default; `-p` fzf-picks one, `-n` forces newest. Local-"
             "only: it reads THIS machine's iCloud, so it is not delegated to a remote slot.")
-    sp.add_argument("repo", nargs="?", help="repository alias or directory name; defaults to the repo your cwd is in")
+    sp.add_argument("repo", nargs="?", help="repository alias, basename or origin name; defaults to the repo your cwd is in")
     sp.add_argument("slot", nargs="?", help="slot number; a lone slot implies the cwd repo")
     sp.add_argument("-p", "--pick", action="store_true", help="fzf-pick the file instead of taking the newest")
     sp.add_argument("-n", "--newest", action="store_true", help="skip the picker; take the newest file by mtime")
@@ -11976,9 +11977,9 @@ RECEIVE AND REMOTE MOVES
     repo_add.add_argument("--alias", help="short name (default: existing alias or checkout directory name)")
     repo_add.add_argument("--dry-run", action="store_true", help="show registration without changing settings")
     repo_cd = repo_sub.add_parser("cd", help="enter a checkout (zsh plugin only)")
-    repo_cd.add_argument("repo", help="registered repository alias or directory name")
+    repo_cd.add_argument("repo", help="registered repository alias, basename or origin name")
     repo_path = repo_sub.add_parser("locate", help="print a checkout's absolute path")
-    repo_path.add_argument("repo", help="registered repository alias or directory name")
+    repo_path.add_argument("repo", help="registered repository alias, basename or origin name")
 
     sp = sub.add_parser("config", help="manage local settings: tools, models, effort, Fast/Ultrafast speed, repos and hosts",
         description='Edit local tool, model, effort, speed, repository, host, and workflow settings. Review before '
@@ -12038,7 +12039,7 @@ RECEIVE AND REMOTE MOVES
             description="Global default unless --repo selects a registered repository. No checkout inference or repository picker.")
         if verb != "add":
             leaf.add_argument("--repo", dest="workflow_repo", metavar="ALIAS", required=verb in ("exclude", "inherit"),
-                              help="registered repository alias or directory name; omit for global")
+                              help="registered repository alias, basename or origin name; omit for global")
         if verb in ("edit", "add", "use"):
             leaf.add_argument("workflow_name", metavar="NAME", nargs="?" if verb == "edit" else None,
                               help="named workflow; edit defaults to current global definition")
@@ -12055,7 +12056,7 @@ RECEIVE AND REMOTE MOVES
     for verb in ("show", "edit"):
         leaf = instructions_sub.add_parser(verb, help="print raw Markdown" if verb == "show" else "edit Markdown in VISUAL/EDITOR")
         leaf.add_argument("workflow_name", nargs="?", metavar="NAME", help="named workflow; default: global workflow")
-        leaf.add_argument("--repo", dest="workflow_repo", metavar="ALIAS", help="registered repository alias or directory name; cannot combine with NAME")
+        leaf.add_argument("--repo", dest="workflow_repo", metavar="ALIAS", help="registered repository alias, basename or origin name; cannot combine with NAME")
 
     runners = workflow_sub.add_parser("runners", help="configure test runners or bootstrap a private GitHub broker")
     runner_sub = runners.add_subparsers(dest="runner_action")
@@ -12208,7 +12209,7 @@ RECEIVE AND REMOTE MOVES
             "T_AGENT_INSTRUCTIONS). --apply updates only t's marked block in the "
             "registered repo's AGENTS.md; unrelated text is preserved. The file is "
             "never committed or pushed automatically.")
-    sp.add_argument("repo", nargs="?", help="registered alias or repository directory name to seed")
+    sp.add_argument("repo", nargs="?", help="registered alias, checkout basename or origin name to seed")
     mode = sp.add_mutually_exclusive_group()
     mode.add_argument("--init", action="store_true", help="create an editable starter profile if absent")
     mode.add_argument("--edit", action="store_true", help="edit the profile with VISUAL/EDITOR")
@@ -12424,7 +12425,7 @@ PERIODIC CHECKS
                     "delivery. This submits an instruction; it does not confirm adoption or interrupt "
                     "the current turn. Inspect unsent drafts/dialogs first. Desktop and foreground "
                     "sessions are unsupported. Example: t session goal api 3 'Finish the login tests'.")
-    gp.add_argument("repo", help="registered repository alias or directory name")
+    gp.add_argument("repo", help="registered repository alias, basename or origin name")
     gp.add_argument("slot", help="local slot number")
     gp.add_argument("goal", help="new objective, quoted as one argument")
     gp.add_argument("--json", action="store_true", help="print a structured delivery result")
