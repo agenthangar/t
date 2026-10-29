@@ -7,7 +7,8 @@ canonical command's entry. `ls` and `list` are interchangeable in every listing
 family (including `config workflow`); root `t list` aliases `t ls`. Resolve only
 command words, preserving option values, repository names, and delegated commands.
 The old `t repos` family is removed; use `t repo` verbs. Existing repository selectors
-accept registered aliases and unambiguous checkout directory names, with exact
+accept registered aliases, checkout basenames, and unambiguous local origin repository
+names (case-sensitive, read from local Git metadata without network access), with exact
 aliases taking precedence. Ambiguous names fail before selection or mutation.
 Remote opens resolve against the selected host’s registrations. Remote resumes
 resolve local aliases/names through verified repository identity; unknown
