@@ -871,11 +871,21 @@ _t() {
   fi
   if [[ $group == config && $action == workflow ]]; then
     if (( CURRENT == first )); then
-      _values 'workflow verb' list ls add use exclude inherit edit instructions sync
+      _values 'workflow resource or verb' list ls add use exclude inherit edit instructions runners runs sync
     elif [[ ${words[CURRENT-1]} == --repo ]]; then
       _values 'repo' "${(@f)$(_dev_repo_selectors)}"
     elif [[ ${words[first]} == instructions ]] && (( CURRENT == first + 1 )); then
       _values 'instructions verb' show edit
+    elif [[ ${words[first]} == runners ]] && (( CURRENT == first + 1 )); then
+      _values 'runner verb' list ls edit setup
+    elif [[ ${words[first]} == runs ]] && (( CURRENT == first + 1 )); then
+      _values 'run verb' start list ls status logs artifacts cancel cleanup
+    elif [[ ${words[first]} == runs ]]; then
+      _values 'flag' --repo --target --os --capability --include --artifact --timeout --queue-timeout --json --output -h --help
+    elif [[ ${words[first]} == runners && ${words[first+1]} == setup ]]; then
+      _values 'flag' --github-repo --create -h --help
+    elif [[ ${words[first]} == runners ]]; then
+      _values 'flag' --repo --json -h --help
     elif [[ ${words[first]} == list || ${words[first]} == ls ]]; then
       _values 'flag' --repo --all --json -h --help
     elif [[ ${words[first]} == add ]]; then

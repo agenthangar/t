@@ -2411,13 +2411,14 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
         if policy.get("stages_enabled", True):
             rows += [(stage, stage.title()) for stage in ("planning", "implementation", "review")]
         rows.append(("behaviors", "Behavior preferences"))
-        rows += [("instructions", "Instructions · edit Markdown"), ("edit", "Advanced JSON editor"), ("back", "Back")]
+        rows += [("runners", "Test runners"), ("instructions", "Instructions · edit Markdown"), ("edit", "Advanced JSON editor"), ("back", "Back")]
         values = {stage: policy[stage]["model"] + " · " + policy[stage]["effort"]
                   for stage in ("planning", "implementation", "review")}
         values["enabled"] = "enabled" if policy["enabled"] else "disabled"
         values["stages_enabled"] = "enabled" if policy.get("stages_enabled", True) else "disabled · models retained"
         values["behaviors"] = f"{len(policy.get('behaviors', {}))} selected"
         values["instructions"] = "saved Markdown" if policy.get("instructions") else "empty"
+        values["runners"] = helper["runners_summary"](policy)
         choice = ui.pick(title, rows, values=values)
         if choice in (None, "back"):
             return
@@ -2430,6 +2431,9 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
                 changed[choice] = picked == "1"
         elif choice == "behaviors":
             changed = _workflow_behaviors_menu(ui, helper, policy)
+        elif choice == "runners":
+            _workflow_runners_menu(ui, cfg, helper, repository, name)
+            continue
         elif choice in ("edit", "instructions"):
             ui.restore()
             try:
@@ -2461,6 +2465,37 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
                 changed[stage][field] = picked
         if changed != policy:
             cfg._workflow_document = helper["update"](document, changed, repository, name)
+
+
+def _workflow_runners_menu(ui, cfg, helper, repository=None, name=None):
+    while True:
+        document = cfg._workflow_document
+        value = helper["runners"](document, repository, name)
+        choice = ui.pick("Test runners", [("edit", "Edit targets, defaults and artifacts · JSON"),
+                         ("show", "Show configured targets"), ("back", "Back")],
+                         values={"edit": f"{len(value['targets'])} targets · {value['timeout_seconds']}s timeout"})
+        if choice in (None, "back"):
+            return
+        if choice == "show":
+            lines = [f"Defaults: {', '.join(value['default_targets']) or 'none'}",
+                     f"Timeout: {value['timeout_seconds']}s · queue: {value['queue_timeout_seconds']}s",
+                     "Artifacts: " + (", ".join(value["artifacts"]) or "none")]
+            lines += [f"{key}: {target['provider']} · {target['os']}/{target['arch']}" for key, target in value["targets"].items()]
+            lines += ["Use t config workflow runners setup --github-repo OWNER/REPO --create to bootstrap a private broker.",
+                      "Edits stay pending until config Review and Save. No machines are provisioned on save."]
+            ui.page("Test runners", lines)
+            continue
+        ui.restore()
+        try:
+            rc, after = helper["edit_runners"](document, repository, name)
+            if not rc:
+                cfg._workflow_document = after
+            else:
+                ui.done("editor", f"Editor exited with status {rc}; runners unchanged.")
+        except (OSError, ValueError) as exc:
+            ui.done("invalid", str(exc))
+        finally:
+            ui.raw()
 
 
 def _config_workflow(ui, cfg, repo=None):
@@ -2540,6 +2575,7 @@ def _workflow_review(document):
         lines.extend("  " + line for line in helper["summary_lines"](policy))
         lines.extend(f"  {stage.title()}: {policy[stage]['model']} · {policy[stage]['effort']}"
                      for stage in ("planning", "implementation", "review"))
+        lines.append("  Test runners: " + helper["runners_summary"](policy))
         if policy.get("instructions"):
             lines.extend("  " + line for line in policy["instructions"].splitlines())
     for path, entry in sorted(document["repositories"].items()):
@@ -2550,6 +2586,7 @@ def _workflow_review(document):
             lines.append(f"  Workflow: {'enabled' if entry['inline']['enabled'] else 'disabled'}")
             lines.extend(f"  {stage.title()}: {entry['inline'][stage]['model']} · {entry['inline'][stage]['effort']}"
                          for stage in ("planning", "implementation", "review"))
+            lines.append("  Test runners: " + helper["runners_summary"](entry['inline']))
             if entry["inline"].get("instructions"):
                 lines.extend("  " + line for line in entry["inline"]["instructions"].splitlines())
     return lines
@@ -3014,6 +3051,7 @@ def _cmd_workflow(cfg, args):
                 print(f"Source: {result['source']}" + (f" · {result['workflow_name']}" if result['workflow_name'] else ""))
                 print("Excluded: " + ("yes" if result["excluded"] else "no"))
                 print("Enabled: " + ("yes" if result["workflow"]["enabled"] else "no"))
+                print("Test runners: " + helper["runners_summary"](result["workflow"]))
                 print("Preference source: " + result["preference_source"])
                 print("Propagation: " + result["propagation"]["runtime"])
                 print("\n".join(helper["summary_lines"](result["workflow"])))
@@ -3044,6 +3082,162 @@ def _cmd_workflow(cfg, args):
         return 130
 
 
+def _runners():
+    return runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_runners.py"))
+
+
+def _runner_scope(cfg, alias):
+    if not alias:
+        return None
+    selected = _resolve_repo_selector(cfg.repos, alias) or alias
+    if selected not in cfg.repos:
+        raise ValueError(f"unknown registered repository {alias!r}")
+    return os.path.realpath(cfg.repos[selected])
+
+
+def _cmd_workflow_runners(cfg, args):
+    try:
+        action = args.runner_action
+        if action == "setup":
+            with _spinner("Preparing private GitHub test runner broker", machine=False):
+                result = _runners()["setup_github"](args.github_repo, create=args.create)
+            print(json.dumps(result, indent=2))
+            return 0
+        helper = _workflow()
+        document, before = helper["load"]()
+        repository = _runner_scope(cfg, args.workflow_repo)
+        name = args.workflow_name
+        value = helper["runners"](document, repository, name)
+        if action == "list":
+            if args.json:
+                print(helper["encode"]({"scope": repository or name or "global", "runners": value}), end="")
+            else:
+                print("Test runners · " + (repository or name or "global"))
+                print("Defaults: " + (", ".join(value["default_targets"]) or "none"))
+                print(f"Timeout: {value['timeout_seconds']}s · queue: {value['queue_timeout_seconds']}s")
+                print("Artifacts: " + (", ".join(value["artifacts"]) or "none"))
+                if value["targets"]:
+                    print("\n".join(_table_lines(("TARGET", "PROVIDER", "OS / ARCH", "CAPABILITIES"), [
+                        (key, target["provider"], target["os"] + " / " + target["arch"], ", ".join(target["capabilities"]) or "—")
+                        for key, target in sorted(value["targets"].items())])))
+                else:
+                    print("No test runners configured. Use t config workflow runners edit.")
+            return 0
+        if not sys.stdin.isatty() or not sys.stdout.isatty():
+            raise ValueError("open the runner editor in a terminal")
+        rc, after = helper["edit_runners"](document, repository, name)
+        if rc:
+            return rc
+        if after != document:
+            helper["save"](after, before)
+            print("✓ saved test runners and native instructions")
+        else:
+            print("Test runners unchanged — nothing written")
+        return 0
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        print(f"t config workflow runners: {exc}", file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        return 130
+
+
+def _cmd_workflow_runs(cfg, args):
+    try:
+        helper = _runners()
+        action = args.run_action
+        if action == "start":
+            root = _t_git(os.getcwd(), "rev-parse", "--show-toplevel")
+            canonical = _t_canonical_root(root) if root else None
+            if canonical is None or canonical not in {os.path.realpath(path) for path in cfg.repos.values()}:
+                raise ValueError("run tests from a registered repository checkout or linked worktree")
+            explicit = _runner_scope(cfg, args.workflow_repo)
+            if explicit and explicit != canonical:
+                raise ValueError("--repo must match the current checkout's registered repository")
+            workflow = _workflow()
+            document, _ = workflow["load"]()
+            policy = workflow["effective"](document, canonical)
+            if not policy["enabled"]:
+                raise ValueError("the workflow is disabled or excluded for this repository")
+            config = copy.deepcopy(policy.get("runners", workflow["RUNNER_DEFAULT"]))
+            selected = helper["select_targets"](config, args.targets, args.runner_os, args.capabilities)
+            config["targets"] = selected
+            config["default_targets"] = list(selected)
+            for target in selected.values():
+                if target["provider"] == "ssh":
+                    if target["host"] not in cfg.hosts:
+                        raise ValueError(f"SSH runner host {target['host']!r} is not registered; use t hosts add")
+                    target["host"] = cfg.hosts[target["host"]]
+            command = args.command[1:] if args.command[:1] == ["--"] else args.command
+            if not command:
+                raise ValueError("runs start requires -- COMMAND ...")
+            with _spinner("Running snapshot tests", machine=args.json):
+                result = helper["start"](root, config, command, targets=list(selected), os_filter=args.runner_os,
+                    capabilities=args.capabilities, include=args.includes, artifacts=args.artifact_paths,
+                    timeout=args.timeout, queue_timeout=args.queue_timeout,
+                    progress=None if args.json else lambda receipt: print("Run: " + receipt["id"], file=sys.stderr))
+            if args.json:
+                print(json.dumps(result, indent=2))
+            else:
+                print("\n".join(_runner_receipt_lines(result)))
+            return int(result.get("exit_code", 0))
+        if action == "logs":
+            logs = helper["logs"](args.run_id, target=args.runner_target)
+            for target, output in logs.items():
+                if len(logs) > 1:
+                    print(f"== {target} ==")
+                print(output, end="")
+            return 0
+        if action in ("list", "status"):
+            result = helper["list_jobs"]() if action == "list" else helper["status"](args.run_id)
+        elif action == "artifacts":
+            with _spinner("Collecting test artifacts", machine=False):
+                result = helper["artifacts"](args.run_id, target=args.runner_target, destination=args.output)
+        else:
+            with _spinner("Cancelling test run" if action == "cancel" else "Cleaning test run resources", machine=False):
+                result = helper[action](args.run_id)
+        if not getattr(args, "json", False) and action == "list":
+            print("Test runs · local receipts")
+            if result:
+                print("\n".join(_table_lines(("ID", "STATUS", "TARGETS"), [
+                    (receipt["id"], receipt["status"], ", ".join(receipt["targets"])) for receipt in result])))
+            else:
+                print("No test runs recorded.")
+        elif not getattr(args, "json", False) and action == "status":
+            print("\n".join(_runner_receipt_lines(result)))
+        else:
+            print(json.dumps(result, indent=2, default=str))
+        return 0
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        print(f"t config workflow runs: {exc}", file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        return 130
+
+
+def _runner_receipt_lines(receipt):
+    lines = ["Run: " + receipt["id"], "Status: " + receipt.get("status", "unknown")]
+    if "exit_code" in receipt:
+        lines.append("Exit code: " + str(receipt["exit_code"]))
+    targets = receipt.get("targets", {})
+    if targets:
+        lines += _table_lines(("TARGET", "PROVIDER", "STATUS", "EXIT"), [
+            (name, target.get("provider", target.get("type", "unknown")), target["status"],
+             str(target["exit_code"]) if target.get("exit_code") is not None else "—")
+            for name, target in targets.items()])
+        for name, target in targets.items():
+            for field in ("error", "cleanup_error"):
+                if target.get(field):
+                    lines.append(name + ": " + target[field])
+            if target.get("result", {}).get("artifact_error"):
+                lines.append(name + " artifacts: " + target["result"]["artifact_error"])
+    if receipt.get("error"):
+        lines.append(receipt["error"])
+    for resource in receipt.get("resources", []):
+        if resource.get("cleanup_error"):
+            lines.append("Cleanup: " + resource["cleanup_error"])
+    return lines
+
+
 def _local_worker():
     return runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_local_worker.py"))
 
@@ -3054,6 +3248,10 @@ def _local_setup(args):
 
 
 def cmd_config(cfg, args):
+    if getattr(args, "runner_action", None):
+        return _cmd_workflow_runners(cfg, args)
+    if getattr(args, "run_action", None):
+        return _cmd_workflow_runs(cfg, args)
     if getattr(args, "local", False):
         return _local_setup(args)
     if getattr(args, "local_model", None) or getattr(args, "disable_local", False) or getattr(args, "yes", False):
@@ -5953,7 +6151,9 @@ def _command_readonly(argv, *, terminal=None):
         return not terminal
     verb, tail = words[0], words[1:]
     if words[:2] == ["config", "workflow"]:
-        return len(words) == 2 or words[2] == "list" or (words[2:4] == ["instructions", "show"])
+        return (len(words) == 2 or words[2] == "list" or words[2:4] == ["instructions", "show"] or
+                words[2:] in (["runners"], ["runs"]) or words[2:4] == ["runners", "list"] or
+                (len(words) > 3 and words[2] == "runs" and words[3] in ("list", "status", "logs")))
     if verb == "__advisories":
         return not tail or tail[0] == "status"
     if verb == "__session-goal":
@@ -6018,9 +6218,11 @@ def _t_auto_update(argv):
               "setup", "new", "checkout", "instructions", "install", "integrate",
               "permissions", "trust", "doctor"}
     operation = _canonical_argv(argv)
+    runner_machine = (operation[:4] == ["config", "workflow", "runs", "start"] and
+                      "--json" in operation[4:operation.index("--") if "--" in operation else len(operation)])
     # Share may write a receipt while emitting JSON; keep its machine protocol
     # free of update prompts independently of the read-only classifier.
-    if (not operation or operation[0] in ("share", "doctor") or operation[0] not in public or _command_readonly(argv)
+    if (not operation or runner_machine or operation[0] in ("share", "doctor") or operation[0] not in public or _command_readonly(argv)
             or not _t_update_interactive()):
         return None
     installation = _t_update_installation()
@@ -10530,7 +10732,9 @@ COMMAND_GROUPS = {
                "workflow": {"list": ("config", "workflow", "list"),
                             "edit": ("config", "workflow", "edit"),
                             **{verb: ("config", "workflow", verb) for verb in ("add", "use", "exclude", "inherit", "sync")},
-                            "instructions": {verb: ("config", "workflow", "instructions", verb) for verb in ("show", "edit")}}},
+                            "instructions": {verb: ("config", "workflow", "instructions", verb) for verb in ("show", "edit")},
+                            "runners": {verb: ("config", "workflow", "runners", verb) for verb in ("list", "edit", "setup")},
+                            "runs": {verb: ("config", "workflow", "runs", verb) for verb in ("start", "list", "status", "logs", "artifacts", "cancel", "cleanup")}}},
     "profile": {"init": ("instructions", "--init"),
                 "edit": ("instructions", "--edit"),
                 "show": ("instructions", "--show"),
@@ -10718,6 +10922,58 @@ def _wrap_help(body):
 
 
 def _group_help(group):
+    if group == "config workflow runners":
+        return _wrap_help("""USAGE
+  t config workflow runners list [NAME] [--repo ALIAS] [--json]
+  t config workflow runners edit [NAME] [--repo ALIAS]
+  t config workflow runners setup --github-repo OWNER/REPO [--create]
+
+COMMANDS
+  list   Print configured targets, defaults, timeouts and artifact paths
+  edit   Edit test runner JSON with VISUAL/EDITOR in a terminal
+  setup  Bootstrap helper workflows in a dedicated private GitHub repository
+
+SCOPE
+  Omit NAME and --repo for the global default. NAME selects a shared definition.
+  --repo explicitly selects a registered repository; it cannot combine with NAME.
+  List reads local configuration without network access, prompts or writes.
+  Saving configuration never provisions runners. Setup uses gh authentication;
+  --create explicitly permits creating the private broker repository.
+
+LEARN MORE
+  t help config workflow runners <verb>
+""")
+    if group == "config workflow runs":
+        return _wrap_help("""USAGE
+  t config workflow runs start [--repo ALIAS] [--target NAME ...] -- COMMAND ...
+  t config workflow runs list [--json]
+  t config workflow runs status ID [--json]
+  t config workflow runs logs ID [--target NAME]
+  t config workflow runs artifacts ID [--target NAME] [--output DIR]
+  t config workflow runs cancel ID
+  t config workflow runs cleanup ID
+
+COMMANDS
+  start      Snapshot current worktree files and wait for concurrent test targets
+  list       Print local durable run receipts
+  status     Inspect a local receipt without contacting providers
+  logs       Print retained local target logs
+  artifacts  Extract bounded retained artifacts into a local directory
+  cancel     Request cancellation and verify terminal provider state
+  cleanup    Retry deletion of exact remote resources recorded for this run
+
+SCOPE
+  Start infers the registered canonical repository from the current checkout or
+  linked worktree. --repo must match that checkout. No repository picker opens.
+  --include PATH explicitly adds intended untracked files. Tracked edits are
+  included without committing or pushing source. One snapshot serves all targets.
+  --os linux|macos and --capability NAME filter configured targets. Windows
+  execution is not yet supported. Native desktop tests remain explicitly opt-in.
+  List, status and logs read local state without network access or update prompts.
+
+LEARN MORE
+  t help config workflow runs <verb>
+""")
     if group == "config workflow instructions":
         return _wrap_help("""USAGE
   t config workflow instructions show [NAME] [--repo ALIAS]
@@ -10745,6 +11001,8 @@ LEARN MORE
   t config workflow inherit --repo ALIAS
   t config workflow edit [NAME] [--repo ALIAS]
   t config workflow instructions <verb> [NAME] [--repo ALIAS]
+  t config workflow runners <verb> [arguments] [flags]
+  t config workflow runs <verb> [arguments] [flags]
   t config workflow sync
 
 COMMANDS
@@ -10755,6 +11013,8 @@ COMMANDS
   inherit       Remove the repository override and use the global default
   edit          Advanced JSON editor for a shared definition or repository policy
   instructions  Show or edit human-written Markdown instructions
+  runners       Configure GitHub or SSH test targets; bootstrap a private broker
+  runs          Test a current worktree snapshot and inspect retained results
   sync          Retry pending local and registered-host propagation
 
 SCOPE
@@ -11960,6 +12220,47 @@ RECEIVE AND REMOTE MOVES
         leaf = instructions_sub.add_parser(verb, help="print raw Markdown" if verb == "show" else "edit Markdown in VISUAL/EDITOR")
         leaf.add_argument("workflow_name", nargs="?", metavar="NAME", help="named workflow; default: global workflow")
         leaf.add_argument("--repo", dest="workflow_repo", metavar="ALIAS", help="registered repository alias, basename or origin name; cannot combine with NAME")
+
+    runners = workflow_sub.add_parser("runners", help="configure test runners or bootstrap a private GitHub broker")
+    runner_sub = runners.add_subparsers(dest="runner_action")
+    for verb in ("list", "edit"):
+        leaf = runner_sub.add_parser(verb, help="list configured test targets" if verb == "list" else "edit runner JSON in VISUAL/EDITOR",
+            description="Global default unless NAME or --repo explicitly selects another scope. No checkout inference or picker.")
+        leaf.add_argument("workflow_name", nargs="?", metavar="NAME", help="named workflow; default: global workflow")
+        leaf.add_argument("--repo", dest="workflow_repo", metavar="ALIAS", help="registered repository alias; cannot combine with NAME")
+        if verb == "list":
+            leaf.add_argument("--json", action="store_true", help="print configured runners as JSON without writes or probes")
+    leaf = runner_sub.add_parser("setup", help="install helper workflows into a dedicated private GitHub broker repository",
+        description="Explicit bootstrap only: source snapshots are never committed. Uses gh authentication; existing unmanaged repositories are refused.")
+    leaf.add_argument("--github-repo", required=True, metavar="OWNER/REPO", help="dedicated private GitHub control repository")
+    leaf.add_argument("--create", action="store_true", help="create the private repository if it does not exist")
+
+    runs = workflow_sub.add_parser("runs", help="test current worktree snapshots on configured runners")
+    run_sub = runs.add_subparsers(dest="run_action")
+    leaf = run_sub.add_parser("start", help="snapshot the current checkout, run targets concurrently, and wait for results",
+        description="Requires a registered current checkout. --repo must match that checkout. Tracked current files are included; untracked inputs require --include. Native GUI tests remain opt-in.")
+    leaf.add_argument("--repo", dest="workflow_repo", metavar="ALIAS", help="registered repository; must match the current checkout")
+    leaf.add_argument("--target", dest="targets", action="append", metavar="NAME", help="configured target; repeat to select several")
+    leaf.add_argument("--os", dest="runner_os", choices=("linux", "macos"), help="filter configured target OS")
+    leaf.add_argument("--capability", dest="capabilities", action="append", metavar="NAME", help="require a configured capability; repeat for all requirements")
+    leaf.add_argument("--include", dest="includes", action="append", metavar="PATH", help="explicit untracked input relative to this checkout")
+    leaf.add_argument("--artifact", dest="artifact_paths", action="append", metavar="PATH", help="collect relative result path; repeat to add to configured artifacts")
+    leaf.add_argument("--timeout", type=int, metavar="SECONDS", help="per-target execution deadline (1–21600)")
+    leaf.add_argument("--queue-timeout", type=int, metavar="SECONDS", help="provisioning/queue deadline (1–3600)")
+    leaf.add_argument("--json", action="store_true", help="print the final durable receipt as JSON")
+    leaf.add_argument("command", nargs=argparse.REMAINDER, metavar="COMMAND", help="argv after --; never interpreted as shell code")
+    for verb in ("list", "status", "logs", "artifacts", "cancel", "cleanup"):
+        leaf = run_sub.add_parser(verb, help={"list": "list local run receipts without network access", "status": "show a local run receipt without network access",
+            "logs": "print retained local logs", "artifacts": "extract retained result artifacts", "cancel": "request cancellation and confirm provider state",
+            "cleanup": "retry deletion of retained remote run resources"}[verb])
+        if verb != "list":
+            leaf.add_argument("run_id", metavar="ID", help="durable local run UUID")
+        if verb in ("list", "status"):
+            leaf.add_argument("--json", action="store_true", help="print local receipts as JSON without network access")
+        if verb in ("logs", "artifacts"):
+            leaf.add_argument("--target", dest="runner_target", metavar="NAME", help="one target; default: all")
+        if verb == "artifacts":
+            leaf.add_argument("--output", metavar="DIR", help="new output directory; omit to show retained archive paths")
 
     sp = sub.add_parser("setup", help="register local repos and ssh hosts in T_LOCAL_RC",
         description='Register local repositories and SSH hosts through a reviewed wizard. Scan ~/config by default. '

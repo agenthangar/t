@@ -119,6 +119,16 @@ destinations use a trailing `›`; scalar choices and immediate actions do not.
 All actions remain directly reachable, returning preserves row focus, and the
 shared viewport keeps the focused row and Save shortcut visible on narrow screens.
 
+Per-agent settings expose Cross-host handoff with staged review/save. Effective
+defaults are `DEV_HANDOFF[claude]=t` and `DEV_HANDOFF[codex]=native`; Codex can
+explicitly select `t`. Claude native is unsupported and rejected. `t config show`
+is read-only and prints the mechanism and app requirement. Native Codex transfer
+is a manual desktop Hand off action, not an automated CLI transfer: cross-host
+resume/move prints actionable steps and returns nonzero before stopping an owner,
+checkpointing, copying transcripts or allocating a destination. Local resume and
+remote attachment retain their existing behavior. Relays preserve the initiating
+host's policy and require a peer that understands it.
+
 Config proposes unique host short names from SSH targets, including the first
 manual addition. Onboarding also generates unique short names for selected peers.
 Hosts → host → Short name edits an existing alias while preserving its SSH target
@@ -232,6 +242,23 @@ checkout inference or picker. Bare subgroups show help. Hidden config show/edit
 local-shell editor. Saving updates account-local Codex and Claude instructions with
 preflight and concurrent-edit checks, never tracked repository instructions. v1
 policies migrate in memory without writing on reads or installer synchronization.
+
+Test runners appear within each workflow policy. Their JSON subeditor exposes targets,
+default targets, timeout/queue deadlines and artifact paths; Show configured targets
+prints a reviewable summary. Menu changes stay staged until existing Review and Save.
+`t config workflow runners list [NAME] [--repo ALIAS] [--json]` is a local read-only
+list; `edit` opens the terminal editor, and `setup --github-repo OWNER/REPO [--create]`
+explicitly bootstraps a dedicated private broker. Configuration save never provisions.
+
+`t config workflow runs start [--repo ALIAS] -- COMMAND ...` is an explicit direct
+action using the registered current checkout or linked worktree; --repo must match.
+Repeatable --target, --os and --capability select configured targets without a picker.
+The argv after -- belongs to the test command. JSON remains machine output and does
+not make start read-only. Runs list/status/logs read only local durable receipts,
+without provider probes, cleanup, update prompts or selection. Artifacts/cancel/cleanup
+are explicit actions. One immutable current-file snapshot serves concurrent targets;
+Ctrl-C requests cancellation and returns 130, preserving honest unknown outcomes if
+provider termination cannot be confirmed. See [test runners](../docs/test-runners.md).
 
 ### Representative screens
 
@@ -750,15 +777,3 @@ diagnostics are explicitly requested.
 The internal `t mcp` machine interface discovers saved Codex and Claude sessions.
 Its explicit `--install` action registers installed clients additively, preserving
 existing entries; `--call`, `--list-tools`, and stdio never install clients.
-
-## Cross-host handoff policy
-
-Per-agent settings expose Cross-host handoff with staged review/save. Effective
-defaults are `DEV_HANDOFF[claude]=t` and `DEV_HANDOFF[codex]=native`; Codex can
-explicitly select `t`. Claude native is unsupported and rejected. `t config show`
-is read-only and prints the mechanism and app requirement. Native Codex transfer
-is a manual desktop Hand off action, not an automated CLI transfer: cross-host
-resume/move prints actionable steps and returns nonzero before stopping an owner,
-checkpointing, copying transcripts or allocating a destination. Local resume and
-remote attachment retain their existing behavior. Relays preserve the initiating
-host's policy and require a peer that understands it.

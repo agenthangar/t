@@ -212,6 +212,34 @@
     "bin/t:_exec_foreground:subprocess.call": {
       "kind": "passthrough",
       "reason": "The foreground SSH or shell command owns terminal input and output; its parent only waits to clear the terminal title."
+    },
+    "libexec/t_runner_job.py:_git:subprocess.check_output": {
+      "kind": "protocol",
+      "reason": "Snapshot reads Git metadata in the bounded runner protocol; the initiating CLI owns progress."
+    },
+    "libexec/t_runner_job.py:execute:subprocess.Popen": {
+      "kind": "background",
+      "reason": "Remote execution starts a dedicated process group and supervises its deadline while bounded logs are captured for the receipt."
+    },
+    "libexec/t_runners.py:_run:subprocess.run": {
+      "kind": "phase",
+      "reason": "Explicit runner setup, execution, cancellation and cleanup run under the initiating CLI phase spinner; raw read-only receipts never call transports."
+    },
+    "libexec/t_runners.py:_cancel_github:time.sleep": {
+      "kind": "phase",
+      "reason": "Bounded cancellation confirmation polls under the initiating runner action spinner."
+    },
+    "libexec/t_runners.py:_github_target:time.sleep": {
+      "kind": "phase",
+      "reason": "Provider queue and execution polling runs under the initiating CLI test-run spinner with explicit deadlines."
+    },
+    "libexec/t_runners.py:_ssh_target:time.sleep": {
+      "kind": "phase",
+      "reason": "Detached SSH supervisor completion and cancellation polling runs under the initiating CLI test-run spinner with explicit deadlines."
+    },
+    "libexec/t_workflow.py:edit_runners:subprocess.call": {
+      "kind": "passthrough",
+      "reason": "The configured terminal editor owns input and rendering until it exits."
     }
   },
   "shell": [
