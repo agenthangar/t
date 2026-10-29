@@ -631,9 +631,10 @@ _dev_session_claude_pid() {{ tmux display-message -p -t "=$session:" '#{{pane_pi
     monkeypatch.setattr(t_mod, "_run", run)
     try:
         ready = tmp_path / 'pane-ready'
-        agent = ("import signal,time,pathlib; "
-                 "signal.signal(signal.SIGTERM, lambda *_: exit(0)); "
-                 f"pathlib.Path({str(ready)!r}).touch(); time.sleep(60)")
+        terminated = tmp_path / 'pane-terminated'
+        agent = ("import os,signal,time,pathlib; "
+                 f"signal.signal(signal.SIGTERM, lambda *_: (pathlib.Path({str(terminated)!r}).touch(), os._exit(0))); "
+                 f"pathlib.Path({str(ready)!r}).write_text(str(os.getpid())); time.sleep(60)")
         subprocess.run(tmux + ["new-session", "-d", "-s", session, "-c", row["cwd"],
                               sys.executable, '-c', agent],
                        env=env, capture_output=True, text=True, check=True)
@@ -641,10 +642,16 @@ _dev_session_claude_pid() {{ tmux display-message -p -t "=$session:" '#{{pane_pi
         while not ready.exists() and time.monotonic() < deadline:
             time.sleep(0.03)
         assert ready.exists(), 'disposable pane process did not become ready'
+        pane_pid = subprocess.run(tmux + ['display-message', '-p', '-t', '=' + session + ':', '#{pane_pid}'],
+                                  env=env, capture_output=True, text=True, check=True).stdout.strip()
+        assert pane_pid == ready.read_text(), 'tmux must directly own the ready synthetic agent'
         subprocess.run(tmux + ["new-session", "-d", "-s", session + "0", "-c", str(tmp_path), "sleep 60"],
                        env=env, capture_output=True, text=True, check=True)
         result = t_mod._app_stop_cli(row)
-        assert result.returncode == 0, result.stderr
+        if result.returncode:
+            process_state = subprocess.run(['ps', '-o', 'pid,ppid,stat,args', '-p', pane_pid],
+                                           env=env, capture_output=True, text=True).stdout
+            pytest.fail(f'{result.stderr}\nTERM received: {terminated.exists()}\n{process_state}')
         expected = row["cwd"] + ("|1" if stop_process else "|0")
         deadline = time.monotonic() + 2
         while True:
