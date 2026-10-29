@@ -1437,9 +1437,9 @@ _dev_session_rows_impl() {
 # source behind `dev ls -r`. Remote hosts are scanned IN PARALLEL over ssh
 # (background jobs → temp files → `wait`) with a short ConnectTimeout + BatchMode so
 # a sleeping/offline Mac is skipped fast and noted on stderr, never waited on. Each
-# host's ssh exit code is stashed in a `.rc` file so we can tell "unreachable"
-# (rc 255) from "reachable but the scan errored" (e.g. rc 127 → stale dotfiles), and
-# warn accordingly. local-first; within a host, _dev_session_rows' own order holds.
+# host's ssh exit code and stderr are retained so failures report their actual
+# diagnostic; rc 255 alone cannot establish that a machine is offline.
+# Local-first; within a host, _dev_session_rows' own order holds.
 # Rows are prefixed verbatim (no re-splitting), so empty fields can't collapse.
 _dev_remote_scan_with_timeout() {
   local target=$1 remote_command=$2 limit=${3:-15} diagnostics=$4
@@ -1448,7 +1448,7 @@ import subprocess, sys
 target, command, limit, diagnostics = sys.argv[1:]
 try:
     result = subprocess.run(["ssh", "-o", "ConnectTimeout=3", "-o", "BatchMode=yes",
-                             target, command], timeout=float(limit), stdout=sys.stdout,
+                             target, command], timeout=float(limit), stdin=subprocess.DEVNULL, stdout=sys.stdout,
                             stderr=None if diagnostics else subprocess.DEVNULL)
 except subprocess.TimeoutExpired:
     sys.exit(124)
@@ -1496,8 +1496,8 @@ _dev_rows_all_impl() {
   local h
   for h in ${(k)REMOTE_HOSTS}; do
     ( local scan_rc=0
-      _dev_remote_scan_with_timeout "${REMOTE_HOSTS[$h]}" "$remote_scan" "${T_REMOTE_SCAN_TIMEOUT:-15}" \
-        > "$tmpd/$h" 2>/dev/null || scan_rc=$?
+      _dev_remote_scan_with_timeout "${REMOTE_HOSTS[$h]}" "$remote_scan" "${T_REMOTE_SCAN_TIMEOUT:-15}" 1 \
+        > "$tmpd/$h" 2> "$tmpd/$h.stderr" || scan_rc=$?
       print -r -- $scan_rc > "$tmpd/$h.rc" ) &
     scan_pids+=($!)
   done
@@ -1527,20 +1527,27 @@ _dev_rows_all_impl() {
       file="$tmpd/$host"
       rc=$(< "$tmpd/$host.rc" 2>/dev/null)
       [[ $rc == 130 ]] && return 130
-      if [[ -z $rc || $rc == 255 ]]; then          # ssh-level failure = unreachable
-        _t_warn "dev: $host unreachable — skipped"
-        failed=1
-        continue
-      elif [[ $rc == 124 ]]; then
-        _t_warn "dev: $host session scan timed out — skipped"
-        failed=1
-        continue
-      elif [[ $rc == 127 ]]; then                  # command or shell integration missing
-        _t_warn "dev: $host scan failed (rc=127; install or update t's shell integration there) — skipped"
-        failed=1
-        continue
-      elif [[ $rc != 0 ]]; then                    # reachable, but the scan errored
-        _t_warn "dev: $host scan failed (rc=$rc) — skipped"
+      if [[ $rc != 0 ]]; then
+        if [[ -z $rc ]]; then
+          _t_warn "dev: $host session scan failed (worker status missing) — skipped"
+        elif [[ $rc == 255 ]]; then
+          _t_warn "dev: $host SSH session scan failed (rc=255) — skipped"
+        elif [[ $rc == 124 ]]; then
+          _t_warn "dev: $host session scan timed out — skipped"
+        elif [[ $rc == 127 ]]; then
+          _t_warn "dev: $host scan failed (rc=127; install or update t's shell integration there) — skipped"
+        else
+          _t_warn "dev: $host scan failed (rc=$rc) — skipped"
+        fi
+        # Bounded, single-line, terminal-safe stderr; never mix it into wire rows.
+        local diagnostic
+        diagnostic=$(python3 -c '
+import sys
+with open(sys.argv[1], "rb") as stream:
+    text = stream.read(1024).decode("utf-8", errors="replace")
+print("".join(c if c.isprintable() else " " for c in text), end="")
+' "$tmpd/$host.stderr" 2>/dev/null)
+        [[ -z $diagnostic ]] || _t_warn "dev: $host SSH diagnostic: $diagnostic"
         failed=1
         continue
       fi
