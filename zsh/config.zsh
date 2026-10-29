@@ -1,9 +1,16 @@
+# Read the shared, bounded local metadata parser only for actual checkouts.
+_dev_repo_origin_name() {
+  [[ -e $1/.git ]] || return 0
+  command python3 "$T_HOME/libexec/t_repos.py" "$1" 2>/dev/null
+}
+
 # Resolve an existing repository selector without adding synthetic registrations.
 # 0 prints its registered alias; 1 is unknown; 2 is ambiguous (with a diagnostic).
 _dev_resolve_repo() {
   emulate -L zsh
-  local selector=$1 key configured real best= checkout=
+  local selector=$1 key configured real best= checkout= origin
   local -a matches
+  local -A origins
   [[ -n $selector ]] || return 1
   if (( ${+DEV_REPOS[$selector]} )); then
     print -r -- "$selector"
@@ -11,9 +18,13 @@ _dev_resolve_repo() {
   fi
   for key in ${(ok)DEV_REPOS}; do
     configured=${DEV_REPOS[$key]:a}
-    [[ ${configured:t} == "$selector" ]] || continue
-    matches+=("$key")
     real=${DEV_REPOS[$key]:P:a}
+    if (( ! ${+origins[$real]} )); then
+      origins[$real]=$(_dev_repo_origin_name "$real")
+    fi
+    origin=${origins[$real]}
+    [[ ${configured:t} == "$selector" || ( -n $origin && $origin == "$selector" ) ]] || continue
+    matches+=("$key")
     if [[ -n $checkout && $real != "$checkout" ]]; then
       checkout=ambiguous
     elif [[ -z $checkout ]]; then
@@ -29,15 +40,28 @@ _dev_resolve_repo() {
   print -r -- "$best"
 }
 
-# Include aliases and only directory names that the resolver can select safely.
+# Build candidates once: no repeated resolver scans or persistent metadata cache.
 _dev_repo_selectors() {
   emulate -L zsh
-  local key configured name
-  local -A selectors
+  local key configured real name origin
+  local -A selectors origins checkouts ambiguous
   for key in ${(ok)DEV_REPOS}; do
     selectors[$key]=1
-    configured=${DEV_REPOS[$key]:a}; name=${configured:t}
-    _dev_resolve_repo "$name" >/dev/null 2>&1 && selectors[$name]=1
+    configured=${DEV_REPOS[$key]:a}; real=${DEV_REPOS[$key]:P:a}
+    if (( ! ${+origins[$real]} )); then
+      origins[$real]=$(_dev_repo_origin_name "$real")
+    fi
+    origin=${origins[$real]}
+    for name in "${configured:t}" "$origin"; do
+      [[ -n $name ]] || continue
+      if (( ${+checkouts[$name]} )) && [[ ${checkouts[$name]} != "$real" ]]; then
+        ambiguous[$name]=1
+      fi
+      checkouts[$name]=$real
+    done
+  done
+  for name in ${(k)checkouts}; do
+    (( ${+ambiguous[$name]} )) || selectors[$name]=1
   done
   (( $#selectors )) && print -rl -- ${(ok)selectors}
   return 0
