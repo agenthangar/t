@@ -613,6 +613,19 @@ Pause requests the default Escape interrupt key; it does not suspend processes,
 stop background subagents, or guarantee queued work remains paused. Goal is a
 conversational objective change, not an agent-native goal API. Delivery results
 report `acknowledged: false`; inspect subsequent agent output to verify the effect.
+Installation registers the `sessions` MCP server with installed Codex and Claude Code
+clients. `t mcp --install` retries registration; existing registrations, including
+custom or disabled entries, are preserved. Set `T_NO_MCP=1` to skip installation.
+Search includes saved Claude transcripts and Codex active/archived rollouts under
+`CODEX_HOME` (default `~/.codex`), excluding injected context and subagent rollouts.
+After registration, refresh MCP tools or reopen the client if tools are unavailable.
+The same lookup backend is available without runtime MCP tools:
+
+```sh
+t mcp --call find_sessions '{"query":"dashboard mobile","repo":"t"}'
+t mcp --call session_detail '{"session":"SESSION_ID"}'
+```
+
 Only the original three lookup tools are automatically allowed. Installing or
 running `t mcp --install` replaces the old blanket `mcp__sessions` permission with
 those lookup rules, preserving custom per-tool rules and deny/ask settings.

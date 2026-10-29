@@ -9244,7 +9244,7 @@ def cmd_app(cfg, args, *, saved=None):
 # cache writes are <key>.<pid>.tmp + os.replace, never a shared tmp name.
 
 _PR_RE = re.compile(r"github\.com/([\w.-]+)/([\w.-]+)/pull/(\d+)")
-_INDEX_V = 1
+_INDEX_V = 2
 _INDEX_HEAD, _INDEX_TAIL = 8, 72   # prompts kept per transcript: first 8 + last 72
 _INDEX_TEXT = 400                  # chars kept per prompt
 _INDEX_ASST = 300                  # chars kept of the last assistant message
@@ -9333,6 +9333,9 @@ def _tx_scan_line(st, raw):
     line = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else raw
     line = line.rstrip("\r\n")
     if not line:
+        return
+    if st.get('agent') == 'codex' or re.search(r'"type"\s*:\s*"(?:session_meta|response_item)"', line):
+        _codex_scan_line(st, line)
         return
     if "/pull/" in line:
         for m in _PR_RE.finditer(line):
@@ -9465,6 +9468,65 @@ def _index_all(projects_dir, cache_dir):
     return out
 
 
+def _codex_scan_line(st, line):
+    """Index canonical message records, ignoring duplicate events and injected context."""
+    try:
+        rec = json.loads(line)
+    except ValueError:
+        return
+    if not isinstance(rec, dict) or not isinstance(rec.get('payload'), dict):
+        return
+    payload = rec['payload']
+    if rec.get('type') == 'session_meta':
+        if not isinstance(payload.get('id'), str) or not isinstance(payload.get('cwd'), str):
+            return
+        if st.get('sid') and st['sid'] != payload['id']:
+            st['invalid_identity'] = True
+        source = payload.get('source')
+        st['subagent'] = (payload.get('thread_source') == 'subagent'
+                          or isinstance(source, dict) and 'subagent' in source)
+        st.update(agent='codex', sid=payload.get('id'), cwd=payload.get('cwd'))
+        git = payload.get('git')
+        if isinstance(git, dict):
+            st['branch'] = git.get('branch')
+    elif rec.get('type') == 'response_item' and payload.get('type') == 'message':
+        content = payload.get('content')
+        if not isinstance(content, list):
+            return
+        text = ' '.join(' '.join(b.get('text', '') for b in content
+                                if isinstance(b, dict) and b.get('type') in ('input_text', 'output_text')
+                                and isinstance(b.get('text'), str)).split())
+        role = payload.get('role')
+        if role == 'user' and text.startswith(('<', '# AGENTS.md instructions')):
+            return
+        if role == 'user' and text:
+            st['prompts'].append({'ts': _iso_epoch(rec.get('timestamp', '')), 'text': text[:_INDEX_TEXT]})
+            st['n_prompts'] += 1
+            _index_trim(st['prompts'])
+        elif role == 'assistant' and text:
+            st['last_asst'] = text[:_INDEX_ASST]
+        if role in ('user', 'assistant') and '/pull/' in text:
+            hits = list(_PR_RE.finditer(text))
+            if hits:
+                st['pr'] = hits[-1].group(0)
+    ts = _iso_epoch(rec.get('timestamp', ''))
+    if ts:
+        st['first_ts'] = min(st['first_ts'] or ts, ts)
+        st['last_ts'] = max(st['last_ts'] or ts, ts)
+
+
+def _mcp_records():
+    records = _index_all(_projects_dir(), _index_dir())
+    home = os.environ.get('CODEX_HOME') or os.path.join(HOME, '.codex')
+    paths = glob.glob(os.path.join(home, 'sessions', '**', 'rollout-*.jsonl'), recursive=True)
+    paths += glob.glob(os.path.join(home, 'archived_sessions', '**', 'rollout-*.jsonl'), recursive=True)
+    for path in sorted(paths):
+        rec = _index_update(path, _index_dir())
+        if rec and rec.get('agent') == 'codex' and rec.get('sid') and not rec.get('subagent') and not rec.get('invalid_identity'):
+            records.append(rec)
+    return records
+
+
 def _index_dedupe(recs):
     """One record per session id. A beam that relands into a new slot COPIES the
     transcript into the new cwd's project dir (see _dev_beam_land_cwd), so the same
@@ -9567,8 +9629,10 @@ def _session_row(cfg, rec, live_by_sid, now, cache_root=None, this_sid=None,
     "last ran ELSEWHERE" signal, like t resume's column."""
     sid = rec.get("sid") or ""
     cwd = rec.get("cwd") or ""
-    alias, slot = cfg.repo_of_dir(cwd) if cwd else (None, None)
     live = live_by_sid.get(sid) if sid else None
+    if live:
+        cwd = live.get("cwd") or cwd
+    alias, slot = cfg.repo_of_dir(cwd) if cwd else (None, None)
     key = worktree = None
     if alias and slot:
         key = "%s-%s" % (alias, slot)
@@ -9586,7 +9650,7 @@ def _session_row(cfg, rec, live_by_sid, now, cache_root=None, this_sid=None,
     if origin and origin == (local_host or _local_host()):
         origin = None
     return {
-        "sid": sid, "short": sid[:8], "title": _rec_title(rec),
+        "sid": sid, "short": sid[:8], "title": _rec_title(rec), "agent": rec.get("agent", "claude"),
         "repo": alias, "slot": live["slot"] if live else key,
         "cwd": cwd, "worktree": worktree,
         "worktree_exists": bool(worktree and os.path.isdir(worktree)),
@@ -9918,7 +9982,7 @@ def _plan_head_lines(path, n=40):
 _MCP_SERVER_INFO = {"name": "sessions", "version": "2"}
 _MCP_PROTOCOL_FALLBACK = "2025-06-18"
 _MCP_INSTRUCTIONS = (
-    "Claude Code session awareness for this machine: its tmux dev slots, foreground "
+    "Codex and Claude Code session awareness for this machine: its tmux dev slots, foreground "
     "claudes, and every saved transcript. Use these tools UNPROMPTED — the user will not "
     "name this server — whenever they ask which session/slot/worktree/branch is or was "
     "working on something ('which session had the accounts redesign?'), what a slot is "
@@ -9934,7 +9998,7 @@ _MCP_INSTRUCTIONS = (
 _MCP_TOOLS = [
     {"name": "find_sessions",
      "description": (
-         "Keyword search over EVERY saved Claude Code transcript on this machine — titles "
+         "Keyword search over saved Codex and Claude Code transcripts on this machine — titles "
          "plus every prompt the user typed (not just the first). Use it when the user asks "
          "which session, slot, worktree, or branch is or was working on something. Returns "
          "candidates with prompt EXCERPTS: read them and judge the match yourself; the "
@@ -9951,7 +10015,7 @@ _MCP_TOOLS = [
          "required": ["query"]}},
     {"name": "list_sessions",
      "description": (
-         "The live Claude sessions right now: tmux dev slots (<repo>-<n>) and foreground "
+         "The live agent sessions right now: tmux dev slots (<repo>-<n>) and foreground "
          "claudes, with title, branch, PR + state, dev-server URL, and "
          "the last prompts. Use it for 'what is running', 'what is slot 17 doing', or to "
          "map a slot to its worktree/branch. all_hosts also asks the other machines "
@@ -9979,7 +10043,7 @@ def _mcp_context(cfg, state):
     files twice) and liveness."""
     now = time.time()
     if state.get("recs") is None or now - state.get("at", 0) > _INDEX_REFRESH_S:
-        state["recs"] = _index_dedupe(_index_all(_projects_dir(), _index_dir()))
+        state["recs"] = _index_dedupe(_mcp_records())
         state["at"] = now
     tmux_rows, panes, parents, registry = _live_rows(_cache_root(), _projects_dir())
     live_by_sid, idle = _live_index(tmux_rows, panes, parents, registry, cfg)
@@ -9987,7 +10051,7 @@ def _mcp_context(cfg, state):
             "live_rows": [{"slot": v["slot"]} for v in live_by_sid.values()]
                          + [{"slot": i["slot"]} for i in idle],
             "now": now, "cache_root": _cache_root(),
-            "this_sid": os.environ.get("CLAUDE_CODE_SESSION_ID")}
+            "this_sid": (os.environ.get("CLAUDE_CODE_SESSION_ID") or os.environ.get("CODEX_THREAD_ID") or os.environ.get("CODEX_SESSION_ID"))}
 
 
 def _tool_find(cfg, ctx, args):
@@ -10252,6 +10316,13 @@ def _mcp_allow_write(settings):
 
 
 def _mcp_install():
+    codex_status = runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_mcp_setup.py"))["install"](os.path.join(HOME, "bin", "t"))
+    if not shutil.which("claude"):
+        return codex_status
+    return max(codex_status, _mcp_install_claude())
+
+
+def _mcp_install_claude():
     """Register with Claude Code at user scope, via `claude mcp add` (Claude's own
     writer — never a hand edit of the stateful ~/.claude.json). The EXPANDED path:
     the stdio spawn does not go through a shell, so `$HOME/bin/t` would be exec'd
@@ -10304,7 +10375,7 @@ def cmd_mcp(cfg, args):
             print("%-16s %s" % (t["name"], t["description"].split(". ")[0] + "."))
         return 0
     if args.reindex:
-        recs = _index_all(_projects_dir(), _index_dir())
+        recs = _mcp_records()
         print("indexed %d transcript(s), %.1f MB" % (len(recs), sum(r.get("size", 0) for r in recs) / 1e6))
         return 0
     if args.call:
@@ -12158,7 +12229,7 @@ PERIODIC CHECKS
     gp.add_argument("--json", action="store_true", help="print a structured delivery result")
 
     mp = sub.add_parser("mcp", hidden=True, help="(internal) stdio MCP server: session discovery and control",
-        description="Internal: the stdio MCP server Claude Code spawns, registered at user "
+        description="Internal: the stdio MCP server Codex and Claude Code spawn, registered at user "
             "scope as `sessions` by install.sh (or `t mcp --install`). Exposes the live slots, "
             "keyword search over every saved transcript's prompts, and per-session detail, "
             "plus explicit session controls and the full session command family through session_command. "
@@ -12166,7 +12237,7 @@ PERIODIC CHECKS
             "Not for direct use except through the flags below.")
     mp.add_argument("--local-worker", action="store_true", help="serve bounded local Codex/Ollama worker tools")
     mp.add_argument("--install", action="store_true",
-                    help="register with Claude Code (user scope) if not already")
+                    help="register with installed Codex and Claude Code clients if not already")
     mp.add_argument("--list-tools", action="store_true", help="print the tool names")
     mp.add_argument("--reindex", action="store_true", help="(re)build the transcript index now")
     mp.add_argument("--call", nargs="+", metavar=("TOOL", "JSON"),
