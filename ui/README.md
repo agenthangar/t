@@ -101,9 +101,10 @@ PATH and shell-wrapper precedence, argument quoting, and ownership checks.
 Fresh and resumed tmux panes start without echoing internal launch commands or
 exit instructions. Agent output is logged from startup; failures retain diagnostics.
 
-The config hub groups Session defaults, Agents & workflow, Repositories &
-worktrees, Remote hosts, and Finish. Keep agent settings, workflow, and local
-worker/model setup together; keep repository/worktree choices separate from
+The config hub groups Session defaults, Agents, Workflow, Repositories &
+worktrees, Remote hosts, and Finish. Keep agent settings and local worker/model
+setup together, with workflow in its own section; keep repository/worktree choices
+separate from
 host registration and the default beam host. Settings collections and setup
 destinations use a trailing `›`; scalar choices and immediate actions do not.
 All actions remain directly reachable, returning preserves row focus, and the
