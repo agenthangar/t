@@ -1115,6 +1115,8 @@ def test_install_workflow_detects_concurrent_edits(mod, tmp_path, monkeypatch):
                 file.write_text('concurrent edit')
         return original(file)
     helper['sync'].__globals__['snapshot'] = read
-    monkeypatch.setattr(mod.runpy, 'run_path', lambda *args: helper)
+    original_run_path = mod.runpy.run_path
+    monkeypatch.setattr(mod.runpy, 'run_path', lambda path, *args, **kwargs:
+                        helper if Path(path).name == 't_workflow.py' else original_run_path(path, *args, **kwargs))
     assert mod.install_workflow() == 1
     assert path.read_text() == 'concurrent edit'

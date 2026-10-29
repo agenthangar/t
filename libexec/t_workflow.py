@@ -109,7 +109,7 @@ def validate_name(name):
     return name
 
 
-def validate(value):
+def validate(value, *, migrate=True):
     """Validate and migrate in memory; read-only commands never rewrite preferences."""
     if not isinstance(value, dict) or type(value.get('version')) is not int:
         raise ValueError('workflow document requires version, default, workflows and repositories')
@@ -154,7 +154,7 @@ def validate(value):
     else:
         result = copy.deepcopy(value)
         result['version'] = 3
-    return _seed_instructions(result, [issue_policy()]) if value['version'] < 3 else result
+    return _seed_instructions(result, [issue_policy()]) if migrate and value['version'] < 3 else result
 
 
 def decode(text):
@@ -574,13 +574,13 @@ def save(document, before, extra=(), preserve_storage=False, propagation_context
             raise ValueError('workflow configuration changed while editing; retry')
         changes = native_changes(document)
         publication = [*changes, *extra, (path, before, before[0] if preserve_storage and before else encode(document))]
-        reconcile = propagate and not preserve_storage and (before is None or validate(decode(before[0])) != document or bool(main_settings))
+        reconcile = propagate and not preserve_storage and (before is None or decode(before[0]) != document or bool(main_settings))
         helper = propagation() if reconcile else None
         if helper:
             # Intent and preferences publish together; journal failures roll back
             # the native files too. Runtime work begins only after both locks exit.
             with helper['locked']():
-                previous = validate(decode(before[0])) if before else defaults()
+                previous = validate(decode(before[0]), migrate=False) if before else defaults()
                 state = helper['desired'](previous, document, settings=main_settings, context=propagation_context)
                 journal = helper['state_path']()
                 publish([*publication, (journal, snapshot(journal), encode(state))])
