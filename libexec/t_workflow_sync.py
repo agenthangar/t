@@ -23,6 +23,7 @@ TIMEOUT = 3
 MAX_THREADS = 200
 MAX_HOSTS = 8
 MAX_SCOPES = 25
+_spinner = runpy.run_path(str(Path(__file__).with_name("t_progress.py")))["spinner"]
 
 
 def workflow():
@@ -73,6 +74,7 @@ def changed_scopes(previous, document):
             if w['effective'](previous, scope) != w['effective'](document, scope)]
 
 
+@_spinner("Resolving workflow repository scopes")
 def git(cwd, *args):
     result = subprocess.run(['git', '-C', cwd, *args], capture_output=True, text=True, timeout=0.1)
     return result.stdout.strip() if result.returncode == 0 else ''
@@ -196,6 +198,7 @@ def changed(previous, document, *, settings=None, context=None):
 
 class Proxy:
     """Connect only to an owning control socket, never start a new backend."""
+    @_spinner("Connecting to the conversation service")
     def __enter__(self):
         self.process = subprocess.Popen(['codex', 'app-server', 'proxy'], stdin=subprocess.PIPE,
                                         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
@@ -214,6 +217,7 @@ class Proxy:
         self.process.stdin.write((json.dumps(message) + '\n').encode())
         self.process.stdin.flush()
 
+    @_spinner("Updating conversation settings")
     def call(self, method, params):
         self.counter += 1
         self.send({'id': self.counter, 'method': method, 'params': params})
@@ -294,6 +298,7 @@ def local(state):
             state['settings'] = {}
 
 
+@_spinner("Synchronizing workflows across hosts")
 def remote(state):
     hosts = sorted(target for target in set(state['context'].get('hosts', {}).values())
                    if state.get('remote_scopes', {}).get(target) or state.get('remote_settings', {}).get(target))
