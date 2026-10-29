@@ -556,7 +556,10 @@ workspace claims and live transfers retain strict ownership checks.
 Warnings are amber on capable stderr terminals and plain with NO_COLOR, dumb
 terminals, or redirected stderr; scanner and machine stdout stay unchanged.
 This includes unavailable-host warnings from `t session list -r` (`t ls -r`):
-local and reachable sessions remain listed. Redirecting stdout alone keeps
+local and reachable sessions remain listed. Failed remote scans include the exit
+status and up to 1024 bytes of terminal-safe SSH stderr; exit 255 reports an SSH
+scan failure rather than asserting that the host is offline. Successful scans
+suppress SSH stderr, and scanner stdin is disconnected. Redirecting stdout alone keeps
 warnings amber when stderr is still a capable terminal.
 Picker helpers return without running the caller's
 shell exit hooks or saving its history. All Codex
