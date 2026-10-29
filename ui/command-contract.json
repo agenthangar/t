@@ -4386,5 +4386,13 @@
       "body": "plain",
       "layout": "ANSI-stripped colored output exactly equals plain output, including newlines; style after wrapping"
     }
+  },
+  "terminal_titles": {
+    "label": "Bounded public command words; remote SSH actions add host, never worker code or delegated payloads.",
+    "cleanup": "Clear on normal return, error and cancellation; preserve handler exit status and caller cwd changes.",
+    "quiet": "Redirected stdout, TERM=dumb, internal workers and machine output emit no OSC.",
+    "tests": [
+      "tests/test_terminal_titles.py"
+    ]
   }
 }
