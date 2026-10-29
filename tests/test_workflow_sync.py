@@ -759,3 +759,74 @@ def test_resume_scope_exclusion_worktree_and_child_are_preserved(sync, monkeypat
     with sqlite3.connect(db) as conn:
         conn.execute('create table threads(id text, source text)');conn.execute('insert into threads values(?,?)',(sid,'{"subagent":{}}'))
     assert sync.resume_settings(sid) == []
+
+
+def config_transaction(sync, t_mod, monkeypatch, tmp_path):
+    doc = saved(sync)
+    source = tmp_path / 'local.zsh'
+    source.write_text('DEV_MODEL[codex]=preferred\nDEV_EFFORT[codex]=medium\nDEV_FAST[codex]=ultrafast\nDEV_HANDOFF[codex]=native\n')
+    monkeypatch.setenv('T_LOCAL_RC',str(source));monkeypatch.setenv('T_SETUP_SHIM','1')
+    cache=tmp_path/'cache.sh';cache.write_text('')
+    monkeypatch.setattr(t_mod,'CONFIG',str(cache))
+    cfg=t_mod.Config();cfg.models={'codex':'preferred'};cfg.efforts={'codex':'medium'}
+    cfg.fast={'codex':'ultrafast'};cfg.handoff={'codex':'native'}
+    calls=fake_proxy(sync,monkeypatch,{None:{'data':['root']}},{'root':{'source':'cli','model':'old','reasoningEffort':'medium'}})
+    sync.changed(doc,doc,settings={'model':'preferred','effort':'medium'},
+                 context={'settings_source':{'path':str(source),'hash':sync.digest(source.read_text())}})
+    helper=sync.workflow();helper['propagation']=lambda:vars(sync)
+    monkeypatch.setitem(helper['save'].__globals__,'propagation',lambda:vars(sync))
+    monkeypatch.setattr(t_mod,'_workflow',lambda:helper)
+    monkeypatch.setattr(t_mod.sys.stdin,'isatty',lambda:True)
+    monkeypatch.setattr(t_mod.sys.stdout,'isatty',lambda:True)
+    monkeypatch.setattr(t_mod,'zsh_capture',lambda *_a,**_k:'')
+    monkeypatch.setattr(t_mod,'_host_verify_offer',lambda *_:None)
+    return cfg,source,calls
+
+
+def test_known_unrelated_config_transaction_rebinds_checkpoint_without_model_replay(sync,t_mod,monkeypatch,tmp_path):
+    cfg,source,calls=config_transaction(sync,t_mod,monkeypatch,tmp_path)
+    initial_ack=copy.deepcopy(sync.status()['threads'])
+    edited=copy.deepcopy(cfg);edited.handoff['codex']='t'
+    monkeypatch.setattr(t_mod,'_config_wizard',lambda _:edited)
+    args=t_mod.build_parser().parse_args(['config'])
+    assert t_mod.cmd_config(cfg,args)==0
+    state=sync.status()
+    assert state['context']['settings_source']['hash']==sync.digest(source.read_text())
+    assert state['threads']==initial_ack and state['settings']=={}
+    assert len([m for m,_ in calls if m=='thread/settings/update'])==1
+    assert sync.resume_settings('66666666-6666-6666-6666-666666666666')[:2]==['--model','preferred']
+    assert 'DEV_FAST[codex]=ultrafast' in source.read_text()
+    # A later real model edit supersedes intent and legitimately resets ACKs.
+    newest=copy.deepcopy(edited);newest.models['codex']='new-main'
+    monkeypatch.setattr(t_mod,'_config_wizard',lambda _:newest)
+    assert t_mod.cmd_config(edited,args)==0
+    assert sync.status()['main_settings']=={'model':'new-main','effort':'medium'}
+    assert [p for m,p in calls if m=='thread/settings/update'][-1]=={'threadId':'root','model':'new-main'}
+
+
+def test_external_source_edit_is_not_rebound_by_unrelated_config_transaction(sync,t_mod,monkeypatch,tmp_path):
+    cfg,source,calls=config_transaction(sync,t_mod,monkeypatch,tmp_path)
+    original_guard=copy.deepcopy(sync.status()['context']['settings_source'])
+    source.write_text(source.read_text().replace('=preferred','=external-choice'))
+    edited=copy.deepcopy(cfg);edited.handoff['codex']='t'
+    monkeypatch.setattr(t_mod,'_config_wizard',lambda _:edited)
+    assert t_mod.cmd_config(cfg,t_mod.build_parser().parse_args(['config']))==0
+    assert sync.status()['context']['settings_source']==original_guard
+    assert sync.resume_settings('66666666-6666-6666-6666-666666666666')==[]
+    assert len([m for m,_ in calls if m=='thread/settings/update'])==1
+
+
+def test_source_rebind_rolls_back_with_failed_config_publication(sync,t_mod,monkeypatch,tmp_path):
+    cfg,source,_=config_transaction(sync,t_mod,monkeypatch,tmp_path)
+    before=source.read_text();guard=copy.deepcopy(sync.status()['context']['settings_source'])
+    edited=copy.deepcopy(cfg);edited.handoff['codex']='t'
+    monkeypatch.setattr(t_mod,'_config_wizard',lambda _:edited)
+    replace=os.replace
+    def fail(pending,target):
+        if Path(target)==sync.state_path() and source.read_text()!=before:
+            raise OSError('intent commit unavailable')
+        return replace(pending,target)
+    monkeypatch.setattr(os,'replace',fail)
+    assert t_mod.cmd_config(cfg,t_mod.build_parser().parse_args(['config']))==1
+    assert source.read_text()==before and sync.status()['context']['settings_source']==guard
+    assert sync.resume_settings('66666666-6666-6666-6666-666666666666')[:2]==['--model','preferred']

@@ -3331,8 +3331,12 @@ def cmd_config(cfg, args):
                 return 0
             after = _config_text(before, changes, current)
             helper = _workflow()
-            main_settings = helper["propagation"]()["settings_delta"](current, _config_state(result))
-            if workflow_changed or main_settings:
+            sync = helper["propagation"]()
+            effective_after = _config_state(result)
+            main_settings = sync["settings_delta"](current, effective_after)
+            rebound = (sync["rebind_source"](_current_local_rc(), before, after, current, effective_after)
+                       if changes and not main_settings else None)
+            if workflow_changed or main_settings or rebound:
                 extra = []
                 if changes:
                     target = Path(os.path.realpath(_current_local_rc()))
@@ -3341,11 +3345,13 @@ def cmd_config(cfg, args):
                         raise ValueError("local config changed while editing; retry")
                     extra.append((target, local_before, after))
                 workflow_doc, workflow_before = (result._workflow_document, result._workflow_before) if workflow_changed else helper["load"]()
-                sync = helper["propagation"]()
+                context = {"repos": result.repos, "hosts": getattr(result, "hosts", {})}
+                if main_settings:
+                    context["settings_source"] = {"path": os.path.realpath(_current_local_rc()), "hash": sync["digest"](after)}
+                elif rebound:
+                    context["settings_source"] = rebound
                 helper["save"](workflow_doc, workflow_before, extra, main_settings=main_settings,
-                               propagation_context={"repos": result.repos, "hosts": getattr(result, "hosts", {}),
-                                                    "settings_source": {"path": os.path.realpath(_current_local_rc()),
-                                                                        "hash": sync["digest"](after)}})
+                               refresh_source=bool(rebound), propagation_context=context)
             else:
                 _config_write(_current_local_rc(), before, after)
             targets = _host_new_targets(cfg.hosts, result.hosts)

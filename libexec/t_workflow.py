@@ -674,7 +674,7 @@ def propagation():
     return __import__('runpy').run_path(str(Path(__file__).with_name('t_workflow_sync.py')))
 
 
-def save(document, before, extra=(), preserve_storage=False, propagation_context=None, propagate=True, main_settings=None):
+def save(document, before, extra=(), preserve_storage=False, propagation_context=None, propagate=True, main_settings=None, refresh_source=False):
     """Publish explicit preferences and native instruction updates under one lock."""
     document = validate(document)
     path = config_path()
@@ -687,7 +687,7 @@ def save(document, before, extra=(), preserve_storage=False, propagation_context
             raise ValueError('workflow configuration changed while editing; retry')
         changes = native_changes(document)
         publication = [*changes, *extra, (path, before, before[0] if preserve_storage and before else encode(document))]
-        reconcile = propagate and not preserve_storage and (before is None or decode(before[0]) != document or bool(main_settings))
+        reconcile = propagate and not preserve_storage and (before is None or decode(before[0]) != document or bool(main_settings) or refresh_source)
         helper = propagation() if reconcile else None
         if helper:
             # Intent and preferences publish together; journal failures roll back

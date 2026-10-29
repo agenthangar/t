@@ -120,6 +120,20 @@ def settings_delta(before, after):
             if before.get(key) != after.get(key)}
 
 
+def rebind_source(path, before, after, effective_before, effective_after):
+    """Advance an existing guard only for a verified unchanged-model transaction."""
+    state = status()
+    guard = state.get('context', {}).get('settings_source', {})
+    values = state.get('main_settings', state.get('settings', {}))
+    if (not values or not guard or guard.get('path') != os.path.realpath(path) or
+            guard.get('hash') != digest(before) or settings_delta(effective_before, effective_after)):
+        return None
+    for field, key in (('model', 'DEV_MODEL[codex]'), ('effort', 'DEV_EFFORT[codex]')):
+        if field in values and (effective_before.get(key) or None) != values[field]:
+            return None
+    return {'path': os.path.realpath(path), 'hash': digest(after)}
+
+
 def verified_settings(text, cached):
     """Bootstrap only literal source assignments agreeing with the derived cache."""
     literal, unsafe = {}, set()
@@ -164,7 +178,7 @@ def desired(previous, document, *, settings=None, context=None):
     scopes = changed_scopes(previous, document)
     old = status()
     inherited_context = old.get('context', {})
-    if not settings and (old.get('main_settings') or old.get('settings')) and inherited_context.get('settings_source'):
+    if not settings and 'settings_source' not in context and (old.get('main_settings') or old.get('settings')) and inherited_context.get('settings_source'):
         context = {**context, 'settings_source': inherited_context['settings_source']}
     remote_settings = copy.deepcopy(old.get('remote_settings', {}))
     remote_scopes = copy.deepcopy(old.get('remote_scopes', {}))
