@@ -510,7 +510,7 @@ def test_remote_archive_release_check_uses_exact_identity_without_wrong_archive_
         with pytest.raises(history.HistoryError, match='writer lock is held') as error:
             app.codex_released(row, source)
         assert isinstance(error.value.__cause__, ValueError)
-        assert 'then reopen history' in str(error.value)
+        assert 'Retry: t session history' in str(error.value)
 
 
 def test_branch_pr_attribution_requires_matching_commit_on_reused_branch(app, history, store, monkeypatch):
@@ -926,8 +926,9 @@ def test_private_saved_resume_reports_ownership_refusal_and_cleans_up(
         return original_run(argv, **kwargs)
     monkeypatch.setattr(history, 'run', run)
     app.api['_run'] = lambda *a, **k: pytest.fail('refused restore must not inspect processes')
-    refusal = ValueError('another loaded Codex conversation could not be matched to its worktree. Release this conversation in its owning app or terminal, then reopen history.')
+    refusal = ValueError('another loaded Codex conversation could not be matched to its worktree. Finish its turn and close the owning app, then retry resume.')
     def refuse(*a, **k):
+        assert k['retry'] == 'Retry: t session history, then select the conversation again.'
         raise refusal
     def helpers(path):
         if str(path).endswith('t_app_handoff.py'):

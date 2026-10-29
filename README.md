@@ -1393,3 +1393,9 @@ Periodic checks are separately opt-in: `t system advisories enable` starts a
 per-user background worker; `status` reads results and `disable` stops it.
 No boot service is installed. See the advisory documentation for supported
 package identities, unknown coverage, local notices and OSV request metadata.
+
+Workflow changes automatically publish native instructions and attempt bounded
+propagation to supported running sessions and registered hosts. Inspect status with
+`t config workflow list`; retry pending work with `t config workflow sync`.
+Live instruction reload and current-turn model changes cannot be verified or forced.
+See [the terminal contract](ui/README.md) for scope, retries and runtime limits.
