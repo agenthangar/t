@@ -655,3 +655,14 @@ CI checks exact bold cyan heading styling, plain body text, all color opt-outs,
 and identical visible text and layout with color enabled. CI rejects oversized summaries,
 option text, pages, missing public options, and undiscoverable commands. Add or
 update help regression tests with each public command change.
+
+Resume discovery checks effective GitHub authentication once per participating
+machine with a bounded, noninteractive probe. Confirmed invalid or missing
+credentials produce one warning per host before selection, including empty and
+automatically selected results. A compact warning remains above the resume
+picker controls through filtering, sorting, show-all, and reset. Available saved
+conversations remain usable. Run `gh auth login --hostname github.com` on the
+affected host, then retry. Remote resume names the selected SSH target. Network
+failures, missing `gh`, permission errors and rate limits do not imply invalid
+credentials. Private machine protocols retain their original output unless
+diagnostics are explicitly requested.

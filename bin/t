@@ -11352,6 +11352,10 @@ EXPLICIT PUSH AND PULL
   Names default to the cwd repo; outside any repo dir a bare `t session resume`
   discovers local and registered-host repositories.
 
+  GitHub authentication failures warn with the affected host before selection and
+  remain at the top of the picker. Available conversations still resume. Run
+  gh auth login --hostname github.com on that host, then retry.
+
   One inactive candidate is taken when there are no excluded live rows; otherwise
   fzf picks (an explicit slot with no TTY takes the newest).
 
@@ -12266,8 +12270,17 @@ def main(argv):
         history = helper['HistoryCommand'](Config(), globals())
         try:
             if argv[0] == '__resume-candidates':
-                for row in history.resume_candidates(argv[1:]):
+                scope = argv[1:]
+                diagnostics_file = None
+                if scope[:1] == ['--diagnostics-file'] and len(scope) >= 2:
+                    diagnostics_file, scope = scope[1], scope[2:]
+                    history.diagnostics_enabled = True
+                for row in history.resume_candidates(scope):
                     print(row)
+                if diagnostics_file:
+                    # Private sidecar leaves the established candidate TSV untouched.
+                    with open(diagnostics_file, 'w') as stream:
+                        stream.write(''.join(host + '\n' for host in history.diagnostic_hosts()))
             else:
                 if len(argv) not in (5, 6) or argv[4] not in ('launch', 'prepare'):
                     raise helper['HistoryError']('invalid saved conversation selection')
@@ -12293,7 +12306,8 @@ def main(argv):
         helper = runpy.run_path(os.path.join(_t_source_root(), 'libexec', 't_history.py'))
         history = helper['HistoryCommand'](Config(), globals())
         try:
-            if argv == ['__history-catalog']:
+            if argv in (['__history-catalog'], ['__history-catalog', '--diagnostics']):
+                history.diagnostics_enabled = '--diagnostics' in argv
                 print(json.dumps(history.local_catalog()))
             elif len(argv) == 2 and argv[0] == '__repo-identity' and argv[1] in history.cfg.repos:
                 print(history.identity(argv[1]))
@@ -12315,17 +12329,21 @@ def main(argv):
         return helper["internal"]()
     if argv == ["__update-prompt"]:
         return _t_offer_update()
-    if len(argv) == 2 and argv[0] == "__history-export":
+    if len(argv) in (2, 3) and argv[0] == "__history-export" and (len(argv) == 2 or argv[2] == "--diagnostics"):
         helper = runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_history.py"))
         cfg = Config()
         history = helper["HistoryCommand"](cfg, globals())
         try:
+            history.diagnostics_enabled = len(argv) == 3
+            history.check_auth()
+            rows = []
             for alias in cfg.repos:
                 if history.same_repository(history.identity(alias), argv[1]):
                     history.discover(alias)
-                    print(json.dumps(history.export(alias)))
-                    return 0
-            print("[]")
+                    rows = history.export(alias)
+                    break
+            print(json.dumps(dict(version=1, conversations=rows, diagnostics=history.diagnostic_rows())
+                             if history.diagnostics_enabled else rows))
             return 0
         finally:
             history.store.close()
