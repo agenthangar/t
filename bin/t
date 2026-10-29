@@ -775,13 +775,13 @@ def cmd_land(cfg, args):
     """Resume a beamed session on this host. Reads TB_CWD/TB_SID/TB_MODE/TB_ATTACH
     from the env (set by the beam orchestrator over ssh, dodging nested-quote hell)
     and delegates to the proven zsh _tbeam_land."""
-    os.execvp("zsh", ["zsh", "-lic", "_tbeam_land"])
+    _exec_foreground("zsh", ["zsh", "-lic", "_tbeam_land"])
 
 
 def cmd_kill_owner(cfg, args):
     """Stop the local dev slot that owns TB_SID (the MOVE / one-live-owner step).
     Delegates to the proven zsh _tbeam_kill_owner."""
-    os.execvp("zsh", ["zsh", "-lic", "_tbeam_kill_owner"])
+    _exec_foreground("zsh", ["zsh", "-lic", "_tbeam_kill_owner"])
 
 
 def cmd_cursor(cfg, args):
@@ -798,17 +798,33 @@ def cmd_cursor(cfg, args):
     exe = os.path.join(os.path.dirname(os.path.realpath(__file__)), "cursor-beam")
     if not os.path.isfile(exe):
         exe = "cursor-beam"
-    os.execvp(exe, [exe] + rest)
+    _exec_foreground(exe, [exe] + rest)
 
 
 # ─── subprocess-safe verbs ─────────────────────────────────────────────────────
 
+_TITLE_OWNED = False
+_TITLE_QUIET = False
+
+
+def _exec_foreground(executable, argv):
+    """Keep a title-owning parent alive to clear OSC state without shell hooks."""
+    if _TITLE_OWNED:
+        status = subprocess.call(argv, executable=executable)
+        raise SystemExit(status if status >= 0 else 128 - status)
+    os.execvp(executable, argv)
+
+
+def _title_scope(name):
+    """Transient shell markers apply only to this process or its direct parent."""
+    return os.environ.get(name) in (str(os.getpid()), str(os.getppid()))
+
+
 def _set_term_title(text):
-    """Set the terminal/tab title via OSC, mirroring .zshrc's _term_title. No-op when
-    stdout is not a tty. Used before an execvp into ssh so the title reads `host: cmd`
-    instead of the leaked ssh argv. We cannot clear it afterward (execvp replaces this
-    process), but the shell's precmd refreshes the title on return."""
-    if sys.stdout.isatty():
+    """Emit a bounded, control-free title only to a capable terminal."""
+    if (not _TITLE_QUIET and not _title_scope("T_TITLE_QUIET")
+            and sys.stdout.isatty() and os.environ.get("TERM", "dumb") != "dumb"):
+        text = "".join(char for char in str(text) if char.isprintable())[:160]
         sys.stdout.write(f"\033]0;{text}\007")
         sys.stdout.flush()
 
@@ -818,14 +834,14 @@ def cmd_on(cfg, args):
         # interactive login shell on the host
         target = cfg.hosts.get(args.host, args.host)
         _set_term_title(args.host)
-        os.execvp("ssh", ["ssh", "-t", target])
+        _exec_foreground("ssh", ["ssh", "-t", target])
     host = args.host
     target = cfg.hosts.get(host, host)
     # `ssh -t` gives the remote command a TTY. Mark only that remote shell's
     # process as already prompted; its tmux panes may inherit the variable.
     inner = "T_UPDATE_PROMPTED=$$ " + " ".join(shlex.quote(a) for a in args.rest)
-    _set_term_title(f"{host}: {' '.join(args.rest)}")
-    os.execvp("ssh", ["ssh", "-t", target, f"zsh -lic {shlex.quote(inner)}"])
+    _set_term_title(f"{host}: t hosts run")
+    _exec_foreground("ssh", ["ssh", "-t", target, f"zsh -lic {shlex.quote(inner)}"])
 
 
 # Escape-stripping for a tmux capture-pane log of a TUI (Claude Code). The naive
@@ -1001,7 +1017,7 @@ def _delegate(snippet):
     verbs whose battle-tested logic stays in zsh during the hybrid migration; these
     end in a pager / tmux send-keys / tmux kill, all child-safe. (At hard cutover the
     target functions are renamed to internal _t_* helpers and these snippets follow.)"""
-    os.execvp("zsh", ["zsh", "-lic", ZSH_PRELUDE + snippet])
+    _exec_foreground("zsh", ["zsh", "-lic", ZSH_PRELUDE + snippet])
 
 
 def _try_remote_delegate(repo, slot, verb, extra=None):
@@ -12356,7 +12372,7 @@ def _bare_entry():
     return _onboarding_start(cfg)
 
 
-def main(argv):
+def _main(argv):
     argv = _hosts_argv(argv)
     if len(argv) == 2 and argv[0] == '__resume-source':
         helper = runpy.run_path(os.path.join(_t_source_root(), 'libexec', 't_history.py'))
@@ -12595,6 +12611,38 @@ def main(argv):
         return handler(cfg, args)
     args._verb = args.verb
     return cmd_pending(cfg, args)
+
+
+def _command_title(argv):
+    """Public command words only; never expose a delegated command or payload."""
+    if (argv and (argv[0].startswith("_") or argv[0] in
+                  {"session-rows", "land", "new-land", "kill-owner", "mcp", "todo"})):
+        return None
+    if any(arg in {"--json", "--dump", "-d", "--statusline", "--raw", "--quiet"} for arg in argv):
+        return None
+    if argv[:4] == ["config", "workflow", "instructions", "show"] or argv[:2] == ["share", "read"]:
+        return None
+    path, _ = _command_path(_hosts_argv(argv))
+    if not path and argv and argv[0] in {*IMPLEMENTED, "help", "list"}:
+        path = argv[:1]
+    return " ".join(["t", *path])
+
+
+def main(argv):
+    global _TITLE_OWNED, _TITLE_QUIET
+    previous = _TITLE_OWNED, _TITLE_QUIET
+    title = _command_title(argv)
+    active = (title is not None and not _title_scope("T_TITLE_ACTIVE")
+              and sys.stdout.isatty() and os.environ.get("TERM", "dumb") != "dumb")
+    _TITLE_OWNED, _TITLE_QUIET = active, title is None
+    if active:
+        _set_term_title(title)
+    try:
+        return _main(argv)
+    finally:
+        if active:
+            _set_term_title("")
+        _TITLE_OWNED, _TITLE_QUIET = previous
 
 
 if __name__ == "__main__":
