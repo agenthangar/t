@@ -328,7 +328,8 @@ def remote(state):
                 raise ValueError('host unreachable or sync unsupported')
             reply = json.loads(result.stdout)
             state['hosts'][target] = reply['summary']
-            state.setdefault('remote_settings', {}).pop(target, None)
+            if not reply.get('defaults_pending'):
+                state.setdefault('remote_settings', {}).pop(target, None)
             if not reply.get('pending_scopes'):
                 sent = {scope for scope in scopes[:MAX_SCOPES]
                         if scope is None or identity_cache.get(scope)}
@@ -366,7 +367,55 @@ def retry(*, boundary=False, remote_hosts=True):
         return state
 
 
-def receive(payload, repos):
+def native_defaults(settings):
+    """Stage only account-owned root Codex defaults; prove unrelated TOML unchanged."""
+    if not settings:
+        return [], None
+    try:
+        import tomllib
+        w = workflow()
+        path = Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex') / 'config.toml'
+        before = w['snapshot'](path)
+        if before and path.stat().st_uid != os.getuid():
+            raise ValueError('native config is not account-owned')
+        text = before[0] if before else ''
+        parsed = tomllib.loads(text)
+        expected = copy.deepcopy(parsed)
+        lines = text.splitlines(keepends=True)
+        boundary = next((i for i, line in enumerate(lines) if re.match(r'\s*\[', line)), len(lines))
+        root, tail = lines[:boundary], lines[boundary:]
+        for field, key in (('model', 'model'), ('effort', 'model_reasoning_effort')):
+            if field not in settings:
+                continue
+            value = settings[field]
+            matches = [i for i, line in enumerate(root) if re.match(r'\s*' + key + r'\s*=', line)]
+            if len(matches) > 1 or (key in parsed and not matches):
+                raise ValueError('native root key requires unsupported syntax')
+            if value is None:
+                expected.pop(key, None)
+                if matches:
+                    root[matches[0]] = ''
+            else:
+                expected[key] = value
+                line = key + ' = ' + json.dumps(value) + '\n'
+                if matches:
+                    prior = root[matches[0]]
+                    if '#' in prior:
+                        line = line.rstrip('\n') + '  #' + prior.split('#', 1)[1].rstrip('\n') + '\n'
+                    root[matches[0]] = line
+                else:
+                    if root and not root[-1].endswith('\n'):
+                        root[-1] += '\n'
+                    root.append(line)
+        after = ''.join([*root, *tail])
+        if tomllib.loads(after) != expected:
+            raise ValueError('native defaults cannot be edited without unrelated changes')
+        return [(path, before, after)], None
+    except (ImportError, OSError, ValueError):
+        return [], 'native Codex defaults require supported TOML and account-owned regular config'
+
+
+def receive(payload, repos, settings_writer=None):
     """One host only; resolve scope identities locally, never fan out."""
     if not isinstance(payload, dict) or payload.get('version') != 1:
         raise ValueError('unsupported workflow propagation payload')
@@ -429,8 +478,24 @@ def receive(payload, repos):
     if set(settings) - {'model', 'effort'} or any(v is not None and (not isinstance(v, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:/@+\[\]-]*', v)) for v in settings.values()):
         raise ValueError('invalid main settings')
     w['validate'](after)
-    if after != document or settings:
-        w['save'](after, before, propagation_context={'hosts': {}, 'repos': {}}, main_settings=settings)
+    defaults_pending, extra = None, []
+    context = {'hosts': {}, 'repos': {}}
+    persist_settings = bool(settings) and batch not in receipt.get('settings_batches', [])
+    if persist_settings:
+        extra, defaults_pending = native_defaults(settings)
+        if settings_writer is None:
+            defaults_pending = 'authoritative launch config writer unavailable'
+        if not defaults_pending:
+            launch_extra = settings_writer(settings)
+            extra.extend(launch_extra)
+            if launch_extra:
+                source, _, text = launch_extra[-1]
+                context['settings_source'] = {'path': str(source), 'hash': digest(text)}
+        else:
+            extra = []
+    runtime_settings = settings if persist_settings and not defaults_pending else {}
+    if after != document or runtime_settings or extra:
+        w['save'](after, before, extra=extra, propagation_context=context, main_settings=runtime_settings)
     if request_id:
         with locked():
             state = status()
@@ -439,11 +504,15 @@ def receive(payload, repos):
             receipt = state.setdefault('received', {}).get(origin, {})
             if receipt.get('revision', 0) <= revision:
                 batches = receipt.get('batches', []) if receipt.get('revision') == revision else []
+                settings_batches = receipt.get('settings_batches', []) if receipt.get('revision') == revision else []
                 state['received'][origin] = {'revision': revision,
-                                             'batches': list(dict.fromkeys([*batches, *([batch] if not pending else [])]))}
+                    'settings_batches': list(dict.fromkeys([*settings_batches, *([batch] if settings and not defaults_pending else [])])),
+                    'batches': list(dict.fromkeys([*batches, *([batch] if not pending and not defaults_pending else [])]))}
             write(state)
-    return {'pending_scopes': pending, 'summary': ('pending: unmapped repository identities' if pending else
-                        'native instructions published; ' + status()['runtime'])}
+    return {'pending_scopes': pending, 'defaults_pending': bool(defaults_pending),
+            'summary': ('pending: ' + defaults_pending if defaults_pending else
+                        'pending: unmapped repository identities' if pending else
+                        'native instructions published; launch defaults ' + ('published; ' if settings else 'unchanged; ') + status()['runtime'])}
 
 
 if __name__ == '__main__':

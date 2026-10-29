@@ -2874,6 +2874,17 @@ def cmd_repo(cfg, args):
     return 0
 
 
+def _workflow_launch_settings(cfg, settings):
+    """Stage explicit remote defaults through the existing authoritative writer."""
+    helper = _workflow()
+    target = Path(os.path.realpath(getattr(cfg, "local_rc", None) or _current_local_rc()))
+    before = helper["snapshot"](target)
+    changes = {"DEV_MODEL[codex]" if key == "model" else "DEV_EFFORT[codex]": value
+               for key, value in settings.items()}
+    after = _config_text(before[0] if before else "", changes, _config_state(cfg))
+    return [(target, before, after)]
+
+
 def _cmd_workflow(cfg, args):
     try:
         verb = getattr(args, "workflow_action", None)
@@ -2888,7 +2899,8 @@ def _cmd_workflow(cfg, args):
             helper = _workflow()
             sync = helper["propagation"]()
             if getattr(args, "workflow_receive", False):
-                print(json.dumps(sync["receive"](json.load(sys.stdin), cfg.repos)))
+                print(json.dumps(sync["receive"](json.load(sys.stdin), cfg.repos,
+                                                       settings_writer=lambda settings: _workflow_launch_settings(cfg, settings))))
             else:
                 document, stored = helper["load"]()
                 if stored and not sync["status"]()["revision"]:

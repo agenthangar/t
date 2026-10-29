@@ -191,7 +191,10 @@ Unused named-definition edits do not affect unrelated consumers.
 Workflow stage models remain guidance and never select a main-session model.
 Explicit Codex model/effort changes in `t config` separately reconcile loaded root
 threads through the running app-server control socket. Pagination is bounded;
-stage agents are skipped. Runtime coverage is limited to the connected owning
+stage agents are skipped. Explicit main model/effort deltas also persist through
+the receiving host's authoritative launch-config writer and account-owned native
+Codex root defaults. Unsupported TOML/ownership or unavailable writers leave
+those defaults explicitly pending. No other native fields are changed. Runtime coverage is limited to the connected owning
 service; standalone, unloaded, and other-runtime sessions remain unverified. Only changed model/effort fields are sent. Accepted
 updates affect subsequent turns; current turns, native instruction reload, and
 speed inheritance remain unverified. Speed, permissions, collaboration mode,

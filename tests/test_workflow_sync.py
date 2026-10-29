@@ -567,3 +567,123 @@ def test_bootstrap_cli_never_attaches_fresh_guard_to_stale_model(sync, t_mod, mo
                                      'if true; then\nDEV_MODEL[codex]=new\nfi', 'unset DEV_MODEL'])
 def test_bootstrap_rejects_unrecognized_later_source_writes(sync, suffix):
     assert sync.verified_settings('DEV_MODEL[codex]=old\n' + suffix, {'model': 'old'}) == {}
+
+
+def test_native_defaults_preserve_unrelated_tier_permissions_plan_and_profiles(sync):
+    import tomllib
+    path = Path(os.environ['CODEX_HOME']) / 'config.toml'
+    original = 'model = "old" # selected\nmodel_reasoning_effort = "high"\nservice_tier = "ultrafast"\nplan_mode_reasoning_effort = "high"\napproval_policy = "never"\n[profiles.local]\nmodel = "profile-model"\n'
+    path.write_text(original)
+    extra, pending = sync.native_defaults({'model': 'new', 'effort': 'medium'})
+    assert pending is None
+    before = tomllib.loads(original); after = tomllib.loads(extra[0][2])
+    expected = copy.deepcopy(before); expected.update(model='new', model_reasoning_effort='medium')
+    assert after == expected and '# selected' in extra[0][2]
+    sync.workflow()['publish'](extra)
+    cleared, pending = sync.native_defaults({'model': None})
+    assert pending is None and 'model' not in tomllib.loads(cleared[0][2])
+    assert tomllib.loads(cleared[0][2])['profiles']['local']['model'] == 'profile-model'
+
+
+def test_native_defaults_unsupported_ownership_and_toml_stay_pending(sync, monkeypatch):
+    path = Path(os.environ['CODEX_HOME']) / 'config.toml'
+    path.write_text('"model" = "quoted key"\n')
+    assert sync.native_defaults({'model': 'new'})[1]
+    path.write_text('invalid = [')
+    assert sync.native_defaults({'model': 'new'})[1]
+    path.write_text('model="old"\n')
+    monkeypatch.setattr(sync.os, 'getuid', lambda: path.stat().st_uid + 1)
+    assert sync.native_defaults({'model': 'new'})[1]
+    assert path.read_text() == 'model="old"\n'
+
+
+def test_remote_explicit_defaults_atomic_with_workflow_and_future_launch_source(sync, t_mod, monkeypatch, tmp_path):
+    import tomllib
+    doc = saved(sync)
+    path = tmp_path / 'authoritative.zsh'
+    path.write_text('DEV_FAST[codex]=ultrafast\nOTHER=value\n')
+    cfg = t_mod.Config(); cfg.local_rc = str(path)
+    helper = sync.workflow(); helper['propagation'] = lambda: vars(sync)
+    monkeypatch.setattr(t_mod, '_workflow', lambda: helper)
+    monkeypatch.setattr(sync, 'Proxy', lambda: (_ for _ in ()).throw(OSError('offline')))
+    native = Path(os.environ['CODEX_HOME']) / 'config.toml'
+    native.write_text('service_tier="ultrafast"\nplan_mode_reasoning_effort="high"\n')
+    payload, _ = sync.portable(doc, [None]); payload['settings'] = {'model': 'new-main', 'effort': 'medium'}
+    result = sync.receive(payload, {}, settings_writer=lambda settings: t_mod._workflow_launch_settings(cfg, settings))
+    assert not result['defaults_pending']
+    text = path.read_text()
+    assert 'DEV_MODEL[codex]=new-main' in text and 'DEV_EFFORT[codex]=medium' in text
+    assert 'DEV_FAST[codex]=ultrafast' in text and 'OTHER=value' in text
+    parsed = tomllib.loads(native.read_text())
+    assert parsed == {'service_tier': 'ultrafast', 'plan_mode_reasoning_effort': 'high',
+                      'model': 'new-main', 'model_reasoning_effort': 'medium'}
+    assert sync.status()['settings'] == {'model': 'new-main', 'effort': 'medium'}
+    assert sync.status()['context']['hosts'] == {}
+
+
+def test_remote_unavailable_defaults_writer_remains_pending(sync):
+    doc = saved(sync)
+    payload, _ = sync.portable(doc, [None]); payload['settings'] = {'model': 'new-main'}
+    result = sync.receive(payload, {})
+    assert result['defaults_pending'] and result['summary'].startswith('pending:')
+    assert not sync.status().get('settings')
+    assert not (Path(os.environ['CODEX_HOME']) / 'config.toml').exists()
+
+
+def test_remote_default_publication_rolls_back_all_authoritative_files(sync, t_mod, monkeypatch, tmp_path):
+    doc = saved(sync)
+    source = tmp_path / 'local.zsh'; source.write_text('DEV_MODEL[codex]=old\\n'.replace('\\n', '\n'))
+    cfg = t_mod.Config(); cfg.local_rc = str(source)
+    helper = sync.workflow(); helper['propagation'] = lambda: vars(sync)
+    monkeypatch.setattr(t_mod, '_workflow', lambda: helper)
+    native = Path(os.environ['CODEX_HOME']) / 'config.toml'; native.write_text('model="old"\nservice_tier="ultrafast"\n')
+    source_before, native_before = source.read_text(), native.read_text()
+    incoming = copy.deepcopy(doc); incoming['workflows']['standard']['instructions'] = 'new instructions'
+    payload, _ = sync.portable(incoming, [None]); payload['settings'] = {'model': 'new-main'}
+    replace = os.replace
+    def fail_journal(pending, target):
+        if Path(target) == sync.state_path() and 'DEV_MODEL[codex]=new-main' in source.read_text():
+            raise OSError('intent commit unavailable')
+        return replace(pending, target)
+    monkeypatch.setattr(os, 'replace', fail_journal)
+    with pytest.raises(OSError, match='intent commit unavailable'):
+        sync.receive(payload, {}, settings_writer=lambda settings: t_mod._workflow_launch_settings(cfg, settings))
+    assert source.read_text() == source_before and native.read_text() == native_before
+    assert helper['load']()[0] == doc
+    assert sync.status()['revision'] == 0
+
+
+def test_native_defaults_without_tomllib_are_explicitly_pending(sync, monkeypatch):
+    import builtins
+    original = builtins.__import__
+    def import_module(name, *args, **kwargs):
+        if name == 'tomllib': raise ImportError('not available')
+        return original(name, *args, **kwargs)
+    monkeypatch.setattr(builtins, '__import__', import_module)
+    extra, pending = sync.native_defaults({'model': 'new'})
+    assert not extra and pending
+
+
+def test_remote_partial_scope_retry_does_not_rewrite_accepted_launch_defaults(sync, t_mod, monkeypatch, tmp_path):
+    doc = saved(sync)
+    source = tmp_path / 'local.zsh'; source.write_text('DEV_MODEL[codex]=old\n')
+    cfg = t_mod.Config(); cfg.local_rc = str(source)
+    helper = sync.workflow(); helper['propagation'] = lambda: vars(sync)
+    monkeypatch.setattr(t_mod, '_workflow', lambda: helper)
+    monkeypatch.setattr(sync, 'Proxy', lambda: (_ for _ in ()).throw(OSError('offline')))
+    monkeypatch.setattr(sync, 'identity', lambda path: 'owner/repo')
+    incoming = copy.deepcopy(doc); incoming['repositories']['/source'] = {'workflow': 'standard'}
+    payload, _ = sync.portable(incoming, ['/source'])
+    payload.update(settings={'model': 'received-main'}, request_id='b' * 32 + ':1')
+    writer = lambda settings: t_mod._workflow_launch_settings(cfg, settings)
+    first = sync.receive(payload, {}, settings_writer=writer)
+    assert first['pending_scopes'] == 1 and not first['defaults_pending']
+    native = Path(os.environ['CODEX_HOME']) / 'config.toml'
+    source.write_text('DEV_MODEL[codex]=deliberate-choice\n')
+    native.write_text('model="deliberate-choice"\nservice_tier="ultrafast"\n')
+    second = sync.receive(payload, {'repo': str(tmp_path)},
+                          settings_writer=lambda _: pytest.fail('accepted defaults rewritten'))
+    assert second['pending_scopes'] == 0
+    assert source.read_text() == 'DEV_MODEL[codex]=deliberate-choice\n'
+    assert native.read_text() == 'model="deliberate-choice"\nservice_tier="ultrafast"\n'
+    assert str(tmp_path) in helper['load']()[0]['repositories']
