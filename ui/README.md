@@ -119,6 +119,16 @@ destinations use a trailing `›`; scalar choices and immediate actions do not.
 All actions remain directly reachable, returning preserves row focus, and the
 shared viewport keeps the focused row and Save shortcut visible on narrow screens.
 
+Per-agent settings expose Cross-host handoff with staged review/save. Effective
+defaults are `DEV_HANDOFF[claude]=t` and `DEV_HANDOFF[codex]=native`; Codex can
+explicitly select `t`. Claude native is unsupported and rejected. `t config show`
+is read-only and prints the mechanism and app requirement. Native Codex transfer
+is a manual desktop Hand off action, not an automated CLI transfer: cross-host
+resume/move prints actionable steps and returns nonzero before stopping an owner,
+checkpointing, copying transcripts or allocating a destination. Local resume and
+remote attachment retain their existing behavior. Relays preserve the initiating
+host's policy and require a peer that understands it.
+
 Config proposes unique host short names from SSH targets, including the first
 manual addition. Onboarding also generates unique short names for selected peers.
 Hosts → host → Short name edits an existing alias while preserving its SSH target

@@ -68,7 +68,7 @@ _dev_repo_selectors() {
 }
 
 # Per-machine configuration is shell code, loaded after the public arrays exist.
-typeset -gA DEV_REPOS DEV_BRANCHES REMOTE_HOSTS DEV_WORKTREE DEV_OPEN_MODE DEV_AGENT DEV_MODEL DEV_EFFORT DEV_FAST
+typeset -gA DEV_REPOS DEV_BRANCHES REMOTE_HOSTS DEV_WORKTREE DEV_OPEN_MODE DEV_AGENT DEV_MODEL DEV_EFFORT DEV_FAST DEV_HANDOFF
 typeset -ga _T_OWNED_ALIASES _T_OWNED_HOSTS
 typeset -gA _T_OWNED_ALIAS_VALUES _T_OWNED_HOST_VALUES
 
@@ -81,7 +81,7 @@ for _t_name in $_T_OWNED_HOSTS; do
   [[ ${functions[$_t_name]-} == ${_T_OWNED_HOST_VALUES[$_t_name]-} ]] && unfunction "$_t_name" 2>/dev/null
 done
 _T_OWNED_ALIASES=() _T_OWNED_HOSTS=() _T_OWNED_ALIAS_VALUES=() _T_OWNED_HOST_VALUES=()
-DEV_REPOS=() DEV_BRANCHES=() REMOTE_HOSTS=() DEV_WORKTREE=() DEV_OPEN_MODE=() DEV_AGENT=() DEV_MODEL=() DEV_EFFORT=() DEV_FAST=()
+DEV_REPOS=() DEV_BRANCHES=() REMOTE_HOSTS=() DEV_WORKTREE=() DEV_OPEN_MODE=() DEV_AGENT=() DEV_MODEL=() DEV_EFFORT=() DEV_FAST=() DEV_HANDOFF=()
 unset DEV_OPEN_MODE_DEFAULT DEV_BRANCH DEV_WORKTREE_ROOT DEV_WORKTREE_DEFAULT DEV_AGENT_DEFAULT TBEAM_HOST MINI_HOST
 
 export T_LOCAL_RC=${T_LOCAL_RC:-${XDG_CONFIG_HOME:-$HOME/.config}/t/local.zsh}
@@ -132,6 +132,7 @@ _t_sync_config() {
     for k in ${(k)DEV_AGENT};     do print -r -- "DEV_AGENT[$k]=${(q)DEV_AGENT[$k]}"; done
     for k in ${(k)DEV_MODEL};     do print -r -- "DEV_MODEL[$k]=${(q)DEV_MODEL[$k]}"; done
     for k in ${(k)DEV_EFFORT};    do print -r -- "DEV_EFFORT[$k]=${(q)DEV_EFFORT[$k]}"; done
+    for k in ${(k)DEV_HANDOFF}; do print -r -- "DEV_HANDOFF[$k]=${(q)DEV_HANDOFF[$k]}"; done
     for k in ${(k)DEV_FAST};      do print -r -- "DEV_FAST[$k]=${(q)DEV_FAST[$k]}"; done
     for k in ${(k)DEV_OPEN_MODE}; do print -r -- "DEV_OPEN_MODE[$k]=${(q)DEV_OPEN_MODE[$k]}"; done
     print -r -- "DEV_OPEN_MODE_DEFAULT=${(q)DEV_OPEN_MODE_DEFAULT}"

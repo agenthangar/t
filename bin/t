@@ -87,7 +87,7 @@ ZSH_PRELUDE = "setopt no_monitor no_notify 2>/dev/null; "
 # ─── config ──────────────────────────────────────────────────────────────────
 
 _CFG_LINE = re.compile(
-    r"^(DEV_REPOS|DEV_BRANCHES|REMOTE_HOSTS|DEV_WORKTREE|DEV_OPEN_MODE|DEV_AGENT|DEV_MODEL|DEV_EFFORT|DEV_FAST)\[([^\]]+)\]=(.*)$"
+    r"^(DEV_REPOS|DEV_BRANCHES|REMOTE_HOSTS|DEV_WORKTREE|DEV_OPEN_MODE|DEV_AGENT|DEV_MODEL|DEV_EFFORT|DEV_FAST|DEV_HANDOFF)\[([^\]]+)\]=(.*)$"
     r"|^(DEV_BRANCH|DEV_WORKTREE_ROOT|DEV_WORKTREE_DEFAULT|DEV_AGENT_DEFAULT|TBEAM_HOST|MINI_HOST|DEV_OPEN_MODE_DEFAULT|T_AUTO_TRUST|T_LOCAL_RC)=(.*)$")
 
 
@@ -137,6 +137,7 @@ class Config:
         self.auto_trust = os.environ.get("T_AUTO_TRUST", "0")
         self.models = {}     # agent -> model for NEW sessions; empty defers to the CLI
         self.efforts = {}    # agent -> reasoning effort for NEW sessions
+        self.handoff = {}    # agent -> cross-host handoff: native (Codex app) or t
         self.fast = {}       # agent -> speed override; empty inherits the CLI setting
         self.beam_host = ""
         self.mini_host = ""  # legacy host seed; cleared if its host is removed
@@ -158,7 +159,7 @@ class Config:
                 {"DEV_REPOS": self.repos, "DEV_BRANCHES": self.branches,
                  "REMOTE_HOSTS": self.hosts, "DEV_WORKTREE": self.worktree, "DEV_OPEN_MODE": self.open_mode,
                  "DEV_AGENT": self.agents, "DEV_MODEL": self.models,
-                 "DEV_EFFORT": self.efforts, "DEV_FAST": self.fast}[arr][key] = val
+                 "DEV_EFFORT": self.efforts, "DEV_FAST": self.fast, "DEV_HANDOFF": self.handoff}[arr][key] = val
             elif m.group(4) == "DEV_BRANCH":
                 self.branch = _unquote(m.group(5))
             elif m.group(4) == "DEV_WORKTREE_ROOT":
@@ -191,6 +192,16 @@ class Config:
                 return a
         return "claude"
 
+
+    def handoff_for(self, agent):
+        value = os.environ.get("_T_HANDOFF_" + agent.upper()) or self.handoff.get(agent, "native" if agent == "codex" else "t")
+        if value not in (("native", "t") if agent == "codex" else ("t",)):
+            raise ValueError(f"invalid cross-host handoff for {agent}: {value}; use t config")
+        return value
+
+    def handoff_label(self, agent):
+        return ("native · Codex desktop app (manual Hand off; no CLI transfer)"
+                if self.handoff_for(agent) == "native" else "t · Git checkpoint and transcript transfer")
 
     def repo_of_dir(self, cwd):
         """(alias, slot) for a path — the Python twin of zsh _dev_repo_of_dir. slot is
@@ -1622,7 +1633,7 @@ _EFFORT_ID = re.compile(r"[a-z][a-z0-9_-]*\Z")
 
 _CONFIG_ARRAYS = {"DEV_REPOS": "repos", "REMOTE_HOSTS": "hosts", "DEV_BRANCHES": "branches",
                   "DEV_AGENT": "agents", "DEV_WORKTREE": "worktree", "DEV_OPEN_MODE": "open_mode", "DEV_MODEL": "models",
-                  "DEV_EFFORT": "efforts", "DEV_FAST": "fast"}
+                  "DEV_EFFORT": "efforts", "DEV_FAST": "fast", "DEV_HANDOFF": "handoff"}
 _CONFIG_SCALARS = {"DEV_AGENT_DEFAULT": "agent_default", "DEV_BRANCH": "branch",
                    "T_AUTO_TRUST": "auto_trust",
                    "DEV_WORKTREE_ROOT": "worktree_root", "DEV_WORKTREE_DEFAULT": "worktree_default",
@@ -1666,6 +1677,9 @@ def _config_assignment(key, value):
         raise ValueError("model IDs must contain no spaces or shell commands")
     if key.startswith("DEV_EFFORT[") and value and not _EFFORT_ID.fullmatch(value):
         raise ValueError("effort must be a level name reported by the tool")
+    if key.startswith("DEV_HANDOFF["):
+        if key not in ("DEV_HANDOFF[claude]", "DEV_HANDOFF[codex]") or value not in (("native", "t") if key == "DEV_HANDOFF[codex]" else ("t",)):
+            raise ValueError("cross-host handoff must be t, or native for Codex")
     if key.startswith("DEV_FAST["):
         allowed = ("", "1", "0", "fast", "ultrafast") if key == "DEV_FAST[codex]" else ("", "1", "0")
         if value not in allowed:
@@ -2127,16 +2141,27 @@ def _config_tool_menu(ui, cfg, agent, catalogs):
     last = "model"
     while True:
         rows = [("model", "Model"), ("effort", "Effort"),
-                ("fast", "Speed" if agent == "codex" else "Fast mode"), ("back", "Back to settings")]
+                ("fast", "Speed" if agent == "codex" else "Fast mode"),
+                ("handoff", "Cross-host handoff"), ("back", "Back to settings")]
         choice = ui.pick(f"{agent.title()} settings", rows,
                          values={"model": cfg.models.get(agent) or "tool default",
                                  "effort": cfg.efforts.get(agent) or "tool default",
-                                 "fast": _config_speed_label(cfg.fast.get(agent))},
+                                 "fast": _config_speed_label(cfg.fast.get(agent)),
+                                 "handoff": cfg.handoff_label(agent)},
                          default=next(i for i, row in enumerate(rows) if row[0] == last))
         if choice in (None, "back"):
             return
         last = choice
-        _config_model_menu(ui, cfg, agent, catalogs, setting=choice)
+        if choice == "handoff":
+            options = [("t", "t · Git checkpoint and transcript transfer")]
+            if agent == "codex":
+                options.insert(0, ("native", "Native · Codex desktop app (manual Hand off)"))
+            picked = ui.pick("Cross-host only · local resume stays local", options,
+                             default=next(i for i, row in enumerate(options) if row[0] == cfg.handoff_for(agent)))
+            if picked is not None:
+                cfg.handoff[agent] = picked
+        else:
+            _config_model_menu(ui, cfg, agent, catalogs, setting=choice)
 
 
 def _config_input(ui, label, current="", kind="text"):
@@ -3244,6 +3269,7 @@ def cmd_config(cfg, args):
     if args.show:
         print("\n".join(_config_summary(cfg.agent_default, cfg.models, cfg.agents)))
         for agent in AGENTS:
+            print(f"{agent} cross-host handoff: {cfg.handoff_label(agent)}")
             print(f"{agent} effort: {cfg.efforts.get(agent) or 'tool default'}")
             print(f"{agent} speed: {_config_speed_label(cfg.fast.get(agent))}")
         print(f"Local worker: t config local --show (setup: t config local)")
@@ -6742,7 +6768,7 @@ _AGENT_PARITY = [
     ("dev slots: t session open / list / close / read / paste", "✓", "✓ t session open --codex · DEV_AGENT", "✗ no slot — t cursor list"),
     ("t session push / pop", "✓", "✓", "✗ no slot"),
     ("t session resume (saved conversations)", "✓", "✓ (rollouts and thread index)", "→ t cursor resume"),
-    ("t session move / --from", "✓", "✓ (rollout + .origin)", "→ t cursor send [id] --host / --from"),
+    ("t session move / --from", "✓ (t)", "✓ (native app; t opt-in)", "→ t cursor send [id] --host / --from"),
     ("t session open-app (desktop + browser preview)", "✗ Codex conversations only", "✓ local macOS slot → same thread", "✗"),
     ("SessionStart stamps (registry · opened · origin)", "✓ settings.json hook",
      "✓ hooks.json (trust once at startup)", "✗ no hook wired"),
@@ -11346,12 +11372,15 @@ def build_parser():
 
   Open an existing session there; --new starts a fresh session there."""),
         ('move', 'Move a current CLI conversation directly between SSH hosts. Infer the current repository; '
-            'outside one, browse all. Omitted source, session, or destination uses a picker. Scripts '
-            'require explicit targets and --detach. The source must reach the destination over SSH and '
-            'rsync; ownership failures stop the move.',
+            'outside one, browse all. Omitted targets use a picker; scripts require explicit targets and --detach. '
+            'Codex defaults to native desktop Hand off; Claude uses t. Choose the mechanism in t config. ',
          """DETAILS
 
-  Move a current local or remote CLI conversation directly to another host.
+  Claude defaults to t transfer; Codex defaults to native desktop Hand off.
+  Native prints app instructions without stopping the source or copying files.
+  Choose the mechanism in t config → agent settings → Cross-host handoff.
+
+  With t transfer, move a current conversation directly to another host.
 
   The host picker selects the destination and names the current source host.
 
@@ -11773,11 +11802,11 @@ EXPLICIT PUSH AND PULL
     sp.add_argument("--json", action="store_true", help="print paginated metadata without launching")
 
     sp = sub.add_parser("resume", help="select and resume saved conversations",
-        description='Resume saved Claude or Codex conversations in fresh slots and attach. Infer the current '
-            'repository; outside one, browse local and remote repositories. Enter selects; Space/Tab marks '
-            'several. Live selections attach to their owner; ownership checks prevent duplicate resumes. '
-            'Repositories are cloned only after selection. Cross-host resumes carry source checkpoints; '
-            'unreachable hosts use local code.',
+        description='Resume saved conversations in fresh slots and attach. Infer the current repository; '
+            'outside one, browse local and remote repositories. Enter selects; Space/Tab marks several. Live selections '
+            'attach to their owner. Repositories are cloned only after selection. Cross-host defaults: Claude uses t; Codex uses native '
+            'desktop Hand off. Choose the mechanism in t config.',
+
         epilog="""EXAMPLES
   %(prog)s                   Browse the current repository
   %(prog)s api 2             Choose a conversation associated with api slot 2
@@ -11793,8 +11822,12 @@ EXPLICIT PUSH AND PULL
   last; conversationless stubs skipped), rebuilding a reaped worktree from its
   branch first, then resumes the pick in a fresh dev slot and attaches.
 
-  Cross-host resumes verify the prior workspace and carry its latest commits,
-  checkpointing outstanding code there first. Unreachable hosts use local code.
+  Cross-host defaults: Claude uses t; Codex uses native desktop Hand off.
+  Native requires the chat and repository project on both Codex hosts; t prints
+  app instructions without starting a transfer. Choose an explicit t override in
+  t config → Codex settings → Cross-host handoff. Local resume is unchanged.
+  With t transfer, verify the prior workspace and carry its latest commits,
+  checkpointing outstanding code first. Unreachable hosts use local code.
 
   Names default to the cwd repo; outside any repo dir a bare `t session resume`
   discovers local and registered-host repositories.
@@ -11911,10 +11944,14 @@ REQUIREMENTS AND DISCOVERY
         description='Move a current Claude or Codex CLI conversation between machines. Infer the current repository; '
             'outside one, browse all. Omit the target to select a session; scripts require an explicit target '
             'and --detach. --host sends, --from receives, and both move directly between hosts. Ownership and '
-            'transfer failures stop the move.',
+            'transfer failures stop the move. Codex defaults to native desktop Hand off; Claude uses t.',
         help_details="""DETAILS
 
-  Move a Claude or Codex session between machines (a cross-host push/pop).
+  Cross-host defaults: Claude uses t; Codex uses native desktop Hand off.
+  Native prints app instructions and starts no transfer. Choose an explicit
+  t override in t config → Codex settings → Cross-host handoff.
+
+  With t transfer, move a session between machines (a cross-host push/pop).
 
   By default SENDS the resolved session to --host (default $TBEAM_HOST) and resumes
   it there; without a slot or --session ID, pick a current local CLI conversation,
@@ -12113,6 +12150,11 @@ RECEIVE AND REMOTE MOVES
   levels; add, edit or remove hosts (Add host discovers new Tailscale peers and
   offers Refresh or manual entry); register or unregister repos and set their tool,
   branch and worktree overrides; choose the default beam host and worktree defaults.
+
+  Cross-host handoff in each agent submenu shows the effective mechanism:
+  Claude defaults to t; Codex defaults to native desktop Hand off (manual app
+  action, no CLI adapter). Codex may explicitly choose t instead. This affects
+  cross-host resume and moves; same-host resume and attach stay unchanged.
 
   Save changes reviews then writes a managed block in T_LOCAL_RC.
 

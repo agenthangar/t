@@ -1,3 +1,22 @@
+# Cross-host policy is explicit; native Codex host transfer is app-mediated.
+# Return before stopping owners, checkpointing, copying transcripts or allocating.
+_t_handoff_check() {
+  local agent=${1:-claude} source_host=${2:-here} destination=${3:-here}
+  local mechanism=${DEV_HANDOFF[$agent]:-t}
+  [[ $agent != codex ]] || mechanism=${_T_HANDOFF_CODEX:-${DEV_HANDOFF[codex]:-native}}
+  [[ $agent != claude ]] || mechanism=${_T_HANDOFF_CLAUDE:-${DEV_HANDOFF[claude]:-t}}
+  if [[ $mechanism == t ]]; then return 0; fi
+  if [[ $agent != codex || $mechanism != native ]]; then
+    print -u2 -- "t: invalid cross-host handoff for $agent: $mechanism; use t config"
+    return 1
+  fi
+  print -u2 -- "t: Codex cross-host handoff uses the native desktop app ($source_host → $destination)."
+  print -u2 -- 'Open this chat in Codex, choose the run location in its footer, select the destination, then Hand off.'
+  print -u2 -- 'Save the same repository as a project on both hosts. Native host handoff has no supported CLI adapter; no transfer was started.'
+  print -u2 -- 'To explicitly use t transfer instead: t config → Codex settings → Cross-host handoff → t, then Save changes.'
+  return 1
+}
+
 # A destination on resume applies to saved history. Live owners may only attach
 # on that same host; moving an owner uses the guarded move transaction.
 _t_resume_host_check() {
@@ -17,6 +36,7 @@ _t_resume_rsync() { rsync "$@" 2>/dev/null; }
 
 _t_resume_on_host() {
   local host="$1" sid="$2" wt="$3" agent="$4" mode="$5"
+  _t_handoff_check "$agent" here "$host" || return $?
   local target="${REMOTE_HOSTS[$host]:-$host}"
   command -v rsync >/dev/null 2>&1 || { echo "t resume --host: rsync not found" >&2; return 1; }
   _dev_worktree_beam_push "$wt" "$host" >&2 || {
@@ -755,6 +775,9 @@ _t_resume() {
   for pick in "${(@)picks}"; do
     f=("${(@ps:\t:)pick}")
     _t_resume_host_check "${f[7]:-}" "$on_host" "$f[1]" "$f[2]" || return 1
+    if [[ -n $on_host && ( -z ${f[7]:-} || $f[7] == - ) ]]; then
+      _t_handoff_check "${f[10]:-claude}" here "$on_host" || return $?
+    fi
   done
   pick=$picks[1]
   if (( $#picks > 1 )); then
@@ -2853,7 +2876,7 @@ _t_beam() {
     [[ -n $detach ]] && relay+=(--detach)
     [[ -n $pick ]] && relay+=(--pick)
     [[ -n $all ]] && relay+=(--all)
-    local relay_cmd="T_NO_UPDATE_CHECK=1 _T_BEAM_HOST_IS_TARGET=1 T_MOVE_EXPECT_ROW=${(q)${T_MOVE_EXPECT_ROW:-}} _t_beam ${(j: :)${(@q)relay}}"
+    local relay_cmd="(( \$+functions[_t_handoff_check] )) || { print -u2 't: update t on the source host before cross-host handoff'; return 1; }; _T_HANDOFF_CODEX=${(q)${_T_HANDOFF_CODEX:-${DEV_HANDOFF[codex]:-native}}} _T_HANDOFF_CLAUDE=${(q)${_T_HANDOFF_CLAUDE:-${DEV_HANDOFF[claude]:-t}}} T_NO_UPDATE_CHECK=1 _T_BEAM_HOST_IS_TARGET=1 T_MOVE_EXPECT_ROW=${(q)${T_MOVE_EXPECT_ROW:-}} _t_beam ${(j: :)${(@q)relay}}"
     # Selection on the source needs its own terminal, including detached moves.
     if [[ -t 0 && -t 1 ]]; then
       ssh -t "$source_target" "zsh -lic ${(qq)relay_cmd}"
@@ -3052,6 +3075,7 @@ _t_beam() {
     done
     [[ -n $matched ]] || { print -u2 't remote move: selected session changed or closed; select it again'; return 1; }
   fi
+  _t_handoff_check "$agent" here "$host" || return $?
   if _dev_app_slot_reserved "$cwd"; then
     print -u2 -- "tbeam: $cwd is reserved for the Codex desktop app; close it and release the reservation before moving its conversation"
     return 1

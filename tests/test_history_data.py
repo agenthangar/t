@@ -51,7 +51,7 @@ def app(history, store, tmp_path, monkeypatch, t_mod):
         return None, None
 
     cfg = SimpleNamespace(repos={'repo': str(repo)}, hosts={}, worktree_root=str(worktrees.parent),
-                          repo_of_dir=repo_of_dir)
+                          repo_of_dir=repo_of_dir, handoff_for=lambda agent: 'native' if agent == 'codex' else 't')
     value = history.HistoryCommand(cfg, {'_t_source_root': lambda: str(ROOT),
                                          '_parse_rows': lambda *a, **k: [],
                                          '_table_lines': t_mod._table_lines}, store)
