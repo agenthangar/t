@@ -23,6 +23,7 @@ exclude_lines = [
     "pragma: no cover",
     "if __name__ == .__main__.:",
     "def main\\(",
+    "def _main\\(",
     "def build_parser\\(",
     "def cmd_",
     # bin/t subprocess / rendering / tty glue
