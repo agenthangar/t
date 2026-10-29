@@ -72,7 +72,12 @@ def picker():
             return subprocess.run(['tmux', '-S', socket, *args], env=env, text=True,
                                   capture_output=True, check=check)
 
-        def start(empty=False, width=90, height=26, mode='open', shell='/bin/sh', *, hostile_opts=False, profile='filtered', monochrome=False):
+        def start(empty=False, width=90, height=26, mode='open', shell='/bin/sh', *, hostile_opts=False, profile='filtered', monochrome=False, auth_warning=False):
+            env.pop('T_PICKER_AUTH_HOSTS', None)
+            env.pop('T_PICKER_COLUMNS', None)
+            if auth_warning:
+                env['T_PICKER_AUTH_HOSTS'] = 'user@host.example'
+                env['T_PICKER_COLUMNS'] = 'SESSION  TASK'
             env.pop('NO_COLOR', None)
             if monochrome:
                 env['NO_COLOR'] = '1'
@@ -510,11 +515,14 @@ def test_open_attachment_views_are_exclusive_and_idempotent(picker):
 
 
 @pytest.mark.parametrize('width,height', [(80, 24), (44, 20), (32, 12)])
-def test_resume_sort_controls_keep_focused_row_and_change_order(picker, width, height):
+@pytest.mark.parametrize('auth_warning', [False, True])
+def test_resume_sort_controls_keep_focused_row_and_change_order(picker, width, height, auth_warning):
     start, wait, keys, finish = picker
-    start(profile='resume-rich', mode='resume', width=width, height=height)
+    start(profile='resume-rich', mode='resume', width=width, height=height, auth_warning=auth_warning)
     screen = wait('2/2 (0)')
     assert 'Sort: last turn' in screen and 'Newest web' in screen
+    if auth_warning:
+        assert 'GitHub auth failed:' in screen
     assert '▸' in screen
     for letter in ('T', 'R', 'G', 'O', 'V'):
         assert 'Alt-' + letter in screen or 'M-' + letter in screen

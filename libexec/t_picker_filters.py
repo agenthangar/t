@@ -132,9 +132,9 @@ def state_label(profile, mask):
 def header(profile, mask, filters, hidden, columns, width, sort='turn', enabled=True, color=False):
     compact = width <= 40
     key = lambda text: text.replace('Ctrl-', '^').replace('Alt-', 'M-') if compact else text
-    controls = [f'Enter {profile}/Esc', 'Space/Tab ✓']
+    controls = ['Enter/Esc' if compact and profile == 'resume' else f'Enter {profile}/Esc', 'Space/Tab ✓']
     if profile != 'open':
-        controls.append('Ctrl-/ details')
+        controls.append('Ctrl-/' if compact and profile == 'resume' else 'Ctrl-/ details')
     lines = pack([key(control) for control in controls], width)
     lines += pack([key(control) for control in
                    ['Ctrl-F filters', 'Ctrl-A off', 'Ctrl-L on']], width)
@@ -283,7 +283,17 @@ def render(directory, profile, action, width, columns='', facet=None):
         sort_file.write_text(sort)
     total = len((directory / 'all').read_text().splitlines())
     (directory / 'current').write_text(''.join(row + '\n' for row in selected))
-    (directory / 'current-header').write_text(header(profile, mask, filters, total - len(selected), columns, width, sort, enabled, os.environ.get('T_PICKER_COLOR') == '1'))
+    warning = ''
+    if profile == 'resume':
+        # The invocation snapshot persists through every filter/sort/reset reload.
+        hosts = (directory / 'auth-hosts').read_text().splitlines() if (directory / 'auth-hosts').exists() else []
+        hosts = [host for host in hosts if host]
+        if hosts:
+            summary = 'GitHub auth failed: ' + ', '.join(hosts)
+            warning = clip_columns(summary, width) + '\n'
+    controls = header(profile, mask, filters, total - len(selected), columns, width,
+                      sort, enabled, os.environ.get('T_PICKER_COLOR') == '1')
+    (directory / 'current-header').write_text(warning + controls)
     enabled_file.write_text('1' if enabled else '0')
     mask_file.write_text(str(mask))
     state_file.write_text(json.dumps(filters))

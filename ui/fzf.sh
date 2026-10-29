@@ -231,6 +231,9 @@ Space/Tab mark ✓"
   esac
   if [ -n "$_t_picker_source" ]; then
     printf '%s\n' "$_t_picker_source" > "$_t_picker_dir/source"
+    if [ "${T_PICKER_SESSION_FILTERS:-}" = resume ]; then
+      printf '%s\n' "${T_PICKER_AUTH_HOSTS:-}" > "$_t_picker_dir/auth-hosts"
+    fi
     T_PICKER_HEADER_WIDTH=${_t_picker_size#* }
     [ "${T_PICKER_HEADER_WIDTH:-0}" -gt 0 ] || T_PICKER_HEADER_WIDTH=${COLUMNS:-80}
     T_PICKER_HEADER_WIDTH=$(( T_PICKER_HEADER_WIDTH - 12 ))
