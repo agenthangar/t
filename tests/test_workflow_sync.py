@@ -227,48 +227,36 @@ def test_sync_cli_and_readonly_status(sync, t_mod, monkeypatch, capsys):
     assert capsys.readouterr().out == helper['instructions'](doc)
 
 
-def test_proxy_supported_wire_protocol(sync, monkeypatch):
+def websocket_process(sync, monkeypatch, mode):
     import sys
     original = sync.subprocess.Popen
-    code = '''import sys,json
-for line in sys.stdin:
- d=json.loads(line)
- if 'id' not in d: continue
- assert d['method'] in ('initialize','thread/loaded/list')
- if d['method']=='initialize':
-  assert d['params']['clientInfo']['name']=='t-workflow-sync'
- result={} if d['method']=='initialize' else {'data':[], 'nextCursor':None}
- print(json.dumps({'method':'notification'}),flush=True)
- print(json.dumps({'id':d['id'],'result':result}),flush=True)
-'''
-    requested = []
+    processes, requested = [], []
     def launch(argv, **kwargs):
         requested.append(argv)
         assert not any(key.startswith('COV_CORE_') for key in kwargs['env'])
-        return original([sys.executable, '-u', '-c', code], **kwargs)
+        process = original([sys.executable, '-u', str(ROOT / 'tests/_websocket_peer.py'), mode], **kwargs)
+        processes.append(process)
+        return process
     monkeypatch.setattr(sync.subprocess, 'Popen', launch)
+    return processes, requested
+
+
+def test_proxy_supported_wire_protocol(sync, monkeypatch):
+    processes, requested = websocket_process(sync, monkeypatch, 'success')
     monkeypatch.setenv('COV_CORE_TEST', 'strip')
     with sync.Proxy() as proxy:
         assert proxy.call('thread/loaded/list', {'limit': 50}) == {'data': [], 'nextCursor': None}
     assert requested == [['codex', 'app-server', 'proxy']]
+    assert processes[0].poll() is not None
 
 
-@pytest.mark.parametrize('code,match', [
-    ("import sys; sys.stdin.read()", 'timed out'),
-    ("print('{}',flush=True)", 'disconnected'),
-    ("print('x'*1100000,flush=True)", 'too large'),
-    ("print('{bad}',flush=True)", 'Expecting'),
-    ("print('{\"id\":1,\"error\":{}}',flush=True)", 'refused'),
+@pytest.mark.parametrize('mode,match', [
+    ('timeout', 'timed out'), ('disconnect', 'disconnected'),
+    ('too-large', 'too large'), ('bad-json', 'Expecting'), ('refused', 'refused'),
+    ('http-invalid', 'upgrade'), ('http-large', 'headers too large'), ('bad-utf8', 'decode'),
 ])
-def test_proxy_failures_close_process(sync, monkeypatch, code, match):
-    import sys
-    original = sync.subprocess.Popen
-    processes = []
-    def launch(_argv, **kwargs):
-        process = original([sys.executable, '-u', '-c', code], **kwargs)
-        processes.append(process)
-        return process
-    monkeypatch.setattr(sync.subprocess, 'Popen', launch)
+def test_proxy_failures_close_process(sync, monkeypatch, mode, match):
+    processes, _ = websocket_process(sync, monkeypatch, mode)
     monkeypatch.setattr(sync, 'TIMEOUT', 0.3)
     with pytest.raises(ValueError, match=match):
         with sync.Proxy():
@@ -653,7 +641,7 @@ def test_remote_default_publication_rolls_back_all_authoritative_files(sync, t_m
     assert sync.status()['revision'] == 0
 
 
-def test_native_defaults_without_tomllib_are_explicitly_pending(sync, monkeypatch):
+def test_native_defaults_without_tomllib_use_private_fallback(sync, monkeypatch):
     import builtins
     original = builtins.__import__
     def import_module(name, *args, **kwargs):
@@ -661,7 +649,7 @@ def test_native_defaults_without_tomllib_are_explicitly_pending(sync, monkeypatc
         return original(name, *args, **kwargs)
     monkeypatch.setattr(builtins, '__import__', import_module)
     extra, pending = sync.native_defaults({'model': 'new'})
-    assert not extra and pending
+    assert extra and pending is None
 
 
 def test_remote_partial_scope_retry_does_not_rewrite_accepted_launch_defaults(sync, t_mod, monkeypatch, tmp_path):
@@ -724,3 +712,121 @@ def test_issue_policy_migration_queues_effective_scopes_and_refreshes_hash(sync,
     assert state['context'] == {} and not state['settings']
     w['sync']()
     assert sync.status()['revision'] == 1
+def test_proxy_helper_setup_failure_reaps_child(sync, monkeypatch):
+    processes, _ = websocket_process(sync, monkeypatch, 'timeout')
+    original = sync.runpy.run_path
+    def load(path, *args, **kwargs):
+        if str(path).endswith('t_codex_socket.py'): raise ValueError('helper unavailable')
+        return original(path, *args, **kwargs)
+    monkeypatch.setattr(sync.runpy, 'run_path', load)
+    with pytest.raises(ValueError, match='helper unavailable'):
+        with sync.Proxy(): pass
+    assert processes[0].poll() is not None and processes[0].stdin.closed and processes[0].stdout.closed
+
+
+def test_guarded_resume_retains_latest_explicit_intent_after_live_ack(sync, monkeypatch, tmp_path):
+    sid = '11111111-1111-1111-1111-111111111111'
+    doc = saved(sync)
+    fake_proxy(sync, monkeypatch, {None:{'data':['root']}}, {'root':{'source':'cli'}})
+    sync.changed(doc, doc, settings={'model':'new-main','effort':'medium'})
+    assert sync.status()['settings'] == {}
+    before = sync.state_path().read_bytes()
+    assert sync.resume_settings(sid) == ['--model','new-main','-c','model_reasoning_effort="medium"']
+    assert sync.state_path().read_bytes() == before
+    sync.changed(doc, doc, settings={'model':'newest'})
+    assert sync.resume_settings(sid)[:2] == ['--model','newest']
+    source = tmp_path / 'config'; source.write_text('source')
+    state = sync.status(); state['context']['settings_source']={'path':str(source),'hash':sync.digest('source')};sync.write(state)
+    source.write_text('deliberately changed')
+    assert sync.resume_settings(sid) == []
+    assert sync.resume_settings('bad; touch secret') == []
+
+
+def test_resume_scope_exclusion_worktree_and_child_are_preserved(sync, monkeypatch, tmp_path):
+    import sqlite3
+    sid = '22222222-2222-2222-2222-222222222222'
+    doc = saved(sync)
+    repo = tmp_path / 'repo';(repo / '.git').mkdir(parents=True)
+    doc['repositories'][str(repo)]={'excluded':True}
+    w = sync.workflow();w['save'](doc,w['snapshot'](w['config_path']()),propagate=False)
+    monkeypatch.setattr(sync,'Proxy',lambda: (_ for _ in ()).throw(OSError('offline')))
+    sync.changed(doc,doc,settings={'model':'new-main'})
+    monkeypatch.setattr(sync,'git',lambda *_:str(repo / '.git'))
+    assert sync.resume_settings(sid,str(tmp_path / 'worktree')) == []
+    doc['repositories'].clear();w['save'](doc,w['snapshot'](w['config_path']()),propagate=False)
+    sync.changed(doc,doc)
+    db = Path(os.environ['CODEX_HOME']) / 'state_5.sqlite'
+    with sqlite3.connect(db) as conn:
+        conn.execute('create table threads(id text, source text)');conn.execute('insert into threads values(?,?)',(sid,'{"subagent":{}}'))
+    assert sync.resume_settings(sid) == []
+
+
+def config_transaction(sync, t_mod, monkeypatch, tmp_path):
+    doc = saved(sync)
+    source = tmp_path / 'local.zsh'
+    source.write_text('DEV_MODEL[codex]=preferred\nDEV_EFFORT[codex]=medium\nDEV_FAST[codex]=ultrafast\nDEV_HANDOFF[codex]=native\n')
+    monkeypatch.setenv('T_LOCAL_RC',str(source));monkeypatch.setenv('T_SETUP_SHIM','1')
+    cache=tmp_path/'cache.sh';cache.write_text('')
+    monkeypatch.setattr(t_mod,'CONFIG',str(cache))
+    cfg=t_mod.Config();cfg.models={'codex':'preferred'};cfg.efforts={'codex':'medium'}
+    cfg.fast={'codex':'ultrafast'};cfg.handoff={'codex':'native'}
+    calls=fake_proxy(sync,monkeypatch,{None:{'data':['root']}},{'root':{'source':'cli','model':'old','reasoningEffort':'medium'}})
+    sync.changed(doc,doc,settings={'model':'preferred','effort':'medium'},
+                 context={'settings_source':{'path':str(source),'hash':sync.digest(source.read_text())}})
+    helper=sync.workflow();helper['propagation']=lambda:vars(sync)
+    monkeypatch.setitem(helper['save'].__globals__,'propagation',lambda:vars(sync))
+    monkeypatch.setattr(t_mod,'_workflow',lambda:helper)
+    monkeypatch.setattr(t_mod.sys.stdin,'isatty',lambda:True)
+    monkeypatch.setattr(t_mod.sys.stdout,'isatty',lambda:True)
+    monkeypatch.setattr(t_mod,'zsh_capture',lambda *_a,**_k:'')
+    monkeypatch.setattr(t_mod,'_host_verify_offer',lambda *_:None)
+    return cfg,source,calls
+
+
+def test_known_unrelated_config_transaction_rebinds_checkpoint_without_model_replay(sync,t_mod,monkeypatch,tmp_path):
+    cfg,source,calls=config_transaction(sync,t_mod,monkeypatch,tmp_path)
+    initial_ack=copy.deepcopy(sync.status()['threads'])
+    edited=copy.deepcopy(cfg);edited.handoff['codex']='t'
+    monkeypatch.setattr(t_mod,'_config_wizard',lambda _:edited)
+    args=t_mod.build_parser().parse_args(['config'])
+    assert t_mod.cmd_config(cfg,args)==0
+    state=sync.status()
+    assert state['context']['settings_source']['hash']==sync.digest(source.read_text())
+    assert state['threads']==initial_ack and state['settings']=={}
+    assert len([m for m,_ in calls if m=='thread/settings/update'])==1
+    assert sync.resume_settings('66666666-6666-6666-6666-666666666666')[:2]==['--model','preferred']
+    assert 'DEV_FAST[codex]=ultrafast' in source.read_text()
+    # A later real model edit supersedes intent and legitimately resets ACKs.
+    newest=copy.deepcopy(edited);newest.models['codex']='new-main'
+    monkeypatch.setattr(t_mod,'_config_wizard',lambda _:newest)
+    assert t_mod.cmd_config(edited,args)==0
+    assert sync.status()['main_settings']=={'model':'new-main','effort':'medium'}
+    assert [p for m,p in calls if m=='thread/settings/update'][-1]=={'threadId':'root','model':'new-main'}
+
+
+def test_external_source_edit_is_not_rebound_by_unrelated_config_transaction(sync,t_mod,monkeypatch,tmp_path):
+    cfg,source,calls=config_transaction(sync,t_mod,monkeypatch,tmp_path)
+    original_guard=copy.deepcopy(sync.status()['context']['settings_source'])
+    source.write_text(source.read_text().replace('=preferred','=external-choice'))
+    edited=copy.deepcopy(cfg);edited.handoff['codex']='t'
+    monkeypatch.setattr(t_mod,'_config_wizard',lambda _:edited)
+    assert t_mod.cmd_config(cfg,t_mod.build_parser().parse_args(['config']))==0
+    assert sync.status()['context']['settings_source']==original_guard
+    assert sync.resume_settings('66666666-6666-6666-6666-666666666666')==[]
+    assert len([m for m,_ in calls if m=='thread/settings/update'])==1
+
+
+def test_source_rebind_rolls_back_with_failed_config_publication(sync,t_mod,monkeypatch,tmp_path):
+    cfg,source,_=config_transaction(sync,t_mod,monkeypatch,tmp_path)
+    before=source.read_text();guard=copy.deepcopy(sync.status()['context']['settings_source'])
+    edited=copy.deepcopy(cfg);edited.handoff['codex']='t'
+    monkeypatch.setattr(t_mod,'_config_wizard',lambda _:edited)
+    replace=os.replace
+    def fail(pending,target):
+        if Path(target)==sync.state_path() and source.read_text()!=before:
+            raise OSError('intent commit unavailable')
+        return replace(pending,target)
+    monkeypatch.setattr(os,'replace',fail)
+    assert t_mod.cmd_config(cfg,t_mod.build_parser().parse_args(['config']))==1
+    assert source.read_text()==before and sync.status()['context']['settings_source']==guard
+    assert sync.resume_settings('66666666-6666-6666-6666-666666666666')[:2]==['--model','preferred']

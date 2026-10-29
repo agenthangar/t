@@ -989,6 +989,7 @@ _dev_attach_fg() {
   fi
   tsess=${sel%%$'\t'*}
   label=$(print -r -- "$sel" | awk -F'\t' '{print $5}')
+  _dev_workflow_attach "${sel##*$'\t'}"
   echo "Attaching $label in place (tmux session $tsess)"
   if [[ ! -t 1 || -n $CLAUDE_CODE_SESSION_ID ]]; then
     echo "  Attach: tmux attach -t $tsess"       # no TTY, or we are inside an agent
@@ -2375,6 +2376,7 @@ _t_history_attach() {
   [[ $actual_sid == $sid && ${actual_dir:A} == $dir && $actual_agent == $agent ]] || {
     print -u2 't history: selected owner changed; reopen history'; return 1
   }
+  _dev_workflow_attach "$agent"
   if [[ -n $TMUX ]]; then tmux switch-client -t "$immutable:"
   else tmux attach-session -t "$immutable:"; fi
 }
@@ -2633,7 +2635,7 @@ _t_dev() {
     if [[ -n $no_tmux ]]; then
       _t_pop "$app_session"
     else
-      _t_session_attach "$app_session"
+      _t_session_attach "$app_session" codex
     fi
     return
   fi
@@ -2841,7 +2843,7 @@ _t_dev() {
     # resume logging if it stopped (e.g. after server restart)
     tmux pipe-pane -t "=$session:" -o "cat >> $logfile"
     _dev_recovery_watch "$session"
-    _t_session_attach "$session" || {
+    _t_session_attach "$session" "$live_agent" || {
       print -u2 -- "t open: could not attach $session; inspect $logfile"
       return 1
     }
@@ -2861,7 +2863,7 @@ _t_dev() {
     local agent_note=; [[ $agent != claude ]] && agent_note=" · $agent"
     echo "Starting $session in $dir$agent_note (logging to $logfile)"
     _dev_new_session "$session" "$dir" "$branch" "$skip_prepare" "$agent" || return 1
-    _t_session_attach "$session" || {
+    _t_session_attach "$session" "$agent" || {
       print -u2 -- "t open: $session did not remain available; inspect $logfile"
       return 1
     }
@@ -2870,6 +2872,7 @@ _t_dev() {
 
 # MCP lifecycle calls leave the existing or newly created slot detached.
 _t_session_attach() {
+  _dev_workflow_attach "${2:-}"
   if [[ ${T_MCP_DETACHED:-0} == 1 ]]; then
     tmux has-session -t "=$1:" || return 1
     print -r -- "Available: $1 (detached control; existing viewers unchanged)"

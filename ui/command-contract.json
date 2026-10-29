@@ -1130,6 +1130,15 @@
         "offline": "warn and use locally available code and validated transcript",
         "safety_refusal": "stop before launch",
         "read_only_discovery": true
+      },
+      "launch_preferences": {
+        "source": "durable explicit main model/effort checkpoint only; never workflow prose or stage models",
+        "boundary": "guarded dormant Codex launch; explicit invocation overrides win; live attach preserves its owner",
+        "preserves": "service tier, permissions and one-live-owner checks; repository exclusions and indexed child agents skip overrides",
+        "tests": [
+          "tests/test_native_agent_shell.py::test_guarded_resume_applies_checkpoint_with_explicit_override_precedence",
+          "tests/test_workflow_sync.py::test_resume_scope_exclusion_worktree_and_child_are_preserved"
+        ]
       }
     },
     "session history": {
@@ -3861,7 +3870,7 @@
           ]
         }
       },
-      "notes": "Bounded retries through owning runtime control socket and nonrecursive zsh -lic SSH. Never injects turns. Current turns and native instruction reload remain unverified."
+      "notes": "Bounded retries through owning runtime control socket and nonrecursive zsh -lic SSH. Never injects turns. Current turns and native instruction reload remain unverified. The raw proxy uses bounded HTTP Upgrade/WebSocket framing; installed private Tomli supplies Python 3.9 parsing without global package changes. Isolated sessions apply retained explicit main intent on guarded resume, while live attach remains unverified."
     },
     "config workflow runners list": {
       "patterns": [

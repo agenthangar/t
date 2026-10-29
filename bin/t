@@ -2981,7 +2981,18 @@ def _cmd_workflow(cfg, args):
                                                        settings_writer=lambda settings: _workflow_launch_settings(cfg, settings))))
             else:
                 document, stored = helper["load"]()
-                if stored and not sync["status"]()["revision"]:
+                if stored and (not sync["status"]()["revision"] or "main_settings" not in sync["status"]()):
+                    # Upgrade a legacy journal through the bundled config bridge,
+                    # under a stable authoritative-source snapshot.
+                    refreshed = False
+                    if isinstance(cfg, Config):
+                        source_before = helper["snapshot"](os.path.realpath(cfg.local_rc))
+                        _host_refresh_config()
+                        loaded = Config()
+                        if (os.path.realpath(loaded.local_rc) != os.path.realpath(cfg.local_rc) or
+                                helper["snapshot"](os.path.realpath(cfg.local_rc)) != source_before):
+                            raise ValueError("local config changed while refreshing workflow defaults; retry")
+                        cfg, refreshed = loaded, True
                     # Explicit sync also adopts preferences saved before this feature.
                     settings = {key: value for key, value in
                                 (("model", getattr(cfg, "models", {}).get("codex")),
@@ -2990,7 +3001,7 @@ def _cmd_workflow(cfg, args):
                     source = getattr(cfg, "local_rc", None)
                     snapshot = helper["snapshot"](os.path.realpath(source)) if source else None
                     requested = settings
-                    settings = sync["verified_settings"](snapshot[0], settings) if snapshot else {}
+                    settings = settings if refreshed else sync["verified_settings"](snapshot[0], settings) if snapshot else {}
                     context["unverified_main_defaults"] = sorted(set(requested) - set(settings))
                     if snapshot and settings:
                         context["settings_source"] = {"path": os.path.realpath(source), "hash": sync["digest"](snapshot[0])}
@@ -3320,8 +3331,12 @@ def cmd_config(cfg, args):
                 return 0
             after = _config_text(before, changes, current)
             helper = _workflow()
-            main_settings = helper["propagation"]()["settings_delta"](current, _config_state(result))
-            if workflow_changed or main_settings:
+            sync = helper["propagation"]()
+            effective_after = _config_state(result)
+            main_settings = sync["settings_delta"](current, effective_after)
+            rebound = (sync["rebind_source"](_current_local_rc(), before, after, current, effective_after)
+                       if changes and not main_settings else None)
+            if workflow_changed or main_settings or rebound:
                 extra = []
                 if changes:
                     target = Path(os.path.realpath(_current_local_rc()))
@@ -3330,11 +3345,13 @@ def cmd_config(cfg, args):
                         raise ValueError("local config changed while editing; retry")
                     extra.append((target, local_before, after))
                 workflow_doc, workflow_before = (result._workflow_document, result._workflow_before) if workflow_changed else helper["load"]()
-                sync = helper["propagation"]()
+                context = {"repos": result.repos, "hosts": getattr(result, "hosts", {})}
+                if main_settings:
+                    context["settings_source"] = {"path": os.path.realpath(_current_local_rc()), "hash": sync["digest"](after)}
+                elif rebound:
+                    context["settings_source"] = rebound
                 helper["save"](workflow_doc, workflow_before, extra, main_settings=main_settings,
-                               propagation_context={"repos": result.repos, "hosts": getattr(result, "hosts", {}),
-                                                    "settings_source": {"path": os.path.realpath(_current_local_rc()),
-                                                                        "hash": sync["digest"](after)}})
+                               refresh_source=bool(rebound), propagation_context=context)
             else:
                 _config_write(_current_local_rc(), before, after)
             targets = _host_new_targets(cfg.hosts, result.hosts)
@@ -5322,7 +5339,7 @@ def _login_cached_expiry(agent, home, env):
         config = os.path.join(root, "config.toml")
         if os.path.exists(config):
             # Parse the real config, never guess at TOML or an alternate store.
-            import tomllib
+            tomllib = _toml()
             with open(config, "rb") as file:
                 settings = tomllib.load(file)
             if settings.get("cli_auth_credentials_store", "file") != "file":
@@ -7312,16 +7329,18 @@ def _perm_codex_subagent_plan(text):
     return text + ("\n" if text else "") + "[agents]\n" + line + "\n"
 
 
+def _toml():
+    from types import SimpleNamespace
+    return SimpleNamespace(**runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_toml.py")))
+
+
 def _perm_toml_ok(text):
-    """True unless tomllib (3.11+) is here and rejects it — the mini's 3.9 cannot check."""
+    """Validate using stdlib TOML or the package's private Python 3.9 fallback."""
+    parser = _toml()
     try:
-        import tomllib
-    except ImportError:
+        parser.loads(text)
         return True
-    try:
-        tomllib.loads(text)
-        return True
-    except tomllib.TOMLDecodeError:
+    except parser.TOMLDecodeError:
         return False
 
 
@@ -11487,6 +11506,7 @@ DESKTOP TO CLI
   %(prog)s api 2 --cli
   Follow its release instructions if the desktop conversation is still loaded.
   It resumes the same conversation and attaches automatically.
+  Live attach retains its owner; guarded resume applies current defaults.
 """,
         help_details="""SESSION TARGETS
   A lone slot number targets the current repo: t open 3.
@@ -11519,6 +11539,10 @@ OPENING DEFAULTS
   --app opens an isolated worktree in the macOS Codex desktop app.
   --codex and --claude select the agent for a fresh slot. Otherwise,
   DEV_AGENT[repo] overrides DEV_AGENT_DEFAULT (fallback: claude).
+  Guarded Codex resume applies the latest applicable explicit main model/effort
+  over saved thread values; invocation overrides win. Speed and permissions stay
+  unchanged. Live attach retains its owner; isolated sessions apply changes at
+  guarded resume/restart.
 
 DESKTOP TO CLI
   On the Mac running the desktop session, run `t open <repo> <slot> --cli`.

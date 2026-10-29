@@ -91,7 +91,7 @@ def test_missing_unreadable_and_alternate_storage(t_mod, tmp_path, monkeypatch):
     assert t_mod._login_cached_expiry('codex', str(tmp_path), {}) is None
     config.write_text('')
     monkeypatch.setitem(sys.modules, 'tomllib', None)
-    assert t_mod._login_cached_expiry('codex', str(tmp_path), {}) is None
+    assert t_mod._login_cached_expiry('codex', str(tmp_path), {}) == 3000
 
 
 @pytest.mark.parametrize('state,expiry,force,run,reason', [
