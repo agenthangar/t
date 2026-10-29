@@ -181,7 +181,7 @@ _dev_remote_resolve() {
 # Empty text clears the explicit title. Some terminal profiles independently
 # append foreground argv; single-quote the outer remote worker command as well.
 _term_title() {
-  [[ -t 1 && ${TERM:-dumb} != dumb && -z ${T_TITLE_QUIET:-} ]] || return 0
+  [[ -t 1 && ${TERM:-dumb} != dumb && ${T_TITLE_QUIET:-} != $$ && ${T_TITLE_QUIET:-} != $PPID ]] || return 0
   local title=$1
   title=${title//[[:cntrl:]]/}
   printf '\e]0;%s\a' "${title[1,160]}"

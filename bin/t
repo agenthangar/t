@@ -815,9 +815,14 @@ def _exec_foreground(executable, argv):
     os.execvp(executable, argv)
 
 
+def _title_scope(name):
+    """Transient shell markers apply only to this process or its direct parent."""
+    return os.environ.get(name) in (str(os.getpid()), str(os.getppid()))
+
+
 def _set_term_title(text):
     """Emit a bounded, control-free title only to a capable terminal."""
-    if (not _TITLE_QUIET and not os.environ.get("T_TITLE_QUIET")
+    if (not _TITLE_QUIET and not _title_scope("T_TITLE_QUIET")
             and sys.stdout.isatty() and os.environ.get("TERM", "dumb") != "dumb"):
         text = "".join(char for char in str(text) if char.isprintable())[:160]
         sys.stdout.write(f"\033]0;{text}\007")
@@ -12599,7 +12604,7 @@ def main(argv):
     global _TITLE_OWNED, _TITLE_QUIET
     previous = _TITLE_OWNED, _TITLE_QUIET
     title = _command_title(argv)
-    active = (title is not None and not os.environ.get("T_TITLE_ACTIVE")
+    active = (title is not None and not _title_scope("T_TITLE_ACTIVE")
               and sys.stdout.isatty() and os.environ.get("TERM", "dumb") != "dumb")
     _TITLE_OWNED, _TITLE_QUIET = active, title is None
     if active:

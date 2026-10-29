@@ -1,5 +1,6 @@
 """Terminal titles expose public actions, never remote worker environments."""
 import io
+import os
 import shlex
 
 import pytest
@@ -66,7 +67,7 @@ def test_python_title_lifecycle_preserves_result(t_mod, monkeypatch, result):
     assert terminal.getvalue().endswith('\x1b]0;\x07')
 
 
-@pytest.mark.parametrize('env', [{'TERM': 'dumb'}, {'TERM': 'xterm', 'T_TITLE_ACTIVE': '1'}])
+@pytest.mark.parametrize('env', [{'TERM': 'dumb'}, {'TERM': 'xterm', 'T_TITLE_ACTIVE': str(os.getpid())}])
 def test_python_title_suppressed(t_mod, monkeypatch, env):
     terminal = Terminal()
     monkeypatch.setattr(t_mod.sys, 'stdout', terminal)
@@ -189,3 +190,51 @@ def test_redirected_shell_output_has_no_title(zsh):
     result = zsh('_t_dispatch() { _term_title nested; print DATA; }; t help', TERM='xterm')
     assert '\x1b]0;' not in result.stdout + result.stderr
     assert 'DATA' in result.stdout
+
+
+@pytest.mark.parametrize('marker', ['T_TITLE_ACTIVE', 'T_TITLE_QUIET'])
+def test_python_ignores_stale_inherited_title_markers(t_mod, monkeypatch, marker):
+    terminal = Terminal()
+    monkeypatch.setattr(t_mod.sys, 'stdout', terminal)
+    monkeypatch.setenv('TERM', 'xterm')
+    monkeypatch.setenv(marker, 'stale-owner')
+    monkeypatch.setattr(t_mod, '_main', lambda argv: 0)
+    assert t_mod.main(['help']) == 0
+    assert terminal.getvalue() == '\x1b]0;t help\x07\x1b]0;\x07'
+
+
+@pytest.mark.parametrize('machine', [False, True])
+def test_tmux_panes_do_not_inherit_title_suppression(zsh, tmp_path, machine):
+    import shutil
+    import subprocess
+    import tempfile
+    import time
+    from pathlib import Path
+    tmux = shutil.which('tmux')
+    if not tmux:
+        pytest.skip('tmux unavailable')
+    root = Path(__file__).resolve().parents[1]
+    pane = tmp_path / 'pane.zsh'
+    pane.write_text('source ' + shlex.quote(str(root / 't.plugin.zsh')) +
+                    '\n_t_dispatch() { sleep 30; }\nt help\n')
+    # A short private socket, never the developer's server.
+    with tempfile.TemporaryDirectory(prefix='t-title-', dir='/tmp') as directory:
+        socket = directory + '/socket'
+        command = [tmux, '-S', socket, '-f', '/dev/null']
+        try:
+            launch = shlex.join([*command, 'new-session', '-d', '-s', 'title',
+                                 shutil.which('zsh'), '-f', str(pane)])
+            result = zsh('_t_dispatch() { ' + launch + '; }; t session open' +
+                         (' --json' if machine else ''), _tty=True, TERM='xterm')
+            assert result.returncode == 0, result.stdout + result.stderr
+            deadline = time.monotonic() + 5
+            title = ''
+            while time.monotonic() < deadline:
+                title = subprocess.run([*command, 'display-message', '-p', '-t', 'title',
+                                        '#{pane_title}'], capture_output=True, text=True).stdout.strip()
+                if title == 't help':
+                    break
+                time.sleep(0.05)
+            assert title == 't help'
+        finally:
+            subprocess.run([*command, 'kill-server'], capture_output=True)

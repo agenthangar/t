@@ -17,6 +17,11 @@
 t() {
   emulate -L zsh
   local title_active= arg label=t
+  # A tmux server may retain these variables long after this command returns.
+  # Only nested invocations in this shell share its title ownership.
+  local -x T_TITLE_ACTIVE=${T_TITLE_ACTIVE:-} T_TITLE_QUIET=${T_TITLE_QUIET:-}
+  [[ $T_TITLE_ACTIVE == $$ ]] || T_TITLE_ACTIVE=
+  [[ $T_TITLE_QUIET == $$ ]] || T_TITLE_QUIET=
   case ${1:-} in
     _*|session-rows|land|new-land|kill-owner|mcp|todo) _t_dispatch "$@"; return ;;
   esac
@@ -37,8 +42,8 @@ t() {
     _term_title "$label"
     title_active=1
   fi
-  local -x T_TITLE_QUIET=${T_TITLE_QUIET:-$machine}
-  local -x T_TITLE_ACTIVE=${T_TITLE_ACTIVE:-$title_active}
+  [[ -n $machine ]] && T_TITLE_QUIET=$$
+  [[ -n $title_active ]] && T_TITLE_ACTIVE=$$
   {
     _t_dispatch "$@"
   } always {
