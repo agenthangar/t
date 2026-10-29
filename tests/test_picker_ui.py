@@ -196,7 +196,8 @@ def test_filter_toggle_preserves_query_and_removes_hidden_marks(picker):
     modern = '--id-nth' in subprocess.check_output(['fzf', '--help'], text=True)
     wait('3/3 (1)' if modern else '3/3 (0)')
     keys('Down', 'Space', 'C-t')
-    screen = wait('2/2 (1)' if modern else '2/2 (0)')
+    # Counts can repaint before the row area after reload-sync.
+    screen = wait('2/2 (1)' if modern else '2/2 (0)', absent=('Pending task',))
     assert 'Pending task' not in screen and 'Ctrl-A show all' in screen
     if not modern:
         keys('Up', 'Space')
