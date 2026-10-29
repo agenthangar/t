@@ -694,6 +694,8 @@
           "tests": [
             "tests/test_open_picker.py::test_bare_open_inside_worktree_shows_every_detail_and_repo",
             "tests/test_open_picker.py::test_open_picker_does_not_run_callers_exit_hook_in_subshell",
+            "tests/test_picker_job_control.py::test_interactive_picker_completes_after_stopped_child",
+            "tests/test_picker_job_control.py::test_picker_worker_preserves_status_and_parent_exit_hooks",
             "tests/test_open_picker.py::test_open_hides_attached_and_loaded_desktop_by_default",
             "tests/test_open_picker.py::test_open_compact_layout_and_search",
             "tests/test_picker_ui.py::test_all_session_filter_keys_visible_at_every_size",

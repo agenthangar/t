@@ -613,7 +613,9 @@ scan failure rather than asserting that the host is offline. Successful scans
 suppress SSH stderr, and scanner stdin is disconnected. Redirecting stdout alone keeps
 warnings amber when stderr is still a capable terminal.
 Picker helpers return without running the caller's
-shell exit hooks or saving its history. All Codex
+shell exit hooks or saving its history. Zsh picker profiles wait for fzf in a
+noninteractive worker, retain ownership through child stop/resume, and clean up
+their private files after completion or cancellation. All Codex
 CLI starts and resumes use an invocation-local backend (`--no-daemon`).
 These are direct-action behaviors within the existing open/resume modes.
 
