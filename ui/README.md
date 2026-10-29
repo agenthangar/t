@@ -230,6 +230,14 @@ repository IDs; names and directory basenames alone never establish equivalence.
 `t remote resume --all --host HOST` explicitly keeps this scope on the chosen host.
 An explicit or inferred locally registered repository resolves there by identity.
 
+After a cross-host saved selection, resume reconciles the latest durable source
+workspace association under conversation and workspace claims. It verifies repository,
+branch, generation and released ownership, checkpoints eligible outstanding code
+with normal Git hooks, and transfers the verified tip privately into a fresh safe
+destination. Safety or checkpoint refusals stop launch; unreachable or unsupported
+source helpers warn and retain the locally available revision and transcript path.
+Lists, discovery and canceled selections never create checkpoints.
+
 Resume and close retain cycling Ctrl-G agent, Ctrl-O host/origin, Ctrl-R repo,
 and (close only) Ctrl-D interface, with their existing state toggles. Resume
 never invents a historical UI. Resume uses actual user-turn timestamps, newest
