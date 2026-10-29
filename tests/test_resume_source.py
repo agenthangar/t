@@ -332,6 +332,7 @@ def test_saved_resume_preparation_carries_code_into_fresh_destination(app, sourc
     transcript = transcript_file(tmp_path / 'rollout-selected.jsonl', codex_rows(path, sid='selected'))
     remote['sources'] = [dict(host='local', path=str(transcript))]
     monkeypatch.setattr(app, 'source', lambda *a: transcript)
+    app.cfg.handoff_for = lambda agent: 't'  # Explicit custom transfer opt-in.
     result = app.resume('repo', remote, detached=True, prepare_only=True)
     session, destination = result.split('\t')
     assert session == 'dev-repo-2'
@@ -349,3 +350,16 @@ def test_private_rpc_returns_safety_errors_as_versioned_json(app, history, t_mod
     assert t_mod.main(['__resume-source', payload]) == 0
     result = json.loads(capsys.readouterr().out)
     assert result['version'] == 1 and result['error']
+
+
+@pytest.mark.parametrize('local_copy', [False, True])
+def test_native_remote_saved_resume_stops_before_any_transfer(app, source, history, monkeypatch, local_copy):
+    path, row, request = source
+    row['associations'][0]['host'] = 'other'
+    row['sources'] = [dict(host='local' if local_copy else 'other', path='/unused', updated=1)]
+    def forbidden(*args, **kwargs):
+        pytest.fail('native handoff must not transfer or allocate')
+    for name in ('source', 'reconcile_source', 'materialize_repository', 'destination', 'install_transcript'):
+        monkeypatch.setattr(app, name, forbidden)
+    with pytest.raises(history.HistoryError, match='native desktop app.*footer run location'):
+        app.resume('repo', row, detached=True, prepare_only=True)

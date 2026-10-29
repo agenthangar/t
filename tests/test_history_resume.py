@@ -164,6 +164,7 @@ def test_source_missing_and_identity_changed_preserves_record(app, history, stor
 
 
 def test_verified_local_and_selected_remote_transcript_only(app, history, tmp_path, monkeypatch):
+    app.cfg.handoff_for = lambda agent: 't'  # Exercise custom transcript transport.
     workspace = Path(app.cfg.worktree_root) / 'repo/1'
     path = transcript_file(tmp_path / 'rollout-selected.jsonl', codex_rows(workspace, sid='selected'))
     row = saved_row(app, 'a' * 40, workspace)
@@ -184,6 +185,7 @@ def test_verified_local_and_selected_remote_transcript_only(app, history, tmp_pa
 
 @pytest.mark.parametrize('name,wrong_sid', [('not-rollout.jsonl', False), ('rollout-selected.jsonl', True)])
 def test_remote_transcript_filename_or_identity_change_fails(app, history, tmp_path, monkeypatch, name, wrong_sid):
+    app.cfg.handoff_for = lambda agent: 't'  # Exercise custom transcript transport.
     workspace = Path(app.cfg.worktree_root) / 'repo/1'
     path = transcript_file(tmp_path / 'tx.jsonl', codex_rows(workspace, sid='other' if wrong_sid else 'selected'))
     row = saved_row(app, 'a' * 40, workspace)
@@ -442,6 +444,7 @@ _dev_resume_session_claimed dev-repo-2 '{tmp_path}/destination 2' selected codex
 
 
 def test_newer_remote_source_wins_stale_local_and_updates_exact_indexed_rollout(app, history, tmp_path, monkeypatch):
+    app.cfg.handoff_for = lambda agent: 't'
     import sqlite3
     sid = 'selected'
     workspace = Path(app.cfg.worktree_root) / 'repo/1'
@@ -978,3 +981,30 @@ def test_moved_source_checks_current_workspace_owner_and_original_rollout(app, h
         fcntl.flock(stream, fcntl.LOCK_EX)
         with pytest.raises(history.HistoryError, match='another Codex conversation'):
             app.codex_released(row, source, workspace=str(current))
+
+
+@pytest.mark.parametrize('selection', ['missing-local', 'timestamp-tie'])
+def test_native_policy_checked_at_actual_remote_source(app, history, tmp_path, monkeypatch, selection):
+    app.cfg.hosts = {'remote': 'remote.example'}
+    workspace = Path(app.cfg.worktree_root) / 'repo/1'
+    row = saved_row(app, 'a' * 40, workspace)
+    local = tmp_path / 'rollout-selected.jsonl'
+    if selection == 'timestamp-tie':
+        transcript_file(local, codex_rows(workspace, sid='selected'))
+    row['sources'] = [dict(host='local', path=str(local), updated=20, size=1),
+                      dict(host='remote', path='/remote/rollout-selected.jsonl',
+                           updated=20 if selection == 'timestamp-tie' else 10, size=100)]
+    monkeypatch.setattr(history, 'run', lambda *a, **kw: pytest.fail('native must not rsync'))
+    with pytest.raises(history.HistoryError, match='native desktop app'):
+        app.source(row)
+    assert not (app.store.directory / 'transcripts').exists()
+
+
+def test_native_policy_allows_verified_local_source_with_incidental_remote_record(app, history, tmp_path):
+    workspace = Path(app.cfg.worktree_root) / 'repo/1'
+    path = transcript_file(tmp_path / 'rollout-selected.jsonl', codex_rows(workspace, sid='selected'))
+    row = saved_row(app, 'a' * 40, workspace)
+    app.cfg.hosts = {'remote': 'remote.example'}
+    row['sources'] = [dict(host='local', path=str(path), updated=20),
+                      dict(host='remote', path='/remote/rollout-selected.jsonl', updated=10)]
+    assert app.source(row) == path

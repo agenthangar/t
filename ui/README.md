@@ -727,3 +727,15 @@ affected host, then retry. Remote resume names the selected SSH target. Network
 failures, missing `gh`, permission errors and rate limits do not imply invalid
 credentials. Private machine protocols retain their original output unless
 diagnostics are explicitly requested.
+
+## Cross-host handoff policy
+
+Per-agent settings expose Cross-host handoff with staged review/save. Effective
+defaults are `DEV_HANDOFF[claude]=t` and `DEV_HANDOFF[codex]=native`; Codex can
+explicitly select `t`. Claude native is unsupported and rejected. `t config show`
+is read-only and prints the mechanism and app requirement. Native Codex transfer
+is a manual desktop Hand off action, not an automated CLI transfer: cross-host
+resume/move prints actionable steps and returns nonzero before stopping an owner,
+checkpointing, copying transcripts or allocating a destination. Local resume and
+remote attachment retain their existing behavior. Relays preserve the initiating
+host's policy and require a peer that understands it.

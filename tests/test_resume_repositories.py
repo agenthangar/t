@@ -248,7 +248,7 @@ def test_cancel_remoteonly_picker_never_prepares_or_registers(zsh):
 def test_remoteonly_prepare_refreshes_actual_alias_before_host_route(zsh):
     row = '\t'.join([str(int(time.time())), 'org/remote', '3', 'saved', '/gone/tree', 'Today', 'Remote work', 'peer', 'codex', '-', 'org/remote'])
     rc = zsh.home / 'selected-registration.zsh'
-    setup = ('DEV_REPOS=(); T_LOCAL_RC=' + shlex.quote(str(rc)) + '; '
+    setup = ('DEV_HANDOFF[codex]=t; DEV_REPOS=(); T_LOCAL_RC=' + shlex.quote(str(rc)) + '; '
         '_t_resume_history_candidates() { print -r -- ' + shlex.quote(row) + '; }; '
         '_t_resume_history_launch() { print -r -- "DEV_REPOS[remote]=$HOME/code/remote" > "$T_LOCAL_RC"; print "dev-remote-17\t/prepared/remote-17"; }; '
         '_t_resume_on_host() { [[ -n ${DEV_REPOS[remote]:-} ]] || return 99; print -u2 -- "LAND $*"; print dev-remote-17; }; ')

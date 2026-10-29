@@ -615,6 +615,8 @@ _dev_pull() {
   local agent=${${(ps:\t:)row}[7]:-claude}; _dev_agent_valid "$agent" || agent=claude   # field 7 (a 6-field host = claude)
   [[ -n $sid && $sid != - ]] || { echo "dev: $host/$fslot has no active conversation to pull" >&2; return 1; }
 
+  _t_handoff_check "$agent" "$host" here || return $?
+
   # Check the source host's durable Codex rollout before stopping its owner.
   # A newer SQLite projection with a shorter JSONL file cannot be transferred
   # faithfully; the remote helper names the damaged file and leaves it running.
@@ -1269,7 +1271,7 @@ _t_remote() {
       if (( identity_rc == 0 )); then
         repository_identity=$(python3 "$T_HOME/bin/t" __repo-identity "$identity_alias") || return $?
       fi
-      local resume_environment="T_NO_UPDATE_CHECK=1 _T_RESUME_REPO_IDENTITY=${(q)repository_identity} _T_RESUME_REQUIRE_PICKER=1 _T_RESUME_OWNER_HOST=here _T_RESUME_DESTINATION_HOST=${(q)target}"
+      local resume_environment="_T_HANDOFF_CODEX=${(q)${_T_HANDOFF_CODEX:-${DEV_HANDOFF[codex]:-native}}} _T_HANDOFF_CLAUDE=${(q)${_T_HANDOFF_CLAUDE:-${DEV_HANDOFF[claude]:-t}}} T_NO_UPDATE_CHECK=1 _T_RESUME_REPO_IDENTITY=${(q)repository_identity} _T_RESUME_REQUIRE_PICKER=1 _T_RESUME_OWNER_HOST=here _T_RESUME_DESTINATION_HOST=${(q)target}"
       if [[ -n $repository_identity ]]; then
         # Resolve on the target before invoking its shell function. Older t
         # versions may ignore the identity environment and reuse a foreign alias.
@@ -1277,6 +1279,9 @@ _t_remote() {
       else
         worker="$resume_environment _t_resume ${(j: :)${(@q)worker_args}}"
       fi
+    fi
+    if [[ $action == resume ]]; then
+      worker="(( \$+functions[_t_handoff_check] )) || { print -u2 't: update t on the destination host before cross-host handoff'; return 1; }; $worker"
     fi
     if [[ -t 0 && -t 1 ]]; then ssh -t "$target" "zsh -lic ${(q)worker}"
     else ssh "$target" "zsh -lic ${(q)worker}"; fi

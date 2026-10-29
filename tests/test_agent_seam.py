@@ -1962,6 +1962,7 @@ def test_paste_does_not_fall_back_to_shared_tree_when_desktop_worktree_is_reserv
 def test_beam_refuses_desktop_owned_codex_thread_before_move(zsh):
     row = "thread-123\tcodex\t/tmp/desktop-slot"
     r = zsh(
+        'DEV_HANDOFF[codex]=t; '
         f'_codex_thread_lookup() {{ print -r -- {shlex.quote(row)}; }}; '
         '_dev_app_slot_reserved() { [[ "$1" == /tmp/desktop-slot ]]; }; '
         '_tbeam_kill_owner() { print -r -- SHOULD_NOT_KILL; }; '
@@ -1990,6 +1991,7 @@ def test_beam_refuses_paginated_codex_rollout_behind_sqlite_checkpoint(zsh, tmp_
     assert "check=1" in r.stdout
     assert "behind its SQLite checkpoint" in r.stderr
     r = zsh(
+        'DEV_HANDOFF[codex]=t; '
         f'_codex_thread_lookup() {{ print -r -- "{SID}\t{rollout}\t{zsh.home}"; }}; '
         '_tbeam_kill_owner() { print -r -- SHOULD_NOT_KILL; }; '
         f'_t_beam -s {SID} mini; print -r -- "beam=$?"'
@@ -2032,6 +2034,7 @@ def test_beam_refuses_paginated_codex_rollout_behind_sqlite_checkpoint(zsh, tmp_
 def test_beam_pull_checks_remote_codex_rollout_before_killing_owner(zsh):
     row = f"{SID}\t/remote/worktree\tapi-3\tdetached\tactive\ttest\tcodex"
     r = zsh(
+        'DEV_HANDOFF[codex]=t; '
         'rsync() { :; }; '
         'ssh() { '
         '  case "$*" in '

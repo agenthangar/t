@@ -1065,3 +1065,34 @@ def test_config_host_rename_preserves_target_defaults_and_same_name(t_mod, confi
     assert (cfg.beam_host, cfg.mini_host) == ('old.example', 'new')
     with pytest.raises(ValueError, match='Use letters'):
         t_mod._config_rename_host(cfg, 'new', 'bad name')
+
+
+def test_handoff_defaults_persistence_and_validation(t_mod, tmp_path, monkeypatch):
+    path = tmp_path / 'config.sh'
+    monkeypatch.setattr(t_mod, 'CONFIG', str(path))
+    cfg = t_mod.Config()
+    assert cfg.handoff_for('claude') == 't'
+    assert cfg.handoff_for('codex') == 'native'
+    assert 'manual Hand off' in cfg.handoff_label('codex')
+    assert 'Git checkpoint' in cfg.handoff_label('claude')
+    changes = {'DEV_HANDOFF[codex]': 't', 'DEV_HANDOFF[claude]': 't'}
+    path.write_text(t_mod._config_text('', changes))
+    assert t_mod.Config().handoff_for('codex') == 't'
+    assert t_mod._config_state(t_mod.Config())['DEV_HANDOFF[codex]'] == 't'
+    for key, value in [('DEV_HANDOFF[claude]', 'native'), ('DEV_HANDOFF[codex]', 'unknown'), ('DEV_HANDOFF[other]', 't')]:
+        with pytest.raises(ValueError, match='cross-host handoff'):
+            t_mod._config_assignment(key, value)
+    cfg.handoff['codex'] = 'typo'
+    with pytest.raises(ValueError, match='invalid cross-host'):
+        cfg.handoff_for('codex')
+
+
+def test_handoff_menu_stages_selection_and_cancel(t_mod):
+    cfg = t_mod.Config()
+    choices = iter(['handoff', 't', 'back'])
+    ui = SimpleNamespace(pick=lambda *a, **kw: next(choices))
+    t_mod._config_tool_menu(ui, cfg, 'codex', {})
+    assert cfg.handoff['codex'] == 't'
+    choices = iter(['handoff', None, 'back'])
+    t_mod._config_tool_menu(ui, cfg, 'codex', {})
+    assert cfg.handoff['codex'] == 't'
