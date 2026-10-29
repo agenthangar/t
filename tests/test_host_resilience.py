@@ -248,6 +248,7 @@ def test_saved_app_resume_preflight_continues_with_unavailable_host(zsh):
 def test_resume_cancellation_stays_130(zsh, phase):
     cwd, _ = saved_rollout(zsh)
     result = zsh(r'''
+      DEV_HANDOFF[codex]=t  # Exercise transport cancellation, not native routing.
       _dev_rows_all() { return 130; }
       _dev_worktree_beam_push() { :; }
       _tbeam_sync_transcript() { :; }

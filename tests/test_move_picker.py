@@ -63,7 +63,7 @@ def test_move_picker_uses_current_sessions(zsh, tmp_path, args, location, inside
     env = picker_stub(tmp_path, label)
     cwd = '$HOME/work trees/api/api-9' if location == 'api' else '$HOME/outside'
     self_owner = '_dev_self_sid() { print self-id; };' if inside else ''
-    result = zsh(SETUP + f'''
+    result = zsh("DEV_HANDOFF[codex]=t; " + SETUP + f'''
       mkdir -p "{cwd}"; cd "{cwd}"
       {self_owner}
       t session move {args} --host mini
@@ -90,7 +90,7 @@ def test_move_picker_uses_current_sessions(zsh, tmp_path, args, location, inside
 def test_move_picker_cancel_empty_and_nonterminal(zsh, tmp_path, scenario, rc):
     env = picker_stub(tmp_path, scenario)
     extra = '_dev_session_rows() { :; };' if scenario == 'empty' else ''
-    result = zsh(SETUP + extra + 't session move api --host mini; print -r -- "rc=$?"',
+    result = zsh("DEV_HANDOFF[codex]=t; " + SETUP + extra + 't session move api --host mini; print -r -- "rc=$?"',
                  _tty=scenario != 'nonterminal', **env)
     output = result.stdout + result.stderr
     assert f'rc={rc}' in output, output
@@ -117,7 +117,7 @@ def test_move_refuses_changed_selection_before_stopping_owner(zsh, tmp_path, cha
     # Keep unrelated identity fields identical so each refusal tests its named change.
     row = row.replace('/code/api', str(zsh.home / 'work trees/api/api-2'))
     import shlex
-    result = zsh(SETUP + f'''
+    result = zsh("DEV_HANDOFF[codex]=t; " + SETUP + f'''
       functions[_move_initial_rows]=$functions[_dev_session_rows]
       _dev_session_rows() {{
         if [[ -f $CHANGE_ROWS ]]; then print -r -- {shlex.quote(row)}
@@ -131,7 +131,7 @@ def test_move_refuses_changed_selection_before_stopping_owner(zsh, tmp_path, cha
 
 @pytest.mark.parametrize('args', ['api 2', '2', '--session codex-id', ''])
 def test_explicit_and_current_targets_bypass_picker(zsh, args):
-    result = zsh(SETUP + r'''
+    result = zsh("DEV_HANDOFF[codex]=t; " + SETUP + r'''
       _t_infer_repo() { print api; }
       _t_move_pick() { print -u2 UNEXPECTED_PICKER; return 99; }
       _dev_self_sid() { print codex-id; }

@@ -49,7 +49,7 @@ def test_resume_history_host_prepares_then_uses_selected_destination(zsh):
         '_t_resume_history_launch() { print -u2 -- "HISTORY $*"; print "dev-api-99\t/prepared/api-99"; }; '
         '_t_resume_on_host() { print -u2 -- "LAND $*"; print dev-api-99; }; '
     )
-    result = zsh(setup + '_t_resume api --host destination')
+    result = zsh('DEV_HANDOFF[codex]=t; ' + setup + '_t_resume api --host destination')
     assert result.returncode == 0, result.stderr
     assert 'HISTORY api saved codex prepare' in result.stderr
     assert 'LAND destination saved /prepared/api-99 codex detach' in result.stderr

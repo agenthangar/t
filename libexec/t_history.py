@@ -1275,6 +1275,15 @@ class HistoryCommand:
                 return association, commit
         return associations[0] if associations else {}, ''
 
+    def cross_host_handoff(self, row, host):
+        if not host or host == 'local':
+            return
+        if self.cfg.handoff_for(row['agent']) == 'native':
+            raise HistoryError('Codex cross-host handoff uses the native desktop app from ' + host +
+                '; open this chat in Codex, choose its footer run location, select the destination, then Hand off. '
+                'Save the same repository as a project on both hosts. No supported CLI adapter; no transfer started. '
+                'To explicitly choose t transfer: t config → Codex settings → Cross-host handoff → t, then Save changes.')
+
     def source(self, row):
         for source in sorted(row['sources'], key=lambda source: (source.get('updated', 0), source.get('size', 0)), reverse=True):
             if source.get('host') == 'local' and Path(source.get('path', '')).is_file():
@@ -1285,6 +1294,7 @@ class HistoryCommand:
                 basename = Path(source['path']).name
                 if row['agent'] == 'codex' and (not basename.startswith('rollout-') or row['sid'] not in basename):
                     raise HistoryError('remote Codex rollout filename does not match its identity')
+                self.cross_host_handoff(row, source['host'])
                 destination = self.store.directory / 'transcripts' / row['agent'] / basename
                 destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
                 remote = self.cfg.hosts[source['host']] + ':' + source['path']
@@ -1562,6 +1572,9 @@ class HistoryCommand:
         if not self.worktree_enabled(destination_alias):
             raise HistoryError('repository opts out of worktree-per-session; no saved conversation resumed')
         self.strict_identity = True
+        association = _RESUME_SOURCE['selected'](row)
+        if association:
+            self.cross_host_handoff(row, association.get('host'))
         source = self.source(row)
         alias = self.materialize_repository(row['repo']) if alias not in self.cfg.repos else alias
         if not self.same_repository(self.identity(alias), row['repo']):

@@ -291,7 +291,20 @@ workspaces with the exact recorded Git origin also appear. `--remote` remains a
 compatibility option. Only a selected remote transcript is downloaded and its
 identity is checked before use; unavailable hosts retain cached history.
 
-After selection, cross-host resume verifies the latest recorded workspace on the
+Cross-host defaults are **t transfer for Claude** and **native desktop Hand off
+for Codex**. `t config show` prints the effective mechanism; change it in
+**t config → agent settings → Cross-host handoff**, then Save changes. Codex
+can explicitly opt into t transfer. For scripted configuration, persist
+`DEV_HANDOFF[codex]=t` (or `native`) in `T_LOCAL_RC`; Claude accepts only
+`DEV_HANDOFF[claude]=t`. Native host handoff is app-mediated: open
+the chat in Codex, choose its footer run location, select the destination, then
+**Hand off**. Save the same repository as a project on both hosts. There is no
+supported CLI adapter, so t prints these steps and returns nonzero before
+stopping an owner or transferring files. This applies to saved cross-host resume
+and moves in either direction; same-host resume and remote attach stay unchanged.
+See [Codex remote connections](https://learn.chatgpt.com/docs/remote-connections#hand-off-a-chat-between-hosts).
+
+With t transfer, after selection, cross-host saved resume verifies the latest recorded workspace on the
 prior host, including its conversation, repository, branch and worktree generation.
 It carries the actual branch tip, including unpushed commits. Outstanding tracked,
 staged and ordinary nonignored untracked code is committed there as a local
@@ -302,7 +315,8 @@ Existing destination branches and files are preserved by allocating a fresh slot
 If the host is unreachable, a warning identifies the local-code fallback; a
 validated local or cached transcript is still required. Missing local revisions
 retain the explicit main-or-cancel choice. Discovery and cancellation never
-checkpoint work.
+checkpoint work. Live moves using t retain the existing commit/push and transcript
+sync transaction; they require the source to reach the destination.
 
 An inactive conversation remains selectable when its historical slot now runs
 another conversation. It resumes in a safely allocated workspace; the existing
@@ -1380,7 +1394,7 @@ checked in CI; optional dotfiles integrations are identified explicitly.
   dev slots: t session open / list / close / read / paste     ✓                                          ✓ t session open --codex · DEV_AGENT                           ✗ no slot — t cursor list
   t session push / pop                                        ✓                                          ✓                                                              ✗ no slot
   t session resume (saved conversations)                      ✓                                          ✓ (rollouts and thread index)                                  → t cursor resume
-  t session move / --from                                     ✓                                          ✓ (rollout + .origin)                                          → t cursor send [id] --host / --from
+  t session move / --from                                     ✓ (t)                                      ✓ (native app; t opt-in)                                       → t cursor send [id] --host / --from
   t session open-app (desktop + browser preview)              ✗ Codex conversations only                 ✓ local macOS slot → same thread                               ✗
   SessionStart stamps (registry · opened · origin)            ✓ settings.json hook                       ✓ hooks.json (trust once at startup)                           ✗ no hook wired
   t session view-plan                                         ✓                                          ✗ codex keeps no plan files (says so)                          ✗

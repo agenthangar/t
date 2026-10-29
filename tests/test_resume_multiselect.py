@@ -301,3 +301,23 @@ def test_resume_last_turn_overrides_mtime_and_sort_hotkeys_keep_rows(zsh, tmp_pa
     (project10 / 'c10.jsonl').rename(project2 / 'c10.jsonl')
     result = zsh('_t_resume api 2 --days all; echo rc=$?')
     assert 'Resuming c2 in dev-api-2' in result.stdout, result.stdout
+
+
+def test_mixed_host_batch_preflights_native_before_first_launch(zsh, tmp_path):
+    import shlex
+    import time
+    stub = tmp_path / 'stubbin/fzf'
+    stub.write_text(FZF_ALL)
+    stub.chmod(0o755)
+    rows = ['\t'.join([str(int(time.time()) - index), 'api', str(index + 3),
+                       'saved-' + agent, '/gone/' + agent, 'Today', 'Saved ' + agent,
+                       'local', agent, '-', 'org/api'])
+            for index, agent in enumerate(['claude', 'codex'])]
+    setup = ('_t_resume_history_candidates() { print -rl -- ' + ' '.join(map(shlex.quote, rows)) + '; }; '
+             '_dev_rows_all() { :; }; '
+             '_t_resume_history_launch() { print -u2 WRONG_PREPARE; return 1; }; '
+             '_t_resume_on_host() { print -u2 WRONG_TRANSFER; return 1; }; ')
+    result = zsh(setup + '_t_resume api --host destination; print rc=$?', _tty=True,
+                 FZF_LOG=str(tmp_path / 'fzf.log'))
+    assert 'rc=1' in result.stdout and 'native desktop app' in result.stdout
+    assert 'WRONG_' not in result.stdout

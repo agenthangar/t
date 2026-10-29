@@ -218,6 +218,7 @@ def test_source_rechecks_original_picker_identity(zsh, change):
                 'agent': f'codex-id\t{cwd}\tapi-2\tattached\tactive\tTask\tclaude',
                 'id': f'previous-id\t{cwd}\tapi-2\tattached\tactive\tTask\tcodex'}[change]
     result = zsh(SETUP + r'''
+DEV_HANDOFF[codex]=t
 _dev_self_sid() { :; }
 _codex_thread_lookup() { printf 'codex-id\trollout\t%s\n' "$HOME/code/api"; }
 _dev_session_rows() { printf 'codex-id\t%s\tapi-2\tattached\tactive\tTask\tcodex\n' "$HOME/code/api"; }
@@ -230,6 +231,7 @@ _dev_session_rows() { printf 'codex-id\t%s\tapi-2\tattached\tactive\tTask\tcodex
 
 def test_surviving_foreground_owner_blocks_landing(zsh):
     result = zsh(SETUP + r'''
+DEV_HANDOFF[codex]=t
 _dev_self_sid() { :; }
 _codex_thread_lookup() { printf 'codex-id\trollout\t%s\n' "$HOME/code/api"; }
 _tbeam_kill_owner() { return 1; }
@@ -313,6 +315,7 @@ def test_host_picker_empty_and_nonterminal_fail_before_ssh(zsh):
 
 def test_resolved_destination_never_reinterpreted_as_source_alias(zsh):
     result = zsh(SETUP + r'''
+DEV_HANDOFF[codex]=t
 REMOTE_HOSTS[user@beta]=wrong-host
 _dev_self_sid() { :; }
 _codex_thread_lookup() { printf 'codex-id\trollout\t%s\n' "$HOME/code/api"; }
@@ -525,3 +528,41 @@ _t_remote_open_inventory beta unknown; print unknown=$?
     assert 'rc=0' in text and 'beta\tone\t' in text and 'foreign-1' in text
     assert 'other-1' not in text
     assert 'unknown=1' in text and 'unknown repository: unknown' in text
+
+
+@pytest.mark.parametrize('route', ['send', 'pull', 'saved'])
+def test_native_default_routes_leave_source_and_destination_untouched(zsh, route):
+    setup = SETUP + r'''
+_dev_self_sid() { :; }
+_codex_thread_lookup() { printf 'codex-id\trollout\t%s\n' "$HOME/code/api"; }
+_dev_codex_rollout_integrity() { print -u2 WRONG_INTEGRITY; return 1; }
+_tbeam_kill_owner() { print -u2 WRONG_STOP; return 1; }
+_dev_worktree_beam_push() { print -u2 WRONG_CHECKPOINT; return 1; }
+_tbeam_sync_transcript() { print -u2 WRONG_SYNC; return 1; }
+_tbeam_pull_transcript() { print -u2 WRONG_SYNC; return 1; }
+ssh() { printf 'codex-id\t%s\tapi-2\tattached\tactive\tTask\tcodex\n' "$HOME/code/api"; }
+'''
+    invocation = {'send': 't session move --session codex-id --host mini --detach',
+                  'pull': '_dev_pull mini mini api 2',
+                  'saved': '_t_resume_on_host mini codex-id "$HOME/code/api" codex detach'}[route]
+    result = zsh(setup + invocation + '; print rc=$?')
+    text = output(result)
+    assert 'rc=1' in text and 'native desktop app' in text and 'Hand off' in text
+    assert 'no transfer was started' in text and 'WRONG_' not in text
+
+
+def test_remote_relay_preserves_initiator_policy_and_checks_peer(zsh):
+    result = zsh(HOSTS + r'''
+DEV_HANDOFF[codex]=t
+ssh() { print -r -- "$*"; }
+t session move api 2 --from alpha --host beta --detach
+''')
+    text = output(result)
+    assert '_T_HANDOFF_CODEX=t' in text
+    assert '_t_handoff_check' in text and 'update' in text
+
+
+@pytest.mark.parametrize('agent,value,success', [('claude', 't', True), ('codex', 't', True), ('codex', 'native', False), ('claude', 'native', False), ('codex', 'typo', False)])
+def test_handoff_shell_policy_validation(zsh, agent, value, success):
+    result = zsh(f'DEV_HANDOFF[{agent}]={value}; _t_handoff_check {agent} alpha beta')
+    assert (result.returncode == 0) is success
