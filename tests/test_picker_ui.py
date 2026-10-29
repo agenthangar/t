@@ -148,11 +148,12 @@ def picker():
             tmux('-f', '/dev/null', 'new-session', '-d', '-x', str(width), '-y', str(height),
                  shell + ' ' + shlex.quote(str(root / 'run.sh')))
 
-        def wait(text, absent=()):
+        def wait(text, absent=(), *, focused=False):
             deadline = time.monotonic() + 5
             while time.monotonic() < deadline:
                 screen = tmux('capture-pane', '-p', check=False).stdout
-                if text in screen and not any(value in screen for value in absent):
+                focus_matches = not focused or any('▸' in line and text in line for line in screen.splitlines())
+                if text in screen and focus_matches and not any(value in screen for value in absent):
                     return screen
                 time.sleep(.05)
             pytest.fail(f'Picker never displayed {text!r}:\n{screen}')
@@ -532,10 +533,10 @@ def test_resume_sort_controls_keep_focused_row_and_change_order(picker, width, h
     loading = tuple('⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏')
     wait('Sort: repo', absent=loading)
     keys('Up', 'Up')
-    screen = wait('Older api')
+    screen = wait('Older api', focused=True)
     assert 'Older api' in screen and '▸' in screen
     keys('M-t')
     wait('Sort: last turn', absent=loading)
     keys('Up', 'Up')
-    wait('Newest web')
+    wait('Newest web', focused=True)
     assert finish()[0].split('\t')[2] == 'sid1'
