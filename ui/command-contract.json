@@ -3499,7 +3499,7 @@
           ]
         }
       },
-      "notes": "Read-only output includes model-stage state, behavior preferences and source, custom Markdown presence and precedence. No picker, model discovery, prompts or storage writes. Named catalogue includes the same summaries; instructions show preserves exact raw Markdown."
+      "notes": "Read-only output includes model-stage state, behavior preferences and source, custom Markdown presence and precedence. No picker, model discovery, prompts or storage writes. Named catalogue includes the same summaries; instructions show preserves exact raw Markdown. Propagation status is read only: never locks, writes, connects, or retries."
     },
     "config workflow edit": {
       "patterns": [
@@ -3811,6 +3811,34 @@
           ]
         }
       }
+    },
+    "config workflow sync": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "plain",
+      "scope": "pending account-local revisions and registered SSH hosts; no repository inference or picker",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_workflow_sync.py::test_sync_cli_and_readonly_status"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "config",
+            "workflow",
+            "sync"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_workflow_sync.py::test_sync_cli_and_readonly_status"
+          ]
+        }
+      },
+      "notes": "Bounded retries through owning runtime control socket and nonrecursive zsh -lic SSH. Never injects turns. Current turns and native instruction reload remain unverified."
     }
   },
   "display_schemas": {

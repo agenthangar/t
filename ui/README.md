@@ -181,6 +181,35 @@ while retaining preferences and prose. The JSON policy optionally accepts
 `stages_enabled` (default true) and `behaviors` (default absent); older v1/v2
 documents retain their shape on reads and synchronization.
 
+Successful workflow mutations publish native instruction files atomically, then
+reconcile an account-local revision outside the save lock. `t config workflow sync`
+retries pending work; later saves and SessionStart launch/resume hooks also retry.
+`list` and `list --json` report saved propagation status without writing or
+connecting. Explicit sync also adopts saved preferences that predate propagation.
+Unused named-definition edits do not affect unrelated consumers.
+
+Workflow stage models remain guidance and never select a main-session model.
+Explicit Codex model/effort changes in `t config` separately reconcile loaded root
+threads through the running app-server control socket. Pagination is bounded;
+stage agents are skipped. Explicit main model/effort deltas also persist through
+the receiving host's authoritative launch-config writer and account-owned native
+Codex root defaults. Unsupported TOML/ownership or unavailable writers leave
+those defaults explicitly pending. No other native fields are changed. Runtime coverage is limited to the connected owning
+service; standalone, unloaded, and other-runtime sessions remain unverified. Only changed model/effort fields are sent. Accepted
+updates affect subsequent turns; current turns, native instruction reload, and
+speed inheritance remain unverified. Speed, permissions, collaboration mode,
+conversation messages and transcripts are untouched. Clearing a launch default
+requires agent reload and is reported pending.
+
+Registered SSH hosts receive bounded nonrecursive `zsh -lic` reconciliation.
+Pending hosts and scope batches advance fairly across retries; identity discovery
+also keeps a durable cursor. Repository scopes cross hosts only as verified GitHub origin identities, resolved
+against each host's registrations; local absolute paths are never copied as scope
+keys. Unreachable hosts, unsupported runtimes, ambiguous/unmapped identities,
+and attempt limits remain explicitly pending. The private revision journal stores
+configuration and acknowledgement metadata, never transcripts. No launchd or
+personal dotfile integration is required for the installed SessionStart hook.
+
 Global is the default scope; --repo explicitly selects a registered alias with no
 checkout inference or picker. Bare subgroups show help. Hidden config show/edit
 --workflow compatibility forms retain their behavior. Bare config edit retains its
