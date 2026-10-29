@@ -183,7 +183,7 @@ Space/Tab mark ✓"
   fi
   export T_PICKER_VIEWS="$_t_picker_dir" T_PICKER_SESSION_MASK=
   case ${T_PICKER_SESSION_FILTERS:-} in
-    open|resume) T_PICKER_SESSION_MASK=1 ;;
+    open|resume|list) T_PICKER_SESSION_MASK=1 ;;
     kill) T_PICKER_SESSION_MASK=3 ;;
   esac
   if [ -n "$T_PICKER_SESSION_MASK" ]; then
@@ -201,6 +201,7 @@ Space/Tab mark ✓"
       [ $(( _t_picker_mask & 1 )) = 0 ] || _t_picker_first=shown
       [ $(( _t_picker_mask & 2 )) = 0 ] || _t_picker_second=shown
       case $T_PICKER_SESSION_FILTERS in
+        list) _t_picker_filters="All sessions" ;;
         resume) _t_picker_filters="Ctrl-L live: $_t_picker_first" ;;
         open) _t_picker_filters="Ctrl-T attached: $_t_picker_first" ;;
         kill) _t_picker_filters="Ctrl-T attached: $_t_picker_first${_t_picker_filter_separator}Ctrl-P pending: $_t_picker_second" ;;
@@ -294,6 +295,7 @@ SH
     _t_picker_bind=
     _t_picker_second_key=
     case $T_PICKER_SESSION_FILTERS in
+      list) _t_picker_first_key= ;;
       resume) _t_picker_first_key=ctrl-l:first ;;
       open)
         _t_picker_first_key=ctrl-t:first
@@ -322,7 +324,7 @@ SH
       _t_picker_bind="${_t_picker_bind},${_t_picker_key}:${T_PICKER_CLEAR_MARKS}${_t_picker_execute}(sh \"\$T_PICKER_TOGGLE\" ${_t_picker_pick:-}$_t_picker_action)+reload-sync(cat \"\$T_PICKER_CURRENT\")+transform-header(cat \"\$T_PICKER_CURRENT_HEADER\")"
     done
   fi
-  if [ "${T_PICKER_SESSION_FILTERS:-}" = resume ]; then
+  if [ "${T_PICKER_SESSION_FILTERS:-}" = resume ] || [ "${T_PICKER_SESSION_FILTERS:-}" = list ]; then
     set -- --no-sort "$@"
     for _t_picker_spec in alt-t:turn alt-r:repo alt-g:agent alt-o:host alt-v:session; do
       _t_picker_key=${_t_picker_spec%:*} _t_picker_action=${_t_picker_spec#*:}

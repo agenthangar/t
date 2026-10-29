@@ -254,7 +254,7 @@ def test_listing_aliases_share_parser_handler_and_readonly(t_mod, monkeypatch, p
         monkeypatch.setitem(t_mod.IMPLEMENTED, name, handler)
     monkeypatch.setattr(t_mod, "cmd_cursor", handler)
     for argv in commands:
-        assert t_mod._command_readonly(argv, terminal=True)
+        assert t_mod._command_readonly(argv, terminal=True) == (t_mod._canonical_argv(argv)[0] != "ls")
         assert t_mod.main(argv) == 0
     assert seen[0] == seen[1]
 
@@ -309,8 +309,8 @@ def test_list_alias_parser_help_dispatch_and_readonly(t_mod, monkeypatch, capsys
     parser = t_mod.build_parser()
     assert vars(parser.parse_args(alias)) == vars(parser.parse_args(canonical))
     assert t_mod._canonical_error(alias) is None
-    assert t_mod._command_readonly(alias, terminal=True)
-    assert t_mod._command_readonly(canonical, terminal=True)
+    assert t_mod._command_readonly(alias, terminal=True) == (t_mod._canonical_argv(alias)[0] != "ls")
+    assert t_mod._command_readonly(canonical, terminal=True) == (t_mod._canonical_argv(canonical)[0] != "ls")
     monkeypatch.setattr(t_mod, 'Config', lambda: pytest.fail('help loaded config'))
     for words in (alias, canonical):
         assert t_mod.main([*words, '--help']) == 0

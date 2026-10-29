@@ -268,3 +268,37 @@ def test_resume_remote_history_retains_exported_turn_without_local_transcript(fi
     assert result[0].split('\t')[10] == '2026-10-28T10:11:12Z'
     invalid = row.replace('2026-10-28T10:11:12Z', 'invalid')
     assert filters.resume_turns(invalid, str(tmp_path), str(tmp_path))[0].split('\t')[10] == '-'
+
+
+def test_list_sort_filter_and_reset_use_raw_snapshot(filters, tmp_path):
+    root = snapshot(tmp_path, 'list')
+    source = SOURCE.replace('api-1', 'api-10')
+    source = source.replace('codex\n', 'codex\t-\t2026-10-22T10:00:00Z\n', 1)
+    source = source.replace('claude\n', 'claude\t-\t2026-10-23T10:00:00Z\n', 1)
+    (root / 'source').write_text(source)
+    rows = [row.replace('api-1', 'api-10') for row in ROWS]
+    for name in ('all', 'rows-0', 'rows-1'):
+        (root / name).write_text('\n'.join(rows) + '\n')
+    def render(action):
+        filters.render(root, 'list', action, 68, 'SESSION TASK')
+        return (root / 'current').read_text().splitlines()
+    assert render('current') == [rows[1], rows[0], rows[2], rows[3]]
+    assert render('sort-session') == [rows[1], rows[0], rows[2], rows[3]]
+    assert render('agent') == [rows[1], rows[3]]
+    assert render('all') == [rows[1], rows[0], rows[2], rows[3]]
+    assert (root / 'sort').read_text() == 'session'
+    render('sort-host')
+    assert render('default') == [rows[1], rows[0], rows[2], rows[3]]
+    assert (root / 'sort').read_text() == 'turn'
+    for sort in ('repo', 'agent', 'host'):
+        assert set(render('sort-' + sort)) == set(rows)
+
+
+@pytest.mark.parametrize('width', [28, 40, 68])
+def test_list_header_fits_with_active_filter(filters, width):
+    text = filters.header('list', 0, dict(agent='codex', interface=None, host=None, repo=None), 3, 'SESSION TASK', width)
+    assert all(filters.display_width(line) <= width for line in text.splitlines())
+    assert len(text.splitlines()) <= (9 if width == 28 else 15)
+    assert '3 hidden' in text and 'agent=codex' in text
+    for key in ('Ctrl-G', 'Ctrl-D', 'Ctrl-O', 'Ctrl-R', 'Alt-T', 'Alt-V'):
+        assert (key.replace('Ctrl-', '^').replace('Alt-', 'M-') if width <= 36 else key) in text

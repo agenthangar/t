@@ -208,6 +208,10 @@
     "libexec/t_workflow_sync.py::subprocess.Popen": {
       "kind": "background",
       "reason": "SessionStart launches a detached try-lock retry worker and never waits for runtime or SSH reconciliation."
+    },
+    "bin/t:_session_list_picker:subprocess.run": {
+      "kind": "passthrough",
+      "reason": "The shared terminal session-list picker owns input and rendering through selection or cancellation."
     }
   },
   "shell": [

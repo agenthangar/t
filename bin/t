@@ -542,24 +542,44 @@ def cmd_ls(cfg, args):
         return 1
     st = Style()
     _progress("Checking local sessions and remote hosts" if args.remote else "Checking local sessions")
-    if args.remote:
-        rows = _scope_filter(_parse_rows(zsh_capture("_dev_rows_all --details"), host_prefixed=True), scope, wt_scope)
-        if not rows:
+    command = "_dev_rows_all --details" if args.remote else "_dev_session_rows --details"
+    rows = _scope_filter(_parse_rows(zsh_capture(command), host_prefixed=args.remote), scope, wt_scope)
+    if not rows:
+        if args.remote:
             where = f" in {os.path.basename(scope)} (t ls -r --all for every repo)," if scope else ""
             print(f"No dev sessions running{where} on this machine or any reachable host.")
-            return 0
-        _render_remote(rows, scope, st)
-    else:
-        rows = _scope_filter(_parse_rows(zsh_capture("_dev_session_rows --details")), scope, wt_scope)
-        if not rows:
+        else:
             where = f" in {os.path.basename(scope)}" if scope else ""
-            hints = ([f"t ls --all for every repo"] if scope else []) + \
-                    (["t ls -r for other machines"] if cfg.hosts else [])
+            hints = (["t ls --all for every repo"] if scope else []) + (["t ls -r for other machines"] if cfg.hosts else [])
             tail = f"  ({' · '.join(hints)})" if hints else ""
             print(f"No dev sessions running{where}.{tail}")
-            return 0
+        return 0
+    if (sys.stdin.isatty() and sys.stdout.isatty() and os.environ.get("TERM") != "dumb"
+            and shutil.which("fzf") and shutil.which("zsh")):
+        return _session_list_picker(rows, args.remote, bool(scope))
+    if args.remote:
+        _render_remote(rows, scope, st)
+    else:
         _render_local(rows, scope, st, bool(cfg.hosts))
     return 0
+
+
+def _session_list_picker(rows, remote=False, scoped=False):
+    """Pass one private discovery snapshot to the matching plugin for browsing."""
+    with tempfile.TemporaryDirectory(prefix="t-list-") as directory:
+        snapshot = os.path.join(directory, "source")
+        keys = ("host", "sid", "cwd", "slot", "state", "context", "summary", "agent", "model", "last_turn_started_at")
+        with open(os.open(snapshot, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as stream:
+            for row in rows:
+                stream.write("\t".join(str(row.get(key) or "-").replace("\t", " ").replace("\n", " ") for key in keys) + "\n")
+        plugin = os.path.join(_t_source_root(), "t.plugin.zsh")
+        args = [snapshot] + (["--remote"] if remote else []) + (["--repo"] if scoped else [])
+        snippet = ZSH_PRELUDE + "source " + shlex.quote(plugin) + " && _t_list_snapshot " + shlex.join(args)
+        try:
+            return subprocess.run(["zsh", "-lic", snippet]).returncode
+        except OSError as error:
+            print(f"t: could not browse sessions: {error}", file=sys.stderr)
+            return 1
 
 
 _PR_WIP_RE = re.compile(r"#\d+ merged, still in progress")
@@ -615,7 +635,7 @@ def _session_picker_columns(rows, prefixes, statuses, width, heading):
     return header, lines
 
 
-def _session_picker_rows(rows, remote=False, scoped=False, compact=False, header=False):
+def _session_picker_rows(rows, remote=False, scoped=False, compact=False, header=False, last_turn=False):
     """Resume-style rows: target fields, full details, then compact display."""
     if not rows:
         return []
@@ -647,6 +667,8 @@ def _session_picker_rows(rows, remote=False, scoped=False, compact=False, header
     for row, parts in zip(rows, cells):
         summary = row.get("summary") or ""
         details = "  ".join(parts) + "  " + summary
+        if last_turn:
+            details += "  Last turn: " + _session_display_helpers()["format_last_turn"](row.get("last_turn_started_at"))
         parts[-1] = _truncate(parts[-1], widths[-1])
         display = "  ".join(value + ' ' * (width - _display_width(value)) for value, width in zip(parts, widths))
         prefixes.append(display)
@@ -5945,7 +5967,11 @@ def _command_readonly(argv, *, terminal=None):
         return True
     if verb == "doctor":
         return "--repair" not in options
-    if verb in ("help", "ls", "read", "plan", "session-rows"):
+    if verb == "ls":
+        if terminal is None:
+            terminal = sys.stdin.isatty() and sys.stdout.isatty()
+        return not terminal
+    if verb in ("help", "read", "plan", "session-rows"):
         return True
     if verb == "issue":
         return bool(tail and tail[0] in ("list", "status"))
@@ -5976,9 +6002,9 @@ def _t_auto_update(argv):
               "setup", "new", "checkout", "instructions", "install", "integrate",
               "permissions", "trust", "doctor"}
     operation = _canonical_argv(argv)
-    # Share may write a receipt while emitting JSON; keep its machine protocol
-    # free of update prompts independently of the read-only classifier.
-    if (not operation or operation[0] in ("share", "doctor") or operation[0] not in public or _command_readonly(argv)
+    # Keep share machine output, diagnosis, and the session browser free of
+    # update prompts independently of their read-only classification.
+    if (not operation or operation[0] in ("share", "doctor", "ls") or operation[0] not in public or _command_readonly(argv)
             or not _t_update_interactive()):
         return None
     installation = _t_update_installation()
@@ -11222,10 +11248,9 @@ EXPLICIT PUSH AND PULL
     sp.add_argument("--dry-run", action="store_true", help="show the proposed handoff without stopping or opening anything")
 
     sp = sub.add_parser("ls", help="list dev sessions (attached + active context)",
-        description='List live sessions without prompting. Use the current repository by default; name one explicitly '
-            'or use --all for every repository. --remote includes registered hosts; unavailable hosts warn '
-            'while reachable sessions remain listed. LAST TURN shows turn initiation time. Pipe to cat for '
-            'complete values on narrow terminals.',
+        description='Browse and sort live sessions in a terminal; Enter opens selections. Use the current repository, '
+            'name one explicitly, or --all. --remote includes registered hosts; unavailable hosts warn. '
+            'Without fzf or a usable terminal, print a table. Pipe to cat for complete values.',
         help_details="""DETAILS
 
   List dev sessions: whether each is attached, and whether it has an active
@@ -11247,7 +11272,10 @@ EXPLICIT PUSH AND PULL
 
   Pipe to cat for complete values.
 
-  Read-only — attach with `t session open`, move with `t session move`.""")
+  With fzf in a terminal, browse all sessions; Enter opens selected existing sessions.
+  Ctrl-G/D/O/R filters agent/UI/host/repo. Alt-T/R/G/O/V sorts turn/repo/agent/host/session.
+  Ctrl-A clears filters; Ctrl-F resets filters and last-turn sorting. Esc cancels.
+  Without fzf or a usable terminal, print a read-only table.""")
     sp.add_argument("repo", nargs="?", help="repository alias, basename or origin name to scope from any directory (default: the repo cwd is in)")
     sp.add_argument("-r", "--remote", action="store_true", help="span every $REMOTE_HOSTS host")
     sp.add_argument("-a", "--all", action="store_true", help="every repo (not just the current)")
@@ -12423,10 +12451,10 @@ def main(argv):
             return 0
         finally:
             history.store.close()
-    if argv and argv[0] == "__session-picker-rows" and set(argv[1:]) <= {"--remote", "--repo", "--compact", "--header"}:
+    if argv and argv[0] == "__session-picker-rows" and set(argv[1:]) <= {"--remote", "--repo", "--compact", "--header", "--last-turn"}:
         rows = _parse_rows(sys.stdin.read(), host_prefixed=True)
         for line in _session_picker_rows(rows, remote="--remote" in argv, scoped="--repo" in argv,
-                                        compact="--compact" in argv, header="--header" in argv):
+                                        compact="--compact" in argv, header="--header" in argv, last_turn="--last-turn" in argv):
             print(line)
         return 0
     if argv == ["__update-check"]:

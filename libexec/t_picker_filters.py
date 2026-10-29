@@ -38,6 +38,8 @@ def metadata(source, profile):
             repo = slot.partition(':')[0] if ':' in slot else slot.rpartition('-')[0] or slot
             result[(host, slot, state)] = dict(agent=fields[7] if len(fields) > 7 else 'claude',
                 interface='desktop' if state == 'app' else 'cli', host=host, repo=repo)
+            if profile == 'list':
+                result[(host, slot, state)].update(session=slot, turn=fields[9] if len(fields) > 9 else '-')
             if profile == 'open':
                 result[(host, slot, state)].update(
                     model=fields[8] if len(fields) > 8 and fields[8] not in ('', '-') else 'unknown',
@@ -121,6 +123,8 @@ def pack(parts, width):
 
 
 def header(profile, mask, filters, hidden, columns, width, sort='turn'):
+    if profile == 'list':
+        return list_header(filters, hidden, columns, width, sort)
     if profile == 'resume':
         return resume_header(mask, filters, hidden, columns, width, sort)
     if profile == 'open':
@@ -150,6 +154,24 @@ def header(profile, mask, filters, hidden, columns, width, sort='turn'):
         lines += pack(['Ctrl-A show all', 'Ctrl-F defaults', f'{hidden} hidden'], width)
         if columns:
             lines.append(clip_columns(columns, width))
+    return '\n'.join(lines) + '\n'
+
+
+def list_header(filters, hidden, columns, width, sort):
+    compact = width <= 36
+    controls = ['Enter open/Esc', 'Space/Tab ✓', 'Ctrl-/ details', 'Ctrl-A all', 'Ctrl-F reset']
+    controls += [f'{key} {label}' for key, label in FACETS.values()]
+    controls += [f'{key} {"turn" if compact and label == "last turn" else label}' for key, label in RESUME_SORTS.values()]
+    if compact:
+        controls = [value.replace('Ctrl-', '^').replace('Alt-', 'M-') for value in controls]
+    lines = pack(controls, width)
+    active = [f'{name}={value}' for name, value in filters.items() if value is not None]
+    label = 'turn' if compact and sort == 'turn' else RESUME_SORTS[sort][1]
+    lines += pack([f'Sort: {label}', f'{hidden} hidden'] + ([] if active and compact else [f'{len(active)} filters']), width)
+    if active:
+        lines.append(clip_columns(' · '.join(active), width))
+    if columns:
+        lines.append(clip_columns(columns, width))
     return '\n'.join(lines) + '\n'
 
 
@@ -236,7 +258,7 @@ def render(directory, profile, action, width, columns='', facet=None):
     if action in ('all', 'default'):
         mask = maximum if action == 'all' else 0
         filters = dict.fromkeys(names)
-    elif profile == 'resume' and action.startswith('sort-') and action[5:] in RESUME_SORTS:
+    elif profile in ('resume', 'list') and action.startswith('sort-') and action[5:] in RESUME_SORTS:
         sort = action[5:]
     elif action == 'first' and profile == 'open':
         mask = 2  # Attached-only; repeated presses are idempotent.
@@ -261,7 +283,7 @@ def render(directory, profile, action, width, columns='', facet=None):
     else:
         rows = (directory / f'rows-{mask}').read_text().splitlines()
     selected = choose(rows, records, filters)
-    if profile == 'resume':
+    if profile in ('resume', 'list'):
         if action == 'default':
             sort = 'turn'
         selected = sort_resume(selected, records, sort)
