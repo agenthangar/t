@@ -77,7 +77,7 @@
       "kind": "protocol",
       "reason": "MCP context collection returns machine data."
     },
-    "bin/t:_mcp_install:subprocess.run": {
+    "bin/t:_mcp_install_claude:subprocess.run": {
       "kind": "passthrough",
       "reason": "Agent CLI integration output is streamed."
     },

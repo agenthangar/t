@@ -35,6 +35,9 @@ def test_install_migrates_mcp_blanket_to_read_tools(box, tmp_path):
     claude = bins / 'claude'
     claude.write_text('#!/bin/sh\nexit 0\n')
     claude.chmod(0o755)
+    codex = bins / 'codex'
+    codex.write_text("#!/bin/sh\nprintf '[]\\n'\n")
+    codex.chmod(0o755)
     env = dict(T_NO_MCP='', PATH=f'{bins}:{os.environ["PATH"]}')
     outcome = run_install(checkout, home, **env)
     assert outcome.returncode == 0, outcome.stderr
@@ -302,3 +305,48 @@ def test_install_seeds_editable_defaults_and_refreshes_configured_workflow(box):
     assert '<!-- t public-issues: begin -->' not in native.read_text()
     assert native.read_text().count('<!-- t agent-workflow: begin -->') == 1
     assert not (checkout / 'AGENTS.md').exists()
+
+
+def test_install_registers_codex_once_with_isolated_custom_home(box, tmp_path):
+    checkout, home = box
+    native = home / 'custom-codex'
+    native.mkdir()
+    config = native / 'config.toml'
+    config.write_text('model = "keep-me"\n')
+    bins = tmp_path / 'bin'
+    bins.mkdir()
+    codex = bins / 'codex'
+    codex.write_text('''#!/usr/bin/env python3
+import json, os, pathlib, sys
+root = pathlib.Path(os.environ['CODEX_HOME'])
+assert str(root).startswith(os.environ['HOME'])
+if sys.argv[1:] == ['mcp', 'list', '--json']:
+    print(json.dumps([{'name': 'sessions', 'enabled': False}] if (root/'registered').exists() else []))
+elif sys.argv[1:5] == ['mcp', 'add', 'sessions', '--']:
+    assert sys.argv[5:] == [os.environ['HOME']+'/bin/t', 'mcp']
+    (root/'registered').write_text('yes')
+    with (root/'calls').open('a') as f: f.write('add\\n')
+''')
+    codex.chmod(0o755)
+    claude = bins / 'claude'
+    claude.write_text('#!/bin/sh\nexit 0\n')
+    claude.chmod(0o755)
+    env = dict(T_NO_MCP='', CODEX_HOME=str(native), PATH=f'{bins}:{os.environ["PATH"]}')
+    assert run_install(checkout, home, **env).returncode == 0
+    assert run_install(checkout, home, **env).returncode == 0
+    assert (native / 'calls').read_text() == 'add\n'
+    assert config.read_text() == 'model = "keep-me"\n'
+    (native / 'registered').unlink()
+    assert run_install(checkout, home, **{**env, 'T_NO_MCP': '1'}).returncode == 0
+    assert not (native / 'registered').exists()
+
+
+def test_dev_link_installs_mcp_from_selected_source(box, tmp_path):
+    checkout, home = box
+    dev = tmp_path / 'dev'
+    git('worktree', 'add', '-qb', 'dev/mcp', str(dev), cwd=checkout)
+    (dev / 'libexec/t_mcp_setup.py').write_text("from pathlib import Path\nPath.home().joinpath('mcp-source').write_text('dev')\n")
+    (checkout / 'libexec/t_mcp_setup.py').unlink()
+    result = run_install(dev, home, T_LINKS_ONLY='1', T_LINK_DEV='1', T_NO_MCP='')
+    assert result.returncode == 0, result.stderr
+    assert (home / 'mcp-source').read_text() == 'dev'
