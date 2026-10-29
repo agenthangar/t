@@ -291,6 +291,19 @@ workspaces with the exact recorded Git origin also appear. `--remote` remains a
 compatibility option. Only a selected remote transcript is downloaded and its
 identity is checked before use; unavailable hosts retain cached history.
 
+After selection, cross-host resume verifies the latest recorded workspace on the
+prior host, including its conversation, repository, branch and worktree generation.
+It carries the actual branch tip, including unpushed commits. Outstanding tracked,
+staged and ordinary nonignored untracked code is committed there as a local
+checkpoint with normal Git identity and hooks, then transferred privately without
+pushing to origin. Private credentials or agent artifacts, a changed workspace,
+live ownership, conflicts, or diverged conversation revisions stop the resume.
+Existing destination branches and files are preserved by allocating a fresh slot.
+If the host is unreachable, a warning identifies the local-code fallback; a
+validated local or cached transcript is still required. Missing local revisions
+retain the explicit main-or-cancel choice. Discovery and cancellation never
+checkpoint work.
+
 An inactive conversation remains selectable when its historical slot now runs
 another conversation. It resumes in a safely allocated workspace; the existing
 owner and its files stay intact. Selecting an exact live conversation attaches

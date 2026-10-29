@@ -11339,8 +11339,8 @@ EXPLICIT PUSH AND PULL
         description='Resume saved Claude or Codex conversations in fresh slots and attach. Infer the current '
             'repository; outside one, browse local and remote repositories. Enter selects; Space/Tab marks '
             'several. Live selections attach to their owner; ownership checks prevent duplicate resumes. '
-            'Missing local repositories are cloned only after selection. Use t remote resume to browse '
-            'history on another host.',
+            'Repositories are cloned only after selection. Cross-host resumes carry source checkpoints; '
+            'unreachable hosts use local code.',
         epilog="""EXAMPLES
   %(prog)s                   Browse the current repository
   %(prog)s api 2             Resume api slot 2
@@ -11355,6 +11355,9 @@ EXPLICIT PUSH AND PULL
   newest-first list by last user turn — never grouped by repo; unknown turn times
   last; conversationless stubs skipped), rebuilding a reaped worktree from its
   branch first, then resumes the pick in a fresh dev slot and attaches.
+
+  Cross-host resumes verify the prior workspace and carry its latest commits,
+  checkpointing outstanding code there first. Unreachable hosts use local code.
 
   Names default to the cwd repo; outside any repo dir a bare `t session resume`
   discovers local and registered-host repositories.
@@ -12258,6 +12261,16 @@ def _bare_entry():
 
 def _main(argv):
     argv = _hosts_argv(argv)
+    if len(argv) == 2 and argv[0] == '__resume-source':
+        helper = runpy.run_path(os.path.join(_t_source_root(), 'libexec', 't_history.py'))
+        history = helper['HistoryCommand'](Config(), globals())
+        try:
+            print(json.dumps(history.resume_source(json.loads(argv[1]))))
+        except (ValueError, TypeError, KeyError, OSError, subprocess.TimeoutExpired) as error:
+            print(json.dumps(dict(version=1, error=str(error))))
+        finally:
+            history.store.close()
+        return 0
     if argv and argv[0] in ('__resume-candidates', '__resume-saved'):
         helper = runpy.run_path(os.path.join(_t_source_root(), 'libexec', 't_history.py'))
         history = helper['HistoryCommand'](Config(), globals())
