@@ -747,6 +747,10 @@ failures, missing `gh`, permission errors and rate limits do not imply invalid
 credentials. Private machine protocols retain their original output unless
 diagnostics are explicitly requested.
 
+The internal `t mcp` machine interface discovers saved Codex and Claude sessions.
+Its explicit `--install` action registers installed clients additively, preserving
+existing entries; `--call`, `--list-tools`, and stdio never install clients.
+
 ## Cross-host handoff policy
 
 Per-agent settings expose Cross-host handoff with staged review/save. Effective
