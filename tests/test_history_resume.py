@@ -951,3 +951,29 @@ def test_private_saved_resume_reports_ownership_refusal_and_cleans_up(
     assert closed == [True]
     assert app.reservation is None
     assert not list(Path(app.cfg.worktree_root).glob('repo/.*history-reservation'))
+
+
+def test_moved_source_checks_current_workspace_owner_and_original_rollout(app, history, tmp_path):
+    import fcntl
+    original = tmp_path / 'original-workspace'
+    current = tmp_path / 'current-workspace'
+    sid = '01234567-89ab-cdef-0123-456789abcdef'
+    other = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+    rows = codex_rows(original, sid=sid)
+    rows[0]['payload']['cli_version'] = '0.160.0'
+    source = transcript_file(tmp_path / ('rollout-' + sid + '.jsonl'), rows)
+    row = saved_row(app, 'a' * 40, current, sid=sid)
+    home = Path(os.environ['CODEX_HOME'])
+    locks = home / 'thread-writer-locks'
+    locks.mkdir()
+    app.api['_run'] = lambda *a, **k: SimpleNamespace(returncode=0, stdout='', stderr='')
+    # A lifecycle move does not rewrite the historical session_meta cwd.
+    app.codex_released(row, source, workspace=str(current))
+    sibling_rows = codex_rows(current, sid=other)
+    sibling = home / 'sessions' / ('rollout-' + other + '.jsonl')
+    sibling.parent.mkdir(parents=True, exist_ok=True)
+    transcript_file(sibling, sibling_rows)
+    with (locks / (other + '.lock')).open('a') as stream:
+        fcntl.flock(stream, fcntl.LOCK_EX)
+        with pytest.raises(history.HistoryError, match='another Codex conversation'):
+            app.codex_released(row, source, workspace=str(current))

@@ -26,6 +26,7 @@ _resolve_repo = runpy.run_path(str(Path(__file__).with_name("t_repos.py")))["res
 VERSION = 1
 PARSER_VERSION = 6
 _DISPLAY = runpy.run_path(str(Path(__file__).with_name('t_session_details.py')))
+_RESUME_SOURCE = runpy.run_path(str(Path(__file__).with_name('t_resume_source.py')))
 display_width = _DISPLAY['display_width']
 clip_columns = _DISPLAY['clip_columns']
 wrap_columns = _DISPLAY['wrap_columns']
@@ -657,8 +658,52 @@ class HistoryCommand:
         self.repository_proofs = {}
         self.fresh_repository_proofs = set()
         self.strict_identity = False
+        self.error, self.run, self.spinner = HistoryError, run, _spinner
+        self.validate, self.generation, self.slug = validate, generation, slug
         self.catalog_repositories = {}
         self.local_identities = {}
+        self.diagnostics_enabled = False
+        self.auth_checked = False
+        self.auth_targets = set()
+        self.diagnostics = {}
+
+    @_spinner('Checking GitHub authentication')
+    def check_auth(self):
+        """Probe effective credentials once, without prompting or changing auth state."""
+        if self.auth_checked or not self.diagnostics_enabled:
+            return
+        self.auth_checked = True
+        env = {k: v for k, v in os.environ.items() if not k.startswith('COV_CORE_')}
+        env.update(GH_PROMPT_DISABLED='1', GH_HOST='github.com')
+        try:
+            result = subprocess.run(['gh', 'api', '--hostname', 'github.com', 'user', '--silent'],
+                                    env=env, capture_output=True, text=True, timeout=3,
+                                    stdin=subprocess.DEVNULL, start_new_session=True)
+        except (OSError, subprocess.TimeoutExpired):
+            return
+        error = result.stderr.lower()
+        if result.returncode and (re.search(r'\bhttp\s+401\b', error) or
+                'bad credentials' in error or 'requires authentication' in error or
+                'to get started with github cli' in error or
+                'not logged into any github hosts' in error):
+            self.diagnostics['local'] = 'github_auth_failed'
+
+    def import_diagnostics(self, payload, host):
+        # Codes only: remote prose and claimed host names are never trusted.
+        if self.diagnostics_enabled and isinstance(payload, list) and any(
+                isinstance(item, dict) and item.get('code') == 'github_auth_failed'
+                for item in payload):
+            self.diagnostics[host] = 'github_auth_failed'
+
+    def diagnostic_rows(self):
+        return [dict(code=code, host=host) for host, code in self.diagnostics.items()]
+
+    def diagnostic_hosts(self):
+        # SSH targets disambiguate similarly named hosts; strip terminal controls.
+        return list(dict.fromkeys(clean(
+            os.environ.get('_T_RESUME_DESTINATION_HOST') or self.host
+            if host == 'local' else self.cfg.hosts.get(host, host))[:120]
+            for host in self.diagnostics))
 
     def repository_proof(self, identity):
         """Only authenticated GitHub evidence may equate different repository names."""
@@ -721,6 +766,7 @@ class HistoryCommand:
 
     def local_catalog(self):
         """Export host-local metadata, never evidence imported from another host."""
+        self.check_auth()
         repositories = {}
         for alias, path in self.cfg.repos.items():
             identity = self.canonical_identity(self.identity(alias))
@@ -764,7 +810,10 @@ class HistoryCommand:
                 row['repo'] = identity
                 repositories.setdefault(identity, dict(repo=identity, alias=identity, path=''))
                 rows.append(row)
-        return dict(version=1, repositories=list(repositories.values()), conversations=rows)
+        payload = dict(version=1, repositories=list(repositories.values()), conversations=rows)
+        if self.diagnostics_enabled:
+            payload['diagnostics'] = self.diagnostic_rows()
+        return payload
 
     def import_catalog(self, payload, host):
         if not isinstance(payload, dict) or payload.get('version') != 1:
@@ -804,6 +853,7 @@ class HistoryCommand:
             pending.append(row)
         for row in pending:
             self.store.merge(row)
+        self.import_diagnostics(payload.get('diagnostics'), host)
 
     def discover_catalog(self):
         local = self.local_catalog()
@@ -814,8 +864,17 @@ class HistoryCommand:
                 continue
             targets.add(target)
             try:
-                output = run(['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=3', target,
-                              'zsh -lic ' + shlex.quote('command t __history-catalog')], timeout=20)
+                command = 'command t __history-catalog'
+                try:
+                    output = run(['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=3', target,
+                                  'zsh -lic ' + shlex.quote(command +
+                                      (' --diagnostics' if self.diagnostics_enabled else ''))], timeout=20)
+                except HistoryError:
+                    if not self.diagnostics_enabled:
+                        raise
+                    # Preserve host-only repositories on peers predating diagnostics.
+                    output = run(['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=3', target,
+                                  'zsh -lic ' + shlex.quote(command)], timeout=20)
                 self.import_catalog(json.loads(output), host)
             except (HistoryError, ValueError, TypeError, AttributeError):
                 # Older hosts retain the scoped protocol for locally known repos.
@@ -1002,6 +1061,7 @@ class HistoryCommand:
                 continue
 
     def export(self, alias):
+        self.check_auth()
         rows = []
         for row in self.records(alias):
             row['associations'] = [a for a in row['associations'] if a.get('host') == 'local']
@@ -1019,9 +1079,23 @@ class HistoryCommand:
             targets.add(target)
             try:
                 # Metadata only: no transcript transfer or implicit remote calls on browse.
-                text = run(['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=3', target,
-                            'zsh -lic ' + shlex.quote('command t __history-export ' + shlex.quote(identity))], timeout=20)
+                command = 'command t __history-export ' + shlex.quote(identity)
+                diagnostic = self.diagnostics_enabled and target not in self.auth_targets
+                if diagnostic:
+                    self.auth_targets.add(target)
+                try:
+                    text = run(['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=3', target,
+                                'zsh -lic ' + shlex.quote(command + (' --diagnostics' if diagnostic else ''))], timeout=20)
+                except HistoryError:
+                    if not diagnostic:
+                        raise
+                    # Older peers only accept the original list protocol.
+                    text = run(['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=3', target,
+                                'zsh -lic ' + shlex.quote(command)], timeout=20)
                 rows = json.loads(text)
+                if diagnostic and isinstance(rows, dict) and rows.get('version') == 1:
+                    self.import_diagnostics(rows.get('diagnostics'), host)
+                    rows = rows.get('conversations')
                 if not isinstance(rows, list):
                     raise HistoryError('invalid remote history')
                 for row in rows:
@@ -1214,7 +1288,15 @@ class HistoryCommand:
                 destination = self.store.directory / 'transcripts' / row['agent'] / basename
                 destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
                 remote = self.cfg.hosts[source['host']] + ':' + source['path']
-                run(['rsync', '-a', '--protect-args', '--timeout=10', '-e', 'ssh -o BatchMode=yes -o ConnectTimeout=3', remote, str(destination)])
+                try:
+                    run(['rsync', '-a', '--protect-args', '--timeout=10', '-e', 'ssh -o BatchMode=yes -o ConnectTimeout=3', remote, str(destination)])
+                except HistoryError:
+                    # A cached validated copy remains usable while its host is offline.
+                    if destination.is_file():
+                        if not self.verify_source(self.store.scan(destination, row['agent']), row):
+                            raise HistoryError('cached transcript identity changed; no session started')
+                        return destination
+                    continue
                 if not self.verify_source(self.store.scan(destination, row['agent']), row):
                     raise HistoryError('selected transcript identity changed; no session started')
                 return destination
@@ -1335,13 +1417,14 @@ class HistoryCommand:
             raise HistoryError('workspace is being prepared by another history action') from error
         self.reservation = marker
 
-    def codex_released(self, row, source):
+    def codex_released(self, row, source, *, workspace=None):
         if row['agent'] != 'codex':
             return
         value = transcript(source, 'codex')
         helper = runpy.run_path(str(Path(self.root) / 'libexec/t_app_handoff.py'))
         try:
             helper['assert_released']('Codex', row['sid'], value['associations'][0]['workspace'], self.api['_run'],
+                ownership_cwd=workspace,
                 codex_home=str(Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex')),
                 rollout=str(source), archived=bool(row.get('archived')) and source.resolve().is_relative_to((Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex') / 'archived_sessions').resolve()),
                 retry='Release this conversation in its owning app or terminal, then reopen history.')
@@ -1460,6 +1543,12 @@ class HistoryCommand:
             self.publish_transcript(target, data, row)
         return target
 
+    def resume_source(self, request):
+        return _RESUME_SOURCE['export'](self, request)
+
+    def reconcile_source(self, alias, row):
+        return _RESUME_SOURCE['reconcile'](self, alias, row)
+
     def resume(self, alias, row, *, detached=False, prepare_only=False):
         owners = self.owners(True)
         matches = [o for o in owners if o['sid'] == row['sid'] and o['agent'] == row['agent']]
@@ -1478,6 +1567,7 @@ class HistoryCommand:
         if not self.same_repository(self.identity(alias), row['repo']):
             raise HistoryError('repository identity changed before resume')
         association, revision = self.revision(row)
+        revision = self.reconcile_source(alias, row) or revision
         if not revision or run(['git', '-C', self.cfg.repos[alias], 'rev-parse', '--verify', revision + '^{commit}'], optional=True).strip() != revision:
             revision = self.fallback(alias)
         common = run(['git', '-C', self.cfg.repos[alias], 'rev-parse', '--git-common-dir']).strip()
@@ -1522,6 +1612,7 @@ class HistoryCommand:
 
     def resume_candidates(self, aliases):
         """Private adapter: display aliases and immutable selection keys differ."""
+        self.check_auth()
         all_repositories = aliases == ['--all'] or not aliases
         if all_repositories:
             identities = list(self.discover_catalog())

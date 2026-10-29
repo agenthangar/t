@@ -247,6 +247,14 @@ repository IDs; names and directory basenames alone never establish equivalence.
 `t remote resume --all --host HOST` explicitly keeps this scope on the chosen host.
 An explicit or inferred locally registered repository resolves there by identity.
 
+After a cross-host saved selection, resume reconciles the latest durable source
+workspace association under conversation and workspace claims. It verifies repository,
+branch, generation and released ownership, checkpoints eligible outstanding code
+with normal Git hooks, and transfers the verified tip privately into a fresh safe
+destination. Safety or checkpoint refusals stop launch; unreachable or unsupported
+source helpers warn and retain the locally available revision and transcript path.
+Lists, discovery and canceled selections never create checkpoints.
+
 Resume and close retain cycling Ctrl-G agent, Ctrl-O host/origin, Ctrl-R repo,
 and (close only) Ctrl-D interface, with their existing state toggles. Resume
 never invents a historical UI. Resume uses actual user-turn timestamps, newest
@@ -663,3 +671,14 @@ CI checks exact bold cyan heading styling, plain body text, all color opt-outs,
 and identical visible text and layout with color enabled. CI rejects oversized summaries,
 option text, pages, missing public options, and undiscoverable commands. Add or
 update help regression tests with each public command change.
+
+Resume discovery checks effective GitHub authentication once per participating
+machine with a bounded, noninteractive probe. Confirmed invalid or missing
+credentials produce one warning per host before selection, including empty and
+automatically selected results. A compact warning remains above the resume
+picker controls through filtering, sorting, show-all, and reset. Available saved
+conversations remain usable. Run `gh auth login --hostname github.com` on the
+affected host, then retry. Remote resume names the selected SSH target. Network
+failures, missing `gh`, permission errors and rate limits do not imply invalid
+credentials. Private machine protocols retain their original output unless
+diagnostics are explicitly requested.

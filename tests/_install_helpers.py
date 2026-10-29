@@ -11,7 +11,7 @@ ASSETS = (
     ".t-install-version", "install.sh", "t.plugin.zsh", "local.zsh.example",
     "bin/t", "bin/t-session-start", "bin/claude-stamp-tmux", "bin/cursor-beam",
     "libexec/t_progress.py", "libexec/t_shell_setup.py", "libexec/t_onboarding.py", "libexec/t_discovery.py",
-    "libexec/t_mcp_controls.py", "libexec/t_workflow.py", "libexec/t_issue.py", "libexec/t_issue_policy.txt", "libexec/t_history.py", "libexec/t_candidates.py", "libexec/t_session_details.py", "libexec/t_picker_filters.py", "libexec/t_repos.py",
+    "libexec/t_mcp_controls.py", "libexec/t_workflow.py", "libexec/t_issue.py", "libexec/t_issue_policy.txt", "libexec/t_resume_source.py", "libexec/t_history.py", "libexec/t_candidates.py", "libexec/t_session_details.py", "libexec/t_picker_filters.py", "libexec/t_repos.py",
     "libexec/t_local_worker.py", "libexec/t_local_setup.py",
     "libexec/t_runners.py", "libexec/t_runner_job.py", "share/runners/broker.yml", "share/runners/sweeper.yml",
     "libexec/t_share.py", "libexec/t_share_sessions.py",

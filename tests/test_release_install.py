@@ -43,7 +43,7 @@ def artifact(version="v1.2.3", changed=None, extra=None):
     changed = changed or {}
     files = {name: (ROOT / name).read_bytes() for name in release.REQUIRED if name != ".t-release-version"}
     # Current installer integrations extend the backwards-compatible release minimum.
-    for name in ('libexec/t_runners.py', 'libexec/t_runner_job.py', 'share/runners/broker.yml', 'share/runners/sweeper.yml', 'libexec/t_progress.py', 'bin/t-session-start', 'libexec/t_shell_setup.py', 'libexec/t_onboarding.py', 'libexec/t_discovery.py', 'libexec/t_workflow.py', 'libexec/t_issue.py', 'libexec/t_issue_policy.txt', 'libexec/t_history.py', 'libexec/t_candidates.py', 'libexec/t_session_details.py', 'libexec/t_picker_filters.py', 'libexec/t_repos.py'):
+    for name in ('libexec/t_runners.py', 'libexec/t_runner_job.py', 'share/runners/broker.yml', 'share/runners/sweeper.yml', 'libexec/t_progress.py', 'bin/t-session-start', 'libexec/t_shell_setup.py', 'libexec/t_onboarding.py', 'libexec/t_discovery.py', 'libexec/t_workflow.py', 'libexec/t_issue.py', 'libexec/t_issue_policy.txt', 'libexec/t_resume_source.py', 'libexec/t_history.py', 'libexec/t_candidates.py', 'libexec/t_session_details.py', 'libexec/t_picker_filters.py', 'libexec/t_repos.py'):
         files[name] = (ROOT / name).read_bytes()
     files[".t-release-version"] = (version + "\n").encode()
     files.update(changed)
