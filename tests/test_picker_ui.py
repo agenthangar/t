@@ -148,12 +148,15 @@ def picker():
             tmux('-f', '/dev/null', 'new-session', '-d', '-x', str(width), '-y', str(height),
                  shell + ' ' + shlex.quote(str(root / 'run.sh')))
 
-        def wait(text, absent=(), *, focused=False):
+        def wait(text, absent=(), ordered=(), focused=None):
             deadline = time.monotonic() + 5
             while time.monotonic() < deadline:
                 screen = tmux('capture-pane', '-p', check=False).stdout
-                focus_matches = not focused or any('▸' in line and text in line for line in screen.splitlines())
-                if text in screen and focus_matches and not any(value in screen for value in absent):
+                positions = [screen.find(value) for value in ordered]
+                in_order = all(p >= 0 for p in positions) and positions == sorted(positions)
+                has_focus = focused is None or any(
+                    '▸' in line and focused in line for line in screen.splitlines())
+                if text in screen and not any(value in screen for value in absent) and in_order and has_focus:
                     return screen
                 time.sleep(.05)
             pytest.fail(f'Picker never displayed {text!r}:\n{screen}')
@@ -528,15 +531,21 @@ def test_resume_sort_controls_keep_focused_row_and_change_order(picker, width, h
     for letter in ('T', 'R', 'G', 'O', 'V'):
         assert 'Alt-' + letter in screen or 'M-' + letter in screen
     keys('M-r')
-    # fzf 0.44 can repaint the header before completing reload-sync. Wait for
-    # its loading indicator to clear, then focus the first sorted result.
+    # Headers can repaint before reload-sync applies the new rows. Wait for
+    # the actual order before moving focus, then verify its rendered identity.
     loading = tuple('⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏')
-    wait('Sort: repo', absent=loading)
+    if height > 12:
+        wait('Sort: repo', absent=loading, ordered=('Older api', 'Newest web'))
+    else:
+        wait('Sort: repo', absent=loading, focused='Older api')
     keys('Up', 'Up')
-    screen = wait('Older api', focused=True)
+    screen = wait('Older api', focused='Older api')
     assert 'Older api' in screen and '▸' in screen
     keys('M-t')
-    wait('Sort: last turn', absent=loading)
+    if height > 12:
+        wait('Sort: last turn', absent=loading, ordered=('Newest web', 'Older api'))
+    else:
+        wait('Sort: last turn', absent=loading, focused='Newest web')
     keys('Up', 'Up')
-    wait('Newest web', focused=True)
+    wait('Newest web', focused='Newest web')
     assert finish()[0].split('\t')[2] == 'sid1'

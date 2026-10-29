@@ -1,6 +1,33 @@
 """Aborted command pickers never launch or fall through to a fresh owner."""
 
+import pytest
+
 from test_agent_seam import zsh  # noqa: F401 — isolated shell fixture
+
+
+@pytest.mark.parametrize('profile', ['filtered', 'paginated'])
+@pytest.mark.parametrize('signal', ['TERM', 'INT'])
+def test_picker_signal_preserves_callers_exit_hooks_and_cleans_files(zsh, tmp_path, profile, signal):
+    temporary = tmp_path / 'picker-temp'
+    temporary.mkdir()
+    invocation = ('_t_fzf_filtered row row resume inactive "" ""' if profile == 'filtered'
+                  else '_t_fzf_paginated "$HOME/page" "$HOME/rows" : : "" resume')
+    result = zsh(f'''
+      zmodload zsh/system
+      autoload -Uz add-zsh-hook
+      terminal_save() {{ print -u2 -- "SESSION_SAVE subshell=$ZSH_SUBSHELL"; }}
+      add-zsh-hook zshexit terminal_save
+      zshexit() {{ print -u2 -- "DIRECT_EXIT subshell=$ZSH_SUBSHELL"; }}
+      print page > "$HOME/page"
+      print row > "$HOME/rows"
+      _t_fzf() {{ kill -{signal} $sysparams[pid]; }}
+      {invocation}
+      print -r -- "RESULT=$?"
+    ''', _tty=True, TMPDIR=str(temporary))
+    assert result.returncode == 0 and 'RESULT=130' in result.stdout
+    assert result.stdout.count('SESSION_SAVE') == 1 and 'SESSION_SAVE subshell=0' in result.stdout
+    assert result.stdout.count('DIRECT_EXIT') == 1 and 'DIRECT_EXIT subshell=0' in result.stdout
+    assert not list(temporary.iterdir())
 
 
 def test_explicit_remote_open_preserves_cancel_and_does_not_attach(zsh):

@@ -96,8 +96,9 @@ _t_resume_history_registered() {
 # defaults; -l/--live starts with all
 # rows. Their labels ("● active" / "● on <host>") remain visible when revealed and a pick
 # ATTACHES in place instead of resuming (one-live-owner: a second `claude -r` on a
-# live id diverges the transcript). An explicit `t resume <repo> <slot>` on a live
-# slot always attaches — a direct ask, not a scan.
+# live id diverges the transcript). An explicit `t resume <repo> <slot>` scopes
+# the shared picker to that slot's conversations, including independent saved
+# work and its live owner. It never attaches before the user selects a row.
 # -f/--fg resumes inline in THIS terminal (t pop's landing) instead of a slot.
 # Dead rows carry the two shared picker signals (see _claude_session_rows and
 # t-session-start jobs 3-4): eligibility = max(transcript mtime, last-opened
@@ -257,17 +258,6 @@ _t_resume() {
     live_scan_rc=0
   fi
   if (( live_scan_rc )); then
-    if [[ -n $slot && -z $app ]]; then
-      local local_wt local_owner
-      local_wt=$(_dev_worktree_path "$repo" "$slot") || return 1
-      local_owner=${live[${local_wt:A}]:-}
-      if [[ -n $local_owner ]] || tmux has-session -t "=dev-${repo}-${slot}:" 2>/dev/null; then
-        _t_resume_host_check here "$on_host" "$repo" "$slot" || return 1
-        print -u2 -- "Slot $slot is live locally ($local_owner) — attaching."
-        _t_dev "$repo" "$slot" --local
-        return
-      fi
-    fi
     _t_warn 't resume: ownership could not be verified because local discovery failed; no saved conversation was resumed. Retry after checking the local shell integration.'
     return 1
   fi
@@ -307,7 +297,8 @@ _t_resume() {
   # real user prompt, so _transcript_title prints nothing) are skipped: they
   # rendered as untitled rows and, being newest, often masked the real
   # conversation. A slot whose worktree is LIVE (by path, local or remote) is
-  # not resumable — explicit ask attaches, scan skips. A slot whose tmux NAME
+  # not reusable — retain its owner and discover independent saved history below.
+  # A slot whose tmux NAME
   # is taken by a session rooted elsewhere is unresumable AND wrong to attach
   # (see the collision branch below). NOTE: every `local` here is hoisted OUT
   # of the loops — an assignmentless `local x` re-run on an already-local x
@@ -376,10 +367,6 @@ _t_resume() {
         [[ -n ${live[${candidate:A}]:-} ]] && { wt=$candidate; break; }
       done
       if [[ -z $app ]] && _dev_app_slot_reserved "$wt"; then
-        if [[ -n $slot ]]; then
-          print -u2 -- "t resume: $repo $n is reserved for the Codex desktop app; use t session open $repo $n --app"
-          return 1
-        fi
         live_seen[app/${repo}-$n]=1
         [[ -n $live_flag ]] || (( hidden_live++ ))
         cands+=(9999999999$'\t'"$repo"$'\t'"$n"$'\t'-$'\t'"$wt"$'\t'"◉ desktop here"$'\t'"(Codex desktop workspace)"$'\t'app:here$'\t'-$'\t'-$'\t'codex)
@@ -387,12 +374,6 @@ _t_resume() {
       fi
       busy=${live[${wt:A}]:-}
       if [[ -n $busy && -z $app ]]; then
-        if [[ -n $slot ]]; then
-          _t_resume_host_check here "$on_host" "$repo" "$n" || return 1
-          echo "Slot $n is live ($busy) — attaching (resume only revives dead slots)."
-          _t_dev "$repo" "$n"
-          return
-        fi
         # Scan: retain live local slots for Ctrl-A, while the initial view
         # filters them (unless --live was passed). The legacy leading key is
         # discarded; actual turn evidence orders live and saved rows together.
@@ -405,20 +386,10 @@ _t_resume() {
       rhost=${remote_live_host[$n]:-}
       if [[ -n $rhost && -z $app ]]; then
         if [[ ${remote_live_state[$n]} == app ]]; then
-          if [[ -n $slot ]]; then
-            print -u2 -- "t resume: $repo $n is reserved for the Codex desktop app on $rhost; close and release it there before resuming"
-            return 1
-          fi
           live_seen[app/$rhost/${remote_live_alias[$n]}-$n]=1
           [[ -n $live_flag ]] || (( hidden_live++ ))
           cands+=(9999999999$'\t'"$repo"$'\t'"$n"$'\t'-$'\t'"$wt"$'\t'"◉ desktop on $rhost"$'\t'"${remote_live_sum[$n]:-(Codex desktop workspace)}"$'\t'"app:$rhost"$'\t'"${remote_live_alias[$n]}"$'\t'-$'\t'codex)
           continue
-        fi
-        if [[ -n $slot ]]; then
-          _t_resume_host_check "$rhost" "$on_host" "$repo" "$n" || return 1
-          echo "Slot $n is live on $rhost — attaching (resume only revives dead slots)."
-          _dev_remote_attach "$rhost"$'\t'"${remote_live_alias[$n]}"$'\t'"$n" ""
-          return
         fi
         live_seen[$rhost/${remote_live_alias[$n]}-$n]=1
         [[ -n $live_flag ]] || (( hidden_live++ ))
@@ -445,12 +416,6 @@ _t_resume() {
       done
       if [[ -n $_stale && -z $app ]]; then
         stale_path=$(tmux display-message -p -t "=$_stale:" '#{session_path}' 2>/dev/null)
-        if [[ -n $slot ]]; then
-          _t_resume_host_check here "$on_host" "$repo" "$n" || return 1
-          echo "Slot $n is live ($_stale${stale_path:+ in $stale_path}) — attaching (resume only revives dead slots)."
-          _t_dev "$repo" "$n"
-          return
-        fi
         live_seen[here/${_stale#dev-}]=1
         [[ -n $live_flag ]] || (( hidden_live++ ))
         cands+=(9999999999$'\t'"$repo"$'\t'"$n"$'\t'-$'\t'"${stale_path:-$wt}"$'\t'"● active"$'\t'"${local_sum[${_stale#dev-}]:-(live session)}"$'\t'here$'\t'-$'\t'-$'\t'"${local_agent[${_stale#dev-}]:-$(_dev_agent_of_session "$_stale")}")
@@ -516,6 +481,7 @@ _t_resume() {
   local -a history_scope=("${(@)repos}")
   [[ -n $all_mode ]] && history_scope=(--all)
   [[ -n $identity_scope ]] && history_scope=("$identity_scope")
+  [[ -n $slot ]] && history_scope+=(--slot "$slot")
   local auth_file auth_hosts auth_host
   auth_file=$(mktemp "${TMPDIR:-/tmp}/t-resume-auth.XXXXXX") || return 1
   history_rows=$(T_RESUME_DIAGNOSTICS_FILE="$auth_file" _t_with_progress "Finding saved conversations across hosts" _t_resume_history_candidates "${(@)history_scope}") || history_rc=$?
@@ -735,14 +701,15 @@ _t_resume() {
     visible=("${(@)inactive}")
   fi
 
-  # Sole candidate auto-picks only when there are no excluded rows to reveal.
+  # Interactive explicit slots always pick. Otherwise a sole candidate can
+  # auto-pick only when there are no excluded rows to reveal.
   # A sole LIVE row without a TTY would hit
   # _t_dev / _dev_remote_attach, both of which need a terminal to attach; fall
   # through to the listing branch so the message matches the multi-candidate
   # no-fzf case instead of failing hard from inside the attach helper.
-  if [[ ${_T_RESUME_REQUIRE_PICKER:-} != 1 ]] && (( $#visible == 1 )) && \
+  if [[ ${_T_RESUME_REQUIRE_PICKER:-} != 1 && ( -z $slot || ! -t 0 || ! -t 1 ) ]] && (( $#visible == 1 )) && \
      { (( ! hidden_live || $#cands == 1 )) || [[ ! -t 0 || ! -t 1 ]]; } && \
-     f=("${(@ps:\t:)visible[1]}") && [[ $f[7] == - || -t 1 ]]; then
+     f=("${(@ps:\t:)visible[1]}") && [[ $f[7] == - || ( -t 0 && -t 1 ) ]]; then
     pick=${visible[1]}
   elif [[ -t 0 && -t 1 ]] && command -v fzf >/dev/null; then
     pick=$(T_PICKER_AUTH_HOSTS="$auth_hosts" T_PICKER_SOURCE_ROWS="${(F)cands}" T_PICKER_SESSION_FILTERS=resume _t_fzf_filtered "$(print -rl -- "${(@)inactive}")" \
@@ -750,9 +717,12 @@ _t_resume() {
       --delimiter=$'\t' --with-nth=-1 --no-hscroll \
       --prompt="$fprompt") || return $?
     [[ -n $pick ]] || return 130
-  elif [[ -n $slot ]] && { pick=; for c in "${(@)visible}"; do
+  elif [[ -n $slot && -t 0 && -t 1 ]]; then
+    print -u2 -- 't resume: selecting a conversation requires fzf; install fzf and retry.'
+    return 1
+  elif [[ -n $slot && ( ! -t 0 || ! -t 1 ) ]] && { pick=; for c in "${(@)visible}"; do
          f=("${(@ps:\t:)c}"); [[ $f[7] == - ]] && { pick=$c; break; }; done; [[ -n $pick ]]; }; then
-    # Explicit slot but no TTY/fzf to pick with: the newest DEAD conversation IS
+    # Explicit slot without a terminal: the newest DEAD conversation IS
     # the documented contract ("revive the slot's last conversation") — take it
     # (never a live row: attaching needs the terminal we lack), and list the rest
     # so a specific pick is one fzf-equipped call away.

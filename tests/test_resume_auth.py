@@ -164,16 +164,21 @@ def test_private_export_retains_list_unless_diagnostics_requested(app, history, 
         dict(code='github_auth_failed', host='local')]) if diagnostic else [])
 
 
-def test_private_candidate_sidecar_leaves_tsv_unchanged(app, history, t_mod, monkeypatch, capsys, tmp_path):
+@pytest.mark.parametrize('slot', [None, '3'])
+def test_private_candidate_sidecar_leaves_tsv_unchanged(app, history, t_mod, monkeypatch, capsys, tmp_path, slot):
     monkeypatch.setattr(t_mod, 'Config', lambda: app.cfg)
     monkeypatch.setattr(t_mod.runpy, 'run_path', lambda path: {
         'HistoryCommand': lambda cfg, api: app, 'HistoryError': history.HistoryError,
         'HistoryCancelled': history.HistoryCancelled})
-    monkeypatch.setattr(app, 'resume_candidates', lambda aliases: ['unchanged\tcandidate'])
+    def candidates(aliases, **kwargs):
+        assert aliases == ['repo'] and kwargs == {'slot': slot}
+        return ['unchanged\tcandidate']
+    monkeypatch.setattr(app, 'resume_candidates', candidates)
     app.diagnostics['local'] = 'github_auth_failed'
     monkeypatch.setattr(app, 'diagnostic_hosts', lambda: ['local.example'])
     output = tmp_path / 'diagnostics'
-    assert t_mod.main(['__resume-candidates', '--diagnostics-file', str(output), 'repo']) == 0
+    args = ['__resume-candidates', '--diagnostics-file', str(output), 'repo']
+    assert t_mod.main(args + (['--slot', slot] if slot else [])) == 0
     assert capsys.readouterr().out == 'unchanged\tcandidate\n'
     assert output.read_text() == 'local.example\n'
     assert app.diagnostics_enabled
