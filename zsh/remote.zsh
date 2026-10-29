@@ -343,7 +343,7 @@ _dev_remote_open() {
     echo "t open --host: starting a session on $host needs a terminal." >&2
     return 1
   fi
-  local rcmd="T_UPDATE_PROMPTED=\$\$ t open"; local a
+  local rcmd="T_UPDATE_PROMPTED=\$\$ t open --local"; local a
   for a in "$@"; do rcmd+=" ${(q)a}"; done
   echo "→ $host: ${rcmd#T_UPDATE_PROMPTED=\$\$ } (stays on $host; Ctrl-b d to detach)"
   _term_title "$host: open ${(j: :)@}"
@@ -1121,6 +1121,40 @@ _t_remote_move_rows() {
   return 0
 }
 
+# Read-only worker: resolve scope on the selected host, never open UI there.
+_t_remote_open_rows() {
+  local repo=$1 resolved rc rows row
+  resolved=$(_dev_resolve_repo "$repo"); rc=$?
+  (( rc == 2 )) && return 2
+  (( rc == 0 )) && repo=$resolved
+  [[ -z $repo || -n ${DEV_REPOS[$repo]:-} ]] || {
+    print -u2 -- "t remote open: unknown repository: $repo"; return 1
+  }
+  rows=$(_dev_session_rows --details) || return $?
+  local -a fields
+  for row in "${(@f)rows}"; do
+    fields=("${(@ps:\t:)row}")
+    (( $#fields >= 7 )) || continue
+    # Remote desktop workspaces cannot be opened as CLI writers.
+    [[ $fields[4] == app ]] && continue
+    if [[ -n $repo ]]; then
+      _dev_dir_in_scope "$fields[2]" "${DEV_REPOS[$repo]:a}" || continue
+    fi
+    print -r -- "$row"
+  done
+  return 0
+}
+
+_t_remote_open_inventory() {
+  local host=$1 repo=$2 rows rc
+  # Ship only this read-only worker so existing hosts need no coordinated update.
+  local worker="$(functions _t_remote_open_rows); T_NO_UPDATE_CHECK=1 _t_remote_open_rows ${(q)repo}"
+  rows=$(_dev_remote_scan_with_timeout "${REMOTE_HOSTS[$host]:-$host}" "zsh -lic ${(q)worker}" "${T_REMOTE_SCAN_TIMEOUT:-15}" 1); rc=$?
+  (( rc == 0 )) || return $rc
+  [[ -z $rows ]] || print -r -- "$rows" | awk -v h="$host" 'NF {print h "\t" $0}'
+  return 0
+}
+
 # Target-host worker: browse current sessions there, without falling through to
 # fresh-session defaults when the inventory is empty.
 _t_remote_open_local() {
@@ -1172,7 +1206,20 @@ _t_remote() {
       *) pos+=("$arg") ;;
     esac
   done
-  (( $#pos <= 2 )) || { print -u2 "t remote $action: expected [repo] [slot]"; return 2; }
+  if [[ $action != move && -z $host && $#pos -gt 0 ]]; then
+    (( $#pos <= 3 )) || { print -u2 "t remote $action: expected [host] [repo] [slot]"; return 2; }
+    # Old repo-only/repo-slot commands must not silently become SSH targets.
+    if (( $#pos <= 2 )); then
+      local old_repo old_rc
+      old_repo=$(_dev_resolve_repo "$pos[1]"); old_rc=$?
+      if (( old_rc == 0 || old_rc == 2 )) || [[ $pos[1] == <-> ]]; then
+        print -u2 -- "t remote $action: ambiguous legacy target '$pos[1]'; host comes first. Use [repo] [slot] --host HOST to make the host explicit."
+        return 2
+      fi
+    fi
+    host=$pos[1]; pos=("${(@)pos[2,-1]}")
+  fi
+  (( $#pos <= 2 )) || { print -u2 "t remote $action: expected [repo] [slot] with --host"; return 2; }
   repo=${pos[1]:-}; slot=${pos[2]:-}
   [[ -z $slot || $slot == <-> ]] || { print -u2 "t remote $action: slot must be a number"; return 2; }
   if [[ $repo == <-> && -z $slot ]]; then
@@ -1191,6 +1238,16 @@ _t_remote() {
       host=$(_t_remote_host_pick '' "$purpose") || return $?
     fi
     target=${REMOTE_HOSTS[$host]:-$host}
+    if [[ $action == open && -z $slot && ${(M)flags:#--new} == '' ]]; then
+      [[ -t 0 && -t 1 ]] && command -v fzf >/dev/null 2>&1 || {
+        print -u2 't remote open: session selection requires a terminal and fzf; name a host, repo and slot or --new'; return 1
+      }
+      _t_open_picker "$repo" '' '' 1 '' "$host"; local pick_rc=$?
+      if (( pick_rc == 2 )); then
+        print -u2 "t remote open: no current sessions${repo:+ for '$repo'} on $host"; return 0
+      fi
+      return $pick_rc
+    fi
     local -a worker_args
     [[ -n $repo ]] && worker_args+=("$repo")
     [[ -n $slot ]] && worker_args+=("$slot")

@@ -57,7 +57,8 @@ def test_remote_parser_and_help(t_mod, capsys, action, flags):
     assert (args.verb, args.action, args.repo, args.slot, args.host) == ('remote', action, 'api', '2', 'beta')
     assert t_mod.main(['remote', action, '--help']) == 0
     help_text = capsys.readouterr().out
-    assert f'usage: t remote {action}' in help_text and '--host' in help_text
+    assert f'usage: t remote {action}' in help_text
+    assert ('--host' if action == 'move' else '[host]') in help_text
 
 
 def test_remote_group_requires_verb(t_mod):
@@ -174,7 +175,7 @@ _t_remote_open_local api; print rc=$?
 @pytest.mark.parametrize('action', ['open', 'resume'])
 def test_remote_host_picker_requires_explicit_enter_and_cancel(zsh, tmp_path, action):
     env = fake_picker(tmp_path, host='cancel')
-    result = zsh(HOSTS + f'ssh() {{ print WRONG_SSH; }}; t remote {action} api; print rc=$?', _tty=True, **env)
+    result = zsh(HOSTS + f'ssh() {{ print WRONG_SSH; }}; t remote {action}; print rc=$?', _tty=True, **env)
     assert 'rc=130' in output(result) and 'WRONG_SSH' not in output(result)
 
 
@@ -305,7 +306,7 @@ t remote move --host beta --detach; print rc=$?
 
 def test_host_picker_empty_and_nonterminal_fail_before_ssh(zsh):
     for setup, expected in [('REMOTE_HOSTS=();', 't hosts add'), (HOSTS, 'requires a terminal')]:
-        result = zsh(setup + 'ssh() { print WRONG_SSH; }; t remote open api; print rc=$?')
+        result = zsh(setup + 'ssh() { print WRONG_SSH; }; t remote open; print rc=$?')
         text = output(result)
         assert 'rc=1' in text and expected in text and 'WRONG_SSH' not in text
 
@@ -343,13 +344,13 @@ _t_move_pick() { print WRONG_PICK; }
 
 
 @pytest.mark.parametrize('action,args,heading,detail', [
-    ('open', 'api', 'Open a session on which host?', ''),
-    ('open', 'api --new', 'Start a new session on which host?', ''),
-    ('resume', 'api', 'Resume saved work on which host?', 'Browse this host’s saved conversations'),
+    ('open', '', 'Open a session on which host?', ''),
+    ('open', '--new', 'Start a new session on which host?', ''),
+    ('resume', '', 'Resume saved work on which host?', 'Browse this host’s saved conversations'),
 ])
 def test_remote_host_picker_explains_action(zsh, tmp_path, action, args, heading, detail):
     env = fake_picker(tmp_path)
-    result = zsh(HOSTS + f'ssh() {{ :; }}; t remote {action} {args}; print rc=$?', _tty=True, **env)
+    result = zsh(HOSTS + f'_t_remote_open_inventory() {{ :; }}; ssh() {{ :; }}; t remote {action} {args}; print rc=$?', _tty=True, **env)
     assert 'rc=0' in output(result), output(result)
     logs = [json.loads(line) for line in (tmp_path / 'picker.jsonl').read_text().splitlines()]
     assert len(logs) == 1
@@ -365,3 +366,162 @@ def test_explicit_remote_host_bypasses_picker(zsh, tmp_path, action):
     result = zsh(HOSTS + f'ssh() {{ :; }}; t remote {action} {args} --host beta; print rc=$?', **env)
     assert 'rc=0' in output(result), output(result)
     assert not (tmp_path / 'picker.jsonl').exists()
+
+
+@pytest.mark.parametrize('action', ['open', 'resume'])
+@pytest.mark.parametrize('argv,expected', [
+    ('beta api 3', ('beta', 'api', '3')),
+    ('beta --host beta 3', ('beta', 'beta', '3')),
+    ('beta', ('beta', None, None)),
+    ('beta api', ('beta', 'api', None)),
+    ('api 3 --host beta', ('beta', 'api', '3')),
+    ('--host=beta api 3', ('beta', 'api', '3')),
+])
+def test_remote_host_first_parser(t_mod, action, argv, expected):
+    args = t_mod.build_parser().parse_args(['remote', action, *shlex.split(argv)])
+    assert (args.host, args.repo, args.slot) == expected
+
+
+@pytest.mark.parametrize('action', ['open', 'resume'])
+@pytest.mark.parametrize('host', ['beta', 'user@raw-host'])
+def test_remote_host_first_direct_delegation(zsh, action, host):
+    result = zsh(HOSTS + 'ssh() { print -r -- "SSH ${(j:|:)@}"; return 19; }; '
+                 + f't remote {action} {host} api 3; print rc=$?')
+    text = output(result)
+    assert 'rc=19' in text
+    assert f'SSH {"user@beta" if host == "beta" else host}|zsh -lic ' in text
+    assert ('_t_remote_open_local' if action == 'open' else '_t_resume') in text
+
+
+@pytest.mark.parametrize('args', ['api', 'api 2', 'api --new', 'beta api x',
+                                   'beta api 2 extra', 'local api 2',
+                                   'beta api 2 --host alpha'])
+def test_remote_host_first_rejects_ambiguous_or_invalid_targets(zsh, args):
+    result = zsh(HOSTS + 'REMOTE_HOSTS[api]=user@api; ssh() { print WRONG_SSH; }; '
+                 + f't remote open {args}; print rc=$?')
+    assert 'rc=2' in output(result) and 'WRONG_SSH' not in output(result)
+
+
+@pytest.mark.parametrize('args,expected', [('beta', 'api'), ('beta api', 'api'),
+                                           ('beta --new', 'api'), ('beta 3', 'api')])
+def test_remote_host_first_infers_and_scopes(zsh, args, expected):
+    result = zsh(HOSTS + '''
+_t_infer_repo() { print api; }
+_t_open_picker() { print -r -- "PICK $1 HOST $6"; }
+ssh() { print -r -- "SSH ${(j:|:)@}"; }
+''' + f't remote open {args}; print rc=$?', _tty=True)
+    text = output(result)
+    assert 'rc=0' in text, text
+    assert expected in text
+    assert 'HOST beta' in text or 'SSH -t|user@beta|' in text
+
+
+@pytest.mark.parametrize('tab_rc', [0, 1])
+def test_remote_open_multiple_sessions_fans_out_on_controller_before_attach(zsh, tmp_path, tab_rc):
+    env = fake_picker(tmp_path)
+    result = zsh(HOSTS + r'''
+_t_remote_open_inventory() {
+  print -u2 -- "SCAN $1 $2"
+  printf 'beta\tid-one\t/remote/api\tapi-1\tdetached\tactive\tFirst task\tcodex\n'
+  printf 'beta\tid-two\t/remote/api\tapi-2\tdetached\tactive\tSecond task\tclaude\n'
+}
+_t_fzf_filtered() { print -r -- "$1"; }
+_t_open() { print -r -- "ATTACH ${(j:|:)@}"; }
+''' + f'_dev_open_tab() {{ print -r -- "TAB $*"; return {tab_rc}; }}; '
+                 + 't remote open beta api; print rc=$?', _tty=True, **env)
+    text = output(result)
+    assert f'rc={tab_rc}' in text, text
+    assert 'SCAN beta api' in text
+    assert 'TAB t open api 2 --cli --host beta' in text
+    assert 'ATTACH api|1|--cli|--host|beta' in text
+    assert text.index('TAB ') < text.index('ATTACH ')
+    assert ('Attach with:' in text) == bool(tab_rc)
+
+
+@pytest.mark.parametrize('mode,rc', [('empty', 0), ('cancel', 130), ('failed', 1), ('scan_cancel', 130)])
+def test_remote_open_local_selection_no_side_effects(zsh, tmp_path, mode, rc):
+    env = fake_picker(tmp_path)
+    scan = 'return 130' if mode == 'scan_cancel' else 'return 1' if mode == 'failed' else (':' if mode == 'empty' else
+        "printf 'beta\\tid-one\\t/remote/api\\tapi-1\\tdetached\\tactive\\tTask\\tcodex\\n'")
+    result = zsh(HOSTS + f'''
+_t_remote_open_inventory() {{ {scan}; }}
+_t_fzf_filtered() {{ return 130; }}
+_t_open() {{ print WRONG_OPEN; }}
+_dev_open_tab() {{ print WRONG_TAB; }}
+t remote open beta api; print rc=$?
+''', _tty=True, **env)
+    assert f'rc={rc}' in output(result) and 'WRONG_' not in output(result)
+
+
+def test_remote_open_inventory_worker_is_read_only_and_filters_on_target(zsh):
+    result = zsh(r'''
+DEV_REPOS=(foreign "$HOME/remote/api")
+_dev_session_rows() {
+  printf 'one\t%s\tforeign-1\tdetached\tactive\tTask\tcodex\n' "$HOME/remote/api"
+  printf 'two\t%s\tforeign:abcd\tattached\tactive\tForeground\tclaude\n' "$HOME/remote/api"
+  printf 'three\t%s\tother-1\tdetached\tactive\tOther\tcodex\n' "$HOME/other"
+  printf 'four\t%s\tforeign-2\tapp\tactive\tDesktop\tcodex\n' "$HOME/remote/api"
+}
+_t_open() { print WRONG_OPEN; }
+_dev_open_tab() { print WRONG_TAB; }
+_t_open_picker() { print WRONG_PICK; }
+_t_remote_open_rows api; print rc=$?
+_t_remote_open_rows unknown; print unknown=$?
+''')
+    text = output(result)
+    assert 'rc=0' in text and 'foreign-1' in text and 'foreign:abcd' in text
+    assert 'other-1' not in text and 'foreign-2' not in text and 'WRONG_' not in text
+    assert 'unknown=1' in text and 'unknown repository: unknown' in text
+
+
+@pytest.mark.parametrize('scan_rc', [0, 1, 2, 130])
+def test_remote_open_inventory_quotes_worker_and_propagates_status(zsh, scan_rc):
+    result = zsh(HOSTS + f'''
+_dev_remote_scan_with_timeout() {{
+  print -u2 -r -- "SCAN $1 $2 timeout=$3 stderr=$4"
+  printf 'id\\t/remote/api\\tapi-1\\tdetached\\tactive\\tTask\\tcodex\\n'
+  return {scan_rc}
+}}
+_t_remote_open_inventory beta 'remote repo'; print rc=$?
+''')
+    text = output(result)
+    assert f'rc={scan_rc}' in text and 'SCAN user@beta zsh -lic ' in text
+    assert 'timeout=15 stderr=1' in text
+    assert '_t_remote_open_rows' in text
+    assert ('beta\tid\t/remote/api' in result.stdout) == (scan_rc == 0)
+
+
+@pytest.mark.parametrize('action,argv', [('open', 'beta --new api 3'),
+                                       ('resume', 'beta --days 7 api 3')])
+def test_remote_parser_allows_interleaved_flags(t_mod, action, argv):
+    args = t_mod.build_parser().parse_args(['remote', action, *shlex.split(argv)])
+    assert (args.host, args.repo, args.slot) == ('beta', 'api', '3')
+
+
+@pytest.mark.parametrize('action,flag', [('open', '--host'), ('resume', '--days'),
+                                       ('move', '--from'), ('move', '--session')])
+def test_remote_parser_rejects_missing_flag_values_after_targets(t_mod, action, flag):
+    with pytest.raises(SystemExit) as exc:
+        t_mod.build_parser().parse_args(['remote', action, 'beta', flag])
+    assert exc.value.code == 2
+
+
+def test_remote_inventory_worker_runs_without_remote_helper_install(zsh):
+    result = zsh(HOSTS + r'''
+DEV_REPOS=(foreign "$HOME/remote path/api")
+_dev_session_rows() {
+  printf 'one\t%s\tforeign-1\tdetached\tactive\tTask\tcodex\n' "$HOME/remote path/api"
+  printf 'two\t/elsewhere\tother-1\tdetached\tactive\tTask\tcodex\n'
+}
+_dev_remote_scan_with_timeout() {
+  unfunction _t_remote_open_rows
+  zsh() { [[ $1 == -lic ]] || return 91; eval "$2"; }
+  eval "$2"
+}
+_t_remote_open_inventory beta api; print rc=$?
+_t_remote_open_inventory beta unknown; print unknown=$?
+''')
+    text = output(result)
+    assert 'rc=0' in text and 'beta\tone\t' in text and 'foreign-1' in text
+    assert 'other-1' not in text
+    assert 'unknown=1' in text and 'unknown repository: unknown' in text
