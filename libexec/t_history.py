@@ -26,6 +26,7 @@ _resolve_repo = runpy.run_path(str(Path(__file__).with_name("t_repos.py")))["res
 VERSION = 1
 PARSER_VERSION = 6
 _DISPLAY = runpy.run_path(str(Path(__file__).with_name('t_session_details.py')))
+_RESUME_SOURCE = runpy.run_path(str(Path(__file__).with_name('t_resume_source.py')))
 display_width = _DISPLAY['display_width']
 clip_columns = _DISPLAY['clip_columns']
 wrap_columns = _DISPLAY['wrap_columns']
@@ -657,6 +658,8 @@ class HistoryCommand:
         self.repository_proofs = {}
         self.fresh_repository_proofs = set()
         self.strict_identity = False
+        self.error, self.run, self.spinner = HistoryError, run, _spinner
+        self.validate, self.generation, self.slug = validate, generation, slug
         self.catalog_repositories = {}
         self.local_identities = {}
 
@@ -1214,7 +1217,15 @@ class HistoryCommand:
                 destination = self.store.directory / 'transcripts' / row['agent'] / basename
                 destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
                 remote = self.cfg.hosts[source['host']] + ':' + source['path']
-                run(['rsync', '-a', '--protect-args', '--timeout=10', '-e', 'ssh -o BatchMode=yes -o ConnectTimeout=3', remote, str(destination)])
+                try:
+                    run(['rsync', '-a', '--protect-args', '--timeout=10', '-e', 'ssh -o BatchMode=yes -o ConnectTimeout=3', remote, str(destination)])
+                except HistoryError:
+                    # A cached validated copy remains usable while its host is offline.
+                    if destination.is_file():
+                        if not self.verify_source(self.store.scan(destination, row['agent']), row):
+                            raise HistoryError('cached transcript identity changed; no session started')
+                        return destination
+                    continue
                 if not self.verify_source(self.store.scan(destination, row['agent']), row):
                     raise HistoryError('selected transcript identity changed; no session started')
                 return destination
@@ -1335,13 +1346,14 @@ class HistoryCommand:
             raise HistoryError('workspace is being prepared by another history action') from error
         self.reservation = marker
 
-    def codex_released(self, row, source):
+    def codex_released(self, row, source, *, workspace=None):
         if row['agent'] != 'codex':
             return
         value = transcript(source, 'codex')
         helper = runpy.run_path(str(Path(self.root) / 'libexec/t_app_handoff.py'))
         try:
             helper['assert_released']('Codex', row['sid'], value['associations'][0]['workspace'], self.api['_run'],
+                ownership_cwd=workspace,
                 codex_home=str(Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex')),
                 rollout=str(source), archived=bool(row.get('archived')) and source.resolve().is_relative_to((Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex') / 'archived_sessions').resolve()),
                 retry='Retry: t session history, then select the conversation again.')
@@ -1460,6 +1472,12 @@ class HistoryCommand:
             self.publish_transcript(target, data, row)
         return target
 
+    def resume_source(self, request):
+        return _RESUME_SOURCE['export'](self, request)
+
+    def reconcile_source(self, alias, row):
+        return _RESUME_SOURCE['reconcile'](self, alias, row)
+
     def resume(self, alias, row, *, detached=False, prepare_only=False):
         owners = self.owners(True)
         matches = [o for o in owners if o['sid'] == row['sid'] and o['agent'] == row['agent']]
@@ -1478,6 +1496,7 @@ class HistoryCommand:
         if not self.same_repository(self.identity(alias), row['repo']):
             raise HistoryError('repository identity changed before resume')
         association, revision = self.revision(row)
+        revision = self.reconcile_source(alias, row) or revision
         if not revision or run(['git', '-C', self.cfg.repos[alias], 'rev-parse', '--verify', revision + '^{commit}'], optional=True).strip() != revision:
             revision = self.fallback(alias)
         common = run(['git', '-C', self.cfg.repos[alias], 'rev-parse', '--git-common-dir']).strip()
