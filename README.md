@@ -308,6 +308,11 @@ An inactive conversation remains selectable when its historical slot now runs
 another conversation. It resumes in a safely allocated workspace; the existing
 owner and its files stay intact. Selecting an exact live conversation attaches
 to that owner. `--fg`, `--app`, and `--host` retain their selected destinations.
+`t resume api 2` opens the shared filtered picker for conversations associated
+with slot 2, including live and saved work and conversations later moved to
+another slot. Even one conversation waits for selection. Ctrl-F shows inactive
+work; Ctrl-A shows all, and Escape cancels without attaching or resuming.
+Without a terminal, an explicit slot retains newest-saved selection.
 
 Saved Codex candidates are cached under `${XDG_CACHE_HOME:-~/.cache}/claude-sessions`.
 Repeated `t resume` calls reuse unchanged metadata; each invocation checks for new,

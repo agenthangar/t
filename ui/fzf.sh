@@ -64,6 +64,12 @@ ${_t_fzf_legend}" "$@"
 # Arguments: page label file, rows file, quoted helper command, preview command,
 # initial query, prompt. The helper writes rows and the page label on each event.
 _t_fzf_paginated() (
+  # Signal cancellation exits this child explicitly; caller session-save hooks
+  # must not run here. The child's cleanup trap is installed below.
+  if [ -n "${ZSH_VERSION:-}" ]; then
+    unset zshexit_functions
+    unfunction zshexit 2>/dev/null || :
+  fi
   [ "$#" -eq 6 ] || { printf 't picker: paged profile needs six arguments\n' >&2; return 2; }
   _t_paged_page=$1 _t_paged_rows=$2 _t_paged_helper=$3
   _t_paged_preview=$4 _t_paged_query=$5 _t_paged_prompt=$6
@@ -117,6 +123,11 @@ SH
 # Kill also supplies the two single-filter views via T_PICKER_WITH_ATTACHED and
 # T_PICKER_WITH_PENDING. All callers use Ctrl-A for all and Ctrl-F for defaults.
 _t_fzf_filtered() (
+  # Keep inherited caller hooks out of this disposable picker's signal exit.
+  if [ -n "${ZSH_VERSION:-}" ]; then
+    unset zshexit_functions
+    unfunction zshexit 2>/dev/null || :
+  fi
   _t_picker_default=$1 _t_picker_all=$2 _t_picker_action=$3
   _t_picker_label=$4 _t_picker_legend=$5 _t_picker_show_all=$6
   _t_picker_with_attached=${T_PICKER_WITH_ATTACHED:-}

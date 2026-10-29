@@ -793,6 +793,20 @@ def test_resume_candidates_refresh_all_hosts_and_deduplicate_sources(app, store,
         list(app.resume_candidates(['missing']))
 
 
+def test_resume_candidates_match_any_recorded_slot_association(app, store, monkeypatch):
+    store.merge(conversation(sources=[dict(host='local', path='/saved.jsonl')], associations=[
+        dict(workspace='/trees/repo-3', slot='3', host='local', observed=10),
+        dict(workspace='/trees/repo-8', slot='8', host='local', observed=20),
+    ]))
+    monkeypatch.setattr(app, 'discover', lambda *args, **kwargs: None)
+    monkeypatch.setattr(app, 'refresh', lambda *args: None)
+    assert list(app.resume_candidates(['repo']))[0].split('\t')[2] == '8'
+    rows = list(app.resume_candidates(['repo'], slot='3'))
+    assert len(rows) == 1
+    assert rows[0].split('\t')[2:5] == ['3', 'same-sid', '/trees/repo-3']
+    assert list(app.resume_candidates(['repo'], slot='99')) == []
+
+
 @pytest.mark.parametrize('child_source', [{'source': {'subagent': {'thread_spawn': {}}}}, {'thread_source': 'subagent'}])
 def test_resume_discovery_excludes_child_rollouts_and_keeps_turn_evidence(app, child_source):
     rows = codex_rows('/old/trees/repo/repo-4', sid='main')
