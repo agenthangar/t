@@ -75,5 +75,5 @@ exclude_lines = [
     "def _git_brief\\(",
     "def _mcp_context\\(",
     "def _mcp_serve\\(",
-    "def _mcp_install\\(",
+    "def _mcp_install(?:_claude)?\\(",
 ]
