@@ -5,7 +5,9 @@
 # `exit` in zsh runs the caller's inherited zshexit hooks (including Terminal.app's
 # session saver) inside the picker subshell.
 _t_fzf() {
-  [ -z "${NO_COLOR+x}" ] && [ "${TERM:-}" != dumb ] || set -- "$@" --color=bw
+  if [ -n "${NO_COLOR+x}" ] || [ "${TERM:-}" = dumb ]; then
+    set -- "$@" --color=bw
+  fi
   command fzf --height=60% --layout=reverse --border=rounded --margin=1,2 \
     --pointer='▸' --marker='✓ ' \
     --color='fg+:white,bg+:#005f5f,hl:cyan,hl+:white:underline,pointer:white,marker:#87ffaf:bold,header:cyan,prompt:cyan,border:bright-black' \
