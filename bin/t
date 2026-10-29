@@ -11468,19 +11468,20 @@ EXPLICIT PUSH AND PULL
     sp.add_argument("--refresh", action="store_true", help="refresh registered hosts' metadata and PR states")
     sp.add_argument("--json", action="store_true", help="print paginated metadata without launching")
 
-    sp = sub.add_parser("resume", help="revive a dead slot's saved conversation",
+    sp = sub.add_parser("resume", help="select and resume saved conversations",
         description='Resume saved conversations in fresh slots and attach. Infer the current repository; '
             'outside one, browse local and remote repositories. Enter selects; Space/Tab marks several. Live selections '
             'attach to their owner. Repositories are cloned only after selection. Cross-host defaults: Claude uses t; Codex uses native '
             'desktop Hand off. Choose the mechanism in t config.',
+
         epilog="""EXAMPLES
   %(prog)s                   Browse the current repository
-  %(prog)s api 2             Resume api slot 2
+  %(prog)s api 2             Choose a conversation associated with api slot 2
   %(prog)s --all --days all   Browse all saved history""",
         help_details=f"""DETAILS
 
-  Revive a DEAD dev slot's conversation (`t session open` on a dead slot
-  deliberately starts fresh — this brings the chat back).
+  Choose saved work associated with a repository or slot. A live selection
+  attaches to its existing owner; an inactive selection resumes saved history.
 
   Offers EVERY conversation associated with the repository across registered hosts,
   including swept and renamed workspaces and the canonical checkout (one global
@@ -11502,8 +11503,10 @@ EXPLICIT PUSH AND PULL
   remain at the top of the picker. Available conversations still resume. Run
   gh auth login --hostname github.com on that host, then retry.
 
-  One inactive candidate is taken when there are no excluded live rows; otherwise
-  fzf picks (an explicit slot with no TTY takes the newest).
+  An explicit slot opens the shared picker, even for one conversation, showing
+  live and saved work associated with that slot. Ctrl-F restores inactive rows.
+  Without a slot, one inactive candidate is taken if no live rows are excluded.
+  An explicit slot without a terminal takes its newest saved conversation.
 
 PICKER CONTROLS
   The picker MULTI-SELECTS: Space/Tab marks rows with a ✓; Ctrl-L toggles live rows,
@@ -11527,8 +11530,8 @@ LIVE OWNERS AND DESKTOP
   or Ctrl-A; -l/--live starts with all rows and Ctrl-F restores the inactive view.
 
   Live rows show '● active' / '● on <host>'; picking one attaches to its existing
-  owner (locally or on its host) instead of resuming; naming a live slot explicitly
-  always attaches in CLI mode. --app instead selects ONE exact saved Codex
+  owner (locally or on its host) instead of resuming, only after selection.
+  --app selects ONE exact saved Codex
   conversation for the local macOS app, including histories in a live slot; only
   that same local owner can be handed off.
 
@@ -12431,12 +12434,17 @@ def _main(argv):
         history = helper['HistoryCommand'](Config(), globals())
         try:
             if argv[0] == '__resume-candidates':
-                scope = argv[1:]
+                aliases, slot = argv[1:], None
                 diagnostics_file = None
-                if scope[:1] == ['--diagnostics-file'] and len(scope) >= 2:
-                    diagnostics_file, scope = scope[1], scope[2:]
+                if aliases[:1] == ['--diagnostics-file'] and len(aliases) >= 2:
+                    diagnostics_file, aliases = aliases[1], aliases[2:]
                     history.diagnostics_enabled = True
-                for row in history.resume_candidates(scope):
+                if '--slot' in aliases:
+                    index = aliases.index('--slot')
+                    if index != len(aliases) - 2 or not re.fullmatch(r'[0-9]+', aliases[-1]):
+                        raise helper['HistoryError']('invalid saved conversation slot')
+                    slot, aliases = aliases[-1], aliases[:index]
+                for row in history.resume_candidates(aliases, slot=slot):
                     print(row)
                 if diagnostics_file:
                     # Private sidecar leaves the established candidate TSV untouched.

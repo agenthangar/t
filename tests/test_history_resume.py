@@ -873,7 +873,8 @@ def test_detached_saved_resume_refuses_new_live_owner(app, history, monkeypatch)
         app.resume('repo', conversation(sid='selected'), detached=True)
 
 
-@pytest.mark.parametrize('mode', ['candidates', 'launch', 'prepare', 'missing', 'invalid', 'cancel'])
+@pytest.mark.parametrize('mode', ['candidates', 'slot-candidates', 'invalid-slot', 'missing-slot',
+                                  'launch', 'prepare', 'missing', 'invalid', 'cancel'])
 def test_private_resume_bridge_dispatches_exact_identity_and_closes_store(
         app, history, t_mod, monkeypatch, capsys, mode):
     calls = []
@@ -884,8 +885,9 @@ def test_private_resume_bridge_dispatches_exact_identity_and_closes_store(
     monkeypatch.setattr(app.store, 'close', lambda: calls.append('closed'))
     monkeypatch.setattr(app, 'records', lambda alias: [] if mode == 'missing' else
                         [dict(sid='selected', agent='codex')])
-    def candidates(aliases):
+    def candidates(aliases, slot=None):
         assert aliases == ['repo']
+        assert slot == ('3' if mode == 'slot-candidates' else None)
         if mode == 'cancel':
             raise history.HistoryCancelled('cancel')
         return ['saved metadata']
@@ -896,19 +898,23 @@ def test_private_resume_bridge_dispatches_exact_identity_and_closes_store(
     monkeypatch.setattr(app, 'resume', resume)
     if mode in ('candidates', 'cancel'):
         argv = ['__resume-candidates', 'repo']
+    elif mode in ('slot-candidates', 'invalid-slot', 'missing-slot'):
+        argv = ['__resume-candidates', 'repo', '--slot']
+        if mode != 'missing-slot':
+            argv.append('3' if mode == 'slot-candidates' else 'bad')
     else:
         argv = ['__resume-saved', 'repo', 'selected', 'codex',
                 mode if mode in ('prepare', 'invalid') else 'launch']
-    assert t_mod.main(argv) == (130 if mode == 'cancel' else 1 if mode in ('missing', 'invalid') else 0)
+    assert t_mod.main(argv) == (130 if mode == 'cancel' else 1 if mode in ('missing', 'invalid', 'invalid-slot', 'missing-slot') else 0)
     assert calls[-1] == 'closed'
     out = capsys.readouterr()
     if mode in ('launch', 'prepare'):
         assert calls[0] == ('repo', dict(sid='selected', agent='codex'),
                             dict(detached=True, prepare_only=mode == 'prepare'))
         assert 'dev-repo-7' in out.out
-    elif mode == 'candidates':
+    elif mode in ('candidates', 'slot-candidates'):
         assert out.out == 'saved metadata\n'
-    elif mode in ('missing', 'invalid'):
+    elif mode in ('missing', 'invalid', 'invalid-slot', 'missing-slot'):
         assert out.err.startswith('t resume: ')
 
 
