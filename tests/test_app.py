@@ -601,7 +601,7 @@ def test_app_stop_revalidates_directory_with_real_tmux(t_mod, app_slot, monkeypa
     The old mocked tmux always returned the cwd and concealed this failure. Keep
     tmux real here, including an active decoy session in a different directory;
     only the Codex probes are stubbed. The pane-process case stops only this
-    test's disposable sleep process and verifies that its slot remains reserved.
+    test's disposable process and verifies that its slot remains reserved.
     """
     if not shutil.which("tmux") or not shutil.which("zsh"):
         pytest.skip("tmux and zsh required")
@@ -613,6 +613,7 @@ def test_app_stop_revalidates_directory_with_real_tmux(t_mod, app_slot, monkeypa
     prelude = f'''
 tmux() {{ command {shlex.join(tmux)} "$@"; }}
 _dev_agent_of_session() {{ print codex; }}
+_dev_history_record() {{ :; }}
 _dev_session_sid() {{
   [[ $1 == {shlex.quote(session)} && $2 == {shlex.quote(row['cwd'])} ]] && print {SID}
 }}
@@ -629,8 +630,17 @@ _dev_session_claude_pid() {{ tmux display-message -p -t "=$session:" '#{{pane_pi
                               env=env, capture_output=True, text=True, timeout=10)
     monkeypatch.setattr(t_mod, "_run", run)
     try:
-        subprocess.run(tmux + ["new-session", "-d", "-s", session, "-c", row["cwd"], "sleep 60"],
+        ready = tmp_path / 'pane-ready'
+        agent = ("import signal,time,pathlib; "
+                 "signal.signal(signal.SIGTERM, lambda *_: exit(0)); "
+                 f"pathlib.Path({str(ready)!r}).touch(); time.sleep(60)")
+        subprocess.run(tmux + ["new-session", "-d", "-s", session, "-c", row["cwd"],
+                              sys.executable, '-c', agent],
                        env=env, capture_output=True, text=True, check=True)
+        deadline = time.monotonic() + 5
+        while not ready.exists() and time.monotonic() < deadline:
+            time.sleep(0.03)
+        assert ready.exists(), 'disposable pane process did not become ready'
         subprocess.run(tmux + ["new-session", "-d", "-s", session + "0", "-c", str(tmp_path), "sleep 60"],
                        env=env, capture_output=True, text=True, check=True)
         result = t_mod._app_stop_cli(row)
