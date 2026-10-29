@@ -11499,10 +11499,8 @@ SELECTION
 DESKTOP TO CLI
   %(prog)s api 2 --cli
   Follow its release instructions if the desktop conversation is still loaded.
-  It resumes the same conversation and attaches automatically. Guarded Codex
-  resumes apply the latest applicable explicit main model/effort over saved thread
-  values; speed and permissions stay unchanged. Live attach retains its owner;
-  isolated sessions apply changes at guarded resume/restart.
+  It resumes the same conversation and attaches automatically.
+  Live attach retains its owner; guarded resume applies current defaults.
 """,
         help_details="""SESSION TARGETS
   A lone slot number targets the current repo: t open 3.
@@ -11535,6 +11533,10 @@ OPENING DEFAULTS
   --app opens an isolated worktree in the macOS Codex desktop app.
   --codex and --claude select the agent for a fresh slot. Otherwise,
   DEV_AGENT[repo] overrides DEV_AGENT_DEFAULT (fallback: claude).
+  Guarded Codex resume applies the latest applicable explicit main model/effort
+  over saved thread values; invocation overrides win. Speed and permissions stay
+  unchanged. Live attach retains its owner; isolated sessions apply changes at
+  guarded resume/restart.
 
 DESKTOP TO CLI
   On the Mac running the desktop session, run `t open <repo> <slot> --cli`.
