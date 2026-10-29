@@ -205,6 +205,10 @@
       "kind": "background",
       "reason": "Starts isolated Codex; its events are task artifacts and task_status provides status over MCP."
     },
+    "libexec/t_repos.py:local_origin_name:subprocess.run": {
+      "kind": "protocol",
+      "reason": "Repository selector normalization and completion read only local Git config with a two-second bound; diagnostics or progress would corrupt completion, read-only and machine output."
+    },
     "libexec/t_workflow_sync.py::subprocess.Popen": {
       "kind": "background",
       "reason": "SessionStart launches a detached try-lock retry worker and never waits for runtime or SSH reconciliation."

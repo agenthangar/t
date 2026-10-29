@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "description": "Development-only public command appearance and interaction inventory; ls/list aliases inherit canonical routes in bin/t COMMAND_GROUPS, including config workflow and root list/ls; the repos family is removed. Existing-repository selectors accept registered aliases or unambiguous checkout directory names; exact aliases retain precedence and remote open/resume resolve on the selected host.",
+  "description": "Development-only public command appearance and interaction inventory; ls/list aliases inherit canonical routes in bin/t COMMAND_GROUPS, including config workflow and root list/ls; the repos family is removed. Existing-repository selectors accept registered aliases, checkout basenames, or unambiguous local origin repository names; exact aliases retain precedence and remote open/resume resolve on the selected host.",
   "patterns": {
     "list": "Direct read-only aligned rows, scope, and empty state; never launches a picker.",
     "detail": "Read-only labeled values; no work starts or prompt appears.",
