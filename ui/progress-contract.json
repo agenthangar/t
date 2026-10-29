@@ -200,6 +200,10 @@
     "libexec/t_local_worker.py:run_worker:subprocess.Popen": {
       "kind": "background",
       "reason": "Starts isolated Codex; its events are task artifacts and task_status provides status over MCP."
+    },
+    "libexec/t_workflow_sync.py::subprocess.Popen": {
+      "kind": "background",
+      "reason": "SessionStart launches a detached try-lock retry worker and never waits for runtime or SSH reconciliation."
     }
   },
   "shell": [

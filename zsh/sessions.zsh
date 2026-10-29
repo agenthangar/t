@@ -24,6 +24,7 @@ _t_with_progress() {
     # the caller, not the spinner. Keep the caller's hooks and history intact.
     zshexit_functions=()
     unfunction zshexit 2>/dev/null || :
+    unfunction TRAPEXIT 2>/dev/null || :
     trap - EXIT
     trap 'exit 0' TERM INT HUP
     command sleep 0.25
