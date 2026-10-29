@@ -348,10 +348,65 @@ def test_config_main_menu_shows_repo_aliases(t_mod, config_cli, monkeypatch):
     def pick(label, rows, **kwargs):
         assert label == "Local settings"
         assert kwargs["values"]["repos"] == "api, t"
+        assert [key for key, _ in rows] == [
+            "tool", "mode", "trust", *t_mod.AGENTS, "workflow", "local",
+            "repos", "worktrees", "hosts", "beam", "edit", "save", "cancel",
+        ]
+        assert kwargs["sections"] == {
+            "tool": "Session defaults", t_mod.AGENTS[0]: "Agents & workflow",
+            "repos": "Repositories & worktrees", "hosts": "Remote hosts", "edit": "Finish",
+        }
+        collections = {*t_mod.AGENTS, "workflow", "local", "repos", "worktrees", "hosts"}
+        assert {key for key, text in rows if text.endswith(" ›")} == collections
         return "cancel"
     ui.pick = pick
     monkeypatch.setattr(t_mod, "_RailUI", lambda: ui)
     assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == 130
+
+
+def test_config_group_navigation_retains_focus(t_mod, config_cli, monkeypatch):
+    cfg, local = config_cli
+    ui = Menu(["workflow", "repos", "worktrees", "hosts", "cancel"])
+    pick = ui.pick
+    previous = "tool"
+    visited = []
+    def choose(label, rows, **kwargs):
+        nonlocal previous
+        assert rows[kwargs["default"]][0] == previous
+        previous = pick(label, rows, **kwargs)
+        return previous
+    ui.pick = choose
+    for key in ("workflow", "repos", "worktrees", "hosts"):
+        monkeypatch.setattr(t_mod, "_config_" + key,
+                            lambda ui, cfg, key=key: visited.append(key))
+    monkeypatch.setattr(t_mod, "_RailUI", lambda: ui)
+    assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == 130
+    assert visited == ["workflow", "repos", "worktrees", "hosts"]
+    assert local.read_text() == "# keep me\n" and ui.restored
+
+
+@pytest.mark.parametrize('width,height', [(80, 24), (44, 20), (32, 12)])
+def test_config_grouped_menu_narrow_navigation(t_mod, config_cli, monkeypatch, width, height):
+    from test_tui import make_ui
+    cfg, local = config_cli
+    cfg.repos = {"long-repository-alias-" + str(i): "/code/repo-" + str(i) for i in range(8)}
+    cfg.models = {agent: "long-model-name-with-context-window" for agent in t_mod.AGENTS}
+    before = t_mod._config_state(cfg)
+    # Visit each row in both directions without entering settings or saving.
+    moves = len(t_mod.AGENTS) + 12
+    ui = make_ui(t_mod, ["j"] * moves + ["k"] * moves + ["q"], width, height)
+    monkeypatch.setattr(t_mod, "_RailUI", lambda: ui)
+    assert t_mod._config_wizard(cfg) is None
+    assert ui.restored and t_mod._config_state(cfg) == before
+    assert local.read_text() == "# keep me\n"
+    # Exclude the separate cancellation summary from the navigation frames.
+    frames = [frame for frame in ui.frames if any("Local settings" in line for line in frame)]
+    assert len(frames) == 2 * moves + 1
+    for frame in frames:
+        assert sum(t_mod._term_rows(line, width) for line in frame) <= height
+        assert all(t_mod._vis_len(line) <= width for line in frame)
+        assert any("▸" in line for line in frame)
+        assert any("SAVE CHANGES" in line for line in frame)
 
 
 def test_config_menu_interrupt_restores_terminal(t_mod, config_cli, monkeypatch):
