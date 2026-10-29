@@ -2719,7 +2719,7 @@ def _config_wizard(cfg):
                 values[a] = f"{edited.models.get(a) or 'tool default'} · {edited.efforts.get(a) or 'default'} effort"
                 if edited.fast.get(a) == "1":
                     values[a] += " · fast"
-            rows += [("workflow", "Agent workflow ›"), ("local", "Local worker & models ›"),
+            rows += [("local", "Local worker & models ›"), ("workflow", "Agent workflow ›"),
                      ("repos", "Repositories ›"), ("worktrees", "Worktrees & branches ›"),
                      ("hosts", "Hosts ›"), ("beam", "Default beam host"), ("edit", "Open config in editor"),
                      ("save", "Save changes"), ("cancel", "Cancel")]
@@ -2728,7 +2728,7 @@ def _config_wizard(cfg):
                            "repos": ", ".join(sorted(edited.repos)) or "none registered",
                            "beam": edited.beam_host or "none", "save": f"{pending} pending"})
             choice = ui.pick("Local settings", rows, values=values,
-                             sections={"tool": "Session defaults", AGENTS[0]: "Agents & workflow",
+                             sections={"tool": "Session defaults", AGENTS[0]: "Agents", "workflow": "Workflow",
                                        "repos": "Repositories & worktrees", "hosts": "Remote hosts", "edit": "Finish"},
                              accents={"save": "g", "cancel": "y"},
                              primary=("s", "SAVE CHANGES", f"{pending} pending"), shortcuts={"s": "save"},
