@@ -353,3 +353,69 @@ def test_remote_resume_ambiguous_name_stops_before_identity_or_ssh(tmp_path):
     ''')
     assert result.returncode == 2
     assert 'ambiguous repository' in result.stderr and 'BAD-' not in result.stderr
+
+
+@pytest.mark.parametrize('selector', ['app', 'application'])
+def test_origin_names_reach_resume_and_remote_identity(tmp_path, selector, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "home/.config"))
+    checkout = tmp_path / 'home/code/owner-application'
+    checkout.mkdir(parents=True)
+    subprocess.run(['git', 'init', '-q', str(checkout)], check=True)
+    subprocess.run(['git', '-C', str(checkout), 'remote', 'add', 'origin', 'git@github.com:team/application.git'], check=True)
+    result = shell(tmp_path, f'''
+        DEV_REPOS=(app "$HOME/code/owner-application")
+        _dev_worktree_enabled() {{ print -u2 -r -- "RESUME $1"; return 1; }}
+        t resume {selector} 2
+        REMOTE_HOSTS=(far user@example)
+        python3() {{ [[ $2 == __repo-identity && $3 == app ]] || return 98; print org/project; }}
+        ssh() {{ print -r -- "SSH $*"; return 17; }}
+        t remote resume {selector} 2 --host far
+    ''')
+    assert result.returncode == 17, result.stderr
+    assert 'RESUME app' in result.stderr
+    worker = shlex.split(result.stdout.removeprefix('SSH user@example '))[2]
+    assert 'command t __resume-alias org/project' in worker
+    assert 'UNEXPECTED' not in result.stderr
+
+
+def test_origin_completion_is_linear_fresh_and_suppresses_combined_collisions(tmp_path):
+    result = shell(tmp_path, '''
+        DEV_REPOS=(long "$HOME/one" a "$HOME/one" b "$HOME/two/application")
+        _dev_repo_origin_name() { print -r -- "$1" >> "$HOME/reads"; print application; }
+        _dev_repo_selectors
+        print READS=$(wc -l < "$HOME/reads" | tr -d ' ')
+        _dev_resolve_repo application; print "rc=$?"
+        _dev_repo_origin_name() { print changed; }
+        _dev_repo_selectors
+        _dev_repo_origin_name() { print -u2 UNEXPECTED; }
+        _dev_resolve_repo a
+    ''')
+    assert result.returncode == 0
+    first, second = result.stdout.split('READS=2\n')
+    assert first.splitlines() == ['a', 'b', 'long', 'one']
+    assert second.startswith('rc=2\n') and second.endswith('a\n')
+    assert 'application\n' in second  # basename remains available after origin edit
+    assert 'changed\n' not in second  # both distinct checkouts still collide
+    assert 'ambiguous repository' in result.stderr and 'UNEXPECTED' not in result.stderr
+
+
+@pytest.mark.parametrize('command', ['t resume application 2', 't repo cd application', '_t_remote_open_local application 2'])
+def test_real_origin_collision_stops_shell_actions(tmp_path, command, monkeypatch):
+    home = tmp_path / 'home'
+    monkeypatch.setenv('HOME', str(home))
+    monkeypatch.setenv('XDG_CONFIG_HOME', str(home / '.config'))
+    for leaf in ['owner-application', 'application']:
+        checkout = home / leaf
+        checkout.mkdir(parents=True)
+        subprocess.run(['git', 'init', '-q', str(checkout)], check=True)
+        subprocess.run(['git', '-C', str(checkout), 'remote', 'add', 'origin',
+                        'https://user:private-token@example.com/org/application.git'], check=True)
+    result = shell(tmp_path, f'''
+        DEV_REPOS=(a "$HOME/owner-application" b "$HOME/application")
+        {command}
+    ''')
+    assert result.returncode == 2
+    assert "ambiguous repository 'application'" in result.stderr
+    assert 'a, b' in result.stderr and 'private-token' not in result.stderr
+    assert 'UNEXPECTED' not in result.stderr and not result.stdout
