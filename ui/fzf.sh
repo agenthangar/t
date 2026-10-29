@@ -1,9 +1,44 @@
 #!/bin/sh
 # Shared visual defaults for every t picker. Callers choose a profile and may
 # customize content (columns, prompt, preview), never controls or visual chrome.
-# These profiles run in subshells. Use `return` for normal completion: an explicit
-# `exit` in zsh runs the caller's inherited zshexit hooks (including Terminal.app's
-# session saver) inside the picker subshell.
+# Interactive zsh's stopped-job handling can spin inside command substitutions.
+# Replace each profile's subshell with a noninteractive sh before waiting for fzf.
+# Resolve this source file here so direct sourcing also works without T_HOME.
+[ "${1:-}" != --t-fzf-worker ] || unset ZSH_VERSION
+if [ -n "${ZSH_VERSION:-}" ]; then
+  eval '_T_FZF_SOURCE=${${(%):-%x}:A}'
+fi
+# Run only inside a zsh profile subshell. Send shell-local inputs and arguments
+# through a private pipe: row snapshots can exceed exec's argv/environment limit.
+# (qq) emits POSIX single-quoted strings, including embedded quotes/newlines.
+_t_fzf_worker() {
+  # shellcheck disable=SC2016
+  eval '
+    emulate -L zsh
+    _t_fzf_inputs=()
+    for _t_fzf_name in COLUMNS LINES TMPDIR NO_COLOR T_HOME PATH \
+      T_PICKER_COLUMNS T_PICKER_SOURCE_ROWS T_PICKER_SESSION_FILTERS \
+      T_PICKER_WITH_ATTACHED T_PICKER_WITH_PENDING T_PICKER_ALL_LABEL T_PICKER_AUTH_HOSTS; do
+      [[ -v $_t_fzf_name ]] && _t_fzf_inputs+=("$_t_fzf_name")
+    done
+    # Keep large prefix-assigned inputs out of the environment of exec itself.
+    (( ${#_t_fzf_inputs} == 0 )) || typeset +x "${_t_fzf_inputs[@]}"
+    exec /bin/sh "$_T_FZF_SOURCE" --t-fzf-worker 3< <(
+      trap - EXIT
+      zshexit_functions=()
+      unfunction zshexit 2>/dev/null || :
+      for _t_fzf_name in "${_t_fzf_inputs[@]}"; do
+        print -r -- "export $_t_fzf_name=${(qq)${(P)_t_fzf_name}}"
+      done
+      print -rn -- "set --"
+      for _t_fzf_arg do
+        print -rn -- " ${(qq)_t_fzf_arg}"
+      done
+      print
+    )
+  '
+}
+
 _t_fzf() {
   [ -z "${NO_COLOR:-}" ] || set -- "$@" --color=bw
   command fzf --height=60% --layout=reverse --border=rounded --margin=1,2 \
@@ -33,6 +68,7 @@ _t_fzf_content_options() {
 }
 
 _t_fzf_single() (
+  [ -z "${ZSH_VERSION:-}" ] || _t_fzf_worker _t_fzf_single "$@"
   _t_fzf_action=$1 _t_fzf_legend=$2
   shift 2
   _t_fzf_content_options "$@" || return $?
@@ -49,6 +85,7 @@ $_t_fzf_legend"
 
 # A separate header line keeps batch controls visible on narrow terminals.
 _t_fzf_multi() (
+  [ -z "${ZSH_VERSION:-}" ] || _t_fzf_worker _t_fzf_multi "$@"
   _t_fzf_action=$1 _t_fzf_legend=$2
   shift 2
   _t_fzf_content_options "$@" || return $?
@@ -64,12 +101,7 @@ ${_t_fzf_legend}" "$@"
 # Arguments: page label file, rows file, quoted helper command, preview command,
 # initial query, prompt. The helper writes rows and the page label on each event.
 _t_fzf_paginated() (
-  # Signal cancellation exits this child explicitly; caller session-save hooks
-  # must not run here. The child's cleanup trap is installed below.
-  if [ -n "${ZSH_VERSION:-}" ]; then
-    unset zshexit_functions
-    unfunction zshexit 2>/dev/null || :
-  fi
+  [ -z "${ZSH_VERSION:-}" ] || _t_fzf_worker _t_fzf_paginated "$@"
   [ "$#" -eq 6 ] || { printf 't picker: paged profile needs six arguments\n' >&2; return 2; }
   _t_paged_page=$1 _t_paged_rows=$2 _t_paged_helper=$3
   _t_paged_preview=$4 _t_paged_query=$5 _t_paged_prompt=$6
@@ -123,11 +155,7 @@ SH
 # Kill also supplies the two single-filter views via T_PICKER_WITH_ATTACHED and
 # T_PICKER_WITH_PENDING. All callers use Ctrl-A for all and Ctrl-F for defaults.
 _t_fzf_filtered() (
-  # Keep inherited caller hooks out of this disposable picker's signal exit.
-  if [ -n "${ZSH_VERSION:-}" ]; then
-    unset zshexit_functions
-    unfunction zshexit 2>/dev/null || :
-  fi
+  [ -z "${ZSH_VERSION:-}" ] || _t_fzf_worker _t_fzf_filtered "$@"
   _t_picker_default=$1 _t_picker_all=$2 _t_picker_action=$3
   _t_picker_label=$4 _t_picker_legend=$5 _t_picker_show_all=$6
   _t_picker_with_attached=${T_PICKER_WITH_ATTACHED:-}
@@ -348,3 +376,16 @@ SH
   _t_picker_rc=$?
   return "$_t_picker_rc"
 )
+
+# Private script entry point; sh callers sourcing the profiles need no worker.
+if [ "${1:-}" = --t-fzf-worker ]; then
+  # Read the complete pipe before parsing (some sh versions truncate sourced pipes).
+  _t_fzf_handoff=$(/bin/cat <&3) || exit $?
+  exec 3<&-
+  eval "$_t_fzf_handoff" || exit $?
+  unset _t_fzf_handoff
+  case ${1:-} in
+    _t_fzf_single|_t_fzf_multi|_t_fzf_paginated|_t_fzf_filtered) "$@" ;;
+    *) exit 2 ;;
+  esac
+fi
