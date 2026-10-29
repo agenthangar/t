@@ -948,7 +948,7 @@ _t_resume() {
       done
       (( $#mp_unopened )) && echo "Also landed on $on_host — attach with: ${(j: · :)mp_unopened}"
       if [[ -t 0 && -t 1 ]]; then
-        ssh -t "${REMOTE_HOSTS[$on_host]:-$on_host}" "zsh -lic ${(q):-tmux attach -t $mp_first_session}"
+        ssh -t "${REMOTE_HOSTS[$on_host]:-$on_host}" "zsh -lic ${(qq):-tmux attach -t $mp_first_session}"
       else
         echo "Attach with: t session open ${${mp_first_session#dev-}%-*} ${mp_first_session##*-} --host $on_host"
       fi
@@ -2909,11 +2909,11 @@ _t_beam() {
     local relay_cmd="(( \$+functions[_t_handoff_check] )) || { print -u2 't: update t on the source host before cross-host handoff'; return 1; }; _T_HANDOFF_CODEX=${(q)${_T_HANDOFF_CODEX:-${DEV_HANDOFF[codex]:-native}}} _T_HANDOFF_CLAUDE=${(q)${_T_HANDOFF_CLAUDE:-${DEV_HANDOFF[claude]:-t}}} T_NO_UPDATE_CHECK=1 _T_BEAM_HOST_IS_TARGET=1 T_MOVE_EXPECT_ROW=${(q)${T_MOVE_EXPECT_ROW:-}} _t_beam ${(j: :)${(@q)relay}}"
     # Selection on the source needs its own terminal, including detached moves.
     if [[ -t 0 && -t 1 ]]; then
-      ssh -t "$source_target" "zsh -lic ${(q)relay_cmd}"
+      ssh -t "$source_target" "zsh -lic ${(qq)relay_cmd}"
     else
       [[ -n $sid_arg || ${relay[2]:-} == <-> ]] || { print -u2 'tbeam: source selection requires a terminal; name a repo and slot or --session ID'; return 1; }
       [[ -n $detach ]] || { print -u2 'tbeam: nonterminal moves require --detach'; return 1; }
-      ssh "$source_target" "zsh -lic ${(q)relay_cmd}"
+      ssh "$source_target" "zsh -lic ${(qq)relay_cmd}"
     fi
     return
   fi

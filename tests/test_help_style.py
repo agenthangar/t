@@ -201,3 +201,11 @@ def test_help_color_lint_detects_detail_and_topic_omissions(t_mod, monkeypatch):
     errors = lint.check_help_style(t_mod, t_mod.build_parser(), CONTRACT)
     assert any('t help agents help must use bold cyan' in error for error in errors)
     assert any('t session resume help must use bold cyan' in error for error in errors)
+
+
+def test_help_color_lint_accepts_titles_but_not_other_controls():
+    lint = lint_module()
+    plain = 'USAGE\n  t help\n'
+    rendered = '\x1b]0;t help\x07' + plain + '\x1b]0;\x07'
+    assert lint.check_help_color('help', plain, rendered, enabled=False) == []
+    assert lint.check_help_color('help', plain, '\x1b[2J' + rendered, enabled=False)
