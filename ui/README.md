@@ -167,7 +167,7 @@ which override generic model-stage guidance. Do not parse prose for contradictio
 source but suppresses the entire workflow, and `inherit --repo ALIAS` removes the
 override. These direct actions work without a terminal. `list [--repo ALIAS] [--json]`
 is a read-only stage/model/effort table with source, exclusion, model-stage state,
-behavior preferences, custom-text presence and precedence. `list --all [--json]`
+behavior preferences, custom-text presence, supplied issue-rule inclusion and precedence. `list --all [--json]`
 is the named catalogue and usage; reject --all with --repo. `edit [NAME] [--repo ALIAS]`
 is the advanced JSON editor; reject NAME with --repo. Omitted selectors target the
 current global default. Repository `null` resets inheritance.
@@ -177,11 +177,16 @@ without prompts, model discovery or writes. `instructions edit` uses a private .
 file in VISUAL/EDITOR, preserves formatting and editor status, and rejects embedded
 managed-block markers. Repository edits create an inline policy only after an actual
 change and preserve exclusion; inspection includes the stored prose when excluded.
+The issue-before-code rule is seeded once as editable Markdown in schema v3.
+Reading v1/v2 migrates in memory without writes; installation or explicit save
+persists v3 and replaces the legacy public-issues block transactionally. Existing
+custom prose is preserved, and later installs never restore a deliberately edited
+or removed rule. Fresh installs save editable defaults.
 Excluded or disabled scopes suppress their prose and preferences in generated native
 instructions. Disabling model stages alone explicitly suppresses t model delegation
 while retaining preferences and prose. The JSON policy optionally accepts
 `stages_enabled` (default true) and `behaviors` (default absent); older v1/v2
-documents retain their shape on reads and synchronization.
+documents remain untouched on reads and migrate when saved or synchronized.
 
 Successful workflow mutations publish native instruction files atomically, then
 reconcile an account-local revision outside the save lock. `t config workflow sync`
@@ -435,6 +440,15 @@ is downloaded and verified. A different live conversation in the historical
 slot does not hide saved work: inactive selections receive a safely allocated
 workspace when their original workspace cannot be reused. Exact live IDs attach
 to their existing owner. Local paths and remote aliases need not match.
+
+`remote open [host] [repo] [slot]` and `remote resume [host] [repo] [slot]`
+use host-first targets. Explicit `[repo] [slot] --host HOST` retains compatibility;
+ambiguous legacy repository-only targets fail with guidance before SSH.
+`remote move` retains its source/destination flags and repo/slot positionals.
+Remote open reads and scopes inventory on the selected host, then uses the shared
+local picker and opens extra local tabs before the first attachment. Failed tab
+creation reports an exact attach command and a nonzero result. Desktop rows are
+excluded from this CLI-only remote picker.
 
 `remote open` selects current sessions on the chosen host and never starts fresh
 from an empty picker; `--new` is explicit. `remote resume` selects saved history

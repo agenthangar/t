@@ -34,44 +34,12 @@ def workflow_policy():
 
 
 def install_workflow():
-    """Add the default workflow to agent-owned instruction files, preserving prose."""
-    home = Path.home()
-    codex = Path(os.environ.get('CODEX_HOME') or home / '.codex').expanduser()
-    claude = Path(os.environ.get('CLAUDE_CONFIG_DIR') or home / '.claude').expanduser()
-    paths = [codex / 'AGENTS.md', claude / 'CLAUDE.md']
-    override = codex / 'AGENTS.override.md'
-    if override.exists() or override.is_symlink():
-        paths.append(override)
-    start, end = '<!-- t public-issues: begin -->', '<!-- t public-issues: end -->'
-    block = start + '\n' + workflow_policy() + '\n' + end
-    failures = []
-    for path in paths:
-        try:
-            if path.is_symlink():
-                raise IssueError('instruction file is a symlink; add the issue-first rule at its source')
-            before = path.read_text(encoding='utf-8') if path.exists() else ''
-            # Codex skips empty overrides. Filling one would hide the user's
-            # base AGENTS.md; leave it empty so the updated base still loads.
-            if path == override and not before.strip():
-                continue
-            if start in before or end in before:
-                if before.count(start) != 1 or before.count(end) != 1 or before.index(start) > before.index(end):
-                    raise IssueError('malformed t public-issues markers; repair them before reinstalling')
-                after = before[:before.index(start)] + block + before[before.index(end) + len(end):]
-            else:
-                after = before + ('\n\n' if before else '') + block + '\n'
-            if after == before:
-                continue
-            path.parent.mkdir(parents=True, exist_ok=True)
-            mode = path.stat().st_mode & 0o777 if path.exists() else 0o600
-            if path.is_symlink() or (path.read_text(encoding='utf-8') if path.exists() else '') != before:
-                raise IssueError('instructions changed while updating; rerun the installer')
-            private_write(path, after, mode=mode)
-            print(f'Installed public-repository issue workflow in {path}')
-        except (OSError, UnicodeError, IssueError) as error:
-            print(f't install: {path}: {error}', file=sys.stderr)
-            failures.append(path)
-    return 1 if failures else 0
+    """Compatibility entry point; editable workflows own all managed policies."""
+    try:
+        return runpy.run_path(str(Path(__file__).with_name('t_workflow.py')))['sync']()
+    except (OSError, ValueError, UnicodeError) as error:
+        print(f't install: agent workflow: {error}', file=sys.stderr)
+        return 1
 
 
 def private_write(path, text, *, mode=0o600):

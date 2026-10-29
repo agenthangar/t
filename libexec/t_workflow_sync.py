@@ -431,7 +431,7 @@ def receive(payload, repos, settings_writer=None):
     w = workflow()
     document, before = w['load']()
     after = copy.deepcopy(document)
-    incoming = w['validate']({'version': 2, 'default': payload['default'],
+    incoming = w['validate']({'version': 3, 'default': payload['default'],
                              'workflows': payload['workflows'], 'repositories': {}})
     if payload.get('global'):
         selected = incoming['workflows'][incoming['default']]
