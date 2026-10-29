@@ -451,8 +451,8 @@ for a host's login shell.
 | `t session resume` / `t session search <query>` | Find and resume saved conversations; search finds Claude transcripts by content, then resumes the selected one |
 | `t session cd [repo] [slot]` / `t session read <repo> [slot]` | Enter a worktree or read its terminal log (`--dump` writes plain output) |
 | `t session move [repo] [slot] --host <host>` | Pick a current session or move an explicit slot; `--from <host>` pulls it here or sends directly with `--host` |
-| `t remote open [repo] [slot] [--host <host>]` | Choose a host and attach to an existing session; `--new` starts fresh |
-| `t remote resume [repo] [slot] [--host <host>] [--all]` | Choose a host and resume saved history discovered there |
+| `t remote open [host] [repo] [slot]` | Choose a host and attach to an existing session; `--new` starts fresh |
+| `t remote resume [host] [repo] [slot] [--all]` | Choose a host and resume saved history discovered there |
 | `t remote move [repo] [slot] [--from <source>] [--host <dest>]` | Choose a current local/remote conversation and its destination |
 | `t session view-plan` / `t session paste` | View a Claude session plan or pass an attachment |
 | `t session open-app [push\|pull] [repo] [slot]` | Advanced Codex handoff options for macOS, including preview, plan, and thread selection; `t app` is the short form |
@@ -506,10 +506,10 @@ Use the `remote` family to choose where to work:
 
 ```sh
 t remote open                         # choose a host, then an existing session there
-t remote open api 2 --host mini        # attach to this slot on mini
-t remote open api --host mini --new    # start fresh on mini
-t remote resume api --host mini        # choose saved history discovered on mini
-t remote resume --all --host mini       # all repositories, regardless of remote login directory
+t remote open mini api 2        # attach to this slot on mini
+t remote open mini api --new    # start fresh on mini
+t remote resume mini api        # choose saved history discovered on mini
+t remote resume mini --all       # all repositories, regardless of remote login directory
 t session resume --all                  # local and remote-only repositories; clone only after selection
 t remote move                         # choose a current session, then its destination
 t remote move api 2 --from mini --host cloud
@@ -537,8 +537,12 @@ worktree push, transcript sync, or landing checks stop the transfer. If a failur
 occurs after stopping the source, its transcript and worktree remain there for
 recovery; the destination is not launched with stale code.
 
-`remote open` browses on the chosen host; an empty inventory does not create a
-session. `--new` explicitly requests a fresh session. `remote resume --host H`
+`remote open` shows the chosen host’s sessions in a local picker and opens additional
+selections in local terminal tabs before attaching the first session.
+The explicit `[repo] [slot] --host HOST` form remains compatible. Unflagged
+repository-only targets that could be mistaken for hosts require `--host`.
+`remote open` browses the chosen host; an empty inventory does not create a
+session. `--new` explicitly requests a fresh session. `remote resume H`
 discovers saved history on H, while `session resume --host H` carries locally
 discovered history to H. A live selection with a different `--host` is refused
 before any batch action and provides an exact `remote move` command. Matching
@@ -987,6 +991,15 @@ only the original Markdown, including for an excluded repository. Editing with
 `--repo` creates a repository-only copy only when text actually changes; exclusion
 remains in effect. Named workflows carry their instructions when copied or assigned.
 **Edit reusable instructions** still opens the separate `t profile edit` profile.
+
+The supplied public-repository issue-before-code rule is ordinary editable workflow
+Markdown. `t config workflow list` shows whether the supplied text is included;
+use `t config workflow instructions show` to read it and `instructions edit` to
+change it. Installation migrates older saved workflows once, preserving existing
+prose, and removes the separate managed public-issues block. Subsequent installs
+preserve your edits or deliberate removal. Repository/task rules still take
+precedence, and excluded workflows suppress their supplied instructions.
+
 
 The implementation stage asks agents to inherit the parent's current speed
 (including Fast or Ultrafast), independently of model and reasoning effort, and

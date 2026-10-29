@@ -10955,9 +10955,9 @@ Run `t help issue <verb>` for flags and arguments.
                  "Add infers the checkout directory name; --alias sets a short name.\n"
                  "Use `t config setup [dirs ...]` to select several checkouts (default ~/config).\n")
     if group == "remote":
-        extra = ("\nTARGETS\n  t remote open [repo] [slot] [--host HOST] [--new]\n"
+        extra = ("\nTARGETS\n  t remote open [host] [repo] [slot] [--new]\n"
                  "  t remote move [repo] [slot] [--session ID] [--from SOURCE] [--host DEST]\n"
-                 "  t remote resume [repo] [slot] [--host HOST] [--days N] [--all]\n"
+                 "  t remote resume [host] [repo] [slot] [--days N] [--all]\n"
                  "\nUse a registered alias, checkout basename or origin name on the selected host.\n"
                  "Infer the repository from the current checkout, or browse all repositories outside one.\n"
                  "Omitted hosts use a picker labeled for opening, starting fresh, resuming, or moving.\n"
@@ -11098,7 +11098,31 @@ class _CommandParser(argparse.ArgumentParser):
     def parse_args(self, args=None, namespace=None):
         if self.prog == "t" and args is not None:
             args = _canonical_argv(list(args))
-        return super().parse_args(args, namespace)
+            if len(args) >= 2 and args[0] == "remote" and args[1] in ("open", "resume", "move"):
+                # Optional positionals otherwise stop at an intervening flag in
+                # argparse. Match the shell's flags-anywhere target grammar.
+                options, targets = [], []
+                rest = iter(args[2:])
+                for word in rest:
+                    if word.startswith("-"):
+                        options.append(word)
+                        if word in ("--host", "--from", "--session", "-s", "--days"):
+                            value = next(rest, None)
+                            if value is None:
+                                self.error(f"remote: {word} requires a value")
+                            options.append(value)
+                    else:
+                        targets.append(word)
+                args = [*args[:2], *options, *targets]
+        parsed = super().parse_args(args, namespace)
+        if getattr(parsed, "verb", None) == "remote" and parsed.action in ("open", "resume"):
+            if parsed.host:
+                if parsed.slot is not None:
+                    self.error("remote: --host accepts only [repo] [slot]")
+                parsed.slot, parsed.repo = parsed.repo, parsed.target_host
+            else:
+                parsed.host = parsed.target_host
+        return parsed
 
     def format_help(self):
         if self.prog == "t":
@@ -11223,7 +11247,7 @@ def build_parser():
     p._group_parsers["remote"] = remote
     for action, summary, details in (
         ('open', 'Choose the host where the session will run. Open an existing session there; --new starts a '
-            'fresh session there. Infer the current repository; outside one, browse all. Omit --host to '
+            'fresh session there. Infer the current repository; outside one, browse all. Omit the host to '
             'choose a host. Scripts require explicit targets.',
          """DETAILS
 
@@ -11248,7 +11272,7 @@ def build_parser():
 
   Failed ownership checks stop the move."""),
         ('resume', 'Browse saved history on the selected SSH host and resume it there. Infer the current '
-            'repository; outside one, browse all. Omit --host to select a host. Scripts require '
+            'repository; outside one, browse all. Omit the host to select a host. Scripts require '
             'explicit targets. Unavailable peers warn; known owners prevent duplicate resumes. To send '
             'locally discovered history instead, use t session resume --host HOST.',
          """DETAILS
@@ -11264,15 +11288,19 @@ def build_parser():
             description=summary, help_details=details + """
 
 TARGETS
-  Use [repo] [slot], infer the current checkout, or browse all repositories outside one.
-  Without --host choose a registered SSH host with Enter.
+  Open/resume use [host] [repo] [slot]; move uses [repo] [slot] --host HOST.
+  Infer the current checkout, or browse all repositories outside one.
+  Omit the host to choose a registered SSH host with Enter.
+  Compatibility: [repo] [slot] --host HOST retains its original meaning.
+  Legacy repository-only targets that could be mistaken for hosts require --host.
   Selection requires a terminal and fzf; scripts must provide explicit targets.
   Cancellation returns 130.""")
+        if action != "move":
+            leaf.add_argument("target_host", metavar="host", nargs="?", help="SSH host alias or target (default: host picker)")
         leaf.add_argument("repo", nargs="?", help="repository alias, basename or origin name (default: current checkout or all)")
         leaf.add_argument("slot", nargs="?", help="slot number; a lone number uses the current repository")
-        leaf.add_argument("--host", help=(
-            "saved-history source and execution host alias or target; omitted: host picker"
-            if action == "resume" else "execution destination SSH host alias or target; omitted: host picker"))
+        leaf.add_argument("--host", help=("execution destination SSH host alias or target; omitted: host picker"
+                                         if action == "move" else argparse.SUPPRESS))
         if action == "open":
             leaf.add_argument("--new", action="store_true", help="start a fresh session on the chosen host")
         elif action == "resume":
