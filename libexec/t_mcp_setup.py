@@ -1,11 +1,17 @@
 """Additive Codex session MCP registration using the client's own config writer."""
 import json
 import os
+from pathlib import Path
+import runpy
 import shutil
 import subprocess
 import sys
 
 
+_spinner = runpy.run_path(str(Path(__file__).with_name("t_progress.py")))["spinner"]
+
+
+@_spinner("Registering Codex session tools")
 def install(command):
     binary = shutil.which('codex')
     if not binary:

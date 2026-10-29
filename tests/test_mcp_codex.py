@@ -144,3 +144,14 @@ def test_codex_invalid_identity(t_mod):
     t_mod._codex_scan_line(st, record('session_meta', {'id': 'a', 'cwd': '/repo'}))
     t_mod._codex_scan_line(st, record('session_meta', {'id': 'b', 'cwd': '/repo'}))
     assert st['invalid_identity']
+
+
+def test_codex_moved_session_uses_latest_turn_worktree(t_mod):
+    st = t_mod._index_empty(1)
+    t_mod._tx_scan_line(st, record('session_meta', {'id': 'a', 'cwd': '/repo/t-2', 'git': {'branch': 'dev/t-2'}}))
+    t_mod._tx_scan_line(st, record('turn_context', {'cwd': '/repo/t-1'}))
+    assert st['cwd'] == '/repo/t-1'
+    assert st['branch'] is None
+    for cwd in (None, [], 'relative'):
+        t_mod._tx_scan_line(st, record('turn_context', {'cwd': cwd}))
+    assert st['cwd'] == '/repo/t-1'

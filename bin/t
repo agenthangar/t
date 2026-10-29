@@ -9244,7 +9244,7 @@ def cmd_app(cfg, args, *, saved=None):
 # cache writes are <key>.<pid>.tmp + os.replace, never a shared tmp name.
 
 _PR_RE = re.compile(r"github\.com/([\w.-]+)/([\w.-]+)/pull/(\d+)")
-_INDEX_V = 2
+_INDEX_V = 3
 _INDEX_HEAD, _INDEX_TAIL = 8, 72   # prompts kept per transcript: first 8 + last 72
 _INDEX_TEXT = 400                  # chars kept per prompt
 _INDEX_ASST = 300                  # chars kept of the last assistant message
@@ -9334,7 +9334,7 @@ def _tx_scan_line(st, raw):
     line = line.rstrip("\r\n")
     if not line:
         return
-    if st.get('agent') == 'codex' or re.search(r'"type"\s*:\s*"(?:session_meta|response_item)"', line):
+    if st.get('agent') == 'codex' or re.search(r'"type"\s*:\s*"(?:session_meta|response_item|turn_context)"', line):
         _codex_scan_line(st, line)
         return
     if "/pull/" in line:
@@ -9489,6 +9489,10 @@ def _codex_scan_line(st, line):
         git = payload.get('git')
         if isinstance(git, dict):
             st['branch'] = git.get('branch')
+    elif rec.get('type') == 'turn_context':
+        cwd = payload.get('cwd')
+        if isinstance(cwd, str) and os.path.isabs(cwd) and cwd != st.get('cwd'):
+            st.update(cwd=cwd, branch=None)
     elif rec.get('type') == 'response_item' and payload.get('type') == 'message':
         content = payload.get('content')
         if not isinstance(content, list):
