@@ -4674,7 +4674,10 @@
     "config workflow exclude": "_cmd_workflow workflow_repo",
     "config workflow inherit": "_cmd_workflow workflow_repo",
     "config workflow instructions show": "_cmd_workflow workflow_repo",
-    "config workflow instructions edit": "_cmd_workflow workflow_repo"
+    "config workflow instructions edit": "_cmd_workflow workflow_repo",
+    "config workflow runners list": "_runner_scope resolves registered repository selectors before runner actions",
+    "config workflow runners edit": "_runner_scope resolves registered repository selectors before runner actions",
+    "config workflow runs start": "_runner_scope resolves registered repository selectors before runner actions"
   },
   "command_aliases": {
     "list_verbs": {
