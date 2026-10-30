@@ -9374,6 +9374,11 @@ tmux set-option -p -t "=$session:" remain-on-exit on || exit 1
 kill -TERM "$cpid" || exit 1
 for attempt in {{1..100}}; do
   kill -0 "$cpid" 2>/dev/null || exit 0
+  # An exited child can remain visible until tmux reaps it. Never treat an
+  # unreadable or live process state as proof of exit.
+  if pstate=$(ps -o stat= -p "$cpid" 2>/dev/null) && [[ $pstate == *Z* ]]; then
+    exit 0
+  fi
   sleep 0.05
 done
 print -u2 -- 'Codex CLI has not exited; the app was not opened. Wait and run t app again.'
