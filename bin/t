@@ -4608,6 +4608,18 @@ def _new_sh_state(path):
     return s
 
 
+def _new_sh_origin_base(path):
+    """Read fetched origin defaults, matching the shell worktree resolver."""
+    r = _run(["git", "-C", path, "symbolic-ref", "-q", "refs/remotes/origin/HEAD"])
+    ref = r.stdout.strip() if r.returncode == 0 else ""
+    candidates = ([ref] if ref.startswith("refs/remotes/origin/") and ref != "refs/remotes/origin/HEAD" else [])
+    candidates += ["refs/remotes/origin/main", "refs/remotes/origin/master"]
+    for ref in candidates:
+        if _run(["git", "-C", path, "rev-parse", "--verify", "-q", ref + "^{commit}"]).returncode == 0:
+            return ref.removeprefix("refs/remotes/")
+    return None
+
+
 def _new_sh_gh(slug):
     if not shutil.which("gh"):
         return "error", "gh not found — brew install gh (Linux: apt install gh)"
@@ -5097,8 +5109,8 @@ def cmd_checkout(cfg, args):
         return 1
     if _instructions_offer([path], instruction_mode, "t checkout"):
         return 1
-    if not _new_sh_state(path)["has_origin_main"]:
-        print("⚠ origin/main is missing; t open needs it. Create a main branch on GitHub and fetch origin before opening a session.",
+    if not _new_sh_origin_base(path):
+        print("⚠ no fetched origin default branch found; fetch origin and run git remote set-head origin -a before opening a session.",
               file=sys.stderr)
     print(f"✓ {_new_land_summary(steps)}: {alias} → {_tilde(path)}")
     if not os.environ.get("T_SETUP_SHIM") and register[0] == "run":
@@ -12544,8 +12556,8 @@ RECEIVE AND REMOTE MOVES
     sp = sub.add_parser("checkout", help="clone an existing GitHub repo and register it locally",
         description='Clone a GitHub repository and register it locally. Default destination: ~/code/REPO; default '
             'alias: repository name. Reuse a matching clone without fetching or resetting; refuse conflicting '
-            'paths or aliases. No remote hosts or GitHub settings change. t session open expects origin/main; '
-            'other default branches produce a warning.',
+            'paths or aliases. No remote hosts or GitHub settings change. '
+            'Sessions use the fetched origin default branch.',
         help_details="""DETAILS
 
   Clone an existing github.com repository to ~/code/<repo> (or --path), then
@@ -12560,7 +12572,7 @@ RECEIVE AND REMOTE MOVES
   remote hosts.
 
   With T_AUTO_TRUST=1, apply the usual optional agent trust sync. t session open
-  needs origin/main; a different default branch gets a warning after checkout.""")
+  uses origin/HEAD, with fetched main or master as fallbacks.""")
     sp.add_argument("url", help="GitHub HTTPS or SSH clone URL (owner/repo)")
     sp.add_argument("alias", nargs="?", help="DEV_REPOS key (default: repository name)")
     sp.add_argument("--path", metavar="DIR", help="local clone destination (default: ~/code/<repo>)")

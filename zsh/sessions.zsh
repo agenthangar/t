@@ -1811,12 +1811,13 @@ _dev_kill_fg() {
 # can have a different commit id, so accept an identical first-parent main tree
 # or the exact head recorded for a merged PR in the existing state cache.
 _dev_kill_no_pending_work() {
-  local cwd="$1" head main base tree trees dirty origin slug file cache
+  local cwd="$1" head main base tree trees dirty origin slug file cache origin_base
   [[ -d $cwd && -e $cwd/.git ]] || return 1
   dirty=$(git -C "$cwd" status --porcelain --untracked-files=all 2>/dev/null) || return 1
   [[ -z $dirty ]] || return 1
   head=$(git -C "$cwd" rev-parse --verify HEAD 2>/dev/null) || return 1
-  main=$(git -C "$cwd" rev-parse --verify refs/remotes/origin/main 2>/dev/null)
+  origin_base=$(_dev_origin_base "$cwd")
+  main=$(git -C "$cwd" rev-parse --verify "refs/remotes/$origin_base" 2>/dev/null)
   if [[ -n $main ]]; then
     git -C "$cwd" merge-base --is-ancestor "$head" "$main" 2>/dev/null && return 0
     base=$(git -C "$cwd" merge-base "$head" "$main" 2>/dev/null)
@@ -2389,7 +2390,7 @@ _t_history_attach() {
 # t issue holds the repository allocation lock across prepare + launch. These
 # helpers deliberately never reuse a parked worktree or fall back to main.
 _t_issue_prepare() {
-  local repo="$1" agent="$2" start_ref="${3:-origin/main}" slot=1 wt br owner gitdir
+  local repo="$1" agent="$2" start_ref="${3:-}" slot=1 wt br owner gitdir
   local _repo_selector _repo_selector_rc
   _repo_selector=$(_dev_resolve_repo "$repo"); _repo_selector_rc=$?
   (( _repo_selector_rc == 2 )) && return 2
@@ -2399,6 +2400,10 @@ _t_issue_prepare() {
   _dev_agent_check "$agent" || return 1
   command -v tmux >/dev/null || return 1
   git -C "${DEV_REPOS[$repo]}" fetch -q --prune origin || return 1
+  if [[ -z $start_ref ]]; then
+    start_ref=$(_dev_origin_base "${DEV_REPOS[$repo]}") || return 1
+    start_ref="refs/remotes/$start_ref"
+  fi
   while true; do
     wt=$(_dev_worktree_path "$repo" "$slot") || return 1
     br=$(_dev_worktree_branch "$repo" "$slot")

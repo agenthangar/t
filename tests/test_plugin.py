@@ -356,7 +356,8 @@ def test_worktree_creation_failure_still_explains_repair(tmp_path):
     result = shell(tmp_path, '_dev_worktree_refuse api 1',
                    local_text='DEV_REPOS[api]="$HOME/api"\n')
     assert "could not create the worktree" in result.stderr
-    assert "worktree prune" in result.stderr
+    assert "no fetched origin default branch" in result.stderr
+    assert "remote set-head origin -a" in result.stderr
     assert "t app pull" not in result.stderr
 
 
