@@ -780,7 +780,7 @@ _t_beam_xlate() { _t_beam "$@"; }
 # key for `on`), and slot/flags after. Pulls live from the ${(k)DEV_REPOS} /
 # ${(k)REMOTE_HOSTS} arrays so it stays current with ${T_LOCAL_RC}.
 _t() {
-  local -a nouns=(session issue share remote repo cursor hosts agentcore config profile policy agent system login help)
+  local -a nouns=(session issue share remote repo cursor hosts agentcore config mcp profile policy agent system login help)
   if (( CURRENT == 2 )); then
     _describe -t nouns 't command group' nouns
     return
@@ -844,6 +844,7 @@ _t() {
     return
   fi
   case $group in
+    mcp) actions=(status install uninstall) ;;
     remote) actions=(open move resume) ;;
     session) actions=(open list ls close restart push pop resume history cd move read view-plan paste search open-app goal) ;;
     repo) actions=(list ls cd locate create clone add) ;;
@@ -867,6 +868,11 @@ _t() {
       return
     fi
     _describe -t actions 't action' actions
+    return
+  fi
+  if [[ $group == mcp ]]; then
+    if [[ $action == status ]]; then _values 'flag' --json -h --help
+    else _values 'flag' -h --help; fi
     return
   fi
   if [[ $group == config && $action == workflow ]]; then
