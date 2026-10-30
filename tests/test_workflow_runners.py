@@ -190,7 +190,7 @@ def test_runner_cli_contract(t_mod):
         assert args.verb == 'config'
         readonly = words in ('runners list', 'runs list', 'runs status', 'runs logs')
         assert t_mod._command_readonly(argv, terminal=True) is readonly
-    for group in ('config workflow runners', 'config workflow runs'):
+    for group in ('workflow runners', 'workflow runs'):
         assert 'USAGE' in t_mod._group_help(group)
         assert t_mod.main(group.split()) == 0
     assert t_mod._command_readonly(['config', 'workflow', 'runs'])

@@ -282,7 +282,7 @@ def test_completion_exposes_groups_and_group_actions(tmp_path):
     assert lines[:3] == ["describe:nouns", "describe:actions", "describe:actions"]
     assert lines[3].startswith("values:")
     source = (ROOT / "zsh" / "shim.zsh").read_text()
-    assert "local -a nouns=(session issue share remote repo cursor hosts agentcore config profile policy agent system login help)" in source
+    assert "local -a nouns=(session issue share remote repo cursor hosts agentcore workflow config profile policy agent system login help)" in source
 
 
 @pytest.mark.skipif(not shutil.which("zsh"), reason="zsh is required")
@@ -569,4 +569,29 @@ def test_remote_host_first_completion_and_legacy_host_flag(tmp_path):
     assert result.stdout.splitlines() == [
         'values:host:lab', 'values:repo:api', 'message:slot', 'values:repo:api',
         'message:slot', 'values:host:lab', 'values:repo:api', 'values:flag:-h,--help,--new',
+    ]
+
+
+@pytest.mark.skipif(not shutil.which("zsh"), reason="zsh is required")
+def test_canonical_workflow_completion_and_dispatch(tmp_path):
+    result = shell(tmp_path, '''
+        DEV_REPOS=(api /tmp/api)
+        _describe() { print -r -- "actions:${(j:,:)actions}"; }
+        _values() { print -r -- "values:${(j:,:)argv[2,-1]}"; }
+        local -a words
+        words=(t workflow '') CURRENT=3; _t
+        words=(t workflow list --) CURRENT=4; _t
+        words=(t workflow list --repo '') CURRENT=5; _t
+        words=(t workflow instructions '') CURRENT=4; _t
+        words=(t help workflow runs '') CURRENT=5; _t
+        words=(t workflow runners setup --) CURRENT=5; _t
+        t workflow list --repo api --json
+    ''')
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == [
+        "actions:list,ls,add,use,exclude,inherit,edit,instructions,runners,runs,sync",
+        "values:--repo,--all,--json,-h,--help", "values:api",
+        "values:show,edit", "values:start,list,ls,status,logs,artifacts,cancel,cleanup",
+        "values:--github-repo,--create,-h,--help",
+        "bin:<workflow><list><--repo><api><--json>",
     ]

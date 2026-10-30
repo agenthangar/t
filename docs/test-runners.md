@@ -1,6 +1,6 @@
 # Test current work on remote runners
 
-`t config workflow runs start` sends one immutable snapshot of current files to
+`t workflow runs start` sends one immutable snapshot of current files to
 configured GitHub-hosted Linux/macOS runners and registered SSH hosts. It waits
 for every selected target and retains a local receipt, combined logs and declared
 artifacts. Source edits do not need a commit or push. This is test execution;
@@ -20,10 +20,10 @@ Use **t config open → Agent workflow → Edit default workflow → Test runner
 or the explicit JSON editor:
 
 ```sh
-t config workflow runners edit
-t config workflow runners edit careful
-t config workflow runners edit --repo api
-t config workflow runners list --repo api --json
+t workflow runners edit
+t workflow runners edit careful
+t workflow runners edit --repo api
+t workflow runners list --repo api --json
 ```
 
 The global default applies outside explicit repository overrides. A named
@@ -72,7 +72,7 @@ source repository is public. Bootstrap it explicitly:
 
 ```sh
 gh auth status
-t config workflow runners setup --github-repo OWNER/private-test-runners --create
+t workflow runners setup --github-repo OWNER/private-test-runners --create
 ```
 
 Omit `--create` for an existing empty or already managed private broker. Public
@@ -95,15 +95,15 @@ an interrupted installation resumable.
 Run from the source checkout or any of its linked worktrees:
 
 ```sh
-t config workflow runs start -- python3 -m pytest
-t config workflow runs start --target linux --include tests/new_test.py -- python3 -m pytest
-t config workflow runs start --os macos --capability tests --timeout 1200 -- python3 -m pytest
-t config workflow runs list --json
-t config workflow runs status RUN_UUID --json
-t config workflow runs logs RUN_UUID --target linux
-t config workflow runs artifacts RUN_UUID --output ./downloaded-results
-t config workflow runs cancel RUN_UUID
-t config workflow runs cleanup RUN_UUID
+t workflow runs start -- python3 -m pytest
+t workflow runs start --target linux --include tests/new_test.py -- python3 -m pytest
+t workflow runs start --os macos --capability tests --timeout 1200 -- python3 -m pytest
+t workflow runs list --json
+t workflow runs status RUN_UUID --json
+t workflow runs logs RUN_UUID --target linux
+t workflow runs artifacts RUN_UUID --output ./downloaded-results
+t workflow runs cancel RUN_UUID
+t workflow runs cleanup RUN_UUID
 ```
 
 Use `--target` repeatedly to choose targets explicitly. `--os` and repeatable
@@ -146,8 +146,8 @@ confirmed, the receipt reports unknown state rather than a false cancellation.
 
 After a controller exits unexpectedly, `runs cleanup RUN_UUID` recovers completed
 remote results while retaining active jobs. If preparation stopped before a target
-was dispatched, use `t config workflow runs cancel RUN_UUID` followed by
-`t config workflow runs cleanup RUN_UUID` to release its recorded source resources.
+was dispatched, use `t workflow runs cancel RUN_UUID` followed by
+`t workflow runs cleanup RUN_UUID` to release its recorded source resources.
 
 ## Privacy, lifecycle and provider choice
 

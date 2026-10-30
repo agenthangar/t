@@ -644,7 +644,7 @@ after a short delay. It clears before results, pickers, or errors; redirected,
 JSON, MCP, and remote scanner output stays free of progress animation.
 
 `ls` and `list` are interchangeable for `session`, `repo`, `cursor`, `hosts`,
-`issue`, and `config workflow`. Root `t ls` and `t list` both list sessions.
+`issue`, and `workflow`. Root `t ls` and `t list` both list sessions.
 The old `t repos` family has been removed; use `t repo list`, `t repo locate`,
 `t repo cd`, and `t repo add`.
 
@@ -927,7 +927,9 @@ It registers only on this machine and leaves the GitHub repository and its setti
 unchanged. If the remote has no `main` branch, checkout succeeds with a warning:
 `t session open` needs a fetched `origin/main` to create task worktrees.
 
-Configure named staged workflows in `t config open` → **Agent workflow**. Choose
+Configure named staged workflows in `t config open` → **Workflows**, or use
+`t workflow` for command help. The former `t config workflow` routes remain
+compatibility aliases. Choose
 **Use recommended defaults** to activate planning with `gpt-6-astra`, implementation
 with `gpt-6.1-sol`, and review with `gpt-6-astra`. **Edit default workflow** and
 **Edit named workflow** give each stage separate model and reasoning-effort controls.
@@ -948,9 +950,9 @@ snapshot serves every target; source files need no commit or push. Bootstrap a
 dedicated private GitHub broker explicitly, then run:
 
 ```sh
-t config workflow runners list
-t config workflow runs start -- python3 -m pytest
-t config workflow runs status RUN_UUID --json
+t workflow runners list
+t workflow runs start -- python3 -m pytest
+t workflow runs status RUN_UUID --json
 ```
 
 See [test runners](docs/test-runners.md) for configuration, explicit untracked
@@ -959,13 +961,13 @@ inputs, artifacts, costs, cancellation and resource cleanup.
 Create and assign reusable workflows directly:
 
 ```sh
-t config workflow add careful             # copy the current default, without selecting it
-t config workflow add quick --from careful
-t config workflow use careful              # select the global default
-t config workflow use quick --repo api     # api follows the shared quick definition
-t config workflow exclude --repo api       # disable only api; remember its source
-t config workflow inherit --repo api       # remove api's override; follow global
-t config workflow list --all               # list named definitions and usage
+t workflow add careful             # copy the current default, without selecting it
+t workflow add quick --from careful
+t workflow use careful              # select the global default
+t workflow use quick --repo api     # api follows the shared quick definition
+t workflow exclude --repo api       # disable only api; remember its source
+t workflow inherit --repo api       # remove api's override; follow global
+t workflow list --all               # list named definitions and usage
 ```
 
 Repository settings offer **Choose named workflow**, **Customize only this
@@ -1003,9 +1005,9 @@ Use **Instructions · edit Markdown** inside a workflow to write ordinary headin
 bullets and prose in your editor. No JSON is needed. The equivalent commands are:
 
 ```sh
-t config workflow instructions edit careful
-t config workflow instructions show careful
-t config workflow instructions edit --repo api
+t workflow instructions edit careful
+t workflow instructions show careful
+t workflow instructions edit --repo api
 ```
 
 Omitting both `NAME` and `--repo` selects the current global default. `show` prints
@@ -1015,8 +1017,8 @@ remains in effect. Named workflows carry their instructions when copied or assig
 **Edit reusable instructions** still opens the separate `t profile edit` profile.
 
 The supplied public-repository issue-before-code rule is ordinary editable workflow
-Markdown. `t config workflow list` shows whether the supplied text is included;
-use `t config workflow instructions show` to read it and `instructions edit` to
+Markdown. `t workflow list` shows whether the supplied text is included;
+use `t workflow instructions show` to read it and `instructions edit` to
 change it. Installation migrates older saved workflows once, preserving existing
 prose, and removes the separate managed public-issues block. Subsequent installs
 preserve your edits or deliberate removal. Repository/task rules still take
@@ -1031,14 +1033,14 @@ and inheritance depend on the runtime's exposed controls or documented behavior.
 Agents must disclose unsupported or unverifiable speed; the policy does not promise
 an immediate change during an active turn.
 
-`t config workflow edit [NAME]` is the advanced JSON editor for a shared definition;
+`t workflow edit [NAME]` is the advanced JSON editor for a shared definition;
 `--repo api` edits an independent repository policy. NAME and `--repo` cannot be
 combined. Set a repository editor's whole document to `null` to inherit the global
 settings. Both editors use `VISUAL`, then `EDITOR`, then `vi`; unchanged or invalid
 edits and unsuccessful editor exits publish nothing. Bare `t config edit` still
 edits local shell configuration.
 
-`t config workflow list [--repo api]` prints scope, source, exclusion, model-stage
+`t workflow list [--repo api]` prints scope, source, exclusion, model-stage
 state, behavior preferences, custom-text presence, precedence and the effective
 stage/model/effort table. Add `--json` for machine output. `--all` lists
 the named catalogue and usage; it cannot combine with `--repo`. A registered
@@ -1445,6 +1447,6 @@ package identities, unknown coverage, local notices and OSV request metadata.
 
 Workflow changes automatically publish native instructions and attempt bounded
 propagation to supported running sessions and registered hosts. Inspect status with
-`t config workflow list`; retry pending work with `t config workflow sync`.
+`t workflow list`; retry pending work with `t workflow sync`.
 Live instruction reload and current-turn model changes cannot be verified or forced.
 See [the terminal contract](ui/README.md) for scope, retries and runtime limits.
