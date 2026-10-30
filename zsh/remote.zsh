@@ -1017,7 +1017,7 @@ _pr_state_tag() {
 # refreshes the repo's PR cache in the background when work still looks pending.
 # Unknown/unreadable history falls back to the dirty check alone.
 _pr_work_continued() {
-  local wt=$1 hf=$2 head= cur dirty f main base tree trees
+  local wt=$1 hf=$2 head= cur dirty f main base tree trees origin_base
   [[ -e $wt/.git ]] || return 1
   dirty=$(git -C "$wt" status --porcelain 2>/dev/null) || return 1
   [[ -n $dirty ]] && return 0
@@ -1031,7 +1031,8 @@ _pr_work_continued() {
     [[ -f ${f%.head} ]] || continue
     [[ $(<"${f%.head}") == MERGED && $(<"$f") == $cur ]] && return 1
   done
-  main=$(git -C "$wt" rev-parse --verify refs/remotes/origin/main 2>/dev/null)
+  origin_base=$(_dev_origin_base "$wt")
+  main=$(git -C "$wt" rev-parse --verify "refs/remotes/$origin_base" 2>/dev/null)
   if [[ -n $main ]]; then
     git -C "$wt" merge-base --is-ancestor "$cur" "$main" 2>/dev/null && return 1
     tree=$(git -C "$wt" rev-parse 'HEAD^{tree}' 2>/dev/null) || return 1

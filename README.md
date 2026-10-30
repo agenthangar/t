@@ -396,7 +396,11 @@ press Enter to confirm and close the whole selection without further prompts.
 Explicit targets still confirm live-agent interruption unless `-y` is supplied.
 Desktop ownership checks apply in both cases.
 
-Repositories need a fetched `origin/main` for worktree sessions. `t repo create` can create
+Worktree sessions use the fetched default branch recorded in `origin/HEAD`,
+falling back to fetched `origin/main` or `origin/master` when that record is missing
+or dangling. After a remote default-branch change, refresh the record with
+`git fetch origin` and `git remote set-head origin -a`.
+`t repo create` can create
 and register a GitHub repository with the expected setup, showing its plan first.
 To use an existing GitHub repository, run `t repo clone https://github.com/owner/repo.git`.
 Use `t system diagnose` when something is missing.
@@ -924,8 +928,8 @@ Use `--path DIR` to choose another destination, or `--dry-run` to inspect the pl
 It accepts GitHub HTTPS and SSH clone URLs. Re-running it preserves a matching
 clone, including uncommitted work; a conflicting destination or alias is refused.
 It registers only on this machine and leaves the GitHub repository and its settings
-unchanged. If the remote has no `main` branch, checkout succeeds with a warning:
-`t session open` needs a fetched `origin/main` to create task worktrees.
+unchanged. Sessions support `main`, `master`, and custom default branches through
+`origin/HEAD`. Checkout warns if no fetched origin default can be resolved.
 
 Configure named staged workflows in `t config open` → **Workflows**, or use
 `t workflow` for command help. The former `t config workflow` routes remain
