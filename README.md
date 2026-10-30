@@ -944,15 +944,16 @@ not change the agent's launch defaults. Planning and implementation accept `auto
 or an explicit effort (`minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `ultra`);
 review accepts an explicit effort or `one-level-lower`.
 
-Configure **Test runners** within a workflow to test current uncommitted work on
+Open **t config → Test runners** to choose the global default, a named workflow,
+or a registered repository. Use its runner settings to test current uncommitted work on
 managed GitHub-hosted Linux/macOS machines or a registered SSH host. One immutable
 snapshot serves every target; source files need no commit or push. Bootstrap a
 dedicated private GitHub broker explicitly, then run:
 
 ```sh
-t workflow runners list
-t workflow runs start -- python3 -m pytest
-t workflow runs status RUN_UUID --json
+t runners list
+t runners runs start -- python3 -m pytest
+t runners runs status RUN_UUID --json
 ```
 
 See [test runners](docs/test-runners.md) for configuration, explicit untracked
@@ -1191,7 +1192,7 @@ Ultrafast where supported), repository choices, and hosts. Teams can share those
 workflows and agent configurations to standardize the parts of their setup that
 matter.
 
-The settings screen groups **Session defaults**, **Agents**, **Workflow**, **MCP server**,
+The settings screen groups **Session defaults**, **Agents**, **Workflows**, **Runners**, **MCP server**,
 **Repositories & worktrees**, **Remote hosts**, and **Finish**. Workflow has its
 own section, separate from agent settings and local model setup; host registration
 and the default beam destination stay together. Rows ending in **›** open a settings collection

@@ -157,7 +157,7 @@ def setup_github(repository, create=False, state_dir=None):
 def _broker(repository, state_dir):
     binding = _read(state_path(state_dir) / "brokers.json", {}).get(repository)
     if not binding or binding.get("protocol") != PROTOCOL:
-        raise RunnerError(f"run t workflow runners setup for private broker {repository} first")
+        raise RunnerError(f"run t runners setup for private broker {repository} first")
     remote = _private(repository, binding["repository_id"])
     for path, expected in _templates().items():
         item = _api(f"repos/{repository}/contents/{path}")

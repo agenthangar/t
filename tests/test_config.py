@@ -349,15 +349,15 @@ def test_config_main_menu_shows_repo_aliases(t_mod, config_cli, monkeypatch):
         assert label == "Local settings"
         assert kwargs["values"]["repos"] == "api, t"
         assert [key for key, _ in rows] == [
-            "tool", "mode", "trust", *t_mod.AGENTS, "local", "workflow",
+            "tool", "mode", "trust", *t_mod.AGENTS, "local", "workflow", "runners",
             "mcp", "repos", "worktrees", "hosts", "beam", "edit", "save", "cancel",
         ]
         assert kwargs["sections"] == {
-            "tool": "Session defaults", t_mod.AGENTS[0]: "Agents", "workflow": "Workflows",
+            "tool": "Session defaults", t_mod.AGENTS[0]: "Agents", "workflow": "Workflows", "runners": "Runners",
             "mcp": "MCP server", "repos": "Repositories & worktrees", "hosts": "Remote hosts", "edit": "Finish",
         }
         assert dict(rows)["workflow"] == "Workflows ›"
-        collections = {*t_mod.AGENTS, "local", "workflow", "mcp", "repos", "worktrees", "hosts"}
+        collections = {*t_mod.AGENTS, "local", "workflow", "runners", "mcp", "repos", "worktrees", "hosts"}
         assert {key for key, text in rows if text.endswith(" ›")} == collections
         return "cancel"
     ui.pick = pick
@@ -394,7 +394,7 @@ def test_config_grouped_menu_narrow_navigation(t_mod, config_cli, monkeypatch, w
     cfg.models = {agent: "long-model-name-with-context-window" for agent in t_mod.AGENTS}
     before = t_mod._config_state(cfg)
     # Visit each row in both directions without entering settings or saving.
-    moves = len(t_mod.AGENTS) + 13
+    moves = len(t_mod.AGENTS) + 14
     ui = make_ui(t_mod, ["j"] * moves + ["k"] * moves + ["q"], width, height)
     monkeypatch.setattr(t_mod, "_RailUI", lambda: ui)
     assert t_mod._config_wizard(cfg) is None

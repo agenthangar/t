@@ -2256,7 +2256,7 @@
             "tests/test_config.py::test_config_group_navigation_retains_focus",
             "tests/test_config.py::test_config_grouped_menu_narrow_navigation"
           ],
-          "notes": "Suggest unique host short names on addition; allow host renaming with defaults preserved and review before saving. Group the hub into Session defaults, Agents, Workflows, MCP server, Repositories & worktrees, Remote hosts, and Finish. Keep all actions directly reachable with stable focus and Save/Discard behavior; collection/setup rows use a trailing submenu cue. Focus and Save remain visible at narrow terminal sizes."
+          "notes": "Suggest unique host short names on addition; allow host renaming with defaults preserved and review before saving. Group the hub into Session defaults, Agents, Workflows, Runners, MCP server, Repositories & worktrees, Remote hosts, and Finish. Keep all actions directly reachable with stable focus and Save/Discard behavior; collection/setup rows use a trailing submenu cue. Focus and Save remain visible at narrow terminal sizes."
         },
         "host_add": {
           "argv": [
@@ -3877,7 +3877,7 @@
       },
       "notes": "Bounded retries through owning runtime control socket and nonrecursive zsh -lic SSH. Never injects turns. Current turns and native instruction reload remain unverified. The raw proxy uses bounded HTTP Upgrade/WebSocket framing; installed private Tomli supplies Python 3.9 parsing without global package changes. Isolated sessions apply retained explicit main intent on guarded resume, while live attach remains unverified."
     },
-    "workflow runners list": {
+    "runners list": {
       "patterns": [
         "list",
         "machine"
@@ -3891,7 +3891,6 @@
       "modes": {
         "default": {
           "argv": [
-            "workflow",
             "runners",
             "list"
           ],
@@ -3905,7 +3904,6 @@
         },
         "json": {
           "argv": [
-            "workflow",
             "runners",
             "list",
             "--json"
@@ -3920,7 +3918,7 @@
         }
       }
     },
-    "workflow runners edit": {
+    "runners edit": {
       "patterns": [
         "action"
       ],
@@ -3933,7 +3931,6 @@
       "modes": {
         "default": {
           "argv": [
-            "workflow",
             "runners",
             "edit"
           ],
@@ -3948,7 +3945,7 @@
         }
       }
     },
-    "workflow runners setup": {
+    "runners setup": {
       "patterns": [
         "action"
       ],
@@ -3961,7 +3958,6 @@
       "modes": {
         "default": {
           "argv": [
-            "workflow",
             "runners",
             "setup",
             "--github-repo",
@@ -3977,7 +3973,7 @@
         }
       }
     },
-    "workflow runs start": {
+    "runners runs start": {
       "patterns": [
         "action",
         "machine"
@@ -3991,7 +3987,7 @@
       "modes": {
         "default": {
           "argv": [
-            "workflow",
+            "runners",
             "runs",
             "start",
             "--",
@@ -4009,7 +4005,7 @@
         },
         "json": {
           "argv": [
-            "workflow",
+            "runners",
             "runs",
             "start",
             "--json",
@@ -4028,7 +4024,7 @@
         }
       }
     },
-    "workflow runs list": {
+    "runners runs list": {
       "patterns": [
         "list",
         "machine"
@@ -4042,7 +4038,7 @@
       "modes": {
         "default": {
           "argv": [
-            "workflow",
+            "runners",
             "runs",
             "list"
           ],
@@ -4056,7 +4052,7 @@
         },
         "json": {
           "argv": [
-            "workflow",
+            "runners",
             "runs",
             "list",
             "--json"
@@ -4071,7 +4067,7 @@
         }
       }
     },
-    "workflow runs status": {
+    "runners runs status": {
       "patterns": [
         "detail",
         "machine"
@@ -4085,7 +4081,7 @@
       "modes": {
         "default": {
           "argv": [
-            "workflow",
+            "runners",
             "runs",
             "status",
             "11111111-1111-4111-8111-111111111111"
@@ -4100,7 +4096,7 @@
         },
         "json": {
           "argv": [
-            "workflow",
+            "runners",
             "runs",
             "status",
             "11111111-1111-4111-8111-111111111111",
@@ -4116,7 +4112,7 @@
         }
       }
     },
-    "workflow runs logs": {
+    "runners runs logs": {
       "patterns": [
         "detail"
       ],
@@ -4129,7 +4125,7 @@
       "modes": {
         "default": {
           "argv": [
-            "workflow",
+            "runners",
             "runs",
             "logs",
             "11111111-1111-4111-8111-111111111111"
@@ -4144,7 +4140,7 @@
         }
       }
     },
-    "workflow runs artifacts": {
+    "runners runs artifacts": {
       "patterns": [
         "action"
       ],
@@ -4157,7 +4153,7 @@
       "modes": {
         "default": {
           "argv": [
-            "workflow",
+            "runners",
             "runs",
             "artifacts",
             "11111111-1111-4111-8111-111111111111"
@@ -4172,7 +4168,7 @@
         }
       }
     },
-    "workflow runs cancel": {
+    "runners runs cancel": {
       "patterns": [
         "action"
       ],
@@ -4185,7 +4181,7 @@
       "modes": {
         "default": {
           "argv": [
-            "workflow",
+            "runners",
             "runs",
             "cancel",
             "11111111-1111-4111-8111-111111111111"
@@ -4200,7 +4196,7 @@
         }
       }
     },
-    "workflow runs cleanup": {
+    "runners runs cleanup": {
       "patterns": [
         "action"
       ],
@@ -4213,7 +4209,7 @@
       "modes": {
         "default": {
           "argv": [
-            "workflow",
+            "runners",
             "runs",
             "cleanup",
             "11111111-1111-4111-8111-111111111111"
@@ -4797,14 +4793,14 @@
     "profile edit": "cmd_instructions",
     "profile show": "cmd_instructions",
     "profile apply": "cmd_instructions",
+    "runners list": "_runner_scope resolves registered repository selectors before runner actions",
+    "runners edit": "_runner_scope resolves registered repository selectors before runner actions",
+    "runners runs start": "_runner_scope resolves registered repository selectors before runner actions",
     "workflow use": "_cmd_workflow workflow_repo",
     "workflow exclude": "_cmd_workflow workflow_repo",
     "workflow inherit": "_cmd_workflow workflow_repo",
     "workflow instructions show": "_cmd_workflow workflow_repo",
-    "workflow instructions edit": "_cmd_workflow workflow_repo",
-    "workflow runners list": "_runner_scope resolves registered repository selectors before runner actions",
-    "workflow runners edit": "_runner_scope resolves registered repository selectors before runner actions",
-    "workflow runs start": "_runner_scope resolves registered repository selectors before runner actions"
+    "workflow instructions edit": "_cmd_workflow workflow_repo"
   },
   "command_aliases": {
     "list_verbs": {

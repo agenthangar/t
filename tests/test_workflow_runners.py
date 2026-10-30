@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from test_config import Menu
+from test_config import Menu, config_cli
 from test_workflow import workflow
 
 
@@ -187,10 +187,12 @@ def test_runner_cli_contract(t_mod):
     for words, flags in forms:
         argv = ['config', 'workflow', *words.split(), *flags]
         args = parser.parse_args(argv)
-        assert args.verb == 'config'
+        assert args.verb == 'runners'
+        canonical = t_mod._runners_argv(argv)
+        assert vars(parser.parse_args(canonical)) == vars(args)
         readonly = words in ('runners list', 'runs list', 'runs status', 'runs logs')
         assert t_mod._command_readonly(argv, terminal=True) is readonly
-    for group in ('workflow runners', 'workflow runs'):
+    for group in ('runners', 'runners runs', 'workflow runners', 'workflow runs', 'config workflow runners', 'config workflow runs'):
         assert 'USAGE' in t_mod._group_help(group)
         assert t_mod.main(group.split()) == 0
     assert t_mod._command_readonly(['config', 'workflow', 'runs'])
@@ -199,51 +201,52 @@ def test_runner_cli_contract(t_mod):
     assert t_mod._canonical_argv(['config', 'workflow', 'runs', 'ls'])[-1] == 'list'
 
 
-def test_runner_config_commands_are_readonly_and_explicit(workflow, t_mod, monkeypatch, tmp_path, capsys):
+@pytest.mark.parametrize('prefix', [['runners'], ['workflow', 'runners'], ['config', 'workflow', 'runners']])
+def test_runner_config_commands_are_readonly_and_explicit(workflow, t_mod, monkeypatch, tmp_path, capsys, prefix):
     w = workflow
     repository = str(tmp_path.resolve() / 'repo')
     cfg = SimpleNamespace(repos={'api': repository}, hosts={})
     monkeypatch.setattr(t_mod, 'Config', lambda: cfg)
     monkeypatch.setattr(t_mod, '_workflow', lambda: w.__dict__)
     monkeypatch.setattr(t_mod, '_t_offer_update', lambda: pytest.fail('readonly prompted'))
-    assert t_mod.main(['config', 'workflow', 'runners', 'list']) == 0
+    assert t_mod.main([*prefix, 'list']) == 0
     assert 'No test runners configured' in capsys.readouterr().out
     policy = w.resolved(w.defaults())
     policy['runners'] = runners()
     document = w.update(w.defaults(), policy)
     monkeypatch.setitem(w.__dict__, 'load', lambda: (document, None))
     for flags in ([], ['--repo', 'api'], ['standard']):
-        assert t_mod.main(['config', 'workflow', 'runners', 'list', *flags]) == 0
+        assert t_mod.main([*prefix, 'list', *flags]) == 0
         assert 'linux' in capsys.readouterr().out
-        assert t_mod.main(['config', 'workflow', 'runners', 'list', *flags, '--json']) == 0
+        assert t_mod.main([*prefix, 'list', *flags, '--json']) == 0
         assert json.loads(capsys.readouterr().out)['runners'] == runners()
     assert not w.config_path().exists()
-    assert t_mod.main(['config', 'workflow', 'runners', 'list', '--repo', 'missing']) == 1
+    assert t_mod.main([*prefix, 'list', '--repo', 'missing']) == 1
     assert 'unknown registered' in capsys.readouterr().err
-    assert t_mod.main(['config', 'workflow', 'runners', 'list', 'standard', '--repo', 'api']) == 1
+    assert t_mod.main([*prefix, 'list', 'standard', '--repo', 'api']) == 1
     capsys.readouterr()
-    assert t_mod.main(['config', 'workflow', 'runners', 'edit']) == 1
+    assert t_mod.main([*prefix, 'edit']) == 1
     assert 'terminal' in capsys.readouterr().err
     monkeypatch.setattr(t_mod.sys.stdin, 'isatty', lambda: True)
     monkeypatch.setattr(t_mod.sys.stdout, 'isatty', lambda: True)
     monkeypatch.setitem(w.__dict__, 'edit_runners', lambda *a: (17, document))
-    assert t_mod.main(['config', 'workflow', 'runners', 'edit']) == 17
+    assert t_mod.main([*prefix, 'edit']) == 17
     monkeypatch.setitem(w.__dict__, 'edit_runners', lambda *a: (0, document))
-    assert t_mod.main(['config', 'workflow', 'runners', 'edit']) == 0
+    assert t_mod.main([*prefix, 'edit']) == 0
     assert 'unchanged' in capsys.readouterr().out
     after = w.action(document, 'add', 'new')
     monkeypatch.setitem(w.__dict__, 'edit_runners', lambda *a: (0, after))
     saved = []
     monkeypatch.setitem(w.__dict__, 'save', lambda *a: saved.append(a))
-    assert t_mod.main(['config', 'workflow', 'runners', 'edit']) == 0
+    assert t_mod.main([*prefix, 'edit']) == 0
     assert saved[0][0] == after
     fake = {'setup_github': lambda repo, create=False: {'repository': repo, 'created': create}}
     monkeypatch.setattr(t_mod, '_runners', lambda: fake)
-    assert t_mod.main(['config', 'workflow', 'runners', 'setup', '--github-repo', 'owner/private-control']) == 0
+    assert t_mod.main([*prefix, 'setup', '--github-repo', 'owner/private-control']) == 0
     def interrupt(*a, **kw):
         raise KeyboardInterrupt
     fake['setup_github'] = interrupt
-    assert t_mod.main(['config', 'workflow', 'runners', 'setup', '--github-repo', 'owner/private-control']) == 130
+    assert t_mod.main([*prefix, 'setup', '--github-repo', 'owner/private-control']) == 130
 
 
 def test_runner_run_commands_and_target_scope(workflow, t_mod, monkeypatch, tmp_path, capsys):
@@ -270,7 +273,7 @@ def test_runner_run_commands_and_target_scope(workflow, t_mod, monkeypatch, tmp_
             'cancel': lambda job: {'id': job, 'status': 'cancelled'},
             'cleanup': lambda job: {'id': job, 'cleaned': True}}
     monkeypatch.setattr(t_mod, '_runners', lambda: fake)
-    command = ['config', 'workflow', 'runs']
+    command = ['runners', 'runs']
     assert t_mod.main([*command, 'start', '--repo', 'api', '--target', 'mini', '--include', 'new.py', '--artifact', 'report', '--timeout', '12', '--queue-timeout', '9', '--json', '--', 'python3', '-c', 'print("quoted ; $x")']) == 7
     assert calls[0][0] == checkout
     assert calls[0][1]['targets']['mini']['host'] == 'remote-user@remote'
@@ -348,3 +351,94 @@ def test_runner_json_start_skips_update_prompt_but_child_json_is_literal(t_mod, 
     monkeypatch.setattr(t_mod, '_t_update_interactive', lambda: True)
     monkeypatch.setattr(t_mod, '_t_update_installation', lambda: None)
     assert t_mod._t_auto_update(['config', 'workflow', 'runs', 'start', '--', 'program', '--json']) is None
+
+
+@pytest.mark.parametrize('selection', ['global', 'named', 'repo'])
+def test_config_runners_scope_stages_and_preserves_repository_policy(workflow, t_mod, monkeypatch, tmp_path, selection):
+    w = workflow
+    repository = str(tmp_path.resolve() / 'repo')
+    document = w.action(w.defaults(), 'add', 'careful')
+    document = w.action(document, 'use', 'careful', repository)
+    document = w.action(document, 'exclude', repository=repository)
+    monkeypatch.setattr(t_mod, '_workflow', lambda: w.__dict__)
+    monkeypatch.setitem(w.__dict__, 'load', lambda: (copy.deepcopy(document), None))
+    cfg = SimpleNamespace(repos={'api': repository})
+    edits = []
+    def edit(doc, repo, name):
+        edits.append((repo, name))
+        policy = copy.deepcopy(doc["workflows"][name]) if name else w.resolved(doc, repo)
+        policy['runners'] = runners()
+        return 0, w.update(doc, policy, repo, name)
+    monkeypatch.setitem(w.__dict__, 'edit_runners', edit)
+    picks = [selection] + ({'global': [], 'named': ['name:careful'], 'repo': ['repo:api']}[selection]) + ['edit', 'back', 'back']
+    t_mod._config_runners(Menu(picks), cfg)
+    assert edits == [(repository if selection == 'repo' else None,
+                      None if selection == 'repo' else 'careful' if selection == 'named' else 'standard')]
+    assert t_mod._workflow_pending(cfg)
+    entry = cfg._workflow_document['repositories'][repository]
+    assert entry['excluded']
+    if selection == 'repo':
+        assert entry['inline']['runners'] == runners()
+        assert 'runners' not in cfg._workflow_document['workflows']['careful']
+    else:
+        assert 'inline' not in entry
+    assert not w.config_path().exists()
+
+
+@pytest.mark.parametrize('picks', [['back'], ['named', None, 'back'], ['repo', '__back__', None], ['global', 'back', 'back']])
+def test_config_runners_back_is_noop(workflow, t_mod, monkeypatch, picks):
+    monkeypatch.setattr(t_mod, '_workflow', lambda: workflow.__dict__)
+    cfg = SimpleNamespace(repos={})
+    t_mod._config_runners(Menu(picks), cfg)
+    assert not t_mod._workflow_pending(cfg)
+    assert not workflow.config_path().exists()
+
+
+@pytest.mark.parametrize('finish', ['save', 'discard'])
+def test_config_runners_hub_review_or_discard(workflow, t_mod, config_cli, monkeypatch, finish):
+    cfg, _ = config_cli
+    w = workflow
+    monkeypatch.setattr(t_mod, '_workflow', lambda: w.__dict__)
+    def edit(doc, repo, name):
+        policy = copy.deepcopy(doc["workflows"][name]) if name else w.resolved(doc, repo)
+        policy['runners'] = runners()
+        return 0, w.update(doc, policy, repo, name)
+    monkeypatch.setitem(w.__dict__, 'edit_runners', edit)
+    picks = ['runners', 'global', 'edit', 'back', 'back'] + (['save'] if finish == 'save' else ['cancel', 'discard'])
+    monkeypatch.setattr(t_mod, '_RailUI', lambda: Menu(picks))
+    result = t_mod._config_wizard(cfg)
+    assert not t_mod._workflow_pending(cfg)
+    assert not w.config_path().exists()
+    if finish == 'save':
+        assert t_mod._workflow_pending(result)
+        assert w.runners(result._workflow_document) == runners()
+    else:
+        assert result is None
+
+
+def test_runners_help_and_payload_keep_canonical_boundary(t_mod, monkeypatch, capsys):
+    monkeypatch.setattr(t_mod, 'Config', lambda: pytest.fail('help loaded config'))
+    for prefix in (['runners'], ['runners', 'runs'], ['config', 'workflow', 'runners'], ['config', 'workflow', 'runs']):
+        assert t_mod.main(prefix) == 0
+        body = capsys.readouterr().out
+        assert 't runners' in body
+        assert 't config workflow runners' not in body
+    for prefix in (['runners', 'runs'], ['config', 'workflow', 'runs']):
+        payload = ['--', 'config', 'workflow', 'runners', 'ls', '--repo', 'ls', '--json']
+        words = [*prefix, 'start', *payload]
+        assert t_mod._canonical_argv(words) == ['runners', 'runs', 'start', *payload]
+        assert not t_mod._command_readonly(words, terminal=True)
+
+
+@pytest.mark.parametrize('prefix', [['runners', 'runs'], ['workflow', 'runs'], ['config', 'workflow', 'runs']])
+def test_runner_start_preserves_delegated_mode_flags(t_mod, monkeypatch, prefix):
+    monkeypatch.setattr(t_mod, 'Config', lambda: SimpleNamespace())
+    monkeypatch.setattr(t_mod, '_t_auto_update', lambda argv: None)
+    payload = ['--', 'program', '--show', '--edit', '--onboard', '--workflow', 'ls']
+    calls = []
+    def run(cfg, args):
+        calls.append(args.command)
+        return 17
+    monkeypatch.setattr(t_mod, '_cmd_workflow_runs', run)
+    assert t_mod.main([*prefix, 'start', *payload]) == 17
+    assert calls == [payload]

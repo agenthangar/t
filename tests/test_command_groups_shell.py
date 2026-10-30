@@ -282,7 +282,7 @@ def test_completion_exposes_groups_and_group_actions(tmp_path):
     assert lines[:3] == ["describe:nouns", "describe:actions", "describe:actions"]
     assert lines[3].startswith("values:")
     source = (ROOT / "zsh" / "shim.zsh").read_text()
-    assert "local -a nouns=(session issue share remote repo cursor hosts agentcore workflow config mcp profile policy agent system login help)" in source
+    assert "local -a nouns=(session issue share remote repo cursor hosts agentcore workflow runners config mcp profile policy agent system login help)" in source
 
 
 @pytest.mark.skipif(not shutil.which("zsh"), reason="zsh is required")
@@ -447,7 +447,7 @@ def test_workflow_completion_offers_scopes_and_registered_repos(tmp_path):
     ''')
     assert result.returncode == 0, result.stderr
     assert result.stdout.splitlines() == [
-        "values:list,ls,add,use,exclude,inherit,edit,instructions,runners,runs,sync", "values:--repo,--all,--json,-h,--help", "values:--repo,-h,--help",
+        "values:list,ls,add,use,exclude,inherit,edit,instructions,sync", "values:--repo,--all,--json,-h,--help", "values:--repo,-h,--help",
         "values:api", "values:api", "values:-h,--help", "values:api",
     ]
 
@@ -573,6 +573,22 @@ def test_remote_host_first_completion_and_legacy_host_flag(tmp_path):
 
 
 @pytest.mark.skipif(not shutil.which("zsh"), reason="zsh is required")
+def test_runners_completion_exposes_nested_runs_and_scopes(tmp_path):
+    result = shell(tmp_path, '''
+        _values() { print -r -- "values:${(j:,:)argv[2,-1]}"; }
+        local -a words
+        words=(t runners runs '') CURRENT=4; _t
+        words=(t runners setup --) CURRENT=4; _t
+        words=(t runners list --repo '') CURRENT=5; _t
+    ''')
+    assert result.returncode == 0, result.stderr
+    lines = result.stdout.splitlines()
+    assert lines[0] == 'values:start,list,ls,status,logs,artifacts,cancel,cleanup'
+    assert lines[1] == 'values:--github-repo,--create,-h,--help'
+    assert lines[2].startswith('values:')
+
+
+@pytest.mark.skipif(not shutil.which("zsh"), reason="zsh is required")
 def test_canonical_workflow_completion_and_dispatch(tmp_path):
     result = shell(tmp_path, '''
         DEV_REPOS=(api /tmp/api)
@@ -583,13 +599,13 @@ def test_canonical_workflow_completion_and_dispatch(tmp_path):
         words=(t workflow list --) CURRENT=4; _t
         words=(t workflow list --repo '') CURRENT=5; _t
         words=(t workflow instructions '') CURRENT=4; _t
-        words=(t help workflow runs '') CURRENT=5; _t
-        words=(t workflow runners setup --) CURRENT=5; _t
+        words=(t help runners runs '') CURRENT=5; _t
+        words=(t runners setup --) CURRENT=4; _t
         t workflow list --repo api --json
     ''')
     assert result.returncode == 0, result.stderr
     assert result.stdout.splitlines() == [
-        "actions:list,ls,add,use,exclude,inherit,edit,instructions,runners,runs,sync",
+        "actions:list,ls,add,use,exclude,inherit,edit,instructions,sync",
         "values:--repo,--all,--json,-h,--help", "values:api",
         "values:show,edit", "values:start,list,ls,status,logs,artifacts,cancel,cleanup",
         "values:--github-repo,--create,-h,--help",
