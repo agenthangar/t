@@ -2219,7 +2219,8 @@
         "wizard",
         "single",
         "action",
-        "passthrough"
+        "passthrough",
+        "detail"
       ],
       "renderer": "rail",
       "scope": "local machine",
@@ -2233,7 +2234,8 @@
         "tests/test_workflow.py::test_menu_workflow_save_and_cancel",
         "tests/test_config.py::test_config_main_menu_shows_repo_aliases",
         "tests/test_config.py::test_config_group_navigation_retains_focus",
-        "tests/test_config.py::test_config_grouped_menu_narrow_navigation"
+        "tests/test_config.py::test_config_grouped_menu_narrow_navigation",
+        "tests/test_config.py::test_config_mcp_registration_review"
       ],
       "modes": {
         "default": {
@@ -2254,7 +2256,7 @@
             "tests/test_config.py::test_config_group_navigation_retains_focus",
             "tests/test_config.py::test_config_grouped_menu_narrow_navigation"
           ],
-          "notes": "Suggest unique host short names on addition; allow host renaming with defaults preserved and review before saving. Group the hub into Session defaults, Agents, Workflow, Repositories & worktrees, Remote hosts, and Finish. Keep all actions directly reachable with stable focus and Save/Discard behavior; collection/setup rows use a trailing submenu cue. Focus and Save remain visible at narrow terminal sizes."
+          "notes": "Suggest unique host short names on addition; allow host renaming with defaults preserved and review before saving. Group the hub into Session defaults, Agents, Workflows, Runners, MCP server, Repositories & worktrees, Remote hosts, and Finish. Keep all actions directly reachable with stable focus and Save/Discard behavior; collection/setup rows use a trailing submenu cue. Focus and Save remain visible at narrow terminal sizes."
         },
         "host_add": {
           "argv": [
@@ -2311,6 +2313,24 @@
             "tests/test_workflow.py::test_behavior_menu_narrow_screens"
           ],
           "notes": "The Workflows section and submenu separate the overall Workflow switch from Model stages. Stage settings are retained when disabled. The shared RailUI Behavior preferences submenu offers worktree isolated/current, preview UI changes/on request, validation relevant/full and delivery review/PR/authorized auto-merge. No preference clears the selected key; none are enabled by default. Edits remain pending until Save, including edits beneath exclusion. Explain task/repository/custom Markdown/behavior/model-stage precedence; preserve raw Markdown and the advanced JSON editor."
+        },
+        "mcp": {
+          "argv": [
+            "config",
+            "open"
+          ],
+          "patterns": [
+            "detail",
+            "single",
+            "wizard",
+            "action"
+          ],
+          "read_only": false,
+          "terminal": true,
+          "tests": [
+            "tests/test_config.py::test_config_mcp_registration_review"
+          ],
+          "notes": "MCP submenu inspection and refresh are read-only. Registration requires immediate-action review and no pending hub edits; preserves existing client entries and disabled settings. Configuration state is not connection health."
         }
       },
       "notes": " Cross-host policy: Claude defaults to t transfer; Codex defaults to manual native desktop Hand off (no supported CLI adapter). Agent settings show/persist the effective mechanism and explicit Codex t override. Native returns nonzero with app steps before transfer mutations; local resume and remote attach unchanged."
@@ -4200,6 +4220,108 @@
           "read_only": false,
           "tests": [
             "tests/test_workflow_runners.py::test_runner_cli_contract"
+          ]
+        }
+      }
+    },
+    "mcp status": {
+      "patterns": [
+        "detail",
+        "machine"
+      ],
+      "read_only": true,
+      "terminal": false,
+      "tests": [
+        "tests/test_mcp_codex.py::test_mcp_management_routes"
+      ],
+      "notes": "This-machine sessions registration. Bare t mcp remains stdio; legacy flags are compatible. Status does not start a server. Uninstall preserves custom entries and disables automatic registration until explicit install.",
+      "renderer": "plain",
+      "scope": "sessions server on this machine",
+      "confirmation": "none",
+      "modes": {
+        "default": {
+          "argv": [
+            "mcp",
+            "status"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_mcp_codex.py::test_mcp_management_routes"
+          ]
+        },
+        "json": {
+          "argv": [
+            "mcp",
+            "status",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_mcp_codex.py::test_mcp_management_routes"
+          ]
+        }
+      }
+    },
+    "mcp install": {
+      "patterns": [
+        "action"
+      ],
+      "read_only": false,
+      "terminal": false,
+      "tests": [
+        "tests/test_mcp_codex.py::test_mcp_management_routes"
+      ],
+      "notes": "This-machine sessions registration. Bare t mcp remains stdio; legacy flags are compatible. Status does not start a server. Uninstall preserves custom entries and disables automatic registration until explicit install.",
+      "renderer": "plain",
+      "scope": "sessions server on this machine",
+      "confirmation": "none",
+      "modes": {
+        "default": {
+          "argv": [
+            "mcp",
+            "install"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_mcp_codex.py::test_mcp_management_routes"
+          ]
+        }
+      }
+    },
+    "mcp uninstall": {
+      "patterns": [
+        "action"
+      ],
+      "read_only": false,
+      "terminal": false,
+      "tests": [
+        "tests/test_mcp_codex.py::test_mcp_management_routes"
+      ],
+      "notes": "This-machine sessions registration. Bare t mcp remains stdio; legacy flags are compatible. Status does not start a server. Uninstall preserves custom entries and disables automatic registration until explicit install.",
+      "renderer": "plain",
+      "scope": "sessions server on this machine",
+      "confirmation": "none",
+      "modes": {
+        "default": {
+          "argv": [
+            "mcp",
+            "uninstall"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_mcp_codex.py::test_mcp_management_routes"
           ]
         }
       }

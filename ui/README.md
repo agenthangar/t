@@ -111,7 +111,7 @@ PATH and shell-wrapper precedence, argument quoting, and ownership checks.
 Fresh and resumed tmux panes start without echoing internal launch commands or
 exit instructions. Agent output is logged from startup; failures retain diagnostics.
 
-The config hub groups Session defaults, Agents, Workflows, Runners, Repositories &
+The config hub groups Session defaults, Agents, Workflows, Runners, MCP server, Repositories &
 worktrees, Remote hosts, and Finish. Keep agent settings and local worker/model
 setup together, with workflow in its own section; keep repository/worktree choices
 separate from
@@ -129,6 +129,22 @@ resume/move prints actionable steps and returns nonzero before stopping an owner
 checkpointing, copying transcripts or allocating a destination. Local resume and
 remote attachment retain their existing behavior. Relays preserve the initiating
 host's policy and require a peer that understands it.
+
+Config → MCP server → Sessions server shows read-only Codex enabled state and
+Claude user-scope registration. Browsing and Refresh status never start servers or
+write settings. Register missing clients now uses an explicit immediate-action
+review, blocks while hub edits are pending, preserves existing registrations and
+disabled entries, and restores the terminal around the existing installer. It is
+separate from config Save. Registration is not proof of an active connection;
+reload the client after registering. No remote fan-out occurs from this menu.
+
+`t mcp status [--json]` is read-only client configuration inspection.
+`t mcp install` adds missing registrations, preserving existing disabled/custom entries.
+`t mcp uninstall` removes only t-owned stdio registrations through client writers,
+preserves permissions and custom entries, and persists an automatic-registration
+opt-out until explicit install. These commands never select or update remote hosts.
+Bare `t mcp` remains the stdio protocol; legacy flags including `--install` remain
+compatible. Management verbs reject combinations with protocol flags.
 
 Config proposes unique host short names from SSH targets, including the first
 manual addition. Onboarding also generates unique short names for selected peers.

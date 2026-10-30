@@ -244,6 +244,10 @@
     "libexec/t_workflow.py:edit_runners:subprocess.call": {
       "kind": "passthrough",
       "reason": "The configured terminal editor owns input and rendering until it exits."
+    },
+    "libexec/t_mcp_setup.py:status:subprocess.run": {
+      "kind": "protocol",
+      "reason": "Read-only client configuration inspection supports JSON status and inline UI; bounded to ten seconds and never starts servers."
     }
   },
   "shell": [

@@ -1952,7 +1952,7 @@ def test_mcp_registered(t_mod, tmp_path):
 
 
 def test_doctor_reports_unregistered_mcp(t_mod):
-    assert any("t mcp --install" in l for l in t_mod._doctor_findings({"mcp_sessions": False}))
+    assert any("t mcp install" in l for l in t_mod._doctor_findings({"mcp_sessions": False}))
     assert t_mod._doctor_findings({"mcp_sessions": True}) == ["✓ nothing suspicious found"]
     assert t_mod._doctor_findings({"mcp_sessions": None}) == ["✓ nothing suspicious found"]
 
@@ -2221,7 +2221,7 @@ def test_double_dash_preserves_literal_help_argument(t_mod, monkeypatch):
     assert seen == ["--help"]
 
 
-_INTERNAL_COMMANDS = ("session-rows", "land", "kill-owner", "new-land", "mcp", "__resolve")
+_INTERNAL_COMMANDS = ("session-rows", "land", "kill-owner", "new-land", "__resolve")
 
 
 @pytest.mark.parametrize("argv", [[], ["help"], ["-h"], ["--help"], ["version"], ["--bad-option"]])
@@ -2244,7 +2244,7 @@ def test_command_discovery_only_advertises_public_verbs(t_mod, capsys, monkeypat
         choices = output.split("choose from ", 1)[1]
         assert "session," in choices and "system" in choices
     elif argv != ["--bad-option"]:
-        assert "session" in output and "system" in output
+        assert "session" in output and "system" in output and "mcp" in output
 
 
 @pytest.mark.parametrize("command", _INTERNAL_COMMANDS)

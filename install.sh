@@ -302,7 +302,7 @@ PY
 }
 
 install_claude_mcp() {
-    [[ -z "${T_NO_MCP:-}" ]] || return 0
+    [[ -z "${T_NO_MCP:-}" && ! -e "${XDG_CONFIG_HOME:-$HOME/.config}/t/mcp-disabled" ]] || return 0
     command -v claude >/dev/null 2>&1 || return 0
     python3 - "$HOME/.claude.json" <<'PY' && return 0
 import json, sys

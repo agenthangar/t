@@ -155,3 +155,143 @@ def test_codex_moved_session_uses_latest_turn_worktree(t_mod):
     for cwd in (None, [], 'relative'):
         t_mod._tx_scan_line(st, record('turn_context', {'cwd': cwd}))
     assert st['cwd'] == '/repo/t-1'
+
+
+@pytest.mark.parametrize('entries,expected', [([], 'Not registered'),
+    ([{'name': 'sessions', 'enabled': True}], 'Enabled'),
+    ([{'name': 'sessions', 'enabled': False}], 'Disabled'),
+    ([{'name': 'sessions', 'enabled': True, 'disabled_reason': 'policy'}], 'Disabled'),
+    ([{'name': 'sessions'}], 'Registered; enabled state unknown'), ({}, 'Status unavailable'),
+    ([1], 'Status unavailable')])
+def test_mcp_config_status(setup_module_api, tmp_path, monkeypatch, entries, expected):
+    api = setup_module_api
+    monkeypatch.setattr(api.shutil, 'which', lambda _: '/fake/codex')
+    def run(argv, **kw):
+        assert argv[1:] == ['mcp', 'list', '--json'] and kw['timeout'] == 10
+        return SimpleNamespace(returncode=0, stdout=json.dumps(entries))
+    monkeypatch.setattr(api.subprocess, 'run', run)
+    path = tmp_path / '.claude.json'
+    path.write_text(json.dumps({'mcpServers': {'sessions': {'command': '/custom'}}}))
+    before = path.read_bytes()
+    assert api.status(tmp_path) == {'codex': expected, 'claude': 'Registered (user scope)'}
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize('data,expected', [(None, 'Not registered'), ('bad', 'Status unavailable'),
+    ('[]', 'Status unavailable'), ('{"mcpServers":[]}', 'Status unavailable'),
+    ('{"mcpServers":{"sessions":{}},"disabledMcpServers":["sessions"]}', 'Disabled')])
+def test_mcp_claude_status(setup_module_api, tmp_path, monkeypatch, data, expected):
+    api = setup_module_api
+    monkeypatch.setattr(api.shutil, 'which', lambda _: None)
+    if data is not None:
+        (tmp_path / '.claude.json').write_text(data)
+    assert api.status(tmp_path) == {'codex': 'Client not installed', 'claude': expected}
+
+
+def test_mcp_status_timeout(setup_module_api, tmp_path, monkeypatch):
+    api = setup_module_api
+    monkeypatch.setattr(api.shutil, 'which', lambda _: '/fake/codex')
+    def run(*args, **kw):
+        raise subprocess.TimeoutExpired('codex', 10)
+    monkeypatch.setattr(api.subprocess, 'run', run)
+    assert api.status(tmp_path)['codex'] == 'Status unavailable'
+
+
+def test_mcp_management_routes(t_mod, monkeypatch, capsys):
+    calls = []
+    monkeypatch.setattr(t_mod, '_mcp_install', lambda: calls.append('install') or 0)
+    monkeypatch.setattr(t_mod, '_mcp_uninstall', lambda: calls.append('uninstall') or 0)
+    monkeypatch.setattr(t_mod, '_mcp_serve', lambda cfg: calls.append('stdio') or 0)
+    monkeypatch.setattr(t_mod.runpy, 'run_path', lambda _: {'status': lambda home: {'codex': 'Enabled', 'claude': 'Not registered'}})
+    for action in ('status', 'install', 'uninstall'):
+        argv = ['mcp', action]
+        assert t_mod._canonical_argv(argv) == argv
+        assert t_mod._canonical_error(argv) is None
+        assert t_mod._command_readonly(argv) == (action == 'status')
+        assert t_mod.cmd_mcp(None, t_mod.build_parser().parse_args(argv)) == 0
+    assert calls == ['install', 'uninstall']
+    capsys.readouterr()
+    assert t_mod.cmd_mcp(None, t_mod.build_parser().parse_args(['mcp', 'status', '--json'])) == 0
+    assert json.loads(capsys.readouterr().out)['clients']['codex'] == 'Enabled'
+    assert t_mod.cmd_mcp(None, t_mod.build_parser().parse_args(['mcp'])) == 0
+    assert calls[-1] == 'stdio'
+    assert t_mod._canonical_error(['mcp', '--install']) is None
+    assert t_mod.cmd_mcp(None, t_mod.build_parser().parse_args(['mcp', '--install', 'status'])) == 2
+
+
+@pytest.mark.parametrize('custom,fail', [(False, False), (True, False), (False, True)])
+def test_mcp_uninstall_ownership(setup_module_api, tmp_path, monkeypatch, custom, fail):
+    api = setup_module_api
+    monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path / 'config'))
+    monkeypatch.setattr(api.shutil, 'which', lambda name: '/fake/' + name)
+    command = str(tmp_path / 'bin/t')
+    entry = {'command': '/custom/server' if custom else command, 'args': ['mcp']}
+    path = tmp_path / '.claude.json'
+    path.write_text(json.dumps({'mcpServers': {'sessions': entry, 'other': {'command': 'untouched'}}}))
+    original = path.read_bytes()
+    calls = []
+    def run(argv, **kw):
+        calls.append(argv)
+        return SimpleNamespace(returncode=int(fail and 'remove' in argv),
+                               stdout=json.dumps([{'name': 'sessions', 'transport': entry}]))
+    monkeypatch.setattr(api.subprocess, 'run', run)
+    assert api.uninstall(command, str(tmp_path)) == int(custom or fail)
+    removes = [argv for argv in calls if 'remove' in argv]
+    assert len(removes) == (0 if custom else 2)
+    if removes:
+        assert removes[-1][-2:] == ['--scope', 'user']
+    assert path.read_bytes() == original
+    assert api.opt_out_path(tmp_path).exists()
+
+
+@pytest.mark.parametrize('response', ['[]', 'bad', '{}', '[1]', 'timeout', 'oserror'])
+def test_mcp_uninstall_missing_and_errors(setup_module_api, tmp_path, monkeypatch, response):
+    api = setup_module_api
+    monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path / 'config'))
+    monkeypatch.setattr(api.shutil, 'which', lambda name: '/fake/' + name)
+    def run(argv, **kw):
+        assert 'remove' not in argv
+        if response == 'timeout':
+            raise subprocess.TimeoutExpired(argv, 20)
+        if response == 'oserror':
+            raise OSError('unavailable')
+        return SimpleNamespace(returncode=0, stdout=response)
+    monkeypatch.setattr(api.subprocess, 'run', run)
+    assert api.uninstall('/t', tmp_path) == int(response != '[]')
+
+
+def test_mcp_uninstall_no_clients(setup_module_api, tmp_path, monkeypatch):
+    api = setup_module_api
+    monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path / 'config'))
+    monkeypatch.setattr(api.shutil, 'which', lambda _: None)
+    assert api.uninstall('/t', tmp_path) == 0
+
+
+def test_mcp_install_clears_automatic_opt_out(t_mod, tmp_path, monkeypatch):
+    marker = tmp_path / 'mcp-disabled'
+    marker.touch()
+    monkeypatch.setattr(t_mod.runpy, 'run_path', lambda _: {'opt_out_path': lambda home: marker, 'install': lambda command: 0})
+    monkeypatch.setattr(t_mod.shutil, 'which', lambda _: None)
+    assert t_mod._mcp_install() == 0
+    assert not marker.exists()
+
+
+def test_mcp_empty_xdg_uses_home(setup_module_api, tmp_path, monkeypatch):
+    monkeypatch.setenv('XDG_CONFIG_HOME', '')
+    assert setup_module_api.opt_out_path(tmp_path) == tmp_path / '.config/t/mcp-disabled'
+
+
+def test_mcp_bare_stdio_survives_public_group(tmp_path):
+    import os
+    import sys
+    env = {key: value for key, value in os.environ.items() if not key.startswith('COV_CORE_')}
+    env.update(HOME=str(tmp_path), XDG_CONFIG_HOME=str(tmp_path / 'config'), T_NO_UPDATE_CHECK='1')
+    messages = [{'jsonrpc': '2.0', 'id': 1, 'method': 'initialize', 'params': {}},
+                {'jsonrpc': '2.0', 'id': 2, 'method': 'tools/list', 'params': {}}]
+    result = subprocess.run([sys.executable, str(Path(__file__).parents[1] / 'bin/t'), 'mcp'],
+                            input=''.join(json.dumps(msg) + '\n' for msg in messages),
+                            text=True, capture_output=True, env=env, timeout=20)
+    assert result.returncode == 0, result.stderr
+    responses = [json.loads(line) for line in result.stdout.splitlines()]
+    assert responses[0]['result']['serverInfo']['name'] == 'sessions'
+    assert 'find_sessions' in {tool['name'] for tool in responses[1]['result']['tools']}

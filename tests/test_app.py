@@ -550,6 +550,7 @@ def test_app_command_failed_launch_gives_recovery(t_mod, app_command, monkeypatc
     ("normal", True), ("already_stopped", True), ("changed_sid", False),
     ("changed_cwd", False), ("changed_agent", False), ("missing", False),
     ("self", False), ("term_failed", False), ("still_running", False), ("stamp_failed", False),
+    ("zombie", True), ("state_unavailable", False),
 ])
 def test_app_stop_shell_revalidates_and_waits(t_mod, app_slot, monkeypatch, tmp_path, scenario, ok):
     """Run the actual handoff shell with stub helpers/signals; never signal a real process."""
@@ -573,11 +574,18 @@ _dev_session_claude_pid() {{
   [[ $scenario == already_stopped ]] && return 1
   [[ $scenario == self ]] && print $PPID || print 99999
 }}
-ps() {{ print 1; }}
+ps() {{
+  if [[ $2 == stat= ]]; then
+    [[ $scenario == state_unavailable ]] && return 1
+    [[ $scenario == zombie ]] && print " Zs" || print S
+  else
+    print 1
+  fi
+}}
 kill() {{
   print -r -- "$*" >> {shlex.quote(str(log))}
   [[ $1 == -TERM ]] && {{ [[ $scenario != term_failed ]]; return; }}
-  [[ $scenario == still_running ]]
+  [[ $scenario == (still_running|zombie|state_unavailable) ]]
 }}
 sleep() {{ :; }}
 '''
@@ -587,9 +595,13 @@ sleep() {{ :; }}
     result = t_mod._app_stop_cli(row)
     assert (result.returncode == 0) is ok, result.stderr
     signals = log.read_text().splitlines() if log.exists() else []
-    if scenario in ("normal", "term_failed", "still_running"):
+    if scenario in ("normal", "term_failed", "still_running", "zombie", "state_unavailable"):
         assert signals[0] == "-TERM 99999"
         assert all(s == "-0 99999" for s in signals[1:])
+        if scenario == "zombie":
+            assert len(signals) == 2
+        elif scenario in ("still_running", "state_unavailable"):
+            assert len(signals) == 101
     else:
         assert signals == []
 

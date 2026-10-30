@@ -623,7 +623,7 @@ stop background subagents, or guarantee queued work remains paused. Goal is a
 conversational objective change, not an agent-native goal API. Delivery results
 report `acknowledged: false`; inspect subsequent agent output to verify the effect.
 Installation registers the `sessions` MCP server with installed Codex and Claude Code
-clients. `t mcp --install` retries registration; existing registrations, including
+clients. `t mcp install` retries registration; existing registrations, including
 custom or disabled entries, are preserved. Set `T_NO_MCP=1` to skip installation.
 Search includes saved Claude transcripts and Codex active/archived rollouts under
 `CODEX_HOME` (default `~/.codex`), excluding injected context and subagent rollouts.
@@ -636,7 +636,7 @@ t mcp --call session_detail '{"session":"SESSION_ID"}'
 ```
 
 Only the original three lookup tools are automatically allowed. Installing or
-running `t mcp --install` replaces the old blanket `mcp__sessions` permission with
+running `t mcp install` replaces the old blanket `mcp__sessions` permission with
 those lookup rules, preserving custom per-tool rules and deny/ask settings.
 
 Slow terminal session/host scans and saved-history discovery show a small spinner
@@ -1192,11 +1192,23 @@ Ultrafast where supported), repository choices, and hosts. Teams can share those
 workflows and agent configurations to standardize the parts of their setup that
 matter.
 
-The settings screen groups **Session defaults**, **Agents**, **Workflow**,
+The settings screen groups **Session defaults**, **Agents**, **Workflows**, **Runners**, **MCP server**,
 **Repositories & worktrees**, **Remote hosts**, and **Finish**. Workflow has its
 own section, separate from agent settings and local model setup; host registration
 and the default beam destination stay together. Rows ending in **›** open a settings collection
 or setup screen. All existing choices remain directly accessible on this screen.
+
+The **MCP server → Sessions server** menu shows Codex enabled state and Claude
+user-scope registration on this machine. Refresh status is read-only.
+**Register missing clients now** reviews and applies registration immediately,
+separately from config Save; first save or discard pending edits. Existing custom
+or disabled entries are preserved. Reload the agent client to load newly registered
+tools; configuration status alone does not verify an active client connection.
+
+Manage the same server directly with `t mcp status [--json]`, `t mcp install`,
+and `t mcp uninstall`. Uninstall removes only t-owned registrations and disables
+automatic registration across updates until explicit install. Custom entries,
+permissions, and transcripts are preserved. Bare `t mcp` remains the stdio server.
 
 In `t config open` → Codex → Speed, choose the tool's own setting, Standard,
 Fast, or Ultrafast. Faster modes appear when the selected model reports support;

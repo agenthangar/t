@@ -350,3 +350,23 @@ def test_dev_link_installs_mcp_from_selected_source(box, tmp_path):
     result = run_install(dev, home, T_LINKS_ONLY='1', T_LINK_DEV='1', T_NO_MCP='')
     assert result.returncode == 0, result.stderr
     assert (home / 'mcp-source').read_text() == 'dev'
+
+
+@pytest.mark.parametrize('xdg', ['empty', 'custom'])
+def test_install_preserves_mcp_uninstall_opt_out(box, tmp_path, xdg):
+    checkout, home = box
+    config = home / '.config' if xdg == 'empty' else tmp_path / 'custom-config'
+    marker = config / 't/mcp-disabled'
+    marker.parent.mkdir(parents=True)
+    marker.write_text('disabled\n')
+    bins = tmp_path / 'fake-bin'
+    bins.mkdir()
+    called = tmp_path / 'mcp-called'
+    for name in ('claude', 'codex'):
+        tool = bins / name
+        tool.write_text('#!/bin/sh\nif [ "$1" = mcp ]; then touch "$MCP_CALLED"; exit 1; fi\nexit 0\n')
+        tool.chmod(0o755)
+    result = run_install(checkout, home, T_NO_MCP='', XDG_CONFIG_HOME='' if xdg == 'empty' else str(config),
+                         PATH=f'{bins}:{os.environ["PATH"]}', MCP_CALLED=str(called))
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not called.exists() and marker.read_text() == 'disabled\n'
