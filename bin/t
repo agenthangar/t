@@ -2558,7 +2558,7 @@ def _config_workflow(ui, cfg, repo=None):
         source_label = source + (" · excluded" if excluded else " · enabled" if policy["enabled"] else " · disabled")
         if repo and repository not in document["repositories"]:
             source_label += " · inherited"
-        choice = ui.pick("Agent workflow" + (f" · {repo}" if repo else " · global"), rows,
+        choice = ui.pick("Workflows" + (f" · {repo}" if repo else " · global"), rows,
                          values={"choose": source_label})
         if choice in (None, "back"):
             return
@@ -2665,7 +2665,7 @@ def _config_repos(ui, cfg):
             continue
         action = ui.pick(f"Repository · {repo}", [
             ("alias", "Short name"), ("mode", "Opening mode"),
-            ("path", "Path"), ("tool", "Tool"), ("workflow", "Agent workflow"), ("branch", "Shared-tree branch"), ("worktree", "Worktrees"),
+            ("path", "Path"), ("tool", "Tool"), ("workflow", "Workflows"), ("branch", "Shared-tree branch"), ("worktree", "Worktrees"),
             ("remove", "Unregister (keep files and sessions)"), ("back", "Back")],
             values={"mode": {"cli": "CLI", "app": "Desktop app (Codex, macOS)"}.get(cfg.open_mode.get(repo), "inherit default"), "alias": repo, "path": _tilde(cfg.repos[repo]), "tool": cfg.agents.get(repo) or "inherit default",
                     "branch": cfg.branches.get(repo) or "inherit default",
@@ -2798,7 +2798,7 @@ def _config_wizard(cfg):
                 values[a] = f"{edited.models.get(a) or 'tool default'} · {edited.efforts.get(a) or 'default'} effort"
                 if edited.fast.get(a) == "1":
                     values[a] += " · fast"
-            rows += [("local", "Local worker & models ›"), ("workflow", "Agent workflow ›"), ("runners", "Test runners ›"),
+            rows += [("local", "Local worker & models ›"), ("workflow", "Workflows ›"), ("runners", "Test runners ›"),
                      ("repos", "Repositories ›"), ("worktrees", "Worktrees & branches ›"),
                      ("hosts", "Hosts ›"), ("beam", "Default beam host"), ("edit", "Open config in editor"),
                      ("save", "Save changes"), ("cancel", "Cancel")]
@@ -2807,7 +2807,7 @@ def _config_wizard(cfg):
                            "repos": ", ".join(sorted(edited.repos)) or "none registered",
                            "beam": edited.beam_host or "none", "save": f"{pending} pending"})
             choice = ui.pick("Local settings", rows, values=values,
-                             sections={"tool": "Session defaults", AGENTS[0]: "Agents", "workflow": "Workflow", "runners": "Runners",
+                             sections={"tool": "Session defaults", AGENTS[0]: "Agents", "workflow": "Workflows", "runners": "Runners",
                                        "repos": "Repositories & worktrees", "hosts": "Remote hosts", "edit": "Finish"},
                              accents={"save": "g", "cancel": "y"},
                              primary=("s", "SAVE CHANGES", f"{pending} pending"), shortcuts={"s": "save"},
@@ -3012,7 +3012,7 @@ def _cmd_workflow(cfg, args):
         if not verb:
             verb = "list" if args.show else "edit" if getattr(args, "edit", False) else None
         if not getattr(args, "workflow", False) or not verb:
-            raise ValueError("use t config workflow list or t config workflow edit [--repo ALIAS]")
+            raise ValueError("use t workflow list or t workflow edit [--repo ALIAS]")
         if verb == "sync":
             helper = _workflow()
             sync = helper["propagation"]()
@@ -3337,7 +3337,7 @@ def cmd_config(cfg, args):
             document, stored = helper["load"]()
             print("Agent workflow: " + ("enabled" if helper["effective"](document)["enabled"] else "disabled") +
                   ("" if stored else " · recommended defaults (not saved)") +
-                  f" · {len(document['repositories'])} repository overrides; t config workflow list for details")
+                  f" · {len(document['repositories'])} repository overrides; t workflow list for details")
         except (OSError, ValueError) as exc:
             print(f"t config: {exc}", file=sys.stderr)
             return 1
@@ -6210,6 +6210,8 @@ def _command_readonly(argv, *, terminal=None):
     if verb == "runners":
         return (not tail or tail == ["runs"] or tail[0] == "list" or
                 (len(tail) > 1 and tail[0] == "runs" and tail[1] in ("list", "status", "logs")))
+    if verb == "workflow":
+        return True  # Incomplete family/resource paths display help.
     if words[:2] == ["config", "workflow"]:
         return (len(words) == 2 or words[2] == "list" or words[2:4] == ["instructions", "show"] or
                 words[2:] in (["runners"], ["runs"]) or words[2:4] == ["runners", "list"] or
@@ -10790,11 +10792,12 @@ COMMAND_GROUPS = {
     "agentcore": {"invoke": ("agentcore", "invoke"), "stop": ("agentcore", "stop")},
     "config": {"open": ("config",), "show": ("config", "--show"),
                "edit": ("config", "--edit"), "setup": ("setup",),
-               "onboard": ("config", "--onboard"), "local": ("config", "--local"),
-               "workflow": {"list": ("config", "workflow", "list"),
-                            "edit": ("config", "workflow", "edit"),
-                            **{verb: ("config", "workflow", verb) for verb in ("add", "use", "exclude", "inherit", "sync")},
-                            "instructions": {verb: ("config", "workflow", "instructions", verb) for verb in ("show", "edit")}}},
+               "onboard": ("config", "--onboard"), "local": ("config", "--local")},
+    "workflow": {"list": ("config", "workflow", "list"),
+                 "edit": ("config", "workflow", "edit"),
+                 **{verb: ("config", "workflow", verb) for verb in ("add", "use", "exclude", "inherit", "sync")},
+                 "instructions": {verb: ("config", "workflow", "instructions", verb) for verb in ("show", "edit")},
+                 },
     "runners": {**{verb: ("runners", verb) for verb in ("list", "edit", "setup")},
                 "runs": {verb: ("runners", "runs", verb) for verb in ("start", "list", "status", "logs", "artifacts", "cancel", "cleanup")}},
     "profile": {"init": ("instructions", "--init"),
@@ -10819,6 +10822,7 @@ GROUP_DESCRIPTIONS = {
     "hosts": "Manage remote SSH hosts and run commands on them",
     "runners": "Configure test targets and run worktree snapshots",
     "config": "Manage local settings",
+    "workflow": "Manage named workflows, behavior preferences and instructions",
     "profile": "Manage reusable AGENTS.md instructions",
     "policy": "Inspect and apply agent permissions",
     "agent": "Install and configure agent CLIs",
@@ -10834,12 +10838,25 @@ def _runners_argv(argv):
         words[start:start + 3] = ["runners"]
     elif words[start:start + 3] == ["config", "workflow", "runs"]:
         words[start:start + 3] = ["runners", "runs"]
+    if words[start:start + 2] == ["workflow", "runners"]:
+        words[start:start + 2] = ["runners"]
+    elif words[start:start + 2] == ["workflow", "runs"]:
+        words[start:start + 2] = ["runners", "runs"]
     return words
+
+
+def _workflow_argv(argv):
+    """Normalize the former family only at the command boundary; keep payloads literal."""
+    argv = list(argv)
+    start = 1 if argv and argv[0] == "help" else 0
+    if argv[start:start + 2] == ["config", "workflow"]:
+        del argv[start]
+    return argv
 
 
 def _hosts_argv(argv):
     """Accept the JSON listing shorthand and removal synonyms."""
-    argv = list(argv)
+    argv = _workflow_argv(_runners_argv(argv))
     start = 1 if argv and argv[0] == "help" else 0
     if len(argv) <= start or argv[start] != "hosts":
         return argv
@@ -10886,6 +10903,7 @@ def _canonical_argv(argv):
 
 def _canonical_error(argv):
     """Validate the public action boundary before legacy argparse sees it."""
+    argv = _workflow_argv(_runners_argv(argv))
     if len(argv) < 2 or argv[0] not in COMMAND_GROUPS:
         return None
     group, action = argv[:2]
@@ -10895,7 +10913,7 @@ def _canonical_error(argv):
         if len(path) == 1 and (group == "cursor" or (group == "config" and unknown.startswith("-"))):
             return None  # Established compatibility input.
         return f"t {' '.join(path)}: unknown action {unknown!r}; choose from {', '.join(node)}"
-    if len(path) > 2:
+    if len(path) > 2 or group == "workflow":
         option_end = argv.index("--") if "--" in argv else len(argv)
         old_flags = {"--show", "--edit", "--onboard", "--workflow"}.intersection(argv[len(path):option_end])
         if old_flags:
@@ -10934,6 +10952,7 @@ WORK
 CONFIGURATION
   runners   Configure test targets and run worktree snapshots
   config    Manage local settings
+  workflow  Manage named workflows and instructions
   profile   Manage reusable AGENTS.md instructions
   policy    Inspect and apply agent permissions
 
@@ -10999,7 +11018,7 @@ def _wrap_help(body):
 
 
 def _group_help(group):
-    if group in ("runners", "config workflow runners"):
+    if group in ("runners", "workflow runners", "config workflow runners"):
         return _wrap_help("""USAGE
   t runners list [NAME] [--repo ALIAS] [--json]
   t runners edit [NAME] [--repo ALIAS]
@@ -11022,7 +11041,7 @@ SCOPE
 LEARN MORE
   t help runners <verb>
 """)
-    if group in ("runners runs", "config workflow runs"):
+    if group in ("runners runs", "workflow runs", "config workflow runs"):
         return _wrap_help("""USAGE
   t runners runs start [--repo ALIAS] [--target NAME ...] -- COMMAND ...
   t runners runs list [--json]
@@ -11053,10 +11072,10 @@ SCOPE
 LEARN MORE
   t help runners runs <verb>
 """)
-    if group == "config workflow instructions":
+    if group == "workflow instructions":
         return _wrap_help("""USAGE
-  t config workflow instructions show [NAME] [--repo ALIAS]
-  t config workflow instructions edit [NAME] [--repo ALIAS]
+  t workflow instructions show [NAME] [--repo ALIAS]
+  t workflow instructions edit [NAME] [--repo ALIAS]
 
 COMMANDS
   show  Print the selected workflow's Markdown instructions without prompts
@@ -11068,19 +11087,19 @@ SCOPE
   NAME and --repo cannot be combined. Repository edits customize only that repo.
 
 LEARN MORE
-  t help config workflow instructions <verb>
+  t help workflow instructions <verb>
 """)
-    if group == "config workflow":
+    if group == "workflow":
         return _wrap_help("""USAGE
-  t config workflow <verb> [arguments] [flags]
-  t config workflow list [--repo ALIAS | --all] [--json]
-  t config workflow add NAME [--from NAME]
-  t config workflow use NAME [--repo ALIAS]
-  t config workflow exclude --repo ALIAS
-  t config workflow inherit --repo ALIAS
-  t config workflow edit [NAME] [--repo ALIAS]
-  t config workflow instructions <verb> [NAME] [--repo ALIAS]
-  t config workflow sync
+  t workflow <verb> [arguments] [flags]
+  t workflow list [--repo ALIAS | --all] [--json]
+  t workflow add NAME [--from NAME]
+  t workflow use NAME [--repo ALIAS]
+  t workflow exclude --repo ALIAS
+  t workflow inherit --repo ALIAS
+  t workflow edit [NAME] [--repo ALIAS]
+  t workflow instructions <verb> [NAME] [--repo ALIAS]
+  t workflow sync
 
 COMMANDS
   list          Print effective settings or the named catalogue with --all
@@ -11107,7 +11126,7 @@ SCOPE
   Instruction reload and current-turn settings cannot be verified or forced.
 
 LEARN MORE
-  t help config workflow <verb>
+  t help workflow <verb>
 """)
     if group == "issue":
         return _wrap_help("""USAGE
@@ -11200,7 +11219,6 @@ def _command_description(group, action):
         "config": {"open": "Open settings; edit repository and host short names", "show": "Print current settings",
                    "edit": "Edit local configuration", "setup": "Register repos and hosts",
                    "onboard": "Guided setup: agents, GitHub repos, and hosts",
-                   "workflow": "Manage named workflows, behavior preferences and Markdown instructions",
                    "local": "Set up local models and Codex worker delegation (--show for status)"},
         "profile": {"init": "Create an instruction profile", "edit": "Edit the profile",
                     "show": "Print the profile", "apply": "Apply it to a repository"},
@@ -11221,8 +11239,8 @@ def _aliases_help():
         if old != " ".join(path):
             rows.append(f"  t {old:<25} t {' '.join(path)}")
     rows.extend((
-        "  t config show --workflow    t config workflow list --json",
-        "  t config edit --workflow    t config workflow edit",
+        "  t config show --workflow    t workflow list --json",
+        "  t config edit --workflow    t workflow edit",
         "  t hosts --json              t hosts list --json",
         "  t hosts delete / rm <alias>  t hosts remove <alias>",
         "  t cursor [id]               t cursor send [id]",
@@ -12221,7 +12239,7 @@ RECEIVE AND REMOTE MOVES
     sp = sub.add_parser("config", help="manage local settings: tools, models, effort, Fast/Ultrafast speed, repos and hosts",
         description='Edit local tool, model, effort, speed, repository, host, and workflow settings. Review before '
             'saving. New SSH targets offer optional verification after saving. Changes to defaults apply to '
-            'fresh sessions. Use t config workflow list for read-only workflow values, or t profile init for '
+            'fresh sessions. Use t workflow list for read-only workflow values, or t profile init for '
             'reusable instructions.',
         help_details="""DETAILS
 
@@ -12247,15 +12265,15 @@ RECEIVE AND REMOTE MOVES
   Fresh tmux and --fg sessions use tool/model/effort/speed defaults. Explicit
   Codex model/effort changes also reconcile supported loaded root threads for
   subsequent turns; current turns and instruction reload remain unverified.
-  Speed is preserved. Use `t config workflow sync` to retry pending propagation.
+  Speed is preserved. Use `t workflow sync` to retry pending propagation.
 
   Open local config in editor covers all custom shell settings (VISUAL/EDITOR, else
   vi).
 
   Agent workflow configures model stages, behavior preferences and Markdown.
 
-  Use `t config workflow edit [--repo ALIAS]` for its JSON editor and `t config
-  workflow list [--repo ALIAS]` for read-only effective values.
+  Use `t workflow edit [--repo ALIAS]` for its JSON editor and `t workflow
+  list [--repo ALIAS]` for read-only effective values.
 
   For a reusable AGENTS.md profile, run `t profile init`.""")
     cg = sp.add_mutually_exclusive_group()
@@ -12271,7 +12289,7 @@ RECEIVE AND REMOTE MOVES
                     help="review agents, optional sign-ins, repositories, and hosts; terminal only. Choices: q/Esc back; review: n/Esc back, q quits; Ctrl-C cancels")
 
     config_sub = sp.add_subparsers(dest="config_resource")
-    workflow = config_sub.add_parser("workflow", help="manage named agent workflows and behavior preferences")
+    workflow = config_sub.add_parser("workflow", hidden=True, help="manage named agent workflows and behavior preferences")
     workflow_sub = workflow.add_subparsers(dest="workflow_action")
     for verb in ("list", "edit", "add", "use", "exclude", "inherit"):
         leaf = workflow_sub.add_parser(verb, help={
@@ -13090,7 +13108,7 @@ def _main(argv):
     args = parser.parse_args(argv)
     if (args.verb == "config" and getattr(args, "workflow_action", None)
             and any(getattr(args, flag, False) for flag in ("show", "edit", "onboard", "workflow"))):
-        parser.error("t config workflow: compatibility mode flags cannot be combined with nested verbs")
+        parser.error("t workflow: compatibility mode flags cannot be combined with nested verbs")
     if args.verb == "share":
         if args.share_action is None:
             if args.retry:
@@ -13127,7 +13145,7 @@ def _command_title(argv):
         return None
     if any(arg in {"--json", "--dump", "-d", "--statusline", "--raw", "--quiet"} for arg in argv):
         return None
-    if argv[:4] == ["config", "workflow", "instructions", "show"] or argv[:2] == ["share", "read"]:
+    if _workflow_argv(argv)[:3] == ["workflow", "instructions", "show"] or argv[:2] == ["share", "read"]:
         return None
     path, _ = _command_path(_hosts_argv(argv))
     if not path and argv and argv[0] in {*IMPLEMENTED, "help", "list"}:

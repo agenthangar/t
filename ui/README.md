@@ -4,7 +4,8 @@ Every public `t` command and conditional mode has an entry in
 [`command-contract.json`](command-contract.json). That inventory is the source of
 truth for classification and contract tests. Compatibility aliases inherit the
 canonical command's entry. `ls` and `list` are interchangeable in every listing
-family (including `config workflow`); root `t list` aliases `t ls`. Resolve only
+family (including `workflow`); the former `t config workflow` routes remain
+compatibility aliases for `t workflow`. Root `t list` aliases `t ls`. Resolve only
 command words, preserving option values, repository names, and delegated commands.
 The old `t repos` family is removed; use `t repo` verbs. Existing repository selectors
 accept registered aliases, checkout basenames, and unambiguous local origin repository
@@ -110,7 +111,7 @@ PATH and shell-wrapper precedence, argument quoting, and ownership checks.
 Fresh and resumed tmux panes start without echoing internal launch commands or
 exit instructions. Agent output is logged from startup; failures retain diagnostics.
 
-The config hub groups Session defaults, Agents, Workflow, Runners, Repositories &
+The config hub groups Session defaults, Agents, Workflows, Runners, Repositories &
 worktrees, Remote hosts, and Finish. Keep agent settings and local worker/model
 setup together, with workflow in its own section; keep repository/worktree choices
 separate from
@@ -156,7 +157,7 @@ the next verification runs. Ctrl-C stops with 130 and reports that configuration
 was already saved. Native SSH owns the restored terminal for each check; no
 fingerprint is automatically accepted. Onboarding uses the same reviewed offer.
 
-Config includes Agent workflow globally and in each repository submenu. The global
+Config includes Workflows globally and in each repository submenu. The global
 menu chooses a named default, adds or edits shared workflows, or activates recommended
 defaults. Each workflow exposes an overall Workflow switch and an independent
 Model stages switch. Disabling stages retains their model/effort settings and keeps
@@ -181,7 +182,7 @@ repository workflow replaces the global default; exclusion suppresses the entire
 workflow. Within a workflow, custom Markdown overrides selected behavior preferences,
 which override generic model-stage guidance. Do not parse prose for contradictions.
 
-`t config workflow add NAME [--from NAME]` copies without selecting, `use NAME
+`t workflow add NAME [--from NAME]` copies without selecting, `use NAME
 [--repo ALIAS]` selects and clears exclusion, `exclude --repo ALIAS` preserves its
 source but suppresses the entire workflow, and `inherit --repo ALIAS` removes the
 override. These direct actions work without a terminal. `list [--repo ALIAS] [--json]`
@@ -191,7 +192,7 @@ is the named catalogue and usage; reject --all with --repo. `edit [NAME] [--repo
 is the advanced JSON editor; reject NAME with --repo. Omitted selectors target the
 current global default. Repository `null` resets inheritance.
 
-`t config workflow instructions show [NAME] [--repo ALIAS]` prints only raw Markdown,
+`t workflow instructions show [NAME] [--repo ALIAS]` prints only raw Markdown,
 without prompts, model discovery or writes. `instructions edit` uses a private .md
 file in VISUAL/EDITOR, preserves formatting and editor status, and rejects embedded
 managed-block markers. Repository edits create an inline policy only after an actual
@@ -227,7 +228,7 @@ that service are reachable; isolated `--no-daemon` owners remain pending until a
 guarded resume boundary.
 
 Successful workflow mutations publish native instruction files atomically, then
-reconcile an account-local revision outside the save lock. `t config workflow sync`
+reconcile an account-local revision outside the save lock. `t workflow sync`
 retries pending work; later saves and SessionStart launch/resume hooks also retry.
 `list` and `list --json` report saved propagation status without writing or
 connecting. Explicit sync also adopts saved preferences that predate propagation.
@@ -265,11 +266,11 @@ policies migrate in memory without writing on reads or installer synchronization
 Test runners appear within each workflow policy. Their JSON subeditor exposes targets,
 default targets, timeout/queue deadlines and artifact paths; Show configured targets
 prints a reviewable summary. Menu changes stay staged until existing Review and Save.
-`t config workflow runners list [NAME] [--repo ALIAS] [--json]` is a local read-only
+`t runners list [NAME] [--repo ALIAS] [--json]` is a local read-only
 list; `edit` opens the terminal editor, and `setup --github-repo OWNER/REPO [--create]`
 explicitly bootstraps a dedicated private broker. Configuration save never provisions.
 
-`t config workflow runs start [--repo ALIAS] -- COMMAND ...` is an explicit direct
+`t runners runs start [--repo ALIAS] -- COMMAND ...` is an explicit direct
 action using the registered current checkout or linked worktree; --repo must match.
 Repeatable --target, --os and --capability select configured targets without a picker.
 The argv after -- belongs to the test command. JSON remains machine output and does
@@ -802,6 +803,6 @@ existing entries; `--call`, `--list-tools`, and stdio never install clients.
 `t runners` is the test-runner noun family: `list`, `edit`, `setup`, and nested
 `runs start/list/status/logs/artifacts/cancel/cleanup`. Bare families print help.
 The old `config workflow runners` and `config workflow runs` routes remain hidden
-compatibility aliases. Config → Test runners chooses the current global default,
+compatibility aliases, as do `workflow runners` and `workflow runs`. Config → Test runners chooses the current global default,
 a named workflow, or a registered repository explicitly; it shares staged workflow
 configuration and the existing review/save/discard flow, with no separate runner store.

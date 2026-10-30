@@ -192,7 +192,7 @@ def test_runner_cli_contract(t_mod):
         assert vars(parser.parse_args(canonical)) == vars(args)
         readonly = words in ('runners list', 'runs list', 'runs status', 'runs logs')
         assert t_mod._command_readonly(argv, terminal=True) is readonly
-    for group in ('config workflow runners', 'config workflow runs'):
+    for group in ('runners', 'runners runs', 'workflow runners', 'workflow runs', 'config workflow runners', 'config workflow runs'):
         assert 'USAGE' in t_mod._group_help(group)
         assert t_mod.main(group.split()) == 0
     assert t_mod._command_readonly(['config', 'workflow', 'runs'])
@@ -201,7 +201,7 @@ def test_runner_cli_contract(t_mod):
     assert t_mod._canonical_argv(['config', 'workflow', 'runs', 'ls'])[-1] == 'list'
 
 
-@pytest.mark.parametrize('prefix', [['runners'], ['config', 'workflow', 'runners']])
+@pytest.mark.parametrize('prefix', [['runners'], ['workflow', 'runners'], ['config', 'workflow', 'runners']])
 def test_runner_config_commands_are_readonly_and_explicit(workflow, t_mod, monkeypatch, tmp_path, capsys, prefix):
     w = workflow
     repository = str(tmp_path.resolve() / 'repo')
@@ -430,7 +430,7 @@ def test_runners_help_and_payload_keep_canonical_boundary(t_mod, monkeypatch, ca
         assert not t_mod._command_readonly(words, terminal=True)
 
 
-@pytest.mark.parametrize('prefix', [['runners', 'runs'], ['config', 'workflow', 'runs']])
+@pytest.mark.parametrize('prefix', [['runners', 'runs'], ['workflow', 'runs'], ['config', 'workflow', 'runs']])
 def test_runner_start_preserves_delegated_mode_flags(t_mod, monkeypatch, prefix):
     monkeypatch.setattr(t_mod, 'Config', lambda: SimpleNamespace())
     monkeypatch.setattr(t_mod, '_t_auto_update', lambda argv: None)

@@ -353,7 +353,7 @@ def test_config_main_menu_shows_repo_aliases(t_mod, config_cli, monkeypatch):
             "repos", "worktrees", "hosts", "beam", "edit", "save", "cancel",
         ]
         assert kwargs["sections"] == {
-            "tool": "Session defaults", t_mod.AGENTS[0]: "Agents", "workflow": "Workflow", "runners": "Runners",
+            "tool": "Session defaults", t_mod.AGENTS[0]: "Agents", "workflow": "Workflows", "runners": "Runners",
             "repos": "Repositories & worktrees", "hosts": "Remote hosts", "edit": "Finish",
         }
         collections = {*t_mod.AGENTS, "local", "workflow", "runners", "repos", "worktrees", "hosts"}

@@ -380,7 +380,7 @@ def summary_lines(policy):
         lines.append(spec['label'] + ': ' + (spec['choices'][selected][0] if selected else 'No preference'))
     lines.append('Custom Markdown: ' + ('present' if summary['custom_instructions'] else 'empty'))
     lines.append('Issue-before-code rule: ' + ('included in editable Markdown' if issue_policy() in policy.get('instructions', '') else 'customized or not included'))
-    lines.append('Read/edit prose: t config workflow instructions show / edit')
+    lines.append('Read/edit prose: t workflow instructions show / edit')
     return lines
 
 
@@ -703,7 +703,7 @@ def save(document, before, extra=(), preserve_storage=False, propagation_context
         try:
             helper['retry']()
         except (OSError, ValueError):
-            print('t workflow: preferences saved; propagation pending, retry with t config workflow sync', file=sys.stderr)
+            print('t workflow: preferences saved; propagation pending, retry with t workflow sync', file=sys.stderr)
 
 
 def sync():

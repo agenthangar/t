@@ -17,7 +17,7 @@ opt-in; choosing macOS does not authorize or prove an interactive GUI session.
 ## Configure
 
 Use **t config → Test runners** and choose the current global default, a named
-workflow, or a registered repository. **Agent workflow → Edit default workflow →
+workflow, or a registered repository. **Workflows → Edit default workflow →
 Test runners** remains a shortcut for that workflow. Or use the explicit JSON editor:
 
 ```sh
