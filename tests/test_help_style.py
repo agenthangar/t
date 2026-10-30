@@ -209,3 +209,14 @@ def test_help_color_lint_accepts_titles_but_not_other_controls():
     rendered = '\x1b]0;t help\x07' + plain + '\x1b]0;\x07'
     assert lint.check_help_color('help', plain, rendered, enabled=False) == []
     assert lint.check_help_color('help', plain, '\x1b[2J' + rendered, enabled=False)
+
+
+@pytest.mark.parametrize('width', [80, 44, 32])
+def test_root_help_separates_work_and_configuration(t_mod, monkeypatch, width):
+    monkeypatch.setattr(t_mod.shutil, 'get_terminal_size',
+                        lambda fallback=(80, 24): t_mod.os.terminal_size((width, 24)))
+    text = t_mod._root_help()
+    before = text.split('CONFIGURATION', 1)[0]
+    assert before.endswith('\n\n')
+    assert 'agentcore' in before
+    assert 'runners' in text.split('CONFIGURATION', 1)[1]

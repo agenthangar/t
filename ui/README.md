@@ -110,7 +110,7 @@ PATH and shell-wrapper precedence, argument quoting, and ownership checks.
 Fresh and resumed tmux panes start without echoing internal launch commands or
 exit instructions. Agent output is logged from startup; failures retain diagnostics.
 
-The config hub groups Session defaults, Agents, Workflow, Repositories &
+The config hub groups Session defaults, Agents, Workflow, Runners, Repositories &
 worktrees, Remote hosts, and Finish. Keep agent settings and local worker/model
 setup together, with workflow in its own section; keep repository/worktree choices
 separate from
@@ -798,3 +798,10 @@ diagnostics are explicitly requested.
 The internal `t mcp` machine interface discovers saved Codex and Claude sessions.
 Its explicit `--install` action registers installed clients additively, preserving
 existing entries; `--call`, `--list-tools`, and stdio never install clients.
+
+`t runners` is the test-runner noun family: `list`, `edit`, `setup`, and nested
+`runs start/list/status/logs/artifacts/cancel/cleanup`. Bare families print help.
+The old `config workflow runners` and `config workflow runs` routes remain hidden
+compatibility aliases. Config → Test runners chooses the current global default,
+a named workflow, or a registered repository explicitly; it shares staged workflow
+configuration and the existing review/save/discard flow, with no separate runner store.

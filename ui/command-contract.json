@@ -1122,7 +1122,6 @@
       },
       "progress": "Terminal-only discovery stages on stderr; no progress in redirected output, JSON, or remote protocols.",
       "notes": "Terminal launches run without echoing internal shell commands or exit instructions; agent output and diagnostics remain visible. Saved Codex resume resolves unindexed held sibling locks through validated session_meta workspace identity in active and archived rollouts. A still-unassociated exact lock is inspected through bounded lock-holder open rollout metadata; process cwd and other thread IDs never establish unrelatedness. Unknown, invalid or unreadable evidence fails closed; ownership refusals identify the conversation and verified PIDs with finish/exit recovery and a concise retry diagnostic, without process arguments or a traceback. Confirmed missing/invalid GitHub authentication warns once per affected host before selection, including empty and automatic results, without blocking available conversations; persistent compact picker warning survives filter/sort/reset/all. Remedy: gh auth login --hostname github.com on the named host. Network/rate-limit/permission failures and missing gh do not trigger auth warnings. Cross-host policy: Claude defaults to t transfer; Codex defaults to manual native desktop Hand off (no supported CLI adapter). Agent settings show/persist the effective mechanism and explicit Codex t override. Native returns nonzero with app steps before transfer mutations; local resume and remote attach unchanged.",
-
       "source_reconciliation": {
         "scope": "selected cross-host saved conversations only",
         "checkpoint": "verified source workspace; normal Git identity/hooks; tracked, staged and nonignored untracked code",
@@ -3872,7 +3871,7 @@
       },
       "notes": "Bounded retries through owning runtime control socket and nonrecursive zsh -lic SSH. Never injects turns. Current turns and native instruction reload remain unverified. The raw proxy uses bounded HTTP Upgrade/WebSocket framing; installed private Tomli supplies Python 3.9 parsing without global package changes. Isolated sessions apply retained explicit main intent on guarded resume, while live attach remains unverified."
     },
-    "config workflow runners list": {
+    "runners list": {
       "patterns": [
         "list",
         "machine"
@@ -3886,8 +3885,6 @@
       "modes": {
         "default": {
           "argv": [
-            "config",
-            "workflow",
             "runners",
             "list"
           ],
@@ -3901,8 +3898,6 @@
         },
         "json": {
           "argv": [
-            "config",
-            "workflow",
             "runners",
             "list",
             "--json"
@@ -3917,7 +3912,7 @@
         }
       }
     },
-    "config workflow runners edit": {
+    "runners edit": {
       "patterns": [
         "action"
       ],
@@ -3930,8 +3925,6 @@
       "modes": {
         "default": {
           "argv": [
-            "config",
-            "workflow",
             "runners",
             "edit"
           ],
@@ -3946,7 +3939,7 @@
         }
       }
     },
-    "config workflow runners setup": {
+    "runners setup": {
       "patterns": [
         "action"
       ],
@@ -3959,8 +3952,6 @@
       "modes": {
         "default": {
           "argv": [
-            "config",
-            "workflow",
             "runners",
             "setup",
             "--github-repo",
@@ -3976,7 +3967,7 @@
         }
       }
     },
-    "config workflow runs start": {
+    "runners runs start": {
       "patterns": [
         "action",
         "machine"
@@ -3990,8 +3981,7 @@
       "modes": {
         "default": {
           "argv": [
-            "config",
-            "workflow",
+            "runners",
             "runs",
             "start",
             "--",
@@ -4009,8 +3999,7 @@
         },
         "json": {
           "argv": [
-            "config",
-            "workflow",
+            "runners",
             "runs",
             "start",
             "--json",
@@ -4029,7 +4018,7 @@
         }
       }
     },
-    "config workflow runs list": {
+    "runners runs list": {
       "patterns": [
         "list",
         "machine"
@@ -4043,8 +4032,7 @@
       "modes": {
         "default": {
           "argv": [
-            "config",
-            "workflow",
+            "runners",
             "runs",
             "list"
           ],
@@ -4058,8 +4046,7 @@
         },
         "json": {
           "argv": [
-            "config",
-            "workflow",
+            "runners",
             "runs",
             "list",
             "--json"
@@ -4074,7 +4061,7 @@
         }
       }
     },
-    "config workflow runs status": {
+    "runners runs status": {
       "patterns": [
         "detail",
         "machine"
@@ -4088,8 +4075,7 @@
       "modes": {
         "default": {
           "argv": [
-            "config",
-            "workflow",
+            "runners",
             "runs",
             "status",
             "11111111-1111-4111-8111-111111111111"
@@ -4104,8 +4090,7 @@
         },
         "json": {
           "argv": [
-            "config",
-            "workflow",
+            "runners",
             "runs",
             "status",
             "11111111-1111-4111-8111-111111111111",
@@ -4121,7 +4106,7 @@
         }
       }
     },
-    "config workflow runs logs": {
+    "runners runs logs": {
       "patterns": [
         "detail"
       ],
@@ -4134,8 +4119,7 @@
       "modes": {
         "default": {
           "argv": [
-            "config",
-            "workflow",
+            "runners",
             "runs",
             "logs",
             "11111111-1111-4111-8111-111111111111"
@@ -4150,7 +4134,7 @@
         }
       }
     },
-    "config workflow runs artifacts": {
+    "runners runs artifacts": {
       "patterns": [
         "action"
       ],
@@ -4163,8 +4147,7 @@
       "modes": {
         "default": {
           "argv": [
-            "config",
-            "workflow",
+            "runners",
             "runs",
             "artifacts",
             "11111111-1111-4111-8111-111111111111"
@@ -4179,7 +4162,7 @@
         }
       }
     },
-    "config workflow runs cancel": {
+    "runners runs cancel": {
       "patterns": [
         "action"
       ],
@@ -4192,8 +4175,7 @@
       "modes": {
         "default": {
           "argv": [
-            "config",
-            "workflow",
+            "runners",
             "runs",
             "cancel",
             "11111111-1111-4111-8111-111111111111"
@@ -4208,7 +4190,7 @@
         }
       }
     },
-    "config workflow runs cleanup": {
+    "runners runs cleanup": {
       "patterns": [
         "action"
       ],
@@ -4221,8 +4203,7 @@
       "modes": {
         "default": {
           "argv": [
-            "config",
-            "workflow",
+            "runners",
             "runs",
             "cleanup",
             "11111111-1111-4111-8111-111111111111"
@@ -4709,9 +4690,9 @@
     "config workflow inherit": "_cmd_workflow workflow_repo",
     "config workflow instructions show": "_cmd_workflow workflow_repo",
     "config workflow instructions edit": "_cmd_workflow workflow_repo",
-    "config workflow runners list": "_runner_scope resolves registered repository selectors before runner actions",
-    "config workflow runners edit": "_runner_scope resolves registered repository selectors before runner actions",
-    "config workflow runs start": "_runner_scope resolves registered repository selectors before runner actions"
+    "runners list": "_runner_scope resolves registered repository selectors before runner actions",
+    "runners edit": "_runner_scope resolves registered repository selectors before runner actions",
+    "runners runs start": "_runner_scope resolves registered repository selectors before runner actions"
   },
   "command_aliases": {
     "list_verbs": {
