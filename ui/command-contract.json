@@ -3275,7 +3275,8 @@
       "confirmation": "enter",
       "tests": [
         "tests/test_remote_commands.py::test_remote_move_selects_current_cross_host_identity_and_destination",
-        "tests/test_host_resilience.py::test_remote_move_source_picker_keeps_reachable_candidates"
+        "tests/test_host_resilience.py::test_remote_move_source_picker_keeps_reachable_candidates",
+        "tests/test_remote_commands.py::test_remote_only_repo_reaches_destination_picker"
       ],
       "modes": {
         "default": {
@@ -3292,7 +3293,7 @@
           "tests": [
             "tests/test_remote_commands.py::test_remote_move_selects_current_cross_host_identity_and_destination"
           ],
-          "notes": "Single host picker waits for Enter even with one host; missing session uses shared selection on the source/target host. Cancellation returns 130. Source browsing skips unavailable peers while retaining reachable candidates; selected-source and transfer ownership checks remain strict. Host picker says Move this session to which host? and Destination host \u00b7 current host: SOURCE; selected host is the destination. SSH alias/target context is subordinate to the action heading."
+          "notes": "Single host picker waits for Enter even with one host; missing session uses shared selection on the source/target host. Cancellation returns 130. Source browsing skips unavailable peers while retaining reachable candidates; selected-source and transfer ownership checks remain strict. Host picker says Move this session to which host? and Destination host \u00b7 current host: SOURCE; selected host is the destination. SSH alias/target context is subordinate to the action heading. Repository selectors absent locally are resolved on each remote source; ambiguity fails closed. A unique repo/slot match proceeds to the destination picker."
         },
         "explicit": {
           "argv": [

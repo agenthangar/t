@@ -1114,7 +1114,13 @@ _t_remote_move_rows() {
     (( scan_rc == 2 )) && return 2
     (( scan_rc == 0 )) || return 1
   else
-    _dev_rows_all --best-effort --details
+    if [[ -n $repo && -z ${DEV_REPOS[$repo]:-} ]]; then
+      # A selector absent here belongs to the source host's registry. Never
+      # widen it to an unfiltered inventory just because it is unknown here.
+      _dev_rows_all --best-effort --repo "$repo"
+    else
+      _dev_rows_all --best-effort --details
+    fi
     return
   fi
   [[ -n $rows ]] && print -r -- "$rows" | awk -v h="$source" 'NF {print h "\t" $0}'
@@ -1306,12 +1312,14 @@ _t_remote() {
     (( source_rc == 0 )) || { print -u2 't remote move: ownership scan failed; no conversation was moved'; return 1; }
     if [[ -z $source || $source == local ]]; then
       scope=${DEV_REPOS[$repo]:-}
-      [[ -z $repo || -n $scope ]] || { print -u2 "t remote move: unknown repository: $repo"; return 1; }
+      [[ $source != local || -z $repo || -n $scope ]] || { print -u2 "t remote move: unknown repository: $repo"; return 1; }
     fi
     scope_rel=$(_dev_homerel "$scope"); wt_rel=$(_dev_homerel "${DEV_WORKTREE_ROOT}/${scope:t}")
     for row in "${(@f)rows}"; do
       fields=("${(@ps:\t:)row}")
       (( $#fields >= 8 )) || continue
+      # Unknown local selectors are resolved only on remote source hosts.
+      [[ -z $source && -n $repo && -z $scope && $fields[1] == local ]] && continue
       [[ $fields[2] != - && $fields[5] == (attached|detached) && $fields[8] == (claude|codex) ]] || continue
       [[ -z $sid || $fields[2] == "$sid" ]] || continue
       [[ -z $slot || $fields[4] == *-$slot ]] || continue

@@ -518,6 +518,7 @@ t remote resume mini api        # choose saved history discovered on mini
 t remote resume mini --all       # all repositories, regardless of remote login directory
 t session resume --all                  # local and remote-only repositories; clone only after selection
 t remote move                         # choose a current session, then its destination
+t remote move api 2                   # discover the source, then choose its destination
 t remote move api 2 --from mini --host cloud
 t session move api 2 --from mini --host cloud --detach
 ```
@@ -531,6 +532,8 @@ below the action heading, and even one configured host waits for Enter. `remote 
 and registered remote Claude/Codex CLI sessions, retains host identity when slot
 names repeat, and rechecks the selected conversation before moving. A named or
 current repository scopes selection; outside a checkout it spans all repositories.
+Repositories absent locally are resolved on each remote source. A unique repo/slot
+match proceeds directly to the destination picker; ambiguous repository selectors fail.
 `--all` widens the move picker. Explicit `--from` plus a slot or `--session ID`
 skips session selection. Esc/Ctrl-C cancels with status 130; an empty current
 session inventory does nothing. Nonterminal invocations require explicit choices.

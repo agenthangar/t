@@ -477,7 +477,10 @@ automatic update prompts.
 
 `remote move` uses a single shared current-session picker over local and registered
 remote CLI owners, including attached sessions and excluding desktop/unknown IDs.
-Repository scope uses home-relative checkout/worktree paths across hosts. Duplicate
+Repository scope uses home-relative checkout/worktree paths across hosts.
+If a named repository is absent locally, each remote source resolves the selector
+in its own registry; ambiguous selectors stop selection. A unique repo/slot match
+goes directly to the destination-host picker when `--host` is omitted. Duplicate
 slot labels retain their host identity. Explicit source plus slot/ID bypasses the
 session picker; an explicit target without source resolves a unique snapshot or
 requires selection when ambiguous. Destination selection excludes every alias of
