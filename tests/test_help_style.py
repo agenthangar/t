@@ -56,7 +56,7 @@ def test_nested_and_mode_help_share_layout_without_side_effects(t_mod, monkeypat
     monkeypatch.setattr(t_mod, '_t_auto_update', lambda argv: pytest.fail('help updated'))
     assert t_mod.main([*path, '-h']) == 0
     quick = capsys.readouterr().out
-    displayed = [*path[:-1], 'remove'] if path[:1] == ['hosts'] and path[-1] in ('delete', 'rm') else path
+    displayed = [*path[:-1], 'remove'] if path[:1] == ['hosts'] and path[-1] in ('delete', 'rm') else t_mod._workflow_argv(path)
     assert quick.startswith('usage: t ' + ' '.join(displayed))
     assert 'OPTIONS:' in quick and 'LEARN MORE' in quick
     assert t_mod.main([*path, '--help']) == 0

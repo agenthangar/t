@@ -499,19 +499,20 @@ def test_combined_config_save_is_one_transaction(workflow, t_mod, tmp_path, monk
         assert 'saved agent workflow and native instructions' in output and 'T_LOCAL_RC' in output
 
 
-def test_nested_workflow_commands(workflow, t_mod, monkeypatch, tmp_path, capsys):
+@pytest.mark.parametrize('prefix', [('workflow',), ('config', 'workflow')])
+def test_nested_workflow_commands(workflow, t_mod, monkeypatch, tmp_path, capsys, prefix):
     monkeypatch.setattr(t_mod, '_workflow', lambda: vars(workflow))
     cfg = SimpleNamespace(repos={'api': str(tmp_path / 'api')})
     monkeypatch.setattr(t_mod, 'Config', lambda: cfg)
     # Exercise the real update classifier: list must skip the prompt.
     monkeypatch.setattr(t_mod, '_t_offer_update', lambda: pytest.fail('list prompted for update'))
-    assert t_mod.main(['config', 'workflow', 'list']) == 0
+    assert t_mod.main([*prefix, 'list']) == 0
     output = capsys.readouterr().out
     assert 'Scope: global' in output and 'recommended defaults (not saved)' in output
     assert 'Enabled: yes' in output and all(word in output for word in ('STAGE', 'MODEL', 'EFFORT', 'planning', 'implementation', 'review'))
     assert not workflow.config_path().exists()
     for flags in ([], ['--repo', 'api']):
-        assert t_mod.main(['config', 'workflow', 'list', *flags, '--json']) == 0
+        assert t_mod.main([*prefix, 'list', *flags, '--json']) == 0
         result = json.loads(capsys.readouterr().out)
         assert result['workflow'] == workflow.defaults()['workflows']['standard']
         assert result['scope'] == (str(tmp_path / 'api') if flags else 'global')
@@ -521,22 +522,22 @@ def test_nested_workflow_commands(workflow, t_mod, monkeypatch, tmp_path, capsys
     document['workflows']['standard']['enabled'] = False
     document['repositories'][str(tmp_path / 'api')] = {'inline': dict(workflow.DEFAULT)}
     workflow.save(document, None)
-    assert t_mod.main(['config', 'workflow', 'list']) == 0
+    assert t_mod.main([*prefix, 'list']) == 0
     assert 'Enabled: no' in capsys.readouterr().out
-    assert t_mod.main(['config', 'workflow', 'list', '--repo', 'api']) == 0
+    assert t_mod.main([*prefix, 'list', '--repo', 'api']) == 0
     output = capsys.readouterr().out
     assert 'Source: repository override' in output and 'Enabled: yes' in output
-    assert t_mod.main(['config', 'workflow', 'list', '--repo', 'missing']) == 1
+    assert t_mod.main([*prefix, 'list', '--repo', 'missing']) == 1
     assert 'unknown registered repository' in capsys.readouterr().err
     monkeypatch.setattr(t_mod, '_t_auto_update', lambda argv: None)
     monkeypatch.setattr(t_mod.sys.stdin, 'isatty', lambda: True)
     monkeypatch.setattr(t_mod.sys.stdout, 'isatty', lambda: True)
     seen = []
     monkeypatch.setattr(workflow, 'edit', lambda doc, repo: (seen.append(repo) or 19, doc))
-    assert t_mod.main(['config', 'workflow', 'edit', '--repo', 'api']) == 19
+    assert t_mod.main([*prefix, 'edit', '--repo', 'api']) == 19
     assert seen == [str(tmp_path / 'api')]
-    assert not t_mod._command_readonly(['config', 'workflow', 'edit'])
-    assert t_mod._command_readonly(['config', 'workflow', 'list', '--repo', 'api'])
+    assert not t_mod._command_readonly([*prefix, 'edit'])
+    assert t_mod._command_readonly([*prefix, 'list', '--repo', 'api'])
 
 
 def test_legacy_migration_is_read_only_and_sync_persists_once(workflow, tmp_path):
@@ -979,7 +980,8 @@ def test_behavior_menu_noop_clear_and_excluded_edit(workflow, t_mod, monkeypatch
     assert not w.config_path().exists()
 
 
-def test_behavior_list_and_raw_show_are_read_only(workflow, t_mod, monkeypatch, tmp_path, capsys):
+@pytest.mark.parametrize('prefix', [('workflow',), ('config', 'workflow')])
+def test_behavior_list_and_raw_show_are_read_only(workflow, t_mod, monkeypatch, tmp_path, capsys, prefix):
     w = workflow
     monkeypatch.setattr(t_mod, '_workflow', lambda: vars(w))
     repo = str(tmp_path / 'api')
@@ -996,18 +998,18 @@ def test_behavior_list_and_raw_show_are_read_only(workflow, t_mod, monkeypatch, 
     w.save(doc, None)
     before = [w.snapshot(path) for path in [w.config_path(), *native_paths()]]
     for scope in [[], ['--repo', 'api']]:
-        assert t_mod.main(['config', 'workflow', 'list', *scope, '--json']) == 0
+        assert t_mod.main([*prefix, 'list', *scope, '--json']) == 0
         result = json.loads(capsys.readouterr().out)
         assert not result['stages_enabled'] and not result['stages_active']
         assert result['behaviors'] == policy['behaviors'] and result['custom_instructions']
         assert result['preference_source'] == 'standard' and result['precedence'] == w.PRECEDENCE
-        assert t_mod.main(['config', 'workflow', 'list', *scope]) == 0
+        assert t_mod.main([*prefix, 'list', *scope]) == 0
         text = capsys.readouterr().out
         assert 'Model stages: disabled' in text and 'Current worktree' in text
         assert 'Precedence:' in text and 'Custom Markdown: present' in text
-        assert t_mod.main(['config', 'workflow', 'instructions', 'show', *scope]) == 0
+        assert t_mod.main([*prefix, 'instructions', 'show', *scope]) == 0
         assert capsys.readouterr().out == prose
-    assert t_mod.main(['config', 'workflow', 'list', '--all']) == 0
+    assert t_mod.main([*prefix, 'list', '--all']) == 0
     assert 'Current worktree' in capsys.readouterr().out
     assert [w.snapshot(path) for path in [w.config_path(), *native_paths()]] == before
 

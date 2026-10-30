@@ -29,10 +29,10 @@ t() {
   for arg in "$@"; do
     case $arg in --json|--dump|-d|--statusline|--raw|--quiet) machine=1 ;; esac
   done
-  [[ "$*" == 'config workflow instructions show'* || "$*" == 'share read'* ]] && machine=1
+  [[ "$*" == 'config workflow instructions show'* || "$*" == 'workflow instructions show'* || "$*" == 'share read'* ]] && machine=1
   if [[ -t 1 && ${TERM:-dumb} != dumb && -z $machine && -z ${T_TITLE_ACTIVE:-} ]]; then
     case ${1:-} in
-      session|remote|issue|repo|cursor|hosts|agentcore|config|profile|policy|agent|system)
+      session|remote|issue|repo|cursor|hosts|agentcore|workflow|config|profile|policy|agent|system)
         label+=" $1"
         case ${2:-} in
           open|move|resume|list|ls|status|start|close|restart|push|pop|history|cd|read|view-plan|paste|search|open-app|goal|locate|create|clone|add|show|edit|remove|delete|rm|default|run|invoke|stop|setup|onboard|local|workflow|init|apply|check|login|install|trust|integrate|update|diagnose|advisories) label+=" $2" ;;
@@ -780,7 +780,7 @@ _t_beam_xlate() { _t_beam "$@"; }
 # key for `on`), and slot/flags after. Pulls live from the ${(k)DEV_REPOS} /
 # ${(k)REMOTE_HOSTS} arrays so it stays current with ${T_LOCAL_RC}.
 _t() {
-  local -a nouns=(session issue share remote repo cursor hosts agentcore config mcp profile policy agent system login help)
+  local -a nouns=(session issue share remote repo cursor hosts agentcore workflow config mcp profile policy agent system login help)
   if (( CURRENT == 2 )); then
     _describe -t nouns 't command group' nouns
     return
@@ -851,7 +851,8 @@ _t() {
     cursor) actions=(list ls resume send) ;;
     agentcore) actions=(invoke stop) ;;
     hosts) actions=(list ls show add edit remove default run) ;;
-    config) actions=(open show edit setup onboard workflow local) ;;
+    workflow) actions=(list ls add use exclude inherit edit instructions runners runs sync) ;;
+    config) actions=(open show edit setup onboard local) ;;
     profile) actions=(init edit show apply) ;;
     policy) actions=(check show apply) ;;
     agent) actions=(login install status trust) ;;
@@ -875,7 +876,8 @@ _t() {
     else _values 'flag' -h --help; fi
     return
   fi
-  if [[ $group == config && $action == workflow ]]; then
+  if [[ $group == workflow || ( $group == config && $action == workflow ) ]]; then
+    [[ $group == workflow ]] && (( first-- ))
     if (( CURRENT == first )); then
       _values 'workflow resource or verb' list ls add use exclude inherit edit instructions runners runs sync
     elif [[ ${words[CURRENT-1]} == --repo ]]; then

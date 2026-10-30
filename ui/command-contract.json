@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "description": "Development-only public command appearance and interaction inventory; ls/list aliases inherit canonical routes in bin/t COMMAND_GROUPS, including config workflow and root list/ls; the repos family is removed. Existing-repository selectors accept registered aliases, checkout basenames, or unambiguous local origin repository names; exact aliases retain precedence and remote open/resume resolve on the selected host.",
+  "description": "Development-only public command appearance and interaction inventory; ls/list aliases inherit canonical routes in bin/t COMMAND_GROUPS, including workflow and root list/ls; the repos family is removed. Existing-repository selectors accept registered aliases, checkout basenames, or unambiguous local origin repository names; exact aliases retain precedence and remote open/resume resolve on the selected host.",
   "patterns": {
     "list": "Direct read-only aligned rows, scope, and empty state; never launches a picker.",
     "detail": "Read-only labeled values; no work starts or prompt appears.",
@@ -2256,7 +2256,7 @@
             "tests/test_config.py::test_config_group_navigation_retains_focus",
             "tests/test_config.py::test_config_grouped_menu_narrow_navigation"
           ],
-          "notes": "Suggest unique host short names on addition; allow host renaming with defaults preserved and review before saving. Group the hub into Session defaults, Agents, Workflow, MCP server, Repositories & worktrees, Remote hosts, and Finish. Keep all actions directly reachable with stable focus and Save/Discard behavior; collection/setup rows use a trailing submenu cue. Focus and Save remain visible at narrow terminal sizes."
+          "notes": "Suggest unique host short names on addition; allow host renaming with defaults preserved and review before saving. Group the hub into Session defaults, Agents, Workflows, MCP server, Repositories & worktrees, Remote hosts, and Finish. Keep all actions directly reachable with stable focus and Save/Discard behavior; collection/setup rows use a trailing submenu cue. Focus and Save remain visible at narrow terminal sizes."
         },
         "host_add": {
           "argv": [
@@ -2312,7 +2312,7 @@
             "tests/test_workflow.py::test_behavior_menu_noop_clear_and_excluded_edit",
             "tests/test_workflow.py::test_behavior_menu_narrow_screens"
           ],
-          "notes": "Agent workflow separates the overall Workflow switch from Model stages. Stage settings are retained when disabled. The shared RailUI Behavior preferences submenu offers worktree isolated/current, preview UI changes/on request, validation relevant/full and delivery review/PR/authorized auto-merge. No preference clears the selected key; none are enabled by default. Edits remain pending until Save, including edits beneath exclusion. Explain task/repository/custom Markdown/behavior/model-stage precedence; preserve raw Markdown and the advanced JSON editor."
+          "notes": "The Workflows section and submenu separate the overall Workflow switch from Model stages. Stage settings are retained when disabled. The shared RailUI Behavior preferences submenu offers worktree isolated/current, preview UI changes/on request, validation relevant/full and delivery review/PR/authorized auto-merge. No preference clears the selected key; none are enabled by default. Edits remain pending until Save, including edits beneath exclusion. Explain task/repository/custom Markdown/behavior/model-stage precedence; preserve raw Markdown and the advanced JSON editor."
         },
         "mcp": {
           "argv": [
@@ -3451,7 +3451,7 @@
       },
       "notes": " Confirmed missing/invalid GitHub authentication warns once per affected host before selection, including empty and automatic results, without blocking available conversations; persistent compact picker warning survives filter/sort/reset/all. Remedy: gh auth login --hostname github.com on the named host. Network/rate-limit/permission failures and missing gh do not trigger auth warnings. Cross-host policy: Claude defaults to t transfer; Codex defaults to manual native desktop Hand off (no supported CLI adapter). Agent settings show/persist the effective mechanism and explicit Codex t override. Native returns nonzero with app steps before transfer mutations; local resume and remote attach unchanged."
     },
-    "config workflow list": {
+    "workflow list": {
       "patterns": [
         "list",
         "machine"
@@ -3466,7 +3466,6 @@
       "modes": {
         "default": {
           "argv": [
-            "config",
             "workflow",
             "list"
           ],
@@ -3481,7 +3480,6 @@
         },
         "repository": {
           "argv": [
-            "config",
             "workflow",
             "list",
             "--repo",
@@ -3498,7 +3496,6 @@
         },
         "json": {
           "argv": [
-            "config",
             "workflow",
             "list",
             "--json"
@@ -3514,7 +3511,6 @@
         },
         "repository_json": {
           "argv": [
-            "config",
             "workflow",
             "list",
             "--repo",
@@ -3532,7 +3528,6 @@
         },
         "catalogue": {
           "argv": [
-            "config",
             "workflow",
             "list",
             "--all",
@@ -3550,7 +3545,7 @@
       },
       "notes": "Read-only output includes model-stage state, behavior preferences and source, custom Markdown presence and precedence. No picker, model discovery, prompts or storage writes. Named catalogue includes the same summaries; instructions show preserves exact raw Markdown."
     },
-    "config workflow edit": {
+    "workflow edit": {
       "patterns": [
         "action"
       ],
@@ -3563,7 +3558,6 @@
       "modes": {
         "default": {
           "argv": [
-            "config",
             "workflow",
             "edit"
           ],
@@ -3578,7 +3572,6 @@
         },
         "repository": {
           "argv": [
-            "config",
             "workflow",
             "edit",
             "--repo",
@@ -3595,7 +3588,6 @@
         },
         "named": {
           "argv": [
-            "config",
             "workflow",
             "edit",
             "quick"
@@ -3612,7 +3604,7 @@
       },
       "notes": "Optional v2 policy fields stages_enabled (default true) and behaviors (default absent) preserve old policies. Strictly validate known worktree/preview/validation/delivery enums. Invalid and unchanged edits write nothing; disabled and excluded workflows suppress stages, behavior preferences and custom Markdown."
     },
-    "config workflow add": {
+    "workflow add": {
       "patterns": [
         "action"
       ],
@@ -3625,7 +3617,6 @@
       "modes": {
         "default": {
           "argv": [
-            "config",
             "workflow",
             "add",
             "quick"
@@ -3640,7 +3631,7 @@
         }
       }
     },
-    "config workflow use": {
+    "workflow use": {
       "patterns": [
         "action"
       ],
@@ -3653,7 +3644,6 @@
       "modes": {
         "default": {
           "argv": [
-            "config",
             "workflow",
             "use",
             "quick"
@@ -3668,7 +3658,7 @@
         }
       }
     },
-    "config workflow exclude": {
+    "workflow exclude": {
       "patterns": [
         "action"
       ],
@@ -3681,7 +3671,6 @@
       "modes": {
         "default": {
           "argv": [
-            "config",
             "workflow",
             "exclude",
             "--repo",
@@ -3697,7 +3686,7 @@
         }
       }
     },
-    "config workflow inherit": {
+    "workflow inherit": {
       "patterns": [
         "action"
       ],
@@ -3710,7 +3699,6 @@
       "modes": {
         "default": {
           "argv": [
-            "config",
             "workflow",
             "inherit",
             "--repo",
@@ -3726,7 +3714,7 @@
         }
       }
     },
-    "config workflow instructions show": {
+    "workflow instructions show": {
       "patterns": [
         "detail"
       ],
@@ -3739,7 +3727,6 @@
       "modes": {
         "default": {
           "argv": [
-            "config",
             "workflow",
             "instructions",
             "show"
@@ -3755,7 +3742,7 @@
         }
       }
     },
-    "config workflow instructions edit": {
+    "workflow instructions edit": {
       "patterns": [
         "action"
       ],
@@ -3768,7 +3755,6 @@
       "modes": {
         "default": {
           "argv": [
-            "config",
             "workflow",
             "instructions",
             "edit"
@@ -3863,7 +3849,7 @@
         }
       }
     },
-    "config workflow sync": {
+    "workflow sync": {
       "patterns": [
         "action"
       ],
@@ -3876,7 +3862,6 @@
       "modes": {
         "default": {
           "argv": [
-            "config",
             "workflow",
             "sync"
           ],
@@ -3891,7 +3876,7 @@
       },
       "notes": "Bounded retries through owning runtime control socket and nonrecursive zsh -lic SSH. Never injects turns. Current turns and native instruction reload remain unverified. The raw proxy uses bounded HTTP Upgrade/WebSocket framing; installed private Tomli supplies Python 3.9 parsing without global package changes. Isolated sessions apply retained explicit main intent on guarded resume, while live attach remains unverified."
     },
-    "config workflow runners list": {
+    "workflow runners list": {
       "patterns": [
         "list",
         "machine"
@@ -3905,7 +3890,6 @@
       "modes": {
         "default": {
           "argv": [
-            "config",
             "workflow",
             "runners",
             "list"
@@ -3920,7 +3904,6 @@
         },
         "json": {
           "argv": [
-            "config",
             "workflow",
             "runners",
             "list",
@@ -3936,7 +3919,7 @@
         }
       }
     },
-    "config workflow runners edit": {
+    "workflow runners edit": {
       "patterns": [
         "action"
       ],
@@ -3949,7 +3932,6 @@
       "modes": {
         "default": {
           "argv": [
-            "config",
             "workflow",
             "runners",
             "edit"
@@ -3965,7 +3947,7 @@
         }
       }
     },
-    "config workflow runners setup": {
+    "workflow runners setup": {
       "patterns": [
         "action"
       ],
@@ -3978,7 +3960,6 @@
       "modes": {
         "default": {
           "argv": [
-            "config",
             "workflow",
             "runners",
             "setup",
@@ -3995,7 +3976,7 @@
         }
       }
     },
-    "config workflow runs start": {
+    "workflow runs start": {
       "patterns": [
         "action",
         "machine"
@@ -4009,7 +3990,6 @@
       "modes": {
         "default": {
           "argv": [
-            "config",
             "workflow",
             "runs",
             "start",
@@ -4028,7 +4008,6 @@
         },
         "json": {
           "argv": [
-            "config",
             "workflow",
             "runs",
             "start",
@@ -4048,7 +4027,7 @@
         }
       }
     },
-    "config workflow runs list": {
+    "workflow runs list": {
       "patterns": [
         "list",
         "machine"
@@ -4062,7 +4041,6 @@
       "modes": {
         "default": {
           "argv": [
-            "config",
             "workflow",
             "runs",
             "list"
@@ -4077,7 +4055,6 @@
         },
         "json": {
           "argv": [
-            "config",
             "workflow",
             "runs",
             "list",
@@ -4093,7 +4070,7 @@
         }
       }
     },
-    "config workflow runs status": {
+    "workflow runs status": {
       "patterns": [
         "detail",
         "machine"
@@ -4107,7 +4084,6 @@
       "modes": {
         "default": {
           "argv": [
-            "config",
             "workflow",
             "runs",
             "status",
@@ -4123,7 +4099,6 @@
         },
         "json": {
           "argv": [
-            "config",
             "workflow",
             "runs",
             "status",
@@ -4140,7 +4115,7 @@
         }
       }
     },
-    "config workflow runs logs": {
+    "workflow runs logs": {
       "patterns": [
         "detail"
       ],
@@ -4153,7 +4128,6 @@
       "modes": {
         "default": {
           "argv": [
-            "config",
             "workflow",
             "runs",
             "logs",
@@ -4169,7 +4143,7 @@
         }
       }
     },
-    "config workflow runs artifacts": {
+    "workflow runs artifacts": {
       "patterns": [
         "action"
       ],
@@ -4182,7 +4156,6 @@
       "modes": {
         "default": {
           "argv": [
-            "config",
             "workflow",
             "runs",
             "artifacts",
@@ -4198,7 +4171,7 @@
         }
       }
     },
-    "config workflow runs cancel": {
+    "workflow runs cancel": {
       "patterns": [
         "action"
       ],
@@ -4211,7 +4184,6 @@
       "modes": {
         "default": {
           "argv": [
-            "config",
             "workflow",
             "runs",
             "cancel",
@@ -4227,7 +4199,7 @@
         }
       }
     },
-    "config workflow runs cleanup": {
+    "workflow runs cleanup": {
       "patterns": [
         "action"
       ],
@@ -4240,7 +4212,6 @@
       "modes": {
         "default": {
           "argv": [
-            "config",
             "workflow",
             "runs",
             "cleanup",
@@ -4819,20 +4790,20 @@
     "config edit": "cmd_config workflow_repo compatibility",
     "config onboard": "cmd_config workflow_repo compatibility",
     "config local": "user-wide model setup; ignores workflow_repo inherited from the shared config parser",
-    "config workflow list": "cmd_config workflow_repo",
-    "config workflow edit": "cmd_config workflow_repo",
+    "workflow list": "cmd_config workflow_repo",
+    "workflow edit": "cmd_config workflow_repo",
     "profile init": "cmd_instructions",
     "profile edit": "cmd_instructions",
     "profile show": "cmd_instructions",
     "profile apply": "cmd_instructions",
-    "config workflow use": "_cmd_workflow workflow_repo",
-    "config workflow exclude": "_cmd_workflow workflow_repo",
-    "config workflow inherit": "_cmd_workflow workflow_repo",
-    "config workflow instructions show": "_cmd_workflow workflow_repo",
-    "config workflow instructions edit": "_cmd_workflow workflow_repo",
-    "config workflow runners list": "_runner_scope resolves registered repository selectors before runner actions",
-    "config workflow runners edit": "_runner_scope resolves registered repository selectors before runner actions",
-    "config workflow runs start": "_runner_scope resolves registered repository selectors before runner actions"
+    "workflow use": "_cmd_workflow workflow_repo",
+    "workflow exclude": "_cmd_workflow workflow_repo",
+    "workflow inherit": "_cmd_workflow workflow_repo",
+    "workflow instructions show": "_cmd_workflow workflow_repo",
+    "workflow instructions edit": "_cmd_workflow workflow_repo",
+    "workflow runners list": "_runner_scope resolves registered repository selectors before runner actions",
+    "workflow runners edit": "_runner_scope resolves registered repository selectors before runner actions",
+    "workflow runs start": "_runner_scope resolves registered repository selectors before runner actions"
   },
   "command_aliases": {
     "list_verbs": {
