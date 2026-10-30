@@ -109,6 +109,56 @@ t remote move; print rc=$?
                'Destination host · current host: alpha' in arg for arg in logs[1]['args'])
 
 
+# Exercise the real fan-out and host-side selector worker. The source registers
+# the checkout under a different alias and path than the controller.
+REMOTE_ONLY = HOSTS + r'''
+_dev_session_rows_impl() {
+  printf 'unrelated\t%s\tother-1\tdetached\tactive\tOther\tcodex\n' "$HOME/code/other"
+  if [[ -n ${DEV_REPOS[remote-auth]:-} ]]; then
+    printf 'auth-id\t%s\tremote-auth-1\tattached\tactive\tAuth\tcodex\n' "$HOME/foreign/auth"
+  fi
+}
+_dev_remote_scan_with_timeout() {
+  local -A DEV_REPOS=(remote-auth "$HOME/foreign/auth")
+  [[ $1 == user@alpha ]] || DEV_REPOS=()
+  [[ ${AMBIGUOUS:-} == 1 && $1 == user@beta ]] && DEV_REPOS=(a "$HOME/a/auth" b "$HOME/b/auth")
+  local -a worker
+  worker=("${(@z)2}")
+  eval "${(Q)worker[3]}"
+}
+_t_beam() { print -r -- "MOVE ${(j:|:)@}"; print -r -- "EXPECTED $T_MOVE_EXPECT_ROW"; }
+'''
+
+
+@pytest.mark.parametrize('host', ['beta', 'cancel'])
+def test_remote_only_repo_reaches_destination_picker(zsh, tmp_path, host):
+    env = fake_picker(tmp_path, host=host)
+    result = zsh(REMOTE_ONLY + 't remote move auth 1; print rc=$?', _tty=True, **env)
+    text = output(result)
+    assert f'rc={130 if host == "cancel" else 0}' in text, text
+    logs = [json.loads(line) for line in (tmp_path / 'picker.jsonl').read_text().splitlines()]
+    assert len(logs) == 1  # unique source goes straight to the destination picker
+    assert all(not row.startswith('alpha\t') for row in logs[0]['rows'])
+    if host == 'cancel':
+        assert 'MOVE ' not in text
+    else:
+        assert 'MOVE --session|auth-id|--from|alpha|--host|beta' in text
+        assert 'EXPECTED auth-id\t' in text and 'remote-auth-1' in text
+    assert 'unrelated' not in text
+
+
+@pytest.mark.parametrize('args,ambiguous,expected', [
+    ('auth 1', '1', 2),
+    ('missing 1', '0', 0),
+    ('auth --from local', '0', 1),
+])
+def test_remote_only_repo_scope_failures_never_move(zsh, args, ambiguous, expected):
+    result = zsh(REMOTE_ONLY + f't remote move {args}; print rc=$?', AMBIGUOUS=ambiguous)
+    text = output(result)
+    assert f'rc={expected}' in text, text
+    assert 'MOVE ' not in text and 'host selection requires' not in text
+
+
 @pytest.mark.parametrize('which', ['session', 'host'])
 def test_remote_move_cancellation_never_mutates(zsh, tmp_path, which):
     env = fake_picker(tmp_path, session='cancel' if which == 'session' else 'alpha/api-2', host='cancel')
