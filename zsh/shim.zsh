@@ -32,13 +32,17 @@ t() {
   [[ "$*" == 'config workflow instructions show'* || "$*" == 'workflow instructions show'* || "$*" == 'share read'* ]] && machine=1
   if [[ -t 1 && ${TERM:-dumb} != dumb && -z $machine && -z ${T_TITLE_ACTIVE:-} ]]; then
     case ${1:-} in
-      session|remote|issue|repo|cursor|hosts|agentcore|workflow|config|profile|policy|agent|system)
+      session|remote|issue|repo|cursor|hosts|agentcore|workflow|runners|config|profile|policy|agent|system)
         label+=" $1"
         case ${2:-} in
           open|move|resume|list|ls|status|start|close|restart|push|pop|history|cd|read|view-plan|paste|search|open-app|goal|locate|create|clone|add|show|edit|remove|delete|rm|default|run|invoke|stop|setup|onboard|local|workflow|init|apply|check|login|install|trust|integrate|update|diagnose|advisories) label+=" $2" ;;
         esac ;;
       open|ls|list|kill|restart|push|pop|resume|history|cd|beam|read|plan|paste|find|app|on|setup|install|login|trust|update|doctor|help|share|checkout|new|instructions|permissions|config) label+=" $1" ;;
     esac
+    if [[ $1 == runners && $2 == runs ]]; then
+      label+=" runs"
+      case ${3:-} in start|list|ls|status|logs|artifacts|cancel|cleanup) label+=" $3" ;; esac
+    fi
     _term_title "$label"
     title_active=1
   fi
@@ -780,7 +784,7 @@ _t_beam_xlate() { _t_beam "$@"; }
 # key for `on`), and slot/flags after. Pulls live from the ${(k)DEV_REPOS} /
 # ${(k)REMOTE_HOSTS} arrays so it stays current with ${T_LOCAL_RC}.
 _t() {
-  local -a nouns=(session issue share remote repo cursor hosts agentcore workflow config profile policy agent system login help)
+  local -a nouns=(session issue share remote repo cursor hosts agentcore workflow runners config profile policy agent system login help)
   if (( CURRENT == 2 )); then
     _describe -t nouns 't command group' nouns
     return
@@ -850,7 +854,8 @@ _t() {
     cursor) actions=(list ls resume send) ;;
     agentcore) actions=(invoke stop) ;;
     hosts) actions=(list ls show add edit remove default run) ;;
-    workflow) actions=(list ls add use exclude inherit edit instructions runners runs sync) ;;
+    workflow) actions=(list ls add use exclude inherit edit instructions sync) ;;
+    runners) actions=(list ls edit setup runs) ;;
     config) actions=(open show edit setup onboard local) ;;
     profile) actions=(init edit show apply) ;;
     policy) actions=(check show apply) ;;
@@ -870,24 +875,28 @@ _t() {
     _describe -t actions 't action' actions
     return
   fi
+  if [[ $group == runners ]]; then
+    if [[ ${words[CURRENT-1]} == --repo ]]; then
+      _values 'repo' "${(@f)$(_dev_repo_selectors)}"
+    elif [[ $action == runs ]] && (( CURRENT == first )); then
+      _values 'run verb' start list ls status logs artifacts cancel cleanup
+    elif [[ $action == runs ]]; then
+      _values 'flag' --repo --target --os --capability --include --artifact --timeout --queue-timeout --json --output -h --help
+    elif [[ $action == setup ]]; then
+      _values 'flag' --github-repo --create -h --help
+    else
+      _values 'flag' --repo --json -h --help
+    fi
+    return
+  fi
   if [[ $group == workflow || ( $group == config && $action == workflow ) ]]; then
     [[ $group == workflow ]] && (( first-- ))
     if (( CURRENT == first )); then
-      _values 'workflow resource or verb' list ls add use exclude inherit edit instructions runners runs sync
+      _values 'workflow resource or verb' list ls add use exclude inherit edit instructions sync
     elif [[ ${words[CURRENT-1]} == --repo ]]; then
       _values 'repo' "${(@f)$(_dev_repo_selectors)}"
     elif [[ ${words[first]} == instructions ]] && (( CURRENT == first + 1 )); then
       _values 'instructions verb' show edit
-    elif [[ ${words[first]} == runners ]] && (( CURRENT == first + 1 )); then
-      _values 'runner verb' list ls edit setup
-    elif [[ ${words[first]} == runs ]] && (( CURRENT == first + 1 )); then
-      _values 'run verb' start list ls status logs artifacts cancel cleanup
-    elif [[ ${words[first]} == runs ]]; then
-      _values 'flag' --repo --target --os --capability --include --artifact --timeout --queue-timeout --json --output -h --help
-    elif [[ ${words[first]} == runners && ${words[first+1]} == setup ]]; then
-      _values 'flag' --github-repo --create -h --help
-    elif [[ ${words[first]} == runners ]]; then
-      _values 'flag' --repo --json -h --help
     elif [[ ${words[first]} == list || ${words[first]} == ls ]]; then
       _values 'flag' --repo --all --json -h --help
     elif [[ ${words[first]} == add ]]; then

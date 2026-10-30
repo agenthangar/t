@@ -504,13 +504,13 @@ def _stage_text(policy):
             spec['label'] + ': ' + spec['choices'][behaviors[key]][1]
             for key, spec in BEHAVIORS.items() if key in behaviors))
     if policy.get('runners', {}).get('targets'):
-        parts.append('Test runners are configured. Use `t workflow runners list` '
+        parts.append('Test runners are configured. Use `t runners list` '
                      '(with `--repo ALIAS` for repository settings) to inspect targets. '
-                     'Use `t workflow runs start -- COMMAND ...` to test one immutable snapshot '
+                     'Use `t runners runs start -- COMMAND ...` to test one immutable snapshot '
                      'of current tracked worktree edits without committing or pushing source; include intended '
                      'untracked inputs with `--include PATH`. Select targets with `--target NAME`, '
                      '`--os linux|macos` or `--capability NAME`. Inspect durable results with '
-                     '`t workflow runs status ID` and `t workflow runs logs ID`. '
+                     '`t runners runs status ID` and `t runners runs logs ID`. '
                      'Native desktop tests remain opt-in.')
     if policy.get('instructions'):
         parts.append('Custom workflow Markdown (takes precedence over behavior preferences and model-stage guidance):\n' + policy['instructions'])

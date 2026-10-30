@@ -944,15 +944,16 @@ not change the agent's launch defaults. Planning and implementation accept `auto
 or an explicit effort (`minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `ultra`);
 review accepts an explicit effort or `one-level-lower`.
 
-Configure **Test runners** within a workflow to test current uncommitted work on
+Open **t config → Test runners** to choose the global default, a named workflow,
+or a registered repository. Use its runner settings to test current uncommitted work on
 managed GitHub-hosted Linux/macOS machines or a registered SSH host. One immutable
 snapshot serves every target; source files need no commit or push. Bootstrap a
 dedicated private GitHub broker explicitly, then run:
 
 ```sh
-t workflow runners list
-t workflow runs start -- python3 -m pytest
-t workflow runs status RUN_UUID --json
+t runners list
+t runners runs start -- python3 -m pytest
+t runners runs status RUN_UUID --json
 ```
 
 See [test runners](docs/test-runners.md) for configuration, explicit untracked

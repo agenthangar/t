@@ -5,7 +5,7 @@ import pytest
 
 def test_registry_covers_the_public_groups(t_mod):
     assert tuple(t_mod.COMMAND_GROUPS) == (
-        "remote", "issue", "session", "repo", "cursor", "hosts", "agentcore", "config", "workflow", "profile", "policy", "agent", "system")
+        "remote", "issue", "session", "repo", "cursor", "hosts", "agentcore", "config", "workflow", "runners", "profile", "policy", "agent", "system")
     for path, legacy in t_mod._command_routes():
         assert t_mod._canonical_argv([*path, "payload"]) == [*legacy, "payload"]
 
@@ -374,8 +374,10 @@ def test_workflow_family_keeps_payloads_and_compatibility(t_mod, suffix):
     legacy = ["config", *canonical]
     parser = t_mod.build_parser()
     assert vars(parser.parse_args(canonical)) == vars(parser.parse_args(legacy))
-    assert t_mod._canonical_argv(canonical) == legacy
-    assert t_mod._canonical_argv(legacy) == legacy
+    expected = (["runners", *suffix[1:]] if suffix[0] == "runners" else
+                ["runners", *suffix] if suffix[0] == "runs" else legacy)
+    assert t_mod._canonical_argv(canonical) == expected
+    assert t_mod._canonical_argv(legacy) == expected
     assert t_mod._canonical_error(canonical) is None
     assert t_mod._canonical_error(legacy) is None
     assert t_mod._workflow_argv(["help", *legacy]) == ["help", *canonical]

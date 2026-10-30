@@ -111,7 +111,7 @@ PATH and shell-wrapper precedence, argument quoting, and ownership checks.
 Fresh and resumed tmux panes start without echoing internal launch commands or
 exit instructions. Agent output is logged from startup; failures retain diagnostics.
 
-The config hub groups Session defaults, Agents, Workflows, Repositories &
+The config hub groups Session defaults, Agents, Workflows, Runners, Repositories &
 worktrees, Remote hosts, and Finish. Keep agent settings and local worker/model
 setup together, with workflow in its own section; keep repository/worktree choices
 separate from
@@ -266,11 +266,11 @@ policies migrate in memory without writing on reads or installer synchronization
 Test runners appear within each workflow policy. Their JSON subeditor exposes targets,
 default targets, timeout/queue deadlines and artifact paths; Show configured targets
 prints a reviewable summary. Menu changes stay staged until existing Review and Save.
-`t workflow runners list [NAME] [--repo ALIAS] [--json]` is a local read-only
+`t runners list [NAME] [--repo ALIAS] [--json]` is a local read-only
 list; `edit` opens the terminal editor, and `setup --github-repo OWNER/REPO [--create]`
 explicitly bootstraps a dedicated private broker. Configuration save never provisions.
 
-`t workflow runs start [--repo ALIAS] -- COMMAND ...` is an explicit direct
+`t runners runs start [--repo ALIAS] -- COMMAND ...` is an explicit direct
 action using the registered current checkout or linked worktree; --repo must match.
 Repeatable --target, --os and --capability select configured targets without a picker.
 The argv after -- belongs to the test command. JSON remains machine output and does
@@ -802,3 +802,10 @@ diagnostics are explicitly requested.
 The internal `t mcp` machine interface discovers saved Codex and Claude sessions.
 Its explicit `--install` action registers installed clients additively, preserving
 existing entries; `--call`, `--list-tools`, and stdio never install clients.
+
+`t runners` is the test-runner noun family: `list`, `edit`, `setup`, and nested
+`runs start/list/status/logs/artifacts/cancel/cleanup`. Bare families print help.
+The old `config workflow runners` and `config workflow runs` routes remain hidden
+compatibility aliases, as do `workflow runners` and `workflow runs`. Config → Test runners chooses the current global default,
+a named workflow, or a registered repository explicitly; it shares staged workflow
+configuration and the existing review/save/discard flow, with no separate runner store.

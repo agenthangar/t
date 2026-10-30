@@ -126,8 +126,8 @@ result = t.main(['config', 'open'])
 pathlib.Path(sys.argv[2]).write_text(json.dumps(seen))
 raise SystemExit(result)
 ''')
-    # Hosts follows session, agent/workflow and repository settings in the hub.
-    actions = [('Local settings', b'j' * 9 + b'\r'), ('Hosts', b'j\r'),
+    # Hosts follows session, agent/workflow, runners and repository settings in the hub.
+    actions = [('Local settings', b'j' * 10 + b'\r'), ('Hosts', b'j\r'),
                ('Add host', b'j\r'), ('Add host', b'\r'),
                ('Hosts', b'jj\r'), ('Add host', b'q'), ('Hosts', b'q'),
                ('Local settings', b's'), ('Review local settings', b'y' if save else b'q')]
