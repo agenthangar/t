@@ -1496,6 +1496,7 @@ _dev_rows_all_impl() {
   scan_pids+=($!)
   local scan=_dev_session_rows remote_scan
   [[ ${1:-} == --details ]] && scan+=' --details'
+  [[ ${1:-} == --repo ]] && scan=$(_dev_repo_rows_command "$2" "$3")
   remote_scan="zsh -lic ${(q)scan}"
   local h
   for h in ${(k)REMOTE_HOSTS}; do
@@ -1531,6 +1532,10 @@ _dev_rows_all_impl() {
       file="$tmpd/$host"
       rc=$(< "$tmpd/$host.rc" 2>/dev/null)
       [[ $rc == 130 ]] && return 130
+      if [[ ${1:-} == --repo && $rc == 2 ]]; then
+        _t_warn "dev: $host repository selector is ambiguous; no conversation was selected"
+        return 2
+      fi
       if [[ $rc != 0 ]]; then
         if [[ -z $rc ]]; then
           _t_warn "dev: $host session scan failed (worker status missing) — skipped"
