@@ -36,7 +36,7 @@ LEGACY_GROUP_VERBS = {
     "cursor": {"list", "resume", "send"},
     "hosts": {"list", "show", "add", "edit", "remove", "default", "run"},
     "agentcore": {"invoke", "stop"},
-    "config": {"open", "show", "edit", "setup", "onboard", "workflow", "local"},
+    "config": {"open", "show", "edit", "setup", "onboard", "local"},
     "profile": {"init", "edit", "show", "apply"},
     "policy": {"check", "show", "apply"},
     "agent": {"login", "install", "status", "trust"},
@@ -59,6 +59,11 @@ def command_routes(groups, prefix=()):
             yield path, value
 
 
+def _parser_path(path):
+    """The canonical workflow family retains its established config backend."""
+    return ("config", *path) if path and path[0] == "workflow" else path
+
+
 def check_subgroups(parser, groups, prefix=()):
     """Nested resource registries must own matching native parser children."""
     errors = []
@@ -67,7 +72,7 @@ def check_subgroups(parser, groups, prefix=()):
             continue
         path = (*prefix, name)
         parent = parser
-        for word in path:
+        for word in _parser_path(path):
             children = _subparsers(parent) if parent else None
             parent = children._name_parser_map.get(word) if children else None
         if prefix:
@@ -75,7 +80,7 @@ def check_subgroups(parser, groups, prefix=()):
             if children is None or set(children.choices) != set(value):
                 errors.append(f"{' '.join(path)} subgroup must own a matching nested verb parser")
             for leaf_path, route in command_routes(value, path):
-                if tuple(route) != leaf_path:
+                if tuple(route) != _parser_path(leaf_path):
                     errors.append(f"{' '.join(leaf_path)} nested resource must route to its own parser")
         errors.extend(check_subgroups(parser, value, path))
     return errors
@@ -228,13 +233,15 @@ def check(parser, command_groups, instructions):
         if group == "issue" or group in LEGACY_GROUP_VERBS:
             continue
         noun = top._name_parser_map.get(group)
+        if group == "workflow":
+            noun = _subparsers(top._name_parser_map["config"])._name_parser_map["workflow"]
         nested = _subparsers(noun) if noun else None
         if nested is None or set(nested.choices) != set(actions):
             errors.append(f"new public group {group} must own a matching nested verb parser")
             continue
         positional = [action for action in noun._actions if not action.option_strings
                       and not isinstance(action, argparse._SubParsersAction)]
-        if positional or any(tuple(route) != path for path, route in command_routes(actions, (group,))):
+        if positional or any(tuple(route) != _parser_path(path) for path, route in command_routes(actions, (group,))):
             errors.append(f"new public group {group} must require a verb before target arguments")
     issue = top._name_parser_map.get("issue")
     issue_sub = _subparsers(issue) if issue else None
@@ -271,9 +278,9 @@ def check(parser, command_groups, instructions):
                 return False, None
         return True, args
 
-    workflow_registry = command_groups.get("config", {}).get("workflow", {})
+    workflow_registry = command_groups.get("workflow", {})
     if not isinstance(workflow_registry, dict) or set(workflow_registry) != {"list", "edit", "add", "use", "exclude", "inherit", "sync", "instructions", "runners", "runs"}:
-        errors.append("config workflow registry must expose named workflows and instructions")
+        errors.append("workflow registry must expose named workflows and instructions")
     config = top._name_parser_map.get("config")
     config_sub = _subparsers(config) if config else None
     workflow = config_sub._name_parser_map.get("workflow") if config_sub else None
@@ -282,7 +289,7 @@ def check(parser, command_groups, instructions):
         leaf = workflow_sub._name_parser_map.get(verb) if workflow_sub else None
         option = leaf._option_string_actions.get("--repo") if leaf else None
         if option is None or option.dest != "workflow_repo" or option.metavar != "ALIAS":
-            errors.append(f"config workflow {verb} must expose consistent --repo ALIAS")
+            errors.append(f"workflow {verb} must expose consistent --repo ALIAS")
         for scope in ([], ["--repo", "api"]):
             words = ["config", "workflow", verb, *scope]
             valid, args = accepts(words)
@@ -307,8 +314,8 @@ def check(parser, command_groups, instructions):
             errors.append("workflow parser accepted invalid form: " + " ".join(words))
     valid, args = accepts(["config", "workflow", "list", "--json"])
     if not valid or not getattr(args, "json", False):
-        errors.append("config workflow list must expose --json")
-    for phrase in ("nested resources before verbs", "flags select scope or format", "t config workflow list", "t config workflow edit"):
+        errors.append("workflow list must expose --json")
+    for phrase in ("nested resources before verbs", "flags select scope or format", "t workflow list", "t workflow edit"):
         if phrase not in instructions:
             errors.append("AGENTS.md must document " + phrase)
     for words in (["issue", "list"], ["issue", "list", "--all", "--json"],

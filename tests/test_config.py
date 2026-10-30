@@ -353,9 +353,10 @@ def test_config_main_menu_shows_repo_aliases(t_mod, config_cli, monkeypatch):
             "repos", "worktrees", "hosts", "beam", "edit", "save", "cancel",
         ]
         assert kwargs["sections"] == {
-            "tool": "Session defaults", t_mod.AGENTS[0]: "Agents", "workflow": "Workflow",
+            "tool": "Session defaults", t_mod.AGENTS[0]: "Agents", "workflow": "Workflows",
             "repos": "Repositories & worktrees", "hosts": "Remote hosts", "edit": "Finish",
         }
+        assert dict(rows)["workflow"] == "Workflows ›"
         collections = {*t_mod.AGENTS, "local", "workflow", "repos", "worktrees", "hosts"}
         assert {key for key, text in rows if text.endswith(" ›")} == collections
         return "cancel"

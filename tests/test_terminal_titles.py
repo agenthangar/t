@@ -111,7 +111,7 @@ _term_title $'safe\\e\\a\\n'
     assert '\x1b]0;safe\x07' in text
 
 
-@pytest.mark.parametrize('args', ['session list --json', '__resume-candidates', '_app-workspace', 'read --dump', 'config workflow instructions show'])
+@pytest.mark.parametrize('args', ['session list --json', '__resume-candidates', '_app-workspace', 'read --dump', 'config workflow instructions show', 'workflow instructions show'])
 def test_shell_machine_commands_never_title(zsh, args):
     result = zsh('_t_dispatch() { print HANDLER; }; t ' + args, _tty=True, TERM='xterm')
     assert '\x1b]0;' not in result.stdout + result.stderr

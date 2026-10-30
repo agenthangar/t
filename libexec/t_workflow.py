@@ -380,7 +380,7 @@ def summary_lines(policy):
         lines.append(spec['label'] + ': ' + (spec['choices'][selected][0] if selected else 'No preference'))
     lines.append('Custom Markdown: ' + ('present' if summary['custom_instructions'] else 'empty'))
     lines.append('Issue-before-code rule: ' + ('included in editable Markdown' if issue_policy() in policy.get('instructions', '') else 'customized or not included'))
-    lines.append('Read/edit prose: t config workflow instructions show / edit')
+    lines.append('Read/edit prose: t workflow instructions show / edit')
     return lines
 
 
@@ -504,13 +504,13 @@ def _stage_text(policy):
             spec['label'] + ': ' + spec['choices'][behaviors[key]][1]
             for key, spec in BEHAVIORS.items() if key in behaviors))
     if policy.get('runners', {}).get('targets'):
-        parts.append('Test runners are configured. Use `t config workflow runners list` '
+        parts.append('Test runners are configured. Use `t workflow runners list` '
                      '(with `--repo ALIAS` for repository settings) to inspect targets. '
-                     'Use `t config workflow runs start -- COMMAND ...` to test one immutable snapshot '
+                     'Use `t workflow runs start -- COMMAND ...` to test one immutable snapshot '
                      'of current tracked worktree edits without committing or pushing source; include intended '
                      'untracked inputs with `--include PATH`. Select targets with `--target NAME`, '
                      '`--os linux|macos` or `--capability NAME`. Inspect durable results with '
-                     '`t config workflow runs status ID` and `t config workflow runs logs ID`. '
+                     '`t workflow runs status ID` and `t workflow runs logs ID`. '
                      'Native desktop tests remain opt-in.')
     if policy.get('instructions'):
         parts.append('Custom workflow Markdown (takes precedence over behavior preferences and model-stage guidance):\n' + policy['instructions'])
@@ -703,7 +703,7 @@ def save(document, before, extra=(), preserve_storage=False, propagation_context
         try:
             helper['retry']()
         except (OSError, ValueError):
-            print('t workflow: preferences saved; propagation pending, retry with t config workflow sync', file=sys.stderr)
+            print('t workflow: preferences saved; propagation pending, retry with t workflow sync', file=sys.stderr)
 
 
 def sync():

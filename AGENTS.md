@@ -24,8 +24,8 @@ must never open a picker or an automatic update prompt. Run
 `python3 scripts/lint_cli.py` to check these rules.
 
 Keep public commands in noun/verb families, with nested resources before verbs
-when a family has multiple resources. For example, use `t config workflow list`
-and `t config workflow edit`; flags select scope or format (`--repo ALIAS`,
+when a family has multiple resources. For example, use `t workflow list`
+and `t workflow edit`; flags select scope or format (`--repo ALIAS`,
 `--json`), not the resource or action. Retain old resource/mode flags only as
 hidden compatibility aliases, never as canonical examples or completion choices.
 The CLI lint must check nested registry leaves, parser routes, inventory, help,
