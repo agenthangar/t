@@ -1952,7 +1952,7 @@ def test_mcp_registered(t_mod, tmp_path):
 
 
 def test_doctor_reports_unregistered_mcp(t_mod):
-    assert any("t mcp --install" in l for l in t_mod._doctor_findings({"mcp_sessions": False}))
+    assert any("t mcp install" in l for l in t_mod._doctor_findings({"mcp_sessions": False}))
     assert t_mod._doctor_findings({"mcp_sessions": True}) == ["✓ nothing suspicious found"]
     assert t_mod._doctor_findings({"mcp_sessions": None}) == ["✓ nothing suspicious found"]
 

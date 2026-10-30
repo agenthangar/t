@@ -8273,10 +8273,10 @@ def _doctor_findings(facts):
                    "(\'[\' dumps it to native scrollback)" % facts["term_program"])
     if facts.get("mcp_sessions") is False:
         out.append("⚠ MCP server 'sessions' is not registered in ~/.claude.json — run "
-                   "t mcp --install")
+                   "t mcp install")
     if facts.get("mcp_allow") == "none":
         out.append("⚠ no %s allow rule in ~/.claude/settings.json, so every sessions "
-                   "lookup prompts — run t mcp --install"
+                   "lookup prompts — run t mcp install"
                    % _MCP_ALLOW_RULE)
     for a, p in sorted((facts.get("agents") or {}).items()):
         if p.get("version") and p.get("logged_in") is False:
@@ -8521,7 +8521,7 @@ def cmd_doctor(cfg, args):
     if shutil.which("claude"):
         facts["mcp_sessions"] = _mcp_registered(os.path.join(HOME, ".claude.json"))
         print("  mcp sessions   %s" % {True: "registered (user scope) → t mcp",
-                                      False: "NOT registered — t mcp --install",
+                                      False: "NOT registered — t mcp install",
                                       None: "~/.claude.json unreadable"}[facts["mcp_sessions"]])
         facts["mcp_allow"] = _mcp_allow_state(os.path.join(HOME, ".claude", "settings.json"))
         print("  mcp permission %s"
@@ -10685,7 +10685,7 @@ def _mcp_install_claude():
 
 def _mcp_allow_announce(settings):
     """Seed the allow rule and say so — the manual twin of install.sh's merge, so
-    `t mcp --install` on a box `dots` has not reached is a complete setup."""
+    `t mcp install` on a box `dots` has not reached is a complete setup."""
     if _mcp_allow_write(settings):
         print("allowed session lookups in %s; session controls retain approval"
               % settings.replace(HOME, "~"))

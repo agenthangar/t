@@ -125,7 +125,7 @@ def install(command):
         if result.returncode:
             raise ValueError('Codex MCP registration failed')
     except (OSError, ValueError, subprocess.TimeoutExpired) as error:
-        print('t: %s; rerun t mcp --install after resolving Codex configuration' % error,
+        print('t: %s; rerun t mcp install after resolving Codex configuration' % error,
               file=sys.stderr)
         return 1
     print("Registered Codex MCP server 'sessions'")
