@@ -11417,6 +11417,9 @@ def build_parser():
 
   The host picker selects the destination and names the current source host.
 
+  Repositories absent locally are resolved on each remote source host.
+  A unique repo/slot match goes directly to the destination picker.
+
   Missing source/session and destination use single pickers.
 
   Explicit targets skip selection.
