@@ -2740,6 +2740,60 @@ def _host_verify_offer(targets):
         _host_verify_targets(targets)
 
 
+
+def _config_mcp(ui, pending):
+    helper = runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_mcp_setup.py"))
+    states = helper["status"](HOME)
+    note = "Configuration status only; use the client to check its active connection."
+    while True:
+        choice = ui.pick("sessions MCP · this machine", [
+            ("codex", "Codex"), ("claude", "Claude"),
+            ("refresh", "Refresh status"), ("register", "Register missing clients now"),
+            ("uninstall", "Uninstall t registrations now"),
+            ("back", "Back")], values=states, accents={"register": "g", "uninstall": "w"})
+        if choice in (None, "back"):
+            return
+        if choice in ("codex", "claude"):
+            ui.page("sessions MCP", [
+                "      " + choice.title() + ": " + states[choice],
+                "      " + note,
+                "      Provides session discovery and session controls via t mcp.",
+                "      Existing disabled or custom entries are preserved during registration.",
+                "      Enable disabled entries in the client's MCP settings.",
+                "      Reload the client after registration to load its tools."],
+                {"enter", "q", "esc"}, "enter / q back")
+        elif choice in ("register", "uninstall"):
+            if pending:
+                ui.done("pending", "Save or discard pending settings before MCP registration.")
+                continue
+            removing = choice == "uninstall"
+            body = ([
+                "      Remove only t-owned sessions registrations from installed clients.",
+                "      Custom registrations and permissions are preserved.",
+                "      Automatic registration stays off until t mcp install.",
+                "      Applies immediately, separately from config Save.",
+            ] if removing else [
+                "      Register sessions for installed Codex and Claude clients on this machine.",
+                "      Applies immediately, separately from config Save.",
+                "      Existing registrations and disabled settings are preserved.",
+                "      Claude lookup permissions may be added; controls retain approval.",
+                "      Reload the client afterward to load its tools."])
+            answer = ui.page("Uninstall MCP registrations" if removing else "Register missing MCP clients", body,
+                {"enter", "q", "esc"}, "enter apply now · q back",
+                primary=("enter", "APPLY NOW", "applies immediately"))
+            if answer != "enter":
+                continue
+            ui.restore()
+            try:
+                rc = _mcp_uninstall() if removing else _mcp_install()
+            finally:
+                ui.raw()
+            ui.done("MCP", "MCP setup finished" if rc == 0 else "MCP setup incomplete; check client status")
+            states = helper["status"](HOME)
+        elif choice == "refresh":
+            states = helper["status"](HOME)
+
+
 def _config_wizard(cfg):
     ui = _RailUI()
     _workflow_session(cfg)
@@ -2761,7 +2815,7 @@ def _config_wizard(cfg):
                 if edited.fast.get(a) == "1":
                     values[a] += " · fast"
             rows += [("local", "Local worker & models ›"), ("workflow", "Agent workflow ›"),
-                     ("repos", "Repositories ›"), ("worktrees", "Worktrees & branches ›"),
+                     ("mcp", "Sessions server ›"), ("repos", "Repositories ›"), ("worktrees", "Worktrees & branches ›"),
                      ("hosts", "Hosts ›"), ("beam", "Default beam host"), ("edit", "Open config in editor"),
                      ("save", "Save changes"), ("cancel", "Cancel")]
             pending = len(_config_diff(initial, _config_state(edited))) + _workflow_pending(edited)
@@ -2770,7 +2824,7 @@ def _config_wizard(cfg):
                            "beam": edited.beam_host or "none", "save": f"{pending} pending"})
             choice = ui.pick("Local settings", rows, values=values,
                              sections={"tool": "Session defaults", AGENTS[0]: "Agents", "workflow": "Workflow",
-                                       "repos": "Repositories & worktrees", "hosts": "Remote hosts", "edit": "Finish"},
+                                       "mcp": "MCP server", "repos": "Repositories & worktrees", "hosts": "Remote hosts", "edit": "Finish"},
                              accents={"save": "g", "cancel": "y"},
                              primary=("s", "SAVE CHANGES", f"{pending} pending"), shortcuts={"s": "save"},
                              default=next(i for i, row in enumerate(rows) if row[0] == last))
@@ -2786,6 +2840,9 @@ def _config_wizard(cfg):
                     ui.done("cancelled", "nothing written")
                     return None
             last = choice
+            if choice == "mcp":
+                _config_mcp(ui, pending)
+                continue
             if choice == "local":
                 if pending:
                     ui.done("pending", "Save or discard pending settings before local worker setup.")
@@ -6171,6 +6228,8 @@ def _command_readonly(argv, *, terminal=None):
         return (len(words) == 2 or words[2] == "list" or words[2:4] == ["instructions", "show"] or
                 words[2:] in (["runners"], ["runs"]) or words[2:4] == ["runners", "list"] or
                 (len(words) > 3 and words[2] == "runs" and words[3] in ("list", "status", "logs")))
+    if verb == "mcp" and tail and tail[0] == "status":
+        return True
     if verb == "__advisories":
         return not tail or tail[0] == "status"
     if verb == "__session-goal":
@@ -10582,8 +10641,18 @@ def _mcp_allow_write(settings):
     return True
 
 
+
+def _mcp_uninstall():
+    helper = runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_mcp_setup.py"))
+    return helper["uninstall"](os.path.join(HOME, "bin", "t"), HOME)
+
+
 def _mcp_install():
-    codex_status = runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_mcp_setup.py"))["install"](os.path.join(HOME, "bin", "t"))
+    helper = runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_mcp_setup.py"))
+    marker = helper["opt_out_path"](HOME)
+    if marker.exists():
+        marker.unlink()
+    codex_status = helper["install"](os.path.join(HOME, "bin", "t"))
     if not shutil.which("claude"):
         return codex_status
     return max(codex_status, _mcp_install_claude())
@@ -10626,6 +10695,25 @@ def _mcp_allow_announce(settings):
 
 
 def cmd_mcp(cfg, args):
+    action = getattr(args, "mcp_action", None)
+    if action and any(getattr(args, key, False) for key in ("install", "local_worker", "list_tools", "reindex", "call")):
+        print("t mcp: management commands cannot be combined with protocol flags", file=sys.stderr)
+        return 2
+    if action == "status":
+        helper = runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_mcp_setup.py"))
+        states = helper["status"](HOME)
+        if getattr(args, "json", False):
+            print(json.dumps({"server": "sessions", "scope": "local machine", "clients": states}))
+        else:
+            print("sessions MCP · this machine")
+            for client, state in states.items():
+                print(f"  {client.title()}: {state}")
+            print("Configuration status only; check the client for its active connection.")
+        return 1 if "Status unavailable" in states.values() else 0
+    if action == "uninstall":
+        return _mcp_uninstall()
+    if action == "install":
+        return _mcp_install()
     if getattr(args, "local_worker", False):
         helper = _local_worker()
         if args.list_tools:
@@ -10721,6 +10809,7 @@ def cmd_share(cfg, args):
 # shell-bound dispatch in zsh/; the Python parser remains the source of flag
 # definitions for both public commands and compatibility aliases.
 COMMAND_GROUPS = {
+    "mcp": {"status": ("mcp", "status"), "install": ("mcp", "install"), "uninstall": ("mcp", "uninstall")},
     "remote": {"open": ("remote", "open"), "move": ("remote", "move"),
                "resume": ("remote", "resume")},
     "issue": {"list": ("issue", "list"), "status": ("issue", "status"),
@@ -10767,6 +10856,7 @@ COMMAND_GROUPS = {
 }
 
 GROUP_DESCRIPTIONS = {
+    "mcp": "Inspect and manage the sessions MCP server on this machine",
     "remote": "Open, move, and resume sessions on SSH hosts",
     "issue": "List GitHub issues, inspect work, start agents, or open issues in a browser",
     "agentcore": "Submit work to an existing Amazon Bedrock AgentCore runtime",
@@ -10837,7 +10927,7 @@ def _canonical_error(argv):
     path, node = _command_path(argv)
     if isinstance(node, dict) and len(argv) > len(path):
         unknown = argv[len(path)]
-        if len(path) == 1 and (group == "cursor" or (group == "config" and unknown.startswith("-"))):
+        if len(path) == 1 and (group == "cursor" or (group in ("config", "mcp") and unknown.startswith("-"))):
             return None  # Established compatibility input.
         return f"t {' '.join(path)}: unknown action {unknown!r}; choose from {', '.join(node)}"
     if len(path) > 2:
@@ -10876,6 +10966,7 @@ WORK
   agentcore  Submit work to an AgentCore runtime
 CONFIGURATION
   config    Manage local settings
+  mcp       Inspect, install, or uninstall session tools
   profile   Manage reusable AGENTS.md instructions
   policy    Inspect and apply agent permissions
 
@@ -11083,6 +11174,11 @@ Run `t help issue <verb>` for flags and arguments.
              "`delete` and `rm` are aliases for `remove`.\n\nEXAMPLES\n"
              "  t hosts add mini chris@mini.local\n"
              "  t hosts run mini t session list\n" if group == "hosts" else "")
+    if group == "mcp":
+        extra = ("\nSCOPE\n  Commands affect this machine only. Status is read-only; --json prints structured state.\n"
+                 "  Install preserves custom and disabled entries; uninstall removes only t-owned entries.\n"
+                 "  Bare t mcp remains the stdio protocol server used by agent clients.\n"
+                 "\nEXAMPLES\n  t mcp status --json\n  t mcp install\n  t mcp uninstall\n")
     if group == "repo":
         extra = ("\nEXAMPLES\n  t repo add [path] [--alias NAME]\n"
                  "  t repo add ~/config/my-project\n"
@@ -11118,6 +11214,7 @@ Run `t help issue <verb>` for flags and arguments.
 
 def _command_description(group, action):
     descriptions = {
+        "mcp": {"status": "Show client registration and enabled state", "install": "Register missing clients", "uninstall": "Remove t-owned registrations"},
         "remote": {"open": "Open a session on a chosen host", "move": "Move a current conversation between hosts",
                    "resume": "Resume saved history on a chosen host"},
         "issue": {"list": "List repository issues", "status": "Inspect existing issue work",
@@ -11141,7 +11238,7 @@ def _command_description(group, action):
                  "remove": "Unregister a host (delete / rm also work)",
                  "default": "Show, set, or clear the session move default",
                  "run": "Run a remote command or shell"},
-        "config": {"open": "Open settings; edit repository and host short names", "show": "Print current settings",
+        "config": {"open": "Open settings for agents, workflows, MCP, repositories and hosts", "show": "Print current settings",
                    "edit": "Edit local configuration", "setup": "Register repos and hosts",
                    "onboard": "Guided setup: agents, GitHub repos, and hosts",
                    "workflow": "Manage named workflows, behavior preferences and Markdown instructions",
@@ -12616,21 +12713,25 @@ PERIODIC CHECKS
     gp.add_argument("goal", help="new objective, quoted as one argument")
     gp.add_argument("--json", action="store_true", help="print a structured delivery result")
 
-    mp = sub.add_parser("mcp", hidden=True, help="(internal) stdio MCP server: session discovery and control",
-        description="Internal: the stdio MCP server Codex and Claude Code spawn, registered at user "
-            "scope as `sessions` by install.sh (or `t mcp --install`). Exposes the live slots, "
+    mp = sub.add_parser("mcp", help="Manage session MCP registration or serve stdio",
+        description="Manage the sessions MCP server on this machine. Bare t mcp serves stdio for agent clients, registered at user "
+            "scope as sessions by install.sh or t mcp install. Exposes live slots, "
             "keyword search over every saved transcript's prompts, and per-session detail, "
             "plus explicit session controls and the full session command family through session_command. "
             "Controls require user authorization; only the three lookup tools are automatically allowed. "
-            "Not for direct use except through the flags below.")
+            "Use status, install, or uninstall to manage registration.")
     mp.add_argument("--local-worker", action="store_true", help="serve bounded local Codex/Ollama worker tools")
-    mp.add_argument("--install", action="store_true",
-                    help="register with installed Codex and Claude Code clients if not already")
+    mp.add_argument("--install", action="store_true", help=argparse.SUPPRESS)
     mp.add_argument("--list-tools", action="store_true", help="print the tool names")
     mp.add_argument("--reindex", action="store_true", help="(re)build the transcript index now")
     mp.add_argument("--call", nargs="+", metavar=("TOOL", "JSON"),
                     help="run one tool by hand and print its result, e.g. "
                          "--call find_sessions '{\"query\":\"accounts redesign\"}'")
+    mcp_sub = mp.add_subparsers(dest="mcp_action")
+    mcp_status = mcp_sub.add_parser("status", help="Show client registration and enabled state")
+    mcp_status.add_argument("--json", action="store_true", help="print structured state")
+    mcp_sub.add_parser("install", help="Register missing clients; preserve existing settings")
+    mcp_sub.add_parser("uninstall", help="Remove t-owned registrations; preserve custom servers")
     rp = sub.add_parser("__resolve", hidden=True, help="(internal) resolve a shell action for the t() shim",
         description="Internal: resolve a shell action for the t() zsh shim. Not for direct use.")
     rp.add_argument("rest", nargs=argparse.REMAINDER)
@@ -12976,7 +13077,7 @@ def _main(argv):
             argv == ["share"] and not (sys.stdin.isatty() and sys.stdout.isatty())):
         _help_parser(parser, ["share"]).print_help()
         return 0
-    if len(argv) == 1 and argv[0] in COMMAND_GROUPS and argv[0] != "config":
+    if len(argv) == 1 and argv[0] in COMMAND_GROUPS and argv[0] not in ("config", "mcp"):
         print(_group_help(argv[0]), end="")
         return 0
     if (len(argv) == 2 and argv[0] in COMMAND_GROUPS
