@@ -534,6 +534,9 @@ Without a terminal it lists history without launching. Space/Tab marks conversat
 Search, page changes, and refresh clear marks. Extra selections open in tabs before
 the first attaches. A resume failure exits nonzero without reopening the picker;
 batches stop and report any conversations already resumed.
+The filtered resume batch also stops at the first failed or cancelled selection.
+Its final summary names the conversation, reason, retry command, ready-session
+attach commands, and number not attempted. No automatic attachment hides errors.
 It has no default 30-day
 cutoff; Ctrl-F/B pages, Ctrl-R refreshes, and Ctrl-/ shows details.
 Explicit resume options (`--cli`, `--app`, `--fg`, `--host`, `--days`, `--live`,

@@ -1,3 +1,21 @@
+# Keep a failed batch visible instead of attaching over its diagnostics.
+_t_resume_batch_stop() {
+  local result=$1 identity=$2 retry=$3 reason=$4 remaining=$5 hint
+  shift 5
+  print -u2 -- ''
+  if (( result == 130 )); then
+    print -u2 -- 'Resume cancelled'
+  else
+    print -u2 -- 'Resume stopped after an error'
+  fi
+  print -u2 -- "Selection: $identity"
+  print -u2 -- "Reason: $reason (exit $result)"
+  print -u2 -- "Retry selection: $retry"
+  for hint in "$@"; do print -u2 -- "Ready — attach with: $hint"; done
+  print -u2 -- "Not attempted: $remaining selection(s)"
+  return "$result"
+}
+
 # Cross-host policy is explicit; native Codex host transfer is app-mediated.
 # Return before stopping owners, checkpointing, copying transcripts or allocating.
 _t_handoff_check() {
@@ -769,7 +787,7 @@ _t_resume() {
   # their own terminal tabs (attach-hint fallback). Live marks attach to their
   # existing owner (one-live-owner: never a second `claude -r`), and a second conversation
   # marked for a slot an earlier mark just took can't have the tmux name —
-  # both become hints, not errors, so one stray mark never aborts the batch.
+  # failures stop the batch with a visible summary and ready-session hints.
   local -a picks; picks=("${(@f)pick}")
   # Check the whole selection before the first revive or attachment.
   for pick in "${(@)picks}"; do
@@ -792,10 +810,14 @@ _t_resume() {
     local -A mp_taken
     local mp_first_repo= mp_first_slot= mp_first_session= mp_cwd mp_session mp_loc mp_pair mp_agent mp_rc
     local mp_live_first= mp_live_cmd= mp_live_alias= mp_live_repo= mp_live_slot= mp_live_loc=
-    local -a mp_rest mp_unopened mp_live mp_live_fields
+    local -a mp_rest mp_unopened mp_live mp_live_fields mp_ready
+    local mp_index=0 mp_remaining mp_identity mp_retry
     for pick in "${(@)picks}"; do
       f=("${(@ps:\t:)pick}")
       repo=$f[1]; slot=$f[2]; sid=$f[3]; wt=$f[4]; mp_loc="${f[7]:-}"; mp_agent="${f[10]:-claude}"
+      (( mp_index++ )); mp_remaining=$(( $#picks - mp_index ))
+      mp_identity="$repo slot $slot · $mp_agent $sid"
+      mp_retry="t session history ${(q)repo} ${(q)slot}"
       if [[ $mp_loc == fg:* ]]; then
         mp_live+=("$mp_loc"$'\t'"$repo"$'\t'"$slot"$'\t'"${f[8]}")
         continue
@@ -807,24 +829,34 @@ _t_resume() {
         mp_live+=("$mp_loc"$'\t'"$repo"$'\t'"$slot"$'\t'-)
         continue
       elif [[ $mp_loc == app:* ]]; then
-        echo "· $repo $slot: desktop app is on ${mp_loc#app:}; open it on that Mac." >&2
-        continue
+        _t_resume_batch_stop 1 "$mp_identity" "$mp_retry" "desktop app is on ${mp_loc#app:}; open it on that Mac" "$mp_remaining" "${mp_ready[@]}"
+        return 1
       elif [[ -n $mp_loc && $mp_loc != - ]]; then
         [[ -n ${f[8]:-} && $f[8] != - ]] && repo=$f[8]
         mp_live+=("$mp_loc"$'\t'"$repo"$'\t'"$slot"$'\t'-)
         continue
       fi
       if [[ $f[8] == history && -n $on_host ]]; then
-        mp_cwd=$(_t_resume_history_launch "$repo" "$sid" "$mp_agent" prepare "${f[12]:--}") || return $?
+        mp_cwd=$(_t_resume_history_launch "$repo" "$sid" "$mp_agent" prepare "${f[12]:--}") || {
+          mp_rc=$?; _t_resume_batch_stop "$mp_rc" "$mp_identity" "$mp_retry" 'saved conversation preparation failed; see diagnostic above' "$mp_remaining" "${mp_ready[@]}"
+          return "$mp_rc"
+        }
         mp_session=${mp_cwd%%$'\t'*}; wt=${mp_cwd#*$'\t'}; slot=${mp_session##*-}; repo=${${mp_session#dev-}%-*}
-        _t_resume_history_registered "$repo" || return 1
+        _t_resume_history_registered "$repo" || {
+          _t_resume_batch_stop 1 "$mp_identity" "$mp_retry" 'repository registration unavailable' "$mp_remaining" "${mp_ready[@]}"
+          return 1
+        }
       elif [[ $f[8] == history ]]; then
         mp_session=$(_t_resume_history_launch "$repo" "$sid" "$mp_agent" launch "${f[12]:--}") || {
-          mp_rc=$?; (( mp_rc == 130 )) && return 130
-          _t_warn "$repo: saved conversation launch failed — skipped"; continue
+          mp_rc=$?; _t_resume_batch_stop "$mp_rc" "$mp_identity" "$mp_retry" 'saved conversation launch failed; see diagnostic above' "$mp_remaining" "${mp_ready[@]}"
+          return "$mp_rc"
         }
         slot=${mp_session##*-}; repo=${${mp_session#dev-}%-*}
-        _t_resume_history_registered "$repo" || return 1
+        mp_ready+=("t session open ${(q)repo} ${(q)slot} --cli --local")
+        _t_resume_history_registered "$repo" || {
+          _t_resume_batch_stop 1 "$mp_identity" "$mp_retry" 'repository registration unavailable after launch' "$mp_remaining" "${mp_ready[@]}"
+          return 1
+        }
         if [[ -z $mp_first_repo ]]; then
           mp_first_repo=$repo; mp_first_slot=$slot
         else
@@ -833,16 +865,18 @@ _t_resume() {
         continue
       fi
       if [[ -n ${mp_taken[$repo/$slot]:-} ]]; then
-        echo "· ${sid:0:8}: $repo slot $slot already revived by an earlier mark — skipped (t session resume $repo $slot swaps it)." >&2
-        continue
+        _t_resume_batch_stop 1 "$mp_identity" "$mp_retry" 'slot already used by an earlier selection' "$mp_remaining" "${mp_ready[@]}"
+        return 1
       fi
       if [[ -n $on_host ]]; then
         # every mark lands DETACHED on the host; the first is attached below
         mp_taken[$repo/$slot]=1
         echo "Resuming ${sid:0:8} ($repo $slot) on $on_host"
         mp_session=$(_t_resume_on_host "$on_host" "$sid" "$wt" "$mp_agent" detach) || {
-          mp_rc=$?; (( mp_rc == 130 )) && return 130
-          _t_warn "$repo $slot: landing on $on_host failed — ${mp_session:-no output}; skipped"; continue; }
+          mp_rc=$?; _t_resume_batch_stop "$mp_rc" "$mp_identity" "$mp_retry" "landing on $on_host failed; see diagnostic above" "$mp_remaining" "${mp_ready[@]}"
+          return "$mp_rc"
+        }
+        mp_ready+=("t session open ${(q)${${mp_session#dev-}%-*}} ${(q)${mp_session##*-}} --cli --host ${(q)on_host}")
         if [[ -z $mp_first_repo ]]; then
           mp_first_repo=$repo; mp_first_slot=$slot; mp_first_session=$mp_session
         else
@@ -851,18 +885,19 @@ _t_resume() {
         continue
       fi
       if ! mp_cwd=$(_dev_ensure_session_cwd "$wt"); then
-        echo "· $repo $slot: couldn't rebuild its worktree ($wt) — skipped." >&2
-        continue
+        _t_resume_batch_stop 1 "$mp_identity" "$mp_retry" 'could not rebuild worktree; see diagnostic above' "$mp_remaining" "${mp_ready[@]}"
+        return 1
       fi
       mp_taken[$repo/$slot]=1
       mp_session="dev-${repo}-${slot}"
       echo "Resuming ${sid:0:8} in $mp_session ($mp_cwd)"
       _dev_resume_session "$mp_session" "$mp_cwd" "$sid" "$mp_agent" || {
-        mp_rc=$?; (( mp_rc == 130 )) && return 130
-        _t_warn "$repo $slot: launch failed; this conversation was not resumed — skipped"
+        mp_rc=$?
         unset 'mp_taken[$repo/$slot]'
-        continue
+        _t_resume_batch_stop "$mp_rc" "$mp_identity" "$mp_retry" 'conversation launch failed; see diagnostic above' "$mp_remaining" "${mp_ready[@]}"
+        return "$mp_rc"
       }
+      mp_ready+=("t session open ${(q)repo} ${(q)slot} --cli --local")
       if [[ -z $mp_first_repo ]]; then
         mp_first_repo=$repo; mp_first_slot=$slot
       else
@@ -895,6 +930,8 @@ _t_resume() {
     done
     if (( $#mp_unopened )); then
       echo "Also selected — attach with: ${(j: · :)mp_unopened}"
+      _t_resume_batch_stop 1 'terminal tabs' 't session resume' 'could not open selected owner tabs' 0 "${mp_ready[@]}"
+      return 1
     fi
     if [[ -n $mp_live_first ]]; then
       mp_live_fields=("${(@ps:\t:)mp_live_first}")
@@ -916,7 +953,11 @@ _t_resume() {
         mp_live_cmd="t open ${(q)${mp_pair%% *}} ${(q)${mp_pair##* }} --cli --host ${(q)on_host}"
         _dev_open_tab "$mp_live_cmd" || mp_unopened+=("$mp_live_cmd")
       done
-      (( $#mp_unopened )) && echo "Also landed on $on_host — attach with: ${(j: · :)mp_unopened}"
+      if (( $#mp_unopened )); then
+        echo "Also landed on $on_host — attach with: ${(j: · :)mp_unopened}"
+        _t_resume_batch_stop 1 'terminal tabs' 't session resume' 'could not open resumed session tabs' 0 "${mp_ready[@]}"
+        return 1
+      fi
       if [[ -t 0 && -t 1 ]]; then
         ssh -t "${REMOTE_HOSTS[$on_host]:-$on_host}" "zsh -lic ${(qq):-tmux attach -t $mp_first_session}"
       else
@@ -938,12 +979,17 @@ _t_resume() {
       echo "Also revived — attach with: ${(j: · :)mp_unopened}"
       [[ -z ${SSH_CONNECTION:-} ]] \
         && echo "(tabs need a local Terminal.app/iTerm2 GUI; Terminal.app also needs Accessibility — System Settings → Privacy & Security)" >&2
+      _t_resume_batch_stop 1 'terminal tabs' 't session resume' 'could not open resumed session tabs' 0 "${mp_ready[@]}"
+      return 1
     fi
     if [[ -z $TMUX && -t 0 && -t 1 ]]; then
       tmux attach-session -t "=dev-${mp_first_repo}-${mp_first_slot}:"
     else
       _dev_open_tab "t open $mp_first_repo $mp_first_slot" \
-        || echo "Attach with: t session open $mp_first_repo $mp_first_slot"
+        || {
+          _t_resume_batch_stop 1 'terminal tab' 't session resume' 'could not open resumed session' 0 "${mp_ready[@]}"
+          return 1
+        }
     fi
     return
   fi

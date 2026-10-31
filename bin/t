@@ -12091,6 +12091,9 @@ PICKER CONTROLS
   Text sorts ascend, with newest turn breaking ties. Filter settings, reset and
   on/off preserve sorting. Ctrl-/ shows full row details.
 
+  Batch failures stop immediately with identity, reason, retry selection, ready
+  session commands, and the number not attempted. No attachment hides the error.
+
   Every marked dead slot revives into its own detached dev slot — the first
   attaches, the rest open in NEW terminal tabs (Terminal.app/iTerm2; `t session
   open` hints when tabs are impossible — ssh, unrecognized terminal, no

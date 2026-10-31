@@ -1350,19 +1350,23 @@ class HistoryCommand:
 
     def resume_many(self, alias, rows):
         owners = []
-        for row in rows:
+        for index, row in enumerate(rows):
             try:
                 owner = self.resume(alias, row, return_owner=True)
                 self.attach_command(owner)  # Reject unsupported owners before tab handling.
                 owners.append(owner)
             except HistoryCancelled:
+                print(f'Resume cancelled: {row["agent"]} {row["sid"]}', file=sys.stderr)
                 for owner in owners:
                     print('Already resumed; attach: ' + shlex.join(self.attach_command(owner)), file=sys.stderr)
+                print(f'Not attempted: {len(rows) - index - 1} selection(s)', file=sys.stderr)
                 return 130
             except (HistoryError, OSError, ValueError) as error:
-                print(f't history: {row["sid"]}: {error}', file=sys.stderr)
+                print(f'Resume stopped after an error\nSelection: {row["agent"]} {row["sid"]}\nReason: {error}', file=sys.stderr)
+                print('Retry selection: t session history ' + shlex.quote(alias), file=sys.stderr)
                 for owner in owners:
                     print('Already resumed; attach: ' + shlex.join(self.attach_command(owner)), file=sys.stderr)
+                print(f'Not attempted: {len(rows) - index - 1} selection(s)', file=sys.stderr)
                 return 1
         for owner in owners[1:]:
             command = shlex.join(self.attach_command(owner))
