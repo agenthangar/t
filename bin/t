@@ -11690,7 +11690,7 @@ TARGETS
   %(prog)s --codex --new        Start Codex directly
 
 SELECTION
-  Space/Tab check; Enter open. Ctrl-F filter settings.
+  Space/Tab check; Enter open; k kill. Ctrl-F filter settings.
   Ctrl-A filters off; Ctrl-L filters on (restore saved choices).
 
 DESKTOP TO CLI
@@ -11721,6 +11721,8 @@ DESKTOP TO CLI
   UI, status, model, session and task details, including idle/desktop rows.
   Column headers stay visible; narrow rows prioritize session and task.
   Space/Tab marks ✓ independently of focus; Enter opens marked rows.
+  Press k to kill marked rows, or the focused row, with close safety checks.
+  Killing refreshes the list and resets search and filters to opening defaults.
   Use --new to start a new session. The first CLI opens here, others use tabs;
   desktop rows open in the app. Remote pickers add HOST. --fg opens one.
 

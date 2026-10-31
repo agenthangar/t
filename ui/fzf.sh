@@ -195,6 +195,7 @@ _t_fzf_filtered() (
   _t_picker_preview_bind=,ctrl-/:toggle-preview
   if [ "${T_PICKER_SESSION_FILTERS:-}" = open ]; then
     _t_picker_preview_bind=,ctrl-/:ignore,alt-n:ignore
+    _t_picker_controls="Enter open · k kill · Esc · Space/Tab mark ✓"
     set -- --preview= "$@"
   else
     _t_picker_controls="$_t_picker_controls · Ctrl-/ details"
@@ -208,6 +209,8 @@ _t_fzf_filtered() (
     _t_picker_legend=
     _t_picker_margin=0,1
     _t_picker_controls="Enter $_t_picker_action · Esc
+Space/Tab mark ✓"
+    [ "${T_PICKER_SESSION_FILTERS:-}" != open ] || _t_picker_controls="Enter/k kill/Esc
 Space/Tab mark ✓"
     set -- --height=100% "$@"
   fi
@@ -379,12 +382,21 @@ SH
       _t_picker_bind="${_t_picker_bind},${_t_picker_key}:${T_PICKER_CLEAR_MARKS}execute-silent(sh \"\$T_PICKER_TOGGLE\" sort-$_t_picker_action)+reload-sync(cat \"\$T_PICKER_CURRENT\")+transform-header(cat \"\$T_PICKER_CURRENT_HEADER\")"
     done
   fi
+  if [ "${T_PICKER_SESSION_FILTERS:-}" = open ]; then
+    # Keep Enter's row-only output unchanged; k adds a private action sentinel.
+    # shellcheck disable=SC2016
+    set -- --bind='k:execute-silent(touch "$T_PICKER_VIEWS/kill")+accept' "$@"
+  fi
   _t_fzf --multi --no-hscroll --margin="$_t_picker_margin" --delimiter="$(printf '\t')" --with-nth=-1 \
     --bind="enter:accept,esc:abort,ctrl-c:abort,space:toggle+down,tab:toggle+down,shift-tab:up${_t_picker_preview_bind}" \
     --bind="$_t_picker_bind" \
     --preview='printf "%s\n" {-1}' --preview-window='hidden:wrap:down:40%' \
-    --header="$(cat "$_t_picker_header")" "$@" < "$T_PICKER_CURRENT"
+    --header="$(cat "$_t_picker_header")" "$@" < "$T_PICKER_CURRENT" > "$_t_picker_dir/result"
   _t_picker_rc=$?
+  if [ "$_t_picker_rc" = 0 ]; then
+    [ ! -f "$_t_picker_dir/kill" ] || printf '__t_open_kill__\n'
+    cat "$_t_picker_dir/result"
+  fi
   return "$_t_picker_rc"
 )
 
