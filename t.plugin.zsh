@@ -66,7 +66,7 @@ _t_load_plugin() {
   if [[ -r $T_HOME/.t-release-version ]]; then
     typeset -g _T_LOADED_HEAD="$(<$T_HOME/.t-release-version)"
   else
-    typeset -g _T_LOADED_HEAD="$(git -C "$T_HOME" rev-parse HEAD 2>/dev/null)"
+    typeset -g _T_LOADED_HEAD="$(command git -C "$T_HOME" rev-parse HEAD 2>/dev/null)"
   fi
 }
 
@@ -109,7 +109,9 @@ _t_reload_if_moved() {
   if [[ -r ${plugin:h}/.t-release-version ]]; then
     head="$(<${plugin:h}/.t-release-version)"
   else
-    head=$(git -C "${plugin:h}" rev-parse HEAD 2>/dev/null)
+    # User shell wrappers must not turn an unchanged source into a reload and
+    # discard invocation-local settings or function overrides.
+    head=$(command git -C "${plugin:h}" rev-parse HEAD 2>/dev/null)
   fi
   [[ $plugin == $_T_LOADED_PLUGIN && $head == $_T_LOADED_HEAD ]] && return 0
   _t_reload
