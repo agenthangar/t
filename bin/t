@@ -3238,7 +3238,7 @@ _WORKFLOW_TOPICS = {
     "local_preview": ("When to preview", "Choose when to make CLI or browser changes available locally."),
     "preview_approval": ("Preview approval before PR", "Choose whether opening a PR waits for your approval of the local preview."),
     "cli_preview": ("CLI preview method", "Install the development version locally, or run it from the repo."),
-    "frontend_preview": ("Web preview updates", "Refresh changes with a local dev server, or rebuild the preview."),
+    "frontend_preview": ("Web preview method", "Refresh changes with a local dev server, or rebuild the preview."),
     "frontend_design": ("Build design", "Try an interactive HTML prototype outside the app, or design in the app itself."),
     "design_approval": ("Design approval", "Choose whether implementation waits for your approval of the design."),
     "test_timing": ("Run tests", "Choose when to run tests. Required PR checks still apply."),

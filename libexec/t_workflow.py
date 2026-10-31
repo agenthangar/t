@@ -91,7 +91,7 @@ BEHAVIORS = {
         'required': ('Required', 'For design and UI work, prepare and show a design preview before substantial implementation, then wait for user feedback and approval before continuing. Report unavailable preview tools accurately.'),
         'continue': ('Not required', 'After preparing the design, continue implementation without an additional design approval step unless repository or task instructions require one.'),
     }},
-    'frontend_preview': {'label': 'Web preview updates', 'choices': {
+    'frontend_preview': {'label': 'Web preview method', 'choices': {
         'fast_reload': ('Live reload', 'For frontend previews, use the supported local development server and fast reload when available so design changes can be inspected promptly. Report unsupported preview capabilities accurately.'),
         'rebuild': ('Rebuild after changes', 'For frontend previews, rebuild using the supported preview command after relevant changes and show the updated result.'),
     }},

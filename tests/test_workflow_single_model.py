@@ -179,7 +179,7 @@ def test_preview_methods_and_approval_choices_keep_context(workflow, t_mod):
     policy = t_mod._workflow_behaviors_menu(ui, vars(workflow), original)
     assert ui.views[2][0] == 'CLI preview method'
     assert dict(ui.views[2][1]) == {'': 'Not set', 'install': 'Install locally', 'run': 'Run from the repo'}
-    assert ui.views[4][0] == 'Web preview updates'
+    assert ui.views[4][0] == 'Web preview method'
     assert dict(ui.views[4][1]) == {'': 'Not set', 'fast_reload': 'Live reload', 'rebuild': 'Rebuild after changes'}
     assert ui.views[6][0] == 'Preview approval before PR'
     assert dict(ui.views[6][1]) == {'': 'Not set', 'required': 'Wait for my approval', 'not_required': 'No approval needed'}
@@ -462,7 +462,7 @@ def test_development_flow_keeps_section_focus_without_chatter(workflow, t_mod):
     assert dict(ui.views[2][1])['draft'] == 'Draft'
     assert ui.views[3][2]['default'] == 1
     assert dict(ui.views[5][1]) == {'local_preview': 'When to preview', 'preview_approval': 'Preview approval before PR',
-                                   'cli_preview': 'CLI preview method', 'frontend_preview': 'Web preview updates', 'back': 'Back'}
+                                   'cli_preview': 'CLI preview method', 'frontend_preview': 'Web preview method', 'back': 'Back'}
     assert dict(ui.views[6][1]) == {'': 'Not set', 'when_ready': 'Automatically when ready', 'on_request': 'Only when I ask'}
     assert dict(ui.views[8][1]) == {'': 'Not set', 'required': 'Wait for my approval', 'not_required': 'No approval needed'}
     assert ui.views[10][2]['default'] == 1

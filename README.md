@@ -1049,7 +1049,7 @@ including repository-only customizations. Menu choices stay pending until
 | When to preview | Automatically when ready or Only when I ask |
 | Preview approval before PR | Wait for my approval or No approval needed |
 | CLI preview method | Install locally or Run from the repo |
-| Web preview updates | Live reload or Rebuild after changes |
+| Web preview method | Live reload or Rebuild after changes |
 | Frontend design | Separate HTML prototype or in-app design; design approval Required or Not required |
 | Tests | Local during work, before preview, before PR, or PR CI |
 

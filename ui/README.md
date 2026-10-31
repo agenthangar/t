@@ -212,7 +212,7 @@ When to open PR offers Automatically when ready or Only when I ask.
 Local preview uses four explicit rows: When to preview (Automatically when ready /
 Only when I ask), Preview approval before PR (Wait for my approval / No approval
 needed), CLI preview method (Install locally / Run from the repo), and Web preview
-updates (Live reload / Rebuild after changes). Removing preview approval never
+method (Live reload / Rebuild after changes). Removing preview approval never
 changes the separate PR-opening preference.
 Frontend design chooses an interactive standalone HTML prototype or design in the
 app, with Design approval labeled Required/Not required. Test timing
