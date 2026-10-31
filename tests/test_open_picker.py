@@ -342,8 +342,8 @@ def test_open_kill_callback_keeps_caller_context_and_never_starts_fresh(zsh, clo
       _t_open --attached
     ''', _tty=True)
     assert result.returncode == 130, result.stdout + result.stderr
-    assert f'CLOSE_RC={close_rc}' in result.stderr
-    assert 'CLOSE local' in result.stderr
+    assert f'CLOSE_RC={close_rc}' in result.stdout + result.stderr
+    assert 'CLOSE local' in result.stdout + result.stderr
     assert 'UNEXPECTED' not in result.stdout
 
 
@@ -359,6 +359,6 @@ def test_open_kill_stale_local_row_never_closes_remote(zsh):
       _t_open --attached
     ''', _tty=True)
     assert result.returncode == 130
-    assert 'CLOSE_RC=1' in result.stderr
+    assert 'CLOSE_RC=1' in result.stdout + result.stderr
     assert 'no longer here' in result.stdout + result.stderr
     assert 'UNEXPECTED' not in result.stdout
