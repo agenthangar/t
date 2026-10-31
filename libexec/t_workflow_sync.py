@@ -333,11 +333,14 @@ def resume_settings(sid, cwd=None, agent='codex'):
     values = {}
     path = state_path()
     if agent == 'codex' and path.exists() and path.stat().st_size <= 1024 * 1024:
-        state = status()
-        if state['revision'] and current(state):
-            existing = state.get('main_settings', state.get('settings', {}))
-            if isinstance(existing, dict):
-                values.update(existing)
+        try:
+            state = status()
+            if isinstance(state, dict) and state.get('revision') and current(state):
+                existing = state.get('main_settings', state.get('settings', {}))
+                if isinstance(existing, dict):
+                    values.update(existing)
+        except (OSError, ValueError, KeyError, TypeError):
+            pass  # The journal cannot invalidate independent scoped preferences.
     if scoped.get('model'):
         values.pop('effort', None)  # A global effort may not suit the selected model.
     values.update(scoped)
@@ -621,5 +624,5 @@ if __name__ == '__main__':
                                  stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                  start_new_session=True,
                                  env={k: v for k, v in os.environ.items() if not k.startswith('COV_CORE_')})
-    except (OSError, ValueError, KeyError, sqlite3.Error):
+    except (OSError, ValueError, KeyError, TypeError, sqlite3.Error):
         pass  # SessionStart retries must never prevent a session from opening.

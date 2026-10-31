@@ -199,18 +199,28 @@ Use multiple models switch. Disabling stages retains their model/effort settings
 behavior preferences and Markdown active; disabling the workflow suppresses all
 three. Active stages expose Planning, Implementation and Review with separate
 model and effort controls, plus Instructions for ordinary Markdown in VISUAL/EDITOR.
-Work preferences uses a shared `_RailUI` submenu with Work in, Preview, Run checks,
-and Stop after. Unset rows say Not set; one explanation makes clear that task,
-repository and text instructions supply the behavior. Clearing a choice removes
-its key; no behavior is enabled by default. Stop after describes concrete handoff
-points: local uncommitted edits, local install/preview, approval before a PR,
-draft PR, ready PR, or authorized merge after checks. Preserve the focused row
-when returning from a choice. Model-stage rows are hidden while stages are off.
+PRs, previews & tests uses shared `_RailUI` submenus for Pull requests, Local
+preview, Frontend design and Tests. PR opening (automatic/on instruction), initial
+state (ready/draft) and merging (automatic/on instruction) are independent.
+Local preview offers automatic, before-PR approval, or on-instruction timing;
+CLI development install/run and frontend fast-reload/rebuild choices are separate.
+Frontend design chooses an interactive standalone HTML prototype or design in the
+app, with a separate feedback gate before substantial implementation. Test timing
+chooses local during work, local before preview, local before PR, or PR CI;
+required repository checks always apply. Unset rows say Not set; one explanation
+makes clear that task, repository and text instructions supply the behavior.
+Clearing a choice removes its key. Preserve focused rows when returning.
+Legacy delivery/preview values are interpreted without rewriting read-only
+configuration; editing materializes equivalent separate choices. Working-folder
+and generic validation choices are no longer in the menu. Existing unrelated
+legacy rules are retained and displayed separately; explicit test timing supersedes
+legacy validation. Model-stage rows are hidden while stages are off.
 Instead show the selected session tool's default model and reasoning effort.
 Optional `session_defaults` stores independent Codex and Claude model/effort maps;
 these are active only for enabled single-model workflows. Repository overrides
 apply to the canonical checkout and its worktrees, including destination paths
-for new and resumed sessions. Explicit resume arguments win. An explicit model
+for new and resumed CLI sessions. Native desktop launches keep the application's
+model settings. Explicit resume arguments win. An explicit model
 without an effort uses that model's default, not an unrelated global effort.
 Empty choices fall back to account-level agent defaults. Excluded workflows and
 multi-model workflows do not apply these launch settings. Never write them into

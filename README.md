@@ -971,8 +971,9 @@ models and efforts. Markdown and behavior preferences still apply when only mode
 stages are off. Choose **No — use one model** to set the default model and reasoning
 effort for the selected session tool. To limit these defaults to one repository,
 open **Repository assignments → your repository → Customize only this repository**.
-These defaults apply when starting or resuming a session in that repository and
-its worktrees. Explicit launch arguments win; running turns keep their settings.
+These defaults apply when starting or resuming a CLI session in that repository
+and its worktrees. Explicit launch arguments win; running turns keep their settings.
+Native desktop launches keep the application's model settings.
 Clearing a model uses the account's agent default. Choosing a model without an
 effort lets that model use its own default effort. Codex and Claude defaults are
 stored separately, and switching back to multiple models retains these choices.
@@ -1090,12 +1091,16 @@ picker. Unsaved accounts show recommended defaults until explicitly activated.
 Preferences live in `${XDG_CONFIG_HOME:-~/.config}/t/workflow.json`. Existing v1
 preferences load as a `standard` named workflow and independent repository policies;
 reading or reinstalling preserves the original file. The next explicit change
-saves the v2 named-workflow format.
+saves the v3 named-workflow format.
 Existing v2 policies also remain valid without the optional `stages_enabled`
 boolean (defaults to true) or `behaviors` object (defaults to no preferences).
-Advanced JSON accepts `worktree: isolated|current`, `preview: ui_changes|on_request`,
-`validation: relevant|full`, and `delivery: review|pull_request|auto_merge` inside
-`behaviors`; unknown keys and values are rejected before any write.
+The optional `session_defaults` object stores `codex` and `claude` model/effort
+defaults for single-model mode. Inside `behaviors`, independent keys are
+`pr_open`, `pr_state`, `pr_merge`, `local_preview`, `cli_preview`,
+`frontend_design`, `design_approval`, `frontend_preview`, and `test_timing`.
+The editor presents their supported choices. Legacy `worktree`, `preview`,
+`validation`, and `delivery` fields remain readable; unknown keys or values are
+rejected before any write.
 Hidden `t config show --workflow` and `t config edit --workflow` compatibility
 forms remain available; the former retains its JSON output.
 Saving synchronizes a separate managed block in Codex's `AGENTS.md` (and existing
@@ -1535,10 +1540,18 @@ then review and save. Repository assignments and the global default share this
 transaction. Cancel leaves saved settings unchanged.
 
 `t workflow list` prints a read-only summary; `--all` lists named workflows and
-`--json` preserves machine output. Text instructions override work preferences
-and model-stage guidance. **Work preferences** asks where to work, when to preview,
-which checks to run, and where to stop. **Not set** leaves that decision to your
-task, repository rules and text instructions; it does not mean the behavior is disabled.
-Delivery choices include trying a local install or preview first, asking before
-pushing or opening a PR, a draft PR, a ready PR without merging, and authorized
-auto-merge. A design preview can also require feedback before implementation.
+`--json` preserves machine output. Text instructions override behavior preferences
+and model-stage guidance. **PRs, previews & tests** separates these decisions:
+
+| Group | Choices |
+| --- | --- |
+| Pull requests | Open automatically or on instruction; create draft or ready; merge automatically or on instruction. |
+| Local preview | Preview automatically, before a PR with approval, or on instruction; install/run CLI changes; fast reload or rebuild HTML/app previews. |
+| Frontend design | Interactive standalone HTML outside the app or design within the app; wait for feedback or proceed. |
+| Tests | Locally during development, before local preview, before opening a PR, or in PR CI. |
+
+**Not set** leaves a decision to your task, repository rules and text instructions.
+These preferences never bypass required checks. Selecting PR CI avoids routine
+local test runs. Legacy saved choices remain readable and are converted into
+separate choices only when you edit them. Single-model launch defaults remain a
+separate setting from these instructions to the agent.

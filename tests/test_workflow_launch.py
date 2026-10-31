@@ -6,6 +6,7 @@ from pathlib import Path
 import shlex
 import sqlite3
 import subprocess
+import sys
 
 import pytest
 
@@ -81,6 +82,27 @@ def test_named_workflow_and_blank_fields(sync, tmp_path, monkeypatch):
     assert sync.launch_settings('claude', str(repo)) == []
 
 
+def test_linked_worktree_subdirectory_uses_canonical_repository(sync, tmp_path):
+    repo, worktree = tmp_path / 'canonical', tmp_path / 'linked'
+    repo.mkdir()
+    def git(*args):
+        subprocess.run(['git', '-C', str(repo), *args], check=True, capture_output=True)
+    git('init', '-q')
+    git('config', 'user.name', 'Workflow Test')
+    git('config', 'user.email', 'workflow@example.invalid')
+    git('config', 'core.hooksPath', str(tmp_path / 'no-hooks'))
+    (repo / 'tracked').write_text('initial')
+    git('add', 'tracked')
+    git('commit', '-qm', 'Initial')
+    git('worktree', 'add', '--detach', str(worktree))
+    (worktree / 'src').mkdir()
+    w = sync.workflow()
+    document = w['defaults']()
+    document['repositories'][str(repo)] = {'inline': single_policy(w, codex={'model': 'canonical-model'})}
+    w['save'](document, None, propagate=False)
+    assert sync.launch_settings('codex', str(worktree / 'src')) == ['--model', 'canonical-model']
+
+
 @pytest.mark.parametrize('settings,expected', [
     ({'model': 'repo-model'}, ['--model', 'repo-model']),
     ({'effort': 'low'}, ['--model', 'global-model', '-c', 'model_reasoning_effort="low"']),
@@ -104,6 +126,23 @@ def test_indexed_child_cannot_receive_scoped_resume_defaults(sync, tmp_path, mon
         db.execute('create table threads(id text, source text)')
         db.execute('insert into threads values(?,?)', (SID, '{"subagent":{}}'))
     assert sync.resume_settings(SID, str(repo)) == []
+
+
+@pytest.mark.parametrize('contents', ['{bad json', '[]', '{"revision":1}'])
+def test_corrupt_journal_cannot_supply_global_resume_settings(sync, tmp_path, monkeypatch, contents):
+    _, _, repo, _ = scoped_document(sync, tmp_path, monkeypatch, codex={'model': 'repo-model'})
+    sync.state_path().write_text(contents)
+    assert sync.resume_settings(SID, str(repo)) == ['--model', 'repo-model']
+
+
+@pytest.mark.parametrize('contents', ['{bad json', '[]', '{"version":3}'])
+def test_corrupt_workflow_helper_never_emits_launch_arguments(sync, contents):
+    config = sync.workflow()['config_path']()
+    config.parent.mkdir(parents=True, exist_ok=True)
+    config.write_text(contents)
+    result = subprocess.run([sys.executable, sync.__file__, '--launch-settings', 'codex', str(config.parent)],
+                            capture_output=True, text=True)
+    assert result.returncode == 0 and not result.stdout and not result.stderr
 
 
 def shell_workflow(zsh, *, model='repo-model', effort='high'):
@@ -161,3 +200,14 @@ def test_shell_foreground_uses_repository_defaults(zsh):
                  '_t_dev api new --fg')
     assert result.returncode == 0, result.stderr
     assert result.stdout.endswith('--model\nrepo-model\n-c\nmodel_reasoning_effort=high\n--no-daemon\n')
+
+
+def test_shell_tmux_new_and_resume_use_destination_not_caller(zsh):
+    repo = shell_workflow(zsh)
+    result = zsh(f'_dev_new_session dev-api-3 {shlex.quote(str(repo))} dev/x 1 codex; '
+                 f'_dev_resume_session dev-api-4 {shlex.quote(str(repo))} {SID} codex')
+    assert result.returncode == 0, result.stderr
+    commands = [line for line in zsh.log.read_text().splitlines() if line.startswith('respawn-pane ')]
+    assert len(commands) == 2
+    assert all('--model repo-model' in command for command in commands)
+    assert all('model_reasoning_effort=' in command and 'high' in command for command in commands)

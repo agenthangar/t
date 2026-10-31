@@ -502,6 +502,11 @@ def test_generation_race_after_destination_is_blocked_under_claim(app, history, 
                              codex_rows(workspace, sid='selected', branch='dev/repo-1'))
     monkeypatch.setattr(app, 'source', lambda *a: source)
     monkeypatch.setattr(app, 'owners', lambda *a: [])
+    # This test isolates the workspace generation guard; native release checks
+    # have dedicated coverage and require a real command-runner adapter.
+    releases = []
+    monkeypatch.setattr(app, 'codex_released', lambda *a, **kw: releases.append(kw['workspace']))
+    monkeypatch.setattr(app, 'install_transcript', lambda *a: pytest.fail('changed generation cannot restore'))
     original = app.destination
     def modified(*args):
         result = original(*args)
@@ -510,6 +515,7 @@ def test_generation_race_after_destination_is_blocked_under_claim(app, history, 
     monkeypatch.setattr(app, 'destination', modified)
     with pytest.raises(history.HistoryError, match='generation changed'):
         app.resume('repo', row)
+    assert releases and all(Path(path) == workspace for path in releases)
 
 
 @pytest.mark.parametrize('ready', [True, False])

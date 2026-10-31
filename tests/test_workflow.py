@@ -855,9 +855,10 @@ def test_behavior_options_render_and_copy_independently(workflow, tmp_path, key,
         policy = dict(copy.deepcopy(w.DEFAULT), stages_enabled=False, behaviors={key: value})
         doc = w.update(w.defaults(), policy)
         rendered = w.render(doc)
-        label, text = w.BEHAVIORS[key]['choices'][value]
-        assert text in rendered
-        assert label in '\n'.join(w.summary_lines(policy))
+        for effective_key, effective_value in w.effective_behaviors({key: value}).items():
+            label, text = w.BEHAVIORS[effective_key]['choices'][effective_value]
+            assert text in rendered
+            assert label in '\n'.join(w.summary_lines(policy))
         assert '1. Plan with' not in rendered and 'authorizes sub-agent' not in rendered
         assert 'Model stages are disabled' in rendered
         assert w.catalogue(doc)['workflows']['standard']['behaviors'] == {key: value}
@@ -909,7 +910,9 @@ def test_stage_toggle_scope_and_precedence(workflow, t_mod, monkeypatch, tmp_pat
     assert w.PRECEDENCE in w.render(doc)
     assert w.PRECEDENCE in '\n'.join(t_mod._workflow_review(doc))
     review = '\n'.join(t_mod._workflow_review(doc))
-    assert 'Model stages: disabled' in review and 'Delivery: Leave for review' in review
+    assert 'Model stages: disabled' in review and 'Open pull request: Wait for my request' in review
+    scoped_review = review.split('Repository ' + repo + ':', 1)[1]
+    assert 'Planning:' not in scoped_review and 'saved-model' not in scoped_review
     policy['stages_enabled'] = True
     doc = w.update(doc, policy, repo)
     rendered = w.render(doc).split('Repository scope: ')[1]
@@ -943,8 +946,11 @@ def test_behavior_menu_save_or_discard(workflow, t_mod, monkeypatch, tmp_path, s
     local.write_text('# untouched\n')
     monkeypatch.setenv('T_LOCAL_RC', str(local))
     picks = ['workflow', 'customize', 'stages_enabled', '0', 'behaviors',
-             'worktree', 'isolated', 'preview', 'ui_changes', 'validation', 'full',
-             'delivery', 'auto_merge', 'back', 'back', 'back']
+             'pull_requests', 'pr_open', 'automatic', 'pr_state', 'draft',
+             'pr_merge', 'on_request', 'back',
+             'local_preview', 'local_preview', 'before_pr', 'cli_preview', 'install',
+             'frontend_preview', 'fast_reload', 'back',
+             'tests', 'test_timing', 'pr_ci', 'back', 'back', 'back', 'back']
     picks += ['save'] if save else ['cancel', 'discard']
     ui = Menu(picks)
     monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
@@ -954,9 +960,13 @@ def test_behavior_menu_save_or_discard(workflow, t_mod, monkeypatch, tmp_path, s
     if save:
         policy = w.load()[0]['workflows']['standard']
         assert not policy['stages_enabled'] and policy['planning'] == w.DEFAULT['planning']
-        assert policy['behaviors'] == {'worktree': 'isolated', 'preview': 'ui_changes',
-                                       'validation': 'full', 'delivery': 'auto_merge'}
-        assert 'enable auto-merge' in native_paths()[0].read_text()
+        assert policy['behaviors'] == {'pr_open': 'automatic', 'pr_state': 'draft', 'pr_merge': 'on_request',
+                                       'local_preview': 'before_pr', 'cli_preview': 'install',
+                                       'frontend_preview': 'fast_reload', 'test_timing': 'pr_ci'}
+        instructions = native_paths()[0].read_text()
+        assert 'Open pull requests as drafts' in instructions
+        assert 'before pushing or opening a pull request' in instructions
+        assert "pull request's required CI" in instructions
 
 
 def test_behavior_menu_noop_clear_and_excluded_edit(workflow, t_mod, monkeypatch, tmp_path):
@@ -967,14 +977,15 @@ def test_behavior_menu_noop_clear_and_excluded_edit(workflow, t_mod, monkeypatch
     initial = copy.deepcopy(cfg._workflow_document)
     # Picking defaults, cancelling options and clearing an absent choice create no override.
     t_mod._config_workflow(Menu(['customize', 'stages_enabled', '1', 'behaviors',
-                                'worktree', '', 'preview', None, 'back', 'back', 'back']), cfg, 'api')
+                                'pull_requests', 'pr_open', '', 'pr_state', None,
+                                'back', 'back', 'back', 'back']), cfg, 'api')
     assert cfg._workflow_document == initial and not t_mod._workflow_pending(cfg)
-    t_mod._config_workflow(Menu(['exclude', 'customize', 'behaviors', 'delivery', 'review',
-                                'back', 'stages_enabled', '0', 'back', 'back']), cfg, 'api')
+    t_mod._config_workflow(Menu(['exclude', 'customize', 'behaviors', 'pull_requests', 'pr_open', 'on_request',
+                                'back', 'back', 'stages_enabled', '0', 'back', 'back']), cfg, 'api')
     entry = cfg._workflow_document['repositories'][cfg.repos['api']]
-    assert entry['excluded'] and entry['inline']['behaviors'] == {'delivery': 'review'}
+    assert entry['excluded'] and entry['inline']['behaviors'] == {'pr_open': 'on_request'}
     assert not entry['inline']['stages_enabled']
-    t_mod._config_workflow(Menu(['customize', 'behaviors', 'delivery', '', 'back',
+    t_mod._config_workflow(Menu(['customize', 'behaviors', 'pull_requests', 'pr_open', '', 'back', 'back',
                                 'stages_enabled', '1', 'back', 'back']), cfg, 'api')
     entry = cfg._workflow_document['repositories'][cfg.repos['api']]
     assert entry['excluded'] and 'behaviors' not in entry['inline']
@@ -1022,13 +1033,13 @@ def test_behavior_menu_narrow_screens(workflow, t_mod, monkeypatch, width, heigh
     monkeypatch.setattr(t_mod, '_workflow', lambda: vars(workflow))
     cfg = SimpleNamespace(repos={})
     t_mod._workflow_session(cfg)
-    # Disable stages, set an isolated worktree preference and return through both menus.
-    keys = ['j', 'enter', 'j', 'enter', 'j', 'j', 'j', 'j', 'enter', 'enter', 'j', 'enter',
-            'j', 'j', 'j', 'j', 'enter', 'q']
+    # Disable stages, choose automatic PR creation and return through the nested menus.
+    keys = ['j', 'enter', 'j', 'enter', 'j', 'j', 'j', 'j', 'enter',
+            'enter', 'enter', 'j', 'enter', 'q', 'q', 'q']
     ui = make_ui(t_mod, keys, width, height)
     t_mod._workflow_policy_menu(ui, cfg, vars(workflow), name='standard')
     policy = cfg._workflow_document['workflows']['standard']
-    assert not policy['stages_enabled'] and policy['behaviors'] == {'worktree': 'isolated'}
+    assert not policy['stages_enabled'] and policy['behaviors'] == {'pr_open': 'automatic'}
     assert policy['planning'] == workflow.DEFAULT['planning']
     assert not workflow.config_path().exists()
     for frame in ui.frames:
@@ -1179,7 +1190,7 @@ def test_workflow_print_precedence_and_reasoning(workflow, t_mod, monkeypatch, c
     cfg = SimpleNamespace(repos={})
     assert t_mod._cmd_workflow(cfg, SimpleNamespace(workflow=True, workflow_action='list')) == 0
     text = capsys.readouterr().out
-    assert text.index('Text instructions:') < text.index('Work preferences (')
-    assert 'Design preview — wait before coding' in text and 'Local install / preview — wait for me' in text
+    assert text.index('Text instructions:') < text.index('PRs, previews & tests (')
+    assert 'Wait for design feedback' in text and 'Before opening a pull request' in text
     assert 'Chosen for the task' in text and 'One level below planning' in text
     assert 'one-level-lower' not in text and 'Test runners:' in text and 'Propagation:' in text
