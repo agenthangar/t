@@ -2442,6 +2442,13 @@ def _workflow_behavior_section(ui, helper, policy, section, runners=None):
                 if runners:
                     changed = runners(changed)
                 continue
+            if choice == "pr_review":
+                current = helper["pr_review_value"](changed)
+                picked = ui.pick("Review before PR", [("review", "Enabled"), ("skip", "Disabled")],
+                                 default=0 if current == "review" else 1)
+                if picked is not None and picked != current:
+                    changed = helper["update_behavior"](changed, choice, picked)
+                continue
             if choice in ("frontend_enabled", "cli_enabled"):
                 current = "enabled" if helper["preview_enabled"](behaviors, section) else "disabled"
                 picked = ui.pick(_workflow_section_spec(section)[0] + " preview", [("enabled", "Enabled"), ("disabled", "Disabled")],
@@ -3325,26 +3332,24 @@ def _workflow_launch_settings(cfg, settings):
 
 _WORKFLOW_SECTIONS = {
     "pull_requests": ("Pull requests", ("pr_review", "pr_open", "pr_state", "pr_merge")),
-    "local_preview": ("Local preview", ("local_preview", "implement_before_approval")),
+    "local_preview": ("Local preview", ("local_preview",)),
     "tests": ("Tests", ("test_timing",)),
 }
 _WORKFLOW_PREVIEW_SUBMENUS = {
     "frontend": ("Frontend", ("frontend_enabled", "frontend_preview_timing", "frontend_implement_before_approval", "frontend_design", "frontend_preview", "frontend_browser")),
-    "cli": ("CLI", ("cli_enabled", "cli_preview_timing", "cli_implement_before_approval", "cli_preview", "cli_launch")),
+    "cli": ("CLI", ("cli_enabled", "cli_preview_timing", "cli_preview", "cli_launch")),
 }
 _WORKFLOW_TOPICS = {
     "frontend_enabled": ("Preview", "Enable or disable frontend preview preferences."),
     "cli_enabled": ("Preview", "Enable or disable CLI preview preferences."),
-    "pr_review": ("Review before PR", "Review changes before opening a pull request, or skip the agent review stage."),
+    "pr_review": ("Review before PR", "Enable or disable the agent review before opening a pull request."),
     "pr_open": ("When to open PR", "Open when the work is ready, or wait for your request."),
     "pr_state": ("PR type", "Drafts wait for your approval before becoming ready for review."),
     "pr_merge": ("Merge PR", "Merge after required checks and approvals, or wait for your request."),
     "local_preview": ("When to preview", "Choose when to make CLI or browser changes available locally."),
-    "implement_before_approval": ("Implement before approval", "Allow implementation before approval, or wait after a lightweight preview before substantial implementation."),
     "frontend_preview_timing": ("When to preview", "Inherit the local-preview default or choose frontend preview timing."),
     "cli_preview_timing": ("When to preview", "Inherit the local-preview default or choose CLI preview timing."),
-    "frontend_implement_before_approval": ("Implement before approval", "Inherit the default or override implementation before approval for frontend work."),
-    "cli_implement_before_approval": ("Implement before approval", "Inherit the default or override implementation before approval for CLI work."),
+    "frontend_implement_before_approval": ("Implement before approval", "Allow frontend implementation before approval, or wait after a lightweight preview before substantial implementation."),
     "cli_preview": ("Preview method", "Install the development version locally, or run it from the repo."),
     "cli_launch": ("Run command", "Run the prepared CLI preview command automatically, or only when requested."),
     "frontend_preview": ("Preview method", "Refresh changes with a local dev server, or rebuild the preview."),
@@ -3392,6 +3397,8 @@ def _workflow_preview_parent_value(helper, behaviors, field):
 
 
 def _workflow_field_value(helper, behaviors, key):
+    if key == "pr_review":
+        return "Disabled" if behaviors.get(key) == "skip" else "Enabled"
     override = _workflow_preview_override(helper, key)
     if override:
         kind, field = override
@@ -3407,7 +3414,7 @@ def _workflow_section_summary(helper, section, behaviors):
     visible = helper["visible_behaviors"](behaviors)
     parts = [_WORKFLOW_TOPICS[key][0] + ": " + _workflow_field_value(helper, behaviors, key)
              for key in _workflow_section_fields(section, behaviors)
-             if (key in visible or _workflow_preview_override(helper, key)) and key not in ("frontend_enabled", "cli_enabled")]
+             if (key == "pr_review" or key in visible or _workflow_preview_override(helper, key)) and key not in ("frontend_enabled", "cli_enabled")]
     for child in _workflow_section_children(section, behaviors):
         summary = _workflow_section_summary(helper, child, behaviors)
         if summary != "Not set":
@@ -3442,7 +3449,7 @@ def _workflow_catalogue_summary(helper, policy):
         fields = set(_workflow_section_fields(section, behaviors))
         for child in _workflow_section_children(section, behaviors):
             fields.update(_workflow_section_fields(child, behaviors))
-        if fields.intersection(visible):
+        if section == "pull_requests" or fields.intersection(visible):
             parts.append(_workflow_section_spec(section)[0] + ": " + _workflow_section_summary(helper, section, behaviors))
     parts += [helper["BEHAVIORS"][key]["label"] + ": " + _workflow_choice(helper, key, value)
               for key, value in visible.items() if key not in _WORKFLOW_TOPICS]
@@ -3450,7 +3457,7 @@ def _workflow_catalogue_summary(helper, policy):
 
 
 def _workflow_choice(helper, key, value):
-    if key in ("pr_review", "pr_open", "frontend_enabled", "cli_enabled", "local_preview", "implement_before_approval", "cli_preview", "cli_launch", "frontend_preview", "frontend_browser") or _workflow_preview_override(helper, key):
+    if key in ("pr_review", "pr_open", "frontend_enabled", "cli_enabled", "local_preview", "frontend_implement_before_approval", "cli_preview", "cli_launch", "frontend_preview", "frontend_browser") or _workflow_preview_override(helper, key):
         return helper["BEHAVIORS"][key]["choices"][value][0]
     return _WORKFLOW_CHOICE_LABELS.get(value, helper["BEHAVIORS"][key]["choices"][value][0])
 

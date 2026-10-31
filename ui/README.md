@@ -223,27 +223,27 @@ PRs, previews & tests uses shared `_RailUI` submenus for Pull requests, Local
 preview and Tests. PR opening (automatic/on instruction), initial
 state (ready/draft) and merging (automatic/on instruction) are independent.
 When to open PR offers Automatically when ready or Only when I ask.
-Review before PR offers a separated Not set choice, Review changes, and Skip
-review. Unset preserves current guidance. Review changes requires a diff and
+Review before PR is an Enabled/Disabled toggle with no Not set choice. Omission
+means Enabled without changing storage on read or an unchanged selection. Enabled requires a diff and
 validation review before PR opening; the selected review worker handles it when
-enabled, otherwise the main agent does. Skip review suppresses the pre-PR review
+enabled, otherwise the main agent does. Disabled suppresses the pre-PR review
 pass in both the main conversation and a selected review worker without deleting
 its saved model, effort, or stage selection. The menu and effective stage displays
 identify it as Skipped before PR, rather than presenting a reviewer as active.
-Clearing the preference or choosing Review changes restores normal review
+Choosing Enabled restores normal review
 guidance. Delivery instructions retain fixes and the selected validation/preview,
 PR timing/state/merge requirements. This preference does not bypass repository
 review requirements or required approvals. No new command or execution mode is
 added; this remains a staged preference in the shared editor.
-Local preview contains defaults for When to preview (Automatically when ready /
-Only when I ask) and Implement before approval (Yes / No), plus
+Local preview contains the When to preview default (Automatically when ready /
+Only when I ask), plus
 Frontend and CLI submenus. Each submenu starts with Preview (Enabled / Disabled).
 Remove the separate Applies to control. Both submenus stay visible and show
 their enabled/disabled state; disabled settings remain saved and editable.
 Optional frontend_enabled/cli_enabled values override legacy preview_target for
 each type independently. Without flags or a legacy target, both are enabled.
 Read-only operations do not migrate storage. Each submenu can Inherit or override
-both defaults independently. Show resolved values with their source in rows,
+the timing default independently. Show resolved timing values with their source in rows,
 summaries, printed lists and save review: Inherit · value or Override · value.
 The Inherit choice is separated from explicit values and removes only that
 override. Inheriting an unset parent displays Inherit · Not set. Changing a parent
@@ -253,7 +253,8 @@ enabled, suppress preview guidance.
 Disabled frontend suppresses design, method and browser guidance;
 disabled CLI suppresses its method and command-launch guidance. Enabling alone does not request a
 preview or change the separate PR-opening preference.
-The nested Frontend submenu contains Design approach (Separate HTML prototype /
+The nested Frontend submenu contains Implement before approval (Yes / No, with
+Not set), Design approach (Separate HTML prototype /
 In the app), Preview method (Fast reload
 / Build), and Open in browser (Automatically / Only when I ask). The nested CLI
 submenu contains Preview method (Install locally / Run from the repo) and
@@ -265,7 +266,8 @@ timing still takes precedence. Only when I ask prepares the command without
 launching it, including with the Run from the repo method. The method determines
 the executable source. Interactive commands use a supported interactive terminal;
 if unavailable, report the limitation and exact command rather than claiming a
-launch. This preference does not run tests or alter preview approval or PR choices.
+launch. This preference does not run tests or alter PR choices. CLI previews have
+no preview-before-implementation approval setting or inherited approval gate.
 Omission preserves existing guidance; clearing removes only the launch preference.
 Menu, list, catalogue and save review reflect the choice and disabled state. Printed
 lists use the same indentation and hierarchy; summaries include nested choices.
@@ -275,19 +277,23 @@ Tests contains Run tests and Test runners; remove the separate Test runners row
 from the workflow menu. Nested runner edits share the same staged Save/discard
 transaction and preserve behavior changes made before or after them.
 Browser opening applies only once a local frontend preview is available; it does
-not start previews or change resolved timing or approval. Implement before
-approval: No requires a lightweight preview and user approval before substantial
+not start previews or change resolved timing or approval. Frontend Implement before
+approval: No requires a lightweight frontend preview and user approval before substantial
 implementation; work needed for the preview itself is allowed. With automatic
 timing, prepare that initial preview before implementation. With request-only
 timing, wait for the preview request and then approval. Yes permits implementation
 without this gate; PR preferences stay independent. Runtime instructions emit
-only per-type resolved rules, never conflicting parent and override rules.
+only resolved timing rules per type and the frontend-only implementation gate.
 Optional frontend_preview_timing/cli_preview_timing override local_preview;
-frontend_implement_before_approval/cli_implement_before_approval override the
-yes/no implement_before_approval parent. Missing child keys mean inheritance.
-Legacy preview_approval and design_approval resolve inversely into the new parent
-only if it is absent. Explicit new choices win. Read-only JSON retains raw keys,
-and clearing a parent must not revive a retired alias. Test timing
+missing timing keys mean inheritance. frontend_implement_before_approval is a
+direct yes/no setting, not an override of a shared gate. Legacy
+implement_before_approval falls back to this frontend-only setting; explicit
+frontend values win. Older preview_approval/design_approval map inversely there.
+Retired cli_implement_before_approval remains valid raw JSON but has no effect on
+instructions or summaries. Read-only JSON retains raw keys, and clearing the
+frontend setting must not revive a retired alias. CLI When to preview prepares
+the working command when ready or on request, never a required pre-implementation
+prototype. Test timing
 chooses local during work, local before preview, local before PR, or PR CI;
 required repository checks always apply. Unset rows and picker choices say
 Not set. Task, repository and text instructions supply
@@ -304,9 +310,9 @@ configuration; editing materializes equivalent separate choices. Working-folder
 and generic validation choices are no longer in the menu. Existing unrelated
 legacy rules are retained and displayed separately; explicit test timing supersedes
 legacy validation. Model-stage rows are hidden while stages are off.
-Legacy local_preview=before_pr resolves automatic preview and an implementation
-approval default. Explicit implement_before_approval wins; older preview_approval
-is honored before inverse mapping. Edits materialize independent settings without
+Legacy local_preview=before_pr resolves automatic preview and frontend implementation
+approval. Explicit frontend_implement_before_approval wins over the old shared
+gate and older preview_approval. Edits materialize independent settings without
 changing raw JSON on reads. The combined legacy choice is hidden in menus.
 Instead show the selected session tool's default model and reasoning effort.
 Optional `session_defaults` stores independent Codex and Claude model/effort maps;

@@ -59,8 +59,8 @@ BEHAVIORS = {
         'auto_merge': ('Auto-merge when authorized', 'Commit, push and open a pull request under repository merge policy and required checks. When authorized and supported, enable auto-merge and monitor it through completion; report any blocker accurately.'),
     }},
     'pr_review': {'label': 'Review before PR', 'choices': {
-        'review': ('Review changes', 'Before opening a pull request, review the actual diff and validation results and address findings. Use the selected review worker when model stages are enabled and Review is selected; otherwise review in the main conversation. Honor selected tests and previews, PR timing, state and merge preferences, required external approvals, repository rules and task instructions.'),
-        'skip': ('Skip review', 'Skip the pre-PR agent review pass. Run neither a main-session review pass nor a review worker solely from this workflow, even when the Review model stage is selected. The main conversation still owns correctness, selected tests and previews, fixes and delivery. Preserve PR timing, state and merge preferences, required external approvals and higher-priority repository and task instructions, including explicit review requirements.'),
+        'review': ('Enabled', 'Before opening a pull request, review the actual diff and validation results and address findings. Use the selected review worker when model stages are enabled and Review is selected; otherwise review in the main conversation. Honor selected tests and previews, PR timing, state and merge preferences, required external approvals, repository rules and task instructions.'),
+        'skip': ('Disabled', 'Skip the pre-PR agent review pass. Run neither a main-session review pass nor a review worker solely from this workflow, even when the Review model stage is selected. The main conversation still owns correctness, selected tests and previews, fixes and delivery. Preserve PR timing, state and merge preferences, required external approvals and higher-priority repository and task instructions, including explicit review requirements.'),
     }},
     'pr_open': {'label': 'When to open PR', 'choices': {
         'automatic': ('Automatically when ready', 'When the work is ready under the selected preview and validation preferences, commit, push and open a pull request without another confirmation. Honor any required preview approval and repository or task instructions.'),
@@ -84,7 +84,7 @@ BEHAVIORS = {
         'disabled': ('Disabled', 'Do not prepare frontend previews solely from these workflow preferences. Honor explicit task instructions and repository rules.'),
     }},
     'cli_enabled': {'label': 'CLI preview', 'choices': {
-        'enabled': ('Enabled', 'Apply selected command-line tool preview preferences. Enabling CLI previews does not request a preview by itself; honor selected preview timing and approval preferences, repository rules and task instructions.'),
+        'enabled': ('Enabled', 'Apply selected command-line tool preview preferences. Enabling CLI previews does not request a preview by itself; honor selected preview timing, repository rules and task instructions.'),
         'disabled': ('Disabled', 'Do not prepare command-line tool previews solely from these workflow preferences. Honor explicit task instructions and repository rules.'),
     }},
     'local_preview': {'label': 'When to preview', 'choices': {
@@ -101,8 +101,8 @@ BEHAVIORS = {
         'run': ('Run from the repo', 'For command-line tool previews, run the repository-supported development command directly and show the user how to invoke it.'),
     }},
     'cli_launch': {'label': 'Run command', 'choices': {
-        'automatic': ('Automatically', 'For command-line tool previews, once the selected CLI preview has been prepared, launch its repository-supported preview command using the configured method: the installed development version or the command run from the repository. Honor the CLI preview\'s resolved timing: do not start a request-only preview before the user requests it. This launch preference does not itself request a preview or change implementation approval, PR or test preferences. Launch only the supported preview command, never arbitrary production or destructive commands. For an interactive CLI, use a supported usable interactive terminal when available; if launch is unavailable, report the limitation and exact command without claiming it ran. Honor repository and task instructions.'),
-        'on_request': ('Only when I ask', 'For command-line tool previews, prepare the invocation using the configured preview method, then wait for an explicit user request before launching its repository-supported preview command. Honor the CLI preview\'s resolved timing and implementation approval preferences. This launch preference does not itself request a preview or change implementation approval, PR or test preferences. Launch only the supported preview command, never arbitrary production or destructive commands. For an interactive CLI, use a supported usable interactive terminal when available; if launch is unavailable, report the limitation and exact command without claiming it ran. Honor repository and task instructions.'),
+        'automatic': ('Automatically', 'For command-line tool previews, once the selected CLI preview has been prepared, launch its repository-supported preview command using the configured method: the installed development version or the command run from the repository. Honor the CLI preview\'s resolved timing: do not start a request-only preview before the user requests it. This launch preference does not itself request a preview or change PR or test preferences. Launch only the supported preview command, never arbitrary production or destructive commands. For an interactive CLI, use a supported usable interactive terminal when available; if launch is unavailable, report the limitation and exact command without claiming it ran. Honor repository and task instructions.'),
+        'on_request': ('Only when I ask', 'For command-line tool previews, prepare the invocation using the configured preview method, then wait for an explicit user request before launching its repository-supported preview command. Honor the CLI preview\'s resolved timing. This launch preference does not itself request a preview or change PR or test preferences. Launch only the supported preview command, never arbitrary production or destructive commands. For an interactive CLI, use a supported usable interactive terminal when available; if launch is unavailable, report the limitation and exact command without claiming it ran. Honor repository and task instructions.'),
     }},
     'frontend_design': {'label': 'Design approach', 'choices': {
         'standalone_html': ('Separate HTML prototype', 'For frontend design, create an interactive standalone HTML prototype outside the application so the user can preview the design before app implementation.'),
@@ -128,15 +128,18 @@ BEHAVIORS = {
     }},
 }
 
-PREVIEW_DEFAULTS = {'timing': 'local_preview', 'implementation': 'implement_before_approval'}
+PREVIEW_DEFAULTS = {'timing': 'local_preview'}
 PREVIEW_OVERRIDES = {
-    kind: {'timing': kind + '_preview_timing', 'implementation': kind + '_implement_before_approval'}
+    kind: {'timing': kind + '_preview_timing'}
     for kind in ('frontend', 'cli')
 }
 BEHAVIORS['implement_before_approval'] = {'label': 'Implement before approval', 'choices': {
     'yes': ('Yes', 'Allow substantial implementation before preview approval. This preference does not authorize pushing, opening or merging a pull request; honor independent PR preferences, repository rules and task instructions.'),
     'no': ('No', 'Wait for explicit user approval of a lightweight preview before substantial implementation. Allow the preview or prototype work needed to obtain approval. This preference does not authorize pushing, opening or merging a pull request; honor independent PR preferences, repository rules and task instructions.'),
 }}
+# Retain old shared/CLI keys for saved-policy validation only.
+BEHAVIORS['frontend_implement_before_approval'] = copy.deepcopy(BEHAVIORS['implement_before_approval'])
+BEHAVIORS['cli_implement_before_approval'] = copy.deepcopy(BEHAVIORS['implement_before_approval'])
 for _kind, _keys in PREVIEW_OVERRIDES.items():
     for _setting, _key in _keys.items():
         _parent = PREVIEW_DEFAULTS[_setting]
@@ -177,6 +180,10 @@ def effective_behaviors(behaviors):
     if legacy_preview_approval:
         result.setdefault('implement_before_approval',
                           'no' if legacy_preview_approval == 'required' else 'yes')
+    legacy_implementation = result.pop('implement_before_approval', None)
+    if legacy_implementation:
+        result.setdefault('frontend_implement_before_approval', legacy_implementation)
+    result.pop('cli_implement_before_approval', None)
     if behaviors.get('delivery') == 'review' and result.get('pr_open') != 'automatic':
         result['delivery'] = 'review'  # Its leave-uncommitted rule is more specific than waiting for a PR.
     if 'test_timing' in result:
@@ -208,14 +215,14 @@ def preview_preferences(behaviors, kind):
 
 
 def _preview_rule_keys():
-    return set(PREVIEW_DEFAULTS.values()) | {
+    return {'frontend_implement_before_approval'} | set(PREVIEW_DEFAULTS.values()) | {
         key for keys in PREVIEW_OVERRIDES.values() for key in keys.values()}
 
 
 def preview_summary_lines(behaviors):
     """Describe defaults once, then each enabled kind's live inherited choices."""
     effective = effective_behaviors(behaviors)
-    configured = any(key in effective for key in PREVIEW_DEFAULTS.values()) or any(
+    configured = 'frontend_implement_before_approval' in effective or any(key in effective for key in PREVIEW_DEFAULTS.values()) or any(
         key in effective for keys in PREVIEW_OVERRIDES.values() for key in keys.values())
     if not configured:
         return []
@@ -233,6 +240,10 @@ def preview_summary_lines(behaviors):
             label = BEHAVIORS[parent]['choices'][choice['value']][0] if choice['value'] else 'Not set'
             lines.append(kind.title() + ' — ' + BEHAVIORS[parent]['label'] + ': ' +
                          choice['source'].title() + ' · ' + label)
+        if kind == 'frontend' and 'frontend_implement_before_approval' in effective:
+            spec = BEHAVIORS['frontend_implement_before_approval']
+            lines.append('Frontend — ' + spec['label'] + ': ' +
+                         spec['choices'][effective['frontend_implement_before_approval']][0])
     return lines
 
 
@@ -244,7 +255,7 @@ def _preview_instruction_lines(behaviors):
         if not resolved['enabled']:
             continue
         timing = resolved['timing']['value']
-        implementation = resolved['implementation']['value']
+        implementation = effective_behaviors(behaviors).get('frontend_implement_before_approval') if kind == 'frontend' else None
         scope = 'For frontend changes' if kind == 'frontend' else 'For command-line tool changes'
         if timing == 'when_ready':
             if implementation == 'no':
@@ -255,7 +266,7 @@ def _preview_instruction_lines(behaviors):
         elif timing == 'on_request':
             lines.append(scope + ' — When to preview: Prepare a local preview only when the user requests it, unless repository or task instructions require one.')
         if implementation:
-            prose = BEHAVIORS['implement_before_approval']['choices'][implementation][1]
+            prose = BEHAVIORS['frontend_implement_before_approval']['choices'][implementation][1]
             if implementation == 'no' and timing == 'on_request':
                 prose += ' Do not automatically launch a preview; wait for a preview request, then obtain approval before substantial implementation.'
             elif implementation == 'no' and timing is None:
@@ -274,7 +285,7 @@ def visible_behaviors(behaviors):
         result['cli_enabled'] = 'enabled' if cli else 'disabled'
     result.pop('preview_target', None)
     if not frontend:
-        for key in ('frontend_design', 'design_approval', 'frontend_preview', 'frontend_browser'):
+        for key in ('frontend_design', 'frontend_implement_before_approval', 'frontend_preview', 'frontend_browser'):
             result.pop(key, None)
     if not cli:
         result.pop('cli_preview', None)
@@ -325,6 +336,8 @@ def update_behavior(policy, key, value):
     if key == 'test_timing' and value:
         behaviors.pop('validation', None)
     behaviors = effective_behaviors(behaviors)
+    if key != 'cli_implement_before_approval' and 'cli_implement_before_approval' in policy.get('behaviors', {}):
+        behaviors['cli_implement_before_approval'] = policy['behaviors']['cli_implement_before_approval']
     if behaviors:
         after['behaviors'] = behaviors
     else:
@@ -816,9 +829,14 @@ def catalogue(document):
         for name, policy in sorted(document['workflows'].items())}}
 
 
+def pr_review_value(policy):
+    """Review is enabled unless explicitly disabled, without storing a default."""
+    return policy.get('behaviors', {}).get('pr_review', 'review')
+
+
 def pr_review_skipped(policy):
     """The review model stays configured while this independent PR choice skips it."""
-    return policy['enabled'] and policy.get('behaviors', {}).get('pr_review') == 'skip'
+    return policy['enabled'] and pr_review_value(policy) == 'skip'
 
 
 def policy_summary(policy):
@@ -860,8 +878,8 @@ def summary_lines(policy):
             if key in behaviors and key not in _preview_rule_keys():
                 lines.append(spec['label'] + ': ' + spec['choices'][behaviors[key]][0])
         lines.extend(preview_summary_lines(behaviors))
-    else:
-        lines.append('PRs, previews & tests: no preferences set')
+    if 'pr_review' not in behaviors:
+        lines.append('Review before PR: Enabled')
     lines.append('Custom Markdown: ' + ('present' if summary['custom_instructions'] else 'empty'))
     lines.append('Issue-before-code rule: ' + ('included in editable Markdown' if issue_policy() in policy.get('instructions', '') else 'customized or not included'))
     lines.append('Read/edit prose: t workflow instructions show / edit')
@@ -989,6 +1007,7 @@ def _stage_text(policy):
                              't applies these defaults to new CLI sessions and supported resumes in this scope. '
                              'They do not change an active turn or require switching models during a task.')
     behaviors = visible_behaviors(policy.get('behaviors', {}))
+    behaviors.setdefault('pr_review', pr_review_value(policy))
     if behaviors:
         behavior_lines = [_behavior_instructions(behaviors, key)
                           for key in BEHAVIORS if key in behaviors and key not in _preview_rule_keys()]
