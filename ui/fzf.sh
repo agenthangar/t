@@ -104,7 +104,10 @@ ${_t_fzf_legend}" "$@"
 # initial query, prompt. The helper writes rows and the page label on each event.
 _t_fzf_paginated() (
   [ -z "${ZSH_VERSION:-}" ] || _t_fzf_worker _t_fzf_paginated "$@"
-  [ "$#" -ge 6 ] && [ "$#" -le 7 ] || { printf 't picker: paged profile needs six arguments and optional multi mode\n' >&2; return 2; }
+  if [ "$#" -lt 6 ] || [ "$#" -gt 7 ]; then
+    printf 't picker: paged profile needs six arguments and optional multi mode\n' >&2
+    return 2
+  fi
   _t_paged_page=$1 _t_paged_rows=$2 _t_paged_helper=$3
   _t_paged_preview=$4 _t_paged_query=$5 _t_paged_prompt=$6
   _t_paged_size=$(stty size </dev/tty 2>/dev/null) || _t_paged_size=
