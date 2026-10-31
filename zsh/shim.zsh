@@ -995,7 +995,9 @@ _t() {
         esac
       done
       case ${words[CURRENT-1]} in
-        --host|--from) _values 'host' ${(k)REMOTE_HOSTS} ;;
+        --host|--from)
+          if [[ $action == move && ${words[CURRENT-1]} == --host ]]; then _values 'host' local ${(k)REMOTE_HOSTS}
+          else _values 'host' ${(k)REMOTE_HOSTS}; fi ;;
         --session|-s) _message 'conversation ID' ;;
         --days) _message 'number of days or all' ;;
         *)
@@ -1072,7 +1074,8 @@ _t() {
       fi ;;
     session/open|session/close|session/read|session/view-plan|session/paste|session/move|session/resume|session/cd|session/pop)
       if [[ ${words[CURRENT-1]} == --host || ${words[CURRENT-1]} == --from ]]; then
-        _values 'host' ${(k)REMOTE_HOSTS}
+        if [[ $action == move && ${words[CURRENT-1]} == --host ]]; then _values 'host' local ${(k)REMOTE_HOSTS}
+        else _values 'host' ${(k)REMOTE_HOSTS}; fi
       elif [[ ${words[CURRENT-1]} == --url ]]; then _message 'preview URL'
       elif [[ ${words[CURRENT-1]} == --plan ]]; then _files -g '*.md'
       elif [[ ${words[CURRENT]} == -* ]] || (( CURRENT > first + 1 )); then

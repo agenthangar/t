@@ -1351,7 +1351,7 @@
         "single"
       ],
       "renderer": "mixed",
-      "scope": "named/current repository, or all outside a checkout; local current CLI sessions, with --remote adding registered remote sources",
+      "scope": "named/current repository, or all outside a checkout; exact slots/IDs search local and registered remote owners; --remote adds remote sources to browsing",
       "confirmation": "enter",
       "tests": [
         "tests/test_command_groups_shell.py::test_grouped_shell_commands_keep_arguments_and_caller_shell",
@@ -1361,7 +1361,9 @@
         "tests/test_remote_commands.py::test_move_batch_excludes_all_source_aliases_and_detaches",
         "tests/test_remote_commands.py::test_move_batch_preflights_every_selection_before_mutation",
         "tests/test_remote_commands.py::test_move_batch_stops_and_identifies_remaining_sessions",
-        "tests/test_remote_commands.py::test_move_root_alias_operational_parser_route"
+        "tests/test_remote_commands.py::test_move_root_alias_operational_parser_route",
+        "tests/test_remote_commands.py::test_remote_only_repo_reaches_destination_picker",
+        "tests/test_move_local_receive.py::test_selected_remote_conversation_lands_locally"
       ],
       "modes": {
         "default": {
@@ -1398,7 +1400,8 @@
           "tests": [
             "tests/test_command_groups_shell.py::test_grouped_shell_commands_keep_arguments_and_caller_shell",
             "tests/test_move_picker.py::test_explicit_and_current_targets_bypass_picker"
-          ]
+          ],
+          "notes": "Resolve exact local/remote ownership first; unique match skips the source picker, ambiguous matches require selection. --host local receives here."
         },
         "pick": {
           "argv": [
@@ -1495,6 +1498,26 @@
             "tests/test_remote_commands.py::test_move_batch_keeps_snapshot_identity_for_identical_display_rows"
           ],
           "notes": "Include current CLI owners on registered remote hosts. Preserve host+ID+path+label+agent and exclude every selected source target and alias from destination selection. Native handoff policy is checked for all selections before mutation."
+        },
+        "local": {
+          "argv": [
+            "session",
+            "move",
+            "api",
+            "2",
+            "--host",
+            "local",
+            "--detach"
+          ],
+          "patterns": [
+            "action",
+            "multi"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_move_local_receive.py::test_selected_remote_conversation_lands_locally"
+          ],
+          "notes": "Discover the source across hosts; local is this machine. Reject local-to-local moves. Guard the selected identity through remote stop, push, transcript transfer and local landing. --detach never attaches."
         }
       },
       "notes": " Cross-host policy: Claude defaults to t transfer; Codex defaults to manual native desktop Hand off (no supported CLI adapter). Agent settings show/persist the effective mechanism and explicit Codex t override. Native returns nonzero with app steps before transfer mutations; local resume and remote attach unchanged."

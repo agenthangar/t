@@ -131,19 +131,22 @@ _t_beam() { print -r -- "MOVE ${(j:|:)@}"; print -r -- "EXPECTED $T_MOVE_EXPECT_
 '''
 
 
-@pytest.mark.parametrize('host', ['beta', 'cancel'])
-def test_remote_only_repo_reaches_destination_picker(zsh, tmp_path, host):
+@pytest.mark.parametrize('command', ['t remote move', 't session move', 't move'])
+@pytest.mark.parametrize('host', ['local', 'beta', 'cancel'])
+def test_remote_only_repo_reaches_destination_picker(zsh, tmp_path, host, command):
     env = fake_picker(tmp_path, host=host)
-    result = zsh(REMOTE_ONLY + 't remote move auth 1; print rc=$?', _tty=True, **env)
+    result = zsh(REMOTE_ONLY + command + ' auth 1; print rc=$?', _tty=True, **env)
     text = output(result)
     assert f'rc={130 if host == "cancel" else 0}' in text, text
     logs = [json.loads(line) for line in (tmp_path / 'picker.jsonl').read_text().splitlines()]
     assert len(logs) == 1  # unique source goes straight to the destination picker
     assert all(not row.startswith('alpha\t') for row in logs[0]['rows'])
+    assert 'local\tthis machine' in logs[0]['rows']
+    assert any('current host: alpha' in arg for arg in logs[0]['args'])
     if host == 'cancel':
         assert 'MOVE ' not in text
     else:
-        assert 'MOVE --session|auth-id|--from|alpha|--host|beta' in text
+        assert f'MOVE --session|auth-id|--from|alpha|--host|{host}' in text
         assert 'EXPECTED auth-id\t' in text and 'remote-auth-1' in text
     assert 'unrelated' not in text
 
@@ -650,7 +653,7 @@ t session move --remote; print rc=$?
     assert 'EXPECTED remote-id\t/home/source/code/api' in text
     assert 'EXPECTED remote-id\t/home/dest/code/api' in text
     logs = [json.loads(line) for line in (tmp_path / 'picker.jsonl').read_text().splitlines()]
-    assert [row.split('\t')[0] for row in logs[1]['rows']] == ['gamma']
+    assert [row.split('\t')[0] for row in logs[1]['rows']] == ['local', 'gamma']
 
 
 @pytest.mark.parametrize('failure', [17, 130])
