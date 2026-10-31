@@ -113,17 +113,18 @@ def test_batch_registration_failure_reports_already_launched_owner(zsh):
 
 
 def test_batch_tab_failure_never_hides_summary_behind_first_attachment(zsh):
-    setup = shell_candidates([history_row('a'), history_row('b')]) + '''
+    setup = shell_candidates([history_row('a'), history_row('b'), history_row('c')]) + '''
       _t_fzf_filtered() { print -r -- "$1"; }
       _t_resume_history_launch() { [[ $2 == a ]] && print dev-api-98 || print dev-api-99; }
       _t_resume_history_registered() { return 0; }
-      _dev_open_tab() { return 1; }
+      _dev_open_tab() { print -u2 TAB_ATTEMPT; return 1; }
     '''
     result = zsh(setup + '_t_resume api', _tty=True)
     assert result.returncode == 1
     assert 'could not open resumed session tabs' in result.stdout
     assert 'Ready — attach with: t session open api 98' in result.stdout
     assert 'Ready — attach with: t session open api 99' in result.stdout
+    assert result.stdout.count('TAB_ATTEMPT') == 1
     assert 'attach-session' not in zsh.log.read_text()
 
 

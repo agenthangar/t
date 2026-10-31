@@ -810,7 +810,7 @@ _t_resume() {
     local -A mp_taken
     local mp_first_repo= mp_first_slot= mp_first_session= mp_cwd mp_session mp_loc mp_pair mp_agent mp_rc
     local mp_live_first= mp_live_cmd= mp_live_alias= mp_live_repo= mp_live_slot= mp_live_loc=
-    local -a mp_rest mp_unopened mp_live mp_live_fields mp_ready
+    local -a mp_rest mp_live mp_live_fields mp_ready
     local mp_index=0 mp_remaining mp_identity mp_retry
     for pick in "${(@)picks}"; do
       f=("${(@ps:\t:)pick}")
@@ -820,13 +820,18 @@ _t_resume() {
       mp_retry="t session history ${(q)repo} ${(q)slot}"
       if [[ $mp_loc == fg:* ]]; then
         mp_live+=("$mp_loc"$'\t'"$repo"$'\t'"$slot"$'\t'"${f[8]}")
+        mp_live_cmd="t open ${(q)f[8]} --cli"
+        [[ $mp_loc != fg:here ]] && mp_live_cmd+=" --host ${(q)${mp_loc#fg:}}"
+        mp_ready+=("$mp_live_cmd")
         continue
       elif [[ $mp_loc == here ]]; then
         [[ -n ${f[8]:-} && $f[8] != - ]] && repo=$f[8]
         mp_live+=("$mp_loc"$'\t'"$repo"$'\t'"$slot"$'\t'-)
+        mp_ready+=("t session open ${(q)repo} ${(q)slot} --cli --local")
         continue
       elif [[ $mp_loc == app:here ]]; then
         mp_live+=("$mp_loc"$'\t'"$repo"$'\t'"$slot"$'\t'-)
+        mp_ready+=("t session open ${(q)repo} ${(q)slot} --app")
         continue
       elif [[ $mp_loc == app:* ]]; then
         _t_resume_batch_stop 1 "$mp_identity" "$mp_retry" "desktop app is on ${mp_loc#app:}; open it on that Mac" "$mp_remaining" "${mp_ready[@]}"
@@ -834,6 +839,7 @@ _t_resume() {
       elif [[ -n $mp_loc && $mp_loc != - ]]; then
         [[ -n ${f[8]:-} && $f[8] != - ]] && repo=$f[8]
         mp_live+=("$mp_loc"$'\t'"$repo"$'\t'"$slot"$'\t'-)
+        mp_ready+=("t session open ${(q)repo} ${(q)slot} --cli --host ${(q)mp_loc}")
         continue
       fi
       if [[ $f[8] == history && -n $on_host ]]; then
@@ -926,13 +932,11 @@ _t_resume() {
         app:here) mp_live_cmd="t open ${(q)mp_live_repo} ${(q)mp_live_slot} --app" ;;
         *)        mp_live_cmd="t open ${(q)mp_live_repo} ${(q)mp_live_slot} --cli --host ${(q)mp_live_loc}" ;;
       esac
-      _dev_open_tab "$mp_live_cmd" || mp_unopened+=("$mp_live_cmd")
+      _dev_open_tab "$mp_live_cmd" || {
+        _t_resume_batch_stop 1 'terminal tabs' 't session resume' 'could not open selected owner tabs' 0 "${mp_ready[@]}"
+        return 1
+      }
     done
-    if (( $#mp_unopened )); then
-      echo "Also selected — attach with: ${(j: · :)mp_unopened}"
-      _t_resume_batch_stop 1 'terminal tabs' 't session resume' 'could not open selected owner tabs' 0 "${mp_ready[@]}"
-      return 1
-    fi
     if [[ -n $mp_live_first ]]; then
       mp_live_fields=("${(@ps:\t:)mp_live_first}")
       mp_live_loc=$mp_live_fields[1]; mp_live_repo=$mp_live_fields[2]
@@ -951,13 +955,11 @@ _t_resume() {
       # first blocking ssh attach; provide commands if GUI tabs are unavailable.
       for mp_pair in "${(@)mp_rest}"; do
         mp_live_cmd="t open ${(q)${mp_pair%% *}} ${(q)${mp_pair##* }} --cli --host ${(q)on_host}"
-        _dev_open_tab "$mp_live_cmd" || mp_unopened+=("$mp_live_cmd")
+        _dev_open_tab "$mp_live_cmd" || {
+          _t_resume_batch_stop 1 'terminal tabs' 't session resume' 'could not open resumed session tabs' 0 "${mp_ready[@]}"
+          return 1
+        }
       done
-      if (( $#mp_unopened )); then
-        echo "Also landed on $on_host — attach with: ${(j: · :)mp_unopened}"
-        _t_resume_batch_stop 1 'terminal tabs' 't session resume' 'could not open resumed session tabs' 0 "${mp_ready[@]}"
-        return 1
-      fi
       if [[ -t 0 && -t 1 ]]; then
         ssh -t "${REMOTE_HOSTS[$on_host]:-$on_host}" "zsh -lic ${(qq):-tmux attach -t $mp_first_session}"
       else
@@ -973,15 +975,11 @@ _t_resume() {
     # Inside tmux / no TTY the first cannot attach here either, so it gets a
     # tab too.
     for mp_pair in "${(@)mp_rest}"; do
-      _dev_open_tab "t open $mp_pair" || mp_unopened+=("t open $mp_pair")
+      _dev_open_tab "t open $mp_pair" || {
+        _t_resume_batch_stop 1 'terminal tabs' 't session resume' 'could not open resumed session tabs' 0 "${mp_ready[@]}"
+        return 1
+      }
     done
-    if (( $#mp_unopened )); then
-      echo "Also revived — attach with: ${(j: · :)mp_unopened}"
-      [[ -z ${SSH_CONNECTION:-} ]] \
-        && echo "(tabs need a local Terminal.app/iTerm2 GUI; Terminal.app also needs Accessibility — System Settings → Privacy & Security)" >&2
-      _t_resume_batch_stop 1 'terminal tabs' 't session resume' 'could not open resumed session tabs' 0 "${mp_ready[@]}"
-      return 1
-    fi
     if [[ -z $TMUX && -t 0 && -t 1 ]]; then
       tmux attach-session -t "=dev-${mp_first_repo}-${mp_first_slot}:"
     else
