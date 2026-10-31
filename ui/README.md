@@ -368,6 +368,16 @@ and preserve query and identities. Filter settings, reset and on/off preserve so
 Compact headers use M for Alt and ^ for Ctrl. Resume disables fzf relevance sorting
 so searching preserves the chosen order. Saved transcript mtime/reopen time still
 controls --days eligibility.
+Resume rows begin with a cached PR badge: MERGED, OPEN, CLOSED, NONE (no PR
+recorded), UNKNOWN, or MIXED. Alt-M toggles hiding MERGED rows and advertises the
+next action in the header. It uses explicit snapshot metadata, never title text.
+Compact headers show `M-M -merged` to hide and `M-M +merged` to show them.
+For histories with multiple associated PRs, all must be explicitly merged before
+the row is hidden; mixed or unknown states remain visible. Live rows without
+structured PR metadata stay UNKNOWN. A merged PR does not imply completed work.
+The toggle enables filtering, preserves query and sort, and removes hidden marks.
+Ctrl-A disables it with other filters; Ctrl-L restores it. Reset clears it.
+For example, run `t session resume --all`, then Alt-M to hide merged PR histories.
 Every column value comes from raw metadata,
 not truncated display text. The progress value exactly follows the ↻ marker:
 work continued after a merged PR; its absence is not completion evidence.
