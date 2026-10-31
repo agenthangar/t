@@ -649,7 +649,7 @@ def test_named_workflow_commands(workflow, t_mod, monkeypatch, tmp_path, capsys)
     assert run('list', '--all') == 0
     overview = capsys.readouterr().out
     assert 'Named workflows; default: standard.' in overview
-    assert 'ASSIGNED' in overview and 'quick' in overview
+    assert 'APPLIES TO' in overview and 'Not assigned' in overview and 'quick' in overview
     assert run('list', '--all', '--json') == 0
     catalogue = json.loads(capsys.readouterr().out)
     assert catalogue['workflows']['quick']['repositories'] == [cfg.repos['api']]

@@ -208,7 +208,12 @@ fingerprint is automatically accepted. Onboarding uses the same reviewed offer.
 
 Config includes Workflows globally and in each repository submenu. The global
 menu chooses a named default, adds or edits shared workflows, or activates recommended
-defaults. Each workflow exposes an overall Workflow switch and an independent
+defaults. Hub and catalogue rows show Global default, Assigned to N repos, or
+Not assigned, with Disabled appended only for a disabled definition. Count
+non-excluded named assignments; exclude inline copies and implicit global inheritance
+from explicit repository counts. An enabled definition is not proof of assignment.
+The catalogue uses APPLIES TO instead of ambiguous STATUS on/off and ASSIGNED columns.
+Each workflow exposes an overall Workflow switch and an independent
 Use multiple models checkbox picker with a leading Use one model for all work
 choice, then Planning, Implementation and Review. Use the shared empty_choice
 multi profile: the one-model row is an exclusive reset, separated by a blank
@@ -219,6 +224,9 @@ cancels. Unchecked Planning/Review use the main model; Review before PR controls
 whether the pre-PR review step runs. Unchecked Implementation uses
 per-tool session defaults, with default model/effort controls still available
 beside selected helpers. Selecting no stages enters single-model mode.
+Default-model choices explicitly say Inherit and show the top-level tool model
+or Tool default. Unset effort inherits top-level effort only when the model is
+also inherited; an explicit workflow model uses Default for this model.
 Deselecting stages retains their model/effort settings and keeps
 permissions, behavior preferences and Markdown active; disabling the workflow
 suppresses every workflow setting. Selected stages expose separate
@@ -366,6 +374,12 @@ affect all repository consumers. Repository menus display their source and offer
 named assignment, repository-only customization, explicit exclusion retaining the
 source, resuming that retained source, or inheritance. All menu changes remain pending until review and Save;
 unchanged selections, canceled editors and discarded changes write nothing.
+Save review compares the staged document with its initial snapshot and shows
+only changed workflows, assignments and fields. Use readable previous/new values,
+changed text lines, and changed runner fields; omit unchanged definitions,
+precedence and unchanged instruction text. Show additions, removals, default changes,
+exclusions and initial activation explicitly. Ctrl+C uses the same pending-edits
+prompt while reviewing these differences.
 Permissions is a separate submenu available with either model mode. Codex and
 Claude have independent native presets and a Not set choice that removes the
 workflow override. The policy's optional permissions object maps codex to

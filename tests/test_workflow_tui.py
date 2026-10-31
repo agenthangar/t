@@ -10,6 +10,85 @@ from test_workflow import workflow, native_paths
 from test_tui import make_ui
 
 
+class HubMenu(Menu):
+    def __init__(self, picks):
+        super().__init__(picks)
+        self.views = []
+
+    def pick(self, label, rows, **kwargs):
+        self.views.append((label, rows, kwargs))
+        return super().pick(label, rows, **kwargs)
+
+
+def assignment_document(workflow, tmp_path):
+    document = workflow.defaults()
+    base = copy.deepcopy(workflow.DEFAULT)
+    document['workflows'] = {'standard': copy.deepcopy(base), 'fast': copy.deepcopy(base),
+        'paused': dict(copy.deepcopy(base), enabled=False), 'unused': dict(copy.deepcopy(base), instructions='Notes'),
+        'excluded-only': copy.deepcopy(base)}
+    entries = {'default-assignment': {'workflow': 'standard'}, 'fast-a': {'workflow': 'fast'},
+        'fast-b': {'workflow': 'fast'}, 'fast-excluded': {'workflow': 'fast', 'excluded': True},
+        'copy': {'inline': copy.deepcopy(base)}, 'paused-assignment': {'workflow': 'paused'},
+        'excluded-only': {'workflow': 'excluded-only', 'excluded': True}}
+    repos = {alias: str(tmp_path / alias) for alias in [*entries, 'implicit']}
+    document['repositories'] = {repos[alias]: entry for alias, entry in entries.items()}
+    return document, repos
+
+
+def test_workflow_hub_labels_assignments_without_claiming_active_use(workflow, t_mod, monkeypatch, tmp_path):
+    monkeypatch.setattr(t_mod, '_workflow', lambda: vars(workflow))
+    document, repos = assignment_document(workflow, tmp_path)
+    initial = copy.deepcopy(document)
+    cfg = SimpleNamespace(repos=repos, _workflow_document=document, _workflow_initial=copy.deepcopy(document),
+                          _workflow_activate=False, _workflow_before=None)
+    ui = HubMenu(['repos', '__back__', 'back'])
+    assert t_mod._workflow_hub(ui, cfg) is None
+    values = ui.views[0][2]['values']
+    assert values['customize'] == 'Global default · 1 repo'
+    assert values['name:fast'] == 'Assigned to 2 repos'
+    assert values['name:paused'] == 'Assigned to 1 repo · Disabled'
+    assert values['name:unused'] == 'Not assigned · text instructions'
+    assert values['name:excluded-only'] == 'Not assigned'
+    repository_values = ui.views[1][2]['values']
+    assert repository_values['fast-excluded'] == 'fast · Excluded'
+    assert repository_values['paused-assignment'] == 'paused · Disabled'
+    assert document == initial
+    assert not workflow.config_path().exists()
+
+
+@pytest.mark.parametrize('selected, label', [('fast', 'Global default · 2 repos'),
+    ('paused', 'Global default · 1 repo · Disabled'), ('unused', 'Global default · text instructions')])
+def test_workflow_hub_assignment_labels_follow_staged_default(workflow, t_mod, monkeypatch, tmp_path, selected, label):
+    monkeypatch.setattr(t_mod, '_workflow', lambda: vars(workflow))
+    document, repos = assignment_document(workflow, tmp_path)
+    initial = copy.deepcopy(document)
+    cfg = SimpleNamespace(repos=repos, _workflow_document=document, _workflow_initial=copy.deepcopy(document),
+                          _workflow_activate=False, _workflow_before=None)
+    ui = HubMenu(['choose', selected, 'back'])
+    assert t_mod._workflow_hub(ui, cfg) is None
+    values = ui.views[-1][2]['values']
+    assert values['customize'] == label
+    assert values['name:standard'] == 'Assigned to 1 repo'
+    assert cfg._workflow_document['default'] == selected
+    assert cfg._workflow_document['repositories'] == initial['repositories']
+    assert document == initial
+    assert not workflow.config_path().exists()
+
+
+def test_workflow_catalogue_uses_assignment_labels_without_changing_json(workflow, t_mod, tmp_path, capsys):
+    document, _ = assignment_document(workflow, tmp_path)
+    catalogue = dict(workflow.catalogue(document), propagation={'runtime': 'pending'})
+    initial = copy.deepcopy(catalogue)
+    t_mod._workflow_print(vars(workflow), catalogue, catalogue=True)
+    output = capsys.readouterr().out
+    assert 'APPLIES TO' in output and 'STATUS' not in output and 'ASSIGNED' not in output
+    for label in ('Global default · 1 repo', 'Assigned to 2 repos', 'Assigned to 1 repo · Disabled', 'Not assigned'):
+        assert label in output
+    assert catalogue == initial
+    assert len(catalogue['workflows']['fast']['repositories']) == 3
+    assert len(catalogue['workflows']['fast']['excluded_repositories']) == 1
+
+
 @pytest.mark.parametrize('selected, keys, expected', [
     (['planning', 'implementation', 'review'], ['space', 'enter'], []),
     (['planning'], ['j', 'space', 'enter'], []),

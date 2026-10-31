@@ -961,8 +961,11 @@ unchanged. Sessions support `main`, `master`, and custom default branches throug
 
 Configure named staged workflows in `t config open` → **Workflows**, or use
 `t workflow` for the editor (`t help workflow` for command help). The former `t config workflow` routes remain
-compatibility aliases. Choose
-**Use recommended defaults** to activate planning with `gpt-6-astra`, implementation
+compatibility aliases.
+Workflow rows show **Global default**, **Assigned to N repos**, or **Not assigned**.
+Repository counts include explicit, non-excluded assignments; a disabled definition
+is marked **Disabled**. Being enabled does not mean a workflow is assigned.
+Choose **Use recommended defaults** to activate planning with `gpt-6-astra`, implementation
 with `gpt-6.1-sol`, and review with `gpt-6-astra`. **Edit default workflow** and
 **Edit named workflow** give each stage separate model and reasoning-effort controls.
 All three stages offer **Agent selects by task**. Before delegating, the agent
@@ -989,6 +992,10 @@ skipping review is a separate choice under Pull requests.
 Leave Implementation unchecked to use the session's default model and reasoning effort,
 which remain editable alongside any selected stages. Separate stage choices stay
 saved when unchecked. One-model mode uses the editable session model and effort.
+Choose **Inherit** in the default-model picker to use that tool's top-level
+`t config` model. The inherited model is shown alongside the choice. When a
+workflow sets its own model, an unset effort uses that model's default rather
+than an unrelated top-level effort.
 Markdown and behavior preferences still apply.
 **Permissions** sets Codex and Claude permissions separately, with either one or
 multiple models. Codex offers **Ask for approval**, **Approve for me**, **Full access**,
@@ -1669,6 +1676,9 @@ Run `t workflow` in a terminal to open the workflow editor. Choose a named
 workflow, edit its model steps, work and delivery choices, or text instructions,
 then review and save. Repository assignments and the global default share this
 transaction. Cancel leaves saved settings unchanged.
+The save review shows only pending changes, grouped by workflow or repository,
+with previous and new values. Text edits show changed lines; unchanged workflows
+and unchanged instruction text are omitted.
 In both `t config` and `t workflow`, Ctrl+C with unsaved edits offers **Keep
 editing**, **Review and save**, or **Discard changes and exit**, including from
 nested menus. Review and save still shows the changes before writing them.

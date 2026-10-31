@@ -2512,8 +2512,11 @@ def _workflow_session_setting(ui, cfg, policy, agent, field):
                              efforts={agent: settings.get("effort", "")}, fast={})
     if not hasattr(cfg, "_workflow_session_catalogs"):
         cfg._workflow_session_catalogs = {}
+    inherited_model = "Inherit · " + (getattr(cfg, "models", {}).get(agent) or "Tool default")
+    inherited_effort = "Inherit · " + (getattr(cfg, "efforts", {}).get(agent) or "Tool default")
     _config_model_menu(ui, staged, agent, cfg._workflow_session_catalogs, field,
-                       default_label="Use agent default" if field == "model" else "Use default for this model",
+                       default_label=inherited_model if field == "model" else
+                                     "Default for this model" if settings.get("model") else inherited_effort,
                        fallback_model=getattr(cfg, "models", {}).get(agent, ""), quiet=True)
     selected = {key: value for key, value in (("model", staged.models.get(agent)),
                                              ("effort", staged.efforts.get(agent))) if value}
@@ -2558,9 +2561,9 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
             values["enabled"] = "enabled" if policy["enabled"] else "disabled"
             values["stages_enabled"] = ", ".join(_workflow_stage_title(stage) for stage in stages) if stages else "No · one model"
             models, efforts = getattr(cfg, "models", {}), getattr(cfg, "efforts", {})
-            values["main_model"] = defaults.get("model") or "Agent default" + (": " + models[agent] if models.get(agent) else "")
+            values["main_model"] = defaults.get("model") or "Inherit · " + (models.get(agent) or "Tool default")
             values["main_effort"] = defaults.get("effort") or ("Default for this model" if defaults.get("model") else
-                                                                "Agent default" + (": " + efforts[agent] if efforts.get(agent) else ""))
+                                                                "Inherit · " + (efforts.get(agent) or "Tool default"))
             selected = helper["effective_behaviors"](policy.get("behaviors", {}))
             count = sum(key in _WORKFLOW_TOPICS for key in selected)
             values["behaviors"] = f"{count} choices set" if count else "Not set"
@@ -2788,6 +2791,13 @@ def _config_workflow(ui, cfg, repo=None):
             ui.done("invalid", str(exc))
 
 
+def _workflow_assignment_label(name, default, enabled, assigned):
+    count = f"{assigned} repo" + ("s" if assigned != 1 else "")
+    label = ("Global default" + (" · " + count if assigned else "") if name == default else
+             "Assigned to " + count if assigned else "Not assigned")
+    return label + (" · Disabled" if not enabled else "")
+
+
 def _workflow_hub(ui, cfg, standalone=False, shell_pending=False):
     helper = _workflow()
     _workflow_session(cfg)
@@ -2801,7 +2811,9 @@ def _workflow_hub(ui, cfg, standalone=False, shell_pending=False):
         for name in names:
             policy = document["workflows"][name]
             key = "customize" if name == default else "name:" + name
-            values[key] = ("default · " if name == default else "") + ("on" if policy["enabled"] else "off")
+            assigned = sum(entry.get("workflow") == name and not entry.get("excluded") and "inline" not in entry
+                           for entry in document["repositories"].values())
+            values[key] = _workflow_assignment_label(name, default, policy["enabled"], assigned)
             if policy.get("instructions"):
                 values[key] += " · text instructions"
         rows += [("add", "+ New workflow"), ("choose", "Default workflow"),
@@ -2837,7 +2849,8 @@ def _workflow_hub(ui, cfg, standalone=False, shell_pending=False):
             elif choice == "repos":
                 repo = ui.pick("Repository assignments", [(name, name) for name in sorted(cfg.repos)] + [("__back__", "Back")],
                                values={name: helper["source"](document, os.path.realpath(path)) +
-                                       (" · off" if not helper["effective"](document, os.path.realpath(path))["enabled"] else "")
+                                       (" · Excluded" if document["repositories"].get(os.path.realpath(path), {}).get("excluded") else
+                                        " · Disabled" if not helper["effective"](document, os.path.realpath(path))["enabled"] else "")
                                        for name, path in cfg.repos.items()})
                 if repo not in (None, "__back__"):
                     _config_workflow(ui, cfg, repo)
@@ -2848,8 +2861,119 @@ def _workflow_hub(ui, cfg, standalone=False, shell_pending=False):
             ui.done("invalid", str(exc))
 
 
-def _workflow_review(document):
+def _workflow_changed_review(helper, document, before, activate=False):
+    """Review changed preferences against the transaction's immutable baseline."""
+    import difflib
+    missing = object()
+    lines = ['Activate recommended workflow settings'] if activate else []
+
+    def value_text(path, value, policy):
+        if value is missing:
+            if path == ('behaviors', 'pr_review'):
+                return 'Enabled'
+            if path in (('behaviors', 'frontend_enabled'), ('behaviors', 'cli_enabled')):
+                kind = 'frontend' if path[-1] == 'frontend_enabled' else 'cli'
+                return 'Enabled' if helper['preview_enabled'](policy.get('behaviors', {}), kind) else 'Disabled'
+            if path[0] == 'session_defaults':
+                settings = policy.get('session_defaults', {}).get(path[1], {}) if len(path) > 1 else {}
+                return 'Default for this model' if path[-1] == 'effort' and settings.get('model') else 'Inherit'
+            return ('Tool default' if path[0] == 'permissions' else
+                    'Inherit' if path[0] == 'behaviors' and any(path[-1] in fields.values() for fields in helper['PREVIEW_OVERRIDES'].values()) else
+                    'Not set')
+        if path[0] == 'behaviors' and len(path) == 2:
+            spec = helper['BEHAVIORS'].get(path[1], {})
+            return spec.get('choices', {}).get(value, (str(value),))[0]
+        if path[0] == 'permissions' and len(path) == 2:
+            return helper['PERMISSIONS'][path[1]][value]['label']
+        if path[-1] == 'effort':
+            return _workflow_effort(helper['effective_effort'](value))
+        if isinstance(value, bool):
+            return 'Enabled' if value else 'Disabled'
+        if isinstance(value, (list, dict)):
+            return json.dumps(value, ensure_ascii=False, sort_keys=True)
+        return str(value)
+
+    def path_label(path):
+        if path[0] == 'behaviors' and len(path) == 2:
+            return helper['BEHAVIORS'].get(path[1], {}).get('label', path[1])
+        return ' · '.join(part.replace('_', ' ').capitalize() for part in path)
+
+    def fields(old, new, path=(), old_policy=None, new_policy=None):
+        if old == new:
+            return []
+        if isinstance(old, dict) or isinstance(new, dict):
+            old_dict, new_dict = old if isinstance(old, dict) else {}, new if isinstance(new, dict) else {}
+            return [line for key in sorted(old_dict.keys() | new_dict.keys())
+                    for line in fields(old_dict.get(key, missing), new_dict.get(key, missing), (*path, key), old_policy, new_policy)]
+        return [path_label(path) + ': ' + value_text(path, old, old_policy or {}) + ' → ' + value_text(path, new, new_policy or {})]
+
+    def policy_changes(old, new):
+        changes = []
+        old_stages = helper['model_stages'](old) if old else []
+        new_stages = helper['model_stages'](new) if new else []
+        if old_stages != new_stages:
+            describe = lambda stages: ', '.join(_workflow_stage_title(stage) for stage in stages) or 'One model'
+            changes.append('Use multiple models: ' + describe(old_stages) + ' → ' + describe(new_stages))
+        elif old and new:
+            old_saved = helper['model_stages']({**old, 'stages_enabled': True})
+            new_saved = helper['model_stages']({**new, 'stages_enabled': True})
+            if old_saved != new_saved:
+                changes.append('Saved model stages: ' + ', '.join(_workflow_stage_title(stage) for stage in old_saved) +
+                               ' → ' + ', '.join(_workflow_stage_title(stage) for stage in new_saved))
+        skipped = {'model_stages', 'separate_stages', 'stages_enabled', 'instructions'}
+        changes.extend(fields({key: value for key, value in old.items() if key not in skipped},
+                              {key: value for key, value in new.items() if key not in skipped}, old_policy=old, new_policy=new))
+        old_text, new_text = old.get('instructions', ''), new.get('instructions', '')
+        if old_text != new_text:
+            diff = list(difflib.unified_diff(old_text.splitlines(), new_text.splitlines(),
+                                           fromfile='Before', tofile='After', n=0, lineterm=''))
+            if diff:
+                changes.append('Text instructions:')
+                changes.extend(diff)
+            elif not new.get('instructions'):
+                changes.append('Text instructions: cleared')
+            elif old:
+                changes.append('Text instructions: formatting changed')
+        return changes
+
+    if before['default'] != document['default']:
+        lines.append('Global default: ' + before['default'] + ' → ' + document['default'])
+    for name in sorted(before['workflows'].keys() | document['workflows'].keys()):
+        old, new = before['workflows'].get(name), document['workflows'].get(name)
+        if old == new:
+            continue
+        if new is None:
+            lines.append('Workflow ' + name + ': removed')
+            continue
+        changes = policy_changes(old or {}, new)
+        if changes or old is None:
+            lines.append('Workflow ' + name + (': added' if old is None else ''))
+            lines.extend('  ' + line for line in changes)
+    def source_label(doc, entry):
+        return ('Custom copy' if 'inline' in entry else 'Named workflow ' + entry['workflow']
+                if 'workflow' in entry else 'Global default ' + doc['default'])
+    for repository in sorted(before['repositories'].keys() | document['repositories'].keys()):
+        old, new = before['repositories'].get(repository, {}), document['repositories'].get(repository, {})
+        if old == new:
+            continue
+        changes = []
+        old_source, new_source = source_label(before, old), source_label(document, new)
+        if old_source != new_source:
+            changes.append('Source: ' + old_source + ' → ' + new_source)
+        if old.get('excluded', False) != new.get('excluded', False):
+            changes.append('Excluded: ' + ('Yes' if old.get('excluded') else 'No') + ' → ' + ('Yes' if new.get('excluded') else 'No'))
+        if 'inline' in new:
+            changes.extend(policy_changes(helper['resolved'](before, repository), new['inline']))
+        if changes:
+            lines.append('Repository ' + repository)
+            lines.extend('  ' + line for line in changes)
+    return lines
+
+
+def _workflow_review(document, before=None, activate=False):
     helper = _workflow()
+    if before is not None:
+        return _workflow_changed_review(helper, document, before, activate)
     lines = [f"Global default: {document['default']}", helper["PRECEDENCE"]]
     for name, policy in sorted(document["workflows"].items()):
         lines.append(f"Workflow {name}: {'enabled' if policy['enabled'] else 'disabled'}")
@@ -3166,8 +3290,10 @@ def _config_wizard(cfg, workflows_only=False):
                         ui.done("invalid", str(exc))
                         continue
                     if _workflow_pending(edited):
-                        lines += ["      Agent workflow and native Codex/Claude instructions:"]
-                        lines += ["      " + line for line in _workflow_review(edited._workflow_document)]
+                        lines += ["      Workflow changes:"]
+                        lines += ["      " + line for line in _workflow_review(
+                            edited._workflow_document, before=edited._workflow_initial,
+                            activate=edited._workflow_activate)]
                     if changes or _workflow_pending(edited):
                         answer = ui.page("Review local settings", lines, ("enter", "y", "n", "q", "esc", "abort"),
                                          keys="y save · n / esc / q back", primary=("enter", "SAVE CHANGES", f"{pending} pending"))
@@ -3493,8 +3619,9 @@ def _workflow_print(helper, result, catalogue=False):
     """Print a compact overview; structured output keeps its existing schema."""
     if catalogue:
         print("Named workflows; default: " + result["default"] + ".")
-        print("\n".join(_table_lines(("WORKFLOW", "STATUS", "ASSIGNED", "TEXT INSTRUCTIONS", "PERMISSIONS", "WORK AND DELIVERY"), [
-            (name, "on" if item["workflow"]["enabled"] else "off", str(len(item["repositories"])),
+        print("\n".join(_table_lines(("WORKFLOW", "APPLIES TO", "TEXT INSTRUCTIONS", "PERMISSIONS", "WORK AND DELIVERY"), [
+            (name, _workflow_assignment_label(name, result["default"], item["workflow"]["enabled"],
+                                             len(set(item["repositories"]) - set(item["excluded_repositories"]))),
              "present" if item["workflow"].get("instructions") else "none",
              _workflow_permission_summary(helper, item["workflow"]),
              _workflow_catalogue_summary(helper, item["workflow"]))
@@ -11743,14 +11870,17 @@ SCOPE
   all its consumers. --all lists named workflows; it cannot combine with --repo.
   `ls` is an alias for `list`.
   Run t workflow in a terminal to edit workflows interactively.
+  Save review shows only changed settings, with before and after values.
   Ctrl+C offers Keep editing, Review and save, or Discard when changes are pending.
   With no pending changes, Ctrl+C exits immediately.
   List prints saved workflow values; --all includes named definitions.
+  Workflow rows show Global default, assigned repository counts, or Not assigned.
   Check Planning, Implementation and/or Review for saved model settings.
   Unchecked Implementation uses session defaults;
   unchecked helpers use the main model.
   Automatic Implementation effort uses a worker; the main session stays Medium.
   Use one model for all work turns stages off and retains saved settings.
+  Inherit uses the tool's top-level model or reasoning effort from t config.
   Permissions selects Codex and Claude access for new and resumed CLI sessions.
   PRs, previews & tests controls PR opening and merging, preview timing and approval,
   frontend design, preview updates and test timing independently.

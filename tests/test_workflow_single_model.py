@@ -940,6 +940,55 @@ def test_repository_model_editor_preserves_global_defaults(workflow, t_mod, monk
     assert 'session_defaults' not in workflow.effective(cfg._workflow_document, '/repo')
 
 
+@pytest.mark.parametrize('agent', ['codex', 'claude'])
+@pytest.mark.parametrize('scope', ['named', 'repository'])
+@pytest.mark.parametrize('configured', [False, True])
+@pytest.mark.parametrize('picked', [None, ''])
+def test_session_default_choices_show_top_level_inheritance_without_writes(workflow, t_mod, agent, scope, configured, picked):
+    document = workflow.defaults()
+    document['workflows']['standard'] = workflow.select_model_stages(document['workflows']['standard'], [])
+    cfg = SimpleNamespace(repos={'api': '/repo'}, agents={'api': agent}, agent_default=agent,
+        models={agent: 'account-model'} if configured else {}, efforts={agent: 'high'} if configured else {},
+        _workflow_document=document)
+    cfg._workflow_session_catalogs = {agent: [dict(id='account-model', resolved='account-model', label='account-model',
+        efforts=['low', 'high'], fast=False, ultrafast=False)]}
+    before = copy.deepcopy(document)
+    target = {'name': 'standard'} if scope == 'named' else {'repository': '/repo'}
+    ui = InspectMenu(['main_model', picked, 'main_effort', picked, 'back'])
+    t_mod._workflow_policy_menu(ui, cfg, vars(workflow), **target)
+    model_label = 'Inherit · ' + ('account-model' if configured else 'Tool default')
+    effort_label = 'Inherit · ' + ('high' if configured else 'Tool default')
+    assert ui.views[0][2]['values']['main_model'] == model_label
+    assert ui.views[0][2]['values']['main_effort'] == effort_label
+    assert ui.views[1][1][0] == ('', model_label)
+    assert ui.views[3][1][0] == ('', effort_label)
+    assert cfg._workflow_document == before
+    assert not workflow.config_path().exists()
+
+
+@pytest.mark.parametrize('agent', ['codex', 'claude'])
+def test_explicit_workflow_model_uses_own_default_effort_then_clears_to_inheritance(workflow, t_mod, agent):
+    document = workflow.defaults()
+    policy = workflow.select_model_stages(document['workflows']['standard'], [])
+    policy['session_defaults'] = {agent: {'model': 'workflow-model'}}
+    document = workflow.update(document, policy, name='standard')
+    cfg = SimpleNamespace(repos={}, agent_default=agent, models={agent: 'account-model'}, efforts={agent: 'high'},
+                          _workflow_document=document)
+    cfg._workflow_session_catalogs = {agent: [dict(id='workflow-model', resolved='workflow-model', label='workflow-model',
+        efforts=['low'], fast=False, ultrafast=False)]}
+    ui = InspectMenu(['main_effort', '', 'main_model', '', 'back'])
+    t_mod._workflow_policy_menu(ui, cfg, vars(workflow), name='standard')
+    assert ui.views[0][2]['values']['main_effort'] == 'Default for this model'
+    assert ui.views[1][1][0] == ('', 'Default for this model')
+    assert 'Inherit · high' not in dict(ui.views[1][1]).values()
+    assert ui.views[3][1][0] == ('', 'Inherit · account-model')
+    assert ui.views[-1][2]['values']['main_model'] == 'Inherit · account-model'
+    assert ui.views[-1][2]['values']['main_effort'] == 'Inherit · high'
+    assert 'session_defaults' not in cfg._workflow_document['workflows']['standard']
+    assert cfg.models == {agent: 'account-model'} and cfg.efforts == {agent: 'high'}
+    assert not workflow.config_path().exists()
+
+
 def test_development_flow_keeps_section_focus_without_chatter(workflow, t_mod):
     class Inspect(Menu):
         def __init__(self):
