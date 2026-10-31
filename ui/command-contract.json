@@ -696,6 +696,9 @@
           "tests": [
             "tests/test_open_picker.py::test_bare_open_inside_worktree_shows_every_detail_and_repo",
             "tests/test_open_picker.py::test_open_picker_does_not_run_callers_exit_hook_in_subshell",
+            "tests/test_open_picker.py::test_open_kill_last_row_never_starts_fresh",
+            "tests/test_open_picker.py::test_open_kill_stale_local_row_never_closes_remote",
+            "tests/test_picker_ui.py::test_open_kill_key_accepts_focused_or_marked_rows",
             "tests/test_picker_job_control.py::test_interactive_picker_completes_after_stopped_child",
             "tests/test_picker_job_control.py::test_picker_worker_preserves_status_and_parent_exit_hooks",
             "tests/test_open_picker.py::test_open_hides_attached_and_loaded_desktop_by_default",
@@ -709,7 +712,7 @@
             "tests/test_picker_ui.py::test_open_attachment_views_are_exclusive_and_idempotent",
             "tests/test_picker_filters.py::test_open_header_keeps_every_column_shortcut_visible"
           ],
-          "notes": "Default is unattached CLI and unloaded desktop sessions. Ctrl-F opens staged filter settings for State and every session column: agent, progress, interface, model, host, repository, session/slot, context and task. Enter chooses values; Apply filters commits and enables them. Esc in a nested picker keeps its value; Esc in settings discards staged edits. Reset filters to defaults stages unattached and clears columns. Ctrl-A disables filters without changing saved choices; Ctrl-L restores them. --attached starts with filters off and defaults retained. One highlighted ON/OFF summary replaces per-facet hotkeys; narrow headers show selected column count and settings retains full values. Progress follows the displayed continued-work marker, not current computation or completion. Search is preserved and hidden marks removed. Snapshot scope, action semantics, compact rows and selection gutter remain unchanged. No LAST TURN, preview, or new-session controls."
+          "notes": "Default is unattached CLI and unloaded desktop sessions. k kills marked rows or the focused row through guarded close dispatch; successful kills refresh the inventory with search and filters reset to opening defaults. Cancellation or failure stops the action. Ctrl-F opens staged filter settings for State and every session column: agent, progress, interface, model, host, repository, session/slot, context and task. Enter chooses values; Apply filters commits and enables them. Esc in a nested picker keeps its value; Esc in settings discards staged edits. Reset filters to defaults stages unattached and clears columns. Ctrl-A disables filters without changing saved choices; Ctrl-L restores them. --attached starts with filters off and defaults retained. One highlighted ON/OFF summary replaces per-facet hotkeys; narrow headers show selected column count and settings retains full values. Progress follows the displayed continued-work marker, not current computation or completion. Search is preserved and hidden marks removed. Snapshot scope, action semantics, compact rows and selection gutter remain unchanged. No LAST TURN, preview, or new-session controls."
         },
         "explicit": {
           "argv": [
