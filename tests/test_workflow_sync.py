@@ -23,9 +23,11 @@ def sync(tmp_path, monkeypatch):
     return module
 
 
-def saved(sync):
+def saved(sync, *, staged=True):
     w = sync.workflow()
     doc = w['defaults']()
+    if not staged:
+        doc['workflows']['standard']['stages_enabled'] = False
     w['save'](doc, None, propagate=False)
     return doc
 
@@ -732,7 +734,7 @@ def test_proxy_helper_setup_failure_reaps_child(sync, monkeypatch):
 
 def test_guarded_resume_retains_latest_explicit_intent_after_live_ack(sync, monkeypatch, tmp_path):
     sid = '11111111-1111-1111-1111-111111111111'
-    doc = saved(sync)
+    doc = saved(sync, staged=False)
     fake_proxy(sync, monkeypatch, {None:{'data':['root']}}, {'root':{'source':'cli'}})
     sync.changed(doc, doc, settings={'model':'new-main','effort':'medium'})
     assert sync.status()['settings'] == {}
@@ -768,7 +770,7 @@ def test_resume_scope_exclusion_worktree_and_child_are_preserved(sync, monkeypat
 
 
 def config_transaction(sync, t_mod, monkeypatch, tmp_path):
-    doc = saved(sync)
+    doc = saved(sync, staged=False)
     source = tmp_path / 'local.zsh'
     source.write_text('DEV_MODEL[codex]=preferred\nDEV_EFFORT[codex]=medium\nDEV_FAST[codex]=ultrafast\nDEV_HANDOFF[codex]=native\n')
     monkeypatch.setenv('T_LOCAL_RC',str(source));monkeypatch.setenv('T_SETUP_SHIM','1')

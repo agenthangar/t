@@ -197,7 +197,7 @@ menu chooses a named default, adds or edits shared workflows, or activates recom
 defaults. Each workflow exposes an overall Workflow switch and an independent
 Use multiple models switch. Disabling stages retains their model/effort settings and keeps
 behavior preferences and Markdown active; disabling the workflow suppresses all
-three. Active stages expose Planning, Implementation and Review with separate
+three. Active stages expose Planning, Main work and Review with separate
 model and effort controls, plus Instructions for ordinary Markdown in VISUAL/EDITOR.
 PRs, previews & tests uses shared `_RailUI` submenus for Pull requests, Local
 preview, Frontend design and Tests. PR opening (automatic/on instruction), initial
@@ -228,9 +228,16 @@ for new and resumed CLI sessions. Native desktop launches keep the application's
 model settings. Explicit resume arguments win. An explicit model
 without an effort uses that model's default, not an unrelated global effort.
 Empty choices fall back to account-level agent defaults. Excluded workflows and
-multi-model workflows do not apply these launch settings. Never write them into
+multi-model workflows do not apply these single-model settings. Never write scoped settings into
 global agent settings or change active turns; indexed Codex child agents retain
 their own settings. The UI discovers supported efforts from the selected tool.
+Saved enabled multi-model workflows use the implementation model for Codex root
+launches and guarded resumes. An automatic implementation effort resolves to medium
+for the main conversation; explicit efforts remain explicit. These scoped values
+override stale resume checkpoints, including a previous planning model or effort.
+Unsaved recommended defaults supply no launch overrides. Claude launch settings
+are not inferred from Codex stage models. Planning and review remain bounded
+delegations with explicit model/effort and fresh context when required by the host.
 Models load lazily from Codex once per menu session; current, recommended and custom
 values remain available offline, with explicit Refresh. Changing a stage model preserves
 its effort; changing a session default model clears incompatible effort. Shared-definition edits
@@ -296,10 +303,14 @@ SessionStart launch/resume hooks retry pending updates automatically.
 connecting. There is no public manual retry action.
 Unused named-definition edits do not affect unrelated consumers.
 
-Workflow stage models remain guidance and never select a main-session model.
-Explicit Codex model/effort changes in `t config` separately reconcile loaded root
+The saved implementation stage selects Codex main launch/resume defaults; planning
+and review delegation remains guidance. Explicit Codex model/effort changes in
+`t config` publish account-owned native root defaults in the same transaction as
+the shell defaults and journal, then separately reconcile loaded root
 threads through the running app-server control socket. Pagination is bounded;
-stage agents are skipped. Explicit main model/effort deltas also persist through
+stage agents are skipped. The external shell editor has already saved its file;
+native/journal publication failures are reported as partial saves without claiming
+runtime adoption. Explicit main model/effort deltas also persist through
 the receiving host's authoritative launch-config writer and account-owned native
 Codex root defaults. Unsupported TOML/ownership or unavailable writers leave
 those defaults explicitly pending. No other native fields are changed. Runtime coverage is limited to the connected owning

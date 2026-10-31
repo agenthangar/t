@@ -2368,7 +2368,7 @@ def _workflow_model(ui, cfg, helper, stage, current):
             choices.setdefault(model["id"], model["label"])
         rows = list(choices.items()) + [("__custom__", "Enter a custom model ID…"),
                                         ("__refresh__", "Refresh model list")]
-        picked = ui.pick(stage.title() + " model", rows,
+        picked = ui.pick(_workflow_stage_title(stage) + " model", rows,
                          default=next(i for i, row in enumerate(rows) if row[0] == current))
         if picked == "__refresh__":
             del cfg._workflow_catalog
@@ -2454,7 +2454,8 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
         defaults = policy.get("session_defaults", {}).get(agent, {})
         rows = [("enabled", "Use this workflow"), ("stages_enabled", "Use multiple models")]
         if policy.get("stages_enabled", True):
-            rows += [(stage, stage.title()) for stage in ("planning", "implementation", "review")]
+            rows += [(stage, _workflow_stage_title(stage))
+                     for stage in ("planning", "implementation", "review")]
         else:
             rows += [("main_model", agent.title() + " default model"), ("main_effort", "Reasoning effort")]
         rows.append(("behaviors", "PRs, previews & tests ›"))
@@ -2462,7 +2463,9 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
         values = {stage: policy[stage]["model"] + " · " + _workflow_effort(policy[stage]["effort"])
                   for stage in ("planning", "implementation", "review")}
         values["enabled"] = "enabled" if policy["enabled"] else "disabled"
-        values["stages_enabled"] = "Yes · plan, implement, review" if policy.get("stages_enabled", True) else "No · one model"
+        values["stages_enabled"] = "Yes · main, planning, review" if policy.get("stages_enabled", True) else "No · one model"
+        if agent == "codex" and policy.get("stages_enabled", True) and policy["implementation"]["effort"] == "auto":
+            values["implementation"] = policy["implementation"]["model"] + " · medium (automatic)"
         models, efforts = getattr(cfg, "models", {}), getattr(cfg, "efforts", {})
         values["main_model"] = defaults.get("model") or "Agent default" + (": " + models[agent] if models.get(agent) else "")
         values["main_effort"] = defaults.get("effort") or ("Default for this model" if defaults.get("model") else
@@ -2506,7 +2509,7 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
             continue
         else:
             stage = choice
-            field = ui.pick(stage.title(), [("model", "Model"), ("effort", "Reasoning effort"), ("back", "Back")],
+            field = ui.pick(_workflow_stage_title(stage), [("model", "Model"), ("effort", "Reasoning effort"), ("back", "Back")],
                             values={"model": policy[stage]["model"], "effort": _workflow_effort(policy[stage]["effort"])})
             if field in (None, "back"):
                 continue
@@ -2516,7 +2519,7 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
                 special = "one-level-lower" if stage == "review" else "auto"
                 levels = [special, *helper["EFFORTS"]]
                 labels = {"auto": "Let the agent choose for the task", "one-level-lower": "One level below planning"}
-                picked = ui.pick(stage.title() + " reasoning effort", [(level, labels.get(level, level)) for level in levels],
+                picked = ui.pick(_workflow_stage_title(stage) + " reasoning effort", [(level, labels.get(level, level)) for level in levels],
                                  default=levels.index(policy[stage]["effort"]))
             if picked is not None:
                 changed[stage][field] = picked
@@ -2729,7 +2732,7 @@ def _workflow_review(document):
         lines.append(f"Workflow {name}: {'enabled' if policy['enabled'] else 'disabled'}")
         lines.extend("  " + line for line in helper["summary_lines"](policy))
         if policy.get("stages_enabled", True):
-            lines.extend(f"  {stage.title()}: {policy[stage]['model']} · {policy[stage]['effort']}"
+            lines.extend(f"  {_workflow_stage_title(stage)}: {policy[stage]['model']} · {policy[stage]['effort']}"
                          for stage in ("planning", "implementation", "review"))
         lines.append("  Test runners: " + helper["runners_summary"](policy))
         if policy.get("instructions"):
@@ -2741,7 +2744,7 @@ def _workflow_review(document):
         if "inline" in entry:
             lines.append(f"  Workflow: {'enabled' if entry['inline']['enabled'] else 'disabled'}")
             if entry['inline'].get("stages_enabled", True):
-                lines.extend(f"  {stage.title()}: {entry['inline'][stage]['model']} · {entry['inline'][stage]['effort']}"
+                lines.extend(f"  {_workflow_stage_title(stage)}: {entry['inline'][stage]['model']} · {entry['inline'][stage]['effort']}"
                              for stage in ("planning", "implementation", "review"))
             lines.append("  Test runners: " + helper["runners_summary"](entry['inline']))
             if entry["inline"].get("instructions"):
@@ -3229,6 +3232,10 @@ def _workflow_effort(value):
     return {"auto": "Chosen for the task", "one-level-lower": "One level below planning"}.get(value, value.capitalize())
 
 
+def _workflow_stage_title(stage):
+    return "Main work" if stage == "implementation" else stage.title()
+
+
 def _workflow_print(helper, result, catalogue=False):
     """Print a compact overview; structured output keeps its existing schema."""
     if catalogue:
@@ -3262,9 +3269,11 @@ def _workflow_print(helper, result, catalogue=False):
             if key not in _WORKFLOW_TOPICS:
                 print("  Other saved rule — " + helper["BEHAVIORS"][key]["label"] + ": " + _workflow_choice(helper, key, value))
         if policy.get("stages_enabled", True):
-            print("Models: separate models for each step")
+            print("Models: Codex main work + planning/review helpers")
             print("\n".join(_table_lines(("STEP", "MODEL", "REASONING"),
-                [(stage, policy[stage]["model"], _workflow_effort(policy[stage]["effort"]))
+                [(_workflow_stage_title(stage), policy[stage]["model"],
+                  "medium (automatic)" if stage == "implementation" and policy[stage]["effort"] == "auto"
+                  else _workflow_effort(policy[stage]["effort"]))
                  for stage in ("planning", "implementation", "review")])))
         else:
             print("Models: one model per session (saved stage choices retained)")
@@ -3607,6 +3616,10 @@ def cmd_config(cfg, args):
                        if changes and not main_settings else None)
             if workflow_changed or main_settings or rebound:
                 extra = []
+                if main_settings:
+                    extra, defaults_pending = sync["native_defaults"](main_settings)
+                    if defaults_pending:
+                        raise ValueError(defaults_pending)
                 if changes:
                     target = Path(os.path.realpath(_current_local_rc()))
                     local_before = helper["snapshot"](target)
@@ -3630,17 +3643,24 @@ def cmd_config(cfg, args):
     except KeyboardInterrupt:
         return 130
     if shell_changed:
-        zsh_capture("_t_sync_config")
-        helper = _workflow()
-        sync = helper["propagation"]()
-        updated_settings = _config_state(result) if result != "edit" else _config_state(Config())
-        settings = sync["settings_delta"](initial_settings, updated_settings)
-        if settings and result == "edit":
-            document, _ = helper["load"]()
-            sync["changed"](document, document, settings=settings,
-                            context={"repos": cfg.repos, "hosts": getattr(cfg, "hosts", {}),
-                                     "settings_source": {"path": os.path.realpath(_current_local_rc()),
-                                                         "hash": sync["digest"](_config_read(_current_local_rc()))}})
+        try:
+            zsh_capture("_t_sync_config")
+            if result == "edit":
+                helper = _workflow()
+                sync = helper["propagation"]()
+                settings = sync["settings_delta"](initial_settings, _config_state(Config()))
+                if settings:
+                    extra, defaults_pending = sync["native_defaults"](settings)
+                    if defaults_pending:
+                        raise ValueError(defaults_pending)
+                    document, stored = helper["load"]()
+                    helper["save"](document, stored, extra, main_settings=settings,
+                                   propagation_context={"repos": cfg.repos, "hosts": getattr(cfg, "hosts", {}),
+                                                        "settings_source": {"path": os.path.realpath(_current_local_rc()),
+                                                                            "hash": sync["digest"](_config_read(_current_local_rc()))}})
+        except (OSError, ValueError) as exc:
+            print(f"t config: local settings saved; native defaults or propagation incomplete: {exc}", file=sys.stderr)
+            return 1
     if workflow_changed:
         print("✓ saved agent workflow and native instructions")
     if not shell_changed:
@@ -11449,6 +11469,8 @@ SCOPE
   `ls` is an alias for `list`.
   Run t workflow in a terminal to edit workflows interactively.
   List prints saved workflow values; --all includes named definitions.
+  Saved multi-model workflows use the implementation model for Codex main sessions;
+  automatic main effort starts at medium. Planning and review use explicit helpers.
   With multiple models off, choose a default model and effort for new/resumed sessions.
   PRs, previews & tests controls PR opening and merging, local preview,
   frontend design, preview updates and test timing independently.

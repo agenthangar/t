@@ -965,6 +965,10 @@ compatibility aliases. Choose
 **Use recommended defaults** to activate planning with `gpt-6-astra`, implementation
 with `gpt-6.1-sol`, and review with `gpt-6-astra`. **Edit default workflow** and
 **Edit named workflow** give each stage separate model and reasoning-effort controls.
+Saved multi-model workflows start and resume Codex's main conversation on the
+implementation model, shown as **Main work**. Automatic main effort starts at
+**medium**. Planning and review use bounded helpers with explicit model and effort;
+the main conversation handles implementation, fixes and follow-ups.
 **Use this workflow** enables or suppresses the entire workflow. **Use multiple models** separately
 turns staged model selection and delegation on or off while retaining the selected
 models and efforts. Markdown and behavior preferences still apply when only model
@@ -979,8 +983,9 @@ effort lets that model use its own default effort. Codex and Claude defaults are
 stored separately, and switching back to multiple models retains these choices.
 Model choices include the current and recommended values, a live Codex catalogue,
 a custom ID, and explicit refresh. Current, recommended and custom models remain
-usable offline. Changing a stage model preserves its selected effort and does
-not change the agent's launch defaults. Planning and implementation accept `auto`
+usable offline. Changing a stage model preserves its selected effort. Saving the
+implementation model updates this workflow's next Codex launch/resume defaults;
+planning and review choices apply to delegated stages. Planning and implementation accept `auto`
 or an explicit effort (`minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `ultra`);
 review accepts an explicit effort or `one-level-lower`.
 
@@ -1108,12 +1113,18 @@ nonempty `AGENTS.override.md`) and Claude's `CLAUDE.md`, honoring `CODEX_HOME` a
 `CLAUDE_CONFIG_DIR`. Personal prose and t's public-issue block are preserved;
 malformed managed blocks, symlinks, and concurrent edits are refused. Repository
 overrides follow the canonical checkout and its linked worktrees, including new
-worktrees. These agent instructions apply in terminal and desktop sessions; t
-does not switch models or enforce their execution. Task instructions and
+worktrees. These agent instructions apply in terminal and desktop sessions;
+stage delegation remains guidance. Saved workflow settings select models at
+supported CLI launch/resume boundaries, without switching active turns. Task instructions and
 repository rules remain authoritative. Reinstalling refreshes saved workflows
 without activating the defaults for other accounts.
 Existing sessions must reload the updated instructions, or start a new session,
 before relying on a changed workflow policy.
+
+Explicit Codex model/effort changes in `t config` also update those fields in
+native `config.toml`, preserving speed and other settings. Existing app
+conversations may retain their selected model; saving defaults does not confirm
+that a running conversation adopted them.
 
 For preferred agent instructions, run `t profile init` to create an editable
 profile at `${XDG_CONFIG_HOME:-~/.config}/t/instructions.md`, then

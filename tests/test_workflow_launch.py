@@ -1,4 +1,4 @@
-"""Single-model workflow defaults apply only to the selected launch scope."""
+"""Saved workflow defaults apply only to the selected launch scope and tool."""
 import copy
 import json
 import os
@@ -52,25 +52,60 @@ def test_fresh_defaults_resolve_destination_and_are_read_only(sync, tmp_path, mo
     assert not sync.state_path().exists()
 
 
-@pytest.mark.parametrize('condition', ['stages', 'disabled', 'excluded', 'unknown', 'unrelated'])
+@pytest.mark.parametrize('condition', ['disabled', 'excluded', 'unknown'])
 def test_inactive_or_unresolved_scope_does_not_supply_defaults(sync, tmp_path, monkeypatch, condition):
     w, document, repo, _ = scoped_document(sync, tmp_path, monkeypatch, codex={'model': 'repo-model'})
     policy = document['repositories'][str(repo)]['inline']
-    if condition == 'stages':
-        policy['stages_enabled'] = True
-    elif condition == 'disabled':
+    if condition == 'disabled':
         policy['enabled'] = False
     elif condition == 'excluded':
         document['repositories'][str(repo)]['excluded'] = True
     elif condition == 'unknown':
         monkeypatch.setattr(sync, 'git', lambda *args: '')
-    else:
-        other = tmp_path / 'other' / '.git'
-        other.mkdir(parents=True)
-        monkeypatch.setattr(sync, 'git', lambda *args: str(other))
     w['save'](document, w['snapshot'](w['config_path']()), propagate=False)
     assert sync.launch_settings('codex', str(repo)) == []
     assert sync.resume_settings(SID, str(repo)) == []
+
+
+@pytest.mark.parametrize('effort,expected_effort', [('auto', 'medium'), ('low', 'low'), ('high', 'high')])
+def test_saved_staged_main_defaults_replace_stale_model_and_effort(sync, tmp_path, monkeypatch, effort, expected_effort):
+    w, document, repo, _ = scoped_document(sync, tmp_path, monkeypatch,
+        codex={'model': 'ignored-single-model'}, claude={'model': 'ignored-claude'})
+    policy = document['repositories'][str(repo)]['inline']
+    policy['stages_enabled'] = True
+    policy['implementation'] = {'model': 'scoped-sol', 'effort': effort}
+    w['save'](document, w['snapshot'](w['config_path']()), propagate=False)
+    sync.write({'revision': 1, 'workflow_hash': sync.digest(document), 'context': {},
+                'main_settings': {'model': 'stale-astra', 'effort': 'ultra'}})
+    before = {path: path.read_bytes() for path in (w['config_path'](), sync.state_path())}
+    expected = ['--model', 'scoped-sol', '-c', 'model_reasoning_effort="' + expected_effort + '"']
+    assert sync.launch_settings('codex', str(repo)) == expected
+    assert sync.resume_settings(SID, str(repo)) == expected
+    assert sync.launch_settings('claude', str(repo)) == []
+    assert sync.resume_settings(SID, str(repo), 'claude') == []
+    assert all(path.read_bytes() == contents for path, contents in before.items())
+    with sqlite3.connect(Path(os.environ['CODEX_HOME']) / 'state_5.sqlite') as db:
+        db.execute('create table threads(id text, source text)')
+        db.execute('insert into threads values(?,?)', (SID, '{"subagent":{}}'))
+    assert sync.resume_settings(SID, str(repo)) == []
+
+
+def test_recommended_unsaved_workflow_does_not_override_launch(sync, tmp_path):
+    assert sync.launch_settings('codex', str(tmp_path)) == []
+    assert sync.resume_settings(SID, str(tmp_path)) == []
+    assert not sync.workflow()['config_path']().exists()
+    assert not sync.state_path().exists()
+
+
+def test_saved_global_stages_apply_to_unregistered_repository(sync, tmp_path, monkeypatch):
+    w, document, _, _ = scoped_document(sync, tmp_path, monkeypatch, codex={'model': 'repo-model'})
+    other = tmp_path / 'other' / '.git'
+    other.mkdir(parents=True)
+    monkeypatch.setattr(sync, 'git', lambda *args: str(other))
+    expected = ['--model', document['workflows']['standard']['implementation']['model'],
+                '-c', 'model_reasoning_effort="medium"']
+    assert sync.launch_settings('codex', str(other.parent)) == expected
+    assert sync.resume_settings(SID, str(other.parent)) == expected
 
 
 def test_named_workflow_and_blank_fields(sync, tmp_path, monkeypatch):
@@ -145,7 +180,7 @@ def test_corrupt_workflow_helper_never_emits_launch_arguments(sync, contents):
     assert result.returncode == 0 and not result.stdout and not result.stderr
 
 
-def shell_workflow(zsh, *, model='repo-model', effort='high'):
+def shell_workflow(zsh, *, model='repo-model', effort='high', staged=False):
     repo = zsh.home / 'code' / 'api'
     repo.mkdir(parents=True)
     subprocess.run(['git', '-C', str(repo), 'init', '-q'], check=True, capture_output=True)
@@ -153,9 +188,9 @@ def shell_workflow(zsh, *, model='repo-model', effort='high'):
         'enabled': True, 'planning': {'model': 'plan', 'effort': 'auto'},
         'implementation': {'model': 'implement', 'effort': 'auto'},
         'review': {'model': 'review', 'effort': 'one-level-lower'}}}, 'repositories': {str(repo): {'inline': {
-        'enabled': True, 'stages_enabled': False,
+        'enabled': True, 'stages_enabled': staged,
         'planning': {'model': 'plan', 'effort': 'auto'},
-        'implementation': {'model': 'implement', 'effort': 'auto'},
+        'implementation': {'model': model, 'effort': effort or 'auto'},
         'review': {'model': 'review', 'effort': 'one-level-lower'},
         'session_defaults': {agent: {'model': model, 'effort': effort} for agent in ('codex', 'claude')},
     }}}}
@@ -182,8 +217,9 @@ def test_shell_fresh_destination_defaults_replace_account_settings(zsh, agent, e
 
 
 @pytest.mark.parametrize('agent', ['codex', 'claude'])
-def test_shell_resume_honors_explicit_arguments(zsh, agent):
-    repo = shell_workflow(zsh)
+@pytest.mark.parametrize('staged', [False, True])
+def test_shell_resume_honors_explicit_arguments(zsh, agent, staged):
+    repo = shell_workflow(zsh, staged=staged)
     effort = '-c model_reasoning_effort=low' if agent == 'codex' else '--effort low'
     result = zsh(f'T_WORKFLOW_CWD={shlex.quote(str(repo))} _dev_agent_resume_cmd {agent} {SID} '
                  f'--model explicit {effort}')
@@ -211,3 +247,14 @@ def test_shell_tmux_new_and_resume_use_destination_not_caller(zsh):
     assert len(commands) == 2
     assert all('--model repo-model' in command for command in commands)
     assert all('model_reasoning_effort=' in command and 'high' in command for command in commands)
+
+
+def test_shell_saved_stages_override_stale_account_main_defaults(zsh):
+    repo = shell_workflow(zsh, model='implementation-sol', effort='', staged=True)
+    result = zsh(f'DEV_MODEL[codex]=old-astra; DEV_EFFORT[codex]=ultra; '
+                 f'_dev_agent_new_cmd codex "" "" {shlex.quote(str(repo))}')
+    args = shlex.split(result.stdout)
+    assert result.returncode == 0, result.stderr
+    assert args[args.index('--model') + 1] == 'implementation-sol'
+    assert 'model_reasoning_effort=medium' in args
+    assert 'old-astra' not in args and 'ultra' not in args

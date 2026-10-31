@@ -284,10 +284,11 @@ def launch_policy(w, document, cwd):
     return w['effective'](document, repository)
 
 
-def session_defaults(policy, agent):
-    if not policy or not policy['enabled'] or policy.get('stages_enabled', True):
+def session_defaults(policy, agent, *, saved=True):
+    # Loading recommended defaults is not an explicit choice of launch model.
+    if not saved and policy and policy.get('stages_enabled', True):
         return {}
-    return {key: value for key, value in policy.get('session_defaults', {}).get(agent, {}).items() if value}
+    return workflow()['main_session_settings'](policy, agent)
 
 
 def setting_args(values, agent):
@@ -305,8 +306,8 @@ def launch_settings(agent, cwd=None):
     if agent not in ('codex', 'claude'):
         return []
     w = workflow()
-    document, _ = w['load']()
-    return setting_args(session_defaults(launch_policy(w, document, cwd), agent), agent)
+    document, before = w['load']()
+    return setting_args(session_defaults(launch_policy(w, document, cwd), agent, saved=before is not None), agent)
 
 
 def resume_settings(sid, cwd=None, agent='codex'):
@@ -314,7 +315,7 @@ def resume_settings(sid, cwd=None, agent='codex'):
     if agent not in ('codex', 'claude') or not re.fullmatch(r'[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}', sid):
         return []
     w = workflow()
-    document, _ = w['load']()
+    document, before = w['load']()
     policy = launch_policy(w, document, cwd)
     if not policy or not policy['enabled']:
         return []
@@ -329,7 +330,7 @@ def resume_settings(sid, cwd=None, agent='codex'):
                 return []
             if row:
                 break
-    scoped = session_defaults(policy, agent)
+    scoped = session_defaults(policy, agent, saved=before is not None)
     values = {}
     path = state_path()
     if agent == 'codex' and path.exists() and path.stat().st_size <= 1024 * 1024:

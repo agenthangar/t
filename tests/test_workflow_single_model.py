@@ -54,7 +54,7 @@ def test_repository_model_editor_preserves_global_defaults(workflow, t_mod, monk
     assert not workflow.config_path().exists()
     review = '\n'.join(t_mod._workflow_review(cfg._workflow_document)).split('Repository /repo:', 1)[1]
     assert 'Codex session default: repo-model; reasoning: high' in review
-    assert 'Planning:' not in review and 'Implementation:' not in review and 'Review:' not in review
+    assert 'Planning:' not in review and 'Main work:' not in review and 'Review:' not in review
     before = copy.deepcopy(cfg._workflow_document)
     t_mod._workflow_policy_menu(Menu(['main_model', None, 'back']), cfg, vars(workflow), repository='/repo')
     assert cfg._workflow_document == before

@@ -1143,3 +1143,121 @@ def test_config_mcp_narrow_navigation(t_mod, monkeypatch, width, height):
     for frame in ui.frames:
         assert sum(t_mod._term_rows(line, width) for line in frame) <= height
         assert any('▸' in line for line in frame)
+
+
+@pytest.fixture
+def native_defaults_config(t_mod, config_cli, tmp_path, monkeypatch):
+    """Exercise local publication without connecting to a runtime or remote host."""
+    monkeypatch.setenv('HOME', str(tmp_path))
+    monkeypatch.setattr(t_mod, 'HOME', str(tmp_path))
+    monkeypatch.setenv('T_SETUP_SHIM', '1')
+    cfg, local = config_cli
+    helper = t_mod._workflow()
+    sync = helper['propagation']()
+    monkeypatch.setitem(sync, 'retry', lambda **kwargs: {})
+    monkeypatch.setitem(helper, 'propagation', lambda: sync)
+    monkeypatch.setitem(helper['save'].__globals__, 'propagation', lambda: sync)
+    monkeypatch.setattr(t_mod, '_workflow', lambda: helper)
+    native = tmp_path / 'codex' / 'config.toml'
+    native.parent.mkdir()
+    native.write_text('model = "old-model"\nmodel_reasoning_effort = "high"\n'
+                      'service_tier = "ultrafast"\n[agents]\nmax_threads = 7\n')
+    cfg.models = {'codex': 'old-model'}
+    cfg.efforts = {'codex': 'high'}
+    return cfg, local, native, helper, sync
+
+
+@pytest.mark.parametrize('field,value,key', [
+    ('models', 'new-model', 'model'), ('efforts', 'low', 'effort'),
+    ('models', '', 'model'), ('efforts', '', 'effort'),
+])
+def test_config_local_defaults_publish_only_explicit_field(t_mod, native_defaults_config, monkeypatch,
+                                                          field, value, key):
+    import copy
+    cfg, local, native, _, sync = native_defaults_config
+    edited = copy.deepcopy(cfg)
+    getattr(edited, field)['codex'] = value
+    monkeypatch.setattr(t_mod, '_config_wizard', lambda cfg: edited)
+    assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == 0
+    text = native.read_text()
+    native_key = 'model' if key == 'model' else 'model_reasoning_effort'
+    if value:
+        assert f'{native_key} = "{value}"' in text
+    else:
+        assert f'{native_key} =' not in text
+    assert ('model_reasoning_effort = "high"' if key == 'model' else 'model = "old-model"') in text
+    assert 'service_tier = "ultrafast"\n[agents]\nmax_threads = 7\n' in text
+    assert sync['status']()['main_settings'] == {key: value or None}
+    assert local.read_text() != '# keep me\n'
+
+
+def test_config_local_unsupported_native_defaults_prevents_publication(t_mod, native_defaults_config,
+                                                                    monkeypatch, capsys):
+    import copy
+    cfg, local, native, helper, sync = native_defaults_config
+    native.write_text('"model" = "old-model"\n')
+    edited = copy.deepcopy(cfg)
+    edited.models['codex'] = 'new-model'
+    monkeypatch.setattr(t_mod, '_config_wizard', lambda cfg: edited)
+    assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == 1
+    assert local.read_text() == '# keep me\n'
+    assert native.read_text() == '"model" = "old-model"\n'
+    assert not helper['config_path']().exists()
+    assert not sync['state_path']().exists()
+    assert 'native Codex defaults' in capsys.readouterr().err
+
+
+@pytest.mark.parametrize('change', ['unchanged', 'editor', 'show', 'speed', 'workflow'])
+def test_config_unrelated_edits_do_not_stage_native_defaults(t_mod, native_defaults_config,
+                                                            monkeypatch, change):
+    import copy
+    cfg, _, native, helper, sync = native_defaults_config
+    edited = copy.deepcopy(cfg)
+    if change == 'speed':
+        edited.fast['codex'] = 'ultrafast'
+    elif change == 'workflow':
+        edited._workflow_document, edited._workflow_before = helper['load']()
+        edited._workflow_initial = copy.deepcopy(edited._workflow_document)
+        edited._workflow_activate = False
+        edited._workflow_document['workflows']['standard']['planning']['effort'] = 'medium'
+    before = native.stat(), native.read_text()
+    monkeypatch.setitem(sync, 'native_defaults', lambda settings: pytest.fail('unrelated native write'))
+    monkeypatch.setitem(helper, 'propagation', lambda: sync)
+    monkeypatch.setattr(t_mod, '_config_wizard', lambda cfg: edited)
+    monkeypatch.setattr(t_mod, '_config_editor', lambda: 0)
+    monkeypatch.setattr(t_mod, 'Config', lambda: edited)
+    assert t_mod.cmd_config(cfg, SimpleNamespace(show=change == 'show', edit=change == 'editor')) == 0
+    assert (native.stat(), native.read_text()) == before
+    if change in ('unchanged', 'editor', 'show'):
+        assert not helper['config_path']().exists()
+        assert not sync['state_path']().exists()
+
+
+@pytest.mark.parametrize('failure', [None, 'unsupported', 'journal'])
+def test_config_editor_defaults_followup_reports_partial_failure(t_mod, native_defaults_config,
+                                                               monkeypatch, capsys, failure):
+    import copy
+    cfg, local, native, _, sync = native_defaults_config
+    edited = copy.deepcopy(cfg)
+    edited.models['codex'] = 'new-model'
+    if failure == 'unsupported':
+        native.write_text('"model" = "old-model"\n')
+    elif failure == 'journal':
+        def fail(*args, **kwargs):
+            raise OSError('journal unavailable')
+        monkeypatch.setitem(sync, 'desired', fail)
+    native_before = native.read_text()
+    def editor():
+        local.write_text('DEV_MODEL[codex]=new-model\n')
+        return 0
+    monkeypatch.setattr(t_mod, '_config_editor', editor)
+    monkeypatch.setattr(t_mod, 'Config', lambda: edited)
+    assert t_mod.cmd_config(cfg, SimpleNamespace(show=False, edit=True)) == int(bool(failure))
+    assert local.read_text() == 'DEV_MODEL[codex]=new-model\n'
+    if failure:
+        assert native.read_text() == native_before
+        assert not sync['state_path']().exists()
+        assert 'local settings saved; native defaults or propagation incomplete' in capsys.readouterr().err
+    else:
+        assert 'model = "new-model"' in native.read_text()
+        assert sync['status']()['main_settings'] == {'model': 'new-model'}

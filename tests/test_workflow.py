@@ -893,6 +893,26 @@ def test_invalid_behavior_editor_is_atomic(workflow, monkeypatch, change):
     assert [w.snapshot(path) for path in [w.config_path(), *native_paths()]] == before
 
 
+def test_staged_guidance_keeps_main_on_implementation_and_bounds_delegation(workflow):
+    policy = copy.deepcopy(workflow.DEFAULT)
+    text = workflow._stage_text(policy)
+    assert 'Keep the main conversation on gpt-6.1-sol for routine discussion, coding and follow-ups' in text
+    assert 'default reasoning effort: medium' in text
+    assert 'Plan with a bounded gpt-6-astra sub-agent' in text
+    assert 'Implement in the main conversation with gpt-6.1-sol' in text
+    assert 'Review with a bounded gpt-6-astra sub-agent' in text
+    assert 'The main conversation owns fixes' in text
+    assert 'explicit model and concrete reasoning settings' in text
+    assert 'Do not blindly inherit the parent model' in text
+    assert 'require fresh context, use it with a concise handoff' in text
+    assert 'do not enforce model selection or switch an active conversation' in text
+    assert workflow.main_session_settings(policy) == {'model': 'gpt-6.1-sol', 'effort': 'medium'}
+    assert workflow.main_session_settings(policy, 'claude') == {}
+    assert workflow.main_session_settings(dict(policy, enabled=False)) == {}
+    policy['implementation']['effort'] = 'low'
+    assert workflow.main_session_settings(policy)['effort'] == 'low'
+
+
 def test_stage_toggle_scope_and_precedence(workflow, t_mod, monkeypatch, tmp_path):
     w = workflow
     monkeypatch.setattr(t_mod, '_workflow', lambda: vars(w))
@@ -916,8 +936,8 @@ def test_stage_toggle_scope_and_precedence(workflow, t_mod, monkeypatch, tmp_pat
     policy['stages_enabled'] = True
     doc = w.update(doc, policy, repo)
     rendered = w.render(doc).split('Repository scope: ')[1]
-    assert 'Plan with saved-model' in rendered
-    assert 'Subject to custom Markdown and selected delivery preferences' in rendered
+    assert 'Plan with a bounded saved-model sub-agent' in rendered
+    assert 'selected delivery preferences and existing authorization' in rendered
     doc = w.action(doc, 'exclude', repository=repo)
     policy['instructions'] = 'new excluded instructions'
     doc = w.update(doc, policy, repo)
@@ -929,7 +949,7 @@ def test_stage_toggle_scope_and_precedence(workflow, t_mod, monkeypatch, tmp_pat
         assert 'behavior preferences or custom Markdown' in text
         assert 'new excluded instructions' not in text
         assert 'Leave changes uncommitted' not in text
-        assert 'Plan with saved-model' not in text
+        assert 'Plan with a bounded saved-model sub-agent' not in text
     assert w.instructions(doc, repo) == 'new excluded instructions'
 
 
@@ -1193,4 +1213,5 @@ def test_workflow_print_precedence_and_reasoning(workflow, t_mod, monkeypatch, c
     assert text.index('Text instructions:') < text.index('PRs, previews & tests:')
     assert 'Wait for approval' in text and 'Before PR, with approval' in text
     assert 'Chosen for the task' in text and 'One level below planning' in text
+    assert 'Main work' in text and 'medium (automatic)' in text
     assert 'one-level-lower' not in text and 'Test runners:' in text and 'Propagation:' in text

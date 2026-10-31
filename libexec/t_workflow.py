@@ -1,6 +1,6 @@
 """Account-local staged agent preferences and managed native instructions.
 
-These instructions guide agents; t does not switch models or enforce execution.
+Saved settings select main-session launch defaults; stage delegation remains guidance.
 """
 import copy
 import fcntl
@@ -399,6 +399,19 @@ def effective(document, repository=None):
     return policy
 
 
+def main_session_settings(policy, agent='codex'):
+    """Scoped launch values; stage models belong only to Codex root sessions."""
+    if not policy or not policy['enabled']:
+        return {}
+    if policy.get('stages_enabled', True):
+        if agent != 'codex':
+            return {}
+        implementation = policy['implementation']
+        return {'model': implementation['model'],
+                'effort': 'medium' if implementation['effort'] == 'auto' else implementation['effort']}
+    return {key: value for key, value in policy.get('session_defaults', {}).get(agent, {}).items() if value}
+
+
 def scoped(document, repository=None, name=None):
     if repository:
         entry = document['repositories'].get(repository, {})
@@ -645,29 +658,36 @@ def _model_stage_text(policy):
                       'and high or higher when implementation complexity warrants it') if implement['effort'] == 'auto' else implement['effort']
     reviewing = ('one supported reasoning-effort level below the planning stage, using the '
                  'lowest supported level if planning is already at the minimum') if review['effort'] == 'one-level-lower' else review['effort']
-    return (f'For new features, updated designs and new buildouts, use this staged workflow. '
+    return (f'Keep the main conversation on {implement["model"]} for routine discussion, coding and '
+            f'follow-ups; default reasoning effort: '
+            f'{main_session_settings(policy)["effort"]}. '
+            f'For new features, updated designs and new buildouts, use these bounded stages. '
             f'Routine questions and small maintenance edits do not require all three stages.\n'
-            f'1. Plan with {plan["model"]}; reasoning effort: {planning}. Produce an actionable '
+            f'1. Plan with a bounded {plan["model"]} sub-agent; reasoning effort: {planning}. '
+            f'Choose a concrete supported effort before delegation. Produce an actionable '
             f'plan, acceptance criteria and validation before implementation.\n'
-            f'2. Implement with {implement["model"]}; reasoning effort: {implementation}. Give '
-            f'the implementation agent the plan, relevant repository instructions and acceptance '
+            f'2. Implement in the main conversation with {implement["model"]}; reasoning effort: '
+            f'{implementation}. Use the plan, relevant repository instructions and acceptance '
             f'criteria; implement and run appropriate checks.\n'
-            f'The implementation agent should inherit the parent agent\'s current speed/service tier '
+            f'3. Review with a bounded {review["model"]} sub-agent; reasoning effort: {reviewing}. '
+            f'Choose a concrete supported effort before delegation. Review the actual diff and '
+            f'validation against the plan and return findings. The main conversation owns fixes, '
+            f'rechecks, PR updates, merge conflicts and required CI through completion under '
+            f'the repository merge policy, selected delivery preferences and existing authorization.\n'
+            f'This workflow authorizes sub-agent delegation with explicit model and concrete '
+            f'reasoning settings. Do not blindly inherit the parent model. When model overrides '
+            f'require fresh context, use it with a concise handoff containing the plan, relevant '
+            f'repository instructions, acceptance criteria and implementation evidence. '
+            f'Each sub-agent should inherit the parent agent\'s current speed/service tier '
             f'(including Fast or Ultrafast), independently of its model and reasoning effort. '
-            f'Check the parent\'s current speed at delegation and at any supported subsequent-turn '
-            f'boundary; use exposed speed controls or documented inheritance when available. '
+            f'Check the parent\'s current speed at delegation and at any supported subsequent-turn boundary; '
+            f'use exposed speed controls or documented inheritance when available. '
             f'If speed selection or inheritance is unsupported or cannot be verified, disclose '
             f'that limitation; never claim a verified tier or an immediate speed switch during '
-            f'an active turn without runtime support.\n'
-            f'3. Review and finish with {review["model"]}; reasoning effort: {reviewing}. '
-            f'Review the actual diff and validation against the plan, resolve findings, and recheck '
-            f'fixes. Subject to custom Markdown and selected delivery preferences, the reviewer owns '
-            f'PR creation or updates, failing tests, merge conflicts and '
-            f'required CI through completion under the repository merge policy and existing authorization.\n'
-            f'This workflow authorizes sub-agent delegation with explicit model and reasoning settings. '
-            f'Preserve the plan, acceptance criteria and implementation evidence in each handoff. '
+            f'an active turn without runtime support. '
             f'If a model or model switching is unavailable, disclose that limitation and the actual '
-            f'model used; never claim a stage ran with a model it did not.')
+            f'model used; never claim a stage ran with a model it did not. '
+            f'These instructions do not enforce model selection or switch an active conversation.')
 
 
 def render(document):
@@ -675,8 +695,8 @@ def render(document):
     text = ('Agent workflow preferences supplied by t. These managed defaults supersede older '
             'general staged-model defaults in personal instructions. Explicit task instructions '
             'and repository-specific rules remain authoritative. These are instructions for the '
-            'agent, not runtime model switching or enforcement by t. The host instruction hierarchy '
-            'is unchanged.\n' + PRECEDENCE + '\n\n'
+            'agent; saved staged workflows set Codex main launch/resume defaults, while stage delegation '
+            'remains guidance and does not switch active conversations. The host instruction hierarchy is unchanged.\n' + PRECEDENCE + '\n\n'
             'Global default (unless a repository scope below matches):\n' + _stage_text(effective(document)))
     for repository in sorted(document['repositories']):
         policy = effective(document, repository)
