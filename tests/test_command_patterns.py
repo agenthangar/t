@@ -25,7 +25,7 @@ def test_declared_commands(t_mod):
     assert lint.check_command_patterns(t_mod.build_parser(), t_mod.COMMAND_GROUPS, CONTRACT) == []
     assert set(CONTRACT["commands"]) == ({
         " ".join(path) for path, _ in t_mod._command_routes()}
-        | {"share", "share targets", "share inbox", "share read"})
+        | {"share", "share targets", "share inbox", "share read", "workflow"})
 
 
 @pytest.mark.parametrize("command,mode,spec", list(_cases()))

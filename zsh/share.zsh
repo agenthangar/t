@@ -16,7 +16,8 @@ _t_share_cursor_new() {
 
 _t_share_cursor_new_claimed() {
   emulate -L zsh
-  local session=$1 dir=${2:A} brief=$3 logfile
+  local session=$1 dir=${2:A} brief=$3 logfile prepared launch
+  local -a workflow_args launch_args
   [[ $session =~ '^t-cursor-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' ]] || {
     print -u2 -- 't share: invalid Cursor session name'; return 1
   }
@@ -27,6 +28,11 @@ _t_share_cursor_new_claimed() {
     print -u2 -- 't share: cursor-agent is not installed'; return 1
   }
   _dev_launch_preflight "$session" "$dir" '' || return 1
+  prepared=$(python3 "$T_HOME/libexec/t_workflow_cursor.py" "$dir") || return $?
+  workflow_args=("${(@f)prepared}")
+  workflow_args=("${(@)workflow_args:#}")
+  launch_args=(cursor-agent "${workflow_args[@]}")
+  launch="${(j: :)${(@q)launch_args}}"
   _t_share_install_cursor_hook || return 1
   _dev_auto_trust "$dir"
   logfile="$HOME/.tmux-logs/${session}.log"
@@ -40,7 +46,7 @@ _t_share_cursor_new_claimed() {
   }
   # The body is read by the pane at startup, never interpolated into this
   # send-keys call or its interactive shell history.
-  tmux send-keys -t "=$session:" "unset CLAUDECODE CLAUDE_CODE_SESSION_ID CLAUDE_RESUME_ID CODEX_THREAD_ID CODEX_SESSION_ID CURSOR_SESSION_ID CURSOR_AGENT DEV_AGENT T_ISSUE_TOKEN; exec cursor-agent \"\$(cat -- ${(q)brief})\"" Enter || {
+  tmux send-keys -t "=$session:" "unset CLAUDECODE CLAUDE_CODE_SESSION_ID CLAUDE_RESUME_ID CODEX_THREAD_ID CODEX_SESSION_ID CURSOR_SESSION_ID CURSOR_AGENT DEV_AGENT T_ISSUE_TOKEN; exec $launch \"\$(cat -- ${(q)brief})\"" Enter || {
     tmux kill-session -t "=$session:"; return 1
   }
   _dev_launch_startup_check "$session" "$logfile" || return 1

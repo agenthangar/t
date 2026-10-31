@@ -41,9 +41,15 @@ headings and current values, green primary/add actions, amber warnings/removal,
 two-space outer margins, a pointer and a dark cyan focus row with light text, and a footer
 showing the next action and keys. Focus and marks must remain distinguishable
 without color. Align labels on wide terminals and stack them below 60 columns.
-Clip text before applying color and count physical rows when repainting; at
+Let label columns use available width before truncating; never cap wide-terminal
+labels at 24 characters. Clip text before applying color and count physical rows when repainting; at
 80×24, 44×20, and 32×12 interactive screens the focused row and primary action
 must remain visible.
+Separate a leading unset/default choice (empty key) from the remaining choices
+with a nonselectable blank rail row in every shared picker. It adds no option or
+explanatory heading. A checklist with an explicit empty choice treats that row as
+an exclusive reset: selecting it clears all other marks, selecting a real option
+clears it, and unchecking the last real option restores it.
 The 60-column breakpoint applies to `_RailUI` inline menus. Most printed tables
 switch to labeled, wrapped cells when their actual columns no longer fit.
 Session lists instead keep one physical row per session, as described below.
@@ -173,6 +179,14 @@ and default-host references. Changes remain staged until review and save.
 Config quitting with pending edits offers Keep editing (default), Review and
 save, and Discard changes and exit. Review screens keep their primary action
 visible while scrolling.
+Ctrl+C in `t config` and `t workflow` uses that same unsaved-change choice from
+the hub, nested settings menus and the save review. Preserve completed selections
+from nested editors before showing the prompt. Keep editing retains all staged
+changes; Review and save opens the normal review before writing; only explicit
+Discard changes and exit discards them. Interrupting the prompt never implicitly
+saves or discards changes. With no edits, Ctrl+C exits immediately with status
+130. Restore terminal state on every exit. These rules apply to the staged menu
+transaction; external editors and post-save operations retain their own behavior.
 
 Config → Hosts → Add host runs fresh Tailscale discovery on each entry and
 offers an explicit Refresh action. The shared single picker shows online Unix
@@ -192,26 +206,241 @@ the next verification runs. Ctrl-C stops with 130 and reports that configuration
 was already saved. Native SSH owns the restored terminal for each check; no
 fingerprint is automatically accepted. Onboarding uses the same reviewed offer.
 
-Config includes Workflows globally and in each repository submenu. The global
-menu chooses a named default, adds or edits shared workflows, or activates recommended
-defaults. Each workflow exposes an overall Workflow switch and an independent
-Model stages switch. Disabling stages retains their model/effort settings and keeps
-behavior preferences and Markdown active; disabling the workflow suppresses all
-three. Active stages expose Planning, Implementation and Review with separate
+Config includes Workflows globally and in each repository submenu. Start with a
+Codex, Claude, or Cursor tool picker, then show that tool's named workflows,
+default and repository assignments. Tool selection is navigation only; it never
+changes session launch tool preferences. The full staged document and immutable
+baseline span all tool menus, including interrupts, review, save and discard.
+Show Save changes once in the persistent footer, with the `s` shortcut; do not
+duplicate it as a row in config, the tool chooser or the workflow catalogue.
+The per-tool menu chooses a named default, adds or edits workflows, or activates recommended
+defaults. Hub and catalogue rows show Global default, Assigned to N repos, or
+Not assigned, with Disabled appended only for a disabled definition. Count
+non-excluded named assignments; exclude inline copies and implicit global inheritance
+from explicit repository counts. An enabled definition is not proof of assignment.
+The catalogue uses APPLIES TO instead of ambiguous STATUS on/off and ASSIGNED columns.
+Each workflow exposes an overall Workflow switch and an independent
+Use multiple models checkbox picker with a leading Use one model for all work
+choice, then Planning, Implementation and Review. Use the shared empty_choice
+multi profile: the one-model row is an exclusive reset, separated by a blank
+rail row. It clears all stages; selecting any stage clears it, and clearing the
+last stage restores it. Translate the empty-key selection into no active stages.
+Space marks choices, Enter applies the selection, q/Esc
+cancels. Unchecked Planning/Review use the main model; Agent review before PR controls
+whether the pre-PR review step runs. Unchecked Implementation uses
+per-tool session defaults, with default model/effort controls still available
+beside selected helpers. Selecting no stages enters single-model mode.
+Model catalogues come from the selected tool. The workflow row is Model;
+its reset choice says Inherit default and shows the top-level tool model.
+Reasoning effort shows an explicit level or Inherit default with the known
+top-level effort. Unset effort inherits top-level effort only when the model is
+also inherited; an explicit workflow model leaves effort to the native tool.
+Unknown native values say Tool setting; model catalogue metadata alone is not
+proof of the effective native configuration. Permissions shows the preset
+without repeating the selected tool name and opens its choices directly.
+Cursor uses model IDs with any supported parameters; do not expose a separate
+reasoning-effort flag or unsupported permission presets. Unavailable model
+catalogues retain inheritance and custom model entry without invented choices.
+Deselecting stages retains their model/effort settings and keeps
+permissions, behavior preferences and Markdown active; disabling the workflow
+suppresses every workflow setting. Selected stages expose separate
 model and effort controls, plus Instructions for ordinary Markdown in VISUAL/EDITOR.
-Behavior preferences uses a shared `_RailUI` submenu for Worktree (isolated/current),
-Local preview (UI changes/on request), Validation (relevant/full documented checks),
-and Delivery (review/PR/authorized auto-merge). Every setting offers No preference,
-which removes its key; no behavior is enabled by default. Model-stage rows are hidden
-while stages are off and their stored values are preserved.
+PRs, previews & tests uses shared `_RailUI` submenus for Pull requests, Local
+preview and Tests. PR opening (automatic/on instruction), initial
+state (ready/draft) and merging (automatic/on instruction) are independent.
+When to open PR offers Automatically when ready or Only when I ask.
+Agent review before PR is an Enabled/Disabled toggle with no Not set choice. Omission
+means Enabled without changing storage on read or an unchanged selection. Enabled requires a diff and
+validation review before PR opening; the selected review worker handles it when
+enabled, otherwise the main agent does. Disabled suppresses the pre-PR review
+pass in both the main conversation and a selected review worker without deleting
+its saved model, effort, or stage selection. The menu and effective stage displays
+identify it as Skipped before PR, rather than presenting a reviewer as active.
+Choosing Enabled restores normal review
+guidance. Delivery instructions retain fixes and the selected validation/preview,
+PR timing/state/merge requirements. This preference does not bypass repository
+review requirements or required approvals. No new command or execution mode is
+added; this remains a staged preference in the shared editor.
+Local preview has a Global section with Preview timing (Automatically
+when ready / Only when I ask), Approval before PR (Wait for my approval /
+No approval needed), and Open/run preview (Automatically / Only when I ask),
+followed by a Preview types section containing
+Frontend and CLI. Keep these submenu summaries concise instead of repeating
+every nested preference. Each submenu starts with Preview (Enabled / Disabled).
+Remove the separate Applies to control. Both submenus stay visible and show
+their enabled/disabled state; disabled settings remain saved and editable.
+Optional frontend_enabled/cli_enabled values override legacy preview_target for
+each type independently. Without flags or a legacy target, both are enabled.
+Read-only operations do not migrate storage. Each submenu's Preview timing can
+Inherit global or override it independently. Show the resolved timing and source
+in detailed rows and printed lists: Inherit global · value or Override · value.
+The Inherit global choice is separated from explicit values and removes only that
+override. Inheriting an unset parent displays Inherit global · Not set. Changing a parent
+updates inheriting children while preserving explicit overrides, even overrides
+equal to the parent. Resolved rules apply only to enabled types; with neither
+enabled, suppress preview guidance.
+Disabled frontend suppresses design, method and browser guidance;
+disabled CLI suppresses its method and command-launch guidance. Enabling alone does not request a
+preview or change the separate PR-opening preference.
+Both submenus inherit Global timing, approval before PR, and launch choices;
+each field shows Inherit global or Override with the resolved value. Clearing
+an override restores live inheritance. Existing explicit frontend_browser and
+cli_launch choices remain launch overrides. The shared launch setting opens a
+prepared browser preview for Frontend and runs the prepared command for CLI.
+It never starts a request-only preview before the user requests it.
+The nested Frontend submenu contains Implement before approval (Yes / No, with
+Not set), Design approach (Separate HTML prototype /
+In the app), Preview method (Fast reload
+/ Build), and Open in browser (Automatically / Only when I ask). The nested CLI
+submenu contains Preview method (Install locally / Run from the repo) and
+Run command (Inherit global / Automatically / Only when I ask), with the
+inherit choice separated from explicit choices.
+The optional cli_launch key accepts automatic/on_request and remains saved while
+CLI preview is disabled. Automatically launches the supported CLI preview command
+only after the selected preview is requested or due and prepared; request-only
+timing still takes precedence. Only when I ask prepares the command without
+launching it, including with the Run from the repo method. The method determines
+the executable source. Interactive commands use a supported interactive terminal;
+if unavailable, report the limitation and exact command rather than claiming a
+launch. This preference does not run tests or alter PR choices. CLI previews have
+no preview-before-implementation approval setting. Approval before PR is
+independent of frontend implementation approval and applies only to enabled
+preview types. Clearing a launch override follows Global.
+Menu, list, catalogue and save review reflect the choice and disabled state. Printed
+lists use the same indentation and hierarchy; summaries include nested choices.
+Returning from a child menu restores the parent focus and retains staged changes.
+Disabled summaries show the status without presenting retained settings as active.
+Tests contains When to run tests and Test runners; remove the separate Test runners row
+from the workflow menu. Nested runner edits share the same staged Save/discard
+transaction and preserve behavior changes made before or after them.
+Browser opening applies only once a local frontend preview is available; it does
+not start previews or change resolved timing or approval. Frontend Implement before
+approval: No requires a lightweight frontend preview and user approval before substantial
+implementation; work needed for the preview itself is allowed. With automatic
+timing, prepare that initial preview before implementation. With request-only
+timing, wait for the preview request and then approval. Yes permits implementation
+without this gate; PR preferences stay independent. Runtime instructions emit
+only resolved timing, PR approval, and launch rules per type and the
+frontend-only implementation gate.
+Optional frontend_preview_timing/cli_preview_timing override local_preview;
+missing timing keys mean inheritance. preview_pr_approval is the shared PR
+approval choice; frontend_preview_pr_approval/cli_preview_pr_approval override
+it. preview_launch is the shared launch choice; frontend_browser/cli_launch
+override it. frontend_implement_before_approval is a
+direct yes/no setting, not an override of a shared gate. Legacy
+implement_before_approval falls back to this frontend-only setting; explicit
+frontend values win. Older preview_approval/design_approval map inversely there.
+Retired cli_implement_before_approval remains valid raw JSON but has no effect on
+instructions or summaries. Read-only JSON retains raw keys, and clearing the
+frontend setting must not revive a retired alias. CLI When to preview prepares
+the working command when ready or on request, never a required pre-implementation
+prototype. Test timing
+is labeled When to run tests and chooses local during work, local before preview,
+local before PR, or On PR CI;
+required repository checks always apply. Unset rows and picker choices say
+Not set. Task, repository and text instructions supply
+the behavior. Menus show concise choices without routine explanatory preambles.
+Use inheritance wording only where values really follow a parent: preview
+defaults, main-session settings, native tool defaults, and workflow assignments.
+The repository workflow UI is a single selector: Inherit global with its named
+source, named workflows, and Disabled. Selection stages the assignment and returns;
+cancel or reselecting the current value changes nothing. An existing inline
+policy may appear as Current custom workflow so it can be retained or restored.
+Do not expose copy, edit, exclusion, or advanced JSON actions in this selector.
+The tool hub summarizes Global and the current registered repository's effective
+assignment, including linked worktrees. Scope discovery is display-only and does
+not implicitly select a repository for edits or read-only workflow commands.
+Use Automerge for automatic PR merging. Preview methods use Install locally, Run from the repo,
+Fast reload and Build. Test choices name Local or On PR CI explicitly.
+Clearing a choice removes its key. Preserve focused rows when returning.
+Legacy delivery/preview values are interpreted without rewriting read-only
+configuration; editing materializes equivalent separate choices. Working-folder
+and generic validation choices are no longer in the menu. Existing unrelated
+legacy rules are retained and displayed separately; explicit test timing supersedes
+legacy validation. Model-stage rows are hidden while stages are off.
+Legacy local_preview=before_pr resolves automatic preview and frontend implementation
+approval. Explicit frontend_implement_before_approval wins over the old shared
+gate and older preview_approval. Edits materialize independent settings without
+changing raw JSON on reads. The combined legacy choice is hidden in menus.
+Instead show the selected session tool's default model and reasoning effort.
+Optional `session_defaults` stores independent Codex and Claude model/effort maps;
+these are active for enabled workflows with Implementation unchecked, including
+single-model workflows. Repository overrides
+apply to the canonical checkout and its worktrees, including destination paths
+for new and resumed CLI sessions. Native desktop launches keep the application's
+model settings. Explicit resume arguments win. An explicit model
+without an effort uses that model's default, not an unrelated global effort.
+Empty choices fall back to account-level agent defaults. Excluded workflows and
+workflows with Implementation selected do not apply these session defaults. Never write scoped settings into
+global agent settings or change active turns; indexed Codex child agents retain
+their own settings. The UI discovers supported efforts from the selected tool.
+Saved enabled workflows with Implementation selected use the implementation model for Codex root
+launches and guarded resumes. An automatic implementation effort resolves to medium
+for the main conversation; explicit efforts remain explicit. These scoped values
+override stale resume checkpoints, including a previous planning model or effort.
+Every stage offers Agent selects by task alongside explicit effort levels.
+Reasoning pickers use shared nonselectable Automatic and Fixed effort section
+headings: Agent selects by task belongs to Automatic; explicit levels belong to
+Fixed effort. Preserve the selected effort when reopening the picker. Use the
+same labels in menus, choices, save review and printed lists. Selected Implementation with auto
+effort delegates a bounded worker at a concrete supported effort;
+explicit Implementation effort keeps the work in the main session at that level.
+Show the main session's fixed model/effort separately when a worker implements,
+and identify worker versus main-session values. Unselected stages inherit the
+main session's actual effort, not the worker's task-based setting. The generated
+instructions require reporting unavailable delegation instead of pretending the
+main session changed effort. No task classifier or active-turn switch is implied.
+Unsaved recommended defaults supply no launch overrides. Claude launch settings
+are not inferred from Codex stage models. Planning, review and automatic
+implementation use bounded delegations only when selected, with explicit model/effort and fresh context when
+required by the host. Optional model_stages is a nonempty unique subset of
+planning/implementation/review. Without it, legacy separate_stages selects helpers
+with implementation still active; omission of both preserves all three stages.
+Selecting none sets stages_enabled false and retains the saved selection. List and save review label unselected stages as
+using the main model and never present inactive model/effort choices as effective.
+Legacy one-level-lower values for Implementation and Review are accepted as auto;
+there is no relative effort option or delegation rule. Display and reopen these
+saved choices as Agent selects by task, preserving stored values on read or cancel.
+Native model/effort defaults are shown as defaults when unspecified, never inferred
+from inactive saved stages.
 Models load lazily from Codex once per menu session; current, recommended and custom
-values remain available offline, with explicit Refresh. Changing a model preserves
-its effort and never changes launch defaults. Shared-definition editing explains
-its affected repository consumers. Repository menus display their source and offer
+values remain available offline, with explicit Refresh. Changing a stage model preserves
+its effort; changing a session default model clears incompatible effort. Shared-definition edits
+affect all repository consumers. Repository menus display their source and offer
 named assignment, repository-only customization, explicit exclusion retaining the
 source, resuming that retained source, or inheritance. All menu changes remain pending until review and Save;
 unchanged selections, canceled editors and discarded changes write nothing.
-The menu and save review explain precedence: the host instruction hierarchy is
+Save review compares the staged document with its initial snapshot and shows
+only changed workflows, assignments and fields. Use readable previous/new values,
+changed text lines, and changed runner fields; omit unchanged definitions,
+precedence and unchanged instruction text. Show additions, removals, default changes,
+exclusions and initial activation explicitly. Ctrl+C uses the same pending-edits
+prompt while reviewing these differences.
+Workflow verbs and instructions support `--tool codex|claude|cursor`; omitted tool
+uses the explicit repository's configured tool or the account default. Lists
+remain read-only and identify the selected tool in text and JSON. Runner list,
+edit and start support the same selector. Retain root v3 data as Codex and store
+independent complete Claude/Cursor catalogues in the optional `tools` map.
+Existing shared Claude preferences migrate in memory to an independent catalogue
+with native model stages; no read writes settings. The next save freezes that
+copy. Native Codex and Claude instructions render their respective catalogues.
+Cursor's existing launch/resume routes prepare only its resolved workspace policy
+in an always-applied managed rule excluded through local Git metadata; refuse
+tracked, unmanaged or symlink destinations. Unconfigured Cursor launches and
+live attachments remain unchanged. Outside Git, configured launches apply model
+arguments and report the unavailable instruction publication. No Cursor dev slots
+or unsupported standalone effort/permission controls are introduced.
+Permissions is a separate submenu available with either model mode. Show only
+the selected tool's supported presets. Codex and Claude have independent native
+presets and a Not set choice that removes the
+workflow override. The policy's optional permissions object maps codex to
+ask/auto/full/read_only and claude to manual/acceptEdits/auto/bypassPermissions/plan;
+unknown tools or values are rejected. Missing permissions preserve native defaults.
+The list and save review show saved choices. Permissions apply only on CLI start
+or guarded resume/restart, after scope, exclusion and root-session checks. Any
+explicit invocation permission option suppresses the workflow permission preset
+as a whole. A save never changes native permission config or a live conversation.
+The host instruction hierarchy is
 unchanged; explicit task and repository rules remain authoritative; one selected
 repository workflow replaces the global default; exclusion suppresses the entire
 workflow. Within a workflow, custom Markdown overrides selected behavior preferences,
@@ -232,6 +461,9 @@ without prompts, model discovery or writes. `instructions edit` uses a private .
 file in VISUAL/EDITOR, preserves formatting and editor status, and rejects embedded
 managed-block markers. Repository edits create an inline policy only after an actual
 change and preserve exclusion; inspection includes the stored prose when excluded.
+Clear text instructions appears when text is present and stages its removal in the
+same save transaction. Empty editor contents clear text too. Cancellation/discard
+preserves saved instructions, and clearing leaves other workflow settings intact.
 The issue-before-code rule is seeded once as editable Markdown in schema v3.
 Reading v1/v2 migrates in memory without writes; installation or explicit save
 persists v3 and replaces the legacy public-issues block transactionally. Existing
@@ -248,7 +480,9 @@ applicable explicit main model/effort checkpoint immediately before constructing
 the launch command. Those overrides replace saved thread model/effort, with
 explicit invocation overrides taking precedence. Repository exclusions (including
 linked worktrees), indexed child agents, changed source guards, and malformed
-checkpoints suppress these overrides. Speed and permissions are retained. A live
+checkpoints suppress these model overrides. Speed is retained. Permissions are
+retained unless the applicable workflow explicitly sets a permission preset;
+explicit invocation permission arguments win. A live
 attach preserves its existing owner, schedules a bounded service retry, and
 explains that isolated sessions require guarded resume/restart. Attaching does
 not restart a process or begin a turn. Native desktop URL reopen has no verified
@@ -263,16 +497,20 @@ that service are reachable; isolated `--no-daemon` owners remain pending until a
 guarded resume boundary.
 
 Successful workflow mutations publish native instruction files atomically, then
-reconcile an account-local revision outside the save lock. `t workflow sync`
-retries pending work; later saves and SessionStart launch/resume hooks also retry.
+reconcile an account-local revision outside the save lock. Later saves and
+SessionStart launch/resume hooks retry pending updates automatically.
 `list` and `list --json` report saved propagation status without writing or
-connecting. Explicit sync also adopts saved preferences that predate propagation.
+connecting. There is no public manual retry action.
 Unused named-definition edits do not affect unrelated consumers.
 
-Workflow stage models remain guidance and never select a main-session model.
-Explicit Codex model/effort changes in `t config` separately reconcile loaded root
+The saved implementation stage selects Codex main launch/resume defaults; planning
+and review delegation remains guidance. Explicit Codex model/effort changes in
+`t config` publish account-owned native root defaults in the same transaction as
+the shell defaults and journal, then separately reconcile loaded root
 threads through the running app-server control socket. Pagination is bounded;
-stage agents are skipped. Explicit main model/effort deltas also persist through
+stage agents are skipped. The external shell editor has already saved its file;
+native/journal publication failures are reported as partial saves without claiming
+runtime adoption. Explicit main model/effort deltas also persist through
 the receiving host's authoritative launch-config writer and account-owned native
 Codex root defaults. Unsupported TOML/ownership or unavailable writers leave
 those defaults explicitly pending. No other native fields are changed. Runtime coverage is limited to the connected owning
@@ -898,8 +1136,9 @@ Bare `t workflow` in a terminal opens the shared RailUI workflow editor. Outside
 a terminal, or with `--help`, it prints group help without writes. `t workflow
 list` stays read-only and never opens the editor. The editor lists named workflows
 and repository assignments, stages all edits, and reviews before saving. Its
-work and delivery menu explains working folders, design previews, checks and
-where delivery stops. Text instructions have higher precedence than those
+PRs, previews & tests menu offers concise choices for pull requests, local
+preview and tests, with Frontend and CLI settings nested under Local preview.
+Text instructions have higher precedence than those
 choices. List output presents that precedence before choices and humanizes model
 reasoning; the named catalogue avoids repeating complete per-workflow blocks.
 The hidden `t config workflows` compatibility route opens the same editor.

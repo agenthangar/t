@@ -1723,12 +1723,12 @@ _t_restart_slot() {
         print -u2 -- 't restart: the startup failure cleared; nothing was stopped'; return 1
       }
       if [[ -n $sid ]]; then
-        launch=$(_dev_agent_resume_cmd "$agent" "$sid")
+        launch=$(T_WORKFLOW_CWD="$dir" _dev_agent_resume_cmd "$agent" "$sid")
       else
-        launch=$(_dev_agent_new_cmd "$agent")
+        launch=$(_dev_agent_new_cmd "$agent" '' '' "$dir")
       fi
     else
-      launch=$(_dev_agent_resume_cmd "$agent" "$sid")
+      launch=$(T_WORKFLOW_CWD="$dir" _dev_agent_resume_cmd "$agent" "$sid")
       if [[ $agent == codex ]]; then
         # Reconnecting through the shared daemon can disturb other windows.
         # Every recovery must be invocation-local, including exited panes.
@@ -2209,7 +2209,7 @@ _dev_resume_session_claimed() {
   tmux set-environment -t "=$session" CLAUDE_RESUME_ID "$sid" || { tmux kill-session -t "=$session:"; return 1; }
   tmux set-environment -t "=$session" DEV_AGENT "$agent" || { tmux kill-session -t "=$session:"; return 1; }
   # Run without typing the internal command into the pane (see _dev_new_session).
-  local resume_command; resume_command=$(_dev_agent_resume_cmd "$agent" "$sid")
+  local resume_command; resume_command=$(T_WORKFLOW_CWD="$dir" _dev_agent_resume_cmd "$agent" "$sid")
   if [[ $5 == history && $agent == codex ]]; then
     resume_command=$(_dev_agent_resume_cmd "$agent" "$sid" --cd "$dir")
   fi

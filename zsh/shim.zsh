@@ -900,7 +900,7 @@ _t() {
     cursor) actions=(list ls resume send) ;;
     agentcore) actions=(invoke stop) ;;
     hosts) actions=(list ls show add edit remove default run) ;;
-    workflow) actions=(list ls add use exclude inherit edit instructions sync) ;;
+    workflow) actions=(list ls add use exclude inherit edit instructions) ;;
     runners) actions=(list ls edit setup runs) ;;
     config) actions=(open show edit setup onboard local) ;;
     profile) actions=(init edit show apply) ;;
@@ -927,35 +927,37 @@ _t() {
     return
   fi
   if [[ $group == runners ]]; then
-    if [[ ${words[CURRENT-1]} == --repo ]]; then
+    if [[ ${words[CURRENT-1]} == --tool ]]; then
+      _values 'CLI tool' codex claude cursor
+    elif [[ ${words[CURRENT-1]} == --repo ]]; then
       _values 'repo' "${(@f)$(_dev_repo_selectors)}"
     elif [[ $action == runs ]] && (( CURRENT == first )); then
       _values 'run verb' start list ls status logs artifacts cancel cleanup
     elif [[ $action == runs ]]; then
-      _values 'flag' --repo --target --os --capability --include --artifact --timeout --queue-timeout --json --output -h --help
+      _values 'flag' --tool --repo --target --os --capability --include --artifact --timeout --queue-timeout --json --output -h --help
     elif [[ $action == setup ]]; then
       _values 'flag' --github-repo --create -h --help
     else
-      _values 'flag' --repo --json -h --help
+      _values 'flag' --tool --repo --json -h --help
     fi
     return
   fi
   if [[ $group == workflow || ( $group == config && $action == workflow ) ]]; then
     [[ $group == workflow ]] && (( first-- ))
     if (( CURRENT == first )); then
-      _values 'workflow resource or verb' list ls add use exclude inherit edit instructions sync
+      _values 'workflow resource or verb' list ls add use exclude inherit edit instructions
+    elif [[ ${words[CURRENT-1]} == --tool ]]; then
+      _values 'CLI tool' codex claude cursor
     elif [[ ${words[CURRENT-1]} == --repo ]]; then
       _values 'repo' "${(@f)$(_dev_repo_selectors)}"
     elif [[ ${words[first]} == instructions ]] && (( CURRENT == first + 1 )); then
       _values 'instructions verb' show edit
     elif [[ ${words[first]} == list || ${words[first]} == ls ]]; then
-      _values 'flag' --repo --all --json -h --help
+      _values 'flag' --tool --repo --all --json -h --help
     elif [[ ${words[first]} == add ]]; then
-      _values 'flag' --from -h --help
-    elif [[ ${words[first]} == sync ]]; then
-      _values 'flag' -h --help
+      _values 'flag' --tool --from -h --help
     else
-      _values 'flag' --repo -h --help
+      _values 'flag' --tool --repo -h --help
     fi
     return
   fi

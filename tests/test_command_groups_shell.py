@@ -448,7 +448,7 @@ def test_workflow_completion_offers_scopes_and_registered_repos(tmp_path):
     ''')
     assert result.returncode == 0, result.stderr
     assert result.stdout.splitlines() == [
-        "values:list,ls,add,use,exclude,inherit,edit,instructions,sync", "values:--repo,--all,--json,-h,--help", "values:--repo,-h,--help",
+        "values:list,ls,add,use,exclude,inherit,edit,instructions", "values:--tool,--repo,--all,--json,-h,--help", "values:--tool,--repo,-h,--help",
         "values:api", "values:api", "values:-h,--help", "values:api",
     ]
 
@@ -606,8 +606,8 @@ def test_canonical_workflow_completion_and_dispatch(tmp_path):
     ''')
     assert result.returncode == 0, result.stderr
     assert result.stdout.splitlines() == [
-        "actions:list,ls,add,use,exclude,inherit,edit,instructions,sync",
-        "values:--repo,--all,--json,-h,--help", "values:api",
+        "actions:list,ls,add,use,exclude,inherit,edit,instructions",
+        "values:--tool,--repo,--all,--json,-h,--help", "values:api",
         "values:show,edit", "values:start,list,ls,status,logs,artifacts,cancel,cleanup",
         "values:--github-repo,--create,-h,--help",
         "bin:<workflow><list><--repo><api><--json>",

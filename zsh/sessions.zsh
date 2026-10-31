@@ -2374,7 +2374,7 @@ _dev_new_session_claimed() {
     local clear_identity='unset CLAUDECODE CLAUDE_CODE_SESSION_ID CLAUDE_RESUME_ID CODEX_THREAD_ID CODEX_SESSION_ID CURSOR_SESSION_ID CURSOR_AGENT T_ISSUE_TOKEN; '
     prep="${clear_identity}${prep}"
   fi
-  _dev_start_session_command "$session" "${prep}$(_dev_agent_new_cmd "$agent" "$sid" "$6")" || { tmux kill-session -t "=$session:"; return 1; }
+  _dev_start_session_command "$session" "${prep}$(_dev_agent_new_cmd "$agent" "$sid" "$6" "$dir")" || { tmux kill-session -t "=$session:"; return 1; }
   _dev_launch_startup_check "$session" "$logfile" || return 1
   [[ $agent == claude ]] && _dev_history_record "$sid" "$agent" "$dir" launch
   _dev_recovery_watch "$session"
@@ -2794,13 +2794,8 @@ _t_dev() {
     cd "$dir" || return 1
     [[ -n $skip_prepare ]] || _dev_repo_prepare "$branch"
     local -a model_args=()
-    [[ -n ${DEV_MODEL[$agent]:-} ]] && model_args=(--model "${DEV_MODEL[$agent]}")
-    if [[ -n ${DEV_EFFORT[$agent]:-} ]]; then
-      case "$agent" in
-        codex) model_args+=(-c "model_reasoning_effort=${DEV_EFFORT[$agent]}") ;;
-        claude) model_args+=(--effort "${DEV_EFFORT[$agent]}") ;;
-      esac
-    fi
+    model_args=("${(@f)$(_dev_agent_default_args "$agent" "$dir")}")
+    model_args=("${(@)model_args:#}")
     case "$agent:${DEV_FAST[$agent]:-}" in
       codex:1|codex:fast) model_args+=(-c service_tier=fast --enable fast_mode) ;;
       codex:ultrafast) model_args+=(-c service_tier=ultrafast --enable fast_mode) ;;
