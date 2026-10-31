@@ -93,15 +93,17 @@ def picker():
                 default = rows.splitlines()[0] + '\n'
                 (root / 'attached').write_text('\n'.join(rows.splitlines()[:2]) + '\n')
                 (root / 'pending').write_text('\n'.join(rows.splitlines()[::2]) + '\n')
-            if profile == 'resume-rich':
+            if profile in ('resume-rich', 'resume-merged'):
                 rows = ('web\t10\tsid1\t/wt\tdate\ttask\t-\t-\tmini\tcodex\t2026-10-22T10:00:00Z\tNewest web\n'
                         'api\t2\tsid2\t/wt\tdate\ttask\t-\t-\t-\tclaude\t2026-10-21T10:00:00Z\tOlder api\n')
+                if profile == 'resume-merged':
+                    rows = rows.replace('\tNewest web', '\torg/web\tMERGED\t[MERGED] Newest web').replace('\tOlder api', '\torg/api\tOPEN\t[OPEN] Older api')
                 default = rows
                 env['T_HOME'] = str(ROOT)
             (root / 'all').write_text(rows)
             (root / 'default').write_text(default)
             mode_env = 'T_PICKER_SESSION_FILTERS=' + shlex.quote(mode) + ' '
-            if profile == 'resume-rich':
+            if profile in ('resume-rich', 'resume-merged'):
                 mode_env += 'T_PICKER_SOURCE_ROWS="$(cat "$HOME/all")" '
             if mode == 'kill':
                 mode_env += 'T_PICKER_WITH_ATTACHED="$(cat "$HOME/attached")" T_PICKER_WITH_PENDING="$(cat "$HOME/pending")" '
@@ -550,3 +552,29 @@ def test_resume_sort_controls_keep_focused_row_and_change_order(picker, width, h
     keys('Up', 'Up')
     wait('Newest web', focused='Newest web')
     assert finish()[0].split('\t')[2] == 'sid1'
+
+
+@pytest.mark.parametrize('width,height', [(80, 24), (44, 20), (32, 12)])
+@pytest.mark.parametrize('monochrome', [False, True])
+def test_resume_merged_key_preserves_query_and_removes_hidden_marks(picker, width, height, monochrome):
+    start, wait, keys, finish = picker
+    start(profile='resume-merged', mode='resume', width=width, height=height,
+          auth_warning=True, monochrome=monochrome)
+    screen = wait('2/2 (0)', focused='[MERGED]')
+    assert 'Alt-M' in screen or 'M-M' in screen
+    keys('Space')
+    wait('2/2 (1)')
+    keys('-l', 'e')  # Both titles match; the query must survive each reload.
+    keys('M-m')
+    screen = wait('1/1 (0)', focused='[OPEN]')
+    assert '[MERGED]' not in screen
+    assert 'resume > e' in screen
+    keys('C-a')
+    wait('2/2 (0)')
+    keys('C-l')
+    wait('1/1 (0)')
+    keys('M-m')
+    wait('2/2 (0)')
+    keys('M-m')
+    wait('1/1 (0)', focused='[OPEN]')
+    assert finish()[0].split('\t')[2] == 'sid2'

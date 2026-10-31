@@ -18,6 +18,8 @@ OPEN_FACETS = {'agent': ('Ctrl-G', 'agent'), 'progress': ('Ctrl-P', 'progress'),
                'session': ('Ctrl-V', 'session'), 'context': ('Ctrl-E', 'context'),
                'task': ('Ctrl-W', 'task')}
 
+PR_STATES = {'MERGED', 'OPEN', 'CLOSED', 'NONE', 'UNKNOWN', 'MIXED'}
+
 
 def metadata(source, profile):
     result = {}
@@ -30,7 +32,8 @@ def metadata(source, profile):
             host = (origin if origin not in ('', '-') else 'local') if location == '-' else location
             result[tuple(fields[:3])] = dict(agent=agent or 'unknown',
                 host='local' if host == 'here' else host, repo=repo, session=slot,
-                turn=fields[10] if len(fields) > 11 else '-')
+                turn=fields[10] if len(fields) > 11 else '-',
+                pr=fields[12] if len(fields) > 12 and fields[12] in PR_STATES else 'UNKNOWN')
         else:
             if len(fields) < 7:
                 continue
@@ -98,7 +101,8 @@ def resume_turns(source, home, codex_home, owners=''):
             turn = row[11]
         when = format_last_turn(turn)
         row[4] = 'Last: ' + when if row[6] == '-' else row[4] + ' · Last: ' + when
-        result.append('\t'.join(row[:10] + [turn] + ([row[12]] if len(row) > 12 else ['-'])))
+        pr = row[13] if len(row) > 13 and row[13] in PR_STATES else 'UNKNOWN'
+        result.append('\t'.join(row[:10] + [turn] + ([row[12]] if len(row) > 12 else ['-']) + [pr]))
     records = metadata('\n'.join(row + '\t' for row in result), 'resume')
     return sort_resume(result, records)
 
@@ -129,7 +133,7 @@ def state_label(profile, mask):
         'pending included' if mask & 2 else 'clean only')
 
 
-def header(profile, mask, filters, hidden, columns, width, sort='turn', enabled=True, color=False):
+def header(profile, mask, filters, hidden, columns, width, sort='turn', enabled=True, color=False, hide_merged=False):
     compact = width <= 40
     key = lambda text: text.replace('Ctrl-', '^').replace('Alt-', 'M-') if compact else text
     controls = ['Enter/Esc' if compact and profile == 'resume' else f'Enter {profile}/Esc', 'Space/Tab ✓']
@@ -141,7 +145,11 @@ def header(profile, mask, filters, hidden, columns, width, sort='turn', enabled=
     if profile == 'resume':
         lines += pack([key(f'{shortcut} {"turn" if compact and label == "last turn" else label}')
                        for shortcut, label in RESUME_SORTS.values()], width)
-        lines.append(clip_columns('Sort: ' + RESUME_SORTS[sort][1], width))
+        merged_control = key('Alt-M ') + (
+            ('+' if enabled and hide_merged else '-') + 'merged' if compact
+            else 'show merged' if enabled and hide_merged else 'hide merged')
+        sort_control = 'Sort: ' + RESUME_SORTS[sort][1]
+        lines += [clip_columns(sort_control + ' ' + merged_control, width)] if compact else pack([sort_control, merged_control], width)
     active = [f'{name}={value}' for name, value in filters.items() if value is not None]
     summary = 'Filters ' + ('ON' if enabled else 'OFF')
     if enabled:
@@ -174,7 +182,7 @@ def pick_menu(directory, choices, label, legend):
     return int(result.stdout.split('\t', 1)[0])
 
 
-def settings(directory, profile, records, mask, filters):
+def settings(directory, profile, records, mask, filters, hide_merged=False):
     """Stage nested choices; only Apply commits, Esc keeps the original settings."""
     filters = dict(filters)
     names = list(filters)
@@ -187,9 +195,10 @@ def settings(directory, profile, records, mask, filters):
         if chosen is None:
             return None
         if chosen == 0:
-            return mask, filters
+            return mask, filters, hide_merged
         if chosen == len(choices) - 1:
             mask, filters = 0, dict.fromkeys(names)
+            hide_merged = False
         elif chosen == 1:
             masks = [0, 2, 1] if profile == 'open' else list(range(4 if profile == 'kill' else 2))
             value = pick_menu(directory, [state_label(profile, value) for value in masks],
@@ -238,17 +247,23 @@ def render(directory, profile, action, width, columns='', facet=None):
     sort = sort_file.read_text().strip() if sort_file.exists() else 'turn'
     enabled_file = directory / 'filters-enabled'
     enabled = enabled_file.read_text() == '1' if enabled_file.exists() else True
+    merged_file = directory / 'hide-merged'
+    hide_merged = merged_file.exists() and merged_file.read_text() == '1'
     maximum = 3 if profile == 'kill' else 1
     if action in ('off', 'on'):
         enabled = action == 'on'
     elif action == 'settings':
-        chosen = settings(directory, profile, records, mask, filters)
+        chosen = settings(directory, profile, records, mask, filters, hide_merged)
         if chosen is not None:
-            mask, filters = chosen
+            mask, filters, hide_merged = chosen
             enabled = True
     elif action in ('all', 'default'):
         mask = maximum if action == 'all' else 0
         filters = dict.fromkeys(names)
+        hide_merged = False
+    elif profile == 'resume' and action == 'merged':
+        hide_merged = not (enabled and hide_merged)
+        enabled = True
     elif profile == 'resume' and action.startswith('sort-') and action[5:] in RESUME_SORTS:
         sort = action[5:]
     elif action == 'first' and profile == 'open':
@@ -277,10 +292,13 @@ def render(directory, profile, action, width, columns='', facet=None):
         rows = (directory / f'rows-{mask}').read_text().splitlines()
     selected = choose(rows, records, filters) if enabled else rows
     if profile == 'resume':
+        if enabled and hide_merged:
+            selected = [row for row in selected if records.get(tuple(row.split('\t')[:3]), {}).get('pr') != 'MERGED']
         if action == 'default':
             sort = 'turn'
         selected = sort_resume(selected, records, sort)
         sort_file.write_text(sort)
+        merged_file.write_text('1' if hide_merged else '0')
     total = len((directory / 'all').read_text().splitlines())
     (directory / 'current').write_text(''.join(row + '\n' for row in selected))
     warning = ''
@@ -292,7 +310,7 @@ def render(directory, profile, action, width, columns='', facet=None):
             summary = 'GitHub auth failed: ' + ', '.join(hosts)
             warning = clip_columns(summary, width) + '\n'
     controls = header(profile, mask, filters, total - len(selected), columns, width,
-                      sort, enabled, os.environ.get('T_PICKER_COLOR') == '1')
+                      sort, enabled, os.environ.get('T_PICKER_COLOR') == '1', hide_merged)
     (directory / 'current-header').write_text(warning + controls)
     enabled_file.write_text('1' if enabled else '0')
     mask_file.write_text(str(mask))

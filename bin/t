@@ -12025,7 +12025,8 @@ EXPLICIT PUSH AND PULL
         epilog="""EXAMPLES
   %(prog)s                   Browse the current repository
   %(prog)s api 2             Choose a conversation associated with api slot 2
-  %(prog)s --all --days all   Browse all saved history""",
+  %(prog)s --all --days all   Browse all saved history
+  In the picker, Alt-M hides/shows merged PR sessions.""",
         help_details=f"""DETAILS
 
   Choose saved work associated with a repository or slot. A live selection
@@ -12062,6 +12063,9 @@ PICKER CONTROLS
   Choose values, then Apply filters; Esc discards staged changes. Reset filters
   to defaults stages saved-only and clears columns. Ctrl-A turns filtering off;
   Ctrl-L restores saved choices. Filtering keeps your search.
+
+  Leading PR badges show cached state. Alt-M hides/shows merged PR sessions;
+  unknown, no-PR and mixed-state histories stay visible. Merged is not completion.
 
   Alt-T sorts by last turn (newest first, the default), Alt-R by repository, Alt-G
   by agent, Alt-O by host/origin, and Alt-V by session.

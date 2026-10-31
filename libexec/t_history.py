@@ -1192,6 +1192,16 @@ class HistoryCommand:
             found = self.store.db.execute('select checked,record from prs where key=?', (key,)).fetchone()
             if found:
                 cached[(repo, number)] = json.loads(found[1])
+            # Resume's ordinary transcript rows use this shared legacy cache.
+            # Reuse newer cached evidence for swept/remote history as well.
+            legacy = Path(os.environ.get('XDG_CACHE_HOME', str(Path.home() / '.cache'))) / 'claude-sessions/pr' / (repo.replace('/', '#') + '#' + str(number))
+            try:
+                if not found or legacy.stat().st_mtime > found[0]:
+                    state = legacy.read_text().strip()
+                    if state in ('MERGED', 'OPEN', 'CLOSED'):
+                        cached[(repo, number)] = dict(state=state)
+            except OSError:
+                pass
             if refresh:
                 pending.setdefault(repo, []).append(number)
         for repo, numbers in pending.items():
@@ -1649,7 +1659,9 @@ class HistoryCommand:
             if not self.worktree_enabled(local_alias):
                 continue
             alias = local_alias or identity
-            for row in self.records(alias):
+            records = self.records(alias)
+            self.pr_states(records)  # Cache only; picker reloads never fetch PR state.
+            for row in records:
                 key = (identity, row['agent'], row['sid'])
                 if key in seen or not row.get('title') or not row.get('sources') or not row.get('associations'):
                     continue
@@ -1661,8 +1673,13 @@ class HistoryCommand:
                 source = max(row['sources'], key=lambda s: (s.get('updated', 0), s.get('size', 0)))
                 updated = int(row.get('updated', 0))
                 when = datetime.datetime.fromtimestamp(updated).strftime('%b %d %H:%M')
+                states = {pr.get('state') or 'UNKNOWN' for pr in row['prs']}
+                pr_state = next(iter(states)) if len(states) == 1 else 'MIXED' if states else 'NONE'
+                title = clean(row['title'])
+                if row['prs']:
+                    title += ' · ' + pr_summary(row['prs'])
                 yield '\t'.join(map(str, [updated, alias, association.get('slot') or '-', row['sid'],
-                    association['workspace'], when, clean(row['title']), source.get('host') or '-', row['agent'], row.get('last_turn', '-'), identity]))
+                    association['workspace'], when, title, source.get('host') or '-', row['agent'], row.get('last_turn', '-'), identity, pr_state]))
 
     def execute(self, args):
         alias, slot = self.scope(args.target)
