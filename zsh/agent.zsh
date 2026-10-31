@@ -91,19 +91,26 @@ _dev_agent_check() {
   print -u2 -r -- "t: '$1' is not installed here — run: t agent install $1"
   return 1
 }
-# _dev_agent_default_args <agent> <cwd> — scoped fresh-session model/effort.
+# _dev_agent_default_args <agent> <cwd> — scoped fresh-session defaults.
 _dev_agent_default_args() {
   local agent=$1 target=${2:-$PWD} model=${DEV_MODEL[$1]:-} effort=${DEV_EFFORT[$1]:-}
   local helper="${T_HOME:-${${(%):-%x}:A:h:h}}/libexec/t_workflow_sync.py" index
-  local -a overrides
+  local -a overrides permissions
   if [[ -f $helper ]]; then
     overrides=("${(@f)$(python3 "$helper" --launch-settings "$agent" "$target" 2>/dev/null)}")
     overrides=("${(@)overrides:#}")
     for (( index=1; index<=${#overrides}; index+=2 )); do
       case ${overrides[index]} in
         --model) model=${overrides[index+1]}; effort= ;;
-        -c) effort=${overrides[index+1]#model_reasoning_effort=}; effort=${effort//\"/} ;;
+        -c)
+          if [[ ${overrides[index+1]} == model_reasoning_effort=* ]]; then
+            effort=${overrides[index+1]#model_reasoning_effort=}; effort=${effort//\"/}
+          else
+            permissions+=("${overrides[index]}" "${overrides[index+1]}")
+          fi ;;
         --effort) effort=${overrides[index+1]} ;;
+        --sandbox|--ask-for-approval|--permission-mode)
+          permissions+=("${overrides[index]}" "${overrides[index+1]}") ;;
       esac
     done
   fi
@@ -114,6 +121,7 @@ _dev_agent_default_args() {
       claude) print -rl -- --effort "$effort" ;;
     esac
   fi
+  (( ${#permissions} )) && print -rl -- "${permissions[@]}"
   return 0
 }
 
@@ -159,19 +167,33 @@ _dev_agent_resume_cmd() {
   [[ $agent == codex ]] || agent=claude
   local executable; executable=$(_dev_agent_executable "$agent") || executable=$agent
   local helper="${T_HOME:-${${(%):-%x}:A:h:h}}/libexec/t_workflow_sync.py"
-  local target=${T_WORKFLOW_CWD:-$PWD} index explicit_model=0 explicit_effort=0
+  local target=${T_WORKFLOW_CWD:-$PWD} index config_key separator=0 explicit_model=0 explicit_effort=0 explicit_permissions=0
   local -a args overrides filtered
   for (( index=1; index<=$#; index++ )); do
+    if [[ ${argv[index]} == -- ]]; then separator=1; break; fi
     case ${argv[index]} in
       --cd) target=${argv[index+1]:-$PWD} ;;
       --cd=*) target=${argv[index]#--cd=} ;;
       --model|-m|-m?*|--model=*) explicit_model=1 ;;
       --effort|--effort=*) explicit_effort=1 ;;
+      --sandbox|--sandbox=*|-s|-s?*|--ask-for-approval|--ask-for-approval=*|-a|-a?*|\
+      --full-auto|--approve-for-me|--dangerously-bypass-approvals-and-sandbox|--yolo|--not-so-yolo|\
+      --permission-mode|--permission-mode=*|--dangerously-skip-permissions|\
+      --allow-dangerously-skip-permissions|--settings|--settings=*)
+        explicit_permissions=1 ;;
+      --profile|--profile=*|-p|-p?*) [[ $agent == codex ]] && explicit_permissions=1 ;;
       -c|--config)
         [[ ${argv[index+1]} == model=* ]] && explicit_model=1
-        [[ ${argv[index+1]} == model_reasoning_effort=* ]] && explicit_effort=1 ;;
+        [[ ${argv[index+1]} == model_reasoning_effort=* ]] && explicit_effort=1
+        config_key=${argv[index+1]%%=*}; config_key=${config_key//[[:space:]]/}
+        [[ $config_key == (approval_policy|sandbox_mode|default_permissions|approvals_reviewer|permissions.*|sandbox_workspace_write.*|network*) ]] && explicit_permissions=1
+        (( index++ )) ;;
       --config=model=*|-cmodel=*) explicit_model=1 ;;
       --config=model_reasoning_effort=*|-cmodel_reasoning_effort=*) explicit_effort=1 ;;
+      --config=*|-c?*)
+        config_key=${argv[index]#--config=}; [[ $config_key == ${argv[index]} ]] && config_key=${argv[index]#-c}
+        config_key=${config_key%%=*}; config_key=${config_key//[[:space:]]/}
+        [[ $config_key == (approval_policy|sandbox_mode|default_permissions|approvals_reviewer|permissions.*|sandbox_workspace_write.*|network*) ]] && explicit_permissions=1 ;;
     esac
   done
   if [[ -f $helper ]]; then
@@ -179,13 +201,24 @@ _dev_agent_resume_cmd() {
     overrides=("${(@)overrides:#}")
     for (( index=1; index<=${#overrides}; index+=2 )); do
       [[ ${overrides[index]} == --model && $explicit_model == 1 ]] && continue
-      [[ ${overrides[index]} == (-c|--effort) && $explicit_effort == 1 ]] && continue
+      [[ ${overrides[index]} == --effort && $explicit_effort == 1 ]] && continue
+      [[ ${overrides[index]} == -c && ${overrides[index+1]} == model_reasoning_effort=* && $explicit_effort == 1 ]] && continue
+      if (( explicit_permissions )); then
+        case ${overrides[index]} in
+          --sandbox|--ask-for-approval|--permission-mode) continue ;;
+          -c) [[ ${overrides[index+1]} == (approval_policy|sandbox_mode|default_permissions|approvals_reviewer)=* ]] && continue ;;
+        esac
+      fi
       filtered+=("${overrides[index]}" "${overrides[index+1]}")
     done
   fi
   case "$agent" in
     codex)
-      args=("$executable" resume "$sid" "${filtered[@]}" "$@" --no-daemon) ;;
+      if (( separator )); then
+        args=("$executable" resume "$sid" "${filtered[@]}" --no-daemon "$@")
+      else
+        args=("$executable" resume "$sid" "${filtered[@]}" "$@" --no-daemon)
+      fi ;;
 
     *) args=("$executable" -r "$sid" "${filtered[@]}" "$@") ;;
   esac

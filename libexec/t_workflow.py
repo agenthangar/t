@@ -19,6 +19,20 @@ END = '<!-- t agent-workflow: end -->'
 ISSUE_BEGIN = '<!-- t public-issues: begin -->'
 ISSUE_END = '<!-- t public-issues: end -->'
 EFFORTS = ('minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra')
+SEPARATE_STAGES = ('planning', 'review')
+PERMISSIONS = {
+    'codex': {
+        'ask': {'label': 'Ask for approval', 'args': ['--sandbox', 'workspace-write', '--ask-for-approval', 'on-request', '-c', 'approvals_reviewer="user"']},
+        'auto': {'label': 'Approve for me', 'args': ['--sandbox', 'workspace-write', '--ask-for-approval', 'on-request', '-c', 'approvals_reviewer="auto_review"']},
+        'full': {'label': 'Full access', 'args': ['--sandbox', 'danger-full-access', '--ask-for-approval', 'never']},
+        'read_only': {'label': 'Read only', 'args': ['--sandbox', 'read-only', '--ask-for-approval', 'never']},
+    },
+    'claude': {
+        mode: {'label': label, 'args': ['--permission-mode', mode]}
+        for mode, label in (('manual', 'Ask for approval'), ('acceptEdits', 'Approve edits'),
+                            ('auto', 'Auto'), ('bypassPermissions', 'Full access'), ('plan', 'Plan only'))
+    },
+}
 # One catalogue drives validation, menu choices, summaries and native instructions.
 # Absent keys mean no preference, not a directive to do the opposite.
 BEHAVIORS = {
@@ -52,13 +66,17 @@ BEHAVIORS = {
         'draft': ('Draft', 'Open pull requests as drafts and wait for user approval before marking them ready for review.'),
     }},
     'pr_merge': {'label': 'Merge pull request', 'choices': {
-        'automatic': ('After checks pass', 'Once a pull request is ready for review, enable automatic merging without another confirmation under repository policy and monitor required checks through completion. Do not promote drafts automatically. Never bypass required checks or branch protections.'),
+        'automatic': ('Automerge', 'Once a pull request is ready for review, enable automatic merging without another confirmation under repository policy and monitor required checks through completion. Do not promote drafts automatically. Never bypass required checks or branch protections.'),
         'on_request': ('When I ask', 'Wait for an explicit user request or approval before merging or enabling automatic merging, subject to repository and task instructions.'),
     }},
     'local_preview': {'label': 'Local preview', 'choices': {
-        'when_ready': ('When ready', 'When the work is ready to try, prepare its supported local preview: a development install or command for a CLI, or a local HTML or application browser preview for a frontend. Explain how the user can access it and report unavailable preview tools accurately.'),
-        'before_pr': ('Before PR, with approval', 'Prepare the supported local preview: a development install or command for a CLI, or a local HTML or application browser preview for a frontend. Explain how to try it, then wait for explicit user feedback and approval before pushing or opening a pull request. Honor repository and task instructions.'),
-        'on_request': ('Only when requested', 'Prepare a local preview only when the user requests it, unless repository or task instructions require one.'),
+        'when_ready': ('Automatically', 'When the work is ready to try, prepare its supported local preview: a development install or command for a CLI, or a local HTML or application browser preview for a frontend. Explain how the user can access it and report unavailable preview tools accurately.'),
+        'before_pr': ('Preview, then ask to open PR', 'Prepare the supported local preview: a development install or command for a CLI, or a local HTML or application browser preview for a frontend. Explain how to try it, then wait for explicit user feedback and approval before pushing or opening a pull request. Honor repository and task instructions.'),
+        'on_request': ('When I ask', 'Prepare a local preview only when the user requests it, unless repository or task instructions require one.'),
+    }},
+    'preview_approval': {'label': 'Preview approval before PR', 'choices': {
+        'required': ('Required', 'Before pushing or opening a pull request, wait until the user has reviewed the local preview and explicitly approved proceeding. Respect the selected preview timing, explicit task instructions and repository rules.'),
+        'not_required': ('Not required', 'Do not add a preview approval gate solely from this preference. This does not authorize pushing or opening a pull request or override selected PR preferences, explicit task instructions or repository rules.'),
     }},
     'cli_preview': {'label': 'Command-line preview', 'choices': {
         'install': ('Install locally', 'For command-line tool previews, use the supported development installation or relink mechanism and clearly identify the development version. Honor repository installation and isolation rules.'),
@@ -69,8 +87,8 @@ BEHAVIORS = {
         'in_app': ('In the app', 'For frontend design, implement and preview the design within the actual application using its existing components and development setup.'),
     }},
     'design_approval': {'label': 'Design approval', 'choices': {
-        'required': ('Wait for approval', 'For design and UI work, prepare and show a design preview before substantial implementation, then wait for user feedback and approval before continuing. Report unavailable preview tools accurately.'),
-        'continue': ('Continue building', 'After preparing the design, continue implementation without an additional design approval step unless repository or task instructions require one.'),
+        'required': ('Required', 'For design and UI work, prepare and show a design preview before substantial implementation, then wait for user feedback and approval before continuing. Report unavailable preview tools accurately.'),
+        'continue': ('Not required', 'After preparing the design, continue implementation without an additional design approval step unless repository or task instructions require one.'),
     }},
     'frontend_preview': {'label': 'Frontend preview', 'choices': {
         'fast_reload': ('Live reload', 'For frontend previews, use the supported local development server and fast reload when available so design changes can be inspected promptly. Report unsupported preview capabilities accurately.'),
@@ -99,11 +117,15 @@ def effective_behaviors(behaviors):
         'auto_merge': {'pr_open': 'automatic', 'pr_state': 'ready', 'pr_merge': 'automatic'},
         'review': {'pr_open': 'on_request', 'pr_merge': 'on_request'},
         'ask_before_pr': {'pr_open': 'on_request', 'pr_merge': 'on_request'},
-        'local_review': {'pr_open': 'automatic', 'pr_merge': 'on_request', 'local_preview': 'before_pr'},
+        'local_review': {'pr_open': 'automatic', 'pr_merge': 'on_request',
+                         'local_preview': 'when_ready', 'preview_approval': 'required'},
     }
     result.update(preview.get(behaviors.get('preview'), {}))
     result.update(delivery.get(behaviors.get('delivery'), {}))
     result.update({key: value for key, value in behaviors.items() if key not in ('preview', 'delivery')})
+    if result.get('local_preview') == 'before_pr':
+        result['local_preview'] = 'when_ready'
+        result.setdefault('preview_approval', 'required')
     if behaviors.get('delivery') == 'review' and result.get('pr_open') != 'automatic':
         result['delivery'] = 'review'  # Its leave-uncommitted rule is more specific than waiting for a PR.
     if 'test_timing' in result:
@@ -230,7 +252,7 @@ def defaults():
 
 
 def validate_policy(value):
-    if not isinstance(value, dict) or set(value) - {'instructions', 'stages_enabled', 'behaviors', 'runners', 'session_defaults'} != set(DEFAULT):
+    if not isinstance(value, dict) or set(value) - {'instructions', 'stages_enabled', 'separate_stages', 'behaviors', 'runners', 'session_defaults', 'permissions'} != set(DEFAULT):
         raise ValueError('workflow requires enabled, planning, implementation and review')
     instructions = value.get('instructions', '')
     if not isinstance(instructions, str) or any(marker in instructions for marker in (BEGIN, END, ISSUE_BEGIN, ISSUE_END)):
@@ -239,8 +261,17 @@ def validate_policy(value):
         raise ValueError('workflow enabled must be true or false')
     if 'runners' in value:
         validate_runners(value['runners'])
+    permissions = value.get('permissions', {})
+    if (not isinstance(permissions, dict) or set(permissions) - set(PERMISSIONS) or
+            any(not isinstance(preset, str) or preset not in PERMISSIONS[agent]
+                for agent, preset in permissions.items())):
+        raise ValueError('workflow permissions must contain supported Codex or Claude presets')
     if 'stages_enabled' in value and type(value['stages_enabled']) is not bool:
         raise ValueError('workflow stages_enabled must be true or false')
+    if 'separate_stages' in value:
+        _validate_stage_selection(value['separate_stages'])
+        if not value['separate_stages']:
+            raise ValueError('workflow separate_stages must contain planning and/or review; use stages_enabled false for none')
     session_defaults = value.get('session_defaults', {})
     if not isinstance(session_defaults, dict) or set(session_defaults) - {'codex', 'claude'}:
         raise ValueError('session_defaults supports codex and claude only')
@@ -412,6 +443,75 @@ def main_session_settings(policy, agent='codex'):
     return {key: value for key, value in policy.get('session_defaults', {}).get(agent, {}).items() if value}
 
 
+def permission_args(policy, agent):
+    """Scoped native launch flags, independent of model-stage preferences."""
+    if not policy or not policy['enabled']:
+        return []
+    validate_policy(policy)
+    if not isinstance(agent, str) or agent not in PERMISSIONS:
+        return []
+    preset = policy.get('permissions', {}).get(agent)
+    return list(PERMISSIONS[agent][preset]['args']) if preset else []
+
+
+def update_permission(policy, agent, value):
+    """Change one tool's preset without materializing unset defaults."""
+    if not isinstance(agent, str) or agent not in PERMISSIONS or (value is not None and
+            (not isinstance(value, str) or value and value not in PERMISSIONS[agent])):
+        raise ValueError('unknown workflow permission preset')
+    after = copy.deepcopy(policy)
+    permissions = after.get('permissions', {})
+    if value:
+        permissions[agent] = value
+        after['permissions'] = permissions
+    elif agent in permissions:
+        permissions.pop(agent)
+        if not permissions:
+            after.pop('permissions', None)
+    validate_policy(after)
+    return after
+
+
+def _validate_stage_selection(selected):
+    if (not isinstance(selected, list) or
+            any(not isinstance(stage, str) or stage not in SEPARATE_STAGES for stage in selected) or
+            len(set(selected)) != len(selected)):
+        raise ValueError('workflow separate_stages must be a list of unique planning and/or review stages')
+
+
+def separate_stages(policy):
+    """Read the active helpers while retaining choices for a disabled workflow."""
+    if not policy.get('stages_enabled', True):
+        return []
+    selected = policy.get('separate_stages', SEPARATE_STAGES)
+    return [stage for stage in SEPARATE_STAGES if stage in selected]
+
+
+def select_stages(policy, selected):
+    """Apply a picker result without materializing unchanged legacy defaults."""
+    _validate_stage_selection(selected)
+    after = copy.deepcopy(policy)
+    if not selected:
+        after['stages_enabled'] = False
+    else:
+        chosen = [stage for stage in SEPARATE_STAGES if stage in selected]
+        retained = [stage for stage in SEPARATE_STAGES
+                    if stage in policy.get('separate_stages', SEPARATE_STAGES)]
+        if chosen != retained:
+            after['separate_stages'] = chosen
+        if not policy.get('stages_enabled', True):
+            after['stages_enabled'] = True
+    validate_policy(after)
+    return after
+
+
+def stage_settings(policy, stage):
+    """Return the model used for a stage without exposing inactive overrides."""
+    if stage not in ('planning', 'implementation', 'review'):
+        raise ValueError('unknown workflow stage')
+    return copy.deepcopy(policy[stage if stage in separate_stages(policy) else 'implementation'])
+
+
 def scoped(document, repository=None, name=None):
     if repository:
         entry = document['repositories'].get(repository, {})
@@ -484,8 +584,10 @@ def catalogue(document):
 def policy_summary(policy):
     return {'stages_enabled': policy.get('stages_enabled', True),
             'stages_active': policy['enabled'] and policy.get('stages_enabled', True),
+            'separate_stages': separate_stages(policy),
             'behaviors': copy.deepcopy(policy.get('behaviors', {})),
             'session_defaults': copy.deepcopy(policy.get('session_defaults', {})),
+            'permissions': copy.deepcopy(policy.get('permissions', {})),
             'custom_instructions': bool(policy.get('instructions')),
             'precedence': PRECEDENCE}
 
@@ -495,10 +597,15 @@ def summary_lines(policy):
     behaviors = effective_behaviors(summary['behaviors'])
     state = 'enabled' if summary['stages_active'] else 'disabled' if not summary['stages_enabled'] else 'inactive (workflow disabled)'
     lines = ['Model stages: ' + state]
+    if summary['stages_enabled']:
+        lines.append('Separate models: ' + ', '.join(stage.title() for stage in summary['separate_stages']))
     if not summary['stages_enabled']:
         for agent, settings in summary['session_defaults'].items():
             lines.append(agent.title() + ' session default: ' + (settings.get('model') or 'agent default') +
                          '; reasoning: ' + (settings.get('effort') or 'default for this model'))
+    for agent, presets in PERMISSIONS.items():
+        preset = summary['permissions'].get(agent)
+        lines.append(agent.title() + ' permissions: ' + (presets[preset]['label'] if preset else 'Not set'))
     if behaviors:
         for key, spec in BEHAVIORS.items():
             if key in behaviors:
@@ -651,27 +758,43 @@ def _stage_text(policy):
 
 
 def _model_stage_text(policy):
-    plan, implement, review = (policy[s] for s in ('planning', 'implementation', 'review'))
+    selected = separate_stages(policy)
+    plan, implement, review = (stage_settings(policy, s) for s in ('planning', 'implementation', 'review'))
     planning = ('medium for straightforward additions, high for substantial features, '
                 'and xhigh or higher for complex architecture or new applications') if plan['effort'] == 'auto' else plan['effort']
     implementation = ('low for straightforward execution, medium for ordinary features, '
                       'and high or higher when implementation complexity warrants it') if implement['effort'] == 'auto' else implement['effort']
     reviewing = ('one supported reasoning-effort level below the planning stage, using the '
                  'lowest supported level if planning is already at the minimum') if review['effort'] == 'one-level-lower' else review['effort']
+    if 'planning' in selected:
+        plan_text = (f'Plan with a bounded {plan["model"]} sub-agent; reasoning effort: {planning}. '
+                     'Choose a concrete supported effort before delegation. ')
+    else:
+        plan_text = (f'Plan in the main conversation with {implement["model"]}; reasoning effort: '
+                     f'{implementation}. ')
+        if review['effort'] == 'one-level-lower':
+            reviewing = ('one supported reasoning-effort level below the actual main-conversation '
+                         'planning effort, using the lowest supported level if planning is already '
+                         'at the minimum; if the actual planning effort is unavailable, use the '
+                         f'concrete main-session launch default {main_session_settings(policy)["effort"]} as the baseline')
+    if 'review' in selected:
+        review_text = (f'Review with a bounded {review["model"]} sub-agent; reasoning effort: {reviewing}. '
+                       'Choose a concrete supported effort before delegation. ')
+    else:
+        review_text = (f'Review in the main conversation with {implement["model"]}; reasoning effort: '
+                       f'{implementation}. ')
     return (f'Keep the main conversation on {implement["model"]} for routine discussion, coding and '
             f'follow-ups; default reasoning effort: '
             f'{main_session_settings(policy)["effort"]}. '
             f'For new features, updated designs and new buildouts, use these bounded stages. '
             f'Routine questions and small maintenance edits do not require all three stages.\n'
-            f'1. Plan with a bounded {plan["model"]} sub-agent; reasoning effort: {planning}. '
-            f'Choose a concrete supported effort before delegation. Produce an actionable '
+            f'1. {plan_text}Produce an actionable '
             f'plan, acceptance criteria and validation before implementation.\n'
             f'2. Implement in the main conversation with {implement["model"]}; reasoning effort: '
             f'{implementation}. Use the plan, relevant repository instructions and acceptance '
             f'criteria; implement and run appropriate checks.\n'
-            f'3. Review with a bounded {review["model"]} sub-agent; reasoning effort: {reviewing}. '
-            f'Choose a concrete supported effort before delegation. Review the actual diff and '
-            f'validation against the plan and return findings. The main conversation owns fixes, '
+            f'3. {review_text}Review the actual diff and '
+            f'validation against the plan and report findings. The main conversation owns fixes, '
             f'rechecks, PR updates, merge conflicts and required CI through completion under '
             f'the repository merge policy, selected delivery preferences and existing authorization.\n'
             f'This workflow authorizes sub-agent delegation with explicit model and concrete '

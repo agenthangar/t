@@ -307,7 +307,9 @@ def launch_settings(agent, cwd=None):
         return []
     w = workflow()
     document, before = w['load']()
-    return setting_args(session_defaults(launch_policy(w, document, cwd), agent, saved=before is not None), agent)
+    policy = launch_policy(w, document, cwd)
+    return (setting_args(session_defaults(policy, agent, saved=before is not None), agent) +
+            (w['permission_args'](policy, agent) if before is not None else []))
 
 
 def resume_settings(sid, cwd=None, agent='codex'):
@@ -345,7 +347,8 @@ def resume_settings(sid, cwd=None, agent='codex'):
     if scoped.get('model'):
         values.pop('effort', None)  # A global effort may not suit the selected model.
     values.update(scoped)
-    return setting_args(values, agent)
+    return (setting_args(values, agent) +
+            (w['permission_args'](policy, agent) if before is not None else []))
 
 
 def local(state):

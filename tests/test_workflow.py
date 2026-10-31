@@ -9,9 +9,19 @@ from types import SimpleNamespace
 
 import pytest
 
-from test_config import Menu
+from test_config import Menu as ConfigMenu
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+class Menu(ConfigMenu):
+    def pick(self, label, rows, default=0, **kwargs):
+        if kwargs.get('multi'):
+            picked = next(self.picks)
+            assert picked is None or isinstance(picked, list) and all(value in dict(rows) for value in picked)
+            assert 0 <= default < len(rows)
+            return picked
+        return super().pick(label, rows, default=default, **kwargs)
 
 
 @pytest.fixture
@@ -509,7 +519,7 @@ def test_nested_workflow_commands(workflow, t_mod, monkeypatch, tmp_path, capsys
     assert t_mod.main([*prefix, 'list']) == 0
     output = capsys.readouterr().out
     assert 'Workflow for the global default.' in output and 'recommended defaults (not saved)' in output
-    assert 'Enabled: yes' in output and all(word in output for word in ('STEP', 'MODEL', 'REASONING', 'planning', 'implementation', 'review'))
+    assert 'Enabled: yes' in output and all(word in output for word in ('STEP', 'MODEL', 'REASONING', 'SOURCE', 'Planning', 'Main work', 'Review'))
     assert not workflow.config_path().exists()
     for flags in ([], ['--repo', 'api']):
         assert t_mod.main([*prefix, 'list', *flags, '--json']) == 0
@@ -786,6 +796,23 @@ def test_workflow_named_menu_and_instructions_staging(workflow, t_mod, monkeypat
     t_mod._config_workflow(ui, cfg)
 
 
+def test_clear_text_instructions_discard_keeps_original(workflow, t_mod, monkeypatch, tmp_path):
+    monkeypatch.setattr(t_mod, '_workflow', lambda: vars(workflow))
+    monkeypatch.setattr(t_mod, 'CONFIG', str(tmp_path / 'absent'))
+    monkeypatch.setattr(t_mod, 'zsh_capture', lambda _: '')
+    monkeypatch.setattr(workflow, 'save', lambda *args, **kwargs: pytest.fail('discard must not save'))
+    ui = Menu(['workflow', 'customize', 'clear_instructions', 'back', 'back', 'cancel', 'discard'])
+    monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
+    cfg = t_mod.Config()
+    t_mod._workflow_session(cfg)
+    initial = copy.deepcopy(cfg._workflow_document)
+    assert initial['workflows']['standard']['instructions']
+    assert t_mod._config_wizard(cfg) is None
+    assert cfg._workflow_document == initial
+    assert not t_mod._workflow_pending(cfg)
+    assert not workflow.config_path().exists()
+
+
 @pytest.mark.parametrize('source', ['inline', 'named', 'inherited'])
 def test_repository_menu_resumes_preserved_workflow(workflow, t_mod, monkeypatch, tmp_path, source):
     w = workflow
@@ -965,10 +992,10 @@ def test_behavior_menu_save_or_discard(workflow, t_mod, monkeypatch, tmp_path, s
     local = tmp_path / 'local.zsh'
     local.write_text('# untouched\n')
     monkeypatch.setenv('T_LOCAL_RC', str(local))
-    picks = ['workflow', 'customize', 'stages_enabled', '0', 'behaviors',
+    picks = ['workflow', 'customize', 'stages_enabled', [], 'behaviors',
              'pull_requests', 'pr_open', 'automatic', 'pr_state', 'draft',
              'pr_merge', 'on_request', 'back',
-             'local_preview', 'local_preview', 'before_pr', 'cli_preview', 'install',
+             'local_preview', 'local_preview', 'when_ready', 'preview_approval', 'required', 'cli_preview', 'install',
              'frontend_preview', 'fast_reload', 'back',
              'tests', 'test_timing', 'pr_ci', 'back', 'back', 'back', 'back']
     picks += ['save'] if save else ['cancel', 'discard']
@@ -981,11 +1008,11 @@ def test_behavior_menu_save_or_discard(workflow, t_mod, monkeypatch, tmp_path, s
         policy = w.load()[0]['workflows']['standard']
         assert not policy['stages_enabled'] and policy['planning'] == w.DEFAULT['planning']
         assert policy['behaviors'] == {'pr_open': 'automatic', 'pr_state': 'draft', 'pr_merge': 'on_request',
-                                       'local_preview': 'before_pr', 'cli_preview': 'install',
+                                       'local_preview': 'when_ready', 'preview_approval': 'required', 'cli_preview': 'install',
                                        'frontend_preview': 'fast_reload', 'test_timing': 'pr_ci'}
         instructions = native_paths()[0].read_text()
         assert 'Open pull requests as drafts' in instructions
-        assert 'before pushing or opening a pull request' in instructions
+        assert 'Before pushing or opening a pull request' in instructions
         assert "pull request's required CI" in instructions
 
 
@@ -996,17 +1023,17 @@ def test_behavior_menu_noop_clear_and_excluded_edit(workflow, t_mod, monkeypatch
     t_mod._workflow_session(cfg)
     initial = copy.deepcopy(cfg._workflow_document)
     # Picking defaults, cancelling options and clearing an absent choice create no override.
-    t_mod._config_workflow(Menu(['customize', 'stages_enabled', '1', 'behaviors',
+    t_mod._config_workflow(Menu(['customize', 'stages_enabled', ['planning', 'review'], 'behaviors',
                                 'pull_requests', 'pr_open', '', 'pr_state', None,
                                 'back', 'back', 'back', 'back']), cfg, 'api')
     assert cfg._workflow_document == initial and not t_mod._workflow_pending(cfg)
     t_mod._config_workflow(Menu(['exclude', 'customize', 'behaviors', 'pull_requests', 'pr_open', 'on_request',
-                                'back', 'back', 'stages_enabled', '0', 'back', 'back']), cfg, 'api')
+                                'back', 'back', 'stages_enabled', [], 'back', 'back']), cfg, 'api')
     entry = cfg._workflow_document['repositories'][cfg.repos['api']]
     assert entry['excluded'] and entry['inline']['behaviors'] == {'pr_open': 'on_request'}
     assert not entry['inline']['stages_enabled']
     t_mod._config_workflow(Menu(['customize', 'behaviors', 'pull_requests', 'pr_open', '', 'back', 'back',
-                                'stages_enabled', '1', 'back', 'back']), cfg, 'api')
+                                'stages_enabled', ['planning', 'review'], 'back', 'back']), cfg, 'api')
     entry = cfg._workflow_document['repositories'][cfg.repos['api']]
     assert entry['excluded'] and 'behaviors' not in entry['inline']
     assert entry['inline']['stages_enabled'] and entry['inline']['planning'] == w.DEFAULT['planning']
@@ -1211,7 +1238,8 @@ def test_workflow_print_precedence_and_reasoning(workflow, t_mod, monkeypatch, c
     assert t_mod._cmd_workflow(cfg, SimpleNamespace(workflow=True, workflow_action='list')) == 0
     text = capsys.readouterr().out
     assert text.index('Text instructions:') < text.index('PRs, previews & tests:')
-    assert 'Wait for approval' in text and 'Before PR, with approval' in text
+    assert 'Design approval: Required' in text and 'Preview: Automatically' in text
+    assert 'Preview approval before PR: Required' in text
     assert 'By task' in text and 'One level below planning' in text
     assert 'Main work' in text and 'By task · starts Medium' in text
     assert 'one-level-lower' not in text and 'Test runners:' in text and 'Propagation:' in text

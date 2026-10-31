@@ -258,3 +258,122 @@ def test_shell_saved_stages_override_stale_account_main_defaults(zsh):
     assert args[args.index('--model') + 1] == 'implementation-sol'
     assert 'model_reasoning_effort=medium' in args
     assert 'old-astra' not in args and 'ultra' not in args
+
+
+@pytest.mark.parametrize('staged', [False, True])
+def test_scoped_permissions_launch_and_resume_without_model_mode_dependency(sync, tmp_path, monkeypatch, staged):
+    w, document, repo, _ = scoped_document(sync, tmp_path, monkeypatch)
+    policy = document['repositories'][str(repo)]['inline']
+    policy['stages_enabled'] = staged
+    policy['permissions'] = {'codex': 'auto', 'claude': 'plan'}
+    w['save'](document, w['snapshot'](w['config_path']()), propagate=False)
+    before = w['config_path']().read_bytes()
+    for agent in ('codex', 'claude'):
+        expected = w['permission_args'](policy, agent)
+        assert sync.launch_settings(agent, str(repo))[-len(expected):] == expected
+        assert sync.resume_settings(SID, str(repo), agent)[-len(expected):] == expected
+    assert w['config_path']().read_bytes() == before
+    with sqlite3.connect(Path(os.environ['CODEX_HOME']) / 'state_5.sqlite') as db:
+        db.execute('create table threads(id text, source text)')
+        db.execute('insert into threads values(?,?)', (SID, '{"subagent":{}}'))
+    assert sync.resume_settings(SID, str(repo)) == []
+    document['repositories'][str(repo)]['excluded'] = True
+    w['save'](document, w['snapshot'](w['config_path']()), propagate=False)
+    assert sync.launch_settings('codex', str(repo)) == []
+    assert sync.resume_settings(SID, str(repo), 'claude') == []
+
+
+def test_unsaved_permissions_never_override_native_defaults(sync, tmp_path, monkeypatch):
+    w = sync.workflow()
+    document = w['defaults']()
+    document['workflows']['standard']['permissions'] = {'codex': 'full', 'claude': 'auto'}
+    monkeypatch.setattr(sync, 'workflow', lambda: {**w, 'load': lambda: (document, None)})
+    assert sync.launch_settings('codex', str(tmp_path)) == []
+    assert sync.resume_settings(SID, str(tmp_path)) == []
+    assert sync.launch_settings('claude', str(tmp_path)) == []
+    assert sync.resume_settings(SID, str(tmp_path), 'claude') == []
+    assert not w['config_path']().exists()
+
+
+def shell_permissions(zsh, agent, preset):
+    repo = shell_workflow(zsh)
+    config = zsh.home / '.config' / 't' / 'workflow.json'
+    document = json.loads(config.read_text())
+    document['repositories'][str(repo)]['inline']['permissions'] = {agent: preset}
+    config.write_text(json.dumps(document))
+    return repo
+
+
+@pytest.mark.parametrize('agent,preset,expected', [
+    ('codex', 'auto', ['--sandbox', 'workspace-write', '--ask-for-approval', 'on-request',
+                      '-c', 'approvals_reviewer="auto_review"']),
+    ('claude', 'acceptEdits', ['--permission-mode', 'acceptEdits']),
+])
+def test_shell_fresh_and_resume_preserve_permission_pairs_and_effort(zsh, agent, preset, expected):
+    repo = shell_permissions(zsh, agent, preset)
+    for command in (f'_dev_agent_new_cmd {agent} "" "" {shlex.quote(str(repo))}',
+                    f'T_WORKFLOW_CWD={shlex.quote(str(repo))} _dev_agent_resume_cmd {agent} {SID}'):
+        result = zsh(command)
+        assert result.returncode == 0, result.stderr
+        args = shlex.split(result.stdout)
+        assert any(args[index:index + len(expected)] == expected for index in range(len(args)))
+        assert ('model_reasoning_effort=high' in args or 'model_reasoning_effort="high"' in args
+                if agent == 'codex' else '--effort' in args and 'high' in args)
+
+
+@pytest.mark.parametrize('explicit', [
+    '--sandbox read-only', '--sandbox=read-only', '-sread-only', '--ask-for-approval never',
+    '--ask-for-approval=never', '-anever', '--full-auto', '--approve-for-me', '--yolo', '--not-so-yolo',
+    '--dangerously-bypass-approvals-and-sandbox', '-c approval_policy=never',
+    '--config sandbox_mode=read-only', '--config=approvals_reviewer=user',
+    '-cdefault_permissions=read-only', '--profile restricted',
+    '-c permissions.custom.allow=true', '--config=sandbox_workspace_write.network_access=false',
+    '-cnetwork.enabled=false', '-c ' + shlex.quote('approval_policy = "never"'),
+])
+def test_explicit_codex_permission_policy_suppresses_entire_workflow_preset(zsh, explicit):
+    repo = shell_permissions(zsh, 'codex', 'auto')
+    result = zsh(f'T_WORKFLOW_CWD={shlex.quote(str(repo))} _dev_agent_resume_cmd codex {SID} {explicit}')
+    assert result.returncode == 0, result.stderr
+    args = shlex.split(result.stdout)
+    assert 'approvals_reviewer="auto_review"' not in args
+    assert 'workspace-write' not in args and 'on-request' not in args
+    assert all(arg in args for arg in shlex.split(explicit))
+    assert '--model' in args and 'repo-model' in args
+    assert 'model_reasoning_effort="high"' in args
+
+
+@pytest.mark.parametrize('explicit', ['--permission-mode plan', '--permission-mode=plan',
+    '--dangerously-skip-permissions', '--allow-dangerously-skip-permissions',
+    '--settings \'' + '{"permissions":{"defaultMode":"manual"}}' + '\''])
+def test_explicit_claude_permission_policy_suppresses_workflow_preset(zsh, explicit):
+    repo = shell_permissions(zsh, 'claude', 'acceptEdits')
+    result = zsh(f'T_WORKFLOW_CWD={shlex.quote(str(repo))} _dev_agent_resume_cmd claude {SID} {explicit}')
+    assert result.returncode == 0, result.stderr
+    args = shlex.split(result.stdout)
+    assert 'acceptEdits' not in args
+    assert all(arg in args for arg in shlex.split(explicit))
+    assert '--model' in args and '--effort' in args
+
+
+def test_explicit_effort_does_not_drop_codex_permission_reviewer(zsh):
+    repo = shell_permissions(zsh, 'codex', 'auto')
+    result = zsh(f'T_WORKFLOW_CWD={shlex.quote(str(repo))} _dev_agent_resume_cmd codex {SID} '
+                 '-c model_reasoning_effort=low')
+    args = shlex.split(result.stdout)
+    assert result.returncode == 0, result.stderr
+    assert 'approvals_reviewer="auto_review"' in args
+    assert 'model_reasoning_effort=low' in args
+    assert 'model_reasoning_effort="high"' not in args
+
+
+def test_prompt_after_separator_cannot_suppress_workflow_permission_defaults(zsh):
+    repo = shell_permissions(zsh, 'codex', 'auto')
+    result = zsh(f'T_WORKFLOW_CWD={shlex.quote(str(repo))} _dev_agent_resume_cmd codex {SID} '
+                 '-- --sandbox --yolo -c approval_policy=never')
+    args = shlex.split(result.stdout)
+    assert result.returncode == 0, result.stderr
+    assert 'approvals_reviewer="auto_review"' in args
+    assert args.index('workspace-write') < args.index('--')
+    assert args.index('--no-daemon') < args.index('--')
+    assert args[args.index('--') + 1:] == [
+        '--sandbox', '--yolo', '-c', 'approval_policy=never']

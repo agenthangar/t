@@ -1,5 +1,6 @@
 """Independent workflow preferences preserve legacy meaning and saved JSON."""
 import copy
+from pathlib import Path
 
 import pytest
 
@@ -12,7 +13,9 @@ from test_workflow import workflow  # noqa: F401 -- isolated account configurati
     ({'delivery': 'auto_merge'}, {'pr_open': 'automatic', 'pr_state': 'ready', 'pr_merge': 'automatic'}),
     ({'delivery': 'review'}, {'pr_open': 'on_request', 'pr_merge': 'on_request', 'delivery': 'review'}),
     ({'delivery': 'ask_before_pr'}, {'pr_open': 'on_request', 'pr_merge': 'on_request'}),
-    ({'delivery': 'local_review'}, {'pr_open': 'automatic', 'pr_merge': 'on_request', 'local_preview': 'before_pr'}),
+    ({'delivery': 'local_review'}, {'pr_open': 'automatic', 'pr_merge': 'on_request',
+                                    'local_preview': 'when_ready', 'preview_approval': 'required'}),
+    ({'local_preview': 'before_pr'}, {'local_preview': 'when_ready', 'preview_approval': 'required'}),
     ({'preview': 'ui_changes'}, {'local_preview': 'when_ready'}),
     ({'preview': 'before_implementation'}, {'design_approval': 'required'}),
     ({'preview': 'on_request'}, {'local_preview': 'on_request'}),
@@ -35,7 +38,8 @@ def test_explicit_preferences_override_legacy_choices(workflow):
 
 def test_preview_before_pr_survives_legacy_ui_preview(workflow):
     assert workflow.effective_behaviors({'preview': 'ui_changes', 'delivery': 'local_review'}) == {
-        'pr_open': 'automatic', 'pr_merge': 'on_request', 'local_preview': 'before_pr'}
+        'pr_open': 'automatic', 'pr_merge': 'on_request', 'local_preview': 'when_ready',
+        'preview_approval': 'required'}
 
 
 def test_design_approval_does_not_assume_prototype_location(workflow):
@@ -109,13 +113,16 @@ def test_invalid_behavior_edit_is_rejected(workflow, key, value):
 
 
 @pytest.mark.parametrize('key', [
-    'pr_open', 'pr_state', 'pr_merge', 'local_preview', 'cli_preview', 'frontend_design',
+    'pr_open', 'pr_state', 'pr_merge', 'local_preview', 'preview_approval', 'cli_preview', 'frontend_design',
     'design_approval', 'frontend_preview', 'test_timing',
 ])
 def test_each_new_preference_validates_and_renders_as_instructions(workflow, key):
     for value, (label, prose) in workflow.BEHAVIORS[key]['choices'].items():
         policy = workflow.update_behavior(copy.deepcopy(workflow.DEFAULT), key, value)
         assert workflow.validate_policy(policy) == policy
+        if key == 'local_preview' and value == 'before_pr':
+            assert policy['behaviors'] == {'local_preview': 'when_ready', 'preview_approval': 'required'}
+            continue  # Legacy combined values render as independent preferences.
         assert prose in workflow._stage_text(policy)
         assert workflow.BEHAVIORS[key]['label'] + ': ' + label in workflow.summary_lines(policy)
     policy['behaviors'][key] = 'invalid-value'
@@ -151,3 +158,79 @@ def test_required_ci_preference_preserves_authoritative_rules(workflow):
     assert 'required CI' in text and 'branch protections intact' in text
     assert 'repository rules remain authoritative' in text
     assert 'Never bypass required checks or branch protections' in text
+
+
+@pytest.mark.parametrize('legacy', [{'local_preview': 'before_pr'}, {'delivery': 'local_review'}])
+def test_explicit_preview_approval_overrides_legacy_gate(workflow, legacy):
+    source = {**legacy, 'preview_approval': 'not_required'}
+    before = copy.deepcopy(source)
+    effective = workflow.effective_behaviors(source)
+    assert effective['local_preview'] == 'when_ready'
+    assert effective['preview_approval'] == 'not_required'
+    assert source == before
+    policy = {**copy.deepcopy(workflow.DEFAULT), 'behaviors': source}
+    text = workflow._stage_text(policy)
+    assert workflow.BEHAVIORS['preview_approval']['choices']['not_required'][1] in text
+    assert workflow.BEHAVIORS['preview_approval']['choices']['required'][1] not in text
+    assert workflow.BEHAVIORS['local_preview']['choices']['before_pr'][1] not in text
+
+
+def test_preview_timing_and_approval_edit_and_clear_independently(workflow):
+    policy = {**copy.deepcopy(workflow.DEFAULT), 'behaviors': {'local_preview': 'before_pr'}}
+    after = workflow.update_behavior(policy, 'local_preview', 'on_request')
+    assert after['behaviors'] == {'local_preview': 'on_request', 'preview_approval': 'required'}
+    after = workflow.update_behavior(after, 'preview_approval', 'not_required')
+    assert after['behaviors'] == {'local_preview': 'on_request', 'preview_approval': 'not_required'}
+    after = workflow.update_behavior(after, 'local_preview', '')
+    assert after['behaviors'] == {'preview_approval': 'not_required'}
+    after = workflow.update_behavior(after, 'preview_approval', '')
+    assert 'behaviors' not in after
+    cleared_gate = workflow.update_behavior(policy, 'preview_approval', '')
+    assert cleared_gate['behaviors'] == {'local_preview': 'when_ready'}
+    cleared_timing = workflow.update_behavior(policy, 'local_preview', '')
+    assert cleared_timing['behaviors'] == {'preview_approval': 'required'}
+    assert policy['behaviors'] == {'local_preview': 'before_pr'}
+
+
+def test_legacy_preview_is_read_only_until_explicit_edit(workflow):
+    policy = {**copy.deepcopy(workflow.DEFAULT), 'behaviors': {'local_preview': 'before_pr'}}
+    document = workflow.update(workflow.defaults(), policy)
+    before = copy.deepcopy(document)
+    text = workflow.render(document)
+    summary = workflow.summary_lines(policy)
+    assert 'Local preview: Automatically' in summary
+    assert 'Preview approval before PR: Required' in summary
+    assert workflow.BEHAVIORS['preview_approval']['choices']['required'][1] in text
+    assert workflow.BEHAVIORS['local_preview']['choices']['before_pr'][1] not in text
+    assert workflow.policy_summary(policy)['behaviors'] == {'local_preview': 'before_pr'}
+    assert document == before
+    assert not workflow.config_path().exists()
+    edited = workflow.update_behavior(policy, 'pr_state', 'draft')
+    assert edited['behaviors'] == {'local_preview': 'when_ready', 'preview_approval': 'required',
+                                   'pr_state': 'draft'}
+
+
+def test_request_only_preview_with_required_approval_keeps_both_rules(workflow):
+    policy = {**copy.deepcopy(workflow.DEFAULT), 'behaviors': {
+        'local_preview': 'on_request', 'preview_approval': 'required'}}
+    text = workflow._stage_text(policy)
+    assert workflow.BEHAVIORS['local_preview']['choices']['on_request'][1] in text
+    assert workflow.BEHAVIORS['preview_approval']['choices']['required'][1] in text
+    assert workflow.BEHAVIORS['local_preview']['choices']['when_ready'][1] not in text
+
+
+def test_empty_instruction_editor_clears_custom_text_without_saving(workflow, monkeypatch):
+    document = workflow.defaults()
+    document['workflows']['standard']['instructions'] = 'Text to remove.'
+    before = copy.deepcopy(document)
+
+    def clear_editor(argv):
+        Path(argv[-1]).write_text('')
+        return 0
+
+    monkeypatch.setattr(workflow.subprocess, 'call', clear_editor)
+    status, after = workflow.edit_instructions(document)
+    assert status == 0
+    assert workflow.instructions(after) == ''
+    assert document == before
+    assert not workflow.config_path().exists()
