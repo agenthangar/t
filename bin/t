@@ -69,6 +69,8 @@ if __name__ == "__main__":
 CONFIG = os.path.join(os.environ.get("XDG_CONFIG_HOME", os.path.join(HOME, ".config")), "t", "config.sh")
 _resolve_repo_selector = runpy.run_path(str(Path(__file__).resolve().parent.parent /
                                            "libexec/t_repos.py"))["resolve_repo"]
+_t_source_git = runpy.run_path(str(Path(__file__).resolve().parent.parent /
+                                  "libexec/t_dev.py"))["git"]
 _DEFAULT_LOCAL_RC = os.path.join(os.environ.get("XDG_CONFIG_HOME", os.path.join(HOME, ".config")), "t", "local.zsh")
 ZSHRC_LOCAL = os.path.expanduser(os.environ.get("T_LOCAL_RC") or
     (_DEFAULT_LOCAL_RC if os.path.exists(_DEFAULT_LOCAL_RC) or
@@ -6126,8 +6128,38 @@ def _t_version():
     release = _t_release_version(source)
     if release:
         return release
-    sha = _t_git(source, "rev-parse", "--short", "HEAD")
+    sha = _t_source_git(source, "rev-parse", "--short", "HEAD")
     return f"{sha} (checkout)" if sha else "unknown"
+
+
+def _t_version_report():
+    """Describe the executable's source separately from the caller's worktree."""
+    source = _t_source_root()
+
+    def label(root):
+        branch = _t_source_git(root, "branch", "--show-current")
+        if branch:
+            return f"branch {branch}"
+        return "detached HEAD" if _t_source_git(root, "rev-parse", "--verify", "HEAD") else "unknown"
+
+    source_label = "release" if _t_release_version(source) else label(source)
+    try:
+        cwd = os.getcwd()
+    except OSError:
+        worktree = "unavailable (current directory was removed)"
+    else:
+        root = _t_source_git(cwd, "rev-parse", "--show-toplevel")
+        worktree = f"{root} ({label(root)})" if root else "none (outside Git)"
+    lines = [f"t {_t_version()}", f"  Source: {source} ({source_label})", f"  Worktree: {worktree}"]
+    # Paths and refs are local data; keep each labeled fact on one terminal line.
+    return "\n".join("".join(char if char.isprintable() else repr(char)[1:-1]
+                              for char in line) for line in lines)
+
+
+class _VersionAction(argparse.Action):
+    def __call__(self, parser, namespace, values, option_string=None):
+        print(_t_version_report())
+        parser.exit()
 
 
 def _t_canonical_root(source):
@@ -11091,7 +11123,7 @@ TOOLS
 
 OPTIONS
   -h, --help     Show help
-  --version      Show version
+  --version      Show version, active source, and current worktree
 
 EXAMPLES
   t config onboard        Discover agents, repos, and hosts again
@@ -11482,7 +11514,8 @@ class _CommandParser(argparse.ArgumentParser):
 
 def build_parser():
     p = _CommandParser(prog="t", description="Manage work sessions, repositories, and agent tools.")
-    p.add_argument("--version", action="version", version=f"t {_t_version()}")
+    p.add_argument("--version", action=_VersionAction, nargs=0,
+                   help="show version, active source, and current worktree")
     sub = p.add_subparsers(dest="verb", metavar="<verb>")
     p._group_parsers = {}
     help_sp = sub.add_parser("help", help="show help for a command or subcommand",

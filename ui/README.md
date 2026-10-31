@@ -11,6 +11,14 @@ Normal installs and canonical updates retain their existing integration behavior
 The installed source selector must be upgraded once for older installations;
 development setup itself never replaces that shared installation.
 
+`t --version` is a read-only detail display. Preserve the release/revision on the
+first line, then show labeled `Source` and `Worktree` paths with their branches.
+Source means the code actually running; Worktree means the current directory's
+Git root, which may differ. Label packaged sources `release`, detached checkouts
+`detached HEAD`, and a non-Git working directory `none (outside Git)`. Escape
+control characters in paths and refs, and never prompt or check for updates.
+Resolve these details only when version output is requested.
+
 Every public `t` command and conditional mode has an entry in
 [`command-contract.json`](command-contract.json). That inventory is the source of
 truth for classification and contract tests. Compatibility aliases inherit the
