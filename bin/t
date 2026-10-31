@@ -12563,7 +12563,7 @@ def build_parser():
   Choose the host where the session will run.
 
   Open an existing session there; --new starts a fresh session there."""),
-        ('move', 'Move a current CLI conversation directly between SSH hosts. Infer the current repository; '
+        ('move', 'Move a current CLI conversation between hosts, including this machine. Infer the current repository; '
             'outside one, browse all. Omitted targets use a picker; scripts require explicit targets and --detach. '
             'Codex defaults to native desktop Hand off; Claude uses t. Choose the mechanism in t config. ',
          """DETAILS
@@ -12575,6 +12575,7 @@ def build_parser():
   With t transfer, move a current conversation directly to another host.
 
   The host picker selects the destination and names the current source host.
+  Choose local (this machine), or pass --host local, to receive a remote session here.
 
   Repositories absent locally are resolved on each remote source host.
   A unique repo/slot match goes directly to the destination picker.
@@ -12615,7 +12616,7 @@ TARGETS
             leaf.add_argument("target_host", metavar="host", nargs="?", help="SSH host alias or target (default: host picker)")
         leaf.add_argument("repo", nargs="?", help="repository alias, basename or origin name (default: current checkout or all)")
         leaf.add_argument("slot", nargs="?", help="slot number; a lone number uses the current repository")
-        leaf.add_argument("--host", help=("execution destination SSH host alias or target; omitted: host picker"
+        leaf.add_argument("--host", help=("destination SSH host or local (this machine); omitted: host picker"
                                          if action == "move" else argparse.SUPPRESS))
         if action == "open":
             leaf.add_argument("--new", action="store_true", help="start a fresh session on the chosen host")
@@ -13164,8 +13165,8 @@ REQUIREMENTS AND DISCOVERY
     sp.add_argument("slot", nargs="?", help="slot number; a lone slot implies the cwd repo")
 
     sp = sub.add_parser("beam", aliases=["move"], help="move a session between machines (send, or --from to receive)",
-        description='Move current Claude or Codex CLI conversations. Select sessions, then a destination host; '
-            '-r includes remote sources. Infer the current repository; outside one, browse all. '
+        description='Move current Claude or Codex CLI conversations. Exact targets search local and remote hosts. '
+            'Select sessions, then a destination, including local; -r includes remote sources when browsing. '
             'Scripts require an explicit target and --detach. --from receives here; add --host to move '
             'between remote hosts. Codex defaults to native desktop Hand off; Claude uses t.',
         help_details="""DETAILS
@@ -13191,6 +13192,9 @@ REQUIREMENTS AND DISCOVERY
   or cancellation. Completed, failed and unattempted counts are reported.
   All selected identities are rechecked after both selections before any move.
   Destination selection excludes every selected source host and its aliases.
+  Exact slots and IDs search local and registered remote hosts automatically;
+  duplicate matches require selection. A remote source offers `local` (this machine)
+  in the destination picker. Use --host local to receive here explicitly.
   The legacy `t beam` shortcut retains its implicit-current and default-host behavior.
 
   Selection requires a terminal and fzf; scripts must name a target.
@@ -13210,10 +13214,15 @@ RECEIVE AND REMOTE MOVES
   Without an explicit source slot or ID, select a current conversation on SOURCE.
 
   Use --detach for scripts; failures stopping the source or pushing code stop the
-  move.""")
+  move.
+
+EXAMPLES
+  t session move api 2
+  t session move api 2 --host local
+  t session move api 2 --from build --host local --detach""")
     sp.add_argument("repo", nargs="?", help="repository alias, basename or origin name; defaults to the repo your cwd is in")
     sp.add_argument("slot", nargs="?", help="slot number; a lone slot implies the cwd repo")
-    sp.add_argument("--host", help="destination SSH host; omitted: choose a host")
+    sp.add_argument("--host", help="destination SSH host or local (this machine); omitted: choose a host")
     sp.add_argument("-r", "--remote", action="store_true", help="include current sessions on registered remote hosts")
     sp.add_argument("--from", dest="from_host", metavar="HOST", help="source host; alone receives here, with --host sends directly to that destination")
     sp.add_argument("--here", action="store_true", help="RECEIVE (auto-host): pull it back here, auto-detecting which host it is on")
