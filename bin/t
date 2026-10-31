@@ -56,6 +56,16 @@ from urllib.parse import quote, urlencode, urlsplit
 from urllib.request import Request, urlopen
 
 HOME = os.path.expanduser("~")
+if __name__ == "__main__":
+    # Select before importing any repository helper, preserving one source for
+    # this command and its login-shell children. Never change user-wide links.
+    _dev_source = Path(__file__).resolve().parent.parent
+    _dev = runpy.run_path(str(_dev_source / 'libexec/t_dev.py'))
+    _dev_selected = _dev['select_root'](_dev_source, explicit=True)
+    os.environ['T_DEV_CONTEXT'] = str(_dev_selected)
+    os.environ['T_DEV_CONTEXT_OWNER'] = str(os.getpid())
+    if _dev_selected != _dev_source:
+        os.execv(sys.executable, [sys.executable, str(_dev_selected / 'bin/t'), *sys.argv[1:]])
 CONFIG = os.path.join(os.environ.get("XDG_CONFIG_HOME", os.path.join(HOME, ".config")), "t", "config.sh")
 _resolve_repo_selector = runpy.run_path(str(Path(__file__).resolve().parent.parent /
                                            "libexec/t_repos.py"))["resolve_repo"]
@@ -6347,7 +6357,7 @@ def _command_readonly(argv, *, terminal=None):
     if verb in ("install", "login", "trust"):
         return "--status" in options
     if verb == "update":
-        return "--check" in options
+        return "--check" in options or "--dev" in options
     return False
 
 
@@ -12712,7 +12722,7 @@ PERIODIC CHECKS
     sp = sub.add_parser("update", help="update the installed t via Homebrew, release, or Git checkout",
         description='Update t from Homebrew, a published release, or canonical Git main. --local switches any '
             'installation to a local checkout. --relink repeats the selected source; --dev selects the '
-            'current t worktree. --all updates this machine and registered SSH hosts, continuing after '
+            'current t worktree without changing shared installation links. --all updates this machine and registered SSH hosts, continuing after '
             'failures. Ctrl-C stops remaining updates.',
         help_details="""DETAILS
 
@@ -12721,8 +12731,11 @@ PERIODIC CHECKS
   For a versioned release, install the latest published release.
 
   For a Git checkout, fetch and fast-forward canonical main before relinking.
-  --relink repeats the selected source without fetching; --dev selects a t worktree
-  from a Git checkout. --local [PATH] switches any installation to a local t
+  --relink repeats the selected source without fetching; --dev makes development
+  available only inside the current t worktree, without changing shared links,
+  hooks or settings. Each worktree automatically uses its own CLI and shell helpers;
+  outside it, the normal installation is used. Child helpers retain their source.
+  --local [PATH] switches any installation to a local t
   checkout, updating canonical main and relinking user commands. --all updates this
   machine and every registered SSH host sequentially; failures are reported while
   other hosts continue.
@@ -12731,7 +12744,7 @@ PERIODIC CHECKS
     group = sp.add_mutually_exclusive_group()
     group.add_argument("--all", action="store_true",
                        help="update this machine and all registered SSH hosts (no recursive fan-out)")
-    group.add_argument("--dev", action="store_true", help="select the t session worktree containing $PWD (Git checkout only)")
+    group.add_argument("--dev", action="store_true", help="use this t worktree for scoped development without changing shared links")
     group.add_argument("--relink", action="store_true", help="relink the currently selected source")
     group.add_argument("--check", action="store_true", help="check for a newer version without installing it")
     group.add_argument("--local", nargs="?", const="", metavar="PATH",

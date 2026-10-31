@@ -2926,7 +2926,11 @@
       "scope": "local installation; --all includes registered SSH hosts",
       "confirmation": "when_interrupting",
       "tests": [
-        "tests/test_update.py::test_update_local_switches_packaged_install_to_updated_main"
+        "tests/test_update.py::test_update_local_switches_packaged_install_to_updated_main",
+        "tests/test_dev_isolation.py::test_cli_scopes_are_independent_and_preserve_explicit_paths",
+        "tests/test_dev_isolation.py::test_shell_helpers_switch_before_prompt_without_changing_path",
+        "tests/test_dev_isolation.py::test_child_login_shell_keeps_invocation_source_after_chdir",
+        "tests/test_dev_isolation.py::test_two_dev_installations_never_change_shared_files"
       ],
       "modes": {
         "default": {
@@ -2972,8 +2976,23 @@
             "tests/test_update.py::test_update_all_failures_continue",
             "tests/test_update.py::test_update_all_cancellation_stops_batch"
           ]
+        },
+        "dev": {
+          "argv": [
+            "system",
+            "update",
+            "--dev"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_dev_isolation.py::test_two_dev_installations_never_change_shared_files"
+          ]
         }
-      }
+      },
+      "notes": "Development follows the current validated linked t worktree automatically, without changing shared installation links or integration state. --dev confirms scoped availability; child helpers retain invocation-local source, and leaving the worktree restores canonical. Explicit development executables and custom PATH choices remain authoritative."
     },
     "system diagnose": {
       "patterns": [

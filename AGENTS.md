@@ -57,6 +57,10 @@ or issue creation cannot be verified, resolve that before implementation.
 
 Work in a per-session worktree on `dev/t-<slot>` or a `cursor/*` feature branch.
 The canonical checkout is the live release on `main`; never develop or commit there.
+Development availability must remain scoped to the session's worktree. Never
+relink shared commands to a development worktree or combine other sessions' branches
+for a preview. The installed source selector automatically chooses the current
+t worktree's executable and shell helpers; outside it, canonical t remains active.
 
 When ready, commit, push, and open a PR to `main`. Immediately enable squash
 auto-merge with `gh pr merge <number> --auto --squash`. Verify state,
