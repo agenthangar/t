@@ -2414,7 +2414,7 @@ def _workflow_behavior_section(ui, helper, policy, section, runners=None):
         if section == "tests":
             rows.append(("runners", "Test runners ›"))
         rows.append(("back", "Back"))
-        values = {key: _workflow_choice(helper, key, behaviors[key]) if key in behaviors else "Not set" for key in fields}
+        values = {key: _workflow_field_value(helper, behaviors, key) for key in fields}
         if section in _WORKFLOW_PREVIEW_SUBMENUS:
             values[section + "_enabled"] = "Enabled" if helper["preview_enabled"](behaviors, section) else "Disabled"
         if section == "tests":
@@ -2439,7 +2439,9 @@ def _workflow_behavior_section(ui, helper, policy, section, runners=None):
                 changed = helper["update_behavior"](changed, choice, picked)
             continue
         spec = helper["BEHAVIORS"][choice]
-        options = [("", "Not set")] + [(key, _workflow_choice(helper, choice, key)) for key in spec["choices"]
+        override = _workflow_preview_override(helper, choice)
+        reset = "Inherit · " + _workflow_preview_parent_value(helper, behaviors, override[1]) if override else "Not set"
+        options = [("", reset)] + [(key, _workflow_choice(helper, choice, key)) for key in spec["choices"]
                                         if not (choice == "local_preview" and key == "before_pr")]
         selected = ui.pick(_WORKFLOW_TOPICS[choice][0], options,
                            default=next(i for i, row in enumerate(options) if row[0] == behaviors.get(choice, "")))
@@ -2655,7 +2657,7 @@ def _config_runners(ui, cfg):
             source = helper["source"](document, repository)
             entry = document["repositories"].get(repository, {})
             ui.done("scope", f"{selected} · {source}" + (" · excluded" if entry.get("excluded") else "") +
-                    (" · inherited" if not entry else "") + "; edits customize only this repository.")
+                    (" · inherited" if not entry else "") + "; edits customize a copy for this repo.")
         else:
             name = document["default"]
             if choice == "named":
@@ -2681,7 +2683,7 @@ def _config_workflow(ui, cfg, repo=None):
         excluded = document["repositories"].get(repository, {}).get("excluded", False)
         rows = [("choose", "Choose named workflow" if repo else "Choose global default")]
         if repo:
-            rows += [("customize", "Customize only this repository"),
+            rows += [("customize", "Customize a copy for this repo"),
                      ("exclude", "Resume workflow for this repository" if excluded else "Exclude workflow for this repository"),
                      ("inherit", "Use global default"), ("edit", "Advanced JSON editor")]
         else:
@@ -3266,21 +3268,25 @@ def _workflow_launch_settings(cfg, settings):
 
 _WORKFLOW_SECTIONS = {
     "pull_requests": ("Pull requests", ("pr_open", "pr_state", "pr_merge")),
-    "local_preview": ("Local preview", ("local_preview", "preview_approval")),
+    "local_preview": ("Local preview", ("local_preview", "implement_before_approval")),
     "tests": ("Tests", ("test_timing",)),
 }
 _WORKFLOW_PREVIEW_SUBMENUS = {
-    "frontend": ("Frontend", ("frontend_enabled", "frontend_design", "frontend_preview", "frontend_browser")),
-    "cli": ("CLI", ("cli_enabled", "cli_preview")),
+    "frontend": ("Frontend", ("frontend_enabled", "frontend_preview_timing", "frontend_implement_before_approval", "frontend_design", "frontend_preview", "frontend_browser")),
+    "cli": ("CLI", ("cli_enabled", "cli_preview_timing", "cli_implement_before_approval", "cli_preview")),
 }
 _WORKFLOW_TOPICS = {
     "frontend_enabled": ("Preview", "Enable or disable frontend preview preferences."),
     "cli_enabled": ("Preview", "Enable or disable CLI preview preferences."),
-    "pr_open": ("When to open PR", "Open when the work is ready, or wait for your request. Any preview approval still applies."),
+    "pr_open": ("When to open PR", "Open when the work is ready, or wait for your request."),
     "pr_state": ("PR type", "Drafts wait for your approval before becoming ready for review."),
     "pr_merge": ("Merge PR", "Merge after required checks and approvals, or wait for your request."),
     "local_preview": ("When to preview", "Choose when to make CLI or browser changes available locally."),
-    "preview_approval": ("Preview approval before PR", "Choose whether opening a PR waits for your approval of the local preview."),
+    "implement_before_approval": ("Implement before approval", "Allow implementation before approval, or wait after a lightweight preview before substantial implementation."),
+    "frontend_preview_timing": ("When to preview", "Inherit the local-preview default or choose frontend preview timing."),
+    "cli_preview_timing": ("When to preview", "Inherit the local-preview default or choose CLI preview timing."),
+    "frontend_implement_before_approval": ("Implement before approval", "Inherit the default or override implementation before approval for frontend work."),
+    "cli_implement_before_approval": ("Implement before approval", "Inherit the default or override implementation before approval for CLI work."),
     "cli_preview": ("Preview method", "Install the development version locally, or run it from the repo."),
     "frontend_preview": ("Preview method", "Refresh changes with a local dev server, or rebuild the preview."),
     "frontend_browser": ("Open in browser", "Open the frontend preview automatically, or only when requested."),
@@ -3316,12 +3322,33 @@ def _workflow_section_children(section, behaviors):
     return tuple(_WORKFLOW_PREVIEW_SUBMENUS) if section == "local_preview" else ()
 
 
+def _workflow_preview_override(helper, key):
+    return next(((kind, field) for kind, fields in helper["PREVIEW_OVERRIDES"].items()
+                 for field, override in fields.items() if override == key), None)
+
+
+def _workflow_preview_parent_value(helper, behaviors, field):
+    key = helper["PREVIEW_DEFAULTS"][field]
+    return _workflow_choice(helper, key, behaviors[key]) if behaviors.get(key) else "Not set"
+
+
+def _workflow_field_value(helper, behaviors, key):
+    override = _workflow_preview_override(helper, key)
+    if override:
+        kind, field = override
+        setting = helper["preview_preferences"](behaviors, kind)[field]
+        label = _workflow_choice(helper, helper["PREVIEW_DEFAULTS"][field], setting["value"]) if setting["value"] else "Not set"
+        return ("Inherit" if setting["source"] == "inherit" else "Override") + " · " + label
+    return _workflow_choice(helper, key, behaviors[key]) if key in behaviors else "Not set"
+
+
 def _workflow_section_summary(helper, section, behaviors):
     if section in _WORKFLOW_PREVIEW_SUBMENUS and not helper["preview_enabled"](behaviors, section):
         return "Disabled"
     visible = helper["visible_behaviors"](behaviors)
-    parts = [_WORKFLOW_TOPICS[key][0] + ": " + _workflow_choice(helper, key, behaviors[key])
-             for key in _workflow_section_fields(section, behaviors) if key in visible and key not in ("frontend_enabled", "cli_enabled")]
+    parts = [_WORKFLOW_TOPICS[key][0] + ": " + _workflow_field_value(helper, behaviors, key)
+             for key in _workflow_section_fields(section, behaviors)
+             if (key in visible or _workflow_preview_override(helper, key)) and key not in ("frontend_enabled", "cli_enabled")]
     for child in _workflow_section_children(section, behaviors):
         summary = _workflow_section_summary(helper, child, behaviors)
         if summary != "Not set":
@@ -3336,10 +3363,9 @@ def _workflow_behavior_lines(helper, section, behaviors, indent=2, policy=None):
     lines = [" " * indent + _workflow_section_spec(section)[0] + (" · " + ("Enabled" if enabled else "Disabled") if child else "")]
     if not enabled:
         return lines
-    visible = helper["visible_behaviors"](behaviors)
     active_shared = section != "local_preview" or any(helper["preview_enabled"](behaviors, kind) for kind in _WORKFLOW_PREVIEW_SUBMENUS)
     lines += [" " * (indent + 2) + _WORKFLOW_TOPICS[key][0] + ": " +
-              (_workflow_choice(helper, key, visible[key]) if key in visible else "Not set")
+              _workflow_field_value(helper, behaviors, key)
               for key in _workflow_section_fields(section, behaviors)
               if active_shared and key not in ("frontend_enabled", "cli_enabled")]
     for child in _workflow_section_children(section, behaviors):
@@ -3349,8 +3375,23 @@ def _workflow_behavior_lines(helper, section, behaviors, indent=2, policy=None):
     return lines
 
 
+def _workflow_catalogue_summary(helper, policy):
+    behaviors = helper["effective_behaviors"](policy.get("behaviors", {}))
+    visible = helper["visible_behaviors"](behaviors)
+    parts = []
+    for section in _WORKFLOW_SECTIONS:
+        fields = set(_workflow_section_fields(section, behaviors))
+        for child in _workflow_section_children(section, behaviors):
+            fields.update(_workflow_section_fields(child, behaviors))
+        if fields.intersection(visible):
+            parts.append(_workflow_section_spec(section)[0] + ": " + _workflow_section_summary(helper, section, behaviors))
+    parts += [helper["BEHAVIORS"][key]["label"] + ": " + _workflow_choice(helper, key, value)
+              for key, value in visible.items() if key not in _WORKFLOW_TOPICS]
+    return "; ".join(parts) or "None set"
+
+
 def _workflow_choice(helper, key, value):
-    if key in ("pr_open", "frontend_enabled", "cli_enabled", "local_preview", "preview_approval", "cli_preview", "frontend_preview", "frontend_browser"):
+    if key in ("pr_open", "frontend_enabled", "cli_enabled", "local_preview", "implement_before_approval", "cli_preview", "frontend_preview", "frontend_browser") or _workflow_preview_override(helper, key):
         return helper["BEHAVIORS"][key]["choices"][value][0]
     return _WORKFLOW_CHOICE_LABELS.get(value, helper["BEHAVIORS"][key]["choices"][value][0])
 
@@ -3385,8 +3426,7 @@ def _workflow_print(helper, result, catalogue=False):
             (name, "on" if item["workflow"]["enabled"] else "off", str(len(item["repositories"])),
              "present" if item["workflow"].get("instructions") else "none",
              _workflow_permission_summary(helper, item["workflow"]),
-             "; ".join(helper["BEHAVIORS"][key]["label"] + ": " + _workflow_choice(helper, key, value)
-                       for key, value in helper["visible_behaviors"](item["workflow"].get("behaviors", {})).items()) or "None set")
+             _workflow_catalogue_summary(helper, item["workflow"]))
             for name, item in result["workflows"].items()])))
         print("Text instructions take precedence over behavior preferences, then model guidance.")
     else:

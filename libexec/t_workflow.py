@@ -120,6 +120,24 @@ BEHAVIORS = {
     }},
 }
 
+PREVIEW_DEFAULTS = {'timing': 'local_preview', 'implementation': 'implement_before_approval'}
+PREVIEW_OVERRIDES = {
+    kind: {'timing': kind + '_preview_timing', 'implementation': kind + '_implement_before_approval'}
+    for kind in ('frontend', 'cli')
+}
+BEHAVIORS['implement_before_approval'] = {'label': 'Implement before approval', 'choices': {
+    'yes': ('Yes', 'Allow substantial implementation before preview approval. This preference does not authorize pushing, opening or merging a pull request; honor independent PR preferences, repository rules and task instructions.'),
+    'no': ('No', 'Wait for explicit user approval of a lightweight preview before substantial implementation. Allow the preview or prototype work needed to obtain approval. This preference does not authorize pushing, opening or merging a pull request; honor independent PR preferences, repository rules and task instructions.'),
+}}
+for _kind, _keys in PREVIEW_OVERRIDES.items():
+    for _setting, _key in _keys.items():
+        _parent = PREVIEW_DEFAULTS[_setting]
+        BEHAVIORS[_key] = {
+            'label': _kind.title() + ' ' + BEHAVIORS[_parent]['label'].lower(),
+            'choices': {value: choice for value, choice in BEHAVIORS[_parent]['choices'].items()
+                        if value != 'before_pr'},
+        }
+
 
 def effective_behaviors(behaviors):
     """Resolve legacy choices without changing the saved workflow or raw JSON."""
@@ -147,6 +165,10 @@ def effective_behaviors(behaviors):
     legacy_approval = {'required': 'required', 'continue': 'not_required'}.get(result.pop('design_approval', None))
     if legacy_approval:
         result.setdefault('preview_approval', legacy_approval)
+    legacy_preview_approval = result.pop('preview_approval', None)
+    if legacy_preview_approval:
+        result.setdefault('implement_before_approval',
+                          'no' if legacy_preview_approval == 'required' else 'yes')
     if behaviors.get('delivery') == 'review' and result.get('pr_open') != 'automatic':
         result['delivery'] = 'review'  # Its leave-uncommitted rule is more specific than waiting for a PR.
     if 'test_timing' in result:
@@ -165,6 +187,75 @@ def preview_enabled(behaviors, kind):
     return target is None or target == 'both' or target == kind
 
 
+def preview_preferences(behaviors, kind):
+    """Resolve live defaults and child overrides, retaining each choice's source."""
+    enabled = preview_enabled(behaviors, kind)
+    effective = effective_behaviors(behaviors)
+    result = {'enabled': enabled}
+    for setting, parent in PREVIEW_DEFAULTS.items():
+        child = PREVIEW_OVERRIDES[kind][setting]
+        result[setting] = {'value': effective.get(child, effective.get(parent)),
+                           'source': 'override' if child in effective else 'inherit'}
+    return result
+
+
+def _preview_rule_keys():
+    return set(PREVIEW_DEFAULTS.values()) | {
+        key for keys in PREVIEW_OVERRIDES.values() for key in keys.values()}
+
+
+def preview_summary_lines(behaviors):
+    """Describe defaults once, then each enabled kind's live inherited choices."""
+    effective = effective_behaviors(behaviors)
+    configured = any(key in effective for key in PREVIEW_DEFAULTS.values()) or any(
+        key in effective for keys in PREVIEW_OVERRIDES.values() for key in keys.values())
+    if not configured:
+        return []
+    lines = []
+    for parent in PREVIEW_DEFAULTS.values():
+        value = effective.get(parent)
+        label = BEHAVIORS[parent]['choices'][value][0] if value else 'Not set'
+        lines.append('Local preview default — ' + BEHAVIORS[parent]['label'] + ': ' + label)
+    for kind in PREVIEW_OVERRIDES:
+        resolved = preview_preferences(effective, kind)
+        if not resolved['enabled']:
+            continue
+        for setting, parent in PREVIEW_DEFAULTS.items():
+            choice = resolved[setting]
+            label = BEHAVIORS[parent]['choices'][choice['value']][0] if choice['value'] else 'Not set'
+            lines.append(kind.title() + ' — ' + BEHAVIORS[parent]['label'] + ': ' +
+                         choice['source'].title() + ' · ' + label)
+    return lines
+
+
+def _preview_instruction_lines(behaviors):
+    """Emit only each enabled kind's resolved rule, never a competing parent rule."""
+    lines = []
+    for kind in PREVIEW_OVERRIDES:
+        resolved = preview_preferences(behaviors, kind)
+        if not resolved['enabled']:
+            continue
+        timing = resolved['timing']['value']
+        implementation = resolved['implementation']['value']
+        scope = 'For frontend changes' if kind == 'frontend' else 'For command-line tool changes'
+        if timing == 'when_ready':
+            if implementation == 'no':
+                prose = 'Prepare an initial lightweight local preview for approval before substantial implementation; preview and prototype work needed for approval is allowed.'
+            else:
+                prose = 'When the work is ready to try, prepare its supported local preview. Explain how to access it and report unavailable preview tools accurately.'
+            lines.append(scope + ' — When to preview: ' + prose)
+        elif timing == 'on_request':
+            lines.append(scope + ' — When to preview: Prepare a local preview only when the user requests it, unless repository or task instructions require one.')
+        if implementation:
+            prose = BEHAVIORS['implement_before_approval']['choices'][implementation][1]
+            if implementation == 'no' and timing == 'on_request':
+                prose += ' Do not automatically launch a preview; wait for a preview request, then obtain approval before substantial implementation.'
+            elif implementation == 'no' and timing is None:
+                prose += ' Preview timing is not set; follow task and repository rules for when to prepare the approval preview.'
+            lines.append(scope + ' — Implement before approval: ' + prose)
+    return lines
+
+
 def visible_behaviors(behaviors):
     """Active instructions and display choices; saved inactive values remain intact."""
     result = effective_behaviors(behaviors)
@@ -179,9 +270,13 @@ def visible_behaviors(behaviors):
             result.pop(key, None)
     if not cli:
         result.pop('cli_preview', None)
+    for kind, keys in PREVIEW_OVERRIDES.items():
+        if not preview_enabled(result, kind):
+            for key in keys.values():
+                result.pop(key, None)
     if not frontend and not cli:
-        result.pop('local_preview', None)
-        result.pop('preview_approval', None)
+        for key in PREVIEW_DEFAULTS.values():
+            result.pop(key, None)
     return result
 
 
@@ -736,8 +831,9 @@ def summary_lines(policy):
         lines.append(agent.title() + ' permissions: ' + (presets[preset]['label'] if preset else 'Not set'))
     if behaviors:
         for key, spec in BEHAVIORS.items():
-            if key in behaviors:
+            if key in behaviors and key not in _preview_rule_keys():
                 lines.append(spec['label'] + ': ' + spec['choices'][behaviors[key]][0])
+        lines.extend(preview_summary_lines(behaviors))
     else:
         lines.append('PRs, previews & tests: no preferences set')
     lines.append('Custom Markdown: ' + ('present' if summary['custom_instructions'] else 'empty'))
@@ -868,9 +964,10 @@ def _stage_text(policy):
                              'They do not change an active turn or require switching models during a task.')
     behaviors = visible_behaviors(policy.get('behaviors', {}))
     if behaviors:
-        parts.append('Selected behavior preferences:\n' + '\n'.join(
-            _behavior_instructions(behaviors, key)
-            for key, spec in BEHAVIORS.items() if key in behaviors))
+        behavior_lines = [_behavior_instructions(behaviors, key)
+                          for key in BEHAVIORS if key in behaviors and key not in _preview_rule_keys()]
+        behavior_lines.extend(_preview_instruction_lines(behaviors))
+        parts.append('Selected behavior preferences:\n' + '\n'.join(behavior_lines))
     if policy.get('runners', {}).get('targets'):
         parts.append('Test runners are configured. Use `t runners list` '
                      '(with `--repo ALIAS` for repository settings) to inspect targets. '

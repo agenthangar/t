@@ -993,7 +993,7 @@ running sessions and native desktop launches keep their permissions. Explicit
 permission arguments take precedence. Saving a workflow does not rewrite native
 permission defaults or command allowlists.
 To limit these defaults to one repository,
-open **Repository assignments → your repository → Customize only this repository**.
+open **Repository assignments → your repository → Customize a copy for this repo**.
 These defaults apply when starting or resuming a CLI session in that repository
 and its worktrees. Explicit launch arguments win; running turns keep their settings.
 Native desktop launches keep the application's model settings.
@@ -1052,12 +1052,16 @@ including repository-only customizations. Menu choices stay pending until
 | --- | --- |
 | Pull requests | When to open; draft or ready; Automerge or When I ask |
 | Local preview → When to preview | Automatically when ready or Only when I ask |
-| Local preview → Preview approval before PR | Wait for my approval or No approval needed |
+| Local preview → Implement before approval | Yes or No |
 | Local preview → Frontend → Preview | Enabled or Disabled |
+| Local preview → Frontend → When to preview | Inherit or choose a timing override |
+| Local preview → Frontend → Implement before approval | Inherit, Yes, or No |
 | Local preview → Frontend → Design approach | Separate HTML prototype or In the app |
 | Local preview → Frontend → Preview method | Fast reload or Build |
 | Local preview → Frontend → Open in browser | Automatically or Only when I ask |
 | Local preview → CLI → Preview | Enabled or Disabled |
+| Local preview → CLI → When to preview | Inherit or choose a timing override |
+| Local preview → CLI → Implement before approval | Inherit, Yes, or No |
 | Local preview → CLI → Preview method | Install locally or Run from the repo |
 | Tests → Run tests | Local during work, before preview, before PR, or PR CI |
 | Tests → Test runners | Configure targets, defaults, and artifacts |
@@ -1068,20 +1072,30 @@ An unset preference leaves the decision to your existing instructions.
 Preview and validation instructions require accurate reporting of limitations and
 results. Opening a PR alone does not authorize a merge. These preferences guide
 agents; they do not enforce execution or grant permission beyond the task.
-Preview approval concerns the local result you tried. **No approval needed**
-removes that preview gate; **When to open PR** still decides whether to open a PR.
+**When to preview** and **Implement before approval** are defaults under Local
+preview. Frontend and CLI each inherit them unless you choose an override. Child
+rows show the resolved value and source, such as **Inherit · No** or **Override ·
+Yes**. Choosing Inherit removes the override; future parent changes then apply.
+**Implement before approval: No** requires a lightweight preview and approval
+before substantial implementation. Work needed to create that preview is allowed.
+**Yes** lets implementation proceed without that approval gate. PR opening and
+merging remain controlled by their separate settings.
 **Local preview** contains **Frontend** and **CLI** submenus, each with its own
 Enabled/Disabled setting. Both remain accessible so you can re-enable them.
-Shared timing and preview approval apply only to enabled types. Disabling a type
+Resolved timing and implementation preferences apply only to enabled types. Disabling a type
 retains its settings and suppresses its design and preview guidance; disabling
 both suppresses the shared preview rules too. Enabling alone does not start a preview.
 Frontend contains design approach, preview method, and browser
 opening. CLI contains the local install/run method. Browser opening does not change
-when to prepare the preview or whether approval is required before a PR.
+the resolved timing or implementation approval choice. With No and automatic
+timing, prepare the initial lightweight preview before substantial implementation.
+With request-only timing, wait for the preview request and subsequent approval.
 
 The host instruction hierarchy stays unchanged: explicit task instructions and
 repository rules remain authoritative. A selected repository assignment or inline
-policy replaces the global workflow rather than combining with it. Within that
+policy replaces the global workflow rather than combining with it. Repository
+customization creates a copy; later edits to the original named workflow do not
+flow into it. Within that
 workflow, custom Markdown takes precedence over behavior preferences, which take
 precedence over generic model-stage guidance. `t` preserves Markdown as written;
 it does not try to interpret or detect conflicting prose.
@@ -1152,13 +1166,16 @@ defaults when Implementation is unchecked or all stages are off. Optional `permi
 `bypassPermissions`, or `plan`. Omitted agents keep native permission defaults;
 permissions apply independently of model stages and are suppressed when the
 workflow is disabled or excluded. Inside `behaviors`, independent keys are
-`pr_open`, `pr_state`, `pr_merge`, `frontend_enabled`, `cli_enabled`, `local_preview`, `preview_approval`, `cli_preview`,
+`pr_open`, `pr_state`, `pr_merge`, `frontend_enabled`, `cli_enabled`, `local_preview`, `implement_before_approval`, `cli_preview`,
 `frontend_design`, `frontend_preview`, `frontend_browser`, and `test_timing`.
-Preview approval is a single setting under Local preview. Legacy `design_approval`
-values supply that setting only when no preview approval is already resolved;
-they no longer create a separate approval gate before implementation. Reading
-older configuration does not rewrite it, and clearing the shared setting removes
-the legacy gate on save.
+`implement_before_approval` accepts `yes` or `no`. Optional
+`frontend_preview_timing` / `cli_preview_timing` and
+`frontend_implement_before_approval` / `cli_implement_before_approval` override
+these defaults per type. Missing override keys inherit; they do not copy the
+current parent value. Legacy `preview_approval` / `design_approval` resolve into
+the new default only when it is absent: required maps to no, and not-required or
+continue maps to yes. Explicit new values win. Reading older configuration does
+not rewrite it; editing or clearing defaults must not restore retired aliases.
 `frontend_enabled` and `cli_enabled` accept `enabled` or `disabled` independently.
 Each explicit setting overrides the legacy `preview_target` (`frontend`, `cli`,
 or `both`). Without either setting or a legacy target, both types are enabled.
@@ -1623,9 +1640,9 @@ and model-stage guidance. **PRs, previews & tests** separates these decisions:
 | Group | Choices |
 | --- | --- |
 | Pull requests | Open automatically or on instruction; create draft or ready; Automerge or When I ask. |
-| Local preview | When to preview; preview approval before PR; Frontend and CLI submenus with independent enable/disable settings. |
-| Local preview → Frontend | Enabled/Disabled; interactive standalone HTML or in-app design; Fast reload or Build; automatic or requested browser opening. |
-| Local preview → CLI | Enabled/Disabled; install locally or run from the repo. |
+| Local preview | Defaults for when to preview and whether to implement before approval. |
+| Local preview → Frontend | Enabled/Disabled; inherit or override defaults; standalone HTML or in-app design; Fast reload or Build; browser opening. |
+| Local preview → CLI | Enabled/Disabled; inherit or override defaults; install locally or run from the repo. |
 | Tests | When tests run, plus Test runners configuration. |
 
 **Not set** leaves a decision to your task, repository rules and text

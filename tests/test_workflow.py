@@ -884,7 +884,12 @@ def test_behavior_options_render_and_copy_independently(workflow, tmp_path, key,
         rendered = w.render(doc)
         for effective_key, effective_value in w.effective_behaviors({key: value}).items():
             label, text = w.BEHAVIORS[effective_key]['choices'][effective_value]
-            assert text in rendered
+            if effective_key == 'local_preview' and effective_value == 'when_ready':
+                expected = ('lightweight local preview' if w.effective_behaviors({key: value}).get('implement_before_approval') == 'no'
+                            else 'When the work is ready to try')
+                assert expected in rendered
+            else:
+                assert text in rendered
             assert label in '\n'.join(w.summary_lines(policy))
         assert '1. Plan with' not in rendered and 'authorizes sub-agent' not in rendered
         assert 'Model stages are disabled' in rendered
@@ -995,7 +1000,7 @@ def test_behavior_menu_save_or_discard(workflow, t_mod, monkeypatch, tmp_path, s
     picks = ['workflow', 'customize', 'stages_enabled', [], 'behaviors',
              'pull_requests', 'pr_open', 'automatic', 'pr_state', 'draft',
              'pr_merge', 'on_request', 'back',
-             'local_preview', 'local_preview', 'when_ready', 'preview_approval', 'required', 'cli', 'cli_preview', 'install', 'back',
+             'local_preview', 'local_preview', 'when_ready', 'implement_before_approval', 'no', 'cli', 'cli_preview', 'install', 'back',
              'frontend', 'frontend_preview', 'fast_reload', 'back', 'back',
              'tests', 'test_timing', 'pr_ci', 'back', 'back', 'back', 'back']
     picks += ['save'] if save else ['cancel', 'discard']
@@ -1008,11 +1013,11 @@ def test_behavior_menu_save_or_discard(workflow, t_mod, monkeypatch, tmp_path, s
         policy = w.load()[0]['workflows']['standard']
         assert not policy['stages_enabled'] and policy['planning'] == w.DEFAULT['planning']
         assert policy['behaviors'] == {'pr_open': 'automatic', 'pr_state': 'draft', 'pr_merge': 'on_request',
-                                       'local_preview': 'when_ready', 'preview_approval': 'required', 'cli_preview': 'install',
+                                       'local_preview': 'when_ready', 'implement_before_approval': 'no', 'cli_preview': 'install',
                                        'frontend_preview': 'fast_reload', 'test_timing': 'pr_ci'}
         instructions = native_paths()[0].read_text()
         assert 'Open pull requests as drafts' in instructions
-        assert 'Before pushing or opening a pull request' in instructions
+        assert 'Wait for explicit user approval of a lightweight preview before substantial implementation' in instructions
         assert "pull request's required CI" in instructions
 
 
@@ -1239,7 +1244,7 @@ def test_workflow_print_precedence_and_reasoning(workflow, t_mod, monkeypatch, c
     text = capsys.readouterr().out
     assert text.index('Text instructions:') < text.index('PRs, previews & tests:')
     assert 'Design approval' not in text and 'When to preview: Automatically when ready' in text
-    assert 'Preview approval before PR: Wait for my approval' in text
+    assert 'Implement before approval: No' in text
     assert 'Agent selects by task' in text and 'One level below' not in text
     assert 'Implementation' in text and 'Main session: gpt-6.1-sol · Medium' in text
     assert 'starts Medium' not in text

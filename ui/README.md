@@ -214,15 +214,21 @@ PRs, previews & tests uses shared `_RailUI` submenus for Pull requests, Local
 preview and Tests. PR opening (automatic/on instruction), initial
 state (ready/draft) and merging (automatic/on instruction) are independent.
 When to open PR offers Automatically when ready or Only when I ask.
-Local preview contains When to preview (Automatically when ready / Only when I
-ask), Preview approval before PR (Wait for my approval / No approval needed), and
+Local preview contains defaults for When to preview (Automatically when ready /
+Only when I ask) and Implement before approval (Yes / No), plus
 Frontend and CLI submenus. Each submenu starts with Preview (Enabled / Disabled).
 Remove the separate Applies to control. Both submenus stay visible and show
 their enabled/disabled state; disabled settings remain saved and editable.
 Optional frontend_enabled/cli_enabled values override legacy preview_target for
 each type independently. Without flags or a legacy target, both are enabled.
-Read-only operations do not migrate storage. Shared timing and approval apply
-only to enabled types; with neither enabled, suppress shared preview guidance.
+Read-only operations do not migrate storage. Each submenu can Inherit or override
+both defaults independently. Show resolved values with their source in rows,
+summaries, printed lists and save review: Inherit · value or Override · value.
+The Inherit choice is separated from explicit values and removes only that
+override. Inheriting an unset parent displays Inherit · Not set. Changing a parent
+updates inheriting children while preserving explicit overrides, even overrides
+equal to the parent. Resolved rules apply only to enabled types; with neither
+enabled, suppress preview guidance.
 Disabled frontend suppresses design, method and browser guidance;
 disabled CLI suppresses its method guidance. Enabling alone does not request a
 preview or change the separate PR-opening preference.
@@ -237,17 +243,27 @@ Tests contains Run tests and Test runners; remove the separate Test runners row
 from the workflow menu. Nested runner edits share the same staged Save/discard
 transaction and preserve behavior changes made before or after them.
 Browser opening applies only once a local frontend preview is available; it does
-not start previews or change preview timing or approval. Preview approval before PR
-is the single approval control under Local preview. Remove the separate Design
-approval control and generated pre-implementation gate. Legacy design_approval
-values resolve into preview_approval only if no preview approval already exists;
-explicit shared choices win. Read-only JSON retains raw keys, and clearing the
-shared choice must not revive a retired gate. Test timing
+not start previews or change resolved timing or approval. Implement before
+approval: No requires a lightweight preview and user approval before substantial
+implementation; work needed for the preview itself is allowed. With automatic
+timing, prepare that initial preview before implementation. With request-only
+timing, wait for the preview request and then approval. Yes permits implementation
+without this gate; PR preferences stay independent. Runtime instructions emit
+only per-type resolved rules, never conflicting parent and override rules.
+Optional frontend_preview_timing/cli_preview_timing override local_preview;
+frontend_implement_before_approval/cli_implement_before_approval override the
+yes/no implement_before_approval parent. Missing child keys mean inheritance.
+Legacy preview_approval and design_approval resolve inversely into the new parent
+only if it is absent. Explicit new choices win. Read-only JSON retains raw keys,
+and clearing a parent must not revive a retired alias. Test timing
 chooses local during work, local before preview, local before PR, or PR CI;
 required repository checks always apply. Unset rows and picker choices say
 Not set. Task, repository and text instructions supply
 the behavior. Menus show concise choices without routine explanatory preambles.
-Reserve inheritance wording for the actual Use global default repository action.
+Use inheritance wording only where values really follow a parent: preview
+defaults, main-session settings, native tool defaults, and workflow assignments.
+Repository customization copies the complete policy; label it Customize a copy
+for this repo so users know later edits to the source workflow stop flowing.
 Use Automerge for automatic PR merging. Preview methods use Install locally, Run from the repo,
 Fast reload and Build. Test choices name Local or PR CI explicitly.
 Clearing a choice removes its key. Preserve focused rows when returning.
@@ -256,9 +272,10 @@ configuration; editing materializes equivalent separate choices. Working-folder
 and generic validation choices are no longer in the menu. Existing unrelated
 legacy rules are retained and displayed separately; explicit test timing supersedes
 legacy validation. Model-stage rows are hidden while stages are off.
-Legacy local_preview=before_pr reads as automatic preview plus required preview
-approval. Explicit preview_approval wins; edits materialize independent settings
-without changing raw JSON on reads. The combined legacy choice is hidden in menus.
+Legacy local_preview=before_pr resolves automatic preview and an implementation
+approval default. Explicit implement_before_approval wins; older preview_approval
+is honored before inverse mapping. Edits materialize independent settings without
+changing raw JSON on reads. The combined legacy choice is hidden in menus.
 Instead show the selected session tool's default model and reasoning effort.
 Optional `session_defaults` stores independent Codex and Claude model/effort maps;
 these are active for enabled workflows with Implementation unchecked, including
