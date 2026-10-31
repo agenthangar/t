@@ -1050,26 +1050,32 @@ including repository-only customizations. Menu choices stay pending until
 | Setting | Choices |
 | --- | --- |
 | Pull requests | When to open; draft or ready; Automerge or When I ask |
-| Local preview → Applies to | Frontend, CLI, or Frontend and CLI |
+| Local preview → Applies to | Check Frontend, CLI, or both |
 | When to preview | Automatically when ready or Only when I ask |
 | Preview approval before PR | Wait for my approval or No approval needed |
 | CLI preview method | Install locally or Run from the repo |
-| Frontend → Design approach | Separate HTML prototype or In the app |
-| Frontend → Design approval | Required or Not required |
-| Frontend → Preview method | Fast reload or Build |
+| Frontend design → Design approach | Separate HTML prototype or In the app |
+| Frontend design → Design approval | Required or Not required |
+| Frontend preview → Preview method | Fast reload or Build |
+| Frontend preview → Open in browser | Automatically or Only when I ask |
 | Tests | Local during work, before preview, before PR, or PR CI |
 
-Every setting also offers **Not set**, which removes that choice without
+Every setting also offers **Not set**, visually separated from the other choices,
+which removes that choice without
 instructing the agent to do its opposite. No behavior is selected by default.
 Preview and validation instructions require accurate reporting of limitations and
 results. Opening a PR alone does not authorize a merge. These preferences guide
 agents; they do not enforce execution or grant permission beyond the task.
 Preview approval concerns the local result you tried. **No approval needed**
 removes that preview gate; **When to open PR** still decides whether to open a PR.
-**Applies to** limits preview timing and approval to the selected kind of work.
+**Applies to** is a checklist: use Space to toggle Frontend and CLI, then Enter
+to accept. **Not set** clears both; checking either clears **Not set**.
+It limits preview timing and approval to the selected kinds of work.
 The CLI method appears when CLI is applicable; saved methods are retained when
-switching applicability. Frontend design and preview method live together in
-**Frontend** and remain independently configurable.
+switching applicability. **Frontend design** controls the design approach and
+approval. **Frontend preview** controls how the preview runs and whether its URL
+opens automatically in your browser once ready. Browser opening does not change
+when to prepare the preview or whether approval is required before a PR.
 
 The host instruction hierarchy stays unchanged: explicit task instructions and
 repository rules remain authoritative. A selected repository assignment or inline
@@ -1145,9 +1151,11 @@ defaults when Implementation is unchecked or all stages are off. Optional `permi
 permissions apply independently of model stages and are suppressed when the
 workflow is disabled or excluded. Inside `behaviors`, independent keys are
 `pr_open`, `pr_state`, `pr_merge`, `preview_target`, `local_preview`, `preview_approval`, `cli_preview`,
-`frontend_design`, `design_approval`, `frontend_preview`, and `test_timing`.
+`frontend_design`, `design_approval`, `frontend_preview`, `frontend_browser`, and `test_timing`.
 `preview_target` accepts `frontend`, `cli`, or `both`; omission preserves the
-existing unspecified applicability. The editor presents supported choices. Legacy `worktree`, `preview`,
+existing unspecified applicability. The checklist retains these saved values.
+`frontend_browser` accepts `automatic` or `on_request`; omission leaves browser
+opening unspecified. The editor presents supported choices. Legacy `worktree`, `preview`,
 `validation`, and `delivery` fields remain readable; unknown keys or values are
 rejected before any write.
 Hidden `t config show --workflow` and `t config edit --workflow` compatibility
@@ -1606,8 +1614,9 @@ and model-stage guidance. **PRs, previews & tests** separates these decisions:
 | Group | Choices |
 | --- | --- |
 | Pull requests | Open automatically or on instruction; create draft or ready; Automerge or When I ask. |
-| Local preview | Applies to Frontend, CLI, or both; when to preview; preview approval before PR; CLI install/run method when applicable. |
-| Frontend | Interactive standalone HTML or in-app design; design approval; Fast reload or Build preview method. |
+| Local preview | Frontend/CLI checklist; when to preview; preview approval before PR; CLI install/run method when applicable. |
+| Frontend design | Interactive standalone HTML or in-app design; design approval. |
+| Frontend preview | Fast reload or Build; open in browser automatically or only when asked. |
 | Tests | Locally during development, before local preview, before opening a PR, or in PR CI. |
 
 **Not set** leaves a decision to your task, repository rules and text

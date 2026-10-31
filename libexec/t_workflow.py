@@ -100,6 +100,10 @@ BEHAVIORS = {
         'fast_reload': ('Fast reload', 'For frontend previews, use the supported local development server and fast reload when available so design changes can be inspected promptly. Report unsupported preview capabilities accurately.'),
         'rebuild': ('Build', 'For frontend previews, rebuild using the supported preview command after relevant changes and show the updated result.'),
     }},
+    'frontend_browser': {'label': 'Open in browser', 'choices': {
+        'automatic': ('Automatically', 'For frontend previews, open the available local preview URL in the user\'s browser after the preview server or build is ready. This browser preference does not itself authorize starting a preview or change selected preview timing, approval or pull request preferences. Honor repository and task instructions and report unavailable browser capabilities accurately.'),
+        'on_request': ('Only when I ask', 'For frontend previews, wait for an explicit user request before opening the local preview URL in the user\'s browser. This browser preference does not itself authorize starting a preview or change selected preview timing, approval or pull request preferences. Honor repository and task instructions.'),
+    }},
     'test_timing': {'label': 'Run tests', 'choices': {
         'during_work': ('Local: during work', 'Run relevant local checks as implementation progresses and report results. Keep required checks and repository validation rules intact.'),
         'before_preview': ('Local: before preview', 'Run relevant local checks before exposing the local preview and report results. Keep required checks and repository validation rules intact.'),

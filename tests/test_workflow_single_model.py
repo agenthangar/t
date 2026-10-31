@@ -175,7 +175,7 @@ def test_pr_open_choices_distinguish_timing_and_explicit_request(workflow, t_mod
 def test_preview_methods_and_approval_choices_keep_context(workflow, t_mod):
     original = dict(copy.deepcopy(workflow.DEFAULT), behaviors={'pr_open': 'on_request'})
     ui = InspectMenu(['local_preview', 'cli_preview', 'run', 'preview_approval', 'not_required',
-                      'back', 'frontend_design', 'frontend_preview', 'rebuild', 'back', 'back'])
+                      'back', 'frontend_preview', 'frontend_preview', 'rebuild', 'back', 'back'])
     policy = t_mod._workflow_behaviors_menu(ui, vars(workflow), original)
     assert ui.views[2][0] == 'CLI preview method'
     assert dict(ui.views[2][1]) == {'': 'Not set', 'install': 'Install locally', 'run': 'Run from the repo'}
@@ -183,8 +183,7 @@ def test_preview_methods_and_approval_choices_keep_context(workflow, t_mod):
     assert dict(ui.views[8][1]) == {'': 'Not set', 'fast_reload': 'Fast reload', 'rebuild': 'Build'}
     assert ui.views[4][0] == 'Preview approval before PR'
     assert dict(ui.views[4][1]) == {'': 'Not set', 'required': 'Wait for my approval', 'not_required': 'No approval needed'}
-    assert dict(ui.views[7][1]) == {'frontend_design': 'Design approach', 'design_approval': 'Design approval',
-                                   'frontend_preview': 'Preview method', 'back': 'Back'}
+    assert dict(ui.views[7][1]) == {'frontend_preview': 'Preview method', 'frontend_browser': 'Open in browser', 'back': 'Back'}
     assert policy['behaviors'] == {'pr_open': 'on_request', 'cli_preview': 'run',
                                    'frontend_preview': 'rebuild', 'preview_approval': 'not_required'}
     assert original['behaviors'] == {'pr_open': 'on_request'}
@@ -194,23 +193,63 @@ def test_preview_methods_and_approval_choices_keep_context(workflow, t_mod):
 def test_preview_target_controls_cli_row_and_preserves_frontend_settings(workflow, t_mod, target):
     original = dict(copy.deepcopy(workflow.DEFAULT), behaviors={'cli_preview': 'install',
         'frontend_preview': 'fast_reload', 'frontend_design': 'standalone_html'})
-    ui = InspectMenu(['local_preview', 'preview_target', target, 'back', 'back'])
+    answer = {'': [''], 'frontend': ['frontend'], 'cli': ['cli'], 'both': ['frontend', 'cli']}[target]
+    ui = InspectMenu(['local_preview', 'preview_target', answer, 'back', 'back'])
     policy = t_mod._workflow_behaviors_menu(ui, vars(workflow), original)
     assert ui.views[2][0] == 'Applies to'
-    assert dict(ui.views[2][1]) == {'': 'Not set', 'frontend': 'Frontend', 'cli': 'CLI', 'both': 'Frontend and CLI'}
+    assert ui.views[2][1] == [('', 'Not set'), ('frontend', 'Frontend'), ('cli', 'CLI')]
+    assert ui.views[2][2] == {'multi': True, 'marked': {0}, 'default': 0, 'empty_choice': ''}
     assert 'frontend_preview' not in dict(ui.views[3][1])
     assert ('cli_preview' in dict(ui.views[3][1])) is (target != 'frontend')
     summary = ui.views[-1][2]['values']
     assert ('CLI preview method: Install locally' in summary['local_preview']) is (target != 'frontend')
-    assert 'Preview method: Fast reload' in summary['frontend_design']
+    assert 'Preview method: Fast reload' in summary['frontend_preview']
     assert 'Design approach:' in summary['frontend_design']
     assert policy['behaviors'].get('preview_target', '') == target
     assert policy['behaviors']['cli_preview'] == 'install'
     assert policy['behaviors']['frontend_preview'] == 'fast_reload'
     assert 'preview_target' not in original['behaviors']
     before = copy.deepcopy(policy)
-    assert t_mod._workflow_behaviors_menu(Menu(['local_preview', 'preview_target', None, 'back', 'back']),
-                                          vars(workflow), policy) == before
+    cancelled = InspectMenu(['local_preview', 'preview_target', None, 'back', 'back'])
+    assert t_mod._workflow_behaviors_menu(cancelled, vars(workflow), policy) == before
+    assert cancelled.views[2][2]['marked'] == {'': {0}, 'frontend': {1}, 'cli': {2}, 'both': {1, 2}}[target]
+
+
+@pytest.mark.parametrize('answer', [[], ['']])
+def test_preview_target_multiselect_reset_preserves_other_preferences(workflow, t_mod, answer):
+    original = dict(copy.deepcopy(workflow.DEFAULT), behaviors={'preview_target': 'both',
+        'cli_preview': 'install', 'frontend_preview': 'fast_reload', 'pr_open': 'on_request'})
+    ui = InspectMenu(['local_preview', 'preview_target', answer, 'back', 'back'])
+    policy = t_mod._workflow_behaviors_menu(ui, vars(workflow), original)
+    assert ui.views[2][2]['marked'] == {1, 2}
+    assert 'preview_target' not in policy['behaviors']
+    assert policy['behaviors'] == {key: value for key, value in original['behaviors'].items() if key != 'preview_target'}
+    assert ui.views[3][2]['values']['preview_target'] == 'Not set'
+    assert original['behaviors']['preview_target'] == 'both'
+    unchanged = t_mod._workflow_behaviors_menu(Menu(['local_preview', 'preview_target', ['frontend', 'cli'],
+        'back', 'back']), vars(workflow), original)
+    assert unchanged == original
+
+
+@pytest.mark.parametrize('browser, label', [('automatic', 'Automatically'), ('on_request', 'Only when I ask')])
+def test_frontend_browser_setting_is_independent_and_clearable(workflow, t_mod, browser, label):
+    original = dict(copy.deepcopy(workflow.DEFAULT), behaviors={'frontend_design': 'in_app',
+        'design_approval': 'required', 'frontend_preview': 'rebuild', 'preview_target': 'cli'})
+    ui = InspectMenu(['frontend_preview', 'frontend_browser', browser, 'back', 'back'])
+    policy = t_mod._workflow_behaviors_menu(ui, vars(workflow), original)
+    assert ui.views[1][0] == 'Frontend preview'
+    assert dict(ui.views[1][1]) == {'frontend_preview': 'Preview method', 'frontend_browser': 'Open in browser', 'back': 'Back'}
+    assert ui.views[2][0] == 'Open in browser'
+    assert dict(ui.views[2][1]) == {'': 'Not set', 'automatic': 'Automatically', 'on_request': 'Only when I ask'}
+    assert policy['behaviors'] == dict(original['behaviors'], frontend_browser=browser)
+    assert ui.views[3][2]['values']['frontend_browser'] == label
+    assert 'Open in browser: ' + label in ui.views[-1][2]['values']['frontend_preview']
+    for picked in (None, browser):
+        assert t_mod._workflow_behaviors_menu(Menu(['frontend_preview', 'frontend_browser', picked, 'back', 'back']),
+                                              vars(workflow), policy) == policy
+    assert t_mod._workflow_behaviors_menu(Menu(['frontend_preview', 'frontend_browser', '', 'back', 'back']),
+                                          vars(workflow), policy) == original
+    assert 'frontend_browser' not in original['behaviors']
 
 
 @pytest.mark.parametrize('target', ['frontend', 'cli', 'both'])
@@ -221,14 +260,16 @@ def test_printed_preview_sections_match_target_and_frontend_grouping(workflow, t
         'workflow_name': 'standard', 'excluded': False, 'workflow': policy,
         'propagation': {'runtime': 'pending'}})
     output = capsys.readouterr().out
-    local = output.split('  Local preview\n', 1)[1].split('  Frontend\n', 1)[0]
-    frontend = output.split('  Frontend\n', 1)[1].split('  Tests\n', 1)[0]
+    local = output.split('  Local preview\n', 1)[1].split('  Frontend design\n', 1)[0]
+    design = output.split('  Frontend design\n', 1)[1].split('  Frontend preview\n', 1)[0]
+    frontend = output.split('  Frontend preview\n', 1)[1].split('  Tests\n', 1)[0]
     assert 'Applies to:' in local
     assert ('CLI preview method: Install locally' in local) is (target != 'frontend')
     assert 'Preview method:' not in local
-    assert 'Design approach: In the app' in frontend
+    assert 'Design approach: In the app' in design
     assert 'Preview method: Build' in frontend
-    assert 'Design approval:' in frontend
+    assert 'Design approval:' in design
+    assert 'Open in browser: Not set' in frontend
 
 
 @pytest.mark.parametrize('stage', ['planning', 'implementation', 'review'])
@@ -539,7 +580,8 @@ def test_development_flow_keeps_section_focus_without_chatter(workflow, t_mod):
     assert first[0] == 'PRs, previews & tests'
     assert set(first[2]['values'].values()) == {'Not set'}
     assert dict(first[1]) == {'pull_requests': 'Pull requests ›', 'local_preview': 'Local preview ›',
-                              'frontend_design': 'Frontend ›', 'tests': 'Tests ›', 'back': 'Back'}
+                              'frontend_design': 'Frontend design ›', 'frontend_preview': 'Frontend preview ›',
+                              'tests': 'Tests ›', 'back': 'Back'}
     assert dict(ui.views[2][1])['draft'] == 'Draft'
     assert ui.views[3][2]['default'] == 1
     assert dict(ui.views[5][1]) == {'preview_target': 'Applies to', 'local_preview': 'When to preview',
@@ -547,5 +589,5 @@ def test_development_flow_keeps_section_focus_without_chatter(workflow, t_mod):
     assert dict(ui.views[6][1]) == {'': 'Not set', 'when_ready': 'Automatically when ready', 'on_request': 'Only when I ask'}
     assert dict(ui.views[8][1]) == {'': 'Not set', 'required': 'Wait for my approval', 'not_required': 'No approval needed'}
     assert ui.views[10][2]['default'] == 1
-    assert ui.views[-1][2]['default'] == 3
+    assert ui.views[-1][2]['default'] == 4
     assert ui.context == []

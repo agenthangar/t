@@ -114,7 +114,7 @@ def test_invalid_behavior_edit_is_rejected(workflow, key, value):
 
 @pytest.mark.parametrize('key', [
     'pr_open', 'pr_state', 'pr_merge', 'preview_target', 'local_preview', 'preview_approval', 'cli_preview', 'frontend_design',
-    'design_approval', 'frontend_preview', 'test_timing',
+    'design_approval', 'frontend_preview', 'frontend_browser', 'test_timing',
 ])
 def test_each_new_preference_validates_and_renders_as_instructions(workflow, key):
     for value, (label, prose) in workflow.BEHAVIORS[key]['choices'].items():
@@ -288,7 +288,8 @@ def test_preview_target_alone_does_not_request_preview_or_approval(workflow, tar
 
 def test_changing_preview_target_preserves_independent_methods_and_design(workflow):
     methods = {'frontend_preview': 'fast_reload', 'cli_preview': 'run',
-               'frontend_design': 'standalone_html', 'design_approval': 'required'}
+               'frontend_design': 'standalone_html', 'design_approval': 'required',
+               'frontend_browser': 'automatic'}
     policy = {**copy.deepcopy(workflow.DEFAULT), 'behaviors': dict(methods)}
     for target in ('frontend', 'cli', 'both'):
         policy = workflow.update_behavior(policy, 'preview_target', target)
@@ -302,6 +303,66 @@ def test_changing_preview_target_preserves_independent_methods_and_design(workfl
     assert workflow.BEHAVIORS['frontend_preview']['label'] == 'Web preview method'
     assert workflow.BEHAVIORS['frontend_preview']['choices']['fast_reload'][0] == 'Fast reload'
     assert workflow.BEHAVIORS['frontend_preview']['choices']['rebuild'][0] == 'Build'
+
+
+@pytest.mark.parametrize('value', ['automatic', 'on_request'])
+def test_frontend_browser_controls_opening_without_requesting_preview(workflow, value):
+    policy = workflow.update_behavior(workflow.DEFAULT, 'frontend_browser', value)
+    assert policy['behaviors'] == {'frontend_browser': value}
+    text = workflow._stage_text(policy)
+    assert 'For frontend previews,' in text
+    assert "local preview URL in the user's browser" in text
+    assert 'does not itself authorize starting a preview' in text
+    assert 'or change selected preview timing, approval or pull request preferences' in text
+    assert 'When to preview:' not in text
+    assert 'Preview approval before PR:' not in text
+    assert 'When to open PR:' not in text
+    if value == 'automatic':
+        assert 'after the preview server or build is ready' in text
+        assert 'Open in browser: Automatically' in workflow.summary_lines(policy)
+    else:
+        assert 'wait for an explicit user request before opening' in text
+        assert 'Open in browser: Only when I ask' in workflow.summary_lines(policy)
+    assert workflow.update_behavior(policy, 'frontend_browser', '') == workflow.DEFAULT
+
+
+@pytest.mark.parametrize('value', ['automatic', 'on_request'])
+def test_frontend_browser_keeps_preview_timing_approval_and_pr_rules(workflow, value):
+    behaviors = {'preview_target': 'cli', 'local_preview': 'on_request',
+                 'preview_approval': 'required', 'pr_open': 'on_request',
+                 'frontend_preview': 'rebuild'}
+    policy = {**copy.deepcopy(workflow.DEFAULT), 'behaviors': behaviors}
+    before = copy.deepcopy(policy)
+    after = workflow.update_behavior(policy, 'frontend_browser', value)
+    assert after['behaviors'] == {**behaviors, 'frontend_browser': value}
+    text = workflow._stage_text(after)
+    assert 'When to preview: For command-line tool changes only:' in text
+    assert 'Preview approval before PR: For command-line tool changes only:' in text
+    assert 'Open in browser: For frontend previews,' in text
+    assert 'wait for an explicit user request or approval before pushing' in text
+    assert policy == before
+    assert workflow.update_behavior(after, 'frontend_browser', '') == policy
+
+
+def test_frontend_browser_render_and_summary_preserve_raw_legacy_policy(workflow):
+    policy = {**copy.deepcopy(workflow.DEFAULT), 'behaviors': {
+        'local_preview': 'before_pr', 'frontend_preview': 'fast_reload',
+        'frontend_browser': 'on_request'}}
+    document = workflow.update(workflow.defaults(), policy)
+    before = copy.deepcopy(document)
+    text = workflow.render(document)
+    assert 'Open in browser: For frontend previews, wait for an explicit user request' in text
+    assert 'Open in browser: Only when I ask' in workflow.summary_lines(policy)
+    assert workflow.policy_summary(policy)['behaviors'] == policy['behaviors']
+    assert document == before
+    assert not workflow.config_path().exists()
+
+
+@pytest.mark.parametrize('value', ['always', 'never', False, [], None])
+def test_invalid_saved_frontend_browser_is_rejected(workflow, value):
+    policy = {**copy.deepcopy(workflow.DEFAULT), 'behaviors': {'frontend_browser': value}}
+    with pytest.raises(ValueError, match='behavior'):
+        workflow.validate_policy(policy)
 
 
 @pytest.mark.parametrize('value', ['backend', 'all', False, [], None])

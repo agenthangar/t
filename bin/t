@@ -2410,6 +2410,17 @@ def _workflow_behaviors_menu(ui, helper, policy):
             if choice in (None, "back"):
                 break
             field_focus = next(i for i, row in enumerate(fields_rows) if row[0] == choice)
+            if choice == "preview_target":
+                current = behaviors.get(choice, "")
+                marked = {"": {0}, "frontend": {1}, "cli": {2}, "both": {1, 2}}[current]
+                picked = ui.pick("Applies to", [("", "Not set"), ("frontend", "Frontend"), ("cli", "CLI")],
+                                 multi=True, marked=marked, default=min(marked), empty_choice="")
+                if picked is not None:
+                    selected = ("" if not picked or "" in picked else "both" if "frontend" in picked and "cli" in picked
+                                else "frontend" if "frontend" in picked else "cli")
+                    if selected != current:
+                        changed = helper["update_behavior"](changed, choice, selected)
+                continue
             spec = helper["BEHAVIORS"][choice]
             options = [("", "Not set")] + [(key, _workflow_choice(helper, choice, key)) for key in spec["choices"]
                                             if not (choice == "local_preview" and key == "before_pr")]
@@ -3231,7 +3242,8 @@ def _workflow_launch_settings(cfg, settings):
 _WORKFLOW_SECTIONS = {
     "pull_requests": ("Pull requests", ("pr_open", "pr_state", "pr_merge")),
     "local_preview": ("Local preview", ("preview_target", "local_preview", "preview_approval", "cli_preview")),
-    "frontend_design": ("Frontend", ("frontend_design", "design_approval", "frontend_preview")),
+    "frontend_design": ("Frontend design", ("frontend_design", "design_approval")),
+    "frontend_preview": ("Frontend preview", ("frontend_preview", "frontend_browser")),
     "tests": ("Tests", ("test_timing",)),
 }
 _WORKFLOW_TOPICS = {
@@ -3243,6 +3255,7 @@ _WORKFLOW_TOPICS = {
     "preview_approval": ("Preview approval before PR", "Choose whether opening a PR waits for your approval of the local preview."),
     "cli_preview": ("CLI preview method", "Install the development version locally, or run it from the repo."),
     "frontend_preview": ("Preview method", "Refresh changes with a local dev server, or rebuild the preview."),
+    "frontend_browser": ("Open in browser", "Open the frontend preview automatically, or only when requested."),
     "frontend_design": ("Design approach", "Try an interactive HTML prototype outside the app, or design in the app itself."),
     "design_approval": ("Design approval", "Choose whether implementation waits for your approval of the design."),
     "test_timing": ("Run tests", "Choose when to run tests. Required PR checks still apply."),
@@ -3270,7 +3283,7 @@ def _workflow_section_fields(section, behaviors):
 
 
 def _workflow_choice(helper, key, value):
-    if key in ("pr_open", "preview_target", "local_preview", "preview_approval", "cli_preview", "frontend_preview"):
+    if key in ("pr_open", "preview_target", "local_preview", "preview_approval", "cli_preview", "frontend_preview", "frontend_browser"):
         return helper["BEHAVIORS"][key]["choices"][value][0]
     return _WORKFLOW_CHOICE_LABELS.get(value, helper["BEHAVIORS"][key]["choices"][value][0])
 
@@ -3954,12 +3967,19 @@ class _RailUI:
 
     def pick(self, label, rows, multi=False, default=0, marked=None,
              values=None, sections=None, accents=None, primary=None, shortcuts=None,
-             on_back=None, back_label=None):
+             on_back=None, back_label=None, empty_choice=None):
         """Single/multiple selection on the shared row/frame template.
-        Sections are not selectable; optional shortcuts return an action key."""
+        Sections and unset-choice spacing are not selectable. An optional
+        empty_choice makes that checklist row an exclusive reset selection.
+        Optional shortcuts return an action key."""
         values, sections, accents = values or {}, sections or {}, accents or {}
         cur = max(0, min(default or 0, len(rows) - 1))
         marks = set(marked or ())
+        empty_index = next((i for i, (key, _) in enumerate(rows) if key == empty_choice), None) if multi and empty_choice is not None else None
+        if empty_index is not None:
+            marks.discard(empty_index)
+            if not marks:
+                marks.add(empty_index)
         keys = "↑↓/jk move" + (" · space mark" if multi else "") + " · enter select"
         keys += (f" · q/esc {back_label} · ctrl-c cancel" if back_label else " · q back")
         flash = ""
@@ -3967,6 +3987,8 @@ class _RailUI:
             display = []
             label_width = max((len(text) for key, text in rows if key in values), default=0)
             for n, (key, text) in enumerate(rows):
+                if n == 1 and rows[0][0] == '' and key not in sections:
+                    display.append((self.rail, None))
                 if key in sections:
                     if display:
                         display.append((self.rail, None))
@@ -3984,7 +4006,14 @@ class _RailUI:
             elif k in ("down", "j"):
                 cur = (cur + 1) % len(rows)
             elif k == "space" and multi:
-                marks.symmetric_difference_update({cur})
+                if empty_index is not None and cur == empty_index:
+                    marks = {empty_index}
+                else:
+                    marks.symmetric_difference_update({cur})
+                    if empty_index is not None:
+                        marks.discard(empty_index)
+                        if not marks:
+                            marks.add(empty_index)
                 cur = min(cur + 1, len(rows) - 1)
             elif k == "enter":
                 return [rows[i][0] for i in sorted(marks)] if multi else rows[cur][0]

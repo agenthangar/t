@@ -996,7 +996,7 @@ def test_behavior_menu_save_or_discard(workflow, t_mod, monkeypatch, tmp_path, s
              'pull_requests', 'pr_open', 'automatic', 'pr_state', 'draft',
              'pr_merge', 'on_request', 'back',
              'local_preview', 'local_preview', 'when_ready', 'preview_approval', 'required', 'cli_preview', 'install', 'back',
-             'frontend_design', 'frontend_preview', 'fast_reload', 'back',
+             'frontend_preview', 'frontend_preview', 'fast_reload', 'back',
              'tests', 'test_timing', 'pr_ci', 'back', 'back', 'back', 'back']
     picks += ['save'] if save else ['cancel', 'discard']
     ui = Menu(picks)

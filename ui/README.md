@@ -45,6 +45,11 @@ Let label columns use available width before truncating; never cap wide-terminal
 labels at 24 characters. Clip text before applying color and count physical rows when repainting; at
 80×24, 44×20, and 32×12 interactive screens the focused row and primary action
 must remain visible.
+Separate a leading unset/default choice (empty key) from the remaining choices
+with a nonselectable blank rail row in every shared picker. It adds no option or
+explanatory heading. A checklist with an explicit empty choice treats that row as
+an exclusive reset: selecting it clears all other marks, selecting a real option
+clears it, and unchecking the last real option restores it.
 The 60-column breakpoint applies to `_RailUI` inline menus. Most printed tables
 switch to labeled, wrapped cells when their actual columns no longer fit.
 Session lists instead keep one physical row per session, as described below.
@@ -206,19 +211,25 @@ permissions, behavior preferences and Markdown active; disabling the workflow
 suppresses every workflow setting. Selected stages expose separate
 model and effort controls, plus Instructions for ordinary Markdown in VISUAL/EDITOR.
 PRs, previews & tests uses shared `_RailUI` submenus for Pull requests, Local
-preview, Frontend and Tests. PR opening (automatic/on instruction), initial
+preview, Frontend design, Frontend preview and Tests. PR opening (automatic/on instruction), initial
 state (ready/draft) and merging (automatic/on instruction) are independent.
 When to open PR offers Automatically when ready or Only when I ask.
-Local preview uses Applies to (Frontend / CLI / Frontend and CLI), When to preview
+Local preview uses an Applies to checklist (Frontend and CLI), When to preview
 (Automatically when ready / Only when I ask), Preview approval before PR (Wait for
 my approval / No approval needed), and CLI preview method (Install locally / Run
 from the repo). Hide the CLI method only for explicit Frontend-only applicability;
-retain its saved value. An unset target preserves legacy applicability. The target
+retain its saved value. The checklist marks either or both independently, with a
+separated Not set reset row. Space toggles; Enter accepts marked choices; cancel
+preserves the saved selection. Save maps the marks to the existing frontend/cli/both
+values or removes the key for Not set. An unset target preserves legacy applicability. The target
 scopes timing and approval prose, not the independent design/method preferences.
 Choosing a target alone does not trigger preview, and removing preview approval
 never changes the separate PR-opening preference.
-Frontend combines Design approach (Separate HTML prototype / In the app), Design
-approval (Required / Not required), and Preview method (Fast reload / Build). Test timing
+Frontend design contains Design approach (Separate HTML prototype / In the app)
+and Design approval (Required / Not required). Frontend preview contains Preview
+method (Fast reload / Build) and Open in browser (Automatically / Only when I ask).
+Browser opening applies only once a local frontend preview is available; it does
+not start previews or change preview timing, design approval, or PR approval. Test timing
 chooses local during work, local before preview, local before PR, or PR CI;
 required repository checks always apply. Unset rows and picker choices say
 Not set. Task, repository and text instructions supply
@@ -989,7 +1000,7 @@ a terminal, or with `--help`, it prints group help without writes. `t workflow
 list` stays read-only and never opens the editor. The editor lists named workflows
 and repository assignments, stages all edits, and reviews before saving. Its
 PRs, previews & tests menu offers concise choices for pull requests, local
-preview, frontend design and tests. Text instructions have higher precedence than those
+preview, frontend design, frontend preview and tests. Text instructions have higher precedence than those
 choices. List output presents that precedence before choices and humanizes model
 reasoning; the named catalogue avoids repeating complete per-workflow blocks.
 The hidden `t config workflows` compatibility route opens the same editor.
