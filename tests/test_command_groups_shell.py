@@ -42,7 +42,7 @@ def test_grouped_shell_commands_keep_arguments_and_caller_shell(tmp_path):
         _t_open() { print -r -- "open:${(j:,:)@}"; }
         _t_push() { print -r -- "push:${(j:,:)@}"; }
         _t_find() { print -r -- "find:${(j:,:)@}"; }
-        _t_beam_xlate() { print -r -- "move:${(j:,:)@}"; }
+        _t_session_move() { print -r -- "move:${(j:,:)@}"; }
         _t_repo_cd() { print -r -- "repo-cd:${(j:,:)@}"; }
         t session open api 4 --fg
         t session push api 4
@@ -282,7 +282,7 @@ def test_completion_exposes_groups_and_group_actions(tmp_path):
     assert lines[:3] == ["describe:nouns", "describe:actions", "describe:actions"]
     assert lines[3].startswith("values:")
     source = (ROOT / "zsh" / "shim.zsh").read_text()
-    assert "local -a nouns=(session issue share remote repo cursor hosts agentcore workflow runners config mcp profile policy agent system login help)" in source
+    assert "local -a nouns=(session move issue share remote repo cursor hosts agentcore workflow runners config mcp profile policy agent system login help)" in source
 
 
 @pytest.mark.skipif(not shutil.which("zsh"), reason="zsh is required")
@@ -343,6 +343,7 @@ def test_shell_dispatch_matches_python_command_registry(tmp_path, t_mod):
         _t_push() { print -r -- handler:push; }
         _t_resume() { print -r -- handler:resume; }
         _t_cd() { print -r -- handler:cd; }
+        _t_session_move() { print -r -- handler:move; }
         _t_beam_xlate() { print -r -- handler:move; }
         _t_find() { print -r -- handler:search; }
         _t_repo_cd() { print -r -- handler:repo-cd; }

@@ -1313,15 +1313,21 @@
     "session move": {
       "patterns": [
         "action",
+        "multi",
         "single"
       ],
       "renderer": "mixed",
-      "scope": "named/current repository or all local CLI conversations for send; explicit/auto-discovered remote sessions for receive",
-      "confirmation": "none",
+      "scope": "named/current repository, or all outside a checkout; local current CLI sessions, with --remote adding registered remote sources",
+      "confirmation": "enter",
       "tests": [
         "tests/test_command_groups_shell.py::test_grouped_shell_commands_keep_arguments_and_caller_shell",
         "tests/test_worktree_labels.py::test_python_and_shell_resolve_same_numeric_identity",
-        "tests/test_move_picker.py::test_move_picker_uses_current_sessions"
+        "tests/test_move_picker.py::test_move_picker_uses_current_sessions",
+        "tests/test_remote_commands.py::test_canonical_move_selects_inside_agent_before_destination",
+        "tests/test_remote_commands.py::test_move_batch_excludes_all_source_aliases_and_detaches",
+        "tests/test_remote_commands.py::test_move_batch_preflights_every_selection_before_mutation",
+        "tests/test_remote_commands.py::test_move_batch_stops_and_identifies_remaining_sessions",
+        "tests/test_remote_commands.py::test_move_root_alias_operational_parser_route"
       ],
       "modes": {
         "default": {
@@ -1330,14 +1336,17 @@
             "move"
           ],
           "patterns": [
+            "multi",
             "single"
           ],
           "read_only": false,
           "tests": [
             "tests/test_move_picker.py::test_move_picker_uses_current_sessions",
-            "tests/test_move_picker.py::test_move_picker_cancel_empty_and_nonterminal"
+            "tests/test_move_picker.py::test_move_picker_cancel_empty_and_nonterminal",
+            "tests/test_remote_commands.py::test_canonical_move_selects_inside_agent_before_destination"
           ],
-          "notes": "Shared single picker uses current session-list rows, never saved history. Named/current repo scopes send; --all widens it. Preserves exact conversation, cwd and agent, and rechecks identity before moving."
+          "notes": "Shared current-session multi picker followed by a destination single picker; --host supplies the destination. Recheck all exact source identities after both selections before mutation. Batches are sequential and detached, stopping and reporting completed/failed/unattempted sessions on first failure or cancellation.",
+          "terminal": true
         },
         "explicit": {
           "argv": [
@@ -1366,13 +1375,15 @@
             "build"
           ],
           "patterns": [
+            "multi",
             "single"
           ],
           "read_only": false,
           "tests": [
             "tests/test_move_picker.py::test_move_picker_uses_current_sessions"
           ],
-          "notes": "Force current-session selection even inside an agent."
+          "notes": "Shared current-session multi picker followed by a destination single picker; --host supplies the destination. Recheck all exact source identities after both selections before mutation. Batches are sequential and detached, stopping and reporting completed/failed/unattempted sessions on first failure or cancellation.",
+          "terminal": true
         },
         "all": {
           "argv": [
@@ -1383,13 +1394,15 @@
             "build"
           ],
           "patterns": [
+            "multi",
             "single"
           ],
           "read_only": false,
           "tests": [
             "tests/test_move_picker.py::test_move_picker_uses_current_sessions"
           ],
-          "notes": "Current CLI sessions across all local repositories."
+          "notes": "Shared current-session multi picker followed by a destination single picker; --host supplies the destination. Recheck all exact source identities after both selections before mutation. Batches are sequential and detached, stopping and reporting completed/failed/unattempted sessions on first failure or cancellation.",
+          "terminal": true
         },
         "current": {
           "argv": [
@@ -1399,13 +1412,15 @@
             "build"
           ],
           "patterns": [
-            "action"
+            "multi",
+            "single"
           ],
           "read_only": false,
           "tests": [
-            "tests/test_move_picker.py::test_explicit_and_current_targets_bypass_picker"
+            "tests/test_move_picker.py::test_move_picker_uses_current_sessions"
           ],
-          "notes": "Inside an agent, an omitted target without --pick/--all moves the current conversation directly."
+          "notes": "Without an exact target, selection also opens inside an agent; the legacy beam alias retains implicit-current behavior.",
+          "terminal": true
         },
         "relay": {
           "argv": [
@@ -1427,6 +1442,25 @@
             "tests/test_remote_commands.py::test_session_move_relays_directly_with_resolved_aliases"
           ],
           "notes": "Controller resolves both host aliases and delegates guarded send to source zsh -lic. Source connects directly to destination via SSH/rsync. Failed stop/push/sync/landing blocks launch; no temporary local resume."
+        },
+        "remote": {
+          "argv": [
+            "session",
+            "move",
+            "--remote"
+          ],
+          "patterns": [
+            "multi",
+            "single"
+          ],
+          "read_only": false,
+          "terminal": true,
+          "tests": [
+            "tests/test_remote_commands.py::test_remote_move_selects_current_cross_host_identity_and_destination",
+            "tests/test_remote_commands.py::test_move_batch_excludes_all_source_aliases_and_detaches",
+            "tests/test_remote_commands.py::test_move_batch_keeps_snapshot_identity_for_identical_display_rows"
+          ],
+          "notes": "Include current CLI owners on registered remote hosts. Preserve host+ID+path+label+agent and exclude every selected source target and alias from destination selection. Native handoff policy is checked for all selections before mutation."
         }
       },
       "notes": " Cross-host policy: Claude defaults to t transfer; Codex defaults to manual native desktop Hand off (no supported CLI adapter). Agent settings show/persist the effective mechanism and explicit Codex t override. Native returns nonzero with app steps before transfer mutations; local resume and remote attach unchanged."
@@ -3307,6 +3341,7 @@
     },
     "remote move": {
       "patterns": [
+        "multi",
         "single",
         "action"
       ],
@@ -3325,6 +3360,7 @@
             "move"
           ],
           "patterns": [
+            "multi",
             "single",
             "action"
           ],
@@ -3333,7 +3369,7 @@
           "tests": [
             "tests/test_remote_commands.py::test_remote_move_selects_current_cross_host_identity_and_destination"
           ],
-          "notes": "Single host picker waits for Enter even with one host; missing session uses shared selection on the source/target host. Cancellation returns 130. Source browsing skips unavailable peers while retaining reachable candidates; selected-source and transfer ownership checks remain strict. Host picker says Move this session to which host? and Destination host \u00b7 current host: SOURCE; selected host is the destination. SSH alias/target context is subordinate to the action heading. Repository selectors absent locally are resolved on each remote source; ambiguity fails closed. A unique repo/slot match proceeds to the destination picker."
+          "notes": "Compatibility route for session move --remote: multi-select current local/remote owners, then choose one destination. Recheck every selected identity before mutation, exclude all source targets/aliases, move batches sequentially and detached, stop on the first failure or cancellation and report outcomes."
         },
         "explicit": {
           "argv": [
@@ -3363,6 +3399,7 @@
             "--all"
           ],
           "patterns": [
+            "multi",
             "single",
             "action"
           ],
@@ -3371,7 +3408,7 @@
           "tests": [
             "tests/test_remote_commands.py::test_remote_move_selects_current_cross_host_identity_and_destination"
           ],
-          "notes": "Current local and remote CLI sessions; include attached, exclude desktop and unknown IDs. Preserve host identity and recheck after destination selection and on source."
+          "notes": "Compatibility route for session move --remote: multi-select current local/remote owners, then choose one destination. Recheck every selected identity before mutation, exclude all source targets/aliases, move batches sequentially and detached, stop on the first failure or cancellation and report outcomes."
         }
       },
       "notes": " Cross-host policy: Claude defaults to t transfer; Codex defaults to manual native desktop Hand off (no supported CLI adapter). Agent settings show/persist the effective mechanism and explicit Codex t override. Native returns nonzero with app steps before transfer mutations; local resume and remote attach unchanged."
@@ -3409,7 +3446,7 @@
           "tests": [
             "tests/test_remote_commands.py::test_remote_host_picker_requires_explicit_enter_and_cancel"
           ],
-          "notes": "Single host picker waits for Enter even with one host; missing session uses shared selection on the source/target host. Cancellation returns 130. Unavailable registered hosts warn and are skipped; discovery retains local and reachable rows. SSH failures report status and bounded terminal-safe stderr without asserting host downtime; scanner stdin is disconnected. Saved resumes retain local locks and known-owner checks, but cannot verify ownership on unavailable hosts. Local scan failures remain fatal. Host picker says Resume saved work on which host? and Browse this host\u2019s saved conversations; selected host supplies saved history and runs the resumed session. SSH alias/target context is subordinate to the action heading. Host-first positionals; explicit --host retains repo/slot compatibility. Ambiguous legacy targets fail before SSH."
+          "notes": "Single host picker waits for Enter even with one host; missing session uses shared selection on the source/target host. Cancellation returns 130. Unavailable registered hosts warn and are skipped; discovery retains local and reachable rows. SSH failures report status and bounded terminal-safe stderr without asserting host downtime; scanner stdin is disconnected. Saved resumes retain local locks and known-owner checks, but cannot verify ownership on unavailable hosts. Local scan failures remain fatal. Host picker says Resume saved work on which host? and Browse this host’s saved conversations; selected host supplies saved history and runs the resumed session. SSH alias/target context is subordinate to the action heading. Host-first positionals; explicit --host retains repo/slot compatibility. Ambiguous legacy targets fail before SSH."
         },
         "explicit": {
           "argv": [
@@ -4440,10 +4477,10 @@
         }
       ],
       "status_marks": {
-        "attached": "\u25cf",
-        "detached": "\u25cb",
-        "active_context": "\u2713",
-        "still_in_progress": "\u21bb"
+        "attached": "●",
+        "detached": "○",
+        "active_context": "✓",
+        "still_in_progress": "↻"
       },
       "layouts": {
         "table": {
@@ -4687,8 +4724,8 @@
         "tests/test_command_behavior.py::test_history_display_contract_preserves_unknowns_preview_and_json"
       ],
       "status_marks": {
-        "saved": "\u00b7",
-        "archived": "\u25a1",
+        "saved": "·",
+        "archived": "□",
         "missing": "!"
       }
     }
@@ -4795,7 +4832,7 @@
     "session resume": "_t_resume",
     "session history": "HistoryCommand.scope",
     "session cd": "_t_cd",
-    "session move": "_t_beam",
+    "session move": "_t_session_move selection scope and guarded _t_beam explicit targets",
     "session read": "cmd_read",
     "session view-plan": "_t_plan",
     "session paste": "_t_paste",
@@ -4833,7 +4870,9 @@
     },
     "legacy": {
       "list": "session list",
-      "ls": "session list"
+      "ls": "session list",
+      "move": "session move",
+      "remote move": "session move --remote"
     }
   },
   "help_style": {
