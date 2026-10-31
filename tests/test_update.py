@@ -366,12 +366,14 @@ def test_homebrew_integrate_is_explicit_and_marker_is_validated(t_mod, tmp_path,
 
 def test_release_marker_and_version(t_mod, tmp_path, monkeypatch, capsys):
     root = _release_tree(tmp_path)
+    monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(t_mod, "_t_source_root", lambda: str(root))
     assert t_mod._t_release_version(str(root)) == "v1.2.3"
     with pytest.raises(SystemExit) as error:
         t_mod.build_parser().parse_args(["--version"])
     assert error.value.code == 0
-    assert capsys.readouterr().out.strip() == "t v1.2.3"
+    assert capsys.readouterr().out.splitlines() == [
+        "t v1.2.3", f"  Source: {root} (release)", "  Worktree: none (outside Git)"]
     (root / ".t-install-version").write_text("2\n")
     assert t_mod._t_release_version(str(root)) is None
     (root / ".t-install-version").write_text("1\n")
@@ -380,12 +382,74 @@ def test_release_marker_and_version(t_mod, tmp_path, monkeypatch, capsys):
 
 
 def test_checkout_version_is_short_sha(t_mod, monkeypatch, capsys):
+    source = "/code/worktrees/t-6"
+    monkeypatch.setattr(t_mod, "_t_source_root", lambda: source)
     monkeypatch.setattr(t_mod, "_t_release_version", lambda root: None)
-    monkeypatch.setattr(t_mod, "_t_git", lambda root, *args: "abc1234")
+    answers = {("rev-parse", "--short", "HEAD"): "abc1234",
+               ("rev-parse", "--show-toplevel"): source,
+               ("branch", "--show-current"): "dev/t-6"}
+    monkeypatch.setattr(t_mod, "_t_source_git", lambda root, *args: answers[args])
     with pytest.raises(SystemExit) as error:
         t_mod.build_parser().parse_args(["--version"])
     assert error.value.code == 0
-    assert capsys.readouterr().out.strip() == "t abc1234 (checkout)"
+    assert capsys.readouterr().out.splitlines() == [
+        "t abc1234 (checkout)", f"  Source: {source} (branch dev/t-6)",
+        f"  Worktree: {source} (branch dev/t-6)"]
+
+
+@pytest.mark.parametrize("revision,expected", [("abc1234", "detached HEAD"), ("", "unknown")])
+def test_version_reports_detached_and_unknown_sources(t_mod, monkeypatch, revision, expected):
+    monkeypatch.setattr(t_mod, "_t_source_root", lambda: "/source")
+    monkeypatch.setattr(t_mod, "_t_release_version", lambda root: None)
+    monkeypatch.setattr(t_mod, "_t_source_git", lambda root, *args:
+                        revision if args[-1] == "HEAD" else "")
+    lines = t_mod._t_version_report().splitlines()
+    assert lines[0] == ("t abc1234 (checkout)" if revision else "t unknown")
+    assert lines[1:] == [f"  Source: /source ({expected})", "  Worktree: none (outside Git)"]
+
+
+def test_version_distinguishes_source_from_current_worktree(t_mod, monkeypatch):
+    monkeypatch.setattr(t_mod, "_t_source_root", lambda: "/code/t")
+    monkeypatch.setattr(t_mod, "_t_release_version", lambda root: None)
+
+    def git(root, *args):
+        if args == ("rev-parse", "--show-toplevel"):
+            return "/code/worktrees/t-6"
+        if args == ("branch", "--show-current"):
+            return "main" if root == "/code/t" else "dev/t-6"
+        return "abc1234"
+
+    monkeypatch.setattr(t_mod, "_t_source_git", git)
+    assert t_mod._t_version_report().splitlines()[1:] == [
+        "  Source: /code/t (branch main)", "  Worktree: /code/worktrees/t-6 (branch dev/t-6)"]
+
+
+def test_version_handles_removed_cwd_and_escapes_control_characters(t_mod, monkeypatch):
+    monkeypatch.setattr(t_mod, "_t_source_root", lambda: "/release\n\x1b[31m")
+    monkeypatch.setattr(t_mod, "_t_release_version", lambda root: "v1.2.3")
+    monkeypatch.setattr(t_mod, "_t_source_git", lambda *args: pytest.fail("unexpected Git probe"))
+
+    def removed():
+        raise FileNotFoundError()
+
+    monkeypatch.setattr(t_mod.os, "getcwd", removed)
+    assert t_mod._t_version_report().splitlines() == [
+        "t v1.2.3", r"  Source: /release\n\x1b[31m (release)",
+        "  Worktree: unavailable (current directory was removed)"]
+
+
+def test_version_probes_only_on_request_and_never_loads_config(t_mod, monkeypatch, capsys):
+    calls = []
+    monkeypatch.setattr(t_mod, "_t_version_report", lambda: calls.append(True) or "version details")
+    monkeypatch.setattr(t_mod, "Config", lambda: pytest.fail("version loaded configuration"))
+    monkeypatch.setattr(t_mod, "_t_auto_update", lambda *args: pytest.fail("version checked for updates"))
+    t_mod.build_parser().parse_args(["session", "list"])
+    assert calls == []
+    with pytest.raises(SystemExit) as error:
+        t_mod.main(["--version"])
+    assert error.value.code == 0
+    assert capsys.readouterr().out == "version details\n"
+    assert calls == [True]
 
 
 def test_release_update_and_relink_route_to_the_right_installer(t_mod, tmp_path, monkeypatch, capsys):

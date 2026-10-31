@@ -4785,6 +4785,23 @@
     }
   },
   "entrypoints": {
+    "version": {
+      "argv": ["--version"],
+      "renderer": "plain",
+      "patterns": ["detail"],
+      "read_only": true,
+      "tests": [
+        "tests/test_update.py::test_release_marker_and_version",
+        "tests/test_update.py::test_checkout_version_is_short_sha",
+        "tests/test_update.py::test_version_distinguishes_source_from_current_worktree",
+        "tests/test_update.py::test_version_reports_detached_and_unknown_sources",
+        "tests/test_update.py::test_version_handles_removed_cwd_and_escapes_control_characters",
+        "tests/test_update.py::test_version_probes_only_on_request_and_never_loads_config",
+        "tests/test_dev_isolation.py::test_version_uses_worktree_on_first_call_after_public_cd",
+        "tests/test_dev_isolation.py::test_version_distinguishes_explicit_source_from_current_worktree"
+      ],
+      "notes": "Preserve the release/revision first line; label the actual executable Source and current Git Worktree with absolute paths and branches, even when they differ. Packaged sources say release; detached checkouts say detached HEAD; outside Git is explicit. Escape control characters. Resolve metadata only on request, with no configuration load, network, picker, or update prompt."
+    },
     "bare_t": {
       "renderer": "rail",
       "modes": {

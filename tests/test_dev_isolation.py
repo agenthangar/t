@@ -1,6 +1,7 @@
 """Development selection is local to a worktree and one command invocation."""
 import os
 from pathlib import Path
+import shlex
 import shutil
 import subprocess
 import sys
@@ -113,6 +114,61 @@ print "scope=${{T_DEV_CONTEXT-unset}}"
         f'helper={a}', f'helper={b}', f'helper={main}']
     for expected in ('dev_protected=1', 'main_protected=0', 'path_unchanged=0', 'scope=unset'):
         assert expected in result.stdout
+
+
+def test_version_uses_worktree_on_first_call_after_public_cd(trees):
+    main, a, b, home, env = trees
+    worktrees = home / 'worktrees'
+    destination = worktrees / main.name / '1'
+    destination.parent.mkdir(parents=True)
+    git('worktree', 'move', str(a), str(destination), cwd=main)
+    git('commit', '--allow-empty', '-qm', 'distinct development revision',
+        '--no-verify', cwd=destination)
+    dev_sha = git('rev-parse', '--short', 'HEAD', cwd=destination).stdout.strip()
+    main_sha = git('rev-parse', '--short', 'HEAD', cwd=main).stdout.strip()
+    assert dev_sha != main_sha
+    config = home / '.config/t'
+    config.mkdir(parents=True, exist_ok=True)
+    (config / 'local.zsh').write_text(
+        f'DEV_REPOS[t]={shlex.quote(str(main))}\n'
+        f'DEV_WORKTREE_ROOT={shlex.quote(str(worktrees))}\n')
+    nested = destination / 'nested'
+    nested.mkdir()
+    # No precmd runs here: each first invocation must select its own source.
+    script = f'''source {shlex.quote(str(main / 't.plugin.zsh'))}
+t cd t 1 || exit $?
+t --version || exit $?
+print -r -- "helper=$T_HOME"
+cd {shlex.quote(str(nested))}
+t --version || exit $?
+cd {shlex.quote(str(home))}
+t --version || exit $?
+print -r -- "helper=$T_HOME"
+'''
+    result = subprocess.run(['zsh', '-f', '-c', script], cwd=home, env=env,
+                            text=True, capture_output=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.count(f't {dev_sha} (checkout)\n') == 2
+    assert result.stdout.count(f'Source: {destination} (branch dev/t-a)') == 2
+    assert result.stdout.count(f'Worktree: {destination} (branch dev/t-a)') == 2
+    assert f'helper={destination}\n' in result.stdout
+    assert f't {main_sha} (checkout)\n' in result.stdout
+    assert f'Source: {main} (branch main)' in result.stdout
+    assert 'Worktree: none (outside Git)' in result.stdout
+    assert result.stdout.endswith(f'helper={main}\n')
+
+
+def test_version_distinguishes_explicit_source_from_current_worktree(trees):
+    main, a, b, home, env = trees
+    git('commit', '--allow-empty', '-qm', 'distinct explicit revision',
+        '--no-verify', cwd=a)
+    sha = git('rev-parse', '--short', 'HEAD', cwd=a).stdout.strip()
+    result = subprocess.run([str(a / 'bin/t'), '--version'], cwd=b, env=env,
+                            text=True, capture_output=True, timeout=15)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.startswith(f't {sha} (checkout)\n')
+    assert f'Source: {a} (branch dev/t-a)' in result.stdout
+    assert f'Worktree: {b} (branch cursor/b)' in result.stdout
 
 
 def test_child_login_shell_keeps_invocation_source_after_chdir(trees):
