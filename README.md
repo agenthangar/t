@@ -1317,7 +1317,7 @@ receive an explicitly chosen minor version. Nightly automation publishes a new
 patch when main has unreleased commits and passing Linux CI, then updates Homebrew.
 
 ```sh
-t --version       # installed release, or developer checkout revision
+t --version       # version, active source path/branch, and current worktree
 t system update --check   # check now for a newer release
 t system update           # latest tagged release; Git installs update main instead
 t system update --all     # this machine, then every registered SSH host
@@ -1325,6 +1325,21 @@ t system update --relink  # repair links from the selected source, without fetch
 t system update --local   # switch to the registered/local t checkout and update main
 t system update --local ~/code/t  # select a checkout explicitly, including from Homebrew
 ```
+
+`t --version` identifies the code being used separately from your current Git
+worktree. For example, inside a development worktree:
+
+```text
+t abc1234 (checkout)
+  Source: /code/.worktrees/t/t-6 (branch dev/t-6)
+  Worktree: /code/.worktrees/t/t-6 (branch dev/t-6)
+```
+
+The first line keeps the release or checkout revision. `Source` is the active
+installation, even when an explicit executable selects a different checkout.
+`Worktree` is the current directory's Git root (including from subdirectories),
+or `none (outside Git)`. Packaged sources show `release`; detached checkouts show
+`detached HEAD`. Version checks never prompt or check for updates.
 
 `--all` updates this machine first, then each registered host from `t hosts list`
 in alias order. Each machine uses its existing Homebrew, release, or Git updater.
