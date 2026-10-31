@@ -23,11 +23,13 @@ def sync(tmp_path, monkeypatch):
     return module
 
 
-def saved(sync):
+def saved(sync, *, staged=True):
     w = sync.workflow()
     doc = w['defaults']()
+    if not staged:
+        doc['workflows']['standard']['stages_enabled'] = False
     w['save'](doc, None, propagate=False)
-    return doc
+    return w['load']()[0]
 
 
 def test_publication_noop_scopes_and_private_journal(sync, monkeypatch):
@@ -206,16 +208,59 @@ def test_git_identity_and_settings_source_staleness(sync, monkeypatch, tmp_path)
     assert not sync.current(state)
 
 
-def test_sync_cli_and_readonly_status(sync, t_mod, monkeypatch, capsys):
+def test_legacy_journal_remains_current_only_while_stored_preferences_match(sync, tmp_path):
+    w = sync.workflow()
+    legacy = w['defaults']()
+    legacy['workflows']['standard']['instructions'] = 'Legacy shared instructions.'
+    path = w['config_path']()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(w['encode'](legacy))
+    raw = path.read_bytes()
+    source = tmp_path / 'launch-config'
+    source.write_text('unchanged')
+    state = {'workflow_hash': sync.digest(legacy), 'context': {
+        'settings_source': {'path': str(source), 'hash': sync.digest('unchanged')}}}
+    loaded, _ = w['load']()
+    assert 'claude' in loaded['tools'] and loaded != legacy
+    assert sync.current(state)
+    assert path.read_bytes() == raw
+    source.write_text('external launch edit')
+    assert not sync.current(state)
+    source.write_text('unchanged')
+    changed = copy.deepcopy(legacy)
+    changed['workflows']['standard']['enabled'] = False
+    path.write_text(w['encode'](changed))
+    assert not sync.current(state)
+
+
+def test_changed_rejects_prepublication_document_after_tool_scope_materialization(sync):
+    w = sync.workflow()
+    before_publication = w['defaults']()
+    w['save'](before_publication, None, propagate=False)
+    assert w['load']()[0] != before_publication
+    assert sync.changed(before_publication, before_publication, settings={'model': 'stale'}) is None
+    assert sync.status()['revision'] == 0
+
+
+def test_legacy_hash_fallback_does_not_ignore_new_native_instruction_import(sync):
+    w = sync.workflow()
+    legacy = w['defaults']()
+    path = w['config_path']()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(w['encode'](legacy))
+    native = Path(os.environ['CODEX_HOME']) / 'AGENTS.md'
+    native.write_text(w['ISSUE_BEGIN'] + '\nNew custom instructions.\n' + w['ISSUE_END'])
+    assert not sync.current({'workflow_hash': sync.digest(legacy), 'context': {}})
+
+
+def test_automatic_propagation_and_readonly_status(sync, t_mod, monkeypatch, capsys):
     doc = saved(sync)
     helper = sync.workflow()
     helper['propagation'] = lambda: vars(sync)
     monkeypatch.setattr(t_mod, '_workflow', lambda: helper)
     cfg = SimpleNamespace(repos={}, hosts={})
     parser = t_mod.build_parser()
-    args = parser.parse_args(['config', 'workflow', 'sync'])
-    assert t_mod.cmd_config(cfg, args) == 0
-    assert 'unverified' in capsys.readouterr().out
+    assert sync.changed(doc, doc)['revision'] == 1
     monkeypatch.setattr(sync, 'retry', lambda: pytest.fail('list retried'))
     monkeypatch.setattr(sync, 'Proxy', lambda: pytest.fail('list connected'))
     args = parser.parse_args(['config', 'workflow', 'list', '--json'])
@@ -225,6 +270,23 @@ def test_sync_cli_and_readonly_status(sync, t_mod, monkeypatch, capsys):
     args = parser.parse_args(['config', 'workflow', 'instructions', 'show'])
     assert t_mod.cmd_config(cfg, args) == 0
     assert capsys.readouterr().out == helper['instructions'](doc)
+
+
+def test_private_receive_cli_preserves_machine_transport(sync, t_mod, monkeypatch, capsys):
+    import io
+    payload = {'request_id': 'transport-test'}
+    helper = sync.workflow()
+    seen = []
+    def receive(value, repos, settings_writer=None):
+        seen.append((value, repos, callable(settings_writer)))
+        return {'summary': 'accepted'}
+    helper['propagation'] = lambda: {'receive': receive}
+    monkeypatch.setattr(t_mod, '_workflow', lambda: helper)
+    monkeypatch.setattr(t_mod.sys, 'stdin', io.StringIO(json.dumps(payload)))
+    args = t_mod.build_parser().parse_args(['config', 'workflow', 'sync', '--receive'])
+    assert t_mod.cmd_config(SimpleNamespace(repos={}), args) == 0
+    assert seen == [(payload, {}, True)]
+    assert json.loads(capsys.readouterr().out) == {'summary': 'accepted'}
 
 
 def websocket_process(sync, monkeypatch, mode):
@@ -282,10 +344,11 @@ def test_proxy_kills_unresponsive_child(sync, monkeypatch):
 def test_postpublication_failure_retains_saved_files(sync, monkeypatch, capsys):
     w = sync.workflow()
     doc = w['defaults'](); doc['workflows']['standard']['instructions'] = 'published'
+    expected = w['_ensure_claude_catalogue'](doc)
     functions = w['save'].__globals__
     def retry():
         # Publication includes durable intent; runtime work holds neither lock.
-        assert w['load']()[0] == doc
+        assert w['load']()[0] == expected
         assert sync.status()['revision'] == 1
         with open(w['config_path']().with_suffix('.lock'), 'r+') as stream:
             import fcntl
@@ -297,7 +360,7 @@ def test_postpublication_failure_retains_saved_files(sync, monkeypatch, capsys):
     monkeypatch.setitem(functions, 'propagation', lambda: vars(sync))
     w['save'](doc, None)
     assert 'preferences saved; propagation pending' in capsys.readouterr().err
-    assert w['load']()[0] == doc
+    assert w['load']()[0] == expected
 
 
 def test_failed_intent_publication_rolls_back_preferences(sync, monkeypatch):
@@ -535,20 +598,11 @@ def test_bootstrap_rejects_stale_derived_settings(sync):
     assert sync.verified_settings('DEV_MODEL[codex]=cached extra\n', {'model': 'cached'}) == {}
 
 
-def test_bootstrap_cli_never_attaches_fresh_guard_to_stale_model(sync, t_mod, monkeypatch, tmp_path, capsys):
-    saved(sync)
-    source = tmp_path / 'local.zsh'; source.write_text('DEV_MODEL[codex]=new-source-model\n')
-    cfg = SimpleNamespace(repos={}, hosts={}, models={'codex': 'stale-cache-model'}, efforts={}, local_rc=str(source))
-    helper = sync.workflow(); helper['propagation'] = lambda: vars(sync)
-    monkeypatch.setattr(t_mod, '_workflow', lambda: helper)
-    monkeypatch.setattr(sync, 'Proxy', lambda: pytest.fail('unverified model applied'))
-    args = t_mod.build_parser().parse_args(['config', 'workflow', 'sync'])
-    assert t_mod.cmd_config(cfg, args) == 0
-    state = sync.status()
-    assert state['settings'] == {}
-    assert 'settings_source' not in state['context']
-    assert state['context']['unverified_main_defaults'] == ['model']
-    assert 'pending: bootstrap' in capsys.readouterr().out
+def test_manual_sync_cannot_retry_or_bootstrap_settings(t_mod, monkeypatch, capsys):
+    monkeypatch.setattr(t_mod, '_workflow', lambda: pytest.fail('manual action loaded settings'))
+    args = SimpleNamespace(workflow=True, workflow_action='sync', workflow_receive=False)
+    assert t_mod.cmd_config(SimpleNamespace(), args) == 1
+    assert 'apply automatically' in capsys.readouterr().err
 
 
 @pytest.mark.parametrize('suffix', [' DEV_MODEL[codex]=new', 'export DEV_MODEL[codex]=new',
@@ -726,7 +780,7 @@ def test_proxy_helper_setup_failure_reaps_child(sync, monkeypatch):
 
 def test_guarded_resume_retains_latest_explicit_intent_after_live_ack(sync, monkeypatch, tmp_path):
     sid = '11111111-1111-1111-1111-111111111111'
-    doc = saved(sync)
+    doc = saved(sync, staged=False)
     fake_proxy(sync, monkeypatch, {None:{'data':['root']}}, {'root':{'source':'cli'}})
     sync.changed(doc, doc, settings={'model':'new-main','effort':'medium'})
     assert sync.status()['settings'] == {}
@@ -762,7 +816,7 @@ def test_resume_scope_exclusion_worktree_and_child_are_preserved(sync, monkeypat
 
 
 def config_transaction(sync, t_mod, monkeypatch, tmp_path):
-    doc = saved(sync)
+    doc = saved(sync, staged=False)
     source = tmp_path / 'local.zsh'
     source.write_text('DEV_MODEL[codex]=preferred\nDEV_EFFORT[codex]=medium\nDEV_FAST[codex]=ultrafast\nDEV_HANDOFF[codex]=native\n')
     monkeypatch.setenv('T_LOCAL_RC',str(source));monkeypatch.setenv('T_SETUP_SHIM','1')

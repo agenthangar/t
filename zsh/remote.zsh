@@ -688,7 +688,7 @@ _dev_pull() {
     _term_title ""
     [[ -n $existing ]] && { echo "dev: already running locally in $existing — attaching."; tmux attach-session -t "=$existing:"; return; }
     echo "✓ Resuming ${sid[1,8]}… here"
-    if [[ $agent == codex ]]; then ( cd "$cwd" && exec codex resume "$sid" --no-daemon ); else ( cd "$cwd" && exec claude -r "$sid" ); fi
+    ( cd "$cwd" && eval "exec $(_dev_agent_resume_cmd "$agent" "$sid")" )
     return
   fi
 
