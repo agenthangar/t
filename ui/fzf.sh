@@ -60,6 +60,8 @@ _t_fzf() {
 
 # Label-only presentation helper, also used by headers transformed after reload.
 _t_fzf_chrome() {
+  # Direct sourcing can provide profiles without the installed theme runtime.
+  [ -r "${T_HOME:-}/libexec/t_picker_theme.py" ] || { cat; return; }
   _t_chrome_size=$(stty size </dev/tty 2>/dev/null) || _t_chrome_size='24 80'
   _t_chrome_inset=8
   if [ "${_t_chrome_size%% *}" -le 14 ] || [ "${_t_chrome_size#* }" -le 60 ]; then _t_chrome_inset=5; fi
@@ -168,7 +170,11 @@ SH
   T_PICKER_PAGED_RAW=$T_PICKER_PAGED_RENDER.raw
   export T_PICKER_PAGED_RAW
   cat > "$T_PICKER_PAGED_RENDER" <<'SH'
-sh "$T_PICKER_PAGED_RAW" | python3 "$T_HOME/libexec/t_picker_theme.py" HISTORY
+if [ -r "${T_HOME:-}/libexec/t_picker_theme.py" ]; then
+  sh "$T_PICKER_PAGED_RAW" | python3 "$T_HOME/libexec/t_picker_theme.py" HISTORY
+else
+  sh "$T_PICKER_PAGED_RAW"
+fi
 SH
   # Expanded by fzf's action shell after the picker starts.
   # shellcheck disable=SC2016
