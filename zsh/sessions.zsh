@@ -2380,19 +2380,47 @@ _dev_new_session_claimed() {
   _dev_recovery_watch "$session"
 }
 
-# Attach-only history action: no generic open path can create a replacement owner.
-_t_history_attach() {
+# Resolve an exact owner. Fresh launches may need time to publish their identity;
+# never accept the prewritten tmux stamp alone or follow a recycled session name.
+_t_history_owner() {
   local label=$1 sid=$2 dir=${3:A} agent=$4 session="dev-$1" actual_sid actual_dir actual_agent immutable
+  local wait_ready=$5 current
+  local -F SECONDS=0
   tmux has-session -t "=$session:" 2>/dev/null || { print -u2 't history: selected owner exited; reopen history'; return 1; }
   local identity
   identity=$(tmux display-message -p -t "=$session:" '#{session_id}|#{session_path}' 2>/dev/null) || return 1
   immutable=${identity%%|*}; actual_dir=${identity#*|}
   [[ $immutable == \$<-> ]] || { print -u2 't history: could not verify selected owner identity'; return 1; }
-  actual_sid=$(_dev_session_sid "$session")
-  actual_agent=$(_dev_agent_of_session "$session")
-  [[ $actual_sid == $sid && ${actual_dir:A} == $dir && $actual_agent == $agent ]] || {
-    print -u2 't history: selected owner changed; reopen history'; return 1
-  }
+  while true; do
+    actual_agent=$(_dev_agent_of_session "$session")
+    actual_sid=$(_dev_session_sid "$session")
+    current=$(tmux display-message -p -t "=$session:" '#{session_id}|#{session_path}' 2>/dev/null) || {
+      print -u2 't history: selected owner exited; reopen history'; return 1
+    }
+    [[ $current == $identity && ${actual_dir:A} == $dir && $actual_agent == $agent &&
+       ( -z $actual_sid || $actual_sid == $sid ) ]] || {
+      print -u2 't history: selected owner changed; reopen history'; return 1
+    }
+    if [[ $wait_ready == wait && $(tmux display-message -p -t "$immutable:" '#{pane_dead}' 2>/dev/null) != 0 ]]; then
+      print -u2 -- "t history: resumed conversation exited during startup; inspect $HOME/.tmux-logs/$session.log"
+      return 1
+    fi
+    [[ -n $actual_sid ]] && { print -r -- "$immutable"; return 0; }
+    [[ $wait_ready == wait ]] || {
+      print -u2 't history: selected owner changed; reopen history'; return 1
+    }
+    if (( SECONDS >= 15 )); then
+      print -u2 -- "t history: resumed conversation identity is not ready; inspect it with: t open ${label%-*} ${label##*-}"
+      return 1
+    fi
+    sleep 0.25
+  done
+}
+
+# Attach-only history action: no generic open path can create a replacement owner.
+_t_history_attach() {
+  local immutable agent=$4
+  immutable=$(_t_history_owner "$@") || return $?
   _dev_workflow_attach "$agent"
   if [[ -n $TMUX ]]; then tmux switch-client -t "$immutable:"
   else tmux attach-session -t "$immutable:"; fi

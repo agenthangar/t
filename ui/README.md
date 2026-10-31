@@ -555,6 +555,11 @@ Without a terminal it lists history without launching. Space/Tab marks conversat
 Search, page changes, and refresh clear marks. Extra selections open in tabs before
 the first attaches. A resume failure exits nonzero without reopening the picker;
 batches stop and report any conversations already resumed.
+Fresh saved launches wait up to 15 seconds for the exact conversation identity
+before attaching or reporting readiness. This covers Codex registering a resumed
+conversation in a new worktree. A changed or exited owner still fails immediately;
+an identity timeout keeps the launched session and prints `t open api 2` with its
+actual destination for inspection.
 The filtered resume batch also stops at the first failed or cancelled selection.
 Its final summary names the conversation, reason, retry command, ready-session
 attach commands, and number not attempted. No automatic attachment hides errors.

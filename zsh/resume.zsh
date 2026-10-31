@@ -2215,6 +2215,9 @@ _dev_resume_session_claimed() {
   fi
   _dev_start_session_command "$session" "$resume_command" || { tmux kill-session -t "=$session:"; return 1; }
   _dev_launch_startup_check "$session" "$logfile" || return 1
+  if [[ $5 == history ]]; then
+    _t_history_owner "${session#dev-}" "$sid" "$dir" "$agent" wait >/dev/null || return $?
+  fi
   _dev_history_record "$sid" "$agent" "$dir" resume
   _dev_recovery_watch "$session"
 }

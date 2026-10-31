@@ -2,6 +2,8 @@
 import json
 import os
 from pathlib import Path
+import shlex
+import sqlite3
 import subprocess
 from types import SimpleNamespace
 
@@ -150,6 +152,96 @@ _t_history_attach repo-1 selected /repo/1 codex
     result = subprocess.run(['zsh', '-fc', script], text=True, capture_output=True, env=os.environ.copy())
     assert result.returncode == 0, result.stderr
     assert log.read_text().strip() == f'{"switch-client" if inside else "attach-session"} -t $7:'
+
+
+@pytest.mark.parametrize('outcome', ['ready', 'sid', 'cwd', 'agent', 'recycled', 'exited', 'dead', 'dead-ready', 'timeout'])
+def test_history_owner_waits_for_identity_without_following_replacement(history, tmp_path, outcome):
+    tick = tmp_path / 'tick'
+    script = f'''
+source {ROOT}/zsh/sessions.zsh
+_dev_session_sid() {{
+  [[ {outcome} == dead-ready ]] && {{ print selected; return 0; }}
+  [[ -f {tick} && {outcome} != timeout ]] && print {'other' if outcome == 'sid' else 'selected'}
+  return 0
+}}
+_dev_agent_of_session() {{
+  if [[ -f {tick} && {outcome} == agent ]]; then print claude; else print codex; fi
+}}
+sleep() {{ print tick >> {tick}; [[ {outcome} == timeout ]] && SECONDS=15; return 0; }}
+tmux() {{
+  case $1 in
+    has-session) return 0 ;;
+    display-message)
+      if [[ ${{@[-1]}} == '#{{pane_dead}}' ]]; then
+        [[ {outcome} == dead* ]] && print 1 || print 0
+      elif [[ -f {tick} ]]; then
+        [[ {outcome} == exited ]] && return 1
+        print -r -- '{'$8' if outcome == 'recycled' else '$7'}|{'/changed' if outcome == 'cwd' else '/repo/1'}'
+      else
+        print -r -- '$7|/repo/1'
+      fi ;;
+    *) return 99 ;;
+  esac
+}}
+_t_history_owner repo-1 selected /repo/1 codex wait
+'''
+    result = subprocess.run(['zsh', '-fc', script], text=True, capture_output=True, env=os.environ.copy(), timeout=5)
+    if outcome == 'ready':
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == '$7'
+    else:
+        assert result.returncode == 1
+        assert not result.stdout
+        expected = ('identity is not ready' if outcome == 'timeout' else
+                    'exited' if outcome in ('exited', 'dead', 'dead-ready') else 'owner changed')
+        assert expected in result.stderr
+    if outcome == 'timeout':
+        assert 't open repo 1' in result.stderr
+    if outcome.startswith('dead'):
+        assert not tick.exists()
+    else:
+        assert tick.read_text() == 'tick\n'
+
+
+def test_history_owner_waits_for_relocated_codex_index(history, tmp_path):
+    database = tmp_path / 'state.sqlite'
+    with sqlite3.connect(database) as db:
+        db.execute('create table threads (id text, cwd text)')
+        db.execute('insert into threads values (?, ?)', ('selected', '/original/repo-9'))
+    source = transcript_file(tmp_path / 'rollout-selected.jsonl', codex_rows('/original/repo-9', sid='selected'))
+    update = ('import sqlite3; '
+              f'c=sqlite3.connect({str(database)!r}); '
+              'c.execute("update threads set cwd=?", ("/destination/repo-1",)); c.commit()')
+    script = f'''
+source {ROOT}/zsh/agent.zsh
+source {ROOT}/zsh/sessions.zsh
+_dev_session_claude_pid() {{ return 1; }}
+_dev_agent_of_session() {{ print codex; }}
+_codex_pane_sid() {{ return 0; }}
+_codex_db() {{ print -r -- {shlex.quote(str(database))}; }}
+_dev_agent_transcript() {{ print -r -- {shlex.quote(str(source))}; }}
+sleep() {{ python3 -c {shlex.quote(update)}; }}
+tmux() {{
+  case $1 in
+    has-session) return 0 ;;
+    show-environment) print CLAUDE_RESUME_ID=selected ;;
+    display-message)
+      case ${{@[-1]}} in
+        '#{{pane_dead}}') print 0 ;;
+        '#{{session_path}}') print /destination/repo-1 ;;
+        *) print -r -- '$7|/destination/repo-1' ;;
+      esac ;;
+    *) return 99 ;;
+  esac
+}}
+_t_history_owner repo-1 selected /destination/repo-1 codex wait
+'''
+    result = subprocess.run(['zsh', '-fc', script], text=True, capture_output=True, env=os.environ.copy(), timeout=5)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == '$7'
+    with sqlite3.connect(database) as db:
+        assert db.execute('select cwd from threads').fetchone() == ('/destination/repo-1',)
+    assert json.loads(source.read_text().splitlines()[0])['payload']['cwd'] == '/original/repo-9'
 
 
 def test_source_missing_and_identity_changed_preserves_record(app, history, store, tmp_path):
@@ -418,7 +510,8 @@ def test_generation_race_after_destination_is_blocked_under_claim(app, history, 
         app.resume('repo', row)
 
 
-def test_codex_history_launch_sets_destination_cd_and_private_backend(history, tmp_path):
+@pytest.mark.parametrize('ready', [True, False])
+def test_codex_history_launch_sets_destination_cd_and_private_backend(history, tmp_path, ready):
     commands = tmp_path / 'commands'
     script = f'''
 source {ROOT}/zsh/agent.zsh
@@ -428,7 +521,8 @@ _dev_issue_preparing() {{ return 1; }}
 _dev_launch_preflight() {{ return 0; }}
 _dev_auto_trust() {{ return 0; }}
 _dev_launch_startup_check() {{ return 0; }}
-_dev_history_record() {{ return 0; }}
+_t_history_owner() {{ print -r -- "READY $*" >> {commands}; return {0 if ready else 1}; }}
+_dev_history_record() {{ print RECORDED >> {commands}; }}
 _dev_recovery_watch() {{ return 0; }}
 tmux() {{ [[ $1 == respawn-pane ]] && print -r -- "$*" > {commands}; return 0; }}
 _dev_resume_session_claimed dev-repo-2 '{tmp_path}/destination 2' selected codex history
@@ -438,9 +532,11 @@ _dev_resume_session_claimed dev-repo-2 '{tmp_path}/destination 2' selected codex
                XDG_CACHE_HOME=str(tmp_path / 'cache'), XDG_CONFIG_HOME=str(tmp_path / 'config'),
                XDG_STATE_HOME=str(tmp_path / 'state'), XDG_DATA_HOME=str(tmp_path / 'data'))
     result = subprocess.run(['zsh', '-fc', script], text=True, capture_output=True, env=env)
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == (0 if ready else 1), result.stderr
     assert 'codex resume selected --cd' in commands.read_text()
     assert 'destination\\ 2 --no-daemon' in commands.read_text()
+    assert f'READY repo-2 selected {tmp_path}/destination 2 codex wait' in commands.read_text()
+    assert ('RECORDED' in commands.read_text()) is ready
 
 
 def test_newer_remote_source_wins_stale_local_and_updates_exact_indexed_rollout(app, history, tmp_path, monkeypatch):
