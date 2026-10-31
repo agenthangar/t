@@ -12713,6 +12713,8 @@ DESKTOP TO CLI
   Failed or canceled closes keep the row. No session inventory refresh is performed.
   Use --new to start a new session. The first CLI opens here, others use tabs;
   desktop rows open in the app. Remote pickers add HOST. --fg opens one.
+  Extra tabs stay in the originating window. If Terminal cannot safely create
+  a tab, it opens a new window. Commands never target an existing tab.
 
 OPENING DEFAULTS
   The configured opening mode chooses CLI or app; --cli and --app override
