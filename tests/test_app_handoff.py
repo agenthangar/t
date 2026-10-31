@@ -112,6 +112,29 @@ def test_free_target_lock_allows_app_and_unrelated_backends(handoff, target):
     assert calls == []  # Modern per-thread proof does not inspect unrelated processes.
 
 
+@pytest.mark.parametrize('mode', ['chatgpt', 'codex', 'unknown', 'missing', 'invalid', 'error'])
+def test_selected_writer_hint_uses_exact_lock_and_never_exposes_arguments(handoff, mode):
+    def run(argv, **kwargs):
+        assert kwargs['timeout'] == 5
+        if mode == 'error':
+            raise OSError('unavailable')
+        if argv[0] == 'lsof':
+            assert argv == ['lsof', '-nP', '-t', '/exact.lock']
+            return subprocess.CompletedProcess(argv, 1 if mode == 'missing' else 0,
+                                               'bad' if mode == 'invalid' else '42\n42\n', '')
+        assert argv == ['ps', '-p', '42', '-o', 'comm=']
+        name = {'chatgpt': 'ChatGPT', 'codex': 'Codex'}.get(mode)
+        executable = f'/Applications/{name}.app/Contents/Resources/codex' if name else '/private/custom-backend'
+        return subprocess.CompletedProcess(argv, 0, executable, '')
+    result = handoff._selected_writer_hint('/exact.lock', run)
+    if mode in ('missing', 'invalid', 'error'):
+        assert result == ''
+    else:
+        assert '42' in result and '/private' not in result and '/Applications' not in result
+        if mode != 'unknown':
+            assert ('ChatGPT' if mode == 'chatgpt' else 'Codex') + ' backend' in result
+
+
 def test_selected_lock_blocks_and_suggests_archive_for_reserved_worktree(handoff, target, tmp_path):
     private = tmp_path / "private-git"
     private.mkdir()

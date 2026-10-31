@@ -988,7 +988,6 @@
         "action",
         "filtered",
         "multi",
-        "single",
         "list"
       ],
       "renderer": "fzf",
@@ -1041,7 +1040,7 @@
             "1"
           ],
           "patterns": [
-            "single"
+            "multi"
           ],
           "read_only": false,
           "tests": [
@@ -1049,7 +1048,7 @@
             "tests/test_resume_history.py::test_resume_options_keep_existing_route",
             "tests/test_history_data.py::test_resume_candidates_match_any_recorded_slot_association"
           ],
-          "notes": "Plain public slot targets, including a lone inferred-repository slot, delegate to session history: paginated single selection of exact conversation identities, no default recency cutoff, no automatic single-result selection, and cancellation returns 130 without launch. Nonterminal use lists history read-only. Explicit resume options and internal callers retain existing resume modes."
+          "notes": "Plain public slot targets, including a lone inferred-repository slot, delegate to session history: paginated multi-selection of exact conversation identities, no default recency cutoff, no automatic single-result selection, and cancellation returns 130 without launch. Nonterminal use lists history read-only. Explicit resume options and internal callers retain existing resume modes."
         },
         "desktop": {
           "argv": [
@@ -1164,7 +1163,7 @@
       "patterns": [
         "list",
         "machine",
-        "single"
+        "multi"
       ],
       "renderer": "fzf",
       "scope": "explicit/inferred repository and slot",
@@ -1184,13 +1183,13 @@
             "1"
           ],
           "patterns": [
-            "single"
+            "multi"
           ],
           "read_only": false,
           "tests": [
             "tests/test_history_picker.py::test_real_isolated_tmux_picker_paging_global_search_refresh_and_cancel"
           ],
-          "notes": "Paginated single choice. Ctrl-F next and Ctrl-B previous page are the documented exception to filtered-picker Ctrl-F settings."
+          "notes": "Paginated multi-selection: Space/Tab mark, Enter accepts marks or focus. Search, page changes and refresh clear marks. Ctrl-F/B paginate. Resume failures exit nonzero without reopening the picker; batches stop on the first failure and retain prior successes."
         },
         "pagination": {
           "argv": [
@@ -1204,7 +1203,7 @@
             "2"
           ],
           "patterns": [
-            "single"
+            "multi"
           ],
           "read_only": false,
           "tests": [
@@ -1220,7 +1219,7 @@
             "--refresh"
           ],
           "patterns": [
-            "single"
+            "multi"
           ],
           "read_only": false,
           "tests": [
@@ -3446,7 +3445,7 @@
           "tests": [
             "tests/test_remote_commands.py::test_remote_host_picker_requires_explicit_enter_and_cancel"
           ],
-          "notes": "Single host picker waits for Enter even with one host; missing session uses shared selection on the source/target host. Cancellation returns 130. Unavailable registered hosts warn and are skipped; discovery retains local and reachable rows. SSH failures report status and bounded terminal-safe stderr without asserting host downtime; scanner stdin is disconnected. Saved resumes retain local locks and known-owner checks, but cannot verify ownership on unavailable hosts. Local scan failures remain fatal. Host picker says Resume saved work on which host? and Browse this host’s saved conversations; selected host supplies saved history and runs the resumed session. SSH alias/target context is subordinate to the action heading. Host-first positionals; explicit --host retains repo/slot compatibility. Ambiguous legacy targets fail before SSH."
+          "notes": "Single host picker waits for Enter even with one host; missing session uses shared selection on the source/target host. Cancellation returns 130. Unavailable registered hosts warn and are skipped; discovery retains local and reachable rows. SSH failures report status and bounded terminal-safe stderr without asserting host downtime; scanner stdin is disconnected. Saved resumes retain local locks and known-owner checks, but cannot verify ownership on unavailable hosts. Local scan failures remain fatal. Host picker says Resume saved work on which host? and Browse this host\u2019s saved conversations; selected host supplies saved history and runs the resumed session. SSH alias/target context is subordinate to the action heading. Host-first positionals; explicit --host retains repo/slot compatibility. Ambiguous legacy targets fail before SSH."
         },
         "explicit": {
           "argv": [
@@ -4477,10 +4476,10 @@
         }
       ],
       "status_marks": {
-        "attached": "●",
-        "detached": "○",
-        "active_context": "✓",
-        "still_in_progress": "↻"
+        "attached": "\u25cf",
+        "detached": "\u25cb",
+        "active_context": "\u2713",
+        "still_in_progress": "\u21bb"
       },
       "layouts": {
         "table": {
@@ -4632,7 +4631,7 @@
         "height_percent": 35
       },
       "selection": {
-        "count": 1,
+        "count": "multiple",
         "identity_fields": [
           "repo",
           "agent",
@@ -4654,7 +4653,18 @@
         "validate_returned_query_page_and_snapshot": true,
         "non_tty": "read_only_table",
         "json": "read_only_machine_output",
-        "network": "explicit_refresh_only"
+        "network": "explicit_refresh_only",
+        "marks": [
+          "space",
+          "tab"
+        ],
+        "marks_scope": "current_page",
+        "clear_marks_on": [
+          "search",
+          "page",
+          "refresh"
+        ],
+        "failure": "exit_nonzero_without_reopening"
       },
       "json": {
         "version": 1,
@@ -4724,8 +4734,8 @@
         "tests/test_command_behavior.py::test_history_display_contract_preserves_unknowns_preview_and_json"
       ],
       "status_marks": {
-        "saved": "·",
-        "archived": "□",
+        "saved": "\u00b7",
+        "archived": "\u25a1",
         "missing": "!"
       }
     }

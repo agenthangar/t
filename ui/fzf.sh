@@ -104,7 +104,7 @@ ${_t_fzf_legend}" "$@"
 # initial query, prompt. The helper writes rows and the page label on each event.
 _t_fzf_paginated() (
   [ -z "${ZSH_VERSION:-}" ] || _t_fzf_worker _t_fzf_paginated "$@"
-  [ "$#" -eq 6 ] || { printf 't picker: paged profile needs six arguments\n' >&2; return 2; }
+  [ "$#" -ge 6 ] && [ "$#" -le 7 ] || { printf 't picker: paged profile needs six arguments and optional multi mode\n' >&2; return 2; }
   _t_paged_page=$1 _t_paged_rows=$2 _t_paged_helper=$3
   _t_paged_preview=$4 _t_paged_query=$5 _t_paged_prompt=$6
   _t_paged_size=$(stty size </dev/tty 2>/dev/null) || _t_paged_size=
@@ -114,6 +114,14 @@ Ctrl-F/B pg · Ctrl-R
 Ctrl-/ details'
   else
     T_PICKER_PAGED_CONTROLS='Enter resume · Esc · Ctrl-F/B pages · Ctrl-R refresh · Ctrl-/ details'
+  fi
+  _t_paged_cardinality=--no-multi
+  _t_paged_keys='tab:down,shift-tab:up'
+  if [ "${7:-}" = multi ]; then
+    _t_paged_cardinality=--multi
+    _t_paged_keys='space:toggle,tab:toggle+down,shift-tab:toggle+up'
+    T_PICKER_PAGED_CONTROLS="$T_PICKER_PAGED_CONTROLS
+Space/Tab mark · page/search clears marks"
   fi
   _t_paged_preview_window='hidden:wrap:down:40%:~1'
   _t_paged_margin='1,2' _t_paged_info=default
@@ -141,11 +149,11 @@ SH
   _t_paged_rows_command='cat "$T_PICKER_PAGED_ROWS"'
   # shellcheck disable=SC2016
   _t_paged_header_command='sh "$T_PICKER_PAGED_RENDER"'
-  _t_paged_bind="change:execute-silent($_t_paged_helper show {q})+reload-sync($_t_paged_rows_command)+transform-header($_t_paged_header_command),ctrl-f:execute-silent($_t_paged_helper next {q})+reload-sync($_t_paged_rows_command)+transform-header($_t_paged_header_command),ctrl-b:execute-silent($_t_paged_helper previous {q})+reload-sync($_t_paged_rows_command)+transform-header($_t_paged_header_command)"
-  _t_fzf --height=100% --margin="$_t_paged_margin" --info="$_t_paged_info" --disabled --sync --no-multi --delimiter="$(printf '\t')" --with-nth=2 --no-hscroll \
+  _t_paged_bind="change:deselect-all+execute-silent($_t_paged_helper show {q})+reload-sync($_t_paged_rows_command)+transform-header($_t_paged_header_command),ctrl-f:deselect-all+execute-silent($_t_paged_helper next {q})+reload-sync($_t_paged_rows_command)+transform-header($_t_paged_header_command),ctrl-b:deselect-all+execute-silent($_t_paged_helper previous {q})+reload-sync($_t_paged_rows_command)+transform-header($_t_paged_header_command)"
+  _t_fzf --height=100% --margin="$_t_paged_margin" --info="$_t_paged_info" --disabled --sync "$_t_paged_cardinality" --delimiter="$(printf '\t')" --with-nth=2 --no-hscroll \
     --print-query --expect=enter,ctrl-r --query="$_t_paged_query" --prompt="$_t_paged_prompt" \
     --header="$(sh "$T_PICKER_PAGED_RENDER")" \
-    --bind='esc:abort,ctrl-c:abort,tab:down,shift-tab:up,ctrl-/:toggle-preview,shift-up:preview-up,shift-down:preview-down' \
+    --bind="esc:abort,ctrl-c:abort,$_t_paged_keys,ctrl-/:toggle-preview,shift-up:preview-up,shift-down:preview-down" \
     --bind="$_t_paged_bind" --preview="$_t_paged_preview" \
     --preview-window="$_t_paged_preview_window" < "$_t_paged_rows"
 )

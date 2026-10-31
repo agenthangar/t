@@ -156,6 +156,30 @@ def test_picker_invalid_exit_and_indices_do_not_resume(history, app, monkeypatch
         app.pick(rows(1), 'repo')
 
 
+@pytest.mark.parametrize('mode', ['valid', 'duplicate', 'invalid', 'stale', 'single'])
+def test_picker_validates_every_multi_selection(history, app, monkeypatch, mode):
+    data = rows(3)
+    def fzf(argv, **kwargs):
+        assert (argv[-1] == 'multi') == (mode != 'single')
+        state = Path(shlex.split(argv[8])[4])
+        width = json.loads(state.read_text())['width']
+        lines = history.picker_rows(data, '', 2, 1, width).splitlines()
+        if mode == 'duplicate':
+            lines[1] = lines[0]
+        elif mode == 'invalid':
+            lines[1] = '999\tinvalid'
+        elif mode == 'stale':
+            lines[1] = history.picker_rows(data, '', 2, 2, width).strip()
+        return SimpleNamespace(returncode=0, stdout='\nenter\n' + '\n'.join(lines) + '\n')
+    monkeypatch.setattr(history.subprocess, 'run', fzf)
+    if mode in ('duplicate', 'invalid', 'single'):
+        with pytest.raises(history.HistoryError):
+            app.pick(data, 'repo', limit=2, multi=mode != 'single')
+    else:
+        selected, key, _ = app.pick(data, 'repo', limit=2, multi=True)
+        assert (selected, key) == ((data[:2], 'enter') if mode == 'valid' else (None, 'retry'))
+
+
 def test_ambiguous_bare_repository_slot_choice_then_conversation_never_autoresumes(app, monkeypatch):
     calls = []
     def pick(options, alias, *a):
@@ -179,8 +203,9 @@ def test_scope_bare_slot_and_explicit_repo_slot_are_read_only(history, app):
             app.scope(target)
 
 
+@pytest.mark.parametrize('multi', [False, True])
 @pytest.mark.parametrize('hostile_defaults', [False, True])
-def test_real_isolated_tmux_picker_paging_global_search_refresh_and_cancel(history, tmp_path, hostile_defaults):
+def test_real_isolated_tmux_picker_paging_global_search_refresh_and_cancel(history, tmp_path, hostile_defaults, multi):
     """fzf actually reloads its rows under a private PTY; no desktop windows."""
     import shutil
     import subprocess
@@ -216,11 +241,11 @@ def capture(*args, **kwargs):
     return value
 m.subprocess.run = capture
 try:
-    row, key, query = app.pick(json.loads(snapshot.read_text()), 'repo')
-    result.write_text(json.dumps({'sid': row['sid'] if row else None, 'key':key, 'query':query}))
+    row, key, query = app.pick(json.loads(snapshot.read_text()), 'repo', multi=MULTI_MODE)
+    result.write_text(json.dumps({'sid': ([r['sid'] for r in row] if isinstance(row, list) else row['sid']) if row else None, 'key':key, 'query':query}))
 finally:
     app.store.close()
-''')
+'''.replace('MULTI_MODE', repr(multi)))
     with tempfile.TemporaryDirectory(prefix='t-history-pty-') as short:
         socket = str(Path(short) / 'tmux.sock')
         def tmux(*argv):
@@ -279,7 +304,19 @@ finally:
             while not result.exists() and time.monotonic() < deadline:
                 time.sleep(.05)
             assert result.exists(), screen()
-            assert json.loads(result.read_text()) == {'sid': 'session-119', 'key': 'enter', 'query': 'session-119'}, result.with_suffix('.fzf').read_text()
+            assert json.loads(result.read_text()) == {'sid': ['session-119'] if multi else 'session-119', 'key': 'enter', 'query': 'session-119'}, result.with_suffix('.fzf').read_text()
+            if multi:
+                tmux('kill-session', '-t', 'picker')
+                result.unlink()
+                tmux('new-session', '-d', '-s', 'picker', '-x', '220', '-y', '45', command)
+                tmux('set-option', '-t', 'picker', 'remain-on-exit', 'on')
+                wait_for(lambda text: 'Conversation 0' in text, 'multi picker')
+                tmux('send-keys', '-t', 'picker', 'Tab', 'Space', 'Enter')
+                deadline = time.monotonic() + 10
+                while not result.exists() and time.monotonic() < deadline:
+                    time.sleep(.05)
+                assert result.exists(), screen()
+                assert set(json.loads(result.read_text())['sid']) == {'session-0', 'session-1'}
         finally:
             subprocess.run(['tmux', '-S', socket, 'kill-server'], env=env, capture_output=True, timeout=10)
 
@@ -308,11 +345,11 @@ m = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m)
 app = m.HistoryCommand(SimpleNamespace(repos={'repo':'/unused'}, hosts={}), {'_t_source_root':lambda: str(root)})
 try:
-    row, key, query = app.pick(json.loads(snapshot.read_text()), 'repo')
+    row, key, query = app.pick(json.loads(snapshot.read_text()), 'repo', multi=MULTI_MODE)
     result.write_text(json.dumps({'sid':row['sid'] if row else None, 'key':key}))
 finally:
     app.store.close()
-''')
+'''.replace('MULTI_MODE', repr(multi)))
     with tempfile.TemporaryDirectory(prefix='t-history-small-pty-') as short:
         socket = str(Path(short) / 'tmux.sock')
         command = shlex.join([sys.executable, str(harness), str(ROOT), str(snapshot), str(result)])
@@ -335,6 +372,18 @@ finally:
             while not result.exists() and time.monotonic() < deadline:
                 time.sleep(.05)
             assert json.loads(result.read_text()) == {'sid': None, 'key': 'cancel'}
+            if multi:
+                tmux('kill-session', '-t', 'picker')
+                result.unlink()
+                tmux('new-session', '-d', '-s', 'picker', '-x', '220', '-y', '45', command)
+                tmux('set-option', '-t', 'picker', 'remain-on-exit', 'on')
+                wait_for(lambda text: 'Conversation 0' in text, 'multi picker')
+                tmux('send-keys', '-t', 'picker', 'Tab', 'Space', 'Enter')
+                deadline = time.monotonic() + 10
+                while not result.exists() and time.monotonic() < deadline:
+                    time.sleep(.05)
+                assert result.exists(), screen()
+                assert set(json.loads(result.read_text())['sid']) == {'session-0', 'session-1'}
         finally:
             subprocess.run(['tmux', '-S', socket, 'kill-server'], env=env, capture_output=True, timeout=10)
 
