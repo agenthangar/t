@@ -988,7 +988,6 @@
         "action",
         "filtered",
         "multi",
-        "single",
         "list"
       ],
       "renderer": "fzf",
@@ -1011,7 +1010,10 @@
         "tests/test_app_handoff.py::test_handoff_scopes_unindexed_writers_using_rollout_metadata",
         "tests/test_history_resume.py::test_private_saved_resume_reports_ownership_refusal_and_cleans_up",
         "tests/test_history_resume.py::test_relocated_resume_checks_destination_and_selected_writer",
-        "tests/test_resume_auth.py::test_resume_auth_warning_precedes_empty_or_selection"
+        "tests/test_resume_auth.py::test_resume_auth_warning_precedes_empty_or_selection",
+        "tests/test_resume_history.py::test_batch_failure_stops_later_launches_and_keeps_ready_hints",
+        "tests/test_resume_history.py::test_batch_registration_failure_reports_already_launched_owner",
+        "tests/test_resume_history.py::test_batch_tab_failure_never_hides_summary_behind_first_attachment"
       ],
       "modes": {
         "default": {
@@ -1043,7 +1045,7 @@
             "1"
           ],
           "patterns": [
-            "single"
+            "multi"
           ],
           "read_only": false,
           "tests": [
@@ -1051,7 +1053,7 @@
             "tests/test_resume_history.py::test_resume_options_keep_existing_route",
             "tests/test_history_data.py::test_resume_candidates_match_any_recorded_slot_association"
           ],
-          "notes": "Plain public slot targets, including a lone inferred-repository slot, delegate to session history: paginated single selection of exact conversation identities, no default recency cutoff, no automatic single-result selection, and cancellation returns 130 without launch. Nonterminal use lists history read-only. Explicit resume options and internal callers retain existing resume modes."
+          "notes": "Plain public slot targets, including a lone inferred-repository slot, delegate to session history: paginated multi-selection of exact conversation identities, no default recency cutoff, no automatic single-result selection, and cancellation returns 130 without launch. Nonterminal use lists history read-only. Explicit resume options and internal callers retain existing resume modes."
         },
         "desktop": {
           "argv": [
@@ -1143,7 +1145,7 @@
         ]
       },
       "progress": "Terminal-only discovery stages on stderr; no progress in redirected output, JSON, or remote protocols.",
-      "notes": "Terminal launches run without echoing internal shell commands or exit instructions; agent output and diagnostics remain visible. Saved Codex resume resolves unindexed held sibling locks through validated session_meta workspace identity in active and archived rollouts. A still-unassociated exact lock is inspected through bounded lock-holder open rollout metadata; process cwd and other thread IDs never establish unrelatedness. Unknown, invalid or unreadable evidence fails closed; ownership refusals identify the conversation and verified PIDs with finish/exit recovery and a concise retry diagnostic, without process arguments or a traceback. Confirmed missing/invalid GitHub authentication warns once per affected host before selection, including empty and automatic results, without blocking available conversations; persistent compact picker warning survives filter/sort/reset/all. Remedy: gh auth login --hostname github.com on the named host. Network/rate-limit/permission failures and missing gh do not trigger auth warnings. Cross-host policy: Claude defaults to t transfer; Codex defaults to manual native desktop Hand off (no supported CLI adapter). Agent settings show/persist the effective mechanism and explicit Codex t override. Native returns nonzero with app steps before transfer mutations; local resume and remote attach unchanged.",
+      "notes": "Terminal launches run without echoing internal shell commands or exit instructions; agent output and diagnostics remain visible. Saved Codex resume resolves unindexed held sibling locks through validated session_meta workspace identity in active and archived rollouts. A still-unassociated exact lock is inspected through bounded lock-holder open rollout metadata; process cwd and other thread IDs never establish unrelatedness. Unknown, invalid or unreadable evidence fails closed; ownership refusals identify the conversation and verified PIDs with finish/exit recovery and a concise retry diagnostic, without process arguments or a traceback. Confirmed missing/invalid GitHub authentication warns once per affected host before selection, including empty and automatic results, without blocking available conversations; persistent compact picker warning survives filter/sort/reset/all. Remedy: gh auth login --hostname github.com on the named host. Network/rate-limit/permission failures and missing gh do not trigger auth warnings. Cross-host policy: Claude defaults to t transfer; Codex defaults to manual native desktop Hand off (no supported CLI adapter). Agent settings show/persist the effective mechanism and explicit Codex t override. Native returns nonzero with app steps before transfer mutations; local resume and remote attach unchanged. Batch failures stop on the first error or cancellation, print a final identity/reason/retry/ready/not-attempted summary, and never attach over failures. Tab failures retain successful sessions and exit nonzero.",
       "source_reconciliation": {
         "scope": "selected cross-host saved conversations only",
         "checkpoint": "verified source workspace; normal Git identity/hooks; tracked, staged and nonignored untracked code",
@@ -1166,7 +1168,7 @@
       "patterns": [
         "list",
         "machine",
-        "single"
+        "multi"
       ],
       "renderer": "fzf",
       "scope": "explicit/inferred repository and slot",
@@ -1186,13 +1188,13 @@
             "1"
           ],
           "patterns": [
-            "single"
+            "multi"
           ],
           "read_only": false,
           "tests": [
             "tests/test_history_picker.py::test_real_isolated_tmux_picker_paging_global_search_refresh_and_cancel"
           ],
-          "notes": "Paginated single choice. Ctrl-F next and Ctrl-B previous page are the documented exception to filtered-picker Ctrl-F settings."
+          "notes": "Paginated multi-selection: Space/Tab mark, Enter accepts marks or focus. Search, page changes and refresh clear marks. Ctrl-F/B paginate. Resume failures exit nonzero without reopening the picker; batches stop on the first failure and retain prior successes."
         },
         "pagination": {
           "argv": [
@@ -1206,7 +1208,7 @@
             "2"
           ],
           "patterns": [
-            "single"
+            "multi"
           ],
           "read_only": false,
           "tests": [
@@ -1222,7 +1224,7 @@
             "--refresh"
           ],
           "patterns": [
-            "single"
+            "multi"
           ],
           "read_only": false,
           "tests": [
@@ -3448,7 +3450,7 @@
           "tests": [
             "tests/test_remote_commands.py::test_remote_host_picker_requires_explicit_enter_and_cancel"
           ],
-          "notes": "Single host picker waits for Enter even with one host; missing session uses shared selection on the source/target host. Cancellation returns 130. Unavailable registered hosts warn and are skipped; discovery retains local and reachable rows. SSH failures report status and bounded terminal-safe stderr without asserting host downtime; scanner stdin is disconnected. Saved resumes retain local locks and known-owner checks, but cannot verify ownership on unavailable hosts. Local scan failures remain fatal. Host picker says Resume saved work on which host? and Browse this host’s saved conversations; selected host supplies saved history and runs the resumed session. SSH alias/target context is subordinate to the action heading. Host-first positionals; explicit --host retains repo/slot compatibility. Ambiguous legacy targets fail before SSH."
+          "notes": "Single host picker waits for Enter even with one host; missing session uses shared selection on the source/target host. Cancellation returns 130. Unavailable registered hosts warn and are skipped; discovery retains local and reachable rows. SSH failures report status and bounded terminal-safe stderr without asserting host downtime; scanner stdin is disconnected. Saved resumes retain local locks and known-owner checks, but cannot verify ownership on unavailable hosts. Local scan failures remain fatal. Host picker says Resume saved work on which host? and Browse this host\u2019s saved conversations; selected host supplies saved history and runs the resumed session. SSH alias/target context is subordinate to the action heading. Host-first positionals; explicit --host retains repo/slot compatibility. Ambiguous legacy targets fail before SSH."
         },
         "explicit": {
           "argv": [
@@ -4479,10 +4481,10 @@
         }
       ],
       "status_marks": {
-        "attached": "●",
-        "detached": "○",
-        "active_context": "✓",
-        "still_in_progress": "↻"
+        "attached": "\u25cf",
+        "detached": "\u25cb",
+        "active_context": "\u2713",
+        "still_in_progress": "\u21bb"
       },
       "layouts": {
         "table": {
@@ -4634,7 +4636,7 @@
         "height_percent": 35
       },
       "selection": {
-        "count": 1,
+        "count": "multiple",
         "identity_fields": [
           "repo",
           "agent",
@@ -4656,7 +4658,18 @@
         "validate_returned_query_page_and_snapshot": true,
         "non_tty": "read_only_table",
         "json": "read_only_machine_output",
-        "network": "explicit_refresh_only"
+        "network": "explicit_refresh_only",
+        "marks": [
+          "space",
+          "tab"
+        ],
+        "marks_scope": "current_page",
+        "clear_marks_on": [
+          "search",
+          "page",
+          "refresh"
+        ],
+        "failure": "exit_nonzero_without_reopening"
       },
       "json": {
         "version": 1,
@@ -4726,8 +4739,8 @@
         "tests/test_command_behavior.py::test_history_display_contract_preserves_unknowns_preview_and_json"
       ],
       "status_marks": {
-        "saved": "·",
-        "archived": "□",
+        "saved": "\u00b7",
+        "archived": "\u25a1",
         "missing": "!"
       }
     }

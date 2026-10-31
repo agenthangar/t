@@ -323,6 +323,26 @@ def _pid_has_lock(path, pid, run):
     return result.returncode == 0 and str(pid) in result.stdout.splitlines()
 
 
+def _selected_writer_hint(path, run):
+    """Diagnostic only: identify processes with this exact lock open."""
+    try:
+        result = run(["lsof", "-nP", "-t", path], timeout=5)
+        pids = result.stdout.splitlines()
+        if (result.returncode or not pids or len(pids) > 32 or
+                any(not pid.isdecimal() or int(pid) <= 0 for pid in pids)):
+            return ""
+        labels = []
+        for pid in sorted(set(pids), key=int):
+            result = run(["ps", "-p", pid, "-o", "comm="], timeout=5)
+            executable = result.stdout.strip() if not result.returncode else ""
+            app = next((name for name in ("ChatGPT", "Codex")
+                        if f"/{name}.app/Contents/" in executable), None)
+            labels.append(pid + (f" ({app} backend)" if app else ""))
+        return "Writer-lock processes: " + ", ".join(labels) + ". "
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return ""
+
+
 def _safe_archive_hint(cwd, run):
     """Only suggest archiving a reserved t worktree, never a Codex-managed one."""
     canonical = os.path.realpath(cwd)
@@ -439,6 +459,7 @@ def assert_released(bundle, sid, cwd, run, *, codex_home=None, rollout=None,
         if held and not (cli_pid is not None and _pid_has_lock(target, cli_pid, run)):
             raise ValueError("the selected Codex conversation is still loaded "
                              "(its writer lock is held). "
+                             + _selected_writer_hint(target, run)
                              + _release_guidance(cwd, archived, run) + retry)
         try:
             other = _other_cwd_owner(folder, sid, ownership_cwd or cwd, codex_home, unknown=unknown,

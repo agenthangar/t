@@ -327,7 +327,7 @@ def test_remote_resume_worker_opens_picker_despite_an_unavailable_peer(zsh, tmp_
     assert 'new-session' not in zsh.log.read_text()
 
 
-def test_partial_resume_batch_skips_saved_failure_and_attaches_live_mark(zsh, tmp_path):
+def test_partial_resume_batch_keeps_saved_failure_visible_without_attaching(zsh, tmp_path):
     cwd, _ = saved_rollout(zsh)
     live_cwd, _ = saved_rollout(zsh, sid=OTHER, slot='5')
     picker = tmp_path / 'stubbin/fzf'
@@ -346,12 +346,11 @@ def test_partial_resume_batch_skips_saved_failure_and_attaches_live_mark(zsh, tm
       _t_resume api --days all --live
     ''', _tty=True, LIVE_SID=OTHER, LIVE_CWD=str(live_cwd),
         FAKE_SESSIONS='dev-api-5', FAKE_SESSION_PATH=str(live_cwd))
-    assert result.returncode == 0, result.stdout
-    assert 'api 3: launch failed' in result.stdout
-    # Unknown turn times break ties by identity: remote slot 4 attaches first,
-    # then the local slot 5 opens in a tab. Neither action reaches real SSH/UI.
-    assert 'REMOTE_ATTACH online\tapi\t4' in result.stdout
-    assert 'TAB t open api 5 --cli --local' in result.stdout
+    assert result.returncode == 1, result.stdout
+    assert 'Resume stopped after an error' in result.stdout
+    assert 'Selection: api slot 3' in result.stdout
+    assert 'conversation launch failed' in result.stdout
+    assert 'REMOTE_ATTACH' not in result.stdout and 'TAB t open' not in result.stdout
     calls = zsh.log.read_text()
     assert 'new-session' not in calls and 'respawn-pane' not in calls
     assert cwd.exists()
