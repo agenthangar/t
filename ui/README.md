@@ -249,7 +249,10 @@ launches and guarded resumes. An automatic implementation effort resolves to med
 for the main conversation; explicit efforts remain explicit. These scoped values
 override stale resume checkpoints, including a previous planning model or effort.
 Every stage offers Agent selects by task alongside explicit effort levels;
-Review additionally offers One level below planning. Use the same labels in
+Review additionally offers One level below planning. Reasoning pickers use shared
+nonselectable Automatic and Fixed effort section headings: task-based and relative
+modes belong to Automatic; explicit levels belong to Fixed effort. Preserve the
+selected effort when reopening the picker. Use the same labels in
 menus, choices, save review and printed lists. Selected Implementation with auto
 effort delegates a bounded worker at a concrete effort chosen for the task;
 explicit Implementation effort keeps the work in the main session at that level.

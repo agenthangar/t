@@ -974,6 +974,9 @@ An explicit Implementation effort keeps implementation in the main session at
 that level. Planning and Review use workers when selected. Review also offers
 **One level below planning**. These are delegation instructions for the agent;
 `t` does not change a running turn's effort or run its own task classifier.
+Reasoning pickers group task-based and relative modes under **Automatic**, and
+explicit levels under **Fixed effort**. These headings are not selectable;
+reopening a picker preserves its selected effort.
 **Use this workflow** enables or suppresses the entire workflow. **Use multiple models**
 opens checkboxes for **Planning**, **Implementation**, and **Review**. Mark stages with
 Space, then press Enter. Unchecked Planning and Review use the main model.

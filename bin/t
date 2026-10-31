@@ -2555,7 +2555,8 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
             else:
                 levels = ["auto", *(["one-level-lower"] if stage == "review" else []), *helper["EFFORTS"]]
                 picked = ui.pick(_workflow_stage_title(stage) + " reasoning effort", [(level, _workflow_effort(level, stage)) for level in levels],
-                                 default=levels.index(policy[stage]["effort"]))
+                                 default=levels.index(policy[stage]["effort"]),
+                                 sections={"auto": "Automatic", helper["EFFORTS"][0]: "Fixed effort"})
             if picked is not None:
                 changed[stage][field] = picked
         if changed != policy:

@@ -199,6 +199,9 @@ def test_each_stage_can_let_agent_choose_worker_effort(workflow, t_mod, stage):
     assert policy[stage]['effort'] == 'auto'
     choices = dict(ui.views[2][1])
     assert choices['auto'] == 'Agent selects by task'
+    assert ui.views[2][2]['sections'] == {'auto': 'Automatic', 'minimal': 'Fixed effort'}
+    assert ui.views[2][1][ui.views[2][2]['default']][0] == 'high'
+    assert 'Automatic' not in choices and 'Fixed effort' not in choices
     assert ('one-level-lower' in choices) is (stage == 'review')
     if stage == 'review':
         assert choices['one-level-lower'] == 'One level below planning'
