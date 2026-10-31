@@ -1605,7 +1605,9 @@ class HistoryCommand:
                         raise HistoryError('destination revision changed before restore; no conversation launched')
                     if not self.same_repository(self.identity(alias), row['repo']):
                         raise HistoryError('repository identity changed before restore')
-                    self.codex_released(row, source)
+                    # The rollout retains its creation cwd even after that slot
+                    # is reused. Check sibling writers in our claimed destination.
+                    self.codex_released(row, source, workspace=destination)
                     self.install_transcript(row, source, destination)
                     # Python holds the same POSIX cwd/SID locks as the zsh wrapper;
                     # use the claimed helper, never recursively acquire those locks.

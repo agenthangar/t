@@ -265,7 +265,7 @@ def test_resume_launch_failure_keeps_worktree_and_releases_reservation(app, hist
     row = saved_row(app, git_repo, workspace)
     row['sources'] = [dict(host='local', path=str(source))]
     monkeypatch.setattr(app, 'owners', lambda *a: [])
-    monkeypatch.setattr(app, 'codex_released', lambda *a: None)
+    monkeypatch.setattr(app, 'codex_released', lambda *a, **kw: None)
     original = history.run
     def fail_launch(argv, **kwargs):
         if argv[0] == 'zsh':
@@ -287,7 +287,7 @@ def test_resume_success_records_exact_agent_destination_and_revision(app, histor
     row['sources'] = [dict(host='local', path=str(source))]
     monkeypatch.setattr(app, 'owners', lambda *a: [])
     monkeypatch.setattr(app, 'attach', lambda owner: 0)
-    monkeypatch.setattr(app, 'codex_released', lambda *a: None)
+    monkeypatch.setattr(app, 'codex_released', lambda *a, **kw: None)
     original, launches = history.run, []
     def launch(argv, **kwargs):
         if argv[0] == 'zsh':
@@ -851,7 +851,7 @@ def test_saved_resume_returns_actual_fresh_owner_without_attaching(app, history,
     row['sources'] = [dict(host='local', path=str(source))]
     monkeypatch.setattr(app, 'owners', lambda *a: [])
     monkeypatch.setattr(app, 'attach', lambda owner: pytest.fail('detached resume must not attach'))
-    monkeypatch.setattr(app, 'codex_released', lambda *a: None)
+    monkeypatch.setattr(app, 'codex_released', lambda *a, **kw: None)
     original, launches = history.run, []
     def launch(argv, **kwargs):
         if argv[0] == 'zsh':
@@ -1014,3 +1014,57 @@ def test_native_policy_allows_verified_local_source_with_incidental_remote_recor
     row['sources'] = [dict(host='local', path=str(path), updated=20),
                       dict(host='remote', path='/remote/rollout-selected.jsonl', updated=10)]
     assert app.source(row) == path
+
+
+@pytest.mark.parametrize('prepare_only', [False, True])
+@pytest.mark.parametrize('writer', ['original', 'destination', 'selected'])
+def test_relocated_resume_checks_destination_and_selected_writer(
+        app, history, git_repo, store, monkeypatch, tmp_path, prepare_only, writer):
+    import fcntl
+    original = Path(app.cfg.worktree_root) / 'repo/9'
+    destination = Path(app.cfg.worktree_root) / 'repo/repo-1'
+    sid = '01234567-89ab-cdef-0123-456789abcdef'
+    other = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+    rows = codex_rows(original, sid=sid)
+    rows[0]['payload']['cli_version'] = '0.160.0'
+    home = Path(os.environ['CODEX_HOME'])
+    source = transcript_file(home / 'sessions' / ('rollout-' + sid + '.jsonl'), rows)
+    source_bytes = source.read_bytes()
+    row = store.merge(saved_row(app, git_repo, original, sid=sid))
+    row['sources'] = [dict(host='local', path=str(source))]
+    locks = home / 'thread-writer-locks'
+    locks.mkdir()
+    sibling = transcript_file(home / 'sessions' / ('rollout-' + other + '.jsonl'),
+                              codex_rows(destination if writer == 'destination' else original, sid=other))
+    sibling_bytes = sibling.read_bytes()
+    monkeypatch.setattr(app, 'owners', lambda *a: [])
+    app.api['_run'] = lambda *a, **kw: SimpleNamespace(returncode=1, stdout='', stderr='')
+    run, launches = history.run, []
+    def launch(argv, **kwargs):
+        if argv[0] == 'zsh':
+            launches.append(argv)
+            return ''
+        return run(argv, **kwargs)
+    monkeypatch.setattr(history, 'run', launch)
+    held = locks / ((sid if writer == 'selected' else other) + '.lock')
+    with held.open('a') as stream:
+        fcntl.flock(stream, fcntl.LOCK_EX)
+        if writer == 'original':
+            result = app.resume('repo', row, detached=True, prepare_only=prepare_only)
+            assert result == 'dev-repo-1' + ('\t' + str(destination) if prepare_only else '')
+            assert bool(launches) == (not prepare_only)
+            assert any(a['workspace'] == str(destination) and a['evidence'] == 'resume'
+                       for a in store.records()[0]['associations'])
+        else:
+            message = 'writer lock is held' if writer == 'selected' else 'another Codex conversation'
+            with pytest.raises(history.HistoryError, match=message):
+                app.resume('repo', row, detached=True, prepare_only=prepare_only)
+            assert launches == []
+            assert not any(a['workspace'] == str(destination) for a in store.records()[0]['associations'])
+        with held.open() as probe:
+            with pytest.raises(BlockingIOError):
+                fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    assert source.read_bytes() == source_bytes
+    assert sibling.read_bytes() == sibling_bytes
+    assert app.reservation is None
+    assert not list(destination.parent.glob('.*.history-reservation'))
