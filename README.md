@@ -350,7 +350,9 @@ stays readable on the darker cyan focused row, without a colored block.
 In `t open`, press **k** to kill only the focused session, independently of
 marks. This confirms that session and retains close safety checks. For example,
 run `t open --attached`, focus a session, and press **k**.
-The command returns the close result without refreshing or reopening the picker.
+The picker stays open and removes the closed row without rediscovering sessions.
+Search, filters, and marks on other rows are preserved; failed or canceled closes
+leave the row available.
 The open picker reserves **k** as an action key rather than query text.
 **Ctrl-F** opens the Filters picker. Choose State or a column, select its value,
 then choose Apply filters. **Ctrl-A** turns filtering off to show the whole

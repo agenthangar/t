@@ -73,6 +73,9 @@ def picker():
                                   capture_output=True, check=check)
 
         def start(empty=False, width=90, height=26, mode='open', shell='/bin/sh', *, hostile_opts=False, profile='filtered', monochrome=False, auth_warning=False):
+            env['T_HOME'] = str(ROOT)
+            env['T_PICKER_KILL_CALLBACK'] = str(root / 'close.zsh')
+            (root / 'close.zsh').write_text('print -r -- "$1" >> "$HOME/closed"\n')
             env.pop('T_PICKER_AUTH_HOSTS', None)
             env.pop('T_PICKER_COLUMNS', None)
             if auth_warning:
@@ -599,15 +602,38 @@ def test_open_kill_key_ignores_marks_and_accepts_focus(picker, width, height, ma
     if marked:
         keys('Space', 'Tab')
         wait('(2)')
-        keys('Up', 'Up', 'Down')
-    selected = finish('k')
-    assert selected[0] == '__t_open_kill__'
-    assert [row.split('\t')[1] for row in selected[1:]] == (
-        ['web-4'] if marked else ['api-2'])
+    keys('Up', 'Up', 'Down')
+    keys('k')
+    wait('Close: web-4 closed', absent=('Beta full',))
+    wait('1/1 (1)' if marked else '1/1 (0)', focused='Alpha')
+    selected = finish()
+    assert [row.split('\t')[1] for row in selected] == ['api-2']
 
 
-def test_public_open_kill_returns_without_refreshing(picker):
+def test_public_open_kill_keeps_picker_without_rediscovery(picker):
     start, wait, keys, finish = picker
     start(profile='public-open-kill')
     wait('k kill', focused='4')
-    assert finish('k') == ['KILL api 4 1']
+    keys('k')
+    wait('Close: api-4 closed')
+    wait('0/0 (0)')
+    keys('C-a')
+    wait('1/1 (0)', focused='2')
+    assert finish() == ['KILL api 4 1', 'api 2 --local']
+
+
+def test_open_kill_preserves_query_and_hidden_marks(picker):
+    start, wait, keys, finish = picker
+    start()
+    wait('2/2 (0)')
+    keys('Space')
+    wait('(1)')
+    keys('-l', 'Beta')
+    wait('1/2 (1)', focused='Beta')
+    keys('k')
+    wait('Close: web-4 closed')
+    screen = wait('0/1 (1)')
+    assert 'open > Beta' in screen
+    keys('Bspace', 'Bspace', 'Bspace', 'Bspace')
+    wait('1/1 (1)', focused='Alpha')
+    assert [row.split('\t')[1] for row in finish()] == ['api-2']

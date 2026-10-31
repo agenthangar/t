@@ -334,8 +334,11 @@ The compatibility --attached flag starts with filtering off and defaults retaine
 There is no new-session shortcut or details preview in open; use `t open --new`.
 Press `k` to kill only the focused session, independently of multi-selection marks.
 The shortcut authorizes that session like Enter in close, retaining ownership
-and desktop safety checks. Return the close result without refreshing inventory
-or reopening the picker, including on failure or cancellation.
+and desktop safety checks. Keep the picker open and remove only successfully
+closed rows from its cached snapshot, without inventory discovery. Preserve query,
+filters, and other marks on both supported fzf versions. Failed or canceled closes
+keep their row and show the outcome in the picker. Closing the last row leaves an
+empty picker; Esc exits without starting a session.
 A plain green ✓ selection marker stays readable on the dark cyan focus row;
 never paint a reversed-color block behind it. The marker occupies its own gutter
 beside the focus pointer, separate from status marks in the row.
