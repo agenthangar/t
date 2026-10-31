@@ -573,6 +573,21 @@ def test_remote_host_first_completion_and_legacy_host_flag(tmp_path):
     ]
 
 
+def test_move_destination_completion_includes_local(tmp_path):
+    result = shell(tmp_path, '''
+        REMOTE_HOSTS=(lab user@lab)
+        _values() { print -r -- "${(j:,:)argv[2,-1]}"; }
+        local -a words
+        words=(t session move --host '') CURRENT=5; _t
+        words=(t move --host '') CURRENT=4; _t
+        words=(t remote move --host '') CURRENT=5; _t
+        words=(t session move --from '') CURRENT=5; _t
+        words=(t remote open --host '') CURRENT=5; _t
+    ''')
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == ['local,lab'] * 3 + ['lab'] * 2
+
+
 @pytest.mark.skipif(not shutil.which("zsh"), reason="zsh is required")
 def test_runners_completion_exposes_nested_runs_and_scopes(tmp_path):
     result = shell(tmp_path, '''
