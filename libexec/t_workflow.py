@@ -646,7 +646,7 @@ def summary_lines(policy):
     if summary['stages_enabled']:
         lines.append('Separate models: ' + (', '.join(stage.title() for stage in summary['separate_stages']) or 'none'))
         lines.append('Configured model stages: ' + ', '.join(
-            'Main work' if stage == 'implementation' else stage.title() for stage in summary['model_stages']))
+            stage.title() for stage in summary['model_stages']))
     if 'implementation' not in summary['model_stages']:
         for agent, settings in summary['session_defaults'].items():
             lines.append(agent.title() + ' session default: ' + (settings.get('model') or 'agent default') +

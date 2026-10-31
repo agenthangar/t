@@ -2510,7 +2510,7 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
             return
         changed = copy.deepcopy(policy)
         if choice == "stages_enabled":
-            picked = ui.pick("Model settings for", [("planning", "Planning"), ("implementation", "Main work"), ("review", "Review")],
+            picked = ui.pick("Model settings for", [("planning", "Planning"), ("implementation", "Implementation"), ("review", "Review")],
                              multi=True, marked={i for i, stage in enumerate(("planning", "implementation", "review")) if stage in stages})
             if picked is not None:
                 changed = helper["select_model_stages"](policy, picked)
@@ -3273,7 +3273,7 @@ def _workflow_effort(value, stage=None):
 
 
 def _workflow_stage_title(stage):
-    return "Main work" if stage == "implementation" else stage.title()
+    return stage.title()
 
 
 def _workflow_model_rows(helper, policy):
@@ -11524,9 +11524,10 @@ SCOPE
   `ls` is an alias for `list`.
   Run t workflow in a terminal to edit workflows interactively.
   List prints saved workflow values; --all includes named definitions.
-  Check Planning, Main work and/or Review for saved model settings.
-  Unchecked Main work uses session defaults; unchecked helpers use the main model.
-  Main work effort selected by task starts at medium.
+  Check Planning, Implementation and/or Review for saved model settings.
+  Unchecked Implementation uses session defaults;
+  unchecked helpers use the main model.
+  Implementation effort selected by task starts at medium.
   Select no stages to use session defaults.
   Permissions selects Codex and Claude access for new and resumed CLI sessions.
   PRs, previews & tests controls PR opening and merging, preview timing and approval,
@@ -12726,8 +12727,9 @@ RECEIVE AND REMOTE MOVES
   Workflows opens the editor for models, PRs, previews, tests, and text.
   Workflow Permissions sets Codex and Claude access for new/resumed CLI sessions.
   Clear text instructions removes Markdown in the pending review and save changes.
-  Use multiple models opens Planning/Main work/Review checkboxes.
-  Unchecked Main work uses session defaults; unchecked helpers use the main model.
+  Use multiple models opens Planning/Implementation/Review checkboxes.
+  Unchecked Implementation uses session defaults;
+  unchecked helpers use the main model.
   Run t workflow directly to edit, review and save workflow changes.
 
   Use `t workflow edit [--repo ALIAS]` for its JSON editor and `t workflow

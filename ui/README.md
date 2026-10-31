@@ -196,9 +196,9 @@ fingerprint is automatically accepted. Onboarding uses the same reviewed offer.
 Config includes Workflows globally and in each repository submenu. The global
 menu chooses a named default, adds or edits shared workflows, or activates recommended
 defaults. Each workflow exposes an overall Workflow switch and an independent
-Use multiple models checkbox picker for Planning, Main work and Review. Use the
+Use multiple models checkbox picker for Planning, Implementation and Review. Use the
 shared multi profile: Space marks stages, Enter applies the selection, q/Esc
-cancels. Unchecked Planning/Review use the main model. Unchecked Main work uses
+cancels. Unchecked Planning/Review use the main model. Unchecked Implementation uses
 per-tool session defaults, with default model/effort controls still available
 beside selected helpers. Selecting no stages enters single-model mode.
 Deselecting stages retains their model/effort settings and keeps
@@ -232,22 +232,22 @@ approval. Explicit preview_approval wins; edits materialize independent settings
 without changing raw JSON on reads. The combined legacy choice is hidden in menus.
 Instead show the selected session tool's default model and reasoning effort.
 Optional `session_defaults` stores independent Codex and Claude model/effort maps;
-these are active for enabled workflows with Main work unchecked, including
+these are active for enabled workflows with Implementation unchecked, including
 single-model workflows. Repository overrides
 apply to the canonical checkout and its worktrees, including destination paths
 for new and resumed CLI sessions. Native desktop launches keep the application's
 model settings. Explicit resume arguments win. An explicit model
 without an effort uses that model's default, not an unrelated global effort.
 Empty choices fall back to account-level agent defaults. Excluded workflows and
-workflows with Main work selected do not apply these session defaults. Never write scoped settings into
+workflows with Implementation selected do not apply these session defaults. Never write scoped settings into
 global agent settings or change active turns; indexed Codex child agents retain
 their own settings. The UI discovers supported efforts from the selected tool.
-Saved enabled workflows with Main work selected use the implementation model for Codex root
+Saved enabled workflows with Implementation selected use the implementation model for Codex root
 launches and guarded resumes. An automatic implementation effort resolves to medium
 for the main conversation; explicit efforts remain explicit. These scoped values
 override stale resume checkpoints, including a previous planning model or effort.
 Use the same stage-aware effort labels in menus, choices, save review and printed
-lists: Agent selects by task for planning, Agent selects by task · starts Medium for Main work, and One level
+lists: Agent selects by task for planning, Agent selects by task · starts Medium for Implementation, and One level
 below planning for relative review effort. Task-based effort remains agent guidance;
 the main launch fallback does not claim automatic runtime effort switching.
 Unsaved recommended defaults supply no launch overrides. Claude launch settings

@@ -186,7 +186,7 @@ def test_stage_checkboxes_select_independent_helpers(workflow, t_mod, scope, sel
     assert workflow.model_stages(policy) == selected
     picker = ui.views[1]
     assert picker[0] == 'Model settings for'
-    assert picker[1] == [('planning', 'Planning'), ('implementation', 'Main work'), ('review', 'Review')]
+    assert picker[1] == [('planning', 'Planning'), ('implementation', 'Implementation'), ('review', 'Review')]
     assert picker[2] == {'multi': True, 'marked': {0, 1, 2}}
     rows = dict(ui.views[-1][1])
     values = ui.views[-1][2]['values']
@@ -195,8 +195,7 @@ def test_stage_checkboxes_select_independent_helpers(workflow, t_mod, scope, sel
     assert ('main_effort' in rows) is ('implementation' not in selected)
     assert ('planning' in rows) is ('planning' in selected)
     assert ('review' in rows) is ('review' in selected)
-    assert values['stages_enabled'] == (', '.join('Main work' if stage == 'implementation' else stage.title()
-                                                for stage in selected) if selected else 'No · one model')
+    assert values['stages_enabled'] == (', '.join(stage.title() for stage in selected) if selected else 'No · one model')
     for stage in ('planning', 'implementation', 'review'):
         assert policy[stage] == original['workflows']['standard'][stage]
     if scope == 'repository':
@@ -275,7 +274,7 @@ def test_deselected_main_stage_never_displays_retained_main_model(workflow, t_mo
     rows = t_mod._workflow_model_rows(vars(workflow), policy)
     expected_model = 'session-main' if defaults else 'Agent default'
     expected_effort = 'High' if defaults else 'Session default'
-    assert rows[1] == ('Main work', expected_model, expected_effort, 'Main model')
+    assert rows[1] == ('Implementation', expected_model, expected_effort, 'Main model')
     assert rows[2] == ('Review', expected_model, expected_effort, 'Main model')
     assert rows[0][3] == 'Selected stage'
     t_mod._workflow_print(vars(workflow), {'scope': 'global', 'source': 'global',
@@ -361,7 +360,7 @@ def test_repository_model_editor_preserves_global_defaults(workflow, t_mod, monk
     assert not workflow.config_path().exists()
     review = '\n'.join(t_mod._workflow_review(cfg._workflow_document)).split('Repository /repo:', 1)[1]
     assert 'Codex session default: repo-model; reasoning: high' in review
-    assert 'Planning:' not in review and 'Main work:' not in review and 'Review:' not in review
+    assert 'Planning:' not in review and 'Implementation:' not in review and 'Review:' not in review
     before = copy.deepcopy(cfg._workflow_document)
     t_mod._workflow_policy_menu(Menu(['main_model', None, 'back']), cfg, vars(workflow), repository='/repo')
     assert cfg._workflow_document == before

@@ -519,7 +519,7 @@ def test_nested_workflow_commands(workflow, t_mod, monkeypatch, tmp_path, capsys
     assert t_mod.main([*prefix, 'list']) == 0
     output = capsys.readouterr().out
     assert 'Workflow for the global default.' in output and 'recommended defaults (not saved)' in output
-    assert 'Enabled: yes' in output and all(word in output for word in ('STEP', 'MODEL', 'REASONING', 'SOURCE', 'Planning', 'Main work', 'Review'))
+    assert 'Enabled: yes' in output and all(word in output for word in ('STEP', 'MODEL', 'REASONING', 'SOURCE', 'Planning', 'Implementation', 'Review'))
     assert not workflow.config_path().exists()
     for flags in ([], ['--repo', 'api']):
         assert t_mod.main([*prefix, 'list', *flags, '--json']) == 0
@@ -1241,5 +1241,5 @@ def test_workflow_print_precedence_and_reasoning(workflow, t_mod, monkeypatch, c
     assert 'Design approval: Required' in text and 'Preview: Automatically' in text
     assert 'Approval before PR: Required' in text
     assert 'Agent selects by task' in text and 'One level below planning' in text
-    assert 'Main work' in text and 'Agent selects by task · starts Medium' in text
+    assert 'Implementation' in text and 'Agent selects by task · starts Medium' in text
     assert 'one-level-lower' not in text and 'Test runners:' in text and 'Propagation:' in text

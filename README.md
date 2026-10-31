@@ -965,16 +965,16 @@ compatibility aliases. Choose
 **Use recommended defaults** to activate planning with `gpt-6-astra`, implementation
 with `gpt-6.1-sol`, and review with `gpt-6-astra`. **Edit default workflow** and
 **Edit named workflow** give each stage separate model and reasoning-effort controls.
-When selected, **Main work** sets the model for Codex's main conversation at
+When selected, **Implementation** sets the model for Codex's main conversation at
 start and resume. Effort labels say **Agent selects by task** for planning and
-**Agent selects by task · starts Medium** for Main work. Task-based effort is
+**Agent selects by task · starts Medium** for Implementation. Task-based effort is
 agent guidance; `t` sets the launch value and does not change effort mid-turn.
 Selected planning and review stages use bounded helpers with explicit model and effort;
 the main conversation handles implementation, fixes and follow-ups.
 **Use this workflow** enables or suppresses the entire workflow. **Use multiple models**
-opens checkboxes for **Planning**, **Main work**, and **Review**. Mark stages with
+opens checkboxes for **Planning**, **Implementation**, and **Review**. Mark stages with
 Space, then press Enter. Unchecked Planning and Review use the main model.
-Leave Main work unchecked to use the session's default model and reasoning effort,
+Leave Implementation unchecked to use the session's default model and reasoning effort,
 which remain editable alongside any selected stages. Separate stage choices stay
 saved when unchecked. Select no stages to use one model throughout.
 Markdown and behavior preferences still apply.
@@ -1116,12 +1116,12 @@ saves the v3 named-workflow format.
 Existing v2 policies also remain valid without the optional `stages_enabled`
 boolean (defaults to true) or `behaviors` object (defaults to no preferences).
 Optional `model_stages` selects any nonempty combination of `planning`,
-`implementation` (Main work), and `review`. Deselecting all stages sets
+`implementation`, and `review`. Deselecting all stages sets
 `stages_enabled=false` while retaining the saved selection. Legacy
-`separate_stages` still selects planning/review helpers with Main work active;
+`separate_stages` still selects planning/review helpers with Implementation active;
 old settings keep their behavior and reads never rewrite them.
 The optional `session_defaults` object stores `codex` and `claude` model/effort
-defaults when Main work is unchecked or all stages are off. Optional `permissions` maps `codex` to `ask`,
+defaults when Implementation is unchecked or all stages are off. Optional `permissions` maps `codex` to `ask`,
 `auto`, `full`, or `read_only`, and `claude` to `manual`, `acceptEdits`, `auto`,
 `bypassPermissions`, or `plan`. Omitted agents keep native permission defaults;
 permissions apply independently of model stages and are suppressed when the
