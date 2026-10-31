@@ -639,7 +639,9 @@ association and branch/commit/evidence, all associated PRs and their states,
 incidental mentions labeled separately, and transcript availability. Show it by
 default at 70 or more columns and 22 or more rows, in a bottom preview occupying
 35% of the full-height picker; Ctrl-/ toggles it at every size. Use the shared
-paginated single picker: Enter selects one exact conversation, Esc/Ctrl-C cancels,
+paginated multi-picker: Space/Tab marks exact conversations, Enter accepts marks
+or the focused row, and Esc/Ctrl-C cancels. Marks clear on search, page change,
+or refresh. Slot and revision choices remain single-selection.
 Ctrl-F/Ctrl-B changes pages, and Ctrl-R explicitly refreshes metadata. Search runs
 against all retained records before slicing a page. A single search result still
 waits for Enter, and returned query/page/snapshot identity must be validated before
