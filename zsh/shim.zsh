@@ -121,6 +121,16 @@ _t_dispatch() {
   elif [[ $verb == profile || $verb == policy || $verb == cursor ]]; then
     shell_verb=
   fi
+  # A plain slot resume selects an immutable conversation from that slot's
+  # history. Never substitute a generic live slot (which may be an empty shell).
+  # Explicit resume options and internal _t_resume callers keep their modes.
+  # Route before update checks: nonterminal history is a read-only listing.
+  if [[ $shell_verb == resume ]] &&
+     { [[ ${#shell_args} == 1 && ${shell_args[1]} == <-> ]] ||
+       [[ ${#shell_args} == 2 && ${shell_args[1]} != -* && ${shell_args[2]} == <-> ]]; }; then
+    command t session history "${shell_args[@]}"
+    return $?
+  fi
   # Forward bin-owned groups and their help. Bare config keeps its settings menu.
   [[ $verb == session || $verb == remote || $verb == repo || $verb == cursor || $verb == hosts ||
      $verb == profile || $verb == policy || $verb == agent || $verb == system ||

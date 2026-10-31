@@ -6264,6 +6264,13 @@ def _t_offer_update(installation=None):
     return 10
 
 
+def _plain_slot_resume(words):
+    """Match the public shell shim's option-free slot history shortcut."""
+    return (len(words) in (2, 3) and words[0] == "resume" and
+            re.fullmatch(r"[0-9]+", words[-1]) is not None and
+            not words[1].startswith("-"))
+
+
 def _command_readonly(argv, *, terminal=None):
     """Classify t-owned read-only modes before any update prompt or config load.
 
@@ -6312,7 +6319,7 @@ def _command_readonly(argv, *, terminal=None):
                 terminal = sys.stdin.isatty() and sys.stdout.isatty()
             return not terminal
         return all(word == "--json" for word in tail)
-    if verb == "history":
+    if verb == "history" or _plain_slot_resume(words):
         if terminal is None:
             terminal = sys.stdin.isatty() and sys.stdout.isatty()
         return "--json" in options or not terminal
@@ -12023,14 +12030,14 @@ EXPLICIT PUSH AND PULL
     sp.add_argument("--json", action="store_true", help="print paginated metadata without launching")
 
     sp = sub.add_parser("resume", help="select and resume saved conversations",
-        description='Resume saved conversations in fresh slots and attach. Infer the current repository; '
+        description='Resume saved conversations. A plain slot target opens conversation history. Infer the current repository; '
             'outside one, browse local and remote repositories. Enter selects; Space/Tab marks several. Live selections '
             'attach to their owner. Repositories are cloned only after selection. Cross-host defaults: Claude uses t; Codex uses native '
             'desktop Hand off. Choose the mechanism in t config.',
 
         epilog="""EXAMPLES
   %(prog)s                   Browse the current repository
-  %(prog)s api 2             Choose a conversation associated with api slot 2
+  %(prog)s api 2             Open conversation history for api slot 2
   %(prog)s --all --days all   Browse all saved history""",
         help_details=f"""DETAILS
 
@@ -12061,10 +12068,12 @@ EXPLICIT PUSH AND PULL
   remain at the top of the picker. Available conversations still resume. Run
   gh auth login --hostname github.com on that host, then retry.
 
-  An explicit slot opens the shared picker, even for one conversation, showing
-  live and saved work associated with that slot. Ctrl-F restores inactive rows.
+  A plain slot target runs `t session history REPO SLOT`: select one exact
+  conversation, even with only one result. Ctrl-F/B pages, Ctrl-R refreshes,
+  and Ctrl-/ shows details. Without a terminal, history lists without launching.
+  Explicit options use the resume picker below and retain their mode semantics.
   Without a slot, one inactive candidate is taken if no live rows are excluded.
-  An explicit slot without a terminal takes its newest saved conversation.
+  With explicit options, a slot without a terminal takes its newest saved chat.
 
 PICKER CONTROLS
   The picker MULTI-SELECTS: Space/Tab marks rows with a ✓.
@@ -13227,6 +13236,8 @@ def _main(argv):
               f"{', '.join(COMMAND_GROUPS)}", file=sys.stderr)
         return 2
     argv = _canonical_argv(argv)
+    if _plain_slot_resume(argv):
+        argv = ["history", *argv[1:]]
     # Operational `cursor` arguments still belong to cursor-beam. In particular,
     # `t cursor --ls` must reach it without argparse rejecting the leading flag.
     # Bare cursor and all help forms were handled above by t's parser.

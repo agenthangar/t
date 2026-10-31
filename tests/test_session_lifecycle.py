@@ -305,14 +305,19 @@ def test_public_resume_revives_saved_thread_once(lifecycle, agent, leaf, swept):
             char if char.isalnum() else "-" for char in str(worktree))
         project.mkdir(parents=True)
         transcript = project / (SID + ".jsonl")
-        transcript.write_text(json.dumps({"type": "user", "message": {
+        transcript.write_text(json.dumps({"type": "user", "cwd": str(worktree),
+            "sessionId": SID, "message": {
             "role": "user", "content": "Resume my saved work"}},
             separators=(",", ":")) + "\n")
     if swept:
         removed = _run(["git", "-C", str(repo), "worktree", "remove", str(worktree)], env=env, cwd=base)
         assert removed.returncode == 0, removed.stderr
     (base / "cache" / "claude-sessions").mkdir(parents=True)
-    resumed = _shell(base, env, "t session resume repo 1")
+    listed = _shell(base, env, "t session resume repo 1")
+    assert listed.returncode == 0, listed.stderr
+    assert "1 conversations" in listed.stdout
+    assert not (base / "agents.log").exists()
+    resumed = _shell(base, env, "t session resume repo 1 --cli")
     assert resumed.returncode == 0, resumed.stderr
     log = base / "agents.log"
     launches = _until(lambda: log.read_text().splitlines() if log.exists() else None)

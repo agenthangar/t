@@ -525,13 +525,17 @@ is downloaded and verified. A different live conversation in the historical
 slot does not hide saved work: inactive selections receive a safely allocated
 workspace when their original workspace cannot be reused. Exact live IDs attach
 to their existing owner. Local paths and remote aliases need not match.
-An explicit slot (`t session resume api 2`, including the `t resume` alias)
-scopes the shared filtered multi-picker to all recorded associations with that
-slot, including conversations whose latest association is elsewhere. In a
-terminal it always waits for selection, even with one row, and initially shows
-live and saved rows; Ctrl-F restores inactive defaults. Cancellation returns 130
-without attaching, launching, or allocating a workspace. Without a terminal,
-an explicit slot retains newest-saved selection. Existing `--days` limits apply.
+A plain explicit slot (`t session resume api 2`, including `t resume api 2`
+and the inferred-repository `t resume 2`) runs `t session history api 2`.
+It uses the shared paginated single picker over retained conversation identities,
+including all recorded slot associations. Even one result requires selection;
+cancellation returns 130 without launching. Empty history never creates a session.
+Without a terminal it lists history without launching. It has no default 30-day
+cutoff; Ctrl-F/B pages, Ctrl-R refreshes, and Ctrl-/ shows details.
+Explicit resume options (`--cli`, `--app`, `--fg`, `--host`, `--days`, `--live`,
+`--remote`) retain the filtered resume picker and their existing semantics,
+including the recency limit and nonterminal saved selection. Internal resume
+callers retain their existing behavior.
 Progress spinner and canceled picker children never run the caller's shell
 session/history exit hooks; the caller's own hooks remain unchanged.
 
