@@ -654,6 +654,11 @@ The filtered multi-selection mode of `t session open` prioritizes session identi
 and working-on text. It omits LAST TURN, previews, and the new-session shortcut.
 Compact rows use the shared Unicode width helpers; full task text and metadata
 remain searchable. Hidden host/session/state identity fields remain unchanged.
+Extra tabs target the originating terminal window and commands target only the
+new tab. Switching tabs or windows never redirects commands into an existing tab.
+Terminal tab creation requires the originating window in front; if focus moves
+away, unavailable or ambiguous creation uses the existing attach-command fallback
+without activating Terminal. iTerm uses the tab returned by its creation API.
 Explicit targets still bypass selection. Open and close pickers label displayed
 columns in a non-selectable header preserved across filter changes. Narrow
 filtered views use full height and smaller margins to retain controls and rows.

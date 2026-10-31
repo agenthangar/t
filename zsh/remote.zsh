@@ -804,48 +804,80 @@ _t_plan() {
   fi
 }
 
-# _dev_open_tab <cmd…> — run a command in a NEW tab of the local terminal app.
-# The tab engine for multi-pick `t resume` (each extra revived slot gets its own
-# tab running the ordinary `t open` attach). Terminal.app has no AppleScript
-# verb for tabs, so the tab is a System Events Cmd+T — which needs Terminal
-# granted Accessibility (System Settings → Privacy & Security) — and the script
-# POLLS the front window's tab count before `do script in front window` (that
-# phrasing targets the ACTIVE tab, which post-Cmd+T is the new one; a blind
-# delay would race slow tab creation). iTerm2 has a first-class tab API, no
-# Accessibility needed. Inside tmux the pane's $TERM_PROGRAM reads "tmux" — the
-# real app is recovered from the server's launch env (tmux show-environment -g).
-# rc 1 whenever a tab is impossible here — over ssh (the GUI is not where you
-# are), an unrecognized terminal, osascript refused — so callers print attach
-# hints instead.
+# _dev_open_tab <cmd…> — open an extra session in the originating GUI window.
+# Resolve the caller by tty, never by the user's current/front window. Terminal
+# needs a foreground Cmd+T; fail closed if focus moved, and address only a proven
+# new tab after creation. iTerm returns the new tab directly. No activate calls:
+# navigating away must not steal focus or inject commands into an existing tab.
 _dev_open_tab() {
-  local cmd="$*" tp=${TERM_PROGRAM:-}
+  local cmd="$*" tp=${TERM_PROGRAM:-} origin_tty=${TTY:-}
   [[ -z ${SSH_CONNECTION:-} ]] || return 1
-  if [[ -n ${TMUX:-} && ( -z $tp || $tp == tmux ) ]]; then
-    tp=$(tmux show-environment -g TERM_PROGRAM 2>/dev/null); tp=${tp#TERM_PROGRAM=}
+  if [[ -n ${TMUX:-} ]]; then
+    if [[ -z $tp || $tp == tmux ]]; then
+      tp=$(tmux show-environment -g TERM_PROGRAM 2>/dev/null); tp=${tp#TERM_PROGRAM=}
+    fi
+    origin_tty=$(tmux display-message -p '#{client_tty}' 2>/dev/null) || return 1
   fi
+  [[ $origin_tty == /dev/* && $origin_tty != *$'\n'* ]] || return 1
   cmd=${cmd//\\/\\\\}; cmd=${cmd//\"/\\\"}
+  origin_tty=${origin_tty//\\/\\\\}; origin_tty=${origin_tty//\"/\\\"}
   case $tp in
     Apple_Terminal)
       osascript >/dev/null 2>&1 <<EOS || return 1
 tell application "Terminal"
-  activate
-  set tabCount to count tabs of front window
+  set originWindow to missing value
+  repeat with candidateWindow in windows
+    repeat with candidateTab in tabs of candidateWindow
+      if tty of candidateTab is "$origin_tty" then set originWindow to contents of candidateWindow
+    end repeat
+  end repeat
+  if originWindow is missing value then error "Origin terminal is unavailable"
+  set originID to id of originWindow
+  set oldTTYs to tty of every tab of originWindow
+  if not frontmost then error "Terminal focus changed"
+  if id of front window is not originID then error "Terminal window changed"
 end tell
-tell application "System Events" to keystroke "t" using command down
+tell application "System Events"
+  tell process "Terminal"
+    if not frontmost then error "Terminal focus changed"
+    keystroke "t" using command down
+  end tell
+end tell
 tell application "Terminal"
+  set newTTY to missing value
   repeat 40 times
-    if (count tabs of front window) > tabCount then exit repeat
+    set newTabs to {}
+    repeat with candidateTab in tabs of window id originID
+      if tty of candidateTab is not in oldTTYs then set end of newTabs to tty of candidateTab
+    end repeat
+    if (count newTabs) > 1 then error "Ambiguous new terminal tab"
+    if (count newTabs) is 1 then
+      set newTTY to item 1 of newTabs
+      exit repeat
+    end if
+    if not frontmost then error "Terminal focus changed"
+    if id of front window is not originID then error "Terminal window changed"
     delay 0.05
   end repeat
-  do script "$cmd" in front window
+  if newTTY is missing value then error "Terminal tab creation timed out"
+  do script "$cmd" in (first tab of window id originID whose tty is newTTY)
 end tell
 EOS
       ;;
     iTerm.app)
       osascript >/dev/null 2>&1 <<EOS || return 1
 tell application "iTerm2"
-  tell current window to create tab with default profile
-  tell current session of current window to write text "$cmd"
+  set originWindow to missing value
+  repeat with candidateWindow in windows
+    repeat with candidateTab in tabs of candidateWindow
+      repeat with candidateSession in sessions of candidateTab
+        if tty of candidateSession is "$origin_tty" then set originWindow to contents of candidateWindow
+      end repeat
+    end repeat
+  end repeat
+  if originWindow is missing value then error "Origin terminal is unavailable"
+  tell originWindow to set newTab to create tab with default profile
+  tell current session of newTab to write text "$cmd"
 end tell
 EOS
       ;;
