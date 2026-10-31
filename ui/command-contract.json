@@ -1010,6 +1010,7 @@
         "tests/test_resume_repositories.py::test_remoteonly_prepare_refreshes_actual_alias_before_host_route",
         "tests/test_app_handoff.py::test_handoff_scopes_unindexed_writers_using_rollout_metadata",
         "tests/test_history_resume.py::test_private_saved_resume_reports_ownership_refusal_and_cleans_up",
+        "tests/test_history_resume.py::test_relocated_resume_checks_destination_and_selected_writer",
         "tests/test_resume_auth.py::test_resume_auth_warning_precedes_empty_or_selection"
       ],
       "modes": {
