@@ -81,7 +81,7 @@ def test_defaults_inheritance_and_explicit_activation(workflow, tmp_path):
     (lambda d: d['workflows']['standard']['planning'].update(extra=1), 'requires model'),
     (lambda d: d['workflows']['standard']['planning'].update(model='x\n## override'), 'model ID'),
     (lambda d: d['workflows']['standard']['planning'].update(model='--bad'), 'model ID'),
-    (lambda d: d['workflows']['standard']['implementation'].update(effort='one-level-lower'), 'effort'),
+    (lambda d: d['workflows']['standard']['planning'].update(effort='one-level-lower'), 'effort'),
     (lambda d: d['workflows']['standard']['review'].update(effort='unsupported'), 'effort'),
 ])
 def test_strict_schema(workflow, mutate, match):
@@ -1240,7 +1240,7 @@ def test_workflow_print_precedence_and_reasoning(workflow, t_mod, monkeypatch, c
     assert text.index('Text instructions:') < text.index('PRs, previews & tests:')
     assert 'Design approval: Required' in text and 'When to preview: Automatically when ready' in text
     assert 'Preview approval before PR: Wait for my approval' in text
-    assert 'Agent selects by task' in text and 'One level below planning' in text
+    assert 'Agent selects by task' in text and 'One level below previous stage' in text
     assert 'Implementation' in text and 'Main session: gpt-6.1-sol · Medium' in text
     assert 'starts Medium' not in text
     assert 'one-level-lower' not in text and 'Test runners:' in text and 'Propagation:' in text

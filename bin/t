@@ -2554,7 +2554,7 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
             if field == "model":
                 picked = _workflow_model(ui, cfg, helper, stage, policy[stage]["model"])
             else:
-                levels = ["auto", *(["one-level-lower"] if stage == "review" else []), *helper["EFFORTS"]]
+                levels = ["auto", *(["one-level-lower"] if stage in ("implementation", "review") else []), *helper["EFFORTS"]]
                 picked = ui.pick(_workflow_stage_title(stage) + " reasoning effort", [(level, _workflow_effort(level, stage)) for level in levels],
                                  default=levels.index(policy[stage]["effort"]),
                                  sections={"auto": "Automatic", helper["EFFORTS"][0]: "Fixed effort"})
@@ -3277,7 +3277,7 @@ def _workflow_choice(helper, key, value):
 def _workflow_effort(value, stage=None):
     if value == "auto":
         return "Agent selects by task"
-    return {"one-level-lower": "One level below planning"}.get(value, value.capitalize())
+    return {"one-level-lower": "One level below previous stage"}.get(value, value.capitalize())
 
 
 def _workflow_stage_title(stage):
@@ -11540,7 +11540,7 @@ SCOPE
   Check Planning, Implementation and/or Review for saved model settings.
   Unchecked Implementation uses session defaults;
   unchecked helpers use the main model.
-  Task-selected Implementation effort uses a worker; the main session stays Medium.
+  Automatic Implementation effort uses a worker; the main session stays Medium.
   Select no stages to use session defaults.
   Permissions selects Codex and Claude access for new and resumed CLI sessions.
   PRs, previews & tests controls PR opening and merging, preview timing and approval,

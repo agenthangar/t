@@ -399,3 +399,15 @@ def test_unselected_main_without_saved_defaults_does_not_launch_inactive_model(s
     w['save'](document, w['snapshot'](w['config_path']()), propagate=False)
     assert sync.launch_settings('codex', str(repo)) == []
     assert sync.resume_settings(SID, str(repo)) == []
+
+
+def test_relative_implementation_launches_coordinator_with_concrete_medium(sync, tmp_path, monkeypatch):
+    w, document, repo, _ = scoped_document(sync, tmp_path, monkeypatch)
+    policy = document['repositories'][str(repo)]['inline']
+    policy.update(stages_enabled=True, model_stages=['implementation', 'review'])
+    policy['implementation']['effort'] = 'one-level-lower'
+    w['save'](document, w['snapshot'](w['config_path']()), propagate=False)
+    expected = ['--model', 'gpt-6.1-sol', '-c', 'model_reasoning_effort="medium"']
+    assert sync.launch_settings('codex', str(repo)) == expected
+    assert sync.resume_settings(SID, str(repo)) == expected
+    assert 'one-level-lower' not in ' '.join(expected)

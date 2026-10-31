@@ -252,12 +252,14 @@ launches and guarded resumes. An automatic implementation effort resolves to med
 for the main conversation; explicit efforts remain explicit. These scoped values
 override stale resume checkpoints, including a previous planning model or effort.
 Every stage offers Agent selects by task alongside explicit effort levels;
-Review additionally offers One level below planning. Reasoning pickers use shared
+Implementation and Review additionally offer One level below previous stage.
+Implementation uses Planning's actual effort; Review uses Implementation's actual
+effort. Planning has no relative choice. Reasoning pickers use shared
 nonselectable Automatic and Fixed effort section headings: task-based and relative
 modes belong to Automatic; explicit levels belong to Fixed effort. Preserve the
 selected effort when reopening the picker. Use the same labels in
 menus, choices, save review and printed lists. Selected Implementation with auto
-effort delegates a bounded worker at a concrete effort chosen for the task;
+or one-level-lower effort delegates a bounded worker at a concrete supported effort;
 explicit Implementation effort keeps the work in the main session at that level.
 Show the main session's fixed model/effort separately when a worker implements,
 and identify worker versus main-session values. Unselected stages inherit the
@@ -265,15 +267,20 @@ main session's actual effort, not the worker's task-based setting. The generated
 instructions require reporting unavailable delegation instead of pretending the
 main session changed effort. No task classifier or active-turn switch is implied.
 Unsaved recommended defaults supply no launch overrides. Claude launch settings
-are not inferred from Codex stage models. Planning, review and task-based
+are not inferred from Codex stage models. Planning, review and automatic
 implementation use bounded delegations only when selected, with explicit model/effort and fresh context when
 required by the host. Optional model_stages is a nonempty unique subset of
 planning/implementation/review. Without it, legacy separate_stages selects helpers
 with implementation still active; omission of both preserves all three stages.
 Selecting none sets stages_enabled false and retains the saved selection. List and save review label unselected stages as
 using the main model and never present inactive model/effort choices as effective.
-Relative review effort uses the actual planning effort; when planning stays on
-main, an explicitly known launch effort is the fallback if actual effort is unavailable.
+Relative effort uses the immediately preceding stage's actual concrete effort,
+carried in its handoff. Choose a lower supported effort for the destination model,
+clamping at its minimum. When the preceding stage uses the main session, an
+explicitly known launch effort is a fallback. When a worker handled that stage,
+require its actual effort instead of substituting the main session's effort or a
+symbolic auto/relative setting. Resolve and disclose unavailable effort evidence
+before delegation.
 Native model/effort defaults are shown as defaults when unspecified, never inferred
 from inactive saved stages.
 Models load lazily from Codex once per menu session; current, recommended and custom

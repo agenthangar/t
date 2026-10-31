@@ -316,7 +316,7 @@ def validate_policy(value):
         model = setting['model']
         if not isinstance(model, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:/\[\]-]*', model):
             raise ValueError(f'{stage} model must be a nonempty model ID without spaces or control characters')
-        allowed = EFFORTS + ('auto',) + (('one-level-lower',) if stage == 'review' else ())
+        allowed = EFFORTS + ('auto',) + (('one-level-lower',) if stage in ('implementation', 'review') else ())
         if setting['effort'] not in allowed:
             raise ValueError(f'{stage} effort must be one of: {", ".join(allowed)}')
     return value
@@ -459,7 +459,7 @@ def main_session_settings(policy, agent='codex'):
             return {}
         implementation = policy['implementation']
         return {'model': implementation['model'],
-                'effort': 'medium' if implementation['effort'] == 'auto' else implementation['effort']}
+                'effort': 'medium' if implementation['effort'] in ('auto', 'one-level-lower') else implementation['effort']}
     return {key: value for key, value in policy.get('session_defaults', {}).get(agent, {}).items() if value}
 
 
@@ -519,8 +519,9 @@ def model_stages(policy):
 
 
 def implementation_worker(policy):
-    """Whether configured implementation guidance delegates task-selected effort."""
-    return 'implementation' in model_stages(policy) and policy['implementation']['effort'] == 'auto'
+    """Whether configured implementation guidance delegates automatic effort."""
+    return ('implementation' in model_stages(policy) and
+            policy['implementation']['effort'] in ('auto', 'one-level-lower'))
 
 
 def select_model_stages(policy, selected):
@@ -828,6 +829,29 @@ def _stage_text(policy):
     return '\n\n'.join(parts)
 
 
+def _relative_stage_effort(policy, stage):
+    previous = 'planning' if stage == 'implementation' else 'implementation'
+    worker = ('planning' in model_stages(policy) if previous == 'planning' else implementation_worker(policy))
+    baseline = main_session_settings(policy).get('effort')
+    if worker:
+        evidence = (f'Use the previous {previous} worker\'s actual concrete reasoning effort, '
+                    'carried in its handoff, as the baseline. Require that evidence; if it is '
+                    'missing, report the missing effort and obtain it before delegating. Do not '
+                    'substitute saved stage preferences, symbolic effort choices or the '
+                    'coordinator\'s launch effort for the worker\'s actual effort.')
+    elif baseline:
+        evidence = (f'Use the actual main-conversation {previous} effort as the baseline; '
+                    f'if unavailable, use the concrete main-session launch default {baseline} as the baseline.')
+    else:
+        evidence = (f'Use the actual main-conversation {previous} effort as the baseline. '
+                    'If the native effort is unknown, disclose that limitation and resolve '
+                    'a concrete supported main-session baseline before delegating; do not guess.')
+    return (f'one supported reasoning-effort level below the previous {previous} stage. '
+            f'{evidence} Select the next lower effort supported by the destination model, '
+            'clamping to its supported minimum when the baseline is already at or below '
+            'that minimum')
+
+
 def _model_stage_text(policy):
     selected = model_stages(policy)
     plan, implement, review = (stage_settings(policy, s) for s in ('planning', 'implementation', 'review'))
@@ -838,23 +862,20 @@ def _model_stage_text(policy):
                 'and xhigh or higher for complex architecture or new applications') if plan['effort'] == 'auto' else plan['effort']
     implementation = ('low for straightforward execution, medium for ordinary features, '
                       'and high or higher when implementation complexity warrants it') if implement['effort'] == 'auto' else (implement['effort'] or 'the current native reasoning setting')
-    reviewing = ('one supported reasoning-effort level below the planning stage, using the '
-                 'lowest supported level if planning is already at the minimum') if review['effort'] == 'one-level-lower' else review['effort']
+    if implement['effort'] == 'one-level-lower':
+        implementation = _relative_stage_effort(policy, 'implementation')
+    reviewing = _relative_stage_effort(policy, 'review') if review['effort'] == 'one-level-lower' else review['effort']
     if review['effort'] == 'auto':
         reviewing = ('low for straightforward reviews, medium for ordinary changes, '
                      'and high or higher for complex changes or substantial risk')
     if 'planning' in selected:
         plan_text = (f'Plan with a bounded {plan["model"]} sub-agent; reasoning effort: {planning}. '
-                     'Choose a concrete supported effort before delegation. ')
+                     'Choose a concrete supported effort before delegation. Require its handoff '
+                     'to include the actual model and concrete reasoning effort used; if those '
+                     'settings cannot be verified, report that limitation explicitly. ')
     else:
         plan_text = (f'Plan in the main conversation with {main_model}; reasoning effort: '
                      f'{main_reasoning}. ')
-        if review['effort'] == 'one-level-lower':
-            reviewing = ('one supported reasoning-effort level below the actual main-conversation '
-                         'planning effort, using the lowest supported level if planning is already '
-                         'at the minimum; ' +
-                         (f'if the actual planning effort is unavailable, use the concrete main-session launch default {main_effort} as the baseline'
-                          if main_effort else 'if the actual planning effort is unavailable, choose and disclose a concrete supported baseline for the current main model before delegating'))
     if 'review' in selected:
         review_text = (f'Review with a bounded {review["model"]} sub-agent; reasoning effort: {reviewing}. '
                        'Choose a concrete supported effort before delegation. ')
@@ -867,10 +888,12 @@ def _model_stage_text(policy):
                                'effort before spawning the worker. Give it the actionable plan, '
                                'relevant repository instructions and context, acceptance criteria '
                                'and required checks. Have the worker implement and run appropriate '
-                               'checks, then return its changes and validation evidence. The main '
+                               'checks, then return its changes and validation evidence. Include '
+                               'the actual model and concrete reasoning effort used in its handoff; '
+                               'if those settings cannot be verified, report that limitation explicitly. The main '
                                'conversation coordinates the work, checks the result and owns '
                                'follow-up fixes without repeating routine implementation. '
-                               'Task-selected effort applies to this worker; the main session keeps '
+                               'The selected implementation effort applies to this worker; the main session keeps '
                                f'its fixed launch effort {main_effort}. If worker delegation or its '
                                'requested model/effort is unavailable, disclose the exact limitation '
                                'and the actual execution settings; never pretend the main session\'s '
