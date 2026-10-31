@@ -656,9 +656,11 @@ Compact rows use the shared Unicode width helpers; full task text and metadata
 remain searchable. Hidden host/session/state identity fields remain unchanged.
 Extra tabs target the originating terminal window and commands target only the
 new tab. Switching tabs or windows never redirects commands into an existing tab.
-Terminal tab creation requires the originating window in front; if focus moves
-away, unavailable or ambiguous creation uses the existing attach-command fallback
-without activating Terminal. iTerm uses the tab returned by its creation API.
+Terminal tab creation requires the originating window in front. If focus moves
+away, the origin is unavailable, or tab creation fails or is ambiguous, create a
+new window with its command atomically, without an activate call. If window
+creation also fails, retain the attach-command fallback and expose the automation
+error. iTerm uses the tab returned by its creation API.
 Explicit targets still bypass selection. Open and close pickers label displayed
 columns in a non-selectable header preserved across filter changes. Narrow
 filtered views use full height and smaller margins to retain controls and rows.

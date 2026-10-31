@@ -498,6 +498,8 @@ def test_generation_race_after_destination_is_blocked_under_claim(app, history, 
     workspace = Path(app.cfg.worktree_root) / 'repo/1'
     history.run(['git', '-C', app.cfg.repos['repo'], 'worktree', 'add', '-b', 'dev/repo-1', str(workspace), git_repo])
     row = store.merge(saved_row(app, git_repo, workspace))
+    # Isolate the destination race from source checkpointing (covered separately).
+    monkeypatch.setattr(app, 'reconcile_source', lambda *a: '')
     monkeypatch.setattr(app, 'source', lambda *a: tmp_path / 'unused')
     monkeypatch.setattr(app, 'owners', lambda *a: [])
     original = app.destination

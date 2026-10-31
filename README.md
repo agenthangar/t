@@ -408,9 +408,9 @@ PRs and uncertain work stay hidden until Ctrl-P or Ctrl-A. `t resume --live`
 and `t open --attached` start with all rows; Ctrl-F restores their defaults.
 
 CLI opens use this terminal for the first selection and new tabs for the rest,
-with attach commands when tabs are unavailable (including switching away from
-Terminal during creation). Commands target only newly created tabs in the original
-window; desktop selections open in the
+falling back to new windows in Terminal when tabs cannot be created safely
+(including switching away during creation). Attach commands remain available
+if opening a terminal fails. Commands never target an existing tab; desktop selections open in the
 app. `--fg` opens one session. In `t kill`, mark sessions with Space/Tab and
 press Enter to confirm and close the whole selection without further prompts.
 Explicit targets still confirm live-agent interruption unless `-y` is supplied.

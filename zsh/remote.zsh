@@ -806,8 +806,8 @@ _t_plan() {
 
 # _dev_open_tab <cmd…> — open an extra session in the originating GUI window.
 # Resolve the caller by tty, never by the user's current/front window. Terminal
-# needs a foreground Cmd+T; fail closed if focus moved, and address only a proven
-# new tab after creation. iTerm returns the new tab directly. No activate calls:
+# needs a foreground Cmd+T; if unavailable, create a new window atomically.
+# Address only a proven new tab after successful creation. iTerm returns the new tab directly. No activate calls:
 # navigating away must not steal focus or inject commands into an existing tab.
 _dev_open_tab() {
   local cmd="$*" tp=${TERM_PROGRAM:-} origin_tty=${TTY:-}
@@ -816,51 +816,66 @@ _dev_open_tab() {
     if [[ -z $tp || $tp == tmux ]]; then
       tp=$(tmux show-environment -g TERM_PROGRAM 2>/dev/null); tp=${tp#TERM_PROGRAM=}
     fi
-    origin_tty=$(tmux display-message -p '#{client_tty}' 2>/dev/null) || return 1
+    origin_tty=$(tmux display-message -p ${TMUX_PANE:+-t "$TMUX_PANE"} '#{client_tty}' 2>/dev/null)
   fi
-  [[ $origin_tty == /dev/* && $origin_tty != *$'\n'* ]] || return 1
+  if [[ $origin_tty != /dev/* || $origin_tty == *$'\n'* ]]; then
+    [[ $tp == Apple_Terminal ]] || return 1
+    origin_tty=
+  fi
   cmd=${cmd//\\/\\\\}; cmd=${cmd//\"/\\\"}
   origin_tty=${origin_tty//\\/\\\\}; origin_tty=${origin_tty//\"/\\\"}
   case $tp in
     Apple_Terminal)
-      osascript >/dev/null 2>&1 <<EOS || return 1
-tell application "Terminal"
-  set originWindow to missing value
-  repeat with candidateWindow in windows
-    repeat with candidateTab in tabs of candidateWindow
-      if tty of candidateTab is "$origin_tty" then set originWindow to contents of candidateWindow
+      osascript >/dev/null <<EOS || return 1
+set newTTY to missing value
+set originID to missing value
+try
+  tell application "Terminal"
+    set originWindow to missing value
+    repeat with candidateWindow in windows
+      repeat with candidateTab in tabs of candidateWindow
+        if tty of candidateTab is "$origin_tty" then set originWindow to contents of candidateWindow
+      end repeat
     end repeat
-  end repeat
-  if originWindow is missing value then error "Origin terminal is unavailable"
-  set originID to id of originWindow
-  set oldTTYs to tty of every tab of originWindow
-  if not frontmost then error "Terminal focus changed"
-  if id of front window is not originID then error "Terminal window changed"
-end tell
-tell application "System Events"
-  tell process "Terminal"
-    if not frontmost then error "Terminal focus changed"
-    keystroke "t" using command down
-  end tell
-end tell
-tell application "Terminal"
-  set newTTY to missing value
-  repeat 40 times
-    set newTabs to {}
-    repeat with candidateTab in tabs of window id originID
-      if tty of candidateTab is not in oldTTYs then set end of newTabs to tty of candidateTab
-    end repeat
-    if (count newTabs) > 1 then error "Ambiguous new terminal tab"
-    if (count newTabs) is 1 then
-      set newTTY to item 1 of newTabs
-      exit repeat
-    end if
+    if originWindow is missing value then error "Origin terminal is unavailable"
+    set originID to id of originWindow
+    set oldTTYs to tty of every tab of originWindow
     if not frontmost then error "Terminal focus changed"
     if id of front window is not originID then error "Terminal window changed"
-    delay 0.05
-  end repeat
-  if newTTY is missing value then error "Terminal tab creation timed out"
-  do script "$cmd" in (first tab of window id originID whose tty is newTTY)
+  end tell
+  tell application "System Events"
+    tell process "Terminal"
+      if not frontmost then error "Terminal focus changed"
+      keystroke "t" using command down
+    end tell
+  end tell
+  tell application "Terminal"
+    repeat 40 times
+      set newTabs to {}
+      repeat with candidateTab in tabs of window id originID
+        set candidateTTY to tty of candidateTab
+        if candidateTTY is not "" and candidateTTY is not in oldTTYs then set end of newTabs to candidateTTY
+      end repeat
+      if (count newTabs) > 1 then error "Ambiguous new terminal tab"
+      if (count newTabs) is 1 then
+        set newTTY to item 1 of newTabs
+        exit repeat
+      end if
+      if not frontmost then error "Terminal focus changed"
+      if id of front window is not originID then error "Terminal window changed"
+      delay 0.05
+    end repeat
+  end tell
+on error
+  set newTTY to missing value
+end try
+tell application "Terminal"
+  if newTTY is missing value then
+    -- With no target, do script creates a new window atomically.
+    do script "$cmd"
+  else
+    do script "$cmd" in (first tab of window id originID whose tty is newTTY)
+  end if
 end tell
 EOS
       ;;

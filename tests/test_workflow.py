@@ -637,7 +637,8 @@ def test_named_workflow_commands(workflow, t_mod, monkeypatch, tmp_path, capsys)
     output = capsys.readouterr().out
     assert '"excluded": true' in output and '"workflow_name": "quick"' in output
     assert run('list', '--all') == 0
-    assert 'REPOSITORY ASSIGNMENTS' in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert 'ASSIGNED' in output and 'quick' in output
     assert run('list', '--all', '--json') == 0
     catalogue = json.loads(capsys.readouterr().out)
     assert catalogue['workflows']['quick']['repositories'] == [cfg.repos['api']]
@@ -1092,7 +1093,9 @@ def test_issue_rule_list_and_markdown_editor_are_visible_without_writes(workflow
     monkeypatch.setattr(t_mod, '_workflow', lambda: vars(w))
     monkeypatch.setattr(t_mod, 'Config', lambda: SimpleNamespace(repos={}))
     assert t_mod.main(['config', 'workflow', 'list']) == 0
-    assert 'Issue-before-code rule: included in editable Markdown' in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert 'Text instructions: present' in output
+    assert 'Read text: t workflow instructions show' in output
     assert t_mod.main(['config', 'workflow', 'instructions', 'show']) == 0
     assert w.issue_policy() in capsys.readouterr().out
     assert not w.config_path().exists()
