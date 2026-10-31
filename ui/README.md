@@ -209,8 +209,12 @@ fingerprint is automatically accepted. Onboarding uses the same reviewed offer.
 Config includes Workflows globally and in each repository submenu. The global
 menu chooses a named default, adds or edits shared workflows, or activates recommended
 defaults. Each workflow exposes an overall Workflow switch and an independent
-Use multiple models checkbox picker for Planning, Implementation and Review. Use the
-shared multi profile: Space marks stages, Enter applies the selection, q/Esc
+Use multiple models checkbox picker with a leading Use one model for all work
+choice, then Planning, Implementation and Review. Use the shared empty_choice
+multi profile: the one-model row is an exclusive reset, separated by a blank
+rail row. It clears all stages; selecting any stage clears it, and clearing the
+last stage restores it. Translate the empty-key selection into no active stages.
+Space marks choices, Enter applies the selection, q/Esc
 cancels. Unchecked Planning/Review use the main model; Review before PR controls
 whether the pre-PR review step runs. Unchecked Implementation uses
 per-tool session defaults, with default model/effort controls still available

@@ -2572,10 +2572,12 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
                 return
             changed = copy.deepcopy(policy)
             if choice == "stages_enabled":
-                picked = ui.pick("Model settings for", [("planning", "Planning"), ("implementation", "Implementation"), ("review", "Review")],
-                                 multi=True, marked={i for i, stage in enumerate(("planning", "implementation", "review")) if stage in stages})
+                picked = ui.pick("Use multiple models", [("", "Use one model for all work"), ("planning", "Planning"),
+                                 ("implementation", "Implementation"), ("review", "Review")],
+                                 multi=True, marked={i + 1 for i, stage in enumerate(("planning", "implementation", "review")) if stage in stages} or {0},
+                                 empty_choice="")
                 if picked is not None:
-                    changed = helper["select_model_stages"](policy, picked)
+                    changed = helper["select_model_stages"](policy, [] if "" in picked else picked)
             elif choice == "enabled":
                 picked = ui.pick("Use this workflow", [("1", "Enabled"), ("0", "Disabled")],
                                  default=0 if policy["enabled"] else 1)
@@ -11748,7 +11750,7 @@ SCOPE
   Unchecked Implementation uses session defaults;
   unchecked helpers use the main model.
   Automatic Implementation effort uses a worker; the main session stays Medium.
-  Select no stages to use session defaults.
+  Use one model for all work turns stages off and retains saved settings.
   Permissions selects Codex and Claude access for new and resumed CLI sessions.
   PRs, previews & tests controls PR opening and merging, preview timing and approval,
   frontend design, preview updates and test timing independently.
@@ -12947,7 +12949,7 @@ RECEIVE AND REMOTE MOVES
   Workflows opens the editor for models, PRs, previews, tests, and text.
   Workflow Permissions sets Codex and Claude access for new/resumed CLI sessions.
   Clear text instructions removes Markdown in the pending review and save changes.
-  Use multiple models opens Planning/Implementation/Review checkboxes.
+  Use multiple models offers stage checkboxes and Use one model for all work.
   Unchecked Implementation uses session defaults;
   unchecked helpers use the main model.
   Run t workflow directly to edit, review and save workflow changes.

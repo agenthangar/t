@@ -1,12 +1,34 @@
 """Workflow TUI uses the config transaction and never publishes canceled edits."""
 import copy
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from test_config import Menu, InterruptMenu
 from test_workflow import workflow, native_paths
 from test_tui import make_ui
+
+
+@pytest.mark.parametrize('selected, keys, expected', [
+    (['planning', 'implementation', 'review'], ['space', 'enter'], []),
+    (['planning'], ['j', 'space', 'enter'], []),
+    ([], ['j', 'space', 'enter'], ['planning']),
+])
+@pytest.mark.parametrize('width,height', [(80, 24), (44, 20), (32, 12)])
+def test_workflow_stage_picker_one_model_reset_uses_real_checkboxes(workflow, t_mod, selected, keys, expected, width, height):
+    document = workflow.defaults()
+    policy = workflow.select_model_stages(document['workflows']['standard'], selected)
+    document = workflow.update(document, policy, name='standard')
+    cfg = SimpleNamespace(repos={}, _workflow_document=document)
+    ui = make_ui(t_mod, ['j', 'enter', *keys, 'q'], width, height)
+    t_mod._workflow_policy_menu(ui, cfg, vars(workflow), name='standard')
+    actual = cfg._workflow_document['workflows']['standard']
+    assert workflow.model_stages(actual) == expected
+    for stage in ('planning', 'implementation', 'review'):
+        assert actual[stage] == policy[stage]
+    assert any('Use one model' in line for frame in ui.frames for line in frame)
+    assert not workflow.config_path().exists()
 
 
 def config(workflow, t_mod, monkeypatch, tmp_path):

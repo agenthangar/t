@@ -712,9 +712,9 @@ def test_stage_checkboxes_select_independent_helpers(workflow, t_mod, scope, sel
               workflow.effective(cfg._workflow_document, '/repo'))
     assert workflow.model_stages(policy) == selected
     picker = ui.views[1]
-    assert picker[0] == 'Model settings for'
-    assert picker[1] == [('planning', 'Planning'), ('implementation', 'Implementation'), ('review', 'Review')]
-    assert picker[2] == {'multi': True, 'marked': {0, 1, 2}}
+    assert picker[0] == 'Use multiple models'
+    assert picker[1] == [('', 'Use one model for all work'), ('planning', 'Planning'), ('implementation', 'Implementation'), ('review', 'Review')]
+    assert picker[2] == {'multi': True, 'marked': {1, 2, 3}, 'empty_choice': ''}
     rows = dict(ui.views[-1][1])
     values = ui.views[-1][2]['values']
     assert ('implementation' in rows) is ('implementation' in selected)
@@ -741,6 +741,46 @@ def test_stage_checkboxes_cancel_and_unchanged_do_not_create_overrides(workflow,
     assert not workflow.config_path().exists()
 
 
+@pytest.mark.parametrize('scope', ['named', 'repository'])
+@pytest.mark.parametrize('answer', [[''], []])
+def test_one_model_choice_disables_stages_and_retains_workflow_settings(workflow, t_mod, scope, answer):
+    document = workflow.defaults()
+    policy = workflow.select_model_stages(document['workflows']['standard'], ['planning', 'review'])
+    policy.update(session_defaults={'codex': {'model': 'session-model', 'effort': 'high'}},
+                  permissions={'codex': 'auto'}, behaviors={'pr_review': 'skip', 'cli_launch': 'on_request'},
+                  instructions='Retain these workflow instructions.')
+    document = workflow.update(document, policy, name='standard')
+    cfg = SimpleNamespace(repos={'api': '/repo'}, _workflow_document=document)
+    initial = copy.deepcopy(document)
+    target = {'name': 'standard'} if scope == 'named' else {'repository': '/repo'}
+    ui = InspectMenu(['stages_enabled', answer, 'back'])
+    t_mod._workflow_policy_menu(ui, cfg, vars(workflow), **target)
+    actual = cfg._workflow_document['workflows']['standard'] if scope == 'named' else workflow.effective(cfg._workflow_document, '/repo')
+    assert actual == dict(policy, stages_enabled=False)
+    assert workflow.model_stages(actual) == []
+    assert ui.views[-1][2]['values']['stages_enabled'] == 'No · one model'
+    assert 'main_model' in dict(ui.views[-1][1])
+    assert 'planning' not in dict(ui.views[-1][1]) and 'review' not in dict(ui.views[-1][1])
+    before = copy.deepcopy(cfg._workflow_document)
+    reopened = InspectMenu(['stages_enabled', [''], 'back'])
+    t_mod._workflow_policy_menu(reopened, cfg, vars(workflow), **target)
+    assert reopened.views[1][2]['marked'] == {0}
+    assert cfg._workflow_document == before
+    assert document == initial
+    assert not workflow.config_path().exists()
+
+
+def test_one_model_choice_on_inherited_disabled_workflow_is_noop(workflow, t_mod):
+    document = workflow.defaults()
+    document['workflows']['standard']['stages_enabled'] = False
+    cfg = SimpleNamespace(repos={'api': '/repo'}, _workflow_document=document)
+    initial = copy.deepcopy(document)
+    t_mod._workflow_policy_menu(Menu(['stages_enabled', [''], 'back']), cfg, vars(workflow), repository='/repo')
+    assert cfg._workflow_document == initial
+    assert not cfg._workflow_document['repositories']
+    assert not workflow.config_path().exists()
+
+
 def test_stage_checkboxes_retain_choices_and_keep_main_work_editable(workflow, t_mod):
     document = workflow.defaults()
     policy = document['workflows']['standard']
@@ -757,12 +797,12 @@ def test_stage_checkboxes_retain_choices_and_keep_main_work_editable(workflow, t
     assert policy['planning'] == {'model': 'planning-only', 'effort': 'high'}
     assert policy['review'] == {'model': 'review-only', 'effort': 'low'}
     assert workflow.model_stages(policy) == ['planning']
-    pickers = [view for view in ui.views if view[0] == 'Model settings for']
-    assert pickers[0][2]['marked'] == {1, 2}
-    assert pickers[1][2]['marked'] == set()
+    pickers = [view for view in ui.views if view[0] == 'Use multiple models']
+    assert pickers[0][2]['marked'] == {2, 3}
+    assert pickers[1][2]['marked'] == {0}
     reopened = InspectMenu(['stages_enabled', None, 'back'])
     t_mod._workflow_policy_menu(reopened, cfg, vars(workflow), name='standard')
-    assert reopened.views[1][2]['marked'] == {0}
+    assert reopened.views[1][2]['marked'] == {1}
 
 
 @pytest.mark.parametrize('scope', ['named', 'repository'])

@@ -980,12 +980,15 @@ Reasoning pickers group **Agent selects by task** under **Automatic**, and
 explicit levels under **Fixed effort**. These headings are not selectable;
 reopening a picker preserves its selected effort.
 **Use this workflow** enables or suppresses the entire workflow. **Use multiple models**
-opens checkboxes for **Planning**, **Implementation**, and **Review**. Mark stages with
-Space, then press Enter. Unchecked Planning and Review use the main model;
+opens **Use one model for all work**, followed by checkboxes for **Planning**,
+**Implementation**, and **Review**. Mark the one-model choice with Space to clear
+all separate stages, then press Enter and save. Marking any stage clears the
+one-model choice; clearing the final stage selects it again.
+Unchecked Planning and Review use the main model;
 skipping review is a separate choice under Pull requests.
 Leave Implementation unchecked to use the session's default model and reasoning effort,
 which remain editable alongside any selected stages. Separate stage choices stay
-saved when unchecked. Select no stages to use one model throughout.
+saved when unchecked. One-model mode uses the editable session model and effort.
 Markdown and behavior preferences still apply.
 **Permissions** sets Codex and Claude permissions separately, with either one or
 multiple models. Codex offers **Ask for approval**, **Approve for me**, **Full access**,
