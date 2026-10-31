@@ -1349,7 +1349,7 @@ class HistoryCommand:
         return subprocess.call(self.attach_command(owner))
 
     def resume_many(self, alias, rows):
-        owners, status = [], 0
+        owners = []
         for row in rows:
             try:
                 owner = self.resume(alias, row, return_owner=True)
@@ -1368,10 +1368,12 @@ class HistoryCommand:
             command = shlex.join(self.attach_command(owner))
             if subprocess.call(self.shell('_dev_open_tab ' + shlex.quote(command))):
                 print('Could not open tab; attach: ' + command, file=sys.stderr)
-                status = 1
+                for ready in owners:
+                    print('Already resumed; attach: ' + shlex.join(self.attach_command(ready)), file=sys.stderr)
+                return 1
         if owners:
-            return self.attach(owners[0]) or status
-        return status
+            return self.attach(owners[0])
+        return 0
 
     def fallback(self, alias):
         options = [dict(repo=self.identity(alias), sid=name, agent='revision', title=title, updated=0, associations=[], sources=[], prs=[], mentions=[]) for name, title in [('main', 'Historical revision unavailable: start from current main'), ('cancel', 'Cancel and keep history available')]]

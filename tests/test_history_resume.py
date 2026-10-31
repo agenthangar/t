@@ -580,8 +580,8 @@ def test_multi_resume_starts_all_before_attach_and_stops_on_failure(app, history
         assert 'Already resumed; attach:' in capsys.readouterr().err
     else:
         assert events[:3] == [('resume', str(i)) for i in range(3)]
-        assert [event[0] for event in events[3:]] == ['tab', 'tab', 'attach']
-        assert all('_t_history_attach' in event[1] and '_dev_open_tab' in event[1] for event in events[3:5])
+        assert [event[0] for event in events[3:]] == (['tab'] if failure == 'tab' else ['tab', 'tab', 'attach'])
+        assert all('_t_history_attach' in event[1] and '_dev_open_tab' in event[1] for event in events if event[0] == 'tab')
         if failure == 'tab':
             assert 'Could not open tab; attach:' in capsys.readouterr().err
 

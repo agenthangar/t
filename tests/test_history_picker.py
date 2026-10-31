@@ -321,9 +321,10 @@ finally:
             subprocess.run(['tmux', '-S', socket, 'kill-server'], env=env, capture_output=True, timeout=10)
 
 
+@pytest.mark.parametrize('multi', [False, True])
 @pytest.mark.parametrize('width,height', [(44, 20), (32, 12)])
 def test_paginated_history_keeps_action_and_focused_row_visible_on_small_terminals(
-        history, tmp_path, width, height):
+        history, tmp_path, width, height, multi):
     import shutil
     import subprocess
     import sys
@@ -372,18 +373,6 @@ finally:
             while not result.exists() and time.monotonic() < deadline:
                 time.sleep(.05)
             assert json.loads(result.read_text()) == {'sid': None, 'key': 'cancel'}
-            if multi:
-                tmux('kill-session', '-t', 'picker')
-                result.unlink()
-                tmux('new-session', '-d', '-s', 'picker', '-x', '220', '-y', '45', command)
-                tmux('set-option', '-t', 'picker', 'remain-on-exit', 'on')
-                wait_for(lambda text: 'Conversation 0' in text, 'multi picker')
-                tmux('send-keys', '-t', 'picker', 'Tab', 'Space', 'Enter')
-                deadline = time.monotonic() + 10
-                while not result.exists() and time.monotonic() < deadline:
-                    time.sleep(.05)
-                assert result.exists(), screen()
-                assert set(json.loads(result.read_text())['sid']) == {'session-0', 'session-1'}
         finally:
             subprocess.run(['tmux', '-S', socket, 'kill-server'], env=env, capture_output=True, timeout=10)
 
