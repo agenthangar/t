@@ -2523,6 +2523,8 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
         rows += [("edit", "Advanced JSON editor"), ("back", "Back")]
         values = {stage: policy[stage]["model"] + " · " + _workflow_effort(policy[stage]["effort"], stage)
                   for stage in ("planning", "implementation", "review")}
+        if helper["pr_review_skipped"](policy):
+            values["review"] = "Skipped before PR"
         values["enabled"] = "enabled" if policy["enabled"] else "disabled"
         values["stages_enabled"] = ", ".join(_workflow_stage_title(stage) for stage in stages) if stages else "No · one model"
         models, efforts = getattr(cfg, "models", {}), getattr(cfg, "efforts", {})
@@ -3267,7 +3269,7 @@ def _workflow_launch_settings(cfg, settings):
 
 
 _WORKFLOW_SECTIONS = {
-    "pull_requests": ("Pull requests", ("pr_open", "pr_state", "pr_merge")),
+    "pull_requests": ("Pull requests", ("pr_review", "pr_open", "pr_state", "pr_merge")),
     "local_preview": ("Local preview", ("local_preview", "implement_before_approval")),
     "tests": ("Tests", ("test_timing",)),
 }
@@ -3278,6 +3280,7 @@ _WORKFLOW_PREVIEW_SUBMENUS = {
 _WORKFLOW_TOPICS = {
     "frontend_enabled": ("Preview", "Enable or disable frontend preview preferences."),
     "cli_enabled": ("Preview", "Enable or disable CLI preview preferences."),
+    "pr_review": ("Review before PR", "Review changes before opening a pull request, or skip the agent review stage."),
     "pr_open": ("When to open PR", "Open when the work is ready, or wait for your request."),
     "pr_state": ("PR type", "Drafts wait for your approval before becoming ready for review."),
     "pr_merge": ("Merge PR", "Merge after required checks and approvals, or wait for your request."),
@@ -3391,7 +3394,7 @@ def _workflow_catalogue_summary(helper, policy):
 
 
 def _workflow_choice(helper, key, value):
-    if key in ("pr_open", "frontend_enabled", "cli_enabled", "local_preview", "implement_before_approval", "cli_preview", "frontend_preview", "frontend_browser") or _workflow_preview_override(helper, key):
+    if key in ("pr_review", "pr_open", "frontend_enabled", "cli_enabled", "local_preview", "implement_before_approval", "cli_preview", "frontend_preview", "frontend_browser") or _workflow_preview_override(helper, key):
         return helper["BEHAVIORS"][key]["choices"][value][0]
     return _WORKFLOW_CHOICE_LABELS.get(value, helper["BEHAVIORS"][key]["choices"][value][0])
 
@@ -3410,6 +3413,9 @@ def _workflow_model_rows(helper, policy):
     stages = helper["model_stages"](policy)
     rows = []
     for stage in ("planning", "implementation", "review"):
+        if stage == "review" and helper["pr_review_skipped"](policy):
+            rows.append((_workflow_stage_title(stage), "—", "—", "Skipped before PR"))
+            continue
         settings = helper["stage_settings"](policy, stage)
         inherited = stage not in stages
         rows.append((_workflow_stage_title(stage), settings["model"] or "Agent default",

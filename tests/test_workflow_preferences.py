@@ -428,3 +428,89 @@ def test_frontend_browser_keeps_resolved_preview_and_pr_rules(workflow):
         assert 'wait for an explicit user request or approval before pushing' in text
         assert 'Wait for an explicit user request or approval before merging' in text
         assert workflow.update_behavior(after, 'frontend_browser', '') == policy
+
+
+@pytest.mark.parametrize('stages_enabled,selected', [
+    (True, ['planning', 'implementation', 'review']),
+    (True, ['implementation']),
+    (False, ['planning', 'implementation', 'review']),
+])
+def test_skip_pr_review_removes_reviewer_requirement_and_retains_delivery(workflow, stages_enabled, selected):
+    policy = {**copy.deepcopy(workflow.DEFAULT), 'stages_enabled': stages_enabled,
+              'model_stages': selected, 'behaviors': {
+                  'pr_review': 'skip', 'pr_open': 'on_request', 'pr_state': 'draft',
+                  'pr_merge': 'on_request', 'test_timing': 'pr_ci',
+                  'local_preview': 'on_request', 'implement_before_approval': 'no'}}
+    before = copy.deepcopy(policy)
+    text = workflow._stage_text(policy)
+    assert 'Review with a bounded' not in text
+    assert 'Review in the main conversation with' not in text
+    assert 'Review the actual diff and validation against the plan' not in text
+    assert 'Skip the pre-PR agent review pass' in text
+    assert 'Run neither a main-session review pass nor a review worker solely from this workflow' in text
+    assert 'including explicit review requirements' in text
+    assert 'required external approvals' in text
+    assert 'PR timing, state and merge preferences' in text
+    assert 'main conversation still owns correctness, selected tests and previews, fixes and delivery' in text
+    assert 'When to open PR:' in text and 'Pull request state:' in text and 'Merge pull request:' in text
+    assert 'Run tests:' in text
+    assert 'wait for a preview request, then obtain approval before substantial implementation' in text
+    if stages_enabled:
+        assert '3. Finish delivery in the main conversation' in text
+        assert 'merge conflicts and required CI through completion' in text
+    assert 'Review before PR: Skip review' in workflow.summary_lines(policy)
+    assert workflow.policy_summary(policy)['review_skipped'] is True
+    assert policy == before
+
+
+@pytest.mark.parametrize('stages_enabled,selected,worker', [
+    (True, ['review'], True), (True, ['implementation'], False),
+    (False, ['review'], False),
+])
+def test_explicit_pr_review_uses_selected_worker_or_main_agent(workflow, stages_enabled, selected, worker):
+    policy = {**copy.deepcopy(workflow.DEFAULT), 'stages_enabled': stages_enabled,
+              'model_stages': selected, 'behaviors': {'pr_review': 'review'}}
+    text = workflow._stage_text(policy)
+    assert 'Before opening a pull request, review the actual diff and validation results and address findings' in text
+    if worker:
+        assert 'Review with a bounded ' + policy['review']['model'] in text
+    elif stages_enabled:
+        assert 'Review in the main conversation with' in text
+    else:
+        assert 'otherwise review in the main conversation' in text
+        assert 'Review with a bounded' not in text
+    assert workflow.pr_review_skipped(policy) is False
+    assert 'Review before PR: Review changes' in workflow.summary_lines(policy)
+
+
+def test_clearing_skip_restores_saved_review_stage_and_its_model_settings(workflow):
+    policy = {**copy.deepcopy(workflow.DEFAULT), 'model_stages': ['planning', 'review']}
+    before = copy.deepcopy(policy)
+    normal = workflow._stage_text(policy)
+    assert 'Review with a bounded ' + policy['review']['model'] in normal
+    skipped = workflow.update_behavior(policy, 'pr_review', 'skip')
+    assert skipped['review'] == policy['review']
+    assert skipped['model_stages'] == policy['model_stages']
+    assert workflow.policy_summary(skipped)['model_stages'] == ['planning', 'review']
+    assert 'Review stage: skipped before PR; saved model settings retained' in workflow.summary_lines(skipped)
+    assert workflow.update_behavior(skipped, 'pr_review', '') == policy
+    assert workflow._stage_text(workflow.update_behavior(skipped, 'pr_review', '')) == normal
+    reviewing = workflow.update_behavior(skipped, 'pr_review', 'review')
+    assert reviewing['review'] == policy['review']
+    assert 'Review with a bounded ' + policy['review']['model'] in workflow._stage_text(reviewing)
+    assert policy == before
+
+
+def test_disabled_workflow_suppresses_pr_review_choice(workflow):
+    policy = {**copy.deepcopy(workflow.DEFAULT), 'enabled': False,
+              'behaviors': {'pr_review': 'skip'}}
+    assert workflow.pr_review_skipped(policy) is False
+    assert workflow.policy_summary(policy)['review_skipped'] is False
+    assert 'Review before PR:' not in workflow._stage_text(policy)
+
+
+@pytest.mark.parametrize('value', ['always', 'never', 'on_request', False, None])
+def test_invalid_saved_pr_review_choice_is_rejected(workflow, value):
+    policy = {**copy.deepcopy(workflow.DEFAULT), 'behaviors': {'pr_review': value}}
+    with pytest.raises(ValueError, match='behavior'):
+        workflow.validate_policy(policy)

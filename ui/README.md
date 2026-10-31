@@ -203,7 +203,8 @@ menu chooses a named default, adds or edits shared workflows, or activates recom
 defaults. Each workflow exposes an overall Workflow switch and an independent
 Use multiple models checkbox picker for Planning, Implementation and Review. Use the
 shared multi profile: Space marks stages, Enter applies the selection, q/Esc
-cancels. Unchecked Planning/Review use the main model. Unchecked Implementation uses
+cancels. Unchecked Planning/Review use the main model; Review before PR controls
+whether the pre-PR review step runs. Unchecked Implementation uses
 per-tool session defaults, with default model/effort controls still available
 beside selected helpers. Selecting no stages enters single-model mode.
 Deselecting stages retains their model/effort settings and keeps
@@ -214,6 +215,18 @@ PRs, previews & tests uses shared `_RailUI` submenus for Pull requests, Local
 preview and Tests. PR opening (automatic/on instruction), initial
 state (ready/draft) and merging (automatic/on instruction) are independent.
 When to open PR offers Automatically when ready or Only when I ask.
+Review before PR offers a separated Not set choice, Review changes, and Skip
+review. Unset preserves current guidance. Review changes requires a diff and
+validation review before PR opening; the selected review worker handles it when
+enabled, otherwise the main agent does. Skip review suppresses the pre-PR review
+pass in both the main conversation and a selected review worker without deleting
+its saved model, effort, or stage selection. The menu and effective stage displays
+identify it as Skipped before PR, rather than presenting a reviewer as active.
+Clearing the preference or choosing Review changes restores normal review
+guidance. Delivery instructions retain fixes and the selected validation/preview,
+PR timing/state/merge requirements. This preference does not bypass repository
+review requirements or required approvals. No new command or execution mode is
+added; this remains a staged preference in the shared editor.
 Local preview contains defaults for When to preview (Automatically when ready /
 Only when I ask) and Implement before approval (Yes / No), plus
 Frontend and CLI submenus. Each submenu starts with Preview (Enabled / Disabled).

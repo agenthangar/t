@@ -172,6 +172,70 @@ def test_pr_open_choices_distinguish_timing_and_explicit_request(workflow, t_mod
     assert t_mod._workflow_choice(vars(workflow), 'pr_merge', 'on_request') == 'When I ask'
 
 
+@pytest.mark.parametrize('scope', ['named', 'repository'])
+@pytest.mark.parametrize('choice', ['review', 'skip'])
+def test_pr_review_preference_stages_and_retains_selected_review_model(workflow, t_mod, scope, choice):
+    document = workflow.defaults()
+    cfg = SimpleNamespace(repos={'api': '/repo'}, _workflow_document=document)
+    initial = copy.deepcopy(document)
+    target = {'name': 'standard'} if scope == 'named' else {'repository': '/repo'}
+    ui = InspectMenu(['behaviors', 'pull_requests', 'pr_review', choice, 'back', 'back', 'back'])
+    t_mod._workflow_policy_menu(ui, cfg, vars(workflow), **target)
+    actual = cfg._workflow_document['workflows']['standard'] if scope == 'named' else workflow.effective(cfg._workflow_document, '/repo')
+    pull_requests = next(view for view in ui.views if view[0] == 'Pull requests')
+    assert pull_requests[1][0] == ('pr_review', 'Review before PR')
+    picker = next(view for view in ui.views if view[0] == 'Review before PR')
+    assert picker[1] == [('', 'Not set'), ('review', 'Review changes'), ('skip', 'Skip review')]
+    assert actual['behaviors']['pr_review'] == choice
+    assert actual['review'] == initial['workflows']['standard']['review']
+    assert 'review' in workflow.model_stages(actual)
+    assert 'review' in dict(ui.views[-1][1])
+    assert (ui.views[-1][2]['values']['review'] == 'Skipped before PR') is (choice == 'skip')
+    review_editor = InspectMenu(['review', None, 'back'])
+    t_mod._workflow_policy_menu(review_editor, cfg, vars(workflow), **target)
+    assert review_editor.views[1][0] == 'Review'
+    assert review_editor.views[1][2]['values']['model'] == actual['review']['model']
+    before = copy.deepcopy(cfg._workflow_document)
+    t_mod._workflow_policy_menu(Menu(['behaviors', 'pull_requests', 'pr_review', choice, 'back', 'back', 'back']),
+                               cfg, vars(workflow), **target)
+    assert cfg._workflow_document == before
+    assert document == initial
+    assert not workflow.config_path().exists()
+
+
+@pytest.mark.parametrize('choice', [None, ''])
+def test_pr_review_unset_or_cancel_does_not_materialize_preference(workflow, t_mod, choice):
+    original = copy.deepcopy(workflow.DEFAULT)
+    assert t_mod._workflow_behaviors_menu(Menu(['pull_requests', 'pr_review', choice, 'back', 'back']),
+                                          vars(workflow), original) == original
+    configured = dict(original, behaviors={'pr_review': 'skip', 'pr_merge': 'on_request'})
+    after = t_mod._workflow_behaviors_menu(Menu(['pull_requests', 'pr_review', choice, 'back', 'back']),
+                                         vars(workflow), configured)
+    assert after == (configured if choice is None else dict(original, behaviors={'pr_merge': 'on_request'}))
+    assert configured['behaviors']['pr_review'] == 'skip'
+
+
+def test_pr_review_skip_is_clear_in_list_and_review_without_losing_settings(workflow, t_mod, monkeypatch, capsys):
+    monkeypatch.setattr(t_mod, '_workflow', lambda: vars(workflow))
+    document = workflow.defaults()
+    policy = document['workflows']['standard']
+    policy['behaviors'] = {'pr_review': 'skip'}
+    policy['review'] = {'model': 'retained-review-model', 'effort': 'high'}
+    before = copy.deepcopy(policy)
+    assert t_mod._workflow_model_rows(vars(workflow), policy)[2] == ('Review', '—', '—', 'Skipped before PR')
+    t_mod._workflow_print(vars(workflow), {'scope': 'global', 'source': 'global', 'workflow_name': 'standard',
+        'excluded': False, 'workflow': policy, 'propagation': {'runtime': 'pending'}})
+    output = capsys.readouterr().out
+    review = '\n'.join(t_mod._workflow_review(document))
+    for text in (output, review):
+        assert 'Review before PR: Skip review' in text and 'Skipped before PR' in text
+        assert 'retained-review-model' not in text
+    assert policy == before
+    restored = workflow.update_behavior(policy, 'pr_review', '')
+    assert t_mod._workflow_model_rows(vars(workflow), restored)[2] == ('Review', 'retained-review-model', 'High', 'Worker')
+    assert policy['behaviors']['pr_review'] == 'skip'
+
+
 def test_preview_methods_and_approval_choices_keep_context(workflow, t_mod):
     original = dict(copy.deepcopy(workflow.DEFAULT), behaviors={'pr_open': 'on_request'})
     ui = InspectMenu(['local_preview', 'cli', 'cli_preview', 'run', 'back', 'implement_before_approval', 'yes',
@@ -797,7 +861,7 @@ def test_development_flow_keeps_section_focus_without_chatter(workflow, t_mod):
     assert dict(first[1]) == {'pull_requests': 'Pull requests ›', 'local_preview': 'Local preview ›',
                               'tests': 'Tests ›', 'back': 'Back'}
     assert dict(ui.views[2][1])['draft'] == 'Draft'
-    assert ui.views[3][2]['default'] == 1
+    assert ui.views[3][2]['default'] == 2
     assert dict(ui.views[5][1]) == {'local_preview': 'When to preview',
                                    'implement_before_approval': 'Implement before approval', 'frontend': 'Frontend ›', 'cli': 'CLI ›', 'back': 'Back'}
     assert dict(ui.views[6][1]) == {'': 'Not set', 'when_ready': 'Automatically when ready', 'on_request': 'Only when I ask'}

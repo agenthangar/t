@@ -971,7 +971,9 @@ Task-based Implementation uses a bounded implementation worker; the main session
 coordinates the work and follows up on its results. The main session's fixed
 launch effort is shown separately and does not determine the worker's effort.
 An explicit Implementation effort keeps implementation in the main session at
-that level. Planning and Review use workers when selected.
+that level. Planning and Review use workers when selected. **Pull requests →
+Review before PR → Skip review** disables the pre-PR review step, including a
+selected review worker, while retaining its model and effort settings.
 These are delegation instructions for the agent;
 `t` does not change a running turn's effort or run its own task classifier.
 Reasoning pickers group **Agent selects by task** under **Automatic**, and
@@ -979,7 +981,8 @@ explicit levels under **Fixed effort**. These headings are not selectable;
 reopening a picker preserves its selected effort.
 **Use this workflow** enables or suppresses the entire workflow. **Use multiple models**
 opens checkboxes for **Planning**, **Implementation**, and **Review**. Mark stages with
-Space, then press Enter. Unchecked Planning and Review use the main model.
+Space, then press Enter. Unchecked Planning and Review use the main model;
+skipping review is a separate choice under Pull requests.
 Leave Implementation unchecked to use the session's default model and reasoning effort,
 which remain editable alongside any selected stages. Separate stage choices stay
 saved when unchecked. Select no stages to use one model throughout.
@@ -1050,7 +1053,9 @@ including repository-only customizations. Menu choices stay pending until
 
 | Setting | Choices |
 | --- | --- |
-| Pull requests | When to open; draft or ready; Automerge or When I ask |
+| Pull requests → Review before PR | Review changes or Skip review |
+| Pull requests → When to open PR | Automatically when ready or Only when I ask |
+| Pull requests → PR type / Merge PR | Draft or ready; Automerge or When I ask |
 | Local preview → When to preview | Automatically when ready or Only when I ask |
 | Local preview → Implement before approval | Yes or No |
 | Local preview → Frontend → Preview | Enabled or Disabled |
@@ -1072,6 +1077,16 @@ An unset preference leaves the decision to your existing instructions.
 Preview and validation instructions require accurate reporting of limitations and
 results. Opening a PR alone does not authorize a merge. These preferences guide
 agents; they do not enforce execution or grant permission beyond the task.
+
+**Review before PR → Skip review** lets the agent proceed from implementation
+and the selected tests/previews to the configured PR-opening action without a
+separate code-review pass. It suppresses review in the main conversation and a
+selected review worker. **Review changes** requires the agent to review the diff
+and validation before opening the PR. The model-stage selection decides who
+reviews when review is enabled. **Not set** preserves the existing instructions.
+Skipping this agent review does not change required repository approvals, checks,
+or explicit task instructions. To open a PR automatically without the review
+pass, select **Skip review** and **When to open PR → Automatically when ready**.
 **When to preview** and **Implement before approval** are defaults under Local
 preview. Frontend and CLI each inherit them unless you choose an override. Child
 rows show the resolved value and source, such as **Inherit · No** or **Override ·
@@ -1166,8 +1181,10 @@ defaults when Implementation is unchecked or all stages are off. Optional `permi
 `bypassPermissions`, or `plan`. Omitted agents keep native permission defaults;
 permissions apply independently of model stages and are suppressed when the
 workflow is disabled or excluded. Inside `behaviors`, independent keys are
-`pr_open`, `pr_state`, `pr_merge`, `frontend_enabled`, `cli_enabled`, `local_preview`, `implement_before_approval`, `cli_preview`,
+`pr_review`, `pr_open`, `pr_state`, `pr_merge`, `frontend_enabled`, `cli_enabled`, `local_preview`, `implement_before_approval`, `cli_preview`,
 `frontend_design`, `frontend_preview`, `frontend_browser`, and `test_timing`.
+`pr_review` accepts `review` or `skip`; omission preserves existing review guidance.
+Skipping review retains the saved model-stage selection and reviewer settings.
 `implement_before_approval` accepts `yes` or `no`. Optional
 `frontend_preview_timing` / `cli_preview_timing` and
 `frontend_implement_before_approval` / `cli_implement_before_approval` override
@@ -1639,7 +1656,7 @@ and model-stage guidance. **PRs, previews & tests** separates these decisions:
 
 | Group | Choices |
 | --- | --- |
-| Pull requests | Open automatically or on instruction; create draft or ready; Automerge or When I ask. |
+| Pull requests | Review changes or skip review; open automatically or on instruction; create draft or ready; Automerge or When I ask. |
 | Local preview | Defaults for when to preview and whether to implement before approval. |
 | Local preview → Frontend | Enabled/Disabled; inherit or override defaults; standalone HTML or in-app design; Fast reload or Build; browser opening. |
 | Local preview → CLI | Enabled/Disabled; inherit or override defaults; install locally or run from the repo. |

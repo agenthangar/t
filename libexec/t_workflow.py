@@ -58,6 +58,10 @@ BEHAVIORS = {
         'local_review': ('Install / preview locally first', 'Complete implementation and relevant checks, then use the documented local install or preview path appropriate to the project so the user can try the result. Respect existing authorization for installation and report unavailable tools accurately. Present how to try it and wait for explicit user feedback and approval before pushing or creating a pull request.'),
         'auto_merge': ('Auto-merge when authorized', 'Commit, push and open a pull request under repository merge policy and required checks. When authorized and supported, enable auto-merge and monitor it through completion; report any blocker accurately.'),
     }},
+    'pr_review': {'label': 'Review before PR', 'choices': {
+        'review': ('Review changes', 'Before opening a pull request, review the actual diff and validation results and address findings. Use the selected review worker when model stages are enabled and Review is selected; otherwise review in the main conversation. Honor selected tests and previews, PR timing, state and merge preferences, required external approvals, repository rules and task instructions.'),
+        'skip': ('Skip review', 'Skip the pre-PR agent review pass. Run neither a main-session review pass nor a review worker solely from this workflow, even when the Review model stage is selected. The main conversation still owns correctness, selected tests and previews, fixes and delivery. Preserve PR timing, state and merge preferences, required external approvals and higher-priority repository and task instructions, including explicit review requirements.'),
+    }},
     'pr_open': {'label': 'When to open PR', 'choices': {
         'automatic': ('Automatically when ready', 'When the work is ready under the selected preview and validation preferences, commit, push and open a pull request without another confirmation. Honor any required preview approval and repository or task instructions.'),
         'on_request': ('Only when I ask', 'Prepare a concrete reviewable result, then wait for an explicit user request or approval before pushing or opening a pull request, subject to repository and task instructions.'),
@@ -798,11 +802,17 @@ def catalogue(document):
         for name, policy in sorted(document['workflows'].items())}}
 
 
+def pr_review_skipped(policy):
+    """The review model stays configured while this independent PR choice skips it."""
+    return policy['enabled'] and policy.get('behaviors', {}).get('pr_review') == 'skip'
+
+
 def policy_summary(policy):
     return {'stages_enabled': policy.get('stages_enabled', True),
             'stages_active': policy['enabled'] and policy.get('stages_enabled', True),
             'separate_stages': separate_stages(policy),
             'model_stages': model_stages(policy),
+            'review_skipped': pr_review_skipped(policy),
             'behaviors': copy.deepcopy(policy.get('behaviors', {})),
             'session_defaults': copy.deepcopy(policy.get('session_defaults', {})),
             'permissions': copy.deepcopy(policy.get('permissions', {})),
@@ -819,6 +829,8 @@ def summary_lines(policy):
         lines.append('Separate models: ' + (', '.join(stage.title() for stage in summary['separate_stages']) or 'none'))
         lines.append('Configured model stages: ' + ', '.join(
             stage.title() for stage in summary['model_stages']))
+        if summary['review_skipped']:
+            lines.append('Review stage: skipped before PR; saved model settings retained')
     if implementation_worker(policy):
         settings = main_session_settings({**policy, 'enabled': True})
         lines.append('Main session: ' + settings['model'] + ' · ' + settings['effort'].capitalize())
@@ -1004,12 +1016,25 @@ def _model_stage_text(policy):
     else:
         plan_text = (f'Plan in the main conversation with {main_model}; reasoning effort: '
                      f'{main_reasoning}. ')
-    if 'review' in selected:
+    if pr_review_skipped(policy):
+        finish_text = ('Finish delivery in the main conversation. Skip the pre-PR agent review pass; '
+                       'run neither a main-session review pass nor a review worker solely from this workflow. '
+                       'Own correctness, selected tests and previews, fixes, '
+                       'PR timing and state, merge conflicts and required CI through completion under '
+                       'repository policy, required external approvals, selected delivery preferences '
+                       'and existing authorization. Honor higher-priority task and repository instructions, '
+                       'including explicit review requirements.')
+    elif 'review' in selected:
         review_text = (f'Review with a bounded {review["model"]} sub-agent; reasoning effort: {reviewing}. '
                        'Choose a concrete supported effort before delegation. ')
     else:
         review_text = (f'Review in the main conversation with {main_model}; reasoning effort: '
                        f'{main_reasoning}. ')
+    if not pr_review_skipped(policy):
+        finish_text = (review_text + 'Review the actual diff and validation against the plan and report findings. '
+                       'The main conversation owns fixes, rechecks, PR updates, merge conflicts and required CI '
+                       'through completion under the repository merge policy, selected delivery preferences '
+                       'and existing authorization.')
     if implementation_worker(policy):
         implementation_text = (f'Delegate implementation to a bounded {implement["model"]} worker; '
                                f'reasoning effort: {implementation}. Choose a concrete supported '
@@ -1038,10 +1063,7 @@ def _model_stage_text(policy):
             f'1. {plan_text}Produce an actionable '
             f'plan, acceptance criteria and validation before implementation.\n'
             f'2. {implementation_text}\n'
-            f'3. {review_text}Review the actual diff and '
-            f'validation against the plan and report findings. The main conversation owns fixes, '
-            f'rechecks, PR updates, merge conflicts and required CI through completion under '
-            f'the repository merge policy, selected delivery preferences and existing authorization.\n'
+            f'3. {finish_text}\n'
             f'This workflow authorizes sub-agent delegation with explicit model and concrete '
             f'reasoning settings. Do not blindly inherit the parent model. When model overrides '
             f'require fresh context, use it with a concise handoff containing the plan, relevant '
