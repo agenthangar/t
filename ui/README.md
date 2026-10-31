@@ -671,6 +671,9 @@ noninteractive worker, retain ownership through child stop/resume, and clean up
 their private files after completion or cancellation. All Codex
 CLI starts and resumes use an invocation-local backend (`--no-daemon`).
 These are direct-action behaviors within the existing open/resume modes.
+Saved Codex resumes validate the original rollout identity and selected writer
+lock, then check sibling writers against the claimed destination workspace.
+A writer in a reused original slot does not block a different destination.
 
 Issue starts warn and skip unavailable registered hosts and unconfigured optional
 cloud providers. Saved resume routes retain local checks and known owners while

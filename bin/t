@@ -12034,6 +12034,10 @@ EXPLICIT PUSH AND PULL
   Choose saved work associated with a repository or slot. A live selection
   attaches to its existing owner; an inactive selection resumes saved history.
 
+  Codex checks the selected conversation's writer lock and the destination
+  workspace. Another conversation in a reused original slot can keep running
+  when the saved conversation resumes into a different workspace.
+
   Offers EVERY conversation associated with the repository across registered hosts,
   including swept and renamed workspaces and the canonical checkout (one global
   newest-first list by last user turn — never grouped by repo; unknown turn times
