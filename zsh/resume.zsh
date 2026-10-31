@@ -2916,6 +2916,11 @@ _t_beam() {
 
   [[ -z $here || -z $host_arg ]] || { print -u2 'tbeam: --here and --host are mutually exclusive'; return 2; }
   [[ -z $fg || -z $detach ]] || { print -u2 'tbeam: --fg and --detach are mutually exclusive'; return 2; }
+  if [[ $host_arg == local ]]; then
+    [[ -n $from_host && $from_host != local ]] || { print -u2 't session move: source and destination are the same host'; return 2; }
+    [[ -t 0 && -t 1 || -n $detach ]] || { print -u2 't session move: nonterminal moves require --detach'; return 1; }
+    host_arg=
+  fi
   # The controller resolves aliases once. The source owns the stop/push/sync/land
   # transaction and connects directly to the destination; nothing resumes here.
   if [[ -n $from_host && -n $host_arg ]]; then
@@ -2971,7 +2976,7 @@ _t_beam() {
     slot_arg=${res##*$'\t'}
     [[ -n $CLAUDE_CODE_SESSION_ID ]] && fg=
     local target="${REMOTE_HOSTS[$from_host]:-$from_host}"
-    _dev_pull "$from_host" "$target" "$repo_arg" "$slot_arg" "$fg"
+    _dev_pull "$from_host" "$target" "$repo_arg" "$slot_arg" "$fg" "$detach"
     return
   fi
 
@@ -2990,11 +2995,11 @@ _t_beam() {
     # _t_infer_repo): the slot lives on the REMOTE host, so a same-numbered local
     # session's name would be a coincidence, not evidence.
     if [[ $repo_arg == <-> && -z $slot_arg ]]; then slot_arg=$repo_arg; repo_arg=$(_t_infer_repo); fi
-    [[ -z $repo_arg ]] && repo_arg=$(_t_infer_repo)
-    [[ -n $repo_arg ]] || { echo "tbeam: --from needs a <repo> to pull (e.g. t session move dot 1 --from $from_host)" >&2; return 1; }
+    [[ -n $repo_arg || -n $sid_arg ]] || repo_arg=$(_t_infer_repo)
+    [[ -n $repo_arg || -n $sid_arg ]] || { echo "tbeam: --from needs a <repo> or --session ID to pull (e.g. t session move dot 1 --from $from_host)" >&2; return 1; }
     [[ -n $CLAUDE_CODE_SESSION_ID ]] && fg=
     local target="${REMOTE_HOSTS[$from_host]:-$from_host}"
-    _dev_pull "$from_host" "$target" "$repo_arg" "$slot_arg" "$fg"
+    _dev_pull "$from_host" "$target" "$repo_arg" "$slot_arg" "$fg" "$detach" "$sid_arg"
     return
   fi
 

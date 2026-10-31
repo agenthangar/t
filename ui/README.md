@@ -512,7 +512,9 @@ shows all repositories, and `--all` widens the scope. `--remote` adds registered
 remote sources. Select sessions first, then one destination host; `--host` supplies
 that destination explicitly. Esc/Ctrl-C cancels with 130 before starting work and
 an empty inventory is a successful no-op. Without a terminal/fzf, require explicit
-targets. Explicit slot/ID sends and `--from`/`--here` receives retain guarded routes.
+targets. Exact slots/IDs discover local and registered remote owners before
+destination selection, without requiring `--remote`. `--host local` receives here;
+`--from`/`--here` receives retain guarded routes.
 The legacy `beam` shortcut retains its implicit-current and default-host behavior.
 
 New worktree folders include the repository basename (`t/t-12`); numeric slot
@@ -523,7 +525,11 @@ Host picker headings state the action: Open a session on which host?, Start a
 new session on which host? with `--new`, Resume saved work on which host?, and
 Move this session to which host?. Resume explains that it browses that host's
 saved conversations; the selected host also runs the resumed session. Move
-labels the destination and current source host. Aliases and SSH targets remain
+labels the destination and verified source host. For remote-only selections it
+offers `local` / `this machine` before SSH hosts; selecting local receives here.
+For example, `t session move api 2` discovers its owner and offers destinations,
+and `t session move api 2 --host local` explicitly brings that conversation here.
+Aliases and SSH targets remain
 subordinate to the action heading. Missing
 hosts use `_t_fzf_single`, displaying alias and SSH target; Enter chooses exactly
 one, including when only one host exists. Esc/Ctrl-C returns 130 without starting
@@ -547,7 +553,10 @@ goes directly to the destination-host picker when `--host` is omitted. Duplicate
 slot labels retain their host identity. Explicit source plus slot/ID bypasses the
 session picker; an explicit target without source resolves a unique snapshot or
 requires selection when ambiguous. Destination selection excludes every alias of
-every selected source target, and never silently chooses the default host. Recheck host, ID,
+every selected source target (including local), and never silently chooses the
+default host. Local receives honor `--detach`, preserve the selected conversation
+identity through a source-side recheck, and stop on failed stop/push/sync steps.
+Recheck host, ID,
 path, label, agent and live ownership for every selection after both pickers before
 any mutation, then again on each source before stopping it. Failed scans or transfer steps fail closed. `session move --from A
 --host B` delegates the whole guarded send to A over `zsh -lic`, using controller
