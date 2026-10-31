@@ -1226,7 +1226,7 @@ class HistoryCommand:
         for row in rows:
             row['prs'] = [{**p, **cached.get((p['repo'], p['number']), {})} for p in row['prs']]
 
-    def pick(self, rows, alias, limit=50, page=1, query=''):
+    def pick(self, rows, alias, limit=50, page=1, query='', multi=False):
         with tempfile.TemporaryDirectory(prefix='t-history-') as directory:
             snapshot, state = Path(directory) / 'records.json', Path(directory) / 'page.json'
             private_write(snapshot, rows)
@@ -1242,7 +1242,7 @@ class HistoryCommand:
             snippet = '. "$1"; shift; _t_fzf_paginated "$@"'
             result = subprocess.run(['sh', '-c', snippet, 't-history', str(Path(self.root) / 'ui/fzf.sh'),
                     str(header), str(rows_file), helper, helper + ' details {1}', query,
-                    'history ' + alias + '> '],
+                    'history ' + alias + '> ', *(['multi'] if multi else [])],
                     stdout=subprocess.PIPE, text=True,
                     env={k: v for k, v in os.environ.items() if not k.startswith('COV_CORE_')})
             if result.returncode in (1, 130):
@@ -1255,16 +1255,30 @@ class HistoryCommand:
                 return None, key, query
             if len(lines) < 3:
                 return None, 'cancel', query
-            index = int(lines[2].split('\t')[0])
-            if not 0 <= index < len(rows):
-                raise HistoryError('invalid selection')
             settings = json.loads(state.read_text())
             matching, _ = page_rows(rows, query, limit, settings['page'])
-            selected = rows[index]
-            expected = f'{index}\t{format_row(selected, settings.get("width", 80))}\t{clean(json.dumps(selected, ensure_ascii=False))}'
-            if settings['query'] != query or selected not in matching or lines[2] != expected:
+            if settings['query'] != query:
                 return None, 'retry', query
-            return selected, key, query
+            selected, identities = [], set()
+            for line in lines[2:]:
+                try:
+                    index = int(line.split('\t')[0])
+                except ValueError as error:
+                    raise HistoryError('invalid selection') from error
+                if not 0 <= index < len(rows):
+                    raise HistoryError('invalid selection')
+                row = rows[index]
+                expected = f'{index}\t{format_row(row, settings.get("width", 80))}\t{clean(json.dumps(row, ensure_ascii=False))}'
+                if row not in matching or line != expected:
+                    return None, 'retry', query
+                identity = (row['repo'], row['agent'], row['sid'])
+                if identity in identities:
+                    raise HistoryError('duplicate conversation selection')
+                identities.add(identity)
+                selected.append(row)
+            if not multi and len(selected) != 1:
+                raise HistoryError('select one conversation')
+            return selected if multi else selected[0], key, query
 
     def choose_slot(self, rows, alias):
         slots = sorted({a.get('slot') for row in rows for a in row['associations'] if a.get('slot')}, key=int)
@@ -1330,7 +1344,7 @@ class HistoryCommand:
         workspaces = {a['workspace'] for a in row['associations']}
         return any(a['workspace'] in workspaces for a in value.get('associations', []))
 
-    def attach(self, owner):
+    def attach_command(self, owner):
         if owner.get('state') == 'app':
             raise HistoryError('conversation is owned by the desktop app on ' + owner['host'] + '; close and release it there, then use t app pull for the verified handoff')
         if ':' in owner['slot']:
@@ -1338,8 +1352,42 @@ class HistoryCommand:
         # Attach-only helper rechecks exact ID/path/agent and has no launch fallback.
         snippet = '_t_history_attach ' + shlex.join([owner['slot'], owner['sid'], owner['cwd'], owner['agent']])
         if owner['host'] == 'local':
-            return subprocess.call(self.shell(snippet))
-        return subprocess.call(['ssh', '-t', self.cfg.hosts[owner['host']], 'zsh -lic ' + shlex.quote(snippet)])
+            return self.shell(snippet)
+        return ['ssh', '-t', self.cfg.hosts[owner['host']], 'zsh -lic ' + shlex.quote(snippet)]
+
+    def attach(self, owner):
+        return subprocess.call(self.attach_command(owner))
+
+    def resume_many(self, alias, rows):
+        owners = []
+        for index, row in enumerate(rows):
+            try:
+                owner = self.resume(alias, row, return_owner=True)
+                self.attach_command(owner)  # Reject unsupported owners before tab handling.
+                owners.append(owner)
+            except HistoryCancelled:
+                print(f'Resume cancelled: {row["agent"]} {row["sid"]}', file=sys.stderr)
+                for owner in owners:
+                    print('Already resumed; attach: ' + shlex.join(self.attach_command(owner)), file=sys.stderr)
+                print(f'Not attempted: {len(rows) - index - 1} selection(s)', file=sys.stderr)
+                return 130
+            except (HistoryError, OSError, ValueError) as error:
+                print(f'Resume stopped after an error\nSelection: {row["agent"]} {row["sid"]}\nReason: {error}', file=sys.stderr)
+                print('Retry selection: t session history ' + shlex.quote(alias), file=sys.stderr)
+                for owner in owners:
+                    print('Already resumed; attach: ' + shlex.join(self.attach_command(owner)), file=sys.stderr)
+                print(f'Not attempted: {len(rows) - index - 1} selection(s)', file=sys.stderr)
+                return 1
+        for owner in owners[1:]:
+            command = shlex.join(self.attach_command(owner))
+            if subprocess.call(self.shell('_dev_open_tab ' + shlex.quote(command))):
+                print('Could not open tab; attach: ' + command, file=sys.stderr)
+                for ready in owners:
+                    print('Already resumed; attach: ' + shlex.join(self.attach_command(ready)), file=sys.stderr)
+                return 1
+        if owners:
+            return self.attach(owners[0])
+        return 0
 
     def fallback(self, alias):
         options = [dict(repo=self.identity(alias), sid=name, agent='revision', title=title, updated=0, associations=[], sources=[], prs=[], mentions=[]) for name, title in [('main', 'Historical revision unavailable: start from current main'), ('cancel', 'Cancel and keep history available')]]
@@ -1569,7 +1617,7 @@ class HistoryCommand:
     def reconcile_source(self, alias, row):
         return _RESUME_SOURCE['reconcile'](self, alias, row)
 
-    def resume(self, alias, row, *, detached=False, prepare_only=False):
+    def resume(self, alias, row, *, detached=False, prepare_only=False, return_owner=False):
         owners = self.owners(True)
         matches = [o for o in owners if o['sid'] == row['sid'] and o['agent'] == row['agent']]
         if len(matches) > 1:
@@ -1577,7 +1625,7 @@ class HistoryCommand:
         if matches and detached:
             raise HistoryError('conversation became live; select its current owner again')
         if matches:
-            return self.attach(matches[0])
+            return matches[0] if return_owner else self.attach(matches[0])
         destination_alias = alias if alias in self.cfg.repos else self.repository_alias(row['repo'])
         if not self.worktree_enabled(destination_alias):
             raise HistoryError('repository opts out of worktree-per-session; no saved conversation resumed')
@@ -1603,7 +1651,7 @@ class HistoryCommand:
                 raise HistoryError('conversation became live while selecting; rerun history to attach to its owner')
             try:
                 destination, slot, created = self.destination(alias, row, revision, owners)
-                print(f'Resume {row["agent"]} {row["sid"]} in {destination} at {revision}', file=sys.stderr)
+                print(f'Preparing {row["agent"]} {row["sid"]} in {destination} at {revision}', file=sys.stderr)
                 with self.launch_claims(destination, row['sid']):
                     final_owners = self.owners(True)
                     if any(owner['sid'] == row['sid'] or os.path.realpath(owner['cwd']) == os.path.realpath(destination) for owner in final_owners):
@@ -1633,7 +1681,8 @@ class HistoryCommand:
             return f'dev-{alias}-{slot}\t{destination}'
         if detached:
             return f'dev-{alias}-{slot}'
-        return self.attach(dict(host='local', slot=f'{alias}-{slot}', sid=row['sid'], agent=row['agent'], cwd=destination, state='active'))
+        owner = dict(host='local', slot=f'{alias}-{slot}', sid=row['sid'], agent=row['agent'], cwd=destination, state='active')
+        return owner if return_owner else self.attach(owner)
 
     def resume_candidates(self, aliases, slot=None):
         """Private adapter: display aliases and immutable selection keys differ."""
@@ -1718,7 +1767,7 @@ class HistoryCommand:
             return 0
         query = ''
         while rows:
-            row, key, query = self.pick(rows, alias + (f' {slot}' if slot else ''), args.limit, args.page, query)
+            row, key, query = self.pick(rows, alias + (f' {slot}' if slot else ''), args.limit, args.page, query, True)
             if key == 'retry':
                 continue
             if key == 'ctrl-r':
@@ -1729,14 +1778,17 @@ class HistoryCommand:
                 continue
             if not row:
                 return 130
+            if isinstance(row, list):
+                if len(row) > 1:
+                    return self.resume_many(alias, row)
+                row = row[0]
             try:
                 return self.resume(alias, row)
             except HistoryCancelled:
                 return 130
             except (HistoryError, OSError, ValueError) as error:
                 print(f't history: {error}', file=sys.stderr)
-                rows = self.records(alias, slot, owners)
-                self.pr_states(rows)
+                return 1
         print('No retained conversations for this slot.')
         return 0
 

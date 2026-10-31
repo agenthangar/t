@@ -533,7 +533,7 @@ def check_display_contracts(contract, *, root=ROOT):
             or preview.get("placement") != "bottom" or preview.get("height_percent") != 35):
         errors.append("history_information preview must use responsive defaults and Ctrl-/ details")
     selection = history.get("selection", {})
-    for key, value in (("count", 1), ("identity_fields", ["repo", "agent", "sid"]),
+    for key, value in (("count", "multiple"), ("identity_fields", ["repo", "agent", "sid"]),
                        ("accept", "enter"), ("cancel", ["esc", "ctrl-c"]), ("page_size", 50),
                        ("keys", {"next": "ctrl-f", "previous": "ctrl-b", "refresh": "ctrl-r"}),
                        ("auto_accept_single_result", False), ("search", "global_before_pagination"),

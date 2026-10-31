@@ -74,6 +74,60 @@ def test_resume_history_multiple_conversations_allocate_independent_slots(zsh):
     assert ('TAB t open api 98' in result.stdout or 'TAB t open api 99' in result.stdout)
 
 
+@pytest.mark.parametrize('failure_at,code', [('a', 1), ('b', 1), ('b', 130)])
+def test_batch_failure_stops_later_launches_and_keeps_ready_hints(zsh, failure_at, code):
+    setup = shell_candidates([history_row(sid) for sid in ('a', 'b', 'c')]) + f'''
+      _t_fzf_filtered() {{ print -r -- "$1"; }}
+      _t_resume_history_launch() {{
+        print -u2 -- "ATTEMPT $2"
+        [[ $2 == {failure_at} ]] && {{ print -u2 'exact writer diagnostic'; return {code}; }}
+        print dev-api-98
+      }}
+      _t_resume_history_registered() {{ return 0; }}
+      _dev_open_tab() {{ print UNEXPECTED_TAB; }}
+    '''
+    result = zsh(setup + '_t_resume api', _tty=True)
+    assert result.returncode == code, result.stdout
+    assert ('Resume cancelled' if code == 130 else 'Resume stopped after an error') in result.stdout
+    assert f'Selection: api slot 3 · codex {failure_at}' in result.stdout
+    assert 'exact writer diagnostic' in result.stdout
+    assert 'Retry selection: t session history api 3' in result.stdout
+    assert 'ATTEMPT c' not in result.stdout and 'UNEXPECTED_TAB' not in result.stdout
+    assert ('Ready — attach with: t session open api 98 --cli --local' in result.stdout) == (failure_at == 'b')
+    assert 'attach-session' not in zsh.log.read_text()
+
+
+def test_batch_registration_failure_reports_already_launched_owner(zsh):
+    setup = shell_candidates([history_row('a'), history_row('b')]) + '''
+      _t_fzf_filtered() { print -r -- "$1"; }
+      _t_resume_history_launch() { print dev-api-98; }
+      _t_resume_history_registered() { return 1; }
+      _dev_open_tab() { print UNEXPECTED_TAB; }
+    '''
+    result = zsh(setup + '_t_resume api', _tty=True)
+    assert result.returncode == 1
+    assert 'repository registration unavailable after launch' in result.stdout
+    assert 'Ready — attach with: t session open api 98 --cli --local' in result.stdout
+    assert 'Not attempted: 1 selection(s)' in result.stdout
+    assert 'UNEXPECTED_TAB' not in result.stdout
+
+
+def test_batch_tab_failure_never_hides_summary_behind_first_attachment(zsh):
+    setup = shell_candidates([history_row('a'), history_row('b'), history_row('c')]) + '''
+      _t_fzf_filtered() { print -r -- "$1"; }
+      _t_resume_history_launch() { [[ $2 == a ]] && print dev-api-98 || print dev-api-99; }
+      _t_resume_history_registered() { return 0; }
+      _dev_open_tab() { print -u2 TAB_ATTEMPT; return 1; }
+    '''
+    result = zsh(setup + '_t_resume api', _tty=True)
+    assert result.returncode == 1
+    assert 'could not open resumed session tabs' in result.stdout
+    assert 'Ready — attach with: t session open api 98' in result.stdout
+    assert 'Ready — attach with: t session open api 99' in result.stdout
+    assert result.stdout.count('TAB_ATTEMPT') == 1
+    assert 'attach-session' not in zsh.log.read_text()
+
+
 def test_resume_history_host_prepares_then_uses_selected_destination(zsh):
     setup = shell_candidates([history_row()]) + (
         '_t_resume_history_launch() { print -u2 -- "HISTORY $*"; print "dev-api-99\t/prepared/api-99"; }; '

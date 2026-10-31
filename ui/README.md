@@ -548,10 +548,17 @@ workspace when their original workspace cannot be reused. Exact live IDs attach
 to their existing owner. Local paths and remote aliases need not match.
 A plain explicit slot (`t session resume api 2`, including `t resume api 2`
 and the inferred-repository `t resume 2`) runs `t session history api 2`.
-It uses the shared paginated single picker over retained conversation identities,
+It uses the shared paginated multi-picker over retained conversation identities,
 including all recorded slot associations. Even one result requires selection;
 cancellation returns 130 without launching. Empty history never creates a session.
-Without a terminal it lists history without launching. It has no default 30-day
+Without a terminal it lists history without launching. Space/Tab marks conversations on the current page; Enter accepts marks or focus.
+Search, page changes, and refresh clear marks. Extra selections open in tabs before
+the first attaches. A resume failure exits nonzero without reopening the picker;
+batches stop and report any conversations already resumed.
+The filtered resume batch also stops at the first failed or cancelled selection.
+Its final summary names the conversation, reason, retry command, ready-session
+attach commands, and number not attempted. No automatic attachment hides errors.
+It has no default 30-day
 cutoff; Ctrl-F/B pages, Ctrl-R refreshes, and Ctrl-/ shows details.
 Explicit resume options (`--cli`, `--app`, `--fg`, `--host`, `--days`, `--live`,
 `--remote`) retain the filtered resume picker and their existing semantics,
@@ -653,7 +660,9 @@ association and branch/commit/evidence, all associated PRs and their states,
 incidental mentions labeled separately, and transcript availability. Show it by
 default at 70 or more columns and 22 or more rows, in a bottom preview occupying
 35% of the full-height picker; Ctrl-/ toggles it at every size. Use the shared
-paginated single picker: Enter selects one exact conversation, Esc/Ctrl-C cancels,
+paginated multi-picker: Space/Tab marks exact conversations, Enter accepts marks
+or the focused row, and Esc/Ctrl-C cancels. Marks clear on search, page change,
+or refresh. Slot and revision choices remain single-selection.
 Ctrl-F/Ctrl-B changes pages, and Ctrl-R explicitly refreshes metadata. Search runs
 against all retained records before slicing a page. A single search result still
 waits for Enter, and returned query/page/snapshot identity must be validated before
@@ -748,7 +757,7 @@ should be added here with their disposition before becoming a precedent.
 | Read-only issue table ([#108](https://github.com/agenthangar/t/pull/108)) | Apply the list contract. |
 | Open GitHub issues in the browser ([#118](https://github.com/agenthangar/t/issues/118)) | Explicit IDs or URLs act directly; omitted IDs use the shared filtered multi picker. |
 | Noun/verb help, added command groups, and speed submenu ([#101](https://github.com/agenthangar/t/pull/101)) | Retain and classify each mode in the inventory. |
-| Paginated history selection ([#113](https://github.com/agenthangar/t/pull/113)) | Treat as single selection with Ctrl-F next, Ctrl-B previous, and Ctrl-R refresh; do not apply the filtered picker's Ctrl-F defaults binding. |
+| Paginated history selection ([#113](https://github.com/agenthangar/t/pull/113)) | Treat as multi-selection with Space/Tab marks, Ctrl-F next, Ctrl-B previous, and Ctrl-R refresh; do not apply the filtered picker's Ctrl-F defaults binding. |
 | Conversation context sharing ([#112](https://github.com/agenthangar/t/pull/112), [#122](https://github.com/agenthangar/t/issues/122)) | Bare `t share` in a terminal is a source, recipient, context, and launch review wizard; after review it enters the new session. A known source and agent-only `--to` can launch without a terminal and leave the new session detached; `--json` returns the result without prompting or entering. An exact destination with `--file` still sends directly. `targets` and `inbox` are read-only lists; `read` is detail or raw attachment output. Cancellation leaves sessions and inboxes untouched. |
 
 ## Verification
