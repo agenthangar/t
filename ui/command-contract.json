@@ -5,7 +5,7 @@
     "list": "Direct read-only aligned rows, scope, and empty state; never launches a picker.",
     "detail": "Read-only labeled values; no work starts or prompt appears.",
     "single": "One focused target chosen with Enter in the shared picker or inline menu.",
-    "multi": "Space/Tab marks searchable rows; Enter accepts marks or the focused row.",
+    "multi": "Space/Tab marks searchable rows; Enter accepts marks or the focused row. RailUI checklists use Space to toggle and Enter to accept only checked items, including none. An explicit empty choice is an exclusive reset; choosing real items clears it and clearing the last real item restores it.",
     "filtered": "Session snapshots use Ctrl-F staged filter settings, Ctrl-A filters off and Ctrl-L filters on with saved state and column choices. Issue pickers retain Ctrl-A all and Ctrl-F defaults. Filters narrow the same snapshot and never rediscover.",
     "wizard": "Stage edits and review before applying with the shared Rail UI.",
     "review": "Show selected install actions before running; Enter applies the reviewed plan.",
@@ -28,7 +28,23 @@
       "tests": [
         "tests/test_share_flow.py::test_bare_interactive_share_defaults_to_new_claude_and_inferred_codex",
         "tests/test_share_flow.py::test_guided_existing_recipient_delivers_without_launch",
-        "tests/test_share.py::test_run_local_send_then_inbox_and_read"
+        "tests/test_share.py::test_run_local_send_then_inbox_and_read",
+        "tests/test_workflow_cursor.py::test_unsaved_defaults_do_not_create_rules_or_model_arguments",
+        "tests/test_workflow_cursor.py::test_prepare_selects_cursor_model_and_private_instructions",
+        "tests/test_workflow_cursor.py::test_prepare_uses_actual_worktree_and_canonical_scope",
+        "tests/test_workflow_cursor.py::test_inactive_cursor_scope_replaces_stale_rule_without_model_override",
+        "tests/test_workflow_cursor.py::test_explicit_cursor_model_wins_but_scoped_instructions_still_prepare",
+        "tests/test_workflow_cursor.py::test_prepare_refuses_tracked_unmanaged_and_symlink_destinations",
+        "tests/test_workflow_cursor.py::test_repository_negation_cannot_expose_private_rule",
+        "tests/test_workflow_cursor.py::test_prepare_preserves_other_rules_and_managed_file_notes",
+        "tests/test_workflow_cursor.py::test_rule_publish_failure_restores_exclusion",
+        "tests/test_workflow_cursor.py::test_recovery_attach_or_unverified_owner_never_prepares_instructions",
+        "tests/test_workflow_cursor.py::test_restart_workflow_failure_or_owner_change_does_not_stop_client",
+        "tests/test_workflow_cursor.py::test_saved_codex_only_settings_leave_cursor_untouched",
+        "tests/test_workflow_cursor.py::test_configured_non_git_cursor_continues_with_model_and_reports_instruction_limit",
+        "tests/test_workflow_cursor.py::test_workspace_rule_contains_only_its_resolved_cursor_policy",
+        "tests/test_workflow_cursor.py::test_removing_cursor_catalogue_cleans_managed_rule_but_preserves_user_notes",
+        "tests/test_workflow_cursor.py::test_removing_cursor_catalogue_removes_empty_managed_file"
       ],
       "modes": {
         "default": {
@@ -214,7 +230,8 @@
           ],
           "notes": "Interactive chooser selects an existing remote conversation; new remote sessions are unsupported."
         }
-      }
+      },
+      "notes": " Guarded Cursor launch/resume/restart applies Cursor model defaults and a workspace-only managed .cursor/rules/t-agent-workflow.mdc, alwaysApply and excluded through local Git metadata. Refuse tracked, unmanaged or symlink destinations and verify effective exclusion before publication. Live attach does not refresh instructions. Unconfigured Cursor remains unchanged. Configured non-Git starts apply global model arguments and report unavailable instruction publication. Direct cursor-agent commands bypass preparation. Remote send-and-attach uses guarded t cursor resume. No Cursor dev-slot expansion."
     },
     "share targets": {
       "patterns": [
@@ -1164,12 +1181,16 @@
         ]
       },
       "launch_preferences": {
-        "source": "durable explicit main model/effort checkpoint only; never workflow prose or stage models",
-        "boundary": "guarded dormant Codex launch; explicit invocation overrides win; live attach preserves its owner",
-        "preserves": "service tier, permissions and one-live-owner checks; repository exclusions and indexed child agents skip overrides",
+        "source": "saved selected Codex Implementation model and effort (automatic worker modes keep the main session at medium), explicit session_defaults when Implementation is unchecked, or durable main-setting checkpoint; never infer settings from prose; unsaved recommendations supply no overrides; optional independent per-tool workflow permission preset",
+        "boundary": "guarded dormant launch in the destination repository; explicit invocation overrides win; live attach preserves its owner",
+        "preserves": "service tier and one-live-owner checks; native permissions unless the applicable saved workflow specifies a preset; repository exclusions and indexed child agents skip overrides",
         "tests": [
           "tests/test_native_agent_shell.py::test_guarded_resume_applies_checkpoint_with_explicit_override_precedence",
-          "tests/test_workflow_sync.py::test_resume_scope_exclusion_worktree_and_child_are_preserved"
+          "tests/test_workflow_launch.py::test_saved_staged_main_defaults_replace_stale_model_and_effort",
+          "tests/test_workflow_launch.py::test_recommended_unsaved_workflow_does_not_override_launch",
+          "tests/test_workflow_sync.py::test_resume_scope_exclusion_worktree_and_child_are_preserved",
+          "tests/test_workflow_launch.py::test_scoped_permissions_launch_and_resume_without_model_mode_dependency",
+          "tests/test_workflow_launch.py::test_explicit_codex_permission_policy_suppresses_entire_workflow_preset"
         ]
       }
     },
@@ -1898,7 +1919,23 @@
       "scope": "local chat inventory or named host",
       "confirmation": "when_interrupting",
       "tests": [
-        "tests/test_recovery.py::test_cursor_resume_has_one_owner"
+        "tests/test_recovery.py::test_cursor_resume_has_one_owner",
+        "tests/test_workflow_cursor.py::test_unsaved_defaults_do_not_create_rules_or_model_arguments",
+        "tests/test_workflow_cursor.py::test_prepare_selects_cursor_model_and_private_instructions",
+        "tests/test_workflow_cursor.py::test_prepare_uses_actual_worktree_and_canonical_scope",
+        "tests/test_workflow_cursor.py::test_inactive_cursor_scope_replaces_stale_rule_without_model_override",
+        "tests/test_workflow_cursor.py::test_explicit_cursor_model_wins_but_scoped_instructions_still_prepare",
+        "tests/test_workflow_cursor.py::test_prepare_refuses_tracked_unmanaged_and_symlink_destinations",
+        "tests/test_workflow_cursor.py::test_repository_negation_cannot_expose_private_rule",
+        "tests/test_workflow_cursor.py::test_prepare_preserves_other_rules_and_managed_file_notes",
+        "tests/test_workflow_cursor.py::test_rule_publish_failure_restores_exclusion",
+        "tests/test_workflow_cursor.py::test_recovery_attach_or_unverified_owner_never_prepares_instructions",
+        "tests/test_workflow_cursor.py::test_restart_workflow_failure_or_owner_change_does_not_stop_client",
+        "tests/test_workflow_cursor.py::test_saved_codex_only_settings_leave_cursor_untouched",
+        "tests/test_workflow_cursor.py::test_configured_non_git_cursor_continues_with_model_and_reports_instruction_limit",
+        "tests/test_workflow_cursor.py::test_workspace_rule_contains_only_its_resolved_cursor_policy",
+        "tests/test_workflow_cursor.py::test_removing_cursor_catalogue_cleans_managed_rule_but_preserves_user_notes",
+        "tests/test_workflow_cursor.py::test_removing_cursor_catalogue_removes_empty_managed_file"
       ],
       "modes": {
         "default": {
@@ -1928,7 +1965,8 @@
             "tests/test_recovery.py::test_cursor_resume_has_one_owner"
           ]
         }
-      }
+      },
+      "notes": " Guarded Cursor launch/resume/restart applies Cursor model defaults and a workspace-only managed .cursor/rules/t-agent-workflow.mdc, alwaysApply and excluded through local Git metadata. Refuse tracked, unmanaged or symlink destinations and verify effective exclusion before publication. Live attach does not refresh instructions. Unconfigured Cursor remains unchanged. Configured non-Git starts apply global model arguments and report unavailable instruction publication. Direct cursor-agent commands bypass preparation. Remote send-and-attach uses guarded t cursor resume. No Cursor dev-slot expansion."
     },
     "cursor send": {
       "patterns": [
@@ -1939,7 +1977,23 @@
       "scope": "local chat inventory or named host",
       "confirmation": "none",
       "tests": [
-        "tests/test_t.py::test_cursor_explicit_send_preserves_legacy_forwarding"
+        "tests/test_t.py::test_cursor_explicit_send_preserves_legacy_forwarding",
+        "tests/test_workflow_cursor.py::test_unsaved_defaults_do_not_create_rules_or_model_arguments",
+        "tests/test_workflow_cursor.py::test_prepare_selects_cursor_model_and_private_instructions",
+        "tests/test_workflow_cursor.py::test_prepare_uses_actual_worktree_and_canonical_scope",
+        "tests/test_workflow_cursor.py::test_inactive_cursor_scope_replaces_stale_rule_without_model_override",
+        "tests/test_workflow_cursor.py::test_explicit_cursor_model_wins_but_scoped_instructions_still_prepare",
+        "tests/test_workflow_cursor.py::test_prepare_refuses_tracked_unmanaged_and_symlink_destinations",
+        "tests/test_workflow_cursor.py::test_repository_negation_cannot_expose_private_rule",
+        "tests/test_workflow_cursor.py::test_prepare_preserves_other_rules_and_managed_file_notes",
+        "tests/test_workflow_cursor.py::test_rule_publish_failure_restores_exclusion",
+        "tests/test_workflow_cursor.py::test_recovery_attach_or_unverified_owner_never_prepares_instructions",
+        "tests/test_workflow_cursor.py::test_restart_workflow_failure_or_owner_change_does_not_stop_client",
+        "tests/test_workflow_cursor.py::test_saved_codex_only_settings_leave_cursor_untouched",
+        "tests/test_workflow_cursor.py::test_configured_non_git_cursor_continues_with_model_and_reports_instruction_limit",
+        "tests/test_workflow_cursor.py::test_workspace_rule_contains_only_its_resolved_cursor_policy",
+        "tests/test_workflow_cursor.py::test_removing_cursor_catalogue_cleans_managed_rule_but_preserves_user_notes",
+        "tests/test_workflow_cursor.py::test_removing_cursor_catalogue_removes_empty_managed_file"
       ],
       "modes": {
         "default": {
@@ -1970,7 +2024,8 @@
             "tests/test_t.py::test_cursor_explicit_send_preserves_legacy_forwarding"
           ]
         }
-      }
+      },
+      "notes": " Guarded Cursor launch/resume/restart applies Cursor model defaults and a workspace-only managed .cursor/rules/t-agent-workflow.mdc, alwaysApply and excluded through local Git metadata. Refuse tracked, unmanaged or symlink destinations and verify effective exclusion before publication. Live attach does not refresh instructions. Unconfigured Cursor remains unchanged. Configured non-Git starts apply global model arguments and report unavailable instruction publication. Direct cursor-agent commands bypass preparation. Remote send-and-attach uses guarded t cursor resume. No Cursor dev-slot expansion."
     },
     "hosts list": {
       "patterns": [
@@ -2326,7 +2381,18 @@
         "tests/test_config.py::test_config_main_menu_shows_repo_aliases",
         "tests/test_config.py::test_config_group_navigation_retains_focus",
         "tests/test_config.py::test_config_grouped_menu_narrow_navigation",
-        "tests/test_config.py::test_config_mcp_registration_review"
+        "tests/test_config.py::test_config_mcp_registration_review",
+        "tests/test_config.py::test_config_clean_ctrl_c_exits_130_without_save_prompt",
+        "tests/test_tui.py::test_dirty_config_ctrl_c_offers_discard_and_restores_terminal",
+        "tests/test_config.py::test_config_dirty_ctrl_c_uses_existing_unsaved_chooser",
+        "tests/test_config.py::test_config_repeated_ctrl_c_and_interrupted_review_keep_pending_edits",
+        "tests/test_config.py::test_config_nested_ctrl_c_preserves_prior_selections",
+        "tests/test_workflow_tui.py::test_config_real_abort_key_offers_review_without_publishing",
+        "tests/test_workflow_review.py::test_config_save_review_passes_baseline_without_dumping_workflows",
+        "tests/test_workflow_tool_ui.py::test_tool_hub_browsing_does_not_materialize_native_scopes_or_change_launch_tool",
+        "tests/test_workflow_tool_ui.py::test_tool_interrupt_merges_completed_nested_edit_into_full_transaction",
+        "tests/test_workflow_tool_runners.py::test_config_runner_tool_picker_keeps_edits_in_selected_tool",
+        "tests/test_workflow_tool_ui.py::test_save_footer_shortcut_works_without_duplicate_menu_row"
       ],
       "modes": {
         "default": {
@@ -2345,9 +2411,10 @@
             "tests/test_workflow.py::test_menu_workflow_save_and_cancel",
             "tests/test_config.py::test_config_main_menu_shows_repo_aliases",
             "tests/test_config.py::test_config_group_navigation_retains_focus",
-            "tests/test_config.py::test_config_grouped_menu_narrow_navigation"
+            "tests/test_config.py::test_config_grouped_menu_narrow_navigation",
+            "tests/test_workflow_review.py::test_config_save_review_passes_baseline_without_dumping_workflows"
           ],
-          "notes": "Suggest unique host short names on addition; allow host renaming with defaults preserved and review before saving. Group the hub into Session defaults, Agents, Workflows, Runners, MCP server, Repositories & worktrees, Remote hosts, and Finish. Keep all actions directly reachable with stable focus and Save/Discard behavior; collection/setup rows use a trailing submenu cue. Focus and Save remain visible at narrow terminal sizes."
+          "notes": "Suggest unique host short names on addition; allow host renaming with defaults preserved and review before saving. Group the hub into Session defaults, Agents, Workflows, Runners, MCP server, Repositories & worktrees, Remote hosts, and Finish. Keep all actions directly reachable with stable focus and Save/Discard behavior; collection/setup rows use a trailing submenu cue. Focus and Save remain visible at narrow terminal sizes. Workflow save review displays only changes against the initial staged-document snapshot, with before/after values and changed text lines."
         },
         "host_add": {
           "argv": [
@@ -2403,7 +2470,7 @@
             "tests/test_workflow.py::test_behavior_menu_noop_clear_and_excluded_edit",
             "tests/test_workflow.py::test_behavior_menu_narrow_screens"
           ],
-          "notes": "Workflows opens the shared staged workflow editor. Work and delivery includes separate working folder, preview, validation, and delivery choices: leave uncommitted, local review first, approval before PR, draft PR, ready PR without merging, or authorized auto-merge. Text instructions take precedence over these choices. Save reviews all pending shell and workflow edits together."
+          "notes": "Workflow settings share the config staged transaction and unsaved-exit prompt. Pull requests has Agent review before PR Enabled/Disabled plus independent opening, state and merge choices. Local preview has shared timing with Frontend/CLI overrides; implementation approval exists only in Frontend. CLI has install/repo method and automatic/request-only command launch. Tests embeds Test runners. Text instructions can override preferences. Save reviews shell and workflow edits together; Ctrl+C preserves completed edits and offers keep/save/discard."
         },
         "mcp": {
           "argv": [
@@ -2424,7 +2491,7 @@
           "notes": "MCP submenu inspection and refresh are read-only. Registration requires immediate-action review and no pending hub edits; preserves existing client entries and disabled settings. Configuration state is not connection health."
         }
       },
-      "notes": " Cross-host policy: Claude defaults to t transfer; Codex defaults to manual native desktop Hand off (no supported CLI adapter). Agent settings show/persist the effective mechanism and explicit Codex t override. Native returns nonzero with app steps before transfer mutations; local resume and remote attach unchanged."
+      "notes": " Cross-host policy: Claude defaults to t transfer; Codex defaults to manual native desktop Hand off (no supported CLI adapter). Agent settings show/persist the effective mechanism and explicit Codex t override. Native returns nonzero with app steps before transfer mutations; local resume and remote attach unchanged. Ctrl+C with pending staged changes opens Keep editing (default), Review and save, or Discard changes and exit, including from nested menus and save review. Preserve completed nested selections before prompting. Review and save uses the normal review; cancellation or repeated Ctrl+C never implicitly saves or discards. No pending changes exits immediately with 130. Always restore terminal state on exit; external editors and post-save actions retain their own behavior. Save changes appears once as the persistent footer action with the s shortcut, never as a duplicate menu row. The shortcut opens the existing final diff review. Tool Back navigation restores focus; reverting a newly materialized tool scope restores its absent baseline without discarding other tools edits."
     },
     "config show": {
       "patterns": [
@@ -3575,7 +3642,17 @@
       "confirmation": "none",
       "tests": [
         "tests/test_workflow.py::test_nested_workflow_commands",
-        "tests/test_workflow.py::test_behavior_list_and_raw_show_are_read_only"
+        "tests/test_workflow.py::test_behavior_list_and_raw_show_are_read_only",
+        "tests/test_workflow_single_model.py::test_partial_stage_list_and_review_use_main_values",
+        "tests/test_workflow_single_model.py::test_permission_list_and_save_review_show_tool_labels",
+        "tests/test_workflow_single_model.py::test_deselected_main_stage_never_displays_retained_main_model",
+        "tests/test_workflow_single_model.py::test_implementation_worker_and_main_session_display_separate_efforts",
+        "tests/test_workflow_single_model.py::test_printed_preview_sections_match_target_and_frontend_grouping",
+        "tests/test_workflow_single_model.py::test_pr_review_skip_is_clear_in_list_and_review_without_losing_settings",
+        "tests/test_workflow_single_model.py::test_cli_launch_display_respects_enabled_state_without_losing_setting",
+        "tests/test_workflow_tui.py::test_workflow_catalogue_uses_assignment_labels_without_changing_json",
+        "tests/test_workflow_tool_ui.py::test_workflow_tool_flag_parser_and_read_scope",
+        "tests/test_workflow_tool_ui.py::test_workflow_read_default_uses_explicit_repository_tool"
       ],
       "modes": {
         "default": {
@@ -3652,12 +3729,30 @@
           ],
           "read_only": true,
           "tests": [
-            "tests/test_workflow.py::test_named_workflow_commands"
+            "tests/test_workflow.py::test_named_workflow_commands",
+            "tests/test_workflow_tui.py::test_workflow_catalogue_uses_assignment_labels_without_changing_json"
+          ],
+          "notes": "Supplied issue-before-code policy lives in editable Markdown; v1/v2 migrate in memory to v3 without read-only writes, then persist on save/install. Later edits/removal are preserved. APPLIES TO shows Global default, Assigned to N repos or Not assigned; Disabled marks disabled definitions. Explicit assignment counts exclude excluded repositories and inline copies. Saved workflow keys remain unchanged; output identifies the tool."
+        },
+        "tool": {
+          "argv": [
+            "workflow",
+            "list",
+            "--tool",
+            "claude"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_workflow_tool_ui.py::test_workflow_tool_flag_parser_and_read_scope",
+            "tests/test_workflow_tool_ui.py::test_workflow_read_default_uses_explicit_repository_tool"
           ],
           "notes": "Supplied issue-before-code policy lives in editable Markdown; v1/v2 migrate in memory to v3 without read-only writes, then persist on save/install. Later edits/removal are preserved."
         }
       },
-      "notes": "Print the scope in a sentence, then text instruction precedence, selected work and delivery choices, humanized model reasoning, test runners and propagation. --all is a compact named catalogue. JSON and raw instruction output retain their existing schemas and bytes. No pickers, writes, update prompts, connections or retries."
+      "notes": "Read-only effective scope/source, exclusion, text precedence, permissions and model settings. PRs, previews & tests groups Pull requests, Local preview and Tests. Agent review before PR is Enabled/Disabled; missing pr_review displays Enabled without a write. Disabled shows the Review stage as Skipped before PR while retaining its configured model and selection. PR opening, state and merging are independent; When to open PR is Automatically when ready or Only when I ask, and automatic merging is Automerge. Local preview has Global Preview timing, Approval before PR, and Open/run preview above Frontend and CLI submenus, both visible with Enabled/Disabled state. Both inherit these Global choices or override each field, showing Inherit global/Override with the resolved value. Frontend Open in browser and CLI Run command override the shared launch choice; existing saved choices remain explicit overrides. Runtime guidance uses only resolved rules for enabled preview types; request-only timing gates automatic launch. Frontend alone contains Implement before approval (Yes/No/Not set), Design approach, Preview method (Fast reload/Build) and Open in browser (Automatically/Only when I ask). CLI contains Preview method (Install locally/Run from the repo) and Run command (Automatically/Only when I ask); no CLI implementation-approval row or guidance. Disabled summaries suppress retained settings. Tests contains When to run tests and Test runners; the CI choice is On PR CI. Lists and catalogue use the same hierarchy and effective choices; save review shows only changed fields. Not set applies to optional choices; Inherit is used only for real parent values. Show effective Implementation or session-default model and selected workers; unselected stages use the main session model/effort, and no selected stages means one model. Never present inactive saved values as effective. Task-selected Implementation uses a bounded worker; show main fixed launch settings separately and label Worker/Main session/Main model sources. Effort pickers separate Automatic from Fixed effort. Per-tool permissions apply to subsequent CLI launch/resume. Retain legacy rules separately. --all is a compact named catalogue. Raw JSON preserves saved keys and text bytes. No picker, write, update prompt, connection or retry. Wide labels use available terminal width; narrow screens retain stacked values. --tool codex|claude|cursor selects the tool catalogue. Omission uses the explicit repository tool override or account default. Reads identify the tool; writes preserve other catalogues. No checkout inference. The parent Local preview settings are labeled Global, not Defaults. Use concise submenu summaries and open Frontend/CLI to inspect details; inherited preview choices explicitly say Inherit global. Agent review before PR names the reviewing actor; it remains an Enabled/Disabled toggle."
     },
     "workflow edit": {
       "patterns": [
@@ -3667,7 +3762,40 @@
       "scope": "current global default or named shared definition; explicit --repo for repository-only inline policy",
       "confirmation": "external",
       "tests": [
-        "tests/test_workflow.py::test_nested_workflow_commands"
+        "tests/test_workflow.py::test_nested_workflow_commands",
+        "tests/test_workflow_single_model.py::test_repository_model_editor_preserves_global_defaults",
+        "tests/test_workflow_stages.py::test_saved_stage_selection_rejects_invalid_values",
+        "tests/test_workflow_permissions.py::test_invalid_permission_schema",
+        "tests/test_workflow_stages.py::test_model_stage_schema_rejects_invalid_selections",
+        "tests/test_workflow_stages.py::test_legacy_stage_selection_preserves_main_and_noop_json",
+        "tests/test_workflow_stages.py::test_review_defaults_to_task_selected_effort",
+        "tests/test_workflow_stages.py::test_task_selected_implementation_uses_worker_with_fixed_main_session",
+        "tests/test_workflow_preferences.py::test_preview_inherits_live_defaults_and_clear_removes_only_override",
+        "tests/test_workflow_preferences.py::test_invalid_saved_preview_target_is_rejected",
+        "tests/test_workflow_preferences.py::test_preview_switches_derive_legacy_defaults_and_override_independently",
+        "tests/test_workflow_preferences.py::test_disabled_preview_kinds_hide_guidance_and_retain_defaults_and_overrides",
+        "tests/test_workflow_preferences.py::test_frontend_browser_controls_opening_without_requesting_preview",
+        "tests/test_workflow_preferences.py::test_explicit_implementation_default_wins_over_all_legacy_gates",
+        "tests/test_workflow_preferences.py::test_read_only_legacy_bytes_and_clear_do_not_resurrect_approval_aliases",
+        "tests/test_workflow_preferences.py::test_frontend_browser_keeps_resolved_preview_and_pr_rules",
+        "tests/test_workflow_stages.py::test_retired_relative_effort_is_read_only_alias_for_task_selection",
+        "tests/test_workflow_stages.py::test_relative_planning_effort_remains_invalid",
+        "tests/test_workflow_preferences.py::test_skip_pr_review_removes_reviewer_requirement_and_retains_delivery",
+        "tests/test_workflow_preferences.py::test_explicit_pr_review_uses_selected_worker_or_main_agent",
+        "tests/test_workflow_preferences.py::test_clearing_skip_restores_saved_review_stage_and_its_model_settings",
+        "tests/test_workflow_preferences.py::test_disabled_workflow_suppresses_pr_review_choice",
+        "tests/test_workflow_preferences.py::test_invalid_saved_pr_review_choice_is_rejected",
+        "tests/test_workflow_preferences.py::test_cli_launch_composes_with_method_and_preserves_other_preferences",
+        "tests/test_workflow_preferences.py::test_automatic_cli_launch_respects_request_only_child_timing",
+        "tests/test_workflow_preferences.py::test_disabled_cli_hides_launch_guidance_without_deleting_setting",
+        "tests/test_workflow_preferences.py::test_cli_launch_is_optional_independent_and_read_only",
+        "tests/test_workflow_preferences.py::test_invalid_saved_cli_launch_choice_is_rejected",
+        "tests/test_workflow_preferences.py::test_legacy_implementation_approval_applies_only_to_frontend",
+        "tests/test_workflow_preferences.py::test_direct_frontend_gate_wins_over_shared_legacy_and_has_no_inheritance",
+        "tests/test_workflow_preferences.py::test_retired_cli_gate_remains_raw_and_inert_on_unrelated_edits",
+        "tests/test_workflow_preferences.py::test_pr_review_defaults_to_enabled_without_materializing_storage",
+        "tests/test_workflow_tool_ui.py::test_workflow_tool_flag_parser_and_read_scope",
+        "tests/test_workflow_tool_ui.py::test_workflow_read_default_uses_explicit_repository_tool"
       ],
       "modes": {
         "default": {
@@ -3714,9 +3842,26 @@
           "tests": [
             "tests/test_workflow.py::test_named_workflow_commands"
           ]
+        },
+        "tool": {
+          "argv": [
+            "workflow",
+            "edit",
+            "--tool",
+            "claude"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_workflow_tool_ui.py::test_workflow_tool_flag_parser_and_read_scope",
+            "tests/test_workflow_tool_ui.py::test_workflow_read_default_uses_explicit_repository_tool"
+          ],
+          "terminal": true
         }
       },
-      "notes": "Optional v2 policy fields stages_enabled (default true) and behaviors (default absent) preserve old policies. Strictly validate known worktree/preview/validation/delivery enums. Invalid and unchanged edits write nothing; disabled and excluded workflows suppress stages, behavior preferences and custom Markdown. Preview supports before_implementation; delivery also supports local_review, ask_before_pr and draft_pull_request. Existing enums retain their meaning."
+      "notes": "Advanced JSON editor with strict validation and no write for invalid/unchanged edits. Optional stages_enabled defaults true; model_stages is a nonempty unique subset of planning/implementation/review. Legacy separate_stages selects planning/review helpers with Implementation active. Deselecting all stages retains models and selections. Disabled/excluded workflows suppress generated stages, behaviors and Markdown. Optional session_defaults stores codex/claude model and explicit effort, active with Implementation unchecked or stages disabled; omitted values use native defaults. Never rewrite global native settings or active turns. Optional permissions maps codex to ask/auto/full/read_only and claude to manual/acceptEdits/auto/bypassPermissions/plan; explicit invocation permission flags suppress the preset. Stage effort accepts auto or supported explicit levels. Legacy one-level-lower for Implementation/Review resolves auto without read writes. Auto Implementation delegates a concrete-effort worker; the main launch effort stays fixed. Behavior keys include pr_review, pr_open, pr_state, pr_merge, frontend_enabled, cli_enabled, local_preview, preview_pr_approval, preview_launch, frontend_preview_timing, cli_preview_timing, frontend_preview_pr_approval, cli_preview_pr_approval, frontend_implement_before_approval, cli_preview, cli_launch, frontend_design, frontend_preview, frontend_browser and test_timing. pr_review retains review/skip storage with Enabled/Disabled labels; omission means Enabled without materializing storage. Disabled skips both main-session and worker pre-PR review, retaining reviewer settings; explicit repository/task requirements still apply. When stages are off, enabled PR review uses the main agent. PR timing/state/merge and validation/preview preferences remain independent. Both preview types inherit local_preview timing, preview_pr_approval, and preview_launch unless their respective child override is present. frontend_preview_pr_approval and cli_preview_pr_approval override PR approval; frontend_browser and cli_launch override launch. Clearing an override restores live inheritance. frontend_implement_before_approval is direct yes/no; no CLI implementation-approval gate. PR approval is independent and can apply to either enabled preview type. Legacy implement_before_approval falls back to the frontend key; explicit frontend wins. Older preview_approval/design_approval map inversely to frontend only. Retired cli_implement_before_approval remains accepted raw but is inert. Clearing frontend approval must not restore aliases. frontend_enabled/cli_enabled independently override legacy preview_target; missing settings enable both types. Disabled types retain stored preferences but suppress runtime instructions. frontend_browser and cli_launch accept automatic/on_request and act only once the corresponding preview is due/requested and ready; neither independently requests a preview. CLI launch composes with install/repo method; request-only launch prepares the command without running it. Interactive CLI launch uses a supported terminal or reports the limitation and exact command. Legacy worktree/preview/validation/delivery values remain readable; explicit choices take precedence. No read-time migration. Unknown keys/values rejected; required repository checks and approvals remain authoritative. The checklist one-model reset maps to stages_enabled=false while retaining configured model_stages and model/effort values. --tool codex|claude|cursor selects the tool catalogue. Omission uses the explicit repository tool override or account default. Reads identify the tool; writes preserve other catalogues. No checkout inference."
     },
     "workflow add": {
       "patterns": [
@@ -3726,7 +3871,9 @@
       "scope": "explicit named workflow or registered --repo alias; no inference or selection",
       "confirmation": "none",
       "tests": [
-        "tests/test_workflow.py::test_named_workflow_commands"
+        "tests/test_workflow.py::test_named_workflow_commands",
+        "tests/test_workflow_tool_ui.py::test_workflow_tool_flag_parser_and_read_scope",
+        "tests/test_workflow_tool_ui.py::test_workflow_read_default_uses_explicit_repository_tool"
       ],
       "modes": {
         "default": {
@@ -3742,8 +3889,26 @@
           "tests": [
             "tests/test_workflow.py::test_named_workflow_commands"
           ]
+        },
+        "tool": {
+          "argv": [
+            "workflow",
+            "add",
+            "quick",
+            "--tool",
+            "claude"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_workflow_tool_ui.py::test_workflow_tool_flag_parser_and_read_scope",
+            "tests/test_workflow_tool_ui.py::test_workflow_read_default_uses_explicit_repository_tool"
+          ]
         }
-      }
+      },
+      "notes": " --tool codex|claude|cursor selects the tool catalogue. Omission uses the explicit repository tool override or account default. Reads identify the tool; writes preserve other catalogues. No checkout inference."
     },
     "workflow use": {
       "patterns": [
@@ -3753,7 +3918,9 @@
       "scope": "explicit named workflow or registered --repo alias; no inference or selection",
       "confirmation": "none",
       "tests": [
-        "tests/test_workflow.py::test_named_workflow_commands"
+        "tests/test_workflow.py::test_named_workflow_commands",
+        "tests/test_workflow_tool_ui.py::test_workflow_tool_flag_parser_and_read_scope",
+        "tests/test_workflow_tool_ui.py::test_workflow_read_default_uses_explicit_repository_tool"
       ],
       "modes": {
         "default": {
@@ -3769,8 +3936,26 @@
           "tests": [
             "tests/test_workflow.py::test_named_workflow_commands"
           ]
+        },
+        "tool": {
+          "argv": [
+            "workflow",
+            "use",
+            "quick",
+            "--tool",
+            "claude"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_workflow_tool_ui.py::test_workflow_tool_flag_parser_and_read_scope",
+            "tests/test_workflow_tool_ui.py::test_workflow_read_default_uses_explicit_repository_tool"
+          ]
         }
-      }
+      },
+      "notes": " --tool codex|claude|cursor selects the tool catalogue. Omission uses the explicit repository tool override or account default. Reads identify the tool; writes preserve other catalogues. No checkout inference."
     },
     "workflow exclude": {
       "patterns": [
@@ -3780,7 +3965,9 @@
       "scope": "explicit named workflow or registered --repo alias; no inference or selection",
       "confirmation": "none",
       "tests": [
-        "tests/test_workflow.py::test_named_workflow_commands"
+        "tests/test_workflow.py::test_named_workflow_commands",
+        "tests/test_workflow_tool_ui.py::test_workflow_tool_flag_parser_and_read_scope",
+        "tests/test_workflow_tool_ui.py::test_workflow_read_default_uses_explicit_repository_tool"
       ],
       "modes": {
         "default": {
@@ -3797,8 +3984,27 @@
           "tests": [
             "tests/test_workflow.py::test_named_workflow_commands"
           ]
+        },
+        "tool": {
+          "argv": [
+            "workflow",
+            "exclude",
+            "--repo",
+            "api",
+            "--tool",
+            "claude"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_workflow_tool_ui.py::test_workflow_tool_flag_parser_and_read_scope",
+            "tests/test_workflow_tool_ui.py::test_workflow_read_default_uses_explicit_repository_tool"
+          ]
         }
-      }
+      },
+      "notes": " --tool codex|claude|cursor selects the tool catalogue. Omission uses the explicit repository tool override or account default. Reads identify the tool; writes preserve other catalogues. No checkout inference."
     },
     "workflow inherit": {
       "patterns": [
@@ -3808,7 +4014,9 @@
       "scope": "explicit named workflow or registered --repo alias; no inference or selection",
       "confirmation": "none",
       "tests": [
-        "tests/test_workflow.py::test_named_workflow_commands"
+        "tests/test_workflow.py::test_named_workflow_commands",
+        "tests/test_workflow_tool_ui.py::test_workflow_tool_flag_parser_and_read_scope",
+        "tests/test_workflow_tool_ui.py::test_workflow_read_default_uses_explicit_repository_tool"
       ],
       "modes": {
         "default": {
@@ -3825,8 +4033,27 @@
           "tests": [
             "tests/test_workflow.py::test_named_workflow_commands"
           ]
+        },
+        "tool": {
+          "argv": [
+            "workflow",
+            "inherit",
+            "--repo",
+            "api",
+            "--tool",
+            "claude"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_workflow_tool_ui.py::test_workflow_tool_flag_parser_and_read_scope",
+            "tests/test_workflow_tool_ui.py::test_workflow_read_default_uses_explicit_repository_tool"
+          ]
         }
-      }
+      },
+      "notes": " --tool codex|claude|cursor selects the tool catalogue. Omission uses the explicit repository tool override or account default. Reads identify the tool; writes preserve other catalogues. No checkout inference."
     },
     "workflow instructions show": {
       "patterns": [
@@ -3836,7 +4063,9 @@
       "scope": "current default or named workflow; explicit --repo alias for repository scope; no inference",
       "confirmation": "none",
       "tests": [
-        "tests/test_workflow.py::test_instructions_commands"
+        "tests/test_workflow.py::test_instructions_commands",
+        "tests/test_workflow_tool_ui.py::test_workflow_tool_flag_parser_and_read_scope",
+        "tests/test_workflow_tool_ui.py::test_workflow_read_default_uses_explicit_repository_tool"
       ],
       "modes": {
         "default": {
@@ -3853,8 +4082,27 @@
             "tests/test_workflow.py::test_instructions_commands"
           ],
           "notes": "Supplied issue-before-code policy lives in editable Markdown; v1/v2 migrate in memory to v3 without read-only writes, then persist on save/install. Later edits/removal are preserved."
+        },
+        "tool": {
+          "argv": [
+            "workflow",
+            "instructions",
+            "show",
+            "--tool",
+            "claude"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_workflow_tool_ui.py::test_workflow_tool_flag_parser_and_read_scope",
+            "tests/test_workflow_tool_ui.py::test_workflow_read_default_uses_explicit_repository_tool"
+          ],
+          "notes": "Supplied issue-before-code policy lives in editable Markdown; v1/v2 migrate in memory to v3 without read-only writes, then persist on save/install. Later edits/removal are preserved."
         }
-      }
+      },
+      "notes": " --tool codex|claude|cursor selects the tool catalogue. Omission uses the explicit repository tool override or account default. Reads identify the tool; writes preserve other catalogues. No checkout inference."
     },
     "workflow instructions edit": {
       "patterns": [
@@ -3864,7 +4112,9 @@
       "scope": "current default or named workflow; explicit --repo alias for repository scope; no inference",
       "confirmation": "external",
       "tests": [
-        "tests/test_workflow.py::test_instructions_commands"
+        "tests/test_workflow.py::test_instructions_commands",
+        "tests/test_workflow_tool_ui.py::test_workflow_tool_flag_parser_and_read_scope",
+        "tests/test_workflow_tool_ui.py::test_workflow_read_default_uses_explicit_repository_tool"
       ],
       "modes": {
         "default": {
@@ -3882,8 +4132,28 @@
           ],
           "terminal": true,
           "notes": "Supplied issue-before-code policy lives in editable Markdown; v1/v2 migrate in memory to v3 without read-only writes, then persist on save/install. Later edits/removal are preserved."
+        },
+        "tool": {
+          "argv": [
+            "workflow",
+            "instructions",
+            "edit",
+            "--tool",
+            "claude"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_workflow_tool_ui.py::test_workflow_tool_flag_parser_and_read_scope",
+            "tests/test_workflow_tool_ui.py::test_workflow_read_default_uses_explicit_repository_tool"
+          ],
+          "terminal": true,
+          "notes": "Supplied issue-before-code policy lives in editable Markdown; v1/v2 migrate in memory to v3 without read-only writes, then persist on save/install. Later edits/removal are preserved."
         }
-      }
+      },
+      "notes": " --tool codex|claude|cursor selects the tool catalogue. Omission uses the explicit repository tool override or account default. Reads identify the tool; writes preserve other catalogues. No checkout inference."
     },
     "config local": {
       "patterns": [
@@ -3963,33 +4233,6 @@
         }
       }
     },
-    "workflow sync": {
-      "patterns": [
-        "action"
-      ],
-      "renderer": "plain",
-      "scope": "pending account-local revisions and registered SSH hosts; no repository inference or picker",
-      "confirmation": "none",
-      "tests": [
-        "tests/test_workflow_sync.py::test_sync_cli_and_readonly_status"
-      ],
-      "modes": {
-        "default": {
-          "argv": [
-            "workflow",
-            "sync"
-          ],
-          "patterns": [
-            "action"
-          ],
-          "read_only": false,
-          "tests": [
-            "tests/test_workflow_sync.py::test_sync_cli_and_readonly_status"
-          ]
-        }
-      },
-      "notes": "Bounded retries through owning runtime control socket and nonrecursive zsh -lic SSH. Never injects turns. Current turns and native instruction reload remain unverified. The raw proxy uses bounded HTTP Upgrade/WebSocket framing; installed private Tomli supplies Python 3.9 parsing without global package changes. Isolated sessions apply retained explicit main intent on guarded resume, while live attach remains unverified."
-    },
     "runners list": {
       "patterns": [
         "list",
@@ -3999,7 +4242,10 @@
       "scope": "global or named workflow; explicit --repo registered alias; setup explicit private broker",
       "confirmation": "none",
       "tests": [
-        "tests/test_workflow_runners.py::test_runner_cli_contract"
+        "tests/test_workflow_runners.py::test_runner_cli_contract",
+        "tests/test_workflow_tool_runners.py::test_runner_list_selects_tool_without_writes",
+        "tests/test_workflow_tool_runners.py::test_config_runner_tool_picker_keeps_edits_in_selected_tool",
+        "tests/test_workflow_tool_runners.py::test_runner_start_tool_flag_and_repository_default"
       ],
       "modes": {
         "default": {
@@ -4028,8 +4274,26 @@
           "tests": [
             "tests/test_workflow_runners.py::test_runner_cli_contract"
           ]
+        },
+        "tool": {
+          "argv": [
+            "runners",
+            "list",
+            "--tool",
+            "cursor"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_workflow_tool_runners.py::test_runner_list_selects_tool_without_writes",
+            "tests/test_workflow_tool_runners.py::test_config_runner_tool_picker_keeps_edits_in_selected_tool",
+            "tests/test_workflow_tool_runners.py::test_runner_start_tool_flag_and_repository_default"
+          ]
         }
-      }
+      },
+      "notes": " --tool codex|claude|cursor selects that tool workflow runners. Omission uses the repository tool override or account default. List/edit use explicit --repo; start uses its verified current repository. JSON list includes tool. Edits preserve other catalogues."
     },
     "runners edit": {
       "patterns": [
@@ -4039,7 +4303,10 @@
       "scope": "global or named workflow; explicit --repo registered alias; setup explicit private broker",
       "confirmation": "external",
       "tests": [
-        "tests/test_workflow_runners.py::test_runner_cli_contract"
+        "tests/test_workflow_runners.py::test_runner_cli_contract",
+        "tests/test_workflow_tool_runners.py::test_runner_list_selects_tool_without_writes",
+        "tests/test_workflow_tool_runners.py::test_config_runner_tool_picker_keeps_edits_in_selected_tool",
+        "tests/test_workflow_tool_runners.py::test_runner_start_tool_flag_and_repository_default"
       ],
       "modes": {
         "default": {
@@ -4055,8 +4322,27 @@
             "tests/test_workflow_runners.py::test_runner_cli_contract"
           ],
           "terminal": true
+        },
+        "tool": {
+          "argv": [
+            "runners",
+            "edit",
+            "--tool",
+            "cursor"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_workflow_tool_runners.py::test_runner_list_selects_tool_without_writes",
+            "tests/test_workflow_tool_runners.py::test_config_runner_tool_picker_keeps_edits_in_selected_tool",
+            "tests/test_workflow_tool_runners.py::test_runner_start_tool_flag_and_repository_default"
+          ],
+          "terminal": true
         }
-      }
+      },
+      "notes": " --tool codex|claude|cursor selects that tool workflow runners. Omission uses the repository tool override or account default. List/edit use explicit --repo; start uses its verified current repository. JSON list includes tool. Edits preserve other catalogues."
     },
     "runners setup": {
       "patterns": [
@@ -4095,7 +4381,10 @@
       "scope": "start snapshots the registered current checkout; other verbs use local run UUID",
       "confirmation": "none",
       "tests": [
-        "tests/test_workflow_runners.py::test_runner_cli_contract"
+        "tests/test_workflow_runners.py::test_runner_cli_contract",
+        "tests/test_workflow_tool_runners.py::test_runner_list_selects_tool_without_writes",
+        "tests/test_workflow_tool_runners.py::test_config_runner_tool_picker_keeps_edits_in_selected_tool",
+        "tests/test_workflow_tool_runners.py::test_runner_start_tool_flag_and_repository_default"
       ],
       "modes": {
         "default": {
@@ -4134,8 +4423,31 @@
           "tests": [
             "tests/test_workflow_runners.py::test_runner_cli_contract"
           ]
+        },
+        "tool": {
+          "argv": [
+            "runners",
+            "runs",
+            "start",
+            "--tool",
+            "cursor",
+            "--",
+            "python3",
+            "-m",
+            "pytest"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_workflow_tool_runners.py::test_runner_list_selects_tool_without_writes",
+            "tests/test_workflow_tool_runners.py::test_config_runner_tool_picker_keeps_edits_in_selected_tool",
+            "tests/test_workflow_tool_runners.py::test_runner_start_tool_flag_and_repository_default"
+          ]
         }
-      }
+      },
+      "notes": " --tool codex|claude|cursor selects that tool workflow runners. Omission uses the repository tool override or account default. List/edit use explicit --repo; start uses its verified current repository. JSON list includes tool. Edits preserve other catalogues."
     },
     "runners runs list": {
       "patterns": [
@@ -4443,13 +4755,115 @@
       "patterns": [
         "wizard",
         "single",
+        "multi",
         "detail"
       ],
       "renderer": "rail",
       "scope": "global workflow catalogue and explicit repository assignments",
       "confirmation": "review",
       "tests": [
-        "tests/test_workflow_tui.py::test_workflow_bare_entry"
+        "tests/test_workflow_tui.py::test_workflow_bare_entry",
+        "tests/test_workflow_single_model.py::test_stage_checkboxes_select_independent_helpers",
+        "tests/test_workflow_single_model.py::test_one_model_choice_disables_stages_and_retains_workflow_settings",
+        "tests/test_workflow_single_model.py::test_one_model_choice_on_inherited_disabled_workflow_is_noop",
+        "tests/test_workflow_tui.py::test_workflow_stage_picker_one_model_reset_uses_real_checkboxes",
+        "tests/test_workflow_single_model.py::test_clear_text_instructions_is_staged_and_preserves_policy",
+        "tests/test_workflow_single_model.py::test_permission_editor_stages_each_tool_in_both_model_modes",
+        "tests/test_workflow_single_model.py::test_permission_editor_discard_keeps_original",
+        "tests/test_workflow_single_model.py::test_helpers_without_main_stage_edit_session_defaults",
+        "tests/test_workflow_single_model.py::test_pr_open_choices_distinguish_timing_and_explicit_request",
+        "tests/test_tui.py::test_shared_row_uses_available_width_for_full_labels",
+        "tests/test_tui.py::test_shared_row_bounds_long_labels_and_retains_values",
+        "tests/test_workflow_single_model.py::test_each_stage_can_let_agent_choose_worker_effort",
+        "tests/test_workflow_single_model.py::test_preview_methods_and_approval_choices_keep_context",
+        "tests/test_workflow_single_model.py::test_nested_preview_menus_stage_changes_and_restore_parent_focus",
+        "tests/test_workflow_single_model.py::test_preview_submenus_replace_legacy_target_with_enable_controls",
+        "tests/test_workflow_single_model.py::test_preview_toggles_preserve_disabled_choices_and_reenable",
+        "tests/test_workflow_single_model.py::test_frontend_browser_setting_is_independent_and_clearable",
+        "tests/test_workflow_single_model.py::test_retired_design_approval_uses_single_preview_gate_without_rewriting",
+        "tests/test_workflow_single_model.py::test_preview_child_fields_show_live_inheritance_without_materializing_choices",
+        "tests/test_workflow_single_model.py::test_preview_overrides_survive_parent_edits_and_clear_to_live_defaults",
+        "tests/test_workflow_single_model.py::test_preview_inheritance_sources_are_clear_in_list_review_and_catalogue",
+        "tests/test_workflow_single_model.py::test_disabled_preview_display_omits_retained_settings_and_legacy_target",
+        "tests/test_workflow_single_model.py::test_tests_runner_edits_keep_prior_and_later_behavior_changes",
+        "tests/test_workflow_single_model.py::test_tests_runner_browsing_is_noop",
+        "tests/test_workflow_single_model.py::test_behavior_revert_after_runner_visit_does_not_keep_intermediate_snapshot",
+        "tests/test_tui.py::test_unset_choice_has_one_nonselectable_gap_before_other_choices",
+        "tests/test_tui.py::test_checklist_unset_reset_and_real_choices_are_exclusive",
+        "tests/test_tui.py::test_unset_gap_checklist_keeps_viewport_focus_and_action_visible",
+        "tests/test_workflow_single_model.py::test_retired_effort_displays_as_automatic_without_rewriting",
+        "tests/test_workflow_single_model.py::test_pr_review_preference_stages_and_retains_selected_review_model",
+        "tests/test_workflow_single_model.py::test_pr_review_default_or_cancel_does_not_materialize_preference",
+        "tests/test_workflow_single_model.py::test_pr_review_skip_is_clear_in_list_and_review_without_losing_settings",
+        "tests/test_workflow_single_model.py::test_cli_launch_stages_clears_and_preserves_preview_preferences",
+        "tests/test_workflow_single_model.py::test_cli_launch_display_respects_enabled_state_without_losing_setting",
+        "tests/test_workflow_tui.py::test_workflow_ctrl_c_preserves_completed_nested_selections",
+        "tests/test_workflow_tui.py::test_workflow_clean_ctrl_c_exits_without_unsaved_prompt",
+        "tests/test_workflow_tui.py::test_workflow_editor_interrupt_keeps_prior_staged_edits",
+        "tests/test_workflow_tui.py::test_workflow_runner_interrupt_keeps_runner_and_behavior_edits",
+        "tests/test_workflow_tui.py::test_pristine_repository_selector_interrupt_does_not_create_override",
+        "tests/test_workflow_single_model.py::test_frontend_implementation_approval_is_direct_and_absent_from_cli",
+        "tests/test_workflow_review.py::test_workflow_review_stage_toggle_shows_only_changed_workflow",
+        "tests/test_workflow_review.py::test_workflow_review_changed_paths_and_clear_values",
+        "tests/test_workflow_review.py::test_workflow_review_review_toggle_missing_value_means_enabled",
+        "tests/test_workflow_review.py::test_workflow_review_preview_toggle_missing_values_resolve_legacy_defaults",
+        "tests/test_workflow_review.py::test_workflow_review_text_uses_changed_lines_without_issue_boilerplate",
+        "tests/test_workflow_review.py::test_workflow_review_instruction_policy_removal_shows_actual_changed_lines",
+        "tests/test_workflow_review.py::test_workflow_review_session_default_clears_show_live_inheritance",
+        "tests/test_workflow_review.py::test_workflow_review_runners_shows_only_changed_target_fields",
+        "tests/test_workflow_review.py::test_workflow_review_add_remove_default_assignments_and_exclusion",
+        "tests/test_workflow_review.py::test_workflow_review_repository_copy_shows_only_customized_fields",
+        "tests/test_workflow_review.py::test_workflow_review_noop_and_activation_are_distinct",
+        "tests/test_workflow_review.py::test_config_save_review_passes_baseline_without_dumping_workflows",
+        "tests/test_workflow_tui.py::test_workflow_hub_labels_assignments_without_claiming_active_use",
+        "tests/test_workflow_tui.py::test_workflow_hub_assignment_labels_follow_staged_default",
+        "tests/test_workflow_single_model.py::test_session_default_choices_show_top_level_inheritance_without_writes",
+        "tests/test_workflow_single_model.py::test_explicit_workflow_model_uses_own_default_effort_then_clears_to_inheritance",
+        "tests/test_workflow_tool_ui.py::test_tool_hub_browsing_does_not_materialize_native_scopes_or_change_launch_tool",
+        "tests/test_workflow_tool_ui.py::test_tool_hub_changes_only_selected_catalogue_and_reviews_only_that_tool",
+        "tests/test_workflow_tool_ui.py::test_tool_interrupt_merges_completed_nested_edit_into_full_transaction",
+        "tests/test_workflow_tool_ui.py::test_claude_stage_choices_come_from_claude_metadata",
+        "tests/test_workflow_tool_ui.py::test_cursor_offline_stage_model_supports_native_parameter_ids_without_effort",
+        "tests/test_workflow_tool_ui.py::test_workflow_tool_flag_parser_and_read_scope",
+        "tests/test_workflow_tool_ui.py::test_workflow_read_default_uses_explicit_repository_tool",
+        "tests/test_workflow_tool_ui.py::test_workflow_tool_write_merges_only_selected_catalogue",
+        "tests/test_workflow_tool_ui.py::test_tool_diff_formats_retained_other_tool_permissions_without_key_error",
+        "tests/test_workflow_tool_ui.py::test_cursor_catalog_discovery_is_bounded_and_auth_failure_does_not_invent_models",
+        "tests/test_workflow_tools.py::test_tool_views_preserve_legacy_document_without_materializing_defaults",
+        "tests/test_workflow_tools.py::test_tool_catalogue_edits_and_assignments_are_independent",
+        "tests/test_workflow_tools.py::test_invalid_tool_catalogue_schema_rejected",
+        "tests/test_workflow_tools.py::test_tool_catalogue_rejects_nesting_and_unknown_tools",
+        "tests/test_workflow_tools.py::test_tool_handoffs_preserve_legacy_snapshot_guards",
+        "tests/test_workflow_tools.py::test_empty_stage_models_inherit_selected_tool_session_defaults",
+        "tests/test_workflow_tools.py::test_cursor_parameterized_models_do_not_emit_separate_effort",
+        "tests/test_workflow_tools.py::test_native_publications_render_each_tool_without_cross_tool_models",
+        "tests/test_workflow_tools.py::test_saved_legacy_claude_preferences_migrate_read_only_then_freeze",
+        "tests/test_workflow_tools.py::test_save_without_migrated_view_freezes_original_legacy_claude_policy",
+        "tests/test_workflow_tools.py::test_tool_runner_guidance_keeps_selected_catalogue",
+        "tests/test_workflow_tool_sync.py::test_tool_launch_settings_choose_actual_tool_before_repository",
+        "tests/test_workflow_tool_sync.py::test_changed_scopes_preserves_tool_identity",
+        "tests/test_workflow_tool_sync.py::test_portable_tools_round_trip_without_local_paths_or_cross_tool_changes",
+        "tests/test_workflow_tool_sync.py::test_legacy_payload_preserves_other_tools",
+        "tests/test_workflow_tool_sync.py::test_tool_scope_limit_and_invalid_tool_payload",
+        "tests/test_workflow_tool_sync.py::test_remote_removes_only_sent_tool_scopes",
+        "tests/test_workflow_tool_ui.py::test_tool_permissions_offer_only_selected_native_tool",
+        "tests/test_workflow_tool_ui.py::test_repository_workflow_tool_chooser_edits_only_selected_tool",
+        "tests/test_workflow_tool_ui.py::test_tool_hub_revert_clears_own_pending_but_preserves_other_tool_pending",
+        "tests/test_workflow_tool_ui.py::test_reverting_new_native_scope_restores_absence_and_preserves_other_edits",
+        "tests/test_workflow_tool_ui.py::test_save_footer_shortcut_works_without_duplicate_menu_row",
+        "tests/test_workflow_single_model.py::test_local_preview_global_timing_is_visible_and_type_summaries_are_concise",
+        "tests/test_workflow_single_model.py::test_global_preview_approval_and_launch_inherit_override_and_clear",
+        "tests/test_workflow_preferences.py::test_preview_common_defaults_have_live_independent_child_overrides",
+        "tests/test_workflow_preferences.py::test_shared_pr_gate_is_distinct_from_legacy_implementation_gate",
+        "tests/test_workflow_preferences.py::test_common_preview_launch_respects_request_only_timing",
+        "tests/test_workflow_preferences.py::test_common_preview_launch_and_approval_both_disabled_are_inactive",
+        "tests/test_workflow_preferences.py::test_preview_summaries_name_global_inheritance_and_actual_child_actions",
+        "tests/test_workflow_tui.py::test_repository_workflow_selector_only_assigns_or_preserves_policy",
+        "tests/test_workflow_scope_summary.py::test_hub_summary_distinguishes_global_and_current_repository",
+        "tests/test_workflow_scope_summary.py::test_hub_summary_reports_inherited_excluded_custom_and_disabled",
+        "tests/test_workflow_scope_summary.py::test_hub_summary_keeps_tool_catalogues_independent_and_absence_visible",
+        "tests/test_workflow_scope_summary.py::test_hub_repository_resolves_other_linked_worktree_with_one_git_read",
+        "tests/test_workflow_scope_summary.py::test_hub_resolves_context_once_and_only_changes_display"
       ],
       "modes": {
         "default": {
@@ -4458,7 +4872,8 @@
           ],
           "patterns": [
             "wizard",
-            "single"
+            "single",
+            "multi"
           ],
           "read_only": false,
           "terminal": true,
@@ -4481,7 +4896,7 @@
           ]
         }
       },
-      "notes": "Bare t workflow in a terminal opens the shared RailUI staged editor. Select named workflows, edit model stages, work and delivery choices, and text instructions, set default or repository assignments, then review and save. Cancellation publishes nothing. Outside a terminal and with --help, print group help without writes. The hidden config workflows alias routes to the same editor."
+      "notes": "Bare t workflow opens the shared RailUI staged editor in a terminal; outside a terminal or with --help it prints help without writes. Hidden config workflows alias uses the same editor. Select named workflows and explicit repository assignments, edit Planning/Implementation/Review model-stage checkboxes and selected models/efforts or session defaults, permissions, behaviors and text. Clear text instructions and empty editor contents stage removal; discard publishes nothing. Repository assignment is one selector: Inherit global with its workflow name, named workflows, or Disabled. A saved inline policy may appear as Current custom workflow to retain or restore it. Selection stages the assignment and returns; cancel and reselecting the current option are no-ops. No copy, edit, exclusion-action or JSON submenu appears here. Agent review before PR in Pull requests is an Enabled/Disabled toggle, no Not set row. Missing pr_review shows Enabled; selecting its current value is a no-op. Disabled suppresses agent review and marks Review Skipped before PR while keeping its model controls editable. Local preview exposes Global Preview timing, Approval before PR, and Open/run preview above Frontend and CLI. Frontend and CLI each have independent Preview Enabled/Disabled plus source-aware Inherit global/Override values for timing, PR approval, and launch. Frontend Open in browser and CLI Run command override shared launch, preserving existing explicit choices. Clearing an override follows Global; only resolved rules for enabled types reach agent instructions. Frontend has a direct Implement before approval Yes/No/Not set choice, Design approach, Fast reload/Build and browser opening. CLI has install/repo method and Run command Automatically/Only when I ask; it has no implementation-approval control. Disabled submenus stay editable and retain settings. Shared pickers separate a leading unset/inherit choice with a blank nonselectable rail row; binary toggles have no unset choice. Tests embeds Test runners beside When to run tests; the CI choice is On PR CI. Nested runner edits preserve prior/later behavior edits in the same transaction. Back restores focus and pending choices. No explanatory preambles. Ctrl+C with pending changes offers Keep editing (default), Review and save, or Discard changes and exit from hubs, nested menus and save review. Preserve completed nested edits. Review and save uses the normal final review; repeated interruption never implicitly saves/discards. No edits exits immediately with status 130. Restore terminal state; external editors and post-save actions retain their own behavior. Use multiple models starts with Use one model for all work as an exclusive empty-key reset in the shared checklist, separated from stage choices. Space selects it and clears Planning/Implementation/Review; selecting any stage clears it and clearing the last stage restores it. Enter applies the marks; translate the reset to no active stages. One-model mode exposes session model/effort controls while retaining all saved stage values and other preferences. Cancel and unchanged selections create no repository override or write. Hub and catalogue assignment labels show Global default, Assigned to N repos or Not assigned, with Disabled appended for a disabled definition. Count only explicit non-excluded named assignments, not inline copies or implicit global inheritance. The workflow row is Model, with an Inherit default choice showing the top-level tool model. Reasoning effort follows the same source-aware wording. An explicit workflow model leaves omitted effort to native settings; unverified native values say Tool setting, without treating catalogue metadata as effective configuration. Permissions displays the preset alone and opens choices directly for the selected tool. Save review compares against the transaction baseline and displays only changed fields, text lines, runner fields and assignments with before/after values. Preserve visibility of additions, removals, default changes, exclusions and initial activation; omit unchanged workflows and instruction text. Start with Codex/Claude/Cursor, then that tool catalogue. Tool rows show Global and the current registered repository assignment, including linked worktrees, without changing edit scope or command scope inference. Each tool has independent named definitions, default and repository assignments. Navigation never changes launch tool preferences. Scoped editors merge into one staged document and immutable baseline, including Ctrl+C and runner edits; review shows only changed tool scopes. Models come from the selected CLI. Cursor model IDs contain parameters; no separate effort or permission picker. Unavailable discovery retains Inherit and custom IDs. Existing root data remains Codex; optional tools.claude and tools.cursor store complete catalogues. Shared legacy Claude preferences migrate in memory and freeze on save, with Codex stages removed and explicit Claude defaults/permissions plus delivery/text/runners retained. Reads never write. Native rendering and launch/resume resolve tool before repository scope. Save changes appears once as the persistent footer action with the s shortcut, never as a duplicate menu row. The shortcut opens the existing final diff review. Tool Back navigation restores focus; reverting a newly materialized tool scope restores its absent baseline without discarding other tools edits. The parent Local preview settings are labeled Global, not Defaults. Use concise submenu summaries and open Frontend/CLI to inspect details; inherited preview choices explicitly say Inherit global. Agent review before PR names the reviewing actor; it remains an Enabled/Disabled toggle."
     }
   },
   "display_schemas": {

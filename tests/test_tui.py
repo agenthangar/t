@@ -20,6 +20,30 @@ def make_ui(t, keys, width=80, height=24):
     return ui
 
 
+@pytest.mark.parametrize('width', [80, 160, 240])
+@pytest.mark.parametrize('selected', [False, True])
+def test_shared_row_uses_available_width_for_full_labels(t_mod, width, selected):
+    ui = make_ui(t_mod, [], width)
+    label = 'Preview approval before PR'
+    lines = ui.row(label, 'Required', selected=selected, label_width=len(label))
+    plain = '\n'.join(t_mod._ANSI_RE.sub('', line) for line in lines)
+    assert label in plain and 'Required' in plain
+    assert all(t_mod._vis_len(line) <= width for line in lines)
+
+
+@pytest.mark.parametrize('width', [32, 44, 60, 80, 160])
+@pytest.mark.parametrize('selected', [False, True])
+def test_shared_row_bounds_long_labels_and_retains_values(t_mod, width, selected):
+    ui = make_ui(t_mod, [], width)
+    lines = ui.row('Long setting label ' * 20, 'Required', selected=selected, mark='◼', label_width=380)
+    plain = '\n'.join(t_mod._ANSI_RE.sub('', line) for line in lines)
+    assert 'Required' in plain
+    assert ('▸' in plain) is selected
+    assert '◼' in plain
+    assert len(lines) == (2 if width < 60 else 1)
+    assert all(t_mod._vis_len(line) <= width for line in lines)
+
+
 @pytest.mark.parametrize('width,height', [(80, 24), (44, 20), (32, 12), (20, 8)])
 @pytest.mark.parametrize('multi', [False, True])
 def test_shared_picker_keeps_focus_and_primary_action_visible(t_mod, width, height, multi):
@@ -122,14 +146,14 @@ def test_config_review_saves_with_enter_or_y(t_mod, monkeypatch, tmp_path, save_
     assert not any('no binding' in line for line in review)
 
 
-def test_dirty_config_ctrl_c_aborts_and_restores_terminal(t_mod, monkeypatch, tmp_path):
+def test_dirty_config_ctrl_c_offers_discard_and_restores_terminal(t_mod, monkeypatch, tmp_path):
     local = tmp_path / 'local.zsh'
     local.write_text('# keep me\n')
     monkeypatch.setenv('T_LOCAL_RC', str(local))
     monkeypatch.setattr(t_mod, 'CONFIG', str(tmp_path / 'config.sh'))
     monkeypatch.setattr(t_mod.sys.stdin, 'isatty', lambda: True)
     monkeypatch.setattr(t_mod.sys.stdout, 'isatty', lambda: True)
-    ui = make_ui(t_mod, ['j', 'enter', 'j', 'enter', 'abort'])
+    ui = make_ui(t_mod, ['j', 'enter', 'j', 'enter', 'abort', 'j', 'j', 'enter'])
     monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
     monkeypatch.setattr(t_mod, '_config_write',
                         lambda *a: pytest.fail('aborted config wrote changes'))
@@ -140,6 +164,8 @@ def test_dirty_config_ctrl_c_aborts_and_restores_terminal(t_mod, monkeypatch, tm
     cfg.open_mode_default = 'cli'
     assert t_mod.cmd_config(cfg, t_mod.build_parser().parse_args(['config'])) == 130
     assert ui.restored
+    assert any('unsaved' in line for frame in ui.frames for line in frame)
+    assert any('Discard changes and exit' in line for frame in ui.frames for line in frame)
     assert local.read_text() == '# keep me\n'
 
 
@@ -164,3 +190,88 @@ def test_picker_ctrl_c_cancels_without_back_callback(t_mod):
                 back_label='cancel')
     assert snapshots == []
     assert any('q/esc cancel' in line for frame in ui.frames for line in frame)
+
+
+@pytest.mark.parametrize('sections', [{}, {'frontend': 'Change types'}])
+def test_unset_choice_has_one_nonselectable_gap_before_other_choices(t_mod, sections):
+    ui = make_ui(t_mod, ['j', 'enter'])
+    frames = []
+    ui.frame = lambda label, display, cur, *args: frames.append((list(display), cur))
+    assert ui.pick('Applies to', [('', 'Not set'), ('frontend', 'Frontend'), ('cli', 'CLI')],
+                   sections=sections) == 'frontend'
+    display, selected = frames[-1]
+    first_end = max(i for i, (_, index) in enumerate(display) if index == 0)
+    second_start = min(i for i, (_, index) in enumerate(display) if index == 1)
+    gap = display[first_end + 1:second_start]
+    assert selected == 1
+    assert sum(line == ui.rail and index is None for line, index in gap) == 1
+    assert all(index is None for _, index in gap)
+    assert len(gap) == (2 if sections else 1)
+
+
+@pytest.mark.parametrize('marks,expected', [(None, ['']), ({0}, ['']), ({1}, ['frontend']),
+    ({0, 1}, ['frontend']), ({1, 2}, ['frontend', 'cli'])])
+def test_checklist_unset_initialization_normalizes_marks_by_index(t_mod, marks, expected):
+    ui = make_ui(t_mod, ['enter'])
+    assert ui.pick('Applies to', [('', 'Not set'), ('frontend', 'Frontend'), ('cli', 'CLI')],
+                   multi=True, marked=marks, empty_choice='') == expected
+
+
+@pytest.mark.parametrize('keys,marks,expected', [
+    (['space', 'enter'], {1, 2}, ['']),
+    (['j', 'space', 'enter'], {0}, ['frontend']),
+    (['j', 'space', 'enter'], {1}, ['']),
+    (['j', 'space', 'space', 'enter'], {0}, ['frontend', 'cli']),
+    (['space', 'enter'], {0}, ['']),
+])
+def test_checklist_unset_reset_and_real_choices_are_exclusive(t_mod, keys, marks, expected):
+    ui = make_ui(t_mod, keys)
+    assert ui.pick('Applies to', [('', 'Not set'), ('frontend', 'Frontend'), ('cli', 'CLI')],
+                   multi=True, marked=marks, empty_choice='') == expected
+
+
+def test_checklist_without_empty_choice_preserves_independent_marks(t_mod):
+    ui = make_ui(t_mod, ['space', 'enter'])
+    assert ui.pick('Legacy checklist', [('', 'Optional'), ('a', 'Alpha')],
+                   multi=True, marked={1}) == ['', 'a']
+    ui = make_ui(t_mod, ['enter'])
+    assert ui.pick('No reset row', [('a', 'Alpha')], multi=True, empty_choice='') == []
+
+
+@pytest.mark.parametrize('key', ['q', 'esc', 'abort'])
+def test_unset_checklist_cancel_does_not_mutate_caller_marks(t_mod, key):
+    marks = {1, 2}
+    ui = make_ui(t_mod, ['space', key])
+    snapshots = []
+    if key == 'abort':
+        with pytest.raises(KeyboardInterrupt):
+            ui.pick('Applies to', [('', 'Not set'), ('frontend', 'Frontend'), ('cli', 'CLI')],
+                    multi=True, marked=marks, empty_choice='', on_back=snapshots.append)
+        assert snapshots == []
+    else:
+        assert ui.pick('Applies to', [('', 'Not set'), ('frontend', 'Frontend'), ('cli', 'CLI')],
+                       multi=True, marked=marks, empty_choice='', on_back=snapshots.append) is None
+        assert snapshots == [['']]
+    assert marks == {1, 2}
+
+
+@pytest.mark.parametrize('width,height', [(80, 24), (32, 12), (20, 8)])
+def test_unset_gap_checklist_keeps_viewport_focus_and_action_visible(t_mod, width, height):
+    ui = make_ui(t_mod, ['j'] * 10 + ['k'] * 10 + ['enter'], width, height)
+    rows = [('', 'Not set')] + [(str(i), 'Long choice label ' + str(i)) for i in range(10)]
+    assert ui.pick('Applies to', rows, multi=True, empty_choice='',
+                   sections={'0': 'Change types'}, primary=('enter', 'SELECT', '')) == ['']
+    for frame in ui.frames:
+        assert sum(t_mod._term_rows(line, width) for line in frame) <= height
+        assert any('▸' in line for line in frame)
+        assert any('SELECT' in line for line in frame)
+        assert all(t_mod._vis_len(line) <= width for line in frame)
+
+
+@pytest.mark.parametrize('width,key', [(20, '↵'), (32, 'enter')])
+def test_primary_enter_hint_preserves_action_on_narrow_terminal(t_mod, width, key):
+    ui = make_ui(t_mod, [], width, 8)
+    _, footer = ui.chrome('Choose', 'enter select', primary=('enter', 'SELECT', ''))
+    plain = '\n'.join(t_mod._ANSI_RE.sub('', line) for line in footer)
+    assert key in plain and 'SELECT' in plain
+    assert all(t_mod._vis_len(line) <= width for line in footer)

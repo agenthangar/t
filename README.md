@@ -960,24 +960,82 @@ unchanged. Sessions support `main`, `master`, and custom default branches throug
 `origin/HEAD`. Checkout warns if no fetched origin default can be resolved.
 
 Configure named staged workflows in `t config open` → **Workflows**, or use
-`t workflow` for command help. The former `t config workflow` routes remain
-compatibility aliases. Choose
-**Use recommended defaults** to activate planning with `gpt-6-astra`, implementation
+`t workflow` for the editor (`t help workflow` for command help). The former `t config workflow` routes remain
+compatibility aliases.
+Start with **Codex**, **Claude**, or **Cursor**, then choose a workflow to edit.
+Each tool has its own workflows, default, and repository assignments. Browsing
+a tool's settings does not change which tool starts sessions; the default tool
+and repository tool overrides remain in `t config`.
+Existing workflows stay under Codex. Previously shared Claude preferences get
+an independent copy, retaining Claude model defaults, permissions, delivery
+preferences, instructions and assignments, with Codex model stages removed.
+New Claude and Cursor scopes start with one model and native defaults. Their
+model pickers query their own CLI; an unavailable catalogue still allows
+inheritance or a custom model ID.
+Workflow rows show **Global default**, **Assigned to N repos**, or **Not assigned**.
+Repository counts include explicit, non-excluded assignments; a disabled definition
+is marked **Disabled**. Being enabled does not mean a workflow is assigned.
+Choose **Use recommended defaults** to activate planning with `gpt-6-astra`, implementation
 with `gpt-6.1-sol`, and review with `gpt-6-astra`. **Edit default workflow** and
 **Edit named workflow** give each stage separate model and reasoning-effort controls.
-**Workflow** enables or suppresses the entire workflow. **Model stages** separately
-turns staged model selection and delegation on or off while retaining the selected
-models and efforts. Markdown and behavior preferences still apply when only model
-stages are off.
+All three stages offer **Agent selects by task**. Before delegating, the agent
+chooses a concrete supported reasoning effort for that stage's worker.
+Task-based Implementation uses a bounded implementation worker; the main session
+coordinates the work and follows up on its results. The main session's fixed
+launch effort is shown separately and does not determine the worker's effort.
+An explicit Implementation effort keeps implementation in the main session at
+that level. Planning and Review use workers when selected. **Pull requests →
+Agent review before PR → Disabled** disables the pre-PR review step, including a
+selected review worker, while retaining its model and effort settings.
+These are delegation instructions for the agent;
+`t` does not change a running turn's effort or run its own task classifier.
+Reasoning pickers group **Agent selects by task** under **Automatic**, and
+explicit levels under **Fixed effort**. These headings are not selectable;
+reopening a picker preserves its selected effort.
+**Use this workflow** enables or suppresses the entire workflow. **Use multiple models**
+opens **Use one model for all work**, followed by checkboxes for **Planning**,
+**Implementation**, and **Review**. Mark the one-model choice with Space to clear
+all separate stages, then press Enter and save. Marking any stage clears the
+one-model choice; clearing the final stage selects it again.
+Unchecked Planning and Review use the main model;
+skipping review is a separate choice under Pull requests.
+Leave Implementation unchecked to use the session's default model and reasoning effort,
+which remain editable alongside any selected stages. Separate stage choices stay
+saved when unchecked. One-model mode uses the editable session model and effort.
+**Model** chooses a model for this workflow. **Inherit default** uses the tool's
+top-level `t config` model and displays that model beside the choice.
+**Reasoning effort** likewise shows a chosen level or the inherited setting.
+When the workflow chooses its own model and leaves effort unset, the tool's
+native effort setting applies. Unavailable native values are labeled **Tool setting**.
+Markdown and behavior preferences still apply.
+**Permissions** opens the selected tool's permission choices directly and shows
+the selected preset, such as **Full access**, in the workflow menu. Codex offers **Ask for approval**, **Approve for me**, **Full access**,
+and **Read only**. Claude offers **Ask for approval**, **Approve edits**, **Auto**,
+**Full access**, and **Plan only**. **Not set** clears the workflow override.
+These choices apply on the next CLI start or resume in the workflow's scope;
+running sessions and native desktop launches keep their permissions. Explicit
+permission arguments take precedence. Saving a workflow does not rewrite native
+permission defaults or command allowlists.
+To apply different settings to one repository, create and edit a named workflow,
+then select it under **Repository assignments → your repository**.
+These defaults apply when starting or resuming a CLI session in that repository
+and its worktrees. Explicit launch arguments win; running turns keep their settings.
+Native desktop launches keep the application's model settings.
+Clearing a model uses the account's agent default. Choosing a model without an
+effort leaves effort selection to the native tool. Codex and Claude defaults are
+stored separately, and switching back to multiple models retains these choices.
 Model choices include the current and recommended values, a live Codex catalogue,
 a custom ID, and explicit refresh. Current, recommended and custom models remain
-usable offline. Changing a workflow model preserves its selected effort and does
-not change the agent's launch defaults. Planning and implementation accept `auto`
-or an explicit effort (`minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `ultra`);
-review accepts an explicit effort or `one-level-lower`.
+usable offline. Changing a stage model preserves its selected effort. Saving the
+implementation model updates this workflow's next Codex launch/resume defaults;
+task-based implementation delegates a worker using that model at a chosen effort.
+Every stage accepts `auto` or an explicit effort (`minimal`, `low`, `medium`,
+`high`, `xhigh`, `max`, `ultra`). Older saved `one-level-lower` values for
+Implementation and Review now behave as `auto` without rewriting settings on read.
 
-Open **t config → Test runners** to choose the global default, a named workflow,
-or a registered repository. Use its runner settings to test current uncommitted work on
+Open **t workflow → PRs, previews & tests → Tests → Test runners** to configure
+runners for the workflow you are editing. **t config → Test runners** also lets you
+choose a global default, named workflow, or registered repository. Use runner settings to test current uncommitted work on
 managed GitHub-hosted Linux/macOS machines or a registered SSH host. One immutable
 snapshot serves every target; source files need no commit or push. Bootstrap a
 dedicated private GitHub broker explicitly, then run:
@@ -1003,38 +1061,107 @@ t workflow inherit --repo api       # remove api's override; follow global
 t workflow list --all               # list named definitions and usage
 ```
 
-Repository settings offer **Choose named workflow**, **Customize only this
-repository**, **Exclude workflow for this repository**, and **Use global default**.
-Editing a named definition affects all its consumers; a repository customization
-is an independent inline copy. Exclusion retains the source and suppresses all
-model stages, behavior preferences and Markdown instructions. Selecting a named workflow clears
-exclusion. **Resume workflow for this repository** restores the retained source,
-including repository-only customizations. Menu choices stay pending until
+Repository settings open one workflow selector: **Inherit global**, the named
+workflows, or **Disabled**. Selecting a named workflow applies that definition;
+editing it affects all its consumers. Disabled retains the previous source and
+suppresses workflow instructions. Existing custom repository policies remain
+available as **Current custom workflow** without exposing another editor here.
+The tools screen shows the global choice and the current registered repository's
+effective assignment, including linked worktrees, for example
+**Global: standard · t: fast**. This summary does not change the editing scope.
+Menu choices stay pending until
 **Save changes**; discard publishes nothing.
 
-**Behavior preferences** provides optional choices within each workflow:
+**PRs, previews & tests** provides optional choices within each workflow:
 
 | Setting | Choices |
 | --- | --- |
-| Worktree | Reuse an appropriate isolated worktree or create one before implementation; use the current worktree subject to repository safety rules |
-| Local preview | Run the available preview and inspect UI changes; preview only when explicitly requested unless higher-priority instructions require it |
-| Validation | Relevant documented checks; full documented validation suite |
-| Delivery | Leave changes uncommitted for review; commit, push and open a PR; enable supported, authorized auto-merge under repository policy and monitor completion |
+| Pull requests → Agent review before PR | Enabled or Disabled |
+| Pull requests → When to open PR | Automatically when ready or Only when I ask |
+| Pull requests → PR type / Merge PR | Draft or ready; Automerge or When I ask |
+| Local preview → Global → Preview timing | Automatically when ready or Only when I ask |
+| Local preview → Global → Approval before PR | Wait for my approval or No approval needed |
+| Local preview → Global → Open/run preview | Automatically or Only when I ask |
+| Local preview → Frontend → Preview | Enabled or Disabled |
+| Local preview → Frontend → Preview timing | Inherit global or choose a timing override |
+| Local preview → Frontend → Approval before PR | Inherit global or choose an approval override |
+| Local preview → Frontend → Implement before approval | Yes or No |
+| Local preview → Frontend → Design approach | Separate HTML prototype or In the app |
+| Local preview → Frontend → Preview method | Fast reload or Build |
+| Local preview → Frontend → Open in browser | Inherit global, Automatically, or Only when I ask |
+| Local preview → CLI → Preview | Enabled or Disabled |
+| Local preview → CLI → Preview timing | Inherit global or choose a timing override |
+| Local preview → CLI → Approval before PR | Inherit global or choose an approval override |
+| Local preview → CLI → Preview method | Install locally or Run from the repo |
+| Local preview → CLI → Run command | Inherit global, Automatically, or Only when I ask |
+| Tests → When to run tests | Local during work, before preview, before PR, or On PR CI |
+| Tests → Test runners | Configure targets, defaults, and artifacts |
 
-Every setting also offers **No preference**, which removes that choice without
-instructing the agent to do its opposite. No behavior is selected by default.
+Other preference choices also offer **Not set**, visually separated from the other choices,
+which removes that choice without instructing the agent to do its opposite.
+An unset preference leaves the decision to your existing instructions.
 Preview and validation instructions require accurate reporting of limitations and
 results. Opening a PR alone does not authorize a merge. These preferences guide
 agents; they do not enforce execution or grant permission beyond the task.
 
+**Agent review before PR → Disabled** lets the agent proceed from implementation
+and the selected tests/previews to the configured PR-opening action without a
+separate code-review pass. It suppresses review in the main conversation and a
+selected review worker. **Enabled** requires the agent to review the diff
+and validation before opening the PR. The model-stage selection decides who
+reviews when review is enabled. This is an Enabled/Disabled toggle, defaulting to
+Enabled; there is no Not set choice.
+Skipping this agent review does not change required repository approvals, checks,
+or explicit task instructions. To open a PR automatically without the review
+pass, select **Disabled** and **When to open PR → Automatically when ready**.
+
+Set **Preview timing**, **Approval before PR**, and **Open/run preview** in
+Local preview's **Global** section, above the Frontend and CLI submenus.
+Each submenu inherits these choices unless you choose an override. Its rows show the source and resolved value,
+such as **Inherit global · Automatically when ready**. Choosing Inherit global
+removes the override; future parent changes then apply. The parent menu keeps
+submenu summaries short; open a submenu for its design and launch settings.
+**Approval before PR** controls whether the agent waits for your approval of
+the preview before pushing or opening a PR. **Open/run preview** opens a ready
+frontend preview in the browser or runs the prepared CLI command; the child
+controls are named **Open in browser** and **Run command**. Existing explicit
+browser and command choices remain overrides when Global changes.
+**Frontend → Implement before approval: No** requires a lightweight frontend
+preview and approval before substantial implementation. Work needed to create
+that preview is allowed. **Yes** lets frontend implementation proceed without
+that approval gate. CLI previews do not impose an implementation approval gate;
+they let you try the working command. PR opening and
+merging remain controlled by their separate settings.
+**Local preview** contains **Frontend** and **CLI** submenus, each with its own
+Enabled/Disabled setting. Both remain accessible so you can re-enable them.
+Resolved preview preferences apply only to enabled types. Disabling a type
+retains its settings and suppresses its design and preview guidance; disabling
+both suppresses the shared preview rules too. Enabling alone does not start a preview.
+Frontend contains design approach, preview method, and browser
+opening. CLI contains the local install/run method and **Run command**. Choose
+**Automatically** to launch the project's supported preview command once the CLI
+preview is prepared, or **Only when I ask** to leave the command ready to run on
+request. The method determines whether to use the development installation or
+run from the repo. Interactive commands need a supported interactive terminal;
+if one is unavailable, the agent reports that and provides the command.
+Browser opening and CLI command launch do not change
+the resolved timing. An automatic launch waits
+until a request-only preview has been requested and prepared. Disabling CLI
+preview suppresses command-launch guidance while retaining the choice.
+For frontend work with Implement before approval set to No and automatic timing,
+prepare the initial lightweight preview before substantial implementation.
+With request-only timing, wait for the frontend preview request and subsequent approval.
+
 The host instruction hierarchy stays unchanged: explicit task instructions and
 repository rules remain authoritative. A selected repository assignment or inline
-policy replaces the global workflow rather than combining with it. Within that
+policy replaces the global workflow rather than combining with it. Repository
+customization creates a copy; later edits to the original named workflow do not
+flow into it. Within that
 workflow, custom Markdown takes precedence over behavior preferences, which take
 precedence over generic model-stage guidance. `t` preserves Markdown as written;
 it does not try to interpret or detect conflicting prose.
 
-Use **Instructions · edit Markdown** inside a workflow to write ordinary headings,
+Use **Text instructions** inside a workflow to write ordinary headings,
 bullets and prose in your editor. No JSON is needed. The equivalent commands are:
 
 ```sh
@@ -1047,6 +1174,9 @@ Omitting both `NAME` and `--repo` selects the current global default. `show` pri
 only the original Markdown, including for an excluded repository. Editing with
 `--repo` creates a repository-only copy only when text actually changes; exclusion
 remains in effect. Named workflows carry their instructions when copied or assigned.
+Choose **Clear text instructions** to stage their removal, then save. Saving an
+empty file in the text editor also clears them. Discarding menu changes restores
+the saved text; clearing instructions preserves the other workflow settings.
 **Edit reusable instructions** still opens the separate `t profile edit` profile.
 
 The supplied public-repository issue-before-code rule is ordinary editable workflow
@@ -1074,20 +1204,54 @@ edits and unsuccessful editor exits publish nothing. Bare `t config edit` still
 edits local shell configuration.
 
 `t workflow list [--repo api]` prints scope, source, exclusion, model-stage
-state, behavior preferences, custom-text presence, precedence and the effective
-stage/model/effort table. Add `--json` for machine output. `--all` lists
+state, permissions, work preferences, custom-text presence, precedence and the effective
+model settings. Single-model workflows show session defaults instead of inactive
+stage rows. Add `--json` for machine output. `--all` lists
 the named catalogue and usage; it cannot combine with `--repo`. A registered
 `--repo` alias explicitly selects a repository without checkout inference or a
 picker. Unsaved accounts show recommended defaults until explicitly activated.
 Preferences live in `${XDG_CONFIG_HOME:-~/.config}/t/workflow.json`. Existing v1
 preferences load as a `standard` named workflow and independent repository policies;
 reading or reinstalling preserves the original file. The next explicit change
-saves the v2 named-workflow format.
+saves the v3 named-workflow format.
 Existing v2 policies also remain valid without the optional `stages_enabled`
 boolean (defaults to true) or `behaviors` object (defaults to no preferences).
-Advanced JSON accepts `worktree: isolated|current`, `preview: ui_changes|on_request`,
-`validation: relevant|full`, and `delivery: review|pull_request|auto_merge` inside
-`behaviors`; unknown keys and values are rejected before any write.
+Optional `model_stages` selects any nonempty combination of `planning`,
+`implementation`, and `review`. Deselecting all stages sets
+`stages_enabled=false` while retaining the saved selection. Legacy
+`separate_stages` still selects planning/review helpers with Implementation active;
+old settings keep their behavior and reads never rewrite them.
+The optional `session_defaults` object stores `codex` and `claude` model/effort
+defaults when Implementation is unchecked or all stages are off. Optional `permissions` maps `codex` to `ask`,
+`auto`, `full`, or `read_only`, and `claude` to `manual`, `acceptEdits`, `auto`,
+`bypassPermissions`, or `plan`. Omitted agents keep native permission defaults;
+permissions apply independently of model stages and are suppressed when the
+workflow is disabled or excluded. Inside `behaviors`, independent keys are
+`pr_review`, `pr_open`, `pr_state`, `pr_merge`, `frontend_enabled`, `cli_enabled`, `local_preview`, `cli_preview`, `cli_launch`,
+`frontend_implement_before_approval`, `frontend_design`, `frontend_preview`, `frontend_browser`, and `test_timing`.
+`pr_review` accepts `review` (Enabled) or `skip` (Disabled); omission means Enabled
+without materializing a stored value on read or an unchanged selection.
+Skipping review retains the saved model-stage selection and reviewer settings.
+`frontend_implement_before_approval` accepts `yes` or `no` directly.
+Optional `frontend_preview_timing` / `cli_preview_timing` override `local_preview`.
+Missing timing overrides inherit; they do not copy the current parent value.
+Legacy `implement_before_approval` resolves into the frontend-only setting when
+it is absent. Older `preview_approval` / `design_approval` also resolve there:
+required maps to no, and not-required or continue maps to yes. Explicit frontend
+values win. Retired `cli_implement_before_approval` is accepted in saved JSON but
+has no effect. Reading older configuration does not rewrite it; clearing the
+frontend choice must not restore retired aliases.
+`frontend_enabled` and `cli_enabled` accept `enabled` or `disabled` independently.
+Each explicit setting overrides the legacy `preview_target` (`frontend`, `cli`,
+or `both`). Without either setting or a legacy target, both types are enabled.
+Legacy targets remain readable without rewriting saved configuration.
+`frontend_browser` accepts `automatic` or `on_request`; omission leaves browser
+opening unspecified. `cli_launch` accepts the same values for running the prepared
+CLI preview command; omission preserves existing command guidance. Clearing it
+leaves the preview method and timing intact.
+The editor presents supported choices. Legacy `worktree`, `preview`,
+`validation`, and `delivery` fields remain readable; unknown keys or values are
+rejected before any write.
 Hidden `t config show --workflow` and `t config edit --workflow` compatibility
 forms remain available; the former retains its JSON output.
 Saving synchronizes a separate managed block in Codex's `AGENTS.md` (and existing
@@ -1095,12 +1259,18 @@ nonempty `AGENTS.override.md`) and Claude's `CLAUDE.md`, honoring `CODEX_HOME` a
 `CLAUDE_CONFIG_DIR`. Personal prose and t's public-issue block are preserved;
 malformed managed blocks, symlinks, and concurrent edits are refused. Repository
 overrides follow the canonical checkout and its linked worktrees, including new
-worktrees. These agent instructions apply in terminal and desktop sessions; t
-does not switch models or enforce their execution. Task instructions and
+worktrees. These agent instructions apply in terminal and desktop sessions;
+stage delegation remains guidance. Saved workflow settings select models at
+supported CLI launch/resume boundaries, without switching active turns. Task instructions and
 repository rules remain authoritative. Reinstalling refreshes saved workflows
 without activating the defaults for other accounts.
 Existing sessions must reload the updated instructions, or start a new session,
 before relying on a changed workflow policy.
+
+Explicit Codex model/effort changes in `t config` also update those fields in
+native `config.toml`, preserving speed and other settings. Existing app
+conversations may retain their selected model; saving defaults does not confirm
+that a running conversation adopted them.
 
 For preferred agent instructions, run `t profile init` to create an editable
 profile at `${XDG_CONFIG_HOME:-~/.config}/t/instructions.md`, then
@@ -1293,6 +1463,11 @@ Use a matching home-relative repository layout on machines that exchange work.
 No SSH server, credentials, or network tunnel is provisioned by t.
 
 ### Permissions and folder trust
+
+Use **t workflow → Permissions** for permissions scoped to a named workflow or
+repository. Those choices affect CLI launches and resumes through `t`.
+Codex presets use the native sandbox, approval-policy and reviewer settings
+described in the [official OpenAI documentation](https://learn.chatgpt.com/docs/sandboxing).
 
 Installing t preserves existing agent choices. Automatic folder trust and the
 maintainer's personal permission defaults are not enabled for a standalone install.
@@ -1516,18 +1691,54 @@ package identities, unknown coverage, local notices and OSV request metadata.
 
 Workflow changes automatically publish native instructions and attempt bounded
 propagation to supported running sessions and registered hosts. Inspect status with
-`t workflow list`; retry pending work with `t workflow sync`.
+`t workflow list`. Later saves and session starts retry pending updates automatically.
 Live instruction reload and current-turn model changes cannot be verified or forced.
 See [the terminal contract](ui/README.md) for scope, retries and runtime limits.
 
 
 Run `t workflow` in a terminal to open the workflow editor. Choose a named
-workflow, edit its model steps, work and delivery choices, or text instructions,
+workflow under its CLI tool, edit its model steps, work and delivery choices, or text instructions,
 then review and save. Repository assignments and the global default share this
 transaction. Cancel leaves saved settings unchanged.
+Use the footer's **Save changes** action (`s`) to review pending edits. The
+workflow and config menus do not repeat it as a menu row.
+Explicit commands accept `--tool codex|claude|cursor`, for example
+`t workflow list --tool claude --all` and
+`t workflow instructions show --tool cursor --repo api`.
+Without `--tool`, commands use the configured default tool, or the selected
+repository's tool override when `--repo` is supplied.
+`t runners list`, `t runners edit` and `t runners runs start` accept the same
+`--tool` selector for that tool's test runners.
+Cursor workflows apply through `t`'s Cursor launch and resume paths. Model
+parameters belong in its model ID. For Git workspaces, `t` prepares an ignored
+`.cursor/rules/t-agent-workflow.mdc` containing only that workspace's policy.
+Direct `cursor-agent` launches and live attachments do not refresh this rule.
+Outside Git, configured Cursor launches apply model defaults and report that
+workspace instructions could not be installed.
+The save review shows only pending changes, grouped by workflow or repository,
+with previous and new values. Text edits show changed lines; unchanged workflows
+and unchanged instruction text are omitted.
+In both `t config` and `t workflow`, Ctrl+C with unsaved edits offers **Keep
+editing**, **Review and save**, or **Discard changes and exit**, including from
+nested menus. Review and save still shows the changes before writing them.
+With no pending changes, Ctrl+C exits immediately.
 
 `t workflow list` prints a read-only summary; `--all` lists named workflows and
-`--json` preserves machine output. Text instructions override the menu choices.
-Delivery choices include trying a local install or preview first, asking before
-pushing or opening a PR, a draft PR, a ready PR without merging, and authorized
-auto-merge. A design preview can also require feedback before implementation.
+`--json` preserves machine output. Text instructions override behavior preferences
+and model-stage guidance. **PRs, previews & tests** separates these decisions:
+
+| Group | Choices |
+| --- | --- |
+| Pull requests | Review Enabled/Disabled; open automatically or on instruction; create draft or ready; Automerge or When I ask. |
+| Local preview | Default for when to preview. |
+| Local preview → Frontend | Enabled/Disabled; inherit or override timing; implement before approval; standalone HTML or in-app design; Fast reload or Build; browser opening. |
+| Local preview → CLI | Enabled/Disabled; inherit or override timing; install locally or run from the repo; launch automatically or on request. |
+| Tests | When tests run, plus Test runners configuration. |
+
+**Not set** leaves a decision to your task, repository rules and text
+instructions. It does not inherit an individual value from the global workflow;
+**Use global default** changes the repository's whole workflow assignment.
+These preferences never bypass required checks. Selecting On PR CI avoids routine
+local test runs. Legacy saved choices remain readable and are converted into
+separate choices only when you edit them. Single-model launch defaults remain a
+separate setting from these instructions to the agent.

@@ -596,6 +596,12 @@ def install_cursor_hook():
     write_json(path, data)
 
 
+def cursor_launch(cwd, sid):
+    helper = __import__('runpy').run_path(str(ROOT / 'libexec/t_workflow_cursor.py'))
+    args = helper['prepare'](cwd)
+    return 'exec ' + shlex.join(['cursor-agent', '--resume=' + sid, *args])
+
+
 def cursor_resume(sid, cwd):
     if not UUID.fullmatch(sid) or not Path(cwd).is_dir():
         raise ValueError("Cursor recovery needs an exact chat ID and existing workspace")
@@ -628,7 +634,7 @@ def cursor_resume(sid, cwd):
             fields = line.strip().split(None, 1)
             if len(fields) == 2 and fields[0] not in known and cursor_process({"args": fields[1]}):
                 raise ValueError("a Cursor CLI has no verified current chat; close it before opening another")
-        launch = "exec cursor-agent --resume=" + shlex.quote(sid)
+        launch = cursor_launch(cwd, sid)
         result = run(["tmux", "new-session", "-d", "-s", session, "-c", cwd, "zsh", "-lic", launch])
         if result.returncode:
             raise ValueError(result.stderr.strip())
@@ -665,13 +671,15 @@ def _cursor_restart(target):
     previous = tmux(socket, "show-options", "-A", "-p", "-v", "-t", pane, "remain-on-exit")
     if previous.returncode or not current(target):
         raise ValueError("Cursor pane changed; no client was stopped")
+    launch = cursor_launch(target['cwd'], target['sid'])
+    if not current(target):
+        raise ValueError("Cursor owner changed while preparing workflow; no client was stopped")
     if tmux(socket, "set-option", "-p", "-t", pane, "remain-on-exit", "on").returncode:
         raise ValueError("could not reserve Cursor's pane")
     os.kill(pid, signal.SIGTERM)
     for _ in range(200):
         gone = not process(pid) or zombie(pid)
         if gone and tmux(socket, "display-message", "-p", "-t", pane, "#{pane_dead}").stdout.strip() == "1":
-            launch = "exec cursor-agent --resume=" + shlex.quote(target["sid"])
             result = tmux(socket, "respawn-pane", "-t", pane, "-c", target["cwd"], "zsh", "-lic", launch)
             if result.returncode:
                 raise ValueError(result.stderr.strip())
