@@ -373,12 +373,16 @@ repository IDs; names and directory basenames alone never establish equivalence.
 `t remote resume --all --host HOST` explicitly keeps this scope on the chosen host.
 An explicit or inferred locally registered repository resolves there by identity.
 
-After a cross-host saved selection, resume reconciles the latest durable source
-workspace association under conversation and workspace claims. It verifies repository,
+After a saved selection, local and cross-host resumes reconcile the latest durable
+source workspace association under conversation and workspace claims. It verifies repository,
 branch, generation and released ownership, checkpoints eligible outstanding code
 with normal Git hooks, and transfers the verified tip privately into a fresh safe
 destination. Safety or checkpoint refusals stop launch; unreachable or unsupported
 source helpers warn and retain the locally available revision and transcript path.
+A valid local source carries its current branch tip and checkpoints eligible tracked
+and nonignored untracked changes before allocating a new worktree. Missing or
+recycled local workspaces retain historical fallback without copying replacement
+files. Local transfers do not require a bundle or inherit the remote size limit.
 Lists, discovery and canceled selections never create checkpoints.
 
 Resume never invents a historical UI. Resume uses actual user-turn timestamps,
@@ -888,3 +892,14 @@ The old `config workflow runners` and `config workflow runs` routes remain hidde
 compatibility aliases, as do `workflow runners` and `workflow runs`. Config → Test runners chooses the current global default,
 a named workflow, or a registered repository explicitly; it shares staged workflow
 configuration and the existing review/save/discard flow, with no separate runner store.
+
+
+Bare `t workflow` in a terminal opens the shared RailUI workflow editor. Outside
+a terminal, or with `--help`, it prints group help without writes. `t workflow
+list` stays read-only and never opens the editor. The editor lists named workflows
+and repository assignments, stages all edits, and reviews before saving. Its
+work and delivery menu explains working folders, design previews, checks and
+where delivery stops. Text instructions have higher precedence than those
+choices. List output presents that precedence before choices and humanizes model
+reasoning; the named catalogue avoids repeating complete per-workflow blocks.
+The hidden `t config workflows` compatibility route opens the same editor.

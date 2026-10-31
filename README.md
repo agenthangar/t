@@ -308,6 +308,13 @@ stopping an owner or transferring files. This applies to saved cross-host resume
 and moves in either direction; same-host resume and remote attach stay unchanged.
 See [Codex remote connections](https://learn.chatgpt.com/docs/remote-connections#hand-off-a-chat-between-hosts).
 
+Selected local resumes also reconcile the original workspace before creating a new
+worktree. If it still belongs to the conversation, current commits and eligible
+uncommitted changes are carried forward, including nonignored untracked files.
+Outstanding changes are committed as a local checkpoint using normal Git hooks.
+Missing or recycled workspaces use the recorded historical revision instead;
+unsafe current sources stop the resume without losing their work.
+
 With t transfer, after selection, cross-host saved resume verifies the latest recorded workspace on the
 prior host, including its conversation, repository, branch and worktree generation.
 It carries the actual branch tip, including unpushed commits. Outstanding tracked,
@@ -1512,3 +1519,15 @@ propagation to supported running sessions and registered hosts. Inspect status w
 `t workflow list`; retry pending work with `t workflow sync`.
 Live instruction reload and current-turn model changes cannot be verified or forced.
 See [the terminal contract](ui/README.md) for scope, retries and runtime limits.
+
+
+Run `t workflow` in a terminal to open the workflow editor. Choose a named
+workflow, edit its model steps, work and delivery choices, or text instructions,
+then review and save. Repository assignments and the global default share this
+transaction. Cancel leaves saved settings unchanged.
+
+`t workflow list` prints a read-only summary; `--all` lists named workflows and
+`--json` preserves machine output. Text instructions override the menu choices.
+Delivery choices include trying a local install or preview first, asking before
+pushing or opening a PR, a draft PR, a ready PR without merging, and authorized
+auto-merge. A design preview can also require feedback before implementation.
