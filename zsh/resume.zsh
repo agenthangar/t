@@ -28,7 +28,7 @@ _t_resume_host_check() {
   [[ $owner == here && $destination == here ]] && return 0
   [[ $owner != here && $destination != here && $owner_target == "$destination_target" ]] && return 0
   local destination_hint=${_T_RESUME_DESTINATION_HOST:-$destination}
-  print -u2 -- "t session resume: $repo $slot is live on $owner; move it with: t remote move $repo $slot --from ${owner/here/local} --host $destination_hint"
+  print -u2 -- "t session resume: $repo $slot is live on $owner; move it with: t session move $repo $slot --from ${owner/here/local} --host $destination_hint"
   return 1
 }
 
@@ -3021,7 +3021,13 @@ _t_beam() {
   # origin (a dev slot) we kill-session it instead — see the two blocks below.
   local sid cwd self_move= agent=claude self_sid
   self_sid=$(_dev_self_sid)
-  if [[ -n $repo_arg && -n $slot_arg && -z $pick ]]; then
+  if [[ -n ${T_MOVE_EXPECT_ROW:-} ]]; then
+    local -a selected_fields=("${(@ps:\t:)T_MOVE_EXPECT_ROW}")
+    sid=$selected_fields[1]; cwd=$selected_fields[2]; agent=$selected_fields[7]
+    [[ $sid_arg == "$sid" && $agent == (claude|codex) ]] || {
+      print -u2 't session move: selected session changed or closed; select it again'; return 1;
+    }
+  elif [[ -n $repo_arg && -n $slot_arg && -z $pick ]]; then
     local slot=$slot_arg
     local session="dev-${repo_arg}-${slot}"
     tmux has-session -t "=$session:" 2>/dev/null || { echo "tbeam: no such session: $session" >&2; return 1; }
@@ -3078,7 +3084,7 @@ _t_beam() {
             $current_fields[3] == "$expected_fields[3]" && $current_fields[7] == "$agent" &&
             $current_fields[4] == (attached|detached) ]]; then matched=1; break; fi
     done
-    [[ -n $matched ]] || { print -u2 't remote move: selected session changed or closed; select it again'; return 1; }
+    [[ -n $matched ]] || { print -u2 't session move: selected session changed or closed; select it again'; return 1; }
   fi
   _t_handoff_check "$agent" here "$host" || return $?
   if _dev_app_slot_reserved "$cwd"; then

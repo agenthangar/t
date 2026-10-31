@@ -32,6 +32,7 @@ def test_every_public_route_and_alias_has_payload_free_title(t_mod):
         assert title is None or title == 't ' + ' '.join(route)
         alias_title = t_mod._command_title([*alias, 'secret;payload'])
         assert alias_title is None or 'secret;payload' not in alias_title
+    assert t_mod._command_title(['move', 'private-id']) == 't move'
     assert t_mod._command_title([]) == 't'
     assert t_mod._command_title(['unknown;payload']) == 't'
     assert t_mod._command_title(['hosts', 'run', 'mini', 'private-command']) == 't hosts run'

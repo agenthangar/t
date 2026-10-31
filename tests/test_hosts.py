@@ -39,10 +39,10 @@ def test_host_lifecycle_without_dotfiles(host_cli):
     assert run("hosts", "add", "mini", "chris@mini.local", "--default").returncode == 0
     assert json.loads(run("hosts", "list", "--json").stdout) == {
         "hosts": {"mini": "chris@mini.local"}, "default": "chris@mini.local"}
-    assert "default for session move" in run("hosts", "list").stdout
+    assert "default for legacy beam" in run("hosts", "list").stdout
     shown = run("hosts", "show", "mini")
     assert shown.returncode == 0 and "SSH target: chris@mini.local" in shown.stdout
-    assert "Default for session move: yes" in shown.stdout
+    assert "Default for legacy beam: yes" in shown.stdout
     assert run("hosts", "edit", "mini", "studio").returncode == 0
     assert run("hosts", "default").stdout == "mini  studio\n"
     assert run("hosts", "default", "--clear").returncode == 0

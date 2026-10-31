@@ -389,7 +389,7 @@ def test_remote_move_source_picker_keeps_reachable_candidates(zsh, tmp_path, loc
     picker.chmod(0o755)
     result = zsh(SCANS + r'''
       _dev_session_rows() { [[ $LOCAL_FAILURE == 0 ]]; }
-      _t_fzf_single() { print -u2 PICKER_OPENED; cat >&2; return 130; }
+      _t_fzf_multi() { print -u2 PICKER_OPENED; cat >&2; return 130; }
       ssh() { print -u2 UNEXPECTED_SSH; return 99; }
       _t_remote move api --host offline
     ''', _tty=True, LOCAL_FAILURE=str(int(local_failure)))

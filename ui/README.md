@@ -465,21 +465,20 @@ the existing guarded desktop handoff; live slots never substitute their current
 conversation. Remote owners, incompatible flags, unsupported agents, and multiple
 marks fail before launching. `--cli` explicitly selects the ordinary resume route.
 
-`session move` sends a current local CLI conversation through a shared single
-picker when no slot or conversation ID is supplied. It uses the session-list
-inventory and formatter, including attached and detached Claude/Codex sessions;
-saved history, unknown IDs, and desktop reservations are not candidates. A named
-repository or the current checkout scopes the picker; outside a checkout it
-shows all repositories, and `--all` widens the scope. Enter selects one exact
-conversation, worktree, and agent; recheck that identity before transfer.
-Esc/Ctrl-C cancels with 130 and an empty inventory is a successful no-op.
-Without a terminal/fzf, require an explicit target. Inside an agent, the implicit
-current conversation remains a direct action; `--pick` opens selection instead.
-Explicit slot/ID sends and `--from`/`--here` receives retain their guarded routes.
+`session move` selects current CLI conversations through the shared multi picker
+when no exact slot or conversation ID is supplied, including inside an agent.
+A named repository or current checkout scopes selection; outside a checkout it
+shows all repositories, and `--all` widens the scope. `--remote` adds registered
+remote sources. Select sessions first, then one destination host; `--host` supplies
+that destination explicitly. Esc/Ctrl-C cancels with 130 before starting work and
+an empty inventory is a successful no-op. Without a terminal/fzf, require explicit
+targets. Explicit slot/ID sends and `--from`/`--here` receives retain guarded routes.
+The legacy `beam` shortcut retains its implicit-current and default-host behavior.
 
 New worktree folders include the repository basename (`t/t-12`); numeric slot
 arguments, tmux identity, JSON slot fields and history associations are unchanged.
-`remote open`, `remote move`, and `remote resume` require explicit verbs.
+`remote open` and `remote resume` require explicit verbs; `remote move` remains
+a compatibility alias for `session move --remote`. `move` aliases `session move`.
 Host picker headings state the action: Open a session on which host?, Start a
 new session on which host? with `--new`, Resume saved work on which host?, and
 Move this session to which host?. Resume explains that it browses that host's
@@ -492,8 +491,15 @@ work. Missing selections require a terminal and fzf; scripts name their targets.
 An empty current-session inventory returns 0. Remote workers suppress nested
 automatic update prompts.
 
-`remote move` uses a single shared current-session picker over local and registered
-remote CLI owners, including attached sessions and excluding desktop/unknown IDs.
+`session move` and its `move` alias use the shared multi-selection picker of current
+local CLI owners; `-r`/`--remote` adds registered remote sources. `remote move` is
+a compatibility route with remote sources included. Selection always opens without
+an exact target, including inside an agent. Space/Tab marks sessions; Enter accepts
+marks or the focused row. Include attached and detached owners and exclude
+desktop reservations, saved history and unknown IDs. Select sessions first, then
+select one destination; explicitly named destinations skip the second picker.
+Multiple sessions move sequentially and detached. Stop on the first failure or
+cancellation and identify completed, failed and unattempted sessions.
 Repository scope uses home-relative checkout/worktree paths across hosts.
 If a named repository is absent locally, each remote source resolves the selector
 in its own registry; ambiguous selectors stop selection. A unique repo/slot match
@@ -501,9 +507,9 @@ goes directly to the destination-host picker when `--host` is omitted. Duplicate
 slot labels retain their host identity. Explicit source plus slot/ID bypasses the
 session picker; an explicit target without source resolves a unique snapshot or
 requires selection when ambiguous. Destination selection excludes every alias of
-the source target, and never silently chooses the default host. Recheck host, ID,
-path, label, agent and live ownership after both selections and on the source before
-stopping it. Failed scans or transfer steps fail closed. `session move --from A
+every selected source target, and never silently chooses the default host. Recheck host, ID,
+path, label, agent and live ownership for every selection after both pickers before
+any mutation, then again on each source before stopping it. Failed scans or transfer steps fail closed. `session move --from A
 --host B` delegates the whole guarded send to A over `zsh -lic`, using controller
 resolved SSH targets. The controller never briefly resumes the conversation.
 
@@ -539,7 +545,7 @@ from an empty picker; `--new` is explicit. `remote resume` selects saved history
 on the chosen host using the existing filtered resume picker. `session resume
 --host H` sends the selected saved history to H. Live rows attach only
 when their owner matches H (including host aliases); a mismatch gives an exact
-`remote move` instruction before any batch mutation. Desktop resume stays local.
+`session move` instruction before any batch mutation. Desktop resume stays local.
 
 Existing `t/12` folders and recorded conversation paths remain valid. Both
 layouts appear in list and navigation results. Ambiguous simultaneous layouts
