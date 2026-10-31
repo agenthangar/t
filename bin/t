@@ -2386,7 +2386,7 @@ def _workflow_model(ui, cfg, helper, stage, current):
         return picked
 
 
-def _workflow_behaviors_menu(ui, helper, policy):
+def _workflow_behaviors_menu(ui, helper, policy, runners=None):
     changed = copy.deepcopy(policy)
     focus = 0
     while True:
@@ -2394,40 +2394,49 @@ def _workflow_behaviors_menu(ui, helper, policy):
         rows = [(key, label + " ›") for key, (label, fields) in _WORKFLOW_SECTIONS.items()] + [("back", "Back")]
         values = {key: _workflow_section_summary(helper, key, behaviors)
                   for key, (label, fields) in _WORKFLOW_SECTIONS.items()}
+        if changed.get("runners"):
+            values["tests"] = (values["tests"] + "; " if values["tests"] != "Not set" else "") + "Test runners: " + helper["runners_summary"](changed)
         section = ui.pick("PRs, previews & tests", rows, values=values, default=focus)
         if section in (None, "back"):
             return changed
         focus = next(i for i, row in enumerate(rows) if row[0] == section)
-        changed = _workflow_behavior_section(ui, helper, changed, section)
+        changed = _workflow_behavior_section(ui, helper, changed, section, runners=runners)
 
 
-def _workflow_behavior_section(ui, helper, policy, section):
+def _workflow_behavior_section(ui, helper, policy, section, runners=None):
     changed, focus = copy.deepcopy(policy), 0
     while True:
         behaviors = helper["effective_behaviors"](changed.get("behaviors", {}))
         fields = _workflow_section_fields(section, behaviors)
         children = _workflow_section_children(section, behaviors)
         rows = [(key, _WORKFLOW_TOPICS[key][0]) for key in fields]
-        rows += [(key, _WORKFLOW_PREVIEW_SUBMENUS[key][0] + " ›") for key in children] + [("back", "Back")]
+        rows += [(key, _WORKFLOW_PREVIEW_SUBMENUS[key][0] + " ›") for key in children]
+        if section == "tests":
+            rows.append(("runners", "Test runners ›"))
+        rows.append(("back", "Back"))
         values = {key: _workflow_choice(helper, key, behaviors[key]) if key in behaviors else "Not set" for key in fields}
+        if section in _WORKFLOW_PREVIEW_SUBMENUS:
+            values[section + "_enabled"] = "Enabled" if helper["preview_enabled"](behaviors, section) else "Disabled"
+        if section == "tests":
+            values["runners"] = helper["runners_summary"](changed)
         values.update({key: _workflow_section_summary(helper, key, behaviors) for key in children})
         choice = ui.pick(_workflow_section_spec(section)[0], rows, values=values, default=min(focus, len(rows) - 1))
         if choice in (None, "back"):
             return changed
         focus = next(i for i, row in enumerate(rows) if row[0] == choice)
         if choice in children:
-            changed = _workflow_behavior_section(ui, helper, changed, choice)
+            changed = _workflow_behavior_section(ui, helper, changed, choice, runners=runners)
             continue
-        if choice == "preview_target":
-            current = behaviors.get(choice, "")
-            marked = {"": {0}, "frontend": {1}, "cli": {2}, "both": {1, 2}}[current]
-            picked = ui.pick("Applies to", [("", "Not set"), ("frontend", "Frontend"), ("cli", "CLI")],
-                             multi=True, marked=marked, default=min(marked), empty_choice="")
-            if picked is not None:
-                selected = ("" if not picked or "" in picked else "both" if "frontend" in picked and "cli" in picked
-                            else "frontend" if "frontend" in picked else "cli")
-                if selected != current:
-                    changed = helper["update_behavior"](changed, choice, selected)
+        if choice == "runners":
+            if runners:
+                changed = runners(changed)
+            continue
+        if choice in ("frontend_enabled", "cli_enabled"):
+            current = "enabled" if helper["preview_enabled"](behaviors, section) else "disabled"
+            picked = ui.pick(_workflow_section_spec(section)[0] + " preview", [("enabled", "Enabled"), ("disabled", "Disabled")],
+                             default=0 if current == "enabled" else 1)
+            if picked is not None and picked != current:
+                changed = helper["update_behavior"](changed, choice, picked)
             continue
         spec = helper["BEHAVIORS"][choice]
         options = [("", "Not set")] + [(key, _workflow_choice(helper, choice, key)) for key in spec["choices"]
@@ -2506,7 +2515,7 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
             rows += [("main_model", agent.title() + " default model"), ("main_effort", "Reasoning effort")]
         rows.append(("behaviors", "PRs, previews & tests ›"))
         rows.append(("permissions", "Permissions ›"))
-        rows += [("runners", "Test runners"), ("instructions", "Text instructions")]
+        rows += [("instructions", "Text instructions")]
         if policy.get("instructions"):
             rows.append(("clear_instructions", "Clear text instructions"))
         rows += [("edit", "Advanced JSON editor"), ("back", "Back")]
@@ -2523,7 +2532,6 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
         values["behaviors"] = f"{count} choices set" if count else "Not set"
         values["instructions"] = (f"text · {len(policy['instructions'].splitlines())} lines · Enter to edit"
                                   if policy.get("instructions") else "Add text instructions")
-        values["runners"] = helper["runners_summary"](policy)
         values["permissions"] = _workflow_permission_summary(helper, policy)
         choice = ui.pick(title, rows, values=values)
         if choice in (None, "back"):
@@ -2542,14 +2550,14 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
         elif choice in ("main_model", "main_effort"):
             changed = _workflow_session_setting(ui, cfg, policy, agent, choice.removeprefix("main_"))
         elif choice == "behaviors":
-            changed = _workflow_behaviors_menu(ui, helper, policy)
+            changed = _workflow_behaviors_menu(ui, helper, policy,
+                runners=lambda current: _workflow_behavior_runners(ui, cfg, helper, current, repository, name))
+            document = cfg._workflow_document
+            policy = (copy.deepcopy(document["workflows"][name]) if name else helper["resolved"](document, repository))
         elif choice == "permissions":
             changed = _workflow_permissions_menu(ui, helper, policy)
         elif choice == "clear_instructions":
             changed["instructions"] = ""
-        elif choice == "runners":
-            _workflow_runners_menu(ui, cfg, helper, repository, name)
-            continue
         elif choice in ("edit", "instructions"):
             ui.restore()
             try:
@@ -2582,6 +2590,15 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
                 changed[stage][field] = picked
         if changed != policy:
             cfg._workflow_document = helper["update"](document, changed, repository, name)
+
+
+def _workflow_behavior_runners(ui, cfg, helper, policy, repository=None, name=None):
+    current = (cfg._workflow_document["workflows"][name] if name else helper["resolved"](cfg._workflow_document, repository))
+    if policy != current:
+        cfg._workflow_document = helper["update"](cfg._workflow_document, policy, repository, name)
+    _workflow_runners_menu(ui, cfg, helper, repository, name)
+    return (copy.deepcopy(cfg._workflow_document["workflows"][name]) if name else
+            helper["resolved"](cfg._workflow_document, repository))
 
 
 def _workflow_runners_menu(ui, cfg, helper, repository=None, name=None):
@@ -2791,7 +2808,7 @@ def _workflow_review(document):
         if helper["model_stages"](policy):
             lines.extend(f"  {title}: {model} · {effort} · {source}"
                          for title, model, effort, source in _workflow_model_rows(helper, policy))
-        lines.append("  Test runners: " + helper["runners_summary"](policy))
+        lines.append("  Tests · Test runners: " + helper["runners_summary"](policy))
         if policy.get("instructions"):
             lines.extend("  " + line for line in policy["instructions"].splitlines())
     for path, entry in sorted(document["repositories"].items()):
@@ -2803,7 +2820,7 @@ def _workflow_review(document):
             if helper["model_stages"](entry['inline']):
                 lines.extend(f"  {title}: {model} · {effort} · {source}"
                              for title, model, effort, source in _workflow_model_rows(helper, entry['inline']))
-            lines.append("  Test runners: " + helper["runners_summary"](entry['inline']))
+            lines.append("  Tests · Test runners: " + helper["runners_summary"](entry['inline']))
             if entry["inline"].get("instructions"):
                 lines.extend("  " + line for line in entry["inline"]["instructions"].splitlines())
     return lines
@@ -3249,15 +3266,16 @@ def _workflow_launch_settings(cfg, settings):
 
 _WORKFLOW_SECTIONS = {
     "pull_requests": ("Pull requests", ("pr_open", "pr_state", "pr_merge")),
-    "local_preview": ("Local preview", ("preview_target", "local_preview", "preview_approval")),
+    "local_preview": ("Local preview", ("local_preview", "preview_approval")),
     "tests": ("Tests", ("test_timing",)),
 }
 _WORKFLOW_PREVIEW_SUBMENUS = {
-    "frontend": ("Frontend", ("frontend_design", "design_approval", "frontend_preview", "frontend_browser")),
-    "cli": ("CLI", ("cli_preview",)),
+    "frontend": ("Frontend", ("frontend_enabled", "frontend_design", "design_approval", "frontend_preview", "frontend_browser")),
+    "cli": ("CLI", ("cli_enabled", "cli_preview")),
 }
 _WORKFLOW_TOPICS = {
-    "preview_target": ("Applies to", "Choose whether preview timing and approval apply to frontend, CLI, or both."),
+    "frontend_enabled": ("Preview", "Enable or disable frontend preview preferences."),
+    "cli_enabled": ("Preview", "Enable or disable CLI preview preferences."),
     "pr_open": ("When to open PR", "Open when the work is ready, or wait for your request. Any preview approval still applies."),
     "pr_state": ("PR type", "Drafts wait for your approval before becoming ready for review."),
     "pr_merge": ("Merge PR", "Merge after required checks and approvals, or wait for your request."),
@@ -3296,32 +3314,44 @@ def _workflow_section_fields(section, behaviors):
 
 
 def _workflow_section_children(section, behaviors):
-    return tuple(key for key in _WORKFLOW_PREVIEW_SUBMENUS
-                 if key != "cli" or behaviors.get("preview_target") != "frontend") if section == "local_preview" else ()
+    return tuple(_WORKFLOW_PREVIEW_SUBMENUS) if section == "local_preview" else ()
 
 
 def _workflow_section_summary(helper, section, behaviors):
+    if section in _WORKFLOW_PREVIEW_SUBMENUS and not helper["preview_enabled"](behaviors, section):
+        return "Disabled"
+    visible = helper["visible_behaviors"](behaviors)
     parts = [_WORKFLOW_TOPICS[key][0] + ": " + _workflow_choice(helper, key, behaviors[key])
-             for key in _workflow_section_fields(section, behaviors) if key in behaviors]
+             for key in _workflow_section_fields(section, behaviors) if key in visible and key not in ("frontend_enabled", "cli_enabled")]
     for child in _workflow_section_children(section, behaviors):
         summary = _workflow_section_summary(helper, child, behaviors)
         if summary != "Not set":
             parts.append(_workflow_section_spec(child)[0] + ": " + summary)
-    return "; ".join(parts) or "Not set"
+    summary = "; ".join(parts)
+    return ("Enabled" + (" · " + summary if summary else "")) if section in _WORKFLOW_PREVIEW_SUBMENUS else summary or "Not set"
 
 
-def _workflow_behavior_lines(helper, section, behaviors, indent=2):
-    lines = [" " * indent + _workflow_section_spec(section)[0]]
+def _workflow_behavior_lines(helper, section, behaviors, indent=2, policy=None):
+    child = section in _WORKFLOW_PREVIEW_SUBMENUS
+    enabled = helper["preview_enabled"](behaviors, section) if child else True
+    lines = [" " * indent + _workflow_section_spec(section)[0] + (" · " + ("Enabled" if enabled else "Disabled") if child else "")]
+    if not enabled:
+        return lines
+    visible = helper["visible_behaviors"](behaviors)
+    active_shared = section != "local_preview" or any(helper["preview_enabled"](behaviors, kind) for kind in _WORKFLOW_PREVIEW_SUBMENUS)
     lines += [" " * (indent + 2) + _WORKFLOW_TOPICS[key][0] + ": " +
-              (_workflow_choice(helper, key, behaviors[key]) if key in behaviors else "Not set")
-              for key in _workflow_section_fields(section, behaviors)]
+              (_workflow_choice(helper, key, visible[key]) if key in visible else "Not set")
+              for key in _workflow_section_fields(section, behaviors)
+              if active_shared and key not in ("frontend_enabled", "cli_enabled")]
     for child in _workflow_section_children(section, behaviors):
-        lines.extend(_workflow_behavior_lines(helper, child, behaviors, indent + 2))
+        lines.extend(_workflow_behavior_lines(helper, child, behaviors, indent + 2, policy=policy))
+    if section == "tests" and policy is not None:
+        lines.append(" " * (indent + 2) + "Test runners: " + helper["runners_summary"](policy))
     return lines
 
 
 def _workflow_choice(helper, key, value):
-    if key in ("pr_open", "preview_target", "local_preview", "preview_approval", "cli_preview", "frontend_preview", "frontend_browser"):
+    if key in ("pr_open", "frontend_enabled", "cli_enabled", "local_preview", "preview_approval", "cli_preview", "frontend_preview", "frontend_browser"):
         return helper["BEHAVIORS"][key]["choices"][value][0]
     return _WORKFLOW_CHOICE_LABELS.get(value, helper["BEHAVIORS"][key]["choices"][value][0])
 
@@ -3357,8 +3387,7 @@ def _workflow_print(helper, result, catalogue=False):
              "present" if item["workflow"].get("instructions") else "none",
              _workflow_permission_summary(helper, item["workflow"]),
              "; ".join(helper["BEHAVIORS"][key]["label"] + ": " + _workflow_choice(helper, key, value)
-                       for key, value in helper["effective_behaviors"](item["workflow"].get("behaviors", {})).items()
-                       if key != "cli_preview" or helper["effective_behaviors"](item["workflow"].get("behaviors", {})).get("preview_target") != "frontend") or "None set")
+                       for key, value in helper["visible_behaviors"](item["workflow"].get("behaviors", {})).items()) or "None set")
             for name, item in result["workflows"].items()])))
         print("Text instructions take precedence over behavior preferences, then model guidance.")
     else:
@@ -3379,8 +3408,8 @@ def _workflow_print(helper, result, catalogue=False):
         print("PRs, previews & tests:")
         behaviors = helper["effective_behaviors"](policy.get("behaviors", {}))
         for section in _WORKFLOW_SECTIONS:
-            print("\n".join(_workflow_behavior_lines(helper, section, behaviors)))
-        for key, value in behaviors.items():
+            print("\n".join(_workflow_behavior_lines(helper, section, behaviors, policy=policy)))
+        for key, value in helper["visible_behaviors"](behaviors).items():
             if key not in _WORKFLOW_TOPICS:
                 print("  Other saved rule — " + helper["BEHAVIORS"][key]["label"] + ": " + _workflow_choice(helper, key, value))
         stages = helper["model_stages"](policy)
@@ -3401,7 +3430,6 @@ def _workflow_print(helper, result, catalogue=False):
                 print("  " + agent.title() + ": " + (settings.get("model") or "agent default") +
                       " · reasoning: " + (settings.get("effort") or "default for this model"))
             print("  Applies to new/resumed CLI sessions; active turns and desktop launches keep their settings.")
-        print("Test runners: " + helper["runners_summary"](policy))
     print("Propagation: " + result["propagation"]["runtime"])
 
 

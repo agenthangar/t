@@ -156,7 +156,7 @@ def test_runner_menu_stages_until_save(workflow, t_mod, monkeypatch, tmp_path):
     policy['runners'] = runners()
     after = w.update(original, policy)
     monkeypatch.setitem(w.__dict__, 'edit_runners', lambda *a: (0, after))
-    t_mod._workflow_policy_menu(Menu(['runners', 'show', 'edit', 'back', 'back']), cfg, w.__dict__, name='standard')
+    t_mod._workflow_policy_menu(Menu(['behaviors', 'tests', 'runners', 'show', 'edit', 'back', 'back', 'back', 'back']), cfg, w.__dict__, name='standard')
     assert cfg._workflow_document == after and t_mod._workflow_pending(cfg)
     assert not w.config_path().exists()
     assert '2 targets' in '\n'.join(t_mod._workflow_review(after))

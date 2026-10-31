@@ -214,23 +214,28 @@ PRs, previews & tests uses shared `_RailUI` submenus for Pull requests, Local
 preview and Tests. PR opening (automatic/on instruction), initial
 state (ready/draft) and merging (automatic/on instruction) are independent.
 When to open PR offers Automatically when ready or Only when I ask.
-Local preview uses an Applies to checklist (Frontend and CLI), When to preview
-(Automatically when ready / Only when I ask), Preview approval before PR (Wait for
-my approval / No approval needed), then Frontend and CLI submenus.
-Hide the CLI submenu only for explicit Frontend-only applicability;
-retain its saved value. The checklist marks either or both independently, with a
-separated Not set reset row. Space toggles; Enter accepts marked choices; cancel
-preserves the saved selection. Save maps the marks to the existing frontend/cli/both
-values or removes the key for Not set. An unset target preserves legacy applicability. The target
-scopes timing and approval prose, not the independent design/method preferences.
-Choosing a target alone does not trigger preview, and removing preview approval
-never changes the separate PR-opening preference.
+Local preview contains When to preview (Automatically when ready / Only when I
+ask), Preview approval before PR (Wait for my approval / No approval needed), and
+Frontend and CLI submenus. Each submenu starts with Preview (Enabled / Disabled).
+Remove the separate Applies to control. Both submenus stay visible and show
+their enabled/disabled state; disabled settings remain saved and editable.
+Optional frontend_enabled/cli_enabled values override legacy preview_target for
+each type independently. Without flags or a legacy target, both are enabled.
+Read-only operations do not migrate storage. Shared timing and approval apply
+only to enabled types; with neither enabled, suppress shared preview guidance.
+Disabled frontend suppresses design, approval, method and browser guidance;
+disabled CLI suppresses its method guidance. Enabling alone does not request a
+preview or change the separate PR-opening preference.
 The nested Frontend submenu contains Design approach (Separate HTML prototype /
 In the app), Design approval (Required / Not required), Preview method (Fast reload
 / Build), and Open in browser (Automatically / Only when I ask). The nested CLI
 submenu contains Preview method (Install locally / Run from the repo). Printed
 lists use the same indentation and hierarchy; summaries include nested choices.
 Returning from a child menu restores the parent focus and retains staged changes.
+Disabled summaries show the status without presenting retained settings as active.
+Tests contains Run tests and Test runners; remove the separate Test runners row
+from the workflow menu. Nested runner edits share the same staged Save/discard
+transaction and preserve behavior changes made before or after them.
 Browser opening applies only once a local frontend preview is available; it does
 not start previews or change preview timing, design approval, or PR approval. Test timing
 chooses local during work, local before preview, local before PR, or PR CI;

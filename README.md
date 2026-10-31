@@ -1009,8 +1009,9 @@ Every stage accepts `auto` or an explicit effort (`minimal`, `low`, `medium`,
 `high`, `xhigh`, `max`, `ultra`). Older saved `one-level-lower` values for
 Implementation and Review now behave as `auto` without rewriting settings on read.
 
-Open **t config → Test runners** to choose the global default, a named workflow,
-or a registered repository. Use its runner settings to test current uncommitted work on
+Open **t workflow → PRs, previews & tests → Tests → Test runners** to configure
+runners for the workflow you are editing. **t config → Test runners** also lets you
+choose a global default, named workflow, or registered repository. Use runner settings to test current uncommitted work on
 managed GitHub-hosted Linux/macOS machines or a registered SSH host. One immutable
 snapshot serves every target; source files need no commit or push. Bootstrap a
 dedicated private GitHub broker explicitly, then run:
@@ -1050,29 +1051,31 @@ including repository-only customizations. Menu choices stay pending until
 | Setting | Choices |
 | --- | --- |
 | Pull requests | When to open; draft or ready; Automerge or When I ask |
-| Local preview → Applies to | Check Frontend, CLI, or both |
 | Local preview → When to preview | Automatically when ready or Only when I ask |
 | Local preview → Preview approval before PR | Wait for my approval or No approval needed |
+| Local preview → Frontend → Preview | Enabled or Disabled |
 | Local preview → Frontend → Design approach | Separate HTML prototype or In the app |
 | Local preview → Frontend → Design approval | Required or Not required |
 | Local preview → Frontend → Preview method | Fast reload or Build |
 | Local preview → Frontend → Open in browser | Automatically or Only when I ask |
+| Local preview → CLI → Preview | Enabled or Disabled |
 | Local preview → CLI → Preview method | Install locally or Run from the repo |
-| Tests | Local during work, before preview, before PR, or PR CI |
+| Tests → Run tests | Local during work, before preview, before PR, or PR CI |
+| Tests → Test runners | Configure targets, defaults, and artifacts |
 
-Every setting also offers **Not set**, visually separated from the other choices,
+Other preference choices also offer **Not set**, visually separated from the other choices,
 which removes that choice without instructing the agent to do its opposite.
-No behavior is selected by default.
+An unset preference leaves the decision to your existing instructions.
 Preview and validation instructions require accurate reporting of limitations and
 results. Opening a PR alone does not authorize a merge. These preferences guide
 agents; they do not enforce execution or grant permission beyond the task.
 Preview approval concerns the local result you tried. **No approval needed**
 removes that preview gate; **When to open PR** still decides whether to open a PR.
-**Applies to** is a checklist: use Space to toggle Frontend and CLI, then Enter
-to accept. **Not set** clears both; checking either clears **Not set**.
-It limits preview timing and approval to the selected kinds of work.
-**Local preview** contains **Frontend** and **CLI** submenus. CLI appears when
-CLI is applicable; saved methods are retained when switching applicability.
+**Local preview** contains **Frontend** and **CLI** submenus, each with its own
+Enabled/Disabled setting. Both remain accessible so you can re-enable them.
+Shared timing and preview approval apply only to enabled types. Disabling a type
+retains its settings and suppresses its design and preview guidance; disabling
+both suppresses the shared preview rules too. Enabling alone does not start a preview.
 Frontend contains design approach, design approval, preview method, and browser
 opening. CLI contains the local install/run method. Browser opening does not change
 when to prepare the preview or whether approval is required before a PR.
@@ -1150,10 +1153,12 @@ defaults when Implementation is unchecked or all stages are off. Optional `permi
 `bypassPermissions`, or `plan`. Omitted agents keep native permission defaults;
 permissions apply independently of model stages and are suppressed when the
 workflow is disabled or excluded. Inside `behaviors`, independent keys are
-`pr_open`, `pr_state`, `pr_merge`, `preview_target`, `local_preview`, `preview_approval`, `cli_preview`,
+`pr_open`, `pr_state`, `pr_merge`, `frontend_enabled`, `cli_enabled`, `local_preview`, `preview_approval`, `cli_preview`,
 `frontend_design`, `design_approval`, `frontend_preview`, `frontend_browser`, and `test_timing`.
-`preview_target` accepts `frontend`, `cli`, or `both`; omission preserves the
-existing unspecified applicability. The checklist retains these saved values.
+`frontend_enabled` and `cli_enabled` accept `enabled` or `disabled` independently.
+Each explicit setting overrides the legacy `preview_target` (`frontend`, `cli`,
+or `both`). Without either setting or a legacy target, both types are enabled.
+Legacy targets remain readable without rewriting saved configuration.
 `frontend_browser` accepts `automatic` or `on_request`; omission leaves browser
 opening unspecified. The editor presents supported choices. Legacy `worktree`, `preview`,
 `validation`, and `delivery` fields remain readable; unknown keys or values are
@@ -1614,10 +1619,10 @@ and model-stage guidance. **PRs, previews & tests** separates these decisions:
 | Group | Choices |
 | --- | --- |
 | Pull requests | Open automatically or on instruction; create draft or ready; Automerge or When I ask. |
-| Local preview | Frontend/CLI checklist; when to preview; preview approval before PR; Frontend and CLI submenus. |
-| Local preview → Frontend | Interactive standalone HTML or in-app design; design approval; Fast reload or Build; automatic or requested browser opening. |
-| Local preview → CLI | Install locally or run from the repo. |
-| Tests | Locally during development, before local preview, before opening a PR, or in PR CI. |
+| Local preview | When to preview; preview approval before PR; Frontend and CLI submenus with independent enable/disable settings. |
+| Local preview → Frontend | Enabled/Disabled; interactive standalone HTML or in-app design; design approval; Fast reload or Build; automatic or requested browser opening. |
+| Local preview → CLI | Enabled/Disabled; install locally or run from the repo. |
+| Tests | When tests run, plus Test runners configuration. |
 
 **Not set** leaves a decision to your task, repository rules and text
 instructions. It does not inherit an individual value from the global workflow;

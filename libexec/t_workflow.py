@@ -75,6 +75,14 @@ BEHAVIORS = {
         'cli': ('CLI', 'Apply selected local-preview timing and preview-approval preferences to command-line tool changes only. This applicability choice does not request a preview by itself.'),
         'both': ('Frontend and CLI', 'Apply selected local-preview timing and preview-approval preferences to frontend and command-line tool changes. This applicability choice does not request a preview by itself.'),
     }},
+    'frontend_enabled': {'label': 'Frontend preview', 'choices': {
+        'enabled': ('Enabled', 'Apply selected frontend preview preferences. Enabling frontend previews does not request a preview by itself; honor selected preview timing and approval preferences, repository rules and task instructions.'),
+        'disabled': ('Disabled', 'Do not prepare frontend previews solely from these workflow preferences. Honor explicit task instructions and repository rules.'),
+    }},
+    'cli_enabled': {'label': 'CLI preview', 'choices': {
+        'enabled': ('Enabled', 'Apply selected command-line tool preview preferences. Enabling CLI previews does not request a preview by itself; honor selected preview timing and approval preferences, repository rules and task instructions.'),
+        'disabled': ('Disabled', 'Do not prepare command-line tool previews solely from these workflow preferences. Honor explicit task instructions and repository rules.'),
+    }},
     'local_preview': {'label': 'When to preview', 'choices': {
         'when_ready': ('Automatically when ready', 'When the work is ready to try, prepare its supported local preview: a development install or command for a CLI, or a local HTML or application browser preview for a frontend. Explain how the user can access it and report unavailable preview tools accurately.'),
         'before_pr': ('Preview, then ask to open PR', 'Prepare the supported local preview: a development install or command for a CLI, or a local HTML or application browser preview for a frontend. Explain how to try it, then wait for explicit user feedback and approval before pushing or opening a pull request. Honor repository and task instructions.'),
@@ -143,12 +151,45 @@ def effective_behaviors(behaviors):
     return result
 
 
+def preview_enabled(behaviors, kind):
+    """Resolve each independent preview switch without changing legacy storage."""
+    if kind not in ('frontend', 'cli'):
+        raise ValueError('preview kind must be frontend or cli')
+    value = behaviors.get(kind + '_enabled')
+    if value is not None:
+        return value == 'enabled'
+    target = behaviors.get('preview_target')
+    return target is None or target == 'both' or target == kind
+
+
+def visible_behaviors(behaviors):
+    """Active instructions and display choices; saved inactive values remain intact."""
+    result = effective_behaviors(behaviors)
+    frontend = preview_enabled(result, 'frontend')
+    cli = preview_enabled(result, 'cli')
+    if any(key in result for key in ('preview_target', 'frontend_enabled', 'cli_enabled')):
+        result['frontend_enabled'] = 'enabled' if frontend else 'disabled'
+        result['cli_enabled'] = 'enabled' if cli else 'disabled'
+    result.pop('preview_target', None)
+    if not frontend:
+        for key in ('frontend_design', 'design_approval', 'frontend_preview', 'frontend_browser'):
+            result.pop(key, None)
+    if not cli:
+        result.pop('cli_preview', None)
+    if not frontend and not cli:
+        result.pop('local_preview', None)
+        result.pop('preview_approval', None)
+    return result
+
+
 def _behavior_instructions(behaviors, key):
     spec = BEHAVIORS[key]
     prose = spec['choices'][behaviors[key]][1]
     if key in ('local_preview', 'preview_approval'):
-        scope = {'frontend': 'For frontend changes only: ',
-                 'cli': 'For command-line tool changes only: '}.get(behaviors.get('preview_target'), '')
+        frontend = preview_enabled(behaviors, 'frontend')
+        cli = preview_enabled(behaviors, 'cli')
+        scope = ('For frontend changes only: ' if frontend and not cli else
+                 'For command-line tool changes only: ' if cli and not frontend else '')
         prose = scope + prose
     return spec['label'] + ': ' + prose
 
@@ -673,7 +714,7 @@ def policy_summary(policy):
 
 def summary_lines(policy):
     summary = policy_summary(policy)
-    behaviors = effective_behaviors(summary['behaviors'])
+    behaviors = visible_behaviors(summary['behaviors'])
     state = 'enabled' if summary['stages_active'] else 'disabled' if not summary['stages_enabled'] else 'inactive (workflow disabled)'
     lines = ['Model stages: ' + state]
     if summary['stages_enabled']:
@@ -822,7 +863,7 @@ def _stage_text(policy):
                 parts.append(f'{agent.title()} session launch defaults: {chosen}. '
                              't applies these defaults to new CLI sessions and supported resumes in this scope. '
                              'They do not change an active turn or require switching models during a task.')
-    behaviors = effective_behaviors(policy.get('behaviors', {}))
+    behaviors = visible_behaviors(policy.get('behaviors', {}))
     if behaviors:
         parts.append('Selected behavior preferences:\n' + '\n'.join(
             _behavior_instructions(behaviors, key)
