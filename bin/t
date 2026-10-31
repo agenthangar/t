@@ -2393,16 +2393,17 @@ def _workflow_behaviors_menu(ui, helper, policy):
         behaviors = helper["effective_behaviors"](changed.get("behaviors", {}))
         rows = [(key, label + " ›") for key, (label, fields) in _WORKFLOW_SECTIONS.items()] + [("back", "Back")]
         values = {key: "; ".join(_WORKFLOW_TOPICS[field][0] + ": " + _workflow_choice(helper, field, behaviors[field])
-                                for field in fields if field in behaviors) or "Not set"
+                                for field in _workflow_section_fields(key, behaviors) if field in behaviors) or "Not set"
                   for key, (label, fields) in _WORKFLOW_SECTIONS.items()}
         section = ui.pick("PRs, previews & tests", rows, values=values, default=focus)
         if section in (None, "back"):
             return changed
         focus = next(i for i, row in enumerate(rows) if row[0] == section)
-        label, fields = _WORKFLOW_SECTIONS[section]
+        label = _WORKFLOW_SECTIONS[section][0]
         field_focus = 0
         while True:
             behaviors = helper["effective_behaviors"](changed.get("behaviors", {}))
+            fields = _workflow_section_fields(section, behaviors)
             fields_rows = [(key, _WORKFLOW_TOPICS[key][0]) for key in fields] + [("back", "Back")]
             values = {key: _workflow_choice(helper, key, behaviors[key]) if key in behaviors else "Not set" for key in fields}
             choice = ui.pick(label, fields_rows, values=values, default=field_focus)
@@ -3228,19 +3229,20 @@ def _workflow_launch_settings(cfg, settings):
 
 _WORKFLOW_SECTIONS = {
     "pull_requests": ("Pull requests", ("pr_open", "pr_state", "pr_merge")),
-    "local_preview": ("Local preview", ("local_preview", "preview_approval", "cli_preview", "frontend_preview")),
-    "frontend_design": ("Frontend design", ("frontend_design", "design_approval")),
+    "local_preview": ("Local preview", ("preview_target", "local_preview", "preview_approval", "cli_preview")),
+    "frontend_design": ("Frontend", ("frontend_design", "design_approval", "frontend_preview")),
     "tests": ("Tests", ("test_timing",)),
 }
 _WORKFLOW_TOPICS = {
+    "preview_target": ("Applies to", "Choose whether preview timing and approval apply to frontend, CLI, or both."),
     "pr_open": ("When to open PR", "Open when the work is ready, or wait for your request. Any preview approval still applies."),
     "pr_state": ("PR type", "Drafts wait for your approval before becoming ready for review."),
     "pr_merge": ("Merge PR", "Merge after required checks and approvals, or wait for your request."),
     "local_preview": ("When to preview", "Choose when to make CLI or browser changes available locally."),
     "preview_approval": ("Preview approval before PR", "Choose whether opening a PR waits for your approval of the local preview."),
     "cli_preview": ("CLI preview method", "Install the development version locally, or run it from the repo."),
-    "frontend_preview": ("Web preview method", "Refresh changes with a local dev server, or rebuild the preview."),
-    "frontend_design": ("Build design", "Try an interactive HTML prototype outside the app, or design in the app itself."),
+    "frontend_preview": ("Preview method", "Refresh changes with a local dev server, or rebuild the preview."),
+    "frontend_design": ("Design approach", "Try an interactive HTML prototype outside the app, or design in the app itself."),
     "design_approval": ("Design approval", "Choose whether implementation waits for your approval of the design."),
     "test_timing": ("Run tests", "Choose when to run tests. Required PR checks still apply."),
 }
@@ -3261,8 +3263,13 @@ _WORKFLOW_CHOICE_LABELS = {
 }
 
 
+def _workflow_section_fields(section, behaviors):
+    return tuple(field for field in _WORKFLOW_SECTIONS[section][1]
+                 if field != "cli_preview" or behaviors.get("preview_target") != "frontend")
+
+
 def _workflow_choice(helper, key, value):
-    if key in ("pr_open", "local_preview", "preview_approval", "cli_preview", "frontend_preview"):
+    if key in ("pr_open", "preview_target", "local_preview", "preview_approval", "cli_preview", "frontend_preview"):
         return helper["BEHAVIORS"][key]["choices"][value][0]
     return _WORKFLOW_CHOICE_LABELS.get(value, helper["BEHAVIORS"][key]["choices"][value][0])
 
@@ -3298,7 +3305,8 @@ def _workflow_print(helper, result, catalogue=False):
              "present" if item["workflow"].get("instructions") else "none",
              _workflow_permission_summary(helper, item["workflow"]),
              "; ".join(helper["BEHAVIORS"][key]["label"] + ": " + _workflow_choice(helper, key, value)
-                       for key, value in helper["effective_behaviors"](item["workflow"].get("behaviors", {})).items()) or "None set")
+                       for key, value in helper["effective_behaviors"](item["workflow"].get("behaviors", {})).items()
+                       if key != "cli_preview" or helper["effective_behaviors"](item["workflow"].get("behaviors", {})).get("preview_target") != "frontend") or "None set")
             for name, item in result["workflows"].items()])))
         print("Text instructions take precedence over behavior preferences, then model guidance.")
     else:
@@ -3318,9 +3326,9 @@ def _workflow_print(helper, result, catalogue=False):
             print("  " + agent.title() + ": " + (helper["PERMISSIONS"][agent][preset]["label"] if preset else "Not set"))
         print("PRs, previews & tests:")
         behaviors = helper["effective_behaviors"](policy.get("behaviors", {}))
-        for label, fields in _WORKFLOW_SECTIONS.values():
+        for section, (label, _) in _WORKFLOW_SECTIONS.items():
             print("  " + label)
-            for key in fields:
+            for key in _workflow_section_fields(section, behaviors):
                 value = behaviors.get(key)
                 print("    " + _WORKFLOW_TOPICS[key][0] + ": " + (_workflow_choice(helper, key, value) if value else "Not set"))
         for key, value in behaviors.items():

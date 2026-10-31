@@ -70,6 +70,11 @@ BEHAVIORS = {
         'automatic': ('Automerge', 'Once a pull request is ready for review, enable automatic merging without another confirmation under repository policy and monitor required checks through completion. Do not promote drafts automatically. Never bypass required checks or branch protections.'),
         'on_request': ('When I ask', 'Wait for an explicit user request or approval before merging or enabling automatic merging, subject to repository and task instructions.'),
     }},
+    'preview_target': {'label': 'Local preview applies to', 'choices': {
+        'frontend': ('Frontend', 'Apply selected local-preview timing and preview-approval preferences to frontend changes only. This applicability choice does not request a preview by itself.'),
+        'cli': ('CLI', 'Apply selected local-preview timing and preview-approval preferences to command-line tool changes only. This applicability choice does not request a preview by itself.'),
+        'both': ('Frontend and CLI', 'Apply selected local-preview timing and preview-approval preferences to frontend and command-line tool changes. This applicability choice does not request a preview by itself.'),
+    }},
     'local_preview': {'label': 'When to preview', 'choices': {
         'when_ready': ('Automatically when ready', 'When the work is ready to try, prepare its supported local preview: a development install or command for a CLI, or a local HTML or application browser preview for a frontend. Explain how the user can access it and report unavailable preview tools accurately.'),
         'before_pr': ('Preview, then ask to open PR', 'Prepare the supported local preview: a development install or command for a CLI, or a local HTML or application browser preview for a frontend. Explain how to try it, then wait for explicit user feedback and approval before pushing or opening a pull request. Honor repository and task instructions.'),
@@ -83,7 +88,7 @@ BEHAVIORS = {
         'install': ('Install locally', 'For command-line tool previews, use the supported development installation or relink mechanism and clearly identify the development version. Honor repository installation and isolation rules.'),
         'run': ('Run from the repo', 'For command-line tool previews, run the repository-supported development command directly and show the user how to invoke it.'),
     }},
-    'frontend_design': {'label': 'Frontend design', 'choices': {
+    'frontend_design': {'label': 'Design approach', 'choices': {
         'standalone_html': ('Separate HTML prototype', 'For frontend design, create an interactive standalone HTML prototype outside the application so the user can preview the design before app implementation.'),
         'in_app': ('In the app', 'For frontend design, implement and preview the design within the actual application using its existing components and development setup.'),
     }},
@@ -92,8 +97,8 @@ BEHAVIORS = {
         'continue': ('Not required', 'After preparing the design, continue implementation without an additional design approval step unless repository or task instructions require one.'),
     }},
     'frontend_preview': {'label': 'Web preview method', 'choices': {
-        'fast_reload': ('Live reload', 'For frontend previews, use the supported local development server and fast reload when available so design changes can be inspected promptly. Report unsupported preview capabilities accurately.'),
-        'rebuild': ('Rebuild after changes', 'For frontend previews, rebuild using the supported preview command after relevant changes and show the updated result.'),
+        'fast_reload': ('Fast reload', 'For frontend previews, use the supported local development server and fast reload when available so design changes can be inspected promptly. Report unsupported preview capabilities accurately.'),
+        'rebuild': ('Build', 'For frontend previews, rebuild using the supported preview command after relevant changes and show the updated result.'),
     }},
     'test_timing': {'label': 'Run tests', 'choices': {
         'during_work': ('Local: during work', 'Run relevant local checks as implementation progresses and report results. Keep required checks and repository validation rules intact.'),
@@ -132,6 +137,16 @@ def effective_behaviors(behaviors):
     if 'test_timing' in result:
         result.pop('validation', None)
     return result
+
+
+def _behavior_instructions(behaviors, key):
+    spec = BEHAVIORS[key]
+    prose = spec['choices'][behaviors[key]][1]
+    if key in ('local_preview', 'preview_approval'):
+        scope = {'frontend': 'For frontend changes only: ',
+                 'cli': 'For command-line tool changes only: '}.get(behaviors.get('preview_target'), '')
+        prose = scope + prose
+    return spec['label'] + ': ' + prose
 
 
 def update_behavior(policy, key, value):
@@ -797,7 +812,7 @@ def _stage_text(policy):
     behaviors = effective_behaviors(policy.get('behaviors', {}))
     if behaviors:
         parts.append('Selected behavior preferences:\n' + '\n'.join(
-            spec['label'] + ': ' + spec['choices'][behaviors[key]][1]
+            _behavior_instructions(behaviors, key)
             for key, spec in BEHAVIORS.items() if key in behaviors))
     if policy.get('runners', {}).get('targets'):
         parts.append('Test runners are configured. Use `t runners list` '

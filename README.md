@@ -1049,11 +1049,13 @@ including repository-only customizations. Menu choices stay pending until
 | Setting | Choices |
 | --- | --- |
 | Pull requests | When to open; draft or ready; Automerge or When I ask |
+| Local preview → Applies to | Frontend, CLI, or Frontend and CLI |
 | When to preview | Automatically when ready or Only when I ask |
 | Preview approval before PR | Wait for my approval or No approval needed |
 | CLI preview method | Install locally or Run from the repo |
-| Web preview method | Live reload or Rebuild after changes |
-| Frontend design | Separate HTML prototype or in-app design; design approval Required or Not required |
+| Frontend → Design approach | Separate HTML prototype or In the app |
+| Frontend → Design approval | Required or Not required |
+| Frontend → Preview method | Fast reload or Build |
 | Tests | Local during work, before preview, before PR, or PR CI |
 
 Every setting also offers **Not set**, which removes that choice without
@@ -1063,6 +1065,10 @@ results. Opening a PR alone does not authorize a merge. These preferences guide
 agents; they do not enforce execution or grant permission beyond the task.
 Preview approval concerns the local result you tried. **No approval needed**
 removes that preview gate; **When to open PR** still decides whether to open a PR.
+**Applies to** limits preview timing and approval to the selected kind of work.
+The CLI method appears when CLI is applicable; saved methods are retained when
+switching applicability. Frontend design and preview method live together in
+**Frontend** and remain independently configurable.
 
 The host instruction hierarchy stays unchanged: explicit task instructions and
 repository rules remain authoritative. A selected repository assignment or inline
@@ -1137,9 +1143,10 @@ defaults when Implementation is unchecked or all stages are off. Optional `permi
 `bypassPermissions`, or `plan`. Omitted agents keep native permission defaults;
 permissions apply independently of model stages and are suppressed when the
 workflow is disabled or excluded. Inside `behaviors`, independent keys are
-`pr_open`, `pr_state`, `pr_merge`, `local_preview`, `preview_approval`, `cli_preview`,
+`pr_open`, `pr_state`, `pr_merge`, `preview_target`, `local_preview`, `preview_approval`, `cli_preview`,
 `frontend_design`, `design_approval`, `frontend_preview`, and `test_timing`.
-The editor presents their supported choices. Legacy `worktree`, `preview`,
+`preview_target` accepts `frontend`, `cli`, or `both`; omission preserves the
+existing unspecified applicability. The editor presents supported choices. Legacy `worktree`, `preview`,
 `validation`, and `delivery` fields remain readable; unknown keys or values are
 rejected before any write.
 Hidden `t config show --workflow` and `t config edit --workflow` compatibility
@@ -1598,8 +1605,8 @@ and model-stage guidance. **PRs, previews & tests** separates these decisions:
 | Group | Choices |
 | --- | --- |
 | Pull requests | Open automatically or on instruction; create draft or ready; Automerge or When I ask. |
-| Local preview | Automatically or When I ask; separately require preview approval before PR; install/run CLI changes; fast reload or rebuild HTML/app previews. |
-| Frontend design | Interactive standalone HTML outside the app or design within the app; design approval Required or Not required. |
+| Local preview | Applies to Frontend, CLI, or both; when to preview; preview approval before PR; CLI install/run method when applicable. |
+| Frontend | Interactive standalone HTML or in-app design; design approval; Fast reload or Build preview method. |
 | Tests | Locally during development, before local preview, before opening a PR, or in PR CI. |
 
 **Not set** leaves a decision to your task, repository rules and text

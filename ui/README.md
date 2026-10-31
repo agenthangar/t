@@ -206,23 +206,26 @@ permissions, behavior preferences and Markdown active; disabling the workflow
 suppresses every workflow setting. Selected stages expose separate
 model and effort controls, plus Instructions for ordinary Markdown in VISUAL/EDITOR.
 PRs, previews & tests uses shared `_RailUI` submenus for Pull requests, Local
-preview, Frontend design and Tests. PR opening (automatic/on instruction), initial
+preview, Frontend and Tests. PR opening (automatic/on instruction), initial
 state (ready/draft) and merging (automatic/on instruction) are independent.
 When to open PR offers Automatically when ready or Only when I ask.
-Local preview uses four explicit rows: When to preview (Automatically when ready /
-Only when I ask), Preview approval before PR (Wait for my approval / No approval
-needed), CLI preview method (Install locally / Run from the repo), and Web preview
-method (Live reload / Rebuild after changes). Removing preview approval never
-changes the separate PR-opening preference.
-Frontend design chooses an interactive standalone HTML prototype or design in the
-app, with Design approval labeled Required/Not required. Test timing
+Local preview uses Applies to (Frontend / CLI / Frontend and CLI), When to preview
+(Automatically when ready / Only when I ask), Preview approval before PR (Wait for
+my approval / No approval needed), and CLI preview method (Install locally / Run
+from the repo). Hide the CLI method only for explicit Frontend-only applicability;
+retain its saved value. An unset target preserves legacy applicability. The target
+scopes timing and approval prose, not the independent design/method preferences.
+Choosing a target alone does not trigger preview, and removing preview approval
+never changes the separate PR-opening preference.
+Frontend combines Design approach (Separate HTML prototype / In the app), Design
+approval (Required / Not required), and Preview method (Fast reload / Build). Test timing
 chooses local during work, local before preview, local before PR, or PR CI;
 required repository checks always apply. Unset rows and picker choices say
 Not set. Task, repository and text instructions supply
 the behavior. Menus show concise choices without routine explanatory preambles.
 Reserve inheritance wording for the actual Use global default repository action.
 Use Automerge for automatic PR merging. Preview methods use Install locally, Run from the repo,
-Live reload and Rebuild after changes. Test choices name Local or PR CI explicitly.
+Fast reload and Build. Test choices name Local or PR CI explicitly.
 Clearing a choice removes its key. Preserve focused rows when returning.
 Legacy delivery/preview values are interpreted without rewriting read-only
 configuration; editing materializes equivalent separate choices. Working-folder

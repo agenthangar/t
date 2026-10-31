@@ -113,7 +113,7 @@ def test_invalid_behavior_edit_is_rejected(workflow, key, value):
 
 
 @pytest.mark.parametrize('key', [
-    'pr_open', 'pr_state', 'pr_merge', 'local_preview', 'preview_approval', 'cli_preview', 'frontend_design',
+    'pr_open', 'pr_state', 'pr_merge', 'preview_target', 'local_preview', 'preview_approval', 'cli_preview', 'frontend_design',
     'design_approval', 'frontend_preview', 'test_timing',
 ])
 def test_each_new_preference_validates_and_renders_as_instructions(workflow, key):
@@ -244,3 +244,81 @@ def test_pr_opening_preference_names_timing_and_request_requirement(workflow):
     for value, label in [('automatic', 'Automatically when ready'), ('on_request', 'Only when I ask')]:
         policy = workflow.update_behavior(workflow.DEFAULT, 'pr_open', value)
         assert 'When to open PR: ' + label in workflow.summary_lines(policy)
+
+
+@pytest.mark.parametrize('target,prefix', [('frontend', 'For frontend changes only: '),
+                                          ('cli', 'For command-line tool changes only: ')])
+def test_preview_target_conditions_timing_and_approval_gate(workflow, target, prefix):
+    policy = {**copy.deepcopy(workflow.DEFAULT), 'behaviors': {
+        'preview_target': target, 'local_preview': 'when_ready', 'preview_approval': 'required'}}
+    text = workflow._stage_text(policy)
+    for key, value in [('local_preview', 'when_ready'), ('preview_approval', 'required')]:
+        label = workflow.BEHAVIORS[key]['label']
+        prose = workflow.BEHAVIORS[key]['choices'][value][1]
+        assert label + ': ' + prefix + prose in text
+        assert label + ': ' + prose not in text
+    assert workflow.BEHAVIORS['preview_target']['choices'][target][1] in text
+    assert workflow.policy_summary(policy)['behaviors']['preview_target'] == target
+
+
+@pytest.mark.parametrize('target', [None, 'both'])
+def test_legacy_and_both_applicability_preserve_existing_preview_prose(workflow, target):
+    behaviors = {'local_preview': 'on_request', 'preview_approval': 'required'}
+    if target:
+        behaviors['preview_target'] = target
+    policy = {**copy.deepcopy(workflow.DEFAULT), 'behaviors': behaviors}
+    before = copy.deepcopy(policy)
+    text = workflow._stage_text(policy)
+    for key, value in [('local_preview', 'on_request'), ('preview_approval', 'required')]:
+        assert workflow.BEHAVIORS[key]['label'] + ': ' + workflow.BEHAVIORS[key]['choices'][value][1] in text
+    assert policy == before
+    assert ('preview_target' in workflow.effective_behaviors(behaviors)) == bool(target)
+
+
+@pytest.mark.parametrize('target', ['frontend', 'cli', 'both'])
+def test_preview_target_alone_does_not_request_preview_or_approval(workflow, target):
+    policy = workflow.update_behavior(workflow.DEFAULT, 'preview_target', target)
+    assert policy['behaviors'] == {'preview_target': target}
+    text = workflow._stage_text(policy)
+    assert 'does not request a preview by itself' in text
+    assert 'When to preview:' not in text
+    assert 'Preview approval before PR:' not in text
+    assert 'wait until the user has reviewed the local preview' not in text
+
+
+def test_changing_preview_target_preserves_independent_methods_and_design(workflow):
+    methods = {'frontend_preview': 'fast_reload', 'cli_preview': 'run',
+               'frontend_design': 'standalone_html', 'design_approval': 'required'}
+    policy = {**copy.deepcopy(workflow.DEFAULT), 'behaviors': dict(methods)}
+    for target in ('frontend', 'cli', 'both'):
+        policy = workflow.update_behavior(policy, 'preview_target', target)
+        assert policy['behaviors'] == {**methods, 'preview_target': target}
+        text = workflow._stage_text(policy)
+        assert 'For frontend previews,' in text
+        assert 'For command-line tool previews,' in text
+        assert 'For frontend design,' in text
+    assert workflow.update_behavior(policy, 'preview_target', '')['behaviors'] == methods
+    assert workflow.BEHAVIORS['frontend_design']['label'] == 'Design approach'
+    assert workflow.BEHAVIORS['frontend_preview']['label'] == 'Web preview method'
+    assert workflow.BEHAVIORS['frontend_preview']['choices']['fast_reload'][0] == 'Fast reload'
+    assert workflow.BEHAVIORS['frontend_preview']['choices']['rebuild'][0] == 'Build'
+
+
+@pytest.mark.parametrize('value', ['backend', 'all', False, [], None])
+def test_invalid_saved_preview_target_is_rejected(workflow, value):
+    policy = {**copy.deepcopy(workflow.DEFAULT), 'behaviors': {'preview_target': value}}
+    with pytest.raises(ValueError, match='behavior'):
+        workflow.validate_policy(policy)
+
+
+def test_preview_target_read_only_summary_keeps_legacy_raw_values(workflow):
+    policy = {**copy.deepcopy(workflow.DEFAULT), 'behaviors': {
+        'local_preview': 'before_pr', 'preview_target': 'frontend'}}
+    document = workflow.update(workflow.defaults(), policy)
+    before = copy.deepcopy(document)
+    text = workflow.render(document)
+    assert 'Preview approval before PR: For frontend changes only:' in text
+    assert 'Local preview applies to: Frontend' in workflow.summary_lines(policy)
+    assert workflow.policy_summary(policy)['behaviors']['local_preview'] == 'before_pr'
+    assert document == before
+    assert not workflow.config_path().exists()
