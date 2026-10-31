@@ -7,6 +7,36 @@ import pytest
 from test_agent_seam import zsh  # noqa: F401
 
 
+@pytest.mark.parametrize('verb', ['t resume', 't session resume'])
+@pytest.mark.parametrize('target,expected', [('api 3', ['api', '3']),
+                                           ('3', ['3']),
+                                           ("'repo with spaces' 3", ['repo with spaces', '3'])])
+@pytest.mark.parametrize('tty', [False, True])
+@pytest.mark.parametrize('status', [0, 130])
+def test_plain_slot_resume_routes_to_history(zsh, tmp_path, verb, target, expected, tty, status):
+    import json
+    import sys
+    stub = tmp_path / 'stubbin/t'
+    stub.write_text(f'#!{sys.executable}\nimport json,sys\n'
+                    f'print(json.dumps(sys.argv[1:]))\nsys.exit({status})\n')
+    stub.chmod(0o755)
+    result = zsh('_t_resume() { print UNEXPECTED_RESUME; }; '
+                 f'{verb} {target}', _tty=tty)
+    assert result.returncode == status
+    assert json.loads(result.stdout.strip()) == ['session', 'history', *expected]
+    assert not zsh.log.exists()
+
+
+@pytest.mark.parametrize('arguments', ['api', '', '--all', 'api 3 --cli',
+                                     'api 3 --app', 'api 3 --fg', 'api 3 --host mini',
+                                     'api 3 --days all', 'api 3 --live', 'api 3 --remote'])
+def test_resume_options_keep_existing_route(zsh, arguments):
+    result = zsh('_t_resume() { print -r -- "RESUME $*"; return 7; }; '
+                 f't resume {arguments}')
+    assert result.returncode == 7
+    assert result.stdout.strip() == f'RESUME {arguments}'.strip()
+
+
 def history_row(sid='saved', slot='3', workspace='/former/home/trees/old/old-3', updated=None, host='local'):
     return '\t'.join(map(str, [updated or int(time.time()), 'api', slot, sid, workspace,
                               'Oct 28 12:00', 'Saved work', host, 'codex']))
@@ -89,7 +119,7 @@ def test_resume_history_app_rejects_claude_before_preparing(zsh):
 
 
 @pytest.mark.parametrize('owner', ['local', 'remote', 'collision', 'desktop', 'remote-desktop'])
-@pytest.mark.parametrize('command', ['t resume api 3', 't session resume api 3'])
+@pytest.mark.parametrize('command', ['t resume api 3 --days all', 't session resume api 3 --days all'])
 def test_explicit_slot_browses_live_and_saved_conversations_before_acting(zsh, owner, command):
     wt = zsh.home / 'code/.worktrees/api/3'
     wt.mkdir(parents=True)
@@ -133,14 +163,14 @@ def test_explicit_slot_requires_selection_even_with_one_conversation(zsh, live):
       _t_dev() { print UNEXPECTED_ATTACH; }
       _t_resume_history_launch() { print UNEXPECTED_LAUNCH; }
     '''
-    result = zsh(setup + 't resume api 3', _tty=True)
+    result = zsh(setup + 't resume api 3 --days all', _tty=True)
     assert result.returncode == 130 and 'PICKER' in result.stdout
     assert 'UNEXPECTED_' not in result.stdout
     if live:
-        result = zsh(setup + 't resume api 3')
+        result = zsh(setup + 't resume api 3 --days all')
         assert result.returncode == 1
         assert 'UNEXPECTED_' not in result.stdout and 'PICKER' not in result.stdout
-        result = zsh(setup + 't resume api 3 </dev/null', _tty=True)
+        result = zsh(setup + 't resume api 3 --days all </dev/null', _tty=True)
         assert result.returncode == 1
         assert 'UNEXPECTED_' not in result.stdout and 'PICKER' not in result.stdout
 
@@ -154,7 +184,7 @@ def test_explicit_slot_saved_selection_preserves_busy_owner(zsh):
         '_t_resume_history_launch() { print -u2 -- "HISTORY $*"; print dev-api-99; }; '
         '_t_dev() { print UNEXPECTED_ATTACH; }; '
     )
-    result = zsh(setup + 't resume api 3', _tty=True,
+    result = zsh(setup + 't resume api 3 --days all', _tty=True,
                  FAKE_SESSIONS='dev-api-3', FAKE_SESSION_PATH=str(wt))
     assert result.returncode == 0, result.stdout
     assert 'HISTORY api saved codex' in result.stdout
@@ -171,7 +201,7 @@ def test_explicit_slot_live_selection_attaches_exact_owner(zsh):
       _t_dev() { print -r -- "ATTACH $*"; }
       _t_resume_history_launch() { print UNEXPECTED_LAUNCH; }
     '''
-    result = zsh(setup + 't session resume api 3', _tty=True)
+    result = zsh(setup + 't session resume api 3 --days all', _tty=True)
     assert result.returncode == 0 and 'ATTACH api 88' in result.stdout
     assert 'UNEXPECTED_LAUNCH' not in result.stdout
 
@@ -189,7 +219,7 @@ def test_explicit_slot_shared_filters_restore_inactive_and_all_rows(zsh, tmp_pat
         '_t_resume_history_launch() { print UNEXPECTED_LAUNCH; }; '
     )
     log = tmp_path / 'picker.log'
-    result = zsh(setup + 't resume api 3', _tty=True, FZF_LOG=str(log),
+    result = zsh(setup + 't resume api 3 --days all', _tty=True, FZF_LOG=str(log),
                  PICK_ACTIONS='on,off', PICK_CANCEL='1',
                  FAKE_SESSIONS='dev-api-3', FAKE_SESSION_PATH=str(wt))
     assert result.returncode == 130 and 'UNEXPECTED_' not in result.stdout
@@ -220,7 +250,7 @@ def test_explicit_slot_failed_owner_scan_never_attaches(zsh):
     result = zsh('''
       _dev_session_rows() { return 7; }
       _t_dev() { print UNEXPECTED_ATTACH; }
-      t resume api 3
+      t resume api 3 --days all
     ''', _tty=True, FAKE_SESSIONS='dev-api-3', FAKE_SESSION_PATH=str(wt))
     assert result.returncode == 1 and 'ownership could not be verified' in result.stdout
     assert 'UNEXPECTED_ATTACH' not in result.stdout

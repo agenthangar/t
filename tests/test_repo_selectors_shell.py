@@ -366,7 +366,7 @@ def test_origin_names_reach_resume_and_remote_identity(tmp_path, selector, monke
     result = shell(tmp_path, f'''
         DEV_REPOS=(app "$HOME/code/owner-application")
         _dev_worktree_enabled() {{ print -u2 -r -- "RESUME $1"; return 1; }}
-        t resume {selector} 2
+        t resume {selector} 2 --days all
         REMOTE_HOSTS=(far user@example)
         python3() {{ [[ $2 == __repo-identity && $3 == app ]] || return 98; print org/project; }}
         ssh() {{ print -r -- "SSH $*"; return 17; }}
@@ -400,7 +400,7 @@ def test_origin_completion_is_linear_fresh_and_suppresses_combined_collisions(tm
     assert 'ambiguous repository' in result.stderr and 'UNEXPECTED' not in result.stderr
 
 
-@pytest.mark.parametrize('command', ['t resume application 2', 't repo cd application', '_t_remote_open_local application 2'])
+@pytest.mark.parametrize('command', ['t resume application 2 --days all', 't repo cd application', '_t_remote_open_local application 2'])
 def test_real_origin_collision_stops_shell_actions(tmp_path, command, monkeypatch):
     home = tmp_path / 'home'
     monkeypatch.setenv('HOME', str(home))
