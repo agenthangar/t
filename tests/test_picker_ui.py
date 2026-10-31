@@ -684,7 +684,7 @@ def test_open_kill_temporarily_locks_query_then_accepts_typing(picker):
     keys('-l', 'Beta')
     wait('1/2 (1)')
     keys('k')
-    wait('1/1 (0)')  # Deliberately held during legacy mark restoration.
+    wait('1/1 (')  # Deliberately held during restoration; modern fzf keeps marks.
     keys('-l', 'x')
     wait('Close: web-4 closed')
     screen = wait('0/1 (1)')
