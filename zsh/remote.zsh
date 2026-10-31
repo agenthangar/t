@@ -973,8 +973,10 @@ _pr_state_refresh() {
 # "merged, still in progress" instead. The tag stays until the session's next PR
 # URL replaces it, since the last PR mention in the transcript is the one shown.
 _pr_state_tag() {
+  # Return both the released text tag and structured state to snapshot callers.
   local pru=$1 wt=${2:-}
   REPLY=
+  REPLY_PR_STATE=NONE
   [[ -n $pru ]] || return 0
   local prdir="${XDG_CACHE_HOME:-$HOME/.cache}/claude-sessions/pr"
   local prp=${pru#github.com/}; prp=${prp/\/pull\//\/}
@@ -986,6 +988,7 @@ _pr_state_tag() {
     [[ $prraw == MERGED || $prraw == CLOSED || $prraw == OPEN ]] && prst=$prraw
   fi
   prlab=${prst:+${(L)prst}}
+  REPLY_PR_STATE=${prst:-UNKNOWN}
   [[ -z $prlab ]] && command -v gh >/dev/null 2>&1 && prlab='?'
   if [[ $prst == MERGED && -n $wt ]] && _pr_work_continued "$wt" "$prcf.head"; then
     prlab='merged, still in progress'

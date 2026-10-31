@@ -2222,6 +2222,8 @@ def test_zsh_resume_picker_shows_the_display_column_for_every_row(zsh, tmp_path)
     assert "rc=130" in r.stdout.splitlines(), r.stdout                    # Esc cancels without spawning work
     rows = log.read_text().splitlines()
     assert len(rows) == 3, rows                                # the subagent thread adds no row
+    assert all(row.startswith(('[NONE   ] ', '[UNKNOWN] ')) for row in rows)
+    rows = [row.split('] ', 1)[1] for row in rows]  # Leading PR state precedes the existing columns.
     # No transcript records a turn timestamp here: deterministic identity ties
     # leave the live slot after saved slot 3 instead of pinning it to the top.
     assert rows[-1].split()[:5] == ["4", "✱", "claude", "●", "active"]

@@ -4,6 +4,8 @@ import pathlib
 import re
 import pytest
 
+import pytest
+
 from test_agent_seam import zsh  # noqa: F401 — sandboxed shell fixture
 
 
@@ -330,3 +332,43 @@ def test_mixed_host_batch_preflights_native_before_first_launch(zsh, tmp_path):
                  FZF_LOG=str(tmp_path / 'fzf.log'))
     assert 'rc=1' in result.stdout and 'native desktop app' in result.stdout
     assert 'WRONG_' not in result.stdout
+
+
+@pytest.mark.parametrize('aggregate', [None, 'MIXED'])
+def test_resume_merged_badge_precedes_long_title_and_toggle_keeps_other_rows(zsh, tmp_path, aggregate):
+    stub = tmp_path / 'stubbin/fzf'
+    stub.write_text(FZF_ALL)
+    stub.chmod(0o755)
+    for slot in (2, 3):
+        wt = zsh.home / 'code/.worktrees/api' / str(slot)
+        wt.mkdir(parents=True)
+        project = zsh.home / '.claude/projects' / re.sub(r'[^A-Za-z0-9]', '-', str(wt))
+        project.mkdir(parents=True)
+        (project / f'c{slot}.jsonl').write_text('{"type":"user","message":{"content":"Task"}}\n')
+    log = tmp_path / 'fzf.log'
+    # Structured cache-derived output is independent of words in the task title.
+    shell = ('_transcript_meta_batch() { local tx; for tx in "$@"; do '
+             'if [[ $tx == */c2.jsonl ]]; then '
+             'print -r -- "$tx"$\'\\t\'"Long task title repeated many times to push suffix beyond the screen"$\'\\t\'github.com/org/api/pull/42; '
+             'else print -r -- "$tx"$\'\\t\'"Task · #99 merged"$\'\\t\'; fi; done; }; '
+             '_pr_state_flush() { :; }; '
+             'mkdir -p "$HOME/.cache/claude-sessions/pr"; '
+             'print -r -- MERGED > "$HOME/.cache/claude-sessions/pr/org#api#42"; ')
+    if aggregate:
+        record = '\t'.join(['1800000000', 'api', '2', 'c2', str(zsh.home / 'code/.worktrees/api/2'),
+                            'date', 'Associated open and merged PRs', 'local', 'claude', '-', 'org/api', aggregate])
+        shell += f"_t_resume_history_candidates() {{ print -r -- '{record}'; }}; "
+    result = zsh(shell + '_t_resume api; echo rc=$?', _tty=True, FZF_LOG=str(log),
+                 PICK_ACTIONS='merged,merged', PICK_CANCEL='1')
+    assert 'rc=1' in result.stdout, result.stdout
+    initial = pathlib.Path(f'{log}.initial').read_text().splitlines()
+    merged = next(row for row in initial if '\tc2\t' in row)
+    assert merged.split('\t')[-1].startswith('[MIXED ' if aggregate else '[MERGED ')
+    assert '#42 merged' in merged
+    hidden = pathlib.Path(f'{log}.step0').read_text()
+    assert ('\tc2\t' in hidden) == bool(aggregate)
+    assert '\tc3\t' in hidden
+    assert 'Task · #99 merged' in hidden
+    assert '\tc2\t' in pathlib.Path(f'{log}.step1').read_text()
+    assert 'alt-m:' in pathlib.Path(f'{log}.args').read_text()
+    assert 'send-keys' not in (zsh.log.read_text() if zsh.log.exists() else '')

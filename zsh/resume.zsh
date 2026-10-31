@@ -511,7 +511,7 @@ _t_resume() {
   # guarded allocator instead of borrowing an occupied or unrelated worktree.
   local history_rows history_rc=0 history_row history_key
   local -a history_fields history_keep
-  local -A history_seen
+  local -A history_seen history_pr_state
   for _p in "${(@)pending}"; do
     _mf=("${(@ps:\t:)_p}")
     history_seen[$_mf[2]/$(_dev_transcript_agent "$_mf[5]")/$(_dev_transcript_sid "$_mf[5]")]=1
@@ -533,8 +533,13 @@ _t_resume() {
   (( history_rc == 0 )) || return $history_rc
   for history_row in "${(@f)history_rows}"; do
     history_fields=("${(@ps:\t:)history_row}")
-    (( $#history_fields == 9 || $#history_fields == 10 || $#history_fields == 11 )) || continue
+    (( $#history_fields >= 9 && $#history_fields <= 12 )) || continue
     history_key=$history_fields[2]/$history_fields[9]/$history_fields[4]
+    # Retained local transcript rows need the full associated-PR aggregate too;
+    # their last-mentioned PR alone cannot prove all work's PRs have merged.
+    if (( $#history_fields >= 12 )) && [[ $history_fields[12] != NONE ]]; then
+      history_pr_state[$history_key]=$history_fields[12]
+    fi
     if [[ -n ${history_seen[$history_key]:-} ]]; then
       [[ $history_fields[8] != local ]] || continue
       # A newer remote source supersedes an already discovered local copy.
@@ -557,7 +562,7 @@ _t_resume() {
       (( skipped++ )); continue
     fi
     org=$history_fields[8]; [[ $org == local ]] && org=-
-    cands+=("$history_fields[1]"$'\t'"$history_fields[2]"$'\t'"$history_fields[3]"$'\t'"$history_fields[4]"$'\t'"$history_fields[5]"$'\t'"$history_fields[6]"$'\t'"$history_fields[7]"$'\t'-$'\t'history$'\t'"$org"$'\t'"$history_fields[9]"$'\t'-$'\t'"${history_fields[10]:--}"$'\t'"${history_fields[11]:--}")
+    cands+=("$history_fields[1]"$'\t'"$history_fields[2]"$'\t'"$history_fields[3]"$'\t'"$history_fields[4]"$'\t'"$history_fields[5]"$'\t'"$history_fields[6]"$'\t'"$history_fields[7]"$'\t'-$'\t'history$'\t'"$org"$'\t'"$history_fields[9]"$'\t'-$'\t'"${history_fields[10]:--}"$'\t'"${history_fields[11]:--}"$'\t'"${history_fields[12]:-UNKNOWN}")
   done
 
   # Conversations live under ANOTHER slot's session (or a foreground one). One row
@@ -630,7 +635,7 @@ _t_resume() {
     # (field 11 here, 10 once the sort key is stripped) gets its own display column
     # AND picks the binary a pick spawns
     _ag=$(_dev_transcript_agent "$txf")
-    cands+=("$ep"$'\t'"$repo"$'\t'"$n"$'\t'"$(_dev_transcript_sid "$txf")"$'\t'"$wt"$'\t'"$when"$'\t'"$title"$'\t'-$'\t'-$'\t'"${org[1,10]}"$'\t'"$_ag"$'\t'"$txf")
+    cands+=("$ep"$'\t'"$repo"$'\t'"$n"$'\t'"$(_dev_transcript_sid "$txf")"$'\t'"$wt"$'\t'"$when"$'\t'"$title"$'\t'-$'\t'-$'\t'"${org[1,10]}"$'\t'"$_ag"$'\t'"$txf"$'\t'-$'\t'-$'\t'"${history_pr_state[$repo/$_ag/$(_dev_transcript_sid "$txf")]:-$REPLY_PR_STATE}")
   done
   # ONE detached refresh for the whole scan, instead of a `gh pr view` child per
   # stale row: _pr_state_refresh batches the refs by repo, so a scan that turned up
@@ -672,8 +677,9 @@ _t_resume() {
   # their host in the ● label instead); agent is the row's claude/codex — what a
   # dead pick spawns, and what a live slot is running (from the live scan, else
   # the session's own stamp). EVERY row carries all ten, sentinelled, so the
-  # positional reads below never slide. The optional last-turn timestamp is field
-  # 11; one ALIGNED display column (12) is
+  # positional reads below never slide. Last-turn timestamp is field 11,
+  # repository identity is 12, and explicit cached PR state is 13.
+  # One ALIGNED display column (14) is
   # appended here — fzf renders raw \t fields at literal tab stops (nothing
   # lines up), so both fzf and the no-fzf listing show the same pre-padded
   # gh-style row: [repo]  slot  agent  [origin]  date|●-where  title. The agent
@@ -689,7 +695,7 @@ _t_resume() {
   # origin column only appears when some row has one (a single-machine setup
   # never sees it); all-repos mode adds the repo column. Both pad to the widest
   # value in this candidate set.
-  local pick c fprompt; local -a f
+  local pick c fprompt prbadge; local -a f
   local rw=0 ow=0 aw=0 i=1
   if [[ -n $all_mode ]]; then
     fprompt="resume (${days}d)> "
@@ -706,18 +712,19 @@ _t_resume() {
   for c in "${(@)cands}"; do
     f=("${(@ps:\t:)c}")
     org=${f[9]:-}; [[ $org == - ]] && org=
+    prbadge=$(printf '[%-7s] ' "${f[13]:-UNKNOWN}")
     agent="${_DEV_AGENT_GLYPH[${f[10]:-claude}]:-?} ${f[10]:-claude}"
     if [[ -n $all_mode ]]; then
       if (( ow )); then
-        cands[$i]+=$'\t'"$(printf '%-*s  %2s  %-*s  %-*s  %-14s  %s' "$rw" "$f[1]" "$f[2]" "$aw" "$agent" "$ow" "$org" "$f[5]" "$f[6]")"
+        cands[$i]+=$'\t'"$prbadge$(printf '%-*s  %2s  %-*s  %-*s  %-14s  %s' "$rw" "$f[1]" "$f[2]" "$aw" "$agent" "$ow" "$org" "$f[5]" "$f[6]")"
       else
-        cands[$i]+=$'\t'"$(printf '%-*s  %2s  %-*s  %-14s  %s' "$rw" "$f[1]" "$f[2]" "$aw" "$agent" "$f[5]" "$f[6]")"
+        cands[$i]+=$'\t'"$prbadge$(printf '%-*s  %2s  %-*s  %-14s  %s' "$rw" "$f[1]" "$f[2]" "$aw" "$agent" "$f[5]" "$f[6]")"
       fi
     else
       if (( ow )); then
-        cands[$i]+=$'\t'"$(printf '%2s  %-*s  %-*s  %-14s  %s' "$f[2]" "$aw" "$agent" "$ow" "$org" "$f[5]" "$f[6]")"
+        cands[$i]+=$'\t'"$prbadge$(printf '%2s  %-*s  %-*s  %-14s  %s' "$f[2]" "$aw" "$agent" "$ow" "$org" "$f[5]" "$f[6]")"
       else
-        cands[$i]+=$'\t'"$(printf '%2s  %-*s  %-14s  %s' "$f[2]" "$aw" "$agent" "$f[5]" "$f[6]")"
+        cands[$i]+=$'\t'"$prbadge$(printf '%2s  %-*s  %-14s  %s' "$f[2]" "$aw" "$agent" "$f[5]" "$f[6]")"
       fi
     fi
     (( i++ ))
