@@ -348,10 +348,12 @@ commands also report discovery stages. Redirected output and JSON remain quiet.
 `t open`, `t resume`, and `t kill` share the compact resume picker design:
 **Space/Tab marks ✓ and Enter acts on the selection**. A plain green checkmark
 stays readable on the darker cyan focused row, without a colored block.
-In `t open`, press **k** to kill the marked sessions, or the focused session
-when nothing is marked. This confirms the selection and retains close safety
-checks. For example, run `t open --attached`, mark sessions, and press **k**.
-Successful kills refresh the list with search and filters reset to opening defaults.
+In `t open`, press **k** to kill only the focused session, independently of
+marks. This confirms that session and retains close safety checks. For example,
+run `t open --attached`, focus a session, and press **k**.
+The picker stays open and removes the closed row without rediscovering sessions.
+Search, filters, and marks on other rows are preserved; failed or canceled closes
+leave the row available.
 The open picker reserves **k** as an action key rather than query text.
 **Ctrl-F** opens the Filters picker. Choose State or a column, select its value,
 then choose Apply filters. **Ctrl-A** turns filtering off to show the whole

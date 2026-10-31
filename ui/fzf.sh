@@ -17,7 +17,7 @@ _t_fzf_worker() {
     emulate -L zsh
     _t_fzf_inputs=()
     for _t_fzf_name in COLUMNS LINES TMPDIR NO_COLOR T_HOME PATH \
-      T_PICKER_COLUMNS T_PICKER_SOURCE_ROWS T_PICKER_SESSION_FILTERS \
+      T_PICKER_COLUMNS T_PICKER_SOURCE_ROWS T_PICKER_SESSION_FILTERS T_PICKER_KILL_CALLBACK \
       T_PICKER_WITH_ATTACHED T_PICKER_WITH_PENDING T_PICKER_ALL_LABEL T_PICKER_AUTH_HOSTS; do
       [[ -v $_t_fzf_name ]] && _t_fzf_inputs+=("$_t_fzf_name")
     done
@@ -191,7 +191,7 @@ _t_fzf_filtered() (
   fi
   umask 077
   _t_picker_dir=$(mktemp -d "${TMPDIR:-/tmp}/t-picker.XXXXXX") || return 1
-  trap 'rm -rf -- "$_t_picker_dir"' EXIT
+  trap '[ ! -f "$_t_picker_dir/update.pid" ] || kill "$(cat "$_t_picker_dir/update.pid")" 2>/dev/null; rm -rf -- "$_t_picker_dir"' EXIT
   trap 'exit 130' HUP INT TERM
   export T_PICKER_DEFAULT="$_t_picker_dir/default" T_PICKER_ALL="$_t_picker_dir/all"
   export T_PICKER_STATE="$_t_picker_dir/show-all" T_PICKER_TOGGLE="$_t_picker_dir/toggle"
@@ -393,10 +393,13 @@ SH
       _t_picker_bind="${_t_picker_bind},${_t_picker_key}:${T_PICKER_CLEAR_MARKS}execute-silent(sh \"\$T_PICKER_TOGGLE\" sort-$_t_picker_action)+reload-sync(cat \"\$T_PICKER_CURRENT\")+transform-header(cat \"\$T_PICKER_CURRENT_HEADER\")"
     done
   fi
-  if [ "${T_PICKER_SESSION_FILTERS:-}" = open ]; then
-    # Keep Enter's row-only output unchanged; k adds a private action sentinel.
+  if [ "${T_PICKER_SESSION_FILTERS:-}" = open ] && [ -n "${T_PICKER_KILL_CALLBACK:-}" ]; then
+    # The action removes a cached row, then restores marks on both fzf versions.
+    # HTTP updates run only after execute returns, outside fzf's blocked loop.
+    export FZF_API_KEY
+    FZF_API_KEY=$(python3 -c 'import secrets; print(secrets.token_hex(32))')
     # shellcheck disable=SC2016
-    set -- --bind='k:execute-silent(touch "$T_PICKER_VIEWS/kill")+accept' "$@"
+    set -- --listen=127.0.0.1:0 --bind='start:unbind(change),change:transform-query(cat "$T_PICKER_VIEWS/action-query-locked"),k:rebind(change)+unbind(enter)+unbind(k)+unbind(space)+unbind(tab)+unbind(ctrl-a)+unbind(ctrl-f)+unbind(ctrl-l)+execute(python3 "$T_HOME/libexec/t_picker_close.py" close {} {q})' "$@"
   fi
   _t_fzf --multi --no-hscroll --margin="$_t_picker_margin" --delimiter="$(printf '\t')" --with-nth=-1 \
     --bind="enter:accept,esc:abort,ctrl-c:abort,space:toggle+down,tab:toggle+down,shift-tab:up${_t_picker_preview_bind}" \
@@ -405,7 +408,6 @@ SH
     --header="$(cat "$_t_picker_header")" "$@" < "$T_PICKER_CURRENT" > "$_t_picker_dir/result"
   _t_picker_rc=$?
   if [ "$_t_picker_rc" = 0 ]; then
-    [ ! -f "$_t_picker_dir/kill" ] || printf '__t_open_kill__\n'
     cat "$_t_picker_dir/result"
   fi
   return "$_t_picker_rc"

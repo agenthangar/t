@@ -260,6 +260,14 @@
     "libexec/t_history.py:HistoryCommand.resume_many:subprocess.call": {
       "kind": "passthrough",
       "reason": "The shared terminal tab launcher owns its visible diagnostics and native terminal handoff, matching issue batch attachment."
+    },
+    "libexec/t_picker_close.py:Picker.wait:time.sleep": {
+      "kind": "protocol",
+      "reason": "Bounded asynchronous fzf update polling runs while the existing picker owns terminal rendering; an extra spinner would corrupt it."
+    },
+    "libexec/t_picker_close.py:close:subprocess.Popen": {
+      "kind": "background",
+      "reason": "Starts a short-lived cached-view updater; it cannot contact fzf until the foreground action returns, and the picker owns its cleanup and rendering."
     }
   },
   "shell": [

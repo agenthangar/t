@@ -494,20 +494,6 @@ _t_open() {
 # Complete current-session picker. Return 2 when there are no candidates, or 3
 # for an explicit new-session request. Cancellation/failure must not start work.
 _t_open_picker() {
-  local picker_rc refreshed=
-  while true; do
-    _t_open_picker_once "$@"; picker_rc=$?
-    if (( picker_rc == 4 )); then
-      refreshed=1
-      continue
-    fi
-    # An emptied list after killing is success, never a request to start work.
-    [[ -n $refreshed && $picker_rc == 2 ]] && return 0
-    return $picker_rc
-  done
-}
-
-_t_open_picker_once() {
   local repo="$1" remote="$2" app="$3" cli="$4" rows row selected scope
   local _repo_selector _repo_selector_rc
   if [[ -z $6 ]]; then
@@ -564,16 +550,36 @@ _t_open_picker_once() {
     [[ -n ${hidden[$fields[1]/$fields[2]]:-} ]] || visible+=("$row")
   done
   filtered="${(F)visible}"
-  selected=$(T_PICKER_SOURCE_ROWS="${(F)candidates}" T_PICKER_COLUMNS="$columns" T_PICKER_SESSION_FILTERS=open _t_fzf_filtered "$filtered" "$rows" open unattached \
-    "" "$include_attached" --prompt="open ${repo:+$repo }> " \
-    --with-nth=5,4) || return $?
+  # A foreground callback retains this invocation's configuration and guarded
+  # close functions without running interactive shell startup or exit hooks.
+  local action_dir action_name picker_rc
+  action_dir=$(mktemp -d "${TMPDIR:-/tmp}/t-open-action.XXXXXX") || return 1
+  {
+    {
+      print -r -- 'emulate -LR zsh'
+      print -r -- "source ${(qq)T_HOME}/t.plugin.zsh"
+      for action_name in ${(k)parameters}; do
+        case $action_name in
+          DEV_*|REMOTE_HOSTS|T_*|_T_*) typeset -p "$action_name" 2>/dev/null ;;
+        esac
+      done
+      for action_name in ${(k)functions}; do
+        case $action_name in
+          _dev_*|_t_*|_term_*|_stat_*|tmux|ssh) functions "$action_name" ;;
+        esac
+      done
+      print -r -- '_dev_kill_selected "$1"'
+    } > "$action_dir/close.zsh"
+    selected=$(T_PICKER_KILL_CALLBACK="$action_dir/close.zsh" \
+      T_PICKER_SOURCE_ROWS="${(F)candidates}" T_PICKER_COLUMNS="$columns" T_PICKER_SESSION_FILTERS=open \
+      _t_fzf_filtered "$filtered" "$rows" open unattached \
+      "" "$include_attached" --prompt="open ${repo:+$repo }> " --with-nth=5,4)
+    picker_rc=$?
+  } always {
+    rm -rf -- "$action_dir"
+  }
+  (( picker_rc == 0 )) || return $picker_rc
   [[ -n $selected ]] || return 130
-  if [[ $selected == __t_open_kill__$'\n'* ]]; then
-    selected=${selected#*$'\n'}
-    [[ -n $selected ]] || return 130
-    _dev_kill_selected "$selected" || return $?
-    return 4
-  fi
   _t_open_selected "$selected" "$app" "$cli"
 }
 
