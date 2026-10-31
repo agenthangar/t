@@ -20,6 +20,30 @@ def make_ui(t, keys, width=80, height=24):
     return ui
 
 
+@pytest.mark.parametrize('width', [80, 160, 240])
+@pytest.mark.parametrize('selected', [False, True])
+def test_shared_row_uses_available_width_for_full_labels(t_mod, width, selected):
+    ui = make_ui(t_mod, [], width)
+    label = 'Preview approval before PR'
+    lines = ui.row(label, 'Required', selected=selected, label_width=len(label))
+    plain = '\n'.join(t_mod._ANSI_RE.sub('', line) for line in lines)
+    assert label in plain and 'Required' in plain
+    assert all(t_mod._vis_len(line) <= width for line in lines)
+
+
+@pytest.mark.parametrize('width', [32, 44, 60, 80, 160])
+@pytest.mark.parametrize('selected', [False, True])
+def test_shared_row_bounds_long_labels_and_retains_values(t_mod, width, selected):
+    ui = make_ui(t_mod, [], width)
+    lines = ui.row('Long setting label ' * 20, 'Required', selected=selected, mark='◼', label_width=380)
+    plain = '\n'.join(t_mod._ANSI_RE.sub('', line) for line in lines)
+    assert 'Required' in plain
+    assert ('▸' in plain) is selected
+    assert '◼' in plain
+    assert len(lines) == (2 if width < 60 else 1)
+    assert all(t_mod._vis_len(line) <= width for line in lines)
+
+
 @pytest.mark.parametrize('width,height', [(80, 24), (44, 20), (32, 12), (20, 8)])
 @pytest.mark.parametrize('multi', [False, True])
 def test_shared_picker_keeps_focus_and_primary_action_visible(t_mod, width, height, multi):

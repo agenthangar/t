@@ -89,7 +89,7 @@ def test_disabled_stages_keep_single_tool_defaults(workflow):
                                   'claude': {'model': 'other-tool'}}
     assert workflow.main_session_settings(policy) == {'model': 'single-tool', 'effort': 'low'}
     assert workflow.main_session_settings(policy, 'claude') == {'model': 'other-tool'}
-    assert workflow.stage_settings(policy, 'planning') == policy['implementation']
+    assert workflow.stage_settings(policy, 'planning') == {'model': 'single-tool', 'effort': 'low'}
 
 
 def test_named_and_repository_choices_are_scoped_and_read_only(workflow, tmp_path):
@@ -154,3 +154,99 @@ def test_disabled_helpers_render_no_inactive_models_but_keep_other_preferences(w
     assert 'inactive-planner' not in text and 'inactive-reviewer' not in text
     assert 'Keep my editable instructions.' in text
     assert workflow.policy_summary(policy)['separate_stages'] == []
+
+
+@pytest.mark.parametrize('selected', [None, 'planning', {}, [], ['other'],
+                                      ['implementation', 'implementation'], [False], [[]]])
+def test_model_stage_schema_rejects_invalid_selections(workflow, selected):
+    policy = {**copy.deepcopy(workflow.DEFAULT), 'model_stages': selected}
+    with pytest.raises(ValueError, match='model_stages'):
+        workflow.validate_policy(policy)
+
+
+@pytest.mark.parametrize('selected', [['implementation'], ['planning'], ['review'],
+                                      ['planning', 'implementation', 'review']])
+def test_all_three_model_stages_can_be_selected_independently(workflow, selected):
+    policy = workflow.select_model_stages(workflow.DEFAULT, selected)
+    assert workflow.model_stages(policy) == selected
+    assert workflow.select_model_stages(policy, list(reversed(selected))) == policy
+    assert workflow.separate_stages(policy) == [stage for stage in selected if stage != 'implementation']
+    disabled = workflow.select_model_stages(policy, [])
+    assert workflow.model_stages(disabled) == []
+    assert disabled.get('model_stages') == policy.get('model_stages')
+    assert disabled['implementation'] == policy['implementation']
+    assert workflow.select_model_stages(disabled, []) == disabled
+    assert workflow.model_stages(workflow.select_model_stages(disabled, selected)) == selected
+    assert workflow.policy_summary(policy)['model_stages'] == selected
+
+
+def test_legacy_stage_selection_preserves_main_and_noop_json(workflow):
+    policy = workflow.select_stages(workflow.DEFAULT, ['review'])
+    before = copy.deepcopy(policy)
+    assert workflow.model_stages(policy) == ['implementation', 'review']
+    assert workflow.select_model_stages(policy, ['review', 'implementation']) == policy
+    assert workflow.validate_policy(policy) == before
+    changed = workflow.select_model_stages(policy, ['review'])
+    assert changed['model_stages'] == ['review']
+    assert 'separate_stages' not in changed
+    compat = workflow.select_stages(changed, ['planning'])
+    assert compat['model_stages'] == ['planning', 'implementation']
+    assert 'separate_stages' not in compat
+    assert policy == before
+
+
+def test_main_work_unselected_uses_each_tools_own_launch_defaults(workflow):
+    policy = workflow.select_model_stages(workflow.DEFAULT, ['planning'])
+    policy['session_defaults'] = {'codex': {'model': 'main-codex', 'effort': 'low'},
+                                  'claude': {'model': 'main-claude', 'effort': 'high'}}
+    assert workflow.main_session_settings(policy) == {'model': 'main-codex', 'effort': 'low'}
+    assert workflow.main_session_settings(policy, 'claude') == {'model': 'main-claude', 'effort': 'high'}
+    assert workflow.stage_settings(policy, 'implementation') == {'model': 'main-codex', 'effort': 'low'}
+    assert workflow.stage_settings(policy, 'review') == {'model': 'main-codex', 'effort': 'low'}
+    assert workflow.stage_settings(policy, 'planning') == policy['planning']
+    text = workflow._stage_text(policy)
+    assert 'Implement in the main conversation with main-codex' in text
+    assert 'Review in the main conversation with main-codex' in text
+    assert 'gpt-6.1-sol' not in text
+    assert 'Codex session default: main-codex; reasoning: low' in workflow.summary_lines(policy)
+
+
+def test_main_work_unselected_native_defaults_do_not_reveal_inactive_values(workflow):
+    policy = workflow.select_model_stages(workflow.DEFAULT, ['review'])
+    policy['planning'] = {'model': 'inactive-planner', 'effort': 'ultra'}
+    policy['implementation'] = {'model': 'inactive-implementation', 'effort': 'max'}
+    assert workflow.main_session_settings(policy) == {}
+    assert workflow.main_session_settings(policy, 'claude') == {}
+    assert workflow.stage_settings(policy, 'planning') == {'model': '', 'effort': ''}
+    assert workflow.stage_settings(policy, 'implementation') == {'model': '', 'effort': ''}
+    text = workflow._stage_text(policy)
+    assert 'the current native model' in text
+    assert 'the current native reasoning setting' in text
+    assert 'choose and disclose a concrete supported baseline for the current main model' in text
+    assert 'inactive-planner' not in text and 'inactive-implementation' not in text
+    assert 'ultra' not in text and ' max' not in text
+
+
+def test_implementation_only_does_not_delegate_planning_or_review(workflow):
+    policy = workflow.select_model_stages(workflow.DEFAULT, ['implementation'])
+    policy['planning']['model'] = 'inactive-planner'
+    policy['review']['model'] = 'inactive-reviewer'
+    text = workflow._stage_text(policy)
+    assert 'Plan in the main conversation with gpt-6.1-sol' in text
+    assert 'Review in the main conversation with gpt-6.1-sol' in text
+    assert 'Plan with a bounded' not in text and 'Review with a bounded' not in text
+    assert 'inactive-planner' not in text and 'inactive-reviewer' not in text
+
+
+def test_model_stage_selector_rejects_invalid_edits(workflow):
+    for selected in (None, 'planning', ['other'], ['planning', 'planning'], [False]):
+        with pytest.raises(ValueError, match='model_stages'):
+            workflow.select_model_stages(workflow.DEFAULT, selected)
+
+
+def test_inherited_stage_guidance_preserves_auto_while_launch_starts_medium(workflow):
+    policy = workflow.select_model_stages(workflow.DEFAULT, ['implementation'])
+    for stage in ('planning', 'implementation', 'review'):
+        assert workflow.stage_settings(policy, stage) == policy['implementation']
+        assert workflow.stage_settings(policy, stage)['effort'] == 'auto'
+    assert workflow.main_session_settings(policy)['effort'] == 'medium'

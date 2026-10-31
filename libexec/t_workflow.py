@@ -20,6 +20,7 @@ ISSUE_BEGIN = '<!-- t public-issues: begin -->'
 ISSUE_END = '<!-- t public-issues: end -->'
 EFFORTS = ('minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra')
 SEPARATE_STAGES = ('planning', 'review')
+MODEL_STAGES = ('planning', 'implementation', 'review')
 PERMISSIONS = {
     'codex': {
         'ask': {'label': 'Ask for approval', 'args': ['--sandbox', 'workspace-write', '--ask-for-approval', 'on-request', '-c', 'approvals_reviewer="user"']},
@@ -57,9 +58,9 @@ BEHAVIORS = {
         'local_review': ('Install / preview locally first', 'Complete implementation and relevant checks, then use the documented local install or preview path appropriate to the project so the user can try the result. Respect existing authorization for installation and report unavailable tools accurately. Present how to try it and wait for explicit user feedback and approval before pushing or creating a pull request.'),
         'auto_merge': ('Auto-merge when authorized', 'Commit, push and open a pull request under repository merge policy and required checks. When authorized and supported, enable auto-merge and monitor it through completion; report any blocker accurately.'),
     }},
-    'pr_open': {'label': 'Open pull request', 'choices': {
-        'automatic': ('When ready', 'When the work is ready under the selected preview and validation preferences, commit, push and open a pull request without another confirmation. Honor any required preview approval and repository or task instructions.'),
-        'on_request': ('When I ask', 'Prepare a concrete reviewable result, then wait for an explicit user request or approval before pushing or opening a pull request, subject to repository and task instructions.'),
+    'pr_open': {'label': 'When to open PR', 'choices': {
+        'automatic': ('Automatically when ready', 'When the work is ready under the selected preview and validation preferences, commit, push and open a pull request without another confirmation. Honor any required preview approval and repository or task instructions.'),
+        'on_request': ('Only when I ask', 'Prepare a concrete reviewable result, then wait for an explicit user request or approval before pushing or opening a pull request, subject to repository and task instructions.'),
     }},
     'pr_state': {'label': 'Pull request state', 'choices': {
         'ready': ('Ready for review', 'Create pull requests ready for review. Required CI still runs and all required checks and merge gates remain in effect.'),
@@ -252,7 +253,7 @@ def defaults():
 
 
 def validate_policy(value):
-    if not isinstance(value, dict) or set(value) - {'instructions', 'stages_enabled', 'separate_stages', 'behaviors', 'runners', 'session_defaults', 'permissions'} != set(DEFAULT):
+    if not isinstance(value, dict) or set(value) - {'instructions', 'stages_enabled', 'separate_stages', 'model_stages', 'behaviors', 'runners', 'session_defaults', 'permissions'} != set(DEFAULT):
         raise ValueError('workflow requires enabled, planning, implementation and review')
     instructions = value.get('instructions', '')
     if not isinstance(instructions, str) or any(marker in instructions for marker in (BEGIN, END, ISSUE_BEGIN, ISSUE_END)):
@@ -272,6 +273,10 @@ def validate_policy(value):
         _validate_stage_selection(value['separate_stages'])
         if not value['separate_stages']:
             raise ValueError('workflow separate_stages must contain planning and/or review; use stages_enabled false for none')
+    if 'model_stages' in value:
+        _validate_model_stages(value['model_stages'])
+        if not value['model_stages']:
+            raise ValueError('workflow model_stages must be nonempty; use stages_enabled false for none')
     session_defaults = value.get('session_defaults', {})
     if not isinstance(session_defaults, dict) or set(session_defaults) - {'codex', 'claude'}:
         raise ValueError('session_defaults supports codex and claude only')
@@ -434,7 +439,7 @@ def main_session_settings(policy, agent='codex'):
     """Scoped launch values; stage models belong only to Codex root sessions."""
     if not policy or not policy['enabled']:
         return {}
-    if policy.get('stages_enabled', True):
+    if 'implementation' in model_stages(policy):
         if agent != 'codex':
             return {}
         implementation = policy['implementation']
@@ -479,17 +484,52 @@ def _validate_stage_selection(selected):
         raise ValueError('workflow separate_stages must be a list of unique planning and/or review stages')
 
 
+def _validate_model_stages(selected):
+    if (not isinstance(selected, list) or
+            any(not isinstance(stage, str) or stage not in MODEL_STAGES for stage in selected) or
+            len(set(selected)) != len(selected)):
+        raise ValueError('workflow model_stages must be a list of unique planning, implementation and/or review stages')
+
+
+def _retained_model_stages(policy):
+    selected = policy.get('model_stages')
+    if selected is None:
+        selected = [*policy.get('separate_stages', SEPARATE_STAGES), 'implementation']
+    return [stage for stage in MODEL_STAGES if stage in selected]
+
+
+def model_stages(policy):
+    """Read active selections, preserving legacy main-work model semantics."""
+    return _retained_model_stages(policy) if policy.get('stages_enabled', True) else []
+
+
+def select_model_stages(policy, selected):
+    """Save changed stage choices without rewriting read-only legacy defaults."""
+    _validate_model_stages(selected)
+    after = copy.deepcopy(policy)
+    if not selected:
+        after['stages_enabled'] = False
+    else:
+        chosen = [stage for stage in MODEL_STAGES if stage in selected]
+        if chosen != _retained_model_stages(policy):
+            after['model_stages'] = chosen
+            after.pop('separate_stages', None)
+        if not policy.get('stages_enabled', True):
+            after['stages_enabled'] = True
+    validate_policy(after)
+    return after
+
+
 def separate_stages(policy):
     """Read the active helpers while retaining choices for a disabled workflow."""
-    if not policy.get('stages_enabled', True):
-        return []
-    selected = policy.get('separate_stages', SEPARATE_STAGES)
-    return [stage for stage in SEPARATE_STAGES if stage in selected]
+    return [stage for stage in model_stages(policy) if stage in SEPARATE_STAGES]
 
 
 def select_stages(policy, selected):
     """Apply a picker result without materializing unchanged legacy defaults."""
     _validate_stage_selection(selected)
+    if 'model_stages' in policy:
+        return select_model_stages(policy, [*selected, 'implementation'] if selected else [])
     after = copy.deepcopy(policy)
     if not selected:
         after['stages_enabled'] = False
@@ -507,9 +547,14 @@ def select_stages(policy, selected):
 
 def stage_settings(policy, stage):
     """Return the model used for a stage without exposing inactive overrides."""
-    if stage not in ('planning', 'implementation', 'review'):
+    if stage not in MODEL_STAGES:
         raise ValueError('unknown workflow stage')
-    return copy.deepcopy(policy[stage if stage in separate_stages(policy) else 'implementation'])
+    if stage in model_stages(policy):
+        return copy.deepcopy(policy[stage])
+    if 'implementation' in model_stages(policy):
+        return copy.deepcopy(policy['implementation'])
+    settings = main_session_settings({**policy, 'enabled': True})
+    return {key: settings.get(key, '') for key in ('model', 'effort')}
 
 
 def scoped(document, repository=None, name=None):
@@ -585,6 +630,7 @@ def policy_summary(policy):
     return {'stages_enabled': policy.get('stages_enabled', True),
             'stages_active': policy['enabled'] and policy.get('stages_enabled', True),
             'separate_stages': separate_stages(policy),
+            'model_stages': model_stages(policy),
             'behaviors': copy.deepcopy(policy.get('behaviors', {})),
             'session_defaults': copy.deepcopy(policy.get('session_defaults', {})),
             'permissions': copy.deepcopy(policy.get('permissions', {})),
@@ -598,8 +644,10 @@ def summary_lines(policy):
     state = 'enabled' if summary['stages_active'] else 'disabled' if not summary['stages_enabled'] else 'inactive (workflow disabled)'
     lines = ['Model stages: ' + state]
     if summary['stages_enabled']:
-        lines.append('Separate models: ' + ', '.join(stage.title() for stage in summary['separate_stages']))
-    if not summary['stages_enabled']:
+        lines.append('Separate models: ' + (', '.join(stage.title() for stage in summary['separate_stages']) or 'none'))
+        lines.append('Configured model stages: ' + ', '.join(
+            'Main work' if stage == 'implementation' else stage.title() for stage in summary['model_stages']))
+    if 'implementation' not in summary['model_stages']:
         for agent, settings in summary['session_defaults'].items():
             lines.append(agent.title() + ' session default: ' + (settings.get('model') or 'agent default') +
                          '; reasoning: ' + (settings.get('effort') or 'default for this model'))
@@ -758,39 +806,42 @@ def _stage_text(policy):
 
 
 def _model_stage_text(policy):
-    selected = separate_stages(policy)
+    selected = model_stages(policy)
     plan, implement, review = (stage_settings(policy, s) for s in ('planning', 'implementation', 'review'))
+    main_model = implement['model'] or 'the current native model'
+    main_effort = main_session_settings(policy).get('effort')
     planning = ('medium for straightforward additions, high for substantial features, '
                 'and xhigh or higher for complex architecture or new applications') if plan['effort'] == 'auto' else plan['effort']
     implementation = ('low for straightforward execution, medium for ordinary features, '
-                      'and high or higher when implementation complexity warrants it') if implement['effort'] == 'auto' else implement['effort']
+                      'and high or higher when implementation complexity warrants it') if implement['effort'] == 'auto' else (implement['effort'] or 'the current native reasoning setting')
     reviewing = ('one supported reasoning-effort level below the planning stage, using the '
                  'lowest supported level if planning is already at the minimum') if review['effort'] == 'one-level-lower' else review['effort']
     if 'planning' in selected:
         plan_text = (f'Plan with a bounded {plan["model"]} sub-agent; reasoning effort: {planning}. '
                      'Choose a concrete supported effort before delegation. ')
     else:
-        plan_text = (f'Plan in the main conversation with {implement["model"]}; reasoning effort: '
+        plan_text = (f'Plan in the main conversation with {main_model}; reasoning effort: '
                      f'{implementation}. ')
         if review['effort'] == 'one-level-lower':
             reviewing = ('one supported reasoning-effort level below the actual main-conversation '
                          'planning effort, using the lowest supported level if planning is already '
-                         'at the minimum; if the actual planning effort is unavailable, use the '
-                         f'concrete main-session launch default {main_session_settings(policy)["effort"]} as the baseline')
+                         'at the minimum; ' +
+                         (f'if the actual planning effort is unavailable, use the concrete main-session launch default {main_effort} as the baseline'
+                          if main_effort else 'if the actual planning effort is unavailable, choose and disclose a concrete supported baseline for the current main model before delegating'))
     if 'review' in selected:
         review_text = (f'Review with a bounded {review["model"]} sub-agent; reasoning effort: {reviewing}. '
                        'Choose a concrete supported effort before delegation. ')
     else:
-        review_text = (f'Review in the main conversation with {implement["model"]}; reasoning effort: '
+        review_text = (f'Review in the main conversation with {main_model}; reasoning effort: '
                        f'{implementation}. ')
-    return (f'Keep the main conversation on {implement["model"]} for routine discussion, coding and '
+    return (f'Keep the main conversation on {main_model} for routine discussion, coding and '
             f'follow-ups; default reasoning effort: '
-            f'{main_session_settings(policy)["effort"]}. '
+            f'{main_effort or "the native session default"}. '
             f'For new features, updated designs and new buildouts, use these bounded stages. '
             f'Routine questions and small maintenance edits do not require all three stages.\n'
             f'1. {plan_text}Produce an actionable '
             f'plan, acceptance criteria and validation before implementation.\n'
-            f'2. Implement in the main conversation with {implement["model"]}; reasoning effort: '
+            f'2. Implement in the main conversation with {main_model}; reasoning effort: '
             f'{implementation}. Use the plan, relevant repository instructions and acceptance '
             f'criteria; implement and run appropriate checks.\n'
             f'3. {review_text}Review the actual diff and '

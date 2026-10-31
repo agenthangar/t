@@ -957,7 +957,7 @@ def test_stage_toggle_scope_and_precedence(workflow, t_mod, monkeypatch, tmp_pat
     assert w.PRECEDENCE in w.render(doc)
     assert w.PRECEDENCE in '\n'.join(t_mod._workflow_review(doc))
     review = '\n'.join(t_mod._workflow_review(doc))
-    assert 'Model stages: disabled' in review and 'Open pull request: When I ask' in review
+    assert 'Model stages: disabled' in review and 'When to open PR: Only when I ask' in review
     scoped_review = review.split('Repository ' + repo + ':', 1)[1]
     assert 'Planning:' not in scoped_review and 'saved-model' not in scoped_review
     policy['stages_enabled'] = True
@@ -1023,7 +1023,7 @@ def test_behavior_menu_noop_clear_and_excluded_edit(workflow, t_mod, monkeypatch
     t_mod._workflow_session(cfg)
     initial = copy.deepcopy(cfg._workflow_document)
     # Picking defaults, cancelling options and clearing an absent choice create no override.
-    t_mod._config_workflow(Menu(['customize', 'stages_enabled', ['planning', 'review'], 'behaviors',
+    t_mod._config_workflow(Menu(['customize', 'stages_enabled', ['planning', 'implementation', 'review'], 'behaviors',
                                 'pull_requests', 'pr_open', '', 'pr_state', None,
                                 'back', 'back', 'back', 'back']), cfg, 'api')
     assert cfg._workflow_document == initial and not t_mod._workflow_pending(cfg)
@@ -1033,7 +1033,7 @@ def test_behavior_menu_noop_clear_and_excluded_edit(workflow, t_mod, monkeypatch
     assert entry['excluded'] and entry['inline']['behaviors'] == {'pr_open': 'on_request'}
     assert not entry['inline']['stages_enabled']
     t_mod._config_workflow(Menu(['customize', 'behaviors', 'pull_requests', 'pr_open', '', 'back', 'back',
-                                'stages_enabled', ['planning', 'review'], 'back', 'back']), cfg, 'api')
+                                'stages_enabled', ['planning', 'implementation', 'review'], 'back', 'back']), cfg, 'api')
     entry = cfg._workflow_document['repositories'][cfg.repos['api']]
     assert entry['excluded'] and 'behaviors' not in entry['inline']
     assert entry['inline']['stages_enabled'] and entry['inline']['planning'] == w.DEFAULT['planning']
@@ -1239,7 +1239,7 @@ def test_workflow_print_precedence_and_reasoning(workflow, t_mod, monkeypatch, c
     text = capsys.readouterr().out
     assert text.index('Text instructions:') < text.index('PRs, previews & tests:')
     assert 'Design approval: Required' in text and 'Preview: Automatically' in text
-    assert 'Preview approval before PR: Required' in text
-    assert 'By task' in text and 'One level below planning' in text
-    assert 'Main work' in text and 'By task · starts Medium' in text
+    assert 'Approval before PR: Required' in text
+    assert 'Agent selects by task' in text and 'One level below planning' in text
+    assert 'Main work' in text and 'Agent selects by task · starts Medium' in text
     assert 'one-level-lower' not in text and 'Test runners:' in text and 'Propagation:' in text

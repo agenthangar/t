@@ -377,3 +377,25 @@ def test_prompt_after_separator_cannot_suppress_workflow_permission_defaults(zsh
     assert args.index('--no-daemon') < args.index('--')
     assert args[args.index('--') + 1:] == [
         '--sandbox', '--yolo', '-c', 'approval_policy=never']
+
+
+@pytest.mark.parametrize('stages', [['planning'], ['review'], ['planning', 'review']])
+def test_unselected_main_work_uses_session_defaults_on_launch_and_resume(sync, tmp_path, monkeypatch, stages):
+    w, document, repo, _ = scoped_document(sync, tmp_path, monkeypatch,
+        codex={'model': 'main-default', 'effort': 'low'}, claude={'model': 'claude-default'})
+    policy = document['repositories'][str(repo)]['inline']
+    policy.update(stages_enabled=True, model_stages=stages)
+    w['save'](document, w['snapshot'](w['config_path']()), propagate=False)
+    assert sync.launch_settings('codex', str(repo)) == ['--model', 'main-default', '-c', 'model_reasoning_effort="low"']
+    assert sync.resume_settings(SID, str(repo)) == sync.launch_settings('codex', str(repo))
+    assert sync.launch_settings('claude', str(repo)) == ['--model', 'claude-default']
+    assert sync.resume_settings(SID, str(repo), 'claude') == ['--model', 'claude-default']
+
+
+def test_unselected_main_without_saved_defaults_does_not_launch_inactive_model(sync, tmp_path, monkeypatch):
+    w, document, repo, _ = scoped_document(sync, tmp_path, monkeypatch)
+    policy = document['repositories'][str(repo)]['inline']
+    policy.update(stages_enabled=True, model_stages=['review'])
+    w['save'](document, w['snapshot'](w['config_path']()), propagate=False)
+    assert sync.launch_settings('codex', str(repo)) == []
+    assert sync.resume_settings(SID, str(repo)) == []

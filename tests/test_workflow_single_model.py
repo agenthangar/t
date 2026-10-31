@@ -160,8 +160,21 @@ def test_legacy_preview_policy_displays_separate_approval_without_rewriting(work
     assert 'before_pr' not in dict(ui.views[2][1])
 
 
+def test_pr_open_choices_distinguish_timing_and_explicit_request(workflow, t_mod):
+    ui = InspectMenu(['pull_requests', 'pr_open', 'on_request', 'back', 'back'])
+    policy = t_mod._workflow_behaviors_menu(ui, vars(workflow), copy.deepcopy(workflow.DEFAULT))
+    assert dict(ui.views[1][1])['pr_open'] == 'When to open PR'
+    assert ui.views[2][0] == 'When to open PR'
+    assert dict(ui.views[2][1]) == {'': 'Not set', 'automatic': 'Automatically when ready',
+                                   'on_request': 'Only when I ask'}
+    assert policy['behaviors']['pr_open'] == 'on_request'
+    assert t_mod._workflow_choice(vars(workflow), 'local_preview', 'on_request') == 'When I ask'
+
+
 @pytest.mark.parametrize('scope', ['named', 'repository'])
-@pytest.mark.parametrize('selected', [[], ['planning'], ['review'], ['planning', 'review']])
+@pytest.mark.parametrize('selected', [[], ['planning'], ['implementation'], ['review'],
+    ['planning', 'implementation'], ['planning', 'review'], ['implementation', 'review'],
+    ['planning', 'implementation', 'review']])
 def test_stage_checkboxes_select_independent_helpers(workflow, t_mod, scope, selected):
     cfg = SimpleNamespace(repos={'api': '/repo'}, _workflow_document=workflow.defaults())
     original = copy.deepcopy(cfg._workflow_document)
@@ -170,18 +183,20 @@ def test_stage_checkboxes_select_independent_helpers(workflow, t_mod, scope, sel
     t_mod._workflow_policy_menu(ui, cfg, vars(workflow), **target)
     policy = (cfg._workflow_document['workflows']['standard'] if scope == 'named' else
               workflow.effective(cfg._workflow_document, '/repo'))
-    assert workflow.separate_stages(policy) == selected
+    assert workflow.model_stages(policy) == selected
     picker = ui.views[1]
-    assert picker[0] == 'Separate models for'
-    assert picker[1] == [('planning', 'Planning'), ('review', 'Review')]
-    assert picker[2] == {'multi': True, 'marked': {0, 1}}
+    assert picker[0] == 'Model settings for'
+    assert picker[1] == [('planning', 'Planning'), ('implementation', 'Main work'), ('review', 'Review')]
+    assert picker[2] == {'multi': True, 'marked': {0, 1, 2}}
     rows = dict(ui.views[-1][1])
     values = ui.views[-1][2]['values']
-    assert ('implementation' in rows) is bool(selected)
-    assert ('main_model' in rows) is (not selected)
+    assert ('implementation' in rows) is ('implementation' in selected)
+    assert ('main_model' in rows) is ('implementation' not in selected)
+    assert ('main_effort' in rows) is ('implementation' not in selected)
     assert ('planning' in rows) is ('planning' in selected)
     assert ('review' in rows) is ('review' in selected)
-    assert values['stages_enabled'] == (', '.join(stage.title() for stage in selected) if selected else 'No · one model')
+    assert values['stages_enabled'] == (', '.join('Main work' if stage == 'implementation' else stage.title()
+                                                for stage in selected) if selected else 'No · one model')
     for stage in ('planning', 'implementation', 'review'):
         assert policy[stage] == original['workflows']['standard'][stage]
     if scope == 'repository':
@@ -189,7 +204,7 @@ def test_stage_checkboxes_select_independent_helpers(workflow, t_mod, scope, sel
     assert not workflow.config_path().exists()
 
 
-@pytest.mark.parametrize('selected', [None, ['planning', 'review']])
+@pytest.mark.parametrize('selected', [None, ['planning', 'implementation', 'review']])
 @pytest.mark.parametrize('scope', ['named', 'repository'])
 def test_stage_checkboxes_cancel_and_unchanged_do_not_create_overrides(workflow, t_mod, selected, scope):
     cfg = SimpleNamespace(repos={'api': '/repo'}, _workflow_document=workflow.defaults())
@@ -205,7 +220,7 @@ def test_stage_checkboxes_retain_choices_and_keep_main_work_editable(workflow, t
     policy = document['workflows']['standard']
     policy['planning'] = {'model': 'planning-only', 'effort': 'high'}
     policy['review'] = {'model': 'review-only', 'effort': 'low'}
-    policy = workflow.select_stages(policy, ['review'])
+    policy = workflow.select_model_stages(policy, ['implementation', 'review'])
     document = workflow.update(document, policy, name='standard')
     cfg = SimpleNamespace(repos={}, _workflow_document=document)
     ui = InspectMenu(['implementation', 'effort', 'high', 'stages_enabled', [],
@@ -215,13 +230,64 @@ def test_stage_checkboxes_retain_choices_and_keep_main_work_editable(workflow, t
     assert policy['implementation']['effort'] == 'high'
     assert policy['planning'] == {'model': 'planning-only', 'effort': 'high'}
     assert policy['review'] == {'model': 'review-only', 'effort': 'low'}
-    assert workflow.separate_stages(policy) == ['planning']
-    pickers = [view for view in ui.views if view[0] == 'Separate models for']
-    assert pickers[0][2]['marked'] == {1}
+    assert workflow.model_stages(policy) == ['planning']
+    pickers = [view for view in ui.views if view[0] == 'Model settings for']
+    assert pickers[0][2]['marked'] == {1, 2}
     assert pickers[1][2]['marked'] == set()
     reopened = InspectMenu(['stages_enabled', None, 'back'])
     t_mod._workflow_policy_menu(reopened, cfg, vars(workflow), name='standard')
     assert reopened.views[1][2]['marked'] == {0}
+
+
+@pytest.mark.parametrize('scope', ['named', 'repository'])
+def test_helpers_without_main_stage_edit_session_defaults(workflow, t_mod, scope):
+    document = workflow.defaults()
+    policy = workflow.select_model_stages(document['workflows']['standard'], ['planning', 'review'])
+    document = workflow.update(document, policy, name='standard')
+    cfg = SimpleNamespace(repos={'api': '/repo'}, agent_default='codex', _workflow_document=document,
+                          models={'codex': 'account-model'}, efforts={'codex': 'low'})
+    cfg._workflow_session_catalogs = {'codex': [dict(id='session-main', resolved='session-main',
+        label='session-main', efforts=['low', 'high'], fast=False, ultrafast=False)]}
+    target = {'name': 'standard'} if scope == 'named' else {'repository': '/repo'}
+    ui = InspectMenu(['main_model', 'session-main', 'main_effort', 'high', 'back'])
+    t_mod._workflow_policy_menu(ui, cfg, vars(workflow), **target)
+    actual = (cfg._workflow_document['workflows']['standard'] if scope == 'named' else
+              workflow.effective(cfg._workflow_document, '/repo'))
+    assert actual['session_defaults'] == {'codex': {'model': 'session-main', 'effort': 'high'}}
+    assert actual['implementation'] == policy['implementation']
+    rows = dict(ui.views[0][1])
+    assert 'planning' in rows and 'review' in rows and 'implementation' not in rows
+    assert 'main_model' in rows and 'main_effort' in rows
+    assert workflow.model_stages(actual) == ['planning', 'review']
+    assert cfg.models == {'codex': 'account-model'} and cfg.efforts == {'codex': 'low'}
+    assert not workflow.config_path().exists()
+
+
+@pytest.mark.parametrize('defaults', [{}, {'codex': {'model': 'session-main', 'effort': 'high'}}])
+def test_deselected_main_stage_never_displays_retained_main_model(workflow, t_mod, monkeypatch, capsys, defaults):
+    monkeypatch.setattr(t_mod, '_workflow', lambda: vars(workflow))
+    document = workflow.defaults()
+    policy = workflow.select_model_stages(document['workflows']['standard'], ['planning'])
+    policy['implementation'] = {'model': 'inactive-implementation', 'effort': 'ultra'}
+    if defaults:
+        policy['session_defaults'] = defaults
+    document = workflow.update(document, policy, name='standard')
+    rows = t_mod._workflow_model_rows(vars(workflow), policy)
+    expected_model = 'session-main' if defaults else 'Agent default'
+    expected_effort = 'High' if defaults else 'Session default'
+    assert rows[1] == ('Main work', expected_model, expected_effort, 'Main model')
+    assert rows[2] == ('Review', expected_model, expected_effort, 'Main model')
+    assert rows[0][3] == 'Selected stage'
+    t_mod._workflow_print(vars(workflow), {'scope': 'global', 'source': 'global',
+        'workflow_name': 'standard', 'excluded': False, 'workflow': policy,
+        'propagation': {'runtime': 'pending'}})
+    output = capsys.readouterr().out
+    review = '\n'.join(t_mod._workflow_review(document))
+    for text in (output, review):
+        assert 'inactive-implementation' not in text and 'Ultra' not in text
+        assert expected_model in text and expected_effort in text
+    assert t_mod._workflow_effort('auto', 'planning') == 'Agent selects by task'
+    assert t_mod._workflow_effort('auto', 'implementation') == 'Agent selects by task · starts Medium'
 
 
 @pytest.mark.parametrize('selected, inherited', [(['planning'], 'review'), (['review'], 'planning')])
@@ -240,13 +306,13 @@ def test_partial_stage_list_and_review_use_main_values(workflow, t_mod, monkeypa
     output = capsys.readouterr().out
     assert inherited + '-private' not in output
     assert selected[0] + '-private' in output
-    assert 'Main model' in output and 'By task · starts Medium' in output
+    assert 'Main model' in output and 'Agent selects by task · starts Medium' in output
     for scope in [document, workflow.update(workflow.defaults(), policy, '/repo')]:
         review = '\n'.join(t_mod._workflow_review(scope))
         if scope is not document:
             review = review.split('Repository /repo:', 1)[1]
         assert inherited + '-private' not in review
-        assert inherited.title() + ': main-active · By task · starts Medium · Main model' in review
+        assert inherited.title() + ': main-active · Agent selects by task · starts Medium · Main model' in review
 
 
 @pytest.mark.parametrize('defaults', [[], {'other': {}}, {'codex': []},
@@ -299,7 +365,7 @@ def test_repository_model_editor_preserves_global_defaults(workflow, t_mod, monk
     before = copy.deepcopy(cfg._workflow_document)
     t_mod._workflow_policy_menu(Menu(['main_model', None, 'back']), cfg, vars(workflow), repository='/repo')
     assert cfg._workflow_document == before
-    t_mod._workflow_policy_menu(Menu(['stages_enabled', ['planning', 'review'], 'back']), cfg, vars(workflow), repository='/repo')
+    t_mod._workflow_policy_menu(Menu(['stages_enabled', ['planning', 'implementation', 'review'], 'back']), cfg, vars(workflow), repository='/repo')
     assert workflow.effective(cfg._workflow_document, '/repo')['session_defaults'] == policy['session_defaults']
     t_mod._workflow_policy_menu(Menu(['stages_enabled', [], 'main_model', '', 'back']), cfg, vars(workflow), repository='/repo')
     assert 'session_defaults' not in workflow.effective(cfg._workflow_document, '/repo')
@@ -331,7 +397,7 @@ def test_development_flow_keeps_section_focus_without_chatter(workflow, t_mod):
                               'frontend_design': 'Frontend design ›', 'tests': 'Tests ›', 'back': 'Back'}
     assert dict(ui.views[2][1])['draft'] == 'Draft'
     assert ui.views[3][2]['default'] == 1
-    assert dict(ui.views[5][1]) == {'local_preview': 'Preview', 'preview_approval': 'Preview approval before PR',
+    assert dict(ui.views[5][1]) == {'local_preview': 'Preview', 'preview_approval': 'Approval before PR',
                                    'cli_preview': 'CLI preview', 'frontend_preview': 'Update preview', 'back': 'Back'}
     assert dict(ui.views[6][1]) == {'': 'Not set', 'when_ready': 'Automatically', 'on_request': 'When I ask'}
     assert dict(ui.views[8][1]) == {'': 'Not set', 'required': 'Required', 'not_required': 'Not required'}

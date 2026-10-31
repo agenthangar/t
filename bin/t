@@ -2478,13 +2478,11 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
         if agent not in ("codex", "claude"):
             agent = "codex"
         defaults = policy.get("session_defaults", {}).get(agent, {})
-        separate = helper["separate_stages"](policy)
+        stages = helper["model_stages"](policy)
         rows = [("enabled", "Use this workflow"), ("stages_enabled", "Use multiple models")]
-        if separate:
-            rows += [(stage, _workflow_stage_title(stage))
-                     for stage in ("planning", "implementation", "review")
-                     if stage == "implementation" or stage in separate]
-        else:
+        rows += [(stage, _workflow_stage_title(stage))
+                 for stage in ("planning", "implementation", "review") if stage in stages]
+        if "implementation" not in stages:
             rows += [("main_model", agent.title() + " default model"), ("main_effort", "Reasoning effort")]
         rows.append(("behaviors", "PRs, previews & tests ›"))
         rows.append(("permissions", "Permissions ›"))
@@ -2495,7 +2493,7 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
         values = {stage: policy[stage]["model"] + " · " + _workflow_effort(policy[stage]["effort"], stage)
                   for stage in ("planning", "implementation", "review")}
         values["enabled"] = "enabled" if policy["enabled"] else "disabled"
-        values["stages_enabled"] = ", ".join(_workflow_stage_title(stage) for stage in separate) if separate else "No · one model"
+        values["stages_enabled"] = ", ".join(_workflow_stage_title(stage) for stage in stages) if stages else "No · one model"
         models, efforts = getattr(cfg, "models", {}), getattr(cfg, "efforts", {})
         values["main_model"] = defaults.get("model") or "Agent default" + (": " + models[agent] if models.get(agent) else "")
         values["main_effort"] = defaults.get("effort") or ("Default for this model" if defaults.get("model") else
@@ -2512,10 +2510,10 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
             return
         changed = copy.deepcopy(policy)
         if choice == "stages_enabled":
-            picked = ui.pick("Separate models for", [("planning", "Planning"), ("review", "Review")],
-                             multi=True, marked={i for i, stage in enumerate(("planning", "review")) if stage in separate})
+            picked = ui.pick("Model settings for", [("planning", "Planning"), ("implementation", "Main work"), ("review", "Review")],
+                             multi=True, marked={i for i, stage in enumerate(("planning", "implementation", "review")) if stage in stages})
             if picked is not None:
-                changed = helper["select_stages"](policy, picked)
+                changed = helper["select_model_stages"](policy, picked)
         elif choice == "enabled":
             picked = ui.pick("Use this workflow", [("1", "Enabled"), ("0", "Disabled")],
                              default=0 if policy["enabled"] else 1)
@@ -2768,7 +2766,7 @@ def _workflow_review(document):
     for name, policy in sorted(document["workflows"].items()):
         lines.append(f"Workflow {name}: {'enabled' if policy['enabled'] else 'disabled'}")
         lines.extend("  " + line for line in helper["summary_lines"](policy))
-        if helper["separate_stages"](policy):
+        if helper["model_stages"](policy):
             lines.extend(f"  {title}: {model} · {effort}" + (" · Main model" if source == "Main model" else "")
                          for title, model, effort, source in _workflow_model_rows(helper, policy))
         lines.append("  Test runners: " + helper["runners_summary"](policy))
@@ -2780,7 +2778,7 @@ def _workflow_review(document):
         lines.extend("  " + line for line in helper["summary_lines"](helper["effective"](document, path)))
         if "inline" in entry:
             lines.append(f"  Workflow: {'enabled' if entry['inline']['enabled'] else 'disabled'}")
-            if helper["separate_stages"](entry['inline']):
+            if helper["model_stages"](entry['inline']):
                 lines.extend(f"  {title}: {model} · {effort}" + (" · Main model" if source == "Main model" else "")
                              for title, model, effort, source in _workflow_model_rows(helper, entry['inline']))
             lines.append("  Test runners: " + helper["runners_summary"](entry['inline']))
@@ -3234,11 +3232,11 @@ _WORKFLOW_SECTIONS = {
     "tests": ("Tests", ("test_timing",)),
 }
 _WORKFLOW_TOPICS = {
-    "pr_open": ("Open PR", "Open when the work is ready, or wait for your request. Any preview approval still applies."),
+    "pr_open": ("When to open PR", "Open when the work is ready, or wait for your request. Any preview approval still applies."),
     "pr_state": ("PR type", "Drafts wait for your approval before becoming ready for review."),
     "pr_merge": ("Merge PR", "Merge after required checks and approvals, or wait for your request."),
     "local_preview": ("Preview", "Choose when to make CLI or browser changes available locally."),
-    "preview_approval": ("Preview approval before PR", "Require preview approval before pushing or opening a PR, or continue without it."),
+    "preview_approval": ("Approval before PR", "Require preview approval before pushing or opening a PR, or continue without it."),
     "cli_preview": ("CLI preview", "Install the development version locally, or run it from the repo."),
     "frontend_preview": ("Update preview", "Refresh changes with a local dev server, or rebuild the preview."),
     "frontend_design": ("Build design", "Try an interactive HTML prototype outside the app, or design in the app itself."),
@@ -3263,12 +3261,14 @@ _WORKFLOW_CHOICE_LABELS = {
 
 
 def _workflow_choice(helper, key, value):
+    if key == "pr_open":
+        return helper["BEHAVIORS"][key]["choices"][value][0]
     return _WORKFLOW_CHOICE_LABELS.get(value, helper["BEHAVIORS"][key]["choices"][value][0])
 
 
 def _workflow_effort(value, stage=None):
     if value == "auto":
-        return "By task · starts Medium" if stage == "implementation" else "By task"
+        return "Agent selects by task · starts Medium" if stage == "implementation" else "Agent selects by task"
     return {"one-level-lower": "One level below planning"}.get(value, value.capitalize())
 
 
@@ -3277,14 +3277,14 @@ def _workflow_stage_title(stage):
 
 
 def _workflow_model_rows(helper, policy):
-    separate = helper["separate_stages"](policy)
+    stages = helper["model_stages"](policy)
     rows = []
     for stage in ("planning", "implementation", "review"):
         settings = helper["stage_settings"](policy, stage)
-        inherited = stage != "implementation" and stage not in separate
-        rows.append((_workflow_stage_title(stage), settings["model"],
-                     _workflow_effort(settings["effort"], "implementation" if inherited else stage),
-                     "Main model" if inherited else "Separate model" if stage in separate else "Main work"))
+        inherited = stage not in stages
+        rows.append((_workflow_stage_title(stage), settings["model"] or "Agent default",
+                     _workflow_effort(settings["effort"], "implementation" if inherited else stage) if settings["effort"] else "Session default",
+                     "Main model" if inherited else "Selected stage"))
     return rows
 
 
@@ -3325,9 +3325,9 @@ def _workflow_print(helper, result, catalogue=False):
         for key, value in behaviors.items():
             if key not in _WORKFLOW_TOPICS:
                 print("  Other saved rule — " + helper["BEHAVIORS"][key]["label"] + ": " + _workflow_choice(helper, key, value))
-        separate = helper["separate_stages"](policy)
-        if separate:
-            print("Models: Codex main work + separate " + "/".join(separate) + " helpers")
+        stages = helper["model_stages"](policy)
+        if stages:
+            print("Model settings: " + ", ".join(_workflow_stage_title(stage) for stage in stages))
             print("\n".join(_table_lines(("STEP", "MODEL", "REASONING", "SOURCE"),
                                         _workflow_model_rows(helper, policy))))
         else:
@@ -3818,7 +3818,7 @@ class _RailUI:
         value = str(value) if value is not None else None
         stacked = value is not None and width < 60
         if value is not None and not stacked:
-            left_width = min(24, label_width or len(label))
+            left_width = min(label_width or len(label), max(1, avail - 3 - max(12, avail // 3)))
             left = _truncate(label, left_width).ljust(left_width)
             right = _truncate(value, max(1, avail - left_width - 3))
             plain = f"{left}   {right}"
@@ -11524,9 +11524,10 @@ SCOPE
   `ls` is an alias for `list`.
   Run t workflow in a terminal to edit workflows interactively.
   List prints saved workflow values; --all includes named definitions.
-  Saved multi-model workflows use the implementation model for Codex main sessions;
-  automatic main effort starts at medium. Check Planning and/or Review to use helpers;
-  unchecked stages use the main model. Select neither for single-model defaults.
+  Check Planning, Main work and/or Review for saved model settings.
+  Unchecked Main work uses session defaults; unchecked helpers use the main model.
+  Main work effort selected by task starts at medium.
+  Select no stages to use session defaults.
   Permissions selects Codex and Claude access for new and resumed CLI sessions.
   PRs, previews & tests controls PR opening and merging, preview timing and approval,
   frontend design, preview updates and test timing independently.
@@ -12725,8 +12726,8 @@ RECEIVE AND REMOTE MOVES
   Workflows opens the editor for models, PRs, previews, tests, and text.
   Workflow Permissions sets Codex and Claude access for new/resumed CLI sessions.
   Clear text instructions removes Markdown in the pending review and save changes.
-  Use multiple models opens Planning/Review checkboxes. Unchecked stages use main;
-  select neither to set a single-model default and reasoning effort.
+  Use multiple models opens Planning/Main work/Review checkboxes.
+  Unchecked Main work uses session defaults; unchecked helpers use the main model.
   Run t workflow directly to edit, review and save workflow changes.
 
   Use `t workflow edit [--repo ALIAS]` for its JSON editor and `t workflow

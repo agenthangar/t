@@ -41,7 +41,8 @@ headings and current values, green primary/add actions, amber warnings/removal,
 two-space outer margins, a pointer and a dark cyan focus row with light text, and a footer
 showing the next action and keys. Focus and marks must remain distinguishable
 without color. Align labels on wide terminals and stack them below 60 columns.
-Clip text before applying color and count physical rows when repainting; at
+Let label columns use available width before truncating; never cap wide-terminal
+labels at 24 characters. Clip text before applying color and count physical rows when repainting; at
 80×24, 44×20, and 32×12 interactive screens the focused row and primary action
 must remain visible.
 The 60-column breakpoint applies to `_RailUI` inline menus. Most printed tables
@@ -195,17 +196,20 @@ fingerprint is automatically accepted. Onboarding uses the same reviewed offer.
 Config includes Workflows globally and in each repository submenu. The global
 menu chooses a named default, adds or edits shared workflows, or activates recommended
 defaults. Each workflow exposes an overall Workflow switch and an independent
-Use multiple models checkbox picker for Planning and Review. Use the shared multi
-profile: Space marks stages, Enter applies the selection, q/Esc cancels. Unchecked
-stages use the main implementation model. Selecting neither enters single-model
-mode. Deselecting stages retains their model/effort settings and keeps
+Use multiple models checkbox picker for Planning, Main work and Review. Use the
+shared multi profile: Space marks stages, Enter applies the selection, q/Esc
+cancels. Unchecked Planning/Review use the main model. Unchecked Main work uses
+per-tool session defaults, with default model/effort controls still available
+beside selected helpers. Selecting no stages enters single-model mode.
+Deselecting stages retains their model/effort settings and keeps
 permissions, behavior preferences and Markdown active; disabling the workflow
-suppresses every workflow setting. Selected stages expose their controls alongside Main work, with separate
+suppresses every workflow setting. Selected stages expose separate
 model and effort controls, plus Instructions for ordinary Markdown in VISUAL/EDITOR.
 PRs, previews & tests uses shared `_RailUI` submenus for Pull requests, Local
 preview, Frontend design and Tests. PR opening (automatic/on instruction), initial
 state (ready/draft) and merging (automatic/on instruction) are independent.
-Local preview offers Automatically or When I ask. Preview approval before PR is
+When to open PR offers Automatically when ready or Only when I ask.
+Local preview offers Automatically or When I ask. Approval before PR is
 a separate Required/Not required choice;
 CLI development install/run and frontend fast-reload/rebuild choices are separate.
 Frontend design chooses an interactive standalone HTML prototype or design in the
@@ -228,32 +232,36 @@ approval. Explicit preview_approval wins; edits materialize independent settings
 without changing raw JSON on reads. The combined legacy choice is hidden in menus.
 Instead show the selected session tool's default model and reasoning effort.
 Optional `session_defaults` stores independent Codex and Claude model/effort maps;
-these are active only for enabled single-model workflows. Repository overrides
+these are active for enabled workflows with Main work unchecked, including
+single-model workflows. Repository overrides
 apply to the canonical checkout and its worktrees, including destination paths
 for new and resumed CLI sessions. Native desktop launches keep the application's
 model settings. Explicit resume arguments win. An explicit model
 without an effort uses that model's default, not an unrelated global effort.
 Empty choices fall back to account-level agent defaults. Excluded workflows and
-multi-model workflows do not apply these single-model settings. Never write scoped settings into
+workflows with Main work selected do not apply these session defaults. Never write scoped settings into
 global agent settings or change active turns; indexed Codex child agents retain
 their own settings. The UI discovers supported efforts from the selected tool.
-Saved enabled multi-model workflows use the implementation model for Codex root
+Saved enabled workflows with Main work selected use the implementation model for Codex root
 launches and guarded resumes. An automatic implementation effort resolves to medium
 for the main conversation; explicit efforts remain explicit. These scoped values
 override stale resume checkpoints, including a previous planning model or effort.
 Use the same stage-aware effort labels in menus, choices, save review and printed
-lists: By task for planning, By task · starts Medium for main work, and One level
+lists: Agent selects by task for planning, Agent selects by task · starts Medium for Main work, and One level
 below planning for relative review effort. Task-based effort remains agent guidance;
 the main launch fallback does not claim automatic runtime effort switching.
 Unsaved recommended defaults supply no launch overrides. Claude launch settings
 are not inferred from Codex stage models. Planning and review remain bounded
 delegations only when selected, with explicit model/effort and fresh context when
-required by the host. Optional separate_stages is a nonempty unique subset of
-planning/review; omission preserves both. Selecting none sets stages_enabled false
-and retains the saved selection. List and save review label unselected stages as
+required by the host. Optional model_stages is a nonempty unique subset of
+planning/implementation/review. Without it, legacy separate_stages selects helpers
+with implementation still active; omission of both preserves all three stages.
+Selecting none sets stages_enabled false and retains the saved selection. List and save review label unselected stages as
 using the main model and never present inactive model/effort choices as effective.
 Relative review effort uses the actual planning effort; when planning stays on
-main, its concrete launch effort is the fallback if actual effort is unavailable.
+main, an explicitly known launch effort is the fallback if actual effort is unavailable.
+Native model/effort defaults are shown as defaults when unspecified, never inferred
+from inactive saved stages.
 Models load lazily from Codex once per menu session; current, recommended and custom
 values remain available offline, with explicit Refresh. Changing a stage model preserves
 its effort; changing a session default model clears incompatible effort. Shared-definition edits

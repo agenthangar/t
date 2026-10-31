@@ -234,3 +234,13 @@ def test_empty_instruction_editor_clears_custom_text_without_saving(workflow, mo
     assert workflow.instructions(after) == ''
     assert document == before
     assert not workflow.config_path().exists()
+
+
+def test_pr_opening_preference_names_timing_and_request_requirement(workflow):
+    spec = workflow.BEHAVIORS['pr_open']
+    assert spec['label'] == 'When to open PR'
+    assert spec['choices']['automatic'][0] == 'Automatically when ready'
+    assert spec['choices']['on_request'][0] == 'Only when I ask'
+    for value, label in [('automatic', 'Automatically when ready'), ('on_request', 'Only when I ask')]:
+        policy = workflow.update_behavior(workflow.DEFAULT, 'pr_open', value)
+        assert 'When to open PR: ' + label in workflow.summary_lines(policy)

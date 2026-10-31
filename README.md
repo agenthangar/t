@@ -965,17 +965,19 @@ compatibility aliases. Choose
 **Use recommended defaults** to activate planning with `gpt-6-astra`, implementation
 with `gpt-6.1-sol`, and review with `gpt-6-astra`. **Edit default workflow** and
 **Edit named workflow** give each stage separate model and reasoning-effort controls.
-Saved multi-model workflows start and resume Codex's main conversation on the
-implementation model, shown as **Main work**. Effort labels distinguish **By task**
-for planning from **By task · starts Medium** for main work. Task-based effort is
+When selected, **Main work** sets the model for Codex's main conversation at
+start and resume. Effort labels say **Agent selects by task** for planning and
+**Agent selects by task · starts Medium** for Main work. Task-based effort is
 agent guidance; `t` sets the launch value and does not change effort mid-turn.
 Selected planning and review stages use bounded helpers with explicit model and effort;
 the main conversation handles implementation, fixes and follow-ups.
 **Use this workflow** enables or suppresses the entire workflow. **Use multiple models**
-opens checkboxes for **Planning** and **Review**. Mark either or both with Space,
-then press Enter. Unchecked stages use the main model; their separate model and
-effort choices stay saved. Select neither to use one model and configure its default
-model and reasoning effort. Markdown and behavior preferences still apply.
+opens checkboxes for **Planning**, **Main work**, and **Review**. Mark stages with
+Space, then press Enter. Unchecked Planning and Review use the main model.
+Leave Main work unchecked to use the session's default model and reasoning effort,
+which remain editable alongside any selected stages. Separate stage choices stay
+saved when unchecked. Select no stages to use one model throughout.
+Markdown and behavior preferences still apply.
 **Permissions** sets Codex and Claude permissions separately, with either one or
 multiple models. Codex offers **Ask for approval**, **Approve for me**, **Full access**,
 and **Read only**. Claude offers **Ask for approval**, **Approve edits**, **Auto**,
@@ -1113,11 +1115,13 @@ reading or reinstalling preserves the original file. The next explicit change
 saves the v3 named-workflow format.
 Existing v2 policies also remain valid without the optional `stages_enabled`
 boolean (defaults to true) or `behaviors` object (defaults to no preferences).
-Optional `separate_stages` selects `planning`, `review`, or both; omission retains
-both for compatibility. Deselecting all stages sets `stages_enabled=false` while
-retaining the saved selection. Main work remains the implementation model.
+Optional `model_stages` selects any nonempty combination of `planning`,
+`implementation` (Main work), and `review`. Deselecting all stages sets
+`stages_enabled=false` while retaining the saved selection. Legacy
+`separate_stages` still selects planning/review helpers with Main work active;
+old settings keep their behavior and reads never rewrite them.
 The optional `session_defaults` object stores `codex` and `claude` model/effort
-defaults for single-model mode. Optional `permissions` maps `codex` to `ask`,
+defaults when Main work is unchecked or all stages are off. Optional `permissions` maps `codex` to `ask`,
 `auto`, `full`, or `read_only`, and `claude` to `manual`, `acceptEdits`, `auto`,
 `bypassPermissions`, or `plan`. Omitted agents keep native permission defaults;
 permissions apply independently of model stages and are suppressed when the
