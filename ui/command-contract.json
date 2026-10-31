@@ -987,7 +987,9 @@
       "patterns": [
         "action",
         "filtered",
-        "multi"
+        "multi",
+        "single",
+        "list"
       ],
       "renderer": "fzf",
       "scope": "explicit/inferred repository, or local and registered-host repository identities with --all/outside a checkout",
@@ -1041,20 +1043,15 @@
             "1"
           ],
           "patterns": [
-            "filtered",
-            "multi"
+            "single"
           ],
           "read_only": false,
           "tests": [
-            "tests/test_resume_history.py::test_explicit_slot_browses_live_and_saved_conversations_before_acting",
-            "tests/test_resume_history.py::test_explicit_slot_requires_selection_even_with_one_conversation",
-            "tests/test_resume_history.py::test_explicit_slot_saved_selection_preserves_busy_owner",
-            "tests/test_resume_history.py::test_explicit_slot_live_selection_attaches_exact_owner",
-            "tests/test_history_data.py::test_resume_candidates_match_any_recorded_slot_association",
-            "tests/test_progress_contract.py::test_spinner_never_runs_callers_session_save_hooks",
-            "tests/test_picker_cancellation.py::test_picker_signal_preserves_callers_exit_hooks_and_cleans_files"
+            "tests/test_resume_history.py::test_plain_slot_resume_routes_to_history",
+            "tests/test_resume_history.py::test_resume_options_keep_existing_route",
+            "tests/test_history_data.py::test_resume_candidates_match_any_recorded_slot_association"
           ],
-          "notes": "Explicit slots scope the shared filtered multi-picker to every recorded association with that slot, including conversations later moved elsewhere. Interactive requests wait for selection even for one row, initially showing live and saved work; Ctrl-F restores inactive defaults. Cancellation returns 130 before any attachment or launch. Selecting a live row attaches to its owner; independent saved work uses guarded allocation. Without a terminal, newest-saved selection is retained. Existing --days limits apply. Spinner children never run inherited caller exit hooks."
+          "notes": "Plain public slot targets, including a lone inferred-repository slot, delegate to session history: paginated single selection of exact conversation identities, no default recency cutoff, no automatic single-result selection, and cancellation returns 130 without launch. Nonterminal use lists history read-only. Explicit resume options and internal callers retain existing resume modes."
         },
         "desktop": {
           "argv": [
@@ -1114,6 +1111,23 @@
             "tests/test_remote_commands.py::test_resume_host_conflict_is_preflight"
           ],
           "notes": "Sends locally discovered saved history to build; any selected live owner on another host is refused before batch mutation with exact remote move guidance. Matching aliases attach in place."
+        },
+        "explicit_nonterminal": {
+          "argv": [
+            "session",
+            "resume",
+            "api",
+            "1"
+          ],
+          "terminal": false,
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_resume_history.py::test_plain_slot_resume_routes_to_history"
+          ],
+          "notes": "Delegates to nonterminal session history; no launch or update prompt."
         }
       },
       "native_agents": "Terminal session launch/resume uses the native ~/.local/bin fallback, preserving PATH and shell wrappers; no global PATH changes.",
