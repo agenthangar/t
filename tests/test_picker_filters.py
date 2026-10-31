@@ -342,3 +342,47 @@ def test_header_color_clips_before_ansi_and_plain_has_explicit_state(filters):
         assert ('\x1b' in colored) == enabled
         assert 'Filters ' + ('ON' if enabled else 'OFF') in plain
         assert all(filters.display_width(line) <= 28 for line in plain.splitlines())
+
+
+def test_resume_merged_toggle_uses_metadata_and_preserves_choices(filters, tmp_path, monkeypatch):
+    states = ['MERGED', 'OPEN', 'CLOSED', 'UNKNOWN', 'NONE', 'MIXED', 'invalid']
+    rows = ['\t'.join(['api', str(i), f'sid{i}', '/wt', 'date', 'Task · #12 merged',
+                      '-', 'history', '-', 'codex', '-', 'org/api', state, 'Display'])
+            for i, state in enumerate(states)]
+    for name in ('source', 'all', 'rows-0', 'rows-1'):
+        (tmp_path / name).write_text('\n'.join(rows) + '\n')
+    def render(action):
+        filters.render(tmp_path, 'resume', action, 68)
+        return (tmp_path / 'current').read_text().splitlines()
+    assert render('current') == rows
+    assert render('merged') == rows[1:]
+    assert 'Alt-M show merged' in (tmp_path / 'current-header').read_text()
+    assert render('sort-repo') == rows[1:]
+    assert render('off') == rows
+    assert render('on') == rows[1:]
+    assert render('merged') == rows
+    assert render('merged') == rows[1:]
+    render('off')
+    assert render('merged') == rows[1:]  # Turning it on while OFF enables filters.
+    monkeypatch.setattr(filters, 'pick_menu', lambda *args: None)
+    assert render('settings') == rows[1:]
+    picks = iter([5, 0])  # Reset staged choices, then Apply.
+    monkeypatch.setattr(filters, 'pick_menu', lambda *args: next(picks))
+    assert render('settings') == rows
+    assert (tmp_path / 'sort').read_text() == 'repo'
+    render('merged')
+    assert render('default') == rows
+    render('merged')
+    assert render('all') == rows
+    for name in ('source', 'all', 'rows-0', 'rows-1'):
+        (tmp_path / name).write_text(rows[0] + '\n')
+    assert render('merged') == []
+    assert '1 hidden' in (tmp_path / 'current-header').read_text()
+    assert render('merged') == [rows[0]]
+
+
+def test_resume_turns_preserve_explicit_pr_and_repository_identity(filters, tmp_path):
+    row = 'api\t2\tsid\t/wt\tdate\ttitle merged\t-\thistory\tmini\tcodex\t-\t-\torg/api\tMERGED'
+    result = filters.resume_turns(row, str(tmp_path), str(tmp_path))[0].split('\t')
+    assert result[11:] == ['org/api', 'MERGED']
+    assert filters.resume_turns(row.replace('MERGED', 'invalid'), str(tmp_path), str(tmp_path))[0].split('\t')[12] == 'UNKNOWN'
