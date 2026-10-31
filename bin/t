@@ -12035,7 +12035,7 @@ EXPLICIT PUSH AND PULL
   %(prog)s                   Browse the current repository
   %(prog)s api 2             Open conversation history for api slot 2
   %(prog)s --all --days all   Browse all saved history
-  In the picker, Alt-M hides/shows merged PR sessions.""",
+  In the repository resume picker, Alt-M hides/shows merged PR sessions.""",
         help_details=f"""DETAILS
 
   Choose saved work associated with a repository or slot. A live selection
