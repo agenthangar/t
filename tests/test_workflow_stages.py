@@ -130,7 +130,7 @@ def test_planning_only_instructions_keep_review_in_main(workflow):
 
 
 @pytest.mark.parametrize('main_effort', ['auto', 'high'])
-def test_review_uses_actual_previous_implementation_effort(workflow, main_effort):
+def test_review_task_effort_is_independent_of_implementation_effort(workflow, main_effort):
     policy = workflow.select_stages(workflow.DEFAULT, ['review'])
     policy['planning'] = {'model': 'inactive-planner', 'effort': 'ultra'}
     policy['implementation']['effort'] = main_effort
@@ -139,13 +139,8 @@ def test_review_uses_actual_previous_implementation_effort(workflow, main_effort
     assert 'Plan with a bounded' not in text
     assert 'Review with a bounded gpt-6-astra sub-agent' in text
     assert 'inactive-planner' not in text and 'ultra' not in text
-    if main_effort == 'auto':
-        assert "previous implementation worker's actual concrete reasoning effort" in text
-        assert 'Require that evidence' in text
-        assert 'concrete main-session launch default medium as the baseline' not in text
-    else:
-        assert 'actual main-conversation implementation effort' in text
-        assert 'concrete main-session launch default high as the baseline' in text
+    assert 'low for straightforward reviews, medium for ordinary changes' in text
+    assert 'one supported reasoning-effort level below' not in text
 
 
 def test_disabled_helpers_render_no_inactive_models_but_keep_other_preferences(workflow):
@@ -227,7 +222,7 @@ def test_main_work_unselected_native_defaults_do_not_reveal_inactive_values(work
     text = workflow._stage_text(policy)
     assert 'the current native model' in text
     assert 'the current native reasoning setting' in text
-    assert 'resolve a concrete supported main-session baseline before delegating' in text
+    assert 'low for straightforward reviews, medium for ordinary changes' in text
     assert 'inactive-planner' not in text and 'inactive-implementation' not in text
     assert 'ultra' not in text and ' max' not in text
 
@@ -259,8 +254,8 @@ def test_worker_effort_is_distinct_from_inherited_main_effort(workflow):
     assert workflow.main_session_settings(policy)['effort'] == 'medium'
 
 
-def test_review_supports_task_selected_effort_without_changing_relative_default(workflow):
-    assert workflow.DEFAULT['review']['effort'] == 'one-level-lower'
+def test_review_defaults_to_task_selected_effort(workflow):
+    assert workflow.DEFAULT['review']['effort'] == 'auto'
     policy = workflow.select_model_stages(workflow.DEFAULT, ['review'])
     policy['review']['effort'] = 'auto'
     assert workflow.validate_policy(policy) == policy
@@ -318,56 +313,46 @@ def test_fixed_or_unselected_implementation_does_not_delegate_worker(workflow):
     assert disabled['implementation']['effort'] == 'auto'
 
 
-def test_relative_implementation_worker_uses_actual_planning_handoff(workflow):
-    policy = workflow.select_model_stages(workflow.DEFAULT, ['planning', 'implementation', 'review'])
-    policy['implementation']['effort'] = 'one-level-lower'
-    assert workflow.validate_policy(policy) == policy
-    assert workflow.implementation_worker(policy)
-    assert workflow.main_session_settings(policy) == {'model': 'gpt-6.1-sol', 'effort': 'medium'}
-    text = workflow._stage_text(policy)
-    assert 'Delegate implementation to a bounded gpt-6.1-sol worker' in text
-    assert 'one supported reasoning-effort level below the previous planning stage' in text
-    assert "previous planning worker's actual concrete reasoning effort" in text
-    assert "previous implementation worker's actual concrete reasoning effort" in text
-    assert 'carried in its handoff' in text
-    assert 'Require its handoff to include the actual model and concrete reasoning effort used' in text
-    assert 'Include the actual model and concrete reasoning effort used in its handoff' in text
-    assert 'if those settings cannot be verified, report that limitation explicitly' in text
-    assert 'report the missing effort and obtain it before delegating' in text
-    assert 'Do not substitute saved stage preferences, symbolic effort choices' in text
-    assert 'concrete main-session launch default medium as the baseline' not in text
-    assert 'clamping to its supported minimum' in text
-    assert 'baseline is already at or below that minimum' in text
-    assert 'Choose a concrete supported effort before delegation' in text
-    assert 'Main session: gpt-6.1-sol · Medium' in workflow.summary_lines(policy)
-
-
-def test_relative_implementation_uses_main_planning_when_planner_unselected(workflow):
-    policy = workflow.select_model_stages(workflow.DEFAULT, ['implementation'])
-    policy['implementation']['effort'] = 'one-level-lower'
-    policy['planning'] = {'model': 'inactive-planner', 'effort': 'ultra'}
-    text = workflow._stage_text(policy)
-    assert 'actual main-conversation planning effort' in text
-    assert 'concrete main-session launch default medium as the baseline' in text
-    assert 'inactive-planner' not in text and 'ultra' not in text
-    assert "previous planning worker's" not in text
-
-
-def test_relative_review_uses_unselected_implementation_native_unknown_honestly(workflow):
-    policy = workflow.select_model_stages(workflow.DEFAULT, ['review'])
-    policy['implementation'] = {'model': 'inactive-implementation', 'effort': 'ultra'}
-    text = workflow._stage_text(policy)
-    assert 'one supported reasoning-effort level below the previous implementation stage' in text
-    assert 'actual main-conversation implementation effort' in text
-    assert 'If the native effort is unknown, disclose that limitation' in text
-    assert 'resolve a concrete supported main-session baseline before delegating; do not guess' in text
-    assert 'inactive-implementation' not in text and 'ultra' not in text
-    assert 'launch default medium as the baseline' not in text
-    assert "previous implementation worker's" not in text
-
-
 def test_relative_planning_effort_remains_invalid(workflow):
     policy = copy.deepcopy(workflow.DEFAULT)
     policy['planning']['effort'] = 'one-level-lower'
     with pytest.raises(ValueError, match='planning effort'):
         workflow.validate_policy(policy)
+
+
+@pytest.mark.parametrize('stage', ['implementation', 'review'])
+def test_retired_relative_effort_is_read_only_alias_for_task_selection(workflow, stage):
+    policy = copy.deepcopy(workflow.DEFAULT)
+    policy[stage]['effort'] = 'one-level-lower'
+    document = workflow.update(workflow.defaults(), policy)
+    before = copy.deepcopy(document)
+    stored = workflow.encode(document)
+    assert workflow.validate_policy(policy) == policy
+    assert workflow.effective_effort(policy[stage]['effort']) == 'auto'
+    assert workflow.stage_settings(policy, stage)['effort'] == 'auto'
+    canonical = copy.deepcopy(policy)
+    canonical[stage]['effort'] = 'auto'
+    assert workflow.main_session_settings(policy) == workflow.main_session_settings(canonical)
+    assert workflow.implementation_worker(policy) == workflow.implementation_worker(canonical)
+    assert workflow._stage_text(policy) == workflow._stage_text(canonical)
+    assert workflow.summary_lines(policy) == workflow.summary_lines(canonical)
+    text = workflow.render(document)
+    assert 'one-level-lower' not in text
+    assert 'one supported reasoning-effort level below' not in text
+    assert 'previous implementation' not in text and 'previous planning' not in text
+    assert 'actual model and concrete reasoning effort used' in text
+    assert policy[stage]['effort'] == 'one-level-lower'
+    assert document == before and workflow.encode(document) == stored
+    assert not workflow.config_path().exists()
+
+
+def test_review_legacy_alias_uses_task_selection_with_native_main_defaults(workflow):
+    policy = workflow.select_model_stages(workflow.DEFAULT, ['review'])
+    policy['review']['effort'] = 'one-level-lower'
+    assert workflow.main_session_settings(policy) == {}
+    assert workflow.stage_settings(policy, 'review')['effort'] == 'auto'
+    text = workflow._stage_text(policy)
+    assert 'low for straightforward reviews, medium for ordinary changes' in text
+    assert 'baseline' not in text
+    assert 'the current native model' in text
+    assert policy['review']['effort'] == 'one-level-lower'

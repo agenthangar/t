@@ -967,17 +967,14 @@ with `gpt-6.1-sol`, and review with `gpt-6-astra`. **Edit default workflow** and
 **Edit named workflow** give each stage separate model and reasoning-effort controls.
 All three stages offer **Agent selects by task**. Before delegating, the agent
 chooses a concrete supported reasoning effort for that stage's worker.
-Task-based or relative Implementation uses a bounded implementation worker; the main session
+Task-based Implementation uses a bounded implementation worker; the main session
 coordinates the work and follows up on its results. The main session's fixed
 launch effort is shown separately and does not determine the worker's effort.
 An explicit Implementation effort keeps implementation in the main session at
-that level. Planning and Review use workers when selected. Implementation and
-Review also offer **One level below previous stage**: Implementation follows
-Planning's actual effort, and Review follows Implementation's actual effort.
-Each uses a lower level supported by its model, stopping at that model's minimum.
+that level. Planning and Review use workers when selected.
 These are delegation instructions for the agent;
 `t` does not change a running turn's effort or run its own task classifier.
-Reasoning pickers group task-based and relative modes under **Automatic**, and
+Reasoning pickers group **Agent selects by task** under **Automatic**, and
 explicit levels under **Fixed effort**. These headings are not selectable;
 reopening a picker preserves its selected effort.
 **Use this workflow** enables or suppresses the entire workflow. **Use multiple models**
@@ -1009,8 +1006,8 @@ usable offline. Changing a stage model preserves its selected effort. Saving the
 implementation model updates this workflow's next Codex launch/resume defaults;
 task-based implementation delegates a worker using that model at a chosen effort.
 Every stage accepts `auto` or an explicit effort (`minimal`, `low`, `medium`,
-`high`, `xhigh`, `max`, `ultra`); Implementation and Review also accept
-`one-level-lower`, relative to the immediately preceding stage.
+`high`, `xhigh`, `max`, `ultra`). Older saved `one-level-lower` values for
+Implementation and Review now behave as `auto` without rewriting settings on read.
 
 Open **t config → Test runners** to choose the global default, a named workflow,
 or a registered repository. Use its runner settings to test current uncommitted work on

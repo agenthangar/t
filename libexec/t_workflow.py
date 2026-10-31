@@ -178,7 +178,7 @@ DEFAULT = {
     'enabled': True,
     'planning': {'model': 'gpt-6-astra', 'effort': 'auto'},
     'implementation': {'model': 'gpt-6.1-sol', 'effort': 'auto'},
-    'review': {'model': 'gpt-6-astra', 'effort': 'one-level-lower'},
+    'review': {'model': 'gpt-6-astra', 'effort': 'auto'},
 }
 RUNNER_DEFAULT = {'default_targets': [], 'timeout_seconds': 900,
                   'queue_timeout_seconds': 300, 'artifacts': [], 'targets': {}}
@@ -316,8 +316,9 @@ def validate_policy(value):
         model = setting['model']
         if not isinstance(model, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:/\[\]-]*', model):
             raise ValueError(f'{stage} model must be a nonempty model ID without spaces or control characters')
-        allowed = EFFORTS + ('auto',) + (('one-level-lower',) if stage in ('implementation', 'review') else ())
-        if setting['effort'] not in allowed:
+        allowed = EFFORTS + ('auto',)
+        legacy_auto = stage in ('implementation', 'review') and setting['effort'] == 'one-level-lower'
+        if setting['effort'] not in allowed and not legacy_auto:
             raise ValueError(f'{stage} effort must be one of: {", ".join(allowed)}')
     return value
 
@@ -459,7 +460,7 @@ def main_session_settings(policy, agent='codex'):
             return {}
         implementation = policy['implementation']
         return {'model': implementation['model'],
-                'effort': 'medium' if implementation['effort'] in ('auto', 'one-level-lower') else implementation['effort']}
+                'effort': 'medium' if effective_effort(implementation['effort']) == 'auto' else implementation['effort']}
     return {key: value for key, value in policy.get('session_defaults', {}).get(agent, {}).items() if value}
 
 
@@ -518,10 +519,15 @@ def model_stages(policy):
     return _retained_model_stages(policy) if policy.get('stages_enabled', True) else []
 
 
+def effective_effort(value):
+    """Read the retired relative choice as automatic without rewriting storage."""
+    return 'auto' if value == 'one-level-lower' else value
+
+
 def implementation_worker(policy):
     """Whether configured implementation guidance delegates automatic effort."""
     return ('implementation' in model_stages(policy) and
-            policy['implementation']['effort'] in ('auto', 'one-level-lower'))
+            effective_effort(policy['implementation']['effort']) == 'auto')
 
 
 def select_model_stages(policy, selected):
@@ -571,7 +577,9 @@ def stage_settings(policy, stage):
     if stage not in MODEL_STAGES:
         raise ValueError('unknown workflow stage')
     if stage in model_stages(policy):
-        return copy.deepcopy(policy[stage])
+        settings = copy.deepcopy(policy[stage])
+        settings['effort'] = effective_effort(settings['effort'])
+        return settings
     if 'implementation' in model_stages(policy) and not implementation_worker(policy):
         return copy.deepcopy(policy['implementation'])
     settings = main_session_settings({**policy, 'enabled': True})
@@ -829,29 +837,6 @@ def _stage_text(policy):
     return '\n\n'.join(parts)
 
 
-def _relative_stage_effort(policy, stage):
-    previous = 'planning' if stage == 'implementation' else 'implementation'
-    worker = ('planning' in model_stages(policy) if previous == 'planning' else implementation_worker(policy))
-    baseline = main_session_settings(policy).get('effort')
-    if worker:
-        evidence = (f'Use the previous {previous} worker\'s actual concrete reasoning effort, '
-                    'carried in its handoff, as the baseline. Require that evidence; if it is '
-                    'missing, report the missing effort and obtain it before delegating. Do not '
-                    'substitute saved stage preferences, symbolic effort choices or the '
-                    'coordinator\'s launch effort for the worker\'s actual effort.')
-    elif baseline:
-        evidence = (f'Use the actual main-conversation {previous} effort as the baseline; '
-                    f'if unavailable, use the concrete main-session launch default {baseline} as the baseline.')
-    else:
-        evidence = (f'Use the actual main-conversation {previous} effort as the baseline. '
-                    'If the native effort is unknown, disclose that limitation and resolve '
-                    'a concrete supported main-session baseline before delegating; do not guess.')
-    return (f'one supported reasoning-effort level below the previous {previous} stage. '
-            f'{evidence} Select the next lower effort supported by the destination model, '
-            'clamping to its supported minimum when the baseline is already at or below '
-            'that minimum')
-
-
 def _model_stage_text(policy):
     selected = model_stages(policy)
     plan, implement, review = (stage_settings(policy, s) for s in ('planning', 'implementation', 'review'))
@@ -862,9 +847,7 @@ def _model_stage_text(policy):
                 'and xhigh or higher for complex architecture or new applications') if plan['effort'] == 'auto' else plan['effort']
     implementation = ('low for straightforward execution, medium for ordinary features, '
                       'and high or higher when implementation complexity warrants it') if implement['effort'] == 'auto' else (implement['effort'] or 'the current native reasoning setting')
-    if implement['effort'] == 'one-level-lower':
-        implementation = _relative_stage_effort(policy, 'implementation')
-    reviewing = _relative_stage_effort(policy, 'review') if review['effort'] == 'one-level-lower' else review['effort']
+    reviewing = review['effort']
     if review['effort'] == 'auto':
         reviewing = ('low for straightforward reviews, medium for ordinary changes, '
                      'and high or higher for complex changes or substantial risk')

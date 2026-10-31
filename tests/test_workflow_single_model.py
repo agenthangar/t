@@ -245,9 +245,7 @@ def test_each_stage_can_let_agent_choose_worker_effort(workflow, t_mod, stage):
     assert ui.views[2][2]['sections'] == {'auto': 'Automatic', 'minimal': 'Fixed effort'}
     assert ui.views[2][1][ui.views[2][2]['default']][0] == 'high'
     assert 'Automatic' not in choices and 'Fixed effort' not in choices
-    assert ('one-level-lower' in choices) is (stage in ('implementation', 'review'))
-    if stage in ('implementation', 'review'):
-        assert choices['one-level-lower'] == 'One level below previous stage'
+    assert 'one-level-lower' not in choices
     assert all('starts' not in label for label in choices.values())
     row = next(row for row in t_mod._workflow_model_rows(vars(workflow), policy)
                if row[0] == stage.title())
@@ -257,34 +255,41 @@ def test_each_stage_can_let_agent_choose_worker_effort(workflow, t_mod, stage):
 
 @pytest.mark.parametrize('stage', ['implementation', 'review'])
 @pytest.mark.parametrize('scope', ['named', 'repository'])
-def test_relative_effort_is_staged_under_automatic_and_preserved(workflow, t_mod, stage, scope):
+@pytest.mark.parametrize('picked', [None, 'auto'])
+def test_retired_effort_displays_as_automatic_without_rewriting(workflow, t_mod, stage, scope, picked):
     document = workflow.defaults()
-    document['workflows']['standard'][stage]['effort'] = 'high'
+    document['workflows']['standard'][stage]['effort'] = 'one-level-lower'
     initial = copy.deepcopy(document)
     cfg = SimpleNamespace(repos={'api': '/repo'}, _workflow_document=document)
     target = {'name': 'standard'} if scope == 'named' else {'repository': '/repo'}
-    ui = InspectMenu([stage, 'effort', 'one-level-lower', 'back'])
+    ui = InspectMenu([stage, 'effort', picked, 'back'])
     t_mod._workflow_policy_menu(ui, cfg, vars(workflow), **target)
     policy = (cfg._workflow_document['workflows']['standard'] if scope == 'named' else
               workflow.effective(cfg._workflow_document, '/repo'))
     assert policy[stage]['effort'] == 'one-level-lower'
     choices = ui.views[2][1]
-    assert choices[1] == ('one-level-lower', 'One level below previous stage')
+    assert choices[0] == ('auto', 'Agent selects by task')
+    assert 'one-level-lower' not in dict(choices)
     assert ui.views[2][2]['sections'] == {'auto': 'Automatic', 'minimal': 'Fixed effort'}
     row = next(row for row in t_mod._workflow_model_rows(vars(workflow), policy) if row[0] == stage.title())
-    assert row[2:] == ('One level below previous stage', 'Worker')
+    assert row[2:] == ('Agent selects by task', 'Worker')
     reopened = InspectMenu([stage, 'effort', None, 'back'])
     before = copy.deepcopy(cfg._workflow_document)
     t_mod._workflow_policy_menu(reopened, cfg, vars(workflow), **target)
     picker = reopened.views[2]
-    assert picker[1][picker[2]['default']][0] == 'one-level-lower'
+    assert picker[1][picker[2]['default']][0] == 'auto'
     assert cfg._workflow_document == before
     assert document == initial
     assert not workflow.config_path().exists()
+    t_mod._workflow_policy_menu(Menu([stage, 'effort', 'high', 'back']), cfg, vars(workflow), **target)
+    edited = (cfg._workflow_document['workflows']['standard'] if scope == 'named' else
+              workflow.effective(cfg._workflow_document, '/repo'))
+    assert edited[stage]['effort'] == 'high'
+    assert document == initial
 
 
 @pytest.mark.parametrize('effort, label', [('auto', 'Agent selects by task'),
-    ('one-level-lower', 'One level below previous stage')])
+    ('one-level-lower', 'Agent selects by task')])
 def test_implementation_worker_and_main_session_display_separate_efforts(workflow, t_mod, monkeypatch, capsys, effort, label):
     monkeypatch.setattr(t_mod, '_workflow', lambda: vars(workflow))
     document = workflow.defaults()

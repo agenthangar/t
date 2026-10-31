@@ -2554,11 +2554,12 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
             if field == "model":
                 picked = _workflow_model(ui, cfg, helper, stage, policy[stage]["model"])
             else:
-                levels = ["auto", *(["one-level-lower"] if stage in ("implementation", "review") else []), *helper["EFFORTS"]]
+                levels = ["auto", *helper["EFFORTS"]]
+                current_effort = helper["effective_effort"](policy[stage]["effort"])
                 picked = ui.pick(_workflow_stage_title(stage) + " reasoning effort", [(level, _workflow_effort(level, stage)) for level in levels],
-                                 default=levels.index(policy[stage]["effort"]),
+                                 default=levels.index(current_effort),
                                  sections={"auto": "Automatic", helper["EFFORTS"][0]: "Fixed effort"})
-            if picked is not None:
+            if picked is not None and (field != "effort" or picked != current_effort):
                 changed[stage][field] = picked
         if changed != policy:
             cfg._workflow_document = helper["update"](document, changed, repository, name)
@@ -3275,9 +3276,9 @@ def _workflow_choice(helper, key, value):
 
 
 def _workflow_effort(value, stage=None):
-    if value == "auto":
+    if value in ("auto", "one-level-lower"):
         return "Agent selects by task"
-    return {"one-level-lower": "One level below previous stage"}.get(value, value.capitalize())
+    return value.capitalize()
 
 
 def _workflow_stage_title(stage):

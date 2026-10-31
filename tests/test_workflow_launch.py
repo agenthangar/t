@@ -401,7 +401,7 @@ def test_unselected_main_without_saved_defaults_does_not_launch_inactive_model(s
     assert sync.resume_settings(SID, str(repo)) == []
 
 
-def test_relative_implementation_launches_coordinator_with_concrete_medium(sync, tmp_path, monkeypatch):
+def test_legacy_relative_alias_launches_coordinator_with_concrete_medium(sync, tmp_path, monkeypatch):
     w, document, repo, _ = scoped_document(sync, tmp_path, monkeypatch)
     policy = document['repositories'][str(repo)]['inline']
     policy.update(stages_enabled=True, model_stages=['implementation', 'review'])

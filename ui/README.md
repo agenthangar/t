@@ -251,15 +251,12 @@ Saved enabled workflows with Implementation selected use the implementation mode
 launches and guarded resumes. An automatic implementation effort resolves to medium
 for the main conversation; explicit efforts remain explicit. These scoped values
 override stale resume checkpoints, including a previous planning model or effort.
-Every stage offers Agent selects by task alongside explicit effort levels;
-Implementation and Review additionally offer One level below previous stage.
-Implementation uses Planning's actual effort; Review uses Implementation's actual
-effort. Planning has no relative choice. Reasoning pickers use shared
-nonselectable Automatic and Fixed effort section headings: task-based and relative
-modes belong to Automatic; explicit levels belong to Fixed effort. Preserve the
-selected effort when reopening the picker. Use the same labels in
-menus, choices, save review and printed lists. Selected Implementation with auto
-or one-level-lower effort delegates a bounded worker at a concrete supported effort;
+Every stage offers Agent selects by task alongside explicit effort levels.
+Reasoning pickers use shared nonselectable Automatic and Fixed effort section
+headings: Agent selects by task belongs to Automatic; explicit levels belong to
+Fixed effort. Preserve the selected effort when reopening the picker. Use the
+same labels in menus, choices, save review and printed lists. Selected Implementation with auto
+effort delegates a bounded worker at a concrete supported effort;
 explicit Implementation effort keeps the work in the main session at that level.
 Show the main session's fixed model/effort separately when a worker implements,
 and identify worker versus main-session values. Unselected stages inherit the
@@ -274,13 +271,9 @@ planning/implementation/review. Without it, legacy separate_stages selects helpe
 with implementation still active; omission of both preserves all three stages.
 Selecting none sets stages_enabled false and retains the saved selection. List and save review label unselected stages as
 using the main model and never present inactive model/effort choices as effective.
-Relative effort uses the immediately preceding stage's actual concrete effort,
-carried in its handoff. Choose a lower supported effort for the destination model,
-clamping at its minimum. When the preceding stage uses the main session, an
-explicitly known launch effort is a fallback. When a worker handled that stage,
-require its actual effort instead of substituting the main session's effort or a
-symbolic auto/relative setting. Resolve and disclose unavailable effort evidence
-before delegation.
+Legacy one-level-lower values for Implementation and Review are accepted as auto;
+there is no relative effort option or delegation rule. Display and reopen these
+saved choices as Agent selects by task, preserving stored values on read or cancel.
 Native model/effort defaults are shown as defaults when unspecified, never inferred
 from inactive saved stages.
 Models load lazily from Codex once per menu session; current, recommended and custom
