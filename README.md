@@ -960,18 +960,25 @@ unchanged. Sessions support `main`, `master`, and custom default branches throug
 `origin/HEAD`. Checkout warns if no fetched origin default can be resolved.
 
 Configure named staged workflows in `t config open` → **Workflows**, or use
-`t workflow` for command help. The former `t config workflow` routes remain
+`t workflow` for the editor (`t help workflow` for command help). The former `t config workflow` routes remain
 compatibility aliases. Choose
 **Use recommended defaults** to activate planning with `gpt-6-astra`, implementation
 with `gpt-6.1-sol`, and review with `gpt-6-astra`. **Edit default workflow** and
 **Edit named workflow** give each stage separate model and reasoning-effort controls.
-**Workflow** enables or suppresses the entire workflow. **Model stages** separately
+**Use this workflow** enables or suppresses the entire workflow. **Use multiple models** separately
 turns staged model selection and delegation on or off while retaining the selected
 models and efforts. Markdown and behavior preferences still apply when only model
-stages are off.
+stages are off. Choose **No — use one model** to set the default model and reasoning
+effort for the selected session tool. To limit these defaults to one repository,
+open **Repository assignments → your repository → Customize only this repository**.
+These defaults apply when starting or resuming a session in that repository and
+its worktrees. Explicit launch arguments win; running turns keep their settings.
+Clearing a model uses the account's agent default. Choosing a model without an
+effort lets that model use its own default effort. Codex and Claude defaults are
+stored separately, and switching back to multiple models retains these choices.
 Model choices include the current and recommended values, a live Codex catalogue,
 a custom ID, and explicit refresh. Current, recommended and custom models remain
-usable offline. Changing a workflow model preserves its selected effort and does
+usable offline. Changing a stage model preserves its selected effort and does
 not change the agent's launch defaults. Planning and implementation accept `auto`
 or an explicit effort (`minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `ultra`);
 review accepts an explicit effort or `one-level-lower`.
@@ -1074,8 +1081,9 @@ edits and unsuccessful editor exits publish nothing. Bare `t config edit` still
 edits local shell configuration.
 
 `t workflow list [--repo api]` prints scope, source, exclusion, model-stage
-state, behavior preferences, custom-text presence, precedence and the effective
-stage/model/effort table. Add `--json` for machine output. `--all` lists
+state, work preferences, custom-text presence, precedence and the effective
+model settings. Single-model workflows show session defaults instead of inactive
+stage rows. Add `--json` for machine output. `--all` lists
 the named catalogue and usage; it cannot combine with `--repo`. A registered
 `--repo` alias explicitly selects a repository without checkout inference or a
 picker. Unsaved accounts show recommended defaults until explicitly activated.
@@ -1527,7 +1535,10 @@ then review and save. Repository assignments and the global default share this
 transaction. Cancel leaves saved settings unchanged.
 
 `t workflow list` prints a read-only summary; `--all` lists named workflows and
-`--json` preserves machine output. Text instructions override the menu choices.
+`--json` preserves machine output. Text instructions override work preferences
+and model-stage guidance. **Work preferences** asks where to work, when to preview,
+which checks to run, and where to stop. **Not set** leaves that decision to your
+task, repository rules and text instructions; it does not mean the behavior is disabled.
 Delivery choices include trying a local install or preview first, asking before
 pushing or opening a PR, a draft PR, a ready PR without merging, and authorized
 auto-merge. A design preview can also require feedback before implementation.

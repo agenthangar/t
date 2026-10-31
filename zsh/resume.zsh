@@ -2209,7 +2209,7 @@ _dev_resume_session_claimed() {
   tmux set-environment -t "=$session" CLAUDE_RESUME_ID "$sid" || { tmux kill-session -t "=$session:"; return 1; }
   tmux set-environment -t "=$session" DEV_AGENT "$agent" || { tmux kill-session -t "=$session:"; return 1; }
   # Run without typing the internal command into the pane (see _dev_new_session).
-  local resume_command; resume_command=$(_dev_agent_resume_cmd "$agent" "$sid")
+  local resume_command; resume_command=$(T_WORKFLOW_CWD="$dir" _dev_agent_resume_cmd "$agent" "$sid")
   if [[ $5 == history && $agent == codex ]]; then
     resume_command=$(_dev_agent_resume_cmd "$agent" "$sid" --cd "$dir")
   fi

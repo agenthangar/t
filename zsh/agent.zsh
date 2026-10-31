@@ -91,22 +91,44 @@ _dev_agent_check() {
   print -u2 -r -- "t: '$1' is not installed here — run: t agent install $1"
   return 1
 }
-# _dev_agent_new_cmd <agent> [sid] — the pane command for a FRESH slot.
-# DEV_MODEL is keyed by agent, so switching tools never carries the other tool's model.
-# Resumes deliberately retain their model/effort behavior, without these new-session defaults.
-_dev_agent_new_cmd() {
-  local agent="$1" model="${DEV_MODEL[$1]:-}"
-  local effort="${DEV_EFFORT[$1]:-}"
-  local executable; executable=$(_dev_agent_executable "$agent") || executable=$agent
-  local -a launch_args=("$executable")
-  [[ $agent == claude && -n $2 ]] && launch_args+=(--session-id "$2")
-  [[ -n $model ]] && launch_args+=(--model "$model")
+# _dev_agent_default_args <agent> <cwd> — scoped fresh-session model/effort.
+_dev_agent_default_args() {
+  local agent=$1 target=${2:-$PWD} model=${DEV_MODEL[$1]:-} effort=${DEV_EFFORT[$1]:-}
+  local helper="${T_HOME:-${${(%):-%x}:A:h:h}}/libexec/t_workflow_sync.py" index
+  local -a overrides
+  if [[ -f $helper ]]; then
+    overrides=("${(@f)$(python3 "$helper" --launch-settings "$agent" "$target" 2>/dev/null)}")
+    overrides=("${(@)overrides:#}")
+    for (( index=1; index<=${#overrides}; index+=2 )); do
+      case ${overrides[index]} in
+        --model) model=${overrides[index+1]}; effort= ;;
+        -c) effort=${overrides[index+1]#model_reasoning_effort=}; effort=${effort//\"/} ;;
+        --effort) effort=${overrides[index+1]} ;;
+      esac
+    done
+  fi
+  [[ -n $model ]] && print -rl -- --model "$model"
   if [[ -n $effort ]]; then
-    case "$agent" in
-      codex) launch_args+=(-c "model_reasoning_effort=$effort") ;;
-      claude) launch_args+=(--effort "$effort") ;;
+    case $agent in
+      codex) print -rl -- -c "model_reasoning_effort=$effort" ;;
+      claude) print -rl -- --effort "$effort" ;;
     esac
   fi
+  return 0
+}
+
+# _dev_agent_new_cmd <agent> [sid] [task-file] [cwd] — a FRESH slot.
+# DEV_MODEL is keyed by agent, so switching tools never carries the other tool's model.
+# Scoped single-model preferences override these account defaults at launch.
+_dev_agent_new_cmd() {
+  local agent="$1"
+  local executable; executable=$(_dev_agent_executable "$agent") || executable=$agent
+  local -a launch_args=("$executable")
+  local -a defaults
+  [[ $agent == claude && -n $2 ]] && launch_args+=(--session-id "$2")
+  defaults=("${(@f)$(_dev_agent_default_args "$agent" "${4:-$PWD}")}")
+  defaults=("${(@)defaults:#}")
+  launch_args+=("${defaults[@]}")
   case "$agent:${DEV_FAST[$agent]:-}" in
     codex:1|codex:fast) launch_args+=(-c service_tier=fast --enable fast_mode) ;;
     codex:ultrafast) launch_args+=(-c service_tier=ultrafast --enable fast_mode) ;;
@@ -136,36 +158,36 @@ _dev_agent_resume_cmd() {
   local agent=$1 sid=$2; shift 2
   [[ $agent == codex ]] || agent=claude
   local executable; executable=$(_dev_agent_executable "$agent") || executable=$agent
-  local -a args
+  local helper="${T_HOME:-${${(%):-%x}:A:h:h}}/libexec/t_workflow_sync.py"
+  local target=${T_WORKFLOW_CWD:-$PWD} index explicit_model=0 explicit_effort=0
+  local -a args overrides filtered
+  for (( index=1; index<=$#; index++ )); do
+    case ${argv[index]} in
+      --cd) target=${argv[index+1]:-$PWD} ;;
+      --cd=*) target=${argv[index]#--cd=} ;;
+      --model|-m|-m?*|--model=*) explicit_model=1 ;;
+      --effort|--effort=*) explicit_effort=1 ;;
+      -c|--config)
+        [[ ${argv[index+1]} == model=* ]] && explicit_model=1
+        [[ ${argv[index+1]} == model_reasoning_effort=* ]] && explicit_effort=1 ;;
+      --config=model=*|-cmodel=*) explicit_model=1 ;;
+      --config=model_reasoning_effort=*|-cmodel_reasoning_effort=*) explicit_effort=1 ;;
+    esac
+  done
+  if [[ -f $helper ]]; then
+    overrides=("${(@f)$(python3 "$helper" --resume-settings "$sid" "$target" "$agent" 2>/dev/null)}")
+    overrides=("${(@)overrides:#}")
+    for (( index=1; index<=${#overrides}; index+=2 )); do
+      [[ ${overrides[index]} == --model && $explicit_model == 1 ]] && continue
+      [[ ${overrides[index]} == (-c|--effort) && $explicit_effort == 1 ]] && continue
+      filtered+=("${overrides[index]}" "${overrides[index+1]}")
+    done
+  fi
   case "$agent" in
     codex)
-      local helper="${T_HOME:-${${(%):-%x}:A:h:h}}/libexec/t_workflow_sync.py"
-      local target=$PWD index explicit_model=0 explicit_effort=0
-      local -a overrides filtered
-      for (( index=1; index<=$#; index++ )); do
-        case ${argv[index]} in
-          --cd) target=${argv[index+1]:-$PWD} ;;
-          --cd=*) target=${argv[index]#--cd=} ;;
-          --model|-m|-m?*|--model=*) explicit_model=1 ;;
-          -c|--config)
-            [[ ${argv[index+1]} == model=* ]] && explicit_model=1
-            [[ ${argv[index+1]} == model_reasoning_effort=* ]] && explicit_effort=1 ;;
-          --config=model=*|-cmodel=*) explicit_model=1 ;;
-          --config=model_reasoning_effort=*|-cmodel_reasoning_effort=*) explicit_effort=1 ;;
-        esac
-      done
-      if [[ -f $helper ]]; then
-        overrides=("${(@f)$(python3 "$helper" --resume-settings "$sid" "$target" 2>/dev/null)}")
-        overrides=("${(@)overrides:#}")
-        for (( index=1; index<=${#overrides}; index+=2 )); do
-          [[ ${overrides[index]} == --model && $explicit_model == 1 ]] && continue
-          [[ ${overrides[index]} == -c && $explicit_effort == 1 ]] && continue
-          filtered+=("${overrides[index]}" "${overrides[index+1]}")
-        done
-      fi
       args=("$executable" resume "$sid" "${filtered[@]}" "$@" --no-daemon) ;;
 
-    *) args=("$executable" -r "$sid" "$@") ;;
+    *) args=("$executable" -r "$sid" "${filtered[@]}" "$@") ;;
   esac
   print -r -- "${(j: :)${(@q)args}}"
 }

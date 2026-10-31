@@ -206,7 +206,8 @@ def test_nested_resource_help_does_not_load_config(t_mod, monkeypatch, capsys, a
     assert t_mod.main(argv) == 0
     output = capsys.readouterr().out
     assert "t workflow <verb>" in output
-    assert "--repo ALIAS" in output and "never inferred" in output
+    assert "--repo ALIAS" in output and "Explicit verbs never infer the checkout" in output
+    assert "Bare t workflow opens the editor" in output
 
 
 @pytest.mark.parametrize("argv", [

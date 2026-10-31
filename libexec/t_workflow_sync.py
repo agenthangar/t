@@ -266,53 +266,82 @@ def current(state):
     return not source or digest(Path(source['path']).read_text()) == source['hash']
 
 
-def resume_settings(sid, cwd=None):
-    """Read-only launch overrides for a guarded selected dormant root conversation."""
-    if not re.fullmatch(r'[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}', sid):
-        return []
-    path = state_path()
-    if not path.exists() or path.stat().st_size > 1024 * 1024:
-        return []
-    state = status()
-    if not state['revision'] or not current(state):
-        return []
-    w = workflow()
-    document, _ = w['load']()
+def launch_policy(w, document, cwd):
+    """Resolve only the actual destination's canonical repository scope."""
     repository = None
     if document['repositories']:
         try:
             raw_common = git(cwd or os.getcwd(), 'rev-parse', '--path-format=absolute', '--git-common-dir')
             if not raw_common or not os.path.isabs(raw_common):
-                return []
+                return None
             common = os.path.realpath(raw_common)
         except (OSError, subprocess.TimeoutExpired):
-            return []
+            return None
         if not os.path.isabs(common) or not os.path.isdir(common):
-            return []
+            return None
         repository = next((scope for scope in document['repositories']
                            if os.path.realpath(os.path.join(scope, '.git')) == common), None)
-    if not w['effective'](document, repository)['enabled']:
-        return []
-    home = Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex')
-    # Existing pickers/launchers retain their one-owner checks. An indexed child
-    # must not inherit root-workflow overrides even if explicitly selected.
-    for database in sorted(home.glob('state_*.sqlite'), reverse=True)[:4]:
-        with closing(sqlite3.connect(database.as_uri() + '?mode=ro', uri=True, timeout=0.1)) as connection:
-            row = connection.execute('SELECT source FROM threads WHERE id=?', (sid,)).fetchone()
-        if row and 'subagent' in str(row[0]).lower():
-            return []
-        if row:
-            break
-    values = state.get('main_settings', state.get('settings', {}))
-    if not isinstance(values, dict):
-        return []
+    return w['effective'](document, repository)
+
+
+def session_defaults(policy, agent):
+    if not policy or not policy['enabled'] or policy.get('stages_enabled', True):
+        return {}
+    return {key: value for key, value in policy.get('session_defaults', {}).get(agent, {}).items() if value}
+
+
+def setting_args(values, agent):
     result = []
     model, effort = values.get('model'), values.get('effort')
     if isinstance(model, str) and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:/@+\[\]-]*', model):
         result.extend(['--model', model])
     if isinstance(effort, str) and re.fullmatch(r'[a-z][a-z0-9_-]*', effort):
-        result.extend(['-c', 'model_reasoning_effort=' + json.dumps(effort)])
+        result.extend(['-c', 'model_reasoning_effort=' + json.dumps(effort)] if agent == 'codex' else ['--effort', effort])
     return result
+
+
+def launch_settings(agent, cwd=None):
+    """Read-only scoped defaults for a fresh session; never write global defaults."""
+    if agent not in ('codex', 'claude'):
+        return []
+    w = workflow()
+    document, _ = w['load']()
+    return setting_args(session_defaults(launch_policy(w, document, cwd), agent), agent)
+
+
+def resume_settings(sid, cwd=None, agent='codex'):
+    """Read-only launch overrides for a guarded selected dormant root conversation."""
+    if agent not in ('codex', 'claude') or not re.fullmatch(r'[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}', sid):
+        return []
+    w = workflow()
+    document, _ = w['load']()
+    policy = launch_policy(w, document, cwd)
+    if not policy or not policy['enabled']:
+        return []
+    # Existing pickers/launchers retain their one-owner checks. An indexed child
+    # must not inherit root-workflow overrides even if explicitly selected.
+    if agent == 'codex':
+        home = Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex')
+        for database in sorted(home.glob('state_*.sqlite'), reverse=True)[:4]:
+            with closing(sqlite3.connect(database.as_uri() + '?mode=ro', uri=True, timeout=0.1)) as connection:
+                row = connection.execute('SELECT source FROM threads WHERE id=?', (sid,)).fetchone()
+            if row and 'subagent' in str(row[0]).lower():
+                return []
+            if row:
+                break
+    scoped = session_defaults(policy, agent)
+    values = {}
+    path = state_path()
+    if agent == 'codex' and path.exists() and path.stat().st_size <= 1024 * 1024:
+        state = status()
+        if state['revision'] and current(state):
+            existing = state.get('main_settings', state.get('settings', {}))
+            if isinstance(existing, dict):
+                values.update(existing)
+    if scoped.get('model'):
+        values.pop('effort', None)  # A global effort may not suit the selected model.
+    values.update(scoped)
+    return setting_args(values, agent)
 
 
 def local(state):
@@ -576,8 +605,11 @@ def receive(payload, repos, settings_writer=None):
 
 if __name__ == '__main__':
     try:
-        if len(sys.argv) in (3, 4) and sys.argv[1] == '--resume-settings':
-            print('\n'.join(resume_settings(sys.argv[2], sys.argv[3] if len(sys.argv) == 4 else None)), end='')
+        if len(sys.argv) == 4 and sys.argv[1] == '--launch-settings':
+            print('\n'.join(launch_settings(sys.argv[2], sys.argv[3])), end='')
+        elif len(sys.argv) in (3, 4, 5) and sys.argv[1] == '--resume-settings':
+            print('\n'.join(resume_settings(sys.argv[2], sys.argv[3] if len(sys.argv) >= 4 else None,
+                                           sys.argv[4] if len(sys.argv) == 5 else 'codex')), end='')
         else:
             state = status()
             if '--attach-status' in sys.argv and state.get('main_settings', state.get('settings')):

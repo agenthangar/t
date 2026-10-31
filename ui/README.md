@@ -195,18 +195,30 @@ fingerprint is automatically accepted. Onboarding uses the same reviewed offer.
 Config includes Workflows globally and in each repository submenu. The global
 menu chooses a named default, adds or edits shared workflows, or activates recommended
 defaults. Each workflow exposes an overall Workflow switch and an independent
-Model stages switch. Disabling stages retains their model/effort settings and keeps
+Use multiple models switch. Disabling stages retains their model/effort settings and keeps
 behavior preferences and Markdown active; disabling the workflow suppresses all
 three. Active stages expose Planning, Implementation and Review with separate
 model and effort controls, plus Instructions for ordinary Markdown in VISUAL/EDITOR.
-Behavior preferences uses a shared `_RailUI` submenu for Worktree (isolated/current),
-Local preview (UI changes/on request), Validation (relevant/full documented checks),
-and Delivery (review/PR/authorized auto-merge). Every setting offers No preference,
-which removes its key; no behavior is enabled by default. Model-stage rows are hidden
-while stages are off and their stored values are preserved.
+Work preferences uses a shared `_RailUI` submenu with Work in, Preview, Run checks,
+and Stop after. Unset rows say Not set; one explanation makes clear that task,
+repository and text instructions supply the behavior. Clearing a choice removes
+its key; no behavior is enabled by default. Stop after describes concrete handoff
+points: local uncommitted edits, local install/preview, approval before a PR,
+draft PR, ready PR, or authorized merge after checks. Preserve the focused row
+when returning from a choice. Model-stage rows are hidden while stages are off.
+Instead show the selected session tool's default model and reasoning effort.
+Optional `session_defaults` stores independent Codex and Claude model/effort maps;
+these are active only for enabled single-model workflows. Repository overrides
+apply to the canonical checkout and its worktrees, including destination paths
+for new and resumed sessions. Explicit resume arguments win. An explicit model
+without an effort uses that model's default, not an unrelated global effort.
+Empty choices fall back to account-level agent defaults. Excluded workflows and
+multi-model workflows do not apply these launch settings. Never write them into
+global agent settings or change active turns; indexed Codex child agents retain
+their own settings. The UI discovers supported efforts from the selected tool.
 Models load lazily from Codex once per menu session; current, recommended and custom
-values remain available offline, with explicit Refresh. Changing a model preserves
-its effort and never changes launch defaults. Shared-definition editing explains
+values remain available offline, with explicit Refresh. Changing a stage model preserves
+its effort; changing a session default model clears incompatible effort. Shared-definition editing explains
 its affected repository consumers. Repository menus display their source and offer
 named assignment, repository-only customization, explicit exclusion retaining the
 source, resuming that retained source, or inheritance. All menu changes remain pending until review and Save;

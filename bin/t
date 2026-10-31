@@ -2070,7 +2070,7 @@ def _config_set_model(cfg, agent, model, catalog):
     return reset
 
 
-def _config_model_menu(ui, cfg, agent, catalogs, setting="model"):
+def _config_model_menu(ui, cfg, agent, catalogs, setting="model", default_label=None, fallback_model=""):
     while True:
         if agent not in catalogs:
             ui.done("loading", f"Reading models and effort levels from {agent}…")
@@ -2082,7 +2082,7 @@ def _config_model_menu(ui, cfg, agent, catalogs, setting="model"):
                 catalogs[agent] = []
                 ui.done("unavailable", f"{agent}: {exc}. Use tool defaults, a custom model, or Refresh.")
         catalog = catalogs[agent]
-        model = cfg.models.get(agent, "")
+        model = cfg.models.get(agent, "") or (fallback_model if setting != "model" else "")
         if setting == "fast":
             current = cfg.fast.get(agent, "")
             if agent == "codex" and current == "1":
@@ -2109,6 +2109,8 @@ def _config_model_menu(ui, cfg, agent, catalogs, setting="model"):
         else:
             current = model
             rows = _config_model_rows(current, catalog)
+        if default_label:
+            rows = [(key, default_label if key == "" else label) for key, label in rows]
         title = f"{agent.title()} {setting if setting != 'fast' else ('Speed' if agent == 'codex' else 'Fast mode')}"
         if setting != "model":
             title += f" · {model or 'tool default'}"
@@ -2386,17 +2388,20 @@ def _workflow_model(ui, cfg, helper, stage, current):
 
 def _workflow_behaviors_menu(ui, helper, policy):
     changed = copy.deepcopy(policy)
+    ui.done("Preferences", "Not set uses your task, repository rules and text instructions. Text instructions take priority over these choices.")
+    focus = 0
     while True:
         behaviors = changed.get("behaviors", {})
         rows = [(key, _WORKFLOW_TOPICS[key][0]) for key in helper["BEHAVIORS"]] + [("back", "Back")]
-        values = {key: _workflow_choice(helper, key, behaviors[key]) if key in behaviors else "Follow other instructions"
+        values = {key: _workflow_choice(helper, key, behaviors[key]) if key in behaviors else "Not set"
                   for key, spec in helper["BEHAVIORS"].items()}
-        choice = ui.pick("Work and delivery", rows, values=values)
+        choice = ui.pick("Work preferences", rows, values=values, default=focus)
         if choice in (None, "back"):
             return changed
         spec = helper["BEHAVIORS"][choice]
+        focus = next(i for i, row in enumerate(rows) if row[0] == choice)
         ui.done(_WORKFLOW_TOPICS[choice][0], _WORKFLOW_TOPICS[choice][1])
-        options = [("", "Follow other instructions")] + [(key, _workflow_choice(helper, choice, key)) for key in spec["choices"]]
+        options = [("", "Not set — use existing instructions")] + [(key, _workflow_choice(helper, choice, key)) for key in spec["choices"]]
         selected = ui.pick(_WORKFLOW_TOPICS[choice][0], options,
                            default=next(i for i, row in enumerate(options) if row[0] == behaviors.get(choice, "")))
         if selected is not None and selected != behaviors.get(choice, ""):
@@ -2408,6 +2413,31 @@ def _workflow_behaviors_menu(ui, helper, policy):
                     changed.pop("behaviors")
 
 
+def _workflow_session_setting(ui, cfg, policy, agent, field):
+    """Edit launch defaults without changing account-wide agent settings."""
+    from types import SimpleNamespace
+    changed = copy.deepcopy(policy)
+    settings = policy.get("session_defaults", {}).get(agent, {})
+    staged = SimpleNamespace(models={agent: settings.get("model", "")},
+                             efforts={agent: settings.get("effort", "")}, fast={})
+    if not hasattr(cfg, "_workflow_session_catalogs"):
+        cfg._workflow_session_catalogs = {}
+    ui.done("Session defaults", f"Applies to {agent.title()} when starting or resuming in this scope. Existing turns keep their settings.")
+    _config_model_menu(ui, staged, agent, cfg._workflow_session_catalogs, field,
+                       default_label="Use agent default" if field == "model" else "Use default for this model",
+                       fallback_model=getattr(cfg, "models", {}).get(agent, ""))
+    selected = {key: value for key, value in (("model", staged.models.get(agent)),
+                                             ("effort", staged.efforts.get(agent))) if value}
+    if selected != settings:
+        if selected:
+            changed.setdefault("session_defaults", {})[agent] = selected
+        else:
+            changed.get("session_defaults", {}).pop(agent, None)
+            if not changed.get("session_defaults"):
+                changed.pop("session_defaults", None)
+    return changed
+
+
 def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
     title = f"Workflow · {name}" if name else "Customize only this repository"
     if name:
@@ -2415,21 +2445,32 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
                  if helper["source"](cfg._workflow_document, os.path.realpath(path)) == name]
         scope = "global default and inherited repositories" if name == cfg._workflow_document["default"] else "named assignments"
         ui.done("scope", f"Editing {name} affects {scope}" + (": " + ", ".join(users) if users else "."))
-    ui.done("Instructions", "Your task and repository rules come first. Extra written instructions can change the choices here.")
+    ui.done("Instructions", "Your task and repository rules come first. Text instructions can override work preferences and model-stage guidance.")
     while True:
         document = cfg._workflow_document
         policy = (copy.deepcopy(document["workflows"][name]) if name else
                   helper["resolved"](document, repository))
-        rows = [("enabled", "Use this workflow"), ("stages_enabled", "Models for each step")]
+        alias = next((alias for alias, path in cfg.repos.items() if os.path.realpath(path) == repository), None)
+        agent = getattr(cfg, "agents", {}).get(alias, getattr(cfg, "agent_default", "codex"))
+        if agent not in ("codex", "claude"):
+            agent = "codex"
+        defaults = policy.get("session_defaults", {}).get(agent, {})
+        rows = [("enabled", "Use this workflow"), ("stages_enabled", "Use multiple models")]
         if policy.get("stages_enabled", True):
             rows += [(stage, stage.title()) for stage in ("planning", "implementation", "review")]
-        rows.append(("behaviors", "Work and delivery"))
+        else:
+            rows += [("main_model", agent.title() + " default model"), ("main_effort", "Reasoning effort")]
+        rows.append(("behaviors", "Work preferences ›"))
         rows += [("runners", "Test runners"), ("instructions", "Text instructions"), ("edit", "Advanced JSON editor"), ("back", "Back")]
         values = {stage: policy[stage]["model"] + " · " + _workflow_effort(policy[stage]["effort"])
                   for stage in ("planning", "implementation", "review")}
         values["enabled"] = "enabled" if policy["enabled"] else "disabled"
-        values["stages_enabled"] = "enabled" if policy.get("stages_enabled", True) else "disabled · models retained"
-        values["behaviors"] = f"{len(policy.get('behaviors', {}))} selected"
+        values["stages_enabled"] = "Yes · plan, implement, review" if policy.get("stages_enabled", True) else "No · one model"
+        models, efforts = getattr(cfg, "models", {}), getattr(cfg, "efforts", {})
+        values["main_model"] = defaults.get("model") or "Agent default" + (": " + models[agent] if models.get(agent) else "")
+        values["main_effort"] = defaults.get("effort") or ("Default for this model" if defaults.get("model") else
+                                                            "Agent default" + (": " + efforts[agent] if efforts.get(agent) else ""))
+        values["behaviors"] = f"{len(policy.get('behaviors', {}))} set" if policy.get('behaviors') else "None set"
         values["instructions"] = (f"text · {len(policy['instructions'].splitlines())} lines · Enter to edit"
                                   if policy.get("instructions") else "Add text instructions")
         values["runners"] = helper["runners_summary"](policy)
@@ -2438,11 +2479,14 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
             return
         changed = copy.deepcopy(policy)
         if choice in ("enabled", "stages_enabled"):
-            picked = ui.pick("Use this workflow" if choice == "enabled" else "Models for each step",
-                             [("1", "Enabled"), ("0", "Disabled")],
+            picked = ui.pick("Use this workflow" if choice == "enabled" else "Use multiple models",
+                             [("1", "Enabled"), ("0", "Disabled")] if choice == "enabled" else
+                             [("1", "Yes — separate models for each step"), ("0", "No — use one model")],
                              default=0 if policy.get(choice, True) else 1)
             if picked is not None and (picked == "1") != policy.get(choice, True):
                 changed[choice] = picked == "1"
+        elif choice in ("main_model", "main_effort"):
+            changed = _workflow_session_setting(ui, cfg, policy, agent, choice.removeprefix("main_"))
         elif choice == "behaviors":
             changed = _workflow_behaviors_menu(ui, helper, policy)
         elif choice == "runners":
@@ -2463,7 +2507,7 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
             continue
         else:
             stage = choice
-            ui.done("Reasoning", "How much thinking to request from the model. Automatic chooses based on the task.")
+            ui.done("Reasoning", "How much thinking to request. The agent can choose based on task complexity; t does not enforce that choice.")
             field = ui.pick(stage.title(), [("model", "Model"), ("effort", "Reasoning effort"), ("back", "Back")],
                             values={"model": policy[stage]["model"], "effort": _workflow_effort(policy[stage]["effort"])})
             if field in (None, "back"):
@@ -2473,7 +2517,7 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
             else:
                 special = "one-level-lower" if stage == "review" else "auto"
                 levels = [special, *helper["EFFORTS"]]
-                labels = {"auto": "Automatic by task complexity", "one-level-lower": "One level below planning"}
+                labels = {"auto": "Let the agent choose for the task", "one-level-lower": "One level below planning"}
                 picked = ui.pick(stage.title() + " reasoning effort", [(level, labels.get(level, level)) for level in levels],
                                  default=levels.index(policy[stage]["effort"]))
             if picked is not None:
@@ -3143,21 +3187,25 @@ def _workflow_launch_settings(cfg, settings):
 
 
 _WORKFLOW_TOPICS = {
-    "worktree": ("Working folder", "A worktree is a separate working copy of the repository."),
-    "preview": ("Design preview", "Choose when to show UI changes locally and wait for feedback."),
-    "validation": ("Tests and checks", "Choose how much project validation to run before delivery."),
-    "delivery": ("When work is ready", "PR means pull request: a proposed change for review. Choose where the agent stops."),
+    "worktree": ("Work in", "Choose the current working copy or a separate Git worktree for this task."),
+    "preview": ("Preview", "For UI changes: inspect a local preview, or show a design first and wait for your feedback."),
+    "validation": ("Run checks", "Choose checks related to the change or the full checks documented by the project."),
+    "delivery": ("Stop after", "Choose the handoff point. A pull request (PR) proposes changes for review; opening one does not merge it."),
 }
 _WORKFLOW_CHOICE_LABELS = {
-    "isolated": "Separate working copy",
+    "isolated": "Separate working copy (worktree)",
     "current": "Current working copy",
-    "review": "Leave changes uncommitted",
-    "local_review": "Let me try it locally first",
-    "ask_before_pr": "Ask before pushing or opening a PR",
-    "draft_pull_request": "Open a draft PR; stop there",
-    "pull_request": "Open a PR; do not merge",
-    "auto_merge": "Auto-merge when authorized",
-    "before_implementation": "Show design; wait for feedback",
+    "ui_changes": "Inspect UI changes locally",
+    "on_request": "Only when I ask",
+    "relevant": "Checks for the changed code",
+    "full": "All documented project checks",
+    "review": "Local edits — leave uncommitted",
+    "local_review": "Local install / preview — wait for me",
+    "ask_before_pr": "Ready for a PR — ask before pushing",
+    "draft_pull_request": "Draft PR — leave open",
+    "pull_request": "Ready PR — leave open",
+    "auto_merge": "Merge — when authorized and checks pass",
+    "before_implementation": "Design preview — wait before coding",
 }
 
 
@@ -3176,8 +3224,8 @@ def _workflow_print(helper, result, catalogue=False):
         print("\n".join(_table_lines(("WORKFLOW", "STATUS", "ASSIGNED", "TEXT INSTRUCTIONS", "WORK AND DELIVERY"), [
             (name, "on" if item["workflow"]["enabled"] else "off", str(len(item["repositories"])),
              "present" if item["workflow"].get("instructions") else "none",
-             "; ".join(_workflow_choice(helper, key, value)
-                       for key, value in item["workflow"].get("behaviors", {}).items()) or "Follow other instructions")
+             "; ".join(_WORKFLOW_TOPICS[key][0] + ": " + _workflow_choice(helper, key, value)
+                       for key, value in item["workflow"].get("behaviors", {}).items()) or "None set")
             for name, item in result["workflows"].items()])))
         print("Text instructions take precedence over work and delivery choices, then model guidance.")
     else:
@@ -3187,19 +3235,28 @@ def _workflow_print(helper, result, catalogue=False):
         print("Source: " + result["source"] + (" · " + result["workflow_name"] if result["workflow_name"] else ""))
         print("Enabled: " + ("yes" if policy["enabled"] else "no") + (" · repository excluded" if result["excluded"] else ""))
         text = policy.get("instructions", "")
-        print("Text instructions: " + (f"present ({len(text.splitlines())} lines); override choices below" if text else "none"))
+        print("Text instructions: " + (f"present ({len(text.splitlines())} lines); override work preferences and stage guidance" if text else "none"))
         if text:
             print("Read text: t workflow instructions show" + (" --repo ALIAS" if result["scope"] != "global" else ""))
         print("Precedence: task instructions > repository rules > text instructions > work and delivery > models")
-        print("Work and delivery:")
-        for key, value in policy.get("behaviors", {}).items():
-            print("  " + _WORKFLOW_TOPICS[key][0] + ": " + _workflow_choice(helper, key, value))
-        if not policy.get("behaviors"):
-            print("  Follow other instructions (no choices saved)")
-        print("Model stages: " + ("enabled" if policy.get("stages_enabled", True) else "disabled · models retained"))
-        print("\n".join(_table_lines(("STEP", "MODEL", "REASONING"),
-            [(stage, policy[stage]["model"], _workflow_effort(policy[stage]["effort"]))
-             for stage in ("planning", "implementation", "review")])))
+        print("Work preferences (not set = use existing instructions):")
+        for key in _WORKFLOW_TOPICS:
+            value = policy.get("behaviors", {}).get(key)
+            print("  " + _WORKFLOW_TOPICS[key][0] + ": " + (_workflow_choice(helper, key, value) if value else "Not set"))
+        if policy.get("stages_enabled", True):
+            print("Models: separate models for each step")
+            print("\n".join(_table_lines(("STEP", "MODEL", "REASONING"),
+                [(stage, policy[stage]["model"], _workflow_effort(policy[stage]["effort"]))
+                 for stage in ("planning", "implementation", "review")])))
+        else:
+            print("Models: one model per session (saved stage choices retained)")
+            defaults = policy.get("session_defaults", {})
+            if not defaults:
+                print("  Use agent defaults")
+            for agent, settings in defaults.items():
+                print("  " + agent.title() + ": " + (settings.get("model") or "agent default") +
+                      " · reasoning: " + (settings.get("effort") or "default for this model"))
+            print("  Applies to new sessions and supported resumes; active turns keep their settings.")
         print("Test runners: " + helper["runners_summary"](policy))
     print("Propagation: " + result["propagation"]["runtime"])
 
@@ -11403,7 +11460,9 @@ SCOPE
   `ls` is an alias for `list`.
   Run t workflow in a terminal to edit workflows interactively.
   List prints saved workflow values; --all includes named definitions.
-  Config menus separately control model stages, behavior preferences and Markdown.
+  With multiple models off, choose a default model and effort for new/resumed sessions.
+  Work preferences describe where to work, preview, run checks and stop.
+  Text instructions can override work preferences and model-stage guidance.
   Delivery: local install/preview first, wait before PR, draft PR, ready PR without
   merging, or authorized auto-merge. Design previews can precede implementation.
   Task/repo rules prevail; Markdown overrides preferences, then stage guidance.
@@ -12593,7 +12652,8 @@ RECEIVE AND REMOTE MOVES
   Open local config in editor covers all custom shell settings (VISUAL/EDITOR, else
   vi).
 
-  Workflows opens the editor for models, work and delivery choices, and text.
+  Workflows opens the editor for models, work preferences, and text.
+  Turn off multiple models to set a single-model default and reasoning effort.
   Run t workflow directly to edit, review and save workflow changes.
 
   Use `t workflow edit [--repo ALIAS]` for its JSON editor and `t workflow

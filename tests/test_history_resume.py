@@ -498,7 +498,9 @@ def test_generation_race_after_destination_is_blocked_under_claim(app, history, 
     workspace = Path(app.cfg.worktree_root) / 'repo/1'
     history.run(['git', '-C', app.cfg.repos['repo'], 'worktree', 'add', '-b', 'dev/repo-1', str(workspace), git_repo])
     row = store.merge(saved_row(app, git_repo, workspace))
-    monkeypatch.setattr(app, 'source', lambda *a: tmp_path / 'unused')
+    source = transcript_file(tmp_path / 'rollout-selected.jsonl',
+                             codex_rows(workspace, sid='selected', branch='dev/repo-1'))
+    monkeypatch.setattr(app, 'source', lambda *a: source)
     monkeypatch.setattr(app, 'owners', lambda *a: [])
     original = app.destination
     def modified(*args):

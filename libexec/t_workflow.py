@@ -140,7 +140,7 @@ def defaults():
 
 
 def validate_policy(value):
-    if not isinstance(value, dict) or set(value) - {'instructions', 'stages_enabled', 'behaviors', 'runners'} != set(DEFAULT):
+    if not isinstance(value, dict) or set(value) - {'instructions', 'stages_enabled', 'behaviors', 'runners', 'session_defaults'} != set(DEFAULT):
         raise ValueError('workflow requires enabled, planning, implementation and review')
     instructions = value.get('instructions', '')
     if not isinstance(instructions, str) or any(marker in instructions for marker in (BEGIN, END, ISSUE_BEGIN, ISSUE_END)):
@@ -151,6 +151,17 @@ def validate_policy(value):
         validate_runners(value['runners'])
     if 'stages_enabled' in value and type(value['stages_enabled']) is not bool:
         raise ValueError('workflow stages_enabled must be true or false')
+    session_defaults = value.get('session_defaults', {})
+    if not isinstance(session_defaults, dict) or set(session_defaults) - {'codex', 'claude'}:
+        raise ValueError('session_defaults supports codex and claude only')
+    for settings in session_defaults.values():
+        if not isinstance(settings, dict) or set(settings) - {'model', 'effort'}:
+            raise ValueError('session_defaults requires model and/or effort')
+        model, effort = settings.get('model', ''), settings.get('effort', '')
+        if not isinstance(model, str) or (model and not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:/@+\[\]-]*', model)):
+            raise ValueError('session default model must be a model ID without spaces')
+        if not isinstance(effort, str) or (effort and effort not in EFFORTS):
+            raise ValueError('session default effort must be an explicit reasoning level')
     behaviors = value.get('behaviors', {})
     if not isinstance(behaviors, dict) or set(behaviors) - set(BEHAVIORS):
         raise ValueError('workflow behaviors must be an object containing only: ' + ', '.join(BEHAVIORS))
@@ -371,6 +382,7 @@ def policy_summary(policy):
     return {'stages_enabled': policy.get('stages_enabled', True),
             'stages_active': policy['enabled'] and policy.get('stages_enabled', True),
             'behaviors': copy.deepcopy(policy.get('behaviors', {})),
+            'session_defaults': copy.deepcopy(policy.get('session_defaults', {})),
             'custom_instructions': bool(policy.get('instructions')),
             'precedence': PRECEDENCE}
 
@@ -379,6 +391,10 @@ def summary_lines(policy):
     summary = policy_summary(policy)
     state = 'enabled' if summary['stages_active'] else 'disabled' if not summary['stages_enabled'] else 'inactive (workflow disabled)'
     lines = ['Model stages: ' + state]
+    if not summary['stages_enabled']:
+        for agent, settings in summary['session_defaults'].items():
+            lines.append(agent.title() + ' session default: ' + (settings.get('model') or 'agent default') +
+                         '; reasoning: ' + (settings.get('effort') or 'default for this model'))
     for key, spec in BEHAVIORS.items():
         selected = summary['behaviors'].get(key)
         lines.append(spec['label'] + ': ' + (spec['choices'][selected][0] if selected else 'No preference'))
@@ -502,6 +518,12 @@ def _stage_text(policy):
         parts.append('Model stages are disabled for this scope. Do not require staged model selection '
                      'or delegation solely because of t preferences. Selected behavior preferences '
                      'and custom Markdown remain active.')
+        for agent, settings in policy.get('session_defaults', {}).items():
+            chosen = ', '.join(key + ': ' + value for key, value in settings.items() if value)
+            if chosen:
+                parts.append(f'{agent.title()} session launch defaults: {chosen}. '
+                             't applies these defaults to new sessions and supported resumes in this scope. '
+                             'They do not change an active turn or require switching models during a task.')
     behaviors = policy.get('behaviors', {})
     if behaviors:
         parts.append('Selected behavior preferences:\n' + '\n'.join(

@@ -637,7 +637,9 @@ def test_named_workflow_commands(workflow, t_mod, monkeypatch, tmp_path, capsys)
     output = capsys.readouterr().out
     assert '"excluded": true' in output and '"workflow_name": "quick"' in output
     assert run('list', '--all') == 0
-    assert 'REPOSITORY ASSIGNMENTS' in capsys.readouterr().out
+    overview = capsys.readouterr().out
+    assert 'Named workflows; default: standard.' in overview
+    assert 'ASSIGNED' in overview and 'quick' in overview
     assert run('list', '--all', '--json') == 0
     catalogue = json.loads(capsys.readouterr().out)
     assert catalogue['workflows']['quick']['repositories'] == [cfg.repos['api']]
@@ -1005,7 +1007,7 @@ def test_behavior_list_and_raw_show_are_read_only(workflow, t_mod, monkeypatch, 
         assert result['preference_source'] == 'standard' and result['precedence'] == w.PRECEDENCE
         assert t_mod.main([*prefix, 'list', *scope]) == 0
         text = capsys.readouterr().out
-        assert 'Model stages: disabled' in text and 'Current working copy' in text
+        assert 'Models: one model per session' in text and 'Current working copy' in text
         assert 'Precedence:' in text and 'Text instructions: present' in text
         assert t_mod.main([*prefix, 'instructions', 'show', *scope]) == 0
         assert capsys.readouterr().out == prose
@@ -1021,7 +1023,7 @@ def test_behavior_menu_narrow_screens(workflow, t_mod, monkeypatch, width, heigh
     cfg = SimpleNamespace(repos={})
     t_mod._workflow_session(cfg)
     # Disable stages, set an isolated worktree preference and return through both menus.
-    keys = ['j', 'enter', 'j', 'enter', 'j', 'j', 'enter', 'enter', 'j', 'enter',
+    keys = ['j', 'enter', 'j', 'enter', 'j', 'j', 'j', 'j', 'enter', 'enter', 'j', 'enter',
             'j', 'j', 'j', 'j', 'enter', 'q']
     ui = make_ui(t_mod, keys, width, height)
     t_mod._workflow_policy_menu(ui, cfg, vars(workflow), name='standard')
@@ -1092,7 +1094,9 @@ def test_issue_rule_list_and_markdown_editor_are_visible_without_writes(workflow
     monkeypatch.setattr(t_mod, '_workflow', lambda: vars(w))
     monkeypatch.setattr(t_mod, 'Config', lambda: SimpleNamespace(repos={}))
     assert t_mod.main(['config', 'workflow', 'list']) == 0
-    assert 'Issue-before-code rule: included in editable Markdown' in capsys.readouterr().out
+    overview = capsys.readouterr().out
+    assert 'Text instructions: present' in overview
+    assert 'Read text: t workflow instructions show' in overview
     assert t_mod.main(['config', 'workflow', 'instructions', 'show']) == 0
     assert w.issue_policy() in capsys.readouterr().out
     assert not w.config_path().exists()
@@ -1175,7 +1179,7 @@ def test_workflow_print_precedence_and_reasoning(workflow, t_mod, monkeypatch, c
     cfg = SimpleNamespace(repos={})
     assert t_mod._cmd_workflow(cfg, SimpleNamespace(workflow=True, workflow_action='list')) == 0
     text = capsys.readouterr().out
-    assert text.index('Text instructions:') < text.index('Work and delivery:')
-    assert 'Show design; wait for feedback' in text and 'Let me try it locally first' in text
+    assert text.index('Text instructions:') < text.index('Work preferences (')
+    assert 'Design preview — wait before coding' in text and 'Local install / preview — wait for me' in text
     assert 'Chosen for the task' in text and 'One level below planning' in text
     assert 'one-level-lower' not in text and 'Test runners:' in text and 'Propagation:' in text
