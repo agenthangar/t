@@ -57,7 +57,7 @@ def test_runner_policy_compatibility_and_resolution(workflow, tmp_path):
     assert w.runners(excluded, repository) == runners()
     assert not w.effective(excluded, repository)['enabled']
     assert 'Test runners are configured' not in w._stage_text(w.effective(excluded, repository))
-    assert 'runs start -- COMMAND' in w._stage_text(policy)
+    assert 'runs start --tool codex -- COMMAND' in w._stage_text(policy)
     assert 'Test runners are configured' not in w._stage_text(w.DEFAULT)
     assert w.action(excluded, 'inherit', repository=repository)['repositories'] == {}
     with pytest.raises(ValueError, match='cannot be combined'):

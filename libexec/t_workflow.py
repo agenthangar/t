@@ -733,6 +733,10 @@ def load():
                 document.legacy_snapshots[path] = native
             if body and body != issue_policy() and body not in texts:
                 texts.append(body)
+    if texts and not before:
+        # Preserve shared legacy prose in both native tools on the first save.
+        # Creating Claude's independent defaults after seeding would lose it.
+        document = _ensure_claude_catalogue(document)
     return _seed_instructions(document, texts), before
 
 

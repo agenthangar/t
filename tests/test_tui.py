@@ -266,3 +266,12 @@ def test_unset_gap_checklist_keeps_viewport_focus_and_action_visible(t_mod, widt
         assert any('▸' in line for line in frame)
         assert any('SELECT' in line for line in frame)
         assert all(t_mod._vis_len(line) <= width for line in frame)
+
+
+@pytest.mark.parametrize('width,key', [(20, '↵'), (32, 'enter')])
+def test_primary_enter_hint_preserves_action_on_narrow_terminal(t_mod, width, key):
+    ui = make_ui(t_mod, [], width, 8)
+    _, footer = ui.chrome('Choose', 'enter select', primary=('enter', 'SELECT', ''))
+    plain = '\n'.join(t_mod._ANSI_RE.sub('', line) for line in footer)
+    assert key in plain and 'SELECT' in plain
+    assert all(t_mod._vis_len(line) <= width for line in footer)

@@ -1279,6 +1279,9 @@ def test_config_local_unsupported_native_defaults_prevents_publication(t_mod, na
     edited = copy.deepcopy(cfg)
     edited.models['codex'] = 'new-model'
     monkeypatch.setattr(t_mod, '_config_wizard', lambda cfg: edited)
+    # capsys replaces the streams after config_cli configures its terminal stub.
+    monkeypatch.setattr(t_mod.sys.stdin, 'isatty', lambda: True)
+    monkeypatch.setattr(t_mod.sys.stdout, 'isatty', lambda: True)
     assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == 1
     assert local.read_text() == '# keep me\n'
     assert native.read_text() == '"model" = "old-model"\n'
@@ -1332,6 +1335,9 @@ def test_config_editor_defaults_followup_reports_partial_failure(t_mod, native_d
         return 0
     monkeypatch.setattr(t_mod, '_config_editor', editor)
     monkeypatch.setattr(t_mod, 'Config', lambda: edited)
+    # Exercise the editor follow-up, rather than the nonterminal entry guard.
+    monkeypatch.setattr(t_mod.sys.stdin, 'isatty', lambda: True)
+    monkeypatch.setattr(t_mod.sys.stdout, 'isatty', lambda: True)
     assert t_mod.cmd_config(cfg, SimpleNamespace(show=False, edit=True)) == int(bool(failure))
     assert local.read_text() == 'DEV_MODEL[codex]=new-model\n'
     if failure:

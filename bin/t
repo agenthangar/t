@@ -1968,7 +1968,8 @@ def _config_live_models(agent):
         if not executable:
             raise ValueError("cursor-agent is not installed")
         try:
-            result = subprocess.run([executable, "--list-models"], capture_output=True, text=True, timeout=8)
+            with _spinner('Looking up models'):
+                result = subprocess.run([executable, "--list-models"], capture_output=True, text=True, timeout=8)
         except subprocess.TimeoutExpired as exc:
             raise ValueError("Cursor model lookup timed out") from exc
         if result.returncode or len(result.stdout) > 1024 * 1024:
@@ -4436,6 +4437,8 @@ class _RailUI:
             footer = [f"      {st.y}↑↓/jk · ↵ · q{st.r}"]
         if primary:
             key, action, detail = primary
+            if key == "enter" and len(f" {key}  {action} ") > width - 6:
+                key = "↵"
             text = _truncate(f" {key}  {action} ", width - 6)
             if self.lines() < 12:
                 footer = [f"      {st.g}{st.b}{st.rev}{text}{st.r}"]
@@ -12191,31 +12194,23 @@ SCOPE
   alias, basename or origin name explicitly.
   Start with Codex, Claude or Cursor in the editor, then choose its workflow.
   Each tool has separate workflows, defaults and repository assignments.
-  --tool selects codex, claude or cursor for explicit commands; otherwise use
-  the repository tool override or account default. Browsing never changes the
-  tool that launches sessions.
+  Browsing never changes the tool that launches sessions.
   Explicit verbs never infer the checkout. Bare t workflow opens the editor.
   NAME and --repo cannot be combined for edit. Shared definition edits affect
   all its consumers. --all lists named workflows; it cannot combine with --repo.
   `ls` is an alias for `list`.
-  Run t workflow in a terminal to edit workflows interactively.
   Save review shows only changed settings, with before and after values.
   Ctrl+C offers Keep editing, Review and save, or Discard when changes are pending.
-  With no pending changes, Ctrl+C exits immediately.
-  List prints saved workflow values; --all includes named definitions.
   Workflow rows show Global default, assigned repository counts, or Not assigned.
   Check Planning, Implementation and/or Review for saved model settings.
-  Unchecked Implementation uses session defaults;
-  unchecked helpers use the main model.
+  Unchecked stages use the session model and effort.
   Automatic Implementation effort uses a worker; the main session stays Medium.
   Use one model for all work turns stages off and retains saved settings.
-  Inherit uses the tool's top-level model or reasoning effort from t config.
+  Inherit uses top-level settings from t config, or the native tool setting.
   Permissions selects Codex and Claude access for new and resumed CLI sessions.
   PRs, previews & tests controls PR opening and merging, preview timing and approval,
   frontend design, preview updates and test timing independently.
   Text instructions can override work preferences and model-stage guidance.
-  Delivery: local install/preview first, wait before PR, draft PR, ready PR without
-  merging, or authorized auto-merge. Design previews can precede implementation.
   Task/repo rules prevail; Markdown overrides preferences, then stage guidance.
   Edits publish native instructions, then reconcile supported loaded sessions.
   List reports propagation without connecting or retrying. Saving and session starts

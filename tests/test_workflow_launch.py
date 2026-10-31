@@ -29,7 +29,14 @@ def scoped_document(sync, tmp_path, monkeypatch, **settings):
     repo = tmp_path / 'repo'
     (repo / '.git').mkdir(parents=True)
     document['repositories'][str(repo)] = {'inline': single_policy(w, **settings)}
+    if 'claude' in settings:
+        claude = w['tool_defaults']('claude')
+        policy = w['effective'](claude)
+        policy['session_defaults'] = {'claude': copy.deepcopy(settings['claude'])}
+        claude = w['update'](claude, policy, str(repo))
+        document = w['with_tool_document'](document, 'claude', claude)
     w['save'](document, None, propagate=False)
+    document = w['load']()[0]
     calls = []
     def common(cwd, *args):
         calls.append(cwd)
@@ -70,7 +77,7 @@ def test_inactive_or_unresolved_scope_does_not_supply_defaults(sync, tmp_path, m
 @pytest.mark.parametrize('effort,expected_effort', [('auto', 'medium'), ('low', 'low'), ('high', 'high')])
 def test_saved_staged_main_defaults_replace_stale_model_and_effort(sync, tmp_path, monkeypatch, effort, expected_effort):
     w, document, repo, _ = scoped_document(sync, tmp_path, monkeypatch,
-        codex={'model': 'ignored-single-model'}, claude={'model': 'ignored-claude'})
+        codex={'model': 'ignored-single-model'})
     policy = document['repositories'][str(repo)]['inline']
     policy['stages_enabled'] = True
     policy['implementation'] = {'model': 'scoped-sol', 'effort': effort}
@@ -265,11 +272,17 @@ def test_scoped_permissions_launch_and_resume_without_model_mode_dependency(sync
     w, document, repo, _ = scoped_document(sync, tmp_path, monkeypatch)
     policy = document['repositories'][str(repo)]['inline']
     policy['stages_enabled'] = staged
-    policy['permissions'] = {'codex': 'auto', 'claude': 'plan'}
+    policy['permissions'] = {'codex': 'auto'}
+    claude = w['tool_document'](document, 'claude')
+    claude_policy = w['effective'](claude)
+    claude_policy['stages_enabled'] = staged
+    claude_policy['permissions'] = {'claude': 'plan'}
+    claude = w['update'](claude, claude_policy, str(repo))
+    document = w['with_tool_document'](document, 'claude', claude)
     w['save'](document, w['snapshot'](w['config_path']()), propagate=False)
     before = w['config_path']().read_bytes()
     for agent in ('codex', 'claude'):
-        expected = w['permission_args'](policy, agent)
+        expected = w['permission_args'](w['effective'](w['tool_document'](document, agent), str(repo)), agent)
         assert sync.launch_settings(agent, str(repo))[-len(expected):] == expected
         assert sync.resume_settings(SID, str(repo), agent)[-len(expected):] == expected
     assert w['config_path']().read_bytes() == before
@@ -278,6 +291,7 @@ def test_scoped_permissions_launch_and_resume_without_model_mode_dependency(sync
         db.execute('insert into threads values(?,?)', (SID, '{"subagent":{}}'))
     assert sync.resume_settings(SID, str(repo)) == []
     document['repositories'][str(repo)]['excluded'] = True
+    document['tools']['claude']['repositories'][str(repo)]['excluded'] = True
     w['save'](document, w['snapshot'](w['config_path']()), propagate=False)
     assert sync.launch_settings('codex', str(repo)) == []
     assert sync.resume_settings(SID, str(repo), 'claude') == []

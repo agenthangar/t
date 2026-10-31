@@ -79,7 +79,7 @@ def test_permission_editor_discard_keeps_original(workflow, t_mod, monkeypatch, 
     monkeypatch.setattr(t_mod, 'CONFIG', str(tmp_path / 'absent'))
     monkeypatch.setattr(t_mod, 'zsh_capture', lambda _: '')
     monkeypatch.setattr(workflow, 'save', lambda *args, **kwargs: pytest.fail('discard must not save'))
-    ui = Menu(['workflow', 'customize', 'permissions', 'codex', 'full', 'back',
+    ui = Menu(['workflow', 'codex', 'customize', 'permissions', 'full', 'back',
                'back', 'back', 'cancel', 'discard'])
     monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
     cfg = t_mod.Config()
@@ -665,7 +665,8 @@ def test_disabled_preview_display_omits_retained_settings_and_legacy_target(work
     catalogue = dict(workflow.catalogue(document), propagation={'runtime': 'pending'})
     t_mod._workflow_print(vars(workflow), catalogue, catalogue=True)
     output = capsys.readouterr().out
-    assert 'applies to' not in output.lower() and 'Install locally' not in output and 'Build' not in output
+    assert 'Local preview applies to' not in output and 'Frontend and CLI' not in output
+    assert 'Install locally' not in output and 'Build' not in output
     assert policy == before
 
 

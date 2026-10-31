@@ -294,7 +294,8 @@ def test_install_seeds_editable_defaults_and_refreshes_configured_workflow(box):
     assert (home / '.config/t/workflow.json').exists()
     policy = {'enabled': True, 'planning': {'model': 'chosen-planner', 'effort': 'high'},
               'implementation': {'model': 'chosen-coder', 'effort': 'medium'},
-              'review': {'model': 'chosen-reviewer', 'effort': 'one-level-lower'}}
+              'review': {'model': 'chosen-reviewer', 'effort': 'one-level-lower'},
+              'instructions': 'Keep release notes concise.'}
     saved = home / '.config/t/workflow.json'
     saved.write_text(json.dumps({'version': 1, 'global': policy, 'repositories': {}}))
     original = native.read_text()
@@ -302,7 +303,14 @@ def test_install_seeds_editable_defaults_and_refreshes_configured_workflow(box):
     assert result.returncode == 0, result.stderr
     assert native.read_text().split('<!-- t agent-workflow: begin -->')[0] == original.split('<!-- t agent-workflow: begin -->')[0]
     assert 'chosen-planner' in native.read_text()
-    assert 'chosen-coder' in (home / '.claude/CLAUDE.md').read_text()
+    assert 'chosen-coder' in native.read_text()
+    claude = (home / '.claude/CLAUDE.md').read_text()
+    assert 'Keep release notes concise.' in native.read_text() and 'Keep release notes concise.' in claude
+    assert all(model not in claude for model in ('chosen-planner', 'chosen-coder', 'chosen-reviewer'))
+    stored = json.loads(saved.read_text())
+    claude_policy = stored['tools']['claude']['workflows']['standard']
+    assert claude_policy['stages_enabled'] is False
+    assert all(not claude_policy[stage]['model'] for stage in ('planning', 'implementation', 'review'))
     assert '<!-- t public-issues: begin -->' not in native.read_text()
     assert native.read_text().count('<!-- t agent-workflow: begin -->') == 1
     assert not (checkout / 'AGENTS.md').exists()

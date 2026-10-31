@@ -29,7 +29,7 @@ def saved(sync, *, staged=True):
     if not staged:
         doc['workflows']['standard']['stages_enabled'] = False
     w['save'](doc, None, propagate=False)
-    return doc
+    return w['load']()[0]
 
 
 def test_publication_noop_scopes_and_private_journal(sync, monkeypatch):
@@ -208,6 +208,51 @@ def test_git_identity_and_settings_source_staleness(sync, monkeypatch, tmp_path)
     assert not sync.current(state)
 
 
+def test_legacy_journal_remains_current_only_while_stored_preferences_match(sync, tmp_path):
+    w = sync.workflow()
+    legacy = w['defaults']()
+    legacy['workflows']['standard']['instructions'] = 'Legacy shared instructions.'
+    path = w['config_path']()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(w['encode'](legacy))
+    raw = path.read_bytes()
+    source = tmp_path / 'launch-config'
+    source.write_text('unchanged')
+    state = {'workflow_hash': sync.digest(legacy), 'context': {
+        'settings_source': {'path': str(source), 'hash': sync.digest('unchanged')}}}
+    loaded, _ = w['load']()
+    assert 'claude' in loaded['tools'] and loaded != legacy
+    assert sync.current(state)
+    assert path.read_bytes() == raw
+    source.write_text('external launch edit')
+    assert not sync.current(state)
+    source.write_text('unchanged')
+    changed = copy.deepcopy(legacy)
+    changed['workflows']['standard']['enabled'] = False
+    path.write_text(w['encode'](changed))
+    assert not sync.current(state)
+
+
+def test_changed_rejects_prepublication_document_after_tool_scope_materialization(sync):
+    w = sync.workflow()
+    before_publication = w['defaults']()
+    w['save'](before_publication, None, propagate=False)
+    assert w['load']()[0] != before_publication
+    assert sync.changed(before_publication, before_publication, settings={'model': 'stale'}) is None
+    assert sync.status()['revision'] == 0
+
+
+def test_legacy_hash_fallback_does_not_ignore_new_native_instruction_import(sync):
+    w = sync.workflow()
+    legacy = w['defaults']()
+    path = w['config_path']()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(w['encode'](legacy))
+    native = Path(os.environ['CODEX_HOME']) / 'AGENTS.md'
+    native.write_text(w['ISSUE_BEGIN'] + '\nNew custom instructions.\n' + w['ISSUE_END'])
+    assert not sync.current({'workflow_hash': sync.digest(legacy), 'context': {}})
+
+
 def test_automatic_propagation_and_readonly_status(sync, t_mod, monkeypatch, capsys):
     doc = saved(sync)
     helper = sync.workflow()
@@ -299,10 +344,11 @@ def test_proxy_kills_unresponsive_child(sync, monkeypatch):
 def test_postpublication_failure_retains_saved_files(sync, monkeypatch, capsys):
     w = sync.workflow()
     doc = w['defaults'](); doc['workflows']['standard']['instructions'] = 'published'
+    expected = w['_ensure_claude_catalogue'](doc)
     functions = w['save'].__globals__
     def retry():
         # Publication includes durable intent; runtime work holds neither lock.
-        assert w['load']()[0] == doc
+        assert w['load']()[0] == expected
         assert sync.status()['revision'] == 1
         with open(w['config_path']().with_suffix('.lock'), 'r+') as stream:
             import fcntl
@@ -314,7 +360,7 @@ def test_postpublication_failure_retains_saved_files(sync, monkeypatch, capsys):
     monkeypatch.setitem(functions, 'propagation', lambda: vars(sync))
     w['save'](doc, None)
     assert 'preferences saved; propagation pending' in capsys.readouterr().err
-    assert w['load']()[0] == doc
+    assert w['load']()[0] == expected
 
 
 def test_failed_intent_publication_rolls_back_preferences(sync, monkeypatch):

@@ -1,6 +1,14 @@
 {
   "description": "Quiet blocking operations use _spinner; reviewed terminal, protocol, and background exceptions remain explicit. New blocking sites fail CI until classified. Shell progress is enforced at shared scanner and resume seams.",
   "exceptions": {
+    "bin/t:_workflow_hub_repository:subprocess.run": {
+      "kind": "protocol",
+      "reason": "A local Git common-directory probe, bounded to half a second, resolves the initial repository scope before the workflow picker without prompting or repainting the terminal."
+    },
+    "libexec/t_workflow_cursor.py:git:subprocess.run": {
+      "kind": "protocol",
+      "reason": "Local Git scope and safety probes are bounded to five seconds and run inside the Cursor launch-argument protocol; startup must remain quiet and stdout contains only launch flags."
+    },
     "libexec/t_dev.py:git:subprocess.run": {
       "kind": "protocol",
       "reason": "Bounded local Git metadata probes select the command source before UI initialization; startup and machine-output callers must remain quiet."

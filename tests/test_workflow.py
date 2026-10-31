@@ -58,7 +58,8 @@ def test_defaults_inheritance_and_explicit_activation(workflow, tmp_path):
     assert w.update(changed, None, repository) == document
     w.save(changed, before)
     saved, saved_before = w.load()
-    assert saved == changed
+    assert w.tool_document(saved, 'codex') == changed
+    assert w.tool_document(saved, 'claude') == w.tool_defaults('claude')
     assert stat.S_IMODE(w.config_path().stat().st_mode) == 0o600
     assert all(p.exists() for p in native_paths())
     before_stats = [p.stat() for p in [w.config_path(), *native_paths()]]
@@ -152,14 +153,16 @@ def test_speed_policy_scopes_and_native_sync(workflow, tmp_path):
     for path in native_paths():
         path.write_text('Personal instructions\n')
     w.save(document, None)
+    saved_document, _ = w.load()
     saved_texts = [path.read_text() for path in native_paths()]
-    for path in native_paths():
+    for tool, path in zip(('codex', 'claude'), native_paths()):
         assert path.read_text().startswith('Personal instructions\n')
-        assert rendered in path.read_text()
+        assert w.render(saved_document, tool=tool) in path.read_text()
         path.write_text('Personal instructions\n')
     assert w.sync() == 0
     assert [path.read_text() for path in native_paths()] == saved_texts
-    assert w.load()[0] == before
+    assert w.tool_document(saved_document, 'codex') == before
+    assert w.load()[0] == saved_document
 
 
 @pytest.mark.parametrize('text', [' ', '\n\n'])
@@ -1092,8 +1095,8 @@ def test_behavior_menu_narrow_screens(workflow, t_mod, monkeypatch, width, heigh
     cfg = SimpleNamespace(repos={})
     t_mod._workflow_session(cfg)
     # Disable stages, choose automatic PR creation and return through the nested menus.
-    keys = ['j', 'enter', 'j', 'enter', 'j', 'j', 'j', 'j', 'enter',
-            'enter', 'enter', 'j', 'enter', 'q', 'q', 'q']
+    keys = ['j', 'enter', 'space', 'enter', 'j', 'j', 'j', 'j', 'enter',
+            'enter', 'j', 'enter', 'j', 'enter', 'q', 'q', 'q']
     ui = make_ui(t_mod, keys, width, height)
     t_mod._workflow_policy_menu(ui, cfg, vars(workflow), name='standard')
     policy = cfg._workflow_document['workflows']['standard']
@@ -1146,6 +1149,7 @@ def test_issue_rule_migration_imports_custom_legacy_native_text_once(workflow):
         path.write_text('Personal prose\n' + w.ISSUE_BEGIN + '\n' + custom + '\n' + w.ISSUE_END + '\n')
     doc, before = w.load()
     assert w.instructions(doc).count(custom) == 1
+    assert w.instructions(w.tool_document(doc, 'claude')).count(custom) == 1
     assert not w.config_path().exists()
     assert w.ISSUE_BEGIN in codex.read_text()
     w.save(doc, before)

@@ -297,8 +297,20 @@ class Proxy:
 
 
 def current(state):
-    if digest(workflow()['load']()[0]) != state['workflow_hash']:
-        return False
+    w = workflow()
+    document, stored = w['load']()
+    if digest(document) != state['workflow_hash']:
+        # Loading a legacy document adds tool catalogues in memory. An intent
+        # recorded before that migration still owns these exact stored bytes;
+        # genuine preference edits must continue to supersede it.
+        if stored is None:
+            return False
+        persisted = w['decode'](stored[0])
+        if digest(persisted) != state['workflow_hash']:
+            return False
+        validated = w['validate'](persisted)
+        if document != w['_ensure_claude_catalogue'](validated, validated):
+            return False  # Imported or edited native instructions are a real preference change.
     source = state['context'].get('settings_source')
     return not source or digest(Path(source['path']).read_text()) == source['hash']
 
