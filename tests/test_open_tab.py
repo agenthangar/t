@@ -53,16 +53,24 @@ def test_open_tab_unavailable_never_automates(zsh, environment):
     assert 'WRONG_AUTOMATION' not in result.stderr
 
 
-def test_open_tab_tmux_uses_client_terminal(zsh, tmp_path):
+@pytest.mark.parametrize('pane', ['', '%42'])
+def test_open_tab_tmux_uses_client_terminal(zsh, tmp_path, pane):
     script = tmp_path / 'automation'
     result = zsh('''
       tmux() {
         if [[ $1 == show-environment ]]; then print TERM_PROGRAM=Apple_Terminal
-        else print /dev/ttys042; fi
+        else
+          if [[ -n $TMUX_PANE ]]; then
+            [[ $# == 5 && $3 == -t && $4 == "$TMUX_PANE" ]] || return 1
+          else
+            [[ $# == 3 ]] || return 1
+          fi
+          print /dev/ttys042
+        fi
       }
       osascript() { cat > "$SCRIPT"; }
       _dev_open_tab 't open api 2'; print rc=$?
-    ''', TMUX='test', TERM_PROGRAM='tmux', SCRIPT=str(script))
+    ''', TMUX='test', TMUX_PANE=pane, TERM_PROGRAM='tmux', SCRIPT=str(script))
     assert 'rc=0' in result.stdout
     assert 'if tty of candidateTab is "/dev/ttys042"' in script.read_text()
 

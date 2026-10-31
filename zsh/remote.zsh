@@ -811,12 +811,14 @@ _t_plan() {
 # navigating away must not steal focus or inject commands into an existing tab.
 _dev_open_tab() {
   local cmd="$*" tp=${TERM_PROGRAM:-} origin_tty=${TTY:-}
+  local -a client_args=()
   [[ -z ${SSH_CONNECTION:-} ]] || return 1
   if [[ -n ${TMUX:-} ]]; then
     if [[ -z $tp || $tp == tmux ]]; then
       tp=$(tmux show-environment -g TERM_PROGRAM 2>/dev/null); tp=${tp#TERM_PROGRAM=}
     fi
-    origin_tty=$(tmux display-message -p ${TMUX_PANE:+-t "$TMUX_PANE"} '#{client_tty}' 2>/dev/null)
+    [[ -n ${TMUX_PANE:-} ]] && client_args=(-t "$TMUX_PANE")
+    origin_tty=$(tmux display-message -p "${client_args[@]}" '#{client_tty}' 2>/dev/null)
   fi
   if [[ $origin_tty != /dev/* || $origin_tty == *$'\n'* ]]; then
     [[ $tp == Apple_Terminal ]] || return 1
