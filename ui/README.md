@@ -343,10 +343,13 @@ Ctrl-A turns filters off without changing saved choices; Ctrl-L restores those
 choices. Both are idempotent. Opening settings while off retains the saved values.
 The compatibility --attached flag starts with filtering off and defaults retained.
 There is no new-session shortcut or details preview in open; use `t open --new`.
-Press `k` to kill marked sessions, or the focused session if none are marked.
-The shortcut authorizes the selection like Enter in close, retaining ownership
-and desktop safety checks. Successful kills refresh the inventory and reset
-search and filters to the opening defaults. Failed or canceled closes stop the action.
+Press `k` to kill only the focused session, independently of multi-selection marks.
+The shortcut authorizes that session like Enter in close, retaining ownership
+and desktop safety checks. Keep the picker open and remove only successfully
+closed rows from its cached snapshot, without inventory discovery. Preserve query,
+filters, and other marks on both supported fzf versions. Failed or canceled closes
+keep their row and show the outcome in the picker. Closing the last row leaves an
+empty picker; Esc exits without starting a session.
 A plain green ✓ selection marker stays readable on the dark cyan focus row;
 never paint a reversed-color block behind it. The marker occupies its own gutter
 beside the focus pointer, separate from status marks in the row.
