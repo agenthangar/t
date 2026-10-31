@@ -16,6 +16,10 @@
 # Keep the title lifecycle in the calling shell: dispatch may change its cwd.
 t() {
   emulate -L zsh
+  _t_reload_if_moved
+  # Dynamic scope ends when this command returns; child helpers may change cwd
+  # while retaining this invocation's source. The selector rejects tmux leaks.
+  local -x T_DEV_CONTEXT="$T_HOME" T_DEV_CONTEXT_OWNER=$$
   local title_active= arg label=t
   # A tmux server may retain these variables long after this command returns.
   # Only nested invocations in this shell share its title ownership.

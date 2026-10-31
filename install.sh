@@ -78,7 +78,7 @@ valid_source() {
     [[ "$(cat "$root/.t-install-version")" == 1 ]] || return 1
     for asset in install.sh t.plugin.zsh local.zsh.example \
         claude/settings.json.example bin/t bin/t-session-start bin/claude-stamp-tmux bin/cursor-beam \
-        libexec/t_progress.py libexec/t_shell_setup.py libexec/t_onboarding.py libexec/t_discovery.py \
+        libexec/t_dev.py libexec/t_progress.py libexec/t_shell_setup.py libexec/t_onboarding.py libexec/t_discovery.py \
         libexec/t_toml.py libexec/t_codex_socket.py libexec/vendor/SHA256SUMS libexec/vendor/tomli-LICENSE libexec/vendor/tomli/__init__.py libexec/vendor/tomli/_parser.py libexec/vendor/tomli/_re.py libexec/vendor/tomli/_types.py libexec/vendor/tomli/py.typed \
         libexec/t_workflow.py libexec/t_workflow_sync.py libexec/t_issue.py libexec/t_issue_policy.txt libexec/t_resume_source.py libexec/t_history.py libexec/t_candidates.py libexec/t_session_details.py libexec/t_picker_filters.py libexec/t_repos.py \
         libexec/t_local_worker.py libexec/t_local_setup.py libexec/t_mcp_setup.py \
@@ -103,6 +103,19 @@ if ! valid_source "$T_LINK_SRC"; then
     echo "t install: $T_LINK_SRC lacks the standalone t installer capability (version 1)" >&2
     echo "  merge or check out a tested t revision, then rerun install.sh" >&2
     exit 1
+fi
+
+# Development follows the caller's worktree. Do not touch any shared user asset,
+# even in links-only mode (which normally also reconciles integrations).
+if [[ -n "${T_LINK_DEV:-}" ]]; then
+    if [[ "$T_RELEASE" == 1 || "$T_SCRIPT_DIR" == "$T_PRIMARY" ]] || \
+       [[ "$(python3 "$T_SCRIPT_DIR/libexec/t_dev.py" "$T_PRIMARY")" != "$T_SCRIPT_DIR" ]]; then
+        echo "t install: development setup requires the current t session worktree" >&2
+        exit 1
+    fi
+    echo "Development t is available automatically inside $T_SCRIPT_DIR."
+    echo "Shared commands, shell startup, hooks, prompts and settings are unchanged."
+    exit 0
 fi
 
 link() {

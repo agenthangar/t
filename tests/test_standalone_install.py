@@ -121,7 +121,8 @@ def test_running_worktree_installer_selects_canonical_or_dev(box):
     assert (home / "bin/t").resolve() == checkout / "bin/t"
     selected = run_install(dev, home, T_LINKS_ONLY="1", T_LINK_DEV="1")
     assert selected.returncode == 0, selected.stderr
-    assert (home / "bin/t").resolve() == dev / "bin/t"
+    assert (home / "bin/t").resolve() == checkout / "bin/t"
+    assert "available automatically" in selected.stdout
 
 
 def test_invalid_marker_refuses_before_changing_home(box):
@@ -154,7 +155,7 @@ def test_homebrew_links_use_stable_opt_path_across_cellar_upgrade(tmp_path):
     opt.parent.parent.mkdir(parents=True)
     first = _brew_tree(tmp_path, "0.3.0", opt)
     opt.parent.symlink_to(first.parent, target_is_directory=True)
-    result = run_install(first, home, T_LINKS_ONLY="1", T_LINK_DEV="1")
+    result = run_install(first, home, T_LINKS_ONLY="1")
     assert result.returncode == 0, result.stderr
     links = {
         "bin/t": "bin/t", "bin/t-session-start": "bin/t-session-start",
@@ -341,15 +342,15 @@ elif sys.argv[1:5] == ['mcp', 'add', 'sessions', '--']:
     assert not (native / 'registered').exists()
 
 
-def test_dev_link_installs_mcp_from_selected_source(box, tmp_path):
+def test_dev_setup_never_installs_mcp_or_mutates_home(box, tmp_path):
     checkout, home = box
     dev = tmp_path / 'dev'
-    git('worktree', 'add', '-qb', 'dev/mcp', str(dev), cwd=checkout)
+    git('worktree', 'add', '-qb', 'dev/t-mcp', str(dev), cwd=checkout)
     (dev / 'libexec/t_mcp_setup.py').write_text("from pathlib import Path\nPath.home().joinpath('mcp-source').write_text('dev')\n")
     (checkout / 'libexec/t_mcp_setup.py').unlink()
     result = run_install(dev, home, T_LINKS_ONLY='1', T_LINK_DEV='1', T_NO_MCP='')
     assert result.returncode == 0, result.stderr
-    assert (home / 'mcp-source').read_text() == 'dev'
+    assert not list(home.iterdir())
 
 
 @pytest.mark.parametrize('xdg', ['empty', 'custom'])
