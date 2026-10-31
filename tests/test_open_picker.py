@@ -324,3 +324,53 @@ def test_progress_animation_keeps_exit_hooks_in_parent(zsh, status):
     assert 'EXIT_TRAP subshell=0' in output
     assert f'OPERATION_RC={status}' in output
     assert 'OPERATION_DIAGNOSTIC' in output
+
+
+@pytest.mark.parametrize('selection', ['api-2', 'api-2,api-4,web:abcdef12'])
+def test_open_kill_dispatches_selection_and_refreshes_without_opening(zsh, tmp_path, selection):
+    env = picker_stub(tmp_path, selection)
+    result = zsh(ROWS + r'''
+      _t_fzf_filtered() {
+        if [[ -f "$HOME/killed" ]]; then return 130; fi
+        print __t_open_kill__
+        print -r -- "$2" | awk -F'\t' -v labels="$PICK_LABELS" 'index("," labels ",", "," $2 ",")'
+      }
+      tmux() { [[ $1 == has-session ]]; }
+      _dev_kill() { print -r -- "KILL $*"; touch "$HOME/killed"; }
+      _dev_kill_fg() { print -r -- "FG $*"; }
+      _t_open_selected() { print UNEXPECTED_OPEN; }
+      _t_open_picker "" "" "" "" 1
+    ''', _tty=True, **env)
+    assert result.returncode == 130, result.stdout + result.stderr
+    assert 'KILL api 2 1' in result.stdout
+    assert 'UNEXPECTED' not in result.stdout
+    if ',' in selection:
+        assert 'KILL api 4 1' in result.stdout
+        assert 'FG web:abcdef12 1' in result.stdout
+
+
+@pytest.mark.parametrize('close_rc', [0, 1, 130])
+def test_open_kill_last_row_never_starts_fresh(zsh, tmp_path, close_rc):
+    result = zsh(ROWS + r'''
+      _t_fzf_filtered() { print __t_open_kill__; print -r -- "$2" | head -1; }
+      _dev_kill_selected() {
+        _dev_session_rows() { return 0; }
+        return ''' + str(close_rc) + r'''
+      }
+      _t_dev() { print UNEXPECTED_FRESH; }
+      _t_open --attached
+    ''', _tty=True)
+    assert result.returncode == close_rc, result.stdout + result.stderr
+    assert 'UNEXPECTED' not in result.stdout
+
+
+def test_open_kill_stale_local_row_never_closes_remote(zsh):
+    result = zsh(ROWS + r'''
+      _t_fzf_filtered() { print __t_open_kill__; print -r -- "$2" | head -1; }
+      tmux() { return 1; }
+      _dev_kill() { print UNEXPECTED_KILL; }
+      _t_open --attached
+    ''', _tty=True)
+    assert result.returncode == 1
+    assert 'no longer here' in result.stdout + result.stderr
+    assert 'UNEXPECTED' not in result.stdout
