@@ -1068,6 +1068,7 @@ including repository-only customizations. Menu choices stay pending until
 | Local preview → CLI → When to preview | Inherit or choose a timing override |
 | Local preview → CLI → Implement before approval | Inherit, Yes, or No |
 | Local preview → CLI → Preview method | Install locally or Run from the repo |
+| Local preview → CLI → Run command | Automatically or Only when I ask |
 | Tests → Run tests | Local during work, before preview, before PR, or PR CI |
 | Tests → Test runners | Configure targets, defaults, and artifacts |
 
@@ -1101,8 +1102,17 @@ Resolved timing and implementation preferences apply only to enabled types. Disa
 retains its settings and suppresses its design and preview guidance; disabling
 both suppresses the shared preview rules too. Enabling alone does not start a preview.
 Frontend contains design approach, preview method, and browser
-opening. CLI contains the local install/run method. Browser opening does not change
-the resolved timing or implementation approval choice. With No and automatic
+opening. CLI contains the local install/run method and **Run command**. Choose
+**Automatically** to launch the project's supported preview command once the CLI
+preview is prepared, or **Only when I ask** to leave the command ready to run on
+request. The method determines whether to use the development installation or
+run from the repo. Interactive commands need a supported interactive terminal;
+if one is unavailable, the agent reports that and provides the command.
+Browser opening and CLI command launch do not change
+the resolved timing or implementation approval choice. An automatic launch waits
+until a request-only preview has been requested and prepared. Disabling CLI
+preview suppresses command-launch guidance while retaining the choice.
+With No and automatic
 timing, prepare the initial lightweight preview before substantial implementation.
 With request-only timing, wait for the preview request and subsequent approval.
 
@@ -1181,7 +1191,7 @@ defaults when Implementation is unchecked or all stages are off. Optional `permi
 `bypassPermissions`, or `plan`. Omitted agents keep native permission defaults;
 permissions apply independently of model stages and are suppressed when the
 workflow is disabled or excluded. Inside `behaviors`, independent keys are
-`pr_review`, `pr_open`, `pr_state`, `pr_merge`, `frontend_enabled`, `cli_enabled`, `local_preview`, `implement_before_approval`, `cli_preview`,
+`pr_review`, `pr_open`, `pr_state`, `pr_merge`, `frontend_enabled`, `cli_enabled`, `local_preview`, `implement_before_approval`, `cli_preview`, `cli_launch`,
 `frontend_design`, `frontend_preview`, `frontend_browser`, and `test_timing`.
 `pr_review` accepts `review` or `skip`; omission preserves existing review guidance.
 Skipping review retains the saved model-stage selection and reviewer settings.
@@ -1198,7 +1208,10 @@ Each explicit setting overrides the legacy `preview_target` (`frontend`, `cli`,
 or `both`). Without either setting or a legacy target, both types are enabled.
 Legacy targets remain readable without rewriting saved configuration.
 `frontend_browser` accepts `automatic` or `on_request`; omission leaves browser
-opening unspecified. The editor presents supported choices. Legacy `worktree`, `preview`,
+opening unspecified. `cli_launch` accepts the same values for running the prepared
+CLI preview command; omission preserves existing command guidance. Clearing it
+leaves the preview method, timing and approval choices intact.
+The editor presents supported choices. Legacy `worktree`, `preview`,
 `validation`, and `delivery` fields remain readable; unknown keys or values are
 rejected before any write.
 Hidden `t config show --workflow` and `t config edit --workflow` compatibility
@@ -1649,6 +1662,10 @@ Run `t workflow` in a terminal to open the workflow editor. Choose a named
 workflow, edit its model steps, work and delivery choices, or text instructions,
 then review and save. Repository assignments and the global default share this
 transaction. Cancel leaves saved settings unchanged.
+In both `t config` and `t workflow`, Ctrl+C with unsaved edits offers **Keep
+editing**, **Review and save**, or **Discard changes and exit**, including from
+nested menus. Review and save still shows the changes before writing them.
+With no pending changes, Ctrl+C exits immediately.
 
 `t workflow list` prints a read-only summary; `--all` lists named workflows and
 `--json` preserves machine output. Text instructions override behavior preferences
@@ -1659,7 +1676,7 @@ and model-stage guidance. **PRs, previews & tests** separates these decisions:
 | Pull requests | Review changes or skip review; open automatically or on instruction; create draft or ready; Automerge or When I ask. |
 | Local preview | Defaults for when to preview and whether to implement before approval. |
 | Local preview → Frontend | Enabled/Disabled; inherit or override defaults; standalone HTML or in-app design; Fast reload or Build; browser opening. |
-| Local preview → CLI | Enabled/Disabled; inherit or override defaults; install locally or run from the repo. |
+| Local preview → CLI | Enabled/Disabled; inherit or override defaults; install locally or run from the repo; launch automatically or on request. |
 | Tests | When tests run, plus Test runners configuration. |
 
 **Not set** leaves a decision to your task, repository rules and text

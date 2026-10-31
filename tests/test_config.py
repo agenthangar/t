@@ -121,6 +121,84 @@ class Menu:
         self.out.write("\n".join(lines))
 
 
+class InterruptMenu(Menu):
+    """Interrupt selected navigation boundaries without touching a terminal."""
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.labels = []
+
+    def pick(self, label, rows, default=0, **kwargs):
+        self.labels.append(label)
+        event = next(self.picks)
+        if event is KeyboardInterrupt:
+            raise KeyboardInterrupt
+        assert event is None or event in dict(rows), (label, event, rows)
+        assert 0 <= default < len(rows)
+        return event
+
+    def cooked_input(self, prompt, **kwargs):
+        event = next(self.inputs)
+        if event is KeyboardInterrupt:
+            raise KeyboardInterrupt
+        return event
+
+    def page(self, *args, **kwargs):
+        event = next(self.pages)
+        if event is KeyboardInterrupt:
+            raise KeyboardInterrupt
+        return event
+
+
+def test_config_clean_ctrl_c_exits_130_without_save_prompt(t_mod, config_cli, monkeypatch):
+    cfg, local = config_cli
+    ui = InterruptMenu([KeyboardInterrupt])
+    monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
+    assert t_mod.cmd_config(cfg, t_mod.build_parser().parse_args(['config'])) == 130
+    assert not any('unsaved' in label for label in ui.labels)
+    assert ui.restored and local.read_text() == '# keep me\n'
+
+
+@pytest.mark.parametrize('finish', ['save', 'discard'])
+def test_config_dirty_ctrl_c_uses_existing_unsaved_chooser(t_mod, config_cli, monkeypatch, finish):
+    cfg, local = config_cli
+    ui = InterruptMenu(['mode', 'app', KeyboardInterrupt, finish], pages=['enter'])
+    monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
+    changed = t_mod._config_wizard(cfg)
+    assert (changed is not None) == (finish == 'save')
+    if changed:
+        assert changed.open_mode_default == 'app'
+    assert any('unsaved' in label for label in ui.labels)
+    assert ui.restored and local.read_text() == '# keep me\n'
+
+
+def test_config_repeated_ctrl_c_and_interrupted_review_keep_pending_edits(t_mod, config_cli, monkeypatch):
+    cfg, local = config_cli
+    ui = InterruptMenu(['mode', 'app', KeyboardInterrupt, KeyboardInterrupt, 'save',
+                        'keep', 'save'], pages=[KeyboardInterrupt, 'enter'])
+    monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
+    changed = t_mod._config_wizard(cfg)
+    assert changed.open_mode_default == 'app'
+    assert sum('unsaved' in label for label in ui.labels) == 3
+    assert ui.restored and local.read_text() == '# keep me\n'
+
+
+@pytest.mark.parametrize('boundary', ['input', 'catalogue'])
+def test_config_nested_ctrl_c_preserves_prior_selections(t_mod, config_cli, monkeypatch, boundary):
+    cfg, local = config_cli
+    if boundary == 'input':
+        ui = InterruptMenu(['mode', 'app', 'worktrees', 'root', 'save'], inputs=[KeyboardInterrupt], pages=['enter'])
+    else:
+        ui = InterruptMenu(['mode', 'app', 'codex', 'model', 'save'], pages=['enter'])
+        def interrupted_catalogue(agent):
+            raise KeyboardInterrupt
+        monkeypatch.setattr(t_mod, '_config_live_models', interrupted_catalogue)
+    monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
+    changed = t_mod._config_wizard(cfg)
+    assert changed.open_mode_default == 'app'
+    assert any('unsaved' in label for label in ui.labels)
+    assert ui.restored and local.read_text() == '# keep me\n'
+
+
 @pytest.mark.parametrize('before,after,expected', [
     ({'old': 'alice@mini'}, {'renamed': 'alice@mini'}, []),
     ({'old': 'mini'}, {'old': 'mini'}, []),

@@ -146,14 +146,14 @@ def test_config_review_saves_with_enter_or_y(t_mod, monkeypatch, tmp_path, save_
     assert not any('no binding' in line for line in review)
 
 
-def test_dirty_config_ctrl_c_aborts_and_restores_terminal(t_mod, monkeypatch, tmp_path):
+def test_dirty_config_ctrl_c_offers_discard_and_restores_terminal(t_mod, monkeypatch, tmp_path):
     local = tmp_path / 'local.zsh'
     local.write_text('# keep me\n')
     monkeypatch.setenv('T_LOCAL_RC', str(local))
     monkeypatch.setattr(t_mod, 'CONFIG', str(tmp_path / 'config.sh'))
     monkeypatch.setattr(t_mod.sys.stdin, 'isatty', lambda: True)
     monkeypatch.setattr(t_mod.sys.stdout, 'isatty', lambda: True)
-    ui = make_ui(t_mod, ['j', 'enter', 'j', 'enter', 'abort'])
+    ui = make_ui(t_mod, ['j', 'enter', 'j', 'enter', 'abort', 'j', 'j', 'enter'])
     monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
     monkeypatch.setattr(t_mod, '_config_write',
                         lambda *a: pytest.fail('aborted config wrote changes'))
@@ -164,6 +164,8 @@ def test_dirty_config_ctrl_c_aborts_and_restores_terminal(t_mod, monkeypatch, tm
     cfg.open_mode_default = 'cli'
     assert t_mod.cmd_config(cfg, t_mod.build_parser().parse_args(['config'])) == 130
     assert ui.restored
+    assert any('unsaved' in line for frame in ui.frames for line in frame)
+    assert any('Discard changes and exit' in line for frame in ui.frames for line in frame)
     assert local.read_text() == '# keep me\n'
 
 

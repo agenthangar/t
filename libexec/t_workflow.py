@@ -100,6 +100,10 @@ BEHAVIORS = {
         'install': ('Install locally', 'For command-line tool previews, use the supported development installation or relink mechanism and clearly identify the development version. Honor repository installation and isolation rules.'),
         'run': ('Run from the repo', 'For command-line tool previews, run the repository-supported development command directly and show the user how to invoke it.'),
     }},
+    'cli_launch': {'label': 'Run command', 'choices': {
+        'automatic': ('Automatically', 'For command-line tool previews, once the selected CLI preview has been prepared, launch its repository-supported preview command using the configured method: the installed development version or the command run from the repository. Honor the CLI preview\'s resolved timing: do not start a request-only preview before the user requests it. This launch preference does not itself request a preview or change implementation approval, PR or test preferences. Launch only the supported preview command, never arbitrary production or destructive commands. For an interactive CLI, use a supported usable interactive terminal when available; if launch is unavailable, report the limitation and exact command without claiming it ran. Honor repository and task instructions.'),
+        'on_request': ('Only when I ask', 'For command-line tool previews, prepare the invocation using the configured preview method, then wait for an explicit user request before launching its repository-supported preview command. Honor the CLI preview\'s resolved timing and implementation approval preferences. This launch preference does not itself request a preview or change implementation approval, PR or test preferences. Launch only the supported preview command, never arbitrary production or destructive commands. For an interactive CLI, use a supported usable interactive terminal when available; if launch is unavailable, report the limitation and exact command without claiming it ran. Honor repository and task instructions.'),
+    }},
     'frontend_design': {'label': 'Design approach', 'choices': {
         'standalone_html': ('Separate HTML prototype', 'For frontend design, create an interactive standalone HTML prototype outside the application so the user can preview the design before app implementation.'),
         'in_app': ('In the app', 'For frontend design, implement and preview the design within the actual application using its existing components and development setup.'),
@@ -274,6 +278,7 @@ def visible_behaviors(behaviors):
             result.pop(key, None)
     if not cli:
         result.pop('cli_preview', None)
+        result.pop('cli_launch', None)
     for kind, keys in PREVIEW_OVERRIDES.items():
         if not preview_enabled(result, kind):
             for key in keys.values():
@@ -287,6 +292,15 @@ def visible_behaviors(behaviors):
 def _behavior_instructions(behaviors, key):
     spec = BEHAVIORS[key]
     prose = spec['choices'][behaviors[key]][1]
+    if key == 'cli_preview' and behaviors.get('cli_launch') in ('automatic', 'on_request'):
+        if behaviors[key] == 'run':
+            prose = ('For command-line tool previews, prepare the repository-supported development command '
+                     'and show the user how to invoke it. Apply the selected command-launch preference '
+                     'only once the CLI preview is prepared under its resolved timing.')
+            if behaviors['cli_launch'] == 'on_request':
+                prose += ' Wait for an explicit user request before launching it.'
+        elif behaviors['cli_launch'] == 'on_request':
+            prose += ' Preparing the development installation does not launch its preview command; wait for an explicit user request before launching it.'
     if key in ('local_preview', 'preview_approval'):
         frontend = preview_enabled(behaviors, 'frontend')
         cli = preview_enabled(behaviors, 'cli')

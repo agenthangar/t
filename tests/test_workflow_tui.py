@@ -1,9 +1,10 @@
 """Workflow TUI uses the config transaction and never publishes canceled edits."""
+import copy
 from pathlib import Path
 
 import pytest
 
-from test_config import Menu
+from test_config import Menu, InterruptMenu
 from test_workflow import workflow, native_paths
 from test_tui import make_ui
 
@@ -106,3 +107,90 @@ def test_workflow_bare_entry(workflow, t_mod, monkeypatch, tmp_path, capsys, ter
     assert t_mod.main(['workflow', '--help']) == 0
     assert 't workflow' in capsys.readouterr().out
     assert not workflow.config_path().exists() and local.read_text() == '# unchanged\n'
+
+
+@pytest.mark.parametrize('menu,field,value', [
+    (['behaviors', 'pull_requests', 'pr_open', 'automatic'], 'behaviors', {'pr_open': 'automatic'}),
+    (['permissions', 'codex', 'full'], 'permissions', {'codex': 'full'}),
+    (['implementation', 'effort', 'high'], 'implementation', {'model': 'gpt-6.1-sol', 'effort': 'high'}),
+])
+def test_workflow_ctrl_c_preserves_completed_nested_selections(workflow, t_mod, monkeypatch, tmp_path, menu, field, value):
+    cfg, local = config(workflow, t_mod, monkeypatch, tmp_path)
+    ui = InterruptMenu(['customize', *menu, KeyboardInterrupt, 'save'], pages=['enter'])
+    monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
+    changed = t_mod._config_wizard(cfg, workflows_only=True)
+    assert changed._workflow_document['workflows']['standard'][field] == value
+    assert any('unsaved' in label for label in ui.labels)
+    assert ui.restored and not workflow.config_path().exists()
+    assert local.read_text() == '# unchanged\n'
+
+
+def test_workflow_clean_ctrl_c_exits_without_unsaved_prompt(workflow, t_mod, monkeypatch, tmp_path):
+    cfg, local = config(workflow, t_mod, monkeypatch, tmp_path)
+    ui = InterruptMenu([KeyboardInterrupt])
+    monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
+    assert t_mod.cmd_config(cfg, t_mod.build_parser().parse_args(['config', '--workflows-ui'])) == 130
+    assert not any('unsaved' in label for label in ui.labels)
+    assert ui.restored and not workflow.config_path().exists()
+    assert local.read_text() == '# unchanged\n'
+
+
+def test_config_real_abort_key_offers_review_without_publishing(workflow, t_mod, monkeypatch, tmp_path):
+    cfg, local = config(workflow, t_mod, monkeypatch, tmp_path)
+    cfg.open_mode_default = 'cli'
+    ui = make_ui(t_mod, ['j', 'enter', 'j', 'enter', 'abort', 'j', 'enter', 'enter'])
+    monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
+    changed = t_mod._config_wizard(cfg)
+    assert changed.open_mode_default == 'app'
+    assert any('unsaved' in line for frame in ui.frames for line in frame)
+    assert any('Review local settings' in line for frame in ui.frames for line in frame)
+    assert ui.restored and not workflow.config_path().exists()
+    assert local.read_text() == '# unchanged\n'
+
+
+def test_workflow_editor_interrupt_keeps_prior_staged_edits(workflow, t_mod, monkeypatch, tmp_path):
+    cfg, local = config(workflow, t_mod, monkeypatch, tmp_path)
+    def interrupted_editor(*args):
+        raise KeyboardInterrupt
+    monkeypatch.setattr(workflow, 'edit_instructions', interrupted_editor)
+    ui = InterruptMenu(['customize', 'enabled', '0', 'instructions', 'save'], pages=['enter'])
+    monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
+    changed = t_mod._config_wizard(cfg, workflows_only=True)
+    assert not changed._workflow_document['workflows']['standard']['enabled']
+    assert any('unsaved' in label for label in ui.labels)
+    assert ui.restored and not workflow.config_path().exists()
+    assert local.read_text() == '# unchanged\n'
+
+
+def test_workflow_runner_interrupt_keeps_runner_and_behavior_edits(workflow, t_mod, monkeypatch, tmp_path):
+    cfg, local = config(workflow, t_mod, monkeypatch, tmp_path)
+    def interrupted_runners(ui, staged, helper, repository, name):
+        policy = copy.deepcopy(staged._workflow_document['workflows'][name])
+        policy['runners'] = copy.deepcopy(workflow.RUNNER_DEFAULT)
+        policy['runners']['timeout_seconds'] = 1234
+        staged._workflow_document = workflow.update(staged._workflow_document, policy, repository, name)
+        raise KeyboardInterrupt
+    monkeypatch.setattr(t_mod, '_workflow_runners_menu', interrupted_runners)
+    ui = InterruptMenu(['customize', 'behaviors', 'pull_requests', 'pr_open', 'on_request',
+                        'back', 'tests', 'runners', 'save'], pages=['enter'])
+    monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
+    changed = t_mod._config_wizard(cfg, workflows_only=True)
+    policy = changed._workflow_document['workflows']['standard']
+    assert policy['behaviors']['pr_open'] == 'on_request'
+    assert policy['runners']['timeout_seconds'] == 1234
+    assert ui.restored and not workflow.config_path().exists()
+    assert local.read_text() == '# unchanged\n'
+
+
+@pytest.mark.parametrize('submenu', ['behaviors', 'permissions'])
+def test_pristine_repository_submenu_interrupt_does_not_create_override(workflow, t_mod, monkeypatch, tmp_path, submenu):
+    cfg, local = config(workflow, t_mod, monkeypatch, tmp_path)
+    cfg.repos = {'api': str(tmp_path / 'api')}
+    ui = InterruptMenu(['repos', 'api', 'customize', submenu, KeyboardInterrupt])
+    monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
+    with pytest.raises(KeyboardInterrupt):
+        t_mod._config_wizard(cfg, workflows_only=True)
+    assert not any('unsaved' in label for label in ui.labels)
+    assert cfg._workflow_document['repositories'] == {}
+    assert ui.restored and not workflow.config_path().exists()
+    assert local.read_text() == '# unchanged\n'

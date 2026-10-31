@@ -514,3 +514,90 @@ def test_invalid_saved_pr_review_choice_is_rejected(workflow, value):
     policy = {**copy.deepcopy(workflow.DEFAULT), 'behaviors': {'pr_review': value}}
     with pytest.raises(ValueError, match='behavior'):
         workflow.validate_policy(policy)
+
+
+@pytest.mark.parametrize('method', ['install', 'run'])
+@pytest.mark.parametrize('launch', ['automatic', 'on_request'])
+def test_cli_launch_composes_with_method_and_preserves_other_preferences(workflow, method, launch):
+    behaviors = {'cli_preview': method, 'local_preview': 'when_ready',
+                 'implement_before_approval': 'no', 'pr_open': 'on_request',
+                 'pr_merge': 'on_request', 'test_timing': 'pr_ci'}
+    policy = {**copy.deepcopy(workflow.DEFAULT), 'behaviors': behaviors}
+    before = copy.deepcopy(policy)
+    after = workflow.update_behavior(policy, 'cli_launch', launch)
+    assert after['behaviors'] == {**behaviors, 'cli_launch': launch}
+    text = workflow._stage_text(after)
+    assert 'Run command: For command-line tool previews,' in text
+    assert ('configured preview method' if launch == 'on_request' else 'configured method') in text
+    assert 'Launch only the supported preview command, never arbitrary production or destructive commands' in text
+    assert 'does not itself request a preview or change implementation approval, PR or test preferences' in text
+    assert 'For an interactive CLI, use a supported usable interactive terminal when available' in text
+    assert 'report the limitation and exact command without claiming it ran' in text
+    assert 'Wait for explicit user approval of a lightweight preview before substantial implementation' in text
+    assert 'When to open PR:' in text and 'Merge pull request:' in text and 'Run tests:' in text
+    if launch == 'automatic':
+        assert 'once the selected CLI preview has been prepared, launch its repository-supported preview command' in text
+        assert 'Run command: Automatically' in workflow.summary_lines(after)
+    else:
+        assert 'wait for an explicit user request before launching' in text
+        assert 'Run command: Only when I ask' in workflow.summary_lines(after)
+        if method == 'run':
+            assert 'prepare the repository-supported development command' in text
+            assert 'run the repository-supported development command directly' not in text
+        else:
+            assert 'Preparing the development installation does not launch its preview command' in text
+    assert workflow.update_behavior(after, 'cli_launch', '') == policy
+    assert policy == before
+
+
+def test_automatic_cli_launch_respects_request_only_child_timing(workflow):
+    behaviors = {'local_preview': 'when_ready', 'cli_preview_timing': 'on_request',
+                 'cli_preview': 'run', 'cli_launch': 'automatic'}
+    policy = {**copy.deepcopy(workflow.DEFAULT), 'behaviors': behaviors}
+    assert workflow.preview_preferences(behaviors, 'cli')['timing'] == {
+        'value': 'on_request', 'source': 'override'}
+    text = workflow._stage_text(policy)
+    assert 'For command-line tool changes — When to preview: Prepare a local preview only when the user requests it' in text
+    assert 'do not start a request-only preview before the user requests it' in text
+    assert 'CLI preview method: For command-line tool previews,' in text
+    assert behaviors['cli_preview_timing'] == 'on_request'
+
+
+@pytest.mark.parametrize('launch', ['automatic', 'on_request'])
+def test_disabled_cli_hides_launch_guidance_without_deleting_setting(workflow, launch):
+    behaviors = {'cli_enabled': 'disabled', 'cli_launch': launch,
+                 'cli_preview': 'run', 'local_preview': 'on_request'}
+    policy = {**copy.deepcopy(workflow.DEFAULT), 'behaviors': behaviors}
+    before = copy.deepcopy(policy)
+    assert 'cli_launch' not in workflow.visible_behaviors(behaviors)
+    assert 'Run command:' not in workflow._stage_text(policy)
+    assert not any(line.startswith('Run command:') for line in workflow.summary_lines(policy))
+    assert workflow.policy_summary(policy)['behaviors'] == behaviors
+    enabled = workflow.update_behavior(policy, 'cli_enabled', 'enabled')
+    assert enabled['behaviors'] == {**behaviors, 'cli_enabled': 'enabled'}
+    assert 'Run command:' in workflow._stage_text(enabled)
+    assert policy == before
+
+
+def test_cli_launch_is_optional_independent_and_read_only(workflow):
+    policy = {**copy.deepcopy(workflow.DEFAULT), 'behaviors': {'cli_preview': 'run'}}
+    baseline = workflow._stage_text(policy)
+    assert 'Run command:' not in baseline
+    selected = workflow.update_behavior(policy, 'cli_launch', 'on_request')
+    document = workflow.update(workflow.defaults(), selected)
+    before = workflow.encode(document)
+    workflow.render(document)
+    workflow.summary_lines(selected)
+    assert workflow.encode(document) == before
+    assert not workflow.config_path().exists()
+    cleared_method = workflow.update_behavior(selected, 'cli_preview', '')
+    assert cleared_method['behaviors'] == {'cli_launch': 'on_request'}
+    assert workflow.update_behavior(selected, 'cli_launch', '') == policy
+    assert workflow._stage_text(workflow.update_behavior(selected, 'cli_launch', '')) == baseline
+
+
+@pytest.mark.parametrize('value', ['always', 'never', 'run', False, None])
+def test_invalid_saved_cli_launch_choice_is_rejected(workflow, value):
+    policy = {**copy.deepcopy(workflow.DEFAULT), 'behaviors': {'cli_launch': value}}
+    with pytest.raises(ValueError, match='behavior'):
+        workflow.validate_policy(policy)

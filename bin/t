@@ -2078,7 +2078,9 @@ def _config_model_menu(ui, cfg, agent, catalogs, setting="model", default_label=
             try:
                 catalogs[agent] = _config_catalog(agent, _config_live_models(agent))
             except KeyboardInterrupt:
-                return  # back to the tool submenu, retaining all pending edits
+                if getattr(ui, "_config_interrupts", False):
+                    raise
+                return
             except (OSError, ValueError) as exc:
                 catalogs[agent] = []
                 ui.done("unavailable", f"{agent}: {exc}. Use tool defaults, a custom model, or Refresh.")
@@ -2357,6 +2359,8 @@ def _workflow_model(ui, cfg, helper, stage, current):
         try:
             cfg._workflow_catalog = _config_catalog("codex", _config_live_models("codex"))
         except KeyboardInterrupt:
+            if getattr(ui, "_config_interrupts", False):
+                raise
             return None
         except (OSError, ValueError) as exc:
             cfg._workflow_catalog = []
@@ -2389,64 +2393,76 @@ def _workflow_model(ui, cfg, helper, stage, current):
 def _workflow_behaviors_menu(ui, helper, policy, runners=None):
     changed = copy.deepcopy(policy)
     focus = 0
-    while True:
-        behaviors = helper["effective_behaviors"](changed.get("behaviors", {}))
-        rows = [(key, label + " ›") for key, (label, fields) in _WORKFLOW_SECTIONS.items()] + [("back", "Back")]
-        values = {key: _workflow_section_summary(helper, key, behaviors)
-                  for key, (label, fields) in _WORKFLOW_SECTIONS.items()}
-        if changed.get("runners"):
-            values["tests"] = (values["tests"] + "; " if values["tests"] != "Not set" else "") + "Test runners: " + helper["runners_summary"](changed)
-        section = ui.pick("PRs, previews & tests", rows, values=values, default=focus)
-        if section in (None, "back"):
-            return changed
-        focus = next(i for i, row in enumerate(rows) if row[0] == section)
-        changed = _workflow_behavior_section(ui, helper, changed, section, runners=runners)
+    try:
+        while True:
+            behaviors = helper["effective_behaviors"](changed.get("behaviors", {}))
+            rows = [(key, label + " ›") for key, (label, fields) in _WORKFLOW_SECTIONS.items()] + [("back", "Back")]
+            values = {key: _workflow_section_summary(helper, key, behaviors)
+                      for key, (label, fields) in _WORKFLOW_SECTIONS.items()}
+            if changed.get("runners"):
+                values["tests"] = (values["tests"] + "; " if values["tests"] != "Not set" else "") + "Test runners: " + helper["runners_summary"](changed)
+            section = ui.pick("PRs, previews & tests", rows, values=values, default=focus)
+            if section in (None, "back"):
+                return changed
+            focus = next(i for i, row in enumerate(rows) if row[0] == section)
+            changed = _workflow_behavior_section(ui, helper, changed, section, runners=runners)
+
+    except KeyboardInterrupt as exc:
+        if not hasattr(exc, "workflow_policy"):
+            exc.workflow_policy = changed
+        raise
 
 
 def _workflow_behavior_section(ui, helper, policy, section, runners=None):
     changed, focus = copy.deepcopy(policy), 0
-    while True:
-        behaviors = helper["effective_behaviors"](changed.get("behaviors", {}))
-        fields = _workflow_section_fields(section, behaviors)
-        children = _workflow_section_children(section, behaviors)
-        rows = [(key, _WORKFLOW_TOPICS[key][0]) for key in fields]
-        rows += [(key, _WORKFLOW_PREVIEW_SUBMENUS[key][0] + " ›") for key in children]
-        if section == "tests":
-            rows.append(("runners", "Test runners ›"))
-        rows.append(("back", "Back"))
-        values = {key: _workflow_field_value(helper, behaviors, key) for key in fields}
-        if section in _WORKFLOW_PREVIEW_SUBMENUS:
-            values[section + "_enabled"] = "Enabled" if helper["preview_enabled"](behaviors, section) else "Disabled"
-        if section == "tests":
-            values["runners"] = helper["runners_summary"](changed)
-        values.update({key: _workflow_section_summary(helper, key, behaviors) for key in children})
-        choice = ui.pick(_workflow_section_spec(section)[0], rows, values=values, default=min(focus, len(rows) - 1))
-        if choice in (None, "back"):
-            return changed
-        focus = next(i for i, row in enumerate(rows) if row[0] == choice)
-        if choice in children:
-            changed = _workflow_behavior_section(ui, helper, changed, choice, runners=runners)
-            continue
-        if choice == "runners":
-            if runners:
-                changed = runners(changed)
-            continue
-        if choice in ("frontend_enabled", "cli_enabled"):
-            current = "enabled" if helper["preview_enabled"](behaviors, section) else "disabled"
-            picked = ui.pick(_workflow_section_spec(section)[0] + " preview", [("enabled", "Enabled"), ("disabled", "Disabled")],
-                             default=0 if current == "enabled" else 1)
-            if picked is not None and picked != current:
-                changed = helper["update_behavior"](changed, choice, picked)
-            continue
-        spec = helper["BEHAVIORS"][choice]
-        override = _workflow_preview_override(helper, choice)
-        reset = "Inherit · " + _workflow_preview_parent_value(helper, behaviors, override[1]) if override else "Not set"
-        options = [("", reset)] + [(key, _workflow_choice(helper, choice, key)) for key in spec["choices"]
-                                        if not (choice == "local_preview" and key == "before_pr")]
-        selected = ui.pick(_WORKFLOW_TOPICS[choice][0], options,
-                           default=next(i for i, row in enumerate(options) if row[0] == behaviors.get(choice, "")))
-        if selected is not None and selected != behaviors.get(choice, ""):
-            changed = helper["update_behavior"](changed, choice, selected)
+    try:
+        while True:
+            behaviors = helper["effective_behaviors"](changed.get("behaviors", {}))
+            fields = _workflow_section_fields(section, behaviors)
+            children = _workflow_section_children(section, behaviors)
+            rows = [(key, _WORKFLOW_TOPICS[key][0]) for key in fields]
+            rows += [(key, _WORKFLOW_PREVIEW_SUBMENUS[key][0] + " ›") for key in children]
+            if section == "tests":
+                rows.append(("runners", "Test runners ›"))
+            rows.append(("back", "Back"))
+            values = {key: _workflow_field_value(helper, behaviors, key) for key in fields}
+            if section in _WORKFLOW_PREVIEW_SUBMENUS:
+                values[section + "_enabled"] = "Enabled" if helper["preview_enabled"](behaviors, section) else "Disabled"
+            if section == "tests":
+                values["runners"] = helper["runners_summary"](changed)
+            values.update({key: _workflow_section_summary(helper, key, behaviors) for key in children})
+            choice = ui.pick(_workflow_section_spec(section)[0], rows, values=values, default=min(focus, len(rows) - 1))
+            if choice in (None, "back"):
+                return changed
+            focus = next(i for i, row in enumerate(rows) if row[0] == choice)
+            if choice in children:
+                changed = _workflow_behavior_section(ui, helper, changed, choice, runners=runners)
+                continue
+            if choice == "runners":
+                if runners:
+                    changed = runners(changed)
+                continue
+            if choice in ("frontend_enabled", "cli_enabled"):
+                current = "enabled" if helper["preview_enabled"](behaviors, section) else "disabled"
+                picked = ui.pick(_workflow_section_spec(section)[0] + " preview", [("enabled", "Enabled"), ("disabled", "Disabled")],
+                                 default=0 if current == "enabled" else 1)
+                if picked is not None and picked != current:
+                    changed = helper["update_behavior"](changed, choice, picked)
+                continue
+            spec = helper["BEHAVIORS"][choice]
+            override = _workflow_preview_override(helper, choice)
+            reset = "Inherit · " + _workflow_preview_parent_value(helper, behaviors, override[1]) if override else "Not set"
+            options = [("", reset)] + [(key, _workflow_choice(helper, choice, key)) for key in spec["choices"]
+                                            if not (choice == "local_preview" and key == "before_pr")]
+            selected = ui.pick(_WORKFLOW_TOPICS[choice][0], options,
+                               default=next(i for i, row in enumerate(options) if row[0] == behaviors.get(choice, "")))
+            if selected is not None and selected != behaviors.get(choice, ""):
+                changed = helper["update_behavior"](changed, choice, selected)
+
+    except KeyboardInterrupt as exc:
+        if not hasattr(exc, "workflow_policy"):
+            exc.workflow_policy = changed
+        raise
 
 
 def _workflow_permission_summary(helper, policy):
@@ -2458,20 +2474,26 @@ def _workflow_permission_summary(helper, policy):
 def _workflow_permissions_menu(ui, helper, policy):
     changed = copy.deepcopy(policy)
     focus = 0
-    while True:
-        permissions = changed.get("permissions", {})
-        rows = [(agent, agent.title()) for agent in ("codex", "claude")] + [("back", "Back")]
-        values = {agent: helper["PERMISSIONS"][agent][permissions[agent]]["label"]
-                  if agent in permissions else "Not set" for agent in ("codex", "claude")}
-        agent = ui.pick("Permissions", rows, values=values, default=focus)
-        if agent in (None, "back"):
-            return changed
-        focus = next(i for i, row in enumerate(rows) if row[0] == agent)
-        options = [("", "Not set")] + [(preset, item["label"]) for preset, item in helper["PERMISSIONS"][agent].items()]
-        picked = ui.pick(agent.title() + " permissions", options,
-                         default=next(i for i, row in enumerate(options) if row[0] == permissions.get(agent, "")))
-        if picked is not None and picked != permissions.get(agent, ""):
-            changed = helper["update_permission"](changed, agent, picked)
+    try:
+        while True:
+            permissions = changed.get("permissions", {})
+            rows = [(agent, agent.title()) for agent in ("codex", "claude")] + [("back", "Back")]
+            values = {agent: helper["PERMISSIONS"][agent][permissions[agent]]["label"]
+                      if agent in permissions else "Not set" for agent in ("codex", "claude")}
+            agent = ui.pick("Permissions", rows, values=values, default=focus)
+            if agent in (None, "back"):
+                return changed
+            focus = next(i for i, row in enumerate(rows) if row[0] == agent)
+            options = [("", "Not set")] + [(preset, item["label"]) for preset, item in helper["PERMISSIONS"][agent].items()]
+            picked = ui.pick(agent.title() + " permissions", options,
+                             default=next(i for i, row in enumerate(options) if row[0] == permissions.get(agent, "")))
+            if picked is not None and picked != permissions.get(agent, ""):
+                changed = helper["update_permission"](changed, agent, picked)
+
+    except KeyboardInterrupt as exc:
+        if not hasattr(exc, "workflow_policy"):
+            exc.workflow_policy = changed
+        raise
 
 
 def _workflow_session_setting(ui, cfg, policy, agent, field):
@@ -2500,107 +2522,121 @@ def _workflow_session_setting(ui, cfg, policy, agent, field):
 
 def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
     title = f"Workflow · {name}" if name else "Customize only this repository"
-    while True:
-        document = cfg._workflow_document
-        policy = (copy.deepcopy(document["workflows"][name]) if name else
-                  helper["resolved"](document, repository))
-        alias = next((alias for alias, path in cfg.repos.items() if os.path.realpath(path) == repository), None)
-        agent = getattr(cfg, "agents", {}).get(alias, getattr(cfg, "agent_default", "codex"))
-        if agent not in ("codex", "claude"):
-            agent = "codex"
-        defaults = policy.get("session_defaults", {}).get(agent, {})
-        stages = helper["model_stages"](policy)
-        rows = [("enabled", "Use this workflow"), ("stages_enabled", "Use multiple models")]
-        rows += [(stage, _workflow_stage_title(stage))
-                 for stage in ("planning", "implementation", "review") if stage in stages]
-        if "implementation" not in stages:
-            rows += [("main_model", agent.title() + " default model"), ("main_effort", "Reasoning effort")]
-        rows.append(("behaviors", "PRs, previews & tests ›"))
-        rows.append(("permissions", "Permissions ›"))
-        rows += [("instructions", "Text instructions")]
-        if policy.get("instructions"):
-            rows.append(("clear_instructions", "Clear text instructions"))
-        rows += [("edit", "Advanced JSON editor"), ("back", "Back")]
-        values = {stage: policy[stage]["model"] + " · " + _workflow_effort(policy[stage]["effort"], stage)
-                  for stage in ("planning", "implementation", "review")}
-        if helper["pr_review_skipped"](policy):
-            values["review"] = "Skipped before PR"
-        values["enabled"] = "enabled" if policy["enabled"] else "disabled"
-        values["stages_enabled"] = ", ".join(_workflow_stage_title(stage) for stage in stages) if stages else "No · one model"
-        models, efforts = getattr(cfg, "models", {}), getattr(cfg, "efforts", {})
-        values["main_model"] = defaults.get("model") or "Agent default" + (": " + models[agent] if models.get(agent) else "")
-        values["main_effort"] = defaults.get("effort") or ("Default for this model" if defaults.get("model") else
-                                                            "Agent default" + (": " + efforts[agent] if efforts.get(agent) else ""))
-        selected = helper["effective_behaviors"](policy.get("behaviors", {}))
-        count = sum(key in _WORKFLOW_TOPICS for key in selected)
-        values["behaviors"] = f"{count} choices set" if count else "Not set"
-        values["instructions"] = (f"text · {len(policy['instructions'].splitlines())} lines · Enter to edit"
-                                  if policy.get("instructions") else "Add text instructions")
-        values["permissions"] = _workflow_permission_summary(helper, policy)
-        choice = ui.pick(title, rows, values=values)
-        if choice in (None, "back"):
-            return
-        changed = copy.deepcopy(policy)
-        if choice == "stages_enabled":
-            picked = ui.pick("Model settings for", [("planning", "Planning"), ("implementation", "Implementation"), ("review", "Review")],
-                             multi=True, marked={i for i, stage in enumerate(("planning", "implementation", "review")) if stage in stages})
-            if picked is not None:
-                changed = helper["select_model_stages"](policy, picked)
-        elif choice == "enabled":
-            picked = ui.pick("Use this workflow", [("1", "Enabled"), ("0", "Disabled")],
-                             default=0 if policy["enabled"] else 1)
-            if picked is not None and (picked == "1") != policy["enabled"]:
-                changed["enabled"] = picked == "1"
-        elif choice in ("main_model", "main_effort"):
-            changed = _workflow_session_setting(ui, cfg, policy, agent, choice.removeprefix("main_"))
-        elif choice == "behaviors":
-            changed = _workflow_behaviors_menu(ui, helper, policy,
-                runners=lambda current: _workflow_behavior_runners(ui, cfg, helper, current, repository, name))
+    try:
+        while True:
             document = cfg._workflow_document
-            policy = (copy.deepcopy(document["workflows"][name]) if name else helper["resolved"](document, repository))
-        elif choice == "permissions":
-            changed = _workflow_permissions_menu(ui, helper, policy)
-        elif choice == "clear_instructions":
-            changed["instructions"] = ""
-        elif choice in ("edit", "instructions"):
-            ui.restore()
-            try:
-                rc, after = helper["edit_instructions" if choice == "instructions" else "edit"](document, repository, name)
-                if not rc:
-                    cfg._workflow_document = after
-                else:
-                    ui.done("editor", f"Editor exited with status {rc}; workflow unchanged.")
-            except (OSError, ValueError) as exc:
-                ui.done("invalid", str(exc))
-            finally:
-                ui.raw()
-            continue
-        else:
-            stage = choice
-            stage_title = _workflow_stage_title(stage) + (" · worker" if stage == "implementation" and helper["implementation_worker"](policy) else "")
-            field = ui.pick(stage_title, [("model", "Model"), ("effort", "Reasoning effort"), ("back", "Back")],
-                            values={"model": policy[stage]["model"], "effort": _workflow_effort(policy[stage]["effort"], stage)})
-            if field in (None, "back"):
+            policy = (copy.deepcopy(document["workflows"][name]) if name else
+                      helper["resolved"](document, repository))
+            alias = next((alias for alias, path in cfg.repos.items() if os.path.realpath(path) == repository), None)
+            agent = getattr(cfg, "agents", {}).get(alias, getattr(cfg, "agent_default", "codex"))
+            if agent not in ("codex", "claude"):
+                agent = "codex"
+            defaults = policy.get("session_defaults", {}).get(agent, {})
+            stages = helper["model_stages"](policy)
+            rows = [("enabled", "Use this workflow"), ("stages_enabled", "Use multiple models")]
+            rows += [(stage, _workflow_stage_title(stage))
+                     for stage in ("planning", "implementation", "review") if stage in stages]
+            if "implementation" not in stages:
+                rows += [("main_model", agent.title() + " default model"), ("main_effort", "Reasoning effort")]
+            rows.append(("behaviors", "PRs, previews & tests ›"))
+            rows.append(("permissions", "Permissions ›"))
+            rows += [("instructions", "Text instructions")]
+            if policy.get("instructions"):
+                rows.append(("clear_instructions", "Clear text instructions"))
+            rows += [("edit", "Advanced JSON editor"), ("back", "Back")]
+            values = {stage: policy[stage]["model"] + " · " + _workflow_effort(policy[stage]["effort"], stage)
+                      for stage in ("planning", "implementation", "review")}
+            if helper["pr_review_skipped"](policy):
+                values["review"] = "Skipped before PR"
+            values["enabled"] = "enabled" if policy["enabled"] else "disabled"
+            values["stages_enabled"] = ", ".join(_workflow_stage_title(stage) for stage in stages) if stages else "No · one model"
+            models, efforts = getattr(cfg, "models", {}), getattr(cfg, "efforts", {})
+            values["main_model"] = defaults.get("model") or "Agent default" + (": " + models[agent] if models.get(agent) else "")
+            values["main_effort"] = defaults.get("effort") or ("Default for this model" if defaults.get("model") else
+                                                                "Agent default" + (": " + efforts[agent] if efforts.get(agent) else ""))
+            selected = helper["effective_behaviors"](policy.get("behaviors", {}))
+            count = sum(key in _WORKFLOW_TOPICS for key in selected)
+            values["behaviors"] = f"{count} choices set" if count else "Not set"
+            values["instructions"] = (f"text · {len(policy['instructions'].splitlines())} lines · Enter to edit"
+                                      if policy.get("instructions") else "Add text instructions")
+            values["permissions"] = _workflow_permission_summary(helper, policy)
+            choice = ui.pick(title, rows, values=values)
+            if choice in (None, "back"):
+                return
+            changed = copy.deepcopy(policy)
+            if choice == "stages_enabled":
+                picked = ui.pick("Model settings for", [("planning", "Planning"), ("implementation", "Implementation"), ("review", "Review")],
+                                 multi=True, marked={i for i, stage in enumerate(("planning", "implementation", "review")) if stage in stages})
+                if picked is not None:
+                    changed = helper["select_model_stages"](policy, picked)
+            elif choice == "enabled":
+                picked = ui.pick("Use this workflow", [("1", "Enabled"), ("0", "Disabled")],
+                                 default=0 if policy["enabled"] else 1)
+                if picked is not None and (picked == "1") != policy["enabled"]:
+                    changed["enabled"] = picked == "1"
+            elif choice in ("main_model", "main_effort"):
+                changed = _workflow_session_setting(ui, cfg, policy, agent, choice.removeprefix("main_"))
+            elif choice == "behaviors":
+                changed = _workflow_behaviors_menu(ui, helper, policy,
+                    runners=lambda current: _workflow_behavior_runners(ui, cfg, helper, current, repository, name))
+                document = cfg._workflow_document
+                policy = (copy.deepcopy(document["workflows"][name]) if name else helper["resolved"](document, repository))
+            elif choice == "permissions":
+                changed = _workflow_permissions_menu(ui, helper, policy)
+            elif choice == "clear_instructions":
+                changed["instructions"] = ""
+            elif choice in ("edit", "instructions"):
+                ui.restore()
+                try:
+                    rc, after = helper["edit_instructions" if choice == "instructions" else "edit"](document, repository, name)
+                    if not rc:
+                        cfg._workflow_document = after
+                    else:
+                        ui.done("editor", f"Editor exited with status {rc}; workflow unchanged.")
+                except (OSError, ValueError) as exc:
+                    ui.done("invalid", str(exc))
+                finally:
+                    ui.raw()
                 continue
-            if field == "model":
-                picked = _workflow_model(ui, cfg, helper, stage, policy[stage]["model"])
             else:
-                levels = ["auto", *helper["EFFORTS"]]
-                current_effort = helper["effective_effort"](policy[stage]["effort"])
-                picked = ui.pick(_workflow_stage_title(stage) + " reasoning effort", [(level, _workflow_effort(level, stage)) for level in levels],
-                                 default=levels.index(current_effort),
-                                 sections={"auto": "Automatic", helper["EFFORTS"][0]: "Fixed effort"})
-            if picked is not None and (field != "effort" or picked != current_effort):
-                changed[stage][field] = picked
-        if changed != policy:
-            cfg._workflow_document = helper["update"](document, changed, repository, name)
+                stage = choice
+                stage_title = _workflow_stage_title(stage) + (" · worker" if stage == "implementation" and helper["implementation_worker"](policy) else "")
+                field = ui.pick(stage_title, [("model", "Model"), ("effort", "Reasoning effort"), ("back", "Back")],
+                                values={"model": policy[stage]["model"], "effort": _workflow_effort(policy[stage]["effort"], stage)})
+                if field in (None, "back"):
+                    continue
+                if field == "model":
+                    picked = _workflow_model(ui, cfg, helper, stage, policy[stage]["model"])
+                else:
+                    levels = ["auto", *helper["EFFORTS"]]
+                    current_effort = helper["effective_effort"](policy[stage]["effort"])
+                    picked = ui.pick(_workflow_stage_title(stage) + " reasoning effort", [(level, _workflow_effort(level, stage)) for level in levels],
+                                     default=levels.index(current_effort),
+                                     sections={"auto": "Automatic", helper["EFFORTS"][0]: "Fixed effort"})
+                if picked is not None and (field != "effort" or picked != current_effort):
+                    changed[stage][field] = picked
+            if changed != policy:
+                cfg._workflow_document = helper["update"](document, changed, repository, name)
+
+    except KeyboardInterrupt as exc:
+        if hasattr(exc, "workflow_policy"):
+            current = (cfg._workflow_document["workflows"][name] if name else
+                       helper["resolved"](cfg._workflow_document, repository))
+            if exc.workflow_policy != current:
+                cfg._workflow_document = helper["update"](cfg._workflow_document, exc.workflow_policy, repository, name)
+        raise
 
 
 def _workflow_behavior_runners(ui, cfg, helper, policy, repository=None, name=None):
     current = (cfg._workflow_document["workflows"][name] if name else helper["resolved"](cfg._workflow_document, repository))
     if policy != current:
         cfg._workflow_document = helper["update"](cfg._workflow_document, policy, repository, name)
-    _workflow_runners_menu(ui, cfg, helper, repository, name)
+    try:
+        _workflow_runners_menu(ui, cfg, helper, repository, name)
+    except KeyboardInterrupt as exc:
+        exc.workflow_policy = (copy.deepcopy(cfg._workflow_document["workflows"][name]) if name else
+                               helper["resolved"](cfg._workflow_document, repository))
+        raise
     return (copy.deepcopy(cfg._workflow_document["workflows"][name]) if name else
             helper["resolved"](cfg._workflow_document, repository))
 
@@ -3034,6 +3070,15 @@ def _config_mcp(ui, pending):
 
 def _config_wizard(cfg, workflows_only=False):
     ui = _RailUI()
+    ui._config_interrupts = True
+    if hasattr(ui, "read_key"):
+        read_key = ui.read_key
+        def interrupt_key():
+            key = read_key()
+            if key == "abort":
+                raise KeyboardInterrupt
+            return key
+        ui.read_key = interrupt_key
     _workflow_session(cfg)
     edited = copy.deepcopy(cfg)
     initial = _config_state(cfg)
@@ -3046,114 +3091,124 @@ def _config_wizard(cfg, workflows_only=False):
     ui.raw()
     try:
         while True:
-            rows = [("tool", "Default tool"), ("mode", "Default opening mode"), ("trust", "Automatic folder trust")]
-            values = {"tool": edited.agent_default, "mode": "Desktop app (Codex, macOS)" if edited.open_mode_default == "app" else "CLI"}
-            values["trust"] = ("enabled" if edited.auto_trust == "1" else "disabled") + (" (T_NO_TRUST overrides)" if os.environ.get(_TRUST_NO_ENV) else "")
-            for a in AGENTS:
-                rows.append((a, f"{a.title()} settings ›"))
-                values[a] = f"{edited.models.get(a) or 'tool default'} · {edited.efforts.get(a) or 'default'} effort"
-                if edited.fast.get(a) == "1":
-                    values[a] += " · fast"
-            rows += [("local", "Local worker & models ›"), ("workflow", "Workflows ›"), ("runners", "Test runners ›"),
-                     ("mcp", "Sessions server ›"), ("repos", "Repositories ›"), ("worktrees", "Worktrees & branches ›"),
-                     ("hosts", "Hosts ›"), ("beam", "Default beam host"), ("edit", "Open config in editor"),
-                     ("save", "Save changes"), ("cancel", "Cancel")]
-            pending = len(_config_diff(initial, _config_state(edited))) + _workflow_pending(edited)
-            values.update({"hosts": f"{len(edited.hosts)} registered",
-                           "repos": ", ".join(sorted(edited.repos)) or "none registered",
-                           "beam": edited.beam_host or "none", "save": f"{pending} pending"})
-            if workflows_only:
-                choice = _workflow_hub(ui, edited, standalone=True)
-            elif next_choice:
-                choice, next_choice = next_choice, None
-            else:
-                choice = ui.pick("Local settings", rows, values=values,
-                                 sections={"tool": "Session defaults", AGENTS[0]: "Agents", "workflow": "Workflows", "runners": "Runners",
-                                           "mcp": "MCP server", "repos": "Repositories & worktrees", "hosts": "Remote hosts", "edit": "Finish"},
-                                 accents={"save": "g", "cancel": "y"},
-                                 primary=("s", "SAVE CHANGES", f"{pending} pending"), shortcuts={"s": "save"},
-                                 default=next(i for i, row in enumerate(rows) if row[0] == last))
-            pending = len(_config_diff(initial, _config_state(edited))) + _workflow_pending(edited)
-            if choice in (None, "cancel"):
-                if pending:
-                    choice = ui.pick(f"{pending} unsaved change{'s' if pending != 1 else ''}", [
-                        ("keep", "Keep editing"), ("save", "Review and save"),
-                        ("discard", "Discard changes and exit")],
-                        accents={"save": "g", "discard": "w"})
-                    if choice in (None, "keep"):
+            try:
+                rows = [("tool", "Default tool"), ("mode", "Default opening mode"), ("trust", "Automatic folder trust")]
+                values = {"tool": edited.agent_default, "mode": "Desktop app (Codex, macOS)" if edited.open_mode_default == "app" else "CLI"}
+                values["trust"] = ("enabled" if edited.auto_trust == "1" else "disabled") + (" (T_NO_TRUST overrides)" if os.environ.get(_TRUST_NO_ENV) else "")
+                for a in AGENTS:
+                    rows.append((a, f"{a.title()} settings ›"))
+                    values[a] = f"{edited.models.get(a) or 'tool default'} · {edited.efforts.get(a) or 'default'} effort"
+                    if edited.fast.get(a) == "1":
+                        values[a] += " · fast"
+                rows += [("local", "Local worker & models ›"), ("workflow", "Workflows ›"), ("runners", "Test runners ›"),
+                         ("mcp", "Sessions server ›"), ("repos", "Repositories ›"), ("worktrees", "Worktrees & branches ›"),
+                         ("hosts", "Hosts ›"), ("beam", "Default beam host"), ("edit", "Open config in editor"),
+                         ("save", "Save changes"), ("cancel", "Cancel")]
+                pending = len(_config_diff(initial, _config_state(edited))) + _workflow_pending(edited)
+                values.update({"hosts": f"{len(edited.hosts)} registered",
+                               "repos": ", ".join(sorted(edited.repos)) or "none registered",
+                               "beam": edited.beam_host or "none", "save": f"{pending} pending"})
+                if next_choice:
+                    choice, next_choice = next_choice, None
+                elif workflows_only:
+                    choice = _workflow_hub(ui, edited, standalone=True)
+                else:
+                    choice = ui.pick("Local settings", rows, values=values,
+                                     sections={"tool": "Session defaults", AGENTS[0]: "Agents", "workflow": "Workflows", "runners": "Runners",
+                                               "mcp": "MCP server", "repos": "Repositories & worktrees", "hosts": "Remote hosts", "edit": "Finish"},
+                                     accents={"save": "g", "cancel": "y"},
+                                     primary=("s", "SAVE CHANGES", f"{pending} pending"), shortcuts={"s": "save"},
+                                     default=next(i for i, row in enumerate(rows) if row[0] == last))
+                pending = len(_config_diff(initial, _config_state(edited))) + _workflow_pending(edited)
+                if choice in (None, "cancel"):
+                    if pending:
+                        choice = ui.pick(f"{pending} unsaved change{'s' if pending != 1 else ''}", [
+                            ("keep", "Keep editing"), ("save", "Review and save"),
+                            ("discard", "Discard changes and exit")],
+                            accents={"save": "g", "discard": "w"})
+                        if choice in (None, "keep"):
+                            continue
+                    if choice != "save":
+                        ui.done("cancelled", "nothing written")
+                        return None
+                last = choice if choice in dict(rows) else last
+                if choice == "mcp":
+                    _config_mcp(ui, pending)
+                    continue
+                if choice == "local":
+                    if pending:
+                        ui.done("pending", "Save or discard pending settings before local worker setup.")
                         continue
-                if choice != "save":
-                    ui.done("cancelled", "nothing written")
-                    return None
-            last = choice
-            if choice == "mcp":
-                _config_mcp(ui, pending)
-                continue
-            if choice == "local":
-                if pending:
-                    ui.done("pending", "Save or discard pending settings before local worker setup.")
-                    continue
-                return "local"
-            if choice == "edit":
-                if pending:
-                    ui.done("pending", "Save or cancel your menu changes before opening the editor.")
-                    continue
-                return "edit"
-            if choice == "save":
-                changes = _config_diff(initial, _config_state(edited))
-                try:
-                    lines = [f"      {st.c}{_config_assignment(k, v)}{st.r}" for k, v in changes.items()]
-                    targets = _host_new_targets(cfg.hosts, edited.hosts)
-                    if targets:
-                        lines.append("      After saving, offer native SSH verification (Verify SSH now / Later):")
-                        lines.extend(f"      {target} · OpenSSH asks before trusting an unknown key" for target in targets)
-                except ValueError as exc:
-                    ui.done("invalid", str(exc))
-                    continue
-                if _workflow_pending(edited):
-                    lines += ["      Agent workflow and native Codex/Claude instructions:"]
-                    lines += ["      " + line for line in _workflow_review(edited._workflow_document)]
-                if changes or _workflow_pending(edited):
-                    answer = ui.page("Review local settings", lines, ("enter", "y", "n", "q", "esc", "abort"),
-                                     keys="y save · n / esc / q back", primary=("enter", "SAVE CHANGES", f"{pending} pending"))
-                    if answer not in ("enter", "y"):
+                    return "local"
+                if choice == "edit":
+                    if pending:
+                        ui.done("pending", "Save or cancel your menu changes before opening the editor.")
                         continue
-                return edited
-            if choice == "hosts":
-                _config_hosts(ui, edited)
-            elif choice == "repos":
-                _config_repos(ui, edited)
-            elif choice == "workflow":
-                next_choice = _workflow_hub(ui, edited, shell_pending=bool(_config_diff(initial, _config_state(edited))))
-            elif choice == "runners":
-                _config_runners(ui, edited)
-            elif choice == "worktrees":
-                _config_worktrees(ui, edited)
-            elif choice == "beam":
-                options = [("", "No default (choose when beaming)")]
-                options += [(h, h) for h in sorted(edited.hosts)]
-                picked = ui.pick("Default beam host", options, values=edited.hosts)
-                if picked is not None:
-                    edited.beam_host = edited.hosts.get(picked, "")
-            elif choice == "mode":
-                picked = ui.pick("Default opening mode", [("cli", "CLI"), ("app", "Desktop app (Codex, macOS)")],
-                                 default=1 if edited.open_mode_default == "app" else 0)
-                if picked is not None:
-                    edited.open_mode_default = picked
-            elif choice == "trust":
-                picked = ui.pick("Trust folders before terminal/desktop launches", [("1", "Enabled"), ("0", "Disabled")],
-                                 default=0 if edited.auto_trust == "1" else 1)
-                if picked is not None:
-                    edited.auto_trust = picked
-            elif choice == "tool":
-                options = [(a, f"{a}" + ("" if shutil.which(a) else f" (install with t install {a})"))
-                           for a in AGENTS]
-                picked = ui.pick("Default tool (repo overrides still win)", options,
-                                 default=AGENTS.index(edited.agent_default) if edited.agent_default in AGENTS else 0)
-                if picked is not None:
-                    edited.agent_default = picked
-            else:
-                _config_tool_menu(ui, edited, choice, catalogs)
+                    return "edit"
+                if choice == "save":
+                    changes = _config_diff(initial, _config_state(edited))
+                    try:
+                        lines = [f"      {st.c}{_config_assignment(k, v)}{st.r}" for k, v in changes.items()]
+                        targets = _host_new_targets(cfg.hosts, edited.hosts)
+                        if targets:
+                            lines.append("      After saving, offer native SSH verification (Verify SSH now / Later):")
+                            lines.extend(f"      {target} · OpenSSH asks before trusting an unknown key" for target in targets)
+                    except ValueError as exc:
+                        ui.done("invalid", str(exc))
+                        continue
+                    if _workflow_pending(edited):
+                        lines += ["      Agent workflow and native Codex/Claude instructions:"]
+                        lines += ["      " + line for line in _workflow_review(edited._workflow_document)]
+                    if changes or _workflow_pending(edited):
+                        answer = ui.page("Review local settings", lines, ("enter", "y", "n", "q", "esc", "abort"),
+                                         keys="y save · n / esc / q back", primary=("enter", "SAVE CHANGES", f"{pending} pending"))
+                        if answer == "abort":
+                            raise KeyboardInterrupt
+                        if answer not in ("enter", "y"):
+                            continue
+                    return edited
+                if choice == "hosts":
+                    _config_hosts(ui, edited)
+                elif choice == "repos":
+                    _config_repos(ui, edited)
+                elif choice == "workflow":
+                    next_choice = _workflow_hub(ui, edited, shell_pending=bool(_config_diff(initial, _config_state(edited))))
+                elif choice == "runners":
+                    _config_runners(ui, edited)
+                elif choice == "worktrees":
+                    _config_worktrees(ui, edited)
+                elif choice == "beam":
+                    options = [("", "No default (choose when beaming)")]
+                    options += [(h, h) for h in sorted(edited.hosts)]
+                    picked = ui.pick("Default beam host", options, values=edited.hosts)
+                    if picked is not None:
+                        edited.beam_host = edited.hosts.get(picked, "")
+                elif choice == "mode":
+                    picked = ui.pick("Default opening mode", [("cli", "CLI"), ("app", "Desktop app (Codex, macOS)")],
+                                     default=1 if edited.open_mode_default == "app" else 0)
+                    if picked is not None:
+                        edited.open_mode_default = picked
+                elif choice == "trust":
+                    picked = ui.pick("Trust folders before terminal/desktop launches", [("1", "Enabled"), ("0", "Disabled")],
+                                     default=0 if edited.auto_trust == "1" else 1)
+                    if picked is not None:
+                        edited.auto_trust = picked
+                elif choice == "tool":
+                    options = [(a, f"{a}" + ("" if shutil.which(a) else f" (install with t install {a})"))
+                               for a in AGENTS]
+                    picked = ui.pick("Default tool (repo overrides still win)", options,
+                                     default=AGENTS.index(edited.agent_default) if edited.agent_default in AGENTS else 0)
+                    if picked is not None:
+                        edited.agent_default = picked
+                else:
+                    _config_tool_menu(ui, edited, choice, catalogs)
+
+            except KeyboardInterrupt:
+                pending = len(_config_diff(initial, _config_state(edited))) + _workflow_pending(edited)
+                if not pending:
+                    raise
+                ui.raw()
+                next_choice = "cancel"
 
     finally:
         ui.restore()
@@ -3275,7 +3330,7 @@ _WORKFLOW_SECTIONS = {
 }
 _WORKFLOW_PREVIEW_SUBMENUS = {
     "frontend": ("Frontend", ("frontend_enabled", "frontend_preview_timing", "frontend_implement_before_approval", "frontend_design", "frontend_preview", "frontend_browser")),
-    "cli": ("CLI", ("cli_enabled", "cli_preview_timing", "cli_implement_before_approval", "cli_preview")),
+    "cli": ("CLI", ("cli_enabled", "cli_preview_timing", "cli_implement_before_approval", "cli_preview", "cli_launch")),
 }
 _WORKFLOW_TOPICS = {
     "frontend_enabled": ("Preview", "Enable or disable frontend preview preferences."),
@@ -3291,6 +3346,7 @@ _WORKFLOW_TOPICS = {
     "frontend_implement_before_approval": ("Implement before approval", "Inherit the default or override implementation before approval for frontend work."),
     "cli_implement_before_approval": ("Implement before approval", "Inherit the default or override implementation before approval for CLI work."),
     "cli_preview": ("Preview method", "Install the development version locally, or run it from the repo."),
+    "cli_launch": ("Run command", "Run the prepared CLI preview command automatically, or only when requested."),
     "frontend_preview": ("Preview method", "Refresh changes with a local dev server, or rebuild the preview."),
     "frontend_browser": ("Open in browser", "Open the frontend preview automatically, or only when requested."),
     "frontend_design": ("Design approach", "Try an interactive HTML prototype outside the app, or design in the app itself."),
@@ -3394,7 +3450,7 @@ def _workflow_catalogue_summary(helper, policy):
 
 
 def _workflow_choice(helper, key, value):
-    if key in ("pr_review", "pr_open", "frontend_enabled", "cli_enabled", "local_preview", "implement_before_approval", "cli_preview", "frontend_preview", "frontend_browser") or _workflow_preview_override(helper, key):
+    if key in ("pr_review", "pr_open", "frontend_enabled", "cli_enabled", "local_preview", "implement_before_approval", "cli_preview", "cli_launch", "frontend_preview", "frontend_browser") or _workflow_preview_override(helper, key):
         return helper["BEHAVIORS"][key]["choices"][value][0]
     return _WORKFLOW_CHOICE_LABELS.get(value, helper["BEHAVIORS"][key]["choices"][value][0])
 
@@ -4038,7 +4094,11 @@ class _RailUI:
                 prompt = f"{prompt}[{prefill}] "
         try:
             s = input(prompt).strip()
-        except (EOFError, KeyboardInterrupt):
+        except KeyboardInterrupt:
+            if getattr(self, "_config_interrupts", False):
+                raise
+            s = ""
+        except EOFError:
             s = ""
         finally:
             if hooked:
@@ -11674,6 +11734,8 @@ SCOPE
   all its consumers. --all lists named workflows; it cannot combine with --repo.
   `ls` is an alias for `list`.
   Run t workflow in a terminal to edit workflows interactively.
+  Ctrl+C offers Keep editing, Review and save, or Discard when changes are pending.
+  With no pending changes, Ctrl+C exits immediately.
   List prints saved workflow values; --all includes named definitions.
   Check Planning, Implementation and/or Review for saved model settings.
   Unchecked Implementation uses session defaults;
@@ -12882,6 +12944,8 @@ RECEIVE AND REMOTE MOVES
   Unchecked Implementation uses session defaults;
   unchecked helpers use the main model.
   Run t workflow directly to edit, review and save workflow changes.
+  Ctrl+C offers Keep editing, Review and save, or Discard for pending changes;
+  without changes it exits immediately. Saving still requires the final review.
 
   Use `t workflow edit [--repo ALIAS]` for its JSON editor and `t workflow
   list [--repo ALIAS]` for read-only effective values.

@@ -179,6 +179,14 @@ and default-host references. Changes remain staged until review and save.
 Config quitting with pending edits offers Keep editing (default), Review and
 save, and Discard changes and exit. Review screens keep their primary action
 visible while scrolling.
+Ctrl+C in `t config` and `t workflow` uses that same unsaved-change choice from
+the hub, nested settings menus and the save review. Preserve completed selections
+from nested editors before showing the prompt. Keep editing retains all staged
+changes; Review and save opens the normal review before writing; only explicit
+Discard changes and exit discards them. Interrupting the prompt never implicitly
+saves or discards changes. With no edits, Ctrl+C exits immediately with status
+130. Restore terminal state on every exit. These rules apply to the staged menu
+transaction; external editors and post-save operations retain their own behavior.
 
 Config → Hosts → Add host runs fresh Tailscale discovery on each entry and
 offers an explicit Refresh action. The shared single picker shows online Unix
@@ -243,12 +251,23 @@ updates inheriting children while preserving explicit overrides, even overrides
 equal to the parent. Resolved rules apply only to enabled types; with neither
 enabled, suppress preview guidance.
 Disabled frontend suppresses design, method and browser guidance;
-disabled CLI suppresses its method guidance. Enabling alone does not request a
+disabled CLI suppresses its method and command-launch guidance. Enabling alone does not request a
 preview or change the separate PR-opening preference.
 The nested Frontend submenu contains Design approach (Separate HTML prototype /
 In the app), Preview method (Fast reload
 / Build), and Open in browser (Automatically / Only when I ask). The nested CLI
-submenu contains Preview method (Install locally / Run from the repo). Printed
+submenu contains Preview method (Install locally / Run from the repo) and
+Run command (Automatically / Only when I ask), with a separated Not set choice.
+The optional cli_launch key accepts automatic/on_request and remains saved while
+CLI preview is disabled. Automatically launches the supported CLI preview command
+only after the selected preview is requested or due and prepared; request-only
+timing still takes precedence. Only when I ask prepares the command without
+launching it, including with the Run from the repo method. The method determines
+the executable source. Interactive commands use a supported interactive terminal;
+if unavailable, report the limitation and exact command rather than claiming a
+launch. This preference does not run tests or alter preview approval or PR choices.
+Omission preserves existing guidance; clearing removes only the launch preference.
+Menu, list, catalogue and save review reflect the choice and disabled state. Printed
 lists use the same indentation and hierarchy; summaries include nested choices.
 Returning from a child menu restores the parent focus and retains staged changes.
 Disabled summaries show the status without presenting retained settings as active.

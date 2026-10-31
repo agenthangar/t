@@ -505,6 +505,58 @@ def test_frontend_browser_setting_is_independent_and_clearable(workflow, t_mod, 
     assert 'frontend_browser' not in original['behaviors']
 
 
+@pytest.mark.parametrize('scope', ['named', 'repository'])
+@pytest.mark.parametrize('launch, label', [('automatic', 'Automatically'), ('on_request', 'Only when I ask')])
+def test_cli_launch_stages_clears_and_preserves_preview_preferences(workflow, t_mod, scope, launch, label):
+    document = workflow.defaults()
+    policy = dict(document['workflows']['standard'], behaviors={'local_preview': 'when_ready',
+        'implement_before_approval': 'no', 'cli_preview_timing': 'on_request', 'cli_preview': 'run'})
+    document = workflow.update(document, policy, name='standard')
+    initial = copy.deepcopy(document)
+    cfg = SimpleNamespace(repos={'api': '/repo'}, _workflow_document=document)
+    target = {'name': 'standard'} if scope == 'named' else {'repository': '/repo'}
+    ui = InspectMenu(['behaviors', 'local_preview', 'cli', 'cli_launch', launch, 'back', 'back', 'back', 'back'])
+    t_mod._workflow_policy_menu(ui, cfg, vars(workflow), **target)
+    actual = cfg._workflow_document['workflows']['standard'] if scope == 'named' else workflow.effective(cfg._workflow_document, '/repo')
+    assert actual == dict(policy, behaviors=dict(policy['behaviors'], cli_launch=launch))
+    cli = next(view for view in ui.views if view[0] == 'CLI')
+    assert cli[1][-3:] == [('cli_preview', 'Preview method'), ('cli_launch', 'Run command'), ('back', 'Back')]
+    picker = next(view for view in ui.views if view[0] == 'Run command')
+    assert picker[1] == [('', 'Not set'), ('automatic', 'Automatically'), ('on_request', 'Only when I ask')]
+    assert picker[2]['default'] == 0
+    assert [view for view in ui.views if view[0] == 'CLI'][-1][2]['values']['cli_launch'] == label
+    for picked in (None, launch):
+        assert t_mod._workflow_behaviors_menu(Menu(['local_preview', 'cli', 'cli_launch', picked, 'back', 'back', 'back']),
+                                              vars(workflow), actual) == actual
+    assert t_mod._workflow_behaviors_menu(Menu(['local_preview', 'cli', 'cli_launch', '', 'back', 'back', 'back']),
+                                          vars(workflow), actual) == policy
+    assert document == initial
+    assert not workflow.config_path().exists()
+
+
+@pytest.mark.parametrize('enabled', [False, True])
+def test_cli_launch_display_respects_enabled_state_without_losing_setting(workflow, t_mod, monkeypatch, capsys, enabled):
+    monkeypatch.setattr(t_mod, '_workflow', lambda: vars(workflow))
+    policy = dict(copy.deepcopy(workflow.DEFAULT), behaviors={'cli_enabled': 'enabled' if enabled else 'disabled',
+        'cli_preview': 'run', 'cli_launch': 'on_request'})
+    before = copy.deepcopy(policy)
+    t_mod._workflow_print(vars(workflow), {'scope': 'global', 'source': 'global', 'workflow_name': 'standard',
+        'excluded': False, 'workflow': policy, 'propagation': {'runtime': 'pending'}})
+    output = capsys.readouterr().out
+    document = workflow.update(workflow.defaults(), policy, name='standard')
+    review = '\n'.join(t_mod._workflow_review(document))
+    catalogue = dict(workflow.catalogue(document), propagation={'runtime': 'pending'})
+    t_mod._workflow_print(vars(workflow), catalogue, catalogue=True)
+    catalogue_text = capsys.readouterr().out
+    for text in (output, review, catalogue_text):
+        assert ('Run command: Only when I ask' in text) is enabled
+    ui = InspectMenu(['local_preview', 'cli', None, 'back', 'back'])
+    assert t_mod._workflow_behaviors_menu(ui, vars(workflow), policy) == before
+    assert ui.views[2][2]['values']['cli_launch'] == 'Only when I ask'
+    assert ui.views[2][2]['values']['cli_enabled'] == ('Enabled' if enabled else 'Disabled')
+    assert policy == before
+
+
 @pytest.mark.parametrize('target', ['frontend', 'cli', 'both'])
 def test_printed_preview_sections_match_target_and_frontend_grouping(workflow, t_mod, capsys, target):
     policy = dict(copy.deepcopy(workflow.DEFAULT), behaviors={'preview_target': target,

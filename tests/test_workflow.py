@@ -1000,7 +1000,7 @@ def test_behavior_menu_save_or_discard(workflow, t_mod, monkeypatch, tmp_path, s
     picks = ['workflow', 'customize', 'stages_enabled', [], 'behaviors',
              'pull_requests', 'pr_review', 'skip', 'pr_open', 'automatic', 'pr_state', 'draft',
              'pr_merge', 'on_request', 'back',
-             'local_preview', 'local_preview', 'when_ready', 'implement_before_approval', 'no', 'cli', 'cli_preview', 'install', 'back',
+             'local_preview', 'local_preview', 'when_ready', 'implement_before_approval', 'no', 'cli', 'cli_preview', 'install', 'cli_launch', 'automatic', 'back',
              'frontend', 'frontend_preview', 'fast_reload', 'back', 'back',
              'tests', 'test_timing', 'pr_ci', 'back', 'back', 'back', 'back']
     picks += ['save'] if save else ['cancel', 'discard']
@@ -1013,7 +1013,7 @@ def test_behavior_menu_save_or_discard(workflow, t_mod, monkeypatch, tmp_path, s
         policy = w.load()[0]['workflows']['standard']
         assert not policy['stages_enabled'] and policy['planning'] == w.DEFAULT['planning']
         assert policy['behaviors'] == {'pr_review': 'skip', 'pr_open': 'automatic', 'pr_state': 'draft', 'pr_merge': 'on_request',
-                                       'local_preview': 'when_ready', 'implement_before_approval': 'no', 'cli_preview': 'install',
+                                       'local_preview': 'when_ready', 'implement_before_approval': 'no', 'cli_preview': 'install', 'cli_launch': 'automatic',
                                        'frontend_preview': 'fast_reload', 'test_timing': 'pr_ci'}
         instructions = native_paths()[0].read_text()
         assert 'Open pull requests as drafts' in instructions
