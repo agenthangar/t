@@ -144,6 +144,9 @@ def effective_behaviors(behaviors):
     if result.get('local_preview') == 'before_pr':
         result['local_preview'] = 'when_ready'
         result.setdefault('preview_approval', 'required')
+    legacy_approval = {'required': 'required', 'continue': 'not_required'}.get(result.pop('design_approval', None))
+    if legacy_approval:
+        result.setdefault('preview_approval', legacy_approval)
     if behaviors.get('delivery') == 'review' and result.get('pr_open') != 'automatic':
         result['delivery'] = 'review'  # Its leave-uncommitted rule is more specific than waiting for a PR.
     if 'test_timing' in result:

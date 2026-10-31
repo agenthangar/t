@@ -1055,7 +1055,6 @@ including repository-only customizations. Menu choices stay pending until
 | Local preview → Preview approval before PR | Wait for my approval or No approval needed |
 | Local preview → Frontend → Preview | Enabled or Disabled |
 | Local preview → Frontend → Design approach | Separate HTML prototype or In the app |
-| Local preview → Frontend → Design approval | Required or Not required |
 | Local preview → Frontend → Preview method | Fast reload or Build |
 | Local preview → Frontend → Open in browser | Automatically or Only when I ask |
 | Local preview → CLI → Preview | Enabled or Disabled |
@@ -1076,7 +1075,7 @@ Enabled/Disabled setting. Both remain accessible so you can re-enable them.
 Shared timing and preview approval apply only to enabled types. Disabling a type
 retains its settings and suppresses its design and preview guidance; disabling
 both suppresses the shared preview rules too. Enabling alone does not start a preview.
-Frontend contains design approach, design approval, preview method, and browser
+Frontend contains design approach, preview method, and browser
 opening. CLI contains the local install/run method. Browser opening does not change
 when to prepare the preview or whether approval is required before a PR.
 
@@ -1154,7 +1153,12 @@ defaults when Implementation is unchecked or all stages are off. Optional `permi
 permissions apply independently of model stages and are suppressed when the
 workflow is disabled or excluded. Inside `behaviors`, independent keys are
 `pr_open`, `pr_state`, `pr_merge`, `frontend_enabled`, `cli_enabled`, `local_preview`, `preview_approval`, `cli_preview`,
-`frontend_design`, `design_approval`, `frontend_preview`, `frontend_browser`, and `test_timing`.
+`frontend_design`, `frontend_preview`, `frontend_browser`, and `test_timing`.
+Preview approval is a single setting under Local preview. Legacy `design_approval`
+values supply that setting only when no preview approval is already resolved;
+they no longer create a separate approval gate before implementation. Reading
+older configuration does not rewrite it, and clearing the shared setting removes
+the legacy gate on save.
 `frontend_enabled` and `cli_enabled` accept `enabled` or `disabled` independently.
 Each explicit setting overrides the legacy `preview_target` (`frontend`, `cli`,
 or `both`). Without either setting or a legacy target, both types are enabled.
@@ -1620,7 +1624,7 @@ and model-stage guidance. **PRs, previews & tests** separates these decisions:
 | --- | --- |
 | Pull requests | Open automatically or on instruction; create draft or ready; Automerge or When I ask. |
 | Local preview | When to preview; preview approval before PR; Frontend and CLI submenus with independent enable/disable settings. |
-| Local preview → Frontend | Enabled/Disabled; interactive standalone HTML or in-app design; design approval; Fast reload or Build; automatic or requested browser opening. |
+| Local preview → Frontend | Enabled/Disabled; interactive standalone HTML or in-app design; Fast reload or Build; automatic or requested browser opening. |
 | Local preview → CLI | Enabled/Disabled; install locally or run from the repo. |
 | Tests | When tests run, plus Test runners configuration. |
 

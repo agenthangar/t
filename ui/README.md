@@ -223,11 +223,11 @@ Optional frontend_enabled/cli_enabled values override legacy preview_target for
 each type independently. Without flags or a legacy target, both are enabled.
 Read-only operations do not migrate storage. Shared timing and approval apply
 only to enabled types; with neither enabled, suppress shared preview guidance.
-Disabled frontend suppresses design, approval, method and browser guidance;
+Disabled frontend suppresses design, method and browser guidance;
 disabled CLI suppresses its method guidance. Enabling alone does not request a
 preview or change the separate PR-opening preference.
 The nested Frontend submenu contains Design approach (Separate HTML prototype /
-In the app), Design approval (Required / Not required), Preview method (Fast reload
+In the app), Preview method (Fast reload
 / Build), and Open in browser (Automatically / Only when I ask). The nested CLI
 submenu contains Preview method (Install locally / Run from the repo). Printed
 lists use the same indentation and hierarchy; summaries include nested choices.
@@ -237,7 +237,12 @@ Tests contains Run tests and Test runners; remove the separate Test runners row
 from the workflow menu. Nested runner edits share the same staged Save/discard
 transaction and preserve behavior changes made before or after them.
 Browser opening applies only once a local frontend preview is available; it does
-not start previews or change preview timing, design approval, or PR approval. Test timing
+not start previews or change preview timing or approval. Preview approval before PR
+is the single approval control under Local preview. Remove the separate Design
+approval control and generated pre-implementation gate. Legacy design_approval
+values resolve into preview_approval only if no preview approval already exists;
+explicit shared choices win. Read-only JSON retains raw keys, and clearing the
+shared choice must not revive a retired gate. Test timing
 chooses local during work, local before preview, local before PR, or PR CI;
 required repository checks always apply. Unset rows and picker choices say
 Not set. Task, repository and text instructions supply

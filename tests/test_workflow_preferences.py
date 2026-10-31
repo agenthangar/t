@@ -17,7 +17,9 @@ from test_workflow import workflow  # noqa: F401 -- isolated account configurati
                                     'local_preview': 'when_ready', 'preview_approval': 'required'}),
     ({'local_preview': 'before_pr'}, {'local_preview': 'when_ready', 'preview_approval': 'required'}),
     ({'preview': 'ui_changes'}, {'local_preview': 'when_ready'}),
-    ({'preview': 'before_implementation'}, {'design_approval': 'required'}),
+    ({'preview': 'before_implementation'}, {'preview_approval': 'required'}),
+    ({'design_approval': 'required'}, {'preview_approval': 'required'}),
+    ({'design_approval': 'continue'}, {'preview_approval': 'not_required'}),
     ({'preview': 'on_request'}, {'local_preview': 'on_request'}),
 ])
 def test_legacy_preferences_are_derived_without_mutation(workflow, legacy, expected):
@@ -32,7 +34,7 @@ def test_explicit_preferences_override_legacy_choices(workflow):
               'frontend_design': 'in_app', 'validation': 'full', 'test_timing': 'pr_ci'}
     effective = workflow.effective_behaviors(source)
     assert effective == {'pr_open': 'automatic', 'pr_state': 'ready', 'pr_merge': 'automatic',
-                         'design_approval': 'continue', 'frontend_design': 'in_app', 'test_timing': 'pr_ci'}
+                         'preview_approval': 'not_required', 'frontend_design': 'in_app', 'test_timing': 'pr_ci'}
     assert source['delivery'] == 'draft_pull_request' and source['validation'] == 'full'
 
 
@@ -42,14 +44,71 @@ def test_preview_before_pr_survives_legacy_ui_preview(workflow):
         'preview_approval': 'required'}
 
 
-def test_design_approval_does_not_assume_prototype_location(workflow):
+def test_legacy_design_preview_resolves_to_unified_approval_without_implementation_gate(workflow):
     effective = workflow.effective_behaviors({'preview': 'before_implementation'})
-    assert effective == {'design_approval': 'required'}
+    assert effective == {'preview_approval': 'required'}
     policy = dict(copy.deepcopy(workflow.DEFAULT), behaviors={'preview': 'before_implementation'})
     text = workflow._stage_text(policy)
-    assert 'design preview before substantial implementation' in text
-    assert 'wait for user feedback and approval' in text
+    assert 'Preview approval before PR:' in text
+    assert 'wait until the user has reviewed the local preview' in text
+    assert 'before substantial implementation' not in text
+    assert 'Design approval:' not in text
     assert 'standalone HTML' not in text
+
+
+@pytest.mark.parametrize('legacy', [
+    {'design_approval': 'required'}, {'design_approval': 'continue'},
+    {'preview': 'before_implementation'},
+    {'preview': 'before_implementation', 'design_approval': 'continue'},
+])
+@pytest.mark.parametrize('approval', ['required', 'not_required'])
+def test_explicit_unified_approval_overrides_legacy_design_rules(workflow, legacy, approval):
+    source = {**legacy, 'preview_approval': approval}
+    before = copy.deepcopy(source)
+    assert workflow.effective_behaviors(source) == {'preview_approval': approval}
+    policy = {**copy.deepcopy(workflow.DEFAULT), 'behaviors': source}
+    text = workflow._stage_text(policy)
+    assert workflow.BEHAVIORS['preview_approval']['choices'][approval][1] in text
+    assert 'Design approval:' not in text
+    assert 'before substantial implementation' not in text
+    assert source == before
+
+
+@pytest.mark.parametrize('legacy', [
+    {'local_preview': 'before_pr'}, {'delivery': 'local_review'},
+])
+def test_existing_preview_gate_wins_over_legacy_design_continue(workflow, legacy):
+    source = {**legacy, 'design_approval': 'continue'}
+    effective = workflow.effective_behaviors(source)
+    assert effective['preview_approval'] == 'required'
+    assert 'design_approval' not in effective
+
+
+@pytest.mark.parametrize('legacy', [
+    {'design_approval': 'required'}, {'design_approval': 'continue'},
+    {'preview': 'before_implementation'},
+    {'preview': 'before_implementation', 'design_approval': 'continue'},
+])
+def test_unified_approval_edits_do_not_resurrect_legacy_design_gate(workflow, legacy):
+    policy = {**copy.deepcopy(workflow.DEFAULT), 'behaviors': legacy}
+    before = copy.deepcopy(policy)
+    document = workflow.update(workflow.defaults(), policy)
+    document_before = copy.deepcopy(document)
+    workflow.render(document)
+    summary = workflow.summary_lines(policy)
+    assert not any(line.startswith('Design approval:') for line in summary)
+    assert workflow.policy_summary(policy)['behaviors'] == legacy
+    assert document == document_before
+    assert not workflow.config_path().exists()
+    cleared = workflow.update_behavior(policy, 'preview_approval', '')
+    assert 'preview_approval' not in cleared.get('behaviors', {})
+    assert 'design_approval' not in cleared.get('behaviors', {})
+    assert 'preview' not in cleared.get('behaviors', {})
+    assert 'Preview approval before PR:' not in workflow._stage_text(cleared)
+    changed = workflow.update_behavior(policy, 'preview_approval', 'not_required')
+    assert changed['behaviors'] == {'preview_approval': 'not_required'}
+    assert 'Design approval:' not in workflow._stage_text(changed)
+    assert policy == before
 
 
 def test_first_edit_materializes_choices_and_keeps_unrelated_preferences(workflow):
@@ -127,6 +186,10 @@ def test_each_new_preference_validates_and_renders_as_instructions(workflow, key
             assert 'Local preview applies to:' not in workflow._stage_text(policy)
             assert workflow.policy_summary(policy)['behaviors'] == {'preview_target': value}
             continue  # Legacy applicability renders as independent preview switches.
+        if key == 'design_approval':
+            assert policy['behaviors'] == {'preview_approval': 'required' if value == 'required' else 'not_required'}
+            assert 'Design approval:' not in workflow._stage_text(policy)
+            continue  # Legacy design approval renders as the unified preview gate.
         assert prose in workflow._stage_text(policy)
         assert workflow.BEHAVIORS[key]['label'] + ': ' + label in workflow.summary_lines(policy)
     policy['behaviors'][key] = 'invalid-value'
@@ -294,7 +357,7 @@ def test_preview_target_alone_does_not_request_preview_or_approval(workflow, tar
 
 def test_changing_preview_target_preserves_independent_methods_and_design(workflow):
     methods = {'frontend_preview': 'fast_reload', 'cli_preview': 'run',
-               'frontend_design': 'standalone_html', 'design_approval': 'required',
+               'frontend_design': 'standalone_html', 'preview_approval': 'required',
                'frontend_browser': 'automatic'}
     policy = {**copy.deepcopy(workflow.DEFAULT), 'behaviors': dict(methods)}
     for target in ('frontend', 'cli', 'both'):
@@ -422,7 +485,7 @@ def test_preview_switch_rejects_unknown_kind(workflow):
 ])
 def test_disabled_preview_kinds_hide_inactive_guidance_without_deleting_settings(workflow, frontend, cli, prefix):
     behaviors = {'preview_target': 'frontend', 'frontend_enabled': frontend, 'cli_enabled': cli,
-                 'frontend_design': 'in_app', 'design_approval': 'required',
+                 'frontend_design': 'in_app',
                  'frontend_preview': 'fast_reload', 'frontend_browser': 'automatic',
                  'cli_preview': 'install', 'local_preview': 'when_ready',
                  'preview_approval': 'required', 'pr_open': 'on_request', 'test_timing': 'pr_ci'}
@@ -434,7 +497,7 @@ def test_disabled_preview_kinds_hide_inactive_guidance_without_deleting_settings
     summary = workflow.summary_lines(policy)
     assert 'Local preview applies to:' not in text
     assert not any(line.startswith('Local preview applies to:') for line in summary)
-    for key in ('frontend_design', 'design_approval', 'frontend_preview', 'frontend_browser'):
+    for key in ('frontend_design', 'frontend_preview', 'frontend_browser'):
         assert (key in visible) == (frontend == 'enabled')
         assert any(line.startswith(workflow.BEHAVIORS[key]['label'] + ':') for line in summary) == (frontend == 'enabled')
     assert ('cli_preview' in visible) == (cli == 'enabled')

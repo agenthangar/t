@@ -3270,7 +3270,7 @@ _WORKFLOW_SECTIONS = {
     "tests": ("Tests", ("test_timing",)),
 }
 _WORKFLOW_PREVIEW_SUBMENUS = {
-    "frontend": ("Frontend", ("frontend_enabled", "frontend_design", "design_approval", "frontend_preview", "frontend_browser")),
+    "frontend": ("Frontend", ("frontend_enabled", "frontend_design", "frontend_preview", "frontend_browser")),
     "cli": ("CLI", ("cli_enabled", "cli_preview")),
 }
 _WORKFLOW_TOPICS = {
@@ -3285,7 +3285,6 @@ _WORKFLOW_TOPICS = {
     "frontend_preview": ("Preview method", "Refresh changes with a local dev server, or rebuild the preview."),
     "frontend_browser": ("Open in browser", "Open the frontend preview automatically, or only when requested."),
     "frontend_design": ("Design approach", "Try an interactive HTML prototype outside the app, or design in the app itself."),
-    "design_approval": ("Design approval", "Choose whether implementation waits for your approval of the design."),
     "test_timing": ("Run tests", "Choose when to run tests. Required PR checks still apply."),
 }
 _WORKFLOW_CHOICE_LABELS = {
