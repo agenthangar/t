@@ -37,7 +37,7 @@ t() {
         case ${2:-} in
           open|move|resume|list|ls|status|start|close|restart|push|pop|history|cd|read|view-plan|paste|search|open-app|goal|locate|create|clone|add|show|edit|remove|delete|rm|default|run|invoke|stop|setup|onboard|local|workflow|init|apply|check|login|install|trust|integrate|update|diagnose|advisories) label+=" $2" ;;
         esac ;;
-      open|ls|list|kill|restart|push|pop|resume|history|cd|beam|read|plan|paste|find|app|on|setup|install|login|trust|update|doctor|help|share|checkout|new|instructions|permissions|config) label+=" $1" ;;
+      open|ls|list|kill|restart|push|pop|resume|history|cd|beam|move|read|plan|paste|find|app|on|setup|install|login|trust|update|doctor|help|share|checkout|new|instructions|permissions|config) label+=" $1" ;;
     esac
     if [[ $1 == runners && $2 == runs ]]; then
       label+=" runs"
@@ -80,7 +80,7 @@ _t_dispatch() {
       push) shell_verb=push ;;
       resume) shell_verb=resume ;;
       cd) shell_verb=cd ;;
-      move) shell_verb=beam ;;
+      move) shell_verb=move ;;
       search) shell_verb=find ;;
       *) shell_verb= ;;
     esac
@@ -142,7 +142,7 @@ _t_dispatch() {
   # checks its own commands; prompting here for those would ask twice.
   local check_update=
   case "$shell_verb" in
-    open|pop|push|resume|find|cd|beam|remote|setup|config|host_config|repo_add|new|checkout|install|integrate)
+    open|pop|push|resume|find|cd|beam|move|remote|setup|config|host_config|repo_add|new|checkout|install|integrate)
       check_update=1 ;;
     repo_cd) check_update=1 ;;
   esac
@@ -177,6 +177,7 @@ _t_dispatch() {
     repo_cd) _t_repo_cd "${shell_args[@]}" ;;
     repo_add) _t_install repo "$@" ;;
     remote) _t_remote "${shell_args[@]}" ;;
+    move)   _t_session_move "${shell_args[@]}" ;;
     beam)   _t_beam_xlate "${shell_args[@]}" ;;     # → guarded local/remote transfer
     # setup runs in the bin (it only edits ${T_LOCAL_RC}), but on success the
     # SHELL must reload so the new cd aliases, host shorthand functions, and the
@@ -794,7 +795,11 @@ _t_open_app_claim() {
 }
 
 # Compatibility seam: the guarded move parser consumes --host directly.
-_t_beam_xlate() { _t_beam "$@"; }
+_t_beam_xlate() {
+  # The new discovery flag opts the released shortcut into canonical selection.
+  if [[ ${(M)@:#(-r|--remote)} != '' ]]; then _t_session_move "$@"
+  else _t_beam "$@"; fi
+}
 
 # help — show this command list, grouped by purpose
 # Each command's name + description are parsed live from the leading
@@ -814,7 +819,7 @@ _t_beam_xlate() { _t_beam "$@"; }
 # key for `on`), and slot/flags after. Pulls live from the ${(k)DEV_REPOS} /
 # ${(k)REMOTE_HOSTS} arrays so it stays current with ${T_LOCAL_RC}.
 _t() {
-  local -a nouns=(session issue share remote repo cursor hosts agentcore workflow runners config mcp profile policy agent system login help)
+  local -a nouns=(session move issue share remote repo cursor hosts agentcore workflow runners config mcp profile policy agent system login help)
   if (( CURRENT == 2 )); then
     _describe -t nouns 't command group' nouns
     return
@@ -947,7 +952,7 @@ _t() {
   # Old spellings remain usable once typed, but are not offered at top level.
   case $group in
     ls|list) action=list; group=session; (( first-- )) ;;
-    open|kill|restart|push|pop|resume|history|cd|beam|read|plan|paste|find|app)
+    open|kill|restart|push|pop|resume|history|cd|beam|move|read|plan|paste|find|app)
       action=$group; group=session; first=3 ;;
     new) group=repo; action=create; first=3 ;;
     checkout) group=repo; action=clone; first=3 ;;
@@ -1066,7 +1071,7 @@ _t() {
           read) flags+=(-d --dump -n --tail) ;;
           view-plan) flags+=(-a --all) ;;
           paste) flags+=(-p --pick -n --newest) ;;
-          move) flags+=(--host --from --here --fg -d --detach -p --pick -a --all -s --session) ;;
+          move) flags+=(-r --remote --host --from --here --fg -d --detach -p --pick -a --all -s --session) ;;
           resume) flags+=(-f --fg --app --cli -a --all -l --live -r --remote --days --host) ;;
         esac
         _values 'flag' "${flags[@]}"

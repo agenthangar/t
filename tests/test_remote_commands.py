@@ -38,9 +38,10 @@ if choice == 'cancel': sys.exit(130)
 if os.environ.get('CHANGE_ROWS'): Path(os.environ['CHANGE_ROWS']).touch()
 for row in rows:
     fields = row.split('\\t')
-    if (fields[0] if is_host else '/'.join(fields[:2])) == choice:
-        print(row)
-        break
+    key = fields[0] if is_host else '/'.join(fields[:2])
+    for wanted in choice.split(','):
+        if key == wanted or (not is_host and wanted == '#' + fields[-1]):
+            print(row)
 ''')
     stub.chmod(0o755)
     return dict(PICK_LOG=str(tmp_path / 'picker.jsonl'), PICK_HOST=host, PICK_SESSION=session)
@@ -90,7 +91,7 @@ def test_move_invalid_inputs_fail_before_ssh(zsh, flags):
 
 def test_remote_move_selects_current_cross_host_identity_and_destination(zsh, tmp_path):
     env = fake_picker(tmp_path)
-    result = zsh(HOSTS + ROWS + '''
+    result = zsh('DEV_HANDOFF[codex]=t; ' + HOSTS + ROWS + '''
 _t_beam() { print -r -- "MOVE ${(j:|:)@}"; print -r -- "EXPECTED $T_MOVE_EXPECT_ROW"; }
 t remote move; print rc=$?
 ''', _tty=True, **env)
@@ -104,14 +105,14 @@ t remote move; print rc=$?
         ['local', 'api-1'], ['alpha', 'api-2'], ['beta', 'api-2']]
     assert all('desktop' not in row for row in logs[0]['rows'])
     assert all(not row.startswith('alpha\t') for row in logs[1]['rows'])
-    assert '--no-multi' in logs[0]['args'] and '--no-multi' in logs[1]['args']
+    assert '--multi' in logs[0]['args'] and '--no-multi' in logs[1]['args']
     assert any('Move this session to which host?' in arg and
                'Destination host · current host: alpha' in arg for arg in logs[1]['args'])
 
 
 # Exercise the real fan-out and host-side selector worker. The source registers
 # the checkout under a different alias and path than the controller.
-REMOTE_ONLY = HOSTS + r'''
+REMOTE_ONLY = 'DEV_HANDOFF[codex]=t; ' + HOSTS + r'''
 _dev_session_rows_impl() {
   printf 'unrelated\t%s\tother-1\tdetached\tactive\tOther\tcodex\n' "$HOME/code/other"
   if [[ -n ${DEV_REPOS[remote-auth]:-} ]]; then
@@ -238,7 +239,7 @@ _t_resume_host_check here beta api 2; print local=$?
 ''')
     text = output(result)
     assert 'conflict=1' in text and 'same=0' in text and 'alias=0' in text and 'local=1' in text
-    assert 't remote move api 2 --from alpha --host beta' in text
+    assert 't session move api 2 --from alpha --host beta' in text
 
 
 @pytest.mark.parametrize('failure', ['stop', 'push', 'sync', 'receipt', 'ssh'])
@@ -316,7 +317,7 @@ _dev_remote_open() {{ print WRONG_ATTACH; }}
 _t_resume api --live --host beta; print rc=$?
 ''', _tty=True, FZF_LOG=str(tmp_path / 'fzf.log'))
     text = output(result)
-    assert 'rc=1' in text and 't remote move api' in text, text
+    assert 'rc=1' in text and 't session move api' in text, text
     assert 'WRONG_' not in text and 'send-keys' not in zsh.log.read_text()
 
 
@@ -616,3 +617,175 @@ t session move api 2 --from alpha --host beta --detach
 def test_handoff_shell_policy_validation(zsh, agent, value, success):
     result = zsh(f'DEV_HANDOFF[{agent}]={value}; _t_handoff_check {agent} alpha beta')
     assert (result.returncode == 0) is success
+
+
+@pytest.mark.parametrize('command', ['t session move', 't move'])
+def test_canonical_move_selects_inside_agent_before_destination(zsh, tmp_path, command):
+    env = fake_picker(tmp_path, session='local/api-2', host='alpha')
+    result = zsh('DEV_HANDOFF[codex]=t; ' + HOSTS + SETUP + '''
+_dev_self_sid() { print codex-id; }
+_dev_rows_all() { print -u2 WRONG_REMOTE_SCAN; return 99; }
+_t_beam() { print -r -- "MOVE ${(j:|:)@}"; }
+''' + command + '; print rc=$?', _tty=True, **env)
+    text = output(result)
+    assert 'rc=0' in text and 'MOVE --session|codex-id|--host|alpha' in text, text
+    assert 'WRONG_REMOTE_SCAN' not in text
+    logs = [json.loads(line) for line in (tmp_path / 'picker.jsonl').read_text().splitlines()]
+    assert len(logs) == 2 and '--multi' in logs[0]['args'] and '--no-multi' in logs[1]['args']
+
+
+def test_move_batch_excludes_all_source_aliases_and_detaches(zsh, tmp_path):
+    env = fake_picker(tmp_path, session='alpha/api-2,beta/api-2', host='gamma')
+    result = zsh('DEV_HANDOFF[codex]=t; ' + HOSTS + ROWS + '''
+REMOTE_HOSTS[alpha-alias]=user@alpha
+REMOTE_HOSTS[gamma]=user@gamma
+_t_beam() { print -r -- "MOVE ${(j:|:)@}"; print -r -- "EXPECTED $T_MOVE_EXPECT_ROW"; }
+t session move --remote; print rc=$?
+''', _tty=True, **env)
+    text = output(result)
+    assert 'rc=0' in text and '2 completed; 0 failed; 0 unattempted' in text, text
+    assert text.count('MOVE ') == 2
+    assert 'MOVE --session|remote-id|--detach|--from|alpha|--host|gamma' in text
+    assert 'MOVE --session|remote-id|--detach|--from|beta|--host|gamma' in text
+    assert 'EXPECTED remote-id\t/home/source/code/api' in text
+    assert 'EXPECTED remote-id\t/home/dest/code/api' in text
+    logs = [json.loads(line) for line in (tmp_path / 'picker.jsonl').read_text().splitlines()]
+    assert [row.split('\t')[0] for row in logs[1]['rows']] == ['gamma']
+
+
+@pytest.mark.parametrize('failure', [17, 130])
+def test_move_batch_stops_and_identifies_remaining_sessions(zsh, tmp_path, failure):
+    env = fake_picker(tmp_path, session='local/api-1,alpha/api-2,beta/api-2', host='gamma')
+    result = zsh('DEV_HANDOFF[codex]=t; ' + HOSTS + ROWS + f'''
+REMOTE_HOSTS[gamma]=user@gamma
+_t_beam() {{ print -r -- "MOVE $T_MOVE_EXPECT_ROW"; [[ $* == *--from\\ alpha* ]] && return {failure}; return 0; }}
+t move -r; print rc=$?
+''', _tty=True, **env)
+    text = output(result)
+    assert f'rc={failure}' in text, text
+    assert text.count('MOVE ') == 2 and '1 completed;' in text and '1 unattempted' in text
+    assert 'completed: local/api-1 (local-id)' in text
+    assert f'{"cancelled" if failure == 130 else "failed"}: alpha/api-2 (remote-id)' in text
+    assert 'unattempted: beta/api-2 (remote-id)' in text
+
+
+@pytest.mark.parametrize('change', ['stale', 'failed-scan', 'native'])
+def test_move_batch_preflights_every_selection_before_mutation(zsh, tmp_path, change):
+    env = fake_picker(tmp_path, session='local/api-1,alpha/api-2', host='beta')
+    env['CHANGE_ROWS'] = str(tmp_path / 'changed')
+    setup = '''
+_t_remote_move_rows() {
+  if [[ -f $CHANGE_ROWS && $1 == alpha ]]; then
+    _dev_rows_all | head -n 1
+  else _dev_rows_all; fi
+}
+''' if change == 'stale' else ('''
+_t_remote_move_rows() { [[ -f $CHANGE_ROWS && $1 == alpha ]] && return 1; _dev_rows_all; }
+''' if change == 'failed-scan' else 'DEV_HANDOFF[codex]=native;')
+    result = zsh('DEV_HANDOFF[codex]=t; ' + HOSTS + ROWS + setup + '''
+_t_beam() { print WRONG_MOVE; }
+t session move -r; print rc=$?
+''', _tty=True, **env)
+    assert 'rc=1' in output(result) and 'WRONG_MOVE' not in output(result), output(result)
+
+
+def test_move_batch_keeps_snapshot_identity_for_identical_display_rows(zsh, tmp_path):
+    env = fake_picker(tmp_path, session='#2', host='beta')
+    result = zsh(HOSTS + '''
+_dev_rows_all() {
+ printf 'alpha\tone\t/path/one\tapi-2\tattached\tactive\tSame task\tclaude\n'
+ printf 'alpha\ttwo\t/path/two\tapi-2\tattached\tactive\tSame task\tclaude\n'
+}
+_t_remote_move_rows() { _dev_rows_all; }
+_t_beam() { print -r -- "MOVE ${(j:|:)@}"; print -r -- "EXPECTED $T_MOVE_EXPECT_ROW"; }
+t move -r; print rc=$?
+''', _tty=True, **env)
+    text = output(result)
+    assert 'rc=0' in text and 'MOVE --session|two|' in text and 'EXPECTED two\t/path/two' in text, text
+
+
+def test_move_batch_deduplicates_repeated_selection_and_aliases(zsh, tmp_path):
+    env = fake_picker(tmp_path, session='alpha/api-2,alpha/api-2,alpha-alias/api-2', host='beta')
+    result = zsh(HOSTS + '''
+REMOTE_HOSTS[alpha-alias]=user@alpha
+_dev_rows_all() {
+ printf 'alpha\tone\t/path/one\tapi-2\tattached\tactive\tTask\tclaude\n'
+ printf 'alpha-alias\tone\t/path/one\tapi-2\tattached\tactive\tTask\tclaude\n'
+}
+_t_remote_move_rows() { _dev_rows_all; }
+_t_beam() { print -r -- "MOVE ${(j:|:)@}"; }
+t move -r; print rc=$?
+''', _tty=True, **env)
+    assert 'rc=0' in output(result) and output(result).count('MOVE ') == 1, output(result)
+
+
+def test_move_batch_runs_current_session_last(zsh, tmp_path):
+    env = fake_picker(tmp_path, session='local/api-1,alpha/api-2', host='beta')
+    result = zsh('DEV_HANDOFF[codex]=t; ' + HOSTS + ROWS + '''
+_dev_self_sid() { print local-id; }
+_t_beam() { print -r -- "MOVE ${(j:|:)@}"; }
+t move -r; print rc=$?
+''', _tty=True, **env)
+    text = output(result)
+    moves = [line for line in text.splitlines() if line.startswith('MOVE ')]
+    assert 'rc=0' in text and len(moves) == 2, text
+    assert 'remote-id' in moves[0] and 'local-id' in moves[1]
+
+
+def test_move_root_alias_operational_parser_route(t_mod, monkeypatch):
+    monkeypatch.setattr(t_mod, 'Config', lambda: object())
+    monkeypatch.setattr(t_mod, '_t_auto_update', lambda argv: None)
+    seen = []
+    monkeypatch.setattr(t_mod, 'cmd_pending', lambda cfg, args: seen.append(args) or 23)
+    assert t_mod.main(['move', '--remote', '--host', 'beta']) == 23
+    assert seen[0].verb == 'beam' and seen[0].remote and seen[0].host == 'beta'
+
+
+def test_move_remote_discovery_flag_does_not_change_receive_engine(zsh):
+    result = zsh(HOSTS + '''
+_t_beam() { print -r -- "MOVE ${(j:|:)@}"; }
+t move --remote api 2 --from alpha --host beta --detach; print rc=$?
+''')
+    text = output(result)
+    assert 'rc=0' in text and 'MOVE api|2|--from|alpha|--host|beta|--detach' in text, text
+    assert '--remote' not in text
+
+
+def test_move_from_local_keeps_source_local(zsh):
+    result = zsh(HOSTS + '''
+_t_beam() { print -r -- "MOVE ${(j:|:)@}"; }
+t session move api 2 --from local --host beta --detach; print rc=$?
+''')
+    text = output(result)
+    assert 'rc=0' in text and 'MOVE api|2|--detach|--host|beta' in text, text
+    assert '--from' not in text
+
+
+def test_move_remote_unique_exact_target_remains_scriptable(zsh):
+    result = zsh(HOSTS + ROWS + '''
+_dev_rows_all() { printf 'alpha\tid\t%s\tapi-2\tattached\tactive\tTask\tclaude\n' "$HOME/code/api"; }
+_t_beam() { print -r -- "MOVE ${(j:|:)@}"; }
+t move api 2 -r --host beta --detach; print rc=$?
+''')
+    text = output(result)
+    assert 'rc=0' in text and 'MOVE --session|id|--detach|--from|alpha|--host|beta' in text, text
+
+
+def test_move_batch_rejects_foreground_before_mutation(zsh, tmp_path):
+    env = fake_picker(tmp_path, session='local/api-1,alpha/api-2', host='beta')
+    result = zsh('DEV_HANDOFF[codex]=t; ' + HOSTS + ROWS + '''
+_t_beam() { print WRONG_MOVE; }
+t move -r --fg; print rc=$?
+''', _tty=True, **env)
+    assert 'rc=2' in output(result) and '--fg requires a single session' in output(result)
+    assert 'WRONG_MOVE' not in output(result)
+
+
+def test_legacy_beam_remote_flag_uses_canonical_discovery(zsh):
+    result = zsh('''
+_t_session_move() { print -r -- "CANONICAL ${(j:|:)@}"; }
+_t_beam() { print WRONG_ENGINE; }
+t beam -r --host beta; print rc=$?
+''')
+    assert 'rc=0' in output(result) and 'CANONICAL -r|--host|beta' in output(result)
+    assert 'WRONG_ENGINE' not in output(result)

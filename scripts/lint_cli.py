@@ -19,7 +19,7 @@ CONTRACT = ROOT / "ui" / "command-contract.json"
 # A new public command must enter a noun/verb family instead of growing this set.
 LEGACY_SHORTCUTS = frozenset({
     "help", "open", "app", "ls", "list", "kill", "restart", "push", "pop",
-    "resume", "history", "cd", "beam", "read", "plan", "paste", "find", "on",
+    "resume", "history", "cd", "beam", "move", "read", "plan", "paste", "find", "on",
     "setup", "new", "checkout", "instructions", "login",
     "install", "integrate", "update", "permissions", "trust", "doctor",
 })
