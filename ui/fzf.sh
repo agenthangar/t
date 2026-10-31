@@ -388,7 +388,7 @@ SH
     export FZF_API_KEY
     FZF_API_KEY=$(python3 -c 'import secrets; print(secrets.token_hex(32))')
     # shellcheck disable=SC2016
-    set -- --listen=127.0.0.1:0 --bind='k:unbind(enter)+unbind(k)+unbind(space)+unbind(tab)+unbind(ctrl-a)+unbind(ctrl-f)+unbind(ctrl-l)+execute(python3 "$T_HOME/libexec/t_picker_close.py" close {})' "$@"
+    set -- --listen=127.0.0.1:0 --bind='start:unbind(change),change:transform-query(cat "$T_PICKER_VIEWS/action-query-locked"),k:rebind(change)+unbind(enter)+unbind(k)+unbind(space)+unbind(tab)+unbind(ctrl-a)+unbind(ctrl-f)+unbind(ctrl-l)+execute(python3 "$T_HOME/libexec/t_picker_close.py" close {} {q})' "$@"
   fi
   _t_fzf --multi --no-hscroll --margin="$_t_picker_margin" --delimiter="$(printf '\t')" --with-nth=-1 \
     --bind="enter:accept,esc:abort,ctrl-c:abort,space:toggle+down,tab:toggle+down,shift-tab:up${_t_picker_preview_bind}" \

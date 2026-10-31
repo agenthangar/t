@@ -72,10 +72,21 @@ def picker():
             return subprocess.run(['tmux', '-S', socket, *args], env=env, text=True,
                                   capture_output=True, check=check)
 
-        def start(empty=False, width=90, height=26, mode='open', shell='/bin/sh', *, hostile_opts=False, profile='filtered', monochrome=False, auth_warning=False):
+        def start(empty=False, width=90, height=26, mode='open', shell='/bin/sh', *, hostile_opts=False, profile='filtered', monochrome=False, auth_warning=False, close_rc=0, slow_update=False):
             env['T_HOME'] = str(ROOT)
+            if slow_update:
+                library = root / 'slow/libexec'
+                library.mkdir(parents=True)
+                for source in (ROOT / 'libexec').glob('*.py'):
+                    if source.name == 't_picker_close.py':
+                        text = source.read_text().replace("state = picker.wait('', total)",
+                            "time.sleep(.5)\n            state = picker.wait('', total)")
+                        (library / source.name).write_text(text)
+                    else:
+                        (library / source.name).symlink_to(source)
+                env['T_HOME'] = str(library.parent)
             env['T_PICKER_KILL_CALLBACK'] = str(root / 'close.zsh')
-            (root / 'close.zsh').write_text('print -r -- "$1" >> "$HOME/closed"\n')
+            (root / 'close.zsh').write_text('print -r -- "$1" >> "$HOME/closed"\nexit ' + str(close_rc) + '\n')
             env.pop('T_PICKER_AUTH_HOSTS', None)
             env.pop('T_PICKER_COLUMNS', None)
             if auth_warning:
@@ -636,4 +647,49 @@ def test_open_kill_preserves_query_and_hidden_marks(picker):
     assert 'open > Beta' in screen
     keys('Bspace', 'Bspace', 'Bspace', 'Bspace')
     wait('1/1 (1)', focused='Alpha')
+    assert [row.split('\t')[1] for row in finish()] == ['api-2']
+
+
+@pytest.mark.parametrize('close_rc', [1, 130])
+def test_open_failed_or_canceled_kill_keeps_rows_marks_and_picker(picker, close_rc):
+    start, wait, keys, finish = picker
+    start(close_rc=close_rc)
+    wait('2/2 (0)')
+    keys('Space')
+    wait('(1)')
+    keys('k')
+    wait('Close: ' + ('canceled' if close_rc == 130 else 'failed'))
+    wait('2/2 (1)')
+    assert [row.split('\t')[1] for row in finish()] == ['api-2']
+
+
+def test_open_kill_last_row_leaves_empty_picker_until_cancel(picker):
+    start, wait, keys, finish = picker
+    start()
+    wait('2/2 (0)')
+    keys('k')
+    wait('Close: api-2 closed')
+    wait('1/1 (0)')
+    keys('k')
+    wait('Close: web-4 closed')
+    wait('0/0 (0)')
+    assert finish('Escape', status=130) == []
+
+
+def test_open_kill_temporarily_locks_query_then_accepts_typing(picker):
+    start, wait, keys, finish = picker
+    start(slow_update=True)
+    wait('2/2 (0)')
+    keys('Space')
+    keys('-l', 'Beta')
+    wait('1/2 (1)')
+    keys('k')
+    wait('1/1 (0)')  # Deliberately held during legacy mark restoration.
+    keys('-l', 'x')
+    wait('Close: web-4 closed')
+    screen = wait('0/1 (1)')
+    assert 'open > Beta' in screen and 'Betax' not in screen
+    keys('Bspace', 'Bspace', 'Bspace', 'Bspace')
+    keys('-l', 'Alpha')
+    wait('1/1 (1)')
     assert [row.split('\t')[1] for row in finish()] == ['api-2']

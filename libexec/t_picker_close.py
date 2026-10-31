@@ -75,6 +75,13 @@ class Picker:
             time.sleep(.01)
 
 
+def lock_query(directory, query):
+    path = directory / 'action-query-locked'
+    temporary = directory / 'action-query-next'
+    temporary.write_text(query)
+    temporary.replace(path)
+
+
 def update(directory, changed):
     """Run after fzf's execute returns: its HTTP API needs a running event loop."""
     count = len((directory / 'all').read_text().splitlines())
@@ -88,17 +95,19 @@ def update(directory, changed):
             total = len((directory / 'current').read_text().splitlines())
             # 0.44 clears marks on reload. Restore exact surviving identities in
             # selection order, including marks hidden by the current query.
+            lock_query(directory, '')
             picker.request('reload-sync(cat "$T_PICKER_CURRENT")+clear-query')
             state = picker.wait('', total)
             positions = {identity(item['text']): n for n, item in enumerate(state['matches'], 1)}
             actions = ['deselect-all']
             actions += [f'pos({positions[key]})+select' for key in marks if key in positions]
+            lock_query(directory, query)
             actions.append('transform-query(cat "$T_PICKER_VIEWS/action-query")')
             picker.request('+'.join(actions))
             state = picker.wait(query, total)
             position = min(before['position'] + 1, max(1, state['matchCount']))
             picker.request(f'pos({position})')
-        picker.request(HEADER + '+' + '+'.join(f'rebind({key})' for key in KEYS))
+        picker.request(HEADER + '+unbind(change)+' + '+'.join(f'rebind({key})' for key in KEYS))
     except (OSError, ValueError, KeyError, TimeoutError):
         # Do not let Enter accidentally accept a different row after an update
         # failure. Esc remains available; no additional session action is run.
@@ -113,7 +122,8 @@ def update(directory, changed):
         (directory / 'update.pid').unlink(missing_ok=True)
 
 
-def close(directory, row):
+def close(directory, row, query=''):
+    lock_query(directory, query)
     row = next((line for line in (directory / 'current').read_text().splitlines()
                 if identity(line) == identity(row)), '')
     if not row:
@@ -148,6 +158,6 @@ def close(directory, row):
 if __name__ == '__main__':
     root = Path(os.environ['T_PICKER_VIEWS'])
     if sys.argv[1] == 'close':
-        close(root, sys.argv[2])
+        close(root, sys.argv[2], sys.argv[3])
     else:
         update(root, sys.argv[2] == '1')
