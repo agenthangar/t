@@ -262,6 +262,9 @@ A live terminal conversation attaches to its existing owner. A desktop or
 foreground owner offers an explicit handoff path. An inactive conversation reuses
 its original workspace only when recorded ownership and revision still match;
 otherwise it gets a new slot branch based on the verified historical commit.
+For example, `t session resume t 4` can resume an inactive conversation into a
+new slot while another conversation uses slot 4. Codex writer checks protect
+the selected conversation and its destination workspace.
 Existing dirty work stays in its source workspace. If the historical commit is
 unavailable, the picker explicitly offers current main or cancel. Legacy history
 can lack commit, host, title, or PR evidence; these details stay unknown. Associated
