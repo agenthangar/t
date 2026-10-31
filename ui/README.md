@@ -207,8 +207,8 @@ CLI development install/run and frontend fast-reload/rebuild choices are separat
 Frontend design chooses an interactive standalone HTML prototype or design in the
 app, with a separate feedback gate before substantial implementation. Test timing
 chooses local during work, local before preview, local before PR, or PR CI;
-required repository checks always apply. Unset rows say Existing rules, with
-Use existing rules in the picker. Task, repository and text instructions supply
+required repository checks always apply. Unset rows and picker choices say
+Not set. Task, repository and text instructions supply
 the behavior. Menus show concise choices without routine explanatory preambles.
 Reserve inheritance wording for the actual Use global default repository action.
 Keep timing choices short: When ready, When I ask, After checks pass, and
@@ -235,6 +235,10 @@ Saved enabled multi-model workflows use the implementation model for Codex root
 launches and guarded resumes. An automatic implementation effort resolves to medium
 for the main conversation; explicit efforts remain explicit. These scoped values
 override stale resume checkpoints, including a previous planning model or effort.
+Use the same stage-aware effort labels in menus, choices, save review and printed
+lists: By task for planning, By task · starts Medium for main work, and One level
+below planning for relative review effort. Task-based effort remains agent guidance;
+the main launch fallback does not claim automatic runtime effort switching.
 Unsaved recommended defaults supply no launch overrides. Claude launch settings
 are not inferred from Codex stage models. Planning and review remain bounded
 delegations with explicit model/effort and fresh context when required by the host.

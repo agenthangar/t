@@ -966,8 +966,10 @@ compatibility aliases. Choose
 with `gpt-6.1-sol`, and review with `gpt-6-astra`. **Edit default workflow** and
 **Edit named workflow** give each stage separate model and reasoning-effort controls.
 Saved multi-model workflows start and resume Codex's main conversation on the
-implementation model, shown as **Main work**. Automatic main effort starts at
-**medium**. Planning and review use bounded helpers with explicit model and effort;
+implementation model, shown as **Main work**. Effort labels distinguish **By task**
+for planning from **By task · starts Medium** for main work. Task-based effort is
+agent guidance; `t` sets the launch value and does not change effort mid-turn.
+Planning and review use bounded helpers with explicit model and effort;
 the main conversation handles implementation, fixes and follow-ups.
 **Use this workflow** enables or suppresses the entire workflow. **Use multiple models** separately
 turns staged model selection and delegation on or off while retaining the selected
@@ -1561,7 +1563,7 @@ and model-stage guidance. **PRs, previews & tests** separates these decisions:
 | Frontend design | Interactive standalone HTML outside the app or design within the app; wait for feedback or proceed. |
 | Tests | Locally during development, before local preview, before opening a PR, or in PR CI. |
 
-**Use existing rules** leaves a decision to your task, repository rules and text
+**Not set** leaves a decision to your task, repository rules and text
 instructions. It does not inherit an individual value from the global workflow;
 **Use global default** changes the repository's whole workflow assignment.
 These preferences never bypass required checks. Selecting PR CI avoids routine

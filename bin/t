@@ -2393,7 +2393,7 @@ def _workflow_behaviors_menu(ui, helper, policy):
         behaviors = helper["effective_behaviors"](changed.get("behaviors", {}))
         rows = [(key, label + " ›") for key, (label, fields) in _WORKFLOW_SECTIONS.items()] + [("back", "Back")]
         values = {key: "; ".join(_WORKFLOW_TOPICS[field][0] + ": " + _workflow_choice(helper, field, behaviors[field])
-                                for field in fields if field in behaviors) or "Existing rules"
+                                for field in fields if field in behaviors) or "Not set"
                   for key, (label, fields) in _WORKFLOW_SECTIONS.items()}
         section = ui.pick("PRs, previews & tests", rows, values=values, default=focus)
         if section in (None, "back"):
@@ -2404,13 +2404,13 @@ def _workflow_behaviors_menu(ui, helper, policy):
         while True:
             behaviors = helper["effective_behaviors"](changed.get("behaviors", {}))
             fields_rows = [(key, _WORKFLOW_TOPICS[key][0]) for key in fields] + [("back", "Back")]
-            values = {key: _workflow_choice(helper, key, behaviors[key]) if key in behaviors else "Existing rules" for key in fields}
+            values = {key: _workflow_choice(helper, key, behaviors[key]) if key in behaviors else "Not set" for key in fields}
             choice = ui.pick(label, fields_rows, values=values, default=field_focus)
             if choice in (None, "back"):
                 break
             field_focus = next(i for i, row in enumerate(fields_rows) if row[0] == choice)
             spec = helper["BEHAVIORS"][choice]
-            options = [("", "Use existing rules")] + [(key, _workflow_choice(helper, choice, key)) for key in spec["choices"]]
+            options = [("", "Not set")] + [(key, _workflow_choice(helper, choice, key)) for key in spec["choices"]]
             selected = ui.pick(_WORKFLOW_TOPICS[choice][0], options,
                                default=next(i for i, row in enumerate(options) if row[0] == behaviors.get(choice, "")))
             if selected is not None and selected != behaviors.get(choice, ""):
@@ -2460,19 +2460,17 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
             rows += [("main_model", agent.title() + " default model"), ("main_effort", "Reasoning effort")]
         rows.append(("behaviors", "PRs, previews & tests ›"))
         rows += [("runners", "Test runners"), ("instructions", "Text instructions"), ("edit", "Advanced JSON editor"), ("back", "Back")]
-        values = {stage: policy[stage]["model"] + " · " + _workflow_effort(policy[stage]["effort"])
+        values = {stage: policy[stage]["model"] + " · " + _workflow_effort(policy[stage]["effort"], stage)
                   for stage in ("planning", "implementation", "review")}
         values["enabled"] = "enabled" if policy["enabled"] else "disabled"
         values["stages_enabled"] = "Yes · main, planning, review" if policy.get("stages_enabled", True) else "No · one model"
-        if agent == "codex" and policy.get("stages_enabled", True) and policy["implementation"]["effort"] == "auto":
-            values["implementation"] = policy["implementation"]["model"] + " · medium (automatic)"
         models, efforts = getattr(cfg, "models", {}), getattr(cfg, "efforts", {})
         values["main_model"] = defaults.get("model") or "Agent default" + (": " + models[agent] if models.get(agent) else "")
         values["main_effort"] = defaults.get("effort") or ("Default for this model" if defaults.get("model") else
                                                             "Agent default" + (": " + efforts[agent] if efforts.get(agent) else ""))
         selected = helper["effective_behaviors"](policy.get("behaviors", {}))
         count = sum(key in _WORKFLOW_TOPICS for key in selected)
-        values["behaviors"] = f"{count} choices set" if count else "Existing rules"
+        values["behaviors"] = f"{count} choices set" if count else "Not set"
         values["instructions"] = (f"text · {len(policy['instructions'].splitlines())} lines · Enter to edit"
                                   if policy.get("instructions") else "Add text instructions")
         values["runners"] = helper["runners_summary"](policy)
@@ -2510,7 +2508,7 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
         else:
             stage = choice
             field = ui.pick(_workflow_stage_title(stage), [("model", "Model"), ("effort", "Reasoning effort"), ("back", "Back")],
-                            values={"model": policy[stage]["model"], "effort": _workflow_effort(policy[stage]["effort"])})
+                            values={"model": policy[stage]["model"], "effort": _workflow_effort(policy[stage]["effort"], stage)})
             if field in (None, "back"):
                 continue
             if field == "model":
@@ -2518,8 +2516,7 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
             else:
                 special = "one-level-lower" if stage == "review" else "auto"
                 levels = [special, *helper["EFFORTS"]]
-                labels = {"auto": "Let the agent choose for the task", "one-level-lower": "One level below planning"}
-                picked = ui.pick(_workflow_stage_title(stage) + " reasoning effort", [(level, labels.get(level, level)) for level in levels],
+                picked = ui.pick(_workflow_stage_title(stage) + " reasoning effort", [(level, _workflow_effort(level, stage)) for level in levels],
                                  default=levels.index(policy[stage]["effort"]))
             if picked is not None:
                 changed[stage][field] = picked
@@ -2732,7 +2729,7 @@ def _workflow_review(document):
         lines.append(f"Workflow {name}: {'enabled' if policy['enabled'] else 'disabled'}")
         lines.extend("  " + line for line in helper["summary_lines"](policy))
         if policy.get("stages_enabled", True):
-            lines.extend(f"  {_workflow_stage_title(stage)}: {policy[stage]['model']} · {policy[stage]['effort']}"
+            lines.extend(f"  {_workflow_stage_title(stage)}: {policy[stage]['model']} · {_workflow_effort(policy[stage]['effort'], stage)}"
                          for stage in ("planning", "implementation", "review"))
         lines.append("  Test runners: " + helper["runners_summary"](policy))
         if policy.get("instructions"):
@@ -2744,7 +2741,7 @@ def _workflow_review(document):
         if "inline" in entry:
             lines.append(f"  Workflow: {'enabled' if entry['inline']['enabled'] else 'disabled'}")
             if entry['inline'].get("stages_enabled", True):
-                lines.extend(f"  {_workflow_stage_title(stage)}: {entry['inline'][stage]['model']} · {entry['inline'][stage]['effort']}"
+                lines.extend(f"  {_workflow_stage_title(stage)}: {entry['inline'][stage]['model']} · {_workflow_effort(entry['inline'][stage]['effort'], stage)}"
                              for stage in ("planning", "implementation", "review"))
             lines.append("  Test runners: " + helper["runners_summary"](entry['inline']))
             if entry["inline"].get("instructions"):
@@ -3228,8 +3225,10 @@ def _workflow_choice(helper, key, value):
     return _WORKFLOW_CHOICE_LABELS.get(value, helper["BEHAVIORS"][key]["choices"][value][0])
 
 
-def _workflow_effort(value):
-    return {"auto": "Chosen for the task", "one-level-lower": "One level below planning"}.get(value, value.capitalize())
+def _workflow_effort(value, stage=None):
+    if value == "auto":
+        return "By task · starts Medium" if stage == "implementation" else "By task"
+    return {"one-level-lower": "One level below planning"}.get(value, value.capitalize())
 
 
 def _workflow_stage_title(stage):
@@ -3264,7 +3263,7 @@ def _workflow_print(helper, result, catalogue=False):
             print("  " + label)
             for key in fields:
                 value = behaviors.get(key)
-                print("    " + _WORKFLOW_TOPICS[key][0] + ": " + (_workflow_choice(helper, key, value) if value else "Existing rules"))
+                print("    " + _WORKFLOW_TOPICS[key][0] + ": " + (_workflow_choice(helper, key, value) if value else "Not set"))
         for key, value in behaviors.items():
             if key not in _WORKFLOW_TOPICS:
                 print("  Other saved rule — " + helper["BEHAVIORS"][key]["label"] + ": " + _workflow_choice(helper, key, value))
@@ -3272,8 +3271,7 @@ def _workflow_print(helper, result, catalogue=False):
             print("Models: Codex main work + planning/review helpers")
             print("\n".join(_table_lines(("STEP", "MODEL", "REASONING"),
                 [(_workflow_stage_title(stage), policy[stage]["model"],
-                  "medium (automatic)" if stage == "implementation" and policy[stage]["effort"] == "auto"
-                  else _workflow_effort(policy[stage]["effort"]))
+                  _workflow_effort(policy[stage]["effort"], stage))
                  for stage in ("planning", "implementation", "review")])))
         else:
             print("Models: one model per session (saved stage choices retained)")

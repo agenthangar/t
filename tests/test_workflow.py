@@ -1212,6 +1212,6 @@ def test_workflow_print_precedence_and_reasoning(workflow, t_mod, monkeypatch, c
     text = capsys.readouterr().out
     assert text.index('Text instructions:') < text.index('PRs, previews & tests:')
     assert 'Wait for approval' in text and 'Before PR, with approval' in text
-    assert 'Chosen for the task' in text and 'One level below planning' in text
-    assert 'Main work' in text and 'medium (automatic)' in text
+    assert 'By task' in text and 'One level below planning' in text
+    assert 'Main work' in text and 'By task · starts Medium' in text
     assert 'one-level-lower' not in text and 'Test runners:' in text and 'Propagation:' in text

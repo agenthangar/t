@@ -83,7 +83,7 @@ def test_development_flow_keeps_section_focus_without_chatter(workflow, t_mod):
     assert 'behaviors' not in policy
     first = ui.views[0]
     assert first[0] == 'PRs, previews & tests'
-    assert set(first[2]['values'].values()) == {'Existing rules'}
+    assert set(first[2]['values'].values()) == {'Not set'}
     assert dict(first[1]) == {'pull_requests': 'Pull requests ›', 'local_preview': 'Local preview ›',
                               'frontend_design': 'Frontend design ›', 'tests': 'Tests ›', 'back': 'Back'}
     assert dict(ui.views[2][1])['draft'] == 'Draft'
