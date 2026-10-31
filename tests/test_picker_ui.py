@@ -616,7 +616,7 @@ def test_open_kill_key_ignores_marks_and_accepts_focus(picker, width, height, ma
     keys('Up', 'Up', 'Down')
     keys('k')
     wait('Close: web-4 closed', absent=('Beta full',))
-    wait('1/1 (1)' if marked else '1/1 (0)', focused='Alpha')
+    wait('1/1 (1)' if marked else '1/1 (0)', focused='api  2')
     selected = finish()
     assert [row.split('\t')[1] for row in selected] == ['api-2']
 

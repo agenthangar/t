@@ -9,6 +9,7 @@ import time
 import urllib.request
 
 from t_picker_filters import render
+from t_progress import spinner as _spinner
 from t_session_details import clip_columns
 
 KEYS = ('enter', 'k', 'space', 'tab', 'ctrl-a', 'ctrl-f', 'ctrl-l')
@@ -131,8 +132,9 @@ def close(directory, row, query=''):
         changed = False
     else:
         try:
-            result = subprocess.run(['zsh', '-f', os.environ['T_PICKER_KILL_CALLBACK'], row],
-                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            with _spinner('Closing session'):
+                result = subprocess.run(['zsh', '-f', os.environ['T_PICKER_KILL_CALLBACK'], row],
+                                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             code, output = result.returncode, result.stdout
         except KeyboardInterrupt:
             code, output = 130, ''
