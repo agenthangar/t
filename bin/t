@@ -12017,14 +12017,14 @@ EXPLICIT PUSH AND PULL
     sp.add_argument("--json", action="store_true", help="print paginated metadata without launching")
 
     sp = sub.add_parser("resume", help="select and resume saved conversations",
-        description='Resume saved conversations in fresh slots and attach. Infer the current repository; '
+        description='Resume saved conversations. A plain slot target opens conversation history. Infer the current repository; '
             'outside one, browse local and remote repositories. Enter selects; Space/Tab marks several. Live selections '
             'attach to their owner. Repositories are cloned only after selection. Cross-host defaults: Claude uses t; Codex uses native '
             'desktop Hand off. Choose the mechanism in t config.',
 
         epilog="""EXAMPLES
   %(prog)s                   Browse the current repository
-  %(prog)s api 2             Choose a conversation associated with api slot 2
+  %(prog)s api 2             Open conversation history for api slot 2
   %(prog)s --all --days all   Browse all saved history""",
         help_details=f"""DETAILS
 
@@ -12051,10 +12051,12 @@ EXPLICIT PUSH AND PULL
   remain at the top of the picker. Available conversations still resume. Run
   gh auth login --hostname github.com on that host, then retry.
 
-  An explicit slot opens the shared picker, even for one conversation, showing
-  live and saved work associated with that slot. Ctrl-F restores inactive rows.
+  A plain slot target runs `t session history REPO SLOT`: select one exact
+  conversation, even with only one result. Ctrl-F/B pages, Ctrl-R refreshes,
+  and Ctrl-/ shows details. Without a terminal, history lists without launching.
+  Explicit options use the resume picker below and retain their mode semantics.
   Without a slot, one inactive candidate is taken if no live rows are excluded.
-  An explicit slot without a terminal takes its newest saved conversation.
+  With explicit options, a slot without a terminal takes its newest saved chat.
 
 PICKER CONTROLS
   The picker MULTI-SELECTS: Space/Tab marks rows with a ✓.
