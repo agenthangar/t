@@ -6264,6 +6264,13 @@ def _t_offer_update(installation=None):
     return 10
 
 
+def _plain_slot_resume(words):
+    """Match the public shell shim's option-free slot history shortcut."""
+    return (len(words) in (2, 3) and words[0] == "resume" and
+            re.fullmatch(r"[0-9]+", words[-1]) is not None and
+            not words[1].startswith("-"))
+
+
 def _command_readonly(argv, *, terminal=None):
     """Classify t-owned read-only modes before any update prompt or config load.
 
@@ -6312,7 +6319,7 @@ def _command_readonly(argv, *, terminal=None):
                 terminal = sys.stdin.isatty() and sys.stdout.isatty()
             return not terminal
         return all(word == "--json" for word in tail)
-    if verb == "history":
+    if verb == "history" or _plain_slot_resume(words):
         if terminal is None:
             terminal = sys.stdin.isatty() and sys.stdout.isatty()
         return "--json" in options or not terminal
@@ -13212,6 +13219,8 @@ def _main(argv):
               f"{', '.join(COMMAND_GROUPS)}", file=sys.stderr)
         return 2
     argv = _canonical_argv(argv)
+    if _plain_slot_resume(argv):
+        argv = ["history", *argv[1:]]
     # Operational `cursor` arguments still belong to cursor-beam. In particular,
     # `t cursor --ls` must reach it without argparse rejecting the leading flag.
     # Bare cursor and all help forms were handled above by t's parser.
