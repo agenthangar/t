@@ -1786,7 +1786,7 @@ def cmd_hosts(cfg, args):
             else:
                 rows = []
                 for alias, target in sorted(cfg.hosts.items()):
-                    suffix = "  (default for session move)" if cfg.beam_host in (alias, target) else ""
+                    suffix = "  (default for legacy beam)" if cfg.beam_host in (alias, target) else ""
                     rows.append((alias, target + suffix))
                 print("\n".join(_table_lines(("ALIAS", "SSH TARGET"), rows)))
             return 0
@@ -1795,14 +1795,14 @@ def cmd_hosts(cfg, args):
             if alias not in cfg.hosts:
                 raise ValueError(f"unknown host {alias!r}; run `t hosts list` to list registered hosts")
             print(f"Host: {alias}\nSSH target: {cfg.hosts[alias]}")
-            print("Default for session move: " + ("yes" if cfg.beam_host in (alias, cfg.hosts[alias]) else "no"))
+            print("Default for legacy beam: " + ("yes" if cfg.beam_host in (alias, cfg.hosts[alias]) else "no"))
             return 0
         if action == "default" and alias is None and not args.clear:
             if cfg.beam_host:
                 aliases = [h for h, target in sorted(cfg.hosts.items()) if cfg.beam_host in (h, target)]
                 print(f"{', '.join(aliases) or '(unregistered)'}  {cfg.beam_host}")
             else:
-                print("No default for session move. Set one with `t hosts default <alias>`.")
+                print("No default for legacy beam. Set one with `t hosts default <alias>`.")
             return 0
         path = _current_local_rc()
         before = _config_read(path)
@@ -1821,7 +1821,7 @@ def cmd_hosts(cfg, args):
     if action == "remove":
         print(f"Removed host {alias}. Remote files and sessions are kept.")
     elif action == "default":
-        print(f"Default for session move: {cfg.beam_host or 'none'}")
+        print(f"Default for legacy beam: {cfg.beam_host or 'none'}")
     else:
         print(f"{'Added' if action == 'add' else 'Updated'} host {alias}: {cfg.hosts[alias]}")
     return 0
@@ -11009,6 +11009,8 @@ def _command_path(argv):
 def _canonical_argv(argv):
     """Translate a complete public command; preserve its payload arguments."""
     argv = _hosts_argv(_runners_argv(argv))
+    if argv and argv[0] == "move":
+        argv[0] = "beam"
     if argv and argv[0] == "list":
         argv[0] = "ls"
     path, route = _command_path(argv)
@@ -11055,6 +11057,7 @@ def _root_help():
 
 WORK
   session    Open, find, and move work sessions
+  move       Alias for session move
   remote     Open, move, and resume sessions on SSH hosts
   issue      List, inspect, work on, and open GitHub issues
   share      Share context between agent conversations
@@ -11335,7 +11338,7 @@ def _command_description(group, action):
         "hosts": {"list": "List registered SSH hosts", "show": "Show a host's target and defaults",
                  "add": "Register a remote SSH host", "edit": "Change a host's SSH target",
                  "remove": "Unregister a host (delete / rm also work)",
-                 "default": "Show, set, or clear the session move default",
+                 "default": "Show, set, or clear the legacy beam default",
                  "run": "Run a remote command or shell"},
         "config": {"open": "Open settings for agents, workflows, MCP, repositories and hosts", "show": "Print current settings",
                    "edit": "Edit local configuration", "setup": "Register repos and hosts",
@@ -11601,7 +11604,8 @@ def build_parser():
   Repositories absent locally are resolved on each remote source host.
   A unique repo/slot match goes directly to the destination picker.
 
-  Missing source/session and destination use single pickers.
+  Compatibility alias for `t session move --remote`: select sessions first, then
+  choose one destination host. Multiple sessions move sequentially and detached.
 
   Explicit targets skip selection.
 
@@ -12174,11 +12178,11 @@ REQUIREMENTS AND DISCOVERY
     sp.add_argument("repo", nargs="?", help="repository alias, basename or origin name; defaults to the repo your cwd is in")
     sp.add_argument("slot", nargs="?", help="slot number; a lone slot implies the cwd repo")
 
-    sp = sub.add_parser("beam", help="move a session between machines (send, or --from to receive)",
-        description='Move a current Claude or Codex CLI conversation between machines. Infer the current repository; '
-            'outside one, browse all. Omit the target to select a session; scripts require an explicit target '
-            'and --detach. --host sends, --from receives, and both move directly between hosts. Ownership and '
-            'transfer failures stop the move. Codex defaults to native desktop Hand off; Claude uses t.',
+    sp = sub.add_parser("beam", aliases=["move"], help="move a session between machines (send, or --from to receive)",
+        description='Move current Claude or Codex CLI conversations. Select sessions, then a destination host; '
+            '-r includes remote sources. Infer the current repository; outside one, browse all. '
+            'Scripts require an explicit target and --detach. --from receives here; add --host to move '
+            'between remote hosts. Codex defaults to native desktop Hand off; Claude uses t.',
         help_details="""DETAILS
 
   Cross-host defaults: Claude uses t; Codex uses native desktop Hand off.
@@ -12187,16 +12191,22 @@ REQUIREMENTS AND DISCOVERY
 
   With t transfer, move a session between machines (a cross-host push/pop).
 
-  By default SENDS the resolved session to --host (default $TBEAM_HOST) and resumes
-  it there; without a slot or --session ID, pick a current local CLI conversation,
+  Without a slot or --session ID, select one or more current local CLI conversations,
+  then choose the destination host (or name --host HOST). Use -r/--remote to include
+  registered remote sources. `t move` aliases `t session move`. Selection is
   scoped to the named or current repository (all repositories outside a checkout;
   --all widens the scope).
 
   The picker includes attached and detached sessions, not saved history or desktop
   reservations.
 
-  Inside an agent, no target moves that conversation; --pick opens the
-  current-session picker instead.
+  Selection also opens inside an agent; --pick forces it for explicit slots.
+  Space/Tab marks sessions; Enter accepts marks or the focused row.
+  Batches run sequentially with detached destinations and stop at the first failure
+  or cancellation. Completed, failed and unattempted counts are reported.
+  All selected identities are rechecked after both selections before any move.
+  Destination selection excludes every selected source host and its aliases.
+  The legacy `t beam` shortcut retains its implicit-current and default-host behavior.
 
   Selection requires a terminal and fzf; scripts must name a target.
 
@@ -12218,7 +12228,8 @@ RECEIVE AND REMOTE MOVES
   move.""")
     sp.add_argument("repo", nargs="?", help="repository alias, basename or origin name; defaults to the repo your cwd is in")
     sp.add_argument("slot", nargs="?", help="slot number; a lone slot implies the cwd repo")
-    sp.add_argument("--host", help="SEND destination machine (default: $TBEAM_HOST)")
+    sp.add_argument("--host", help="destination SSH host; omitted: choose a host")
+    sp.add_argument("-r", "--remote", action="store_true", help="include current sessions on registered remote hosts")
     sp.add_argument("--from", dest="from_host", metavar="HOST", help="source host; alone receives here, with --host sends directly to that destination")
     sp.add_argument("--here", action="store_true", help="RECEIVE (auto-host): pull it back here, auto-detecting which host it is on")
     sp.add_argument("--fg", action="store_true", help="resume in the foreground, no tmux slot")
@@ -12328,10 +12339,10 @@ RECEIVE AND REMOTE MOVES
     p._group_parsers["hosts"] = sp
     host_sub = sp.add_subparsers(dest="action", metavar="<command>")
     host_list = host_sub.add_parser("list", description="List the registered aliases and SSH targets. "
-        "The default marker identifies the destination for `t session move`.")
-    host_list.add_argument("--json", action="store_true", help="print hosts and the session move default as JSON")
+        "The default marker identifies the destination for legacy `t beam`.")
+    host_list.add_argument("--json", action="store_true", help="print hosts and the legacy beam default as JSON")
     host_show = host_sub.add_parser("show", description="Show a registered host's SSH target and whether "
-        "it is the default destination for `t session move`.")
+        "it is the default destination for legacy `t beam`.")
     host_show.add_argument("alias", help="registered host alias")
     for action in ("add", "edit"):
         hp = host_sub.add_parser(action, description=(
@@ -12342,12 +12353,12 @@ RECEIVE AND REMOTE MOVES
             "This saves local settings; it does not connect or install t on the remote machine.")
         hp.add_argument("alias", help="short host alias (letters, numbers, dots, underscores or hyphens)")
         hp.add_argument("target", help="SSH config name, address, or user@host")
-        hp.add_argument("--default", action="store_true", help="use this host as the default destination for t session move")
+        hp.add_argument("--default", action="store_true", help="use this host as the default destination for legacy t beam")
     host_remove = host_sub.add_parser("remove", description="Remove a local host registration and clear "
         "defaults that refer to it. Remote files, sessions, and ~/.ssh/config are kept. "
         "`t hosts delete` and `t hosts rm` are aliases for this command.")
     host_remove.add_argument("alias", help="registered host alias to remove")
-    host_default = host_sub.add_parser("default", description="Show the default destination for `t session move`, "
+    host_default = host_sub.add_parser("default", description="Show the default destination for legacy `t beam`, "
         "set it to a registered host, or clear it with --clear. Other remote commands retain their own host selection.")
     hd = host_default.add_mutually_exclusive_group()
     hd.add_argument("alias", nargs="?", help="registered host alias to use as the default")
@@ -13290,7 +13301,7 @@ def _command_title(argv):
     if _workflow_argv(argv)[:3] == ["workflow", "instructions", "show"] or argv[:2] == ["share", "read"]:
         return None
     path, _ = _command_path(_hosts_argv(argv))
-    if not path and argv and argv[0] in {*IMPLEMENTED, "help", "list"}:
+    if not path and argv and argv[0] in {*IMPLEMENTED, "help", "list", "move"}:
         path = argv[:1]
     return " ".join(["t", *path])
 

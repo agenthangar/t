@@ -468,10 +468,10 @@ for a host's login shell.
 | `t session push` / `t session pop` | Move between foreground and detached tmux |
 | `t session resume` / `t session search <query>` | Find and resume saved conversations; search finds Claude transcripts by content, then resumes the selected one |
 | `t session cd [repo] [slot]` / `t session read <repo> [slot]` | Enter a worktree or read its terminal log (`--dump` writes plain output) |
-| `t session move [repo] [slot] --host <host>` | Pick a current session or move an explicit slot; `--from <host>` pulls it here or sends directly with `--host` |
+| `t session move [repo] [slot] [-r] [--host <host>]` | Select current sessions, then a destination, or move an explicit slot; `--from <host>` pulls it here or sends directly with `--host` |
 | `t remote open [host] [repo] [slot]` | Choose a host and attach to an existing session; `--new` starts fresh |
 | `t remote resume [host] [repo] [slot] [--all]` | Choose a host and resume saved history discovered there |
-| `t remote move [repo] [slot] [--from <source>] [--host <dest>]` | Choose a current local/remote conversation and its destination |
+| `t move [repo] [slot] [-r] [--host <dest>]` | Alias for `t session move`; `t remote move` remains compatible with `--remote` |
 | `t session view-plan` / `t session paste` | View a Claude session plan or pass an attachment |
 | `t session open-app [push\|pull] [repo] [slot]` | Advanced Codex handoff options for macOS, including preview, plan, and thread selection; `t app` is the short form |
 | `t repo list` / `t repo locate <repo>` / `t repo cd <repo>` | List names and paths, print a checkout path, or enter it in the shell |
@@ -485,12 +485,12 @@ for a host's login shell.
 | `t hosts add <alias> <target> [--default]` | Register an SSH config name, address, or user@host |
 | `t hosts edit <alias> <target> [--default]` | Change a registered host's target |
 | `t hosts remove <alias>` | Unregister a host and clear its defaults; `delete` and `rm` also work |
-| `t hosts default [alias] [--clear]` | Show, set, or clear the default destination for session moves |
+| `t hosts default [alias] [--clear]` | Show, set, or clear the legacy `t beam` default destination |
 
 `hosts` manages remote machines. Run `t hosts` to see its commands,
 `t hosts list` to list machines, and `t hosts <verb>` to manage them or run remote commands.
 For example, `t hosts add mini chris@mini.local --default` registers `mini` and
-makes it the default destination for `t session move`. Configure SSH keys,
+makes it the default destination for legacy `t beam`; `t session move` still asks for a destination. Configure SSH keys,
 ports, and jump hosts in `~/.ssh/config`; registering a host saves local
 settings without connecting to it or installing software there.
 
@@ -511,14 +511,23 @@ if needed). To rename a registered host, choose Hosts → host → Short name,
 then Save changes. SSH targets and default-host references are preserved.
 First-run onboarding also generates unique short names for selected hosts.
 
-`t session move --host mini` opens a single-selection picker of current local
-Claude and Codex CLI conversations in the current repository (all repositories
-outside a checkout). Use `t session move --all --host mini` to widen the scope,
-or `t session move api --host mini` to select within `api`. Attached and detached
-sessions are included; saved history and desktop reservations are excluded.
-`t session move api 2 --host mini` bypasses selection. Inside an agent, an omitted
-target moves that conversation; add `--pick` to choose another current session.
-Scripts must supply a slot or `--session ID` and `--detach`.
+`t session move` (also `t move`) opens a multi-selection picker of current local
+Claude and Codex CLI conversations, then a destination host picker. Space/Tab
+marks sessions; Enter moves the marks or the focused session. Use `-r`/`--remote`
+to include registered remote sources, `--all` to browse every repository, or name
+`api` to scope selection. The current checkout scopes the default view; outside
+a checkout all repositories appear. Attached and detached sessions are included;
+saved history and desktop reservations are excluded. Selection also opens inside
+an agent. `--host mini` supplies the destination explicitly; a configured default
+never bypasses selection. Every alias of each selected source host is excluded.
+
+Multiple selections move sequentially with detached destinations. All identities
+are rechecked after both pickers before any move. A failure or cancellation stops
+the remaining moves and reports completed, failed and unattempted sessions.
+`t session move api 2 --host mini` bypasses session selection. Scripts must supply
+a slot or `--session ID`, a destination, and `--detach`. `--from HOST` receives
+here; combine it with `--host DEST` for a direct remote-to-remote move. The legacy
+`t beam` shortcut retains its implicit-current and default-host behavior.
 
 Use the `remote` family to choose where to work:
 
@@ -530,9 +539,9 @@ t remote resume mini api        # choose saved history discovered on mini
 t remote resume mini --all       # all repositories, regardless of remote login directory
 t resume t 11                          # select an exact conversation from slot 11 history
 t session resume --all                  # local and remote-only repositories; clone only after selection
-t remote move                         # choose a current session, then its destination
-t remote move api 2                   # discover the source, then choose its destination
-t remote move api 2 --from mini --host cloud
+t session move -r                      # choose current sessions, then their destination
+t session move api 2 -r                # discover the source, then choose its destination
+t session move api 2 --from mini --host cloud
 t session move api 2 --from mini --host cloud --detach
 ```
 
@@ -541,7 +550,7 @@ open an existing session, start a new session, resume saved work, or move a sess
 For open, the selected host runs the session. For resume, it supplies the saved
 conversations and runs the resumed session. For move, it is the destination;
 the picker also names the current source host. Aliases and SSH targets appear
-below the action heading, and even one configured host waits for Enter. `remote move` includes current local
+below the action heading, and even one configured host waits for Enter. `remote move` remains a compatibility alias for `session move --remote`, including local
 and registered remote Claude/Codex CLI sessions, retains host identity when slot
 names repeat, and rechecks the selected conversation before moving. A named or
 current repository scopes selection; outside a checkout it spans all repositories.
@@ -567,7 +576,7 @@ repository-only targets that could be mistaken for hosts require `--host`.
 session. `--new` explicitly requests a fresh session. `remote resume H`
 discovers saved history on H, while `session resume --host H` carries locally
 discovered history to H. A live selection with a different `--host` is refused
-before any batch action and provides an exact `remote move` command. Matching
+before any batch action and provides an exact `session move` command. Matching
 host aliases may attach to the existing owner. Desktop resume remains local.
 
 ### Configuration and tools

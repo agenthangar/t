@@ -72,8 +72,8 @@ def test_move_picker_uses_current_sessions(zsh, tmp_path, args, location, inside
     assert 'rc=0' in result.stdout, result.stdout
     log = json.loads((tmp_path / 'picker.json').read_text())
     assert [row.split('\t')[1] for row in log['rows']] == expected
-    assert '--no-multi' in log['args']
-    assert '--header=Enter move · Esc\nCurrent local sessions' in log['args']
+    assert '--multi' in log['args']
+    assert any('Current local sessions' in arg for arg in log['args'])
     assert 'UNEXPECTED' not in result.stdout
     sid, agent = ('codex-id', 'codex') if label == 'api-2' else (
         ('claude-id', 'claude') if label == 'api-3' else ('fg-id', 'claude'))
@@ -129,7 +129,7 @@ def test_move_refuses_changed_selection_before_stopping_owner(zsh, tmp_path, cha
     assert 'STOP ' not in result.stdout and 'SYNC ' not in result.stdout
 
 
-@pytest.mark.parametrize('args', ['api 2', '2', '--session codex-id', ''])
+@pytest.mark.parametrize('args', ['api 2', '2', '--session codex-id'])
 def test_explicit_and_current_targets_bypass_picker(zsh, args):
     result = zsh("DEV_HANDOFF[codex]=t; " + SETUP + r'''
       _t_infer_repo() { print api; }
