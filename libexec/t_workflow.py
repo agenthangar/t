@@ -21,6 +21,8 @@ ISSUE_END = '<!-- t public-issues: end -->'
 EFFORTS = ('minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra')
 SEPARATE_STAGES = ('planning', 'review')
 MODEL_STAGES = ('planning', 'implementation', 'review')
+TOOLS = ('codex', 'claude', 'cursor')
+MODEL_ID = re.compile(r'[A-Za-z0-9][A-Za-z0-9._:/@+\[\](),=-]*')
 PERMISSIONS = {
     'codex': {
         'ask': {'label': 'Ask for approval', 'args': ['--sandbox', 'workspace-write', '--ask-for-approval', 'on-request', '-c', 'approvals_reviewer="user"']},
@@ -58,7 +60,7 @@ BEHAVIORS = {
         'local_review': ('Install / preview locally first', 'Complete implementation and relevant checks, then use the documented local install or preview path appropriate to the project so the user can try the result. Respect existing authorization for installation and report unavailable tools accurately. Present how to try it and wait for explicit user feedback and approval before pushing or creating a pull request.'),
         'auto_merge': ('Auto-merge when authorized', 'Commit, push and open a pull request under repository merge policy and required checks. When authorized and supported, enable auto-merge and monitor it through completion; report any blocker accurately.'),
     }},
-    'pr_review': {'label': 'Review before PR', 'choices': {
+    'pr_review': {'label': 'Agent review before PR', 'choices': {
         'review': ('Enabled', 'Before opening a pull request, review the actual diff and validation results and address findings. Use the selected review worker when model stages are enabled and Review is selected; otherwise review in the main conversation. Honor selected tests and previews, PR timing, state and merge preferences, required external approvals, repository rules and task instructions.'),
         'skip': ('Disabled', 'Skip the pre-PR agent review pass. Run neither a main-session review pass nor a review worker solely from this workflow, even when the Review model stage is selected. The main conversation still owns correctness, selected tests and previews, fixes and delivery. Preserve PR timing, state and merge preferences, required external approvals and higher-priority repository and task instructions, including explicit review requirements.'),
     }},
@@ -428,6 +430,9 @@ def issue_policy():
 def _seed_instructions(document, texts):
     policies = [*document['workflows'].values(),
                 *(entry['inline'] for entry in document['repositories'].values() if 'inline' in entry)]
+    for catalogue in document.get('tools', {}).values():
+        policies.extend(catalogue['workflows'].values())
+        policies.extend(entry['inline'] for entry in catalogue['repositories'].values() if 'inline' in entry)
     for policy in policies:
         for text in texts:
             existing = policy.get('instructions', '')
@@ -439,6 +444,95 @@ def _seed_instructions(document, texts):
 def defaults():
     return _seed_instructions({'version': 3, 'default': 'standard',
                               'workflows': {'standard': copy.deepcopy(DEFAULT)}, 'repositories': {}}, [issue_policy()])
+
+
+def tool_defaults(tool):
+    if tool not in TOOLS:
+        raise ValueError('workflow tool must be codex, claude or cursor')
+    document = defaults()
+    if tool != 'codex':
+        policy = document['workflows']['standard']
+        policy['stages_enabled'] = False
+        for stage in MODEL_STAGES:
+            policy[stage] = {'model': '', 'effort': 'auto'}
+    result = WorkflowDocument(document)
+    result.tool = tool
+    return result
+
+
+def _preserve_document_attributes(original, result):
+    if hasattr(original, 'legacy_snapshots') or hasattr(original, 'tool'):
+        result = WorkflowDocument(result)
+    if hasattr(original, 'legacy_snapshots'):
+        result.legacy_snapshots = copy.deepcopy(original.legacy_snapshots)
+    if hasattr(original, 'tool'):
+        result.tool = original.tool
+    return result
+
+
+def tool_document(document, tool='codex'):
+    """Return one complete tool catalogue without materializing absent scopes."""
+    if tool not in TOOLS:
+        raise ValueError('workflow tool must be codex, claude or cursor')
+    validated = validate(document)
+    if getattr(document, 'tool', None) == tool or tool == 'codex':
+        result = {key: copy.deepcopy(validated[key]) for key in ('version', 'default', 'workflows', 'repositories')}
+    elif tool in validated.get('tools', {}):
+        result = {'version': 3, **copy.deepcopy(validated['tools'][tool])}
+    else:
+        result = tool_defaults(tool)
+    result = WorkflowDocument(_preserve_document_attributes(document, result))
+    if hasattr(document, 'legacy_snapshots'):
+        result.legacy_snapshots = copy.deepcopy(document.legacy_snapshots)
+    result.tool = tool
+    return result
+
+
+def with_tool_document(document, tool, scoped):
+    """Replace only the edited catalogue; inspection and no-ops retain raw data."""
+    current = tool_document(document, tool)
+    selected = validate(scoped)
+    if 'tools' in selected:
+        raise ValueError('a scoped tool catalogue cannot contain nested tools')
+    if current == selected:
+        return _preserve_document_attributes(document, copy.deepcopy(document))
+    after = validate(document)
+    catalogue = {key: copy.deepcopy(selected[key]) for key in ('default', 'workflows', 'repositories')}
+    if tool == 'codex':
+        after.update(catalogue)
+    else:
+        after.setdefault('tools', {})[tool] = catalogue
+    return _preserve_document_attributes(document, validate(after))
+
+
+def _legacy_claude_catalogue(document):
+    """Keep formerly shared preferences while retiring Codex-only stage models."""
+    catalogue = {key: copy.deepcopy(document[key]) for key in ('default', 'workflows', 'repositories')}
+    policies = [*catalogue['workflows'].values(),
+                *(entry['inline'] for entry in catalogue['repositories'].values() if 'inline' in entry)]
+    for policy in policies:
+        policy['stages_enabled'] = False
+        for stage in MODEL_STAGES:
+            policy[stage] = {'model': '', 'effort': 'auto'}
+        for field in ('session_defaults', 'permissions'):
+            values = policy.get(field, {})
+            if 'claude' in values:
+                policy[field] = {'claude': copy.deepcopy(values['claude'])}
+            else:
+                policy.pop(field, None)
+    return catalogue
+
+
+def _ensure_claude_catalogue(document, previous=None):
+    if 'claude' in document.get('tools', {}):
+        return document
+    after = copy.deepcopy(document)
+    if previous is not None:
+        catalogue = previous.get('tools', {}).get('claude') or _legacy_claude_catalogue(previous)
+    else:
+        catalogue = {key: copy.deepcopy(tool_defaults('claude')[key]) for key in ('default', 'workflows', 'repositories')}
+    after.setdefault('tools', {})['claude'] = copy.deepcopy(catalogue)
+    return _preserve_document_attributes(document, after)
 
 
 def validate_policy(value):
@@ -467,16 +561,18 @@ def validate_policy(value):
         if not value['model_stages']:
             raise ValueError('workflow model_stages must be nonempty; use stages_enabled false for none')
     session_defaults = value.get('session_defaults', {})
-    if not isinstance(session_defaults, dict) or set(session_defaults) - {'codex', 'claude'}:
-        raise ValueError('session_defaults supports codex and claude only')
-    for settings in session_defaults.values():
+    if not isinstance(session_defaults, dict) or set(session_defaults) - set(TOOLS):
+        raise ValueError('session_defaults supports codex, claude and cursor only')
+    for tool, settings in session_defaults.items():
         if not isinstance(settings, dict) or set(settings) - {'model', 'effort'}:
             raise ValueError('session_defaults requires model and/or effort')
         model, effort = settings.get('model', ''), settings.get('effort', '')
-        if not isinstance(model, str) or (model and not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:/@+\[\]-]*', model)):
+        if not isinstance(model, str) or (model and not MODEL_ID.fullmatch(model)):
             raise ValueError('session default model must be a model ID without spaces')
         if not isinstance(effort, str) or (effort and effort not in EFFORTS):
             raise ValueError('session default effort must be an explicit reasoning level')
+        if tool == 'cursor' and effort:
+            raise ValueError('Cursor reasoning belongs in the model ID, not a separate effort setting')
     behaviors = value.get('behaviors', {})
     if not isinstance(behaviors, dict) or set(behaviors) - set(BEHAVIORS):
         raise ValueError('workflow behaviors must be an object containing only: ' + ', '.join(BEHAVIORS))
@@ -488,8 +584,8 @@ def validate_policy(value):
         if not isinstance(setting, dict) or set(setting) != {'model', 'effort'}:
             raise ValueError(f'{stage} requires model and effort')
         model = setting['model']
-        if not isinstance(model, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:/\[\]-]*', model):
-            raise ValueError(f'{stage} model must be a nonempty model ID without spaces or control characters')
+        if not isinstance(model, str) or (model and not MODEL_ID.fullmatch(model)):
+            raise ValueError(f'{stage} model must be a model ID without spaces or control characters, or empty to inherit')
         allowed = EFFORTS + ('auto',)
         legacy_auto = stage in ('implementation', 'review') and setting['effort'] == 'one-level-lower'
         if setting['effort'] not in allowed and not legacy_auto:
@@ -509,10 +605,17 @@ def validate(value, *, migrate=True):
         raise ValueError('workflow document requires version, default, workflows and repositories')
     legacy = value['version'] == 1
     expected = {'version', 'global', 'repositories'} if legacy else {'version', 'default', 'workflows', 'repositories'}
-    if set(value) != expected:
+    if set(value) - ({'tools'} if value['version'] == 3 else set()) != expected:
         raise ValueError('workflow document requires version, default, workflows and repositories (or legacy global)')
     if value['version'] not in (1, 2, 3):
         raise ValueError('unsupported workflow version; expected 1, 2 or 3')
+    if 'tools' in value:
+        if not isinstance(value['tools'], dict) or set(value['tools']) - {'claude', 'cursor'}:
+            raise ValueError('workflow tools supports complete claude and cursor catalogues only; Codex uses the root catalogue')
+        for catalogue in value['tools'].values():
+            if not isinstance(catalogue, dict) or set(catalogue) != {'default', 'workflows', 'repositories'}:
+                raise ValueError('tool catalogue requires default, workflows and repositories')
+            validate({'version': 3, **catalogue}, migrate=False)
     if not isinstance(value['repositories'], dict):
         raise ValueError('workflow repositories must be an object')
     if legacy:
@@ -548,7 +651,9 @@ def validate(value, *, migrate=True):
     else:
         result = copy.deepcopy(value)
         result['version'] = 3
-    return _seed_instructions(result, [issue_policy()]) if migrate and value['version'] < 3 else result
+    if migrate and value['version'] < 3:
+        result = _seed_instructions(result, [issue_policy()])
+    return _preserve_document_attributes(value, result)
 
 
 def decode(text):
@@ -592,6 +697,8 @@ class WorkflowDocument(dict):
 def load():
     before = snapshot(config_path())
     document = WorkflowDocument(validate(decode(before[0])) if before else defaults())
+    if before:
+        document = _ensure_claude_catalogue(document, document)
     document.legacy_snapshots = {}
     # Import customized legacy policy text before the installer removes its old
     # managed block. This read-only migration is persisted only by an explicit save.
@@ -626,16 +733,18 @@ def effective(document, repository=None):
 
 
 def main_session_settings(policy, agent='codex'):
-    """Scoped launch values; stage models belong only to Codex root sessions."""
-    if not policy or not policy['enabled']:
+    """Launch values for a policy already resolved within the selected tool."""
+    if agent not in TOOLS or not policy or not policy['enabled']:
         return {}
+    settings = {key: value for key, value in policy.get('session_defaults', {}).get(agent, {}).items() if value}
     if 'implementation' in model_stages(policy):
-        if agent != 'codex':
-            return {}
         implementation = policy['implementation']
-        return {'model': implementation['model'],
-                'effort': 'medium' if effective_effort(implementation['effort']) == 'auto' else implementation['effort']}
-    return {key: value for key, value in policy.get('session_defaults', {}).get(agent, {}).items() if value}
+        if implementation['model']:
+            settings['model'] = implementation['model']
+        settings['effort'] = 'medium' if effective_effort(implementation['effort']) == 'auto' else implementation['effort']
+    if agent == 'cursor':
+        settings.pop('effort', None)
+    return settings
 
 
 def permission_args(policy, agent):
@@ -746,17 +855,19 @@ def select_stages(policy, selected):
     return after
 
 
-def stage_settings(policy, stage):
+def stage_settings(policy, stage, tool='codex'):
     """Return the model used for a stage without exposing inactive overrides."""
     if stage not in MODEL_STAGES:
         raise ValueError('unknown workflow stage')
+    if tool not in TOOLS:
+        raise ValueError('workflow tool must be codex, claude or cursor')
     if stage in model_stages(policy):
         settings = copy.deepcopy(policy[stage])
         settings['effort'] = effective_effort(settings['effort'])
+        if not settings['model']:
+            settings['model'] = main_session_settings({**policy, 'enabled': True}, tool).get('model', '')
         return settings
-    if 'implementation' in model_stages(policy) and not implementation_worker(policy):
-        return copy.deepcopy(policy['implementation'])
-    settings = main_session_settings({**policy, 'enabled': True})
+    settings = main_session_settings({**policy, 'enabled': True}, tool)
     return {key: settings.get(key, '') for key in ('model', 'effort')}
 
 
@@ -852,7 +963,7 @@ def policy_summary(policy):
             'precedence': PRECEDENCE}
 
 
-def summary_lines(policy):
+def summary_lines(policy, tool='codex'):
     summary = policy_summary(policy)
     behaviors = visible_behaviors(summary['behaviors'])
     state = 'enabled' if summary['stages_active'] else 'disabled' if not summary['stages_enabled'] else 'inactive (workflow disabled)'
@@ -864,10 +975,13 @@ def summary_lines(policy):
         if summary['review_skipped']:
             lines.append('Review stage: skipped before PR; saved model settings retained')
     if implementation_worker(policy):
-        settings = main_session_settings({**policy, 'enabled': True})
-        lines.append('Main session: ' + settings['model'] + ' · ' + settings['effort'].capitalize())
+        settings = main_session_settings({**policy, 'enabled': True}, tool)
+        lines.append('Main session: ' + (settings.get('model') or 'Agent default') + ' · ' +
+                     (settings['effort'].capitalize() if settings.get('effort') else 'Model default'))
     if 'implementation' not in summary['model_stages']:
         for agent, settings in summary['session_defaults'].items():
+            if agent != tool:
+                continue
             lines.append(agent.title() + ' session default: ' + (settings.get('model') or 'agent default') +
                          '; reasoning: ' + (settings.get('effort') or 'default for this model'))
     for agent, presets in PERMISSIONS.items():
@@ -879,10 +993,10 @@ def summary_lines(policy):
                 lines.append(spec['label'] + ': ' + spec['choices'][behaviors[key]][0])
         lines.extend(preview_summary_lines(behaviors))
     if 'pr_review' not in behaviors:
-        lines.append('Review before PR: Enabled')
+        lines.append('Agent review before PR: Enabled')
     lines.append('Custom Markdown: ' + ('present' if summary['custom_instructions'] else 'empty'))
     lines.append('Issue-before-code rule: ' + ('included in editable Markdown' if issue_policy() in policy.get('instructions', '') else 'customized or not included'))
-    lines.append('Read/edit prose: t workflow instructions show / edit')
+    lines.append(f'Read/edit prose: t workflow instructions show --tool {tool} / edit --tool {tool}')
     return lines
 
 
@@ -987,7 +1101,7 @@ def edit_instructions(document, repository=None, name=None):
         return 0, update(document, policy, repository, name)
 
 
-def _stage_text(policy):
+def _stage_text(policy, tool='codex'):
     if not policy['enabled']:
         return ('The entire workflow is disabled for this scope. Do not require '
                 'these stages or delegation solely because of t preferences. Do not apply inherited '
@@ -995,12 +1109,14 @@ def _stage_text(policy):
                 'follow the task and repository rules.')
     parts = []
     if policy.get('stages_enabled', True):
-        parts.append(_model_stage_text(policy))
+        parts.append(_model_stage_text(policy, tool))
     else:
         parts.append('Model stages are disabled for this scope. Do not require staged model selection '
                      'or delegation solely because of t preferences. Selected behavior preferences '
                      'and custom Markdown remain active.')
         for agent, settings in policy.get('session_defaults', {}).items():
+            if agent != tool:
+                continue
             chosen = ', '.join(key + ': ' + value for key, value in settings.items() if value)
             if chosen:
                 parts.append(f'{agent.title()} session launch defaults: {chosen}. '
@@ -1014,9 +1130,9 @@ def _stage_text(policy):
         behavior_lines.extend(_preview_instruction_lines(behaviors))
         parts.append('Selected behavior preferences:\n' + '\n'.join(behavior_lines))
     if policy.get('runners', {}).get('targets'):
-        parts.append('Test runners are configured. Use `t runners list` '
+        parts.append(f'Test runners are configured. Use `t runners list --tool {tool}` '
                      '(with `--repo ALIAS` for repository settings) to inspect targets. '
-                     'Use `t runners runs start -- COMMAND ...` to test one immutable snapshot '
+                     f'Use `t runners runs start --tool {tool} -- COMMAND ...` to test one immutable snapshot '
                      'of current tracked worktree edits without committing or pushing source; include intended '
                      'untracked inputs with `--include PATH`. Select targets with `--target NAME`, '
                      '`--os linux|macos` or `--capability NAME`. Inspect durable results with '
@@ -1027,11 +1143,11 @@ def _stage_text(policy):
     return '\n\n'.join(parts)
 
 
-def _model_stage_text(policy):
+def _model_stage_text(policy, tool='codex'):
     selected = model_stages(policy)
-    plan, implement, review = (stage_settings(policy, s) for s in ('planning', 'implementation', 'review'))
+    plan, implement, review = (stage_settings(policy, s, tool) for s in ('planning', 'implementation', 'review'))
     main_model = implement['model'] or 'the current native model'
-    main_effort = main_session_settings(policy).get('effort')
+    main_effort = main_session_settings(policy, tool).get('effort')
     main_reasoning = main_effort or 'the current native reasoning setting'
     planning = ('medium for straightforward additions, high for substantial features, '
                 'and xhigh or higher for complex architecture or new applications') if plan['effort'] == 'auto' else plan['effort']
@@ -1042,7 +1158,8 @@ def _model_stage_text(policy):
         reviewing = ('low for straightforward reviews, medium for ordinary changes, '
                      'and high or higher for complex changes or substantial risk')
     if 'planning' in selected:
-        plan_text = (f'Plan with a bounded {plan["model"]} sub-agent; reasoning effort: {planning}. '
+        planner = f'{plan["model"]} sub-agent' if plan['model'] else 'sub-agent using the current session model'
+        plan_text = (f'Plan with a bounded {planner}; reasoning effort: {planning}. '
                      'Choose a concrete supported effort before delegation. Require its handoff '
                      'to include the actual model and concrete reasoning effort used; if those '
                      'settings cannot be verified, report that limitation explicitly. ')
@@ -1058,7 +1175,8 @@ def _model_stage_text(policy):
                        'and existing authorization. Honor higher-priority task and repository instructions, '
                        'including explicit review requirements.')
     elif 'review' in selected:
-        review_text = (f'Review with a bounded {review["model"]} sub-agent; reasoning effort: {reviewing}. '
+        reviewer = f'{review["model"]} sub-agent' if review['model'] else 'sub-agent using the current session model'
+        review_text = (f'Review with a bounded {reviewer}; reasoning effort: {reviewing}. '
                        'Choose a concrete supported effort before delegation. ')
     else:
         review_text = (f'Review in the main conversation with {main_model}; reasoning effort: '
@@ -1069,7 +1187,8 @@ def _model_stage_text(policy):
                        'through completion under the repository merge policy, selected delivery preferences '
                        'and existing authorization.')
     if implementation_worker(policy):
-        implementation_text = (f'Delegate implementation to a bounded {implement["model"]} worker; '
+        worker = f'{implement["model"]} worker' if implement['model'] else 'worker using the current session model'
+        implementation_text = (f'Delegate implementation to a bounded {worker}; '
                                f'reasoning effort: {implementation}. Choose a concrete supported '
                                'effort before spawning the worker. Give it the actionable plan, '
                                'relevant repository instructions and context, acceptance criteria '
@@ -1080,7 +1199,7 @@ def _model_stage_text(policy):
                                'conversation coordinates the work, checks the result and owns '
                                'follow-up fixes without repeating routine implementation. '
                                'The selected implementation effort applies to this worker; the main session keeps '
-                               f'its fixed launch effort {main_effort}. If worker delegation or its '
+                               f'its fixed launch effort {main_effort or "from the native model settings"}. If worker delegation or its '
                                'requested model/effort is unavailable, disclose the exact limitation '
                                'and the actual execution settings; never pretend the main session\'s '
                                'effort changed.')
@@ -1113,14 +1232,14 @@ def _model_stage_text(policy):
             f'These instructions do not enforce model selection or switch an active conversation.')
 
 
-def render(document):
-    document = validate(document)
+def render(document, tool='codex'):
+    document = tool_document(document, tool)
     text = ('Agent workflow preferences supplied by t. These managed defaults supersede older '
             'general staged-model defaults in personal instructions. Explicit task instructions '
             'and repository-specific rules remain authoritative. These are instructions for the '
-            'agent; saved staged workflows set Codex main launch/resume defaults, while stage delegation '
+            f'agent; saved staged workflows set {tool.title()} main launch/resume defaults, while stage delegation '
             'remains guidance and does not switch active conversations. The host instruction hierarchy is unchanged.\n' + PRECEDENCE + '\n\n'
-            'Global default (unless a repository scope below matches):\n' + _stage_text(effective(document)))
+            'Global default (unless a repository scope below matches):\n' + _stage_text(effective(document), tool))
     for repository in sorted(document['repositories']):
         policy = effective(document, repository)
         text += ('\n\nRepository scope: ' + json.dumps(repository, ensure_ascii=False) + '.\n'
@@ -1128,7 +1247,7 @@ def render(document):
                  'worktrees, including worktrees created later. Resolve the current checkout with '
                  '`git rev-parse --show-toplevel` and its canonical repository with '
                  '`git rev-parse --path-format=absolute --git-common-dir`; the common Git directory '
-                 'must belong to the canonical checkout above. Other repositories use the global default.\n' + _stage_text(policy))
+                 'must belong to the canonical checkout above. Other repositories use the global default.\n' + _stage_text(policy, tool))
     return BEGIN + '\n' + text + '\n' + END
 
 
@@ -1167,18 +1286,20 @@ def native_paths():
 def native_changes(document):
     paths = native_paths()
     override = paths[0].with_name('AGENTS.override.md')
-    policies = [*document['workflows'].values(),
-                *(entry['inline'] for entry in document['repositories'].values() if 'inline' in entry)]
-    legacy_instructions = '\n'.join(policy.get('instructions', '') for policy in policies)
     changes = []
     legacy_snapshots = getattr(document, 'legacy_snapshots', {})
     for path in paths:
+        tool = 'claude' if path == paths[1] else 'codex'
+        scoped_document = tool_document(document, tool)
+        policies = [*scoped_document['workflows'].values(),
+                    *(entry['inline'] for entry in scoped_document['repositories'].values() if 'inline' in entry)]
+        legacy_instructions = '\n'.join(policy.get('instructions', '') for policy in policies)
         before = snapshot(path)
         if path in legacy_snapshots and before != legacy_snapshots[path]:
             raise ValueError(f'{path}: native instructions changed while editing; retry')
         if path == override and before and not before[0].strip():
             continue  # An empty override must not begin masking the base file.
-        changes.append((path, before, merge(before[0] if before else '', render(document), legacy_instructions, path in legacy_snapshots)))
+        changes.append((path, before, merge(before[0] if before else '', render(document, tool), legacy_instructions, path in legacy_snapshots)))
     return changes
 
 
@@ -1240,6 +1361,8 @@ def propagation():
 def save(document, before, extra=(), preserve_storage=False, propagation_context=None, propagate=True, main_settings=None, refresh_source=False):
     """Publish explicit preferences and native instruction updates under one lock."""
     document = validate(document)
+    previous = validate(decode(before[0])) if before else None
+    document = _ensure_claude_catalogue(document, previous)
     path = config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     lock = path.with_suffix('.lock')

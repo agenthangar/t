@@ -183,8 +183,8 @@ def test_pr_review_preference_stages_and_retains_selected_review_model(workflow,
     t_mod._workflow_policy_menu(ui, cfg, vars(workflow), **target)
     actual = cfg._workflow_document['workflows']['standard'] if scope == 'named' else workflow.effective(cfg._workflow_document, '/repo')
     pull_requests = next(view for view in ui.views if view[0] == 'Pull requests')
-    assert pull_requests[1][0] == ('pr_review', 'Review before PR')
-    picker = next(view for view in ui.views if view[0] == 'Review before PR')
+    assert pull_requests[1][0] == ('pr_review', 'Agent review before PR')
+    picker = next(view for view in ui.views if view[0] == 'Agent review before PR')
     assert picker[1] == [('review', 'Enabled'), ('skip', 'Disabled')]
     assert actual.get('behaviors', {}).get('pr_review', 'review') == choice
     if choice == 'review':
@@ -230,7 +230,7 @@ def test_pr_review_skip_is_clear_in_list_and_review_without_losing_settings(work
     output = capsys.readouterr().out
     review = '\n'.join(t_mod._workflow_review(document))
     for text in (output, review):
-        assert 'Review before PR: Disabled' in text and 'Skipped before PR' in text
+        assert 'Agent review before PR: Disabled' in text and 'Skipped before PR' in text
         assert 'retained-review-model' not in text
     assert policy == before
     restored = workflow.update_behavior(policy, 'pr_review', 'review')
@@ -251,7 +251,7 @@ def test_preview_methods_and_approval_choices_keep_context(workflow, t_mod):
     assert ui.views[7][0] == 'Implement before approval'
     assert dict(ui.views[7][1]) == {'': 'Not set', 'yes': 'Yes', 'no': 'No'}
     assert ui.views[8][0] == 'Frontend'
-    assert dict(ui.views[8][1]) == {'frontend_enabled': 'Preview', 'frontend_preview_timing': 'When to preview',
+    assert dict(ui.views[8][1]) == {'frontend_enabled': 'Preview', 'frontend_preview_timing': 'Preview timing',
                                    'frontend_implement_before_approval': 'Implement before approval', 'frontend_design': 'Design approach',
                                    'frontend_preview': 'Preview method', 'frontend_browser': 'Open in browser', 'back': 'Back'}
     assert ui.views[5][2]['default'] == 2
@@ -269,14 +269,37 @@ def test_preview_child_fields_show_live_inheritance_without_materializing_choice
     ui = InspectMenu(['local_preview', kind, timing, None, 'back', 'back', 'back'])
     assert t_mod._workflow_behaviors_menu(ui, vars(workflow), original) == original
     label = 'Automatically when ready' if defaults else 'Not set'
-    assert ui.views[2][2]['values'][timing] == 'Inherit · ' + label
-    assert ui.views[3][1] == [('', 'Inherit · ' + label), ('when_ready', 'Automatically when ready'), ('on_request', 'Only when I ask')]
+    assert ui.views[2][2]['values'][timing] == 'Inherit global · ' + label
+    assert ui.views[3][1] == [('', 'Inherit global · ' + label), ('when_ready', 'Automatically when ready'), ('on_request', 'Only when I ask')]
     assert ui.views[3][2]['default'] == 0
     assert timing not in original['behaviors']
     assert 'cli_implement_before_approval' not in dict(ui.views[2][1])
     assert ('frontend_implement_before_approval' in dict(ui.views[2][1])) is (kind == 'frontend')
     if kind == 'frontend':
         assert ui.views[2][2]['values']['frontend_implement_before_approval'] == 'Not set'
+    assert not workflow.config_path().exists()
+
+
+def test_local_preview_global_timing_is_visible_and_type_summaries_are_concise(workflow, t_mod):
+    original = dict(copy.deepcopy(workflow.DEFAULT), behaviors={'local_preview': 'when_ready',
+        'frontend_design': 'in_app', 'frontend_preview': 'fast_reload', 'frontend_browser': 'automatic',
+        'frontend_implement_before_approval': 'no', 'cli_preview': 'run', 'cli_launch': 'automatic'})
+    before = copy.deepcopy(original)
+    ui = InspectMenu(['local_preview', 'frontend', 'frontend_preview_timing', 'on_request',
+                      'back', 'cli', None, 'back', 'back'])
+    policy = t_mod._workflow_behaviors_menu(ui, vars(workflow), original)
+    local = ui.views[1]
+    assert local[1][0] == ('local_preview', 'Preview timing')
+    assert local[2]['sections'] == {'local_preview': 'Global', 'frontend': 'Preview types'}
+    assert local[2]['values']['frontend'] == local[2]['values']['cli'] == 'Enabled · Inherit global'
+    assert 'implement_before_approval' not in dict(local[1])
+    assert ui.views[2][2]['values']['frontend_preview_timing'] == 'Inherit global · Automatically when ready'
+    assert ui.views[3][1][0] == ('', 'Inherit global · Automatically when ready')
+    assert ui.views[5][2]['values']['frontend'] == 'Enabled · Only when I ask'
+    assert ui.views[5][2]['values']['cli'] == 'Enabled · Inherit global'
+    assert ui.views[6][2]['values']['cli_preview_timing'] == 'Inherit global · Automatically when ready'
+    assert policy['behaviors'] == dict(original['behaviors'], frontend_preview_timing='on_request')
+    assert original == before
     assert not workflow.config_path().exists()
 
 
@@ -311,14 +334,14 @@ def test_preview_overrides_survive_parent_edits_and_clear_to_live_defaults(workf
     overridden = t_mod._workflow_behaviors_menu(ui, vars(workflow), original)
     assert ui.views[4][2]['values'][timing] == 'Override · Automatically when ready'
     assert ui.views[8][2]['values'][timing] == 'Override · Automatically when ready'
-    assert ui.views[9][1][0] == ('', 'Inherit · Only when I ask')
+    assert ui.views[9][1][0] == ('', 'Inherit global · Only when I ask')
     assert overridden['behaviors'][timing] == 'when_ready'
     assert overridden['behaviors']['local_preview'] == 'on_request'
     cleared = t_mod._workflow_behaviors_menu(Menu(['local_preview', kind, timing, '', 'back', 'back', 'back']), vars(workflow), overridden)
     assert timing not in cleared['behaviors']
     reopened = InspectMenu(['local_preview', kind, None, 'back', 'back'])
     assert t_mod._workflow_behaviors_menu(reopened, vars(workflow), cleared) == cleared
-    assert reopened.views[2][2]['values'][timing] == 'Inherit · Only when I ask'
+    assert reopened.views[2][2]['values'][timing] == 'Inherit global · Only when I ask'
     assert cleared['behaviors']['pr_open'] == 'on_request'
     assert original == before
 
@@ -337,9 +360,14 @@ def test_preview_inheritance_sources_are_clear_in_list_review_and_catalogue(work
     catalogue = dict(workflow.catalogue(document), propagation={'runtime': 'pending'})
     t_mod._workflow_print(vars(workflow), catalogue, catalogue=True)
     catalogue_text = capsys.readouterr().out
+    assert 'Preview timing: Override · Only when I ask' in output
+    assert 'Preview timing: Inherit global · Only when I ask' in output
+    assert 'When to preview: Override · Only when I ask' in review
+    assert 'When to preview: Inherit · Only when I ask' in review
+    assert 'Global: Preview timing: Only when I ask' in catalogue_text
+    assert 'Preview timing: Override · Only when I ask' in catalogue_text
+    assert 'Inherit global' not in catalogue_text
     for text in (output, review, catalogue_text):
-        assert 'When to preview: Override · Only when I ask' in text
-        assert 'When to preview: Inherit · Only when I ask' in text
         assert 'Implement before approval: Yes' in text
         assert 'Implement before approval: Override' not in text and 'Implement before approval: Inherit' not in text
         assert 'Preview approval before PR' not in text and 'Design approval' not in text
@@ -362,7 +390,7 @@ def test_retired_design_approval_uses_single_preview_gate_without_rewriting(work
     label = 'No' if expected == 'no' else 'Yes'
     assert ui.views[2][2]['values']['frontend_implement_before_approval'] == label
     assert 'design_approval' not in dict(ui.views[2][1])
-    assert dict(ui.views[2][1]) == {'frontend_enabled': 'Preview', 'frontend_preview_timing': 'When to preview',
+    assert dict(ui.views[2][1]) == {'frontend_enabled': 'Preview', 'frontend_preview_timing': 'Preview timing',
                                    'frontend_implement_before_approval': 'Implement before approval', 'frontend_design': 'Design approach',
                                    'frontend_preview': 'Preview method', 'frontend_browser': 'Open in browser', 'back': 'Back'}
     t_mod._workflow_print(vars(workflow), {'scope': 'global', 'source': 'global', 'workflow_name': 'standard',
@@ -388,7 +416,7 @@ def test_nested_preview_menus_stage_changes_and_restore_parent_focus(workflow, t
     policy = t_mod._workflow_behaviors_menu(ui, vars(workflow), original)
     assert dict(ui.views[0][1]) == {'pull_requests': 'Pull requests ›', 'local_preview': 'Local preview ›',
                                    'tests': 'Tests ›', 'back': 'Back'}
-    assert dict(ui.views[1][1]) == {'local_preview': 'When to preview',
+    assert dict(ui.views[1][1]) == {'local_preview': 'Preview timing',
         'frontend': 'Frontend ›', 'cli': 'CLI ›', 'back': 'Back'}
     assert ui.views[2][0] == 'Frontend'
     assert ui.views[9][0] == 'Local preview' and ui.views[9][2]['default'] == 1
@@ -461,7 +489,7 @@ def test_preview_submenus_replace_legacy_target_with_enable_controls(workflow, t
     ui = InspectMenu(['local_preview', 'frontend', 'frontend_enabled', None, 'back',
                       'cli', 'cli_enabled', None, 'back', 'back', 'back'])
     policy = t_mod._workflow_behaviors_menu(ui, vars(workflow), original)
-    assert dict(ui.views[1][1]) == {'local_preview': 'When to preview',
+    assert dict(ui.views[1][1]) == {'local_preview': 'Preview timing',
                                    'frontend': 'Frontend ›', 'cli': 'CLI ›', 'back': 'Back'}
     assert ui.views[3][0] == 'Frontend preview' and ui.views[7][0] == 'CLI preview'
     for view, kind in [(ui.views[3], 'frontend'), (ui.views[7], 'cli')]:
@@ -502,7 +530,7 @@ def test_frontend_browser_setting_is_independent_and_clearable(workflow, t_mod, 
     ui = InspectMenu(['local_preview', 'frontend', 'frontend_browser', browser, 'back', 'back', 'back'])
     policy = t_mod._workflow_behaviors_menu(ui, vars(workflow), original)
     assert ui.views[2][0] == 'Frontend'
-    assert dict(ui.views[2][1]) == {'frontend_enabled': 'Preview', 'frontend_preview_timing': 'When to preview',
+    assert dict(ui.views[2][1]) == {'frontend_enabled': 'Preview', 'frontend_preview_timing': 'Preview timing',
                                   'frontend_implement_before_approval': 'Implement before approval', 'frontend_design': 'Design approach',
                                   'frontend_preview': 'Preview method', 'frontend_browser': 'Open in browser', 'back': 'Back'}
     assert ui.views[3][0] == 'Open in browser'
@@ -604,7 +632,7 @@ def test_disabled_preview_display_omits_retained_settings_and_legacy_target(work
     t_mod._workflow_print(vars(workflow), result)
     output = capsys.readouterr().out
     assert 'Frontend · Disabled' in output and 'CLI · Disabled' in output
-    for inactive in ('Applies to', 'When to preview:', 'Preview method:', 'Design approach:', 'Open in browser:'):
+    for inactive in ('Applies to', 'Preview timing:', 'Preview method:', 'Design approach:', 'Open in browser:'):
         assert inactive not in output
     assert 'When to open PR: Only when I ask' in output
     document = workflow.update(workflow.defaults(), policy, name='standard')
@@ -1010,15 +1038,15 @@ def test_development_flow_keeps_section_focus_without_chatter(workflow, t_mod):
     assert 'behaviors' not in policy
     first = ui.views[0]
     assert first[0] == 'PRs, previews & tests'
-    assert first[2]['values']['pull_requests'] == 'Review before PR: Enabled'
+    assert first[2]['values']['pull_requests'] == 'Agent review before PR: Enabled'
     assert first[2]['values']['tests'] == 'Not set'
     assert 'Frontend: Enabled' in first[2]['values']['local_preview'] and 'CLI: Enabled' in first[2]['values']['local_preview']
-    assert 'Inherit · Not set' in first[2]['values']['local_preview']
+    assert 'Inherit global' not in first[2]['values']['local_preview']
     assert dict(first[1]) == {'pull_requests': 'Pull requests ›', 'local_preview': 'Local preview ›',
                               'tests': 'Tests ›', 'back': 'Back'}
     assert dict(ui.views[2][1])['draft'] == 'Draft'
     assert ui.views[3][2]['default'] == 2
-    assert dict(ui.views[5][1]) == {'local_preview': 'When to preview',
+    assert dict(ui.views[5][1]) == {'local_preview': 'Preview timing',
                                    'frontend': 'Frontend ›', 'cli': 'CLI ›', 'back': 'Back'}
     assert dict(ui.views[6][1]) == {'': 'Not set', 'when_ready': 'Automatically when ready', 'on_request': 'Only when I ask'}
     assert dict(ui.views[9][1]) == {'': 'Not set', 'yes': 'Yes', 'no': 'No'}

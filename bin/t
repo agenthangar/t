@@ -1963,6 +1963,24 @@ def _config_live_models(agent):
     """Use the same capability metadata as the vendors' pickers, not a model catalog
     frozen in dotfiles or a stale disk cache. See learn.chatgpt.com/docs/app-server
     (model/list) and Claude Agent SDK's initialize response / ModelInfo."""
+    if agent == "cursor":
+        executable = shutil.which("cursor-agent")
+        if not executable:
+            raise ValueError("cursor-agent is not installed")
+        try:
+            result = subprocess.run([executable, "--list-models"], capture_output=True, text=True, timeout=8)
+        except subprocess.TimeoutExpired as exc:
+            raise ValueError("Cursor model lookup timed out") from exc
+        if result.returncode or len(result.stdout) > 1024 * 1024:
+            raise ValueError("Cursor models unavailable; check authentication with cursor-agent")
+        models = []
+        for line in _ANSI_RE.sub("", result.stdout).splitlines():
+            ident = re.sub(r"\s+\((?:default|current)\)$", "", line.strip())
+            if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/@+\[\](),=-]*", ident) and ident.lower() not in ("models", "available", "default"):
+                models.append({"value": ident, "supportsEffort": False})
+        if not models:
+            raise ValueError("Cursor returned no readable model IDs")
+        return models
     if agent == "codex":
         with _ConfigRPC(["codex", "app-server"]) as rpc:
             rpc.call(1, "initialize", {"clientInfo": {"name": "t-config", "version": "1"}})
@@ -2001,11 +2019,12 @@ def _config_catalog(agent, raw):
         if not isinstance(model, dict) or model.get("hidden"):
             continue
         ident = model.get("model" if agent == "codex" else "value")
-        if not isinstance(ident, str) or not _MODEL_ID.fullmatch(ident) or ident in seen:
+        valid_id = lambda value: re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/@+\[\](),=-]*", value) if agent == "cursor" else _MODEL_ID.fullmatch(value)
+        if not isinstance(ident, str) or not valid_id(ident) or ident in seen:
             continue
         seen.add(ident)
         resolved = model.get("resolvedModel", ident)
-        if not isinstance(resolved, str) or not _MODEL_ID.fullmatch(resolved):
+        if not isinstance(resolved, str) or not valid_id(resolved):
             resolved = ident
         label = f"{resolved} ({ident})" if resolved != ident else ident
         levels = model.get("supportedReasoningEfforts", []) if agent == "codex" else model.get("supportedEffortLevels", [])
@@ -2070,7 +2089,7 @@ def _config_set_model(cfg, agent, model, catalog):
     return reset
 
 
-def _config_model_menu(ui, cfg, agent, catalogs, setting="model", default_label=None, fallback_model="", quiet=False):
+def _config_model_menu(ui, cfg, agent, catalogs, setting="model", default_label=None, fallback_model="", quiet=False, model_validator=None):
     while True:
         if agent not in catalogs:
             if not quiet:
@@ -2125,7 +2144,7 @@ def _config_model_menu(ui, cfg, agent, catalogs, setting="model", default_label=
             continue
         if picked == "__custom__":
             picked = _config_input(ui, "model ID")
-            if picked is not None and not _MODEL_ID.fullmatch(picked):
+            if picked is not None and not (model_validator or _MODEL_ID.fullmatch)(picked):
                 ui.done("invalid", "Enter a model ID without spaces or shell commands.")
                 continue
         if picked is not None:
@@ -2353,29 +2372,94 @@ def _workflow_pending(cfg):
                (cfg._workflow_activate or cfg._workflow_document != cfg._workflow_initial))
 
 
+def _workflow_tool_helper(helper, tool):
+    scoped = dict(helper)
+    scoped["TOOL"] = tool
+    scoped["DEFAULT"] = helper["tool_defaults"](tool)["workflows"]["standard"]
+    scoped["PERMISSIONS"] = {tool: helper["PERMISSIONS"][tool]} if tool in helper["PERMISSIONS"] else {}
+    scoped["ALL_PERMISSIONS"] = helper["PERMISSIONS"]
+    scoped["stage_settings"] = lambda policy, stage: helper["stage_settings"](policy, stage, tool=tool)
+    scoped["main_session_settings"] = lambda policy, agent=tool: helper["main_session_settings"](policy, agent=agent)
+    scoped["summary_lines"] = lambda policy: helper["summary_lines"](policy, tool=tool)
+    return scoped
+
+
+def _workflow_cfg_helper(cfg):
+    helper = _workflow()
+    return _workflow_tool_helper(helper, cfg._workflow_tool) if hasattr(cfg, "_workflow_tool") else helper
+
+
+def _workflow_selected_tool(cfg, args, alias=None):
+    tool = getattr(args, "workflow_tool", None) or getattr(cfg, "agents", {}).get(alias) or getattr(cfg, "agent_default", "codex")
+    if tool not in ("codex", "claude", "cursor"):
+        raise ValueError(f"unsupported workflow tool {tool!r}")
+    return tool
+
+
+def _workflow_tool_scope(ui, cfg, tool, action):
+    helper = _workflow()
+    _workflow_session(cfg)
+    scoped = copy.copy(cfg)
+    scoped._workflow_tool = tool
+    scoped._workflow_document = helper["tool_document"](cfg._workflow_document, tool)
+    scoped._workflow_initial = helper["tool_document"](cfg._workflow_initial, tool)
+    try:
+        return action(scoped)
+    finally:
+        merged = helper["with_tool_document"](cfg._workflow_document, tool, scoped._workflow_document)
+        if (tool != "codex" and tool not in cfg._workflow_initial.get("tools", {}) and
+                scoped._workflow_document == scoped._workflow_initial and not scoped._workflow_activate):
+            merged.get("tools", {}).pop(tool, None)
+            if "tools" in merged and not merged["tools"]:
+                merged.pop("tools")
+        cfg._workflow_document = merged
+        cfg._workflow_activate = cfg._workflow_activate or scoped._workflow_activate
+        for attribute in ("_workflow_catalogs", "_workflow_session_catalogs"):
+            if hasattr(scoped, attribute):
+                setattr(cfg, attribute, getattr(scoped, attribute))
+
+
+def _workflow_native_catalog(cfg, tool):
+    if not hasattr(cfg, "_workflow_catalogs"):
+        cfg._workflow_catalogs = {}
+    if tool not in cfg._workflow_catalogs:
+        cfg._workflow_catalogs[tool] = _config_catalog(tool, _config_live_models(tool))
+    return cfg._workflow_catalogs[tool]
+
+
 def _workflow_model(ui, cfg, helper, stage, current):
     """Read catalogue lazily; workflow choices never mutate launch defaults."""
-    if not hasattr(cfg, "_workflow_catalog"):
+    tool = getattr(cfg, "_workflow_tool", "codex")
+    if hasattr(cfg, "_workflow_catalog") and tool == "codex":
+        catalog = cfg._workflow_catalog
+    else:
         try:
-            cfg._workflow_catalog = _config_catalog("codex", _config_live_models("codex"))
+            catalog = _workflow_native_catalog(cfg, tool)
         except KeyboardInterrupt:
             if getattr(ui, "_config_interrupts", False):
                 raise
             return None
         except (OSError, ValueError) as exc:
-            cfg._workflow_catalog = []
-            ui.done("unavailable", f"Codex: {exc}. Current, recommended and custom models remain available.")
+            catalog = []
+            cfg._workflow_catalogs[tool] = []
+            ui.done("unavailable", f"{tool.title()}: {exc}. Tool default, saved and custom models remain available.")
     while True:
         recommended = helper["DEFAULT"][stage]["model"]
-        choices = {current: f"{current} (current)", recommended: f"{recommended} (recommended)"}
-        for model in cfg._workflow_catalog:
+        choices = {"": "Inherit · Tool default"}
+        if current:
+            choices[current] = f"{current} (current)"
+        if recommended:
+            choices.setdefault(recommended, f"{recommended} (recommended)")
+        for model in catalog:
             choices.setdefault(model["id"], model["label"])
         rows = list(choices.items()) + [("__custom__", "Enter a custom model ID…"),
                                         ("__refresh__", "Refresh model list")]
         picked = ui.pick(_workflow_stage_title(stage) + " model", rows,
                          default=next(i for i, row in enumerate(rows) if row[0] == current))
         if picked == "__refresh__":
-            del cfg._workflow_catalog
+            getattr(cfg, "_workflow_catalogs", {}).pop(tool, None)
+            if hasattr(cfg, "_workflow_catalog"):
+                del cfg._workflow_catalog
             return _workflow_model(ui, cfg, helper, stage, current)
         if picked == "__custom__":
             picked = _config_input(ui, "model ID")
@@ -2430,8 +2514,9 @@ def _workflow_behavior_section(ui, helper, policy, section, runners=None):
                 values[section + "_enabled"] = "Enabled" if helper["preview_enabled"](behaviors, section) else "Disabled"
             if section == "tests":
                 values["runners"] = helper["runners_summary"](changed)
-            values.update({key: _workflow_section_summary(helper, key, behaviors) for key in children})
-            choice = ui.pick(_workflow_section_spec(section)[0], rows, values=values, default=min(focus, len(rows) - 1))
+            values.update({key: _workflow_preview_type_summary(helper, key, behaviors) for key in children})
+            choice = ui.pick(_workflow_section_spec(section)[0], rows, values=values, default=min(focus, len(rows) - 1),
+                             sections={"local_preview": "Global", "frontend": "Preview types"} if section == "local_preview" else {})
             if choice in (None, "back"):
                 return changed
             focus = next(i for i, row in enumerate(rows) if row[0] == choice)
@@ -2444,7 +2529,7 @@ def _workflow_behavior_section(ui, helper, policy, section, runners=None):
                 continue
             if choice == "pr_review":
                 current = helper["pr_review_value"](changed)
-                picked = ui.pick("Review before PR", [("review", "Enabled"), ("skip", "Disabled")],
+                picked = ui.pick("Agent review before PR", [("review", "Enabled"), ("skip", "Disabled")],
                                  default=0 if current == "review" else 1)
                 if picked is not None and picked != current:
                     changed = helper["update_behavior"](changed, choice, picked)
@@ -2458,7 +2543,7 @@ def _workflow_behavior_section(ui, helper, policy, section, runners=None):
                 continue
             spec = helper["BEHAVIORS"][choice]
             override = _workflow_preview_override(helper, choice)
-            reset = "Inherit · " + _workflow_preview_parent_value(helper, behaviors, override[1]) if override else "Not set"
+            reset = "Inherit global · " + _workflow_preview_parent_value(helper, behaviors, override[1]) if override else "Not set"
             options = [("", reset)] + [(key, _workflow_choice(helper, choice, key)) for key in spec["choices"]
                                             if not (choice == "local_preview" and key == "before_pr")]
             selected = ui.pick(_WORKFLOW_TOPICS[choice][0], options,
@@ -2473,9 +2558,11 @@ def _workflow_behavior_section(ui, helper, policy, section, runners=None):
 
 
 def _workflow_permission_summary(helper, policy):
+    if helper.get("TOOL") == "cursor":
+        return "Tool default"
     permissions = policy.get("permissions", {})
     return "; ".join(agent.title() + ": " + helper["PERMISSIONS"][agent][permissions[agent]]["label"]
-                     for agent in ("codex", "claude") if agent in permissions) or "Not set"
+                     for agent in ("codex", "claude") if agent in permissions and agent in helper["PERMISSIONS"]) or "Not set"
 
 
 def _workflow_permissions_menu(ui, helper, policy):
@@ -2484,9 +2571,9 @@ def _workflow_permissions_menu(ui, helper, policy):
     try:
         while True:
             permissions = changed.get("permissions", {})
-            rows = [(agent, agent.title()) for agent in ("codex", "claude")] + [("back", "Back")]
+            rows = [(agent, agent.title()) for agent in helper["PERMISSIONS"]] + [("back", "Back")]
             values = {agent: helper["PERMISSIONS"][agent][permissions[agent]]["label"]
-                      if agent in permissions else "Not set" for agent in ("codex", "claude")}
+                      if agent in permissions else "Not set" for agent in helper["PERMISSIONS"]}
             agent = ui.pick("Permissions", rows, values=values, default=focus)
             if agent in (None, "back"):
                 return changed
@@ -2517,7 +2604,8 @@ def _workflow_session_setting(ui, cfg, policy, agent, field):
     _config_model_menu(ui, staged, agent, cfg._workflow_session_catalogs, field,
                        default_label=inherited_model if field == "model" else
                                      "Default for this model" if settings.get("model") else inherited_effort,
-                       fallback_model=getattr(cfg, "models", {}).get(agent, ""), quiet=True)
+                       fallback_model=getattr(cfg, "models", {}).get(agent, ""), quiet=True,
+                       model_validator=(lambda value: re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/@+\[\](),=-]*", value)) if agent == "cursor" else None)
     selected = {key: value for key, value in (("model", staged.models.get(agent)),
                                              ("effort", staged.efforts.get(agent))) if value}
     if selected != settings:
@@ -2538,8 +2626,8 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
             policy = (copy.deepcopy(document["workflows"][name]) if name else
                       helper["resolved"](document, repository))
             alias = next((alias for alias, path in cfg.repos.items() if os.path.realpath(path) == repository), None)
-            agent = getattr(cfg, "agents", {}).get(alias, getattr(cfg, "agent_default", "codex"))
-            if agent not in ("codex", "claude"):
+            agent = getattr(cfg, "_workflow_tool", getattr(cfg, "agents", {}).get(alias, getattr(cfg, "agent_default", "codex")))
+            if agent not in ("codex", "claude", "cursor"):
                 agent = "codex"
             defaults = policy.get("session_defaults", {}).get(agent, {})
             stages = helper["model_stages"](policy)
@@ -2547,14 +2635,18 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
             rows += [(stage, _workflow_stage_title(stage))
                      for stage in ("planning", "implementation", "review") if stage in stages]
             if "implementation" not in stages:
-                rows += [("main_model", agent.title() + " default model"), ("main_effort", "Reasoning effort")]
+                rows += [("main_model", agent.title() + " default model")]
+                if agent != "cursor":
+                    rows.append(("main_effort", "Reasoning effort"))
             rows.append(("behaviors", "PRs, previews & tests ›"))
-            rows.append(("permissions", "Permissions ›"))
+            if helper["PERMISSIONS"]:
+                rows.append(("permissions", "Permissions ›"))
             rows += [("instructions", "Text instructions")]
             if policy.get("instructions"):
                 rows.append(("clear_instructions", "Clear text instructions"))
             rows += [("edit", "Advanced JSON editor"), ("back", "Back")]
-            values = {stage: policy[stage]["model"] + " · " + _workflow_effort(policy[stage]["effort"], stage)
+            values = {stage: (policy[stage]["model"] or "Inherit · Tool default") +
+                      (" · " + _workflow_effort(policy[stage]["effort"], stage) if agent != "cursor" else "")
                       for stage in ("planning", "implementation", "review")}
             if helper["pr_review_skipped"](policy):
                 values["review"] = "Skipped before PR"
@@ -2613,18 +2705,30 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
             else:
                 stage = choice
                 stage_title = _workflow_stage_title(stage) + (" · worker" if stage == "implementation" and helper["implementation_worker"](policy) else "")
-                field = ui.pick(stage_title, [("model", "Model"), ("effort", "Reasoning effort"), ("back", "Back")],
+                field = ui.pick(stage_title, [("model", "Model")] + ([] if agent == "cursor" else [("effort", "Reasoning effort")]) + [("back", "Back")],
                                 values={"model": policy[stage]["model"], "effort": _workflow_effort(policy[stage]["effort"], stage)})
                 if field in (None, "back"):
                     continue
                 if field == "model":
                     picked = _workflow_model(ui, cfg, helper, stage, policy[stage]["model"])
                 else:
-                    levels = ["auto", *helper["EFFORTS"]]
+                    fixed = list(helper["EFFORTS"])
+                    if hasattr(cfg, "_workflow_tool"):
+                        try:
+                            catalog = _workflow_native_catalog(cfg, agent)
+                            info = _config_find_model(catalog, policy[stage]["model"] or getattr(cfg, "models", {}).get(agent, ""))
+                            fixed = list(info["efforts"]) if info else []
+                        except (OSError, ValueError) as exc:
+                            fixed = []
+                            ui.done("unavailable", f"{agent.title()}: {exc}. Saved effort remains available.")
+                        saved = helper["effective_effort"](policy[stage]["effort"])
+                        if saved != "auto" and saved not in fixed:
+                            fixed.append(saved)
+                    levels = ["auto", *fixed]
                     current_effort = helper["effective_effort"](policy[stage]["effort"])
                     picked = ui.pick(_workflow_stage_title(stage) + " reasoning effort", [(level, _workflow_effort(level, stage)) for level in levels],
                                      default=levels.index(current_effort),
-                                     sections={"auto": "Automatic", helper["EFFORTS"][0]: "Fixed effort"})
+                                     sections={"auto": "Automatic", **({fixed[0]: "Fixed effort"} if fixed else {})})
                 if picked is not None and (field != "effort" or picked != current_effort):
                     changed[stage][field] = picked
             if changed != policy:
@@ -2687,8 +2791,19 @@ def _workflow_runners_menu(ui, cfg, helper, repository=None, name=None):
 
 
 def _config_runners(ui, cfg):
+    if hasattr(cfg, "_workflow_tool"):
+        return _config_tool_runners(ui, cfg)
+    _workflow_session(cfg)
+    while True:
+        tool = ui.pick("Test runners · tool", [(tool, tool.title() + " ›") for tool in _workflow()["TOOLS"]] + [("back", "Back")])
+        if tool in (None, "back"):
+            return
+        _workflow_tool_scope(ui, cfg, tool, lambda scoped: _config_tool_runners(ui, scoped))
+
+
+def _config_tool_runners(ui, cfg):
     """Choose an explicit workflow scope; share the config hub's staged document."""
-    helper = _workflow()
+    helper = _workflow_cfg_helper(cfg)
     _workflow_session(cfg)
     while True:
         document = cfg._workflow_document
@@ -2723,7 +2838,22 @@ def _config_runners(ui, cfg):
 
 
 def _config_workflow(ui, cfg, repo=None):
-    helper = _workflow()
+    if hasattr(cfg, "_workflow_tool"):
+        return _config_workflow_tool(ui, cfg, repo)
+    _workflow_session(cfg)
+    last = getattr(cfg, "agents", {}).get(repo) or getattr(cfg, "agent_default", "codex")
+    while True:
+        rows = [(tool, tool.title() + " ›") for tool in _workflow()["TOOLS"]] + [("back", "Back")]
+        tool = ui.pick("Workflow tool" + (" · " + repo if repo else ""), rows,
+                       default=next((i for i, row in enumerate(rows) if row[0] == last), 0))
+        if tool in (None, "back"):
+            return
+        last = tool
+        _workflow_tool_scope(ui, cfg, tool, lambda scoped: _config_workflow_tool(ui, scoped, repo))
+
+
+def _config_workflow_tool(ui, cfg, repo=None):
+    helper = _workflow_cfg_helper(cfg)
     _workflow_session(cfg)
     repository = os.path.realpath(cfg.repos[repo]) if repo else None
     while True:
@@ -2801,6 +2931,32 @@ def _workflow_assignment_label(name, default, enabled, assigned):
 def _workflow_hub(ui, cfg, standalone=False, shell_pending=False):
     helper = _workflow()
     _workflow_session(cfg)
+    last = getattr(cfg, "agent_default", "codex")
+    while True:
+        pending = _workflow_pending(cfg) or shell_pending
+        rows = [(tool, tool.title() + " ›") for tool in helper["TOOLS"]] + [("back", "Cancel" if standalone else "Back to config")]
+        values = {tool: ("Not configured" if (cfg._workflow_before is None if tool == "codex" else tool not in cfg._workflow_document.get("tools", {})) else
+                         helper["tool_document"](cfg._workflow_document, tool)["default"]) for tool in helper["TOOLS"]}
+        values["save"] = "pending changes" if pending else "no changes"
+        tool = ui.pick("Workflows · tools", rows, values=values,
+                       default=next((i for i, row in enumerate(rows) if row[0] == last), 0),
+                       primary=("s", "SAVE CHANGES", values["save"]), shortcuts={"s": "save"})
+        if tool in (None, "back"):
+            return "cancel" if standalone else None
+        if tool == "save":
+            return "save"
+        last = tool
+        other_pending = shell_pending or any(helper["tool_document"](cfg._workflow_document, other) !=
+            helper["tool_document"](cfg._workflow_initial, other) for other in helper["TOOLS"] if other != tool)
+        result = _workflow_tool_scope(ui, cfg, tool,
+            lambda scoped: _workflow_tool_hub(ui, scoped, shell_pending=bool(other_pending)))
+        if result == "save":
+            return "save"
+
+
+def _workflow_tool_hub(ui, cfg, standalone=False, shell_pending=False):
+    helper = _workflow_cfg_helper(cfg)
+    _workflow_session(cfg)
     last = "customize"
     while True:
         document = cfg._workflow_document
@@ -2818,14 +2974,14 @@ def _workflow_hub(ui, cfg, standalone=False, shell_pending=False):
                 values[key] += " · text instructions"
         rows += [("add", "+ New workflow"), ("choose", "Default workflow"),
                  ("repos", "Repository assignments ›"), ("defaults", "Restore recommended defaults"),
-                 ("save", "Save changes"), ("back", "Cancel" if standalone else "Back to config")]
+                 ("back", "Back to tools")]
         values["choose"] = default
         values["repos"] = str(len(cfg.repos)) + " repositories"
         pending = _workflow_pending(cfg) or shell_pending
         values["save"] = "pending changes" if pending else "no changes"
-        choice = ui.pick("Workflows", rows, values=values,
-                         sections={rows[0][0]: "Select a workflow to edit", "choose": "Where it applies", "save": "Finish"},
-                         accents={"add": "g", "save": "g", "back": "y"},
+        choice = ui.pick(getattr(cfg, "_workflow_tool", "codex").title() + " workflows", rows, values=values,
+                         sections={rows[0][0]: "Select a workflow to edit", "choose": "Where it applies", "back": "Finish"},
+                         accents={"add": "g", "back": "y"},
                          primary=("s", "SAVE CHANGES", values["save"]), shortcuts={"s": "save"},
                          default=next((i for i, row in enumerate(rows) if row[0] == last), 0))
         last = choice
@@ -2884,7 +3040,7 @@ def _workflow_changed_review(helper, document, before, activate=False):
             spec = helper['BEHAVIORS'].get(path[1], {})
             return spec.get('choices', {}).get(value, (str(value),))[0]
         if path[0] == 'permissions' and len(path) == 2:
-            return helper['PERMISSIONS'][path[1]][value]['label']
+            return helper.get('ALL_PERMISSIONS', helper['PERMISSIONS'])[path[1]][value]['label']
         if path[-1] == 'effort':
             return _workflow_effort(helper['effective_effort'](value))
         if isinstance(value, bool):
@@ -2972,8 +3128,24 @@ def _workflow_changed_review(helper, document, before, activate=False):
 
 def _workflow_review(document, before=None, activate=False):
     helper = _workflow()
-    if before is not None:
-        return _workflow_changed_review(helper, document, before, activate)
+    lines = ['Activate recommended workflow settings'] if activate else []
+    for tool in helper["TOOLS"]:
+        scoped = helper["tool_document"](document, tool)
+        previous = helper["tool_document"](before, tool) if before is not None else None
+        if previous is not None and scoped == previous:
+            continue
+        if previous is None and tool != "codex" and tool not in document.get("tools", {}):
+            continue
+        tool_helper = _workflow_tool_helper(helper, tool)
+        changes = (_workflow_changed_review(tool_helper, scoped, previous) if previous is not None else
+                   _workflow_scope_review(tool_helper, scoped))
+        if changes:
+            lines.append(tool.title() + " workflows")
+            lines.extend("  " + line for line in changes)
+    return lines
+
+
+def _workflow_scope_review(helper, document):
     lines = [f"Global default: {document['default']}", helper["PRECEDENCE"]]
     for name, policy in sorted(document["workflows"].items()):
         lines.append(f"Workflow {name}: {'enabled' if policy['enabled'] else 'disabled'}")
@@ -3236,7 +3408,7 @@ def _config_wizard(cfg, workflows_only=False):
                 rows += [("local", "Local worker & models ›"), ("workflow", "Workflows ›"), ("runners", "Test runners ›"),
                          ("mcp", "Sessions server ›"), ("repos", "Repositories ›"), ("worktrees", "Worktrees & branches ›"),
                          ("hosts", "Hosts ›"), ("beam", "Default beam host"), ("edit", "Open config in editor"),
-                         ("save", "Save changes"), ("cancel", "Cancel")]
+                         ("cancel", "Cancel")]
                 pending = len(_config_diff(initial, _config_state(edited))) + _workflow_pending(edited)
                 values.update({"hosts": f"{len(edited.hosts)} registered",
                                "repos": ", ".join(sorted(edited.repos)) or "none registered",
@@ -3249,7 +3421,7 @@ def _config_wizard(cfg, workflows_only=False):
                     choice = ui.pick("Local settings", rows, values=values,
                                      sections={"tool": "Session defaults", AGENTS[0]: "Agents", "workflow": "Workflows", "runners": "Runners",
                                                "mcp": "MCP server", "repos": "Repositories & worktrees", "hosts": "Remote hosts", "edit": "Finish"},
-                                     accents={"save": "g", "cancel": "y"},
+                                     accents={"cancel": "y"},
                                      primary=("s", "SAVE CHANGES", f"{pending} pending"), shortcuts={"s": "save"},
                                      default=next(i for i, row in enumerate(rows) if row[0] == last))
                 pending = len(_config_diff(initial, _config_state(edited))) + _workflow_pending(edited)
@@ -3470,13 +3642,13 @@ _WORKFLOW_PREVIEW_SUBMENUS = {
 _WORKFLOW_TOPICS = {
     "frontend_enabled": ("Preview", "Enable or disable frontend preview preferences."),
     "cli_enabled": ("Preview", "Enable or disable CLI preview preferences."),
-    "pr_review": ("Review before PR", "Enable or disable the agent review before opening a pull request."),
+    "pr_review": ("Agent review before PR", "Enable or disable the agent review before opening a pull request."),
     "pr_open": ("When to open PR", "Open when the work is ready, or wait for your request."),
     "pr_state": ("PR type", "Drafts wait for your approval before becoming ready for review."),
     "pr_merge": ("Merge PR", "Merge after required checks and approvals, or wait for your request."),
-    "local_preview": ("When to preview", "Choose when to make CLI or browser changes available locally."),
-    "frontend_preview_timing": ("When to preview", "Inherit the local-preview default or choose frontend preview timing."),
-    "cli_preview_timing": ("When to preview", "Inherit the local-preview default or choose CLI preview timing."),
+    "local_preview": ("Preview timing", "Choose the shared global timing for CLI and frontend previews."),
+    "frontend_preview_timing": ("Preview timing", "Inherit the local-preview default or choose frontend preview timing."),
+    "cli_preview_timing": ("Preview timing", "Inherit the local-preview default or choose CLI preview timing."),
     "frontend_implement_before_approval": ("Implement before approval", "Allow frontend implementation before approval, or wait after a lightweight preview before substantial implementation."),
     "cli_preview": ("Preview method", "Install the development version locally, or run it from the repo."),
     "cli_launch": ("Run command", "Run the prepared CLI preview command automatically, or only when requested."),
@@ -3524,6 +3696,15 @@ def _workflow_preview_parent_value(helper, behaviors, field):
     return _workflow_choice(helper, key, behaviors[key]) if behaviors.get(key) else "Not set"
 
 
+def _workflow_preview_type_summary(helper, kind, behaviors):
+    preferences = helper["preview_preferences"](behaviors, kind)
+    if not preferences["enabled"]:
+        return "Disabled"
+    timing = preferences["timing"]
+    label = "Inherit global" if timing["source"] == "inherit" else _workflow_choice(helper, "local_preview", timing["value"])
+    return "Enabled · " + label
+
+
 def _workflow_field_value(helper, behaviors, key):
     if key == "pr_review":
         return "Disabled" if behaviors.get(key) == "skip" else "Enabled"
@@ -3532,7 +3713,7 @@ def _workflow_field_value(helper, behaviors, key):
         kind, field = override
         setting = helper["preview_preferences"](behaviors, kind)[field]
         label = _workflow_choice(helper, helper["PREVIEW_DEFAULTS"][field], setting["value"]) if setting["value"] else "Not set"
-        return ("Inherit" if setting["source"] == "inherit" else "Override") + " · " + label
+        return ("Inherit global" if setting["source"] == "inherit" else "Override") + " · " + label
     return _workflow_choice(helper, key, behaviors[key]) if key in behaviors else "Not set"
 
 
@@ -3542,7 +3723,9 @@ def _workflow_section_summary(helper, section, behaviors):
     visible = helper["visible_behaviors"](behaviors)
     parts = [_WORKFLOW_TOPICS[key][0] + ": " + _workflow_field_value(helper, behaviors, key)
              for key in _workflow_section_fields(section, behaviors)
-             if (key == "pr_review" or key in visible or _workflow_preview_override(helper, key)) and key not in ("frontend_enabled", "cli_enabled")]
+             if (key == "pr_review" or key in visible) and key not in ("frontend_enabled", "cli_enabled")]
+    if section == "local_preview" and parts:
+        parts = ["Global: " + "; ".join(parts)]
     for child in _workflow_section_children(section, behaviors):
         summary = _workflow_section_summary(helper, child, behaviors)
         if summary != "Not set":
@@ -3558,7 +3741,11 @@ def _workflow_behavior_lines(helper, section, behaviors, indent=2, policy=None):
     if not enabled:
         return lines
     active_shared = section != "local_preview" or any(helper["preview_enabled"](behaviors, kind) for kind in _WORKFLOW_PREVIEW_SUBMENUS)
-    lines += [" " * (indent + 2) + _WORKFLOW_TOPICS[key][0] + ": " +
+    field_indent = indent + 2
+    if section == "local_preview" and active_shared:
+        lines.append(" " * field_indent + "Global")
+        field_indent += 2
+    lines += [" " * field_indent + _WORKFLOW_TOPICS[key][0] + ": " +
               _workflow_field_value(helper, behaviors, key)
               for key in _workflow_section_fields(section, behaviors)
               if active_shared and key not in ("frontend_enabled", "cli_enabled")]
@@ -3610,6 +3797,7 @@ def _workflow_model_rows(helper, policy):
         settings = helper["stage_settings"](policy, stage)
         inherited = stage not in stages
         rows.append((_workflow_stage_title(stage), settings["model"] or "Agent default",
+                     "Model default" if helper.get("TOOL") == "cursor" else
                      _workflow_effort(settings["effort"], "implementation" if inherited else stage) if settings["effort"] else "Session default",
                      "Main model" if inherited else "Main session" if stage == "implementation" and not helper["implementation_worker"](policy) else "Worker"))
     return rows
@@ -3618,6 +3806,8 @@ def _workflow_model_rows(helper, policy):
 def _workflow_print(helper, result, catalogue=False):
     """Print a compact overview; structured output keeps its existing schema."""
     if catalogue:
+        if result.get("tool"):
+            print("Tool: " + result["tool"].title())
         print("Named workflows; default: " + result["default"] + ".")
         print("\n".join(_table_lines(("WORKFLOW", "APPLIES TO", "TEXT INSTRUCTIONS", "PERMISSIONS", "WORK AND DELIVERY"), [
             (name, _workflow_assignment_label(name, result["default"], item["workflow"]["enabled"],
@@ -3629,6 +3819,8 @@ def _workflow_print(helper, result, catalogue=False):
         print("Text instructions take precedence over behavior preferences, then model guidance.")
     else:
         policy = result["workflow"]
+        if result.get("tool"):
+            print("Tool: " + result["tool"].title())
         scope = "the global default" if result["scope"] == "global" else "repository " + result["scope"]
         print("Workflow for " + scope + ".")
         print("Source: " + result["source"] + (" · " + result["workflow_name"] if result["workflow_name"] else ""))
@@ -3636,10 +3828,13 @@ def _workflow_print(helper, result, catalogue=False):
         text = policy.get("instructions", "")
         print("Text instructions: " + (f"present ({len(text.splitlines())} lines); override work preferences and stage guidance" if text else "none"))
         if text:
-            print("Read text: t workflow instructions show" + (" --repo ALIAS" if result["scope"] != "global" else ""))
+            read_tool = result.get("tool") or helper.get("TOOL")
+            print("Read text: t workflow instructions show" + (" --tool " + read_tool if read_tool else "") +
+                  (" --repo ALIAS" if result["scope"] != "global" else ""))
         print("Precedence: task instructions > repository rules > text instructions > behavior preferences > model guidance")
-        print("Permissions: New and resumed CLI sessions")
-        for agent in ("codex", "claude"):
+        if helper["PERMISSIONS"]:
+            print("Permissions: New and resumed CLI sessions")
+        for agent in helper["PERMISSIONS"]:
             preset = policy.get("permissions", {}).get(agent)
             print("  " + agent.title() + ": " + (helper["PERMISSIONS"][agent][preset]["label"] if preset else "Not set"))
         print("PRs, previews & tests:")
@@ -3654,8 +3849,9 @@ def _workflow_print(helper, result, catalogue=False):
             print("Model settings: " + ", ".join(_workflow_stage_title(stage) for stage in stages))
             if helper["implementation_worker"](policy):
                 settings = helper["main_session_settings"]({**policy, "enabled": True})
-                print("Main session: " + (settings.get("model") or "Agent default") + " · " +
-                      (_workflow_effort(settings["effort"]) if settings.get("effort") else "Session default"))
+                print("Main session: " + (settings.get("model") or "Agent default") +
+                      ("" if helper.get("TOOL") == "cursor" else " · " +
+                       (_workflow_effort(settings["effort"]) if settings.get("effort") else "Session default")))
             print("\n".join(_table_lines(("STEP", "MODEL", "REASONING", "SOURCE"),
                                         _workflow_model_rows(helper, policy))))
         else:
@@ -3665,7 +3861,7 @@ def _workflow_print(helper, result, catalogue=False):
                 print("  Use agent defaults")
             for agent, settings in defaults.items():
                 print("  " + agent.title() + ": " + (settings.get("model") or "agent default") +
-                      " · reasoning: " + (settings.get("effort") or "default for this model"))
+                      ("" if agent == "cursor" else " · reasoning: " + (settings.get("effort") or "default for this model")))
             print("  Applies to new/resumed CLI sessions; active turns and desktop launches keep their settings.")
     print("Propagation: " + result["propagation"]["runtime"])
 
@@ -3702,13 +3898,18 @@ def _cmd_workflow(cfg, args):
                 raise ValueError(f"unknown registered repository {alias!r}")
             repository = os.path.realpath(cfg.repos[alias])
         helper = _workflow()
-        document, before = helper["load"]()
+        full_document, before = helper["load"]()
+        tool = _workflow_selected_tool(cfg, args, alias)
+        saved_scope = before is not None and (tool == "codex" or tool in full_document.get("tools", {}))
+        document = helper["tool_document"](full_document, tool)
+        helper = _workflow_tool_helper(helper, tool)
         if instructions_action == "show":
             print(helper["instructions"](document, repository, name), end="")
             return 0
         if verb == "list":
             if all_workflows:
                 result = helper["catalogue"](document)
+                result["tool"] = tool
                 result["propagation"] = helper["propagation"]()["status"]()
                 if getattr(args, "json", False):
                     print(helper["encode"](result), end="")
@@ -3717,8 +3918,9 @@ def _cmd_workflow(cfg, args):
                 return 0
             entry = document["repositories"].get(repository, {})
             result = {"scope": repository or "global",
+                      "tool": tool,
                       "source": ("repository override" if "inline" in entry else "repository workflow" if "workflow" in entry else
-                                 "global" if before else "recommended defaults (not saved)"),
+                                 "global" if saved_scope else "recommended defaults (not saved)"),
                       "workflow_name": None if "inline" in entry else helper["source"](document, repository),
                       "excluded": entry.get("excluded", False),
                       "workflow": helper["effective"](document, repository)}
@@ -3742,6 +3944,7 @@ def _cmd_workflow(cfg, args):
         if after == document:
             print("Workflow unchanged — nothing written")
         else:
+            after = helper["with_tool_document"](full_document, tool, after)
             helper["save"](after, before, propagation_context={"repos": cfg.repos, "hosts": getattr(cfg, "hosts", {})})
             print("✓ saved agent workflow and native instructions")
         return 0
@@ -3765,6 +3968,11 @@ def _runner_scope(cfg, alias):
     return os.path.realpath(cfg.repos[selected])
 
 
+def _runner_tool(cfg, args, repository=None):
+    alias = next((key for key, path in cfg.repos.items() if os.path.realpath(path) == repository), None)
+    return _workflow_selected_tool(cfg, args, alias)
+
+
 def _cmd_workflow_runners(cfg, args):
     try:
         action = args.runner_action
@@ -3774,15 +3982,17 @@ def _cmd_workflow_runners(cfg, args):
             print(json.dumps(result, indent=2))
             return 0
         helper = _workflow()
-        document, before = helper["load"]()
+        full_document, before = helper["load"]()
         repository = _runner_scope(cfg, args.workflow_repo)
+        tool = _runner_tool(cfg, args, repository)
+        document = helper["tool_document"](full_document, tool)
         name = args.workflow_name
         value = helper["runners"](document, repository, name)
         if action == "list":
             if args.json:
-                print(helper["encode"]({"scope": repository or name or "global", "runners": value}), end="")
+                print(helper["encode"]({"tool": tool, "scope": repository or name or "global", "runners": value}), end="")
             else:
-                print("Test runners · " + (repository or name or "global"))
+                print("Test runners · " + tool.title() + " · " + (repository or name or "global"))
                 print("Defaults: " + (", ".join(value["default_targets"]) or "none"))
                 print(f"Timeout: {value['timeout_seconds']}s · queue: {value['queue_timeout_seconds']}s")
                 print("Artifacts: " + (", ".join(value["artifacts"]) or "none"))
@@ -3799,7 +4009,7 @@ def _cmd_workflow_runners(cfg, args):
         if rc:
             return rc
         if after != document:
-            helper["save"](after, before)
+            helper["save"](helper["with_tool_document"](full_document, tool, after), before)
             print("✓ saved test runners and native instructions")
         else:
             print("Test runners unchanged — nothing written")
@@ -3825,6 +4035,7 @@ def _cmd_workflow_runs(cfg, args):
                 raise ValueError("--repo must match the current checkout's registered repository")
             workflow = _workflow()
             document, _ = workflow["load"]()
+            document = workflow["tool_document"](document, _runner_tool(cfg, args, canonical))
             policy = workflow["effective"](document, canonical)
             if not policy["enabled"]:
                 raise ValueError("the workflow is disabled or excluded for this repository")
@@ -11772,8 +11983,8 @@ def _wrap_help(body):
 def _group_help(group):
     if group in ("runners", "workflow runners", "config workflow runners"):
         return _wrap_help("""USAGE
-  t runners list [NAME] [--repo ALIAS] [--json]
-  t runners edit [NAME] [--repo ALIAS]
+  t runners list [NAME] [--tool TOOL] [--repo ALIAS] [--json]
+  t runners edit [NAME] [--tool TOOL] [--repo ALIAS]
   t runners setup --github-repo OWNER/REPO [--create]
   t runners runs <verb> [arguments] [flags]
 
@@ -11785,6 +11996,8 @@ COMMANDS
 
 SCOPE
   Omit NAME and --repo for the global default. NAME selects a shared definition.
+  --tool selects codex, claude or cursor; otherwise use the repository tool
+  override or account default.
   --repo explicitly selects a registered repository; it cannot combine with NAME.
   List reads local configuration without network access, prompts or writes.
   Saving configuration never provisions runners. Setup uses gh authentication;
@@ -11795,7 +12008,7 @@ LEARN MORE
 """)
     if group in ("runners runs", "workflow runs", "config workflow runs"):
         return _wrap_help("""USAGE
-  t runners runs start [--repo ALIAS] [--target NAME ...] -- COMMAND ...
+  t runners runs start [--tool TOOL] [--repo ALIAS] [--target NAME ...] -- COMMAND ...
   t runners runs list [--json]
   t runners runs status ID [--json]
   t runners runs logs ID [--target NAME]
@@ -11815,6 +12028,8 @@ COMMANDS
 SCOPE
   Start infers the registered canonical repository from the current checkout or
   linked worktree. --repo must match that checkout. No repository picker opens.
+  --tool selects codex, claude or cursor runner preferences; otherwise use the
+  repository tool override or account default.
   --include PATH explicitly adds intended untracked files. Tracked edits are
   included without committing or pushing source. One snapshot serves all targets.
   --os linux|macos and --capability NAME filter configured targets. Windows
@@ -11826,8 +12041,8 @@ LEARN MORE
 """)
     if group == "workflow instructions":
         return _wrap_help("""USAGE
-  t workflow instructions show [NAME] [--repo ALIAS]
-  t workflow instructions edit [NAME] [--repo ALIAS]
+  t workflow instructions show [NAME] [--tool TOOL] [--repo ALIAS]
+  t workflow instructions edit [NAME] [--tool TOOL] [--repo ALIAS]
 
 COMMANDS
   show  Print the selected workflow's Markdown instructions without prompts
@@ -11835,6 +12050,8 @@ COMMANDS
 
 SCOPE
   Omit NAME and --repo for the global default. NAME edits a shared definition.
+  --tool selects codex, claude or cursor; otherwise use the repository tool
+  override or account default.
   --repo selects a registered repository explicitly, without checkout inference.
   NAME and --repo cannot be combined. Repository edits customize only that repo.
 
@@ -11845,13 +12062,13 @@ LEARN MORE
         return _wrap_help("""USAGE
   t workflow <verb> [arguments] [flags]
   t workflow
-  t workflow list [--repo ALIAS | --all] [--json]
-  t workflow add NAME [--from NAME]
-  t workflow use NAME [--repo ALIAS]
-  t workflow exclude --repo ALIAS
-  t workflow inherit --repo ALIAS
-  t workflow edit [NAME] [--repo ALIAS]
-  t workflow instructions <verb> [NAME] [--repo ALIAS]
+  t workflow list [--tool TOOL] [--repo ALIAS | --all] [--json]
+  t workflow add NAME [--tool TOOL] [--from NAME]
+  t workflow use NAME [--tool TOOL] [--repo ALIAS]
+  t workflow exclude [--tool TOOL] --repo ALIAS
+  t workflow inherit [--tool TOOL] --repo ALIAS
+  t workflow edit [NAME] [--tool TOOL] [--repo ALIAS]
+  t workflow instructions <verb> [NAME] [--tool TOOL] [--repo ALIAS]
 
 COMMANDS
   list          Print effective settings or the named catalogue with --all
@@ -11863,8 +12080,14 @@ COMMANDS
   instructions  Show or edit human-written Markdown instructions
 
 SCOPE
-  Omit --repo for the global workflow. --repo selects a registered repository
+  Use --tool codex, claude or cursor; default: repository or account tool.
+  Omit --repo for that tool's global workflow. --repo selects a registered repository
   alias, basename or origin name explicitly.
+  Start with Codex, Claude or Cursor in the editor, then choose its workflow.
+  Each tool has separate workflows, defaults and repository assignments.
+  --tool selects codex, claude or cursor for explicit commands; otherwise use
+  the repository tool override or account default. Browsing never changes the
+  tool that launches sessions.
   Explicit verbs never infer the checkout. Bare t workflow opens the editor.
   NAME and --repo cannot be combined for edit. Shared definition edits affect
   all its consumers. --all lists named workflows; it cannot combine with --repo.
@@ -13112,6 +13335,8 @@ RECEIVE AND REMOTE MOVES
             "add": "copy a workflow under a new name", "use": "select a named workflow",
             "exclude": "exclude a repository from its workflow", "inherit": "restore the global default for a repository"}[verb],
             description="Global default unless --repo selects a registered repository. No checkout inference or repository picker.")
+        leaf.add_argument("--tool", dest="workflow_tool", choices=("codex", "claude", "cursor"),
+                          help="workflow tool; default: repository tool or account default")
         if verb != "add":
             leaf.add_argument("--repo", dest="workflow_repo", metavar="ALIAS", required=verb in ("exclude", "inherit"),
                               help="registered repository alias, basename or origin name; omit for global")
@@ -13129,6 +13354,8 @@ RECEIVE AND REMOTE MOVES
     instructions_sub = instructions.add_subparsers(dest="workflow_instructions_action")
     for verb in ("show", "edit"):
         leaf = instructions_sub.add_parser(verb, help="print raw Markdown" if verb == "show" else "edit Markdown in VISUAL/EDITOR")
+        leaf.add_argument("--tool", dest="workflow_tool", choices=("codex", "claude", "cursor"),
+                          help="workflow tool; default: repository tool or account default")
         leaf.add_argument("workflow_name", nargs="?", metavar="NAME", help="named workflow; default: global workflow")
         leaf.add_argument("--repo", dest="workflow_repo", metavar="ALIAS", help="registered repository alias, basename or origin name; cannot combine with NAME")
 
@@ -13137,6 +13364,8 @@ RECEIVE AND REMOTE MOVES
     for verb in ("list", "edit"):
         leaf = runner_sub.add_parser(verb, help="list configured test targets" if verb == "list" else "edit runner JSON in VISUAL/EDITOR",
             description="Global default unless NAME or --repo explicitly selects another scope. No checkout inference or picker.")
+        leaf.add_argument("--tool", dest="workflow_tool", choices=("codex", "claude", "cursor"),
+                          help="workflow tool; default: repository tool or account default")
         leaf.add_argument("workflow_name", nargs="?", metavar="NAME", help="named workflow; default: global workflow")
         leaf.add_argument("--repo", dest="workflow_repo", metavar="ALIAS", help="registered repository alias; cannot combine with NAME")
         if verb == "list":
@@ -13150,6 +13379,8 @@ RECEIVE AND REMOTE MOVES
     run_sub = runs.add_subparsers(dest="run_action")
     leaf = run_sub.add_parser("start", help="snapshot the current checkout, run targets concurrently, and wait for results",
         description="Requires a registered current checkout. --repo must match that checkout. Tracked current files are included; untracked inputs require --include. Native GUI tests remain opt-in.")
+    leaf.add_argument("--tool", dest="workflow_tool", choices=("codex", "claude", "cursor"),
+                      help="workflow tool; default: repository tool or account default")
     leaf.add_argument("--repo", dest="workflow_repo", metavar="ALIAS", help="registered repository; must match the current checkout")
     leaf.add_argument("--target", dest="targets", action="append", metavar="NAME", help="configured target; repeat to select several")
     leaf.add_argument("--os", dest="runner_os", choices=("linux", "macos"), help="filter configured target OS")

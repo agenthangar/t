@@ -68,7 +68,8 @@ def test_selection_helper_validates_before_updating(workflow, selected):
 def test_stage_settings_and_launch_defaults_are_independent(workflow, selected):
     policy = workflow.select_stages(workflow.DEFAULT, selected)
     assert workflow.main_session_settings(policy) == {'model': 'gpt-6.1-sol', 'effort': 'medium'}
-    assert workflow.main_session_settings(policy, 'claude') == {}
+    claude_policy = workflow.effective(workflow.tool_document(workflow.defaults(), 'claude'))
+    assert workflow.main_session_settings(claude_policy, 'claude') == {}
     for stage in ('planning', 'review'):
         settings = workflow.stage_settings(policy, stage)
         assert settings == (policy[stage] if stage in selected else workflow.main_session_settings(policy))

@@ -383,6 +383,12 @@ if (( attach )) && [[ -t 0 && -t 1 ]]; then
   # interactive PATH — plain ssh would not see it. unlock-keychain first:
   # the ssh login keychain is locked and cursor-agent's creds live there
   # (prompts for the host's login password on the ssh -t TTY).
-  exec ssh -t "$host" "zsh -lic 'if command -v security >/dev/null; then security unlock-keychain || exit 1; fi; cd ${rcwd:-~} && cursor-agent --resume=$id'"
+  remote_resume=$(python3 - "$id" <<'PY'
+import shlex
+import sys
+print(shlex.quote('if command -v security >/dev/null; then security unlock-keychain || exit 1; fi; t cursor resume ' + shlex.quote(sys.argv[1])))
+PY
+)
+  exec ssh -t "$host" "zsh -lic $remote_resume"
 fi
 resume_hint "$id" "$host"

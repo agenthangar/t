@@ -52,7 +52,7 @@ def test_clearing_optional_preference_does_not_save_a_default(workflow):
 def test_summary_only_shows_selected_effective_preferences(workflow):
     policy = copy.deepcopy(workflow.DEFAULT)
     empty = workflow.summary_lines(policy)
-    assert 'Review before PR: Enabled' in empty
+    assert 'Agent review before PR: Enabled' in empty
     assert 'PRs, previews & tests: no preferences set' not in empty
     assert not any('No preference' in line for line in empty)
     selected = workflow.summary_lines(workflow.update_behavior(policy, 'pr_state', 'draft'))
@@ -387,7 +387,7 @@ def test_skip_pr_review_removes_reviewer_requirement_and_retains_delivery(workfl
     if stages_enabled:
         assert '3. Finish delivery in the main conversation' in text
         assert 'merge conflicts and required CI through completion' in text
-    assert 'Review before PR: Disabled' in workflow.summary_lines(policy)
+    assert 'Agent review before PR: Disabled' in workflow.summary_lines(policy)
     assert workflow.policy_summary(policy)['review_skipped'] is True
     assert policy == before
 
@@ -409,7 +409,7 @@ def test_explicit_pr_review_uses_selected_worker_or_main_agent(workflow, stages_
         assert 'otherwise review in the main conversation' in text
         assert 'Review with a bounded' not in text
     assert workflow.pr_review_skipped(policy) is False
-    assert 'Review before PR: Enabled' in workflow.summary_lines(policy)
+    assert 'Agent review before PR: Enabled' in workflow.summary_lines(policy)
 
 
 def test_clearing_skip_restores_saved_review_stage_and_its_model_settings(workflow):
@@ -435,7 +435,7 @@ def test_disabled_workflow_suppresses_pr_review_choice(workflow):
               'behaviors': {'pr_review': 'skip'}}
     assert workflow.pr_review_skipped(policy) is False
     assert workflow.policy_summary(policy)['review_skipped'] is False
-    assert 'Review before PR:' not in workflow._stage_text(policy)
+    assert 'Agent review before PR:' not in workflow._stage_text(policy)
 
 
 @pytest.mark.parametrize('value', ['always', 'never', 'on_request', False, None])
@@ -611,7 +611,7 @@ def test_pr_review_defaults_to_enabled_without_materializing_storage(workflow, s
     policy = {**copy.deepcopy(workflow.DEFAULT), 'stages_enabled': stages_enabled}
     before = copy.deepcopy(policy)
     assert workflow.pr_review_value(policy) == 'review'
-    assert 'Review before PR: Enabled' in workflow.summary_lines(policy)
+    assert 'Agent review before PR: Enabled' in workflow.summary_lines(policy)
     assert 'Before opening a pull request, review the actual diff and validation results' in workflow._stage_text(policy)
     assert policy == before
     changed = workflow.update_behavior(policy, 'pr_open', 'on_request')

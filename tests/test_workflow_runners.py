@@ -371,7 +371,7 @@ def test_config_runners_scope_stages_and_preserves_repository_policy(workflow, t
         return 0, w.update(doc, policy, repo, name)
     monkeypatch.setitem(w.__dict__, 'edit_runners', edit)
     picks = [selection] + ({'global': [], 'named': ['name:careful'], 'repo': ['repo:api']}[selection]) + ['edit', 'back', 'back']
-    t_mod._config_runners(Menu(picks), cfg)
+    t_mod._config_tool_runners(Menu(picks), cfg)
     assert edits == [(repository if selection == 'repo' else None,
                       None if selection == 'repo' else 'careful' if selection == 'named' else 'standard')]
     assert t_mod._workflow_pending(cfg)
@@ -389,7 +389,7 @@ def test_config_runners_scope_stages_and_preserves_repository_policy(workflow, t
 def test_config_runners_back_is_noop(workflow, t_mod, monkeypatch, picks):
     monkeypatch.setattr(t_mod, '_workflow', lambda: workflow.__dict__)
     cfg = SimpleNamespace(repos={})
-    t_mod._config_runners(Menu(picks), cfg)
+    t_mod._config_tool_runners(Menu(picks), cfg)
     assert not t_mod._workflow_pending(cfg)
     assert not workflow.config_path().exists()
 
@@ -404,7 +404,7 @@ def test_config_runners_hub_review_or_discard(workflow, t_mod, config_cli, monke
         policy['runners'] = runners()
         return 0, w.update(doc, policy, repo, name)
     monkeypatch.setitem(w.__dict__, 'edit_runners', edit)
-    picks = ['runners', 'global', 'edit', 'back', 'back'] + (['save'] if finish == 'save' else ['cancel', 'discard'])
+    picks = ['runners', 'codex', 'global', 'edit', 'back', 'back', 'back'] + (['save'] if finish == 'save' else ['cancel', 'discard'])
     monkeypatch.setattr(t_mod, '_RailUI', lambda: Menu(picks))
     result = t_mod._config_wizard(cfg)
     assert not t_mod._workflow_pending(cfg)

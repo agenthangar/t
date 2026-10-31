@@ -42,7 +42,8 @@ def test_workflow_hub_labels_assignments_without_claiming_active_use(workflow, t
     cfg = SimpleNamespace(repos=repos, _workflow_document=document, _workflow_initial=copy.deepcopy(document),
                           _workflow_activate=False, _workflow_before=None)
     ui = HubMenu(['repos', '__back__', 'back'])
-    assert t_mod._workflow_hub(ui, cfg) is None
+    cfg._workflow_tool = 'codex'
+    assert t_mod._workflow_tool_hub(ui, cfg) is None
     values = ui.views[0][2]['values']
     assert values['customize'] == 'Global default · 1 repo'
     assert values['name:fast'] == 'Assigned to 2 repos'
@@ -65,7 +66,8 @@ def test_workflow_hub_assignment_labels_follow_staged_default(workflow, t_mod, m
     cfg = SimpleNamespace(repos=repos, _workflow_document=document, _workflow_initial=copy.deepcopy(document),
                           _workflow_activate=False, _workflow_before=None)
     ui = HubMenu(['choose', selected, 'back'])
-    assert t_mod._workflow_hub(ui, cfg) is None
+    cfg._workflow_tool = 'codex'
+    assert t_mod._workflow_tool_hub(ui, cfg) is None
     values = ui.views[-1][2]['values']
     assert values['customize'] == label
     assert values['name:standard'] == 'Assigned to 1 repo'
@@ -119,7 +121,11 @@ def config(workflow, t_mod, monkeypatch, tmp_path):
     local = tmp_path / 'local.zsh'
     local.write_text('# unchanged\n')
     monkeypatch.setenv('T_LOCAL_RC', str(local))
-    return t_mod.Config(), local
+    cfg = t_mod.Config()
+    cfg._workflow_catalogs = {'codex': [dict(id=model, resolved=model, label=model,
+        efforts=list(workflow.EFFORTS), fast=False, ultrafast=False)
+        for model in {workflow.DEFAULT[stage]['model'] for stage in workflow.MODEL_STAGES}]}
+    return cfg, local
 
 
 @pytest.mark.parametrize('save', [False, True])
@@ -131,8 +137,8 @@ def test_workflow_tui_save_discard(workflow, t_mod, monkeypatch, tmp_path, save,
         Path(argv[-1]).write_text('Try it locally before opening a PR.\n')
         return 0
     monkeypatch.setattr(workflow.subprocess, 'call', editor)
-    picks = ([] if direct else ['workflow']) + ['customize', 'instructions', 'back']
-    picks += ['save'] if save else ['back', *([] if direct else ['cancel']), 'discard']
+    picks = ([] if direct else ['workflow']) + ['codex', 'customize', 'instructions', 'back']
+    picks += ['save'] if save else ['back', 'back', *([] if direct else ['cancel']), 'discard']
     ui = Menu(picks)
     monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
     args = t_mod.build_parser().parse_args(['config', 'workflows'] if direct else ['config'])
@@ -174,7 +180,7 @@ def test_workflow_tui_narrow(workflow, t_mod, monkeypatch, tmp_path, width, heig
 
 def test_workflow_tui_review_back_and_keep(workflow, t_mod, monkeypatch, tmp_path):
     cfg, _ = config(workflow, t_mod, monkeypatch, tmp_path)
-    ui = Menu(['customize', 'enabled', '0', 'back', 'save', 'back', 'keep', 'save'], pages=['n', 'y'])
+    ui = Menu(['codex', 'customize', 'enabled', '0', 'back', 'save', 'back', 'keep', 'save'], pages=['n', 'y'])
     monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
     changed = t_mod._config_wizard(cfg, workflows_only=True)
     assert not changed._workflow_document['workflows']['standard']['enabled']
@@ -184,7 +190,7 @@ def test_workflow_tui_review_back_and_keep(workflow, t_mod, monkeypatch, tmp_pat
 def test_workflow_tui_add_assign_and_repository_scope(workflow, t_mod, monkeypatch, tmp_path):
     cfg, _ = config(workflow, t_mod, monkeypatch, tmp_path)
     cfg.repos = {'api': str(tmp_path / 'api')}
-    ui = Menu(['add', 'back', 'choose', 'local', 'repos', 'api', 'exclude', 'back', 'name:standard', 'back', 'save'], inputs=['local'])
+    ui = Menu(['codex', 'add', 'back', 'choose', 'local', 'repos', 'api', 'exclude', 'back', 'name:standard', 'back', 'save'], inputs=['local'])
     assert t_mod._workflow_hub(ui, cfg, standalone=True) == 'save'
     assert cfg._workflow_document['default'] == 'local'
     assert cfg._workflow_document['repositories'][cfg.repos['api']]['excluded']
@@ -217,7 +223,7 @@ def test_workflow_bare_entry(workflow, t_mod, monkeypatch, tmp_path, capsys, ter
 ])
 def test_workflow_ctrl_c_preserves_completed_nested_selections(workflow, t_mod, monkeypatch, tmp_path, menu, field, value):
     cfg, local = config(workflow, t_mod, monkeypatch, tmp_path)
-    ui = InterruptMenu(['customize', *menu, KeyboardInterrupt, 'save'], pages=['enter'])
+    ui = InterruptMenu(['codex', 'customize', *menu, KeyboardInterrupt, 'save'], pages=['enter'])
     monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
     changed = t_mod._config_wizard(cfg, workflows_only=True)
     assert changed._workflow_document['workflows']['standard'][field] == value
@@ -254,7 +260,7 @@ def test_workflow_editor_interrupt_keeps_prior_staged_edits(workflow, t_mod, mon
     def interrupted_editor(*args):
         raise KeyboardInterrupt
     monkeypatch.setattr(workflow, 'edit_instructions', interrupted_editor)
-    ui = InterruptMenu(['customize', 'enabled', '0', 'instructions', 'save'], pages=['enter'])
+    ui = InterruptMenu(['codex', 'customize', 'enabled', '0', 'instructions', 'save'], pages=['enter'])
     monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
     changed = t_mod._config_wizard(cfg, workflows_only=True)
     assert not changed._workflow_document['workflows']['standard']['enabled']
@@ -272,7 +278,7 @@ def test_workflow_runner_interrupt_keeps_runner_and_behavior_edits(workflow, t_m
         staged._workflow_document = workflow.update(staged._workflow_document, policy, repository, name)
         raise KeyboardInterrupt
     monkeypatch.setattr(t_mod, '_workflow_runners_menu', interrupted_runners)
-    ui = InterruptMenu(['customize', 'behaviors', 'pull_requests', 'pr_open', 'on_request',
+    ui = InterruptMenu(['codex', 'customize', 'behaviors', 'pull_requests', 'pr_open', 'on_request',
                         'back', 'tests', 'runners', 'save'], pages=['enter'])
     monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
     changed = t_mod._config_wizard(cfg, workflows_only=True)
@@ -287,7 +293,7 @@ def test_workflow_runner_interrupt_keeps_runner_and_behavior_edits(workflow, t_m
 def test_pristine_repository_submenu_interrupt_does_not_create_override(workflow, t_mod, monkeypatch, tmp_path, submenu):
     cfg, local = config(workflow, t_mod, monkeypatch, tmp_path)
     cfg.repos = {'api': str(tmp_path / 'api')}
-    ui = InterruptMenu(['repos', 'api', 'customize', submenu, KeyboardInterrupt])
+    ui = InterruptMenu(['codex', 'repos', 'api', 'customize', submenu, KeyboardInterrupt])
     monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
     with pytest.raises(KeyboardInterrupt):
         t_mod._config_wizard(cfg, workflows_only=True)

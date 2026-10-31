@@ -962,6 +962,16 @@ unchanged. Sessions support `main`, `master`, and custom default branches throug
 Configure named staged workflows in `t config open` → **Workflows**, or use
 `t workflow` for the editor (`t help workflow` for command help). The former `t config workflow` routes remain
 compatibility aliases.
+Start with **Codex**, **Claude**, or **Cursor**, then choose a workflow to edit.
+Each tool has its own workflows, default, and repository assignments. Browsing
+a tool's settings does not change which tool starts sessions; the default tool
+and repository tool overrides remain in `t config`.
+Existing workflows stay under Codex. Previously shared Claude preferences get
+an independent copy, retaining Claude model defaults, permissions, delivery
+preferences, instructions and assignments, with Codex model stages removed.
+New Claude and Cursor scopes start with one model and native defaults. Their
+model pickers query their own CLI; an unavailable catalogue still allows
+inheritance or a custom model ID.
 Workflow rows show **Global default**, **Assigned to N repos**, or **Not assigned**.
 Repository counts include explicit, non-excluded assignments; a disabled definition
 is marked **Disabled**. Being enabled does not mean a workflow is assigned.
@@ -975,7 +985,7 @@ coordinates the work and follows up on its results. The main session's fixed
 launch effort is shown separately and does not determine the worker's effort.
 An explicit Implementation effort keeps implementation in the main session at
 that level. Planning and Review use workers when selected. **Pull requests →
-Review before PR → Disabled** disables the pre-PR review step, including a
+Agent review before PR → Disabled** disables the pre-PR review step, including a
 selected review worker, while retaining its model and effort settings.
 These are delegation instructions for the agent;
 `t` does not change a running turn's effort or run its own task classifier.
@@ -1063,18 +1073,18 @@ including repository-only customizations. Menu choices stay pending until
 
 | Setting | Choices |
 | --- | --- |
-| Pull requests → Review before PR | Enabled or Disabled |
+| Pull requests → Agent review before PR | Enabled or Disabled |
 | Pull requests → When to open PR | Automatically when ready or Only when I ask |
 | Pull requests → PR type / Merge PR | Draft or ready; Automerge or When I ask |
-| Local preview → When to preview | Automatically when ready or Only when I ask |
+| Local preview → Global → Preview timing | Automatically when ready or Only when I ask |
 | Local preview → Frontend → Preview | Enabled or Disabled |
-| Local preview → Frontend → When to preview | Inherit or choose a timing override |
+| Local preview → Frontend → Preview timing | Inherit global or choose a timing override |
 | Local preview → Frontend → Implement before approval | Yes or No |
 | Local preview → Frontend → Design approach | Separate HTML prototype or In the app |
 | Local preview → Frontend → Preview method | Fast reload or Build |
 | Local preview → Frontend → Open in browser | Automatically or Only when I ask |
 | Local preview → CLI → Preview | Enabled or Disabled |
-| Local preview → CLI → When to preview | Inherit or choose a timing override |
+| Local preview → CLI → Preview timing | Inherit global or choose a timing override |
 | Local preview → CLI → Preview method | Install locally or Run from the repo |
 | Local preview → CLI → Run command | Automatically or Only when I ask |
 | Tests → Run tests | Local during work, before preview, before PR, or PR CI |
@@ -1087,7 +1097,7 @@ Preview and validation instructions require accurate reporting of limitations an
 results. Opening a PR alone does not authorize a merge. These preferences guide
 agents; they do not enforce execution or grant permission beyond the task.
 
-**Review before PR → Disabled** lets the agent proceed from implementation
+**Agent review before PR → Disabled** lets the agent proceed from implementation
 and the selected tests/previews to the configured PR-opening action without a
 separate code-review pass. It suppresses review in the main conversation and a
 selected review worker. **Enabled** requires the agent to review the diff
@@ -1098,10 +1108,12 @@ Skipping this agent review does not change required repository approvals, checks
 or explicit task instructions. To open a PR automatically without the review
 pass, select **Disabled** and **When to open PR → Automatically when ready**.
 
-**When to preview** is the default under Local preview. Frontend and CLI inherit
-it unless you choose an override. Their timing rows show the resolved value and
-source, such as **Inherit · Automatically when ready**. Choosing Inherit removes
-the override; future parent changes then apply.
+Set **Preview timing** in Local preview's **Global** section, above
+the Frontend and CLI submenus. Each submenu's **Preview timing** inherits that
+value unless you choose an override. Its row shows the source and resolved value,
+such as **Inherit global · Automatically when ready**. Choosing Inherit global
+removes the override; future parent changes then apply. The parent menu keeps
+submenu summaries short; open a submenu for its design and launch settings.
 **Frontend → Implement before approval: No** requires a lightweight frontend
 preview and approval before substantial implementation. Work needed to create
 that preview is allowed. **Yes** lets frontend implementation proceed without
@@ -1673,9 +1685,24 @@ See [the terminal contract](ui/README.md) for scope, retries and runtime limits.
 
 
 Run `t workflow` in a terminal to open the workflow editor. Choose a named
-workflow, edit its model steps, work and delivery choices, or text instructions,
+workflow under its CLI tool, edit its model steps, work and delivery choices, or text instructions,
 then review and save. Repository assignments and the global default share this
 transaction. Cancel leaves saved settings unchanged.
+Use the footer's **Save changes** action (`s`) to review pending edits. The
+workflow and config menus do not repeat it as a menu row.
+Explicit commands accept `--tool codex|claude|cursor`, for example
+`t workflow list --tool claude --all` and
+`t workflow instructions show --tool cursor --repo api`.
+Without `--tool`, commands use the configured default tool, or the selected
+repository's tool override when `--repo` is supplied.
+`t runners list`, `t runners edit` and `t runners runs start` accept the same
+`--tool` selector for that tool's test runners.
+Cursor workflows apply through `t`'s Cursor launch and resume paths. Model
+parameters belong in its model ID. For Git workspaces, `t` prepares an ignored
+`.cursor/rules/t-agent-workflow.mdc` containing only that workspace's policy.
+Direct `cursor-agent` launches and live attachments do not refresh this rule.
+Outside Git, configured Cursor launches apply model defaults and report that
+workspace instructions could not be installed.
 The save review shows only pending changes, grouped by workflow or repository,
 with previous and new values. Text edits show changed lines; unchanged workflows
 and unchanged instruction text are omitted.

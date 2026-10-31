@@ -206,8 +206,14 @@ the next verification runs. Ctrl-C stops with 130 and reports that configuration
 was already saved. Native SSH owns the restored terminal for each check; no
 fingerprint is automatically accepted. Onboarding uses the same reviewed offer.
 
-Config includes Workflows globally and in each repository submenu. The global
-menu chooses a named default, adds or edits shared workflows, or activates recommended
+Config includes Workflows globally and in each repository submenu. Start with a
+Codex, Claude, or Cursor tool picker, then show that tool's named workflows,
+default and repository assignments. Tool selection is navigation only; it never
+changes session launch tool preferences. The full staged document and immutable
+baseline span all tool menus, including interrupts, review, save and discard.
+Show Save changes once in the persistent footer, with the `s` shortcut; do not
+duplicate it as a row in config, the tool chooser or the workflow catalogue.
+The per-tool menu chooses a named default, adds or edits workflows, or activates recommended
 defaults. Hub and catalogue rows show Global default, Assigned to N repos, or
 Not assigned, with Disabled appended only for a disabled definition. Count
 non-excluded named assignments; exclude inline copies and implicit global inheritance
@@ -220,13 +226,16 @@ multi profile: the one-model row is an exclusive reset, separated by a blank
 rail row. It clears all stages; selecting any stage clears it, and clearing the
 last stage restores it. Translate the empty-key selection into no active stages.
 Space marks choices, Enter applies the selection, q/Esc
-cancels. Unchecked Planning/Review use the main model; Review before PR controls
+cancels. Unchecked Planning/Review use the main model; Agent review before PR controls
 whether the pre-PR review step runs. Unchecked Implementation uses
 per-tool session defaults, with default model/effort controls still available
 beside selected helpers. Selecting no stages enters single-model mode.
-Default-model choices explicitly say Inherit and show the top-level tool model
+Model catalogues come from the selected tool. Default-model choices explicitly say Inherit and show the top-level tool model
 or Tool default. Unset effort inherits top-level effort only when the model is
 also inherited; an explicit workflow model uses Default for this model.
+Cursor uses model IDs with any supported parameters; do not expose a separate
+reasoning-effort flag or unsupported permission presets. Unavailable model
+catalogues retain inheritance and custom model entry without invented choices.
 Deselecting stages retains their model/effort settings and keeps
 permissions, behavior preferences and Markdown active; disabling the workflow
 suppresses every workflow setting. Selected stages expose separate
@@ -235,7 +244,7 @@ PRs, previews & tests uses shared `_RailUI` submenus for Pull requests, Local
 preview and Tests. PR opening (automatic/on instruction), initial
 state (ready/draft) and merging (automatic/on instruction) are independent.
 When to open PR offers Automatically when ready or Only when I ask.
-Review before PR is an Enabled/Disabled toggle with no Not set choice. Omission
+Agent review before PR is an Enabled/Disabled toggle with no Not set choice. Omission
 means Enabled without changing storage on read or an unchanged selection. Enabled requires a diff and
 validation review before PR opening; the selected review worker handles it when
 enabled, otherwise the main agent does. Disabled suppresses the pre-PR review
@@ -247,18 +256,19 @@ guidance. Delivery instructions retain fixes and the selected validation/preview
 PR timing/state/merge requirements. This preference does not bypass repository
 review requirements or required approvals. No new command or execution mode is
 added; this remains a staged preference in the shared editor.
-Local preview contains the When to preview default (Automatically when ready /
-Only when I ask), plus
-Frontend and CLI submenus. Each submenu starts with Preview (Enabled / Disabled).
+Local preview has a Global section with Preview timing (Automatically
+when ready / Only when I ask), followed by a Preview types section containing
+Frontend and CLI. Keep these submenu summaries concise instead of repeating
+every nested preference. Each submenu starts with Preview (Enabled / Disabled).
 Remove the separate Applies to control. Both submenus stay visible and show
 their enabled/disabled state; disabled settings remain saved and editable.
 Optional frontend_enabled/cli_enabled values override legacy preview_target for
 each type independently. Without flags or a legacy target, both are enabled.
-Read-only operations do not migrate storage. Each submenu can Inherit or override
-the timing default independently. Show resolved timing values with their source in rows,
-summaries, printed lists and save review: Inherit · value or Override · value.
-The Inherit choice is separated from explicit values and removes only that
-override. Inheriting an unset parent displays Inherit · Not set. Changing a parent
+Read-only operations do not migrate storage. Each submenu's Preview timing can
+Inherit global or override it independently. Show the resolved timing and source
+in detailed rows and printed lists: Inherit global · value or Override · value.
+The Inherit global choice is separated from explicit values and removes only that
+override. Inheriting an unset parent displays Inherit global · Not set. Changing a parent
 updates inheriting children while preserving explicit overrides, even overrides
 equal to the parent. Resolved rules apply only to enabled types; with neither
 enabled, suppress preview guidance.
@@ -380,8 +390,23 @@ changed text lines, and changed runner fields; omit unchanged definitions,
 precedence and unchanged instruction text. Show additions, removals, default changes,
 exclusions and initial activation explicitly. Ctrl+C uses the same pending-edits
 prompt while reviewing these differences.
-Permissions is a separate submenu available with either model mode. Codex and
-Claude have independent native presets and a Not set choice that removes the
+Workflow verbs and instructions support `--tool codex|claude|cursor`; omitted tool
+uses the explicit repository's configured tool or the account default. Lists
+remain read-only and identify the selected tool in text and JSON. Runner list,
+edit and start support the same selector. Retain root v3 data as Codex and store
+independent complete Claude/Cursor catalogues in the optional `tools` map.
+Existing shared Claude preferences migrate in memory to an independent catalogue
+with native model stages; no read writes settings. The next save freezes that
+copy. Native Codex and Claude instructions render their respective catalogues.
+Cursor's existing launch/resume routes prepare only its resolved workspace policy
+in an always-applied managed rule excluded through local Git metadata; refuse
+tracked, unmanaged or symlink destinations. Unconfigured Cursor launches and
+live attachments remain unchanged. Outside Git, configured launches apply model
+arguments and report the unavailable instruction publication. No Cursor dev slots
+or unsupported standalone effort/permission controls are introduced.
+Permissions is a separate submenu available with either model mode. Show only
+the selected tool's supported presets. Codex and Claude have independent native
+presets and a Not set choice that removes the
 workflow override. The policy's optional permissions object maps codex to
 ask/auto/full/read_only and claude to manual/acceptEdits/auto/bypassPermissions/plan;
 unknown tools or values are rejected. Missing permissions preserve native defaults.

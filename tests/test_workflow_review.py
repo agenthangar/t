@@ -17,8 +17,8 @@ def test_workflow_review_stage_toggle_shows_only_changed_workflow(review, workfl
     before = workflow.action(workflow.defaults(), 'add', 'fast')
     after = copy.deepcopy(before)
     after['workflows']['fast']['stages_enabled'] = False
-    assert review(after, before) == ['Workflow fast',
-        '  Use multiple models: Planning, Implementation, Review → One model']
+    assert review(after, before) == ['Codex workflows', '  Workflow fast',
+        '    Use multiple models: Planning, Implementation, Review → One model']
     assert before['workflows']['fast'].get('stages_enabled') is None
 
 
@@ -86,9 +86,9 @@ def test_workflow_review_review_toggle_missing_value_means_enabled(review, workf
     after = copy.deepcopy(before)
     after['workflows']['standard']['behaviors'] = {'pr_review': 'skip'}
     text = '\n'.join(review(after, before))
-    assert 'Review before PR: Enabled → Disabled' in text
+    assert 'Agent review before PR: Enabled → Disabled' in text
     restored = '\n'.join(review(before, after))
-    assert 'Review before PR: Disabled → Enabled' in restored
+    assert 'Agent review before PR: Disabled → Enabled' in restored
     assert 'Not set' not in text and 'Not set' not in restored
 
 
@@ -164,7 +164,7 @@ def test_workflow_review_noop_and_activation_are_distinct(review, workflow):
 
 def test_config_save_review_passes_baseline_without_dumping_workflows(review, workflow, t_mod, config_cli, monkeypatch):
     cfg, local = config_cli
-    ui = Menu(['workflow', 'customize', 'enabled', '0', 'back', 'save'])
+    ui = Menu(['workflow', 'codex', 'customize', 'enabled', '0', 'back', 'save'])
     pages = []
     ui.page = lambda label, body, *args, **kwargs: pages.append((label, body)) or 'enter'
     monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)

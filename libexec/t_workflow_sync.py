@@ -70,9 +70,26 @@ def write(state):
 
 def changed_scopes(previous, document):
     w = workflow()
-    scopes = {None, *previous['repositories'], *document['repositories']}
-    return [scope for scope in sorted(scopes, key=lambda item: item or '')
-            if w['effective'](previous, scope) != w['effective'](document, scope)]
+    changed = []
+    for tool in w['TOOLS']:
+        old, new = w['tool_document'](previous, tool), w['tool_document'](document, tool)
+        scopes = {None, *old['repositories'], *new['repositories']}
+        changed.extend(scope_key(tool, scope) for scope in sorted(scopes, key=lambda item: item or '')
+                       if w['effective'](old, scope) != w['effective'](new, scope))
+    return changed
+
+
+def scope_key(tool, repository):
+    return repository if tool == 'codex' else 'tool:' + tool + (':' + repository if repository else '')
+
+
+def scope_parts(scope):
+    if isinstance(scope, str) and scope.startswith('tool:'):
+        parts = scope.split(':', 2)
+        if parts[1] not in ('claude', 'cursor') or (len(parts) == 3 and not os.path.isabs(parts[2])):
+            raise ValueError('invalid workflow tool scope')
+        return parts[1], parts[2] if len(parts) == 3 else None
+    return 'codex', scope
 
 
 @_spinner("Resolving workflow repository scopes")
@@ -87,7 +104,7 @@ def identity(cwd):
     return match[1].lower() if match else None
 
 
-def portable(document, scopes, identity_cache=None):
+def _portable_catalogue(document, scopes, identity_cache=None):
     """Only verified host-independent identities cross SSH, never local paths."""
     entries, missing = {}, 0
     identity_cache = {} if identity_cache is None else identity_cache
@@ -112,6 +129,26 @@ def portable(document, scopes, identity_cache=None):
                           {document['default'], *(entry['workflow'] for entry in entries.values()
                                                   if entry and 'workflow' in entry)}},
             'repositories': entries}, missing
+
+
+def portable(document, scopes, identity_cache=None):
+    """Version 2 preserves independent tool scopes; v1 remains valid for Codex."""
+    w = workflow()
+    identity_cache = {} if identity_cache is None else identity_cache
+    grouped = {}
+    for scope in scopes[:MAX_SCOPES]:
+        tool, repository = scope_parts(scope)
+        grouped.setdefault(tool, []).append(repository)
+    if not grouped:
+        grouped['codex'] = []
+    payloads, missing = {}, max(0, len(scopes) - MAX_SCOPES)
+    for tool, repositories in grouped.items():
+        payload, unresolved = _portable_catalogue(w['tool_document'](document, tool), repositories, identity_cache)
+        payloads[tool] = {key: value for key, value in payload.items() if key != 'version'}
+        missing += unresolved
+    if set(payloads) == {'codex'}:
+        return {'version': 1, **payloads['codex']}, missing
+    return {'version': 2, 'tools': payloads}, missing
 
 
 def settings_delta(before, after):
@@ -294,20 +331,20 @@ def session_defaults(policy, agent, *, saved=True):
 def setting_args(values, agent):
     result = []
     model, effort = values.get('model'), values.get('effort')
-    if isinstance(model, str) and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:/@+\[\]-]*', model):
+    if isinstance(model, str) and workflow()['MODEL_ID'].fullmatch(model):
         result.extend(['--model', model])
-    if isinstance(effort, str) and re.fullmatch(r'[a-z][a-z0-9_-]*', effort):
+    if agent != 'cursor' and isinstance(effort, str) and re.fullmatch(r'[a-z][a-z0-9_-]*', effort):
         result.extend(['-c', 'model_reasoning_effort=' + json.dumps(effort)] if agent == 'codex' else ['--effort', effort])
     return result
 
 
 def launch_settings(agent, cwd=None):
     """Read-only scoped defaults for a fresh session; never write global defaults."""
-    if agent not in ('codex', 'claude'):
+    if agent not in ('codex', 'claude', 'cursor'):
         return []
     w = workflow()
     document, before = w['load']()
-    policy = launch_policy(w, document, cwd)
+    policy = launch_policy(w, w['tool_document'](document, agent), cwd)
     return (setting_args(session_defaults(policy, agent, saved=before is not None), agent) +
             (w['permission_args'](policy, agent) if before is not None else []))
 
@@ -318,7 +355,7 @@ def resume_settings(sid, cwd=None, agent='codex'):
         return []
     w = workflow()
     document, before = w['load']()
-    policy = launch_policy(w, document, cwd)
+    policy = launch_policy(w, w['tool_document'](document, agent), cwd)
     if not policy or not policy['enabled']:
         return []
     # Existing pickers/launchers retain their one-owner checks. An indexed child
@@ -427,7 +464,7 @@ def remote(state):
                 state.setdefault('remote_settings', {}).pop(target, None)
             if not reply.get('pending_scopes'):
                 sent = {scope for scope in scopes[:MAX_SCOPES]
-                        if scope is None or identity_cache.get(scope)}
+                        if scope_parts(scope)[1] is None or identity_cache.get(scope_parts(scope)[1])}
                 remaining = [scope for scope in scopes if scope not in sent]
                 if remaining:
                     state.setdefault('remote_scopes', {})[target] = remaining
@@ -512,7 +549,7 @@ def native_defaults(settings):
 
 def receive(payload, repos, settings_writer=None):
     """One host only; resolve scope identities locally, never fan out."""
-    if not isinstance(payload, dict) or payload.get('version') != 1:
+    if not isinstance(payload, dict) or payload.get('version') not in (1, 2):
         raise ValueError('unsupported workflow propagation payload')
     request_id = payload.get('request_id')
     if request_id is not None and (not isinstance(request_id, str) or not re.fullmatch(r'[0-9a-f]{32}:[1-9][0-9]*', request_id)):
@@ -526,14 +563,25 @@ def receive(payload, repos, settings_writer=None):
     w = workflow()
     document, before = w['load']()
     after = copy.deepcopy(document)
-    incoming = w['validate']({'version': 3, 'default': payload['default'],
-                             'workflows': payload['workflows'], 'repositories': {}})
-    if payload.get('global'):
-        selected = incoming['workflows'][incoming['default']]
-        name = 'synced-' + digest(selected)[:16]
-        after['default'] = name
-        after['workflows'][name] = selected
-    paths = sorted({os.path.realpath(path) for path in repos.values()}) if payload['repositories'] else []
+    catalogues = {'codex': payload} if payload['version'] == 1 else payload.get('tools')
+    if not isinstance(catalogues, dict) or not catalogues or set(catalogues) - set(w['TOOLS']):
+        raise ValueError('invalid workflow tool payload')
+    incoming_catalogues = {}
+    for tool, incoming_payload in catalogues.items():
+        if not isinstance(incoming_payload, dict) or not isinstance(incoming_payload.get('repositories'), dict):
+            raise ValueError('invalid workflow catalogue payload')
+        incoming = w['validate']({'version': 3, 'default': incoming_payload['default'],
+                                 'workflows': incoming_payload['workflows'], 'repositories': {}})
+        incoming_catalogues[tool] = incoming
+        if incoming_payload.get('global'):
+            selected = incoming['workflows'][incoming['default']]
+            name = 'synced-' + digest(selected)[:16]
+            scoped = w['tool_document'](after, tool)
+            scoped['default'] = name
+            scoped['workflows'][name] = selected
+            after = w['with_tool_document'](after, tool, scoped)
+    has_repositories = any(item['repositories'] for item in catalogues.values())
+    paths = sorted({os.path.realpath(path) for path in repos.values()}) if has_repositories else []
     scan_key = digest([request_id, paths])
     with locked():
         scan_state = status()
@@ -557,18 +605,22 @@ def receive(payload, repos, settings_writer=None):
     identities = scan['identities']
     incomplete = scan['cursor'] < len(paths)
     pending = 0
-    for key, entry in payload['repositories'].items():
-        paths = identities.get(key, [])
-        if incomplete or len(paths) != 1:
-            pending += 1
-            continue
-        if entry is None:
-            after['repositories'].pop(paths[0], None)
-        else:
-            if 'workflow' in entry:
-                entry = {'inline': copy.deepcopy(incoming['workflows'][entry['workflow']]),
-                         **({'excluded': True} if entry.get('excluded') else {})}
-            after['repositories'][paths[0]] = entry
+    for tool, incoming_payload in catalogues.items():
+        scoped = w['tool_document'](after, tool)
+        incoming = incoming_catalogues[tool]
+        for key, entry in incoming_payload['repositories'].items():
+            paths = identities.get(key, [])
+            if incomplete or len(paths) != 1:
+                pending += 1
+                continue
+            if entry is None:
+                scoped['repositories'].pop(paths[0], None)
+            else:
+                if 'workflow' in entry:
+                    entry = {'inline': copy.deepcopy(incoming['workflows'][entry['workflow']]),
+                             **({'excluded': True} if entry.get('excluded') else {})}
+                scoped['repositories'][paths[0]] = entry
+        after = w['with_tool_document'](after, tool, scoped)
     settings = payload.get('settings', {})
     if set(settings) - {'model', 'effort'} or any(v is not None and (not isinstance(v, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:/@+\[\]-]*', v)) for v in settings.values()):
         raise ValueError('invalid main settings')

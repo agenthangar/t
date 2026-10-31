@@ -104,7 +104,7 @@ class Menu:
 
     def pick(self, label, rows, default=0, **kwargs):
         pick = next(self.picks)
-        assert pick is None or pick in dict(rows), (label, pick, rows)
+        assert pick is None or pick in dict(rows) or pick in kwargs.get('shortcuts', {}).values(), (label, pick, rows)
         assert 0 <= default < len(rows)
         return pick
 
@@ -132,7 +132,7 @@ class InterruptMenu(Menu):
         event = next(self.picks)
         if event is KeyboardInterrupt:
             raise KeyboardInterrupt
-        assert event is None or event in dict(rows), (label, event, rows)
+        assert event is None or event in dict(rows) or event in kwargs.get('shortcuts', {}).values(), (label, event, rows)
         assert 0 <= default < len(rows)
         return event
 
@@ -428,13 +428,15 @@ def test_config_main_menu_shows_repo_aliases(t_mod, config_cli, monkeypatch):
         assert kwargs["values"]["repos"] == "api, t"
         assert [key for key, _ in rows] == [
             "tool", "mode", "trust", *t_mod.AGENTS, "local", "workflow", "runners",
-            "mcp", "repos", "worktrees", "hosts", "beam", "edit", "save", "cancel",
+            "mcp", "repos", "worktrees", "hosts", "beam", "edit", "cancel",
         ]
         assert kwargs["sections"] == {
             "tool": "Session defaults", t_mod.AGENTS[0]: "Agents", "workflow": "Workflows", "runners": "Runners",
             "mcp": "MCP server", "repos": "Repositories & worktrees", "hosts": "Remote hosts", "edit": "Finish",
         }
         assert dict(rows)["workflow"] == "Workflows ›"
+        assert kwargs['primary'][:2] == ('s', 'SAVE CHANGES')
+        assert kwargs['shortcuts'] == {'s': 'save'}
         collections = {*t_mod.AGENTS, "local", "workflow", "runners", "mcp", "repos", "worktrees", "hosts"}
         assert {key for key, text in rows if text.endswith(" ›")} == collections
         return "cancel"
