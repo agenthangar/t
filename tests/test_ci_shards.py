@@ -136,11 +136,13 @@ def test_opt_in_collection_and_report_accounting(monkeypatch):
     assert [item.nodeid for item in items] == ['a.py::test_one', 'a.py::test_two']
     assert len(config._ci_audit['full']) == 3
     assert [item.nodeid for item in deselections] == ['b.py::test_one']
-    monkeypatch.setattr(ci, '_state', config._ci_audit, raising=False)
-    for phase in ('setup', 'call', 'teardown'):
-        ci.pytest_runtest_logreport(SimpleNamespace(
-            nodeid=items[0].nodeid, duration=0.5, when=phase,
-            failed=False, skipped=False, passed=True))
+    # Restore the real plugin state before pytest emits this test's call report.
+    with monkeypatch.context() as reports:
+        reports.setattr(ci, '_state', config._ci_audit, raising=False)
+        for phase in ('setup', 'call', 'teardown'):
+            ci.pytest_runtest_logreport(SimpleNamespace(
+                nodeid=items[0].nodeid, duration=0.5, when=phase,
+                failed=False, skipped=False, passed=True))
     assert config._ci_audit['durations'][items[0].nodeid] == 1.5
     assert config._ci_audit['outcomes'][items[0].nodeid] == 'passed'
 
