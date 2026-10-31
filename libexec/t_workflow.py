@@ -122,17 +122,24 @@ BEHAVIORS = {
         'automatic': ('Automatically', 'For frontend previews, open the available local preview URL in the user\'s browser after the preview server or build is ready. This browser preference does not itself authorize starting a preview or change selected preview timing, approval or pull request preferences. Honor repository and task instructions and report unavailable browser capabilities accurately.'),
         'on_request': ('Only when I ask', 'For frontend previews, wait for an explicit user request before opening the local preview URL in the user\'s browser. This browser preference does not itself authorize starting a preview or change selected preview timing, approval or pull request preferences. Honor repository and task instructions.'),
     }},
-    'test_timing': {'label': 'Run tests', 'choices': {
+    'test_timing': {'label': 'When to run tests', 'choices': {
         'during_work': ('Local: during work', 'Run relevant local checks as implementation progresses and report results. Keep required checks and repository validation rules intact.'),
         'before_preview': ('Local: before preview', 'Run relevant local checks before exposing the local preview and report results. Keep required checks and repository validation rules intact.'),
         'before_pr': ('Local: before PR', 'Run relevant local checks before pushing or opening a pull request and report results. Keep required checks and repository validation rules intact.'),
-        'pr_ci': ('PR CI', 'Use the pull request\'s required CI for validation rather than routine local test, lint, coverage or compilation suites. Keep required checks and branch protections intact; explicit task instructions and repository rules remain authoritative.'),
+        'pr_ci': ('On PR CI', 'Use the pull request\'s required CI for validation rather than routine local test, lint, coverage or compilation suites. Keep required checks and branch protections intact; explicit task instructions and repository rules remain authoritative.'),
     }},
 }
 
-PREVIEW_DEFAULTS = {'timing': 'local_preview'}
+BEHAVIORS['preview_pr_approval'] = copy.deepcopy(BEHAVIORS['preview_approval'])
+BEHAVIORS['preview_pr_approval']['label'] = 'Approval before PR'
+BEHAVIORS['preview_launch'] = {'label': 'Open/run preview', 'choices': {
+    'automatic': ('Automatically', 'Open or run an available preview automatically after it is prepared under its selected timing. This preference does not itself request a preview or override request-only preview timing.'),
+    'on_request': ('Only when I ask', 'Wait for an explicit user request before opening or running an available preview. This preference does not itself request a preview or change PR or test preferences.'),
+}}
+PREVIEW_DEFAULTS = {'timing': 'local_preview', 'approval': 'preview_pr_approval', 'launch': 'preview_launch'}
 PREVIEW_OVERRIDES = {
-    kind: {'timing': kind + '_preview_timing'}
+    kind: {'timing': kind + '_preview_timing', 'approval': kind + '_preview_pr_approval',
+           'launch': 'frontend_browser' if kind == 'frontend' else 'cli_launch'}
     for kind in ('frontend', 'cli')
 }
 BEHAVIORS['implement_before_approval'] = {'label': 'Implement before approval', 'choices': {
@@ -144,9 +151,11 @@ BEHAVIORS['frontend_implement_before_approval'] = copy.deepcopy(BEHAVIORS['imple
 BEHAVIORS['cli_implement_before_approval'] = copy.deepcopy(BEHAVIORS['implement_before_approval'])
 for _kind, _keys in PREVIEW_OVERRIDES.items():
     for _setting, _key in _keys.items():
+        if _key in BEHAVIORS:
+            continue
         _parent = PREVIEW_DEFAULTS[_setting]
         BEHAVIORS[_key] = {
-            'label': _kind.title() + ' ' + BEHAVIORS[_parent]['label'].lower(),
+            'label': ('CLI' if _kind == 'cli' else 'Frontend') + ' ' + BEHAVIORS[_parent]['label'].lower(),
             'choices': {value: choice for value, choice in BEHAVIORS[_parent]['choices'].items()
                         if value != 'before_pr'},
         }
@@ -232,7 +241,7 @@ def preview_summary_lines(behaviors):
     for parent in PREVIEW_DEFAULTS.values():
         value = effective.get(parent)
         label = BEHAVIORS[parent]['choices'][value][0] if value else 'Not set'
-        lines.append('Local preview default — ' + BEHAVIORS[parent]['label'] + ': ' + label)
+        lines.append('Local preview · Global — ' + BEHAVIORS[parent]['label'] + ': ' + label)
     for kind in PREVIEW_OVERRIDES:
         resolved = preview_preferences(effective, kind)
         if not resolved['enabled']:
@@ -240,8 +249,9 @@ def preview_summary_lines(behaviors):
         for setting, parent in PREVIEW_DEFAULTS.items():
             choice = resolved[setting]
             label = BEHAVIORS[parent]['choices'][choice['value']][0] if choice['value'] else 'Not set'
-            lines.append(kind.title() + ' — ' + BEHAVIORS[parent]['label'] + ': ' +
-                         choice['source'].title() + ' · ' + label)
+            field_label = BEHAVIORS[PREVIEW_OVERRIDES[kind][setting]]['label'] if setting == 'launch' else BEHAVIORS[parent]['label']
+            source = 'Inherit global' if choice['source'] == 'inherit' else 'Override'
+            lines.append(('CLI' if kind == 'cli' else 'Frontend') + ' — ' + field_label + ': ' + source + ' · ' + label)
         if kind == 'frontend' and 'frontend_implement_before_approval' in effective:
             spec = BEHAVIORS['frontend_implement_before_approval']
             lines.append('Frontend — ' + spec['label'] + ': ' +
@@ -274,6 +284,17 @@ def _preview_instruction_lines(behaviors):
             elif implementation == 'no' and timing is None:
                 prose += ' Preview timing is not set; follow task and repository rules for when to prepare the approval preview.'
             lines.append(scope + ' — Implement before approval: ' + prose)
+        approval = resolved['approval']['value']
+        if approval:
+            lines.append(scope + ' — Approval before PR: ' +
+                         BEHAVIORS['preview_pr_approval']['choices'][approval][1])
+        launch = resolved['launch']['value']
+        if launch:
+            launch_key = PREVIEW_OVERRIDES[kind]['launch']
+            prose = BEHAVIORS[launch_key]['choices'][launch][1]
+            if timing == 'on_request':
+                prose += ' Request-only preview timing still applies: do not prepare, open or run a preview until the user requests it.'
+            lines.append(scope + ' — ' + BEHAVIORS[launch_key]['label'] + ': ' + prose)
     return lines
 
 
@@ -305,14 +326,15 @@ def visible_behaviors(behaviors):
 def _behavior_instructions(behaviors, key):
     spec = BEHAVIORS[key]
     prose = spec['choices'][behaviors[key]][1]
-    if key == 'cli_preview' and behaviors.get('cli_launch') in ('automatic', 'on_request'):
+    launch = preview_preferences(behaviors, 'cli')['launch']['value'] if key == 'cli_preview' else None
+    if key == 'cli_preview' and launch in ('automatic', 'on_request'):
         if behaviors[key] == 'run':
             prose = ('For command-line tool previews, prepare the repository-supported development command '
                      'and show the user how to invoke it. Apply the selected command-launch preference '
                      'only once the CLI preview is prepared under its resolved timing.')
-            if behaviors['cli_launch'] == 'on_request':
+            if launch == 'on_request':
                 prose += ' Wait for an explicit user request before launching it.'
-        elif behaviors['cli_launch'] == 'on_request':
+        elif launch == 'on_request':
             prose += ' Preparing the development installation does not launch its preview command; wait for an explicit user request before launching it.'
     if key in ('local_preview', 'preview_approval'):
         frontend = preview_enabled(behaviors, 'frontend')

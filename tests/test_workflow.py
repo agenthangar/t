@@ -392,7 +392,7 @@ def test_menu_workflow_save_and_cancel(workflow, t_mod, tmp_path, monkeypatch, c
     monkeypatch.setattr(t_mod, 'zsh_capture', lambda snippet: '')
     cfg = t_mod.Config()
     cfg.repos = {'api': str(tmp_path.resolve() / 'repo')}
-    choices = ['workflow', 'codex', 'defaults', 'back', 'back', 'repos', 'api', 'workflow', 'codex', 'exclude', 'back', 'back', 'back', '__back__']
+    choices = ['workflow', 'codex', 'defaults', 'back', 'back', 'repos', 'api', 'workflow', 'codex', '__disabled__', 'back', 'back', '__back__']
     choices += ['save'] if save else ['cancel', 'discard']
     ui = Menu(choices)
     monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
@@ -413,16 +413,16 @@ def test_menu_workflow_save_and_cancel(workflow, t_mod, tmp_path, monkeypatch, c
         assert not any(path.exists() for path in native_paths())
 
 
-def test_menu_workflow_editor_inherit_and_profile(workflow, t_mod, tmp_path, monkeypatch):
+def test_menu_workflow_selector_inherit_and_profile(workflow, t_mod, tmp_path, monkeypatch):
     w = workflow
     monkeypatch.setattr(t_mod, '_workflow', lambda: vars(w))
     cfg = SimpleNamespace(repos={'api': str(tmp_path.resolve() / 'repo')})
     monkeypatch.setattr(w.subprocess, 'call', lambda argv: 0)
-    ui = Menu(['edit', 'back'])
+    ui = Menu(['back'])
     t_mod._config_workflow_tool(ui, cfg, 'api')
     assert not t_mod._workflow_pending(cfg)
-    ui = Menu(['exclude', 'inherit', 'back'])
-    t_mod._config_workflow_tool(ui, cfg, 'api')
+    t_mod._config_workflow_tool(Menu(['__disabled__']), cfg, 'api')
+    t_mod._config_workflow_tool(Menu(['']), cfg, 'api')
     assert not cfg._workflow_document['repositories']
     calls = []
     monkeypatch.setattr(t_mod, '_instructions_init', lambda: calls.append('init'))
@@ -773,8 +773,7 @@ def test_workflow_stage_controls_preserve_launch_settings(workflow, t_mod, monke
     assert cfg.models == {'codex': 'launch'} and cfg.efforts == {'codex': 'high'}
     assert discoveries == ['codex', 'codex']
     assert t_mod._workflow_pending(cfg) and not w.config_path().exists()
-    ui = Menu(['choose', 'name:standard', 'customize', 'planning', 'model', 'custom-model',
-               'planning', 'effort', 'ultra', 'back', 'back'])
+    ui = Menu(['name:standard'])
     t_mod._config_workflow_tool(ui, cfg, 'api')
     # Explicit assignment is an override; unchanged stage choices do not turn it into an inline copy.
     assert cfg._workflow_document['repositories'][cfg.repos['api']] == {'workflow': 'standard'}
@@ -792,8 +791,8 @@ def test_workflow_named_menu_and_instructions_staging(workflow, t_mod, monkeypat
     assert cfg._workflow_document['workflows']['careful']['instructions'] == '# Notes\n'
     assert not w.config_path().exists()
     assert '# Notes' in '\n'.join(t_mod._workflow_review(cfg._workflow_document))
-    ui = Menu(['customize', 'instructions', 'back', 'back'])
-    t_mod._config_workflow_tool(ui, cfg, 'api')
+    ui = Menu(['instructions', 'back'])
+    t_mod._workflow_policy_menu(ui, cfg, vars(w), repository=cfg.repos['api'])
     assert not cfg._workflow_document['repositories']  # same text does not create an override
     ui = Menu(['add', 'choose', None, 'manage', 'back', 'back'], inputs=['bad name'])
     t_mod._config_workflow_tool(ui, cfg)
@@ -831,7 +830,8 @@ def test_repository_menu_resumes_preserved_workflow(workflow, t_mod, monkeypatch
     elif source == 'named':
         document = w.action(document, 'use', 'standard', repository)
     cfg._workflow_document = w.action(document, 'exclude', repository=repository)
-    t_mod._config_workflow_tool(Menu(['exclude', 'back']), cfg, 'api')
+    selection = '__current__' if source == 'inline' else 'name:standard' if source == 'named' else ''
+    t_mod._config_workflow_tool(Menu([selection]), cfg, 'api')
     assert cfg._workflow_document == document
     assert not w.config_path().exists()
     if source == 'inline':
@@ -1033,17 +1033,18 @@ def test_behavior_menu_noop_clear_and_excluded_edit(workflow, t_mod, monkeypatch
     t_mod._workflow_session(cfg)
     initial = copy.deepcopy(cfg._workflow_document)
     # Picking defaults, cancelling options and clearing an absent choice create no override.
-    t_mod._config_workflow_tool(Menu(['customize', 'stages_enabled', ['planning', 'implementation', 'review'], 'behaviors',
+    t_mod._workflow_policy_menu(Menu(['stages_enabled', ['planning', 'implementation', 'review'], 'behaviors',
                                 'pull_requests', 'pr_open', '', 'pr_state', None,
-                                'back', 'back', 'back', 'back']), cfg, 'api')
+                                'back', 'back', 'back']), cfg, vars(w), repository=cfg.repos['api'])
     assert cfg._workflow_document == initial and not t_mod._workflow_pending(cfg)
-    t_mod._config_workflow_tool(Menu(['exclude', 'customize', 'behaviors', 'pull_requests', 'pr_open', 'on_request',
-                                'back', 'back', 'stages_enabled', [], 'back', 'back']), cfg, 'api')
+    cfg._workflow_document = w.action(cfg._workflow_document, 'exclude', repository=cfg.repos['api'])
+    t_mod._workflow_policy_menu(Menu(['behaviors', 'pull_requests', 'pr_open', 'on_request',
+                                'back', 'back', 'stages_enabled', [], 'back']), cfg, vars(w), repository=cfg.repos['api'])
     entry = cfg._workflow_document['repositories'][cfg.repos['api']]
     assert entry['excluded'] and entry['inline']['behaviors'] == {'pr_open': 'on_request'}
     assert not entry['inline']['stages_enabled']
-    t_mod._config_workflow_tool(Menu(['customize', 'behaviors', 'pull_requests', 'pr_open', '', 'back', 'back',
-                                'stages_enabled', ['planning', 'implementation', 'review'], 'back', 'back']), cfg, 'api')
+    t_mod._workflow_policy_menu(Menu(['behaviors', 'pull_requests', 'pr_open', '', 'back', 'back',
+                                'stages_enabled', ['planning', 'implementation', 'review'], 'back']), cfg, vars(w), repository=cfg.repos['api'])
     entry = cfg._workflow_document['repositories'][cfg.repos['api']]
     assert entry['excluded'] and 'behaviors' not in entry['inline']
     assert entry['inline']['stages_enabled'] and entry['inline']['planning'] == w.DEFAULT['planning']

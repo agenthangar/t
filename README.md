@@ -1002,26 +1002,27 @@ skipping review is a separate choice under Pull requests.
 Leave Implementation unchecked to use the session's default model and reasoning effort,
 which remain editable alongside any selected stages. Separate stage choices stay
 saved when unchecked. One-model mode uses the editable session model and effort.
-Choose **Inherit** in the default-model picker to use that tool's top-level
-`t config` model. The inherited model is shown alongside the choice. When a
-workflow sets its own model, an unset effort uses that model's default rather
-than an unrelated top-level effort.
+**Model** chooses a model for this workflow. **Inherit default** uses the tool's
+top-level `t config` model and displays that model beside the choice.
+**Reasoning effort** likewise shows a chosen level or the inherited setting.
+When the workflow chooses its own model and leaves effort unset, the tool's
+native effort setting applies. Unavailable native values are labeled **Tool setting**.
 Markdown and behavior preferences still apply.
-**Permissions** sets Codex and Claude permissions separately, with either one or
-multiple models. Codex offers **Ask for approval**, **Approve for me**, **Full access**,
+**Permissions** opens the selected tool's permission choices directly and shows
+the selected preset, such as **Full access**, in the workflow menu. Codex offers **Ask for approval**, **Approve for me**, **Full access**,
 and **Read only**. Claude offers **Ask for approval**, **Approve edits**, **Auto**,
 **Full access**, and **Plan only**. **Not set** clears the workflow override.
 These choices apply on the next CLI start or resume in the workflow's scope;
 running sessions and native desktop launches keep their permissions. Explicit
 permission arguments take precedence. Saving a workflow does not rewrite native
 permission defaults or command allowlists.
-To limit these defaults to one repository,
-open **Repository assignments → your repository → Customize a copy for this repo**.
+To apply different settings to one repository, create and edit a named workflow,
+then select it under **Repository assignments → your repository**.
 These defaults apply when starting or resuming a CLI session in that repository
 and its worktrees. Explicit launch arguments win; running turns keep their settings.
 Native desktop launches keep the application's model settings.
 Clearing a model uses the account's agent default. Choosing a model without an
-effort lets that model use its own default effort. Codex and Claude defaults are
+effort leaves effort selection to the native tool. Codex and Claude defaults are
 stored separately, and switching back to multiple models retains these choices.
 Model choices include the current and recommended values, a live Codex catalogue,
 a custom ID, and explicit refresh. Current, recommended and custom models remain
@@ -1060,13 +1061,15 @@ t workflow inherit --repo api       # remove api's override; follow global
 t workflow list --all               # list named definitions and usage
 ```
 
-Repository settings offer **Choose named workflow**, **Customize only this
-repository**, **Exclude workflow for this repository**, and **Use global default**.
-Editing a named definition affects all its consumers; a repository customization
-is an independent inline copy. Exclusion retains the source and suppresses all
-model stages, permissions, behavior preferences and Markdown instructions. Selecting a named workflow clears
-exclusion. **Resume workflow for this repository** restores the retained source,
-including repository-only customizations. Menu choices stay pending until
+Repository settings open one workflow selector: **Inherit global**, the named
+workflows, or **Disabled**. Selecting a named workflow applies that definition;
+editing it affects all its consumers. Disabled retains the previous source and
+suppresses workflow instructions. Existing custom repository policies remain
+available as **Current custom workflow** without exposing another editor here.
+The tools screen shows the global choice and the current registered repository's
+effective assignment, including linked worktrees, for example
+**Global: standard · t: fast**. This summary does not change the editing scope.
+Menu choices stay pending until
 **Save changes**; discard publishes nothing.
 
 **PRs, previews & tests** provides optional choices within each workflow:
@@ -1077,17 +1080,21 @@ including repository-only customizations. Menu choices stay pending until
 | Pull requests → When to open PR | Automatically when ready or Only when I ask |
 | Pull requests → PR type / Merge PR | Draft or ready; Automerge or When I ask |
 | Local preview → Global → Preview timing | Automatically when ready or Only when I ask |
+| Local preview → Global → Approval before PR | Wait for my approval or No approval needed |
+| Local preview → Global → Open/run preview | Automatically or Only when I ask |
 | Local preview → Frontend → Preview | Enabled or Disabled |
 | Local preview → Frontend → Preview timing | Inherit global or choose a timing override |
+| Local preview → Frontend → Approval before PR | Inherit global or choose an approval override |
 | Local preview → Frontend → Implement before approval | Yes or No |
 | Local preview → Frontend → Design approach | Separate HTML prototype or In the app |
 | Local preview → Frontend → Preview method | Fast reload or Build |
-| Local preview → Frontend → Open in browser | Automatically or Only when I ask |
+| Local preview → Frontend → Open in browser | Inherit global, Automatically, or Only when I ask |
 | Local preview → CLI → Preview | Enabled or Disabled |
 | Local preview → CLI → Preview timing | Inherit global or choose a timing override |
+| Local preview → CLI → Approval before PR | Inherit global or choose an approval override |
 | Local preview → CLI → Preview method | Install locally or Run from the repo |
-| Local preview → CLI → Run command | Automatically or Only when I ask |
-| Tests → Run tests | Local during work, before preview, before PR, or PR CI |
+| Local preview → CLI → Run command | Inherit global, Automatically, or Only when I ask |
+| Tests → When to run tests | Local during work, before preview, before PR, or On PR CI |
 | Tests → Test runners | Configure targets, defaults, and artifacts |
 
 Other preference choices also offer **Not set**, visually separated from the other choices,
@@ -1108,12 +1115,17 @@ Skipping this agent review does not change required repository approvals, checks
 or explicit task instructions. To open a PR automatically without the review
 pass, select **Disabled** and **When to open PR → Automatically when ready**.
 
-Set **Preview timing** in Local preview's **Global** section, above
-the Frontend and CLI submenus. Each submenu's **Preview timing** inherits that
-value unless you choose an override. Its row shows the source and resolved value,
+Set **Preview timing**, **Approval before PR**, and **Open/run preview** in
+Local preview's **Global** section, above the Frontend and CLI submenus.
+Each submenu inherits these choices unless you choose an override. Its rows show the source and resolved value,
 such as **Inherit global · Automatically when ready**. Choosing Inherit global
 removes the override; future parent changes then apply. The parent menu keeps
 submenu summaries short; open a submenu for its design and launch settings.
+**Approval before PR** controls whether the agent waits for your approval of
+the preview before pushing or opening a PR. **Open/run preview** opens a ready
+frontend preview in the browser or runs the prepared CLI command; the child
+controls are named **Open in browser** and **Run command**. Existing explicit
+browser and command choices remain overrides when Global changes.
 **Frontend → Implement before approval: No** requires a lightweight frontend
 preview and approval before substantial implementation. Work needed to create
 that preview is allowed. **Yes** lets frontend implementation proceed without
@@ -1122,7 +1134,7 @@ they let you try the working command. PR opening and
 merging remain controlled by their separate settings.
 **Local preview** contains **Frontend** and **CLI** submenus, each with its own
 Enabled/Disabled setting. Both remain accessible so you can re-enable them.
-Resolved timing preferences apply only to enabled types. Disabling a type
+Resolved preview preferences apply only to enabled types. Disabling a type
 retains its settings and suppresses its design and preview guidance; disabling
 both suppresses the shared preview rules too. Enabling alone does not start a preview.
 Frontend contains design approach, preview method, and browser
@@ -1726,7 +1738,7 @@ and model-stage guidance. **PRs, previews & tests** separates these decisions:
 **Not set** leaves a decision to your task, repository rules and text
 instructions. It does not inherit an individual value from the global workflow;
 **Use global default** changes the repository's whole workflow assignment.
-These preferences never bypass required checks. Selecting PR CI avoids routine
+These preferences never bypass required checks. Selecting On PR CI avoids routine
 local test runs. Legacy saved choices remain readable and are converted into
 separate choices only when you edit them. Single-model launch defaults remain a
 separate setting from these instructions to the agent.

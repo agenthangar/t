@@ -190,7 +190,7 @@ def test_workflow_tui_review_back_and_keep(workflow, t_mod, monkeypatch, tmp_pat
 def test_workflow_tui_add_assign_and_repository_scope(workflow, t_mod, monkeypatch, tmp_path):
     cfg, _ = config(workflow, t_mod, monkeypatch, tmp_path)
     cfg.repos = {'api': str(tmp_path / 'api')}
-    ui = Menu(['codex', 'add', 'back', 'choose', 'local', 'repos', 'api', 'exclude', 'back', 'name:standard', 'back', 'save'], inputs=['local'])
+    ui = Menu(['codex', 'add', 'back', 'choose', 'local', 'repos', 'api', '__disabled__', 'name:standard', 'back', 'save'], inputs=['local'])
     assert t_mod._workflow_hub(ui, cfg, standalone=True) == 'save'
     assert cfg._workflow_document['default'] == 'local'
     assert cfg._workflow_document['repositories'][cfg.repos['api']]['excluded']
@@ -218,7 +218,7 @@ def test_workflow_bare_entry(workflow, t_mod, monkeypatch, tmp_path, capsys, ter
 
 @pytest.mark.parametrize('menu,field,value', [
     (['behaviors', 'pull_requests', 'pr_open', 'automatic'], 'behaviors', {'pr_open': 'automatic'}),
-    (['permissions', 'codex', 'full'], 'permissions', {'codex': 'full'}),
+    (['permissions', 'full'], 'permissions', {'codex': 'full'}),
     (['implementation', 'effort', 'high'], 'implementation', {'model': 'gpt-6.1-sol', 'effort': 'high'}),
 ])
 def test_workflow_ctrl_c_preserves_completed_nested_selections(workflow, t_mod, monkeypatch, tmp_path, menu, field, value):
@@ -289,11 +289,10 @@ def test_workflow_runner_interrupt_keeps_runner_and_behavior_edits(workflow, t_m
     assert local.read_text() == '# unchanged\n'
 
 
-@pytest.mark.parametrize('submenu', ['behaviors', 'permissions'])
-def test_pristine_repository_submenu_interrupt_does_not_create_override(workflow, t_mod, monkeypatch, tmp_path, submenu):
+def test_pristine_repository_selector_interrupt_does_not_create_override(workflow, t_mod, monkeypatch, tmp_path):
     cfg, local = config(workflow, t_mod, monkeypatch, tmp_path)
     cfg.repos = {'api': str(tmp_path / 'api')}
-    ui = InterruptMenu(['codex', 'repos', 'api', 'customize', submenu, KeyboardInterrupt])
+    ui = InterruptMenu(['codex', 'repos', 'api', KeyboardInterrupt])
     monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
     with pytest.raises(KeyboardInterrupt):
         t_mod._config_wizard(cfg, workflows_only=True)
@@ -301,3 +300,66 @@ def test_pristine_repository_submenu_interrupt_does_not_create_override(workflow
     assert cfg._workflow_document['repositories'] == {}
     assert ui.restored and not workflow.config_path().exists()
     assert local.read_text() == '# unchanged\n'
+
+
+@pytest.mark.parametrize('initial,choice,expected', [
+    ('named', '', 'inherit'),
+    ('inherit', 'name:careful', 'named'),
+    ('named', '__disabled__', 'disabled'),
+    ('named', 'name:careful', 'unchanged'),
+    ('inherit', '', 'unchanged'),
+    ('inline', '__current__', 'unchanged'),
+    ('inline', '__disabled__', 'inline_disabled'),
+    ('inherit', '__disabled__', 'inherited_disabled'),
+    ('inline_disabled', '__current__', 'inline'),
+    ('inline_disabled', '__disabled__', 'unchanged'),
+    ('inline_disabled', 'back', 'unchanged'),
+    ('inline', None, 'unchanged'),
+])
+def test_repository_workflow_selector_only_assigns_or_preserves_policy(workflow, t_mod, monkeypatch, tmp_path, initial, choice, expected):
+    cfg, local = config(workflow, t_mod, monkeypatch, tmp_path)
+    repository = str(tmp_path.resolve() / 'api')
+    cfg.repos = {'api': repository}
+    document = workflow.action(workflow.defaults(), 'add', 'careful')
+    inline = copy.deepcopy(workflow.DEFAULT)
+    inline['instructions'] = 'Retained repository instructions.'
+    inline['planning']['model'] = 'retained-repository-model'
+    if initial == 'named':
+        document = workflow.action(document, 'use', 'careful', repository)
+    elif initial.startswith('inline'):
+        document = workflow.update(document, inline, repository)
+        if initial == 'inline_disabled':
+            document = workflow.action(document, 'exclude', repository=repository)
+    cfg._workflow_document = document
+    cfg._workflow_initial = copy.deepcopy(document)
+    cfg._workflow_before = None
+    cfg._workflow_activate = False
+    before = copy.deepcopy(document)
+
+    class Selector(Menu):
+        def pick(self, label, rows, **kwargs):
+            keys = {key for key, _ in rows}
+            assert keys == {'', 'name:standard', 'name:careful', '__disabled__', 'back'} | (
+                {'__current__'} if initial.startswith('inline') else set())
+            assert ('', 'Inherit global · standard') in rows
+            return super().pick(label, rows, **kwargs)
+
+    t_mod._config_workflow_tool(Selector([choice]), cfg, 'api')
+    entry = cfg._workflow_document['repositories'].get(repository)
+    if expected == 'unchanged':
+        assert cfg._workflow_document == before
+        assert not t_mod._workflow_pending(cfg)
+    elif expected == 'inherit':
+        assert entry is None
+    elif expected == 'named':
+        assert entry == {'workflow': 'careful'}
+    elif expected == 'disabled':
+        assert entry == {'workflow': 'careful', 'excluded': True}
+    elif expected == 'inline_disabled':
+        assert entry == {'inline': inline, 'excluded': True}
+    elif expected == 'inherited_disabled':
+        assert entry == {'excluded': True}
+    else:
+        assert entry == {'inline': inline}
+    assert cfg._workflow_document['workflows'] == before['workflows']
+    assert local.read_text() == '# unchanged\n' and not workflow.config_path().exists()

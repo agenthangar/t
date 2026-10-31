@@ -230,9 +230,14 @@ cancels. Unchecked Planning/Review use the main model; Agent review before PR co
 whether the pre-PR review step runs. Unchecked Implementation uses
 per-tool session defaults, with default model/effort controls still available
 beside selected helpers. Selecting no stages enters single-model mode.
-Model catalogues come from the selected tool. Default-model choices explicitly say Inherit and show the top-level tool model
-or Tool default. Unset effort inherits top-level effort only when the model is
-also inherited; an explicit workflow model uses Default for this model.
+Model catalogues come from the selected tool. The workflow row is Model;
+its reset choice says Inherit default and shows the top-level tool model.
+Reasoning effort shows an explicit level or Inherit default with the known
+top-level effort. Unset effort inherits top-level effort only when the model is
+also inherited; an explicit workflow model leaves effort to the native tool.
+Unknown native values say Tool setting; model catalogue metadata alone is not
+proof of the effective native configuration. Permissions shows the preset
+without repeating the selected tool name and opens its choices directly.
 Cursor uses model IDs with any supported parameters; do not expose a separate
 reasoning-effort flag or unsupported permission presets. Unavailable model
 catalogues retain inheritance and custom model entry without invented choices.
@@ -257,7 +262,9 @@ PR timing/state/merge requirements. This preference does not bypass repository
 review requirements or required approvals. No new command or execution mode is
 added; this remains a staged preference in the shared editor.
 Local preview has a Global section with Preview timing (Automatically
-when ready / Only when I ask), followed by a Preview types section containing
+when ready / Only when I ask), Approval before PR (Wait for my approval /
+No approval needed), and Open/run preview (Automatically / Only when I ask),
+followed by a Preview types section containing
 Frontend and CLI. Keep these submenu summaries concise instead of repeating
 every nested preference. Each submenu starts with Preview (Enabled / Disabled).
 Remove the separate Applies to control. Both submenus stay visible and show
@@ -275,12 +282,19 @@ enabled, suppress preview guidance.
 Disabled frontend suppresses design, method and browser guidance;
 disabled CLI suppresses its method and command-launch guidance. Enabling alone does not request a
 preview or change the separate PR-opening preference.
+Both submenus inherit Global timing, approval before PR, and launch choices;
+each field shows Inherit global or Override with the resolved value. Clearing
+an override restores live inheritance. Existing explicit frontend_browser and
+cli_launch choices remain launch overrides. The shared launch setting opens a
+prepared browser preview for Frontend and runs the prepared command for CLI.
+It never starts a request-only preview before the user requests it.
 The nested Frontend submenu contains Implement before approval (Yes / No, with
 Not set), Design approach (Separate HTML prototype /
 In the app), Preview method (Fast reload
 / Build), and Open in browser (Automatically / Only when I ask). The nested CLI
 submenu contains Preview method (Install locally / Run from the repo) and
-Run command (Automatically / Only when I ask), with a separated Not set choice.
+Run command (Inherit global / Automatically / Only when I ask), with the
+inherit choice separated from explicit choices.
 The optional cli_launch key accepts automatic/on_request and remains saved while
 CLI preview is disabled. Automatically launches the supported CLI preview command
 only after the selected preview is requested or due and prepared; request-only
@@ -289,13 +303,14 @@ launching it, including with the Run from the repo method. The method determines
 the executable source. Interactive commands use a supported interactive terminal;
 if unavailable, report the limitation and exact command rather than claiming a
 launch. This preference does not run tests or alter PR choices. CLI previews have
-no preview-before-implementation approval setting or inherited approval gate.
-Omission preserves existing guidance; clearing removes only the launch preference.
+no preview-before-implementation approval setting. Approval before PR is
+independent of frontend implementation approval and applies only to enabled
+preview types. Clearing a launch override follows Global.
 Menu, list, catalogue and save review reflect the choice and disabled state. Printed
 lists use the same indentation and hierarchy; summaries include nested choices.
 Returning from a child menu restores the parent focus and retains staged changes.
 Disabled summaries show the status without presenting retained settings as active.
-Tests contains Run tests and Test runners; remove the separate Test runners row
+Tests contains When to run tests and Test runners; remove the separate Test runners row
 from the workflow menu. Nested runner edits share the same staged Save/discard
 transaction and preserve behavior changes made before or after them.
 Browser opening applies only once a local frontend preview is available; it does
@@ -305,9 +320,13 @@ implementation; work needed for the preview itself is allowed. With automatic
 timing, prepare that initial preview before implementation. With request-only
 timing, wait for the preview request and then approval. Yes permits implementation
 without this gate; PR preferences stay independent. Runtime instructions emit
-only resolved timing rules per type and the frontend-only implementation gate.
+only resolved timing, PR approval, and launch rules per type and the
+frontend-only implementation gate.
 Optional frontend_preview_timing/cli_preview_timing override local_preview;
-missing timing keys mean inheritance. frontend_implement_before_approval is a
+missing timing keys mean inheritance. preview_pr_approval is the shared PR
+approval choice; frontend_preview_pr_approval/cli_preview_pr_approval override
+it. preview_launch is the shared launch choice; frontend_browser/cli_launch
+override it. frontend_implement_before_approval is a
 direct yes/no setting, not an override of a shared gate. Legacy
 implement_before_approval falls back to this frontend-only setting; explicit
 frontend values win. Older preview_approval/design_approval map inversely there.
@@ -316,16 +335,23 @@ instructions or summaries. Read-only JSON retains raw keys, and clearing the
 frontend setting must not revive a retired alias. CLI When to preview prepares
 the working command when ready or on request, never a required pre-implementation
 prototype. Test timing
-chooses local during work, local before preview, local before PR, or PR CI;
+is labeled When to run tests and chooses local during work, local before preview,
+local before PR, or On PR CI;
 required repository checks always apply. Unset rows and picker choices say
 Not set. Task, repository and text instructions supply
 the behavior. Menus show concise choices without routine explanatory preambles.
 Use inheritance wording only where values really follow a parent: preview
 defaults, main-session settings, native tool defaults, and workflow assignments.
-Repository customization copies the complete policy; label it Customize a copy
-for this repo so users know later edits to the source workflow stop flowing.
+The repository workflow UI is a single selector: Inherit global with its named
+source, named workflows, and Disabled. Selection stages the assignment and returns;
+cancel or reselecting the current value changes nothing. An existing inline
+policy may appear as Current custom workflow so it can be retained or restored.
+Do not expose copy, edit, exclusion, or advanced JSON actions in this selector.
+The tool hub summarizes Global and the current registered repository's effective
+assignment, including linked worktrees. Scope discovery is display-only and does
+not implicitly select a repository for edits or read-only workflow commands.
 Use Automerge for automatic PR merging. Preview methods use Install locally, Run from the repo,
-Fast reload and Build. Test choices name Local or PR CI explicitly.
+Fast reload and Build. Test choices name Local or On PR CI explicitly.
 Clearing a choice removes its key. Preserve focused rows when returning.
 Legacy delivery/preview values are interpreted without rewriting read-only
 configuration; editing materializes equivalent separate choices. Working-folder

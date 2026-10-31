@@ -45,7 +45,8 @@ def test_tool_hub_browsing_does_not_materialize_native_scopes_or_change_launch_t
     assert 'permissions' not in dict(cursor[1])
     assert cfg._workflow_document == before
     roots = [view for view in ui.views if view[0] == 'Workflows · tools']
-    assert roots[1][2]['default'] == 1 and roots[-1][2]['default'] == 2
+    assert roots[1][1][roots[1][2]['default']][0] == 'claude'
+    assert roots[-1][1][roots[-1][2]['default']][0] == 'cursor'
     assert cfg.agent_default == 'codex' and cfg.agents == {'api': 'claude'}
     assert not hasattr(cfg, '_workflow_tool')
     assert not workflow.config_path().exists()
@@ -86,10 +87,12 @@ def test_tool_permissions_offer_only_selected_native_tool(workflow, t_mod, monke
     monkeypatch.setattr(t_mod, '_workflow', lambda: vars(workflow))
     cfg = config(workflow)
     before = copy.deepcopy(cfg._workflow_document)
-    ui = ToolMenu(['claude', 'customize', 'permissions', 'claude', 'manual', 'back', 'back', 'save'])
+    ui = ToolMenu(['claude', 'customize', 'permissions', 'manual', 'back', 'save'])
     assert t_mod._workflow_hub(ui, cfg) == 'save'
     permissions = next(view for view in ui.views if view[0] == 'Permissions')
-    assert permissions[1] == [('claude', 'Claude'), ('back', 'Back')]
+    assert permissions[1][0] == ('', 'Not set')
+    assert ('manual', 'Ask for approval') in permissions[1]
+    assert ('claude', 'Claude') not in permissions[1]
     assert workflow.tool_document(cfg._workflow_document, 'claude')['workflows']['standard']['permissions'] == {'claude': 'manual'}
     assert workflow.tool_document(cfg._workflow_document, 'codex') == workflow.tool_document(before, 'codex')
 
@@ -98,13 +101,12 @@ def test_repository_workflow_tool_chooser_edits_only_selected_tool(workflow, t_m
     monkeypatch.setattr(t_mod, '_workflow', lambda: vars(workflow))
     cfg = config(workflow)
     before = copy.deepcopy(cfg._workflow_document)
-    ui = ToolMenu(['claude', 'customize', 'behaviors', 'pull_requests', 'pr_review', 'skip',
-                   'back', 'back', 'back', 'back', 'back'])
+    ui = ToolMenu(['claude', '__disabled__', 'back'])
     t_mod._config_workflow(ui, cfg, 'api')
     assert ui.views[0][0] == 'Workflow tool · api'
-    assert ui.views[-1][0] == 'Workflow tool · api' and ui.views[-1][2]['default'] == 1
+    assert ui.views[-1][0] == 'Workflow tool · api' and ui.views[-1][1][ui.views[-1][2]['default']][0] == 'claude'
     claude = workflow.tool_document(cfg._workflow_document, 'claude')
-    assert workflow.effective(claude, '/repo')['behaviors']['pr_review'] == 'skip'
+    assert not workflow.effective(claude, '/repo')['enabled']
     assert workflow.tool_document(cfg._workflow_document, 'codex') == workflow.tool_document(before, 'codex')
     assert cfg.agents == {'api': 'claude'} and cfg.agent_default == 'codex'
 
@@ -214,7 +216,7 @@ def test_cursor_offline_stage_model_supports_native_parameter_ids_without_effort
     stage = next(view for view in ui.views if view[0] == 'Implementation · worker')
     assert stage[1] == [('model', 'Model'), ('back', 'Back')]
     picker = next(view for view in ui.views if view[0] == 'Implementation model')
-    assert dict(picker[1]) == {'': 'Inherit · Tool default', '__custom__': 'Enter a custom model ID…', '__refresh__': 'Refresh model list'}
+    assert dict(picker[1]) == {'': 'Inherit default · Tool setting', '__custom__': 'Enter a custom model ID…', '__refresh__': 'Refresh model list'}
     assert any(label == 'unavailable' for label, _ in ui.messages)
     policy = workflow.tool_document(cfg._workflow_document, 'cursor')['workflows']['standard']
     assert policy['implementation']['model'] == native_id
