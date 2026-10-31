@@ -308,6 +308,13 @@ stopping an owner or transferring files. This applies to saved cross-host resume
 and moves in either direction; same-host resume and remote attach stay unchanged.
 See [Codex remote connections](https://learn.chatgpt.com/docs/remote-connections#hand-off-a-chat-between-hosts).
 
+Selected local resumes also reconcile the original workspace before creating a new
+worktree. If it still belongs to the conversation, current commits and eligible
+uncommitted changes are carried forward, including nonignored untracked files.
+Outstanding changes are committed as a local checkpoint using normal Git hooks.
+Missing or recycled workspaces use the recorded historical revision instead;
+unsafe current sources stop the resume without losing their work.
+
 With t transfer, after selection, cross-host saved resume verifies the latest recorded workspace on the
 prior host, including its conversation, repository, branch and worktree generation.
 It carries the actual branch tip, including unpushed commits. Outstanding tracked,

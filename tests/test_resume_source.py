@@ -191,10 +191,157 @@ def test_unavailable_source_warns_and_retains_local_revision(app, source, histor
     assert 'locally available code' in capsys.readouterr().err
 
 
-def test_local_resume_does_not_checkpoint(app, source, protocol, monkeypatch):
+@pytest.mark.parametrize('advanced,dirty', [(False, False), (True, False), (True, True)])
+def test_local_resume_preserves_current_code(app, source, history, protocol, monkeypatch, tmp_path, advanced, dirty):
+    from test_history_data import codex_rows, transcript_file
     path, row, request = source
-    monkeypatch.setattr(protocol.subprocess, 'run', lambda *a, **kw: pytest.fail('local resume must not reconcile'))
+    recorded = row['associations'][0]['commit']
+    if advanced:
+        Path(path, 'committed.py').write_text('new committed code\n')
+        history.run(['git', '-C', str(path), 'add', 'committed.py'])
+        history.run(['git', '-C', str(path), 'commit', '-m', 'Advance source'])
+    tip = history.run(['git', '-C', str(path), 'rev-parse', 'HEAD']).strip()
+    if dirty:
+        Path(path, 'tracked').write_text('staged\n')
+        history.run(['git', '-C', str(path), 'add', 'tracked'])
+        Path(path, 'tracked').write_text('latest unstaged\n')
+        Path(path, 'untracked.py').write_text('new untracked code\n')
+        Path(path, '.gitignore').write_text('ignored\n')
+        Path(path, 'ignored').write_text('ignored private data\n')
+    transcript = transcript_file(tmp_path / 'rollout-selected.jsonl', codex_rows(path, sid='selected'))
+    row['sources'] = [dict(host='local', path=str(transcript))]
+    monkeypatch.setattr(app, 'source', lambda *a: transcript)
+    # Local checkpoints must not create a bundle or inherit its transfer limit.
+    monkeypatch.setitem(history._RESUME_SOURCE['reconcile'].__globals__, 'MAX_BUNDLE', 1)
+    original = history.run
+    def no_bundle(argv, **kwargs):
+        assert 'bundle' not in argv and argv[0] != 'ssh'
+        return original(argv, **kwargs)
+    monkeypatch.setattr(app, 'run', no_bundle)
+    result = app.resume('repo', row, detached=True, prepare_only=True)
+    session, destination = result.split('\t')
+    revision = history.run(['git', '-C', destination, 'rev-parse', 'HEAD']).strip()
+    assert (revision != tip) is dirty
+    assert session == ('dev-repo-2' if advanced else 'dev-repo-1')
+    if advanced:
+        assert revision != recorded
+        assert Path(destination, 'committed.py').read_text() == 'new committed code\n'
+    if dirty:
+        assert Path(destination, 'tracked').read_text() == 'latest unstaged\n'
+        assert Path(destination, 'untracked.py').read_text() == 'new untracked code\n'
+        assert not Path(destination, 'ignored').exists()
+        assert Path(path, 'ignored').read_text() == 'ignored private data\n'
+    assert not history.run(['git', '-C', str(path), 'status', '--porcelain'])
+    saved = next(r for r in app.store.records() if r['sid'] == row['sid'])
+    assert any(a['workspace'] == destination and a['commit'] == revision and a['evidence'] == 'resume'
+               for a in saved['associations'])
+
+
+@pytest.mark.parametrize('failure', ['', 'fetch', 'source-change'])
+def test_local_resume_imports_unpushed_checkpoint_from_separate_clone(app, source, history, monkeypatch, tmp_path, failure):
+    from test_history_data import codex_rows, transcript_file
+    path, row, request = source
+    target = tmp_path / 'separate-clone' / 'repo'
+    target.parent.mkdir()
+    history.run(['git', 'clone', '--no-local', app.cfg.repos['repo'], str(target)])
+    history.run(['git', '-C', str(target), 'remote', 'set-url', 'origin', 'https://github.com/org/repo.git'])
+    app.cfg.repos['repo'] = str(target)
+    Path(path, 'committed.py').write_text('unpushed committed code\n')
+    history.run(['git', '-C', str(path), 'add', 'committed.py'])
+    history.run(['git', '-C', str(path), 'commit', '-m', 'Source advance after clone'])
+    Path(path, 'carried.py').write_text('untracked source work\n')
+    transcript = transcript_file(tmp_path / 'rollout-selected.jsonl', codex_rows(path, sid='selected'))
+    monkeypatch.setattr(app, 'source', lambda *a: transcript)
+    # The selected workspace is still in the original clone's object store.
+    original = app.run
+    def import_source(argv, **kwargs):
+        if 'fetch' in argv and failure == 'fetch':
+            raise history.HistoryError('local source fetch failed')
+        value = original(argv, **kwargs)
+        if 'fetch' in argv and failure == 'source-change':
+            Path(path, 'concurrent.py').write_text('new concurrent work')
+        return value
+    monkeypatch.setattr(app, 'run', import_source)
+    monkeypatch.setattr(app, 'fallback', lambda *a: pytest.fail('local import must not fall back'))
+    if failure:
+        monkeypatch.setattr(app, 'destination', lambda *a: pytest.fail('unsafe import must not allocate'))
+        with pytest.raises(history.HistoryError, match='fetch failed' if failure == 'fetch' else 'source changed'):
+            app.resume('repo', row, detached=True, prepare_only=True)
+        assert not history.run(['git', '-C', str(target), 'for-each-ref', 'refs/t/resume/'])
+        assert Path(path, 'carried.py').read_text() == 'untracked source work\n'
+        return
+    result = app.resume('repo', row, detached=True, prepare_only=True)
+    session, destination = result.split('\t')
+    assert session == 'dev-repo-2'
+    assert Path(destination, 'committed.py').read_text() == 'unpushed committed code\n'
+    assert Path(destination, 'carried.py').read_text() == 'untracked source work\n'
+    assert history.run(['git', '-C', destination, 'rev-parse', 'HEAD']) == history.run(['git', '-C', str(path), 'rev-parse', 'HEAD'])
+    assert not history.run(['git', '-C', str(target), 'for-each-ref', 'refs/t/resume/'])
+    assert not history.run(['git', '-C', str(path), 'status', '--porcelain'])
+
+
+@pytest.mark.parametrize('replacement', ['missing', 'generation', 'owner'])
+def test_local_replaced_source_keeps_historical_fallback(app, source, history, protocol, store, replacement):
+    path, row, request = source
+    Path(path, 'untracked.py').write_text('replacement work')
+    head = history.run(['git', '-C', str(path), 'rev-parse', 'HEAD'])
+    if replacement == 'missing':
+        history.run(['git', '-C', app.cfg.repos['repo'], 'worktree', 'remove', '--force', str(path)])
+    elif replacement == 'generation':
+        row['associations'][0]['generation'] = 'old generation'
+    else:
+        store.merge(saved_row(app, head.strip(), path, sid='replacement', observed=2))
     assert protocol.reconcile(app, 'repo', row) == ''
+    if replacement != 'missing':
+        assert Path(path, 'untracked.py').read_text() == 'replacement work'
+        assert history.run(['git', '-C', str(path), 'rev-parse', 'HEAD']) == head
+
+
+@pytest.mark.parametrize('unsafe', ['branch', 'unrelated', 'merge', 'live', 'index', 'private', 'hook', 'race', 'root', 'identity'])
+def test_local_unsafe_source_refuses_before_destination(app, source, history, protocol, monkeypatch, unsafe):
+    path, row, request = source
+    Path(path, 'tracked').write_text('outstanding work')
+    if unsafe == 'branch':
+        history.run(['git', '-C', str(path), 'checkout', '-b', 'wrong'])
+    elif unsafe == 'unrelated':
+        history.run(['git', '-C', str(path), 'checkout', '--orphan', 'orphan'])
+        history.run(['git', '-C', str(path), 'commit', '-am', 'Unrelated'])
+        history.run(['git', '-C', str(path), 'branch', '-D', 'dev/repo-1'])
+        history.run(['git', '-C', str(path), 'branch', '-m', 'dev/repo-1'])
+    elif unsafe in ('merge', 'index', 'hook'):
+        gitdir = Path(history.run(['git', '-C', str(path), 'rev-parse', '--absolute-git-dir']).strip())
+        if unsafe == 'merge':
+            (gitdir / 'MERGE_HEAD').write_text(row['associations'][0]['commit'])
+        elif unsafe == 'index':
+            (gitdir / 'index.lock').write_text('existing Git writer')
+        else:
+            hooks = gitdir / 'test-hooks'
+            hooks.mkdir()
+            hook = hooks / 'pre-commit'
+            hook.write_text('#!/bin/sh\nexit 1\n')
+            hook.chmod(0o700)
+            history.run(['git', '-C', str(path), 'config', 'core.hooksPath', str(hooks)])
+    elif unsafe == 'root':
+        original = app.run
+        monkeypatch.setattr(app, 'run', lambda argv, **kw: '/different/root' if argv[-1] == '--show-toplevel' else original(argv, **kw))
+    elif unsafe == 'identity':
+        history.run(['git', '-C', str(path), 'remote', 'set-url', 'origin', 'https://github.com/other/repo.git'])
+        monkeypatch.setattr(app, 'same_repository', lambda a, b: a == b)
+    elif unsafe == 'live':
+        monkeypatch.setattr(app, 'owners', lambda *a: [dict(sid='another', agent='codex', cwd=str(path))])
+    elif unsafe == 'private':
+        Path(path, '.env').write_text('synthetic secret')
+    elif unsafe == 'race':
+        original = protocol.subprocess.run
+        def mutate(argv, **kwargs):
+            result = original(argv, **kwargs)
+            if argv[0] == 'git' and 'add' in argv:
+                Path(path, 'tracked').write_text(Path(path, 'tracked').read_text() + 'concurrent work')
+            return result
+        monkeypatch.setattr(protocol.subprocess, 'run', mutate)
+    monkeypatch.setattr(app, 'destination', lambda *a: pytest.fail('unsafe source must not allocate'))
+    with pytest.raises(history.HistoryError):
+        app.resume('repo', row, detached=True, prepare_only=True)
 
 
 def test_checkpoint_respects_existing_git_index_lock(app, source, history, protocol):
@@ -289,7 +436,8 @@ def test_reconcile_compares_unrecorded_exact_local_tip(app, source, history, pro
         protocol.reconcile(app, 'repo', remote)
 
 
-def test_native_source_writer_claim_covers_checkpoint(app, source, protocol, monkeypatch):
+@pytest.mark.parametrize('local', [False, True])
+def test_native_source_writer_claim_covers_checkpoint(app, source, protocol, monkeypatch, local):
     from contextlib import contextmanager
     import os
     path, row, request = source
@@ -307,7 +455,10 @@ def test_native_source_writer_claim_covers_checkpoint(app, source, protocol, mon
         return original(*args)
     monkeypatch.setattr(app, 'native_writer_claim', claim)
     monkeypatch.setattr(protocol, 'checkpoint', checked)
-    protocol.export(app, request)
+    if local:
+        protocol.reconcile(app, 'repo', row)
+    else:
+        protocol.export(app, request)
     assert states == ['held', 'released']
 
 

@@ -1,4 +1,4 @@
-"""Selected cross-host resume checkpoints; private, versioned SSH protocol."""
+"""Selected-source resume checkpoints and private, versioned SSH protocol."""
 import base64
 from contextlib import contextmanager, nullcontext
 import hashlib
@@ -95,7 +95,7 @@ def checkpoint(history, row, association):
         staged_paths = indexed('diff', '--cached', '--name-only', '-z', head)
         if any(private_path(name) for name in staged_paths.split('\0') if name):
             raise error('source contains private credentials or agent artifacts; no checkpoint transferred')
-        indexed('commit', '-m', 't: checkpoint work before cross-host resume (' + row['sid'] + ')')
+        indexed('commit', '-m', 't: checkpoint work before resume (' + row['sid'] + ')')
         committed = git('rev-parse', 'HEAD')
         if git('rev-parse', 'HEAD^{tree}') != tree or git('branch', '--show-current') != branch or (index.read_bytes() if index.exists() else None) != original:
             raise error('source changed during checkpoint; checkpoint retained locally, no transfer')
@@ -107,8 +107,9 @@ def checkpoint(history, row, association):
         return committed, True
 
 
-def export(history, request):
-    """Validate host-local evidence under the shared workspace and SID claims."""
+@contextmanager
+def prepared_source(history, request, *, historical_fallback=False):
+    """Validate and checkpoint a selected source while holding its ownership claims."""
     error = history.error
     if not isinstance(request, dict) or request.get('version') != 1:
         raise error('unsupported source reconciliation request')
@@ -125,20 +126,26 @@ def export(history, request):
     workspace = association['workspace']
     with history.launch_claims(workspace, row['sid']):
         if not association.get('generation') or association['generation'] != history.generation(workspace):
+            if historical_fallback:
+                yield None
+                return
             raise error('source workspace generation changed')
-        actual = history.run(['git', '-C', workspace, 'rev-parse', '--show-toplevel']).strip()
-        if os.path.realpath(actual) != os.path.realpath(workspace):
-            raise error('source workspace is not the recorded Git root')
-        identity = history.slug(history.run(['git', '-C', workspace, 'remote', 'get-url', 'origin']).strip())
-        if not identity or not history.same_repository(identity, row['repo']):
-            raise error('source repository identity changed')
         latest = []
         for record in history.store.records():
             for a in record.get('associations', []):
                 if a.get('host') == 'local' and a.get('evidence') in LIFECYCLE and os.path.realpath(a['workspace']) == os.path.realpath(workspace):
                     latest.append((a.get('observed', 0), record['sid'], record['agent']))
         if max(latest, default=(0, '', ''))[1:] != (row['sid'], row['agent']):
+            if historical_fallback:
+                yield None
+                return
             raise error('source workspace belongs to another conversation')
+        actual = history.run(['git', '-C', workspace, 'rev-parse', '--show-toplevel']).strip()
+        if os.path.realpath(actual) != os.path.realpath(workspace):
+            raise error('source workspace is not the recorded Git root')
+        identity = history.slug(history.run(['git', '-C', workspace, 'remote', 'get-url', 'origin']).strip())
+        if not identity or not history.same_repository(identity, row['repo']):
+            raise error('source repository identity changed')
         def released():
             if any(o['sid'] == row['sid'] or os.path.realpath(o['cwd']) == os.path.realpath(workspace) for o in history.owners()):
                 raise error('source conversation or workspace has a live owner')
@@ -149,6 +156,14 @@ def export(history, request):
         with history.native_writer_claim(row['sid']) if row['agent'] == 'codex' and native.exists() else nullcontext():
             revision, changed = checkpoint(history, row, association)
         released()
+        yield workspace, revision, changed, released
+
+
+def export(history, request):
+    """Bundle a validated checkpoint for the private cross-host protocol."""
+    error = history.error
+    with prepared_source(history, request) as prepared:
+        workspace, revision, changed, released = prepared
         with tempfile.TemporaryDirectory(prefix='t-resume-') as directory:
             os.chmod(directory, 0o700)
             bundle = Path(directory) / 'source.bundle'
@@ -161,15 +176,43 @@ def export(history, request):
                 raise error('source changed during bundle creation; checkpoint retained locally, no transfer')
             data = bundle.read_bytes()
         released()
-        return dict(version=1, identity=row, association=expected, revision=revision, checkpoint=changed,
+        return dict(version=1, identity=request['identity'], association=request['association'], revision=revision, checkpoint=changed,
                     token=uuid.uuid4().hex, sha256=hashlib.sha256(data).hexdigest(), bundle=base64.b64encode(data).decode())
 
 
 def reconcile(history, alias, row):
     _spinner = history.spinner
     association = selected(row)
-    if not association or association.get('host') == 'local':
+    if not association:
         return ''
+    if association.get('host') == 'local':
+        # Missing/replaced workspaces have no current work attributable to this
+        # conversation. Keep historical fallback without touching replacement files.
+        workspace = association.get('workspace', '')
+        if not association.get('generation') or association['generation'] != history.generation(workspace):
+            return ''
+        request = dict(version=1, identity={k: row[k] for k in ('repo', 'agent', 'sid')}, association=association)
+        with prepared_source(history, request, historical_fallback=True) as prepared:
+            if prepared is None:
+                return ''
+            workspace, revision, changed, released = prepared
+            repository = history.cfg.repos[alias]
+            if history.run(['git', '-C', repository, 'cat-file', '-t', revision], optional=True).strip() != 'commit':
+                # A verified local source can be a separate clone. Carry its
+                # objects before allocating a destination, without a bundle.
+                reference = 'refs/t/resume/' + uuid.uuid4().hex
+                try:
+                    history.run(['git', '-C', repository, 'fetch', '--no-tags', workspace, revision + ':' + reference])
+                    if history.run(['git', '-C', repository, 'rev-parse', reference + '^{commit}']).strip() != revision:
+                        raise history.error('imported local source revision mismatch; no session started')
+                finally:
+                    history.run(['git', '-C', repository, 'update-ref', '-d', reference], optional=True)
+            if history.run(['git', '-C', workspace, 'rev-parse', 'HEAD']).strip() != revision or history.run(['git', '-C', workspace, 'branch', '--show-current']).strip() != association.get('branch') or history.run(['git', '-C', workspace, 'status', '--porcelain=v1', '--untracked-files=all']):
+                raise history.error('source changed during local import; no session started')
+            released()
+            if changed:
+                print('t resume: carried checkpoint ' + revision, file=sys.stderr)
+            return revision
     host = association.get('host', '')
     def unavailable():
         print('t resume: ' + host + ' unavailable; continuing with locally available code and history (a source checkpoint may have been retained)', file=sys.stderr)
