@@ -1,6 +1,14 @@
 {
   "description": "Quiet blocking operations use _spinner; reviewed terminal, protocol, and background exceptions remain explicit. New blocking sites fail CI until classified. Shell progress is enforced at shared scanner and resume seams.",
   "exceptions": {
+    "libexec/t_dev.py:git:subprocess.run": {
+      "kind": "protocol",
+      "reason": "Bounded local Git metadata probes select the command source before UI initialization; startup and machine-output callers must remain quiet."
+    },
+    "libexec/t_dev.py:invocation_owner:subprocess.run": {
+      "kind": "protocol",
+      "reason": "A bounded local process ancestry probe validates the invocation source pin before UI initialization without emitting output into the source-selection protocol."
+    },
     "libexec/t_picker_filters.py:pick_menu:subprocess.run": {
       "kind": "passthrough",
       "reason": "The shared nested filter settings picker owns terminal input and visible progress until the user chooses or cancels."
