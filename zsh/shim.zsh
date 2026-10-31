@@ -900,7 +900,7 @@ _t() {
     cursor) actions=(list ls resume send) ;;
     agentcore) actions=(invoke stop) ;;
     hosts) actions=(list ls show add edit remove default run) ;;
-    workflow) actions=(list ls add use exclude inherit edit instructions sync) ;;
+    workflow) actions=(list ls add use exclude inherit edit instructions) ;;
     runners) actions=(list ls edit setup runs) ;;
     config) actions=(open show edit setup onboard local) ;;
     profile) actions=(init edit show apply) ;;
@@ -943,7 +943,7 @@ _t() {
   if [[ $group == workflow || ( $group == config && $action == workflow ) ]]; then
     [[ $group == workflow ]] && (( first-- ))
     if (( CURRENT == first )); then
-      _values 'workflow resource or verb' list ls add use exclude inherit edit instructions sync
+      _values 'workflow resource or verb' list ls add use exclude inherit edit instructions
     elif [[ ${words[CURRENT-1]} == --repo ]]; then
       _values 'repo' "${(@f)$(_dev_repo_selectors)}"
     elif [[ ${words[first]} == instructions ]] && (( CURRENT == first + 1 )); then
@@ -952,8 +952,6 @@ _t() {
       _values 'flag' --repo --all --json -h --help
     elif [[ ${words[first]} == add ]]; then
       _values 'flag' --from -h --help
-    elif [[ ${words[first]} == sync ]]; then
-      _values 'flag' -h --help
     else
       _values 'flag' --repo -h --help
     fi

@@ -279,7 +279,7 @@ def check(parser, command_groups, instructions):
         return True, args
 
     workflow_registry = command_groups.get("workflow", {})
-    if not isinstance(workflow_registry, dict) or set(workflow_registry) != {"list", "edit", "add", "use", "exclude", "inherit", "sync", "instructions"}:
+    if not isinstance(workflow_registry, dict) or set(workflow_registry) != {"list", "edit", "add", "use", "exclude", "inherit", "instructions"}:
         errors.append("workflow registry must expose named workflows and instructions")
     config = top._name_parser_map.get("config")
     config_sub = _subparsers(config) if config else None
@@ -295,7 +295,13 @@ def check(parser, command_groups, instructions):
             valid, args = accepts(words)
             if not valid or args.verb != "config" or getattr(args, "workflow_action", None) != verb:
                 errors.append("workflow parser rejected or misrouted required form: " + " ".join(words))
-    for words in (["sync"], ["add", "quick"], ["add", "quick", "--from", "standard"], ["use", "quick"],
+    receive = workflow_sub._name_parser_map.get("sync") if workflow_sub else None
+    if receive is None or "sync" in workflow_sub.choices:
+        errors.append("workflow receive transport must remain private")
+    valid, args = accepts(["config", "workflow", "sync", "--receive"])
+    if not valid or not getattr(args, "workflow_receive", False):
+        errors.append("workflow receive transport must retain existing host compatibility")
+    for words in (["add", "quick"], ["add", "quick", "--from", "standard"], ["use", "quick"],
                   ["use", "quick", "--repo", "api"], ["exclude", "--repo", "api"], ["inherit", "--repo", "api"],
                   ["edit", "quick"], ["list", "--all", "--json"], ["instructions", "show"],
                   ["instructions", "edit", "quick"], ["instructions", "show", "--repo", "api"],
@@ -308,7 +314,7 @@ def check(parser, command_groups, instructions):
         valid, args = accepts(["config", "workflow", *words])
         if not valid or args.verb != ("runners" if words[0] in ("runners", "runs") else "config"):
             errors.append("workflow parser rejected required form: " + " ".join(words))
-    for words in (["add"], ["use"], ["exclude"], ["inherit"], ["add", "quick", "--repo", "api"]):
+    for words in (["sync"], ["add"], ["use"], ["exclude"], ["inherit"], ["add", "quick", "--repo", "api"]):
         valid, _ = accepts(["config", "workflow", *words])
         if valid:
             errors.append("workflow parser accepted invalid form: " + " ".join(words))

@@ -207,8 +207,13 @@ CLI development install/run and frontend fast-reload/rebuild choices are separat
 Frontend design chooses an interactive standalone HTML prototype or design in the
 app, with a separate feedback gate before substantial implementation. Test timing
 chooses local during work, local before preview, local before PR, or PR CI;
-required repository checks always apply. Unset rows say Not set; one explanation
-makes clear that task, repository and text instructions supply the behavior.
+required repository checks always apply. Unset rows say Existing rules, with
+Use existing rules in the picker. Task, repository and text instructions supply
+the behavior. Menus show concise choices without routine explanatory preambles.
+Reserve inheritance wording for the actual Use global default repository action.
+Keep timing choices short: When ready, When I ask, After checks pass, and
+Before PR, with approval. Preview methods use Install locally, Run from the repo,
+Live reload and Rebuild. Test choices name Local or PR CI explicitly.
 Clearing a choice removes its key. Preserve focused rows when returning.
 Legacy delivery/preview values are interpreted without rewriting read-only
 configuration; editing materializes equivalent separate choices. Working-folder
@@ -228,12 +233,12 @@ global agent settings or change active turns; indexed Codex child agents retain
 their own settings. The UI discovers supported efforts from the selected tool.
 Models load lazily from Codex once per menu session; current, recommended and custom
 values remain available offline, with explicit Refresh. Changing a stage model preserves
-its effort; changing a session default model clears incompatible effort. Shared-definition editing explains
-its affected repository consumers. Repository menus display their source and offer
+its effort; changing a session default model clears incompatible effort. Shared-definition edits
+affect all repository consumers. Repository menus display their source and offer
 named assignment, repository-only customization, explicit exclusion retaining the
 source, resuming that retained source, or inheritance. All menu changes remain pending until review and Save;
 unchanged selections, canceled editors and discarded changes write nothing.
-The menu and save review explain precedence: the host instruction hierarchy is
+The host instruction hierarchy is
 unchanged; explicit task and repository rules remain authoritative; one selected
 repository workflow replaces the global default; exclusion suppresses the entire
 workflow. Within a workflow, custom Markdown overrides selected behavior preferences,
@@ -285,10 +290,10 @@ that service are reachable; isolated `--no-daemon` owners remain pending until a
 guarded resume boundary.
 
 Successful workflow mutations publish native instruction files atomically, then
-reconcile an account-local revision outside the save lock. `t workflow sync`
-retries pending work; later saves and SessionStart launch/resume hooks also retry.
+reconcile an account-local revision outside the save lock. Later saves and
+SessionStart launch/resume hooks retry pending updates automatically.
 `list` and `list --json` report saved propagation status without writing or
-connecting. Explicit sync also adopts saved preferences that predate propagation.
+connecting. There is no public manual retry action.
 Unused named-definition edits do not affect unrelated consumers.
 
 Workflow stage models remain guidance and never select a main-session model.
@@ -920,8 +925,8 @@ Bare `t workflow` in a terminal opens the shared RailUI workflow editor. Outside
 a terminal, or with `--help`, it prints group help without writes. `t workflow
 list` stays read-only and never opens the editor. The editor lists named workflows
 and repository assignments, stages all edits, and reviews before saving. Its
-work and delivery menu explains working folders, design previews, checks and
-where delivery stops. Text instructions have higher precedence than those
+PRs, previews & tests menu offers concise choices for pull requests, local
+preview, frontend design and tests. Text instructions have higher precedence than those
 choices. List output presents that precedence before choices and humanizes model
 reasoning; the named catalogue avoids repeating complete per-workflow blocks.
 The hidden `t config workflows` compatibility route opens the same editor.

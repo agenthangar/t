@@ -3634,7 +3634,7 @@
           "notes": "Supplied issue-before-code policy lives in editable Markdown; v1/v2 migrate in memory to v3 without read-only writes, then persist on save/install. Later edits/removal are preserved."
         }
       },
-      "notes": "Print effective scope and source, custom-text precedence, and PRs, previews & tests grouped into Pull requests, Local preview, Frontend design and Tests. Opening and merging PRs are independent. Unset rows say Not set with one fallback explanation. Show active stage models or single-model session defaults; retain legacy rules separately. --all is a compact named catalogue. JSON remains compatible and raw instructions retain their bytes. No pickers, writes, update prompts, connections or retries."
+      "notes": "Print effective scope and source, custom-text precedence, and PRs, previews & tests grouped into Pull requests, Local preview, Frontend design and Tests. Opening and merging PRs are independent. Unset rows say Existing rules; pickers offer Use existing rules without explanatory preambles. This defers to task/repository/text rules, not per-field global inheritance. Timing options use When ready, When I ask and After checks pass. Show active stage models or single-model session defaults; retain legacy rules separately. --all is a compact named catalogue. JSON remains compatible and raw instructions retain their bytes. No pickers, writes, update prompts, connections or retries."
     },
     "workflow edit": {
       "patterns": [
@@ -3940,33 +3940,6 @@
           ]
         }
       }
-    },
-    "workflow sync": {
-      "patterns": [
-        "action"
-      ],
-      "renderer": "plain",
-      "scope": "pending account-local revisions and registered SSH hosts; no repository inference or picker",
-      "confirmation": "none",
-      "tests": [
-        "tests/test_workflow_sync.py::test_sync_cli_and_readonly_status"
-      ],
-      "modes": {
-        "default": {
-          "argv": [
-            "workflow",
-            "sync"
-          ],
-          "patterns": [
-            "action"
-          ],
-          "read_only": false,
-          "tests": [
-            "tests/test_workflow_sync.py::test_sync_cli_and_readonly_status"
-          ]
-        }
-      },
-      "notes": "Bounded retries through owning runtime control socket and nonrecursive zsh -lic SSH. Never injects turns. Current turns and native instruction reload remain unverified. The raw proxy uses bounded HTTP Upgrade/WebSocket framing; installed private Tomli supplies Python 3.9 parsing without global package changes. Isolated sessions apply retained explicit main intent on guarded resume, while live attach remains unverified."
     },
     "runners list": {
       "patterns": [

@@ -206,16 +206,14 @@ def test_git_identity_and_settings_source_staleness(sync, monkeypatch, tmp_path)
     assert not sync.current(state)
 
 
-def test_sync_cli_and_readonly_status(sync, t_mod, monkeypatch, capsys):
+def test_automatic_propagation_and_readonly_status(sync, t_mod, monkeypatch, capsys):
     doc = saved(sync)
     helper = sync.workflow()
     helper['propagation'] = lambda: vars(sync)
     monkeypatch.setattr(t_mod, '_workflow', lambda: helper)
     cfg = SimpleNamespace(repos={}, hosts={})
     parser = t_mod.build_parser()
-    args = parser.parse_args(['config', 'workflow', 'sync'])
-    assert t_mod.cmd_config(cfg, args) == 0
-    assert 'unverified' in capsys.readouterr().out
+    assert sync.changed(doc, doc)['revision'] == 1
     monkeypatch.setattr(sync, 'retry', lambda: pytest.fail('list retried'))
     monkeypatch.setattr(sync, 'Proxy', lambda: pytest.fail('list connected'))
     args = parser.parse_args(['config', 'workflow', 'list', '--json'])
@@ -225,6 +223,23 @@ def test_sync_cli_and_readonly_status(sync, t_mod, monkeypatch, capsys):
     args = parser.parse_args(['config', 'workflow', 'instructions', 'show'])
     assert t_mod.cmd_config(cfg, args) == 0
     assert capsys.readouterr().out == helper['instructions'](doc)
+
+
+def test_private_receive_cli_preserves_machine_transport(sync, t_mod, monkeypatch, capsys):
+    import io
+    payload = {'request_id': 'transport-test'}
+    helper = sync.workflow()
+    seen = []
+    def receive(value, repos, settings_writer=None):
+        seen.append((value, repos, callable(settings_writer)))
+        return {'summary': 'accepted'}
+    helper['propagation'] = lambda: {'receive': receive}
+    monkeypatch.setattr(t_mod, '_workflow', lambda: helper)
+    monkeypatch.setattr(t_mod.sys, 'stdin', io.StringIO(json.dumps(payload)))
+    args = t_mod.build_parser().parse_args(['config', 'workflow', 'sync', '--receive'])
+    assert t_mod.cmd_config(SimpleNamespace(repos={}), args) == 0
+    assert seen == [(payload, {}, True)]
+    assert json.loads(capsys.readouterr().out) == {'summary': 'accepted'}
 
 
 def websocket_process(sync, monkeypatch, mode):
@@ -535,20 +550,11 @@ def test_bootstrap_rejects_stale_derived_settings(sync):
     assert sync.verified_settings('DEV_MODEL[codex]=cached extra\n', {'model': 'cached'}) == {}
 
 
-def test_bootstrap_cli_never_attaches_fresh_guard_to_stale_model(sync, t_mod, monkeypatch, tmp_path, capsys):
-    saved(sync)
-    source = tmp_path / 'local.zsh'; source.write_text('DEV_MODEL[codex]=new-source-model\n')
-    cfg = SimpleNamespace(repos={}, hosts={}, models={'codex': 'stale-cache-model'}, efforts={}, local_rc=str(source))
-    helper = sync.workflow(); helper['propagation'] = lambda: vars(sync)
-    monkeypatch.setattr(t_mod, '_workflow', lambda: helper)
-    monkeypatch.setattr(sync, 'Proxy', lambda: pytest.fail('unverified model applied'))
-    args = t_mod.build_parser().parse_args(['config', 'workflow', 'sync'])
-    assert t_mod.cmd_config(cfg, args) == 0
-    state = sync.status()
-    assert state['settings'] == {}
-    assert 'settings_source' not in state['context']
-    assert state['context']['unverified_main_defaults'] == ['model']
-    assert 'pending: bootstrap' in capsys.readouterr().out
+def test_manual_sync_cannot_retry_or_bootstrap_settings(t_mod, monkeypatch, capsys):
+    monkeypatch.setattr(t_mod, '_workflow', lambda: pytest.fail('manual action loaded settings'))
+    args = SimpleNamespace(workflow=True, workflow_action='sync', workflow_receive=False)
+    assert t_mod.cmd_config(SimpleNamespace(), args) == 1
+    assert 'apply automatically' in capsys.readouterr().err
 
 
 @pytest.mark.parametrize('suffix', [' DEV_MODEL[codex]=new', 'export DEV_MODEL[codex]=new',

@@ -44,43 +44,43 @@ BEHAVIORS = {
         'auto_merge': ('Auto-merge when authorized', 'Commit, push and open a pull request under repository merge policy and required checks. When authorized and supported, enable auto-merge and monitor it through completion; report any blocker accurately.'),
     }},
     'pr_open': {'label': 'Open pull request', 'choices': {
-        'automatic': ('Automatically when ready', 'When the work is ready under the selected preview and validation preferences, commit, push and open a pull request without another confirmation. Honor any required preview approval and repository or task instructions.'),
-        'on_request': ('Wait for my request', 'Prepare a concrete reviewable result, then wait for an explicit user request or approval before pushing or opening a pull request, subject to repository and task instructions.'),
+        'automatic': ('When ready', 'When the work is ready under the selected preview and validation preferences, commit, push and open a pull request without another confirmation. Honor any required preview approval and repository or task instructions.'),
+        'on_request': ('When I ask', 'Prepare a concrete reviewable result, then wait for an explicit user request or approval before pushing or opening a pull request, subject to repository and task instructions.'),
     }},
     'pr_state': {'label': 'Pull request state', 'choices': {
         'ready': ('Ready for review', 'Create pull requests ready for review. Required CI still runs and all required checks and merge gates remain in effect.'),
         'draft': ('Draft', 'Open pull requests as drafts and wait for user approval before marking them ready for review.'),
     }},
     'pr_merge': {'label': 'Merge pull request', 'choices': {
-        'automatic': ('Automatically after checks', 'Once a pull request is ready for review, enable automatic merging without another confirmation under repository policy and monitor required checks through completion. Do not promote drafts automatically. Never bypass required checks or branch protections.'),
-        'on_request': ('Wait for my request', 'Wait for an explicit user request or approval before merging or enabling automatic merging, subject to repository and task instructions.'),
+        'automatic': ('After checks pass', 'Once a pull request is ready for review, enable automatic merging without another confirmation under repository policy and monitor required checks through completion. Do not promote drafts automatically. Never bypass required checks or branch protections.'),
+        'on_request': ('When I ask', 'Wait for an explicit user request or approval before merging or enabling automatic merging, subject to repository and task instructions.'),
     }},
     'local_preview': {'label': 'Local preview', 'choices': {
-        'when_ready': ('Automatically when ready', 'When the work is ready to try, prepare its supported local preview: a development install or command for a CLI, or a local HTML or application browser preview for a frontend. Explain how the user can access it and report unavailable preview tools accurately.'),
-        'before_pr': ('Before PR — wait for approval', 'Prepare the supported local preview: a development install or command for a CLI, or a local HTML or application browser preview for a frontend. Explain how to try it, then wait for explicit user feedback and approval before pushing or opening a pull request. Honor repository and task instructions.'),
+        'when_ready': ('When ready', 'When the work is ready to try, prepare its supported local preview: a development install or command for a CLI, or a local HTML or application browser preview for a frontend. Explain how the user can access it and report unavailable preview tools accurately.'),
+        'before_pr': ('Before PR, with approval', 'Prepare the supported local preview: a development install or command for a CLI, or a local HTML or application browser preview for a frontend. Explain how to try it, then wait for explicit user feedback and approval before pushing or opening a pull request. Honor repository and task instructions.'),
         'on_request': ('Only when requested', 'Prepare a local preview only when the user requests it, unless repository or task instructions require one.'),
     }},
     'cli_preview': {'label': 'Command-line preview', 'choices': {
-        'install': ('Install the development version', 'For command-line tool previews, use the supported development installation or relink mechanism and clearly identify the development version. Honor repository installation and isolation rules.'),
-        'run': ('Run the development command', 'For command-line tool previews, run the repository-supported development command directly and show the user how to invoke it.'),
+        'install': ('Install locally', 'For command-line tool previews, use the supported development installation or relink mechanism and clearly identify the development version. Honor repository installation and isolation rules.'),
+        'run': ('Run from the repo', 'For command-line tool previews, run the repository-supported development command directly and show the user how to invoke it.'),
     }},
     'frontend_design': {'label': 'Frontend design', 'choices': {
-        'standalone_html': ('Standalone interactive HTML', 'For frontend design, create an interactive standalone HTML prototype outside the application so the user can preview the design before app implementation.'),
-        'in_app': ('Design in the application', 'For frontend design, implement and preview the design within the actual application using its existing components and development setup.'),
+        'standalone_html': ('Separate HTML prototype', 'For frontend design, create an interactive standalone HTML prototype outside the application so the user can preview the design before app implementation.'),
+        'in_app': ('In the app', 'For frontend design, implement and preview the design within the actual application using its existing components and development setup.'),
     }},
     'design_approval': {'label': 'Design approval', 'choices': {
-        'required': ('Wait for design feedback', 'For design and UI work, prepare and show a design preview before substantial implementation, then wait for user feedback and approval before continuing. Report unavailable preview tools accurately.'),
-        'continue': ('Continue after the design', 'After preparing the design, continue implementation without an additional design approval step unless repository or task instructions require one.'),
+        'required': ('Wait for approval', 'For design and UI work, prepare and show a design preview before substantial implementation, then wait for user feedback and approval before continuing. Report unavailable preview tools accurately.'),
+        'continue': ('Continue building', 'After preparing the design, continue implementation without an additional design approval step unless repository or task instructions require one.'),
     }},
     'frontend_preview': {'label': 'Frontend preview', 'choices': {
-        'fast_reload': ('Development server with fast reload', 'For frontend previews, use the supported local development server and fast reload when available so design changes can be inspected promptly. Report unsupported preview capabilities accurately.'),
-        'rebuild': ('Rebuild the preview', 'For frontend previews, rebuild using the supported preview command after relevant changes and show the updated result.'),
+        'fast_reload': ('Live reload', 'For frontend previews, use the supported local development server and fast reload when available so design changes can be inspected promptly. Report unsupported preview capabilities accurately.'),
+        'rebuild': ('Rebuild', 'For frontend previews, rebuild using the supported preview command after relevant changes and show the updated result.'),
     }},
     'test_timing': {'label': 'Run tests', 'choices': {
-        'during_work': ('Locally during development', 'Run relevant local checks as implementation progresses and report results. Keep required checks and repository validation rules intact.'),
-        'before_preview': ('Locally before preview', 'Run relevant local checks before exposing the local preview and report results. Keep required checks and repository validation rules intact.'),
-        'before_pr': ('Locally before PR', 'Run relevant local checks before pushing or opening a pull request and report results. Keep required checks and repository validation rules intact.'),
-        'pr_ci': ('In PR CI', 'Use the pull request\'s required CI for validation rather than routine local test, lint, coverage or compilation suites. Keep required checks and branch protections intact; explicit task instructions and repository rules remain authoritative.'),
+        'during_work': ('Local: during work', 'Run relevant local checks as implementation progresses and report results. Keep required checks and repository validation rules intact.'),
+        'before_preview': ('Local: before preview', 'Run relevant local checks before exposing the local preview and report results. Keep required checks and repository validation rules intact.'),
+        'before_pr': ('Local: before PR', 'Run relevant local checks before pushing or opening a pull request and report results. Keep required checks and repository validation rules intact.'),
+        'pr_ci': ('PR CI', 'Use the pull request\'s required CI for validation rather than routine local test, lint, coverage or compilation suites. Keep required checks and branch protections intact; explicit task instructions and repository rules remain authoritative.'),
     }},
 }
 
@@ -823,7 +823,7 @@ def save(document, before, extra=(), preserve_storage=False, propagation_context
         try:
             helper['retry']()
         except (OSError, ValueError):
-            print('t workflow: preferences saved; propagation pending, retry with t workflow sync', file=sys.stderr)
+            print('t workflow: preferences saved; propagation pending; automatic retry on session start', file=sys.stderr)
 
 
 def sync():

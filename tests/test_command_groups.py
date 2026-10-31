@@ -208,16 +208,30 @@ def test_nested_resource_help_does_not_load_config(t_mod, monkeypatch, capsys, a
     assert "t workflow <verb>" in output
     assert "--repo ALIAS" in output and "Explicit verbs never infer the checkout" in output
     assert "Bare t workflow opens the editor" in output
+    assert "t workflow sync" not in output and "Retry pending" not in output
 
 
 @pytest.mark.parametrize("argv", [
     ["config", "workflow", "unknown"], ["config", "workflow", "list", "--edit"],
     ["config", "workflow", "edit", "--workflow"],
+    ["config", "workflow", "sync"], ["workflow", "sync"],
 ])
 def test_nested_invalid_verbs_and_modes_fail_before_config(t_mod, monkeypatch, capsys, argv):
     monkeypatch.setattr(t_mod, "Config", lambda: pytest.fail("invalid nested command loaded config"))
     assert t_mod.main(argv) == 2
     assert "t workflow" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize('prefix', [[], ['config']])
+def test_workflow_receive_transport_is_hidden_and_compatible(t_mod, prefix):
+    parser = t_mod.build_parser()
+    words = [*prefix, 'workflow', 'sync', '--receive']
+    assert t_mod._canonical_error(words) is None
+    assert t_mod._canonical_argv(words) == ['config', 'workflow', 'sync', '--receive']
+    args = parser.parse_args(words)
+    assert args.verb == 'config' and args.workflow_action == 'sync' and args.workflow_receive
+    assert 'sync' not in t_mod.COMMAND_GROUPS['workflow']
+    assert 'sync' not in t_mod._group_help('workflow')
 
 
 @pytest.mark.parametrize("flag", ["--show", "--edit", "--workflow", "--onboard"])

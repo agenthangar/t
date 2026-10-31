@@ -1529,7 +1529,7 @@ package identities, unknown coverage, local notices and OSV request metadata.
 
 Workflow changes automatically publish native instructions and attempt bounded
 propagation to supported running sessions and registered hosts. Inspect status with
-`t workflow list`; retry pending work with `t workflow sync`.
+`t workflow list`. Later saves and session starts retry pending updates automatically.
 Live instruction reload and current-turn model changes cannot be verified or forced.
 See [the terminal contract](ui/README.md) for scope, retries and runtime limits.
 
@@ -1550,7 +1550,9 @@ and model-stage guidance. **PRs, previews & tests** separates these decisions:
 | Frontend design | Interactive standalone HTML outside the app or design within the app; wait for feedback or proceed. |
 | Tests | Locally during development, before local preview, before opening a PR, or in PR CI. |
 
-**Not set** leaves a decision to your task, repository rules and text instructions.
+**Use existing rules** leaves a decision to your task, repository rules and text
+instructions. It does not inherit an individual value from the global workflow;
+**Use global default** changes the repository's whole workflow assignment.
 These preferences never bypass required checks. Selecting PR CI avoids routine
 local test runs. Legacy saved choices remain readable and are converted into
 separate choices only when you edit them. Single-model launch defaults remain a

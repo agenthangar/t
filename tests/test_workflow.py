@@ -910,7 +910,7 @@ def test_stage_toggle_scope_and_precedence(workflow, t_mod, monkeypatch, tmp_pat
     assert w.PRECEDENCE in w.render(doc)
     assert w.PRECEDENCE in '\n'.join(t_mod._workflow_review(doc))
     review = '\n'.join(t_mod._workflow_review(doc))
-    assert 'Model stages: disabled' in review and 'Open pull request: Wait for my request' in review
+    assert 'Model stages: disabled' in review and 'Open pull request: When I ask' in review
     scoped_review = review.split('Repository ' + repo + ':', 1)[1]
     assert 'Planning:' not in scoped_review and 'saved-model' not in scoped_review
     policy['stages_enabled'] = True
@@ -1190,7 +1190,7 @@ def test_workflow_print_precedence_and_reasoning(workflow, t_mod, monkeypatch, c
     cfg = SimpleNamespace(repos={})
     assert t_mod._cmd_workflow(cfg, SimpleNamespace(workflow=True, workflow_action='list')) == 0
     text = capsys.readouterr().out
-    assert text.index('Text instructions:') < text.index('PRs, previews & tests (')
-    assert 'Wait for design feedback' in text and 'Before opening a pull request' in text
+    assert text.index('Text instructions:') < text.index('PRs, previews & tests:')
+    assert 'Wait for approval' in text and 'Before PR, with approval' in text
     assert 'Chosen for the task' in text and 'One level below planning' in text
     assert 'one-level-lower' not in text and 'Test runners:' in text and 'Propagation:' in text

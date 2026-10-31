@@ -64,7 +64,7 @@ def test_repository_model_editor_preserves_global_defaults(workflow, t_mod, monk
     assert 'session_defaults' not in workflow.effective(cfg._workflow_document, '/repo')
 
 
-def test_development_flow_explains_unset_once_and_keeps_section_focus(workflow, t_mod):
+def test_development_flow_keeps_section_focus_without_chatter(workflow, t_mod):
     class Inspect(Menu):
         def __init__(self):
             super().__init__(['pull_requests', 'pr_state', 'draft', 'back',
@@ -83,12 +83,11 @@ def test_development_flow_explains_unset_once_and_keeps_section_focus(workflow, 
     assert 'behaviors' not in policy
     first = ui.views[0]
     assert first[0] == 'PRs, previews & tests'
-    assert set(first[2]['values'].values()) == {'Not set'}
+    assert set(first[2]['values'].values()) == {'Existing rules'}
     assert dict(first[1]) == {'pull_requests': 'Pull requests ›', 'local_preview': 'Local preview ›',
                               'frontend_design': 'Frontend design ›', 'tests': 'Tests ›', 'back': 'Back'}
     assert dict(ui.views[2][1])['draft'] == 'Draft'
     assert ui.views[3][2]['default'] == 1
     assert ui.views[8][2]['default'] == 1
     assert ui.views[-1][2]['default'] == 3
-    assert sum(label == 'Preferences' for label, value in ui.context) == 1
-    assert 'Text instructions take priority' in ui.context[0][1]
+    assert ui.context == []
