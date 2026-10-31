@@ -2637,7 +2637,7 @@ def test_open_local_multi_picker(zsh, tmp_path, tabs):
     assert "new-session" not in calls and "dev-web-3" not in calls
     args = log.read_text()
     assert "--multi" in args and "space:toggle+down" in args
-    assert "Enter open/Esc · Space/Tab ✓" in args
+    assert "Enter open/k kill/Esc · Space/Tab ✓" in args
     for control in ("Ctrl-F filters", "Ctrl-A off", "Ctrl-L on"):
         assert control in args
     assert "Filters ON: unattached" in args

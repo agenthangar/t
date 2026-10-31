@@ -332,6 +332,10 @@ Ctrl-A turns filters off without changing saved choices; Ctrl-L restores those
 choices. Both are idempotent. Opening settings while off retains the saved values.
 The compatibility --attached flag starts with filtering off and defaults retained.
 There is no new-session shortcut or details preview in open; use `t open --new`.
+Press `k` to kill marked sessions, or the focused session if none are marked.
+The shortcut authorizes the selection like Enter in close, retaining ownership
+and desktop safety checks. Successful kills refresh the inventory and reset
+search and filters to the opening defaults. Failed or canceled closes stop the action.
 A plain green ✓ selection marker stays readable on the dark cyan focus row;
 never paint a reversed-color block behind it. The marker occupies its own gutter
 beside the focus pointer, separate from status marks in the row.

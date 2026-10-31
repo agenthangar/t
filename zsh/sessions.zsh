@@ -1957,9 +1957,15 @@ _dev_kill_pick() {
     'unattached · no pending work' "$(_dev_agent_legend)" '' \
     --prompt="kill ${repo:+$repo }> " --preview='printf "%s\n" {4}') || return $?
   [[ -n $picked ]] || return 130
+  _dev_kill_selected "$picked"
+}
+
+# Close exact picker identities, retaining ownership guards for every caller.
+_dev_kill_selected() {
+  local picked="$1"
   # Enter in the kill picker authorizes the complete selection. Keep all
   # ownership checks, but do not ask again for each local or remote target.
-  force=1
+  local force=1 host label state line target rcmd
   local rc=0 prepo slot action_rc
   for line in "${(@f)picked}"; do
     host=${line%%$'\t'*}
@@ -1979,7 +1985,7 @@ _dev_kill_pick() {
              && { [[ $state != app ]] || ! _dev_app_slot_reserved "$(_dev_worktree_path "$prepo" "$slot")"; }; then
           print -u2 -- "t kill: $label is no longer here"; rc=1; continue
         fi
-        _dev_kill "$prepo" "$slot" "$force" || action_rc=$?
+        _dev_kill_local_selected "$prepo" "$slot" "$force" || action_rc=$?
       fi
       (( action_rc == 130 )) && return 130
       (( action_rc )) && rc=1
@@ -1987,12 +1993,11 @@ _dev_kill_pick() {
       target="${REMOTE_HOSTS[$host]:-}"
       [[ -n $target ]] || { print -u2 -- "t kill: host '$host' is no longer configured"; rc=1; continue; }
       if [[ $label == *:* ]]; then
-        rcmd="T_UPDATE_PROMPTED=\$\$ t kill ${(q)label}"
+        rcmd="REMOTE_HOSTS=(); _dev_kill_fg ${(q)label} 1"
       else
         prepo=${label%-*}; slot=${label##*-}
-        rcmd="T_UPDATE_PROMPTED=\$\$ t kill ${(q)prepo} ${(q)slot}"
+        rcmd="REMOTE_HOSTS=(); _dev_kill ${(q)prepo} ${(q)slot} 1"
       fi
-      [[ -n $force ]] && rcmd+=' -y'
       print -r -- "→ Killing $host:$label"
       _term_title "$host: kill $label"
       action_rc=0
@@ -2003,6 +2008,12 @@ _dev_kill_pick() {
     fi
   done
   return $rc
+}
+
+# A selected host is final even if its owner disappears during guarded close.
+_dev_kill_local_selected() {
+  local -A REMOTE_HOSTS=()
+  _dev_kill "$@"
 }
 
 # _dev_kill <repo> <slot|all> [force] — tear down dev-<repo>-<slot> sessions.
