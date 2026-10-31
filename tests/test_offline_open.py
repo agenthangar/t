@@ -32,8 +32,10 @@ def test_issue_resume_skips_offline_host(zsh, mode):
       fi
     ''', MODE=mode, SID=SID, CWD=str(cwd))
     assert ('RESUMED' in result.stdout) == (mode == 'issue'), result.stdout + result.stderr
-    assert (result.returncode == 0) == (mode in ('issue', 'known_owner')), result.stdout + result.stderr
-    if mode == 'known_owner': assert 'REMOTE online' in result.stdout
+    assert (result.returncode == 0) == (mode == 'issue'), result.stdout + result.stderr
+    if mode == 'known_owner':
+        assert 'on online' in result.stderr
+        assert 'REMOTE online' not in result.stdout  # no implicit nonterminal attachment
     if mode == 'moved_owner': assert 'on online' in result.stderr
     if mode == 'local_guard': assert 'LOCAL_GUARD' in result.stderr
     if mode == 'local_failure': assert 'local ownership check failed' in result.stderr

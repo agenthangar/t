@@ -550,6 +550,7 @@ def test_app_command_failed_launch_gives_recovery(t_mod, app_command, monkeypatc
     ("normal", True), ("already_stopped", True), ("changed_sid", False),
     ("changed_cwd", False), ("changed_agent", False), ("missing", False),
     ("self", False), ("term_failed", False), ("still_running", False), ("stamp_failed", False),
+    ("zombie", True), ("state_unavailable", False),
 ])
 def test_app_stop_shell_revalidates_and_waits(t_mod, app_slot, monkeypatch, tmp_path, scenario, ok):
     """Run the actual handoff shell with stub helpers/signals; never signal a real process."""
@@ -573,11 +574,18 @@ _dev_session_claude_pid() {{
   [[ $scenario == already_stopped ]] && return 1
   [[ $scenario == self ]] && print $PPID || print 99999
 }}
-ps() {{ print 1; }}
+ps() {{
+  if [[ $2 == stat= ]]; then
+    [[ $scenario == state_unavailable ]] && return 1
+    [[ $scenario == zombie ]] && print " Zs" || print S
+  else
+    print 1
+  fi
+}}
 kill() {{
   print -r -- "$*" >> {shlex.quote(str(log))}
   [[ $1 == -TERM ]] && {{ [[ $scenario != term_failed ]]; return; }}
-  [[ $scenario == still_running ]]
+  [[ $scenario == (still_running|zombie|state_unavailable) ]]
 }}
 sleep() {{ :; }}
 '''
@@ -587,9 +595,13 @@ sleep() {{ :; }}
     result = t_mod._app_stop_cli(row)
     assert (result.returncode == 0) is ok, result.stderr
     signals = log.read_text().splitlines() if log.exists() else []
-    if scenario in ("normal", "term_failed", "still_running"):
+    if scenario in ("normal", "term_failed", "still_running", "zombie", "state_unavailable"):
         assert signals[0] == "-TERM 99999"
         assert all(s == "-0 99999" for s in signals[1:])
+        if scenario == "zombie":
+            assert len(signals) == 2
+        elif scenario in ("still_running", "state_unavailable"):
+            assert len(signals) == 101
     else:
         assert signals == []
 
@@ -601,7 +613,7 @@ def test_app_stop_revalidates_directory_with_real_tmux(t_mod, app_slot, monkeypa
     The old mocked tmux always returned the cwd and concealed this failure. Keep
     tmux real here, including an active decoy session in a different directory;
     only the Codex probes are stubbed. The pane-process case stops only this
-    test's disposable sleep process and verifies that its slot remains reserved.
+    test's disposable process and verifies that its slot remains reserved.
     """
     if not shutil.which("tmux") or not shutil.which("zsh"):
         pytest.skip("tmux and zsh required")
@@ -613,6 +625,7 @@ def test_app_stop_revalidates_directory_with_real_tmux(t_mod, app_slot, monkeypa
     prelude = f'''
 tmux() {{ command {shlex.join(tmux)} "$@"; }}
 _dev_agent_of_session() {{ print codex; }}
+_dev_history_record() {{ :; }}
 _dev_session_sid() {{
   [[ $1 == {shlex.quote(session)} && $2 == {shlex.quote(row['cwd'])} ]] && print {SID}
 }}
@@ -629,12 +642,28 @@ _dev_session_claude_pid() {{ tmux display-message -p -t "=$session:" '#{{pane_pi
                               env=env, capture_output=True, text=True, timeout=10)
     monkeypatch.setattr(t_mod, "_run", run)
     try:
-        subprocess.run(tmux + ["new-session", "-d", "-s", session, "-c", row["cwd"], "sleep 60"],
+        ready = tmp_path / 'pane-ready'
+        terminated = tmp_path / 'pane-terminated'
+        agent = ("import os,signal,time,pathlib; "
+                 f"signal.signal(signal.SIGTERM, lambda *_: (pathlib.Path({str(terminated)!r}).touch(), os._exit(0))); "
+                 f"pathlib.Path({str(ready)!r}).write_text(str(os.getpid())); time.sleep(60)")
+        subprocess.run(tmux + ["new-session", "-d", "-s", session, "-c", row["cwd"],
+                              sys.executable, '-c', agent],
                        env=env, capture_output=True, text=True, check=True)
+        deadline = time.monotonic() + 5
+        while not ready.exists() and time.monotonic() < deadline:
+            time.sleep(0.03)
+        assert ready.exists(), 'disposable pane process did not become ready'
+        pane_pid = subprocess.run(tmux + ['display-message', '-p', '-t', '=' + session + ':', '#{pane_pid}'],
+                                  env=env, capture_output=True, text=True, check=True).stdout.strip()
+        assert pane_pid == ready.read_text(), 'tmux must directly own the ready synthetic agent'
         subprocess.run(tmux + ["new-session", "-d", "-s", session + "0", "-c", str(tmp_path), "sleep 60"],
                        env=env, capture_output=True, text=True, check=True)
         result = t_mod._app_stop_cli(row)
-        assert result.returncode == 0, result.stderr
+        if result.returncode:
+            process_state = subprocess.run(['ps', '-o', 'pid,ppid,stat,args', '-p', pane_pid],
+                                           env=env, capture_output=True, text=True).stdout
+            pytest.fail(f'{result.stderr}\nTERM received: {terminated.exists()}\n{process_state}')
         expected = row["cwd"] + ("|1" if stop_process else "|0")
         deadline = time.monotonic() + 2
         while True:

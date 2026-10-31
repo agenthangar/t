@@ -22,6 +22,62 @@ SCANS = r'''
 '''
 
 
+@pytest.mark.parametrize('remote_rc', [0, 255, 127, 7, 124])
+def test_real_ssh_scan_diagnostics(zsh, tmp_path, remote_rc):
+    ssh = tmp_path / 'stubbin/ssh'
+    ssh.write_text('#!/bin/sh\n' + r'''
+      printf '%s\n' "$@" > "$HOME/ssh-argv"
+      if read -r input; then echo consumed-input > "$HOME/consumed-input"; fi
+      printf 'remote-id\t/work/api\tapi-4\tdetached\tactive\tRemote\tcodex\n'
+      printf '\033[31mPermission denied\033[0m\r\n' >&2
+      printf '\377' >&2
+      head -c 2048 /dev/zero | tr '\000' x >&2
+      if [ "$REMOTE_RC" = 124 ]; then exec sleep 5; fi
+      exit "$REMOTE_RC"
+    ''')
+    ssh.chmod(0o755)
+    result = zsh(r'''
+      REMOTE_HOSTS[peer]=peer
+      _dev_session_rows() { printf 'local-id\t/work/local\tapi-3\tdetached\tnone\tLocal\tcodex\n'; }
+      T_REMOTE_SCAN_TIMEOUT=0.5
+      print caller-input > "$HOME/probe-input"
+      _dev_remote_scan_with_timeout peer 'zsh -lic _dev_session_rows' 0.5 < "$HOME/probe-input" > /dev/null || :
+      _dev_rows_all
+    ''', REMOTE_RC=str(remote_rc))
+    assert result.returncode == (0 if remote_rc == 0 else 1), result.stderr
+    assert 'local\tlocal-id\t' in result.stdout
+    assert ('peer\tremote-id\t' in result.stdout) == (remote_rc == 0)
+    assert not (zsh.home / 'consumed-input').exists()
+    assert (zsh.home / 'ssh-argv').read_text().splitlines() == [
+        '-o', 'ConnectTimeout=3', '-o', 'BatchMode=yes', 'peer',
+        'zsh -lic _dev_session_rows',
+    ]
+    if remote_rc == 0:
+        assert result.stderr == ''
+    else:
+        assert 'unreachable' not in result.stderr
+        assert 'peer SSH diagnostic:' in result.stderr
+        assert 'Permission denied' in result.stderr
+        assert '\ufffd' in result.stderr
+        assert '\x1b' not in result.stderr and '\r' not in result.stderr
+        assert len(result.stderr) < 1300
+        assert len(result.stderr.splitlines()) == 2
+        assert ('timed out' if remote_rc == 124 else f'rc={remote_rc}') in result.stderr
+    assert 'Permission denied' not in result.stdout
+
+
+def test_remote_scan_missing_worker_status_is_not_unreachable(zsh):
+    result = zsh(r'''
+      REMOTE_HOSTS[peer]=peer
+      _dev_session_rows() { :; }
+      _dev_remote_scan_with_timeout() { exit 0; }
+      _dev_rows_all
+    ''')
+    assert result.returncode == 1
+    assert 'worker status missing' in result.stderr
+    assert 'unreachable' not in result.stderr
+
+
 @pytest.mark.parametrize('stderr_tty,stdout_tty,term,no_color,color', [
     (True, True, 'xterm-256color', None, True),
     (True, False, 'xterm-256color', None, True),
@@ -88,7 +144,7 @@ _dev_session_rows() {
         command += f' > {shlex.quote(str(output_file))}'
     if mode == 'stderr_redirected':
         command += f' 2> {shlex.quote(str(error_file))}'
-    env = {'TERM': 'dumb' if mode == 'dumb' else 'xterm-256color'}
+    env = {'TERM': 'dumb' if mode == 'dumb' else 'xterm-256color', 'COLUMNS': '120'}
     if mode == 'no_color':
         env['NO_COLOR'] = ''
     result = zsh(command + '; print rc=$?', _tty=mode != 'plain', **env)
@@ -96,7 +152,7 @@ _dev_session_rows() {
     if error_file.exists():
         text += error_file.read_text()
     assert 'rc=0' in text
-    assert 'warning: dev: offline unreachable — skipped' in text
+    assert 'warning: dev: offline SSH session scan failed (rc=255) — skipped' in text
     assert ('\x1b[33mwarning: dev: offline' in text) == color
     rows = output_file.read_text() if output_file.exists() else result.stdout
     assert 'api-3' in rows and 'api-4' in rows
@@ -149,7 +205,7 @@ def test_partial_resume_checks_selected_saved_writer_and_starts(zsh):
       _t_resume api 3 --days all
     ''')
     assert result.returncode == 0, result.stdout + result.stderr
-    assert 'offline unreachable' in result.stderr
+    assert 'offline SSH session scan failed (rc=255)' in result.stderr
     assert 'ownership on unavailable hosts could not be verified' in result.stderr
     assert 'no saved conversation was resumed. Retry when configured hosts' not in result.stderr
     calls = zsh.log.read_text()
@@ -192,6 +248,7 @@ def test_saved_app_resume_preflight_continues_with_unavailable_host(zsh):
 def test_resume_cancellation_stays_130(zsh, phase):
     cwd, _ = saved_rollout(zsh)
     result = zsh(r'''
+      DEV_HANDOFF[codex]=t  # Exercise transport cancellation, not native routing.
       _dev_rows_all() { return 130; }
       _dev_worktree_beam_push() { :; }
       _tbeam_sync_transcript() { :; }
@@ -221,7 +278,7 @@ def test_remote_session_pickers_keep_reachable_rows_with_offline_peer(zsh, tmp_p
     ''', _tty=True, VERB=verb)
     assert result.returncode == 0, result.stdout
     assert 'PICKER_OPENED' in result.stdout
-    assert 'offline unreachable' in result.stdout
+    assert 'offline SSH session scan failed (rc=255)' in result.stdout
     assert ('OPEN online' if verb == 'open' else '→ Killing online:api-4') in result.stdout
 
 
@@ -265,12 +322,12 @@ def test_remote_resume_worker_opens_picker_despite_an_unavailable_peer(zsh, tmp_
     assert result.returncode == 0, result.stdout
     assert 'PICKER_OPENED' in result.stdout
     assert 'ATTACH api 3' in result.stdout
-    assert 'offline unreachable — skipped' in result.stdout
+    assert 'offline SSH session scan failed (rc=255) — skipped' in result.stdout
     assert 'no saved conversation was resumed' not in result.stdout
     assert 'new-session' not in zsh.log.read_text()
 
 
-def test_partial_resume_batch_skips_saved_failure_and_attaches_live_mark(zsh, tmp_path):
+def test_partial_resume_batch_keeps_saved_failure_visible_without_attaching(zsh, tmp_path):
     cwd, _ = saved_rollout(zsh)
     live_cwd, _ = saved_rollout(zsh, sid=OTHER, slot='5')
     picker = tmp_path / 'stubbin/fzf'
@@ -289,12 +346,11 @@ def test_partial_resume_batch_skips_saved_failure_and_attaches_live_mark(zsh, tm
       _t_resume api --days all --live
     ''', _tty=True, LIVE_SID=OTHER, LIVE_CWD=str(live_cwd),
         FAKE_SESSIONS='dev-api-5', FAKE_SESSION_PATH=str(live_cwd))
-    assert result.returncode == 0, result.stdout
-    assert 'api 3: launch failed' in result.stdout
-    # Unknown turn times break ties by identity: remote slot 4 attaches first,
-    # then the local slot 5 opens in a tab. Neither action reaches real SSH/UI.
-    assert 'REMOTE_ATTACH online\tapi\t4' in result.stdout
-    assert 'TAB t open api 5 --cli --local' in result.stdout
+    assert result.returncode == 1, result.stdout
+    assert 'Resume stopped after an error' in result.stdout
+    assert 'Selection: api slot 3' in result.stdout
+    assert 'conversation launch failed' in result.stdout
+    assert 'REMOTE_ATTACH' not in result.stdout and 'TAB t open' not in result.stdout
     calls = zsh.log.read_text()
     assert 'new-session' not in calls and 'respawn-pane' not in calls
     assert cwd.exists()
@@ -332,12 +388,12 @@ def test_remote_move_source_picker_keeps_reachable_candidates(zsh, tmp_path, loc
     picker.chmod(0o755)
     result = zsh(SCANS + r'''
       _dev_session_rows() { [[ $LOCAL_FAILURE == 0 ]]; }
-      _t_fzf_single() { print -u2 PICKER_OPENED; cat >&2; return 130; }
+      _t_fzf_multi() { print -u2 PICKER_OPENED; cat >&2; return 130; }
       ssh() { print -u2 UNEXPECTED_SSH; return 99; }
       _t_remote move api --host offline
     ''', _tty=True, LOCAL_FAILURE=str(int(local_failure)))
     assert result.returncode == (1 if local_failure else 130), result.stdout
-    assert 'offline unreachable' in result.stdout
+    assert 'offline SSH session scan failed (rc=255)' in result.stdout
     assert ('PICKER_OPENED' in result.stdout) == (not local_failure)
     if not local_failure:
         assert 'online' in result.stdout and 'api-4' in result.stdout

@@ -3,9 +3,44 @@
 # shellcheck disable=SC2030,SC2031
 # Shared visual defaults for every t picker. Callers choose a profile and may
 # customize content (columns, prompt, preview), never controls or visual chrome.
-# These profiles run in subshells. Use `return` for normal completion: an explicit
-# `exit` in zsh runs the caller's inherited zshexit hooks (including Terminal.app's
-# session saver) inside the picker subshell.
+# Interactive zsh's stopped-job handling can spin inside command substitutions.
+# Replace each profile's subshell with a noninteractive sh before waiting for fzf.
+# Resolve this source file here so direct sourcing also works without T_HOME.
+[ "${1:-}" != --t-fzf-worker ] || unset ZSH_VERSION
+if [ -n "${ZSH_VERSION:-}" ]; then
+  eval '_T_FZF_SOURCE=${${(%):-%x}:A}'
+fi
+# Run only inside a zsh profile subshell. Send shell-local inputs and arguments
+# through a private pipe: row snapshots can exceed exec's argv/environment limit.
+# (qq) emits POSIX single-quoted strings, including embedded quotes/newlines.
+_t_fzf_worker() {
+  # shellcheck disable=SC2016
+  eval '
+    emulate -L zsh
+    _t_fzf_inputs=()
+    for _t_fzf_name in COLUMNS LINES TMPDIR NO_COLOR T_HOME PATH \
+      T_PICKER_COLUMNS T_PICKER_SOURCE_ROWS T_PICKER_SESSION_FILTERS T_PICKER_KILL_CALLBACK \
+      T_PICKER_WITH_ATTACHED T_PICKER_WITH_PENDING T_PICKER_ALL_LABEL T_PICKER_AUTH_HOSTS; do
+      [[ -v $_t_fzf_name ]] && _t_fzf_inputs+=("$_t_fzf_name")
+    done
+    # Keep large prefix-assigned inputs out of the environment of exec itself.
+    (( ${#_t_fzf_inputs} == 0 )) || typeset +x "${_t_fzf_inputs[@]}"
+    exec /bin/sh "$_T_FZF_SOURCE" --t-fzf-worker 3< <(
+      trap - EXIT
+      zshexit_functions=()
+      unfunction zshexit 2>/dev/null || :
+      for _t_fzf_name in "${_t_fzf_inputs[@]}"; do
+        print -r -- "export $_t_fzf_name=${(qq)${(P)_t_fzf_name}}"
+      done
+      print -rn -- "set --"
+      for _t_fzf_arg do
+        print -rn -- " ${(qq)_t_fzf_arg}"
+      done
+      print
+    )
+  '
+}
+
 _t_fzf() {
   if [ "${NO_COLOR+x}" = x ] || [ "${TERM:-}" = dumb ]; then set -- "$@" --color=bw; fi
   _t_air_size=$(stty size </dev/tty 2>/dev/null) || _t_air_size=
@@ -48,6 +83,7 @@ _t_fzf_content_options() {
 }
 
 _t_fzf_single() (
+  [ -z "${ZSH_VERSION:-}" ] || _t_fzf_worker _t_fzf_single "$@"
   _t_fzf_action=$1 _t_fzf_legend=$2
   shift 2
   _t_fzf_content_options "$@" || return $?
@@ -64,6 +100,7 @@ $_t_fzf_legend"
 
 # A separate header line keeps batch controls visible on narrow terminals.
 _t_fzf_multi() (
+  [ -z "${ZSH_VERSION:-}" ] || _t_fzf_worker _t_fzf_multi "$@"
   _t_fzf_action=$1 _t_fzf_legend=$2
   shift 2
   _t_fzf_content_options "$@" || return $?
@@ -80,7 +117,11 @@ ${_t_fzf_legend}"
 # Arguments: page label file, rows file, quoted helper command, preview command,
 # initial query, prompt. The helper writes rows and the page label on each event.
 _t_fzf_paginated() (
-  [ "$#" -eq 6 ] || { printf 't picker: paged profile needs six arguments\n' >&2; return 2; }
+  [ -z "${ZSH_VERSION:-}" ] || _t_fzf_worker _t_fzf_paginated "$@"
+  if [ "$#" -lt 6 ] || [ "$#" -gt 7 ]; then
+    printf 't picker: paged profile needs six arguments and optional multi mode\n' >&2
+    return 2
+  fi
   _t_paged_page=$1 _t_paged_rows=$2 _t_paged_helper=$3
   _t_paged_preview=$4 _t_paged_query=$5 _t_paged_prompt=$6
   _t_paged_size=$(stty size </dev/tty 2>/dev/null) || _t_paged_size='24 80'
@@ -93,6 +134,14 @@ Ctrl-/ details'
   fi
   export T_PICKER_HEADER_HEIGHT="${_t_paged_size%% *}"
   export T_PICKER_HEADER_WIDTH=$(( ${_t_paged_size#* } - 8 ))
+  _t_paged_cardinality=--no-multi
+  _t_paged_keys='tab:down,shift-tab:up'
+  if [ "${7:-}" = multi ]; then
+    _t_paged_cardinality=--multi
+    _t_paged_keys='space:toggle,tab:toggle+down,shift-tab:toggle+up'
+    T_PICKER_PAGED_CONTROLS="$T_PICKER_PAGED_CONTROLS
+Space/Tab mark · page/search clears marks"
+  fi
   _t_paged_preview_window='hidden:wrap:down:40%:~1'
   _t_paged_margin='1,2' _t_paged_info=default
   if [ -n "$_t_paged_size" ] && [ "${_t_paged_size%% *}" -le 14 ]; then
@@ -126,11 +175,11 @@ SH
   _t_paged_rows_command='cat "$T_PICKER_PAGED_ROWS"'
   # shellcheck disable=SC2016
   _t_paged_header_command='sh "$T_PICKER_PAGED_RENDER"'
-  _t_paged_bind="change:execute-silent($_t_paged_helper show {q})+reload-sync($_t_paged_rows_command)+transform-header($_t_paged_header_command),ctrl-f:execute-silent($_t_paged_helper next {q})+reload-sync($_t_paged_rows_command)+transform-header($_t_paged_header_command),ctrl-b:execute-silent($_t_paged_helper previous {q})+reload-sync($_t_paged_rows_command)+transform-header($_t_paged_header_command)"
-  _t_fzf --height=100% --margin="$_t_paged_margin" --info="$_t_paged_info" --disabled --sync --no-multi --delimiter="$(printf '\t')" --with-nth=2 --no-hscroll \
+  _t_paged_bind="change:deselect-all+execute-silent($_t_paged_helper show {q})+reload-sync($_t_paged_rows_command)+transform-header($_t_paged_header_command),ctrl-f:deselect-all+execute-silent($_t_paged_helper next {q})+reload-sync($_t_paged_rows_command)+transform-header($_t_paged_header_command),ctrl-b:deselect-all+execute-silent($_t_paged_helper previous {q})+reload-sync($_t_paged_rows_command)+transform-header($_t_paged_header_command)"
+  _t_fzf --height=100% --margin="$_t_paged_margin" --info="$_t_paged_info" --disabled --sync "$_t_paged_cardinality" --delimiter="$(printf '\t')" --with-nth=2 --no-hscroll \
     --print-query --expect=enter,ctrl-r --query="$_t_paged_query" --prompt="$_t_paged_prompt" \
     --header="$(sh "$T_PICKER_PAGED_RENDER")" \
-    --bind='esc:abort,ctrl-c:abort,tab:down,shift-tab:up,ctrl-/:toggle-preview,shift-up:preview-up,shift-down:preview-down' \
+    --bind="esc:abort,ctrl-c:abort,$_t_paged_keys,ctrl-/:toggle-preview,shift-up:preview-up,shift-down:preview-down" \
     --bind="$_t_paged_bind" --preview="$_t_paged_preview" \
     --preview-window="$_t_paged_preview_window" < "$_t_paged_rows"
 )
@@ -140,8 +189,10 @@ SH
 # Arguments: default rows, all rows, action, filter label, legend, show-all, fzf args.
 # Session callers opt into independent controls with T_PICKER_SESSION_FILTERS.
 # Kill also supplies the two single-filter views via T_PICKER_WITH_ATTACHED and
-# T_PICKER_WITH_PENDING. All callers use Ctrl-A for all and Ctrl-F for defaults.
+# T_PICKER_WITH_PENDING. Session snapshots use Ctrl-F settings, Ctrl-A off,
+# Ctrl-L on. Generic filtered lists retain Ctrl-A all and Ctrl-F defaults.
 _t_fzf_filtered() (
+  [ -z "${ZSH_VERSION:-}" ] || _t_fzf_worker _t_fzf_filtered "$@"
   _t_picker_default=$1 _t_picker_all=$2 _t_picker_action=$3
   _t_picker_label=$4 _t_picker_legend=$5 _t_picker_show_all=$6
   _t_picker_with_attached=${T_PICKER_WITH_ATTACHED:-}
@@ -164,7 +215,7 @@ _t_fzf_filtered() (
   fi
   umask 077
   _t_picker_dir=$(mktemp -d "${TMPDIR:-/tmp}/t-picker.XXXXXX") || return 1
-  trap 'rm -rf -- "$_t_picker_dir"' EXIT
+  trap '[ ! -f "$_t_picker_dir/update.pid" ] || kill "$(cat "$_t_picker_dir/update.pid")" 2>/dev/null; rm -rf -- "$_t_picker_dir"' EXIT
   trap 'exit 130' HUP INT TERM
   export T_PICKER_DEFAULT="$_t_picker_dir/default" T_PICKER_ALL="$_t_picker_dir/all"
   export T_PICKER_STATE="$_t_picker_dir/show-all" T_PICKER_TOGGLE="$_t_picker_dir/toggle"
@@ -179,6 +230,7 @@ _t_fzf_filtered() (
   _t_picker_preview_bind=,ctrl-/:toggle-preview
   if [ "${T_PICKER_SESSION_FILTERS:-}" = open ]; then
     _t_picker_preview_bind=,ctrl-/:ignore,alt-n:ignore
+    _t_picker_controls="Enter open · k kill · Esc · Space/Tab mark ✓"
     set -- --preview= "$@"
   else
     _t_picker_controls="$_t_picker_controls · Ctrl-/ details"
@@ -194,6 +246,8 @@ _t_fzf_filtered() (
     _t_picker_controls="Enter $_t_picker_action · Esc
 Space/Tab mark ✓"
     [ "${T_PICKER_SESSION_FILTERS:-}" = open ] || _t_picker_controls="$_t_picker_controls · Ctrl-/ details"
+    [ "${T_PICKER_SESSION_FILTERS:-}" != open ] || _t_picker_controls="Enter/k kill/Esc
+Space/Tab mark ✓"
     set -- --height=100% "$@"
   fi
   printf '%s\n%s\n' "$_t_picker_controls" \
@@ -261,6 +315,12 @@ Space/Tab mark ✓"
   esac
   if [ -n "$_t_picker_source" ]; then
     printf '%s\n' "$_t_picker_source" > "$_t_picker_dir/source"
+    if [ "${T_PICKER_SESSION_FILTERS:-}" = resume ]; then
+      printf '%s\n' "${T_PICKER_AUTH_HOSTS:-}" > "$_t_picker_dir/auth-hosts"
+      # The persistent warning needs another row; fzf 0.44 otherwise exhausts
+      # its 60%-height window at 80x24 before rendering a focused session.
+      [ -z "${T_PICKER_AUTH_HOSTS:-}" ] || set -- --height=100% "$@"
+    fi
     T_PICKER_HEADER_WIDTH=${_t_picker_size#* }
     [ "${T_PICKER_HEADER_WIDTH:-0}" -gt 0 ] || T_PICKER_HEADER_WIDTH=${COLUMNS:-80}
     T_PICKER_HEADER_WIDTH=$(( T_PICKER_HEADER_WIDTH - 12 ))
@@ -271,6 +331,12 @@ Space/Tab mark ✓"
     fi
     export T_PICKER_HEADER_WIDTH
     export T_PICKER_FILTER_HELPER="$T_HOME/libexec/t_picker_filters.py"
+    T_PICKER_COLOR=0
+    if [ -z "${NO_COLOR+x}" ] && [ "${TERM:-dumb}" != dumb ] && [ -t 2 ]; then
+      T_PICKER_COLOR=1
+    fi
+    export T_PICKER_COLOR
+    set -- --ansi "$@"
   else
     unset T_PICKER_FILTER_HELPER
   fi
@@ -311,6 +377,10 @@ SH
   cp "$_t_picker_input" "$T_PICKER_CURRENT"
   cp "$_t_picker_header" "$T_PICKER_CURRENT_HEADER"
   if [ -n "${T_PICKER_FILTER_HELPER:-}" ]; then
+    if [ -n "$_t_picker_show_all" ]; then
+      printf '0\n' > "$T_PICKER_STATE"
+      printf '0' > "$_t_picker_dir/filters-enabled"
+    fi
     sh "$T_PICKER_TOGGLE" current || return $?
     _t_picker_header=$T_PICKER_CURRENT_HEADER
   fi
@@ -338,32 +408,51 @@ SH
     done
   fi
   if [ -n "${T_PICKER_FILTER_HELPER:-}" ]; then
-    _t_picker_facets='ctrl-g:agent ctrl-d:interface ctrl-o:host ctrl-r:repo'
-    _t_picker_execute=execute-silent
-    _t_picker_pick=
-    if [ "$T_PICKER_SESSION_FILTERS" = open ]; then
-      _t_picker_facets='ctrl-g:agent ctrl-p:progress ctrl-d:interface ctrl-b:model ctrl-o:host ctrl-r:repo ctrl-v:session ctrl-e:context ctrl-w:task'
-      _t_picker_execute=execute
-      _t_picker_pick='pick '
-    fi
-    for _t_picker_spec in $(printf '%s\n' "$_t_picker_facets"); do
-      [ "$T_PICKER_SESSION_FILTERS" != resume ] || [ "$_t_picker_spec" != ctrl-d:interface ] || continue
+    _t_picker_bind=
+    for _t_picker_spec in ctrl-a:off ctrl-l:on ctrl-f:settings; do
       _t_picker_key=${_t_picker_spec%:*} _t_picker_action=${_t_picker_spec#*:}
-      _t_picker_bind="${_t_picker_bind},${_t_picker_key}:${T_PICKER_CLEAR_MARKS}${_t_picker_execute}(sh \"\$T_PICKER_TOGGLE\" ${_t_picker_pick:-}$_t_picker_action)+reload-sync(cat \"\$T_PICKER_CURRENT\")+transform-header(cat \"\$T_PICKER_CURRENT_HEADER\")"
+      _t_picker_execute=execute-silent
+      [ "$_t_picker_action" != settings ] || _t_picker_execute=execute
+      _t_picker_bind="${_t_picker_bind}${_t_picker_bind:+,}${_t_picker_key}:${T_PICKER_CLEAR_MARKS}${_t_picker_execute}(sh \"\$T_PICKER_TOGGLE\" $_t_picker_action)+reload-sync(cat \"\$T_PICKER_CURRENT\")+transform-header(cat \"\$T_PICKER_CURRENT_HEADER\")"
     done
   fi
   if [ "${T_PICKER_SESSION_FILTERS:-}" = resume ]; then
     set -- --no-sort "$@"
+    _t_picker_bind="${_t_picker_bind},alt-m:${T_PICKER_CLEAR_MARKS}execute-silent(sh \"\$T_PICKER_TOGGLE\" merged)+reload-sync(cat \"\$T_PICKER_CURRENT\")+transform-header(cat \"\$T_PICKER_CURRENT_HEADER\")"
     for _t_picker_spec in alt-t:turn alt-r:repo alt-g:agent alt-o:host alt-v:session; do
       _t_picker_key=${_t_picker_spec%:*} _t_picker_action=${_t_picker_spec#*:}
       _t_picker_bind="${_t_picker_bind},${_t_picker_key}:${T_PICKER_CLEAR_MARKS}execute-silent(sh \"\$T_PICKER_TOGGLE\" sort-$_t_picker_action)+reload-sync(cat \"\$T_PICKER_CURRENT\")+transform-header(cat \"\$T_PICKER_CURRENT_HEADER\")"
     done
   fi
+  if [ "${T_PICKER_SESSION_FILTERS:-}" = open ] && [ -n "${T_PICKER_KILL_CALLBACK:-}" ]; then
+    # The action removes a cached row, then restores marks on both fzf versions.
+    # HTTP updates run only after execute returns, outside fzf's blocked loop.
+    export FZF_API_KEY
+    FZF_API_KEY=$(python3 -c 'import secrets; print(secrets.token_hex(32))')
+    # shellcheck disable=SC2016
+    set -- --listen=127.0.0.1:0 --bind='start:unbind(change),change:transform-query(cat "$T_PICKER_VIEWS/action-query-locked"),k:rebind(change)+unbind(enter)+unbind(k)+unbind(space)+unbind(tab)+unbind(ctrl-a)+unbind(ctrl-f)+unbind(ctrl-l)+execute(python3 "$T_HOME/libexec/t_picker_close.py" close {} {q})' "$@"
+  fi
   _t_fzf --height=100% --multi --no-hscroll --margin="$_t_picker_margin" --delimiter="$(printf '\t')" --with-nth=-1 \
     --bind="enter:accept,esc:abort,ctrl-c:abort,space:toggle+down,tab:toggle+down,shift-tab:up${_t_picker_preview_bind}" \
     --bind="$_t_picker_bind" \
     --preview='printf "%s\n" {-1}' --preview-window='hidden:wrap:down:40%' \
-    --header="$(cat "$_t_picker_header")" "$@" < "$T_PICKER_CURRENT"
+    --header="$(cat "$_t_picker_header")" "$@" < "$T_PICKER_CURRENT" > "$_t_picker_dir/result"
   _t_picker_rc=$?
+  if [ "$_t_picker_rc" = 0 ]; then
+    cat "$_t_picker_dir/result"
+  fi
   return "$_t_picker_rc"
 )
+
+# Private script entry point; sh callers sourcing the profiles need no worker.
+if [ "${1:-}" = --t-fzf-worker ]; then
+  # Read the complete pipe before parsing (some sh versions truncate sourced pipes).
+  _t_fzf_handoff=$(/bin/cat <&3) || exit $?
+  exec 3<&-
+  eval "$_t_fzf_handoff" || exit $?
+  unset _t_fzf_handoff
+  case ${1:-} in
+    _t_fzf_single|_t_fzf_multi|_t_fzf_paginated|_t_fzf_filtered) "$@" ;;
+    *) exit 2 ;;
+  esac
+fi

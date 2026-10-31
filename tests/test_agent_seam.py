@@ -1926,6 +1926,7 @@ def test_remote_desktop_reservation_blocks_local_slot_without_becoming_attachabl
         'REMOTE_HOSTS[mini]=unused; DEV_WORKTREE_ROOT=/Users/local/code/.worktrees; '
         '_dev_homerel() { case $1 in */code/api) print -r -- code/api;; */code/.worktrees) print -r -- code/.worktrees;; esac; }; '
         f'_dev_rows_all() {{ print -r -- {shlex.quote(row)}; }}; '
+        '_t_resume_history_candidates() { :; }; '
         'print -r -- "owner=$(_dev_remote_app_owner api 3)"; '
         '_dev_remote_resolve api 3 >/dev/null 2>&1; print -r -- "attachable=$?"; '
         '_t_dev api 3 --codex; print -r -- "cli=$?"; '
@@ -1941,7 +1942,7 @@ def test_remote_desktop_reservation_blocks_local_slot_without_becoming_attachabl
     assert r.stderr.count("reserved by the Codex desktop app on mini") == (4 if sys.platform == "darwin" else 3)
     if sys.platform != "darwin":
         assert "requires macOS" in r.stderr
-    assert "reserved for the Codex desktop app on mini" in r.stderr
+    assert "◉ desktop on mini" in r.stderr
     assert not zsh.log.exists() or "new-session" not in zsh.log.read_text()
 
 
@@ -1963,6 +1964,7 @@ def test_paste_does_not_fall_back_to_shared_tree_when_desktop_worktree_is_reserv
 def test_beam_refuses_desktop_owned_codex_thread_before_move(zsh):
     row = "thread-123\tcodex\t/tmp/desktop-slot"
     r = zsh(
+        'DEV_HANDOFF[codex]=t; '
         f'_codex_thread_lookup() {{ print -r -- {shlex.quote(row)}; }}; '
         '_dev_app_slot_reserved() { [[ "$1" == /tmp/desktop-slot ]]; }; '
         '_tbeam_kill_owner() { print -r -- SHOULD_NOT_KILL; }; '
@@ -1991,6 +1993,7 @@ def test_beam_refuses_paginated_codex_rollout_behind_sqlite_checkpoint(zsh, tmp_
     assert "check=1" in r.stdout
     assert "behind its SQLite checkpoint" in r.stderr
     r = zsh(
+        'DEV_HANDOFF[codex]=t; '
         f'_codex_thread_lookup() {{ print -r -- "{SID}\t{rollout}\t{zsh.home}"; }}; '
         '_tbeam_kill_owner() { print -r -- SHOULD_NOT_KILL; }; '
         f'_t_beam -s {SID} mini; print -r -- "beam=$?"'
@@ -2033,6 +2036,7 @@ def test_beam_refuses_paginated_codex_rollout_behind_sqlite_checkpoint(zsh, tmp_
 def test_beam_pull_checks_remote_codex_rollout_before_killing_owner(zsh):
     row = f"{SID}\t/remote/worktree\tapi-3\tdetached\tactive\ttest\tcodex"
     r = zsh(
+        'DEV_HANDOFF[codex]=t; '
         'rsync() { :; }; '
         'ssh() { '
         '  case "$*" in '
@@ -2145,10 +2149,10 @@ def test_remote_t_delegations_suppress_a_second_update_prompt(zsh, tmp_path):
     )
     result = zsh(snippet, _tty=True, SSH_LOG=str(log), FAKE_ROWS=rows)
     assert result.returncode == 0, result.stderr
-    assert "→ mini: t open api 3 --fg" in result.stdout
+    assert "→ mini: t open --local api 3 --fg" in result.stdout
     assert log.read_text().splitlines() == [
         "-t me@mini zsh -lic 'T_UPDATE_PROMPTED=$$ t open api 3'",
-        "-t me@mini zsh -lic 'T_UPDATE_PROMPTED=$$ t open api 3 --fg'",
+        "-t me@mini zsh -lic 'T_UPDATE_PROMPTED=$$ t open --local api 3 --fg'",
         "-t me@mini zsh -lic 'T_UPDATE_PROMPTED=$$ t plan api 3 --raw'",
         "-t me@mini zsh -lic 'T_UPDATE_PROMPTED=$$ t kill api:fg -y'",
         "-t me@mini zsh -lic 'T_UPDATE_PROMPTED=$$ t open api:fg'",
@@ -2219,6 +2223,8 @@ def test_zsh_resume_picker_shows_the_display_column_for_every_row(zsh, tmp_path)
     assert "rc=130" in r.stdout.splitlines(), r.stdout                    # Esc cancels without spawning work
     rows = log.read_text().splitlines()
     assert len(rows) == 3, rows                                # the subagent thread adds no row
+    assert all(row.startswith(('[NONE   ] ', '[UNKNOWN] ')) for row in rows)
+    rows = [row.split('] ', 1)[1] for row in rows]  # Leading PR state precedes the existing columns.
     # No transcript records a turn timestamp here: deterministic identity ties
     # leave the live slot after saved slot 3 instead of pinning it to the top.
     assert rows[-1].split()[:5] == ["4", "✱", "claude", "●", "active"]
@@ -2233,9 +2239,8 @@ def test_zsh_resume_picker_shows_the_display_column_for_every_row(zsh, tmp_path)
     # The header exposes every available filter; agent names remain in the rows.
     header = semantic_chrome((tmp_path / "fzf.log.header").read_text()).splitlines()
     controls = "\n".join(header)
-    for control in ("Ctrl-G agent", "Ctrl-O host", "Ctrl-R repo", "Ctrl-L live",
-                    "Ctrl-A all", "Ctrl-F reset", "0 hidden", "live: shown",
-                    "Sort: last turn", "Alt-T last turn", "Alt-R repo",
+    for control in ("Ctrl-F filters", "Ctrl-A off", "Ctrl-L on", "0 hidden",
+                    "Filters OFF", "Sort: last turn", "Alt-T last turn", "Alt-R repo",
                     "Alt-G agent", "Alt-O host", "Alt-V session"):
         assert control in controls
     assert "Ctrl-D" not in controls  # Resume has no historical interface metadata.
@@ -2294,8 +2299,10 @@ def test_zsh_resume_never_resumes_a_conversation_live_in_another_slot(zsh, tmp_p
     r = zsh(live + "_t_resume api 3; echo rc=$?")
     assert "rc=1" in r.stdout and "● in api-5" in r.stderr, (r.stdout, r.stderr)
     assert "send-keys" not in zsh.log.read_text()
-    # under a TTY the sole (live) row auto-picks → attach the OWNER's slot
-    r = zsh(live + "_t_resume api 3; echo rc=$?", _tty=True)
+    # Under a TTY even the sole live row waits for selection, then attaches
+    # the OWNER's slot rather than starting a second conversation.
+    r = zsh(live + "_t_resume api 3; echo rc=$?", _tty=True,
+            FZF_LOG=str(tmp_path / 'resume-picker.log'), FZF_PICK='Audit balances')
     assert "ATTACH api 5" in r.stdout and "send-keys" not in zsh.log.read_text(), r.stdout
     # scan mode: hidden like any live row, and counted
     r = zsh(live + "_t_resume api; echo rc=$?")
@@ -2625,7 +2632,7 @@ def test_open_local_multi_picker(zsh, tmp_path, tabs):
       print -r -- "rc=$?"
     '''.replace("TAB_RESULT", "return 0" if tabs else "return 1")
     result = zsh(snippet, _tty=True, FZF_LOG=str(log), FAKE_HAS_SESSION="1")
-    assert "rc=0" in result.stdout, result.stdout
+    assert f"rc={0 if tabs else 1}" in result.stdout, result.stdout
     assert "TAB t open alias 4 --cli --local" in result.stdout
     assert ("Attach with: t open alias 4 --cli --local" in result.stdout) == (not tabs)
     calls = zsh.log.read_text()
@@ -2633,10 +2640,10 @@ def test_open_local_multi_picker(zsh, tmp_path, tabs):
     assert "new-session" not in calls and "dev-web-3" not in calls
     args = semantic_chrome(log.read_text())
     assert "--multi" in args and "space:toggle+down" in args
-    assert "Enter open · Esc · Space/Tab mark ✓" in args
-    for control in ("Ctrl-T attached", "Ctrl-U unattached", "Ctrl-F defaults", "Ctrl-A all"):
+    assert "Enter open/k kill/Esc · Space/Tab ✓" in args
+    for control in ("Ctrl-F filters", "Ctrl-A off", "Ctrl-L on"):
         assert control in args
-    assert "View: unattached" in args and 'FILTERS' in args
+    assert "Filters ON: unattached" in args
 
 
 def test_open_picker_cancel_does_not_create_session(zsh, tmp_path):

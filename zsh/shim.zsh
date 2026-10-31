@@ -13,7 +13,53 @@
 #     subprocess cannot. No resolve protocol is needed: the shim just calls them.
 # `t help <verb>` and `t <verb> -h` show the bin's gh-style help. Full per-verb
 # help + the verb list live in bin/t.
+# Keep the title lifecycle in the calling shell: dispatch may change its cwd.
 t() {
+  emulate -L zsh
+  _t_reload_if_moved
+  # Dynamic scope ends when this command returns; child helpers may change cwd
+  # while retaining this invocation's source. The selector rejects tmux leaks.
+  local -x T_DEV_CONTEXT="$T_HOME" T_DEV_CONTEXT_OWNER=$$
+  local title_active= arg label=t
+  # A tmux server may retain these variables long after this command returns.
+  # Only nested invocations in this shell share its title ownership.
+  local -x T_TITLE_ACTIVE=${T_TITLE_ACTIVE:-} T_TITLE_QUIET=${T_TITLE_QUIET:-}
+  [[ $T_TITLE_ACTIVE == $$ ]] || T_TITLE_ACTIVE=
+  [[ $T_TITLE_QUIET == $$ ]] || T_TITLE_QUIET=
+  case ${1:-} in
+    _*|session-rows|land|new-land|kill-owner|mcp|todo) _t_dispatch "$@"; return ;;
+  esac
+  local machine=
+  for arg in "$@"; do
+    case $arg in --json|--dump|-d|--statusline|--raw|--quiet) machine=1 ;; esac
+  done
+  [[ "$*" == 'config workflow instructions show'* || "$*" == 'workflow instructions show'* || "$*" == 'share read'* ]] && machine=1
+  if [[ -t 1 && ${TERM:-dumb} != dumb && -z $machine && -z ${T_TITLE_ACTIVE:-} ]]; then
+    case ${1:-} in
+      session|remote|issue|repo|cursor|hosts|agentcore|workflow|runners|config|profile|policy|agent|system)
+        label+=" $1"
+        case ${2:-} in
+          open|move|resume|list|ls|status|start|close|restart|push|pop|history|cd|read|view-plan|paste|search|open-app|goal|locate|create|clone|add|show|edit|remove|delete|rm|default|run|invoke|stop|setup|onboard|local|workflow|init|apply|check|login|install|trust|integrate|update|diagnose|advisories) label+=" $2" ;;
+        esac ;;
+      open|ls|list|kill|restart|push|pop|resume|history|cd|beam|move|read|plan|paste|find|app|on|setup|install|login|trust|update|doctor|help|share|checkout|new|instructions|permissions|config) label+=" $1" ;;
+    esac
+    if [[ $1 == runners && $2 == runs ]]; then
+      label+=" runs"
+      case ${3:-} in start|list|ls|status|logs|artifacts|cancel|cleanup) label+=" $3" ;; esac
+    fi
+    _term_title "$label"
+    title_active=1
+  fi
+  [[ -n $machine ]] && T_TITLE_QUIET=$$
+  [[ -n $title_active ]] && T_TITLE_ACTIVE=$$
+  {
+    _t_dispatch "$@"
+  } always {
+    [[ -n $title_active ]] && _term_title ''
+  }
+}
+
+_t_dispatch() {
   emulate -L zsh
   # Help belongs to the executable, including nested command help. A remote
   # command's own --help is data and must pass through unchanged.
@@ -38,7 +84,7 @@ t() {
       push) shell_verb=push ;;
       resume) shell_verb=resume ;;
       cd) shell_verb=cd ;;
-      move) shell_verb=beam ;;
+      move) shell_verb=move ;;
       search) shell_verb=find ;;
       *) shell_verb= ;;
     esac
@@ -79,6 +125,16 @@ t() {
   elif [[ $verb == profile || $verb == policy || $verb == cursor ]]; then
     shell_verb=
   fi
+  # A plain slot resume selects an immutable conversation from that slot's
+  # history. Never substitute a generic live slot (which may be an empty shell).
+  # Explicit resume options and internal _t_resume callers keep their modes.
+  # Route before update checks: nonterminal history is a read-only listing.
+  if [[ $shell_verb == resume ]] &&
+     { [[ ${#shell_args} == 1 && ${shell_args[1]} == <-> ]] ||
+       [[ ${#shell_args} == 2 && ${shell_args[1]} != -* && ${shell_args[2]} == <-> ]]; }; then
+    command t session history "${shell_args[@]}"
+    return $?
+  fi
   # Forward bin-owned groups and their help. Bare config keeps its settings menu.
   [[ $verb == session || $verb == remote || $verb == repo || $verb == cursor || $verb == hosts ||
      $verb == profile || $verb == policy || $verb == agent || $verb == system ||
@@ -90,7 +146,7 @@ t() {
   # checks its own commands; prompting here for those would ask twice.
   local check_update=
   case "$shell_verb" in
-    open|pop|push|resume|find|cd|beam|remote|setup|config|host_config|repo_add|new|checkout|install|integrate)
+    open|pop|push|resume|find|cd|beam|move|remote|setup|config|host_config|repo_add|new|checkout|install|integrate)
       check_update=1 ;;
     repo_cd) check_update=1 ;;
   esac
@@ -125,6 +181,7 @@ t() {
     repo_cd) _t_repo_cd "${shell_args[@]}" ;;
     repo_add) _t_install repo "$@" ;;
     remote) _t_remote "${shell_args[@]}" ;;
+    move)   _t_session_move "${shell_args[@]}" ;;
     beam)   _t_beam_xlate "${shell_args[@]}" ;;     # → guarded local/remote transfer
     # setup runs in the bin (it only edits ${T_LOCAL_RC}), but on success the
     # SHELL must reload so the new cd aliases, host shorthand functions, and the
@@ -440,16 +497,23 @@ _t_open() {
 _t_open_picker() {
   local repo="$1" remote="$2" app="$3" cli="$4" rows row selected scope
   local _repo_selector _repo_selector_rc
-  _repo_selector=$(_dev_resolve_repo "$repo"); _repo_selector_rc=$?
-  (( _repo_selector_rc == 2 )) && return 2
-  (( _repo_selector_rc == 0 )) && repo=$_repo_selector
-  scope=${DEV_REPOS[$repo]:-}
+  if [[ -z $6 ]]; then
+    _repo_selector=$(_dev_resolve_repo "$repo"); _repo_selector_rc=$?
+    (( _repo_selector_rc == 2 )) && return 2
+    (( _repo_selector_rc == 0 )) && repo=$_repo_selector
+    scope=${DEV_REPOS[$repo]:-}
+  fi
   local -a fields candidates format_args
   local include_attached="$5" filtered
   local scope_rel wt_rel cwd_rel
   scope_rel=$(_dev_homerel "$scope")
   wt_rel=$(_dev_homerel "${DEV_WORKTREE_ROOT}/${scope:t}")
-  if [[ -n $remote ]]; then
+  if [[ -n $6 ]]; then
+    rows=$(_t_remote_open_inventory "$6" "$repo"); local inventory_rc=$?
+    (( inventory_rc == 130 )) && return 130
+    (( inventory_rc == 0 )) || return 1
+    format_args=(--remote)
+  elif [[ -n $remote ]]; then
     rows=$(_dev_rows_all --best-effort --details) || return $?
     format_args=(--remote)
   else
@@ -486,9 +550,35 @@ _t_open_picker() {
     [[ -n ${hidden[$fields[1]/$fields[2]]:-} ]] || visible+=("$row")
   done
   filtered="${(F)visible}"
-  selected=$(T_PICKER_SOURCE_ROWS="${(F)candidates}" T_PICKER_COLUMNS="$columns" T_PICKER_SESSION_FILTERS=open _t_fzf_filtered "$filtered" "$rows" open unattached \
-    "" "$include_attached" --prompt="open ${repo:+$repo }> " \
-    --with-nth=5,4) || return $?
+  # A foreground callback retains this invocation's configuration and guarded
+  # close functions without running interactive shell startup or exit hooks.
+  local action_dir action_name picker_rc
+  action_dir=$(mktemp -d "${TMPDIR:-/tmp}/t-open-action.XXXXXX") || return 1
+  {
+    {
+      print -r -- 'emulate -LR zsh'
+      print -r -- "source ${(qq)T_HOME}/t.plugin.zsh"
+      for action_name in ${(k)parameters}; do
+        case $action_name in
+          DEV_*|REMOTE_HOSTS|T_*|_T_*) typeset -p "$action_name" 2>/dev/null ;;
+        esac
+      done
+      for action_name in ${(k)functions}; do
+        case $action_name in
+          _dev_*|_t_*|_term_*|_stat_*|tmux|ssh) functions "$action_name" ;;
+        esac
+      done
+      print -r -- '_dev_kill_selected "$1"'
+    } > "$action_dir/close.zsh"
+    selected=$(T_PICKER_KILL_CALLBACK="$action_dir/close.zsh" \
+      T_PICKER_SOURCE_ROWS="${(F)candidates}" T_PICKER_COLUMNS="$columns" T_PICKER_SESSION_FILTERS=open \
+      _t_fzf_filtered "$filtered" "$rows" open unattached \
+      "" "$include_attached" --prompt="open ${repo:+$repo }> " --with-nth=5,4)
+    picker_rc=$?
+  } always {
+    rm -rf -- "$action_dir"
+  }
+  (( picker_rc == 0 )) || return $picker_rc
   [[ -n $selected ]] || return 130
   _t_open_selected "$selected" "$app" "$cli"
 }
@@ -527,7 +617,7 @@ _t_open_selected() {
       first=("${args[@]}")
     else
       cmd="t open ${(j: :)${(@q)args}}"
-      _dev_open_tab "$cmd" || print -r -- "Attach with: $cmd"
+      _dev_open_tab "$cmd" || { print -u2 -r -- "Could not open a terminal. Attach with: $cmd"; rc=1; }
     fi
   done
   if (( $#first )); then
@@ -715,7 +805,11 @@ _t_open_app_claim() {
 }
 
 # Compatibility seam: the guarded move parser consumes --host directly.
-_t_beam_xlate() { _t_beam "$@"; }
+_t_beam_xlate() {
+  # The new discovery flag opts the released shortcut into canonical selection.
+  if [[ ${(M)@:#(-r|--remote)} != '' ]]; then _t_session_move "$@"
+  else _t_beam "$@"; fi
+}
 
 # help — show this command list, grouped by purpose
 # Each command's name + description are parsed live from the leading
@@ -735,7 +829,7 @@ _t_beam_xlate() { _t_beam "$@"; }
 # key for `on`), and slot/flags after. Pulls live from the ${(k)DEV_REPOS} /
 # ${(k)REMOTE_HOSTS} arrays so it stays current with ${T_LOCAL_RC}.
 _t() {
-  local -a nouns=(session issue share remote repo cursor hosts agentcore config profile policy agent system login help)
+  local -a nouns=(session move issue share remote repo cursor hosts agentcore workflow runners config mcp profile policy agent system login help)
   if (( CURRENT == 2 )); then
     _describe -t nouns 't command group' nouns
     return
@@ -799,13 +893,16 @@ _t() {
     return
   fi
   case $group in
+    mcp) actions=(status install uninstall) ;;
     remote) actions=(open move resume) ;;
     session) actions=(open list ls close restart push pop resume history cd move read view-plan paste search open-app goal) ;;
     repo) actions=(list ls cd locate create clone add) ;;
     cursor) actions=(list ls resume send) ;;
     agentcore) actions=(invoke stop) ;;
     hosts) actions=(list ls show add edit remove default run) ;;
-    config) actions=(open show edit setup onboard workflow local) ;;
+    workflow) actions=(list ls add use exclude inherit edit instructions sync) ;;
+    runners) actions=(list ls edit setup runs) ;;
+    config) actions=(open show edit setup onboard local) ;;
     profile) actions=(init edit show apply) ;;
     policy) actions=(check show apply) ;;
     agent) actions=(login install status trust) ;;
@@ -824,9 +921,29 @@ _t() {
     _describe -t actions 't action' actions
     return
   fi
-  if [[ $group == config && $action == workflow ]]; then
+  if [[ $group == mcp ]]; then
+    if [[ $action == status ]]; then _values 'flag' --json -h --help
+    else _values 'flag' -h --help; fi
+    return
+  fi
+  if [[ $group == runners ]]; then
+    if [[ ${words[CURRENT-1]} == --repo ]]; then
+      _values 'repo' "${(@f)$(_dev_repo_selectors)}"
+    elif [[ $action == runs ]] && (( CURRENT == first )); then
+      _values 'run verb' start list ls status logs artifacts cancel cleanup
+    elif [[ $action == runs ]]; then
+      _values 'flag' --repo --target --os --capability --include --artifact --timeout --queue-timeout --json --output -h --help
+    elif [[ $action == setup ]]; then
+      _values 'flag' --github-repo --create -h --help
+    else
+      _values 'flag' --repo --json -h --help
+    fi
+    return
+  fi
+  if [[ $group == workflow || ( $group == config && $action == workflow ) ]]; then
+    [[ $group == workflow ]] && (( first-- ))
     if (( CURRENT == first )); then
-      _values 'workflow verb' list ls add use exclude inherit edit instructions
+      _values 'workflow resource or verb' list ls add use exclude inherit edit instructions sync
     elif [[ ${words[CURRENT-1]} == --repo ]]; then
       _values 'repo' "${(@f)$(_dev_repo_selectors)}"
     elif [[ ${words[first]} == instructions ]] && (( CURRENT == first + 1 )); then
@@ -835,6 +952,8 @@ _t() {
       _values 'flag' --repo --all --json -h --help
     elif [[ ${words[first]} == add ]]; then
       _values 'flag' --from -h --help
+    elif [[ ${words[first]} == sync ]]; then
+      _values 'flag' -h --help
     else
       _values 'flag' --repo -h --help
     fi
@@ -843,7 +962,7 @@ _t() {
   # Old spellings remain usable once typed, but are not offered at top level.
   case $group in
     ls|list) action=list; group=session; (( first-- )) ;;
-    open|kill|restart|push|pop|resume|history|cd|beam|read|plan|paste|find|app)
+    open|kill|restart|push|pop|resume|history|cd|beam|move|read|plan|paste|find|app)
       action=$group; group=session; first=3 ;;
     new) group=repo; action=create; first=3 ;;
     checkout) group=repo; action=clone; first=3 ;;
@@ -862,16 +981,31 @@ _t() {
   fi
   case "$group/$action" in
     remote/open|remote/move|remote/resume)
+      local remote_legacy= remote_skip= remote_count=0 remote_word
+      for remote_word in "${(@)words[first,CURRENT-1]}"; do
+        if [[ -n $remote_skip ]]; then remote_skip=; continue; fi
+        case $remote_word in
+          --host) remote_legacy=1; remote_skip=1 ;;
+          --host=*) remote_legacy=1 ;;
+          --from|--session|-s|--days) remote_skip=1 ;;
+          -*) ;;
+          *) (( ++remote_count )) ;;
+        esac
+      done
       case ${words[CURRENT-1]} in
         --host|--from) _values 'host' ${(k)REMOTE_HOSTS} ;;
         --session|-s) _message 'conversation ID' ;;
         --days) _message 'number of days or all' ;;
         *)
           if [[ ${words[CURRENT]} == -* ]]; then
-            local -a remote_flags=(--host -h --help)
-            case $action in open) remote_flags+=(--new) ;; move) remote_flags+=(--from --session --all --detach --fg) ;; resume) remote_flags+=(--days --all) ;; esac
+            local -a remote_flags=(-h --help)
+            case $action in open) remote_flags+=(--new) ;; move) remote_flags+=(--host --from --session --all --detach --fg) ;; resume) remote_flags+=(--days --all) ;; esac
             _values 'flag' $remote_flags
-          elif (( CURRENT == first )); then _values 'repo' "${(@f)$(_dev_repo_selectors)}"
+          elif [[ $action != move && -z $remote_legacy ]] && (( remote_count == 0 )); then
+            _values 'host' ${(k)REMOTE_HOSTS}
+          elif { [[ $action == move || -n $remote_legacy ]] && (( remote_count == 0 )); } \
+            || { [[ $action != move && -z $remote_legacy ]] && (( remote_count == 1 )); }; then
+            _values 'repo' "${(@f)$(_dev_repo_selectors)}"
           else _message 'slot'; fi ;;
       esac ;;
 
@@ -947,7 +1081,7 @@ _t() {
           read) flags+=(-d --dump -n --tail) ;;
           view-plan) flags+=(-a --all) ;;
           paste) flags+=(-p --pick -n --newest) ;;
-          move) flags+=(--host --from --here --fg -d --detach -p --pick -a --all -s --session) ;;
+          move) flags+=(-r --remote --host --from --here --fg -d --detach -p --pick -a --all -s --session) ;;
           resume) flags+=(-f --fg --app --cli -a --all -l --live -r --remote --days --host) ;;
         esac
         _values 'flag' "${flags[@]}"

@@ -90,3 +90,34 @@ print -r -- "CHECKS=$checks"
     assert '\x1b[2K' in result.stdout
     result = zsh(script)
     assert result.stdout == 'CHECKS=9\n' and not result.stderr
+
+
+@pytest.mark.parametrize('delay, result_code', [(0.03, 0), (0.3, 7), (0.03, 130)])
+def test_spinner_never_runs_callers_session_save_hooks(zsh, tmp_path, delay, result_code):
+    temporary = tmp_path / 'spinner'
+    temporary.mkdir()
+    result = zsh(f'''
+      autoload -Uz add-zsh-hook
+      terminal_save() {{ print -u2 -- "SESSION_SAVE subshell=$ZSH_SUBSHELL"; }}
+      add-zsh-hook zshexit terminal_save
+      zshexit() {{ print -u2 -- "DIRECT_EXIT subshell=$ZSH_SUBSHELL"; }}
+      TRAPEXIT() {{ print -u2 -- "EXIT_TRAP subshell=$ZSH_SUBSHELL"; }}
+      TERM=xterm-256color
+      _T_PROGRESS=1
+      work() {{ sleep {delay}; print payload; print -u2 diagnostic; return {result_code}; }}
+      value=$(_t_with_progress 'Testing progress' work)
+      result_code=$?
+      print -r -- "RESULT=$value RC=$result_code"
+    ''', _tty=True, TMPDIR=str(temporary))
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, output
+    assert f'RESULT=payload RC={result_code}' in output
+    assert 'diagnostic' in output
+    assert output.count('SESSION_SAVE') == 1 and 'SESSION_SAVE subshell=0' in output
+    # The caller's command substitution has its ordinary EXIT trap too; only
+    # the nested animation child must omit it.
+    assert output.count('EXIT_TRAP') == 2
+    assert 'EXIT_TRAP subshell=0' in output and 'EXIT_TRAP subshell=1' in output
+    assert 'EXIT_TRAP subshell=2' not in output
+    assert output.count('DIRECT_EXIT') == 1 and 'DIRECT_EXIT subshell=0' in output
+    assert not list(temporary.iterdir())

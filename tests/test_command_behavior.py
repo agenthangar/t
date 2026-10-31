@@ -72,6 +72,31 @@ def test_history_readonly_follows_terminal_context(t_mod, monkeypatch):
         assert t_mod._command_readonly(argv)
 
 
+@pytest.mark.parametrize('argv,target', [
+    (['resume', 'api', '3'], ['api', '3']),
+    (['session', 'resume', 'api', '3'], ['api', '3']),
+    (['resume', '3'], ['3']),
+])
+@pytest.mark.parametrize('terminal', [False, True])
+def test_plain_slot_resume_executable_uses_history(t_mod, monkeypatch, argv, target, terminal):
+    monkeypatch.setattr(t_mod.sys.stdin, 'isatty', lambda: terminal)
+    monkeypatch.setattr(t_mod.sys.stdout, 'isatty', lambda: terminal)
+    monkeypatch.setattr(t_mod, '_t_auto_update', lambda *a: None)
+    monkeypatch.setattr(t_mod, 'Config', lambda: object())
+    seen = []
+    monkeypatch.setitem(t_mod.IMPLEMENTED, 'history', lambda cfg, args: seen.append(args.target) or 130)
+    assert t_mod.main(argv) == 130
+    assert seen == [target]
+    assert t_mod._command_readonly(argv, terminal=terminal) is not terminal
+
+
+@pytest.mark.parametrize('words', [[], ['resume'], ['resume', 'api'],
+                                  ['resume', '--host', '3'], ['resume', 'api', '3', '--cli'],
+                                  ['open', 'api', '3']])
+def test_plain_slot_resume_does_not_capture_other_modes(t_mod, words):
+    assert not t_mod._plain_slot_resume(words)
+
+
 def test_share_machine_receipt_is_mutating_but_never_offers_update(t_mod, monkeypatch):
     argv = ['share', '--to', 'codex:123', '--file', '-', '--json']
     assert not t_mod._command_readonly(argv, terminal=True)

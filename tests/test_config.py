@@ -348,10 +348,67 @@ def test_config_main_menu_shows_repo_aliases(t_mod, config_cli, monkeypatch):
     def pick(label, rows, **kwargs):
         assert label == "Local settings"
         assert kwargs["values"]["repos"] == "api, t"
+        assert [key for key, _ in rows] == [
+            "tool", "mode", "trust", *t_mod.AGENTS, "local", "workflow", "runners",
+            "mcp", "repos", "worktrees", "hosts", "beam", "edit", "save", "cancel",
+        ]
+        assert kwargs["sections"] == {
+            "tool": "Session defaults", t_mod.AGENTS[0]: "Agents", "workflow": "Workflows", "runners": "Runners",
+            "mcp": "MCP server", "repos": "Repositories & worktrees", "hosts": "Remote hosts", "edit": "Finish",
+        }
+        assert dict(rows)["workflow"] == "Workflows ›"
+        collections = {*t_mod.AGENTS, "local", "workflow", "runners", "mcp", "repos", "worktrees", "hosts"}
+        assert {key for key, text in rows if text.endswith(" ›")} == collections
         return "cancel"
     ui.pick = pick
     monkeypatch.setattr(t_mod, "_RailUI", lambda: ui)
     assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == 130
+
+
+def test_config_group_navigation_retains_focus(t_mod, config_cli, monkeypatch):
+    cfg, local = config_cli
+    ui = Menu(["workflow", "repos", "worktrees", "hosts", "cancel"])
+    pick = ui.pick
+    previous = "tool"
+    visited = []
+    def choose(label, rows, **kwargs):
+        nonlocal previous
+        assert rows[kwargs["default"]][0] == previous
+        previous = pick(label, rows, **kwargs)
+        return previous
+    ui.pick = choose
+    monkeypatch.setattr(t_mod, "_workflow_hub", lambda ui, cfg, **kwargs: visited.append("workflow"))
+    for key in ("repos", "worktrees", "hosts"):
+        monkeypatch.setattr(t_mod, "_config_" + key,
+                            lambda ui, cfg, key=key: visited.append(key))
+    monkeypatch.setattr(t_mod, "_RailUI", lambda: ui)
+    assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == 130
+    assert visited == ["workflow", "repos", "worktrees", "hosts"]
+    assert local.read_text() == "# keep me\n" and ui.restored
+
+
+@pytest.mark.parametrize('width,height', [(80, 24), (44, 20), (32, 12)])
+def test_config_grouped_menu_narrow_navigation(t_mod, config_cli, monkeypatch, width, height):
+    from test_tui import make_ui
+    cfg, local = config_cli
+    cfg.repos = {"long-repository-alias-" + str(i): "/code/repo-" + str(i) for i in range(8)}
+    cfg.models = {agent: "long-model-name-with-context-window" for agent in t_mod.AGENTS}
+    before = t_mod._config_state(cfg)
+    # Visit each row in both directions without entering settings or saving.
+    moves = len(t_mod.AGENTS) + 14
+    ui = make_ui(t_mod, ["j"] * moves + ["k"] * moves + ["q"], width, height)
+    monkeypatch.setattr(t_mod, "_RailUI", lambda: ui)
+    assert t_mod._config_wizard(cfg) is None
+    assert ui.restored and t_mod._config_state(cfg) == before
+    assert local.read_text() == "# keep me\n"
+    # Exclude the separate cancellation summary from the navigation frames.
+    frames = [frame for frame in ui.frames if any("Local settings" in line for line in frame)]
+    assert len(frames) == 2 * moves + 1
+    for frame in frames:
+        assert sum(t_mod._term_rows(line, width) for line in frame) <= height
+        assert all(t_mod._vis_len(line) <= width for line in frame)
+        assert any("▸" in line for line in frame)
+        assert any("SAVE CHANGES" in line for line in frame)
 
 
 def test_config_menu_interrupt_restores_terminal(t_mod, config_cli, monkeypatch):
@@ -1010,3 +1067,79 @@ def test_config_host_rename_preserves_target_defaults_and_same_name(t_mod, confi
     assert (cfg.beam_host, cfg.mini_host) == ('old.example', 'new')
     with pytest.raises(ValueError, match='Use letters'):
         t_mod._config_rename_host(cfg, 'new', 'bad name')
+
+
+def test_handoff_defaults_persistence_and_validation(t_mod, tmp_path, monkeypatch):
+    path = tmp_path / 'config.sh'
+    monkeypatch.setattr(t_mod, 'CONFIG', str(path))
+    cfg = t_mod.Config()
+    assert cfg.handoff_for('claude') == 't'
+    assert cfg.handoff_for('codex') == 'native'
+    assert 'manual Hand off' in cfg.handoff_label('codex')
+    assert 'Git checkpoint' in cfg.handoff_label('claude')
+    changes = {'DEV_HANDOFF[codex]': 't', 'DEV_HANDOFF[claude]': 't'}
+    path.write_text(t_mod._config_text('', changes))
+    assert t_mod.Config().handoff_for('codex') == 't'
+    assert t_mod._config_state(t_mod.Config())['DEV_HANDOFF[codex]'] == 't'
+    for key, value in [('DEV_HANDOFF[claude]', 'native'), ('DEV_HANDOFF[codex]', 'unknown'), ('DEV_HANDOFF[other]', 't')]:
+        with pytest.raises(ValueError, match='cross-host handoff'):
+            t_mod._config_assignment(key, value)
+    cfg.handoff['codex'] = 'typo'
+    with pytest.raises(ValueError, match='invalid cross-host'):
+        cfg.handoff_for('codex')
+
+
+def test_handoff_menu_stages_selection_and_cancel(t_mod):
+    cfg = t_mod.Config()
+    choices = iter(['handoff', 't', 'back'])
+    ui = SimpleNamespace(pick=lambda *a, **kw: next(choices))
+    t_mod._config_tool_menu(ui, cfg, 'codex', {})
+    assert cfg.handoff['codex'] == 't'
+    choices = iter(['handoff', None, 'back'])
+    t_mod._config_tool_menu(ui, cfg, 'codex', {})
+    assert cfg.handoff['codex'] == 't'
+
+
+@pytest.mark.parametrize('pending,answer,expected', [(1, None, 0), (0, 'q', 0), (0, 'enter', 1)])
+def test_config_mcp_registration_review(t_mod, monkeypatch, pending, answer, expected):
+    ui = Menu(['codex', 'refresh', 'register', 'back'], pages=['enter'] + ([answer] if answer else []))
+    inspections, installs = [], []
+    monkeypatch.setattr(t_mod.runpy, 'run_path', lambda _: {'status': lambda home: inspections.append(home) or
+                        {'codex': 'Disabled', 'claude': 'Registered (user scope)'}})
+    monkeypatch.setattr(t_mod, '_mcp_install', lambda: installs.append(True) or 1)
+    t_mod._config_mcp(ui, pending)
+    assert len(installs) == expected
+    assert len(inspections) == 2 + expected
+    assert ui.restored == bool(expected)
+
+
+def test_config_mcp_hub_returns_to_same_row(t_mod, config_cli, monkeypatch):
+    cfg, local = config_cli
+    ui = Menu(['mcp', 'cancel'])
+    calls = []
+    monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
+    monkeypatch.setattr(t_mod, '_config_mcp', lambda ui, pending: calls.append(pending))
+    assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == 130
+    assert calls == [0] and local.read_text() == '# keep me\n'
+
+
+@pytest.mark.parametrize('pending,answer,expected', [(1, None, 0), (0, 'q', 0), (0, 'enter', 1)])
+def test_config_mcp_uninstall_review(t_mod, monkeypatch, pending, answer, expected):
+    ui = Menu(['uninstall', 'back'], pages=[answer] if answer else [])
+    installs = []
+    monkeypatch.setattr(t_mod.runpy, 'run_path', lambda _: {'status': lambda home: {'codex': 'Enabled'}})
+    monkeypatch.setattr(t_mod, '_mcp_uninstall', lambda: installs.append(True) or 0)
+    t_mod._config_mcp(ui, pending)
+    assert len(installs) == expected and ui.restored == bool(expected)
+
+
+@pytest.mark.parametrize('width,height', [(80, 24), (44, 20), (32, 12)])
+def test_config_mcp_narrow_navigation(t_mod, monkeypatch, width, height):
+    from test_tui import make_ui
+    ui = make_ui(t_mod, ['j'] * 5 + ['k'] * 5 + ['q'], width, height)
+    monkeypatch.setattr(t_mod.runpy, 'run_path', lambda _: {'status': lambda home: {
+        'codex': 'Registered; enabled state unknown', 'claude': 'Registered (user scope)'}})
+    t_mod._config_mcp(ui, 0)
+    for frame in ui.frames:
+        assert sum(t_mod._term_rows(line, width) for line in frame) <= height
+        assert any('▸' in line for line in frame)

@@ -1,12 +1,12 @@
 {
   "schema_version": 1,
-  "description": "Development-only public command appearance and interaction inventory; ls/list aliases inherit canonical routes in bin/t COMMAND_GROUPS, including config workflow and root list/ls; the repos family is removed. Existing-repository selectors accept registered aliases or unambiguous checkout directory names; exact aliases retain precedence and remote open/resume resolve on the selected host.",
+  "description": "Development-only public command appearance and interaction inventory; ls/list aliases inherit canonical routes in bin/t COMMAND_GROUPS, including workflow and root list/ls; the repos family is removed. Existing-repository selectors accept registered aliases, checkout basenames, or unambiguous local origin repository names; exact aliases retain precedence and remote open/resume resolve on the selected host.",
   "patterns": {
     "list": "Direct read-only aligned rows, scope, and empty state; never launches a picker.",
     "detail": "Read-only labeled values; no work starts or prompt appears.",
     "single": "Air shared picker or inline menu: cyan headings, muted hints, explicit dark cyan focus; Enter selects one target. Native macOS key labels change presentation only.",
     "multi": "Air shared picker or inline checklist: green check in its own gutter beside focus pointer. Space/Tab marks searchable rows; Enter accepts marks or focused row. Width and height preserve controls and focused identity.",
-    "filtered": "Shared Ctrl-A all and Ctrl-F defaults. Open has attached-only/unattached/all views and a searchable value picker for every session column; other session views retain their state toggles and cycling facets. Filters narrow the same snapshot and never rediscover.",
+    "filtered": "Session snapshots use Ctrl-F staged filter settings, Ctrl-A filters off and Ctrl-L filters on with saved state and column choices. Issue pickers retain Ctrl-A all and Ctrl-F defaults. Filters narrow the same snapshot and never rediscover.",
     "wizard": "Stage edits and review before applying with the shared Rail UI.",
     "review": "Show selected install actions before running; Enter applies the reviewed plan.",
     "action": "Run an explicit target without unnecessary selection; confirm interruption when needed.",
@@ -671,6 +671,8 @@
       "tests": [
         "tests/test_open_picker.py::test_bare_open_inside_worktree_shows_every_detail_and_repo",
         "tests/test_worktree_labels.py::test_python_and_shell_resolve_same_numeric_identity",
+        "tests/test_worktree_default_branch.py::test_new_worktree_uses_published_default_and_preserves_dirty_checkout",
+        "tests/test_worktree_default_branch.py::test_missing_default_never_deletes_a_lingering_branch",
         "tests/test_offline_open.py::test_fresh_cli_open_with_offline_host",
         "tests/test_offline_open.py::test_desktop_claim_offline_allows_fresh_or_reserved_local_slot",
         "tests/test_offline_open.py::test_desktop_offline_reopen_retains_local_owner_checks",
@@ -694,18 +696,23 @@
           "tests": [
             "tests/test_open_picker.py::test_bare_open_inside_worktree_shows_every_detail_and_repo",
             "tests/test_open_picker.py::test_open_picker_does_not_run_callers_exit_hook_in_subshell",
+            "tests/test_open_picker.py::test_open_kill_callback_keeps_caller_context_and_never_starts_fresh",
+            "tests/test_open_picker.py::test_open_kill_stale_local_row_never_closes_remote",
+            "tests/test_picker_ui.py::test_open_kill_key_ignores_marks_and_accepts_focus",
+            "tests/test_picker_job_control.py::test_interactive_picker_completes_after_stopped_child",
+            "tests/test_picker_job_control.py::test_picker_worker_preserves_status_and_parent_exit_hooks",
             "tests/test_open_picker.py::test_open_hides_attached_and_loaded_desktop_by_default",
             "tests/test_open_picker.py::test_open_compact_layout_and_search",
             "tests/test_picker_ui.py::test_all_session_filter_keys_visible_at_every_size",
             "tests/test_picker_ui.py::test_open_simple_rows_and_focused_marks",
             "tests/test_picker_filters.py::test_every_filter_key_survives_long_values",
             "tests/test_picker_ui.py::test_session_pickers_display_every_filter_key",
-            "tests/test_picker_ui.py::test_public_open_facet_keys_combine_and_clear_hidden_marks",
+            "tests/test_picker_ui.py::test_public_open_settings_keep_query_restore_saved_choices_and_remove_hidden_marks",
             "tests/test_picker_ui.py::test_open_each_column_opens_searchable_value_picker",
             "tests/test_picker_ui.py::test_open_attachment_views_are_exclusive_and_idempotent",
             "tests/test_picker_filters.py::test_open_header_keeps_every_column_shortcut_visible"
           ],
-          "notes": "Browse local and registered remote hosts by default; --local restricts discovery without changing explicit-target or fresh-session routing. Default is unattached CLI and unloaded desktop sessions. Ctrl-T selects attached-only and Ctrl-U selects unattached-only, both preserving column filters. Ctrl-F restores unattached/default and clears column filters; Ctrl-A shows all and clears filters. Dedicated searchable value pickers: Ctrl-G agent, Ctrl-P progress, Ctrl-D interface, Ctrl-B model, Ctrl-O host, Ctrl-R repository, Ctrl-V session/slot, Ctrl-E context, Ctrl-W task. Progress follows the displayed continued-work marker, not current computation or completion. Filters combine within the snapshot, preserve search, and clear hidden marks. Plain selection checks remain separate from row context marks. Retain compact session/task rows without LAST TURN, preview, or new-session controls. Every shortcut and a focused row remain visible at narrow sizes, abbreviating Ctrl as ^ and active values as a count; the value picker shows the current value."
+          "notes": "Browse local and registered remote hosts by default; --local restricts discovery without changing explicit-target or fresh-session routing. Default is unattached CLI and unloaded desktop sessions. k kills only the focused row independently of multi-selection marks through guarded close dispatch; keep the picker open and remove successfully closed rows from cached views without rediscovery, preserving query, filters and other marks on both supported fzf versions. Failed or canceled closes keep their row and report the outcome. Killing the last row leaves an empty picker until cancellation, never starting a session. Ctrl-F opens staged filter settings for State and every session column: agent, progress, interface, model, host, repository, session/slot, context and task. Enter chooses values; Apply filters commits and enables them. Esc in a nested picker keeps its value; Esc in settings discards staged edits. Reset filters to defaults stages unattached and clears columns. Ctrl-A disables filters without changing saved choices; Ctrl-L restores them. --attached starts with filters off and defaults retained. One highlighted ON/OFF summary replaces per-facet hotkeys; narrow headers show selected column count and settings retains full values. Progress follows the displayed continued-work marker, not current computation or completion. Search is preserved and hidden marks removed. Snapshot scope, action semantics, compact rows and selection gutter remain unchanged. No LAST TURN, preview, or new-session controls."
         },
         "explicit": {
           "argv": [
@@ -872,7 +879,7 @@
             "tests/test_picker_filters.py::test_every_filter_key_survives_long_values"
           ],
           "confirmation": "enter",
-          "notes": "Displayed columns have a non-selectable aligned header preserved across filter changes. Independent Ctrl-G agent, Ctrl-O host/origin, and Ctrl-R repository facets; open/close also support Ctrl-D interface. All/default clears facets, preserves search, and removes hidden marks. No additional discovery or scope expansion."
+          "notes": "Displayed columns have a non-selectable aligned header preserved across filter changes. Ctrl-F opens staged filter settings for state, agent, host/origin and repository; close includes interface. Apply enables saved choices; nested cancellation keeps values and settings cancellation discards edits. Reset stages default state and cleared columns. Ctrl-A disables filters; Ctrl-L restores saved choices. One highlighted ON/OFF summary replaces individual facet hotkeys. Filtering preserves search and removes hidden marks without discovery or scope expansion."
         },
         "explicit": {
           "argv": [
@@ -1010,7 +1017,8 @@
       "patterns": [
         "action",
         "filtered",
-        "multi"
+        "multi",
+        "list"
       ],
       "renderer": "fzf",
       "scope": "explicit/inferred repository, or local and registered-host repository identities with --all/outside a checkout",
@@ -1023,13 +1031,22 @@
         "tests/test_agent_seam.py::test_zsh_foreground_uses_native_agent_outside_path",
         "tests/test_agent_seam.py::test_session_startup_is_quiet_and_logged",
         "tests/test_host_resilience.py::test_partial_resume_checks_selected_saved_writer_and_starts",
+        "tests/test_host_resilience.py::test_real_ssh_scan_diagnostics",
         "tests/test_host_resilience.py::test_remote_resume_worker_opens_picker_despite_an_unavailable_peer",
         "tests/test_resume_history.py::test_resume_history_selects_inactive_conversation_from_busy_slot",
         "tests/test_resume_repositories.py::test_remote_catalog_queries_distinct_targets_and_deduplicates_identity",
         "tests/test_resume_repositories.py::test_cancel_remoteonly_picker_never_prepares_or_registers",
         "tests/test_resume_repositories.py::test_remoteonly_prepare_refreshes_actual_alias_before_host_route",
         "tests/test_app_handoff.py::test_handoff_scopes_unindexed_writers_using_rollout_metadata",
-        "tests/test_history_resume.py::test_private_saved_resume_reports_ownership_refusal_and_cleans_up"
+        "tests/test_history_resume.py::test_private_saved_resume_reports_ownership_refusal_and_cleans_up",
+        "tests/test_history_resume.py::test_relocated_resume_checks_destination_and_selected_writer",
+        "tests/test_history_resume.py::test_history_owner_waits_for_identity_without_following_replacement",
+        "tests/test_history_resume.py::test_history_owner_waits_for_relocated_codex_index",
+        "tests/test_history_resume.py::test_codex_history_launch_sets_destination_cd_and_private_backend",
+        "tests/test_resume_auth.py::test_resume_auth_warning_precedes_empty_or_selection",
+        "tests/test_resume_history.py::test_batch_failure_stops_later_launches_and_keeps_ready_hints",
+        "tests/test_resume_history.py::test_batch_registration_failure_reports_already_launched_owner",
+        "tests/test_resume_history.py::test_batch_tab_failure_never_hides_summary_behind_first_attachment"
       ],
       "modes": {
         "default": {
@@ -1047,9 +1064,11 @@
             "tests/test_picker_filters.py::test_every_filter_key_survives_long_values",
             "tests/test_picker_filters.py::test_resume_sorts_preserve_snapshot_filters_and_reset_defaults",
             "tests/test_resume_multiselect.py::test_resume_last_turn_overrides_mtime_and_sort_hotkeys_keep_rows",
-            "tests/test_picker_ui.py::test_resume_sort_controls_keep_focused_row_and_change_order"
+            "tests/test_picker_ui.py::test_resume_sort_controls_keep_focused_row_and_change_order",
+            "tests/test_picker_filters.py::test_resume_merged_toggle_uses_metadata_and_preserves_choices",
+            "tests/test_picker_ui.py::test_resume_merged_key_preserves_query_and_removes_hidden_marks"
           ],
-          "notes": "Independent Ctrl-G agent, Ctrl-O host/origin, and Ctrl-R repository facets; open/close also support Ctrl-D interface. All/default clears facets, preserves search, and removes hidden marks. No additional discovery or scope expansion. Unavailable registered hosts warn and are skipped; discovery retains local and reachable rows. Saved resumes retain local locks and known-owner checks, but cannot verify ownership on unavailable hosts. Local scan failures remain fatal. Default order is actual last user turn newest first, unknown times last, without pinning live rows. Alt-T last turn, Alt-R repository, Alt-G agent, Alt-O host/origin, Alt-V session select immutable snapshot sorting; text modes ascend with newest turn and stable identity ties and natural numeric session slots. Ctrl-A clears filters and preserves sort; Ctrl-F restores inactive/default filters and last-turn sorting. Search preserves the selected order. Narrow headers use ^ Ctrl and M Alt. Saved metadata refreshes on registered hosts by repository identity by default; --remote remains compatible. Canonical and verified renamed roots and swept rollouts are included. Exact IDs determine live ownership; independent saved conversations in occupied slots use guarded fresh allocation. Only selected transcripts are fetched. All-repository discovery includes repositories registered only on a reachable host and orphan Codex rollouts with exact Git metadata, even without local registrations. Metadata browsing and cancellation never clone or register repositories. Only a selected saved identity may create its guarded local checkout. GitHub transfers match only authenticated immutable repository IDs; selected different-name identities require fresh proof."
+          "notes": "Ctrl-F opens staged filter settings for state, agent, host/origin and repository; close includes interface. Apply enables saved choices; nested cancellation keeps values and settings cancellation discards edits. Reset stages default state and cleared columns. Ctrl-A disables filters; Ctrl-L restores saved choices. One highlighted ON/OFF summary replaces individual facet hotkeys. Filtering preserves search and removes hidden marks without discovery or scope expansion. Unavailable registered hosts warn and are skipped; discovery retains local and reachable rows. SSH failures report status and bounded terminal-safe stderr without asserting host downtime; scanner stdin is disconnected. Saved resumes retain local locks and known-owner checks, but cannot verify ownership on unavailable hosts. Local scan failures remain fatal. Default order is actual last user turn newest first, unknown times last, without pinning live rows. Alt-T last turn, Alt-R repository, Alt-G agent, Alt-O host/origin, Alt-V session select immutable snapshot sorting; text modes ascend with newest turn and stable identity ties and natural numeric session slots. Filter settings, reset and on/off preserve the selected sort; Alt-T restores last-turn sorting. Search preserves the selected order. Narrow headers use ^ Ctrl and M Alt. Saved metadata refreshes on registered hosts by repository identity by default; --remote remains compatible. Canonical and verified renamed roots and swept rollouts are included. Exact IDs determine live ownership; independent saved conversations in occupied slots use guarded fresh allocation. Only selected transcripts are fetched. All-repository discovery includes repositories registered only on a reachable host and orphan Codex rollouts with exact Git metadata, even without local registrations. Metadata browsing and cancellation never clone or register repositories. Only a selected saved identity may create its guarded local checkout. GitHub transfers match only authenticated immutable repository IDs; selected different-name identities require fresh proof. Rows begin with explicit cached PR state badges. Alt-M toggles hiding only explicitly MERGED rows, enabling filters; Ctrl-A disables and Ctrl-L restores this choice, Reset clears it. Multiple associated PRs must all be merged; mixed, unknown and no-PR rows remain. Short headers use M-M -merged to hide and M-M +merged to show. State is immutable snapshot metadata, never inferred from task text."
         },
         "explicit": {
           "argv": [
@@ -1059,12 +1078,15 @@
             "1"
           ],
           "patterns": [
-            "action"
+            "multi"
           ],
           "read_only": false,
           "tests": [
-            "tests/test_resume_multiselect.py::test_resume_multi_opens_selected_live_slot_and_revives_dead_slot"
-          ]
+            "tests/test_resume_history.py::test_plain_slot_resume_routes_to_history",
+            "tests/test_resume_history.py::test_resume_options_keep_existing_route",
+            "tests/test_history_data.py::test_resume_candidates_match_any_recorded_slot_association"
+          ],
+          "notes": "Plain public slot targets, including a lone inferred-repository slot, delegate to session history: paginated multi-selection of exact conversation identities, no default recency cutoff, no automatic single-result selection, and cancellation returns 130 without launch. Nonterminal use lists history read-only. Explicit resume options and internal callers retain existing resume modes."
         },
         "desktop": {
           "argv": [
@@ -1124,6 +1146,23 @@
             "tests/test_remote_commands.py::test_resume_host_conflict_is_preflight"
           ],
           "notes": "Sends locally discovered saved history to build; any selected live owner on another host is refused before batch mutation with exact remote move guidance. Matching aliases attach in place."
+        },
+        "explicit_nonterminal": {
+          "argv": [
+            "session",
+            "resume",
+            "api",
+            "1"
+          ],
+          "terminal": false,
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_resume_history.py::test_plain_slot_resume_routes_to_history"
+          ],
+          "notes": "Delegates to nonterminal session history; no launch or update prompt."
         }
       },
       "native_agents": "Terminal session launch/resume uses the native ~/.local/bin fallback, preserving PATH and shell wrappers; no global PATH changes.",
@@ -1139,13 +1178,36 @@
         ]
       },
       "progress": "Terminal-only discovery stages on stderr; no progress in redirected output, JSON, or remote protocols.",
-      "notes": "Terminal launches run without echoing internal shell commands or exit instructions; agent output and diagnostics remain visible. Saved Codex resume resolves unindexed held sibling locks through validated session_meta workspace identity in active and archived rollouts. Unknown, invalid or unreadable evidence fails closed; ownership refusals return a concise retry diagnostic without a traceback."
+      "notes": "Terminal launches run without echoing internal shell commands or exit instructions; agent output and diagnostics remain visible. Saved Codex resume resolves unindexed held sibling locks through validated session_meta workspace identity in active and archived rollouts. A still-unassociated exact lock is inspected through bounded lock-holder open rollout metadata; process cwd and other thread IDs never establish unrelatedness. Unknown, invalid or unreadable evidence fails closed; ownership refusals identify the conversation and verified PIDs with finish/exit recovery and a concise retry diagnostic, without process arguments or a traceback. Confirmed missing/invalid GitHub authentication warns once per affected host before selection, including empty and automatic results, without blocking available conversations; persistent compact picker warning survives filter/sort/reset/all. Remedy: gh auth login --hostname github.com on the named host. Network/rate-limit/permission failures and missing gh do not trigger auth warnings. Cross-host policy: Claude defaults to t transfer; Codex defaults to manual native desktop Hand off (no supported CLI adapter). Agent settings show/persist the effective mechanism and explicit Codex t override. Native returns nonzero with app steps before transfer mutations; local resume and remote attach unchanged. Batch failures stop on the first error or cancellation, print a final identity/reason/retry/ready/not-attempted summary, and never attach over failures. Tab failures retain successful sessions and exit nonzero.",
+      "source_reconciliation": {
+        "scope": "selected local and cross-host saved conversations",
+        "checkpoint": "verified source workspace; normal Git identity/hooks; tracked, staged and nonignored untracked code",
+        "transfer": "verified local revision import or private cross-host bundle; no origin push or destination branch overwrite",
+        "offline": "warn and use locally available code and validated transcript",
+        "safety_refusal": "stop before launch",
+        "read_only_discovery": true,
+        "local_fallback": "missing or recycled source workspace retains historical revision without copying replacement files",
+        "tests": [
+          "tests/test_resume_source.py::test_local_resume_preserves_current_code",
+          "tests/test_resume_source.py::test_local_replaced_source_keeps_historical_fallback",
+          "tests/test_resume_source.py::test_local_unsafe_source_refuses_before_destination"
+        ]
+      },
+      "launch_preferences": {
+        "source": "durable explicit main model/effort checkpoint only; never workflow prose or stage models",
+        "boundary": "guarded dormant Codex launch; explicit invocation overrides win; live attach preserves its owner",
+        "preserves": "service tier, permissions and one-live-owner checks; repository exclusions and indexed child agents skip overrides",
+        "tests": [
+          "tests/test_native_agent_shell.py::test_guarded_resume_applies_checkpoint_with_explicit_override_precedence",
+          "tests/test_workflow_sync.py::test_resume_scope_exclusion_worktree_and_child_are_preserved"
+        ]
+      }
     },
     "session history": {
       "patterns": [
         "list",
         "machine",
-        "single"
+        "multi"
       ],
       "renderer": "fzf",
       "scope": "explicit/inferred repository and slot",
@@ -1165,13 +1227,13 @@
             "1"
           ],
           "patterns": [
-            "single"
+            "multi"
           ],
           "read_only": false,
           "tests": [
             "tests/test_history_picker.py::test_real_isolated_tmux_picker_paging_global_search_refresh_and_cancel"
           ],
-          "notes": "Paginated single choice. Ctrl-F next and Ctrl-B previous page are the documented exception to filtered-picker Ctrl-F defaults."
+          "notes": "Paginated multi-selection: Space/Tab mark, Enter accepts marks or focus. Search, page changes and refresh clear marks. Ctrl-F/B paginate. Resume failures exit nonzero without reopening the picker; batches stop on the first failure and retain prior successes."
         },
         "pagination": {
           "argv": [
@@ -1185,7 +1247,7 @@
             "2"
           ],
           "patterns": [
-            "single"
+            "multi"
           ],
           "read_only": false,
           "tests": [
@@ -1201,7 +1263,7 @@
             "--refresh"
           ],
           "patterns": [
-            "single"
+            "multi"
           ],
           "read_only": false,
           "tests": [
@@ -1294,15 +1356,21 @@
     "session move": {
       "patterns": [
         "action",
+        "multi",
         "single"
       ],
       "renderer": "mixed",
-      "scope": "named/current repository or all local CLI conversations for send; explicit/auto-discovered remote sessions for receive",
-      "confirmation": "none",
+      "scope": "named/current repository, or all outside a checkout; local current CLI sessions, with --remote adding registered remote sources",
+      "confirmation": "enter",
       "tests": [
         "tests/test_command_groups_shell.py::test_grouped_shell_commands_keep_arguments_and_caller_shell",
         "tests/test_worktree_labels.py::test_python_and_shell_resolve_same_numeric_identity",
-        "tests/test_move_picker.py::test_move_picker_uses_current_sessions"
+        "tests/test_move_picker.py::test_move_picker_uses_current_sessions",
+        "tests/test_remote_commands.py::test_canonical_move_selects_inside_agent_before_destination",
+        "tests/test_remote_commands.py::test_move_batch_excludes_all_source_aliases_and_detaches",
+        "tests/test_remote_commands.py::test_move_batch_preflights_every_selection_before_mutation",
+        "tests/test_remote_commands.py::test_move_batch_stops_and_identifies_remaining_sessions",
+        "tests/test_remote_commands.py::test_move_root_alias_operational_parser_route"
       ],
       "modes": {
         "default": {
@@ -1311,14 +1379,17 @@
             "move"
           ],
           "patterns": [
+            "multi",
             "single"
           ],
           "read_only": false,
           "tests": [
             "tests/test_move_picker.py::test_move_picker_uses_current_sessions",
-            "tests/test_move_picker.py::test_move_picker_cancel_empty_and_nonterminal"
+            "tests/test_move_picker.py::test_move_picker_cancel_empty_and_nonterminal",
+            "tests/test_remote_commands.py::test_canonical_move_selects_inside_agent_before_destination"
           ],
-          "notes": "Shared single picker uses current session-list rows, never saved history. Named/current repo scopes send; --all widens it. Preserves exact conversation, cwd and agent, and rechecks identity before moving."
+          "notes": "Shared current-session multi picker followed by a destination single picker; --host supplies the destination. Recheck all exact source identities after both selections before mutation. Batches are sequential and detached, stopping and reporting completed/failed/unattempted sessions on first failure or cancellation.",
+          "terminal": true
         },
         "explicit": {
           "argv": [
@@ -1347,13 +1418,15 @@
             "build"
           ],
           "patterns": [
+            "multi",
             "single"
           ],
           "read_only": false,
           "tests": [
             "tests/test_move_picker.py::test_move_picker_uses_current_sessions"
           ],
-          "notes": "Force current-session selection even inside an agent."
+          "notes": "Shared current-session multi picker followed by a destination single picker; --host supplies the destination. Recheck all exact source identities after both selections before mutation. Batches are sequential and detached, stopping and reporting completed/failed/unattempted sessions on first failure or cancellation.",
+          "terminal": true
         },
         "all": {
           "argv": [
@@ -1364,13 +1437,15 @@
             "build"
           ],
           "patterns": [
+            "multi",
             "single"
           ],
           "read_only": false,
           "tests": [
             "tests/test_move_picker.py::test_move_picker_uses_current_sessions"
           ],
-          "notes": "Current CLI sessions across all local repositories."
+          "notes": "Shared current-session multi picker followed by a destination single picker; --host supplies the destination. Recheck all exact source identities after both selections before mutation. Batches are sequential and detached, stopping and reporting completed/failed/unattempted sessions on first failure or cancellation.",
+          "terminal": true
         },
         "current": {
           "argv": [
@@ -1380,13 +1455,15 @@
             "build"
           ],
           "patterns": [
-            "action"
+            "multi",
+            "single"
           ],
           "read_only": false,
           "tests": [
-            "tests/test_move_picker.py::test_explicit_and_current_targets_bypass_picker"
+            "tests/test_move_picker.py::test_move_picker_uses_current_sessions"
           ],
-          "notes": "Inside an agent, an omitted target without --pick/--all moves the current conversation directly."
+          "notes": "Without an exact target, selection also opens inside an agent; the legacy beam alias retains implicit-current behavior.",
+          "terminal": true
         },
         "relay": {
           "argv": [
@@ -1408,8 +1485,28 @@
             "tests/test_remote_commands.py::test_session_move_relays_directly_with_resolved_aliases"
           ],
           "notes": "Controller resolves both host aliases and delegates guarded send to source zsh -lic. Source connects directly to destination via SSH/rsync. Failed stop/push/sync/landing blocks launch; no temporary local resume."
+        },
+        "remote": {
+          "argv": [
+            "session",
+            "move",
+            "--remote"
+          ],
+          "patterns": [
+            "multi",
+            "single"
+          ],
+          "read_only": false,
+          "terminal": true,
+          "tests": [
+            "tests/test_remote_commands.py::test_remote_move_selects_current_cross_host_identity_and_destination",
+            "tests/test_remote_commands.py::test_move_batch_excludes_all_source_aliases_and_detaches",
+            "tests/test_remote_commands.py::test_move_batch_keeps_snapshot_identity_for_identical_display_rows"
+          ],
+          "notes": "Include current CLI owners on registered remote hosts. Preserve host+ID+path+label+agent and exclude every selected source target and alias from destination selection. Native handoff policy is checked for all selections before mutation."
         }
-      }
+      },
+      "notes": " Cross-host policy: Claude defaults to t transfer; Codex defaults to manual native desktop Hand off (no supported CLI adapter). Agent settings show/persist the effective mechanism and explicit Codex t override. Native returns nonzero with app steps before transfer mutations; local resume and remote attach unchanged."
     },
     "session read": {
       "patterns": [
@@ -1737,7 +1834,8 @@
       "scope": "registered repository or checkout",
       "confirmation": "review",
       "tests": [
-        "tests/test_checkout.py::test_checkout_clones_registers_and_reuses_dirty_clone"
+        "tests/test_checkout.py::test_checkout_clones_registers_and_reuses_dirty_clone",
+        "tests/test_checkout.py::test_checkout_custom_path_alias_and_default_warning"
       ],
       "modes": {
         "default": {
@@ -2219,7 +2317,8 @@
         "wizard",
         "single",
         "action",
-        "passthrough"
+        "passthrough",
+        "detail"
       ],
       "renderer": "rail",
       "scope": "local machine",
@@ -2230,7 +2329,11 @@
         "tests/test_config.py::test_config_host_rename_review_save_or_discard",
         "tests/test_config.py::test_config_verification_delta_is_offered_after_save_and_sync",
         "tests/test_config_hosts_pty.py::test_saved_host_verification_uses_native_cooked_terminal",
-        "tests/test_workflow.py::test_menu_workflow_save_and_cancel"
+        "tests/test_workflow.py::test_menu_workflow_save_and_cancel",
+        "tests/test_config.py::test_config_main_menu_shows_repo_aliases",
+        "tests/test_config.py::test_config_group_navigation_retains_focus",
+        "tests/test_config.py::test_config_grouped_menu_narrow_navigation",
+        "tests/test_config.py::test_config_mcp_registration_review"
       ],
       "modes": {
         "default": {
@@ -2246,9 +2349,12 @@
             "tests/test_config.py::test_config_menu_save_then_cancel",
             "tests/test_config.py::test_config_register_suggests_path_and_alias_and_can_cancel",
             "tests/test_config.py::test_config_host_rename_review_save_or_discard",
-            "tests/test_workflow.py::test_menu_workflow_save_and_cancel"
+            "tests/test_workflow.py::test_menu_workflow_save_and_cancel",
+            "tests/test_config.py::test_config_main_menu_shows_repo_aliases",
+            "tests/test_config.py::test_config_group_navigation_retains_focus",
+            "tests/test_config.py::test_config_grouped_menu_narrow_navigation"
           ],
-          "notes": "Suggest unique host short names on addition; allow host renaming with defaults preserved and review before saving."
+          "notes": "Suggest unique host short names on addition; allow host renaming with defaults preserved and review before saving. Group the hub into Session defaults, Agents, Workflows, Runners, MCP server, Repositories & worktrees, Remote hosts, and Finish. Keep all actions directly reachable with stable focus and Save/Discard behavior; collection/setup rows use a trailing submenu cue. Focus and Save remain visible at narrow terminal sizes."
         },
         "host_add": {
           "argv": [
@@ -2287,8 +2393,45 @@
             "tests/test_config_hosts_pty.py::test_saved_host_verification_uses_native_cooked_terminal"
           ],
           "notes": "After reviewed registration is saved, offer Verify SSH now or Later for distinct added or changed target strings. Native OpenSSH owns the restored terminal and asks for host fingerprint confirmation; never auto-accept trust. Refused/unavailable checks warn and continue, preserving registration. Ctrl-C stops with 130 and retains saved changes; alias/default-only edits never connect."
+        },
+        "workflow_preferences": {
+          "argv": [
+            "config",
+            "open"
+          ],
+          "patterns": [
+            "wizard",
+            "single"
+          ],
+          "read_only": false,
+          "terminal": true,
+          "tests": [
+            "tests/test_workflow.py::test_behavior_menu_save_or_discard",
+            "tests/test_workflow.py::test_behavior_menu_noop_clear_and_excluded_edit",
+            "tests/test_workflow.py::test_behavior_menu_narrow_screens"
+          ],
+          "notes": "Workflows opens the shared staged workflow editor. Work and delivery includes separate working folder, preview, validation, and delivery choices: leave uncommitted, local review first, approval before PR, draft PR, ready PR without merging, or authorized auto-merge. Text instructions take precedence over these choices. Save reviews all pending shell and workflow edits together."
+        },
+        "mcp": {
+          "argv": [
+            "config",
+            "open"
+          ],
+          "patterns": [
+            "detail",
+            "single",
+            "wizard",
+            "action"
+          ],
+          "read_only": false,
+          "terminal": true,
+          "tests": [
+            "tests/test_config.py::test_config_mcp_registration_review"
+          ],
+          "notes": "MCP submenu inspection and refresh are read-only. Registration requires immediate-action review and no pending hub edits; preserves existing client entries and disabled settings. Configuration state is not connection health."
         }
-      }
+      },
+      "notes": " Cross-host policy: Claude defaults to t transfer; Codex defaults to manual native desktop Hand off (no supported CLI adapter). Agent settings show/persist the effective mechanism and explicit Codex t override. Native returns nonzero with app steps before transfer mutations; local resume and remote attach unchanged."
     },
     "config show": {
       "patterns": [
@@ -2316,7 +2459,8 @@
             "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
           ]
         }
-      }
+      },
+      "notes": " Cross-host policy: Claude defaults to t transfer; Codex defaults to manual native desktop Hand off (no supported CLI adapter). Agent settings show/persist the effective mechanism and explicit Codex t override. Native returns nonzero with app steps before transfer mutations; local resume and remote attach unchanged."
     },
     "config edit": {
       "patterns": [
@@ -2825,7 +2969,11 @@
       "scope": "local installation; --all includes registered SSH hosts",
       "confirmation": "when_interrupting",
       "tests": [
-        "tests/test_update.py::test_update_local_switches_packaged_install_to_updated_main"
+        "tests/test_update.py::test_update_local_switches_packaged_install_to_updated_main",
+        "tests/test_dev_isolation.py::test_cli_scopes_are_independent_and_preserve_explicit_paths",
+        "tests/test_dev_isolation.py::test_shell_helpers_switch_before_prompt_without_changing_path",
+        "tests/test_dev_isolation.py::test_child_login_shell_keeps_invocation_source_after_chdir",
+        "tests/test_dev_isolation.py::test_two_dev_installations_never_change_shared_files"
       ],
       "modes": {
         "default": {
@@ -2871,8 +3019,23 @@
             "tests/test_update.py::test_update_all_failures_continue",
             "tests/test_update.py::test_update_all_cancellation_stops_batch"
           ]
+        },
+        "dev": {
+          "argv": [
+            "system",
+            "update",
+            "--dev"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_dev_isolation.py::test_two_dev_installations_never_change_shared_files"
+          ]
         }
-      }
+      },
+      "notes": "Development follows the current validated linked t worktree automatically, without changing shared installation links or integration state. --dev confirms scoped availability; child helpers retain invocation-local source, and leaving the worktree restores canonical. Explicit development executables and custom PATH choices remain authoritative."
     },
     "system diagnose": {
       "patterns": [
@@ -3196,25 +3359,27 @@
           "read_only": false,
           "terminal": true,
           "tests": [
-            "tests/test_remote_commands.py::test_remote_host_picker_requires_explicit_enter_and_cancel"
+            "tests/test_remote_commands.py::test_remote_host_picker_requires_explicit_enter_and_cancel",
+            "tests/test_remote_commands.py::test_remote_open_multiple_sessions_fans_out_on_controller_before_attach",
+            "tests/test_remote_commands.py::test_remote_open_local_selection_no_side_effects"
           ],
-          "notes": "Single host picker waits for Enter even with one host; missing session uses shared selection on the source/target host. Cancellation returns 130. Empty current-session inventory returns 0 and never starts fresh. Host picker says Open a session on which host?, or Start a new session on which host? with --new; selected host is the execution destination. SSH alias/target context is subordinate to the action heading."
+          "notes": "Single host picker waits for Enter even with one host; missing session uses the shared local picker over the selected host inventory. Cancellation returns 130. Empty current-session inventory returns 0 and never starts fresh. Host picker says Open a session on which host?, or Start a new session on which host? with --new; selected host is the execution destination. SSH alias/target context is subordinate to the action heading. Host-first positionals; explicit --host retains repo/slot compatibility. Ambiguous legacy targets fail before SSH. Inventory is scoped remotely; shared picker and extra terminal tabs run on the controller. All extra tabs launch before the first attachment; failures report attach commands and nonzero status. Desktop rows are excluded."
         },
         "explicit": {
           "argv": [
             "remote",
             "open",
+            "build",
             "api",
-            "2",
-            "--host",
-            "build"
+            "2"
           ],
           "patterns": [
             "action"
           ],
           "read_only": false,
           "tests": [
-            "tests/test_remote_commands.py::test_remote_open_resume_delegate_quoted_worker_and_status"
+            "tests/test_remote_commands.py::test_remote_open_resume_delegate_quoted_worker_and_status",
+            "tests/test_remote_commands.py::test_remote_host_first_direct_delegation"
           ],
           "notes": "Explicit targets skip selection and retain ownership/worktree checks; scripts require explicit selections."
         },
@@ -3222,9 +3387,8 @@
           "argv": [
             "remote",
             "open",
-            "api",
-            "--host",
             "build",
+            "api",
             "--new"
           ],
           "patterns": [
@@ -3239,6 +3403,7 @@
     },
     "remote move": {
       "patterns": [
+        "multi",
         "single",
         "action"
       ],
@@ -3247,7 +3412,8 @@
       "confirmation": "enter",
       "tests": [
         "tests/test_remote_commands.py::test_remote_move_selects_current_cross_host_identity_and_destination",
-        "tests/test_host_resilience.py::test_remote_move_source_picker_keeps_reachable_candidates"
+        "tests/test_host_resilience.py::test_remote_move_source_picker_keeps_reachable_candidates",
+        "tests/test_remote_commands.py::test_remote_only_repo_reaches_destination_picker"
       ],
       "modes": {
         "default": {
@@ -3256,6 +3422,7 @@
             "move"
           ],
           "patterns": [
+            "multi",
             "single",
             "action"
           ],
@@ -3264,7 +3431,7 @@
           "tests": [
             "tests/test_remote_commands.py::test_remote_move_selects_current_cross_host_identity_and_destination"
           ],
-          "notes": "Single host picker waits for Enter even with one host; missing session uses shared selection on the source/target host. Cancellation returns 130. Source browsing skips unavailable peers while retaining reachable candidates; selected-source and transfer ownership checks remain strict. Host picker says Move this session to which host? and Destination host · current host: SOURCE; selected host is the destination. SSH alias/target context is subordinate to the action heading."
+          "notes": "Compatibility route for session move --remote: multi-select current local/remote owners, then choose one destination. Recheck every selected identity before mutation, exclude all source targets/aliases, move batches sequentially and detached, stop on the first failure or cancellation and report outcomes."
         },
         "explicit": {
           "argv": [
@@ -3294,6 +3461,7 @@
             "--all"
           ],
           "patterns": [
+            "multi",
             "single",
             "action"
           ],
@@ -3302,9 +3470,10 @@
           "tests": [
             "tests/test_remote_commands.py::test_remote_move_selects_current_cross_host_identity_and_destination"
           ],
-          "notes": "Current local and remote CLI sessions; include attached, exclude desktop and unknown IDs. Preserve host identity and recheck after destination selection and on source."
+          "notes": "Compatibility route for session move --remote: multi-select current local/remote owners, then choose one destination. Recheck every selected identity before mutation, exclude all source targets/aliases, move batches sequentially and detached, stop on the first failure or cancellation and report outcomes."
         }
-      }
+      },
+      "notes": " Cross-host policy: Claude defaults to t transfer; Codex defaults to manual native desktop Hand off (no supported CLI adapter). Agent settings show/persist the effective mechanism and explicit Codex t override. Native returns nonzero with app steps before transfer mutations; local resume and remote attach unchanged."
     },
     "remote resume": {
       "patterns": [
@@ -3319,7 +3488,8 @@
       "tests": [
         "tests/test_remote_commands.py::test_remote_open_resume_delegate_quoted_worker_and_status",
         "tests/test_host_resilience.py::test_partial_resume_checks_selected_saved_writer_and_starts",
-        "tests/test_host_resilience.py::test_remote_resume_worker_opens_picker_despite_an_unavailable_peer"
+        "tests/test_host_resilience.py::test_remote_resume_worker_opens_picker_despite_an_unavailable_peer",
+        "tests/test_resume_auth.py::test_resume_auth_warning_precedes_empty_or_selection"
       ],
       "modes": {
         "default": {
@@ -3338,33 +3508,35 @@
           "tests": [
             "tests/test_remote_commands.py::test_remote_host_picker_requires_explicit_enter_and_cancel"
           ],
-          "notes": "Single host picker waits for Enter even with one host; missing session uses shared selection on the source/target host. Cancellation returns 130. Unavailable registered hosts warn and are skipped; discovery retains local and reachable rows. Saved resumes retain local locks and known-owner checks, but cannot verify ownership on unavailable hosts. Local scan failures remain fatal. Host picker says Resume saved work on which host? and Browse this host\u2019s saved conversations; selected host supplies saved history and runs the resumed session. SSH alias/target context is subordinate to the action heading."
+          "notes": "Single host picker waits for Enter even with one host; missing session uses shared selection on the source/target host. Cancellation returns 130. Unavailable registered hosts warn and are skipped; discovery retains local and reachable rows. SSH failures report status and bounded terminal-safe stderr without asserting host downtime; scanner stdin is disconnected. Saved resumes retain local locks and known-owner checks, but cannot verify ownership on unavailable hosts. Local scan failures remain fatal. Host picker says Resume saved work on which host? and Browse this host\u2019s saved conversations; selected host supplies saved history and runs the resumed session. SSH alias/target context is subordinate to the action heading. Host-first positionals; explicit --host retains repo/slot compatibility. Ambiguous legacy targets fail before SSH."
         },
         "explicit": {
           "argv": [
             "remote",
             "resume",
+            "build",
             "api",
-            "2",
-            "--host",
-            "build"
+            "2"
           ],
           "patterns": [
+            "filtered",
+            "multi",
             "action"
           ],
           "read_only": false,
           "tests": [
-            "tests/test_remote_commands.py::test_remote_open_resume_delegate_quoted_worker_and_status"
+            "tests/test_remote_commands.py::test_remote_open_resume_delegate_quoted_worker_and_status",
+            "tests/test_resume_history.py::test_explicit_slot_browses_live_and_saved_conversations_before_acting",
+            "tests/test_remote_commands.py::test_remote_host_first_direct_delegation"
           ],
-          "notes": "Explicit targets skip selection and retain ownership/worktree checks; scripts require explicit selections."
+          "notes": "An explicit host skips host selection. An explicit slot scopes the shared filtered conversation picker on that host and waits for selection in a terminal, even for one live or saved row. Cancellation returns 130 before attachment or launch. Ownership/worktree checks and nonterminal newest-saved selection remain in effect."
         },
         "days": {
           "argv": [
             "remote",
             "resume",
-            "api",
-            "--host",
             "build",
+            "api",
             "--days",
             "all"
           ],
@@ -3383,7 +3555,6 @@
           "argv": [
             "remote",
             "resume",
-            "--host",
             "build",
             "--all"
           ],
@@ -3398,9 +3569,10 @@
           ],
           "notes": "Explicit --all is forwarded to the selected host so its login directory cannot narrow discovery. A locally resolvable repository is forwarded by GitHub identity and resolved to the selected host alias; otherwise a literal host alias is preserved."
         }
-      }
+      },
+      "notes": " Confirmed missing/invalid GitHub authentication warns once per affected host before selection, including empty and automatic results, without blocking available conversations; persistent compact picker warning survives filter/sort/reset/all. Remedy: gh auth login --hostname github.com on the named host. Network/rate-limit/permission failures and missing gh do not trigger auth warnings. Cross-host policy: Claude defaults to t transfer; Codex defaults to manual native desktop Hand off (no supported CLI adapter). Agent settings show/persist the effective mechanism and explicit Codex t override. Native returns nonzero with app steps before transfer mutations; local resume and remote attach unchanged."
     },
-    "config workflow list": {
+    "workflow list": {
       "patterns": [
         "list",
         "machine"
@@ -3409,12 +3581,12 @@
       "scope": "global by default; explicit registered repository alias with --repo; no inference or selection",
       "confirmation": "none",
       "tests": [
-        "tests/test_workflow.py::test_nested_workflow_commands"
+        "tests/test_workflow.py::test_nested_workflow_commands",
+        "tests/test_workflow.py::test_behavior_list_and_raw_show_are_read_only"
       ],
       "modes": {
         "default": {
           "argv": [
-            "config",
             "workflow",
             "list"
           ],
@@ -3424,11 +3596,11 @@
           "read_only": true,
           "tests": [
             "tests/test_workflow.py::test_nested_workflow_commands"
-          ]
+          ],
+          "notes": "Supplied issue-before-code policy lives in editable Markdown; v1/v2 migrate in memory to v3 without read-only writes, then persist on save/install. Later edits/removal are preserved."
         },
         "repository": {
           "argv": [
-            "config",
             "workflow",
             "list",
             "--repo",
@@ -3440,11 +3612,11 @@
           "read_only": true,
           "tests": [
             "tests/test_workflow.py::test_nested_workflow_commands"
-          ]
+          ],
+          "notes": "Supplied issue-before-code policy lives in editable Markdown; v1/v2 migrate in memory to v3 without read-only writes, then persist on save/install. Later edits/removal are preserved."
         },
         "json": {
           "argv": [
-            "config",
             "workflow",
             "list",
             "--json"
@@ -3455,11 +3627,11 @@
           "read_only": true,
           "tests": [
             "tests/test_workflow.py::test_nested_workflow_commands"
-          ]
+          ],
+          "notes": "Supplied issue-before-code policy lives in editable Markdown; v1/v2 migrate in memory to v3 without read-only writes, then persist on save/install. Later edits/removal are preserved."
         },
         "repository_json": {
           "argv": [
-            "config",
             "workflow",
             "list",
             "--repo",
@@ -3472,11 +3644,11 @@
           "read_only": true,
           "tests": [
             "tests/test_workflow.py::test_nested_workflow_commands"
-          ]
+          ],
+          "notes": "Supplied issue-before-code policy lives in editable Markdown; v1/v2 migrate in memory to v3 without read-only writes, then persist on save/install. Later edits/removal are preserved."
         },
         "catalogue": {
           "argv": [
-            "config",
             "workflow",
             "list",
             "--all",
@@ -3488,11 +3660,13 @@
           "read_only": true,
           "tests": [
             "tests/test_workflow.py::test_named_workflow_commands"
-          ]
+          ],
+          "notes": "Supplied issue-before-code policy lives in editable Markdown; v1/v2 migrate in memory to v3 without read-only writes, then persist on save/install. Later edits/removal are preserved."
         }
-      }
+      },
+      "notes": "Print the scope in a sentence, then text instruction precedence, selected work and delivery choices, humanized model reasoning, test runners and propagation. --all is a compact named catalogue. JSON and raw instruction output retain their existing schemas and bytes. No pickers, writes, update prompts, connections or retries."
     },
-    "config workflow edit": {
+    "workflow edit": {
       "patterns": [
         "action"
       ],
@@ -3505,7 +3679,6 @@
       "modes": {
         "default": {
           "argv": [
-            "config",
             "workflow",
             "edit"
           ],
@@ -3520,7 +3693,6 @@
         },
         "repository": {
           "argv": [
-            "config",
             "workflow",
             "edit",
             "--repo",
@@ -3537,7 +3709,6 @@
         },
         "named": {
           "argv": [
-            "config",
             "workflow",
             "edit",
             "quick"
@@ -3551,9 +3722,10 @@
             "tests/test_workflow.py::test_named_workflow_commands"
           ]
         }
-      }
+      },
+      "notes": "Optional v2 policy fields stages_enabled (default true) and behaviors (default absent) preserve old policies. Strictly validate known worktree/preview/validation/delivery enums. Invalid and unchanged edits write nothing; disabled and excluded workflows suppress stages, behavior preferences and custom Markdown. Preview supports before_implementation; delivery also supports local_review, ask_before_pr and draft_pull_request. Existing enums retain their meaning."
     },
-    "config workflow add": {
+    "workflow add": {
       "patterns": [
         "action"
       ],
@@ -3566,7 +3738,6 @@
       "modes": {
         "default": {
           "argv": [
-            "config",
             "workflow",
             "add",
             "quick"
@@ -3581,7 +3752,7 @@
         }
       }
     },
-    "config workflow use": {
+    "workflow use": {
       "patterns": [
         "action"
       ],
@@ -3594,7 +3765,6 @@
       "modes": {
         "default": {
           "argv": [
-            "config",
             "workflow",
             "use",
             "quick"
@@ -3609,7 +3779,7 @@
         }
       }
     },
-    "config workflow exclude": {
+    "workflow exclude": {
       "patterns": [
         "action"
       ],
@@ -3622,7 +3792,6 @@
       "modes": {
         "default": {
           "argv": [
-            "config",
             "workflow",
             "exclude",
             "--repo",
@@ -3638,7 +3807,7 @@
         }
       }
     },
-    "config workflow inherit": {
+    "workflow inherit": {
       "patterns": [
         "action"
       ],
@@ -3651,7 +3820,6 @@
       "modes": {
         "default": {
           "argv": [
-            "config",
             "workflow",
             "inherit",
             "--repo",
@@ -3667,7 +3835,7 @@
         }
       }
     },
-    "config workflow instructions show": {
+    "workflow instructions show": {
       "patterns": [
         "detail"
       ],
@@ -3680,7 +3848,6 @@
       "modes": {
         "default": {
           "argv": [
-            "config",
             "workflow",
             "instructions",
             "show"
@@ -3691,11 +3858,12 @@
           "read_only": true,
           "tests": [
             "tests/test_workflow.py::test_instructions_commands"
-          ]
+          ],
+          "notes": "Supplied issue-before-code policy lives in editable Markdown; v1/v2 migrate in memory to v3 without read-only writes, then persist on save/install. Later edits/removal are preserved."
         }
       }
     },
-    "config workflow instructions edit": {
+    "workflow instructions edit": {
       "patterns": [
         "action"
       ],
@@ -3708,7 +3876,6 @@
       "modes": {
         "default": {
           "argv": [
-            "config",
             "workflow",
             "instructions",
             "edit"
@@ -3720,7 +3887,8 @@
           "tests": [
             "tests/test_workflow.py::test_instructions_commands"
           ],
-          "terminal": true
+          "terminal": true,
+          "notes": "Supplied issue-before-code policy lives in editable Markdown; v1/v2 migrate in memory to v3 without read-only writes, then persist on save/install. Later edits/removal are preserved."
         }
       }
     },
@@ -3801,6 +3969,526 @@
           ]
         }
       }
+    },
+    "workflow sync": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "plain",
+      "scope": "pending account-local revisions and registered SSH hosts; no repository inference or picker",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_workflow_sync.py::test_sync_cli_and_readonly_status"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "workflow",
+            "sync"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_workflow_sync.py::test_sync_cli_and_readonly_status"
+          ]
+        }
+      },
+      "notes": "Bounded retries through owning runtime control socket and nonrecursive zsh -lic SSH. Never injects turns. Current turns and native instruction reload remain unverified. The raw proxy uses bounded HTTP Upgrade/WebSocket framing; installed private Tomli supplies Python 3.9 parsing without global package changes. Isolated sessions apply retained explicit main intent on guarded resume, while live attach remains unverified."
+    },
+    "runners list": {
+      "patterns": [
+        "list",
+        "machine"
+      ],
+      "renderer": "plain",
+      "scope": "global or named workflow; explicit --repo registered alias; setup explicit private broker",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_workflow_runners.py::test_runner_cli_contract"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "runners",
+            "list"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_workflow_runners.py::test_runner_cli_contract"
+          ]
+        },
+        "json": {
+          "argv": [
+            "runners",
+            "list",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_workflow_runners.py::test_runner_cli_contract"
+          ]
+        }
+      }
+    },
+    "runners edit": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "external",
+      "scope": "global or named workflow; explicit --repo registered alias; setup explicit private broker",
+      "confirmation": "external",
+      "tests": [
+        "tests/test_workflow_runners.py::test_runner_cli_contract"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "runners",
+            "edit"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_workflow_runners.py::test_runner_cli_contract"
+          ],
+          "terminal": true
+        }
+      }
+    },
+    "runners setup": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "plain",
+      "scope": "global or named workflow; explicit --repo registered alias; setup explicit private broker",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_workflow_runners.py::test_runner_cli_contract"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "runners",
+            "setup",
+            "--github-repo",
+            "owner/private-control"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_workflow_runners.py::test_runner_cli_contract"
+          ]
+        }
+      }
+    },
+    "runners runs start": {
+      "patterns": [
+        "action",
+        "machine"
+      ],
+      "renderer": "plain",
+      "scope": "start snapshots the registered current checkout; other verbs use local run UUID",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_workflow_runners.py::test_runner_cli_contract"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "runners",
+            "runs",
+            "start",
+            "--",
+            "python3",
+            "-m",
+            "pytest"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_workflow_runners.py::test_runner_cli_contract"
+          ]
+        },
+        "json": {
+          "argv": [
+            "runners",
+            "runs",
+            "start",
+            "--json",
+            "--",
+            "python3",
+            "-m",
+            "pytest"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_workflow_runners.py::test_runner_cli_contract"
+          ]
+        }
+      }
+    },
+    "runners runs list": {
+      "patterns": [
+        "list",
+        "machine"
+      ],
+      "renderer": "plain",
+      "scope": "start snapshots the registered current checkout; other verbs use local run UUID",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_workflow_runners.py::test_runner_cli_contract"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "runners",
+            "runs",
+            "list"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_workflow_runners.py::test_runner_cli_contract"
+          ]
+        },
+        "json": {
+          "argv": [
+            "runners",
+            "runs",
+            "list",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_workflow_runners.py::test_runner_cli_contract"
+          ]
+        }
+      }
+    },
+    "runners runs status": {
+      "patterns": [
+        "detail",
+        "machine"
+      ],
+      "renderer": "plain",
+      "scope": "start snapshots the registered current checkout; other verbs use local run UUID",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_workflow_runners.py::test_runner_cli_contract"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "runners",
+            "runs",
+            "status",
+            "11111111-1111-4111-8111-111111111111"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_workflow_runners.py::test_runner_cli_contract"
+          ]
+        },
+        "json": {
+          "argv": [
+            "runners",
+            "runs",
+            "status",
+            "11111111-1111-4111-8111-111111111111",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_workflow_runners.py::test_runner_cli_contract"
+          ]
+        }
+      }
+    },
+    "runners runs logs": {
+      "patterns": [
+        "detail"
+      ],
+      "renderer": "plain",
+      "scope": "start snapshots the registered current checkout; other verbs use local run UUID",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_workflow_runners.py::test_runner_cli_contract"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "runners",
+            "runs",
+            "logs",
+            "11111111-1111-4111-8111-111111111111"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_workflow_runners.py::test_runner_cli_contract"
+          ]
+        }
+      }
+    },
+    "runners runs artifacts": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "plain",
+      "scope": "start snapshots the registered current checkout; other verbs use local run UUID",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_workflow_runners.py::test_runner_cli_contract"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "runners",
+            "runs",
+            "artifacts",
+            "11111111-1111-4111-8111-111111111111"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_workflow_runners.py::test_runner_cli_contract"
+          ]
+        }
+      }
+    },
+    "runners runs cancel": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "plain",
+      "scope": "start snapshots the registered current checkout; other verbs use local run UUID",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_workflow_runners.py::test_runner_cli_contract"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "runners",
+            "runs",
+            "cancel",
+            "11111111-1111-4111-8111-111111111111"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_workflow_runners.py::test_runner_cli_contract"
+          ]
+        }
+      }
+    },
+    "runners runs cleanup": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "plain",
+      "scope": "start snapshots the registered current checkout; other verbs use local run UUID",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_workflow_runners.py::test_runner_cli_contract"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "runners",
+            "runs",
+            "cleanup",
+            "11111111-1111-4111-8111-111111111111"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_workflow_runners.py::test_runner_cli_contract"
+          ]
+        }
+      }
+    },
+    "mcp status": {
+      "patterns": [
+        "detail",
+        "machine"
+      ],
+      "read_only": true,
+      "terminal": false,
+      "tests": [
+        "tests/test_mcp_codex.py::test_mcp_management_routes"
+      ],
+      "notes": "This-machine sessions registration. Bare t mcp remains stdio; legacy flags are compatible. Status does not start a server. Uninstall preserves custom entries and disables automatic registration until explicit install.",
+      "renderer": "plain",
+      "scope": "sessions server on this machine",
+      "confirmation": "none",
+      "modes": {
+        "default": {
+          "argv": [
+            "mcp",
+            "status"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_mcp_codex.py::test_mcp_management_routes"
+          ]
+        },
+        "json": {
+          "argv": [
+            "mcp",
+            "status",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_mcp_codex.py::test_mcp_management_routes"
+          ]
+        }
+      }
+    },
+    "mcp install": {
+      "patterns": [
+        "action"
+      ],
+      "read_only": false,
+      "terminal": false,
+      "tests": [
+        "tests/test_mcp_codex.py::test_mcp_management_routes"
+      ],
+      "notes": "This-machine sessions registration. Bare t mcp remains stdio; legacy flags are compatible. Status does not start a server. Uninstall preserves custom entries and disables automatic registration until explicit install.",
+      "renderer": "plain",
+      "scope": "sessions server on this machine",
+      "confirmation": "none",
+      "modes": {
+        "default": {
+          "argv": [
+            "mcp",
+            "install"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_mcp_codex.py::test_mcp_management_routes"
+          ]
+        }
+      }
+    },
+    "mcp uninstall": {
+      "patterns": [
+        "action"
+      ],
+      "read_only": false,
+      "terminal": false,
+      "tests": [
+        "tests/test_mcp_codex.py::test_mcp_management_routes"
+      ],
+      "notes": "This-machine sessions registration. Bare t mcp remains stdio; legacy flags are compatible. Status does not start a server. Uninstall preserves custom entries and disables automatic registration until explicit install.",
+      "renderer": "plain",
+      "scope": "sessions server on this machine",
+      "confirmation": "none",
+      "modes": {
+        "default": {
+          "argv": [
+            "mcp",
+            "uninstall"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_mcp_codex.py::test_mcp_management_routes"
+          ]
+        }
+      }
+    },
+    "workflow": {
+      "patterns": [
+        "wizard",
+        "single",
+        "detail"
+      ],
+      "renderer": "rail",
+      "scope": "global workflow catalogue and explicit repository assignments",
+      "confirmation": "review",
+      "tests": [
+        "tests/test_workflow_tui.py::test_workflow_bare_entry"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "workflow"
+          ],
+          "patterns": [
+            "wizard",
+            "single"
+          ],
+          "read_only": false,
+          "terminal": true,
+          "tests": [
+            "tests/test_workflow_tui.py::test_workflow_bare_entry",
+            "tests/test_workflow_tui.py::test_workflow_tui_save_discard"
+          ]
+        },
+        "nonterminal": {
+          "argv": [
+            "workflow"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_workflow_tui.py::test_workflow_bare_entry"
+          ]
+        }
+      },
+      "notes": "Bare t workflow in a terminal opens the shared RailUI staged editor. Select named workflows, edit model stages, work and delivery choices, and text instructions, set default or repository assignments, then review and save. Cancellation publishes nothing. Outside a terminal and with --help, print group help without writes. The hidden config workflows alias routes to the same editor."
     }
   },
   "display_schemas": {
@@ -4050,7 +4738,7 @@
         "height_percent": 35
       },
       "selection": {
-        "count": 1,
+        "count": "multiple",
         "identity_fields": [
           "repo",
           "agent",
@@ -4072,7 +4760,18 @@
         "validate_returned_query_page_and_snapshot": true,
         "non_tty": "read_only_table",
         "json": "read_only_machine_output",
-        "network": "explicit_refresh_only"
+        "network": "explicit_refresh_only",
+        "marks": [
+          "space",
+          "tab"
+        ],
+        "marks_scope": "current_page",
+        "clear_marks_on": [
+          "search",
+          "page",
+          "refresh"
+        ],
+        "failure": "exit_nonzero_without_reopening"
       },
       "json": {
         "version": 1,
@@ -4166,6 +4865,27 @@
     }
   },
   "entrypoints": {
+    "version": {
+      "argv": [
+        "--version"
+      ],
+      "renderer": "plain",
+      "patterns": [
+        "detail"
+      ],
+      "read_only": true,
+      "tests": [
+        "tests/test_update.py::test_release_marker_and_version",
+        "tests/test_update.py::test_checkout_version_is_short_sha",
+        "tests/test_update.py::test_version_distinguishes_source_from_current_worktree",
+        "tests/test_update.py::test_version_reports_detached_and_unknown_sources",
+        "tests/test_update.py::test_version_handles_removed_cwd_and_escapes_control_characters",
+        "tests/test_update.py::test_version_probes_only_on_request_and_never_loads_config",
+        "tests/test_dev_isolation.py::test_version_uses_worktree_on_first_call_after_public_cd",
+        "tests/test_dev_isolation.py::test_version_distinguishes_explicit_source_from_current_worktree"
+      ],
+      "notes": "Preserve the release/revision first line; label the actual executable Source and current Git Worktree with absolute paths and branches, even when they differ. Packaged sources say release; detached checkouts say detached HEAD; outside Git is explicit. Escape control characters. Resolve metadata only on request, with no configuration load, network, picker, or update prompt."
+    },
     "bare_t": {
       "renderer": "rail",
       "modes": {
@@ -4250,7 +4970,7 @@
     "session resume": "_t_resume",
     "session history": "HistoryCommand.scope",
     "session cd": "_t_cd",
-    "session move": "_t_beam",
+    "session move": "_t_session_move selection scope and guarded _t_beam explicit targets",
     "session read": "cmd_read",
     "session view-plan": "_t_plan",
     "session paste": "_t_paste",
@@ -4263,17 +4983,20 @@
     "config edit": "cmd_config workflow_repo compatibility",
     "config onboard": "cmd_config workflow_repo compatibility",
     "config local": "user-wide model setup; ignores workflow_repo inherited from the shared config parser",
-    "config workflow list": "cmd_config workflow_repo",
-    "config workflow edit": "cmd_config workflow_repo",
+    "workflow list": "cmd_config workflow_repo",
+    "workflow edit": "cmd_config workflow_repo",
     "profile init": "cmd_instructions",
     "profile edit": "cmd_instructions",
     "profile show": "cmd_instructions",
     "profile apply": "cmd_instructions",
-    "config workflow use": "_cmd_workflow workflow_repo",
-    "config workflow exclude": "_cmd_workflow workflow_repo",
-    "config workflow inherit": "_cmd_workflow workflow_repo",
-    "config workflow instructions show": "_cmd_workflow workflow_repo",
-    "config workflow instructions edit": "_cmd_workflow workflow_repo"
+    "runners list": "_runner_scope resolves registered repository selectors before runner actions",
+    "runners edit": "_runner_scope resolves registered repository selectors before runner actions",
+    "runners runs start": "_runner_scope resolves registered repository selectors before runner actions",
+    "workflow use": "_cmd_workflow workflow_repo",
+    "workflow exclude": "_cmd_workflow workflow_repo",
+    "workflow inherit": "_cmd_workflow workflow_repo",
+    "workflow instructions show": "_cmd_workflow workflow_repo",
+    "workflow instructions edit": "_cmd_workflow workflow_repo"
   },
   "command_aliases": {
     "list_verbs": {
@@ -4285,7 +5008,9 @@
     },
     "legacy": {
       "list": "session list",
-      "ls": "session list"
+      "ls": "session list",
+      "move": "session move",
+      "remote move": "session move --remote"
     }
   },
   "help_style": {
@@ -4322,6 +5047,21 @@
       "LOCATION",
       "SELECTION",
       "DESKTOP TO CLI"
+    ],
+    "color": {
+      "headings": "bold cyan",
+      "scope": "all quick and detailed help, including agent support and compatibility aliases",
+      "enabled": "stdout is a TTY; NO_COLOR absent; TERM != dumb; CLICOLOR != 0",
+      "body": "plain",
+      "layout": "ANSI-stripped colored output exactly equals plain output, including newlines; style after wrapping"
+    }
+  },
+  "terminal_titles": {
+    "label": "Bounded public command words; remote SSH actions add host, never worker code or delegated payloads.",
+    "cleanup": "Clear on normal return, error and cancellation; preserve handler exit status and caller cwd changes.",
+    "quiet": "Redirected stdout, TERM=dumb, internal workers and machine output emit no OSC.",
+    "tests": [
+      "tests/test_terminal_titles.py"
     ]
   },
   "visual_design": {

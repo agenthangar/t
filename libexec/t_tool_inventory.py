@@ -10,10 +10,10 @@ import shlex
 import shutil
 import stat
 from urllib.parse import unquote, urlsplit
-try:
-    import tomllib
-except ImportError:  # Python < 3.11 keeps JSON/tool-version support.
-    tomllib = None
+import runpy
+from types import SimpleNamespace
+
+tomllib = SimpleNamespace(**runpy.run_path(str(Path(__file__).with_name('t_toml.py'))))
 
 LIMIT = 1048576
 MAX_ITEMS = 500
@@ -36,8 +36,6 @@ def document(path):
     if path.suffix == '.json':
         data = json.loads(raw)
     else:
-        if tomllib is None:
-            raise ValueError('TOML metadata needs Python 3.11 or newer')
         data = tomllib.loads(raw)
     if not isinstance(data, dict):
         raise ValueError('invalid metadata object')

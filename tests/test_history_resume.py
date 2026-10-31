@@ -2,6 +2,8 @@
 import json
 import os
 from pathlib import Path
+import shlex
+import sqlite3
 import subprocess
 from types import SimpleNamespace
 
@@ -152,6 +154,96 @@ _t_history_attach repo-1 selected /repo/1 codex
     assert log.read_text().strip() == f'{"switch-client" if inside else "attach-session"} -t $7:'
 
 
+@pytest.mark.parametrize('outcome', ['ready', 'sid', 'cwd', 'agent', 'recycled', 'exited', 'dead', 'dead-ready', 'timeout'])
+def test_history_owner_waits_for_identity_without_following_replacement(history, tmp_path, outcome):
+    tick = tmp_path / 'tick'
+    script = f'''
+source {ROOT}/zsh/sessions.zsh
+_dev_session_sid() {{
+  [[ {outcome} == dead-ready ]] && {{ print selected; return 0; }}
+  [[ -f {tick} && {outcome} != timeout ]] && print {'other' if outcome == 'sid' else 'selected'}
+  return 0
+}}
+_dev_agent_of_session() {{
+  if [[ -f {tick} && {outcome} == agent ]]; then print claude; else print codex; fi
+}}
+sleep() {{ print tick >> {tick}; [[ {outcome} == timeout ]] && SECONDS=15; return 0; }}
+tmux() {{
+  case $1 in
+    has-session) return 0 ;;
+    display-message)
+      if [[ ${{@[-1]}} == '#{{pane_dead}}' ]]; then
+        [[ {outcome} == dead* ]] && print 1 || print 0
+      elif [[ -f {tick} ]]; then
+        [[ {outcome} == exited ]] && return 1
+        print -r -- '{'$8' if outcome == 'recycled' else '$7'}|{'/changed' if outcome == 'cwd' else '/repo/1'}'
+      else
+        print -r -- '$7|/repo/1'
+      fi ;;
+    *) return 99 ;;
+  esac
+}}
+_t_history_owner repo-1 selected /repo/1 codex wait
+'''
+    result = subprocess.run(['zsh', '-fc', script], text=True, capture_output=True, env=os.environ.copy(), timeout=5)
+    if outcome == 'ready':
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == '$7'
+    else:
+        assert result.returncode == 1
+        assert not result.stdout
+        expected = ('identity is not ready' if outcome == 'timeout' else
+                    'exited' if outcome in ('exited', 'dead', 'dead-ready') else 'owner changed')
+        assert expected in result.stderr
+    if outcome == 'timeout':
+        assert 't open repo 1' in result.stderr
+    if outcome.startswith('dead'):
+        assert not tick.exists()
+    else:
+        assert tick.read_text() == 'tick\n'
+
+
+def test_history_owner_waits_for_relocated_codex_index(history, tmp_path):
+    database = tmp_path / 'state.sqlite'
+    with sqlite3.connect(database) as db:
+        db.execute('create table threads (id text, cwd text)')
+        db.execute('insert into threads values (?, ?)', ('selected', '/original/repo-9'))
+    source = transcript_file(tmp_path / 'rollout-selected.jsonl', codex_rows('/original/repo-9', sid='selected'))
+    update = ('import sqlite3; '
+              f'c=sqlite3.connect({str(database)!r}); '
+              'c.execute("update threads set cwd=?", ("/destination/repo-1",)); c.commit()')
+    script = f'''
+source {ROOT}/zsh/agent.zsh
+source {ROOT}/zsh/sessions.zsh
+_dev_session_claude_pid() {{ return 1; }}
+_dev_agent_of_session() {{ print codex; }}
+_codex_pane_sid() {{ return 0; }}
+_codex_db() {{ print -r -- {shlex.quote(str(database))}; }}
+_dev_agent_transcript() {{ print -r -- {shlex.quote(str(source))}; }}
+sleep() {{ python3 -c {shlex.quote(update)}; }}
+tmux() {{
+  case $1 in
+    has-session) return 0 ;;
+    show-environment) print CLAUDE_RESUME_ID=selected ;;
+    display-message)
+      case ${{@[-1]}} in
+        '#{{pane_dead}}') print 0 ;;
+        '#{{session_path}}') print /destination/repo-1 ;;
+        *) print -r -- '$7|/destination/repo-1' ;;
+      esac ;;
+    *) return 99 ;;
+  esac
+}}
+_t_history_owner repo-1 selected /destination/repo-1 codex wait
+'''
+    result = subprocess.run(['zsh', '-fc', script], text=True, capture_output=True, env=os.environ.copy(), timeout=5)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == '$7'
+    with sqlite3.connect(database) as db:
+        assert db.execute('select cwd from threads').fetchone() == ('/destination/repo-1',)
+    assert json.loads(source.read_text().splitlines()[0])['payload']['cwd'] == '/original/repo-9'
+
+
 def test_source_missing_and_identity_changed_preserves_record(app, history, store, tmp_path):
     row = store.merge(conversation(sources=[dict(host='local', path=str(tmp_path / 'missing'))]))
     with pytest.raises(history.HistoryError, match='missing'):
@@ -164,6 +256,7 @@ def test_source_missing_and_identity_changed_preserves_record(app, history, stor
 
 
 def test_verified_local_and_selected_remote_transcript_only(app, history, tmp_path, monkeypatch):
+    app.cfg.handoff_for = lambda agent: 't'  # Exercise custom transcript transport.
     workspace = Path(app.cfg.worktree_root) / 'repo/1'
     path = transcript_file(tmp_path / 'rollout-selected.jsonl', codex_rows(workspace, sid='selected'))
     row = saved_row(app, 'a' * 40, workspace)
@@ -184,6 +277,7 @@ def test_verified_local_and_selected_remote_transcript_only(app, history, tmp_pa
 
 @pytest.mark.parametrize('name,wrong_sid', [('not-rollout.jsonl', False), ('rollout-selected.jsonl', True)])
 def test_remote_transcript_filename_or_identity_change_fails(app, history, tmp_path, monkeypatch, name, wrong_sid):
+    app.cfg.handoff_for = lambda agent: 't'  # Exercise custom transcript transport.
     workspace = Path(app.cfg.worktree_root) / 'repo/1'
     path = transcript_file(tmp_path / 'tx.jsonl', codex_rows(workspace, sid='other' if wrong_sid else 'selected'))
     row = saved_row(app, 'a' * 40, workspace)
@@ -263,7 +357,7 @@ def test_resume_launch_failure_keeps_worktree_and_releases_reservation(app, hist
     row = saved_row(app, git_repo, workspace)
     row['sources'] = [dict(host='local', path=str(source))]
     monkeypatch.setattr(app, 'owners', lambda *a: [])
-    monkeypatch.setattr(app, 'codex_released', lambda *a: None)
+    monkeypatch.setattr(app, 'codex_released', lambda *a, **kw: None)
     original = history.run
     def fail_launch(argv, **kwargs):
         if argv[0] == 'zsh':
@@ -285,7 +379,7 @@ def test_resume_success_records_exact_agent_destination_and_revision(app, histor
     row['sources'] = [dict(host='local', path=str(source))]
     monkeypatch.setattr(app, 'owners', lambda *a: [])
     monkeypatch.setattr(app, 'attach', lambda owner: 0)
-    monkeypatch.setattr(app, 'codex_released', lambda *a: None)
+    monkeypatch.setattr(app, 'codex_released', lambda *a, **kw: None)
     original, launches = history.run, []
     def launch(argv, **kwargs):
         if argv[0] == 'zsh':
@@ -416,7 +510,8 @@ def test_generation_race_after_destination_is_blocked_under_claim(app, history, 
         app.resume('repo', row)
 
 
-def test_codex_history_launch_sets_destination_cd_and_private_backend(history, tmp_path):
+@pytest.mark.parametrize('ready', [True, False])
+def test_codex_history_launch_sets_destination_cd_and_private_backend(history, tmp_path, ready):
     commands = tmp_path / 'commands'
     script = f'''
 source {ROOT}/zsh/agent.zsh
@@ -426,7 +521,8 @@ _dev_issue_preparing() {{ return 1; }}
 _dev_launch_preflight() {{ return 0; }}
 _dev_auto_trust() {{ return 0; }}
 _dev_launch_startup_check() {{ return 0; }}
-_dev_history_record() {{ return 0; }}
+_t_history_owner() {{ print -r -- "READY $*" >> {commands}; return {0 if ready else 1}; }}
+_dev_history_record() {{ print RECORDED >> {commands}; }}
 _dev_recovery_watch() {{ return 0; }}
 tmux() {{ [[ $1 == respawn-pane ]] && print -r -- "$*" > {commands}; return 0; }}
 _dev_resume_session_claimed dev-repo-2 '{tmp_path}/destination 2' selected codex history
@@ -436,12 +532,15 @@ _dev_resume_session_claimed dev-repo-2 '{tmp_path}/destination 2' selected codex
                XDG_CACHE_HOME=str(tmp_path / 'cache'), XDG_CONFIG_HOME=str(tmp_path / 'config'),
                XDG_STATE_HOME=str(tmp_path / 'state'), XDG_DATA_HOME=str(tmp_path / 'data'))
     result = subprocess.run(['zsh', '-fc', script], text=True, capture_output=True, env=env)
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == (0 if ready else 1), result.stderr
     assert 'codex resume selected --cd' in commands.read_text()
     assert 'destination\\ 2 --no-daemon' in commands.read_text()
+    assert f'READY repo-2 selected {tmp_path}/destination 2 codex wait' in commands.read_text()
+    assert ('RECORDED' in commands.read_text()) is ready
 
 
 def test_newer_remote_source_wins_stale_local_and_updates_exact_indexed_rollout(app, history, tmp_path, monkeypatch):
+    app.cfg.handoff_for = lambda agent: 't'
     import sqlite3
     sid = 'selected'
     workspace = Path(app.cfg.worktree_root) / 'repo/1'
@@ -510,7 +609,7 @@ def test_remote_archive_release_check_uses_exact_identity_without_wrong_archive_
         with pytest.raises(history.HistoryError, match='writer lock is held') as error:
             app.codex_released(row, source)
         assert isinstance(error.value.__cause__, ValueError)
-        assert 'then reopen history' in str(error.value)
+        assert 'Retry: t session history' in str(error.value)
 
 
 def test_branch_pr_attribution_requires_matching_commit_on_reused_branch(app, history, store, monkeypatch):
@@ -536,7 +635,7 @@ def test_index_merge_retains_source_freshness(app, history, store):
     assert merged['sources'] == [dict(host='local', path='/rollout.jsonl', updated=20, size=100, available=True)]
 
 
-def test_history_failure_reopens_picker_with_query_and_success_can_retry(app, history, monkeypatch, capsys):
+def test_history_failure_exits_without_reopening_picker(app, history, monkeypatch, capsys):
     row = conversation()
     for method in ('discover', 'pr_states', 'branch_prs'):
         monkeypatch.setattr(app, method, lambda *a, **k: None)
@@ -544,7 +643,7 @@ def test_history_failure_reopens_picker_with_query_and_success_can_retry(app, hi
     monkeypatch.setattr(app, 'records', lambda *a: [row])
     monkeypatch.setattr(history.sys.stdin, 'isatty', lambda: True)
     monkeypatch.setattr(history.sys.stdout, 'isatty', lambda: True)
-    picks = iter([(row, 'enter', 'keep query'), (row, 'enter', 'keep query')])
+    picks = iter([([row], 'enter', 'keep query')])
     monkeypatch.setattr(app, 'pick', lambda *a: next(picks))
     attempts = []
     def resume(*a):
@@ -553,9 +652,41 @@ def test_history_failure_reopens_picker_with_query_and_success_can_retry(app, hi
             raise history.HistoryError('retryable failure')
         return 0
     monkeypatch.setattr(app, 'resume', resume)
-    assert app.execute(SimpleNamespace(target=['repo', '1'], json=False, refresh=False, page=1, limit=50)) == 0
-    assert len(attempts) == 2
+    assert app.execute(SimpleNamespace(target=['repo', '1'], json=False, refresh=False, page=1, limit=50)) == 1
+    assert len(attempts) == 1
     assert 'retryable failure' in capsys.readouterr().err
+
+
+@pytest.mark.parametrize('failure', ['', 'error', 'cancel', 'tab'])
+def test_multi_resume_starts_all_before_attach_and_stops_on_failure(app, history, monkeypatch, capsys, failure):
+    rows = [conversation(sid=str(i)) for i in range(3)]
+    events = []
+    def resume(alias, row, **kwargs):
+        assert kwargs == {'return_owner': True}
+        events.append(('resume', row['sid']))
+        if row['sid'] == '1' and failure in ('error', 'cancel'):
+            raise (history.HistoryCancelled('cancelled') if failure == 'cancel' else history.HistoryError('writer held'))
+        return dict(host='local', slot='repo-' + row['sid'], sid=row['sid'], cwd='/repo/' + row['sid'], agent='codex')
+    monkeypatch.setattr(app, 'resume', resume)
+    monkeypatch.setattr(app, 'attach', lambda owner: events.append(('attach', owner['sid'])) or 0)
+    monkeypatch.setattr(history.subprocess, 'call', lambda argv: events.append(('tab', argv[-1])) or (1 if failure == 'tab' else 0))
+    assert app.resume_many('repo', rows) == (130 if failure == 'cancel' else 1 if failure else 0)
+    if failure in ('error', 'cancel'):
+        assert events == [('resume', '0'), ('resume', '1')]
+        assert 'Already resumed; attach:' in capsys.readouterr().err
+    else:
+        assert events[:3] == [('resume', str(i)) for i in range(3)]
+        assert [event[0] for event in events[3:]] == (['tab'] if failure == 'tab' else ['tab', 'tab', 'attach'])
+        assert all('_t_history_attach' in event[1] and '_dev_open_tab' in event[1] for event in events if event[0] == 'tab')
+        if failure == 'tab':
+            assert 'Could not open tab; attach:' in capsys.readouterr().err
+
+
+def test_multi_resume_live_owner_returns_identity_without_attaching(app, history, monkeypatch):
+    owner = dict(host='local', slot='repo-5', sid='selected', agent='codex', cwd='/repo/5')
+    monkeypatch.setattr(app, 'owners', lambda *a: [owner])
+    monkeypatch.setattr(app, 'attach', lambda *a: pytest.fail('must not attach before batch completes'))
+    assert app.resume('repo', conversation(sid='selected'), return_owner=True) == owner
 
 
 def test_competing_native_codex_writer_blocks_canonical_extension(app, history, tmp_path):
@@ -848,7 +979,7 @@ def test_saved_resume_returns_actual_fresh_owner_without_attaching(app, history,
     row['sources'] = [dict(host='local', path=str(source))]
     monkeypatch.setattr(app, 'owners', lambda *a: [])
     monkeypatch.setattr(app, 'attach', lambda owner: pytest.fail('detached resume must not attach'))
-    monkeypatch.setattr(app, 'codex_released', lambda *a: None)
+    monkeypatch.setattr(app, 'codex_released', lambda *a, **kw: None)
     original, launches = history.run, []
     def launch(argv, **kwargs):
         if argv[0] == 'zsh':
@@ -870,7 +1001,8 @@ def test_detached_saved_resume_refuses_new_live_owner(app, history, monkeypatch)
         app.resume('repo', conversation(sid='selected'), detached=True)
 
 
-@pytest.mark.parametrize('mode', ['candidates', 'launch', 'prepare', 'missing', 'invalid', 'cancel'])
+@pytest.mark.parametrize('mode', ['candidates', 'slot-candidates', 'invalid-slot', 'missing-slot',
+                                  'launch', 'prepare', 'missing', 'invalid', 'cancel'])
 def test_private_resume_bridge_dispatches_exact_identity_and_closes_store(
         app, history, t_mod, monkeypatch, capsys, mode):
     calls = []
@@ -881,8 +1013,9 @@ def test_private_resume_bridge_dispatches_exact_identity_and_closes_store(
     monkeypatch.setattr(app.store, 'close', lambda: calls.append('closed'))
     monkeypatch.setattr(app, 'records', lambda alias: [] if mode == 'missing' else
                         [dict(sid='selected', agent='codex')])
-    def candidates(aliases):
+    def candidates(aliases, slot=None):
         assert aliases == ['repo']
+        assert slot == ('3' if mode == 'slot-candidates' else None)
         if mode == 'cancel':
             raise history.HistoryCancelled('cancel')
         return ['saved metadata']
@@ -893,19 +1026,23 @@ def test_private_resume_bridge_dispatches_exact_identity_and_closes_store(
     monkeypatch.setattr(app, 'resume', resume)
     if mode in ('candidates', 'cancel'):
         argv = ['__resume-candidates', 'repo']
+    elif mode in ('slot-candidates', 'invalid-slot', 'missing-slot'):
+        argv = ['__resume-candidates', 'repo', '--slot']
+        if mode != 'missing-slot':
+            argv.append('3' if mode == 'slot-candidates' else 'bad')
     else:
         argv = ['__resume-saved', 'repo', 'selected', 'codex',
                 mode if mode in ('prepare', 'invalid') else 'launch']
-    assert t_mod.main(argv) == (130 if mode == 'cancel' else 1 if mode in ('missing', 'invalid') else 0)
+    assert t_mod.main(argv) == (130 if mode == 'cancel' else 1 if mode in ('missing', 'invalid', 'invalid-slot', 'missing-slot') else 0)
     assert calls[-1] == 'closed'
     out = capsys.readouterr()
     if mode in ('launch', 'prepare'):
         assert calls[0] == ('repo', dict(sid='selected', agent='codex'),
                             dict(detached=True, prepare_only=mode == 'prepare'))
         assert 'dev-repo-7' in out.out
-    elif mode == 'candidates':
+    elif mode in ('candidates', 'slot-candidates'):
         assert out.out == 'saved metadata\n'
-    elif mode in ('missing', 'invalid'):
+    elif mode in ('missing', 'invalid', 'invalid-slot', 'missing-slot'):
         assert out.err.startswith('t resume: ')
 
 
@@ -926,8 +1063,9 @@ def test_private_saved_resume_reports_ownership_refusal_and_cleans_up(
         return original_run(argv, **kwargs)
     monkeypatch.setattr(history, 'run', run)
     app.api['_run'] = lambda *a, **k: pytest.fail('refused restore must not inspect processes')
-    refusal = ValueError('another loaded Codex conversation could not be matched to its worktree. Release this conversation in its owning app or terminal, then reopen history.')
+    refusal = ValueError('another loaded Codex conversation could not be matched to its worktree. Finish its turn and close the owning app, then retry resume.')
     def refuse(*a, **k):
+        assert k['retry'] == 'Retry: t session history, then select the conversation again.'
         raise refusal
     def helpers(path):
         if str(path).endswith('t_app_handoff.py'):
@@ -951,3 +1089,110 @@ def test_private_saved_resume_reports_ownership_refusal_and_cleans_up(
     assert closed == [True]
     assert app.reservation is None
     assert not list(Path(app.cfg.worktree_root).glob('repo/.*history-reservation'))
+
+
+def test_moved_source_checks_current_workspace_owner_and_original_rollout(app, history, tmp_path):
+    import fcntl
+    original = tmp_path / 'original-workspace'
+    current = tmp_path / 'current-workspace'
+    sid = '01234567-89ab-cdef-0123-456789abcdef'
+    other = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+    rows = codex_rows(original, sid=sid)
+    rows[0]['payload']['cli_version'] = '0.160.0'
+    source = transcript_file(tmp_path / ('rollout-' + sid + '.jsonl'), rows)
+    row = saved_row(app, 'a' * 40, current, sid=sid)
+    home = Path(os.environ['CODEX_HOME'])
+    locks = home / 'thread-writer-locks'
+    locks.mkdir()
+    app.api['_run'] = lambda *a, **k: SimpleNamespace(returncode=0, stdout='', stderr='')
+    # A lifecycle move does not rewrite the historical session_meta cwd.
+    app.codex_released(row, source, workspace=str(current))
+    sibling_rows = codex_rows(current, sid=other)
+    sibling = home / 'sessions' / ('rollout-' + other + '.jsonl')
+    sibling.parent.mkdir(parents=True, exist_ok=True)
+    transcript_file(sibling, sibling_rows)
+    with (locks / (other + '.lock')).open('a') as stream:
+        fcntl.flock(stream, fcntl.LOCK_EX)
+        with pytest.raises(history.HistoryError, match='another Codex conversation'):
+            app.codex_released(row, source, workspace=str(current))
+
+
+@pytest.mark.parametrize('selection', ['missing-local', 'timestamp-tie'])
+def test_native_policy_checked_at_actual_remote_source(app, history, tmp_path, monkeypatch, selection):
+    app.cfg.hosts = {'remote': 'remote.example'}
+    workspace = Path(app.cfg.worktree_root) / 'repo/1'
+    row = saved_row(app, 'a' * 40, workspace)
+    local = tmp_path / 'rollout-selected.jsonl'
+    if selection == 'timestamp-tie':
+        transcript_file(local, codex_rows(workspace, sid='selected'))
+    row['sources'] = [dict(host='local', path=str(local), updated=20, size=1),
+                      dict(host='remote', path='/remote/rollout-selected.jsonl',
+                           updated=20 if selection == 'timestamp-tie' else 10, size=100)]
+    monkeypatch.setattr(history, 'run', lambda *a, **kw: pytest.fail('native must not rsync'))
+    with pytest.raises(history.HistoryError, match='native desktop app'):
+        app.source(row)
+    assert not (app.store.directory / 'transcripts').exists()
+
+
+def test_native_policy_allows_verified_local_source_with_incidental_remote_record(app, history, tmp_path):
+    workspace = Path(app.cfg.worktree_root) / 'repo/1'
+    path = transcript_file(tmp_path / 'rollout-selected.jsonl', codex_rows(workspace, sid='selected'))
+    row = saved_row(app, 'a' * 40, workspace)
+    app.cfg.hosts = {'remote': 'remote.example'}
+    row['sources'] = [dict(host='local', path=str(path), updated=20),
+                      dict(host='remote', path='/remote/rollout-selected.jsonl', updated=10)]
+    assert app.source(row) == path
+
+
+@pytest.mark.parametrize('prepare_only', [False, True])
+@pytest.mark.parametrize('writer', ['original', 'destination', 'selected'])
+def test_relocated_resume_checks_destination_and_selected_writer(
+        app, history, git_repo, store, monkeypatch, tmp_path, prepare_only, writer):
+    import fcntl
+    original = Path(app.cfg.worktree_root) / 'repo/9'
+    destination = Path(app.cfg.worktree_root) / 'repo/repo-1'
+    sid = '01234567-89ab-cdef-0123-456789abcdef'
+    other = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+    rows = codex_rows(original, sid=sid)
+    rows[0]['payload']['cli_version'] = '0.160.0'
+    home = Path(os.environ['CODEX_HOME'])
+    source = transcript_file(home / 'sessions' / ('rollout-' + sid + '.jsonl'), rows)
+    source_bytes = source.read_bytes()
+    row = store.merge(saved_row(app, git_repo, original, sid=sid))
+    row['sources'] = [dict(host='local', path=str(source))]
+    locks = home / 'thread-writer-locks'
+    locks.mkdir()
+    sibling = transcript_file(home / 'sessions' / ('rollout-' + other + '.jsonl'),
+                              codex_rows(destination if writer == 'destination' else original, sid=other))
+    sibling_bytes = sibling.read_bytes()
+    monkeypatch.setattr(app, 'owners', lambda *a: [])
+    app.api['_run'] = lambda *a, **kw: SimpleNamespace(returncode=1, stdout='', stderr='')
+    run, launches = history.run, []
+    def launch(argv, **kwargs):
+        if argv[0] == 'zsh':
+            launches.append(argv)
+            return ''
+        return run(argv, **kwargs)
+    monkeypatch.setattr(history, 'run', launch)
+    held = locks / ((sid if writer == 'selected' else other) + '.lock')
+    with held.open('a') as stream:
+        fcntl.flock(stream, fcntl.LOCK_EX)
+        if writer == 'original':
+            result = app.resume('repo', row, detached=True, prepare_only=prepare_only)
+            assert result == 'dev-repo-1' + ('\t' + str(destination) if prepare_only else '')
+            assert bool(launches) == (not prepare_only)
+            assert any(a['workspace'] == str(destination) and a['evidence'] == 'resume'
+                       for a in store.records()[0]['associations'])
+        else:
+            message = 'writer lock is held' if writer == 'selected' else 'another Codex conversation'
+            with pytest.raises(history.HistoryError, match=message):
+                app.resume('repo', row, detached=True, prepare_only=prepare_only)
+            assert launches == []
+            assert not any(a['workspace'] == str(destination) for a in store.records()[0]['associations'])
+        with held.open() as probe:
+            with pytest.raises(BlockingIOError):
+                fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    assert source.read_bytes() == source_bytes
+    assert sibling.read_bytes() == sibling_bytes
+    assert app.reservation is None
+    assert not list(destination.parent.glob('.*.history-reservation'))

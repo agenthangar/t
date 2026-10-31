@@ -62,7 +62,7 @@ def test_defaults_inheritance_and_explicit_activation(workflow, tmp_path):
 @pytest.mark.parametrize('mutate,match', [
     (lambda d: d.update(extra=1), 'requires version'),
     (lambda d: d.update(version=True), 'version'),
-    (lambda d: d.update(version=3), 'version'),
+    (lambda d: d.update(version=4), 'version'),
     (lambda d: d.update(global_=None), 'requires version'),
     (lambda d: d.update(repositories=[]), 'repositories'),
     (lambda d: d['repositories'].update({'relative': {}}), 'canonical absolute'),
@@ -103,7 +103,7 @@ def test_native_preservation_overrides_and_disabled_scope(workflow, tmp_path):
         assert 'one supported reasoning-effort level below' in text
         assert 'acceptance criteria' in text and 'CI through completion' in text
         assert 'never claim a stage' in text and 'sub-agent delegation' in text
-    assert codex.read_text().startswith(original)
+    assert codex.read_text().startswith('# Personal prose\nUse old general models.\nissue policy\n')
     assert stat.S_IMODE(codex.stat().st_mode) == 0o640
     assert override.read_text().startswith('Important override prose\n')
     assert w.merge(codex.read_text(), w.render(document)) == codex.read_text()
@@ -422,9 +422,9 @@ def test_menu_workflow_editor_inherit_and_profile(workflow, t_mod, tmp_path, mon
 
 def test_installer_sync_absent_and_configured(workflow):
     w = workflow
-    assert w.sync() == 0 and not w.config_path().exists()
-    assert not any(path.exists() for path in native_paths())
-    w.config_path().parent.mkdir(parents=True)
+    assert w.sync() == 0 and w.config_path().exists()
+    assert all(w.issue_policy() in path.read_text() for path in native_paths())
+    w.config_path().parent.mkdir(parents=True, exist_ok=True)
     document = w.defaults()
     document['workflows']['standard']['planning']['model'] = 'chosen-model'
     w.config_path().write_text(w.encode(document))
@@ -499,21 +499,22 @@ def test_combined_config_save_is_one_transaction(workflow, t_mod, tmp_path, monk
         assert 'saved agent workflow and native instructions' in output and 'T_LOCAL_RC' in output
 
 
-def test_nested_workflow_commands(workflow, t_mod, monkeypatch, tmp_path, capsys):
+@pytest.mark.parametrize('prefix', [('workflow',), ('config', 'workflow')])
+def test_nested_workflow_commands(workflow, t_mod, monkeypatch, tmp_path, capsys, prefix):
     monkeypatch.setattr(t_mod, '_workflow', lambda: vars(workflow))
     cfg = SimpleNamespace(repos={'api': str(tmp_path / 'api')})
     monkeypatch.setattr(t_mod, 'Config', lambda: cfg)
     # Exercise the real update classifier: list must skip the prompt.
     monkeypatch.setattr(t_mod, '_t_offer_update', lambda: pytest.fail('list prompted for update'))
-    assert t_mod.main(['config', 'workflow', 'list']) == 0
+    assert t_mod.main([*prefix, 'list']) == 0
     output = capsys.readouterr().out
-    assert 'Scope: global' in output and 'recommended defaults (not saved)' in output
-    assert 'Enabled: yes' in output and all(word in output for word in ('STAGE', 'MODEL', 'EFFORT', 'planning', 'implementation', 'review'))
+    assert 'Workflow for the global default.' in output and 'recommended defaults (not saved)' in output
+    assert 'Enabled: yes' in output and all(word in output for word in ('STEP', 'MODEL', 'REASONING', 'planning', 'implementation', 'review'))
     assert not workflow.config_path().exists()
     for flags in ([], ['--repo', 'api']):
-        assert t_mod.main(['config', 'workflow', 'list', *flags, '--json']) == 0
+        assert t_mod.main([*prefix, 'list', *flags, '--json']) == 0
         result = json.loads(capsys.readouterr().out)
-        assert result['workflow'] == workflow.DEFAULT
+        assert result['workflow'] == workflow.defaults()['workflows']['standard']
         assert result['scope'] == (str(tmp_path / 'api') if flags else 'global')
         assert t_mod.main(['config', 'show', '--workflow', *flags]) == 0
         assert json.loads(capsys.readouterr().out) == result
@@ -521,25 +522,25 @@ def test_nested_workflow_commands(workflow, t_mod, monkeypatch, tmp_path, capsys
     document['workflows']['standard']['enabled'] = False
     document['repositories'][str(tmp_path / 'api')] = {'inline': dict(workflow.DEFAULT)}
     workflow.save(document, None)
-    assert t_mod.main(['config', 'workflow', 'list']) == 0
+    assert t_mod.main([*prefix, 'list']) == 0
     assert 'Enabled: no' in capsys.readouterr().out
-    assert t_mod.main(['config', 'workflow', 'list', '--repo', 'api']) == 0
+    assert t_mod.main([*prefix, 'list', '--repo', 'api']) == 0
     output = capsys.readouterr().out
     assert 'Source: repository override' in output and 'Enabled: yes' in output
-    assert t_mod.main(['config', 'workflow', 'list', '--repo', 'missing']) == 1
+    assert t_mod.main([*prefix, 'list', '--repo', 'missing']) == 1
     assert 'unknown registered repository' in capsys.readouterr().err
     monkeypatch.setattr(t_mod, '_t_auto_update', lambda argv: None)
     monkeypatch.setattr(t_mod.sys.stdin, 'isatty', lambda: True)
     monkeypatch.setattr(t_mod.sys.stdout, 'isatty', lambda: True)
     seen = []
     monkeypatch.setattr(workflow, 'edit', lambda doc, repo: (seen.append(repo) or 19, doc))
-    assert t_mod.main(['config', 'workflow', 'edit', '--repo', 'api']) == 19
+    assert t_mod.main([*prefix, 'edit', '--repo', 'api']) == 19
     assert seen == [str(tmp_path / 'api')]
-    assert not t_mod._command_readonly(['config', 'workflow', 'edit'])
-    assert t_mod._command_readonly(['config', 'workflow', 'list', '--repo', 'api'])
+    assert not t_mod._command_readonly([*prefix, 'edit'])
+    assert t_mod._command_readonly([*prefix, 'list', '--repo', 'api'])
 
 
-def test_legacy_migration_is_read_only_and_sync_preserves_storage(workflow, tmp_path):
+def test_legacy_migration_is_read_only_and_sync_persists_once(workflow, tmp_path):
     w = workflow
     repo = str(tmp_path / 'api')
     policy = copy.deepcopy(w.DEFAULT)
@@ -549,14 +550,17 @@ def test_legacy_migration_is_read_only_and_sync_preserves_storage(workflow, tmp_
     w.config_path().write_text(json.dumps(legacy, separators=(',', ':')))
     before = w.snapshot(w.config_path())
     doc, _ = w.load()
-    assert doc['version'] == 2 and doc['default'] == 'standard'
-    assert w.effective(doc) == policy
-    assert w.effective(doc, repo) == legacy['repositories'][repo]
+    assert doc['version'] == 3 and doc['default'] == 'standard'
+    assert w.effective(doc) == dict(policy, instructions=w.issue_policy())
+    assert w.effective(doc, repo) == dict(legacy['repositories'][repo], instructions=w.issue_policy())
     assert w.snapshot(w.config_path()) == before
+    w.sync()
+    assert json.loads(w.config_path().read_text())['version'] == 3
+    before = w.snapshot(w.config_path())
     w.sync()
     assert w.snapshot(w.config_path()) == before
     w.save(w.action(doc, 'add', 'copy'), before)
-    assert json.loads(w.config_path().read_text())['version'] == 2
+    assert json.loads(w.config_path().read_text())['version'] == 3
 
 
 def test_named_consumers_inline_exclusion_and_inheritance(workflow, tmp_path):
@@ -816,3 +820,362 @@ def test_instructions_preserve_crlf_and_absent_final_newline(workflow, monkeypat
     assert w.instructions(w.load()[0]).encode() == body
     assert body in native_paths()[0].read_bytes()
     assert w.edit_instructions(document) == (0, document)
+
+
+@pytest.mark.parametrize('version', [1, 2])
+def test_optional_workflow_fields_survive_storage_migration(workflow, version):
+    w = workflow
+    doc = (w.defaults() if version == 2 else
+           {'version': 1, 'global': copy.deepcopy(w.DEFAULT), 'repositories': {}})
+    w.config_path().parent.mkdir(parents=True)
+    w.config_path().write_text(json.dumps(doc))
+    before = w.snapshot(w.config_path())
+    loaded, _ = w.load()
+    assert 'stages_enabled' not in loaded['workflows']['standard']
+    assert 'behaviors' not in loaded['workflows']['standard']
+    assert w.policy_summary(w.effective(loaded))['stages_active']
+    assert w.snapshot(w.config_path()) == before
+    w.sync()
+    assert json.loads(w.config_path().read_text())['version'] == 3
+    before = w.snapshot(w.config_path())
+    w.sync()
+    assert w.snapshot(w.config_path()) == before
+
+
+@pytest.mark.parametrize('key,values', [
+    ('worktree', ['isolated', 'current']), ('preview', ['ui_changes', 'before_implementation', 'on_request']),
+    ('validation', ['relevant', 'full']), ('delivery', ['review', 'pull_request', 'draft_pull_request', 'ask_before_pr', 'local_review', 'auto_merge']),
+])
+def test_behavior_options_render_and_copy_independently(workflow, tmp_path, key, values):
+    w = workflow
+    repo = str(tmp_path / 'repo')
+    for value in values:
+        policy = dict(copy.deepcopy(w.DEFAULT), stages_enabled=False, behaviors={key: value})
+        doc = w.update(w.defaults(), policy)
+        rendered = w.render(doc)
+        label, text = w.BEHAVIORS[key]['choices'][value]
+        assert text in rendered
+        assert label in '\n'.join(w.summary_lines(policy))
+        assert '1. Plan with' not in rendered and 'authorizes sub-agent' not in rendered
+        assert 'Model stages are disabled' in rendered
+        assert w.catalogue(doc)['workflows']['standard']['behaviors'] == {key: value}
+        doc = w.action(doc, 'add', 'copy')
+        doc = w.action(doc, 'use', 'copy', repo)
+        inline = w.resolved(doc, repo)
+        doc = w.update(doc, inline, repo)
+        inline['behaviors'].clear()
+        doc = w.update(doc, inline, name='copy')
+        assert w.resolved(doc, repo)['behaviors'] == {key: value}
+        assert w.resolved(doc)['behaviors'] == {key: value}
+        assert doc['workflows']['copy']['behaviors'] == {}
+
+
+@pytest.mark.parametrize('change', [
+    {'stages_enabled': 1}, {'stages_enabled': 'false'}, {'behaviors': None}, {'behaviors': []},
+    {'behaviors': {'unknown': 'current'}}, {'behaviors': {'worktree': 'elsewhere'}},
+    {'behaviors': {'preview': True}}, {'behaviors': {'validation': []}},
+    {'behaviors': {'delivery': 'merge'}}, {'unknown': False},
+])
+def test_invalid_behavior_editor_is_atomic(workflow, monkeypatch, change):
+    w = workflow
+    doc = w.defaults()
+    w.save(doc, None)
+    before = [w.snapshot(path) for path in [w.config_path(), *native_paths()]]
+    def edit(argv):
+        Path(argv[-1]).write_text(w.encode(dict(w.DEFAULT, **change)))
+        return 0
+    monkeypatch.setattr(w.subprocess, 'call', edit)
+    with pytest.raises(ValueError):
+        w.edit(doc)
+    assert [w.snapshot(path) for path in [w.config_path(), *native_paths()]] == before
+
+
+def test_stage_toggle_scope_and_precedence(workflow, t_mod, monkeypatch, tmp_path):
+    w = workflow
+    monkeypatch.setattr(t_mod, '_workflow', lambda: vars(w))
+    repo = str(tmp_path / 'repo')
+    policy = dict(copy.deepcopy(w.DEFAULT), stages_enabled=False,
+                  behaviors={'delivery': 'review', 'preview': 'ui_changes'},
+                  instructions='# Exact custom\n\nKeep my choice.  \n')
+    policy['planning']['model'] = 'saved-model'
+    doc = w.update(w.defaults(), policy, repo)
+    rendered = w.render(doc).split('Repository scope: ')[1]
+    assert 'saved-model' not in rendered and '1. Plan with' not in rendered
+    assert policy['instructions'] in rendered
+    assert 'Leave changes uncommitted' in rendered
+    assert 'custom Markdown remain active' in rendered
+    assert w.PRECEDENCE in w.render(doc)
+    assert w.PRECEDENCE in '\n'.join(t_mod._workflow_review(doc))
+    review = '\n'.join(t_mod._workflow_review(doc))
+    assert 'Model stages: disabled' in review and 'Delivery: Leave for review' in review
+    policy['stages_enabled'] = True
+    doc = w.update(doc, policy, repo)
+    rendered = w.render(doc).split('Repository scope: ')[1]
+    assert 'Plan with saved-model' in rendered
+    assert 'Subject to custom Markdown and selected delivery preferences' in rendered
+    doc = w.action(doc, 'exclude', repository=repo)
+    policy['instructions'] = 'new excluded instructions'
+    doc = w.update(doc, policy, repo)
+    for disabled in [doc, w.action(doc, 'include', repository=repo)]:
+        if not disabled['repositories'][repo].get('excluded'):
+            disabled['repositories'][repo]['inline']['enabled'] = False
+        text = w.render(disabled).split('Repository scope: ')[1]
+        assert 'entire workflow is disabled' in text
+        assert 'behavior preferences or custom Markdown' in text
+        assert 'new excluded instructions' not in text
+        assert 'Leave changes uncommitted' not in text
+        assert 'Plan with saved-model' not in text
+    assert w.instructions(doc, repo) == 'new excluded instructions'
+
+
+@pytest.mark.parametrize('save', [False, True])
+def test_behavior_menu_save_or_discard(workflow, t_mod, monkeypatch, tmp_path, save):
+    w = workflow
+    monkeypatch.setattr(t_mod, '_workflow', lambda: vars(w))
+    monkeypatch.setattr(t_mod, 'CONFIG', str(tmp_path / 'absent'))
+    monkeypatch.setattr(t_mod.sys.stdin, 'isatty', lambda: True)
+    monkeypatch.setattr(t_mod.sys.stdout, 'isatty', lambda: True)
+    monkeypatch.setattr(t_mod, 'zsh_capture', lambda _: '')
+    monkeypatch.setattr(t_mod, '_config_live_models', lambda _: pytest.fail('unexpected lookup'))
+    local = tmp_path / 'local.zsh'
+    local.write_text('# untouched\n')
+    monkeypatch.setenv('T_LOCAL_RC', str(local))
+    picks = ['workflow', 'customize', 'stages_enabled', '0', 'behaviors',
+             'worktree', 'isolated', 'preview', 'ui_changes', 'validation', 'full',
+             'delivery', 'auto_merge', 'back', 'back', 'back']
+    picks += ['save'] if save else ['cancel', 'discard']
+    ui = Menu(picks)
+    monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
+    assert t_mod.cmd_config(t_mod.Config(), SimpleNamespace(show=False)) == (0 if save else 130)
+    assert w.config_path().exists() is save
+    assert local.read_text() == '# untouched\n'
+    if save:
+        policy = w.load()[0]['workflows']['standard']
+        assert not policy['stages_enabled'] and policy['planning'] == w.DEFAULT['planning']
+        assert policy['behaviors'] == {'worktree': 'isolated', 'preview': 'ui_changes',
+                                       'validation': 'full', 'delivery': 'auto_merge'}
+        assert 'enable auto-merge' in native_paths()[0].read_text()
+
+
+def test_behavior_menu_noop_clear_and_excluded_edit(workflow, t_mod, monkeypatch, tmp_path):
+    w = workflow
+    monkeypatch.setattr(t_mod, '_workflow', lambda: vars(w))
+    cfg = SimpleNamespace(repos={'api': str(tmp_path / 'api')})
+    t_mod._workflow_session(cfg)
+    initial = copy.deepcopy(cfg._workflow_document)
+    # Picking defaults, cancelling options and clearing an absent choice create no override.
+    t_mod._config_workflow(Menu(['customize', 'stages_enabled', '1', 'behaviors',
+                                'worktree', '', 'preview', None, 'back', 'back', 'back']), cfg, 'api')
+    assert cfg._workflow_document == initial and not t_mod._workflow_pending(cfg)
+    t_mod._config_workflow(Menu(['exclude', 'customize', 'behaviors', 'delivery', 'review',
+                                'back', 'stages_enabled', '0', 'back', 'back']), cfg, 'api')
+    entry = cfg._workflow_document['repositories'][cfg.repos['api']]
+    assert entry['excluded'] and entry['inline']['behaviors'] == {'delivery': 'review'}
+    assert not entry['inline']['stages_enabled']
+    t_mod._config_workflow(Menu(['customize', 'behaviors', 'delivery', '', 'back',
+                                'stages_enabled', '1', 'back', 'back']), cfg, 'api')
+    entry = cfg._workflow_document['repositories'][cfg.repos['api']]
+    assert entry['excluded'] and 'behaviors' not in entry['inline']
+    assert entry['inline']['stages_enabled'] and entry['inline']['planning'] == w.DEFAULT['planning']
+    assert not w.config_path().exists()
+
+
+@pytest.mark.parametrize('prefix', [('workflow',), ('config', 'workflow')])
+def test_behavior_list_and_raw_show_are_read_only(workflow, t_mod, monkeypatch, tmp_path, capsys, prefix):
+    w = workflow
+    monkeypatch.setattr(t_mod, '_workflow', lambda: vars(w))
+    repo = str(tmp_path / 'api')
+    monkeypatch.setattr(t_mod, 'Config', lambda: SimpleNamespace(repos={'api': repo}))
+    monkeypatch.setattr(t_mod, '_RailUI', lambda: pytest.fail('read-only command prompted'))
+    monkeypatch.setattr(t_mod, '_config_live_models', lambda _: pytest.fail('read-only lookup'))
+    monkeypatch.setattr(t_mod, '_t_offer_update', lambda: pytest.fail('read-only update'))
+    prose = '# Exact\r\n\r\nlast without newline'
+    policy = dict(copy.deepcopy(w.DEFAULT), stages_enabled=False,
+                  behaviors={'worktree': 'current', 'delivery': 'pull_request'}, instructions=prose)
+    doc = w.update(w.defaults(), policy)
+    doc = w.action(doc, 'use', 'standard', repo)
+    doc = w.action(doc, 'exclude', repository=repo)
+    w.save(doc, None)
+    before = [w.snapshot(path) for path in [w.config_path(), *native_paths()]]
+    for scope in [[], ['--repo', 'api']]:
+        assert t_mod.main([*prefix, 'list', *scope, '--json']) == 0
+        result = json.loads(capsys.readouterr().out)
+        assert not result['stages_enabled'] and not result['stages_active']
+        assert result['behaviors'] == policy['behaviors'] and result['custom_instructions']
+        assert result['preference_source'] == 'standard' and result['precedence'] == w.PRECEDENCE
+        assert t_mod.main([*prefix, 'list', *scope]) == 0
+        text = capsys.readouterr().out
+        assert 'Model stages: disabled' in text and 'Current working copy' in text
+        assert 'Precedence:' in text and 'Text instructions: present' in text
+        assert t_mod.main([*prefix, 'instructions', 'show', *scope]) == 0
+        assert capsys.readouterr().out == prose
+    assert t_mod.main([*prefix, 'list', '--all']) == 0
+    assert 'Current working copy' in capsys.readouterr().out
+    assert [w.snapshot(path) for path in [w.config_path(), *native_paths()]] == before
+
+
+@pytest.mark.parametrize('width,height', [(80, 24), (44, 20), (32, 12)])
+def test_behavior_menu_narrow_screens(workflow, t_mod, monkeypatch, width, height):
+    from test_tui import make_ui
+    monkeypatch.setattr(t_mod, '_workflow', lambda: vars(workflow))
+    cfg = SimpleNamespace(repos={})
+    t_mod._workflow_session(cfg)
+    # Disable stages, set an isolated worktree preference and return through both menus.
+    keys = ['j', 'enter', 'j', 'enter', 'j', 'j', 'enter', 'enter', 'j', 'enter',
+            'j', 'j', 'j', 'j', 'enter', 'q']
+    ui = make_ui(t_mod, keys, width, height)
+    t_mod._workflow_policy_menu(ui, cfg, vars(workflow), name='standard')
+    policy = cfg._workflow_document['workflows']['standard']
+    assert not policy['stages_enabled'] and policy['behaviors'] == {'worktree': 'isolated'}
+    assert policy['planning'] == workflow.DEFAULT['planning']
+    assert not workflow.config_path().exists()
+    for frame in ui.frames:
+        if not any('▸' in line for line in frame):
+            continue  # Completed context messages are scrollback, not interactive frames.
+        assert sum(t_mod._term_rows(line, width) for line in frame) <= height
+        assert any('▸' in line for line in frame)
+        assert any('enter' in line.lower() for line in frame)
+        assert all(t_mod._vis_len(line) <= width for line in frame)
+
+
+@pytest.mark.parametrize('version', [1, 2])
+def test_issue_rule_migration_preserves_all_scopes_and_is_read_only(workflow, tmp_path, version):
+    w = workflow
+    repo = str(tmp_path / 'repo')
+    prose = '# My workflow\nKeep exact spacing.  \n'
+    policy = dict(copy.deepcopy(w.DEFAULT), instructions=prose)
+    old = ({'version': 1, 'global': policy, 'repositories': {repo: dict(policy, enabled=False)}}
+           if version == 1 else {'version': 2, 'default': 'standard',
+               'workflows': {'standard': policy, 'other': dict(policy)},
+               'repositories': {repo: {'inline': dict(policy), 'excluded': True}}})
+    w.config_path().parent.mkdir(parents=True)
+    w.config_path().write_text(json.dumps(old))
+    before = w.snapshot(w.config_path())
+    doc, _ = w.load()
+    assert w.snapshot(w.config_path()) == before
+    for current in [*doc['workflows'].values(), doc['repositories'][repo]['inline']]:
+        assert current['instructions'].startswith(prose)
+        assert current['instructions'].count(w.issue_policy()) == 1
+    assert w.effective(doc, repo)['enabled'] is False
+    w.sync()
+    saved, before = w.load()
+    assert saved['version'] == 3
+    saved['workflows']['standard']['instructions'] = ''
+    w.save(saved, before)
+    w.sync()
+    assert w.instructions(w.load()[0]) == ''
+    assert w.issue_policy() not in native_paths()[0].read_text().split('Repository scope:')[0]
+
+
+def test_issue_rule_migration_imports_custom_legacy_native_text_once(workflow):
+    w = workflow
+    codex, claude = native_paths()
+    custom = 'Check issue acceptance criteria with the repository maintainer.'
+    for path in (codex, claude):
+        path.write_text('Personal prose\n' + w.ISSUE_BEGIN + '\n' + custom + '\n' + w.ISSUE_END + '\n')
+    doc, before = w.load()
+    assert w.instructions(doc).count(custom) == 1
+    assert not w.config_path().exists()
+    assert w.ISSUE_BEGIN in codex.read_text()
+    w.save(doc, before)
+    for path in (codex, claude):
+        assert path.read_text().startswith('Personal prose\n')
+        assert path.read_text().count(custom) == 1
+        assert w.ISSUE_BEGIN not in path.read_text()
+    before = w.snapshot(w.config_path())
+    w.sync()
+    assert w.snapshot(w.config_path()) == before
+
+
+def test_issue_rule_list_and_markdown_editor_are_visible_without_writes(workflow, t_mod, monkeypatch, capsys):
+    w = workflow
+    monkeypatch.setattr(t_mod, '_workflow', lambda: vars(w))
+    monkeypatch.setattr(t_mod, 'Config', lambda: SimpleNamespace(repos={}))
+    assert t_mod.main(['config', 'workflow', 'list']) == 0
+    assert 'Issue-before-code rule: included in editable Markdown' in capsys.readouterr().out
+    assert t_mod.main(['config', 'workflow', 'instructions', 'show']) == 0
+    assert w.issue_policy() in capsys.readouterr().out
+    assert not w.config_path().exists()
+    doc = w.defaults()
+    def editor(argv):
+        path = Path(argv[-1])
+        assert w.issue_policy() in path.read_text()
+        path.write_text('My deliberate replacement.')
+        return 0
+    monkeypatch.setattr(w.subprocess, 'call', editor)
+    rc, updated = w.edit_instructions(doc)
+    assert rc == 0
+    w.save(updated, None)
+    w.sync()
+    assert w.instructions(w.load()[0]) == 'My deliberate replacement.'
+    assert w.issue_policy() not in native_paths()[0].read_text()
+
+
+def test_bad_legacy_issue_markers_fail_before_any_publication(workflow):
+    w = workflow
+    codex, claude = native_paths()
+    codex.write_text('Keep Codex')
+    claude.write_text(w.ISSUE_BEGIN)
+    with pytest.raises(ValueError, match='malformed t public-issues'):
+        w.sync()
+    assert codex.read_text() == 'Keep Codex'
+    assert claude.read_text() == w.ISSUE_BEGIN
+    assert not w.config_path().exists()
+
+
+def test_custom_legacy_issue_policy_stays_suppressed_when_workflow_disabled(workflow):
+    w = workflow
+    custom = 'Customized public issue policy.'
+    codex = native_paths()[0]
+    codex.write_text(w.ISSUE_BEGIN + '\n' + custom + '\n' + w.ISSUE_END)
+    document, before = w.load()
+    document['workflows']['standard']['enabled'] = False
+    w.save(document, before)
+    assert custom not in codex.read_text()
+    assert w.ISSUE_BEGIN not in codex.read_text()
+    assert custom in w.instructions(w.load()[0])
+
+
+@pytest.mark.parametrize('replacement', ['', 'My replacement.'])
+def test_first_edit_can_remove_imported_legacy_rule(workflow, replacement):
+    w = workflow
+    codex = native_paths()[0]
+    codex.write_text('Keep prose\n' + w.ISSUE_BEGIN + '\nAlways ask maintainer first.\n' + w.ISSUE_END)
+    doc, before = w.load()
+    policy = w.resolved(doc)
+    policy['instructions'] = replacement
+    doc = w.update(doc, policy)
+    w.save(doc, before)
+    assert 'Always ask maintainer first.' not in codex.read_text()
+    assert codex.read_text().startswith('Keep prose\n')
+    w.sync()
+    assert w.instructions(w.load()[0]) == replacement
+
+
+def test_first_edit_refuses_concurrently_changed_legacy_rule(workflow):
+    w = workflow
+    codex = native_paths()[0]
+    codex.write_text(w.ISSUE_BEGIN + '\nOriginal custom rule\n' + w.ISSUE_END)
+    doc, before = w.load()
+    codex.write_text(w.ISSUE_BEGIN + '\nConcurrent custom rule\n' + w.ISSUE_END)
+    doc['workflows']['standard']['instructions'] = 'My replacement'
+    with pytest.raises(ValueError, match='native instructions changed while editing'):
+        w.save(doc, before)
+    assert 'Concurrent custom rule' in codex.read_text()
+    assert not w.config_path().exists()
+
+
+def test_workflow_print_precedence_and_reasoning(workflow, t_mod, monkeypatch, capsys):
+    monkeypatch.setattr(t_mod, '_workflow', lambda: vars(workflow))
+    doc = workflow.defaults()
+    policy = doc['workflows']['standard']
+    policy['instructions'] = 'Review the local preview before proceeding.'
+    policy['behaviors'] = {'preview': 'before_implementation', 'delivery': 'local_review'}
+    workflow.save(doc, None)
+    cfg = SimpleNamespace(repos={})
+    assert t_mod._cmd_workflow(cfg, SimpleNamespace(workflow=True, workflow_action='list')) == 0
+    text = capsys.readouterr().out
+    assert text.index('Text instructions:') < text.index('Work and delivery:')
+    assert 'Show design; wait for feedback' in text and 'Let me try it locally first' in text
+    assert 'Chosen for the task' in text and 'One level below planning' in text
+    assert 'one-level-lower' not in text and 'Test runners:' in text and 'Propagation:' in text

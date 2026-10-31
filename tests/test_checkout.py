@@ -158,7 +158,8 @@ def test_checkout_rejects_same_basename_as_another_registered_repo(t_mod, box, t
     assert t_mod._repo_basename_conflict(str(other), [str(other)]) is None
 
 
-def test_checkout_custom_path_alias_and_non_main_warning(t_mod, box, tmp_path, capsys):
+@pytest.mark.parametrize("default", [None, "master", "release/stable"])
+def test_checkout_custom_path_alias_and_default_warning(t_mod, box, tmp_path, capsys, default):
     cfg, home, local = box
     destination = tmp_path / "different"
     git("init", "-q", "-b", "master", destination)
@@ -166,9 +167,12 @@ def test_checkout_custom_path_alias_and_non_main_warning(t_mod, box, tmp_path, c
     git("config", "user.name", "Tester", cwd=destination)
     git("commit", "-qm", "seed", "--allow-empty", cwd=destination)
     git("remote", "add", "origin", "git@github.com:owner/repo.git", cwd=destination)
+    if default:
+        git("update-ref", f"refs/remotes/origin/{default}", "HEAD", cwd=destination)
+        git("symbolic-ref", "refs/remotes/origin/HEAD", f"refs/remotes/origin/{default}", cwd=destination)
     assert t_mod.cmd_checkout(cfg, args(alias="other", path=str(destination))) == 0
     assert "DEV_REPOS[other]" in local.read_text()
-    assert "origin/main is missing" in capsys.readouterr().err
+    assert ("no fetched origin default branch" in capsys.readouterr().err) == (default is None)
     assert git("branch", "--show-current", cwd=destination) == "master"
 
 

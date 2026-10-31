@@ -19,7 +19,10 @@ ROWS = ['local\tapi-1\tdetached\tclaude desktop task',
 def filters(monkeypatch):
     monkeypatch.syspath_prepend(str(ROOT / 'libexec'))
     monkeypatch.setenv('NO_COLOR', '')
-    return load_script(ROOT / 'libexec/t_picker_filters.py', 'picker_filters')
+    module = load_script(ROOT / 'libexec/t_picker_filters.py', 'picker_filters')
+    import t_picker_theme
+    monkeypatch.setattr(t_picker_theme.sys, 'platform', 'linux')
+    return module
 
 
 def snapshot(tmp_path, profile='open'):
@@ -99,41 +102,28 @@ def test_resume_cycles_and_invalid_controls(filters, tmp_path):
         filters.render(root, 'resume', 'second', 32)
 
 
-@pytest.mark.parametrize('width', [32, 44, 72])
-@pytest.mark.parametrize('profile', ['resume', 'kill'])
+@pytest.mark.parametrize('width', [28, 32, 44, 68])
+@pytest.mark.parametrize('profile', ['resume', 'kill', 'open'])
 def test_every_filter_key_survives_long_values(filters, width, profile):
     facets = dict(agent='codex-long-界面', host='a-very-long-host-alias', repo='long-repository-name')
-    if profile != 'resume':
-        facets['interface'] = 'desktop'
     text = filters.header(profile, 0, facets, 17, 'SESSION  WORKING ON', width)
     assert all(filters.display_width(line) <= width for line in text.splitlines())
-    from t_picker_theme import key_labels
-    label = lambda text: key_labels(text, compact=width <= 40)
-    for key in ('Ctrl-G', 'Ctrl-O', 'Ctrl-R', 'Ctrl-A', 'Ctrl-F'):
-        assert label(key) in text
-    assert (label('Ctrl-D') in text) == (profile != 'resume')
-    assert '17 hidden' in text
-    if width <= 40:
-        assert f'{len(facets)} filters' in text
-        assert label('Ctrl-G agent*') in text
-    assert 'live: hidden' in text if profile == 'resume' else label('Ctrl-T attached: hidden') in text
-    assert (label('Ctrl-P') in text) == (profile == 'kill')
+    for letter in ('A', 'F', 'L'):
+        assert ('^' if width <= 40 else 'Ctrl-') + letter in text
+    assert '17 hidden' in text and text.count('Filters ON') == 1
+    assert 'Ctrl-G' not in text and '^G' not in text
+    assert len(text.splitlines()) <= (9 if profile == 'resume' else 5) + (3 if width > 40 else 0)
 
 
 @pytest.mark.parametrize('width', [28, 32, 68])
 def test_open_header_keeps_every_column_shortcut_visible(filters, width):
+    # Facet controls live inside settings; the main header advertises one entry.
     text = filters.header('open', 0, dict(agent='codex-long-界面'), 17, 'SESSION  TASK', width)
     assert all(filters.display_width(line) <= width for line in text.splitlines())
-    for letter in ('T', 'U', 'F', 'A', 'G', 'P', 'D', 'B', 'O', 'R', 'V', 'E', 'W'):
-        from t_picker_theme import key_labels
-        assert key_labels('Ctrl-' + letter, compact=width <= 40) in text
-    assert 'View: unattached' in text and '17 hidden' in text
-    if width <= 36:
-        assert 'Space/' in text and '1 filters' in text
-        assert len(text.splitlines()) <= 9
-    else:
-        assert 'agent=codex-long-界面' in text
-    assert 'View: all' in filters.header('open', 1, {}, 0, '', width)
+    assert ('^F filters' if width <= 40 else 'Ctrl-F filters') in text
+    assert 'Filters ON' in text and '17 hidden' in text
+    assert 'Ctrl-T' not in text and 'Ctrl-G' not in text
+    assert len(text.splitlines()) <= 5 + (3 if width > 40 else 0)
 
 
 def test_open_exclusive_views_combine_column_choices_and_clear(filters, tmp_path, monkeypatch):
@@ -205,21 +195,21 @@ def test_air_headers_preserve_keys_width_and_state(filters, monkeypatch, platfor
     facets = dict.fromkeys(filters.OPEN_FACETS)
     if active:
         facets['agent'] = 'codex'
-    text = filters.open_header(0, facets, 2, 'SESSION  TASK', width)
+    text = filters.header('open', 0, facets, 2, 'SESSION  TASK', width, color=True)
     plain = re.sub(r'\x1b\[[0-9;]*m', '', text)
     assert all(filters.display_width(line) <= width for line in plain.splitlines())
     compact = width <= 40 or height <= 14
-    assert all(theme.key_labels('Ctrl-' + letter, compact=compact) in plain for letter in 'TUFAGDBORPVEW')
-    assert '2 hidden' in plain and 'View: unattached' in plain
-    if compact:
-        assert f'{int(active)} filters' in plain
+    assert all(theme.key_labels('Ctrl-' + letter, compact=compact) in plain for letter in 'FAL')
+    assert '2 hidden' in plain and 'Filters ON' in plain
+    if compact and active:
+        assert '+1' in plain
     assert '\x1b[36m' in text and '\x1b[90m' in text
     if height <= 14:
         assert len(plain.splitlines()) <= 9
     else:
         assert 'FILTERS' in plain and '\n\n' in plain
     monkeypatch.setenv('NO_COLOR', '')
-    assert '\x1b' not in filters.open_header(1, facets, 0, '', width)
+    assert '\x1b' not in filters.header('open', 1, facets, 0, '', width, color=True)
 
 
 def test_air_theme_labels_and_generic_chrome(filters, monkeypatch):
@@ -310,10 +300,9 @@ def test_resume_header_retains_sort_controls_and_row_space(filters, width):
     text = filters.header('resume', 0, dict.fromkeys(['agent', 'host', 'repo']), 2, '', width)
     assert all(filters.display_width(line) <= width for line in text.splitlines())
     for letter in ('T', 'R', 'G', 'O', 'V'):
-        from t_picker_theme import key_labels
-        assert key_labels('Alt-' + letter, compact=width <= 40) in text
-    for letter in ('L', 'A', 'F', 'G', 'O', 'R', '/'):
-        assert key_labels('Ctrl-' + letter, compact=width <= 40) in text
+        assert ('M-' if width <= 36 else 'Alt-') + letter in text
+    for letter in ('L', 'A', 'F', '/'):
+        assert ('^' if width <= 36 else 'Ctrl-') + letter in text
     assert 'Sort: last turn' in text
     if width <= 36:
         assert len(text.splitlines()) <= 9
@@ -325,3 +314,131 @@ def test_resume_remote_history_retains_exported_turn_without_local_transcript(fi
     assert result[0].split('\t')[10] == '2026-10-28T10:11:12Z'
     invalid = row.replace('2026-10-28T10:11:12Z', 'invalid')
     assert filters.resume_turns(invalid, str(tmp_path), str(tmp_path))[0].split('\t')[10] == '-'
+
+
+@pytest.mark.parametrize('profile', ['open', 'kill', 'resume'])
+def test_filters_off_on_preserve_saved_choices_and_sort(filters, tmp_path, profile):
+    root = snapshot(tmp_path, profile if profile != 'resume' else 'open')
+    if profile == 'resume':
+        (root / 'source').write_text('api\t1\tsid1\t/wt\tdate\ttitle\t-\t-\t-\tcodex\n')
+    filters.render(root, profile, 'agent', 68)
+    saved_rows = (root / 'current').read_text()
+    saved = (root / 'facets.json').read_text()
+    filters.render(root, profile, 'off', 68)
+    assert set((root / 'current').read_text().splitlines()) == set(ROWS)
+    assert (root / 'facets.json').read_text() == saved
+    assert 'Filters OFF' in (root / 'current-header').read_text()
+    filters.render(root, profile, 'off', 68)
+    filters.render(root, profile, 'on', 68)
+    assert (root / 'current').read_text() == saved_rows
+    assert (root / 'facets.json').read_text() == saved
+
+
+@pytest.mark.parametrize('profile', ['open', 'kill', 'resume'])
+def test_settings_apply_cancel_and_reset_preserve_sort(filters, tmp_path, monkeypatch, profile):
+    root = snapshot(tmp_path, profile if profile != 'resume' else 'open')
+    filters.render(root, profile, 'current', 68)
+    names = list(json.loads((root / 'facets.json').read_text()))
+    # A column edit and state edit remain staged until Apply.
+    picks = iter([2, 1, 1, 0])
+    monkeypatch.setattr(filters, 'pick_menu', lambda *args: next(picks))
+    monkeypatch.setattr(filters, 'pick_value', lambda *args: ('codex',))
+    filters.render(root, profile, 'settings', 68)
+    assert json.loads((root / 'facets.json').read_text())['agent'] == 'codex'
+    saved_mask = (root / 'show-all').read_text()
+    saved = (root / 'facets.json').read_text()
+    # Reset staged values then cancel the settings screen: nothing commits.
+    picks = iter([len(names) + 2, None])
+    filters.render(root, profile, 'settings', 68)
+    assert (root / 'facets.json').read_text() == saved
+    assert (root / 'show-all').read_text() == saved_mask
+    # Cancel the nested value and state screens, then Apply unchanged settings.
+    picks = iter([2, 1, None, 0])
+    monkeypatch.setattr(filters, 'pick_value', lambda *args: None)
+    filters.render(root, profile, 'settings', 68)
+    assert (root / 'facets.json').read_text() == saved
+    assert (root / 'show-all').read_text() == saved_mask
+    if profile == 'resume':
+        filters.render(root, profile, 'sort-repo', 68)
+    picks = iter([len(names) + 2, 0])
+    filters.render(root, profile, 'settings', 68)
+    assert all(v is None for v in json.loads((root / 'facets.json').read_text()).values())
+    assert (root / 'show-all').read_text() == '0'
+    if profile == 'resume':
+        assert (root / 'sort').read_text() == 'repo'
+
+
+@pytest.mark.parametrize('code,expected', [(0, 1), (1, None), (130, None)])
+def test_settings_shared_picker_selection_and_cancel(filters, tmp_path, monkeypatch, code, expected):
+    from types import SimpleNamespace
+    def run(argv, **kwargs):
+        assert '_t_fzf_single' in argv[2]
+        assert (tmp_path / 'settings').read_text() == '0\tApply\n1\tState\n'
+        return SimpleNamespace(returncode=code, stdout='1\tState\n')
+    monkeypatch.setattr(filters.subprocess, 'run', run)
+    assert filters.pick_menu(tmp_path, ['Apply', 'State'], 'Filters', 'Esc discard') == expected
+
+
+def test_settings_picker_failure(filters, tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    monkeypatch.setattr(filters.subprocess, 'run', lambda *args, **kwargs: SimpleNamespace(returncode=2))
+    with pytest.raises(RuntimeError, match='settings picker failed'):
+        filters.pick_menu(tmp_path, ['Apply'], 'Filters', '')
+
+
+def test_header_color_clips_before_ansi_and_plain_has_explicit_state(filters, monkeypatch):
+    import re
+    monkeypatch.delenv('NO_COLOR')
+    monkeypatch.setenv('TERM', 'xterm-256color')
+    for enabled in (True, False):
+        plain = filters.header('resume', 0, {'agent': '界' * 40}, 3, '', 28, enabled=enabled)
+        colored = filters.header('resume', 0, {'agent': '界' * 40}, 3, '', 28, enabled=enabled, color=True)
+        assert re.sub(r'\x1b\[[0-9;]*m', '', colored) == plain
+        assert '\x1b' in colored
+        assert ('\x1b[36mFilters' in colored) == enabled
+        assert 'Filters ' + ('ON' if enabled else 'OFF') in plain
+        assert all(filters.display_width(line) <= 28 for line in plain.splitlines())
+
+
+def test_resume_merged_toggle_uses_metadata_and_preserves_choices(filters, tmp_path, monkeypatch):
+    states = ['MERGED', 'OPEN', 'CLOSED', 'UNKNOWN', 'NONE', 'MIXED', 'invalid']
+    rows = ['\t'.join(['api', str(i), f'sid{i}', '/wt', 'date', 'Task · #12 merged',
+                      '-', 'history', '-', 'codex', '-', 'org/api', state, 'Display'])
+            for i, state in enumerate(states)]
+    for name in ('source', 'all', 'rows-0', 'rows-1'):
+        (tmp_path / name).write_text('\n'.join(rows) + '\n')
+    def render(action):
+        filters.render(tmp_path, 'resume', action, 68)
+        return (tmp_path / 'current').read_text().splitlines()
+    assert render('current') == rows
+    assert render('merged') == rows[1:]
+    assert 'Alt-M show merged' in (tmp_path / 'current-header').read_text()
+    assert render('sort-repo') == rows[1:]
+    assert render('off') == rows
+    assert render('on') == rows[1:]
+    assert render('merged') == rows
+    assert render('merged') == rows[1:]
+    render('off')
+    assert render('merged') == rows[1:]  # Turning it on while OFF enables filters.
+    monkeypatch.setattr(filters, 'pick_menu', lambda *args: None)
+    assert render('settings') == rows[1:]
+    picks = iter([5, 0])  # Reset staged choices, then Apply.
+    monkeypatch.setattr(filters, 'pick_menu', lambda *args: next(picks))
+    assert render('settings') == rows
+    assert (tmp_path / 'sort').read_text() == 'repo'
+    render('merged')
+    assert render('default') == rows
+    render('merged')
+    assert render('all') == rows
+    for name in ('source', 'all', 'rows-0', 'rows-1'):
+        (tmp_path / name).write_text(rows[0] + '\n')
+    assert render('merged') == []
+    assert '1 hidden' in (tmp_path / 'current-header').read_text()
+    assert render('merged') == [rows[0]]
+
+
+def test_resume_turns_preserve_explicit_pr_and_repository_identity(filters, tmp_path):
+    row = 'api\t2\tsid\t/wt\tdate\ttitle merged\t-\thistory\tmini\tcodex\t-\t-\torg/api\tMERGED'
+    result = filters.resume_turns(row, str(tmp_path), str(tmp_path))[0].split('\t')
+    assert result[11:] == ['org/api', 'MERGED']
+    assert filters.resume_turns(row.replace('MERGED', 'invalid'), str(tmp_path), str(tmp_path))[0].split('\t')[12] == 'UNKNOWN'

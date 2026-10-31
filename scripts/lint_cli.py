@@ -19,7 +19,7 @@ CONTRACT = ROOT / "ui" / "command-contract.json"
 # A new public command must enter a noun/verb family instead of growing this set.
 LEGACY_SHORTCUTS = frozenset({
     "help", "open", "app", "ls", "list", "kill", "restart", "push", "pop",
-    "resume", "history", "cd", "beam", "read", "plan", "paste", "find", "on",
+    "resume", "history", "cd", "beam", "move", "read", "plan", "paste", "find", "on",
     "setup", "new", "checkout", "instructions", "login",
     "install", "integrate", "update", "permissions", "trust", "doctor",
 })
@@ -36,7 +36,7 @@ LEGACY_GROUP_VERBS = {
     "cursor": {"list", "resume", "send"},
     "hosts": {"list", "show", "add", "edit", "remove", "default", "run"},
     "agentcore": {"invoke", "stop"},
-    "config": {"open", "show", "edit", "setup", "onboard", "workflow", "local"},
+    "config": {"open", "show", "edit", "setup", "onboard", "local"},
     "profile": {"init", "edit", "show", "apply"},
     "policy": {"check", "show", "apply"},
     "agent": {"login", "install", "status", "trust"},
@@ -59,6 +59,11 @@ def command_routes(groups, prefix=()):
             yield path, value
 
 
+def _parser_path(path):
+    """The canonical workflow family retains its established config backend."""
+    return ("config", *path) if path and path[0] == "workflow" else path
+
+
 def check_subgroups(parser, groups, prefix=()):
     """Nested resource registries must own matching native parser children."""
     errors = []
@@ -67,7 +72,7 @@ def check_subgroups(parser, groups, prefix=()):
             continue
         path = (*prefix, name)
         parent = parser
-        for word in path:
+        for word in _parser_path(path):
             children = _subparsers(parent) if parent else None
             parent = children._name_parser_map.get(word) if children else None
         if prefix:
@@ -75,7 +80,7 @@ def check_subgroups(parser, groups, prefix=()):
             if children is None or set(children.choices) != set(value):
                 errors.append(f"{' '.join(path)} subgroup must own a matching nested verb parser")
             for leaf_path, route in command_routes(value, path):
-                if tuple(route) != leaf_path:
+                if tuple(route) != _parser_path(leaf_path):
                     errors.append(f"{' '.join(leaf_path)} nested resource must route to its own parser")
         errors.extend(check_subgroups(parser, value, path))
     return errors
@@ -228,13 +233,15 @@ def check(parser, command_groups, instructions):
         if group == "issue" or group in LEGACY_GROUP_VERBS:
             continue
         noun = top._name_parser_map.get(group)
+        if group == "workflow":
+            noun = _subparsers(top._name_parser_map["config"])._name_parser_map["workflow"]
         nested = _subparsers(noun) if noun else None
         if nested is None or set(nested.choices) != set(actions):
             errors.append(f"new public group {group} must own a matching nested verb parser")
             continue
         positional = [action for action in noun._actions if not action.option_strings
                       and not isinstance(action, argparse._SubParsersAction)]
-        if positional or any(tuple(route) != path for path, route in command_routes(actions, (group,))):
+        if positional or any(tuple(route) != _parser_path(path) for path, route in command_routes(actions, (group,))):
             errors.append(f"new public group {group} must require a verb before target arguments")
     issue = top._name_parser_map.get("issue")
     issue_sub = _subparsers(issue) if issue else None
@@ -271,9 +278,9 @@ def check(parser, command_groups, instructions):
                 return False, None
         return True, args
 
-    workflow_registry = command_groups.get("config", {}).get("workflow", {})
-    if not isinstance(workflow_registry, dict) or set(workflow_registry) != {"list", "edit", "add", "use", "exclude", "inherit", "instructions"}:
-        errors.append("config workflow registry must expose named workflows and instructions")
+    workflow_registry = command_groups.get("workflow", {})
+    if not isinstance(workflow_registry, dict) or set(workflow_registry) != {"list", "edit", "add", "use", "exclude", "inherit", "sync", "instructions"}:
+        errors.append("workflow registry must expose named workflows and instructions")
     config = top._name_parser_map.get("config")
     config_sub = _subparsers(config) if config else None
     workflow = config_sub._name_parser_map.get("workflow") if config_sub else None
@@ -282,18 +289,24 @@ def check(parser, command_groups, instructions):
         leaf = workflow_sub._name_parser_map.get(verb) if workflow_sub else None
         option = leaf._option_string_actions.get("--repo") if leaf else None
         if option is None or option.dest != "workflow_repo" or option.metavar != "ALIAS":
-            errors.append(f"config workflow {verb} must expose consistent --repo ALIAS")
+            errors.append(f"workflow {verb} must expose consistent --repo ALIAS")
         for scope in ([], ["--repo", "api"]):
             words = ["config", "workflow", verb, *scope]
             valid, args = accepts(words)
             if not valid or args.verb != "config" or getattr(args, "workflow_action", None) != verb:
                 errors.append("workflow parser rejected or misrouted required form: " + " ".join(words))
-    for words in (["add", "quick"], ["add", "quick", "--from", "standard"], ["use", "quick"],
+    for words in (["sync"], ["add", "quick"], ["add", "quick", "--from", "standard"], ["use", "quick"],
                   ["use", "quick", "--repo", "api"], ["exclude", "--repo", "api"], ["inherit", "--repo", "api"],
                   ["edit", "quick"], ["list", "--all", "--json"], ["instructions", "show"],
-                  ["instructions", "edit", "quick"], ["instructions", "show", "--repo", "api"]):
+                  ["instructions", "edit", "quick"], ["instructions", "show", "--repo", "api"],
+                  ["runners", "list", "--json"], ["runners", "edit", "--repo", "api"],
+                  ["runners", "setup", "--github-repo", "owner/control", "--create"],
+                  ["runs", "start", "--target", "linux", "--", "python3", "-m", "pytest"],
+                  ["runs", "list", "--json"], ["runs", "status", "ID", "--json"],
+                  ["runs", "logs", "ID"], ["runs", "artifacts", "ID"],
+                  ["runs", "cancel", "ID"], ["runs", "cleanup", "ID"]):
         valid, args = accepts(["config", "workflow", *words])
-        if not valid or args.verb != "config":
+        if not valid or args.verb != ("runners" if words[0] in ("runners", "runs") else "config"):
             errors.append("workflow parser rejected required form: " + " ".join(words))
     for words in (["add"], ["use"], ["exclude"], ["inherit"], ["add", "quick", "--repo", "api"]):
         valid, _ = accepts(["config", "workflow", *words])
@@ -301,8 +314,8 @@ def check(parser, command_groups, instructions):
             errors.append("workflow parser accepted invalid form: " + " ".join(words))
     valid, args = accepts(["config", "workflow", "list", "--json"])
     if not valid or not getattr(args, "json", False):
-        errors.append("config workflow list must expose --json")
-    for phrase in ("nested resources before verbs", "flags select scope or format", "t config workflow list", "t config workflow edit"):
+        errors.append("workflow list must expose --json")
+    for phrase in ("nested resources before verbs", "flags select scope or format", "t workflow list", "t workflow edit"):
         if phrase not in instructions:
             errors.append("AGENTS.md must document " + phrase)
     for words in (["issue", "list"], ["issue", "list", "--all", "--json"],
@@ -362,7 +375,7 @@ def check_command_patterns(parser, command_groups, contract, *, root=ROOT):
         errors.append("command patterns must define the ten approved behavior types")
     registry_routes = {" ".join(path): route for path, route in command_routes(command_groups)}
     routes = (set(registry_routes)
-              | {SHARE_COMMAND, "share targets", "share inbox", "share read"})
+              | {SHARE_COMMAND, "share targets", "share inbox", "share read", "workflow"})
     top = _subparsers(parser)
     commands = contract.get("commands", {})
     if set(commands) != routes:
@@ -520,7 +533,7 @@ def check_display_contracts(contract, *, root=ROOT):
             or preview.get("placement") != "bottom" or preview.get("height_percent") != 35):
         errors.append("history_information preview must use responsive defaults and Ctrl-/ details")
     selection = history.get("selection", {})
-    for key, value in (("count", 1), ("identity_fields", ["repo", "agent", "sid"]),
+    for key, value in (("count", "multiple"), ("identity_fields", ["repo", "agent", "sid"]),
                        ("accept", "enter"), ("cancel", ["esc", "ctrl-c"]), ("page_size", 50),
                        ("keys", {"next": "ctrl-f", "previous": "ctrl-b", "refresh": "ctrl-r"}),
                        ("auto_accept_single_result", False), ("search", "global_before_pagination"),
@@ -697,6 +710,10 @@ def check_listing_aliases(module):
         for words in (list(path), alias):
             if not module._command_readonly(words, terminal=True):
                 errors.append(f"{' '.join(words)} must remain read-only without prompts")
+    if module._command_readonly(["workflow"], terminal=True):
+        errors.append("bare workflow in a terminal must open the editor")
+    if not module._command_readonly(["workflow"], terminal=False):
+        errors.append("bare workflow outside a terminal must remain read-only help")
     if module._canonical_argv(["list", "ls"]) != ["ls", "ls"]:
         errors.append("root list must alias ls while preserving repository arguments")
     top = _subparsers(module.build_parser())
@@ -705,7 +722,16 @@ def check_listing_aliases(module):
     return errors
 
 
-def help_surfaces(module, parser):
+class _HelpOutput(io.StringIO):
+    def __init__(self, tty=False):
+        super().__init__()
+        self.tty = tty
+
+    def isatty(self):
+        return self.tty
+
+
+def help_surfaces(module, parser, *, detailed=False, tty=False):
     """Enumerate registry commands, native descendants, and compatibility spellings."""
     paths = {(), ("list",), ("hosts", "delete"), ("hosts", "rm")}
 
@@ -722,6 +748,9 @@ def help_surfaces(module, parser):
         paths.update(path[:end] for end in range(1, len(path) + 1))
         if path[-1] == "list":
             paths.add((*path[:-1], "ls"))
+    if detailed:
+        yield ("help", "agents"), module._wrap_help("AGENT SUPPORT\n" + "\n".join(module._agent_parity_render())), None
+        yield ("help", "aliases"), module._aliases_help(), None
     for path in sorted(paths):
         if not path:
             yield path, module._root_help(), None
@@ -735,19 +764,19 @@ def help_surfaces(module, parser):
         if target is None:
             yield path, "", None
             continue
-        with contextlib.redirect_stdout(io.StringIO()) as output:
-            rendered_parser = module._print_command_help(target, list(path), canonical)
+        with contextlib.redirect_stdout(_HelpOutput(tty)) as output:
+            rendered_parser = module._print_command_help(target, list(path), canonical, detailed=detailed)
         yield path, output.getvalue(), rendered_parser
 
 
-def check_help_page(name, body, parser, policy, *, width=80):
+def check_help_page(name, body, parser, policy, *, width=80, detailed=False):
     """Validate visible content, with actionable failures rather than truncation."""
     errors = []
     label = "t " + name if name else "t"
     lines = body.splitlines()
     if not lines or not re.match(r"(?:usage:|USAGE)", lines[0]):
         errors.append(f"{label} help must start with usage")
-    if width == 80:
+    if width == 80 and not detailed:
         budget = policy["command_line_limits"].get(name, policy["max_lines"])
         if len(lines) > budget:
             errors.append(f"{label} help has {len(lines)} lines (limit {budget}); move explanations to help_details")
@@ -760,12 +789,12 @@ def check_help_page(name, body, parser, policy, *, width=80):
             errors.append(f"{label} help line {number} needs at least two spaces of indentation")
         if line.rstrip(":").upper() in policy["headings"] and line != line.upper():
             errors.append(f"{label} help headings must use uppercase: {line!r}")
-        if re.fullmatch(r"[A-Z][A-Z ()/]+:?", line) and line.rstrip(":") not in policy["headings"]:
+        if not detailed and re.fullmatch(r"[A-Z][A-Z ()/]+:?", line) and line.rstrip(":") not in policy["headings"]:
             errors.append(f"{label} help uses unrecognized heading {line!r}")
     normalized = " ".join(body.split())
     if name and f"usage: {label} " not in normalized and f"USAGE {label} " not in normalized:
         errors.append(f"{label} help must show its complete command path in usage")
-    if "t help " not in normalized:
+    if not detailed and "t help " not in normalized:
         errors.append(f"{label} help needs a discoverable 't help' details pointer")
     example_match = re.search(r"(?m)^EXAMPLES:?\n(.*?)(?=\n[A-Z][A-Z ()/]+:?\n|\Z)", body, re.S)
     if example_match:
@@ -789,26 +818,71 @@ def check_help_page(name, body, parser, policy, *, width=80):
     return errors
 
 
+def check_help_color(name, plain, rendered, *, enabled):
+    """Compare exact layout and independently require color on heading labels only."""
+    # OSC titles affect the terminal tab, not help text or its color policy.
+    rendered = re.sub(r"\x1b\]0;[^\x00-\x1f\x7f-\x9f]*\x07", "", rendered)
+    errors = []
+    ansi = re.compile(r"\x1b\[[0-9;]*m")
+    if ansi.sub("", rendered) != plain:
+        errors.append(f"t {name} help color changed plain text or layout")
+    expected = []
+    for line in plain.splitlines(keepends=True):
+        heading = re.match(r"^(usage:|[A-Z][A-Z ()/+-]*:?)($|(?<=:) )", line.rstrip("\n"))
+        if heading and enabled:
+            label = heading.group(1)
+            line = "\033[1m\033[36m" + label + "\033[0m" + line[len(label):]
+        expected.append(line)
+    if rendered != "".join(expected):
+        errors.append(f"t {name} help must use bold cyan headings only" if enabled
+                      else f"t {name} help must not emit ANSI when color is disabled")
+    return errors
+
+
 def check_help_style(module, parser, contract):
-    """Render every public help surface at the contract's terminal widths."""
+    """Render every quick/detailed surface with controlled terminal and color state."""
     policy = contract.get("help_style")
     if not isinstance(policy, dict):
         return ["command inventory must define the help_style contract"]
     errors = []
     original = module.shutil.get_terminal_size
+    environment = dict(module.os.environ)
     try:
         for width in policy["widths"]:
             module.shutil.get_terminal_size = lambda fallback=(80, 24): module.os.terminal_size((width, 24))
-            surfaces = {path: (body, target) for path, body, target in help_surfaces(module, parser)}
-            for path, (body, target) in surfaces.items():
-                errors.extend(check_help_page(" ".join(path), body, target, policy, width=width))
-                if width == 80 and len(path) > 1 and path[-1] not in ("ls", "delete", "rm"):
-                    parent_body = surfaces[path[:-1]][0]
-                    if not re.search(r"(?m)^ {2,}" + ("(?:list|ls)" if path[-1] == "list" else re.escape(path[-1])) + r"(?:\s|$)", parent_body) and (
-                            "t " + " ".join(path) not in " ".join(parent_body.split())):
-                        errors.append(f"t {' '.join(path)} must be discoverable in parent help")
+            for detailed in (False, True):
+                module.os.environ.update(TERM="xterm-256color")
+                for key in ("NO_COLOR", "CLICOLOR"):
+                    module.os.environ.pop(key, None)
+                with contextlib.redirect_stdout(_HelpOutput()):
+                    surfaces = {path: (body, target) for path, body, target in
+                                help_surfaces(module, parser, detailed=detailed)}
+                for path, (body, target) in surfaces.items():
+                    if path not in (("help", "agents"), ("help", "aliases")):
+                        errors.extend(check_help_page(" ".join(path), body, target, policy,
+                                                      width=width, detailed=detailed))
+                    if not detailed and width == 80 and len(path) > 1 and path[-1] not in ("ls", "delete", "rm"):
+                        parent_body = surfaces[path[:-1]][0]
+                        if not re.search(r"(?m)^ {2,}" + ("(?:list|ls)" if path[-1] == "list" else re.escape(path[-1])) + r"(?:\s|$)", parent_body) and (
+                                "t " + " ".join(path) not in " ".join(parent_body.split())):
+                            errors.append(f"t {' '.join(path)} must be discoverable in parent help")
+                for tty, overrides in ((True, {}), (False, {}), (True, {"NO_COLOR": ""}),
+                                       (True, {"NO_COLOR": "1"}), (True, {"TERM": "dumb"}),
+                                       (True, {"CLICOLOR": "0"}), (False, {"CLICOLOR": "1"})):
+                    module.os.environ.update(TERM="xterm-256color")
+                    for key in ("NO_COLOR", "CLICOLOR"):
+                        module.os.environ.pop(key, None)
+                    module.os.environ.update(overrides)
+                    with contextlib.redirect_stdout(_HelpOutput(tty)):
+                        colored = {path: body for path, body, _ in
+                                   help_surfaces(module, parser, detailed=detailed, tty=tty)}
+                    for path, (plain, _) in surfaces.items():
+                        errors.extend(check_help_color(" ".join(path), plain, colored.get(path, ""),
+                                                       enabled=tty and not overrides))
     finally:
         module.shutil.get_terminal_size = original
+        module.os.environ.clear()
+        module.os.environ.update(environment)
     return list(dict.fromkeys(errors))
 
 

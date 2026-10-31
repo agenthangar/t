@@ -1058,8 +1058,9 @@ def test_install_workflow_preserves_prose_and_is_idempotent(mod, tmp_path, monke
     assert all(p.read_bytes() == data and p.stat().st_mtime_ns == stamp for p, data, stamp in snapshots)
     monkeypatch.setattr(mod, 'workflow_policy', lambda: 'Updated policy.')
     assert mod.install_workflow() == 0
-    assert 'Updated policy.' in base.read_text()
-    assert base.read_text().count('<!-- t public-issues: begin -->') == 1
+    assert 'Updated policy.' not in base.read_text()
+    assert '<!-- t public-issues: begin -->' not in base.read_text()
+    assert base.read_text().count('<!-- t agent-workflow: begin -->') == 1
 
 
 def test_install_workflow_uses_custom_agent_homes(mod, tmp_path, monkeypatch):
@@ -1103,13 +1104,19 @@ def test_install_workflow_detects_concurrent_edits(mod, tmp_path, monkeypatch):
     monkeypatch.setenv('HOME', str(tmp_path))
     path = tmp_path / '.codex/AGENTS.md'; path.parent.mkdir()
     path.write_text('before')
-    original = Path.read_text
+    # The consolidated installer uses snapshot identity checks during publication.
+    helper = mod.runpy.run_path(str(ROOT / 'libexec/t_workflow.py'))
+    original = helper['snapshot']
     reads = []
-    def read(file, *a, **kw):
+    def read(file):
         if file == path:
             reads.append(file)
-            if len(reads) == 2: file.write_text('concurrent edit')
-        return original(file, *a, **kw)
-    monkeypatch.setattr(Path, 'read_text', read)
+            if len(reads) == 3:
+                file.write_text('concurrent edit')
+        return original(file)
+    helper['sync'].__globals__['snapshot'] = read
+    original_run_path = mod.runpy.run_path
+    monkeypatch.setattr(mod.runpy, 'run_path', lambda path, *args, **kwargs:
+                        helper if Path(path).name == 't_workflow.py' else original_run_path(path, *args, **kwargs))
     assert mod.install_workflow() == 1
     assert path.read_text() == 'concurrent edit'

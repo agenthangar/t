@@ -42,7 +42,7 @@ def test_grouped_shell_commands_keep_arguments_and_caller_shell(tmp_path):
         _t_open() { print -r -- "open:${(j:,:)@}"; }
         _t_push() { print -r -- "push:${(j:,:)@}"; }
         _t_find() { print -r -- "find:${(j:,:)@}"; }
-        _t_beam_xlate() { print -r -- "move:${(j:,:)@}"; }
+        _t_session_move() { print -r -- "move:${(j:,:)@}"; }
         _t_repo_cd() { print -r -- "repo-cd:${(j:,:)@}"; }
         t session open api 4 --fg
         t session push api 4
@@ -282,7 +282,7 @@ def test_completion_exposes_groups_and_group_actions(tmp_path):
     assert lines[:3] == ["describe:nouns", "describe:actions", "describe:actions"]
     assert lines[3].startswith("values:")
     source = (ROOT / "zsh" / "shim.zsh").read_text()
-    assert "local -a nouns=(session issue share remote repo cursor hosts agentcore config profile policy agent system login help)" in source
+    assert "local -a nouns=(session move issue share remote repo cursor hosts agentcore workflow runners config mcp profile policy agent system login help)" in source
 
 
 @pytest.mark.skipif(not shutil.which("zsh"), reason="zsh is required")
@@ -343,6 +343,7 @@ def test_shell_dispatch_matches_python_command_registry(tmp_path, t_mod):
         _t_push() { print -r -- handler:push; }
         _t_resume() { print -r -- handler:resume; }
         _t_cd() { print -r -- handler:cd; }
+        _t_session_move() { print -r -- handler:move; }
         _t_beam_xlate() { print -r -- handler:move; }
         _t_find() { print -r -- handler:search; }
         _t_repo_cd() { print -r -- handler:repo-cd; }
@@ -447,7 +448,7 @@ def test_workflow_completion_offers_scopes_and_registered_repos(tmp_path):
     ''')
     assert result.returncode == 0, result.stderr
     assert result.stdout.splitlines() == [
-        "values:list,ls,add,use,exclude,inherit,edit,instructions", "values:--repo,--all,--json,-h,--help", "values:--repo,-h,--help",
+        "values:list,ls,add,use,exclude,inherit,edit,instructions,sync", "values:--repo,--all,--json,-h,--help", "values:--repo,-h,--help",
         "values:api", "values:api", "values:-h,--help", "values:api",
     ]
 
@@ -547,3 +548,67 @@ def test_list_alias_completion_and_shell_forwarding(tmp_path, command):
     assert lines[0] == lines[1]
     assert lines[-2] == 'bin:' + ''.join(f'<{word}>' for word in [*command.split(), 'list', '--repo', 'ls'])
     assert lines[-1] == 'bin:' + ''.join(f'<{word}>' for word in [*command.split(), 'ls', '--repo', 'ls'])
+
+
+def test_remote_host_first_completion_and_legacy_host_flag(tmp_path):
+    result = shell(tmp_path, '''
+        REMOTE_HOSTS=(lab user@lab)
+        DEV_REPOS=(api "$HOME/code/api")
+        _values() { print -r -- "values:$1:${(j:,:)argv[2,-1]}"; }
+        _message() { print -r -- "message:$1"; }
+        local -a words
+        words=(t remote open '') CURRENT=4; _t
+        words=(t remote resume lab '') CURRENT=5; _t
+        words=(t remote open lab api '') CURRENT=6; _t
+        words=(t remote open --host lab '') CURRENT=6; _t
+        words=(t remote open --host=lab api '') CURRENT=6; _t
+        words=(t remote resume --days 7 '') CURRENT=6; _t
+        words=(t remote move '') CURRENT=4; _t
+        words=(t remote open --) CURRENT=4; _t
+    ''')
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == [
+        'values:host:lab', 'values:repo:api', 'message:slot', 'values:repo:api',
+        'message:slot', 'values:host:lab', 'values:repo:api', 'values:flag:-h,--help,--new',
+    ]
+
+
+@pytest.mark.skipif(not shutil.which("zsh"), reason="zsh is required")
+def test_runners_completion_exposes_nested_runs_and_scopes(tmp_path):
+    result = shell(tmp_path, '''
+        _values() { print -r -- "values:${(j:,:)argv[2,-1]}"; }
+        local -a words
+        words=(t runners runs '') CURRENT=4; _t
+        words=(t runners setup --) CURRENT=4; _t
+        words=(t runners list --repo '') CURRENT=5; _t
+    ''')
+    assert result.returncode == 0, result.stderr
+    lines = result.stdout.splitlines()
+    assert lines[0] == 'values:start,list,ls,status,logs,artifacts,cancel,cleanup'
+    assert lines[1] == 'values:--github-repo,--create,-h,--help'
+    assert lines[2].startswith('values:')
+
+
+@pytest.mark.skipif(not shutil.which("zsh"), reason="zsh is required")
+def test_canonical_workflow_completion_and_dispatch(tmp_path):
+    result = shell(tmp_path, '''
+        DEV_REPOS=(api /tmp/api)
+        _describe() { print -r -- "actions:${(j:,:)actions}"; }
+        _values() { print -r -- "values:${(j:,:)argv[2,-1]}"; }
+        local -a words
+        words=(t workflow '') CURRENT=3; _t
+        words=(t workflow list --) CURRENT=4; _t
+        words=(t workflow list --repo '') CURRENT=5; _t
+        words=(t workflow instructions '') CURRENT=4; _t
+        words=(t help runners runs '') CURRENT=5; _t
+        words=(t runners setup --) CURRENT=4; _t
+        t workflow list --repo api --json
+    ''')
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == [
+        "actions:list,ls,add,use,exclude,inherit,edit,instructions,sync",
+        "values:--repo,--all,--json,-h,--help", "values:api",
+        "values:show,edit", "values:start,list,ls,status,logs,artifacts,cancel,cleanup",
+        "values:--github-repo,--create,-h,--help",
+        "bin:<workflow><list><--repo><api><--json>",
+    ]

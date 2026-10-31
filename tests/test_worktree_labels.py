@@ -150,6 +150,7 @@ def test_transcript_projection_keeps_exact_recorded_workspace(tmp_path, monkeypa
 def test_public_move_refuses_old_peer_before_stopping_or_copying(tmp_path, leaf):
     cwd = tmp_path / 'home/work trees/api' / leaf
     result = configured_shell(tmp_path, f'''
+DEV_HANDOFF[codex]=t  # Exercise guarded t transfer to an older peer.
 rsync() {{ print -u2 UNEXPECTED_COPY; return 99; }}
 ssh() {{ return 1; }}
 _dev_self_sid() {{ :; }}

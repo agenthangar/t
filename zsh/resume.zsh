@@ -1,3 +1,40 @@
+# Keep a failed batch visible instead of attaching over its diagnostics.
+_t_resume_batch_stop() {
+  local result=$1 identity=$2 retry=$3 reason=$4 remaining=$5 hint
+  shift 5
+  print -u2 -- ''
+  if (( result == 130 )); then
+    print -u2 -- 'Resume cancelled'
+  else
+    print -u2 -- 'Resume stopped after an error'
+  fi
+  print -u2 -- "Selection: $identity"
+  print -u2 -- "Reason: $reason (exit $result)"
+  print -u2 -- "Retry selection: $retry"
+  for hint in "$@"; do print -u2 -- "Ready — attach with: $hint"; done
+  print -u2 -- "Not attempted: $remaining selection(s)"
+  return "$result"
+}
+
+# Cross-host policy is explicit; native Codex host transfer is app-mediated.
+# Return before stopping owners, checkpointing, copying transcripts or allocating.
+_t_handoff_check() {
+  local agent=${1:-claude} source_host=${2:-here} destination=${3:-here}
+  local mechanism=${DEV_HANDOFF[$agent]:-t}
+  [[ $agent != codex ]] || mechanism=${_T_HANDOFF_CODEX:-${DEV_HANDOFF[codex]:-native}}
+  [[ $agent != claude ]] || mechanism=${_T_HANDOFF_CLAUDE:-${DEV_HANDOFF[claude]:-t}}
+  if [[ $mechanism == t ]]; then return 0; fi
+  if [[ $agent != codex || $mechanism != native ]]; then
+    print -u2 -- "t: invalid cross-host handoff for $agent: $mechanism; use t config"
+    return 1
+  fi
+  print -u2 -- "t: Codex cross-host handoff uses the native desktop app ($source_host → $destination)."
+  print -u2 -- 'Open this chat in Codex, choose the run location in its footer, select the destination, then Hand off.'
+  print -u2 -- 'Save the same repository as a project on both hosts. Native host handoff has no supported CLI adapter; no transfer was started.'
+  print -u2 -- 'To explicitly use t transfer instead: t config → Codex settings → Cross-host handoff → t, then Save changes.'
+  return 1
+}
+
 # A destination on resume applies to saved history. Live owners may only attach
 # on that same host; moving an owner uses the guarded move transaction.
 _t_resume_host_check() {
@@ -9,7 +46,7 @@ _t_resume_host_check() {
   [[ $owner == here && $destination == here ]] && return 0
   [[ $owner != here && $destination != here && $owner_target == "$destination_target" ]] && return 0
   local destination_hint=${_T_RESUME_DESTINATION_HOST:-$destination}
-  print -u2 -- "t session resume: $repo $slot is live on $owner; move it with: t remote move $repo $slot --from ${owner/here/local} --host $destination_hint"
+  print -u2 -- "t session resume: $repo $slot is live on $owner; move it with: t session move $repo $slot --from ${owner/here/local} --host $destination_hint"
   return 1
 }
 
@@ -17,6 +54,7 @@ _t_resume_rsync() { rsync "$@" 2>/dev/null; }
 
 _t_resume_on_host() {
   local host="$1" sid="$2" wt="$3" agent="$4" mode="$5"
+  _t_handoff_check "$agent" here "$host" || return $?
   local target="${REMOTE_HOSTS[$host]:-$host}"
   command -v rsync >/dev/null 2>&1 || { echo "t resume --host: rsync not found" >&2; return 1; }
   _dev_worktree_beam_push "$wt" "$host" >&2 || {
@@ -39,7 +77,11 @@ _t_resume_on_host() {
 }
 
 _t_resume_history_candidates() {
-  python3 "$T_HOME/bin/t" __resume-candidates "$@"
+  if [[ -n ${T_RESUME_DIAGNOSTICS_FILE:-} ]]; then
+    python3 "$T_HOME/bin/t" __resume-candidates --diagnostics-file "$T_RESUME_DIAGNOSTICS_FILE" "$@"
+  else
+    python3 "$T_HOME/bin/t" __resume-candidates "$@"
+  fi
 }
 
 # Resume a retained conversation through the exact-source verifier and fresh
@@ -92,8 +134,9 @@ _t_resume_history_registered() {
 # defaults; -l/--live starts with all
 # rows. Their labels ("● active" / "● on <host>") remain visible when revealed and a pick
 # ATTACHES in place instead of resuming (one-live-owner: a second `claude -r` on a
-# live id diverges the transcript). An explicit `t resume <repo> <slot>` on a live
-# slot always attaches — a direct ask, not a scan.
+# live id diverges the transcript). An explicit `t resume <repo> <slot>` scopes
+# the shared picker to that slot's conversations, including independent saved
+# work and its live owner. It never attaches before the user selects a row.
 # -f/--fg resumes inline in THIS terminal (t pop's landing) instead of a slot.
 # Dead rows carry the two shared picker signals (see _claude_session_rows and
 # t-session-start jobs 3-4): eligibility = max(transcript mtime, last-opened
@@ -253,17 +296,6 @@ _t_resume() {
     live_scan_rc=0
   fi
   if (( live_scan_rc )); then
-    if [[ -n $slot && -z $app ]]; then
-      local local_wt local_owner
-      local_wt=$(_dev_worktree_path "$repo" "$slot") || return 1
-      local_owner=${live[${local_wt:A}]:-}
-      if [[ -n $local_owner ]] || tmux has-session -t "=dev-${repo}-${slot}:" 2>/dev/null; then
-        _t_resume_host_check here "$on_host" "$repo" "$slot" || return 1
-        print -u2 -- "Slot $slot is live locally ($local_owner) — attaching."
-        _t_dev "$repo" "$slot" --local
-        return
-      fi
-    fi
     _t_warn 't resume: ownership could not be verified because local discovery failed; no saved conversation was resumed. Retry after checking the local shell integration.'
     return 1
   fi
@@ -303,7 +335,8 @@ _t_resume() {
   # real user prompt, so _transcript_title prints nothing) are skipped: they
   # rendered as untitled rows and, being newest, often masked the real
   # conversation. A slot whose worktree is LIVE (by path, local or remote) is
-  # not resumable — explicit ask attaches, scan skips. A slot whose tmux NAME
+  # not reusable — retain its owner and discover independent saved history below.
+  # A slot whose tmux NAME
   # is taken by a session rooted elsewhere is unresumable AND wrong to attach
   # (see the collision branch below). NOTE: every `local` here is hoisted OUT
   # of the loops — an assignmentless `local x` re-run on an already-local x
@@ -372,10 +405,6 @@ _t_resume() {
         [[ -n ${live[${candidate:A}]:-} ]] && { wt=$candidate; break; }
       done
       if [[ -z $app ]] && _dev_app_slot_reserved "$wt"; then
-        if [[ -n $slot ]]; then
-          print -u2 -- "t resume: $repo $n is reserved for the Codex desktop app; use t session open $repo $n --app"
-          return 1
-        fi
         live_seen[app/${repo}-$n]=1
         [[ -n $live_flag ]] || (( hidden_live++ ))
         cands+=(9999999999$'\t'"$repo"$'\t'"$n"$'\t'-$'\t'"$wt"$'\t'"◉ desktop here"$'\t'"(Codex desktop workspace)"$'\t'app:here$'\t'-$'\t'-$'\t'codex)
@@ -383,12 +412,6 @@ _t_resume() {
       fi
       busy=${live[${wt:A}]:-}
       if [[ -n $busy && -z $app ]]; then
-        if [[ -n $slot ]]; then
-          _t_resume_host_check here "$on_host" "$repo" "$n" || return 1
-          echo "Slot $n is live ($busy) — attaching (resume only revives dead slots)."
-          _t_dev "$repo" "$n"
-          return
-        fi
         # Scan: retain live local slots for Ctrl-A, while the initial view
         # filters them (unless --live was passed). The legacy leading key is
         # discarded; actual turn evidence orders live and saved rows together.
@@ -401,20 +424,10 @@ _t_resume() {
       rhost=${remote_live_host[$n]:-}
       if [[ -n $rhost && -z $app ]]; then
         if [[ ${remote_live_state[$n]} == app ]]; then
-          if [[ -n $slot ]]; then
-            print -u2 -- "t resume: $repo $n is reserved for the Codex desktop app on $rhost; close and release it there before resuming"
-            return 1
-          fi
           live_seen[app/$rhost/${remote_live_alias[$n]}-$n]=1
           [[ -n $live_flag ]] || (( hidden_live++ ))
           cands+=(9999999999$'\t'"$repo"$'\t'"$n"$'\t'-$'\t'"$wt"$'\t'"◉ desktop on $rhost"$'\t'"${remote_live_sum[$n]:-(Codex desktop workspace)}"$'\t'"app:$rhost"$'\t'"${remote_live_alias[$n]}"$'\t'-$'\t'codex)
           continue
-        fi
-        if [[ -n $slot ]]; then
-          _t_resume_host_check "$rhost" "$on_host" "$repo" "$n" || return 1
-          echo "Slot $n is live on $rhost — attaching (resume only revives dead slots)."
-          _dev_remote_attach "$rhost"$'\t'"${remote_live_alias[$n]}"$'\t'"$n" ""
-          return
         fi
         live_seen[$rhost/${remote_live_alias[$n]}-$n]=1
         [[ -n $live_flag ]] || (( hidden_live++ ))
@@ -441,12 +454,6 @@ _t_resume() {
       done
       if [[ -n $_stale && -z $app ]]; then
         stale_path=$(tmux display-message -p -t "=$_stale:" '#{session_path}' 2>/dev/null)
-        if [[ -n $slot ]]; then
-          _t_resume_host_check here "$on_host" "$repo" "$n" || return 1
-          echo "Slot $n is live ($_stale${stale_path:+ in $stale_path}) — attaching (resume only revives dead slots)."
-          _t_dev "$repo" "$n"
-          return
-        fi
         live_seen[here/${_stale#dev-}]=1
         [[ -n $live_flag ]] || (( hidden_live++ ))
         cands+=(9999999999$'\t'"$repo"$'\t'"$n"$'\t'-$'\t'"${stale_path:-$wt}"$'\t'"● active"$'\t'"${local_sum[${_stale#dev-}]:-(live session)}"$'\t'here$'\t'-$'\t'-$'\t'"${local_agent[${_stale#dev-}]:-$(_dev_agent_of_session "$_stale")}")
@@ -504,7 +511,7 @@ _t_resume() {
   # guarded allocator instead of borrowing an occupied or unrelated worktree.
   local history_rows history_rc=0 history_row history_key
   local -a history_fields history_keep
-  local -A history_seen
+  local -A history_seen history_pr_state
   for _p in "${(@)pending}"; do
     _mf=("${(@ps:\t:)_p}")
     history_seen[$_mf[2]/$(_dev_transcript_agent "$_mf[5]")/$(_dev_transcript_sid "$_mf[5]")]=1
@@ -512,13 +519,27 @@ _t_resume() {
   local -a history_scope=("${(@)repos}")
   [[ -n $all_mode ]] && history_scope=(--all)
   [[ -n $identity_scope ]] && history_scope=("$identity_scope")
-  history_rows=$(_t_with_progress "Finding saved conversations across hosts" _t_resume_history_candidates "${(@)history_scope}") || history_rc=$?
+  [[ -n $slot ]] && history_scope+=(--slot "$slot")
+  local auth_file auth_hosts auth_host
+  auth_file=$(mktemp "${TMPDIR:-/tmp}/t-resume-auth.XXXXXX") || return 1
+  history_rows=$(T_RESUME_DIAGNOSTICS_FILE="$auth_file" _t_with_progress "Finding saved conversations across hosts" _t_resume_history_candidates "${(@)history_scope}") || history_rc=$?
+  auth_hosts=$(<"$auth_file")
+  rm -f -- "$auth_file"
+  for auth_host in "${(@f)auth_hosts}"; do
+    [[ -n $auth_host ]] || continue
+    _t_warn "GitHub authentication failed on $auth_host; some saved conversations may be missing. Run gh auth login --hostname github.com on $auth_host, then retry."
+  done
   (( history_rc == 130 )) && return 130
   (( history_rc == 0 )) || return $history_rc
   for history_row in "${(@f)history_rows}"; do
     history_fields=("${(@ps:\t:)history_row}")
-    (( $#history_fields == 9 || $#history_fields == 10 || $#history_fields == 11 )) || continue
+    (( $#history_fields >= 9 && $#history_fields <= 12 )) || continue
     history_key=$history_fields[2]/$history_fields[9]/$history_fields[4]
+    # Retained local transcript rows need the full associated-PR aggregate too;
+    # their last-mentioned PR alone cannot prove all work's PRs have merged.
+    if (( $#history_fields >= 12 )) && [[ $history_fields[12] != NONE ]]; then
+      history_pr_state[$history_key]=$history_fields[12]
+    fi
     if [[ -n ${history_seen[$history_key]:-} ]]; then
       [[ $history_fields[8] != local ]] || continue
       # A newer remote source supersedes an already discovered local copy.
@@ -541,7 +562,7 @@ _t_resume() {
       (( skipped++ )); continue
     fi
     org=$history_fields[8]; [[ $org == local ]] && org=-
-    cands+=("$history_fields[1]"$'\t'"$history_fields[2]"$'\t'"$history_fields[3]"$'\t'"$history_fields[4]"$'\t'"$history_fields[5]"$'\t'"$history_fields[6]"$'\t'"$history_fields[7]"$'\t'-$'\t'history$'\t'"$org"$'\t'"$history_fields[9]"$'\t'-$'\t'"${history_fields[10]:--}"$'\t'"${history_fields[11]:--}")
+    cands+=("$history_fields[1]"$'\t'"$history_fields[2]"$'\t'"$history_fields[3]"$'\t'"$history_fields[4]"$'\t'"$history_fields[5]"$'\t'"$history_fields[6]"$'\t'"$history_fields[7]"$'\t'-$'\t'history$'\t'"$org"$'\t'"$history_fields[9]"$'\t'-$'\t'"${history_fields[10]:--}"$'\t'"${history_fields[11]:--}"$'\t'"${history_fields[12]:-UNKNOWN}")
   done
 
   # Conversations live under ANOTHER slot's session (or a foreground one). One row
@@ -614,7 +635,7 @@ _t_resume() {
     # (field 11 here, 10 once the sort key is stripped) gets its own display column
     # AND picks the binary a pick spawns
     _ag=$(_dev_transcript_agent "$txf")
-    cands+=("$ep"$'\t'"$repo"$'\t'"$n"$'\t'"$(_dev_transcript_sid "$txf")"$'\t'"$wt"$'\t'"$when"$'\t'"$title"$'\t'-$'\t'-$'\t'"${org[1,10]}"$'\t'"$_ag"$'\t'"$txf")
+    cands+=("$ep"$'\t'"$repo"$'\t'"$n"$'\t'"$(_dev_transcript_sid "$txf")"$'\t'"$wt"$'\t'"$when"$'\t'"$title"$'\t'-$'\t'-$'\t'"${org[1,10]}"$'\t'"$_ag"$'\t'"$txf"$'\t'-$'\t'-$'\t'"${history_pr_state[$repo/$_ag/$(_dev_transcript_sid "$txf")]:-$REPLY_PR_STATE}")
   done
   # ONE detached refresh for the whole scan, instead of a `gh pr view` child per
   # stale row: _pr_state_refresh batches the refs by repo, so a scan that turned up
@@ -656,8 +677,9 @@ _t_resume() {
   # their host in the ● label instead); agent is the row's claude/codex — what a
   # dead pick spawns, and what a live slot is running (from the live scan, else
   # the session's own stamp). EVERY row carries all ten, sentinelled, so the
-  # positional reads below never slide. The optional last-turn timestamp is field
-  # 11; one ALIGNED display column (12) is
+  # positional reads below never slide. Last-turn timestamp is field 11,
+  # repository identity is 12, and explicit cached PR state is 13.
+  # One ALIGNED display column (14) is
   # appended here — fzf renders raw \t fields at literal tab stops (nothing
   # lines up), so both fzf and the no-fzf listing show the same pre-padded
   # gh-style row: [repo]  slot  agent  [origin]  date|●-where  title. The agent
@@ -673,7 +695,7 @@ _t_resume() {
   # origin column only appears when some row has one (a single-machine setup
   # never sees it); all-repos mode adds the repo column. Both pad to the widest
   # value in this candidate set.
-  local pick c fprompt; local -a f
+  local pick c fprompt prbadge; local -a f
   local rw=0 ow=0 aw=0 i=1
   if [[ -n $all_mode ]]; then
     fprompt="resume (${days}d)> "
@@ -690,18 +712,19 @@ _t_resume() {
   for c in "${(@)cands}"; do
     f=("${(@ps:\t:)c}")
     org=${f[9]:-}; [[ $org == - ]] && org=
+    prbadge=$(printf '[%-7s] ' "${f[13]:-UNKNOWN}")
     agent="${_DEV_AGENT_GLYPH[${f[10]:-claude}]:-?} ${f[10]:-claude}"
     if [[ -n $all_mode ]]; then
       if (( ow )); then
-        cands[$i]+=$'\t'"$(printf '%-*s  %2s  %-*s  %-*s  %-14s  %s' "$rw" "$f[1]" "$f[2]" "$aw" "$agent" "$ow" "$org" "$f[5]" "$f[6]")"
+        cands[$i]+=$'\t'"$prbadge$(printf '%-*s  %2s  %-*s  %-*s  %-14s  %s' "$rw" "$f[1]" "$f[2]" "$aw" "$agent" "$ow" "$org" "$f[5]" "$f[6]")"
       else
-        cands[$i]+=$'\t'"$(printf '%-*s  %2s  %-*s  %-14s  %s' "$rw" "$f[1]" "$f[2]" "$aw" "$agent" "$f[5]" "$f[6]")"
+        cands[$i]+=$'\t'"$prbadge$(printf '%-*s  %2s  %-*s  %-14s  %s' "$rw" "$f[1]" "$f[2]" "$aw" "$agent" "$f[5]" "$f[6]")"
       fi
     else
       if (( ow )); then
-        cands[$i]+=$'\t'"$(printf '%2s  %-*s  %-*s  %-14s  %s' "$f[2]" "$aw" "$agent" "$ow" "$org" "$f[5]" "$f[6]")"
+        cands[$i]+=$'\t'"$prbadge$(printf '%2s  %-*s  %-*s  %-14s  %s' "$f[2]" "$aw" "$agent" "$ow" "$org" "$f[5]" "$f[6]")"
       else
-        cands[$i]+=$'\t'"$(printf '%2s  %-*s  %-14s  %s' "$f[2]" "$aw" "$agent" "$f[5]" "$f[6]")"
+        cands[$i]+=$'\t'"$prbadge$(printf '%2s  %-*s  %-14s  %s' "$f[2]" "$aw" "$agent" "$f[5]" "$f[6]")"
       fi
     fi
     (( i++ ))
@@ -723,24 +746,28 @@ _t_resume() {
     visible=("${(@)inactive}")
   fi
 
-  # Sole candidate auto-picks only when there are no excluded rows to reveal.
+  # Interactive explicit slots always pick. Otherwise a sole candidate can
+  # auto-pick only when there are no excluded rows to reveal.
   # A sole LIVE row without a TTY would hit
   # _t_dev / _dev_remote_attach, both of which need a terminal to attach; fall
   # through to the listing branch so the message matches the multi-candidate
   # no-fzf case instead of failing hard from inside the attach helper.
-  if [[ ${_T_RESUME_REQUIRE_PICKER:-} != 1 ]] && (( $#visible == 1 )) && \
+  if [[ ${_T_RESUME_REQUIRE_PICKER:-} != 1 && ( -z $slot || ! -t 0 || ! -t 1 ) ]] && (( $#visible == 1 )) && \
      { (( ! hidden_live || $#cands == 1 )) || [[ ! -t 0 || ! -t 1 ]]; } && \
-     f=("${(@ps:\t:)visible[1]}") && [[ $f[7] == - || -t 1 ]]; then
+     f=("${(@ps:\t:)visible[1]}") && [[ $f[7] == - || ( -t 0 && -t 1 ) ]]; then
     pick=${visible[1]}
   elif [[ -t 0 && -t 1 ]] && command -v fzf >/dev/null; then
-    pick=$(T_PICKER_SOURCE_ROWS="${(F)cands}" T_PICKER_SESSION_FILTERS=resume _t_fzf_filtered "$(print -rl -- "${(@)inactive}")" \
+    pick=$(T_PICKER_AUTH_HOSTS="$auth_hosts" T_PICKER_SOURCE_ROWS="${(F)cands}" T_PICKER_SESSION_FILTERS=resume _t_fzf_filtered "$(print -rl -- "${(@)inactive}")" \
       "$(print -rl -- "${(@)cands}")" resume inactive "$legend" "$show_all" \
       --delimiter=$'\t' --with-nth=-1 --no-hscroll \
       --prompt="$fprompt") || return $?
     [[ -n $pick ]] || return 130
-  elif [[ -n $slot ]] && { pick=; for c in "${(@)visible}"; do
+  elif [[ -n $slot && -t 0 && -t 1 ]]; then
+    print -u2 -- 't resume: selecting a conversation requires fzf; install fzf and retry.'
+    return 1
+  elif [[ -n $slot && ( ! -t 0 || ! -t 1 ) ]] && { pick=; for c in "${(@)visible}"; do
          f=("${(@ps:\t:)c}"); [[ $f[7] == - ]] && { pick=$c; break; }; done; [[ -n $pick ]]; }; then
-    # Explicit slot but no TTY/fzf to pick with: the newest DEAD conversation IS
+    # Explicit slot without a terminal: the newest DEAD conversation IS
     # the documented contract ("revive the slot's last conversation") — take it
     # (never a live row: attaching needs the terminal we lack), and list the rest
     # so a specific pick is one fzf-equipped call away.
@@ -767,12 +794,15 @@ _t_resume() {
   # their own terminal tabs (attach-hint fallback). Live marks attach to their
   # existing owner (one-live-owner: never a second `claude -r`), and a second conversation
   # marked for a slot an earlier mark just took can't have the tmux name —
-  # both become hints, not errors, so one stray mark never aborts the batch.
+  # failures stop the batch with a visible summary and ready-session hints.
   local -a picks; picks=("${(@f)pick}")
   # Check the whole selection before the first revive or attachment.
   for pick in "${(@)picks}"; do
     f=("${(@ps:\t:)pick}")
     _t_resume_host_check "${f[7]:-}" "$on_host" "$f[1]" "$f[2]" || return 1
+    if [[ -n $on_host && ( -z ${f[7]:-} || $f[7] == - ) ]]; then
+      _t_handoff_check "${f[10]:-claude}" here "$on_host" || return $?
+    fi
   done
   pick=$picks[1]
   if (( $#picks > 1 )); then
@@ -787,39 +817,59 @@ _t_resume() {
     local -A mp_taken
     local mp_first_repo= mp_first_slot= mp_first_session= mp_cwd mp_session mp_loc mp_pair mp_agent mp_rc
     local mp_live_first= mp_live_cmd= mp_live_alias= mp_live_repo= mp_live_slot= mp_live_loc=
-    local -a mp_rest mp_unopened mp_live mp_live_fields
+    local -a mp_rest mp_live mp_live_fields mp_ready
+    local mp_index=0 mp_remaining mp_identity mp_retry
     for pick in "${(@)picks}"; do
       f=("${(@ps:\t:)pick}")
       repo=$f[1]; slot=$f[2]; sid=$f[3]; wt=$f[4]; mp_loc="${f[7]:-}"; mp_agent="${f[10]:-claude}"
+      (( mp_index++ )); mp_remaining=$(( $#picks - mp_index ))
+      mp_identity="$repo slot $slot · $mp_agent $sid"
+      mp_retry="t session history ${(q)repo} ${(q)slot}"
       if [[ $mp_loc == fg:* ]]; then
         mp_live+=("$mp_loc"$'\t'"$repo"$'\t'"$slot"$'\t'"${f[8]}")
+        mp_live_cmd="t open ${(q)f[8]} --cli"
+        [[ $mp_loc != fg:here ]] && mp_live_cmd+=" --host ${(q)${mp_loc#fg:}}"
+        mp_ready+=("$mp_live_cmd")
         continue
       elif [[ $mp_loc == here ]]; then
         [[ -n ${f[8]:-} && $f[8] != - ]] && repo=$f[8]
         mp_live+=("$mp_loc"$'\t'"$repo"$'\t'"$slot"$'\t'-)
+        mp_ready+=("t session open ${(q)repo} ${(q)slot} --cli --local")
         continue
       elif [[ $mp_loc == app:here ]]; then
         mp_live+=("$mp_loc"$'\t'"$repo"$'\t'"$slot"$'\t'-)
+        mp_ready+=("t session open ${(q)repo} ${(q)slot} --app")
         continue
       elif [[ $mp_loc == app:* ]]; then
-        echo "· $repo $slot: desktop app is on ${mp_loc#app:}; open it on that Mac." >&2
-        continue
+        _t_resume_batch_stop 1 "$mp_identity" "$mp_retry" "desktop app is on ${mp_loc#app:}; open it on that Mac" "$mp_remaining" "${mp_ready[@]}"
+        return 1
       elif [[ -n $mp_loc && $mp_loc != - ]]; then
         [[ -n ${f[8]:-} && $f[8] != - ]] && repo=$f[8]
         mp_live+=("$mp_loc"$'\t'"$repo"$'\t'"$slot"$'\t'-)
+        mp_ready+=("t session open ${(q)repo} ${(q)slot} --cli --host ${(q)mp_loc}")
         continue
       fi
       if [[ $f[8] == history && -n $on_host ]]; then
-        mp_cwd=$(_t_resume_history_launch "$repo" "$sid" "$mp_agent" prepare "${f[12]:--}") || return $?
+        mp_cwd=$(_t_resume_history_launch "$repo" "$sid" "$mp_agent" prepare "${f[12]:--}") || {
+          mp_rc=$?; _t_resume_batch_stop "$mp_rc" "$mp_identity" "$mp_retry" 'saved conversation preparation failed; see diagnostic above' "$mp_remaining" "${mp_ready[@]}"
+          return "$mp_rc"
+        }
         mp_session=${mp_cwd%%$'\t'*}; wt=${mp_cwd#*$'\t'}; slot=${mp_session##*-}; repo=${${mp_session#dev-}%-*}
-        _t_resume_history_registered "$repo" || return 1
+        _t_resume_history_registered "$repo" || {
+          _t_resume_batch_stop 1 "$mp_identity" "$mp_retry" 'repository registration unavailable' "$mp_remaining" "${mp_ready[@]}"
+          return 1
+        }
       elif [[ $f[8] == history ]]; then
         mp_session=$(_t_resume_history_launch "$repo" "$sid" "$mp_agent" launch "${f[12]:--}") || {
-          mp_rc=$?; (( mp_rc == 130 )) && return 130
-          _t_warn "$repo: saved conversation launch failed — skipped"; continue
+          mp_rc=$?; _t_resume_batch_stop "$mp_rc" "$mp_identity" "$mp_retry" 'saved conversation launch failed; see diagnostic above' "$mp_remaining" "${mp_ready[@]}"
+          return "$mp_rc"
         }
         slot=${mp_session##*-}; repo=${${mp_session#dev-}%-*}
-        _t_resume_history_registered "$repo" || return 1
+        mp_ready+=("t session open ${(q)repo} ${(q)slot} --cli --local")
+        _t_resume_history_registered "$repo" || {
+          _t_resume_batch_stop 1 "$mp_identity" "$mp_retry" 'repository registration unavailable after launch' "$mp_remaining" "${mp_ready[@]}"
+          return 1
+        }
         if [[ -z $mp_first_repo ]]; then
           mp_first_repo=$repo; mp_first_slot=$slot
         else
@@ -828,16 +878,18 @@ _t_resume() {
         continue
       fi
       if [[ -n ${mp_taken[$repo/$slot]:-} ]]; then
-        echo "· ${sid:0:8}: $repo slot $slot already revived by an earlier mark — skipped (t session resume $repo $slot swaps it)." >&2
-        continue
+        _t_resume_batch_stop 1 "$mp_identity" "$mp_retry" 'slot already used by an earlier selection' "$mp_remaining" "${mp_ready[@]}"
+        return 1
       fi
       if [[ -n $on_host ]]; then
         # every mark lands DETACHED on the host; the first is attached below
         mp_taken[$repo/$slot]=1
         echo "Resuming ${sid:0:8} ($repo $slot) on $on_host"
         mp_session=$(_t_resume_on_host "$on_host" "$sid" "$wt" "$mp_agent" detach) || {
-          mp_rc=$?; (( mp_rc == 130 )) && return 130
-          _t_warn "$repo $slot: landing on $on_host failed — ${mp_session:-no output}; skipped"; continue; }
+          mp_rc=$?; _t_resume_batch_stop "$mp_rc" "$mp_identity" "$mp_retry" "landing on $on_host failed; see diagnostic above" "$mp_remaining" "${mp_ready[@]}"
+          return "$mp_rc"
+        }
+        mp_ready+=("t session open ${(q)${${mp_session#dev-}%-*}} ${(q)${mp_session##*-}} --cli --host ${(q)on_host}")
         if [[ -z $mp_first_repo ]]; then
           mp_first_repo=$repo; mp_first_slot=$slot; mp_first_session=$mp_session
         else
@@ -846,18 +898,19 @@ _t_resume() {
         continue
       fi
       if ! mp_cwd=$(_dev_ensure_session_cwd "$wt"); then
-        echo "· $repo $slot: couldn't rebuild its worktree ($wt) — skipped." >&2
-        continue
+        _t_resume_batch_stop 1 "$mp_identity" "$mp_retry" 'could not rebuild worktree; see diagnostic above' "$mp_remaining" "${mp_ready[@]}"
+        return 1
       fi
       mp_taken[$repo/$slot]=1
       mp_session="dev-${repo}-${slot}"
       echo "Resuming ${sid:0:8} in $mp_session ($mp_cwd)"
       _dev_resume_session "$mp_session" "$mp_cwd" "$sid" "$mp_agent" || {
-        mp_rc=$?; (( mp_rc == 130 )) && return 130
-        _t_warn "$repo $slot: launch failed; this conversation was not resumed — skipped"
+        mp_rc=$?
         unset 'mp_taken[$repo/$slot]'
-        continue
+        _t_resume_batch_stop "$mp_rc" "$mp_identity" "$mp_retry" 'conversation launch failed; see diagnostic above' "$mp_remaining" "${mp_ready[@]}"
+        return "$mp_rc"
       }
+      mp_ready+=("t session open ${(q)repo} ${(q)slot} --cli --local")
       if [[ -z $mp_first_repo ]]; then
         mp_first_repo=$repo; mp_first_slot=$slot
       else
@@ -886,11 +939,11 @@ _t_resume() {
         app:here) mp_live_cmd="t open ${(q)mp_live_repo} ${(q)mp_live_slot} --app" ;;
         *)        mp_live_cmd="t open ${(q)mp_live_repo} ${(q)mp_live_slot} --cli --host ${(q)mp_live_loc}" ;;
       esac
-      _dev_open_tab "$mp_live_cmd" || mp_unopened+=("$mp_live_cmd")
+      _dev_open_tab "$mp_live_cmd" || {
+        _t_resume_batch_stop 1 'terminal tabs' 't session resume' 'could not open selected owner tabs' 0 "${mp_ready[@]}"
+        return 1
+      }
     done
-    if (( $#mp_unopened )); then
-      echo "Also selected — attach with: ${(j: · :)mp_unopened}"
-    fi
     if [[ -n $mp_live_first ]]; then
       mp_live_fields=("${(@ps:\t:)mp_live_first}")
       mp_live_loc=$mp_live_fields[1]; mp_live_repo=$mp_live_fields[2]
@@ -909,11 +962,13 @@ _t_resume() {
       # first blocking ssh attach; provide commands if GUI tabs are unavailable.
       for mp_pair in "${(@)mp_rest}"; do
         mp_live_cmd="t open ${(q)${mp_pair%% *}} ${(q)${mp_pair##* }} --cli --host ${(q)on_host}"
-        _dev_open_tab "$mp_live_cmd" || mp_unopened+=("$mp_live_cmd")
+        _dev_open_tab "$mp_live_cmd" || {
+          _t_resume_batch_stop 1 'terminal tabs' 't session resume' 'could not open resumed session tabs' 0 "${mp_ready[@]}"
+          return 1
+        }
       done
-      (( $#mp_unopened )) && echo "Also landed on $on_host — attach with: ${(j: · :)mp_unopened}"
       if [[ -t 0 && -t 1 ]]; then
-        ssh -t "${REMOTE_HOSTS[$on_host]:-$on_host}" "zsh -lic ${(q):-tmux attach -t $mp_first_session}"
+        ssh -t "${REMOTE_HOSTS[$on_host]:-$on_host}" "zsh -lic ${(qq):-tmux attach -t $mp_first_session}"
       else
         echo "Attach with: t session open ${${mp_first_session#dev-}%-*} ${mp_first_session##*-} --host $on_host"
       fi
@@ -927,18 +982,19 @@ _t_resume() {
     # Inside tmux / no TTY the first cannot attach here either, so it gets a
     # tab too.
     for mp_pair in "${(@)mp_rest}"; do
-      _dev_open_tab "t open $mp_pair" || mp_unopened+=("t open $mp_pair")
+      _dev_open_tab "t open $mp_pair" || {
+        _t_resume_batch_stop 1 'terminal tabs' 't session resume' 'could not open resumed session tabs' 0 "${mp_ready[@]}"
+        return 1
+      }
     done
-    if (( $#mp_unopened )); then
-      echo "Also revived — attach with: ${(j: · :)mp_unopened}"
-      [[ -z ${SSH_CONNECTION:-} ]] \
-        && echo "(tabs need a local Terminal.app/iTerm2 GUI; Terminal.app also needs Accessibility — System Settings → Privacy & Security)" >&2
-    fi
     if [[ -z $TMUX && -t 0 && -t 1 ]]; then
       tmux attach-session -t "=dev-${mp_first_repo}-${mp_first_slot}:"
     else
       _dev_open_tab "t open $mp_first_repo $mp_first_slot" \
-        || echo "Attach with: t session open $mp_first_repo $mp_first_slot"
+        || {
+          _t_resume_batch_stop 1 'terminal tab' 't session resume' 'could not open resumed session' 0 "${mp_ready[@]}"
+          return 1
+        }
     fi
     return
   fi
@@ -1872,7 +1928,12 @@ _t_app_pull_slot() {
   [[ $codex_home == /* && -d $codex_home ]] || {
     print -u2 -- 't app pull: the selected Codex home is unavailable'; return 1
   }
-  launch="export CODEX_HOME=${(q)codex_home}; exec codex resume ${(q)sid} --cd ${(q)dir} --no-daemon"
+  local resume_command
+  resume_command=$(CODEX_HOME="$codex_home" _dev_agent_resume_cmd codex "$sid" --cd "$dir") || {
+    print -u2 -- 't app pull: could not prepare the guarded resume command'; return 1
+  }
+  [[ -n $resume_command ]] || { print -u2 -- 't app pull: empty guarded resume command'; return 1; }
+  launch="export CODEX_HOME=${(q)codex_home}; exec $resume_command"
   local fg_sid fg_rest fg_cwd
   while IFS=$'\t' read -r fg_sid fg_rest; do
     fg_cwd=${fg_rest%%$'\t'*}
@@ -2154,6 +2215,9 @@ _dev_resume_session_claimed() {
   fi
   _dev_start_session_command "$session" "$resume_command" || { tmux kill-session -t "=$session:"; return 1; }
   _dev_launch_startup_check "$session" "$logfile" || return 1
+  if [[ $5 == history ]]; then
+    _t_history_owner "${session#dev-}" "$sid" "$dir" "$agent" wait >/dev/null || return $?
+  fi
   _dev_history_record "$sid" "$agent" "$dir" resume
   _dev_recovery_watch "$session"
 }
@@ -2871,14 +2935,14 @@ _t_beam() {
     [[ -n $detach ]] && relay+=(--detach)
     [[ -n $pick ]] && relay+=(--pick)
     [[ -n $all ]] && relay+=(--all)
-    local relay_cmd="T_NO_UPDATE_CHECK=1 _T_BEAM_HOST_IS_TARGET=1 T_MOVE_EXPECT_ROW=${(q)${T_MOVE_EXPECT_ROW:-}} _t_beam ${(j: :)${(@q)relay}}"
+    local relay_cmd="(( \$+functions[_t_handoff_check] )) || { print -u2 't: update t on the source host before cross-host handoff'; return 1; }; _T_HANDOFF_CODEX=${(q)${_T_HANDOFF_CODEX:-${DEV_HANDOFF[codex]:-native}}} _T_HANDOFF_CLAUDE=${(q)${_T_HANDOFF_CLAUDE:-${DEV_HANDOFF[claude]:-t}}} T_NO_UPDATE_CHECK=1 _T_BEAM_HOST_IS_TARGET=1 T_MOVE_EXPECT_ROW=${(q)${T_MOVE_EXPECT_ROW:-}} _t_beam ${(j: :)${(@q)relay}}"
     # Selection on the source needs its own terminal, including detached moves.
     if [[ -t 0 && -t 1 ]]; then
-      ssh -t "$source_target" "zsh -lic ${(q)relay_cmd}"
+      ssh -t "$source_target" "zsh -lic ${(qq)relay_cmd}"
     else
       [[ -n $sid_arg || ${relay[2]:-} == <-> ]] || { print -u2 'tbeam: source selection requires a terminal; name a repo and slot or --session ID'; return 1; }
       [[ -n $detach ]] || { print -u2 'tbeam: nonterminal moves require --detach'; return 1; }
-      ssh "$source_target" "zsh -lic ${(q)relay_cmd}"
+      ssh "$source_target" "zsh -lic ${(qq)relay_cmd}"
     fi
     return
   fi
@@ -3011,7 +3075,13 @@ _t_beam() {
   # origin (a dev slot) we kill-session it instead — see the two blocks below.
   local sid cwd self_move= agent=claude self_sid
   self_sid=$(_dev_self_sid)
-  if [[ -n $repo_arg && -n $slot_arg && -z $pick ]]; then
+  if [[ -n ${T_MOVE_EXPECT_ROW:-} ]]; then
+    local -a selected_fields=("${(@ps:\t:)T_MOVE_EXPECT_ROW}")
+    sid=$selected_fields[1]; cwd=$selected_fields[2]; agent=$selected_fields[7]
+    [[ $sid_arg == "$sid" && $agent == (claude|codex) ]] || {
+      print -u2 't session move: selected session changed or closed; select it again'; return 1;
+    }
+  elif [[ -n $repo_arg && -n $slot_arg && -z $pick ]]; then
     local slot=$slot_arg
     local session="dev-${repo_arg}-${slot}"
     tmux has-session -t "=$session:" 2>/dev/null || { echo "tbeam: no such session: $session" >&2; return 1; }
@@ -3068,8 +3138,9 @@ _t_beam() {
             $current_fields[3] == "$expected_fields[3]" && $current_fields[7] == "$agent" &&
             $current_fields[4] == (attached|detached) ]]; then matched=1; break; fi
     done
-    [[ -n $matched ]] || { print -u2 't remote move: selected session changed or closed; select it again'; return 1; }
+    [[ -n $matched ]] || { print -u2 't session move: selected session changed or closed; select it again'; return 1; }
   fi
+  _t_handoff_check "$agent" here "$host" || return $?
   if _dev_app_slot_reserved "$cwd"; then
     print -u2 -- "tbeam: $cwd is reserved for the Codex desktop app; close it and release the reservation before moving its conversation"
     return 1

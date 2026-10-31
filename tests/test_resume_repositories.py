@@ -72,7 +72,7 @@ def test_remote_catalog_queries_distinct_targets_and_deduplicates_identity(app, 
     output = list(app.resume_candidates(['--all']))
     assert len(calls) == 2 and len(output) == 1
     fields = output[0].split('\t')
-    assert fields[1] == fields[-1] == 'org/remote'
+    assert fields[1] == fields[10] == 'org/remote'
     assert {s['host'] for s in app.store.records()[0]['sources']} == {'first', 'second'}
     assert not app.cfg.repos
 
@@ -248,7 +248,7 @@ def test_cancel_remoteonly_picker_never_prepares_or_registers(zsh):
 def test_remoteonly_prepare_refreshes_actual_alias_before_host_route(zsh):
     row = '\t'.join([str(int(time.time())), 'org/remote', '3', 'saved', '/gone/tree', 'Today', 'Remote work', 'peer', 'codex', '-', 'org/remote'])
     rc = zsh.home / 'selected-registration.zsh'
-    setup = ('DEV_REPOS=(); T_LOCAL_RC=' + shlex.quote(str(rc)) + '; '
+    setup = ('DEV_HANDOFF[codex]=t; DEV_REPOS=(); T_LOCAL_RC=' + shlex.quote(str(rc)) + '; '
         '_t_resume_history_candidates() { print -r -- ' + shlex.quote(row) + '; }; '
         '_t_resume_history_launch() { print -r -- "DEV_REPOS[remote]=$HOME/code/remote" > "$T_LOCAL_RC"; print "dev-remote-17\t/prepared/remote-17"; }; '
         '_t_resume_on_host() { [[ -n ${DEV_REPOS[remote]:-} ]] || return 99; print -u2 -- "LAND $*"; print dev-remote-17; }; ')
@@ -331,7 +331,7 @@ def test_exact_identity_scope_discovers_orphan_history_without_checkout(app, his
     rows = list(app.resume_candidates(['org/project']))
     assert len(rows) == 1
     fields = rows[0].split('\t')
-    assert fields[3] == 'wanted' and fields[1] == fields[-1] == 'org/project'
+    assert fields[3] == 'wanted' and fields[1] == fields[10] == 'org/project'
     assert not app.cfg.repos
 
 

@@ -56,6 +56,8 @@ def desktop_close(t_mod, tmp_path, monkeypatch):
                                   capture_output=True)
         if argv[0] == "ps":
             return subprocess.CompletedProcess(argv, 0, "", "")
+        if argv[0] == "lsof":
+            return subprocess.CompletedProcess(argv, 1, "", "")
         if argv[0] == "zsh":
             return subprocess.CompletedProcess(argv, 0, "", "")
         raise AssertionError(argv)

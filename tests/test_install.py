@@ -424,7 +424,8 @@ def test_parity_matrix_is_available_in_its_help_topic(t_mod, capsys):
     assert t_mod.main(["help", "agents"]) == 0
     help_text = capsys.readouterr().out
     for ln in t_mod._agent_parity_render():
-        assert ln in help_text
+        # Help wraps the reference table to the terminal width.
+        assert " ".join(ln.split()) in " ".join(help_text.split())
     assert "surface" not in t_mod.build_parser().format_help()
 
 

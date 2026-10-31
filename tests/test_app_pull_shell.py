@@ -20,6 +20,8 @@ SID = "12345678-1234-1234-1234-123456789abc"
         ("app_only", True, "respawn-pane"),
         ("shell", True, "new-window"),
         ("no_marker", False, None),
+        ("resume_failure", False, None),
+        ("empty_resume", False, None),
         ("alias", False, None),
         ("duplicate", False, None),
         ("other_owner", False, None),
@@ -50,8 +52,11 @@ def test_app_pull_preserves_ownership_until_verified(tmp_path, case, ok, launch)
     calls = tmp_path / "calls"
     expected = "-" if case in ("missing", "app_only") else SID
     script = f'''
+source {shlex.quote(str(ROOT / 'zsh/agent.zsh'))}
 source {shlex.quote(str(ROOT / 'zsh/resume.zsh'))}
 case={shlex.quote(case)}
+[[ $case == resume_failure ]] && _dev_agent_resume_cmd() {{ return 1; }}
+[[ $case == empty_resume ]] && _dev_agent_resume_cmd() {{ return 0; }}
 _test_marker={shlex.quote(str(marker))}
 calls={shlex.quote(str(calls))}
 launched=0

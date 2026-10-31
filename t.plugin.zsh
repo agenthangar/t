@@ -1,15 +1,35 @@
 # Source this file from ~/.zshrc after putting the installed t binary on PATH.
-# Its path is resolved afresh on every source, including after t update switches
-# the installed links between the canonical checkout and a development worktree.
+# Development selection follows this shell's current worktree; shared links
+# always retain the normal installation.
 _t_load_plugin() {
-  local entry="${${(%):-%x}:A}" bin resolved common
+  local entry="${${(%):-%x}:A}" bin resolved common selected
   # %x in a function is its definition file; resolve that file, not a cached root.
   entry="${${(%):-%x}:A}"
+  if [[ -r ${entry:h}/libexec/t_dev.py ]]; then
+    bin=$(whence -p t 2>/dev/null)
+    resolved="${bin:A:h:h}"
+    if [[ -n $bin && -r $resolved/libexec/t_dev.py ]]; then
+      selected=$(python3 "${entry:h}/libexec/t_dev.py" "$resolved" --explicit)
+    else
+      selected=$(python3 "${entry:h}/libexec/t_dev.py" "${entry:h}")
+    fi
+    if [[ -n $selected && $selected != ${entry:h} && -r $selected/t.plugin.zsh ]]; then
+      source "$selected/t.plugin.zsh"
+      return $?
+    fi
+  fi
   typeset -g T_HOME="${entry:h}"
+  typeset -g _T_CANONICAL_HOME="$T_HOME"
+  common=
+  [[ -e $T_HOME/.t-release-version ]] || common=$(git -C "$T_HOME" rev-parse --git-common-dir 2>/dev/null)
+  if [[ -n $common ]]; then
+    [[ $common == /* ]] || common="$T_HOME/$common"
+    [[ ${common:A:t} == .git ]] && _T_CANONICAL_HOME="${common:A:h}"
+  fi
   export T_HOME T_LOCAL_RC
   # Direct sourcing works in a clean shell; an explicitly earlier t on PATH wins
   # (useful for shell test stubs and custom installs).
-  [[ -n $(whence -p t 2>/dev/null) ]] || export PATH="$PATH:$T_HOME/bin"
+  [[ -n $(whence -p t 2>/dev/null) ]] || export PATH="$PATH:$_T_CANONICAL_HOME/bin"
 
   if [[ ! -w /tmp ]]; then
     export TMPDIR="${TMPDIR:-$HOME/.cache/tmp}"
@@ -46,15 +66,15 @@ _t_load_plugin() {
   if [[ -r $T_HOME/.t-release-version ]]; then
     typeset -g _T_LOADED_HEAD="$(<$T_HOME/.t-release-version)"
   else
-    typeset -g _T_LOADED_HEAD="$(git -C "$T_HOME" rev-parse HEAD 2>/dev/null)"
+    typeset -g _T_LOADED_HEAD="$(command git -C "$T_HOME" rev-parse HEAD 2>/dev/null)"
   fi
 }
 
-# Protect both selected and canonical t code plus an explicit dotfiles live tree.
+# Selecting development helpers must not turn that worktree into the live tree.
 _t_tree_is_live() {
   local tree=$1 common
   [[ -n $tree && -d $tree ]] || return 1
-  [[ ${tree:A} == ${T_HOME:A} ]] && return 0
+  [[ ${tree:A} == ${_T_CANONICAL_HOME:A} ]] && return 0
   [[ -n ${T_DOTFILES_LIVE_TREE:-} && ${tree:A} == ${T_DOTFILES_LIVE_TREE:A} ]] && return 0
   [[ -r $T_HOME/.t-release-version ]] && return 1
   common=$(git -C "$T_HOME" rev-parse --git-common-dir 2>/dev/null)
@@ -67,6 +87,9 @@ _t_reload() {
   local bin root plugin
   bin=$(whence -p t 2>/dev/null)
   [[ -n $bin ]] && root="${bin:A:h:h}"
+  if [[ -r $root/libexec/t_dev.py ]]; then
+    root=$(python3 "$root/libexec/t_dev.py" "$root" --explicit)
+  fi
   plugin="$root/t.plugin.zsh"
   [[ -r $plugin ]] || plugin="$T_HOME/t.plugin.zsh"
   [[ -r $plugin ]] || { print -u2 -r -- "t: shell integration is missing; source the installed t.plugin.zsh from ~/.zshrc"; return 1; }
@@ -78,12 +101,17 @@ _t_reload_if_moved() {
   local bin root plugin head
   bin=$(whence -p t 2>/dev/null)
   [[ -n $bin ]] && root="${bin:A:h:h}"
+  if [[ -r $root/libexec/t_dev.py ]]; then
+    root=$(python3 "$root/libexec/t_dev.py" "$root" --explicit)
+  fi
   plugin="$root/t.plugin.zsh"
   [[ -r $plugin ]] || plugin="$T_HOME/t.plugin.zsh"
   if [[ -r ${plugin:h}/.t-release-version ]]; then
     head="$(<${plugin:h}/.t-release-version)"
   else
-    head=$(git -C "${plugin:h}" rev-parse HEAD 2>/dev/null)
+    # User shell wrappers must not turn an unchanged source into a reload and
+    # discard invocation-local settings or function overrides.
+    head=$(command git -C "${plugin:h}" rev-parse HEAD 2>/dev/null)
   fi
   [[ $plugin == $_T_LOADED_PLUGIN && $head == $_T_LOADED_HEAD ]] && return 0
   _t_reload
@@ -98,4 +126,4 @@ _stat_birth() {
 }
 
 _t_load_plugin || return $?
-unfunction _t_load_plugin
+unfunction _t_load_plugin 2>/dev/null || true

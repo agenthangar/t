@@ -19,6 +19,13 @@ _t_with_progress() {
   local _T_SPINNING=1 spin_pid spin_err
   spin_err=$(mktemp "${TMPDIR:-/tmp}/t-progress.XXXXXX") || { "$@"; return $?; }
   (
+    # This disposable child exits on every completed operation. Inherited
+    # zshexit hooks (including Terminal.app's session/history saver) belong to
+    # the caller, not the spinner. Keep the caller's hooks and history intact.
+    zshexit_functions=()
+    unfunction zshexit 2>/dev/null || :
+    unfunction TRAPEXIT 2>/dev/null || :
+    trap - EXIT
     trap 'exit 0' TERM INT HUP
     command sleep 0.25
     local frame=1 width=$(( ${COLUMNS:-80} - 7 ))
@@ -982,6 +989,7 @@ _dev_attach_fg() {
   fi
   tsess=${sel%%$'\t'*}
   label=$(print -r -- "$sel" | awk -F'\t' '{print $5}')
+  _dev_workflow_attach "${sel##*$'\t'}"
   echo "Attaching $label in place (tmux session $tsess)"
   if [[ ! -t 1 || -n $CLAUDE_CODE_SESSION_ID ]]; then
     echo "  Attach: tmux attach -t $tsess"       # no TTY, or we are inside an agent
@@ -1433,9 +1441,9 @@ _dev_session_rows_impl() {
 # source behind `dev ls -r`. Remote hosts are scanned IN PARALLEL over ssh
 # (background jobs → temp files → `wait`) with a short ConnectTimeout + BatchMode so
 # a sleeping/offline Mac is skipped fast and noted on stderr, never waited on. Each
-# host's ssh exit code is stashed in a `.rc` file so we can tell "unreachable"
-# (rc 255) from "reachable but the scan errored" (e.g. rc 127 → stale dotfiles), and
-# warn accordingly. local-first; within a host, _dev_session_rows' own order holds.
+# host's ssh exit code and stderr are retained so failures report their actual
+# diagnostic; rc 255 alone cannot establish that a machine is offline.
+# Local-first; within a host, _dev_session_rows' own order holds.
 # Rows are prefixed verbatim (no re-splitting), so empty fields can't collapse.
 _dev_remote_scan_with_timeout() {
   local target=$1 remote_command=$2 limit=${3:-15} diagnostics=$4
@@ -1444,7 +1452,7 @@ import subprocess, sys
 target, command, limit, diagnostics = sys.argv[1:]
 try:
     result = subprocess.run(["ssh", "-o", "ConnectTimeout=3", "-o", "BatchMode=yes",
-                             target, command], timeout=float(limit), stdout=sys.stdout,
+                             target, command], timeout=float(limit), stdin=subprocess.DEVNULL, stdout=sys.stdout,
                             stderr=None if diagnostics else subprocess.DEVNULL)
 except subprocess.TimeoutExpired:
     sys.exit(124)
@@ -1488,12 +1496,13 @@ _dev_rows_all_impl() {
   scan_pids+=($!)
   local scan=_dev_session_rows remote_scan
   [[ ${1:-} == --details ]] && scan+=' --details'
+  [[ ${1:-} == --repo ]] && scan=$(_dev_repo_rows_command "$2" "$3")
   remote_scan="zsh -lic ${(q)scan}"
   local h
   for h in ${(k)REMOTE_HOSTS}; do
     ( local scan_rc=0
-      _dev_remote_scan_with_timeout "${REMOTE_HOSTS[$h]}" "$remote_scan" "${T_REMOTE_SCAN_TIMEOUT:-15}" \
-        > "$tmpd/$h" 2>/dev/null || scan_rc=$?
+      _dev_remote_scan_with_timeout "${REMOTE_HOSTS[$h]}" "$remote_scan" "${T_REMOTE_SCAN_TIMEOUT:-15}" 1 \
+        > "$tmpd/$h" 2> "$tmpd/$h.stderr" || scan_rc=$?
       print -r -- $scan_rc > "$tmpd/$h.rc" ) &
     scan_pids+=($!)
   done
@@ -1523,20 +1532,31 @@ _dev_rows_all_impl() {
       file="$tmpd/$host"
       rc=$(< "$tmpd/$host.rc" 2>/dev/null)
       [[ $rc == 130 ]] && return 130
-      if [[ -z $rc || $rc == 255 ]]; then          # ssh-level failure = unreachable
-        _t_warn "dev: $host unreachable — skipped"
-        failed=1
-        continue
-      elif [[ $rc == 124 ]]; then
-        _t_warn "dev: $host session scan timed out — skipped"
-        failed=1
-        continue
-      elif [[ $rc == 127 ]]; then                  # command or shell integration missing
-        _t_warn "dev: $host scan failed (rc=127; install or update t's shell integration there) — skipped"
-        failed=1
-        continue
-      elif [[ $rc != 0 ]]; then                    # reachable, but the scan errored
-        _t_warn "dev: $host scan failed (rc=$rc) — skipped"
+      if [[ ${1:-} == --repo && $rc == 2 ]]; then
+        _t_warn "dev: $host repository selector is ambiguous; no conversation was selected"
+        return 2
+      fi
+      if [[ $rc != 0 ]]; then
+        if [[ -z $rc ]]; then
+          _t_warn "dev: $host session scan failed (worker status missing) — skipped"
+        elif [[ $rc == 255 ]]; then
+          _t_warn "dev: $host SSH session scan failed (rc=255) — skipped"
+        elif [[ $rc == 124 ]]; then
+          _t_warn "dev: $host session scan timed out — skipped"
+        elif [[ $rc == 127 ]]; then
+          _t_warn "dev: $host scan failed (rc=127; install or update t's shell integration there) — skipped"
+        else
+          _t_warn "dev: $host scan failed (rc=$rc) — skipped"
+        fi
+        # Bounded, single-line, terminal-safe stderr; never mix it into wire rows.
+        local diagnostic
+        diagnostic=$(python3 -c '
+import sys
+with open(sys.argv[1], "rb") as stream:
+    text = stream.read(1024).decode("utf-8", errors="replace")
+print("".join(c if c.isprintable() else " " for c in text), end="")
+' "$tmpd/$host.stderr" 2>/dev/null)
+        [[ -z $diagnostic ]] || _t_warn "dev: $host SSH diagnostic: $diagnostic"
         failed=1
         continue
       fi
@@ -1791,12 +1811,13 @@ _dev_kill_fg() {
 # can have a different commit id, so accept an identical first-parent main tree
 # or the exact head recorded for a merged PR in the existing state cache.
 _dev_kill_no_pending_work() {
-  local cwd="$1" head main base tree trees dirty origin slug file cache
+  local cwd="$1" head main base tree trees dirty origin slug file cache origin_base
   [[ -d $cwd && -e $cwd/.git ]] || return 1
   dirty=$(git -C "$cwd" status --porcelain --untracked-files=all 2>/dev/null) || return 1
   [[ -z $dirty ]] || return 1
   head=$(git -C "$cwd" rev-parse --verify HEAD 2>/dev/null) || return 1
-  main=$(git -C "$cwd" rev-parse --verify refs/remotes/origin/main 2>/dev/null)
+  origin_base=$(_dev_origin_base "$cwd")
+  main=$(git -C "$cwd" rev-parse --verify "refs/remotes/$origin_base" 2>/dev/null)
   if [[ -n $main ]]; then
     git -C "$cwd" merge-base --is-ancestor "$head" "$main" 2>/dev/null && return 0
     base=$(git -C "$cwd" merge-base "$head" "$main" 2>/dev/null)
@@ -1936,9 +1957,15 @@ _dev_kill_pick() {
     'unattached · no pending work' "$(_dev_agent_legend)" '' \
     --prompt="kill ${repo:+$repo }> " --preview='printf "%s\n" {4}') || return $?
   [[ -n $picked ]] || return 130
+  _dev_kill_selected "$picked"
+}
+
+# Close exact picker identities, retaining ownership guards for every caller.
+_dev_kill_selected() {
+  local picked="$1"
   # Enter in the kill picker authorizes the complete selection. Keep all
   # ownership checks, but do not ask again for each local or remote target.
-  force=1
+  local force=1 host label state line target rcmd
   local rc=0 prepo slot action_rc
   for line in "${(@f)picked}"; do
     host=${line%%$'\t'*}
@@ -1958,7 +1985,7 @@ _dev_kill_pick() {
              && { [[ $state != app ]] || ! _dev_app_slot_reserved "$(_dev_worktree_path "$prepo" "$slot")"; }; then
           print -u2 -- "t kill: $label is no longer here"; rc=1; continue
         fi
-        _dev_kill "$prepo" "$slot" "$force" || action_rc=$?
+        _dev_kill_local_selected "$prepo" "$slot" "$force" || action_rc=$?
       fi
       (( action_rc == 130 )) && return 130
       (( action_rc )) && rc=1
@@ -1966,12 +1993,11 @@ _dev_kill_pick() {
       target="${REMOTE_HOSTS[$host]:-}"
       [[ -n $target ]] || { print -u2 -- "t kill: host '$host' is no longer configured"; rc=1; continue; }
       if [[ $label == *:* ]]; then
-        rcmd="T_UPDATE_PROMPTED=\$\$ t kill ${(q)label}"
+        rcmd="REMOTE_HOSTS=(); _dev_kill_fg ${(q)label} 1"
       else
         prepo=${label%-*}; slot=${label##*-}
-        rcmd="T_UPDATE_PROMPTED=\$\$ t kill ${(q)prepo} ${(q)slot}"
+        rcmd="REMOTE_HOSTS=(); _dev_kill ${(q)prepo} ${(q)slot} 1"
       fi
-      [[ -n $force ]] && rcmd+=' -y'
       print -r -- "→ Killing $host:$label"
       _term_title "$host: kill $label"
       action_rc=0
@@ -1982,6 +2008,12 @@ _dev_kill_pick() {
     fi
   done
   return $rc
+}
+
+# A selected host is final even if its owner disappears during guarded close.
+_dev_kill_local_selected() {
+  local -A REMOTE_HOSTS=()
+  _dev_kill "$@"
 }
 
 # _dev_kill <repo> <slot|all> [force] — tear down dev-<repo>-<slot> sessions.
@@ -2348,19 +2380,48 @@ _dev_new_session_claimed() {
   _dev_recovery_watch "$session"
 }
 
-# Attach-only history action: no generic open path can create a replacement owner.
-_t_history_attach() {
+# Resolve an exact owner. Fresh launches may need time to publish their identity;
+# never accept the prewritten tmux stamp alone or follow a recycled session name.
+_t_history_owner() {
   local label=$1 sid=$2 dir=${3:A} agent=$4 session="dev-$1" actual_sid actual_dir actual_agent immutable
+  local wait_ready=$5 current
+  local -F SECONDS=0
   tmux has-session -t "=$session:" 2>/dev/null || { print -u2 't history: selected owner exited; reopen history'; return 1; }
   local identity
   identity=$(tmux display-message -p -t "=$session:" '#{session_id}|#{session_path}' 2>/dev/null) || return 1
   immutable=${identity%%|*}; actual_dir=${identity#*|}
   [[ $immutable == \$<-> ]] || { print -u2 't history: could not verify selected owner identity'; return 1; }
-  actual_sid=$(_dev_session_sid "$session")
-  actual_agent=$(_dev_agent_of_session "$session")
-  [[ $actual_sid == $sid && ${actual_dir:A} == $dir && $actual_agent == $agent ]] || {
-    print -u2 't history: selected owner changed; reopen history'; return 1
-  }
+  while true; do
+    actual_agent=$(_dev_agent_of_session "$session")
+    actual_sid=$(_dev_session_sid "$session")
+    current=$(tmux display-message -p -t "=$session:" '#{session_id}|#{session_path}' 2>/dev/null) || {
+      print -u2 't history: selected owner exited; reopen history'; return 1
+    }
+    [[ $current == $identity && ${actual_dir:A} == $dir && $actual_agent == $agent &&
+       ( -z $actual_sid || $actual_sid == $sid ) ]] || {
+      print -u2 't history: selected owner changed; reopen history'; return 1
+    }
+    if [[ $wait_ready == wait && $(tmux display-message -p -t "$immutable:" '#{pane_dead}' 2>/dev/null) != 0 ]]; then
+      print -u2 -- "t history: resumed conversation exited during startup; inspect $HOME/.tmux-logs/$session.log"
+      return 1
+    fi
+    [[ -n $actual_sid ]] && { print -r -- "$immutable"; return 0; }
+    [[ $wait_ready == wait ]] || {
+      print -u2 't history: selected owner changed; reopen history'; return 1
+    }
+    if (( SECONDS >= 15 )); then
+      print -u2 -- "t history: resumed conversation identity is not ready; inspect it with: t open ${label%-*} ${label##*-}"
+      return 1
+    fi
+    sleep 0.25
+  done
+}
+
+# Attach-only history action: no generic open path can create a replacement owner.
+_t_history_attach() {
+  local immutable agent=$4
+  immutable=$(_t_history_owner "$@") || return $?
+  _dev_workflow_attach "$agent"
   if [[ -n $TMUX ]]; then tmux switch-client -t "$immutable:"
   else tmux attach-session -t "$immutable:"; fi
 }
@@ -2368,7 +2429,7 @@ _t_history_attach() {
 # t issue holds the repository allocation lock across prepare + launch. These
 # helpers deliberately never reuse a parked worktree or fall back to main.
 _t_issue_prepare() {
-  local repo="$1" agent="$2" start_ref="${3:-origin/main}" slot=1 wt br owner gitdir
+  local repo="$1" agent="$2" start_ref="${3:-}" slot=1 wt br owner gitdir
   local _repo_selector _repo_selector_rc
   _repo_selector=$(_dev_resolve_repo "$repo"); _repo_selector_rc=$?
   (( _repo_selector_rc == 2 )) && return 2
@@ -2378,6 +2439,10 @@ _t_issue_prepare() {
   _dev_agent_check "$agent" || return 1
   command -v tmux >/dev/null || return 1
   git -C "${DEV_REPOS[$repo]}" fetch -q --prune origin || return 1
+  if [[ -z $start_ref ]]; then
+    start_ref=$(_dev_origin_base "${DEV_REPOS[$repo]}") || return 1
+    start_ref="refs/remotes/$start_ref"
+  fi
   while true; do
     wt=$(_dev_worktree_path "$repo" "$slot") || return 1
     br=$(_dev_worktree_branch "$repo" "$slot")
@@ -2619,7 +2684,7 @@ _t_dev() {
     if [[ -n $no_tmux ]]; then
       _t_pop "$app_session"
     else
-      _t_session_attach "$app_session"
+      _t_session_attach "$app_session" codex
     fi
     return
   fi
@@ -2827,7 +2892,7 @@ _t_dev() {
     # resume logging if it stopped (e.g. after server restart)
     tmux pipe-pane -t "=$session:" -o "cat >> $logfile"
     _dev_recovery_watch "$session"
-    _t_session_attach "$session" || {
+    _t_session_attach "$session" "$live_agent" || {
       print -u2 -- "t open: could not attach $session; inspect $logfile"
       return 1
     }
@@ -2847,7 +2912,7 @@ _t_dev() {
     local agent_note=; [[ $agent != claude ]] && agent_note=" · $agent"
     echo "Starting $session in $dir$agent_note (logging to $logfile)"
     _dev_new_session "$session" "$dir" "$branch" "$skip_prepare" "$agent" || return 1
-    _t_session_attach "$session" || {
+    _t_session_attach "$session" "$agent" || {
       print -u2 -- "t open: $session did not remain available; inspect $logfile"
       return 1
     }
@@ -2856,6 +2921,7 @@ _t_dev() {
 
 # MCP lifecycle calls leave the existing or newly created slot detached.
 _t_session_attach() {
+  _dev_workflow_attach "${2:-}"
   if [[ ${T_MCP_DETACHED:-0} == 1 ]]; then
     tmux has-session -t "=$1:" || return 1
     print -r -- "Available: $1 (detached control; existing viewers unchanged)"

@@ -37,7 +37,7 @@ REQUIRED = (
     "local.zsh.example", "bin/t", "bin/claude-stamp-tmux", "bin/cursor-beam",
     "LICENSE", "README.md", "ui/fzf.sh", "libexec/t_app_window.py",
     "libexec/t_desktop.py", "libexec/t_session_details.py", "libexec/t_markdown.py", "libexec/t_recovery.py",
-    "libexec/t_local_worker.py", "libexec/t_local_setup.py",
+    "libexec/t_resume_source.py", "libexec/t_local_worker.py", "libexec/t_local_setup.py",
     "libexec/t_share.py", "libexec/t_share_sessions.py",
     "libexec/t_share_context.py", "libexec/t_share_flow.py", "libexec/t_share_launch.py", "libexec/t_share_ui.py", "libexec/vendor/mistune/LICENSE",
     "zsh/config.zsh", "zsh/agent.zsh", "zsh/worktree.zsh",

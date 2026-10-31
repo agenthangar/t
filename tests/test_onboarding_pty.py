@@ -86,8 +86,28 @@ def run_terminal(command, env, cwd, size, actions):
 @pytest.mark.parametrize('keys,code', [(b'q', 130), (b'\x03', 130), (b'j\r', 0)])
 def test_bare_first_run_can_cancel_or_skip_at_terminal_sizes(tmp_path, size, keys, code):
     home, env = sandbox(tmp_path)
-    result, output = run_terminal([sys.executable, str(ROOT / 'bin/t')], env, tmp_path,
-                                  size, [('Welcome to t', keys)])
+    command = [sys.executable, str(ROOT / 'bin/t')]
+    ready = 'Welcome to t'
+    if keys == b'\x03':
+        # SIGINT can interrupt rendering as soon as the title becomes visible.
+        # Signal at the input boundary, as the navigation cancellation tests do.
+        harness = tmp_path / 'first_run.py'
+        harness.write_text('''import importlib.machinery, importlib.util, sys
+loader = importlib.machinery.SourceFileLoader('entry', sys.argv[1])
+spec = importlib.util.spec_from_loader('entry', loader)
+t = importlib.util.module_from_spec(spec)
+loader.exec_module(t)
+read_key = t._RailUI.read_key
+def ready_read_key(self):
+    self.out.write('<test-read-ready>')
+    self.out.flush()
+    return read_key(self)
+t._RailUI.read_key = ready_read_key
+raise SystemExit(t.main([]))
+''')
+        command = [sys.executable, str(harness), str(ROOT / 'bin/t')]
+        ready = '<test-read-ready>'
+    result, output = run_terminal(command, env, tmp_path, size, [(ready, keys)])
     assert result == code, output
     assert 'CONTINUE' in output
     assert not list(home.iterdir()), 'skip/cancel modified the fresh home'
