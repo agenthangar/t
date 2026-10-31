@@ -1512,3 +1512,15 @@ propagation to supported running sessions and registered hosts. Inspect status w
 `t workflow list`; retry pending work with `t workflow sync`.
 Live instruction reload and current-turn model changes cannot be verified or forced.
 See [the terminal contract](ui/README.md) for scope, retries and runtime limits.
+
+
+Run `t workflow` in a terminal to open the workflow editor. Choose a named
+workflow, edit its model steps, work and delivery choices, or text instructions,
+then review and save. Repository assignments and the global default share this
+transaction. Cancel leaves saved settings unchanged.
+
+`t workflow list` prints a read-only summary; `--all` lists named workflows and
+`--json` preserves machine output. Text instructions override the menu choices.
+Delivery choices include trying a local install or preview first, asking before
+pushing or opening a PR, a draft PR, a ready PR without merging, and authorized
+auto-merge. A design preview can also require feedback before implementation.

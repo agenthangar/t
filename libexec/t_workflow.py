@@ -28,6 +28,7 @@ BEHAVIORS = {
     }},
     'preview': {'label': 'Local preview', 'choices': {
         'ui_changes': ('Preview UI changes', 'For UI changes, run the available local preview and inspect the changed UI. Report unavailable preview tools or verification limitations accurately.'),
+        'before_implementation': ('Design preview first', 'For design and UI work, prepare and show a local design preview before substantial implementation. Wait for user feedback before continuing implementation. Report unavailable preview tools or verification limitations accurately.'),
         'on_request': ('Only when requested', 'Run a local preview only when explicitly requested, unless higher-priority instructions require it.'),
     }},
     'validation': {'label': 'Validation', 'choices': {
@@ -36,7 +37,10 @@ BEHAVIORS = {
     }},
     'delivery': {'label': 'Delivery', 'choices': {
         'review': ('Leave for review', 'Leave changes uncommitted for user review unless explicit task instructions or repository rules require otherwise.'),
-        'pull_request': ('Open a pull request', 'Commit, push and open a pull request. This preference alone does not authorize merging.'),
+        'pull_request': ('Open PR when ready; do not merge', 'When implementation and required checks are ready, commit, push and open a pull request without an extra confirmation. Do not merge or enable auto-merge from this preference.'),
+        'draft_pull_request': ('Open a draft PR', 'When implementation and relevant checks are ready, commit, push and open a draft pull request. Leave it as a draft; do not mark it ready, merge or enable auto-merge from this preference.'),
+        'ask_before_pr': ('Wait for approval before PR', 'Complete implementation and relevant checks, present a concrete reviewable result, then wait for explicit user approval before pushing or creating a pull request.'),
+        'local_review': ('Install / preview locally first', 'Complete implementation and relevant checks, then use the documented local install or preview path appropriate to the project so the user can try the result. Respect existing authorization for installation and report unavailable tools accurately. Present how to try it and wait for explicit user feedback and approval before pushing or creating a pull request.'),
         'auto_merge': ('Auto-merge when authorized', 'Commit, push and open a pull request under repository merge policy and required checks. When authorized and supported, enable auto-merge and monitor it through completion; report any blocker accurately.'),
     }},
 }

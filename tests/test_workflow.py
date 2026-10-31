@@ -508,8 +508,8 @@ def test_nested_workflow_commands(workflow, t_mod, monkeypatch, tmp_path, capsys
     monkeypatch.setattr(t_mod, '_t_offer_update', lambda: pytest.fail('list prompted for update'))
     assert t_mod.main([*prefix, 'list']) == 0
     output = capsys.readouterr().out
-    assert 'Scope: global' in output and 'recommended defaults (not saved)' in output
-    assert 'Enabled: yes' in output and all(word in output for word in ('STAGE', 'MODEL', 'EFFORT', 'planning', 'implementation', 'review'))
+    assert 'Workflow for the global default.' in output and 'recommended defaults (not saved)' in output
+    assert 'Enabled: yes' in output and all(word in output for word in ('STEP', 'MODEL', 'REASONING', 'planning', 'implementation', 'review'))
     assert not workflow.config_path().exists()
     for flags in ([], ['--repo', 'api']):
         assert t_mod.main([*prefix, 'list', *flags, '--json']) == 0
@@ -843,8 +843,8 @@ def test_optional_workflow_fields_survive_storage_migration(workflow, version):
 
 
 @pytest.mark.parametrize('key,values', [
-    ('worktree', ['isolated', 'current']), ('preview', ['ui_changes', 'on_request']),
-    ('validation', ['relevant', 'full']), ('delivery', ['review', 'pull_request', 'auto_merge']),
+    ('worktree', ['isolated', 'current']), ('preview', ['ui_changes', 'before_implementation', 'on_request']),
+    ('validation', ['relevant', 'full']), ('delivery', ['review', 'pull_request', 'draft_pull_request', 'ask_before_pr', 'local_review', 'auto_merge']),
 ])
 def test_behavior_options_render_and_copy_independently(workflow, tmp_path, key, values):
     w = workflow
@@ -1005,12 +1005,12 @@ def test_behavior_list_and_raw_show_are_read_only(workflow, t_mod, monkeypatch, 
         assert result['preference_source'] == 'standard' and result['precedence'] == w.PRECEDENCE
         assert t_mod.main([*prefix, 'list', *scope]) == 0
         text = capsys.readouterr().out
-        assert 'Model stages: disabled' in text and 'Current worktree' in text
-        assert 'Precedence:' in text and 'Custom Markdown: present' in text
+        assert 'Model stages: disabled' in text and 'Current working copy' in text
+        assert 'Precedence:' in text and 'Text instructions: present' in text
         assert t_mod.main([*prefix, 'instructions', 'show', *scope]) == 0
         assert capsys.readouterr().out == prose
     assert t_mod.main([*prefix, 'list', '--all']) == 0
-    assert 'Current worktree' in capsys.readouterr().out
+    assert 'Current working copy' in capsys.readouterr().out
     assert [w.snapshot(path) for path in [w.config_path(), *native_paths()]] == before
 
 
@@ -1163,3 +1163,19 @@ def test_first_edit_refuses_concurrently_changed_legacy_rule(workflow):
         w.save(doc, before)
     assert 'Concurrent custom rule' in codex.read_text()
     assert not w.config_path().exists()
+
+
+def test_workflow_print_precedence_and_reasoning(workflow, t_mod, monkeypatch, capsys):
+    monkeypatch.setattr(t_mod, '_workflow', lambda: vars(workflow))
+    doc = workflow.defaults()
+    policy = doc['workflows']['standard']
+    policy['instructions'] = 'Review the local preview before proceeding.'
+    policy['behaviors'] = {'preview': 'before_implementation', 'delivery': 'local_review'}
+    workflow.save(doc, None)
+    cfg = SimpleNamespace(repos={})
+    assert t_mod._cmd_workflow(cfg, SimpleNamespace(workflow=True, workflow_action='list')) == 0
+    text = capsys.readouterr().out
+    assert text.index('Text instructions:') < text.index('Work and delivery:')
+    assert 'Show design; wait for feedback' in text and 'Let me try it locally first' in text
+    assert 'Chosen for the task' in text and 'One level below planning' in text
+    assert 'one-level-lower' not in text and 'Test runners:' in text and 'Propagation:' in text

@@ -888,3 +888,14 @@ The old `config workflow runners` and `config workflow runs` routes remain hidde
 compatibility aliases, as do `workflow runners` and `workflow runs`. Config → Test runners chooses the current global default,
 a named workflow, or a registered repository explicitly; it shares staged workflow
 configuration and the existing review/save/discard flow, with no separate runner store.
+
+
+Bare `t workflow` in a terminal opens the shared RailUI workflow editor. Outside
+a terminal, or with `--help`, it prints group help without writes. `t workflow
+list` stays read-only and never opens the editor. The editor lists named workflows
+and repository assignments, stages all edits, and reviews before saving. Its
+work and delivery menu explains working folders, design previews, checks and
+where delivery stops. Text instructions have higher precedence than those
+choices. List output presents that precedence before choices and humanizes model
+reasoning; the named catalogue avoids repeating complete per-workflow blocks.
+The hidden `t config workflows` compatibility route opens the same editor.

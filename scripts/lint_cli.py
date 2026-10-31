@@ -375,7 +375,7 @@ def check_command_patterns(parser, command_groups, contract, *, root=ROOT):
         errors.append("command patterns must define the ten approved behavior types")
     registry_routes = {" ".join(path): route for path, route in command_routes(command_groups)}
     routes = (set(registry_routes)
-              | {SHARE_COMMAND, "share targets", "share inbox", "share read"})
+              | {SHARE_COMMAND, "share targets", "share inbox", "share read", "workflow"})
     top = _subparsers(parser)
     commands = contract.get("commands", {})
     if set(commands) != routes:
@@ -710,6 +710,10 @@ def check_listing_aliases(module):
         for words in (list(path), alias):
             if not module._command_readonly(words, terminal=True):
                 errors.append(f"{' '.join(words)} must remain read-only without prompts")
+    if module._command_readonly(["workflow"], terminal=True):
+        errors.append("bare workflow in a terminal must open the editor")
+    if not module._command_readonly(["workflow"], terminal=False):
+        errors.append("bare workflow outside a terminal must remain read-only help")
     if module._canonical_argv(["list", "ls"]) != ["ls", "ls"]:
         errors.append("root list must alias ls while preserving repository arguments")
     top = _subparsers(module.build_parser())

@@ -377,7 +377,8 @@ def test_config_group_navigation_retains_focus(t_mod, config_cli, monkeypatch):
         previous = pick(label, rows, **kwargs)
         return previous
     ui.pick = choose
-    for key in ("workflow", "repos", "worktrees", "hosts"):
+    monkeypatch.setattr(t_mod, "_workflow_hub", lambda ui, cfg, **kwargs: visited.append("workflow"))
+    for key in ("repos", "worktrees", "hosts"):
         monkeypatch.setattr(t_mod, "_config_" + key,
                             lambda ui, cfg, key=key: visited.append(key))
     monkeypatch.setattr(t_mod, "_RailUI", lambda: ui)
