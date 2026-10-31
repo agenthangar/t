@@ -479,6 +479,20 @@ _t_open() {
 # Complete current-session picker. Return 2 when there are no candidates, or 3
 # for an explicit new-session request. Cancellation/failure must not start work.
 _t_open_picker() {
+  local picker_rc refreshed=
+  while true; do
+    _t_open_picker_once "$@"; picker_rc=$?
+    if (( picker_rc == 4 )); then
+      refreshed=1
+      continue
+    fi
+    # An emptied list after killing is success, never a request to start work.
+    [[ -n $refreshed && $picker_rc == 2 ]] && return 0
+    return $picker_rc
+  done
+}
+
+_t_open_picker_once() {
   local repo="$1" remote="$2" app="$3" cli="$4" rows row selected scope
   local _repo_selector _repo_selector_rc
   if [[ -z $6 ]]; then
@@ -539,6 +553,12 @@ _t_open_picker() {
     "" "$include_attached" --prompt="open ${repo:+$repo }> " \
     --with-nth=5,4) || return $?
   [[ -n $selected ]] || return 130
+  if [[ $selected == __t_open_kill__$'\n'* ]]; then
+    selected=${selected#*$'\n'}
+    [[ -n $selected ]] || return 130
+    _dev_kill_selected "$selected" || return $?
+    return 4
+  fi
   _t_open_selected "$selected" "$app" "$cli"
 }
 

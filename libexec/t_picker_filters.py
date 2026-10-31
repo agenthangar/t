@@ -133,6 +133,8 @@ def header(profile, mask, filters, hidden, columns, width, sort='turn', enabled=
     compact = width <= 40
     key = lambda text: text.replace('Ctrl-', '^').replace('Alt-', 'M-') if compact else text
     controls = ['Enter/Esc' if compact and profile == 'resume' else f'Enter {profile}/Esc', 'Space/Tab ✓']
+    if profile == 'open':
+        controls[0] = 'Enter/k kill/Esc' if compact else 'Enter open/k kill/Esc'
     if profile != 'open':
         controls.append('Ctrl-/' if compact and profile == 'resume' else 'Ctrl-/ details')
     lines = pack([key(control) for control in controls], width)

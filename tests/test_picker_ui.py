@@ -120,7 +120,7 @@ def picker():
                 picker_cmd = '_t_fzf_multi open "Saved sessions" --delimiter="$(printf "\\t")" --with-nth=-1 --prompt="multi > " < "$HOME/default"'
             prefix = f'. {shlex.quote(str(ROOT / "ui/fzf.sh"))}\n'
             redirect = ' > "$HOME/selected"'
-            if profile in ('public-open', 'public-open-all', 'public-kill'):
+            if profile in ('public-open', 'public-open-all', 'public-open-kill', 'public-kill'):
                 from test_open_picker import ROWS
                 shell = 'zsh -f'
                 env.update(T_NO_UPDATE_CHECK='1', T_NO_AUTORELOAD='1',
@@ -135,6 +135,15 @@ def picker():
                           '_t_dev() { print -r -- "$*" >> "$HOME/selected"; }\n'
                           ': > "$HOME/selected"\n')
                 picker_cmd = 't open --cli' if profile == 'public-open-all' else 't open api --cli'
+                if profile == 'public-open-kill':
+                    prefix += ('functions[_rows_before_kill]=$functions[_dev_session_rows]\n'
+                               '_dev_session_rows() {\n'
+                               '  if [[ -f "$HOME/killed" ]]; then\n'
+                               '    _rows_before_kill "$@" | grep -v api-4\n'
+                               '  else _rows_before_kill "$@"; fi\n'
+                               '}\n'
+                               '_dev_app_slot_reserved() { return 0; }\n'
+                               '_dev_kill() { print -r -- "KILL $*" >> "$HOME/selected"; touch "$HOME/killed"; }\n')
                 if profile == 'public-kill':
                     prefix += 'cd "$HOME"\n_dev_kill_completed_labels() { print -rl api-4 web-6; }\n'
                     picker_cmd = '_dev_kill_pick'
@@ -329,7 +338,8 @@ def test_primary_action_and_focused_row_visible_in_small_viewports(picker, width
     start, wait, keys, finish = picker
     start(width=width, height=height, profile=profile)
     screen = wait('▸')
-    assert 'Enter open · Esc' in screen
+    action = ('Enter/k kill/Esc' if width <= 60 else 'Enter open · k kill · Esc')
+    assert (action if profile == 'filtered' else 'Enter open · Esc') in screen
     assert any('▸' in line and 'api' in line for line in screen.splitlines())
     assert f'{prompt} >' in screen
     assert len(finish()) == 1
@@ -550,3 +560,29 @@ def test_resume_sort_controls_keep_focused_row_and_change_order(picker, width, h
     keys('Up', 'Up')
     wait('Newest web', focused='Newest web')
     assert finish()[0].split('\t')[2] == 'sid1'
+
+
+@pytest.mark.parametrize('width,height', [(80, 24), (44, 20), (32, 12)])
+@pytest.mark.parametrize('marked', [False, True])
+def test_open_kill_key_accepts_focused_or_marked_rows(picker, width, height, marked):
+    start, wait, keys, finish = picker
+    start(width=width, height=height)
+    wait('k kill')
+    if marked:
+        keys('Space', 'Tab')
+        wait('(2)')
+    selected = finish('k')
+    assert selected[0] == '__t_open_kill__'
+    assert [row.split('\t')[1] for row in selected[1:]] == (
+        ['api-2', 'web-4'] if marked else ['api-2'])
+
+
+def test_public_open_kill_refreshes_then_opens_remaining_session(picker):
+    start, wait, keys, finish = picker
+    start(profile='public-open-kill')
+    wait('k kill', focused='4')
+    keys('k')
+    wait('0/0 (0)')
+    keys('C-a')
+    wait('1/1 (0)', focused='2')
+    assert finish() == ['KILL api 4 1', 'api 2 --local']
