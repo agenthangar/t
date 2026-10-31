@@ -2,7 +2,6 @@
 import json
 
 import pytest
-from _picker_helpers import semantic_chrome
 
 from test_agent_seam import zsh  # noqa: F401 — isolated HOME, process table and tmux
 
