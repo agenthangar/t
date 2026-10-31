@@ -1,5 +1,16 @@
 # Command and terminal contract
 
+Development availability is scoped to the caller's t worktree. With a canonical
+Git installation, each `dev/t-*` or `cursor/*` worktree supplies its own executable
+and shell helpers automatically, including subdirectories and invocation-local
+child helpers. Leaving the worktree restores canonical behavior. A custom binary
+earlier on PATH remains authoritative. Development setup (`system update --dev`
+or `T_LINK_DEV=1 ./install.sh`) never relinks global commands or writes hooks,
+prompts, shell startup, MCP registrations, workflow preferences, or settings.
+Normal installs and canonical updates retain their existing integration behavior.
+The installed source selector must be upgraded once for older installations;
+development setup itself never replaces that shared installation.
+
 Every public `t` command and conditional mode has an entry in
 [`command-contract.json`](command-contract.json). That inventory is the source of
 truth for classification and contract tests. Compatibility aliases inherit the

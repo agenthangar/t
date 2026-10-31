@@ -169,7 +169,8 @@ The installer appends a marked t startup block to `${ZDOTDIR:-$HOME}/.zshrc`,
 creating the file when needed and preserving existing content. Previously documented
 startup snippets are retained without adding a second plugin source. It prints an exact
 `source` command for the current terminal; a new interactive zsh loads t automatically.
-The block follows `~/bin/t`, including development worktrees and Homebrew upgrades.
+The block follows `~/bin/t` and Homebrew upgrades. A canonical Git installation
+automatically selects the current t development worktree without changing that link.
 Links-only updates do not edit shell startup files.
 
 For an older or incomplete installation, run:
@@ -1376,8 +1377,17 @@ git clone https://github.com/agenthangar/t.git ~/code/t
 
 For a Git installation, `t system update` fetches and fast-forwards `main`. The canonical
 clone stays on `main`; develop in a session worktree (`t session open t` after
-registering the t repository). From that worktree, `t system update --dev` makes its files
-live. Ordinary `t system update` switches back without resetting or removing the worktree.
+registering the t repository). Inside each `dev/t-*` or `cursor/*` worktree,
+`t` automatically uses that worktree's CLI and shell helpers. Two sessions can
+develop independently; commands outside those worktrees keep using canonical main.
+`t system update --dev` confirms scoped development availability and changes no
+shared links, hooks, prompts, settings, or shell startup. No combined preview or
+activation command is needed. Child helpers retain their command's source even
+when they change directory; a tmux server cannot retain that source for other sessions.
+Existing installations need this source-selection support installed once before
+automatic selection works. A development installer does not upgrade an older
+canonical installation. Ordinary `t system update` updates canonical main without
+resetting or removing development worktrees.
 Dirty or divergent canonical checkouts are refused. Avoid editing canonical main:
 its files are the installed command. A full install enables a repository-local
 pre-commit hook to guard that live checkout. If you already set `core.hooksPath`,
