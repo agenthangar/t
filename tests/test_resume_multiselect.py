@@ -2,6 +2,7 @@
 
 import pathlib
 import re
+import pytest
 
 import pytest
 
@@ -76,7 +77,8 @@ def test_resume_multi_fg_guard_prevents_any_revive(zsh, tmp_path):
     assert "send-keys" not in (zsh.log.read_text() if zsh.log.exists() else "")
 
 
-def test_resume_multi_all_live_attaches_first_and_tabs_second(zsh, tmp_path):
+@pytest.mark.parametrize('tab_fails', [False, True])
+def test_resume_multi_all_live_attaches_first_and_tabs_second(zsh, tmp_path, tab_fails):
     stub = tmp_path / "stubbin" / "fzf"
     stub.write_text(FZF_ALL)
     stub.chmod(0o755)
@@ -94,8 +96,15 @@ def test_resume_multi_all_live_attaches_first_and_tabs_second(zsh, tmp_path):
         f"print -r -- '-{tab}{wt5}{tab}api-5{tab}detached{tab}active{tab}Second live{tab}claude'; }}; "
         "_dev_open_tab() { echo \"TAB $*\"; }; _t_dev() { echo \"ATTACH $*\"; }; "
     )
+    if tab_fails:
+        shell += '_dev_open_tab() { print -r -- "TAB $*"; return 1; }; '
     r = zsh(shell + "_t_resume api --live; echo rc=$?", _tty=True,
             FZF_LOG=str(tmp_path / "fzf.log"))
+    if tab_fails:
+        assert 'rc=1' in r.stdout and 'ATTACH' not in r.stdout
+        assert 'Ready — attach with: t session open api 4 --cli --local' in r.stdout
+        assert 'Ready — attach with: t session open api 5 --cli --local' in r.stdout
+        return
     assert "rc=0" in r.stdout, r.stdout
     assert ("ATTACH api 4" in r.stdout and "TAB t open api 5 --cli --local" in r.stdout) or (
         "ATTACH api 5" in r.stdout and "TAB t open api 4 --cli --local" in r.stdout

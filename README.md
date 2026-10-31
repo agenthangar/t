@@ -539,7 +539,7 @@ t remote open mini api 2        # attach to this slot on mini
 t remote open mini api --new    # start fresh on mini
 t remote resume mini api        # choose saved history discovered on mini
 t remote resume mini --all       # all repositories, regardless of remote login directory
-t resume t 11                          # select an exact conversation from slot 11 history
+t resume t 11                          # mark conversations with Space/Tab, then Enter
 t session resume --all                  # local and remote-only repositories; clone only after selection
 t session move -r                      # choose current sessions, then their destination
 t session move api 2 -r                # discover the source, then choose its destination

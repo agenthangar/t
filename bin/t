@@ -11988,7 +11988,7 @@ EXPLICIT PUSH AND PULL
 
     sp = sub.add_parser("history", help="browse every conversation associated with a slot",
         description='Browse every conversation associated with a slot. Infer the current repository and slot, or '
-            'choose a slot interactively. Search covers all pages; Enter resumes the selected conversation, '
+            'choose a slot interactively. Space/Tab marks conversations; Enter resumes the selection. '
             'Ctrl-F/B changes page, Ctrl-R refreshes metadata, and Ctrl-/ shows details. Without a terminal, '
             'list only. History never automatically resumes a sole result.',
         help_details="""DETAILS
@@ -12014,9 +12014,12 @@ EXPLICIT PUSH AND PULL
   The details pane opens on larger terminals; Ctrl-/ toggles it and Shift-Up/Down
   scrolls.
 
-  Search covers all pages.
+  Search covers all pages. Search, paging, and refresh clear marks.
+  Extra selections open in new tabs before the first attaches here.
+  Resume errors exit nonzero without reopening the picker; batches stop and
+  report already-resumed conversations.
 
-  Enter resumes the selected conversation; Ctrl-F/B change page, Ctrl-R refreshes
+  Space/Tab marks conversations; Enter resumes marks or focus. Ctrl-F/B change page, Ctrl-R refreshes
   remote metadata, Ctrl-/ shows details, and Escape cancels.
 
   Without a terminal this command lists only.
@@ -12070,8 +12073,8 @@ EXPLICIT PUSH AND PULL
   remain at the top of the picker. Available conversations still resume. Run
   gh auth login --hostname github.com on that host, then retry.
 
-  A plain slot target runs `t session history REPO SLOT`: select one exact
-  conversation, even with only one result. Ctrl-F/B pages, Ctrl-R refreshes,
+  A plain slot target runs `t session history REPO SLOT`: select exact
+  conversations with Space/Tab, then Enter, even with only one result. Ctrl-F/B pages, Ctrl-R refreshes,
   and Ctrl-/ shows details. Without a terminal, history lists without launching.
   Explicit options use the resume picker below and retain their mode semantics.
   Without a slot, one inactive candidate is taken if no live rows are excluded.
@@ -12092,6 +12095,9 @@ PICKER CONTROLS
 
   Text sorts ascend, with newest turn breaking ties. Filter settings, reset and
   on/off preserve sorting. Ctrl-/ shows full row details.
+
+  Batch failures stop immediately with identity, reason, retry selection, ready
+  session commands, and the number not attempted. No attachment hides the error.
 
   Every marked dead slot revives into its own detached dev slot — the first
   attaches, the rest open in NEW terminal tabs (Terminal.app/iTerm2; `t session
