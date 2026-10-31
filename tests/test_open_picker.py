@@ -327,21 +327,24 @@ def test_progress_animation_keeps_exit_hooks_in_parent(zsh, status):
 
 
 @pytest.mark.parametrize('selection', ['api-2', 'api-2,api-4,web:abcdef12'])
-def test_open_kill_dispatches_selection_and_refreshes_without_opening(zsh, tmp_path, selection):
+def test_open_kill_dispatches_selection_without_refreshing_or_opening(zsh, tmp_path, selection):
     env = picker_stub(tmp_path, selection)
     result = zsh(ROWS + r'''
       _t_fzf_filtered() {
-        if [[ -f "$HOME/killed" ]]; then return 130; fi
+        if [[ -f "$HOME/killed" ]]; then print UNEXPECTED_PICKER; return 130; fi
         print __t_open_kill__
         print -r -- "$2" | awk -F'\t' -v labels="$PICK_LABELS" 'index("," labels ",", "," $2 ",")'
       }
       tmux() { [[ $1 == has-session ]]; }
-      _dev_kill() { print -r -- "KILL $*"; touch "$HOME/killed"; }
+      _dev_kill() {
+        print -r -- "KILL $*"; touch "$HOME/killed"
+        _dev_session_rows() { print UNEXPECTED_DISCOVERY; return 1; }
+      }
       _dev_kill_fg() { print -r -- "FG $*"; }
       _t_open_selected() { print UNEXPECTED_OPEN; }
       _t_open_picker "" "" "" "" 1
     ''', _tty=True, **env)
-    assert result.returncode == 130, result.stdout + result.stderr
+    assert result.returncode == 0, result.stdout + result.stderr
     assert 'KILL api 2 1' in result.stdout
     assert 'UNEXPECTED' not in result.stdout
     if ',' in selection:

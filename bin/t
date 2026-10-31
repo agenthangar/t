@@ -11732,8 +11732,8 @@ DESKTOP TO CLI
   UI, status, model, session and task details, including idle/desktop rows.
   Column headers stay visible; narrow rows prioritize session and task.
   Space/Tab marks ✓ independently of focus; Enter opens marked rows.
-  Press k to kill marked rows, or the focused row, with close safety checks.
-  Killing refreshes the list and resets search and filters to opening defaults.
+  Press k to kill only the focused row, ignoring marks, with close safety checks.
+  Killing returns the close result without refreshing or reopening the picker.
   Use --new to start a new session. The first CLI opens here, others use tabs;
   desktop rows open in the app. Remote pickers add HOST. --fg opens one.
 

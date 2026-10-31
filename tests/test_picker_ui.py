@@ -564,25 +564,22 @@ def test_resume_sort_controls_keep_focused_row_and_change_order(picker, width, h
 
 @pytest.mark.parametrize('width,height', [(80, 24), (44, 20), (32, 12)])
 @pytest.mark.parametrize('marked', [False, True])
-def test_open_kill_key_accepts_focused_or_marked_rows(picker, width, height, marked):
+def test_open_kill_key_ignores_marks_and_accepts_focus(picker, width, height, marked):
     start, wait, keys, finish = picker
     start(width=width, height=height)
     wait('k kill')
     if marked:
         keys('Space', 'Tab')
         wait('(2)')
+        keys('Up', 'Up', 'Down')
     selected = finish('k')
     assert selected[0] == '__t_open_kill__'
     assert [row.split('\t')[1] for row in selected[1:]] == (
-        ['api-2', 'web-4'] if marked else ['api-2'])
+        ['web-4'] if marked else ['api-2'])
 
 
-def test_public_open_kill_refreshes_then_opens_remaining_session(picker):
+def test_public_open_kill_returns_without_refreshing(picker):
     start, wait, keys, finish = picker
     start(profile='public-open-kill')
     wait('k kill', focused='4')
-    keys('k')
-    wait('0/0 (0)')
-    keys('C-a')
-    wait('1/1 (0)', focused='2')
-    assert finish() == ['KILL api 4 1', 'api 2 --local']
+    assert finish('k') == ['KILL api 4 1']
