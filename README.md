@@ -1051,18 +1051,18 @@ including repository-only customizations. Menu choices stay pending until
 | --- | --- |
 | Pull requests | When to open; draft or ready; Automerge or When I ask |
 | Local preview → Applies to | Check Frontend, CLI, or both |
-| When to preview | Automatically when ready or Only when I ask |
-| Preview approval before PR | Wait for my approval or No approval needed |
-| CLI preview method | Install locally or Run from the repo |
-| Frontend design → Design approach | Separate HTML prototype or In the app |
-| Frontend design → Design approval | Required or Not required |
-| Frontend preview → Preview method | Fast reload or Build |
-| Frontend preview → Open in browser | Automatically or Only when I ask |
+| Local preview → When to preview | Automatically when ready or Only when I ask |
+| Local preview → Preview approval before PR | Wait for my approval or No approval needed |
+| Local preview → Frontend → Design approach | Separate HTML prototype or In the app |
+| Local preview → Frontend → Design approval | Required or Not required |
+| Local preview → Frontend → Preview method | Fast reload or Build |
+| Local preview → Frontend → Open in browser | Automatically or Only when I ask |
+| Local preview → CLI → Preview method | Install locally or Run from the repo |
 | Tests | Local during work, before preview, before PR, or PR CI |
 
 Every setting also offers **Not set**, visually separated from the other choices,
-which removes that choice without
-instructing the agent to do its opposite. No behavior is selected by default.
+which removes that choice without instructing the agent to do its opposite.
+No behavior is selected by default.
 Preview and validation instructions require accurate reporting of limitations and
 results. Opening a PR alone does not authorize a merge. These preferences guide
 agents; they do not enforce execution or grant permission beyond the task.
@@ -1071,10 +1071,10 @@ removes that preview gate; **When to open PR** still decides whether to open a P
 **Applies to** is a checklist: use Space to toggle Frontend and CLI, then Enter
 to accept. **Not set** clears both; checking either clears **Not set**.
 It limits preview timing and approval to the selected kinds of work.
-The CLI method appears when CLI is applicable; saved methods are retained when
-switching applicability. **Frontend design** controls the design approach and
-approval. **Frontend preview** controls how the preview runs and whether its URL
-opens automatically in your browser once ready. Browser opening does not change
+**Local preview** contains **Frontend** and **CLI** submenus. CLI appears when
+CLI is applicable; saved methods are retained when switching applicability.
+Frontend contains design approach, design approval, preview method, and browser
+opening. CLI contains the local install/run method. Browser opening does not change
 when to prepare the preview or whether approval is required before a PR.
 
 The host instruction hierarchy stays unchanged: explicit task instructions and
@@ -1614,9 +1614,9 @@ and model-stage guidance. **PRs, previews & tests** separates these decisions:
 | Group | Choices |
 | --- | --- |
 | Pull requests | Open automatically or on instruction; create draft or ready; Automerge or When I ask. |
-| Local preview | Frontend/CLI checklist; when to preview; preview approval before PR; CLI install/run method when applicable. |
-| Frontend design | Interactive standalone HTML or in-app design; design approval. |
-| Frontend preview | Fast reload or Build; open in browser automatically or only when asked. |
+| Local preview | Frontend/CLI checklist; when to preview; preview approval before PR; Frontend and CLI submenus. |
+| Local preview → Frontend | Interactive standalone HTML or in-app design; design approval; Fast reload or Build; automatic or requested browser opening. |
+| Local preview → CLI | Install locally or run from the repo. |
 | Tests | Locally during development, before local preview, before opening a PR, or in PR CI. |
 
 **Not set** leaves a decision to your task, repository rules and text

@@ -211,13 +211,13 @@ permissions, behavior preferences and Markdown active; disabling the workflow
 suppresses every workflow setting. Selected stages expose separate
 model and effort controls, plus Instructions for ordinary Markdown in VISUAL/EDITOR.
 PRs, previews & tests uses shared `_RailUI` submenus for Pull requests, Local
-preview, Frontend design, Frontend preview and Tests. PR opening (automatic/on instruction), initial
+preview and Tests. PR opening (automatic/on instruction), initial
 state (ready/draft) and merging (automatic/on instruction) are independent.
 When to open PR offers Automatically when ready or Only when I ask.
 Local preview uses an Applies to checklist (Frontend and CLI), When to preview
 (Automatically when ready / Only when I ask), Preview approval before PR (Wait for
-my approval / No approval needed), and CLI preview method (Install locally / Run
-from the repo). Hide the CLI method only for explicit Frontend-only applicability;
+my approval / No approval needed), then Frontend and CLI submenus.
+Hide the CLI submenu only for explicit Frontend-only applicability;
 retain its saved value. The checklist marks either or both independently, with a
 separated Not set reset row. Space toggles; Enter accepts marked choices; cancel
 preserves the saved selection. Save maps the marks to the existing frontend/cli/both
@@ -225,9 +225,12 @@ values or removes the key for Not set. An unset target preserves legacy applicab
 scopes timing and approval prose, not the independent design/method preferences.
 Choosing a target alone does not trigger preview, and removing preview approval
 never changes the separate PR-opening preference.
-Frontend design contains Design approach (Separate HTML prototype / In the app)
-and Design approval (Required / Not required). Frontend preview contains Preview
-method (Fast reload / Build) and Open in browser (Automatically / Only when I ask).
+The nested Frontend submenu contains Design approach (Separate HTML prototype /
+In the app), Design approval (Required / Not required), Preview method (Fast reload
+/ Build), and Open in browser (Automatically / Only when I ask). The nested CLI
+submenu contains Preview method (Install locally / Run from the repo). Printed
+lists use the same indentation and hierarchy; summaries include nested choices.
+Returning from a child menu restores the parent focus and retains staged changes.
 Browser opening applies only once a local frontend preview is available; it does
 not start previews or change preview timing, design approval, or PR approval. Test timing
 chooses local during work, local before preview, local before PR, or PR CI;
@@ -1000,7 +1003,8 @@ a terminal, or with `--help`, it prints group help without writes. `t workflow
 list` stays read-only and never opens the editor. The editor lists named workflows
 and repository assignments, stages all edits, and reviews before saving. Its
 PRs, previews & tests menu offers concise choices for pull requests, local
-preview, frontend design, frontend preview and tests. Text instructions have higher precedence than those
+preview and tests, with Frontend and CLI settings nested under Local preview.
+Text instructions have higher precedence than those
 choices. List output presents that precedence before choices and humanizes model
 reasoning; the named catalogue avoids repeating complete per-workflow blocks.
 The hidden `t config workflows` compatibility route opens the same editor.
