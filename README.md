@@ -965,12 +965,15 @@ compatibility aliases. Choose
 **Use recommended defaults** to activate planning with `gpt-6-astra`, implementation
 with `gpt-6.1-sol`, and review with `gpt-6-astra`. **Edit default workflow** and
 **Edit named workflow** give each stage separate model and reasoning-effort controls.
-When selected, **Implementation** sets the model for Codex's main conversation at
-start and resume. Effort labels say **Agent selects by task** for planning and
-**Agent selects by task · starts Medium** for Implementation. Task-based effort is
-agent guidance; `t` sets the launch value and does not change effort mid-turn.
-Selected planning and review stages use bounded helpers with explicit model and effort;
-the main conversation handles implementation, fixes and follow-ups.
+All three stages offer **Agent selects by task**. Before delegating, the agent
+chooses a concrete supported reasoning effort for that stage's worker.
+Task-based Implementation uses a bounded implementation worker; the main session
+coordinates the work and follows up on its results. The main session's fixed
+launch effort is shown separately and does not determine the worker's effort.
+An explicit Implementation effort keeps implementation in the main session at
+that level. Planning and Review use workers when selected. Review also offers
+**One level below planning**. These are delegation instructions for the agent;
+`t` does not change a running turn's effort or run its own task classifier.
 **Use this workflow** enables or suppresses the entire workflow. **Use multiple models**
 opens checkboxes for **Planning**, **Implementation**, and **Review**. Mark stages with
 Space, then press Enter. Unchecked Planning and Review use the main model.
@@ -998,9 +1001,9 @@ Model choices include the current and recommended values, a live Codex catalogue
 a custom ID, and explicit refresh. Current, recommended and custom models remain
 usable offline. Changing a stage model preserves its selected effort. Saving the
 implementation model updates this workflow's next Codex launch/resume defaults;
-planning and review choices apply to delegated stages. Planning and implementation accept `auto`
-or an explicit effort (`minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `ultra`);
-review accepts an explicit effort or `one-level-lower`.
+task-based implementation delegates a worker using that model at a chosen effort.
+Every stage accepts `auto` or an explicit effort (`minimal`, `low`, `medium`,
+`high`, `xhigh`, `max`, `ultra`); review also accepts `one-level-lower`.
 
 Open **t config → Test runners** to choose the global default, a named workflow,
 or a registered repository. Use its runner settings to test current uncommitted work on
@@ -1043,7 +1046,10 @@ including repository-only customizations. Menu choices stay pending until
 | Setting | Choices |
 | --- | --- |
 | Pull requests | When to open; draft or ready; Automerge or When I ask |
-| Local preview | Automatically or When I ask; separately require preview approval before PR; CLI install/run and frontend reload/rebuild |
+| When to preview | Automatically when ready or Only when I ask |
+| Preview approval before PR | Wait for my approval or No approval needed |
+| CLI preview method | Install locally or Run from the repo |
+| Web preview updates | Live reload or Rebuild after changes |
 | Frontend design | Separate HTML prototype or in-app design; design approval Required or Not required |
 | Tests | Local during work, before preview, before PR, or PR CI |
 
@@ -1052,6 +1058,8 @@ instructing the agent to do its opposite. No behavior is selected by default.
 Preview and validation instructions require accurate reporting of limitations and
 results. Opening a PR alone does not authorize a merge. These preferences guide
 agents; they do not enforce execution or grant permission beyond the task.
+Preview approval concerns the local result you tried. **No approval needed**
+removes that preview gate; **When to open PR** still decides whether to open a PR.
 
 The host instruction hierarchy stays unchanged: explicit task instructions and
 repository rules remain authoritative. A selected repository assignment or inline

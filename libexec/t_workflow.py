@@ -70,16 +70,16 @@ BEHAVIORS = {
         'automatic': ('Automerge', 'Once a pull request is ready for review, enable automatic merging without another confirmation under repository policy and monitor required checks through completion. Do not promote drafts automatically. Never bypass required checks or branch protections.'),
         'on_request': ('When I ask', 'Wait for an explicit user request or approval before merging or enabling automatic merging, subject to repository and task instructions.'),
     }},
-    'local_preview': {'label': 'Local preview', 'choices': {
-        'when_ready': ('Automatically', 'When the work is ready to try, prepare its supported local preview: a development install or command for a CLI, or a local HTML or application browser preview for a frontend. Explain how the user can access it and report unavailable preview tools accurately.'),
+    'local_preview': {'label': 'When to preview', 'choices': {
+        'when_ready': ('Automatically when ready', 'When the work is ready to try, prepare its supported local preview: a development install or command for a CLI, or a local HTML or application browser preview for a frontend. Explain how the user can access it and report unavailable preview tools accurately.'),
         'before_pr': ('Preview, then ask to open PR', 'Prepare the supported local preview: a development install or command for a CLI, or a local HTML or application browser preview for a frontend. Explain how to try it, then wait for explicit user feedback and approval before pushing or opening a pull request. Honor repository and task instructions.'),
-        'on_request': ('When I ask', 'Prepare a local preview only when the user requests it, unless repository or task instructions require one.'),
+        'on_request': ('Only when I ask', 'Prepare a local preview only when the user requests it, unless repository or task instructions require one.'),
     }},
     'preview_approval': {'label': 'Preview approval before PR', 'choices': {
-        'required': ('Required', 'Before pushing or opening a pull request, wait until the user has reviewed the local preview and explicitly approved proceeding. Respect the selected preview timing, explicit task instructions and repository rules.'),
-        'not_required': ('Not required', 'Do not add a preview approval gate solely from this preference. This does not authorize pushing or opening a pull request or override selected PR preferences, explicit task instructions or repository rules.'),
+        'required': ('Wait for my approval', 'Before pushing or opening a pull request, wait until the user has reviewed the local preview and explicitly approved proceeding. Respect the selected preview timing, explicit task instructions and repository rules.'),
+        'not_required': ('No approval needed', 'Do not add a preview approval gate solely from this preference. This does not authorize pushing or opening a pull request or override selected PR preferences, explicit task instructions or repository rules.'),
     }},
-    'cli_preview': {'label': 'Command-line preview', 'choices': {
+    'cli_preview': {'label': 'CLI preview method', 'choices': {
         'install': ('Install locally', 'For command-line tool previews, use the supported development installation or relink mechanism and clearly identify the development version. Honor repository installation and isolation rules.'),
         'run': ('Run from the repo', 'For command-line tool previews, run the repository-supported development command directly and show the user how to invoke it.'),
     }},
@@ -91,9 +91,9 @@ BEHAVIORS = {
         'required': ('Required', 'For design and UI work, prepare and show a design preview before substantial implementation, then wait for user feedback and approval before continuing. Report unavailable preview tools accurately.'),
         'continue': ('Not required', 'After preparing the design, continue implementation without an additional design approval step unless repository or task instructions require one.'),
     }},
-    'frontend_preview': {'label': 'Frontend preview', 'choices': {
+    'frontend_preview': {'label': 'Web preview updates', 'choices': {
         'fast_reload': ('Live reload', 'For frontend previews, use the supported local development server and fast reload when available so design changes can be inspected promptly. Report unsupported preview capabilities accurately.'),
-        'rebuild': ('Rebuild', 'For frontend previews, rebuild using the supported preview command after relevant changes and show the updated result.'),
+        'rebuild': ('Rebuild after changes', 'For frontend previews, rebuild using the supported preview command after relevant changes and show the updated result.'),
     }},
     'test_timing': {'label': 'Run tests', 'choices': {
         'during_work': ('Local: during work', 'Run relevant local checks as implementation progresses and report results. Keep required checks and repository validation rules intact.'),
@@ -301,7 +301,7 @@ def validate_policy(value):
         model = setting['model']
         if not isinstance(model, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:/\[\]-]*', model):
             raise ValueError(f'{stage} model must be a nonempty model ID without spaces or control characters')
-        allowed = EFFORTS + (('one-level-lower',) if stage == 'review' else ('auto',))
+        allowed = EFFORTS + ('auto',) + (('one-level-lower',) if stage == 'review' else ())
         if setting['effort'] not in allowed:
             raise ValueError(f'{stage} effort must be one of: {", ".join(allowed)}')
     return value
@@ -503,6 +503,11 @@ def model_stages(policy):
     return _retained_model_stages(policy) if policy.get('stages_enabled', True) else []
 
 
+def implementation_worker(policy):
+    """Whether configured implementation guidance delegates task-selected effort."""
+    return 'implementation' in model_stages(policy) and policy['implementation']['effort'] == 'auto'
+
+
 def select_model_stages(policy, selected):
     """Save changed stage choices without rewriting read-only legacy defaults."""
     _validate_model_stages(selected)
@@ -551,7 +556,7 @@ def stage_settings(policy, stage):
         raise ValueError('unknown workflow stage')
     if stage in model_stages(policy):
         return copy.deepcopy(policy[stage])
-    if 'implementation' in model_stages(policy):
+    if 'implementation' in model_stages(policy) and not implementation_worker(policy):
         return copy.deepcopy(policy['implementation'])
     settings = main_session_settings({**policy, 'enabled': True})
     return {key: settings.get(key, '') for key in ('model', 'effort')}
@@ -647,6 +652,9 @@ def summary_lines(policy):
         lines.append('Separate models: ' + (', '.join(stage.title() for stage in summary['separate_stages']) or 'none'))
         lines.append('Configured model stages: ' + ', '.join(
             stage.title() for stage in summary['model_stages']))
+    if implementation_worker(policy):
+        settings = main_session_settings({**policy, 'enabled': True})
+        lines.append('Main session: ' + settings['model'] + ' · ' + settings['effort'].capitalize())
     if 'implementation' not in summary['model_stages']:
         for agent, settings in summary['session_defaults'].items():
             lines.append(agent.title() + ' session default: ' + (settings.get('model') or 'agent default') +
@@ -810,18 +818,22 @@ def _model_stage_text(policy):
     plan, implement, review = (stage_settings(policy, s) for s in ('planning', 'implementation', 'review'))
     main_model = implement['model'] or 'the current native model'
     main_effort = main_session_settings(policy).get('effort')
+    main_reasoning = main_effort or 'the current native reasoning setting'
     planning = ('medium for straightforward additions, high for substantial features, '
                 'and xhigh or higher for complex architecture or new applications') if plan['effort'] == 'auto' else plan['effort']
     implementation = ('low for straightforward execution, medium for ordinary features, '
                       'and high or higher when implementation complexity warrants it') if implement['effort'] == 'auto' else (implement['effort'] or 'the current native reasoning setting')
     reviewing = ('one supported reasoning-effort level below the planning stage, using the '
                  'lowest supported level if planning is already at the minimum') if review['effort'] == 'one-level-lower' else review['effort']
+    if review['effort'] == 'auto':
+        reviewing = ('low for straightforward reviews, medium for ordinary changes, '
+                     'and high or higher for complex changes or substantial risk')
     if 'planning' in selected:
         plan_text = (f'Plan with a bounded {plan["model"]} sub-agent; reasoning effort: {planning}. '
                      'Choose a concrete supported effort before delegation. ')
     else:
         plan_text = (f'Plan in the main conversation with {main_model}; reasoning effort: '
-                     f'{implementation}. ')
+                     f'{main_reasoning}. ')
         if review['effort'] == 'one-level-lower':
             reviewing = ('one supported reasoning-effort level below the actual main-conversation '
                          'planning effort, using the lowest supported level if planning is already '
@@ -833,7 +845,25 @@ def _model_stage_text(policy):
                        'Choose a concrete supported effort before delegation. ')
     else:
         review_text = (f'Review in the main conversation with {main_model}; reasoning effort: '
-                       f'{implementation}. ')
+                       f'{main_reasoning}. ')
+    if implementation_worker(policy):
+        implementation_text = (f'Delegate implementation to a bounded {implement["model"]} worker; '
+                               f'reasoning effort: {implementation}. Choose a concrete supported '
+                               'effort before spawning the worker. Give it the actionable plan, '
+                               'relevant repository instructions and context, acceptance criteria '
+                               'and required checks. Have the worker implement and run appropriate '
+                               'checks, then return its changes and validation evidence. The main '
+                               'conversation coordinates the work, checks the result and owns '
+                               'follow-up fixes without repeating routine implementation. '
+                               'Task-selected effort applies to this worker; the main session keeps '
+                               f'its fixed launch effort {main_effort}. If worker delegation or its '
+                               'requested model/effort is unavailable, disclose the exact limitation '
+                               'and the actual execution settings; never pretend the main session\'s '
+                               'effort changed.')
+    else:
+        implementation_text = (f'Implement in the main conversation with {main_model}; reasoning effort: '
+                               f'{implementation}. Use the plan, relevant repository instructions '
+                               'and acceptance criteria; implement and run appropriate checks.')
     return (f'Keep the main conversation on {main_model} for routine discussion, coding and '
             f'follow-ups; default reasoning effort: '
             f'{main_effort or "the native session default"}. '
@@ -841,9 +871,7 @@ def _model_stage_text(policy):
             f'Routine questions and small maintenance edits do not require all three stages.\n'
             f'1. {plan_text}Produce an actionable '
             f'plan, acceptance criteria and validation before implementation.\n'
-            f'2. Implement in the main conversation with {main_model}; reasoning effort: '
-            f'{implementation}. Use the plan, relevant repository instructions and acceptance '
-            f'criteria; implement and run appropriate checks.\n'
+            f'2. {implementation_text}\n'
             f'3. {review_text}Review the actual diff and '
             f'validation against the plan and report findings. The main conversation owns fixes, '
             f'rechecks, PR updates, merge conflicts and required CI through completion under '

@@ -2545,15 +2545,15 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
             continue
         else:
             stage = choice
-            field = ui.pick(_workflow_stage_title(stage), [("model", "Model"), ("effort", "Reasoning effort"), ("back", "Back")],
+            stage_title = _workflow_stage_title(stage) + (" · worker" if stage == "implementation" and helper["implementation_worker"](policy) else "")
+            field = ui.pick(stage_title, [("model", "Model"), ("effort", "Reasoning effort"), ("back", "Back")],
                             values={"model": policy[stage]["model"], "effort": _workflow_effort(policy[stage]["effort"], stage)})
             if field in (None, "back"):
                 continue
             if field == "model":
                 picked = _workflow_model(ui, cfg, helper, stage, policy[stage]["model"])
             else:
-                special = "one-level-lower" if stage == "review" else "auto"
-                levels = [special, *helper["EFFORTS"]]
+                levels = ["auto", *(["one-level-lower"] if stage == "review" else []), *helper["EFFORTS"]]
                 picked = ui.pick(_workflow_stage_title(stage) + " reasoning effort", [(level, _workflow_effort(level, stage)) for level in levels],
                                  default=levels.index(policy[stage]["effort"]))
             if picked is not None:
@@ -2767,7 +2767,7 @@ def _workflow_review(document):
         lines.append(f"Workflow {name}: {'enabled' if policy['enabled'] else 'disabled'}")
         lines.extend("  " + line for line in helper["summary_lines"](policy))
         if helper["model_stages"](policy):
-            lines.extend(f"  {title}: {model} · {effort}" + (" · Main model" if source == "Main model" else "")
+            lines.extend(f"  {title}: {model} · {effort} · {source}"
                          for title, model, effort, source in _workflow_model_rows(helper, policy))
         lines.append("  Test runners: " + helper["runners_summary"](policy))
         if policy.get("instructions"):
@@ -2779,7 +2779,7 @@ def _workflow_review(document):
         if "inline" in entry:
             lines.append(f"  Workflow: {'enabled' if entry['inline']['enabled'] else 'disabled'}")
             if helper["model_stages"](entry['inline']):
-                lines.extend(f"  {title}: {model} · {effort}" + (" · Main model" if source == "Main model" else "")
+                lines.extend(f"  {title}: {model} · {effort} · {source}"
                              for title, model, effort, source in _workflow_model_rows(helper, entry['inline']))
             lines.append("  Test runners: " + helper["runners_summary"](entry['inline']))
             if entry["inline"].get("instructions"):
@@ -3235,12 +3235,12 @@ _WORKFLOW_TOPICS = {
     "pr_open": ("When to open PR", "Open when the work is ready, or wait for your request. Any preview approval still applies."),
     "pr_state": ("PR type", "Drafts wait for your approval before becoming ready for review."),
     "pr_merge": ("Merge PR", "Merge after required checks and approvals, or wait for your request."),
-    "local_preview": ("Preview", "Choose when to make CLI or browser changes available locally."),
-    "preview_approval": ("Approval before PR", "Require preview approval before pushing or opening a PR, or continue without it."),
-    "cli_preview": ("CLI preview", "Install the development version locally, or run it from the repo."),
-    "frontend_preview": ("Update preview", "Refresh changes with a local dev server, or rebuild the preview."),
+    "local_preview": ("When to preview", "Choose when to make CLI or browser changes available locally."),
+    "preview_approval": ("Preview approval before PR", "Choose whether opening a PR waits for your approval of the local preview."),
+    "cli_preview": ("CLI preview method", "Install the development version locally, or run it from the repo."),
+    "frontend_preview": ("Web preview updates", "Refresh changes with a local dev server, or rebuild the preview."),
     "frontend_design": ("Build design", "Try an interactive HTML prototype outside the app, or design in the app itself."),
-    "design_approval": ("Design approval", "Wait for your feedback on the design, or continue building."),
+    "design_approval": ("Design approval", "Choose whether implementation waits for your approval of the design."),
     "test_timing": ("Run tests", "Choose when to run tests. Required PR checks still apply."),
 }
 _WORKFLOW_CHOICE_LABELS = {
@@ -3261,14 +3261,14 @@ _WORKFLOW_CHOICE_LABELS = {
 
 
 def _workflow_choice(helper, key, value):
-    if key == "pr_open":
+    if key in ("pr_open", "local_preview", "preview_approval", "cli_preview", "frontend_preview"):
         return helper["BEHAVIORS"][key]["choices"][value][0]
     return _WORKFLOW_CHOICE_LABELS.get(value, helper["BEHAVIORS"][key]["choices"][value][0])
 
 
 def _workflow_effort(value, stage=None):
     if value == "auto":
-        return "Agent selects by task · starts Medium" if stage == "implementation" else "Agent selects by task"
+        return "Agent selects by task"
     return {"one-level-lower": "One level below planning"}.get(value, value.capitalize())
 
 
@@ -3284,7 +3284,7 @@ def _workflow_model_rows(helper, policy):
         inherited = stage not in stages
         rows.append((_workflow_stage_title(stage), settings["model"] or "Agent default",
                      _workflow_effort(settings["effort"], "implementation" if inherited else stage) if settings["effort"] else "Session default",
-                     "Main model" if inherited else "Selected stage"))
+                     "Main model" if inherited else "Main session" if stage == "implementation" and not helper["implementation_worker"](policy) else "Worker"))
     return rows
 
 
@@ -3328,6 +3328,10 @@ def _workflow_print(helper, result, catalogue=False):
         stages = helper["model_stages"](policy)
         if stages:
             print("Model settings: " + ", ".join(_workflow_stage_title(stage) for stage in stages))
+            if helper["implementation_worker"](policy):
+                settings = helper["main_session_settings"]({**policy, "enabled": True})
+                print("Main session: " + (settings.get("model") or "Agent default") + " · " +
+                      (_workflow_effort(settings["effort"]) if settings.get("effort") else "Session default"))
             print("\n".join(_table_lines(("STEP", "MODEL", "REASONING", "SOURCE"),
                                         _workflow_model_rows(helper, policy))))
         else:
@@ -11527,7 +11531,7 @@ SCOPE
   Check Planning, Implementation and/or Review for saved model settings.
   Unchecked Implementation uses session defaults;
   unchecked helpers use the main model.
-  Implementation effort selected by task starts at medium.
+  Task-selected Implementation effort uses a worker; the main session stays Medium.
   Select no stages to use session defaults.
   Permissions selects Codex and Claude access for new and resumed CLI sessions.
   PRs, previews & tests controls PR opening and merging, preview timing and approval,

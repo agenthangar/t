@@ -155,8 +155,8 @@ def test_legacy_preview_policy_displays_separate_approval_without_rewriting(work
     ui = InspectMenu(['local_preview', 'local_preview', None, 'preview_approval', None, 'back', 'back'])
     assert t_mod._workflow_behaviors_menu(ui, vars(workflow), policy) == initial
     assert policy == initial
-    assert ui.views[1][2]['values']['local_preview'] == 'Automatically'
-    assert ui.views[1][2]['values']['preview_approval'] == 'Required'
+    assert ui.views[1][2]['values']['local_preview'] == 'Automatically when ready'
+    assert ui.views[1][2]['values']['preview_approval'] == 'Wait for my approval'
     assert 'before_pr' not in dict(ui.views[2][1])
 
 
@@ -168,7 +168,69 @@ def test_pr_open_choices_distinguish_timing_and_explicit_request(workflow, t_mod
     assert dict(ui.views[2][1]) == {'': 'Not set', 'automatic': 'Automatically when ready',
                                    'on_request': 'Only when I ask'}
     assert policy['behaviors']['pr_open'] == 'on_request'
-    assert t_mod._workflow_choice(vars(workflow), 'local_preview', 'on_request') == 'When I ask'
+    assert t_mod._workflow_choice(vars(workflow), 'local_preview', 'on_request') == 'Only when I ask'
+    assert t_mod._workflow_choice(vars(workflow), 'pr_merge', 'on_request') == 'When I ask'
+
+
+def test_preview_methods_and_approval_choices_keep_context(workflow, t_mod):
+    original = dict(copy.deepcopy(workflow.DEFAULT), behaviors={'pr_open': 'on_request'})
+    ui = InspectMenu(['local_preview', 'cli_preview', 'run', 'frontend_preview', 'rebuild',
+                      'preview_approval', 'not_required', 'back', 'back'])
+    policy = t_mod._workflow_behaviors_menu(ui, vars(workflow), original)
+    assert ui.views[2][0] == 'CLI preview method'
+    assert dict(ui.views[2][1]) == {'': 'Not set', 'install': 'Install locally', 'run': 'Run from the repo'}
+    assert ui.views[4][0] == 'Web preview updates'
+    assert dict(ui.views[4][1]) == {'': 'Not set', 'fast_reload': 'Live reload', 'rebuild': 'Rebuild after changes'}
+    assert ui.views[6][0] == 'Preview approval before PR'
+    assert dict(ui.views[6][1]) == {'': 'Not set', 'required': 'Wait for my approval', 'not_required': 'No approval needed'}
+    assert policy['behaviors'] == {'pr_open': 'on_request', 'cli_preview': 'run',
+                                   'frontend_preview': 'rebuild', 'preview_approval': 'not_required'}
+    assert original['behaviors'] == {'pr_open': 'on_request'}
+
+
+@pytest.mark.parametrize('stage', ['planning', 'implementation', 'review'])
+def test_each_stage_can_let_agent_choose_worker_effort(workflow, t_mod, stage):
+    document = workflow.defaults()
+    document['workflows']['standard'][stage]['effort'] = 'high'
+    cfg = SimpleNamespace(repos={}, _workflow_document=document)
+    ui = InspectMenu([stage, 'effort', 'auto', 'back'])
+    t_mod._workflow_policy_menu(ui, cfg, vars(workflow), name='standard')
+    policy = cfg._workflow_document['workflows']['standard']
+    assert policy[stage]['effort'] == 'auto'
+    choices = dict(ui.views[2][1])
+    assert choices['auto'] == 'Agent selects by task'
+    assert ('one-level-lower' in choices) is (stage == 'review')
+    if stage == 'review':
+        assert choices['one-level-lower'] == 'One level below planning'
+    assert all('starts' not in label for label in choices.values())
+    row = next(row for row in t_mod._workflow_model_rows(vars(workflow), policy)
+               if row[0] == stage.title())
+    assert row[2:] == ('Agent selects by task', 'Worker')
+    assert not workflow.config_path().exists()
+
+
+def test_implementation_worker_and_main_session_display_separate_efforts(workflow, t_mod, monkeypatch, capsys):
+    monkeypatch.setattr(t_mod, '_workflow', lambda: vars(workflow))
+    document = workflow.defaults()
+    policy = workflow.select_model_stages(document['workflows']['standard'], ['implementation'])
+    policy['implementation'] = {'model': 'implementation-model', 'effort': 'auto'}
+    document = workflow.update(document, policy, name='standard')
+    rows = t_mod._workflow_model_rows(vars(workflow), policy)
+    assert rows == [('Planning', 'implementation-model', 'Medium', 'Main model'),
+                    ('Implementation', 'implementation-model', 'Agent selects by task', 'Worker'),
+                    ('Review', 'implementation-model', 'Medium', 'Main model')]
+    t_mod._workflow_print(vars(workflow), {'scope': 'global', 'source': 'global',
+        'workflow_name': 'standard', 'excluded': False, 'workflow': policy,
+        'propagation': {'runtime': 'pending'}})
+    output = capsys.readouterr().out
+    review = '\n'.join(t_mod._workflow_review(document))
+    for text in (output, review):
+        assert 'Main session: implementation-model · Medium' in text
+        assert 'Agent selects by task' in text
+        assert 'starts' not in text
+    policy['implementation']['effort'] = 'high'
+    fixed_rows = t_mod._workflow_model_rows(vars(workflow), policy)
+    assert fixed_rows[1] == ('Implementation', 'implementation-model', 'High', 'Main session')
 
 
 @pytest.mark.parametrize('scope', ['named', 'repository'])
@@ -276,7 +338,7 @@ def test_deselected_main_stage_never_displays_retained_main_model(workflow, t_mo
     expected_effort = 'High' if defaults else 'Session default'
     assert rows[1] == ('Implementation', expected_model, expected_effort, 'Main model')
     assert rows[2] == ('Review', expected_model, expected_effort, 'Main model')
-    assert rows[0][3] == 'Selected stage'
+    assert rows[0][3] == 'Worker'
     t_mod._workflow_print(vars(workflow), {'scope': 'global', 'source': 'global',
         'workflow_name': 'standard', 'excluded': False, 'workflow': policy,
         'propagation': {'runtime': 'pending'}})
@@ -286,7 +348,7 @@ def test_deselected_main_stage_never_displays_retained_main_model(workflow, t_mo
         assert 'inactive-implementation' not in text and 'Ultra' not in text
         assert expected_model in text and expected_effort in text
     assert t_mod._workflow_effort('auto', 'planning') == 'Agent selects by task'
-    assert t_mod._workflow_effort('auto', 'implementation') == 'Agent selects by task · starts Medium'
+    assert t_mod._workflow_effort('auto', 'implementation') == 'Agent selects by task'
 
 
 @pytest.mark.parametrize('selected, inherited', [(['planning'], 'review'), (['review'], 'planning')])
@@ -305,13 +367,16 @@ def test_partial_stage_list_and_review_use_main_values(workflow, t_mod, monkeypa
     output = capsys.readouterr().out
     assert inherited + '-private' not in output
     assert selected[0] + '-private' in output
-    assert 'Main model' in output and 'Agent selects by task · starts Medium' in output
+    assert 'Main model' in output and 'Main session: main-active · Medium' in output
+    assert 'starts Medium' not in output
     for scope in [document, workflow.update(workflow.defaults(), policy, '/repo')]:
         review = '\n'.join(t_mod._workflow_review(scope))
         if scope is not document:
             review = review.split('Repository /repo:', 1)[1]
         assert inherited + '-private' not in review
-        assert inherited.title() + ': main-active · Agent selects by task · starts Medium · Main model' in review
+        assert inherited.title() + ': main-active · Medium · Main model' in review
+        assert 'Main session: main-active · Medium' in review
+        assert 'starts Medium' not in review
 
 
 @pytest.mark.parametrize('defaults', [[], {'other': {}}, {'codex': []},
@@ -396,10 +461,10 @@ def test_development_flow_keeps_section_focus_without_chatter(workflow, t_mod):
                               'frontend_design': 'Frontend design ›', 'tests': 'Tests ›', 'back': 'Back'}
     assert dict(ui.views[2][1])['draft'] == 'Draft'
     assert ui.views[3][2]['default'] == 1
-    assert dict(ui.views[5][1]) == {'local_preview': 'Preview', 'preview_approval': 'Approval before PR',
-                                   'cli_preview': 'CLI preview', 'frontend_preview': 'Update preview', 'back': 'Back'}
-    assert dict(ui.views[6][1]) == {'': 'Not set', 'when_ready': 'Automatically', 'on_request': 'When I ask'}
-    assert dict(ui.views[8][1]) == {'': 'Not set', 'required': 'Required', 'not_required': 'Not required'}
+    assert dict(ui.views[5][1]) == {'local_preview': 'When to preview', 'preview_approval': 'Preview approval before PR',
+                                   'cli_preview': 'CLI preview method', 'frontend_preview': 'Web preview updates', 'back': 'Back'}
+    assert dict(ui.views[6][1]) == {'': 'Not set', 'when_ready': 'Automatically when ready', 'on_request': 'Only when I ask'}
+    assert dict(ui.views[8][1]) == {'': 'Not set', 'required': 'Wait for my approval', 'not_required': 'No approval needed'}
     assert ui.views[10][2]['default'] == 1
     assert ui.views[-1][2]['default'] == 3
     assert ui.context == []

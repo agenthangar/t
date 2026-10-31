@@ -199,7 +199,7 @@ def test_legacy_preview_is_read_only_until_explicit_edit(workflow):
     text = workflow.render(document)
     summary = workflow.summary_lines(policy)
     assert 'Local preview: Automatically' in summary
-    assert 'Preview approval before PR: Required' in summary
+    assert 'Preview approval before PR: Wait for my approval' in summary
     assert workflow.BEHAVIORS['preview_approval']['choices']['required'][1] in text
     assert workflow.BEHAVIORS['local_preview']['choices']['before_pr'][1] not in text
     assert workflow.policy_summary(policy)['behaviors'] == {'local_preview': 'before_pr'}

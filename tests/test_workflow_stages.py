@@ -71,7 +71,7 @@ def test_stage_settings_and_launch_defaults_are_independent(workflow, selected):
     assert workflow.main_session_settings(policy, 'claude') == {}
     for stage in ('planning', 'review'):
         settings = workflow.stage_settings(policy, stage)
-        assert settings == policy[stage if stage in selected else 'implementation']
+        assert settings == (policy[stage] if stage in selected else workflow.main_session_settings(policy))
         settings['model'] = 'changed-copy'
         assert policy['implementation']['model'] == 'gpt-6.1-sol'
         assert policy[stage]['model'] != 'changed-copy'
@@ -244,9 +244,70 @@ def test_model_stage_selector_rejects_invalid_edits(workflow):
             workflow.select_model_stages(workflow.DEFAULT, selected)
 
 
-def test_inherited_stage_guidance_preserves_auto_while_launch_starts_medium(workflow):
+def test_worker_effort_is_distinct_from_inherited_main_effort(workflow):
     policy = workflow.select_model_stages(workflow.DEFAULT, ['implementation'])
-    for stage in ('planning', 'implementation', 'review'):
-        assert workflow.stage_settings(policy, stage) == policy['implementation']
-        assert workflow.stage_settings(policy, stage)['effort'] == 'auto'
+    assert workflow.stage_settings(policy, 'implementation') == policy['implementation']
+    assert workflow.stage_settings(policy, 'implementation')['effort'] == 'auto'
+    for stage in ('planning', 'review'):
+        assert workflow.stage_settings(policy, stage) == workflow.main_session_settings(policy)
+        assert workflow.stage_settings(policy, stage)['effort'] == 'medium'
     assert workflow.main_session_settings(policy)['effort'] == 'medium'
+
+
+def test_review_supports_task_selected_effort_without_changing_relative_default(workflow):
+    assert workflow.DEFAULT['review']['effort'] == 'one-level-lower'
+    policy = workflow.select_model_stages(workflow.DEFAULT, ['review'])
+    policy['review']['effort'] = 'auto'
+    assert workflow.validate_policy(policy) == policy
+    assert workflow.stage_settings(policy, 'review')['effort'] == 'auto'
+    text = workflow._stage_text(policy)
+    assert 'Review with a bounded gpt-6-astra sub-agent' in text
+    assert 'low for straightforward reviews, medium for ordinary changes' in text
+    assert 'high or higher for complex changes or substantial risk' in text
+    assert 'Choose a concrete supported effort before delegation' in text
+    assert 'one supported reasoning-effort level below' not in text
+    unselected = workflow.select_model_stages(policy, ['implementation'])
+    text = workflow._stage_text(unselected)
+    assert 'Review in the main conversation with gpt-6.1-sol' in text
+    assert 'low for straightforward reviews' not in text
+
+
+def test_task_selected_implementation_uses_worker_with_fixed_main_session(workflow):
+    policy = workflow.select_model_stages(workflow.DEFAULT, ['implementation'])
+    before = copy.deepcopy(policy)
+    assert workflow.implementation_worker(policy)
+    assert workflow.implementation_worker({**policy, 'enabled': False})
+    text = workflow._stage_text(policy)
+    assert 'Delegate implementation to a bounded gpt-6.1-sol worker' in text
+    assert 'Choose a concrete supported effort before spawning the worker' in text
+    assert 'actionable plan' in text and 'acceptance criteria' in text
+    assert 'return its changes and validation evidence' in text
+    assert 'without repeating routine implementation' in text
+    assert 'the main session keeps its fixed launch effort medium' in text
+    assert 'disclose the exact limitation' in text
+    assert 'never pretend the main session\'s effort changed' in text
+    assert 'Plan in the main conversation with gpt-6.1-sol; reasoning effort: medium.' in text
+    assert 'Review in the main conversation with gpt-6.1-sol; reasoning effort: medium.' in text
+    assert 'Main session: gpt-6.1-sol · Medium' in workflow.summary_lines(policy)
+    assert workflow.main_session_settings(policy) == {'model': 'gpt-6.1-sol', 'effort': 'medium'}
+    assert policy == before
+
+
+def test_fixed_or_unselected_implementation_does_not_delegate_worker(workflow):
+    policy = workflow.select_model_stages(workflow.DEFAULT, ['implementation'])
+    policy['implementation']['effort'] = 'high'
+    assert not workflow.implementation_worker(policy)
+    text = workflow._stage_text(policy)
+    assert 'Implement in the main conversation with gpt-6.1-sol; reasoning effort: high.' in text
+    assert 'Delegate implementation' not in text
+    assert workflow.main_session_settings(policy)['effort'] == 'high'
+    policy['implementation']['effort'] = 'auto'
+    policy = workflow.select_model_stages(policy, ['planning'])
+    policy['session_defaults'] = {'codex': {'model': 'coordinator', 'effort': 'low'}}
+    assert not workflow.implementation_worker(policy)
+    text = workflow._stage_text(policy)
+    assert 'Implement in the main conversation with coordinator; reasoning effort: low.' in text
+    assert 'Delegate implementation' not in text
+    disabled = workflow.select_model_stages(policy, [])
+    assert not workflow.implementation_worker(disabled)
+    assert disabled['implementation']['effort'] == 'auto'

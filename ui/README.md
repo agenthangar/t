@@ -209,9 +209,11 @@ PRs, previews & tests uses shared `_RailUI` submenus for Pull requests, Local
 preview, Frontend design and Tests. PR opening (automatic/on instruction), initial
 state (ready/draft) and merging (automatic/on instruction) are independent.
 When to open PR offers Automatically when ready or Only when I ask.
-Local preview offers Automatically or When I ask. Approval before PR is
-a separate Required/Not required choice;
-CLI development install/run and frontend fast-reload/rebuild choices are separate.
+Local preview uses four explicit rows: When to preview (Automatically when ready /
+Only when I ask), Preview approval before PR (Wait for my approval / No approval
+needed), CLI preview method (Install locally / Run from the repo), and Web preview
+updates (Live reload / Rebuild after changes). Removing preview approval never
+changes the separate PR-opening preference.
 Frontend design chooses an interactive standalone HTML prototype or design in the
 app, with Design approval labeled Required/Not required. Test timing
 chooses local during work, local before preview, local before PR, or PR CI;
@@ -220,7 +222,7 @@ Not set. Task, repository and text instructions supply
 the behavior. Menus show concise choices without routine explanatory preambles.
 Reserve inheritance wording for the actual Use global default repository action.
 Use Automerge for automatic PR merging. Preview methods use Install locally, Run from the repo,
-Live reload and Rebuild. Test choices name Local or PR CI explicitly.
+Live reload and Rebuild after changes. Test choices name Local or PR CI explicitly.
 Clearing a choice removes its key. Preserve focused rows when returning.
 Legacy delivery/preview values are interpreted without rewriting read-only
 configuration; editing materializes equivalent separate choices. Working-folder
@@ -246,13 +248,19 @@ Saved enabled workflows with Implementation selected use the implementation mode
 launches and guarded resumes. An automatic implementation effort resolves to medium
 for the main conversation; explicit efforts remain explicit. These scoped values
 override stale resume checkpoints, including a previous planning model or effort.
-Use the same stage-aware effort labels in menus, choices, save review and printed
-lists: Agent selects by task for planning, Agent selects by task · starts Medium for Implementation, and One level
-below planning for relative review effort. Task-based effort remains agent guidance;
-the main launch fallback does not claim automatic runtime effort switching.
+Every stage offers Agent selects by task alongside explicit effort levels;
+Review additionally offers One level below planning. Use the same labels in
+menus, choices, save review and printed lists. Selected Implementation with auto
+effort delegates a bounded worker at a concrete effort chosen for the task;
+explicit Implementation effort keeps the work in the main session at that level.
+Show the main session's fixed model/effort separately when a worker implements,
+and identify worker versus main-session values. Unselected stages inherit the
+main session's actual effort, not the worker's task-based setting. The generated
+instructions require reporting unavailable delegation instead of pretending the
+main session changed effort. No task classifier or active-turn switch is implied.
 Unsaved recommended defaults supply no launch overrides. Claude launch settings
-are not inferred from Codex stage models. Planning and review remain bounded
-delegations only when selected, with explicit model/effort and fresh context when
+are not inferred from Codex stage models. Planning, review and task-based
+implementation use bounded delegations only when selected, with explicit model/effort and fresh context when
 required by the host. Optional model_stages is a nonempty unique subset of
 planning/implementation/review. Without it, legacy separate_stages selects helpers
 with implementation still active; omission of both preserves all three stages.

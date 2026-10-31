@@ -82,7 +82,7 @@ def test_defaults_inheritance_and_explicit_activation(workflow, tmp_path):
     (lambda d: d['workflows']['standard']['planning'].update(model='x\n## override'), 'model ID'),
     (lambda d: d['workflows']['standard']['planning'].update(model='--bad'), 'model ID'),
     (lambda d: d['workflows']['standard']['implementation'].update(effort='one-level-lower'), 'effort'),
-    (lambda d: d['workflows']['standard']['review'].update(effort='auto'), 'effort'),
+    (lambda d: d['workflows']['standard']['review'].update(effort='unsupported'), 'effort'),
 ])
 def test_strict_schema(workflow, mutate, match):
     document = workflow.defaults()
@@ -926,7 +926,7 @@ def test_staged_guidance_keeps_main_on_implementation_and_bounds_delegation(work
     assert 'Keep the main conversation on gpt-6.1-sol for routine discussion, coding and follow-ups' in text
     assert 'default reasoning effort: medium' in text
     assert 'Plan with a bounded gpt-6-astra sub-agent' in text
-    assert 'Implement in the main conversation with gpt-6.1-sol' in text
+    assert 'Delegate implementation to a bounded gpt-6.1-sol worker' in text
     assert 'Review with a bounded gpt-6-astra sub-agent' in text
     assert 'The main conversation owns fixes' in text
     assert 'explicit model and concrete reasoning settings' in text
@@ -1238,8 +1238,9 @@ def test_workflow_print_precedence_and_reasoning(workflow, t_mod, monkeypatch, c
     assert t_mod._cmd_workflow(cfg, SimpleNamespace(workflow=True, workflow_action='list')) == 0
     text = capsys.readouterr().out
     assert text.index('Text instructions:') < text.index('PRs, previews & tests:')
-    assert 'Design approval: Required' in text and 'Preview: Automatically' in text
-    assert 'Approval before PR: Required' in text
+    assert 'Design approval: Required' in text and 'When to preview: Automatically when ready' in text
+    assert 'Preview approval before PR: Wait for my approval' in text
     assert 'Agent selects by task' in text and 'One level below planning' in text
-    assert 'Implementation' in text and 'Agent selects by task · starts Medium' in text
+    assert 'Implementation' in text and 'Main session: gpt-6.1-sol · Medium' in text
+    assert 'starts Medium' not in text
     assert 'one-level-lower' not in text and 'Test runners:' in text and 'Propagation:' in text
