@@ -1342,7 +1342,9 @@
         "tests/test_remote_commands.py::test_move_root_alias_operational_parser_route",
         "tests/test_remote_commands.py::test_remote_only_repo_reaches_destination_picker",
         "tests/test_move_local_receive.py::test_selected_remote_conversation_lands_locally",
-        "tests/test_desktop_removal.py::test_move_without_live_owner_points_to_saved_resume"
+        "tests/test_desktop_removal.py::test_move_without_live_owner_points_to_saved_resume",
+        "tests/test_transfer_snapshots.py::test_snapshot_relands_divergent_slot_without_overwriting_branch",
+        "tests/test_transfer_snapshots.py::test_receive_preflight_failure_does_not_stop_owner"
       ],
       "modes": {
         "default": {
@@ -1499,7 +1501,7 @@
           "notes": "Discover the source across hosts; local is this machine. Reject local-to-local moves. Guard the selected identity through remote stop, push, transcript transfer and local landing. --detach never attaches."
         }
       },
-      "notes": "Claude and Codex use guarded t transfers. Legacy native-handoff settings are ignored; older peers receive an explicit t policy. When no current owner is found, suggest t session resume [repo] [slot] for saved work."
+      "notes": "Claude and Codex use guarded t transfers. Legacy native-handoff settings are ignored; older peers receive an explicit t policy. When no current owner is found, suggest t session resume [repo] [slot] for saved work. Worktree snapshots preflight push access and peer capability before stopping; exact immutable transfer refs preserve divergent slot branches. No destination starts when snapshot publication or fetching fails."
     },
     "session read": {
       "patterns": [
