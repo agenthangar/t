@@ -42,6 +42,8 @@ def metadata(source, profile):
             repo = slot.partition(':')[0] if ':' in slot else slot.rpartition('-')[0] or slot
             result[(host, slot, state)] = dict(agent=fields[7] if len(fields) > 7 else 'claude',
                 interface='desktop' if state == 'app' else 'cli', host=host, repo=repo)
+            if profile == 'list':
+                result[(host, slot, state)].update(session=slot, turn=fields[9] if len(fields) > 9 else '-')
             if profile == 'open':
                 result[(host, slot, state)].update(
                     model=fields[8] if len(fields) > 8 and fields[8] not in ('', '-') else 'unknown',
@@ -135,6 +137,8 @@ def state_label(profile, mask):
 
 
 def header(profile, mask, filters, hidden, columns, width, sort='turn', enabled=True, color=False, hide_merged=False):
+    if profile == 'list':
+        return list_header(filters, hidden, columns, width, sort, color)
     compact = width <= 40 or int(os.environ.get('T_PICKER_HEADER_HEIGHT') or '24') <= 14
     key = lambda text: key_labels(text, compact=compact)
     style = lambda text, role='hint': paint(text, role) if color else text
@@ -183,6 +187,42 @@ def header(profile, mask, filters, hidden, columns, width, sort='turn', enabled=
     # Clip plain text first: ANSI escapes must never count toward terminal width.
     summary = clip_columns(summary, width - display_width(suffix)) + suffix
     lines.append(style(summary, 'heading') if enabled else style(summary))
+    if not compact:
+        lines.append('')
+    if columns:
+        lines.append(style(clip_columns(columns, width)))
+    return '\n'.join(lines) + '\n'
+
+
+def list_header(filters, hidden, columns, width, sort, color=False):
+    compact = width <= 40 or int(os.environ.get('T_PICKER_HEADER_HEIGHT') or '24') <= 14
+    key = lambda text: key_labels(text, compact=compact)
+    style = lambda text, role='hint': paint(text, role) if color else text
+    actions = ['Enter open/Esc', 'Space/Tab ✓', 'Ctrl-/' if compact else 'Ctrl-/ details']
+    facets = [f'{shortcut} {label}' for shortcut, label in FACETS.values()]
+    controls = ['Ctrl-A all', 'Ctrl-F reset'] + facets
+    sorts = {name: f'{shortcut} {"turn" if compact and label == "last turn" else label}'
+             for name, (shortcut, label) in RESUME_SORTS.items()}
+    active = [f'{name}={value}' for name, value in filters.items() if value is not None]
+    selected = {key(sorts[sort])}
+    selected.update(key(f'{FACETS[name][0]} {FACETS[name][1]}')
+                    for name, value in filters.items() if value is not None)
+    if not active:
+        selected.add(key('Ctrl-A all'))
+    def keys(parts):
+        return [' · '.join(style(part, 'active' if part in selected else 'action')
+                           for part in line.split(' · '))
+                for line in pack([key(part) for part in parts], width)]
+    if compact:
+        lines = keys(actions + controls + list(sorts.values()))
+    else:
+        lines = [style('HOTKEYS', 'heading')] + keys(actions)
+        lines += ['', style('FILTERS', 'heading')] + keys(controls) + keys(sorts.values())
+    label = 'turn' if compact and sort == 'turn' else RESUME_SORTS[sort][1]
+    lines += [style(line, 'heading') for line in pack(
+        [f'Sort: {label}', f'{hidden} hidden'] + ([] if active and compact else [f'{len(active)} filters']), width)]
+    if active:
+        lines.append(style(clip_columns(' · '.join(active), width), 'heading'))
     if not compact:
         lines.append('')
     if columns:
@@ -287,7 +327,7 @@ def render(directory, profile, action, width, columns='', facet=None):
     elif profile == 'resume' and action == 'merged':
         hide_merged = not (enabled and hide_merged)
         enabled = True
-    elif profile == 'resume' and action.startswith('sort-') and action[5:] in RESUME_SORTS:
+    elif profile in ('resume', 'list') and action.startswith('sort-') and action[5:] in RESUME_SORTS:
         sort = action[5:]
     elif action == 'first' and profile == 'open':
         mask = 2  # Attached-only; repeated presses are idempotent.
@@ -314,8 +354,8 @@ def render(directory, profile, action, width, columns='', facet=None):
     else:
         rows = (directory / f'rows-{mask}').read_text().splitlines()
     selected = choose(rows, records, filters) if enabled else rows
-    if profile == 'resume':
-        if enabled and hide_merged:
+    if profile in ('resume', 'list'):
+        if profile == 'resume' and enabled and hide_merged:
             selected = [row for row in selected if records.get(tuple(row.split('\t')[:3]), {}).get('pr') != 'MERGED']
         if action == 'default':
             sort = 'turn'

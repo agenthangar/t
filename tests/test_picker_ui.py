@@ -114,11 +114,21 @@ def picker():
                     rows = rows.replace('\tNewest web', '\torg/web\tMERGED\t[MERGED] Newest web').replace('\tOlder api', '\torg/api\tOPEN\t[OPEN] Older api')
                 default = rows
                 env['T_HOME'] = str(ROOT)
+            if profile == 'list-rich':
+                rows = ('local\tapi-10\tattached\tNewest full metadata Last turn: 2026-10-23\tapi-10 Newest task\n'
+                        'mini\tapi-2\tdetached\tOlder full metadata\tapi-2 Older task\n')
+                default = rows
+                source = ('local\tsid1\t/code/api\tapi-10\tattached\tactive\tNewest task\tcodex\t-\t2026-10-23T10:00:00Z\n'
+                          'mini\tsid2\t/code/api\tapi-2\tdetached\tidle\tOlder task\tclaude\t-\t2026-10-22T10:00:00Z\n')
+                (root / 'source').write_text(source)
+                env['T_HOME'] = str(ROOT)
             (root / 'all').write_text(rows)
             (root / 'default').write_text(default)
             mode_env = 'T_PICKER_SESSION_FILTERS=' + shlex.quote(mode) + ' '
             if profile in ('resume-rich', 'resume-merged'):
                 mode_env += 'T_PICKER_SOURCE_ROWS="$(cat "$HOME/all")" '
+            if profile == 'list-rich':
+                mode_env += 'T_PICKER_SOURCE_ROWS="$(cat "$HOME/source")" T_PICKER_COLUMNS="SESSION TASK" '
             if mode == 'kill':
                 mode_env += 'T_PICKER_WITH_ATTACHED="$(cat "$HOME/attached")" T_PICKER_WITH_PENDING="$(cat "$HOME/pending")" '
             if hostile_opts:
@@ -130,6 +140,8 @@ def picker():
                     env['FZF_DEFAULT_OPTS_FILE'] = '/dev/null'
             picker_cmd = (mode_env + '_t_fzf_filtered "$(cat "$HOME/default")" "$(cat "$HOME/all")" '
                           + mode + ' unattached "⬡ codex · ✱ claude" "" --prompt="' + mode + ' > "')
+            if profile == 'list-rich':
+                picker_cmd += " --with-nth=5,4 --preview='printf \"%s\\n\" {4}'"
             if profile == 'single':
                 picker_cmd = '_t_fzf_single open "Saved sessions" --delimiter="$(printf "\\t")" --with-nth=-1 --prompt="single > " < "$HOME/default"'
             elif profile == 'multi':
@@ -713,3 +725,38 @@ def test_open_kill_temporarily_locks_query_then_accepts_typing(picker):
     keys('-l', 'Alpha')
     wait('1/1 (1)')
     assert [row.split('\t')[1] for row in finish()] == ['api-2']
+
+
+@pytest.mark.parametrize('width,height', [(80, 24), (44, 20), (32, 12)])
+def test_list_sort_filter_query_and_cancel_at_terminal_sizes(picker, width, height):
+    start, wait, keys, finish = picker
+    start(profile='list-rich', mode='list', width=width, height=height)
+    screen = wait('2/2 (0)')
+    assert 'Newest task' in screen and '▸' in screen
+    for letter in ('T', 'R', 'G', 'O', 'V'):
+        assert 'Alt-' + letter in screen or 'M-' + letter in screen
+    loading = tuple('⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏')
+    keys('M-v')
+    wait('Sort: session', absent=loading)
+    keys('C-g')  # First recorded agent is claude; attached row is hidden.
+    screen = wait('1/1 (0)', absent=loading)
+    assert 'agent=claude' in screen and 'Older task' in screen and '▸' in screen
+    keys('-l', 'Older')
+    wait('list > Older')
+    keys('C-a')
+    screen = wait('1/2 (0)', absent=loading)
+    assert 'Sort: session' in screen and 'list > Older' in screen
+    keys('C-f')
+    screen = wait('Sort: turn' if width <= 48 else 'Sort: last turn', absent=loading)
+    assert 'list > Older' in screen
+    assert finish('Escape', status=130) == []
+
+
+def test_list_details_preview_preserves_full_metadata(picker):
+    start, wait, keys, finish = picker
+    start(profile='list-rich', mode='list', width=80, height=24)
+    wait('2/2 (0)')
+    keys('C-_')
+    screen = wait('Last turn: 2026-10-23')
+    assert 'Newest full metadata' in screen
+    assert finish('Escape', status=130) == []

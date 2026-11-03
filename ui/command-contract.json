@@ -752,9 +752,11 @@
     },
     "session list": {
       "patterns": [
-        "list"
+        "list",
+        "filtered",
+        "multi"
       ],
-      "renderer": "plain",
+      "renderer": "mixed",
       "scope": "explicit/inferred repository or all local/remote sessions",
       "confirmation": "none",
       "tests": [
@@ -775,7 +777,8 @@
             "tests/test_t.py::test_ls_scope_defaults_to_cwd_repo",
             "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
           ],
-          "notes": "Include local and registered remote hosts by default; repository scope and --all remain independent. Unavailable hosts warn; lists never prompt."
+          "notes": "Include local and registered remote hosts by default; repository scope and --all remain independent. Unavailable hosts warn; lists never prompt.",
+          "terminal": false
         },
         "remote": {
           "argv": [
@@ -790,7 +793,8 @@
           "tests": [
             "tests/test_host_resilience.py::test_python_remote_list_replays_captured_warnings"
           ],
-          "notes": "Unavailable hosts warn on stderr while local/reachable rows remain listed. Warnings are amber only on capable stderr terminals; NO_COLOR (including empty), TERM=dumb, and redirected stderr keep warnings plain. Redirecting stdout alone does not disable stderr color."
+          "notes": "Unavailable hosts warn on stderr while local/reachable rows remain listed. Warnings are amber only on capable stderr terminals; NO_COLOR (including empty), TERM=dumb, and redirected stderr keep warnings plain. Redirecting stdout alone does not disable stderr color.",
+          "terminal": false
         },
         "local": {
           "argv": [
@@ -804,7 +808,24 @@
           "read_only": true,
           "tests": [
             "tests/test_t.py::test_ls_default_includes_remote_and_local_override"
-          ]
+          ],
+          "terminal": false
+        },
+        "terminal": {
+          "argv": [
+            "session",
+            "list"
+          ],
+          "patterns": [
+            "filtered",
+            "multi"
+          ],
+          "terminal": true,
+          "read_only": false,
+          "tests": [
+            "tests/test_list_picker.py::test_terminal_list_uses_private_scoped_snapshot"
+          ],
+          "notes": "Discover once using the existing local/remote scope; browse all attachment states. Raw last-turn descending is default, Alt-T/R/G/O/V sorts turn/repo/agent/host/natural session. Ctrl-G/D/O/R cycles agent/UI/host/repo filters. Ctrl-A clears filters and retains sort; Ctrl-F restores all sessions and turn sort. Enter rechecks every selected host/session/state/conversation identity before guarded open; changed owners refuse the whole batch. Esc cancels without rediscovery. No automatic update prompt. Without fzf, a usable terminal, or rows use the read-only table/empty state."
         }
       },
       "display_schema": "session_information",
@@ -5072,11 +5093,11 @@
       "bin/t:_RailUI"
     ],
     "macos_labels": [
-      "⌃T",
-      "⌥T",
-      "↩ Return",
-      "⎋ Esc",
-      "⇥ Tab"
+      "\u2303T",
+      "\u2325T",
+      "\u21a9 Return",
+      "\u238b Esc",
+      "\u21e5 Tab"
     ],
     "other_labels": [
       "Ctrl-T",

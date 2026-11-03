@@ -477,3 +477,57 @@ def test_hotkeys_highlight_only_current_states(filters, monkeypatch, platform, w
     monkeypatch.setenv('NO_COLOR', '1')
     assert filters.header('resume', 0, {}, 2, 'SESSION TASK', width,
                           sort=sort, enabled=enabled, hide_merged=hide_merged, color=True) == plain
+
+
+def test_list_sort_filter_and_reset_use_raw_snapshot(filters, tmp_path):
+    root = snapshot(tmp_path, 'list')
+    source = SOURCE.replace('api-1', 'api-10')
+    source = source.replace('codex\n', 'codex\t-\t2026-10-22T10:00:00Z\n', 1)
+    source = source.replace('claude\n', 'claude\t-\t2026-10-23T10:00:00Z\n', 1)
+    (root / 'source').write_text(source)
+    rows = [row.replace('api-1', 'api-10') for row in ROWS]
+    for name in ('all', 'rows-0', 'rows-1'):
+        (root / name).write_text('\n'.join(rows) + '\n')
+    def render(action):
+        filters.render(root, 'list', action, 68, 'SESSION TASK')
+        return (root / 'current').read_text().splitlines()
+    assert render('current') == [rows[1], rows[0], rows[2], rows[3]]
+    assert render('sort-session') == [rows[1], rows[0], rows[2], rows[3]]
+    assert render('agent') == [rows[1], rows[3]]
+    assert render('all') == [rows[1], rows[0], rows[2], rows[3]]
+    assert (root / 'sort').read_text() == 'session'
+    render('sort-host')
+    assert render('default') == [rows[1], rows[0], rows[2], rows[3]]
+    assert (root / 'sort').read_text() == 'turn'
+    for sort in ('repo', 'agent', 'host'):
+        assert set(render('sort-' + sort)) == set(rows)
+
+
+@pytest.mark.parametrize('width', [28, 40, 68])
+def test_list_header_fits_with_active_filter(filters, width):
+    text = filters.header('list', 0, dict(agent='codex', interface=None, host=None, repo=None), 3, 'SESSION TASK', width)
+    assert all(filters.display_width(line) <= width for line in text.splitlines())
+    assert len(text.splitlines()) <= (9 if width == 28 else 15)
+    assert '3 hidden' in text and 'agent=codex' in text
+    for key in ('Ctrl-G', 'Ctrl-D', 'Ctrl-O', 'Ctrl-R', 'Alt-T', 'Alt-V'):
+        assert (key.replace('Ctrl-', '^').replace('Alt-', 'M-') if width <= 40 else key) in text
+
+
+@pytest.mark.parametrize('platform', ['darwin', 'linux'])
+@pytest.mark.parametrize('width,height', [(27, 12), (68, 24)])
+def test_list_hotkeys_follow_active_facets_and_sort(filters, monkeypatch, platform, width, height):
+    import re
+    import t_picker_theme as theme
+    monkeypatch.setattr(theme.sys, 'platform', platform)
+    monkeypatch.setenv('T_PICKER_HEADER_HEIGHT', str(height))
+    monkeypatch.setenv('TERM', 'xterm-256color')
+    monkeypatch.delenv('NO_COLOR', raising=False)
+    compact = height <= 14
+    for facets, sort in (({}, 'turn'), ({'agent': 'codex'}, 'repo')):
+        text = filters.header('list', 0, facets, 2, 'SESSION TASK', width, sort, color=True)
+        active = re.findall(r'\x1b\[1;4;96m(.*?)\x1b\[0m', text)
+        expected_filter = 'Ctrl-G agent' if facets else 'Ctrl-A all'
+        expected_sort = 'Alt-R repo' if sort == 'repo' else ('Alt-T turn' if compact else 'Alt-T last turn')
+        assert set(active) == {theme.key_labels(value, compact=compact) for value in (expected_filter, expected_sort)}
+        plain = re.sub(r'\x1b\[[0-9;]*m', '', text)
+        assert all(filters.display_width(line) <= width for line in plain.splitlines())

@@ -78,7 +78,7 @@ the command name.
 
 | Type | Behavior and appearance |
 | --- | --- |
-| **List** | Print a scoped, aligned table immediately. Name its scope, label columns, and give a clear empty state. No picker, confirmation, or update prompt. `t session list` and `t issue list` are examples. |
+| **List** | Print a scoped, aligned table immediately. Name its scope, label columns, and give a clear empty state. No picker, confirmation, or update prompt. `t issue list` is an example. Terminal session list is the explicit filtered-selection exception below. |
 | **Detail/status** | Print labeled facts without changing state or prompting. Preserve raw text, paths, and streams when the command explicitly exposes them. |
 | **Single selection** | Use a searchable fzf picker or an inline `_RailUI` menu with one visibly focused row. Enter chooses exactly one item; Esc/Ctrl-C cancels. An explicit target bypasses selection. A paginated single picker uses Ctrl-F for the next page, Ctrl-B for the previous page, and Ctrl-R to refresh; those keys belong to pagination rather than the filtered picker's settings control. |
 | **Multi-selection** | Searchable pickers use Space/Tab to mark rows and Enter to accept the marks, or the focused row if none are marked. Inline checklists use Space to toggle and Enter to submit only checked items. Show marks and the Enter action independently of color. |
@@ -354,7 +354,7 @@ limits discovery to this machine. `-r`/`--remote` retains inclusive browsing.
 Fresh sessions and explicit targets retain their existing location routing.
 Session lists (`t ls` / `t session list`) also include remote hosts by default;
 `-l`/`--local` lists only this machine. Repository scope and `--all` are independent
-of host scope. Lists remain read-only and never open a picker.
+of host scope. Noninteractive lists remain read-only; terminal session lists use the shared picker.
 
 The open picker hides attached CLI and loaded desktop sessions by default.
 Ctrl-F opens the shared single-picker Filters settings. Choose State for attached,
@@ -653,7 +653,7 @@ uses an actual user prompt, excluding tool results and injected metadata.
 Assistant output, transcript mtime, and index activity never substitute for a
 turn start. The optional ninth rich-row field, `last_turn_started_at`, carries
 an ISO 8601 UTC timestamp or `-`; legacy rows and the seven-field ownership
-protocol remain valid. This remains a read-only list mode. History's DATE
+protocol remain valid. The table remains read-only. History's DATE
 continues to describe retained activity.
 
 `t session list` overrides the shared table's narrow layout: first clip WORKING ON
@@ -661,7 +661,7 @@ to the available space, then omit UI and MODEL if the other columns cannot fit.
 Compact rows show S (the same status marks without spaces), HOST for remote lists,
 SESSION (SLOT at the smallest width), TASK, and LAST TURN. Shorten timestamps to
 local `MM-DD HH:MM`, or `HH:MM` when necessary. Count Unicode display columns and
-mark clipped values with an ellipsis. Lists stay read-only and never open a picker.
+mark clipped values with an ellipsis. Without a usable terminal or fzf, lists stay read-only.
 Redirected output retains all columns and complete values: `t ls | cat` or
 `t ls -r | cat`. For example, at 32 columns a remote row can look like:
 
@@ -669,6 +669,20 @@ Redirected output retains all columns and complete values: `t ls | cat` or
   S   HOST SLOT   TASK LAST TURN
   ●✓↻ mini api-17 Fix… 09:41
 ```
+
+With stdin and stdout attached to a usable terminal and fzf available, `t session
+list` (`t ls`, `t list`) uses the shared filtered multi-picker. It starts with all
+attached, detached, desktop and foreground rows in the command's existing scope.
+Enter rechecks every selected owner before opening through the guarded open path;
+changed or missing sessions are refused. Esc cancels.
+The compact task row stays searchable with full metadata and last-turn details
+available through Ctrl-/. Ctrl-G/D/O/R cycles agent/UI/host/repo filters. Alt-T/R/G/O/V
+sorts by last turn/repo/agent/host/natural session from raw snapshot metadata.
+Unknown turns sort last. Ctrl-A clears filters while retaining sort; Ctrl-F restores
+all sessions and last-turn sort. Reloads preserve search and remove hidden marks,
+without discovery. Enter rechecks the selected host/session/state/conversation
+identities before opening any selection and refuses changed owners. Remote hosts are included by default; `--local` restricts discovery; empty results print the existing
+empty state. No list mode offers an automatic update prompt.
 
 The filtered multi-selection mode of `t session open` prioritizes session identity
 and working-on text. It omits LAST TURN, previews, and the new-session shortcut.

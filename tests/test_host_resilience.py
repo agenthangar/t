@@ -133,28 +133,39 @@ def test_capture_replays_only_warning_lines(t_mod, monkeypatch, stderr_tty, stdo
 def test_python_remote_list_replays_captured_warnings(zsh, tmp_path, mode, color):
     # The real CLI spawns a login shell: give that shell only fixture integration.
     (zsh.home / '.zshrc').write_text(
+        f'export PATH={shlex.quote(str(tmp_path / "stubbin"))}:$PATH\n'
         f'source {shlex.quote(str(REPO_ROOT / "t.plugin.zsh"))}\n' + SCANS + r'''
 _dev_session_rows() {
   printf 'local-id\t%s\tapi-3\tdetached\tnone\tLocal\tcodex\n' "$HOME/code/.worktrees/api/3"
 }
 ''')
+    # Terminal lists now enter the shared picker. Cancel deterministically after
+    # recording its reachable rows independently of stderr redirection.
+    picker = tmp_path / 'stubbin/fzf'
+    picker.write_text('#!/bin/sh\nif [ "$1" = --help ]; then printf "%s\\n" --id-nth; exit 0; fi\ncat > "$PICKER_ROWS"\nexit 130\n')
+    picker.chmod(0o755)
     output_file, error_file = tmp_path / 'rows.txt', tmp_path / 'warnings.txt'
     command = f'{shlex.quote(sys.executable)} {shlex.quote(str(REPO_ROOT / "bin/t"))} session list -r -a'
     if mode == 'stdout_redirected':
         command += f' > {shlex.quote(str(output_file))}'
     if mode == 'stderr_redirected':
         command += f' 2> {shlex.quote(str(error_file))}'
-    env = {'TERM': 'dumb' if mode == 'dumb' else 'xterm-256color', 'COLUMNS': '120'}
+    picker_rows = tmp_path / 'picker-rows.txt'
+    env = {'TERM': 'dumb' if mode == 'dumb' else 'xterm-256color', 'COLUMNS': '120',
+           'PICKER_ROWS': str(picker_rows)}
     if mode == 'no_color':
         env['NO_COLOR'] = ''
     result = zsh(command + '; print rc=$?', _tty=mode != 'plain', **env)
     text = result.stdout + result.stderr
     if error_file.exists():
         text += error_file.read_text()
-    assert 'rc=0' in text
+    expected_rc = 130 if mode in ('tty', 'stderr_redirected', 'no_color') else 0
+    assert f'rc={expected_rc}' in text
     assert 'warning: dev: offline SSH session scan failed (rc=255) — skipped' in text
     assert ('\x1b[33mwarning: dev: offline' in text) == color
-    rows = output_file.read_text() if output_file.exists() else result.stdout
+    assert picker_rows.exists() == (expected_rc == 130)
+    rows = (picker_rows.read_text() if picker_rows.exists() else
+            output_file.read_text() if output_file.exists() else result.stdout)
     assert 'api-3' in rows and 'api-4' in rows
     assert 'Local' in rows and 'Reachable' in rows
     if output_file.exists():

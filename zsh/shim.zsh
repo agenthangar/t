@@ -583,6 +583,51 @@ _t_open_picker() {
   _t_open_selected "$selected" "$app" "$cli"
 }
 
+# The Python list handler already resolved scope and discovered this snapshot.
+_t_list_snapshot() {
+  local snapshot=$1 source rows columns selected current row candidate remote=
+  local -a identity original latest
+  local -A expected owners
+  shift
+  source=$(<"$snapshot")
+  rows=$(COLUMNS=${COLUMNS:-80} python3 "$T_HOME/bin/t" __session-picker-rows --compact --header --last-turn "$@" < "$snapshot") || return $?
+  columns=${rows%%$'\n'*}
+  rows=${rows#*$'\n'}
+  selected=$(T_PICKER_SOURCE_ROWS="$source" T_PICKER_COLUMNS="$columns" T_PICKER_SESSION_FILTERS=list \
+    _t_fzf_filtered "$rows" "$rows" open all "" "" --prompt="sessions > " --with-nth=5,4 \
+      --preview='printf "%s\n" {4}') || return $?
+  [[ -n $selected ]] || return 130
+  # Selection may be old after browsing. Recheck ownership once on Enter before
+  # handing the exact target to open; missing/changed rows must not become fresh.
+  for row in "${(@f)source}"; do
+    original=("${(@ps:\t:)row}")
+    expected[$original[1]/$original[4]/$original[5]]="${(j:\t:)original[1,5]}"
+  done
+  for row in "${(@f)selected}"; do
+    identity=("${(@ps:\t:)row}")
+    [[ $identity[1] == local ]] || remote=1
+  done
+  if [[ -n $remote ]]; then
+    current=$(_dev_rows_all --best-effort --details) || return $?
+  else
+    current=$(_dev_session_rows --details) || return $?
+    current=$(print -r -- "$current" | awk 'NF {print "local\t" $0}')
+  fi
+  for row in "${(@f)current}"; do
+    latest=("${(@ps:\t:)row}")
+    owners[$latest[1]/$latest[4]/$latest[5]]="${(j:\t:)latest[1,5]}"
+  done
+  for row in "${(@f)selected}"; do
+    identity=("${(@ps:\t:)row}")
+    candidate=$identity[1]/$identity[2]/$identity[3]
+    if [[ -z ${expected[$candidate]:-} || ${owners[$candidate]:-} != ${expected[$candidate]} ]]; then
+      print -u2 -- "t list: $identity[2] on $identity[1] changed while browsing; run t ls again."
+      return 1
+    fi
+  done
+  _t_open_selected "$selected" "" ""
+}
+
 # Desktop selections open immediately; the first CLI selection uses this terminal
 # and the remaining CLI selections get tabs. Preserve the selected host/interface,
 # so a configured default never converts an existing owner as a side effect.

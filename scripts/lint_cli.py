@@ -436,7 +436,8 @@ def check_command_patterns(parser, command_groups, contract, *, root=ROOT):
             argv = spec.get("argv", [])
             if not isinstance(argv, list) or argv[:len(words)] != words or not accepts(argv):
                 errors.append(f"{name} {mode} example does not parse as its canonical command")
-            if words[-1] == "list" and (not spec.get("read_only") or "list" not in mode_patterns and "machine" not in mode_patterns
+            if words[-1] == "list" and not (name == "session list" and mode == "terminal"
+                    and spec.get("terminal") is True and mode_patterns == {"filtered", "multi"}) and (not spec.get("read_only") or "list" not in mode_patterns and "machine" not in mode_patterns
                                              or mode_patterns & {"single", "multi", "filtered", "wizard", "review", "action"}):
                 errors.append(f"{name} {mode} list must be read-only list or machine output without selection")
             for reference in spec.get("tests", []):
@@ -708,7 +709,7 @@ def check_listing_aliases(module):
             if module._canonical_argv([*alias, *payload]) != [*route, *payload]:
                 errors.append(f"{' '.join(alias)} must inherit its canonical route and preserve payload")
         for words in (list(path), alias):
-            if not module._command_readonly(words, terminal=True):
+            if not module._command_readonly(words, terminal=(path != ("session", "list"))):
                 errors.append(f"{' '.join(words)} must remain read-only without prompts")
     if module._command_readonly(["workflow"], terminal=True):
         errors.append("bare workflow in a terminal must open the editor")

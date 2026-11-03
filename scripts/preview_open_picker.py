@@ -8,7 +8,7 @@ import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-PROFILES = ('open', 'resume', 'close', 'issues', 'single', 'multi', 'history', 'inline-single', 'inline-checklist', 'review')
+PROFILES = ('open', 'list', 'resume', 'close', 'issues', 'single', 'multi', 'history', 'inline-single', 'inline-checklist', 'review')
 
 
 def fixture():
@@ -79,6 +79,9 @@ def main(argv=None):
                   if fields[4] == 'attached' or fields[4:6] == ['app', 'active']}
         visible = [line for line in formatted.splitlines()
                    if tuple(line.split('\t')[:2]) not in hidden]
+        if args.profile == 'list':
+            visible = formatted.splitlines()
+            env['T_PICKER_SESSION_FILTERS'] = 'list'
         (directory / 'all').write_text(formatted)
         (directory / 'default').write_text('\n'.join(visible) + '\n')
         if args.profile in ('resume', 'close'):
@@ -89,7 +92,9 @@ def main(argv=None):
                 env['T_PICKER_WITH_PENDING'] = formatted
         # The shared profile owns keys, nested filters, theme and cancellation.
         script = '. "$T_HOME/ui/fzf.sh"\n_t_fzf_filtered "$(cat "$HOME/default")" "$(cat "$HOME/all")" open unattached "" "" --prompt="open preview > " --with-nth=5,4'
-        if args.profile != 'open':
+        if args.profile == 'list':
+            script = script.replace('open unattached', 'open all').replace('open preview', 'list preview')
+        elif args.profile != 'open':
             script = script.replace(' open unattached ', ' ' + ('resume' if args.profile == 'resume' else 'kill') + ' defaults ')
         selected = subprocess.run(['sh', '-c', script], env=env, text=True,
                                   stdout=subprocess.PIPE, check=False)
