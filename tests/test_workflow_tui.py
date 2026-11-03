@@ -244,11 +244,11 @@ def test_workflow_clean_ctrl_c_exits_without_unsaved_prompt(workflow, t_mod, mon
 
 def test_config_real_abort_key_offers_review_without_publishing(workflow, t_mod, monkeypatch, tmp_path):
     cfg, local = config(workflow, t_mod, monkeypatch, tmp_path)
-    cfg.open_mode_default = 'cli'
-    ui = make_ui(t_mod, ['j', 'enter', 'j', 'enter', 'abort', 'j', 'enter', 'enter'])
+    cfg.agent_default = 'claude'
+    ui = make_ui(t_mod, ['enter', 'j', 'enter', 'abort', 'j', 'enter', 'enter'])
     monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
     changed = t_mod._config_wizard(cfg)
-    assert changed.open_mode_default == 'app'
+    assert changed.agent_default == 'codex'
     assert any('unsaved' in line for frame in ui.frames for line in frame)
     assert any('Review local settings' in line for frame in ui.frames for line in frame)
     assert ui.restored and not workflow.config_path().exists()

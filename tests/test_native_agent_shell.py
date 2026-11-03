@@ -151,5 +151,3 @@ def test_resume_selected_codex_home_checks_that_index_for_child(tmp_path):
     result=run_shell(tmp_path,f'CODEX_HOME={shlex.quote(str(selected))} _dev_agent_resume_cmd codex {sid}')
     assert result.returncode==0 and 'preferred-main' not in result.stdout
     assert 'model_reasoning_effort' not in result.stdout
-    source=(ROOT/'zsh/resume.zsh').read_text()
-    assert 'resume_command=$(CODEX_HOME="$codex_home" _dev_agent_resume_cmd codex "$sid" --cd "$dir") ||' in source

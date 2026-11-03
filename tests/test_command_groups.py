@@ -10,12 +10,10 @@ def test_registry_covers_the_public_groups(t_mod):
         assert t_mod._canonical_argv([*path, "payload"]) == [*legacy, "payload"]
 
 
-
 @pytest.mark.parametrize("argv,legacy", [
     (["session", "list", "-a"], ["ls", "-a"]),
     (["session", "open", "api", "2", "--codex", "--host", "mini"],
      ["open", "api", "2", "--codex", "--host", "mini"]),
-    (["session", "open-app", "api", "3"], ["app", "api", "3"]),
     (["repo", "locate", "api"], ["repo", "locate", "api"]),
     (["repo", "create", "name", "--dry-run"], ["new", "name", "--dry-run"]),
     (["profile", "apply", "api"], ["instructions", "--apply", "api"]),
@@ -148,7 +146,6 @@ def test_every_advertised_action_has_side_effect_free_help(t_mod, monkeypatch, c
         assert expected.startswith(concise.split("\nLEARN MORE", 1)[0].rstrip())
 
 
-
 @pytest.mark.parametrize("words", [["open"], ["session", "open"]])
 @pytest.mark.parametrize("width", [40, 80])
 def test_open_help_is_concise_with_discoverable_details(t_mod, monkeypatch, capsys, words, width):
@@ -164,18 +161,15 @@ def test_open_help_is_concise_with_discoverable_details(t_mod, monkeypatch, caps
     assert "AGENT (FRESH SLOTS):" in concise and "LOCATION:" in concise
     assert "--codex --new" in concise and "t help " + " ".join(words) in concise
     normalized = " ".join(concise.split())
-    assert "Follow its release instructions if the desktop conversation is still loaded" in normalized
-    assert "t app pull" not in normalized
-    assert "resumes the same conversation and attaches automatically" in normalized
-    assert "t " + " ".join(words) + " api 2 --cli" in normalized
-    for flag in ("--new", "--fg", "--cli", "--app", "--codex", "--claude",
+    assert "--app" not in normalized
+    for flag in ("--new", "--fg", "--cli", "--codex", "--claude",
                  "--local", "--here", "--remote", "--host", "--help"):
         assert flag in concise
     assert t_mod.main(["help", *words]) == 0
     detailed = capsys.readouterr().out
     assert len(detailed) > len(concise)
     assert all(section in detailed for section in (
-        "SESSION TARGETS", "OPENING DEFAULTS", "DESKTOP TO CLI", "REMOTE SESSIONS"))
+        "SESSION TARGETS", "OPENING DEFAULTS", "REMOTE SESSIONS"))
     assert "DEV_AGENT_DEFAULT" in detailed and "<repo>:p<pid>" in detailed
     assert max(map(len, detailed.splitlines())) <= width
 

@@ -136,220 +136,12 @@ def test_reloader_follows_installed_binary_source_switch(tmp_path, release):
 def test_live_tree_guard_protects_canonical_and_selected_code(tmp_path):
     result = shell(
         tmp_path,
-        '_t_tree_is_live "$T_HOME"; echo "selected=$?"; '
+        'T_DOTFILES_LIVE_TREE=$T_HOME; _t_tree_is_live "$T_HOME"; echo "selected=$?"; '
         '_t_tree_is_live "$HOME"; echo "home=$?"',
     )
     assert result.returncode == 0, result.stderr
     assert "selected=0" in result.stdout
     assert "home=1" in result.stdout
-
-
-@pytest.mark.skipif(not shutil.which("zsh"), reason="zsh is required")
-@pytest.mark.parametrize("reopen,leaf", [(False, "api-1"), (True, "1"), (True, "api-1")])
-@pytest.mark.parametrize("offline", [False, True])
-def test_open_app_creates_worktree_without_starting_tmux_or_cli(tmp_path, reopen, leaf, offline):
-    bins = tmp_path / "stubbin"
-    bins.mkdir()
-    launcher = bins / "t"
-    launcher.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$CODEX_LOG"\nprintf "Open request sent\\n"\n')
-    launcher.chmod(0o755)
-    codex = bins / "codex"
-    codex.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$CODEX_LOG"\n')
-    codex.chmod(0o755)
-    log = tmp_path / "codex.log"
-    repo = tmp_path / "home" / "code" / "api"
-    if reopen:
-        metadata = tmp_path / "home" / "worktrees" / "api" / leaf / ".git"
-        metadata.mkdir(parents=True)
-        (metadata / "t-app-slot").write_text("codex-app\n")
-    result = shell(
-        tmp_path,
-        f'''mkdir -p {repo}
-        OSTYPE=darwin # All app/process commands are stubs; no native window opens.
-        _dev_slot_fresh() {{ [[ $2 == 1 ]] }}
-        _dev_worktree_create() {{ local wt="$HOME/worktrees/api/{leaf}"; [[ $3 == "$wt" ]] || return 1; mkdir -p "$wt/.git"; print -r -- "$wt"; }}
-        _dev_app_slot_marker() {{ print -r -- "$1/.git/t-app-slot"; }}
-        _dev_ps_snapshot() {{ :; }}
-        _dev_cwd_pids() {{ :; }}
-        _dev_session_rows() {{ :; }}
-        _dev_rows_all() {{ print scan >> "$HOME/scans"; print -u2 'dev: offline unreachable — skipped'; return 1; }}
-        {'REMOTE_HOSTS[offline]=offline' if offline else ':'}
-        {'_dev_worktree_create() { print -u2 -- "unexpected worktree creation"; return 1; };' if reopen else ''}
-        t open api {'1' if reopen else '--new --app'}
-        ''',
-        local_text='DEV_REPOS[api]="$HOME/code/api"\nDEV_WORKTREE_ROOT="$HOME/worktrees"\nDEV_OPEN_MODE_DEFAULT=cli\n',
-        extra_env={"PATH": f"{bins}:{os.environ['PATH']}", "CODEX_LOG": str(log),
-                   "TMUX_TMPDIR": str(tmp_path / "tmux")},
-    )
-    assert result.returncode == 0, result.stderr
-    assert log.read_text().strip() == f"_app-workspace {tmp_path}/home/worktrees/api/{leaf}" + (' --reopen' if reopen else '')
-    assert (tmp_path / "home" / "worktrees" / "api" / leaf / ".git" / "t-app-slot").read_text().strip() == "codex-app"
-    assert "Open request sent" in result.stdout
-    assert "unexpected worktree creation" not in result.stderr
-    if offline:
-        assert (tmp_path / 'home/scans').read_text().splitlines() == ['scan']
-        assert result.stderr.count('offline unreachable') == 1
-        assert 'ownership could not be verified' not in result.stderr
-
-
-@pytest.mark.skipif(not shutil.which("zsh"), reason="zsh is required")
-def test_open_app_rejects_conflicting_flags_before_worktree_changes(tmp_path):
-    for flags in ("--claude", "--remote", "--fg", "--host mini", "3 --new"):
-        result = shell(tmp_path / flags.replace(" ", "_"),
-                       f't open api --app {flags}',
-                       local_text='DEV_REPOS[api]="$HOME/code/api"\n')
-        assert result.returncode != 0, (flags, result.stdout, result.stderr)
-        assert "t open --app:" in result.stderr
-
-
-@pytest.mark.skipif(not shutil.which('zsh') or os.uname().sysname != 'Darwin',
-                    reason='Codex desktop launch requires macOS and zsh')
-@pytest.mark.parametrize('owner,allowed', [
-    ('codex', False), ('claude', False), ('unknown', False),
-    ('ps_failed', False), ('cwd_failed', False), ('exited', True),
-    ('desktop', True), ('shared', True), ('server', True),
-])
-def test_open_app_rechecks_terminal_ownership_before_reopening(tmp_path, owner, allowed):
-    bins = tmp_path / 'stubbin'
-    bins.mkdir()
-    log = tmp_path / 'launch.log'
-    for name, body in {
-        'codex': '#!/bin/sh\nexit 0\n',
-        'tmux': '#!/bin/sh\nexit 1\n',
-        't': '#!/bin/sh\nprintf "%s\\n" "$*" >> "$APP_LOG"\n',
-        'ps': '#!/bin/sh\nprintf "codex app-server --managed-daemon\\n"\n' if owner == 'shared'
-              else '#!/bin/sh\nprintf "codex resume example\\n"\n',
-    }.items():
-        stub = bins / name
-        stub.write_text(body)
-        stub.chmod(0o755)
-    metadata = tmp_path / 'home/worktrees/api/1/.git'
-    metadata.mkdir(parents=True)
-    (metadata / 't-app-slot').write_text('codex-app\n')
-    comm = 'node' if owner == 'server' else 'claude' if owner == 'claude' else 'codex'
-    result = shell(tmp_path, f'''
-        mkdir -p "$HOME/code/api"
-        _dev_worktree_create() {{ print -u2 -- 'unexpected worktree creation'; return 1; }}
-        _dev_app_slot_marker() {{ print -r -- "$1/.git/t-app-slot"; }}
-        _dev_ps_snapshot() {{
-          _DEV_PS_COMM=(); _DEV_PS_APP=()
-          {'_DEV_PS_COMM[4242]=' + comm if owner not in ('unknown', 'exited') else ':'}
-          {'_DEV_PS_APP[4242]=1' if owner == 'desktop' else ':'}
-          return {1 if owner == 'ps_failed' else 0}
-        }}
-        _dev_cwd_pids() {{ print -r -- 4242; return {1 if owner == 'cwd_failed' else 0}; }}
-        kill() {{ [[ $1 == -0 ]] || return 1; return {1 if owner == 'exited' else 0}; }}
-        t open api 1
-        ''', local_text='DEV_REPOS[api]="$HOME/code/api"\nDEV_WORKTREE_ROOT="$HOME/worktrees"\n',
-        extra_env={'PATH': f"{bins}:{os.environ['PATH']}", 'APP_LOG': str(log),
-                   'TMUX_TMPDIR': str(tmp_path / 'tmux')})
-    assert (result.returncode == 0) == allowed, result.stderr
-    assert (metadata / 't-app-slot').read_text() == 'codex-app\n'
-    if allowed:
-        assert log.read_text().strip() == f'_app-workspace {metadata.parent} --reopen'
-    else:
-        assert not log.exists()
-        assert 't open --app:' in result.stderr
-
-
-@pytest.mark.skipif(not shutil.which("zsh") or os.uname().sysname != "Darwin",
-                    reason="Codex desktop handoff requires macOS and zsh")
-def test_open_app_hands_live_codex_slot_to_existing_thread(tmp_path):
-    bins = tmp_path / "stubbin"
-    bins.mkdir()
-    for name, body in {
-        "codex": "#!/bin/sh\nexit 0\n",
-        "tmux": '#!/bin/sh\n[ "$1" = has-session ]\n',
-        "t": '#!/bin/sh\nprintf "%s\\n" "$*" >> "$APP_LOG"\n',
-    }.items():
-        stub = bins / name
-        stub.write_text(body)
-        stub.chmod(0o755)
-    log = tmp_path / "app.log"
-    repo = tmp_path / "home" / "code" / "api"
-    result = shell(
-        tmp_path,
-        f'''mkdir -p {repo}
-        _dev_agent_of_session() {{ print -r -- codex; }}
-        _dev_worktree_create() {{ print -u2 -- 'unexpected worktree creation'; return 1; }}
-        t open api 3 --app
-        ''',
-        local_text='DEV_REPOS[api]="$HOME/code/api"\nDEV_WORKTREE_ROOT="$HOME/worktrees"\n',
-        extra_env={"PATH": f"{bins}:{os.environ['PATH']}", "APP_LOG": str(log)},
-    )
-    assert result.returncode == 0, result.stderr
-    assert log.read_text().strip() == "app api 3"
-    assert "unexpected worktree creation" not in result.stderr
-
-
-@pytest.mark.skipif(not shutil.which("zsh") or os.uname().sysname != "Darwin",
-                    reason="Codex desktop launch requires macOS and zsh")
-def test_open_app_refuses_a_slot_owned_by_remote_host(tmp_path):
-    bins = tmp_path / "stubbin"
-    bins.mkdir()
-    codex = bins / "codex"
-    codex.write_text("#!/bin/sh\nexit 0\n")
-    codex.chmod(0o755)
-    repo = tmp_path / "home" / "code" / "api"
-    result = shell(
-        tmp_path,
-        f'''mkdir -p {repo}
-        _dev_rows_all() {{ printf 'mini\\tsaved-id\\t%s\\tapi-3\\tdetached\\tactive\\tWork\\n' "$HOME/code/api"; }}
-        _dev_worktree_create() {{ print -u2 -- 'unexpected worktree creation'; return 1; }}
-        t open api 3 --app
-        ''',
-        local_text='DEV_REPOS[api]="$HOME/code/api"\nREMOTE_HOSTS[mini]=unused\n',
-        extra_env={"PATH": f"{bins}:{os.environ['PATH']}",
-                   "TMUX_TMPDIR": str(tmp_path / "tmux")},
-    )
-    assert result.returncode != 0
-    assert "is live on mini" in result.stderr
-    assert "unexpected worktree creation" not in result.stderr
-
-
-@pytest.mark.skipif(not shutil.which("zsh"), reason="zsh is required")
-def test_app_reservation_protects_worktree_from_cli_reuse_and_sweep(tmp_path):
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
-    (repo / "README.md").write_text("# disposable\n")
-    subprocess.run(["git", "-C", str(repo), "add", "README.md"], check=True)
-    subprocess.run(["git", "-C", str(repo), "-c", "user.name=Test",
-                    "-c", "user.email=test@example.invalid", "commit", "-qm", "start"], check=True)
-    wt = tmp_path / "home" / "worktrees" / "repo" / "1"
-    wt.parent.mkdir(parents=True)
-    subprocess.run(["git", "-C", str(repo), "worktree", "add", "-q", "-b", "dev/repo-1",
-                    str(wt), "main"], check=True)
-    result = shell(
-        tmp_path,
-        f'''tmux() {{ return 1; }}
-        _dev_app_slot_reserve "{wt}" || return 1
-        _dev_app_slot_reserved "{wt}"; print -r -- "reserved=$?"
-        _dev_worktree_create api 1; print -r -- "create=$?"
-        _dev_slot_fresh api 1; print -r -- "fresh=$?"
-        _dev_branch_merged() {{ return 0; }}
-        _dev_worktree_sweep_run
-        [[ -e "{wt}/.git" ]]; print -r -- "kept=$?"
-        _dev_session_rows
-        ''',
-        local_text=f'DEV_REPOS[api]="{repo}"\nDEV_WORKTREE_ROOT="$HOME/worktrees"\n',
-        extra_env={"TMUX_TMPDIR": str(tmp_path / "tmux"),
-                   "T_NO_AUTORELOAD": "1", "T_NO_UPDATE_CHECK": "1"},
-    )
-    assert result.returncode == 0, result.stderr
-    assert "reserved=0" in result.stdout
-    assert "create=1" in result.stdout
-    assert "fresh=1" in result.stdout
-    assert "kept=0" in result.stdout
-    assert f"-\t{wt}\tapi-1\tapp\tnone\t(Codex desktop workspace" in result.stdout
-    assert "follow its release instructions" in result.stderr
-    assert "t open api 1 --cli" in result.stderr
-    assert "t app pull" not in result.stderr
-    assert "t open api 1 --app" in result.stderr
-    assert result.stderr.count("reserved for the Codex desktop app") == 1
-    assert "could not create the worktree" not in result.stderr
-    assert "worktree prune" not in result.stderr and "DEV_WORKTREE[api]=0" not in result.stderr
-    assert (repo / ".git" / "worktrees" / "1" / "t-app-slot").read_text() == "codex-app\n"
 
 
 def test_worktree_creation_failure_still_explains_repair(tmp_path):
@@ -444,69 +236,42 @@ def test_repo_launch_and_reattach_on_isolated_tmux(tmp_path, launch, repo):
         tmux("kill-server")
 
 
-@pytest.mark.parametrize("flags,repo_mode,expected", [
-    ("", "", "app api"),
-    ("3", "", "app api 3"),
-    ("--new", "", "app api --new"),
-    ("--cli", "", "cli api"),
-    ("--fg", "", "cli api -f"),
-    ("--claude", "", "cli api --claude"),
-    ("fg", "", "cli api fg"),
-    ("thread-id", "", "cli api thread-id"),
-    ("", "cli", "cli api"),
-    ("--app", "cli", "app api --app"),
-    ("--remote", "", "cli api -r"),
-    ("--host mini", "", "remote mini api --cli"),
-])
-def test_open_mode_defaults_and_explicit_overrides(tmp_path, flags, repo_mode, expected):
-    result = shell(tmp_path,
-        '_t_open_app() { print -r -- "app $*"; }; '
-        '_t_dev() { print -r -- "cli $*"; }; '
-        '_dev_remote_open() { print -r -- "remote $*"; }; '
-        f'_t_open api {flags}',
-        local_text='DEV_REPOS[api]=/code/api\nDEV_OPEN_MODE_DEFAULT=app\n'
-                   + (f'DEV_OPEN_MODE[api]={repo_mode}\n' if repo_mode else ''))
-    assert result.returncode == 0, result.stderr
-    assert result.stdout.strip() == expected
-    cache = tmp_path / "home" / ".config" / "t" / "config.sh"
-    assert "DEV_OPEN_MODE_DEFAULT=app" in cache.read_text()
-    if repo_mode:
-        assert f"DEV_OPEN_MODE[api]={repo_mode}" in cache.read_text()
-
-
-def test_open_cli_and_app_conflict(tmp_path):
+def test_open_rejects_removed_app_flag(tmp_path):
     result = shell(tmp_path, '_t_open api --app --cli')
     assert result.returncode == 2
-    assert "mutually exclusive" in result.stderr
+    assert "support has been removed" in result.stderr
 
 
-@pytest.mark.parametrize("args,expected", [
-    ("api 3", "app api 3"),
-    ("api 3 --codex", "app api 3 --codex"),
-    ("alias 3", "app alias 3"),
-    ("3", "app 3"),
-    ("", "app "),
-    ("api 4", "cli api 4"),
-    ("api", "cli api"),
-    ("api --new", "cli api new"),
-    ("--new", "cli new"),
-    ("api 3 --cli", "cli api 3"),
-    ("api 3 --fg", "cli api 3 -f"),
-    ("api 3 --claude", "cli api 3 --claude"),
-    ("api 3 --remote", "cli api 3 -r"),
-    ("api 3 --host mini", "remote mini api 3 --cli"),
-])
-def test_open_infers_reserved_desktop_slot_before_cli_default(tmp_path, args, expected):
-    (tmp_path / "home/worktrees/api/3").mkdir(parents=True)
-    result = shell(tmp_path,
-        '_t_open_app() { print -r -- "app $*"; }; '
-        '_t_dev() { print -r -- "cli $*"; }; '
-        '_dev_remote_open() { print -r -- "remote $*"; }; '
-        '_t_infer_repo() { print -r -- api; }; '
-        '_dev_repo_of_dir() { print -r -- $\'api\\t3\'; }; '
-        '_dev_app_slot_reserved() { [[ $1 == "$HOME/worktrees/api/3" ]]; }; '
-        f'_t_open {args}',
-        local_text='DEV_REPOS[api]=/code/api\nDEV_REPOS[alias]=/code/api\n'
-                   'DEV_WORKTREE_ROOT="$HOME/worktrees"\nDEV_OPEN_MODE_DEFAULT=cli\n')
+def test_legacy_reservation_protects_worktree_from_freshen_and_sweep(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
+    (repo / "README.md").write_text("# disposable\n")
+    subprocess.run(["git", "-C", str(repo), "add", "README.md"], check=True)
+    subprocess.run(["git", "-C", str(repo), "-c", "user.name=Test",
+                    "-c", "user.email=test@example.invalid", "commit", "-qm", "start"], check=True)
+    wt = tmp_path / "home" / "worktrees" / "repo" / "1"
+    wt.parent.mkdir(parents=True)
+    subprocess.run(["git", "-C", str(repo), "worktree", "add", "-q", "-b", "dev/repo-1",
+                    str(wt), "main"], check=True)
+    gitdir = subprocess.check_output(['git', '-C', str(wt), 'rev-parse', '--absolute-git-dir'], text=True).strip()
+    (Path(gitdir) / 't-app-slot').write_text('codex-app\n')
+    result = shell(
+        tmp_path,
+        f'''tmux() {{ return 1; }}
+        _dev_legacy_workspace_reserved "{wt}"; print -r -- "reserved=$?"
+        _dev_branch_merged() {{ print -u2 UNEXPECTED_FRESHEN; return 0; }}
+        _dev_worktree_freshen api 1 "{wt}" dev/repo-1
+        _dev_worktree_create api 1; print -r -- "create=$?"
+        _dev_worktree_sweep_run
+        [[ -e "{wt}/.git" ]]; print -r -- "kept=$?"
+        ''',
+        local_text=f'DEV_REPOS[api]="{repo}"\nDEV_WORKTREE_ROOT="$HOME/worktrees"\n',
+        extra_env={"TMUX_TMPDIR": str(tmp_path / "tmux"),
+                   "T_NO_AUTORELOAD": "1", "T_NO_UPDATE_CHECK": "1"},
+    )
     assert result.returncode == 0, result.stderr
-    assert result.stdout.rstrip("\n") == expected
+    assert "reserved=0" in result.stdout
+    assert "create=0" in result.stdout
+    assert "kept=0" in result.stdout
+    assert 'UNEXPECTED_FRESHEN' not in result.stderr

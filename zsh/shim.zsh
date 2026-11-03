@@ -39,7 +39,7 @@ t() {
       session|remote|issue|repo|cursor|hosts|agentcore|workflow|runners|config|profile|policy|agent|system)
         label+=" $1"
         case ${2:-} in
-          open|move|resume|list|ls|status|start|close|restart|push|pop|history|cd|read|view-plan|paste|search|open-app|goal|locate|create|clone|add|show|edit|remove|delete|rm|default|run|invoke|stop|setup|onboard|local|workflow|init|apply|check|login|install|trust|integrate|update|diagnose|advisories) label+=" $2" ;;
+          open|move|resume|list|ls|status|start|close|restart|push|pop|history|cd|read|view-plan|paste|search|goal|locate|create|clone|add|show|edit|remove|delete|rm|default|run|invoke|stop|setup|onboard|local|workflow|init|apply|check|login|install|trust|integrate|update|diagnose|advisories) label+=" $2" ;;
         esac ;;
       open|ls|list|kill|restart|push|pop|resume|history|cd|beam|move|read|plan|paste|find|app|on|setup|install|login|trust|update|doctor|help|share|checkout|new|instructions|permissions|config) label+=" $1" ;;
     esac
@@ -349,7 +349,7 @@ _t_open() {
     case "$arg" in
       --new|new)         a+=(new); isnew=1 ;;
       --attached)        include_attached=1 ;;
-      --app)             app=1 ;;
+      --app) print -u2 -- "t: Codex Desktop support has been removed; use t session open --cli"; return 2 ;;
       --cli)             cli=1 ;;
       --fg)              cli_intent=1; a+=(-f) ;;
       --claude)          cli_intent=1; a+=("$arg") ;;
@@ -360,18 +360,16 @@ _t_open() {
     esac
   done
   [[ -n $want_host || ( -n $has_host && -z $host ) || $host == -* ]] && { echo "t open: --host requires a value" >&2; return 2; }
-  [[ -n $app && -n $cli ]] && { echo "t open: --app and --cli are mutually exclusive" >&2; return 2; }
 
   # A slot-less interactive open browses the same complete rows as `t ls`.
   # Bare means every local repo, even from a worktree; a named repo filters.
   # Explicit slots, fresh sessions, agent flags and foreground requests retain
-  # their direct paths. Resolve the picker before the configured opening mode,
-  # since each existing row already knows whether it belongs to CLI or desktop.
+  # their direct paths. Resolve the picker before starting a fresh session.
   local picker_ok=1 picker_repo= picker_rc
   if [[ -z $host && -z $isnew && -t 0 && -t 1 ]] && command -v fzf >/dev/null 2>&1; then
     for arg in "${rest[@]}"; do
       case $arg in
-        --cli|--app|--attached|-l|--local|--here|-r|--remote) ;;
+        --cli|--attached|-l|--local|--here|-r|--remote) ;;
         -*) picker_ok= ;;
         *)
           local picker_alias; picker_rc=1
@@ -395,46 +393,6 @@ _t_open() {
       (( picker_rc == 2 )) || return $picker_rc
       # No existing rows: use the ordinary fresh-session/default-host path.
     fi
-  fi
-
-  # Explicit CLI/remote intents take precedence over reservations and defaults.
-  if [[ -z $app && -z $cli && -z $cli_intent && -z $host && -z $remote ]]; then
-    for arg in "${rest[@]}"; do
-      [[ $arg == -* ]] || mode_pos+=("$arg")
-    done
-    local mode_repo=${mode_pos[1]:-} mode_slot=${mode_pos[2]:-}
-    local mode_alias mode_rc
-    mode_rc=1
-    if [[ -n ${DEV_REPOS[$mode_repo]:-} || ! ( $mode_repo == <-> || $mode_repo == new ) ]]; then
-      mode_alias=$(_dev_resolve_repo "$mode_repo"); mode_rc=$?
-    fi
-    (( mode_rc == 2 )) && return 2
-    (( mode_rc == 0 )) && mode_repo=$mode_alias
-    # Foreground selectors and conversation IDs continue through CLI routing.
-    if [[ ( -n ${DEV_REPOS[$mode_repo]:-} || -z $mode_repo || $mode_repo == <-> || $mode_repo == new ) &&
-          ( -z $mode_slot || $mode_slot == <-> || $mode_slot == new ) ]]; then
-      if [[ -z ${DEV_REPOS[$mode_repo]:-} ]]; then
-        [[ $mode_repo == <-> && -z $mode_slot ]] && mode_slot=$mode_repo
-        mode_repo=$(_t_infer_repo "$mode_repo")
-        if [[ -z $mode_slot && -z $isnew ]]; then
-          local mode_row; mode_row=$(_dev_repo_of_dir "$PWD" 2>/dev/null)
-          [[ $mode_row == *$'\t'* ]] && mode_slot=${mode_row#*$'\t'}
-        fi
-      fi
-      # A desktop reservation is the slot's owner, even when new slots default
-      # to CLI. Reuse the app path so reopening never freshens its worktree.
-      if [[ -n ${DEV_REPOS[$mode_repo]:-} && $mode_slot == <-> && -z $isnew ]] &&
-          _dev_app_slot_reserved "$(_dev_worktree_path "$mode_repo" "$mode_slot")"; then
-        app=1
-      elif [[ ${DEV_OPEN_MODE[$mode_repo]:-$DEV_OPEN_MODE_DEFAULT} == app ]]; then
-        app=1
-      fi
-    fi
-  fi
-
-  if [[ -n $app ]]; then
-    _t_open_app "${(@)rest:#--attached}" ${host:+--host "$host"}
-    return
   fi
 
   # -l/--local/--here and -r/--remote are opposite intents — reject the combination
@@ -592,8 +550,12 @@ _t_open_selected() {
   for row in "${(@f)selected}"; do
     fields=("${(@ps:\t:)row}")
     host=$fields[1]; label=$fields[2]; state=$fields[3]
+    if [[ $state == app ]]; then
+      print -u2 -- "t: $label on $host uses a retired integration; release its owner there, then use t session history"
+      rc=1
+      continue
+    fi
     mode=--cli
-    [[ $state == app && -z $cli || -n $app ]] && mode=--app
     args=()
     if [[ $label == *:* ]]; then
       args+=("$label")
@@ -602,18 +564,11 @@ _t_open_selected() {
     fi
     args+=("$mode")
     if [[ $host != local ]]; then
-      if [[ $mode == --app ]]; then
-        print -u2 -- "t open: $label is a desktop workspace on $host — open it on that Mac with: t open ${(j: :)${(@q)args}}"
-        rc=1
-        continue
-      fi
       args+=(--host "$host")
     elif [[ $mode == --cli ]]; then
       args+=(--local)
     fi
-    if [[ $mode == --app ]]; then
-      _t_open "${args[@]}" || rc=1
-    elif (( ! $#first )); then
+    if (( ! $#first )); then
       first=("${args[@]}")
     else
       cmd="t open ${(j: :)${(@q)args}}"
@@ -624,7 +579,6 @@ _t_open_selected() {
     # A local tmux slot can switch in place. Desktop-to-CLI handoff and true
     # foreground handles still go through their ordinary ownership checks.
     if [[ -n $TMUX && $first[-1] == --local && $first[2] == <-> ]] \
-        && ! _dev_app_slot_reserved "$(_dev_worktree_path "$first[1]" "$first[2]")" \
         && tmux has-session -t "=dev-${first[1]}-${first[2]}:" 2>/dev/null; then
       tmux switch-client -t "=dev-${first[1]}-${first[2]}:" || rc=1
     else
@@ -632,176 +586,6 @@ _t_open_selected() {
     fi
   fi
   return $rc
-}
-
-# Open a dedicated t worktree in the Codex desktop app. A running Codex CLI slot
-# uses `t app` so its conversation has only one owner; a new workspace needs no
-# tmux pane or throwaway CLI process.
-_t_open_app() {
-  local repo= slot= arg isnew= claude= host= want_host= inferred= reopen=
-  local -a pos
-  for arg in "$@"; do
-    if [[ -n $want_host ]]; then host=$arg; want_host=; continue; fi
-    case "$arg" in
-      --app) ;;
-      --new|new) isnew=1 ;;
-      --codex) ;;
-      --claude) claude=1 ;;
-      --host) want_host=1 ;;
-      --host=*) host=${arg#--host=} ;;
-      --fg|-f|--no-tmux|-r|--remote|-l|--local|--here)
-        print -u2 -- "t open --app: --app opens a local desktop workspace; omit '$arg'"
-        return 2 ;;
-      -*) print -u2 -- "t open --app: unknown flag '$arg'"; return 2 ;;
-      *) pos+=("$arg") ;;
-    esac
-  done
-  [[ -z $want_host && -z $host ]] || {
-    print -u2 -- 't open --app: remote desktop launch is not supported; run this on the Mac that owns the app'
-    return 2
-  }
-  [[ -z $claude ]] || {
-    print -u2 -- 't open --app: --claude conflicts with the Codex desktop app'
-    return 2
-  }
-  [[ $OSTYPE == darwin* ]] || {
-    print -u2 -- 't open --app: the Codex desktop app requires macOS'
-    return 1
-  }
-  (( ${#pos} <= 2 )) || { print -u2 -- 't open --app: expected a repo and optional slot number'; return 2; }
-  repo=${pos[1]:-}; slot=${pos[2]:-}
-  if [[ $repo == <-> && -z $slot ]]; then slot=$repo; repo=; fi
-  local _repo_selector _repo_selector_rc
-  _repo_selector=$(_dev_resolve_repo "$repo"); _repo_selector_rc=$?
-  (( _repo_selector_rc == 2 )) && return 2
-  (( _repo_selector_rc == 0 )) && repo=$_repo_selector
-  [[ -z $repo ]] && inferred=1
-  [[ -n $repo ]] || repo=$(_t_infer_repo "$slot")
-  [[ -n $repo && -n ${DEV_REPOS[$repo]:-} && -d ${DEV_REPOS[$repo]} ]] || {
-    print -u2 -- 't open --app: name a registered repository with an existing checkout'
-    return 1
-  }
-  [[ -z $slot || $slot == <-> ]] || {
-    print -u2 -- 't open --app: slot must be a number'
-    return 2
-  }
-  [[ -z $slot || -z $isnew ]] || {
-    print -u2 -- 't open --app: choose a slot number or --new, not both'
-    return 2
-  }
-  if [[ -n $inferred && -z $slot && -z $isnew ]]; then
-    local row here_slot
-    row=$(_dev_repo_of_dir "$PWD" 2>/dev/null)
-    here_slot=${row#*$'\t'}
-    [[ $row == *$'\t'* && -n $here_slot ]] && slot=$here_slot
-  fi
-  _dev_worktree_enabled "$repo" || {
-    print -u2 -- "t open --app: $repo has worktrees disabled; enable them to isolate the desktop workspace"
-    return 1
-  }
-  command -v codex >/dev/null 2>&1 || {
-    print -u2 -- 't open --app: Codex CLI is missing (run t install codex)'
-    return 1
-  }
-  if [[ -z $slot ]]; then
-    local _T_OPEN_REMOTE_APP_READY= _T_OPEN_REMOTE_APP_ROWS= _T_OPEN_REMOTE_APP_RC=0
-    if (( ${#REMOTE_HOSTS} )); then
-      _T_OPEN_REMOTE_APP_ROWS=$(_dev_rows_all)
-      _T_OPEN_REMOTE_APP_RC=$?
-      _T_OPEN_REMOTE_APP_READY=1
-    fi
-    local n=1
-    while ! _dev_slot_fresh_unreserved "$repo" "$n"; do (( n++ )); done
-    slot=$n
-  fi
-  # Aliases pointing at one canonical checkout share slot ownership. Handoff the
-  # existing owner's session name rather than opening its worktree a second time.
-  if ! tmux has-session -t "=dev-${repo}-${slot}:" 2>/dev/null; then
-    local sibling
-    for sibling in ${(k)DEV_REPOS}; do
-      [[ $sibling == $repo || ${DEV_REPOS[$sibling]} != ${DEV_REPOS[$repo]} ]] && continue
-      if tmux has-session -t "=dev-${sibling}-${slot}:" 2>/dev/null; then
-        repo=$sibling
-        break
-      fi
-    done
-  fi
-  local session="dev-${repo}-${slot}" dir
-  if tmux has-session -t "=$session:" 2>/dev/null; then
-    [[ $(_dev_agent_of_session "$session") == codex ]] || {
-      print -u2 -- "t open --app: $session is running Claude; choose --new or another slot"
-      return 1
-    }
-    command t app "$repo" "$slot"
-    return
-  fi
-  dir=$(_dev_worktree_path "$repo" "$slot") || return 1
-  _dev_with_launch_locks "$dir" '' _t_open_app_claim "$repo" "$slot" "$dir" || return $?
-  print -r -- "Opening $repo $slot in the Codex desktop app: $dir"
-  command t _app-workspace "$dir" ${reopen:+--reopen} || {
-    print -u2 -- "t open --app: could not confirm the app open request; the worktree remains reserved at $dir for a retry"
-    return 1
-  }
-}
-
-_t_open_app_claim() {
-  local repo=$1 slot=$2 dir=$3 owner owner_dir
-  # Recheck after taking the same worktree lock as CLI creation and app handoff.
-  local session="dev-${repo}-${slot}"
-  if tmux has-session -t "=$session:" 2>/dev/null; then
-    print -u2 -- "t open --app: $session became live while opening; retry to hand it to the app"
-    return 1
-  fi
-  while IFS='|' read -r owner owner_dir; do
-    [[ -n $owner_dir ]] || continue
-    if [[ ${owner_dir:A} == ${dir:A} ]]; then
-      print -u2 -- "t open --app: $owner now owns this worktree; retry to hand it to the app"
-      return 1
-    fi
-  done < <(tmux list-sessions -F '#{session_name}|#{session_path}' 2>/dev/null)
-  local allow_incomplete=
-  if _dev_app_slot_reserved "$dir"; then
-    reopen=1 # Preserve its branch and reopen the saved conversation.
-    allow_incomplete=1
-  elif _dev_slot_fresh "$repo" "$slot"; then
-    allow_incomplete=1
-  fi
-  if (( ${#REMOTE_HOSTS} )); then
-    _dev_remote_app_check "$repo" "$slot" "$allow_incomplete" || return $?
-  fi
-  # A foreground CLI can own a worktree without tmux or a desktop marker.
-  # Shared backends are not CLI owners; their cwd can belong to another thread.
-  local pid workspace_pids
-  workspace_pids=$(_dev_cwd_pids "$dir") || {
-    print -u2 -- 't open --app: could not check workspace processes; retry before opening'
-    return 1
-  }
-  _DEV_PS_AT=0
-  _dev_ps_snapshot || {
-    print -u2 -- 't open --app: could not check terminal agents; retry before opening'
-    return 1
-  }
-  for pid in ${(f)workspace_pids}; do
-    [[ -n ${_DEV_PS_COMM[$pid]:-} ]] || {
-      kill -0 "$pid" 2>/dev/null || continue # The cwd probe itself may have exited.
-      print -u2 -- 't open --app: workspace processes changed; retry before opening'
-      return 1
-    }
-    [[ -n ${_DEV_PS_APP[$pid]:-} ]] && continue
-    _dev_agent_is_proc "${_DEV_PS_COMM[$pid]:-}" || continue
-    _dev_agent_is_service "$pid" && continue
-    print -u2 -- "t open --app: a terminal agent still owns this workspace (pid $pid); exit it before opening in the app"
-    return 1
-  done
-  if [[ -z $reopen ]]; then
-    dir=$(_dev_worktree_create "$repo" "$slot" "$dir") || return 1
-  fi
-  [[ -n $dir && -e $dir/.git ]] || { _dev_worktree_refuse "$repo" "$slot"; return 1; }
-  _dev_auto_trust "$dir"
-  _dev_app_slot_reserve "$dir" || {
-    print -u2 -- "t open --app: could not reserve $dir against automatic cleanup"
-    return 1
-  }
 }
 
 # Compatibility seam: the guarded move parser consumes --host directly.
@@ -895,7 +679,7 @@ _t() {
   case $group in
     mcp) actions=(status install uninstall) ;;
     remote) actions=(open move resume) ;;
-    session) actions=(open list ls close restart push pop resume history cd move read view-plan paste search open-app goal) ;;
+    session) actions=(open list ls close restart push pop resume history cd move read view-plan paste search goal) ;;
     repo) actions=(list ls cd locate create clone add) ;;
     cursor) actions=(list ls resume send) ;;
     agentcore) actions=(invoke stop) ;;
@@ -982,7 +766,7 @@ _t() {
   if [[ $group == session && $first == 3 ]]; then
     case $action in
       ls) action=list ;; kill) action=close ;; beam) action=move ;;
-      plan) action=view-plan ;; find) action=search ;; app) action=open-app ;;
+      plan) action=view-plan ;; find) action=search ;;
     esac
   fi
   case "$group/$action" in
@@ -1030,22 +814,6 @@ _t() {
     repo/list|repo/cd|repo/locate)
       if (( CURRENT == first )) && [[ $action == cd || $action == locate ]]; then _values 'repo' "${(@f)$(_dev_repo_selectors)}"
       else _values 'flag' -h --help; fi ;;
-    session/open-app)
-      local -a app_flags=(--url --no-preview --plan --no-plan --reuse-window --dry-run -h --help)
-      local app_direction=${words[first]}
-      [[ $app_direction == pull ]] && app_flags=(--thread --dry-run -h --help)
-      if [[ $app_direction == push || $app_direction == pull ]] && (( CURRENT > first )); then
-        (( first++ ))
-      fi
-      if [[ ${words[CURRENT-1]} == --url ]]; then _message 'preview URL'
-      elif [[ ${words[CURRENT-1]} == --plan ]]; then _files -g '*.md'
-      elif [[ ${words[CURRENT-1]} == --thread ]]; then _message 'saved conversation ID'
-      elif [[ ${words[CURRENT]} == -* ]]; then _values 'flag' $app_flags
-      elif (( CURRENT == first )); then
-        if [[ $app_direction == push || $app_direction == pull ]]; then _values 'repo' "${(@f)$(_dev_repo_selectors)}"
-        else _values 'direction or repo' push pull "${(@f)$(_dev_repo_selectors)}"; fi
-      elif (( CURRENT == first + 1 )); then _message 'local slot number'
-      else _values 'flag' $app_flags; fi ;;
     session/history)
       local -a history_flags=(--limit --page --refresh --json -h --help)
       if [[ ${words[CURRENT-1]} == --limit || ${words[CURRENT-1]} == --page ]]; then
@@ -1085,13 +853,13 @@ _t() {
       elif [[ ${words[CURRENT]} == -* ]] || (( CURRENT > first + 1 )); then
         local -a flags=(-h --help)
         case $action in
-          open) flags+=(--new --fg --app --cli -l --local --here -r --remote --host --codex --claude -y --yes) ;;
+          open) flags+=(--new --fg --cli -l --local --here -r --remote --host --codex --claude -y --yes) ;;
           close) flags+=(-y --yes -r --remote) ;;
           read) flags+=(-d --dump -n --tail) ;;
           view-plan) flags+=(-a --all) ;;
           paste) flags+=(-p --pick -n --newest) ;;
           move) flags+=(-r --remote --host --from --here --fg -d --detach -p --pick -a --all -s --session) ;;
-          resume) flags+=(-f --fg --app --cli -a --all -l --live -r --remote --days --host) ;;
+          resume) flags+=(-f --fg --cli -a --all -l --live -r --remote --days --host) ;;
         esac
         _values 'flag' "${flags[@]}"
       elif (( CURRENT == first )); then _values 'repo' "${(@f)$(_dev_repo_selectors)}"

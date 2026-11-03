@@ -85,18 +85,13 @@ _dev_worktree_remote_accept() {
   }
 }
 
-# A desktop-only Codex slot has no tmux owner. Keep its reservation in the
-# worktree's private Git metadata so commits cannot publish it and sweep cannot
-# mistake a clean, merged branch for an abandoned workspace.
-_dev_app_slot_marker() {
+# Retired integrations may have left a reservation in private Git metadata.
+# Do not freshen or sweep that workspace. Exact saved CLI resume still verifies
+# the conversation's writer locks; no new reservations are created.
+_dev_legacy_workspace_reserved() {
   local gitdir
   gitdir=$(git -C "$1" rev-parse --absolute-git-dir 2>/dev/null) || return 1
-  [[ -n $gitdir ]] || return 1
-  print -r -- "$gitdir/t-app-slot"
-}
-_dev_app_slot_reserved() {
-  local marker; marker=$(_dev_app_slot_marker "$1") || return 1
-  [[ -f $marker ]]
+  [[ -f "$gitdir/t-app-slot" ]]
 }
 
 # A t issue launch reserves its freshly created worktree until the task and
@@ -106,10 +101,6 @@ _dev_issue_preparing() {
   if [[ -f $reservation && $(<$reservation) != ${T_HISTORY_TOKEN:-} ]]; then return 0; fi
   gitdir=$(git -C "$1" rev-parse --absolute-git-dir 2>/dev/null) || return 1
   [[ -f "$gitdir/t-issue-preparing" ]]
-}
-_dev_app_slot_reserve() {
-  local marker; marker=$(_dev_app_slot_marker "$1") || return 1
-  print -r -- 'codex-app' >| "$marker"
 }
 
 # _dev_repo_slots <repo> — every slot NUMBER this repo has any trace of, ascending:
@@ -190,14 +181,9 @@ _dev_worktree_create_impl() {
   br="$(_dev_worktree_branch "$repo" "$slot")"
   if [[ -e "$wt/.git" ]]; then          # already materialized → reuse (idempotent)
     _dev_issue_preparing "$wt" && { print -u2 't: issue launch is reserved; rerun t issue start <issue> to recover it'; return 1; }
-    if _dev_app_slot_reserved "$wt"; then
-      print -u2 -- "t: $repo $slot is reserved for the Codex desktop app."
-      print -u2 -- '  To continue in the CLI, run this on the Mac with the conversation and follow its release instructions:'
-      print -u2 -- "    t open ${(q)repo} ${(q)slot} --cli"
-      print -u2 -- "  To reopen in the app: t open ${(q)repo} ${(q)slot} --app"
-      return 1
+    if ! _dev_legacy_workspace_reserved "$wt"; then
+      _dev_worktree_freshen "$repo" "$slot" "$wt" "$br"
     fi
-    _dev_worktree_freshen "$repo" "$slot" "$wt" "$br"
     _dev_auto_trust "$wt"
     print -r -- "$wt"; return 0
   fi
@@ -265,7 +251,7 @@ _dev_worktree_create_impl() {
 # reuse pays only a tmux probe and a local `git status`.
 _dev_worktree_freshen() {
   local repo="$1" slot="$2" wt="$3" br="$4" repodir="${DEV_REPOS[$1]}"
-  _dev_app_slot_reserved "$wt" && return 0
+  _dev_legacy_workspace_reserved "$wt" && return 0
   local -a livepaths
   livepaths=("${(@f)$(tmux list-sessions -F '#{session_path}' 2>/dev/null)}")
   (( ${livepaths[(Ie)$wt]} )) && return 0
@@ -336,9 +322,6 @@ _dev_slot_fresh() {
 # before anyone noticed (ff-12, ff-15). Failing loudly is cheaper than that.
 _dev_worktree_refuse() {
   local repo="$1" slot="$2" repodir="${DEV_REPOS[$1]}"
-  # Creation already explained how to release a desktop reservation. The
-  # worktree exists; prune/add and disabling worktrees cannot fix ownership.
-  _dev_app_slot_reserved "$(_dev_worktree_path "$repo" "$slot")" && return 0
   print -r -- "✗ could not create the worktree for $repo $slot — refusing to start in the shared tree $repodir" >&2
   local origin_base; origin_base=$(_dev_origin_base "$repodir")
   if [[ -n $origin_base ]]; then
@@ -473,7 +456,7 @@ _dev_beam_land_cwd() {
   # _dev_worktree_create would otherwise resume under the beamed conversation.
   local why= s p
   if [[ -e $cwd/.git ]]; then
-    _dev_app_slot_reserved "$cwd" && why="the Codex desktop app owns this worktree"
+    _dev_legacy_workspace_reserved "$cwd" && why="it has a retired integration reservation"
     for s in ${(f)"$(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep '^dev-')"}; do
       p=$(tmux display-message -p -t "=$s:" '#{session_path}' 2>/dev/null)
       [[ -n $p && ${p:A} == ${cwd:A} ]] && { why="$s is live in it"; break }
@@ -754,7 +737,7 @@ _dev_worktree_sweep_run() {
   for wt in $root/*/*(N/); do                       # <basename>/<slot> dirs
     [[ -e "$wt/.git" ]] || continue
     (( ${livepaths[(Ie)$wt]} )) && continue         # live session here → keep
-    _dev_app_slot_reserved "$wt" && continue      # desktop app owns this worktree
+    _dev_legacy_workspace_reserved "$wt" && continue
     _dev_issue_preparing "$wt" && continue        # issue launch is still being prepared
     # Unlike the dirty/merged skips below this one is LOGGED: a worktree that is
     # merged, clean, and never reaped is otherwise a silent mystery.

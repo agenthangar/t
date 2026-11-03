@@ -117,7 +117,6 @@ def test_existing_stamp_entry_is_left_alone(box):
     (home / ".codex" / "hooks.json").write_text(json.dumps(mine))
     r = relink(co, home)
     assert r.returncode == 0 and "Registered the SessionStart" not in r.stdout
-    assert "Allow selected" in r.stdout
     assert "/opt/bin/claude-stamp-tmux --agent codex --quiet" in r.stdout
     assert hooks_of(home) == mine
 
@@ -141,8 +140,6 @@ def test_opt_out_env(box):
 
 
 def assert_review_notice(output):
-    assert "ChatGPT desktop app" in output
-    assert "Review hooks" in output and "Allow selected" in output
     assert "User config / SessionStart" in output
     assert "t-session-start --agent codex" in output
     assert "/hooks" in output and "Until approved" in output

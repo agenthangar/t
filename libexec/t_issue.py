@@ -721,9 +721,10 @@ class IssueCommand:
                         f'Last turn started: {owner.get("last_turn_started_at") or "unknown"}']
             if re.fullmatch(r'.+-[0-9]+', owner['slot']):
                 alias, slot = owner['slot'].rsplit('-', 1)
-                words = ['t', 'session', 'open', alias, slot, '--app' if owner['state'] == 'app' else '--cli']
-                if owner['state'] != 'app':
-                    words.append('--local')
+                if owner['state'] == 'app':
+                    details.append('Retired integration: release this owner on its host, then use t session history.')
+                    continue
+                words = ['t', 'session', 'open', alias, slot, '--cli', '--local']
                 if row.get('provider') == 'remote':
                     words = ['ssh', '-t', self.cfg.hosts[row['host']], 'zsh -lic ' + shlex.quote(shlex.join(words))]
                 details.append('Open session: ' + shlex.join(words))
@@ -797,10 +798,7 @@ class IssueCommand:
 
     def attach_argv(self, row, *, new_terminal=False):
         if row.get('app'):
-            argv = ['t', 'session', 'open', row['alias'], row['slot'], '--app']
-            if row.get('host') == 'local':
-                return self.shell(shlex.join(['_t_open', *argv[3:]]))
-            return ['ssh', '-t', self.cfg.hosts[row['host']], 'zsh -lic ' + shlex.quote(shlex.join(argv))]
+            raise IssueError('this owner uses a retired integration; release it on its host, then use t session history')
         if row.get('resume'):
             argv = ['t', 'session', 'resume', row['alias'], row['slot'], '--days', 'all']
             if row.get('host') == 'local':
@@ -826,11 +824,10 @@ class IssueCommand:
         rows = list(unique.values())
         if not rows:
             return 0
+        if any(row.get('app') for row in rows):
+            raise IssueError('a selected owner uses a retired integration; release it on its host first')
         result = 0
         for row in rows[1:]:
-            if row.get('app'):
-                result = self.attach(row) or result
-                continue
             cmd = shlex.join(self.attach_argv(row, new_terminal=True))
             if subprocess.call(self.shell('_dev_open_tab ' + shlex.quote(cmd))):
                 print('Attach with: ' + cmd)

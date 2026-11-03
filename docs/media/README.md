@@ -1,3 +1,6 @@
+> Historical recording: Codex Desktop integration has been removed. The app
+> commands shown here are no longer supported; use CLI sessions and `t session move`.
+
 # Launch media
 
 The editable [hero](hero.svg) and rendered [demo](demo.mp4), [GIF](demo.gif),
@@ -33,13 +36,8 @@ requires macOS Accessibility permission for the invoking terminal. The video
 labels this stage as an app request and says delivery is unconfirmed. It does
 not show a desktop conversation or a web preview.
 
-Run `python3 scripts/demo/handoff_render.py` to regenerate the media from the
-committed sanitized capture without another model request. To make a new capture,
-use a disposable repository slot on two configured hosts, run the observed
-commands, verify one live owner and transcript continuity on each transfer,
-redact the output into `handoff-capture.json`, then render. The renderer refuses
-to advertise a returned conversation unless its evidence flags and observed
-output are present. It requires Python 3, Pillow, and ffmpeg. The earlier
+The Desktop handoff renderer has been retired. These captures are historical
+evidence and cannot be regenerated with the removed app commands. The earlier
 [local-only capture](demo-capture.json) and `scripts/demo/real.py` remain as a
 historical source for the original local demo; do not use that script to
 regenerate these handoff assets. `scripts/demo/render.py` is a deterministic

@@ -506,13 +506,13 @@ def test_private_rpc_returns_safety_errors_as_versioned_json(app, history, t_mod
 
 
 @pytest.mark.parametrize('local_copy', [False, True])
-def test_native_remote_saved_resume_stops_before_any_transfer(app, source, history, monkeypatch, local_copy):
+def test_legacy_native_setting_reaches_remote_saved_transfer(app, source, history, monkeypatch, local_copy):
     path, row, request = source
     row['associations'][0]['host'] = 'other'
     row['sources'] = [dict(host='local' if local_copy else 'other', path='/unused', updated=1)]
-    def forbidden(*args, **kwargs):
-        pytest.fail('native handoff must not transfer or allocate')
-    for name in ('source', 'reconcile_source', 'materialize_repository', 'destination', 'install_transcript'):
-        monkeypatch.setattr(app, name, forbidden)
-    with pytest.raises(history.HistoryError, match='native desktop app.*footer run location'):
+    app.cfg.handoff = {'codex': 'native'}
+    def transfer(*args, **kwargs):
+        raise history.HistoryError('reached guarded transfer')
+    monkeypatch.setattr(app, 'source', transfer)
+    with pytest.raises(history.HistoryError, match='reached guarded transfer'):
         app.resume('repo', row, detached=True, prepare_only=True)

@@ -31,7 +31,7 @@ def test_vendor_hashes_and_license_are_shipped():
         assert hashlib.sha256((vendor / name).read_bytes()).hexdigest() == digest
     assert 'MIT License' in (vendor / 'tomli-LICENSE').read_text()
     readme = (vendor / 'README.md').read_text()
-    assert 'Mistune 3.3.4' in readme and 'Two local compatibility changes' in readme and 'Tomli 2.2.1' in readme
+    assert 'Tomli 2.2.1' in readme and 'vendored without modification' in readme
 
 
 def test_system_python_can_parse_without_pip(tmp_path):
