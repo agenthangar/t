@@ -63,17 +63,18 @@ def test_move_picker_uses_current_sessions(zsh, tmp_path, args, location, inside
     env = picker_stub(tmp_path, label)
     cwd = '$HOME/work trees/api/api-9' if location == 'api' else '$HOME/outside'
     self_owner = '_dev_self_sid() { print self-id; };' if inside else ''
-    result = zsh(SETUP + f'''
+    result = zsh("DEV_HANDOFF[codex]=t; " + SETUP + f'''
       mkdir -p "{cwd}"; cd "{cwd}"
       {self_owner}
       t session move {args} --host mini
       print -r -- "rc=$?"
     ''', _tty=True, **env)
     assert 'rc=0' in result.stdout, result.stdout
+    assert (tmp_path / 'picker.json').exists(), result.stdout + result.stderr
     log = json.loads((tmp_path / 'picker.json').read_text())
     assert [row.split('\t')[1] for row in log['rows']] == expected
-    assert '--no-multi' in log['args']
-    assert '--header=Enter move · Esc\nCurrent local sessions' in log['args']
+    assert '--multi' in log['args']
+    assert any('Current local sessions' in arg for arg in log['args'])
     assert 'UNEXPECTED' not in result.stdout
     sid, agent = ('codex-id', 'codex') if label == 'api-2' else (
         ('claude-id', 'claude') if label == 'api-3' else ('fg-id', 'claude'))
@@ -90,7 +91,7 @@ def test_move_picker_uses_current_sessions(zsh, tmp_path, args, location, inside
 def test_move_picker_cancel_empty_and_nonterminal(zsh, tmp_path, scenario, rc):
     env = picker_stub(tmp_path, scenario)
     extra = '_dev_session_rows() { :; };' if scenario == 'empty' else ''
-    result = zsh(SETUP + extra + 't session move api --host mini; print -r -- "rc=$?"',
+    result = zsh("DEV_HANDOFF[codex]=t; " + SETUP + extra + 't session move api --host mini; print -r -- "rc=$?"',
                  _tty=scenario != 'nonterminal', **env)
     output = result.stdout + result.stderr
     assert f'rc={rc}' in output, output
@@ -117,7 +118,7 @@ def test_move_refuses_changed_selection_before_stopping_owner(zsh, tmp_path, cha
     # Keep unrelated identity fields identical so each refusal tests its named change.
     row = row.replace('/code/api', str(zsh.home / 'work trees/api/api-2'))
     import shlex
-    result = zsh(SETUP + f'''
+    result = zsh("DEV_HANDOFF[codex]=t; " + SETUP + f'''
       functions[_move_initial_rows]=$functions[_dev_session_rows]
       _dev_session_rows() {{
         if [[ -f $CHANGE_ROWS ]]; then print -r -- {shlex.quote(row)}
@@ -129,9 +130,9 @@ def test_move_refuses_changed_selection_before_stopping_owner(zsh, tmp_path, cha
     assert 'STOP ' not in result.stdout and 'SYNC ' not in result.stdout
 
 
-@pytest.mark.parametrize('args', ['api 2', '2', '--session codex-id', ''])
+@pytest.mark.parametrize('args', ['api 2', '2', '--session codex-id'])
 def test_explicit_and_current_targets_bypass_picker(zsh, args):
-    result = zsh(SETUP + r'''
+    result = zsh("DEV_HANDOFF[codex]=t; " + SETUP + r'''
       _t_infer_repo() { print api; }
       _t_move_pick() { print -u2 UNEXPECTED_PICKER; return 99; }
       _dev_self_sid() { print codex-id; }

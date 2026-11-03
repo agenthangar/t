@@ -72,7 +72,26 @@ def picker():
             return subprocess.run(['tmux', '-S', socket, *args], env=env, text=True,
                                   capture_output=True, check=check)
 
-        def start(empty=False, width=90, height=26, mode='open', shell='/bin/sh', *, hostile_opts=False, profile='filtered', monochrome=False):
+        def start(empty=False, width=90, height=26, mode='open', shell='/bin/sh', *, hostile_opts=False, profile='filtered', monochrome=False, auth_warning=False, close_rc=0, slow_update=False):
+            env['T_HOME'] = str(ROOT)
+            if slow_update:
+                library = root / 'slow/libexec'
+                library.mkdir(parents=True)
+                for source in (ROOT / 'libexec').glob('*.py'):
+                    if source.name == 't_picker_close.py':
+                        text = source.read_text().replace("state = picker.wait('', total)",
+                            "time.sleep(.5)\n            state = picker.wait('', total)")
+                        (library / source.name).write_text(text)
+                    else:
+                        (library / source.name).symlink_to(source)
+                env['T_HOME'] = str(library.parent)
+            env['T_PICKER_KILL_CALLBACK'] = str(root / 'close.zsh')
+            (root / 'close.zsh').write_text('print -r -- "$1" >> "$HOME/closed"\nexit ' + str(close_rc) + '\n')
+            env.pop('T_PICKER_AUTH_HOSTS', None)
+            env.pop('T_PICKER_COLUMNS', None)
+            if auth_warning:
+                env['T_PICKER_AUTH_HOSTS'] = 'user@host.example'
+                env['T_PICKER_COLUMNS'] = 'SESSION  TASK'
             env.pop('NO_COLOR', None)
             if monochrome:
                 env['NO_COLOR'] = '1'
@@ -88,15 +107,17 @@ def picker():
                 default = rows.splitlines()[0] + '\n'
                 (root / 'attached').write_text('\n'.join(rows.splitlines()[:2]) + '\n')
                 (root / 'pending').write_text('\n'.join(rows.splitlines()[::2]) + '\n')
-            if profile == 'resume-rich':
+            if profile in ('resume-rich', 'resume-merged'):
                 rows = ('web\t10\tsid1\t/wt\tdate\ttask\t-\t-\tmini\tcodex\t2026-10-22T10:00:00Z\tNewest web\n'
                         'api\t2\tsid2\t/wt\tdate\ttask\t-\t-\t-\tclaude\t2026-10-21T10:00:00Z\tOlder api\n')
+                if profile == 'resume-merged':
+                    rows = rows.replace('\tNewest web', '\torg/web\tMERGED\t[MERGED] Newest web').replace('\tOlder api', '\torg/api\tOPEN\t[OPEN] Older api')
                 default = rows
                 env['T_HOME'] = str(ROOT)
             (root / 'all').write_text(rows)
             (root / 'default').write_text(default)
             mode_env = 'T_PICKER_SESSION_FILTERS=' + shlex.quote(mode) + ' '
-            if profile == 'resume-rich':
+            if profile in ('resume-rich', 'resume-merged'):
                 mode_env += 'T_PICKER_SOURCE_ROWS="$(cat "$HOME/all")" '
             if mode == 'kill':
                 mode_env += 'T_PICKER_WITH_ATTACHED="$(cat "$HOME/attached")" T_PICKER_WITH_PENDING="$(cat "$HOME/pending")" '
@@ -115,12 +136,14 @@ def picker():
                 picker_cmd = '_t_fzf_multi open "Saved sessions" --delimiter="$(printf "\\t")" --with-nth=-1 --prompt="multi > " < "$HOME/default"'
             prefix = f'. {shlex.quote(str(ROOT / "ui/fzf.sh"))}\n'
             redirect = ' > "$HOME/selected"'
-            if profile in ('public-open', 'public-open-all', 'public-kill'):
+            if profile in ('public-open', 'public-open-cli', 'public-open-all', 'public-open-kill', 'public-kill'):
                 from test_open_picker import ROWS
                 shell = 'zsh -f'
                 env.update(T_NO_UPDATE_CHECK='1', T_NO_AUTORELOAD='1',
                            T_LOCAL_RC=str(root / 'local.zsh'))
                 raw = ROWS.replace(r'\tapp\tnone', r'\tapp\tactive') if empty else ROWS
+                if profile in ('public-open-cli', 'public-open-kill'):
+                    raw = raw.replace(r'\tapp\tnone', r'\tdetached\tnone')
                 prefix = (f'source {shlex.quote(str(ROOT / "t.plugin.zsh"))}\n'
                           'unset TMUX\n'
                           'DEV_REPOS[api]="$HOME/code/api"\n'
@@ -130,6 +153,15 @@ def picker():
                           '_t_dev() { print -r -- "$*" >> "$HOME/selected"; }\n'
                           ': > "$HOME/selected"\n')
                 picker_cmd = 't open --cli' if profile == 'public-open-all' else 't open api --cli'
+                if profile == 'public-open-kill':
+                    prefix += ('functions[_rows_before_kill]=$functions[_dev_session_rows]\n'
+                               '_dev_session_rows() {\n'
+                               '  if [[ -f "$HOME/killed" ]]; then\n'
+                               '    _rows_before_kill "$@" | grep -v api-4\n'
+                               '  else _rows_before_kill "$@"; fi\n'
+                               '}\n'
+                               'tmux() { [[ $1 == has-session ]] || command tmux "$@"; }\n'
+                               '_dev_kill() { print -r -- "KILL $*" >> "$HOME/selected"; touch "$HOME/killed"; }\n')
                 if profile == 'public-kill':
                     prefix += 'cd "$HOME"\n_dev_kill_completed_labels() { print -rl api-4 web-6; }\n'
                     picker_cmd = '_dev_kill_pick'
@@ -143,11 +175,15 @@ def picker():
             tmux('-f', '/dev/null', 'new-session', '-d', '-x', str(width), '-y', str(height),
                  shell + ' ' + shlex.quote(str(root / 'run.sh')))
 
-        def wait(text, absent=()):
+        def wait(text, absent=(), ordered=(), focused=None):
             deadline = time.monotonic() + 5
             while time.monotonic() < deadline:
                 screen = tmux('capture-pane', '-p', check=False).stdout
-                if text in screen and not any(value in screen for value in absent):
+                positions = [screen.find(value) for value in ordered]
+                in_order = all(p >= 0 for p in positions) and positions == sorted(positions)
+                has_focus = focused is None or any(
+                    '▸' in line and focused in line for line in screen.splitlines())
+                if text in screen and not any(value in screen for value in absent) and in_order and has_focus:
                     return screen
                 time.sleep(.05)
             pytest.fail(f'Picker never displayed {text!r}:\n{screen}')
@@ -187,7 +223,8 @@ def test_filter_toggle_preserves_query_and_removes_hidden_marks(picker):
     modern = '--id-nth' in subprocess.check_output(['fzf', '--help'], text=True)
     wait('3/3 (1)' if modern else '3/3 (0)')
     keys('Down', 'Space', 'C-t')
-    screen = wait('2/2 (1)' if modern else '2/2 (0)')
+    # Counts can repaint before the row area after reload-sync.
+    screen = wait('2/2 (1)' if modern else '2/2 (0)', absent=('Pending task',))
     assert 'Pending task' not in screen and 'Ctrl-A show all' in screen
     if not modern:
         keys('Up', 'Space')
@@ -319,7 +356,8 @@ def test_primary_action_and_focused_row_visible_in_small_viewports(picker, width
     start, wait, keys, finish = picker
     start(width=width, height=height, profile=profile)
     screen = wait('▸')
-    assert 'Enter open · Esc' in screen
+    action = ('Enter/k kill/Esc' if width <= 60 else 'Enter open · k kill · Esc')
+    assert (action if profile == 'filtered' else 'Enter open · Esc') in screen
     assert any('▸' in line and 'api' in line for line in screen.splitlines())
     assert f'{prompt} >' in screen
     assert len(finish()) == 1
@@ -352,7 +390,7 @@ def test_open_abort_does_not_start_or_attach_sessions(picker, key):
 
 def test_open_ctrl_n_still_navigates_and_enter_opens_selection(picker):
     start, wait, keys, finish = picker
-    start(profile='public-open')
+    start(profile='public-open-cli')
     wait('1/1 (0)')
     keys('C-a')
     wait('2/2 (0)')
@@ -367,7 +405,7 @@ def test_open_simple_rows_and_focused_marks(picker, width, height, monochrome):
     start, wait, keys, finish = picker
     start(profile='public-open', width=width, height=height, monochrome=monochrome)
     screen = wait('1/1 (0)')
-    assert 'View: unattached' in screen
+    assert 'Filters ON' in screen
     assert 'LAST TURN' not in screen and 'details' not in screen and 'Alt-N' not in screen
     keys('C-a')
     wait('2/2 (0)')
@@ -398,101 +436,92 @@ def test_open_removed_shortcuts_never_launch_or_preview(picker, empty, source):
     assert finish('Escape', status=130) == []
 
 
+def choose_setting(wait, keys, field, value):
+    keys('C-f')
+    wait('Filters >')
+    keys('-l', field + ':')
+    wait('1/')
+    keys('Enter')
+    wait(field + ' >')
+    keys('-l', value)
+    wait('1/')
+    keys('Enter')
+    wait('Filters >')
+    keys('Enter')  # Apply filters is the initial focused choice.
+
+
 @pytest.mark.parametrize('width,height', [(80, 24), (44, 20), (32, 12)])
 @pytest.mark.parametrize('profile', ['public-open-all', 'public-kill'])
 def test_session_pickers_display_every_filter_key(picker, width, height, profile):
     start, wait, keys, finish = picker
     start(profile=profile, width=width, height=height)
     screen = wait('2/2 (0)')
-    if profile == 'public-open-all':
-        for key in ('T', 'U', 'G', 'D', 'O', 'R', 'A', 'F', 'P', 'B', 'V', 'E', 'W'):
-            assert 'Ctrl-' + key in screen or '^' + key in screen, screen
-        assert 'View: unattached' in screen
-        if width <= 44:
-            assert '^ = Ctrl' in screen
-    else:
-        for key in ('Ctrl-T', 'Ctrl-G', 'Ctrl-D', 'Ctrl-O', 'Ctrl-R', 'Ctrl-A', 'Ctrl-F'):
-            assert key in screen, screen
-        assert 'UI: all' in screen and 'repo: all' in screen and 'host: all' in screen
-        assert 'Ctrl-P pending: hidden' in screen
-    assert '▸' in screen and 'hidden' in screen
+    for letter in ('A', 'F', 'L'):
+        assert 'Ctrl-' + letter in screen or '^' + letter in screen, screen
+    assert 'Ctrl-G' not in screen and '^G' not in screen
+    assert screen.count('Filters ON') == 1 and '▸' in screen and 'hidden' in screen
+    keys('C-f')
+    screen = wait('Filters >')
+    assert '▸' in screen and 'Enter choose' in screen
+    keys('Escape')
+    wait('2/2 (0)')
     assert finish('Escape', status=130) == []
 
 
-def test_public_open_facet_keys_combine_and_clear_hidden_marks(picker):
+def test_public_open_settings_keep_query_restore_saved_choices_and_remove_hidden_marks(picker):
     start, wait, keys, finish = picker
     start(profile='public-open-all')
     wait('2/2 (0)')
-    keys('C-g')
-    wait('agent >')
-    keys('-l', 'codex')
-    # Wait for asynchronous filtering before accepting the highlighted value.
-    wait('1/')
-    keys('Enter')
-    wait('1/1 (0)')
-    wait('agent=codex')
-    keys('C-t')
-    wait('View: attached', absent=('api-4',))
-    wait('api-2')
-    wait('1/1 (0)')
-    keys('Space')
-    wait('1/1 (1)')
-    keys('C-u')
-    screen = wait('View: unattached', absent=('api-2',))
-    assert 'agent=codex' in screen and 'api-4' in screen
-    wait('1/1 (0)')
-    keys('C-t')
-    wait('View: attached', absent=('api-4',))
-    keys('C-d')
-    wait('UI >')
-    keys('-l', 'desktop')
-    # Wait for asynchronous filtering before accepting the highlighted value.
-    wait('1/')
-    keys('Enter')
-    wait('0/0 (0)')
+    choose_setting(wait, keys, 'agent', 'codex')
+    screen = wait('1/1 (0)')
+    assert 'agent=codex' in screen
     keys('C-a')
     wait('4/4 (0)')
     keys('-l', 'First')
     wait('1/4 (0)')
+    keys('Space')
+    wait('1/4 (1)')
+    keys('C-l')
+    screen = wait('0/1 (0)')
+    assert 'open > First' in screen and 'agent=codex' in screen
+    keys('C-a')
+    wait('1/4 (0)')
     keys('C-f')
-    wait('0/2 (0)')
-    keys('C-t')
-    screen = wait('1/2 (0)')
-    assert 'open > First' in screen
+    wait('Filters >')
+    keys('Escape')
+    screen = wait('1/4 (0)')
+    assert 'Filters OFF' in screen and 'open > First' in screen
     assert finish() == ['api 2 --local']
 
 
 @pytest.mark.parametrize('width,height', [(80, 24), (32, 12)])
-@pytest.mark.parametrize('key,label,query,count', [
-    ('C-g', 'agent', 'codex', 2), ('C-p', 'progress', 'in progress', 1),
-    ('C-d', 'UI', 'desktop', 1), ('C-b', 'model', 'gpt-test-astra', 1),
-    ('C-o', 'host', 'local', 4), ('C-r', 'repo', 'api', 2),
-    ('C-v', 'session', 'api-2', 1), ('C-e', 'context', 'active', 2),
-    ('C-w', 'task', 'First task', 1),
+@pytest.mark.parametrize('field,query,count', [
+    ('agent', 'codex', 2), ('progress', 'in progress', 1),
+    ('UI', 'desktop', 1), ('model', 'gpt-test-astra', 1),
+    ('host', 'local', 4), ('repo', 'api', 2),
+    ('session', 'api-2', 1), ('context', 'active', 2),
+    ('task', 'First task', 1),
 ])
-def test_open_each_column_opens_searchable_value_picker(picker, key, label, query, count, width, height):
+def test_open_each_column_opens_searchable_value_picker(picker, field, query, count, width, height):
     start, wait, keys, finish = picker
     start(profile='public-open-all', width=width, height=height)
     wait('2/2 (0)')
-    keys('C-a')
+    choose_setting(wait, keys, 'State', 'all attachment states')
     wait('4/4 (0)')
-    keys(key)
-    wait(label + ' >')
-    keys('-l', query)
-    # Wait for asynchronous filtering before accepting the highlighted value.
+    choose_setting(wait, keys, field, query)
+    wait(f'{count}/{count} (0)')
+    # Cancel a nested value picker and discard the settings: no changes.
+    keys('C-f')
+    wait('Filters >')
+    keys('-l', field + ':')
     wait('1/')
     keys('Enter')
-    wait(f'{count}/{count} (0)')
-    keys(key)
-    wait(label + ' >')
+    wait(field + ' >')
+    keys('Escape')
+    wait('Filters >')
     keys('Escape')
     wait(f'{count}/{count} (0)')
-    keys(key)
-    wait(label + ' >')
-    keys('-l', 'All (clear filter)')
-    # Wait for asynchronous filtering before accepting the highlighted value.
-    wait('1/')
-    keys('Enter')
+    choose_setting(wait, keys, field, 'All (clear filter)')
     wait('4/4 (0)')
     assert finish('Escape', status=130) == []
 
@@ -501,38 +530,168 @@ def test_open_attachment_views_are_exclusive_and_idempotent(picker):
     start, wait, keys, finish = picker
     start(profile='public-open-all')
     wait('2/2 (0)')
-    keys('C-t')
-    screen = wait('View: attached', absent=('api-4',))
-    assert 'api-2' in screen and 'api-4' not in screen
-    keys('C-t')
-    wait('View: attached')
+    wait('api-4', absent=('api-2',))
+    choose_setting(wait, keys, 'State', '^attached$')
+    wait('2/2 (0)')
+    wait('api-2', absent=('api-4',))
     keys('C-a')
     wait('4/4 (0)')
-    keys('C-u')
-    screen = wait('View: unattached', absent=('api-2',))
-    assert 'api-4' in screen and 'api-2' not in screen
+    keys('C-l')
+    wait('2/2 (0)')
+    wait('api-2', absent=('api-4',))
+    keys('C-l')
+    wait('api-2', absent=('api-4',))
+    choose_setting(wait, keys, 'State', '^unattached$')
+    wait('2/2 (0)')
+    wait('api-4', absent=('api-2',))
     assert finish('Escape', status=130) == []
 
 
 @pytest.mark.parametrize('width,height', [(80, 24), (44, 20), (32, 12)])
-def test_resume_sort_controls_keep_focused_row_and_change_order(picker, width, height):
+@pytest.mark.parametrize('auth_warning', [False, True])
+def test_resume_sort_controls_keep_focused_row_and_change_order(picker, width, height, auth_warning):
     start, wait, keys, finish = picker
-    start(profile='resume-rich', mode='resume', width=width, height=height)
+    start(profile='resume-rich', mode='resume', width=width, height=height, auth_warning=auth_warning)
     screen = wait('2/2 (0)')
     assert 'Sort: last turn' in screen and 'Newest web' in screen
+    if auth_warning:
+        assert 'GitHub auth failed:' in screen
     assert '▸' in screen
     for letter in ('T', 'R', 'G', 'O', 'V'):
         assert 'Alt-' + letter in screen or 'M-' + letter in screen
     keys('M-r')
-    # fzf 0.44 can repaint the header before completing reload-sync. Wait for
-    # its loading indicator to clear, then focus the first sorted result.
+    # Headers can repaint before reload-sync applies the new rows. Wait for
+    # the actual order before moving focus, then verify its rendered identity.
     loading = tuple('⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏')
-    wait('Sort: repo', absent=loading)
+    if height > 12:
+        wait('Sort: repo', absent=loading, ordered=('Older api', 'Newest web'))
+    else:
+        wait('Sort: repo', absent=loading, focused='Older api')
     keys('Up', 'Up')
-    screen = wait('Older api')
+    screen = wait('Older api', focused='Older api')
     assert 'Older api' in screen and '▸' in screen
-    keys('C-f')
-    wait('Sort: last turn', absent=loading)
+    keys('M-t')
+    if height > 12:
+        wait('Sort: last turn', absent=loading, ordered=('Newest web', 'Older api'))
+    else:
+        wait('Sort: last turn', absent=loading, focused='Newest web')
     keys('Up', 'Up')
-    wait('Newest web')
+    wait('Newest web', focused='Newest web')
     assert finish()[0].split('\t')[2] == 'sid1'
+
+
+@pytest.mark.parametrize('width,height', [(80, 24), (44, 20), (32, 12)])
+@pytest.mark.parametrize('monochrome', [False, True])
+def test_resume_merged_key_preserves_query_and_removes_hidden_marks(picker, width, height, monochrome):
+    start, wait, keys, finish = picker
+    start(profile='resume-merged', mode='resume', width=width, height=height,
+          auth_warning=True, monochrome=monochrome)
+    screen = wait('2/2 (0)', focused='[MERGED]')
+    assert 'Alt-M' in screen or 'M-M' in screen
+    keys('Space')
+    wait('2/2 (1)')
+    keys('-l', 'e')  # Both titles match; the query must survive each reload.
+    keys('M-m')
+    screen = wait('1/1 (0)', focused='[OPEN]')
+    assert '[MERGED]' not in screen
+    assert 'resume > e' in screen
+    keys('C-a')
+    wait('2/2 (0)')
+    keys('C-l')
+    wait('1/1 (0)')
+    keys('M-m')
+    wait('2/2 (0)')
+    keys('M-m')
+    wait('1/1 (0)', focused='[OPEN]')
+    assert finish()[0].split('\t')[2] == 'sid2'
+
+
+@pytest.mark.parametrize('width,height', [(80, 24), (44, 20), (32, 12)])
+@pytest.mark.parametrize('marked', [False, True])
+def test_open_kill_key_ignores_marks_and_accepts_focus(picker, width, height, marked):
+    start, wait, keys, finish = picker
+    start(width=width, height=height)
+    wait('k kill')
+    if marked:
+        keys('Space', 'Tab')
+        wait('(2)')
+    keys('Up', 'Up', 'Down')
+    keys('k')
+    wait('Close: web-4 closed', absent=('Beta full',))
+    wait('1/1 (1)' if marked else '1/1 (0)', focused='api  2')
+    selected = finish()
+    assert [row.split('\t')[1] for row in selected] == ['api-2']
+
+
+def test_public_open_kill_keeps_picker_without_rediscovery(picker):
+    start, wait, keys, finish = picker
+    start(profile='public-open-kill')
+    wait('k kill', focused='4')
+    keys('k')
+    wait('Close: api-4 closed')
+    wait('0/0 (0)')
+    keys('C-a')
+    wait('1/1 (0)', focused='2')
+    assert finish() == ['KILL api 4 1', 'api 2 --local']
+
+
+def test_open_kill_preserves_query_and_hidden_marks(picker):
+    start, wait, keys, finish = picker
+    start()
+    wait('2/2 (0)')
+    keys('Space')
+    wait('(1)')
+    keys('-l', 'Beta')
+    wait('1/2 (1)', focused='Beta')
+    keys('k')
+    wait('Close: web-4 closed')
+    screen = wait('0/1 (1)')
+    assert 'open > Beta' in screen
+    keys('Bspace', 'Bspace', 'Bspace', 'Bspace')
+    wait('1/1 (1)', focused='Alpha')
+    assert [row.split('\t')[1] for row in finish()] == ['api-2']
+
+
+@pytest.mark.parametrize('close_rc', [1, 130])
+def test_open_failed_or_canceled_kill_keeps_rows_marks_and_picker(picker, close_rc):
+    start, wait, keys, finish = picker
+    start(close_rc=close_rc)
+    wait('2/2 (0)')
+    keys('Space')
+    wait('(1)')
+    keys('k')
+    wait('Close: ' + ('canceled' if close_rc == 130 else 'failed'))
+    wait('2/2 (1)')
+    assert [row.split('\t')[1] for row in finish()] == ['api-2']
+
+
+def test_open_kill_last_row_leaves_empty_picker_until_cancel(picker):
+    start, wait, keys, finish = picker
+    start()
+    wait('2/2 (0)')
+    keys('k')
+    wait('Close: api-2 closed')
+    wait('1/1 (0)')
+    keys('k')
+    wait('Close: web-4 closed')
+    wait('0/0 (0)')
+    assert finish('Escape', status=130) == []
+
+
+def test_open_kill_temporarily_locks_query_then_accepts_typing(picker):
+    start, wait, keys, finish = picker
+    start(slow_update=True)
+    wait('2/2 (0)')
+    keys('Space')
+    keys('-l', 'Beta')
+    wait('1/2 (1)')
+    keys('k')
+    wait('1/1 (')  # Deliberately held during restoration; modern fzf keeps marks.
+    keys('-l', 'x')
+    wait('Close: web-4 closed')
+    screen = wait('0/1 (1)')
+    assert 'open > Beta' in screen and 'Betax' not in screen
+    keys('Bspace', 'Bspace', 'Bspace', 'Bspace')
+    keys('-l', 'Alpha')
+    wait('1/1 (1)')
+    assert [row.split('\t')[1] for row in finish()] == ['api-2']

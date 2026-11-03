@@ -1,60 +1,16 @@
-# Check a desktop claim with one discovery snapshot. A local desktop reservation
-# continues its existing owner; an unreserved saved workspace needs a complete
-# scan before acquiring one. Known remote owners always block either operation.
-_dev_remote_app_check() {
-  local repo=$1 slot=$2 allow_incomplete=$3 dir=${DEV_REPOS[$1]:-}
-  local rows scan_rc owner host state
-  if [[ ${_T_OPEN_REMOTE_APP_READY:-} == 1 ]]; then
-    rows=$_T_OPEN_REMOTE_APP_ROWS; scan_rc=$_T_OPEN_REMOTE_APP_RC
-  else
-    rows=$(_dev_rows_all); scan_rc=$?
-  fi
-  owner=$(print -r -- "$rows" | awk -F'\t' \
-    -v d="$(_dev_homerel "$dir")" -v s="$slot" \
-    -v wtr="$(_dev_homerel "${DEV_WORKTREE_ROOT:-}")" -v b="${dir:t}" '
-      $1 != "local" && $4 !~ /:/ {
-        c=$3; sub(/^\/(Users|home)\/[^\/]+\//, "", c)
-        n=$4; sub(/^.*-/, "", n)
-        if ((c==d || (wtr != "" && b != "" && index(c, wtr "/" b "/") == 1)) && n==s) {
-          print $1 "\t" $5; exit
-        }
-      }')
-  if [[ -n $owner ]]; then
-    host=${owner%%$'\t'*}; state=${owner#*$'\t'}
-    if [[ $state == app ]]; then
-      print -u2 -- "t open --app: $repo $slot is reserved by the Codex desktop app on $host; close it there and release the reservation before opening here"
-    else
-      print -u2 -- "t open --app: $repo $slot is live on $host; move it here with t beam before opening the app"
-    fi
-    return 1
-  fi
-  if (( scan_rc )); then
-    if [[ -z $allow_incomplete ]]; then
-      print -u2 -- 't open --app: ownership could not be verified for this existing workspace; retry when the skipped host is reachable'
-      return 3
-    fi
-    # The aggregate result includes local failures too. An offline host never
-    # excuses a failed local scan, even for a reserved or fresh workspace.
-    _dev_session_rows >/dev/null || {
-      print -u2 -- 't open --app: local ownership check failed; retry before opening'
-      return 3
-    }
-  fi
-}
-
 # → stderr (stdout is captured).
-# A desktop-only slot has no tmux process to attach, but it still owns its
-# worktree and conversation. Keep this separate from _dev_remote_resolve, whose
+# Older peers can report retired integration reservations without a tmux
+# process. Keep recognizing these as conflicts during rolling upgrades. Keep this separate from _dev_remote_resolve, whose
 # result is strictly an attachable tmux slot.
 # Optional third argument permits an incomplete scan only for a fresh local slot.
 # Positive remote ownership evidence always wins. Existing work stays strict.
-_dev_remote_app_owner() {
+_dev_remote_legacy_owner() {
   local repo="$1" slot="$2" dir="${DEV_REPOS[$1]:-}" base wtr
   [[ -n $dir ]] || return 1
   base=${dir:t}; wtr=${DEV_WORKTREE_ROOT:-}
   local rows result scan_rc
-  if [[ ${_T_OPEN_REMOTE_APP_READY:-} == 1 ]]; then
-    rows=$_T_OPEN_REMOTE_APP_ROWS; scan_rc=$_T_OPEN_REMOTE_APP_RC
+  if [[ ${_T_OPEN_REMOTE_ROWS_READY:-} == 1 ]]; then
+    rows=$_T_OPEN_REMOTE_ROWS_ROWS; scan_rc=$_T_OPEN_REMOTE_ROWS_RC
   else
     rows=$(_dev_rows_all); scan_rc=$?
   fi
@@ -84,7 +40,7 @@ _dev_slot_fresh_unreserved() {
   _dev_slot_fresh "$1" "$2" || return 1
   (( ${#REMOTE_HOSTS} )) || return 0
   local owner
-  owner=$(_dev_remote_app_owner "$1" "$2" 1)
+  owner=$(_dev_remote_legacy_owner "$1" "$2" 1)
   [[ -z $owner ]]
 }
 
@@ -177,17 +133,15 @@ _dev_remote_resolve() {
   printf '%s\t%s\t%s\n' "$host" "${hostslot%-*}" "${hostslot##*-}"
 }
 
-# _term_title <text> — set the terminal/tab title via an OSC escape. When Terminal.app
-# honors it, it STOPS auto-titling from the foreground process's argv — which is why
-# a remote attach otherwise reads as the raw `ssh -t mini zsh -lic dev\ dotfiles\ 2`
-# (nothing set a title, so Terminal fell back to the ssh command line). Empty <text>
-# clears it so process tracking resumes. No-op when stdout is not a tty (cmd | cat).
-# CAVEAT: a Terminal profile (or recent macOS) that composes the title from "active
-# process name AND arguments" appends the ssh argv REGARDLESS of this OSC. The robust
-# defense is therefore the ssh-call quoting itself: every remote `ssh -t … zsh -lic
-# ${(qq)rcmd}` uses (qq) (single-quote), NOT (q) (backslash) — so even when the argv
-# leaks into the title it reads one quoted command rather than escaped spaces.
-_term_title() { [[ -t 1 ]] && printf '\e]0;%s\a' "$1" }
+# _term_title <text> — bounded, control-free OSC title on capable terminals.
+# Empty text clears the explicit title. Some terminal profiles independently
+# append foreground argv; single-quote the outer remote worker command as well.
+_term_title() {
+  [[ -t 1 && ${TERM:-dumb} != dumb && ${T_TITLE_QUIET:-} != $$ && ${T_TITLE_QUIET:-} != $PPID ]] || return 0
+  local title=$1
+  title=${title//[[:cntrl:]]/}
+  printf '\e]0;%s\a' "${title[1,160]}"
+}
 
 # _term_reset_mouse — disable every terminal mouse-tracking + bracketed-paste mode.
 # WHY: a remote attach (`t open`/`t beam`/`on`, all `ssh -t … zsh -lic`) runs a TUI
@@ -343,7 +297,7 @@ _dev_remote_open() {
     echo "t open --host: starting a session on $host needs a terminal." >&2
     return 1
   fi
-  local rcmd="T_UPDATE_PROMPTED=\$\$ t open"; local a
+  local rcmd="T_UPDATE_PROMPTED=\$\$ t open --local"; local a
   for a in "$@"; do rcmd+=" ${(q)a}"; done
   echo "→ $host: ${rcmd#T_UPDATE_PROMPTED=\$\$ } (stays on $host; Ctrl-b d to detach)"
   _term_title "$host: open ${(j: :)@}"
@@ -593,27 +547,53 @@ _dev_remote_kill() {
   return $rc
 }
 
-# _dev_pull <host> <target> <repo> <slot> <fg> — pull a remote dev slot's session
-# onto THIS machine and land it (the engine behind `tbeam <repo> <slot> --from <host>` —
-# the RECEIVE direction, mirror of the default send). Finds the live dev-<repo>-<slot> on <host> via its
-# _dev_session_rows (sid + cwd; slot omitted → the repo's first live slot), rsync's
-# the transcript back, then stops the origin copy there (the MOVE — _tbeam_kill_owner,
-# so exactly one live claude owns the id) and resumes it locally: a dev-<repo>-<slot>
-# by default, or this terminal with <fg>. Reuses a local slot already running that id.
+# Match immutable conversation identity while allowing attached/detached changes.
+# The receive path ships this small verifier to older source installations too.
+_t_move_match_row() {
+  local expected=$1 rows=$2 row
+  local -a wanted=("${(@ps:\t:)expected}") fields
+  for row in "${(@f)rows}"; do
+    fields=("${(@ps:\t:)row}")
+    if [[ $fields[1] == "$wanted[1]" && $fields[2] == "$wanted[2]" &&
+          $fields[3] == "$wanted[3]" && ${fields[7]:-claude} == "${wanted[7]:-claude}" &&
+          $fields[4] == (attached|detached) ]]; then
+      print -r -- "$row"; return 0
+    fi
+  done
+  print -u2 't session move: selected session changed or closed; select it again'
+  return 1
+}
+
+# Bring a remote conversation here: verify and stop its owner, push its work,
+# copy the transcript, then resume locally. Optional arguments 6/7 are detach/ID.
 _dev_pull() {
-  local host="$1" target="$2" repo="$3" slot="$4" fg="$5"
+  local host="$1" target="$2" repo="$3" slot="$4" fg="$5" detach=${6:-} sid_arg=${7:-}
   command -v rsync >/dev/null 2>&1 || { echo "dev: rsync not found" >&2; return 1; }
-  local worker; worker=$(_dev_repo_rows_command "$repo" "$slot")
+  local worker
+  if [[ -n ${T_MOVE_EXPECT_ROW:-} || -z $repo ]]; then worker='_dev_session_rows --details'
+  else worker=$(_dev_repo_rows_command "$repo" "$slot"); fi
   local rows; rows=$(ssh "$target" "zsh -lic ${(q)worker}") || return $?
   [[ -n $rows ]] || { echo "dev: no live sessions for '$repo${slot:+ $slot}' on $host (check that t is installed and up to date there)" >&2; return 1; }
   # The source resolved the selector against its own registrations. Keep its
   # immutable label and path, including sibling aliases for the same checkout.
   local row=${rows%%$'\n'*}
+  if [[ -n ${T_MOVE_EXPECT_ROW:-} ]]; then
+    row=$(_t_move_match_row "$T_MOVE_EXPECT_ROW" "$rows") || return $?
+  elif [[ -n $sid_arg ]]; then
+    local candidate
+    local -a matches
+    for candidate in "${(@f)rows}"; do
+      [[ ${candidate%%$'\t'*} == "$sid_arg"* ]] && matches+=("$candidate")
+    done
+    (( $#matches == 1 )) || { print -u2 't session move: source session ID must match exactly one current conversation'; return 1; }
+    row=$(_t_move_match_row "$matches[1]" "$rows") || return $?
+  fi
   local sid=${row%%$'\t'*}
   local cwd=${${row#*$'\t'}%%$'\t'*}
   local fslot=${${${row#*$'\t'}#*$'\t'}%%$'\t'*}
   local agent=${${(ps:\t:)row}[7]:-claude}; _dev_agent_valid "$agent" || agent=claude   # field 7 (a 6-field host = claude)
   [[ -n $sid && $sid != - ]] || { echo "dev: $host/$fslot has no active conversation to pull" >&2; return 1; }
+
 
   # Check the source host's durable Codex rollout before stopping its owner.
   # A newer SQLite projection with a shorter JSONL file cannot be transferred
@@ -640,16 +620,20 @@ _dev_pull() {
   # pull below would miss the tail) between the snapshot and the move — the same
   # invariant tpush/tpop/tbeam protect.
   local killed
-  killed=$(ssh "$target" "TB_SID=${(q)sid} zsh -lic _tbeam_kill_owner" 2>/dev/null | tail -1)
+  local stop_worker="functions[_t_move_match_row]=${(q)functions[_t_move_match_row]}; move_rows=\$(_dev_session_rows --details) || exit 1; _t_move_match_row ${(q)row} \"\$move_rows\" >/dev/null && TB_SID=${(q)sid} _tbeam_kill_owner"
+  killed=$(ssh "$target" "zsh -lic ${(q)stop_worker}") || {
+    print -u2 't session move: could not stop the source; nothing was started locally'; return 1
+  }
+  killed=${killed##*$'\n'}
   [[ $killed == dev-* ]] && echo "✂ Stopped the live copy on $host ($killed)"
 
   # Carry the origin worktree's uncommitted edits with the move: commit-all + push its branch
   # ON the remote (over ssh, work passed in TB_* env like _tbeam_land) so the local worktree can
   # fast-forward to them below. The mirror of the SEND path's local _dev_worktree_beam_push.
-  # Nonzero = the commit or push could not fully carry the work — land anyway (degraded, the
-  # edits stay safe on $host; the reland path re-verifies what it needs) but say so loudly.
+  # A failed push must not launch a local copy with incomplete work.
   if ! ssh "$target" "TB_WT=${(q)cwd} TB_HOST=${(q)$(hostname -s)} zsh -lic _dev_worktree_beam_push"; then
-    echo "⚠ $host couldn't fully commit/push the worktree — the landing may miss its latest edits (they remain on $host at $cwd)" >&2
+    echo "t session move: $host couldn't commit/push the worktree; work remains at $cwd; nothing was started locally" >&2
+    return 1
   fi
 
   # Transcript first: the collision reland below copies this sid's files into the new
@@ -669,7 +653,7 @@ _dev_pull() {
       [[ -n $_pr && -n $_ps ]] && _dev_worktree_enabled "$_pr" && _dev_worktree_create "$_pr" "$_ps" "$cwd" >/dev/null || return 1
     fi
     [[ -d $cwd ]] || { echo "dev: $cwd doesn't exist here — clone/sync the repo first." >&2; return 1; }
-    _dev_worktree_beam_sync "$cwd"      # fast-forward to the edits the origin just pushed
+    _dev_worktree_beam_sync "$cwd" || return 1  # fast-forward to the edits the origin just pushed
   else
     cwd="$land"                          # relanded: resume in the fresh slot's worktree
   fi
@@ -688,7 +672,7 @@ _dev_pull() {
     _term_title ""
     [[ -n $existing ]] && { echo "dev: already running locally in $existing — attaching."; tmux attach-session -t "=$existing:"; return; }
     echo "✓ Resuming ${sid[1,8]}… here"
-    if [[ $agent == codex ]]; then ( cd "$cwd" && exec codex resume "$sid" --no-daemon ); else ( cd "$cwd" && exec claude -r "$sid" ); fi
+    ( cd "$cwd" && eval "exec $(_dev_agent_resume_cmd "$agent" "$sid")" )
     return
   fi
 
@@ -702,7 +686,7 @@ _dev_pull() {
     _dev_resume_session "$session" "$cwd" "$sid" "$agent" || return 1
   fi
   echo "✓ Landed here as $session"
-  if [[ -t 1 && -z $CLAUDE_CODE_SESSION_ID ]]; then
+  if [[ -z $detach && -t 1 && -z $CLAUDE_CODE_SESSION_ID ]]; then
     # Title the local landing so the header reads "$session" (clearly local), NOT the
     # stale "<host>: …" a prior remote attach set — tmux (set-titles off) swallows OSC
     # from inside the pane, so this pre-attach write is the title that sticks.
@@ -804,48 +788,97 @@ _t_plan() {
   fi
 }
 
-# _dev_open_tab <cmd…> — run a command in a NEW tab of the local terminal app.
-# The tab engine for multi-pick `t resume` (each extra revived slot gets its own
-# tab running the ordinary `t open` attach). Terminal.app has no AppleScript
-# verb for tabs, so the tab is a System Events Cmd+T — which needs Terminal
-# granted Accessibility (System Settings → Privacy & Security) — and the script
-# POLLS the front window's tab count before `do script in front window` (that
-# phrasing targets the ACTIVE tab, which post-Cmd+T is the new one; a blind
-# delay would race slow tab creation). iTerm2 has a first-class tab API, no
-# Accessibility needed. Inside tmux the pane's $TERM_PROGRAM reads "tmux" — the
-# real app is recovered from the server's launch env (tmux show-environment -g).
-# rc 1 whenever a tab is impossible here — over ssh (the GUI is not where you
-# are), an unrecognized terminal, osascript refused — so callers print attach
-# hints instead.
+# _dev_open_tab <cmd…> — open an extra session in the originating GUI window.
+# Resolve the caller by tty, never by the user's current/front window. Terminal
+# needs a foreground Cmd+T; if unavailable, create a new window atomically.
+# Address only a proven new tab after successful creation. iTerm returns the new tab directly. No activate calls:
+# navigating away must not steal focus or inject commands into an existing tab.
 _dev_open_tab() {
-  local cmd="$*" tp=${TERM_PROGRAM:-}
+  local cmd="$*" tp=${TERM_PROGRAM:-} origin_tty=${TTY:-}
+  local -a client_args=()
   [[ -z ${SSH_CONNECTION:-} ]] || return 1
-  if [[ -n ${TMUX:-} && ( -z $tp || $tp == tmux ) ]]; then
-    tp=$(tmux show-environment -g TERM_PROGRAM 2>/dev/null); tp=${tp#TERM_PROGRAM=}
+  if [[ -n ${TMUX:-} ]]; then
+    if [[ -z $tp || $tp == tmux ]]; then
+      tp=$(tmux show-environment -g TERM_PROGRAM 2>/dev/null); tp=${tp#TERM_PROGRAM=}
+    fi
+    [[ -n ${TMUX_PANE:-} ]] && client_args=(-t "$TMUX_PANE")
+    origin_tty=$(tmux display-message -p "${client_args[@]}" '#{client_tty}' 2>/dev/null)
+  fi
+  if [[ $origin_tty != /dev/* || $origin_tty == *$'\n'* ]]; then
+    [[ $tp == Apple_Terminal ]] || return 1
+    origin_tty=
   fi
   cmd=${cmd//\\/\\\\}; cmd=${cmd//\"/\\\"}
+  origin_tty=${origin_tty//\\/\\\\}; origin_tty=${origin_tty//\"/\\\"}
   case $tp in
     Apple_Terminal)
-      osascript >/dev/null 2>&1 <<EOS || return 1
+      osascript >/dev/null <<EOS || return 1
+set newTTY to missing value
+set originID to missing value
+try
+  tell application "Terminal"
+    set originWindow to missing value
+    repeat with candidateWindow in windows
+      repeat with candidateTab in tabs of candidateWindow
+        if tty of candidateTab is "$origin_tty" then set originWindow to contents of candidateWindow
+      end repeat
+    end repeat
+    if originWindow is missing value then error "Origin terminal is unavailable"
+    set originID to id of originWindow
+    set oldTTYs to tty of every tab of originWindow
+    if not frontmost then error "Terminal focus changed"
+    if id of front window is not originID then error "Terminal window changed"
+  end tell
+  tell application "System Events"
+    tell process "Terminal"
+      if not frontmost then error "Terminal focus changed"
+      keystroke "t" using command down
+    end tell
+  end tell
+  tell application "Terminal"
+    repeat 40 times
+      set newTabs to {}
+      repeat with candidateTab in tabs of window id originID
+        set candidateTTY to tty of candidateTab
+        if candidateTTY is not "" and candidateTTY is not in oldTTYs then set end of newTabs to candidateTTY
+      end repeat
+      if (count newTabs) > 1 then error "Ambiguous new terminal tab"
+      if (count newTabs) is 1 then
+        set newTTY to item 1 of newTabs
+        exit repeat
+      end if
+      if not frontmost then error "Terminal focus changed"
+      if id of front window is not originID then error "Terminal window changed"
+      delay 0.05
+    end repeat
+  end tell
+on error
+  set newTTY to missing value
+end try
 tell application "Terminal"
-  activate
-  set tabCount to count tabs of front window
-end tell
-tell application "System Events" to keystroke "t" using command down
-tell application "Terminal"
-  repeat 40 times
-    if (count tabs of front window) > tabCount then exit repeat
-    delay 0.05
-  end repeat
-  do script "$cmd" in front window
+  if newTTY is missing value then
+    -- With no target, do script creates a new window atomically.
+    do script "$cmd"
+  else
+    do script "$cmd" in (first tab of window id originID whose tty is newTTY)
+  end if
 end tell
 EOS
       ;;
     iTerm.app)
       osascript >/dev/null 2>&1 <<EOS || return 1
 tell application "iTerm2"
-  tell current window to create tab with default profile
-  tell current session of current window to write text "$cmd"
+  set originWindow to missing value
+  repeat with candidateWindow in windows
+    repeat with candidateTab in tabs of candidateWindow
+      repeat with candidateSession in sessions of candidateTab
+        if tty of candidateSession is "$origin_tty" then set originWindow to contents of candidateWindow
+      end repeat
+    end repeat
+  end repeat
+  if originWindow is missing value then error "Origin terminal is unavailable"
+  tell originWindow to set newTab to create tab with default profile
+  tell current session of newTab to write text "$cmd"
 end tell
 EOS
       ;;
@@ -973,8 +1006,10 @@ _pr_state_refresh() {
 # "merged, still in progress" instead. The tag stays until the session's next PR
 # URL replaces it, since the last PR mention in the transcript is the one shown.
 _pr_state_tag() {
+  # Return both the released text tag and structured state to snapshot callers.
   local pru=$1 wt=${2:-}
   REPLY=
+  REPLY_PR_STATE=NONE
   [[ -n $pru ]] || return 0
   local prdir="${XDG_CACHE_HOME:-$HOME/.cache}/claude-sessions/pr"
   local prp=${pru#github.com/}; prp=${prp/\/pull\//\/}
@@ -986,6 +1021,7 @@ _pr_state_tag() {
     [[ $prraw == MERGED || $prraw == CLOSED || $prraw == OPEN ]] && prst=$prraw
   fi
   prlab=${prst:+${(L)prst}}
+  REPLY_PR_STATE=${prst:-UNKNOWN}
   [[ -z $prlab ]] && command -v gh >/dev/null 2>&1 && prlab='?'
   if [[ $prst == MERGED && -n $wt ]] && _pr_work_continued "$wt" "$prcf.head"; then
     prlab='merged, still in progress'
@@ -1017,7 +1053,7 @@ _pr_state_tag() {
 # refreshes the repo's PR cache in the background when work still looks pending.
 # Unknown/unreadable history falls back to the dirty check alone.
 _pr_work_continued() {
-  local wt=$1 hf=$2 head= cur dirty f main base tree trees
+  local wt=$1 hf=$2 head= cur dirty f main base tree trees origin_base
   [[ -e $wt/.git ]] || return 1
   dirty=$(git -C "$wt" status --porcelain 2>/dev/null) || return 1
   [[ -n $dirty ]] && return 0
@@ -1031,7 +1067,8 @@ _pr_work_continued() {
     [[ -f ${f%.head} ]] || continue
     [[ $(<"${f%.head}") == MERGED && $(<"$f") == $cur ]] && return 1
   done
-  main=$(git -C "$wt" rev-parse --verify refs/remotes/origin/main 2>/dev/null)
+  origin_base=$(_dev_origin_base "$wt")
+  main=$(git -C "$wt" rev-parse --verify "refs/remotes/$origin_base" 2>/dev/null)
   if [[ -n $main ]]; then
     git -C "$wt" merge-base --is-ancestor "$cur" "$main" 2>/dev/null && return 1
     tree=$(git -C "$wt" rev-parse 'HEAD^{tree}' 2>/dev/null) || return 1
@@ -1081,21 +1118,26 @@ _t_remote_host_pick() {
     move) heading="Move this session to which host?"$'\n'"Destination host · current host: $source" ;;
     *) heading='Open a session on which host?' ;;
   esac
-  heading+=$'\nSSH hosts · alias and target'
-  (( ${#REMOTE_HOSTS} )) || { print -u2 't remote: no hosts configured; run t hosts add <alias> <target>'; return 1; }
+  if [[ $purpose == move ]]; then
+    heading+=$'\nHosts · local or SSH alias and target'
+    [[ $'\n'$excluded$'\n' == *$'\nlocal\n'* ]] || rows+=$'local\tthis machine\n'
+  else
+    heading+=$'\nSSH hosts · alias and target'
+  fi
+  (( ${#REMOTE_HOSTS} )) || [[ -n $rows ]] || { print -u2 't remote: no hosts configured; run t hosts add <alias> <target>'; return 1; }
   [[ -t 0 ]] && command -v fzf >/dev/null 2>&1 || {
     print -u2 't remote: host selection requires a terminal and fzf; use --host HOST'; return 1;
   }
   for host in ${(ko)REMOTE_HOSTS}; do
     target=${REMOTE_HOSTS[$host]}
-    [[ $target == "$excluded" ]] && continue
+    [[ $'\n'$excluded$'\n' == *$'\n'$target$'\n'* ]] && continue
     rows+="$host"$'\t'"$target"$'\n'
   done
   [[ -n $rows ]] || { print -u2 't remote: no other destination hosts configured; run t hosts add <alias> <target>'; return 1; }
   selected=$(print -rn -- "$rows" | _t_fzf_single host "$heading" --delimiter=$'\t' --prompt='host> ') || return $?
   [[ -n $selected ]] || return 130
   host=${selected%%$'\t'*}
-  [[ -n ${REMOTE_HOSTS[$host]:-} ]] || return 1
+  [[ ( $purpose == move && $host == local ) || -n ${REMOTE_HOSTS[$host]:-} ]] || return 1
   print -r -- "$host"
 }
 
@@ -1114,10 +1156,50 @@ _t_remote_move_rows() {
     (( scan_rc == 2 )) && return 2
     (( scan_rc == 0 )) || return 1
   else
-    _dev_rows_all --best-effort --details
+    if [[ -n $repo && -z ${DEV_REPOS[$repo]:-} ]]; then
+      # A selector absent here belongs to the source host's registry. Never
+      # widen it to an unfiltered inventory just because it is unknown here.
+      _dev_rows_all --best-effort --repo "$repo"
+    else
+      _dev_rows_all --best-effort --details
+    fi
     return
   fi
   [[ -n $rows ]] && print -r -- "$rows" | awk -v h="$source" 'NF {print h "\t" $0}'
+  return 0
+}
+
+# Read-only worker: resolve scope on the selected host, never open UI there.
+_t_remote_open_rows() {
+  local repo=$1 resolved rc rows row
+  resolved=$(_dev_resolve_repo "$repo"); rc=$?
+  (( rc == 2 )) && return 2
+  (( rc == 0 )) && repo=$resolved
+  [[ -z $repo || -n ${DEV_REPOS[$repo]:-} ]] || {
+    print -u2 -- "t remote open: unknown repository: $repo"; return 1
+  }
+  rows=$(_dev_session_rows --details) || return $?
+  local -a fields
+  for row in "${(@f)rows}"; do
+    fields=("${(@ps:\t:)row}")
+    (( $#fields >= 7 )) || continue
+    # Remote desktop workspaces cannot be opened as CLI writers.
+    [[ $fields[4] == app ]] && continue
+    if [[ -n $repo ]]; then
+      _dev_dir_in_scope "$fields[2]" "${DEV_REPOS[$repo]:a}" || continue
+    fi
+    print -r -- "$row"
+  done
+  return 0
+}
+
+_t_remote_open_inventory() {
+  local host=$1 repo=$2 rows rc
+  # Ship only this read-only worker so existing hosts need no coordinated update.
+  local worker="$(functions _t_remote_open_rows); T_NO_UPDATE_CHECK=1 _t_remote_open_rows ${(q)repo}"
+  rows=$(_dev_remote_scan_with_timeout "${REMOTE_HOSTS[$host]:-$host}" "zsh -lic ${(q)worker}" "${T_REMOTE_SCAN_TIMEOUT:-15}" 1); rc=$?
+  (( rc == 0 )) || return $rc
+  [[ -z $rows ]] || print -r -- "$rows" | awk -v h="$host" 'NF {print h "\t" $0}'
   return 0
 }
 
@@ -1144,36 +1226,111 @@ _t_remote_open_local() {
   return $rc
 }
 
+# Canonical move always browses when no exact target is given. The released
+# beam shortcut retains its implicit-current behavior in _t_beam.
+_t_session_move() {
+  local arg host= receive= from_host= here= pick= remote= exact= fg= detach= all=
+  local -a args=("$@") pos
+  while (( $# )); do
+    arg=$1; shift
+    case $arg in
+      --host|--from|--session|-s|--id)
+        (( $# )) && [[ -n $1 && $1 != -* ]] || { print -u2 -- "t session move: $arg requires a value"; return 2; }
+        case $arg in
+          --host) host=$1 ;;
+          --from) receive=1; from_host=$1 ;;
+          *) exact=1 ;;
+        esac
+        shift ;;
+      --host=*|--from=*|--session=*|-s=*|--id=*)
+        [[ -n ${arg#*=} ]] || { print -u2 -- "t session move: ${arg%%=*} requires a value"; return 2; }
+        case $arg in --host=*) host=${arg#*=} ;; --from=*) receive=1; from_host=${arg#*=} ;; *) exact=1 ;; esac ;;
+      --here) receive=1; here=1 ;;
+      -p|--pick) pick=1 ;;
+      -a|--all) pick=1; all=1 ;;
+      -r|--remote) remote=1; pick=1 ;;
+      -f|--fg) fg=1 ;;
+      -d|--detach) detach=1 ;;
+      -*) print -u2 -- "t session move: unknown flag $arg"; return 2 ;;
+      *) pos+=("$arg"); [[ $arg == <-> || $arg == *:* ]] && exact=1 ;;
+    esac
+  done
+  (( $#pos <= 2 )) || { print -u2 't session move: expected [repo] [slot]'; return 2; }
+  [[ -z $fg || -z $detach ]] || { print -u2 't session move: --fg and --detach are mutually exclusive'; return 2; }
+  [[ -z $all || $#pos == 0 ]] || { print -u2 't session move: --all cannot be combined with a repository or slot'; return 2; }
+  if [[ $from_host == local && -z $here ]]; then
+    local T_MOVE_REMOTE=0
+    _t_remote move "${args[@]}"
+    return
+  fi
+  # Let the engine validate malformed flags and the mutually exclusive receive
+  # modes before discovery. --from alone continues to mean receive here.
+  if [[ -n $receive || -n ${T_MOVE_EXPECT_ROW:-} || ${_T_BEAM_HOST_IS_TARGET:-0} == 1 ]]; then
+    # --remote controls source discovery; it is not a transfer-engine flag.
+    local -a engine_args
+    for arg in "${args[@]}"; do
+      [[ $arg == (-r|--remote) ]] || engine_args+=("$arg")
+    done
+    _t_beam "${engine_args[@]}"
+    return
+  fi
+  # Exact targets can live on any registered host. Resolve ownership before
+  # labeling the source or asking for a destination, even without --remote.
+  [[ ( -n $exact && -z $pick ) || $host == local ]] && remote=1
+  local T_MOVE_REMOTE=${remote:-0}
+  _t_remote move "${args[@]}"
+}
+
 _t_remote() {
   local action=$1; shift
-  local host= source= sid= all= repo= slot= arg rows row scope= scope_rel= wt_rel= cwd_rel= selected= source_target= target=
-  local -a pos flags fields candidates format_args chosen move_args
+  local host= source= sid= all= pick= remote=${T_MOVE_REMOTE:-1} repo= slot= arg rows row scope= scope_rel= wt_rel= cwd_rel= selected= source_target= target=
+  local -a pos flags fields candidates format_args chosen move_args selections displays excluded completed_rows unattempted
+  local -A seen
   case $action in open|resume|move) ;; *) print -u2 't remote: choose open, move, or resume'; return 2 ;; esac
   while (( $# )); do
     arg=$1; shift
     case $arg in
-      --host|--from|--session|-s|--days)
+      --host|--from|--session|-s|--id|--days)
         (( $# )) && [[ -n $1 && $1 != -* ]] || { print -u2 "t remote $action: $arg requires a value"; return 2; }
         case $arg in
           --host) host=$1 ;;
           --from) [[ $action == move ]] || return 2; source=$1 ;;
-          --session|-s) [[ $action == move ]] || return 2; sid=$1 ;;
+          --session|-s|--id) [[ $action == move ]] || return 2; sid=$1 ;;
           --days) [[ $action == resume ]] || return 2; flags+=(--days "$1") ;;
         esac
         shift ;;
       --host=*) host=${arg#*=}; [[ -n $host ]] || return 2 ;;
       --from=*) [[ $action == move ]] || return 2; source=${arg#*=}; [[ -n $source ]] || return 2 ;;
-      --session=*|-s=*) [[ $action == move ]] || return 2; sid=${arg#*=}; [[ -n $sid ]] || return 2 ;;
+      --session=*|-s=*|--id=*) [[ $action == move ]] || return 2; sid=${arg#*=}; [[ -n $sid ]] || return 2 ;;
       --days=*) [[ $action == resume ]] || return 2; flags+=("$arg") ;;
       -a|--all) [[ $action == (move|resume) ]] || return 2; all=1 ;;
+      -r|--remote) [[ $action == move ]] || return 2; remote=1 ;;
+      -p|--pick) [[ $action == move ]] || return 2; pick=1 ;;
       --new) [[ $action == open ]] || return 2; flags+=(--new) ;;
       -d|--detach|-f|--fg) [[ $action == move ]] || return 2; flags+=("$arg") ;;
       -*) print -u2 "t remote $action: unknown flag $arg"; return 2 ;;
       *) pos+=("$arg") ;;
     esac
   done
-  (( $#pos <= 2 )) || { print -u2 "t remote $action: expected [repo] [slot]"; return 2; }
+  if [[ $action != move && -z $host && $#pos -gt 0 ]]; then
+    (( $#pos <= 3 )) || { print -u2 "t remote $action: expected [host] [repo] [slot]"; return 2; }
+    # Old repo-only/repo-slot commands must not silently become SSH targets.
+    if (( $#pos <= 2 )); then
+      local old_repo old_rc
+      old_repo=$(_dev_resolve_repo "$pos[1]"); old_rc=$?
+      if (( old_rc == 0 || old_rc == 2 )) || [[ $pos[1] == <-> ]]; then
+        print -u2 -- "t remote $action: ambiguous legacy target '$pos[1]'; host comes first. Use [repo] [slot] --host HOST to make the host explicit."
+        return 2
+      fi
+    fi
+    host=$pos[1]; pos=("${(@)pos[2,-1]}")
+  fi
+  (( $#pos <= 2 )) || { print -u2 "t remote $action: expected [repo] [slot] with --host"; return 2; }
   repo=${pos[1]:-}; slot=${pos[2]:-}
+  if [[ $action == move && -z $sid && ${pos[-1]:-} == *:* ]]; then
+    sid=${pos[-1]##*:}
+    if (( $#pos == 1 )); then repo=; else slot=; fi
+  fi
   [[ -z $slot || $slot == <-> ]] || { print -u2 "t remote $action: slot must be a number"; return 2; }
   if [[ $repo == <-> && -z $slot ]]; then
     slot=$repo; repo=$(_t_infer_repo) || { print -u2 't remote: name the repository for a numeric slot'; return 1; }
@@ -1181,9 +1338,9 @@ _t_remote() {
     repo=$(_t_infer_repo)
   fi
   [[ -z $all || ( -z $repo && -z $slot ) ]] || { print -u2 "t remote $action: --all cannot be combined with a repository or slot"; return 2; }
-  [[ $host != local ]] || { print -u2 't remote: --host names a remote SSH host; use t session move --from HOST to receive here'; return 2; }
+  [[ $action == move || $host != local ]] || { print -u2 't remote: --host names a remote SSH host; use t session move --from HOST to receive here'; return 2; }
   # An exact conversation ID is global unless a repository was explicit.
-  [[ -z $sid || $#pos != 0 ]] || repo=
+  if [[ -n $sid && ( $#pos == 0 || ( $#pos == 1 && $pos[1] == *:* ) ) ]]; then repo=; fi
   if [[ $action != move ]]; then
     if [[ -z $host ]]; then
       local purpose=$action
@@ -1191,6 +1348,16 @@ _t_remote() {
       host=$(_t_remote_host_pick '' "$purpose") || return $?
     fi
     target=${REMOTE_HOSTS[$host]:-$host}
+    if [[ $action == open && -z $slot && ${(M)flags:#--new} == '' ]]; then
+      [[ -t 0 && -t 1 ]] && command -v fzf >/dev/null 2>&1 || {
+        print -u2 't remote open: session selection requires a terminal and fzf; name a host, repo and slot or --new'; return 1
+      }
+      _t_open_picker "$repo" '' '' 1 '' "$host"; local pick_rc=$?
+      if (( pick_rc == 2 )); then
+        print -u2 "t remote open: no current sessions${repo:+ for '$repo'} on $host"; return 0
+      fi
+      return $pick_rc
+    fi
     local -a worker_args
     [[ -n $repo ]] && worker_args+=("$repo")
     [[ -n $slot ]] && worker_args+=("$slot")
@@ -1212,7 +1379,7 @@ _t_remote() {
       if (( identity_rc == 0 )); then
         repository_identity=$(python3 "$T_HOME/bin/t" __repo-identity "$identity_alias") || return $?
       fi
-      local resume_environment="T_NO_UPDATE_CHECK=1 _T_RESUME_REPO_IDENTITY=${(q)repository_identity} _T_RESUME_REQUIRE_PICKER=1 _T_RESUME_OWNER_HOST=here _T_RESUME_DESTINATION_HOST=${(q)target}"
+      local resume_environment="_T_HANDOFF_CODEX=t _T_HANDOFF_CLAUDE=t T_NO_UPDATE_CHECK=1 _T_RESUME_REPO_IDENTITY=${(q)repository_identity} _T_RESUME_REQUIRE_PICKER=1 _T_RESUME_OWNER_HOST=here _T_RESUME_DESTINATION_HOST=${(q)target}"
       if [[ -n $repository_identity ]]; then
         # Resolve on the target before invoking its shell function. Older t
         # versions may ignore the identity environment and reuse a foreign alias.
@@ -1221,12 +1388,19 @@ _t_remote() {
         worker="$resume_environment _t_resume ${(j: :)${(@q)worker_args}}"
       fi
     fi
-    if [[ -t 0 && -t 1 ]]; then ssh -t "$target" "zsh -lic ${(q)worker}"
-    else ssh "$target" "zsh -lic ${(q)worker}"; fi
+    _term_title "$host: t remote $action"
+    {
+      if [[ -t 0 && -t 1 ]]; then ssh -t "$target" "zsh -lic ${(qq)worker}"
+      else ssh "$target" "zsh -lic ${(qq)worker}"; fi
+    } always {
+      _term_title ''
+    }
+
     return
   fi
+  [[ -n $source || $remote == 1 ]] || source=local
   # Explicit source + exact target uses the existing guarded source resolver.
-  if [[ -n $source && ( -n $sid || -n $slot ) ]]; then
+  if [[ -n $source && -z $pick && ( -n $sid || -n $slot ) ]]; then
     chosen=()
   else
     if [[ -z $source || $source == local ]]; then
@@ -1237,17 +1411,19 @@ _t_remote() {
     fi
     rows=$(_t_remote_move_rows "$source" "$repo"); local source_rc=$?
     (( source_rc == 2 )) && return 2
-    (( source_rc == 0 )) || { print -u2 't remote move: ownership scan failed; no conversation was moved'; return 1; }
+    (( source_rc == 0 )) || { print -u2 't session move: ownership scan failed; no conversation was moved'; return 1; }
     if [[ -z $source || $source == local ]]; then
       scope=${DEV_REPOS[$repo]:-}
-      [[ -z $repo || -n $scope ]] || { print -u2 "t remote move: unknown repository: $repo"; return 1; }
+      [[ $source != local || -z $repo || -n $scope ]] || { print -u2 "t session move: unknown repository: $repo"; return 1; }
     fi
     scope_rel=$(_dev_homerel "$scope"); wt_rel=$(_dev_homerel "${DEV_WORKTREE_ROOT}/${scope:t}")
     for row in "${(@f)rows}"; do
       fields=("${(@ps:\t:)row}")
       (( $#fields >= 8 )) || continue
-      [[ $fields[2] != - && $fields[5] == (attached|detached) && $fields[8] == (claude|codex) ]] || continue
-      [[ -z $sid || $fields[2] == "$sid" ]] || continue
+      # Unknown local selectors are resolved only on remote source hosts.
+      [[ -z $source && -n $repo && -z $scope && $fields[1] == local ]] && continue
+      [[ -n $fields[2] && $fields[2] != - && $fields[5] == (attached|detached) && $fields[8] == (claude|codex) ]] || continue
+      [[ -z $sid || $fields[2] == "$sid"* ]] || continue
       [[ -z $slot || $fields[4] == *-$slot ]] || continue
       if [[ -n $scope ]]; then
         cwd_rel=$(_dev_homerel "$fields[3]")
@@ -1255,50 +1431,127 @@ _t_remote() {
       fi
       candidates+=("$row")
     done
-    (( $#candidates )) || { print -u2 "t remote move: no current CLI conversations${repo:+ for '$repo'} to move"; return 0; }
-    if (( $#candidates == 1 )) && [[ -n $sid || -n $slot ]]; then
+    if (( ! $#candidates )); then
+      print -u2 "t session move: no current CLI conversations${repo:+ for '$repo'}${slot:+ in slot $slot} to move"
+      print -u2 -- "t: To restore saved work, use t session resume${repo:+ ${(q)repo}}${slot:+ $slot}"
+      return 0
+    fi
+    if (( $#candidates == 1 )) && [[ -z $pick && ( -n $sid || -n $slot ) ]]; then
       selected=$candidates[1]
     else
-      [[ -t 0 ]] && command -v fzf >/dev/null 2>&1 || { print -u2 't remote move: session selection requires a terminal and fzf; name --from and a repo and slot or --session ID'; return 1; }
+      [[ -t 0 ]] && command -v fzf >/dev/null 2>&1 || { print -u2 't session move: session selection requires a terminal and fzf; name --from and a repo and slot or --session ID'; return 1; }
       [[ -n $repo ]] && format_args+=(--repo)
-      rows=$(print -rl -- "${candidates[@]}" | python3 "$T_HOME/bin/t" __session-picker-rows --compact --remote "${format_args[@]}") || return 1
-      selected=$(print -r -- "$rows" | _t_fzf_single move 'Current local and remote CLI sessions' --delimiter=$'\t' --with-nth=5,4 --no-hscroll --prompt='move> ') || return $?
-      [[ -n $selected ]] || return 130
-      fields=("${(@ps:\t:)selected}")
-      selected=
-      for row in "${candidates[@]}"; do
-        chosen=("${(@ps:\t:)row}")
-        [[ $chosen[1] == "$fields[1]" && $chosen[4] == "$fields[2]" ]] && { selected=$row; break; }
+      [[ $source != local ]] && format_args+=(--remote)
+      rows=$(print -rl -- "${candidates[@]}" | python3 "$T_HOME/bin/t" __session-picker-rows --compact "${format_args[@]}") || return 1
+      displays=("${(@f)rows}")
+      local snapshot_index
+      for (( snapshot_index=1; snapshot_index <= $#displays; snapshot_index++ )); do
+        displays[$snapshot_index]+=$'\t'$snapshot_index
       done
-      [[ -n $selected ]] || return 1
+      rows=${(F)displays}
+      local heading='Current local sessions'
+      [[ $source != local ]] && heading='Current local and remote CLI sessions'
+      selected=$(print -r -- "$rows" | _t_fzf_multi move "$heading" --delimiter=$'\t' --with-nth=5,4 --no-hscroll --prompt='move> ') || return $?
+      [[ -n $selected ]] || return 130
+      # Match the complete rendered record, not a potentially reused slot label.
+      # Indexing preserves distinct IDs even when host and display labels agree.
+      local display i key
+      for display in "${(@f)selected}"; do
+        i=${display##*$'\t'}
+        [[ $i == <-> ]] && (( i >= 1 && i <= $#displays )) && [[ $display == "$displays[$i]" ]] || return 1
+        row=$candidates[$i]
+        chosen=("${(@ps:\t:)row}")
+        key="${REMOTE_HOSTS[$chosen[1]]:-$chosen[1]}"$'\t'"$chosen[2]"$'\t'"$chosen[3]"$'\t'"$chosen[4]"$'\t'"$chosen[8]"
+        [[ -n ${seen[$key]:-} ]] || { selections+=("$row"); seen[$key]=1; }
+      done
+      selected=
     fi
-    chosen=("${(@ps:\t:)selected}")
-    source=$chosen[1]; sid=$chosen[2]
+    [[ -z $selected ]] || selections+=("$selected")
   fi
-  source_target=${REMOTE_HOSTS[$source]:-$source}
+  # Explicit source scripts have no picker snapshot; all selected rows retain
+  # their exact host + conversation identity through both selection stages.
+  if (( $#selections )); then
+    for row in "${selections[@]}"; do
+      fields=("${(@ps:\t:)row}")
+      excluded+=("${REMOTE_HOSTS[$fields[1]]:-$fields[1]}")
+    done
+    source=${${selections[1]}%%$'\t'*}
+  else
+    excluded+=("${REMOTE_HOSTS[$source]:-$source}")
+  fi
+  source_target=${(F)excluded}
   [[ -n $host ]] || { host=$(_t_remote_host_pick "$source_target" move "$source") || return $?; }
   target=${REMOTE_HOSTS[$host]:-$host}
-  [[ $source_target != "$target" ]] || { print -u2 't remote move: source and destination are the same host'; return 2; }
-  if (( $#chosen )); then
-    # Recheck after BOTH selections. Match immutable ID, path, label, agent,
-    # host and current CLI ownership; never infer identity from display text.
-    rows=$(_t_remote_move_rows "$source") || return 1
-    local verified=
-    for row in "${(@f)rows}"; do
+  [[ $'\n'$source_target$'\n' != *$'\n'$target$'\n'* ]] || {
+    print -u2 't session move: source and destination are the same host'; return 2;
+  }
+  # Recheck every selection after BOTH pickers, before the first mutation.
+  # Cache each source scan so one host supplies one coherent preflight snapshot.
+  local -A source_rows
+  local verified self_sid=$(_dev_self_sid) self_row=
+  for selected in "${selections[@]}"; do
+    chosen=("${(@ps:\t:)selected}"); source=$chosen[1]
+    if [[ -z ${source_rows[$source]+present} ]]; then
+      rows=$(_t_remote_move_rows "$source") || {
+        print -u2 't session move: ownership scan failed; no conversation was moved'; return 1;
+      }
+      source_rows[$source]=$rows
+    fi
+    verified=
+    for row in "${(@f)source_rows[$source]}"; do
       fields=("${(@ps:\t:)row}")
       if [[ $fields[1] == "$chosen[1]" && $fields[2] == "$chosen[2]" && $fields[3] == "$chosen[3]" &&
             $fields[4] == "$chosen[4]" && $fields[8] == "$chosen[8]" && $fields[5] == (attached|detached) ]]; then verified=1; break; fi
     done
-    [[ -n $verified ]] || { print -u2 't remote move: selected session changed or closed; select it again'; return 1; }
+    [[ -n $verified ]] || { print -u2 't session move: selected session changed or closed; select it again'; return 1; }
+    [[ $source == local && $chosen[2] == "$self_sid" ]] && self_row=$selected
+  done
+  # Moving our own current process ends this controller, so do that last.
+  if [[ -n $self_row && $#selections -gt 1 ]]; then
+    local -a ordered
+    for row in "${selections[@]}"; do
+      [[ $row == "$self_row" ]] || ordered+=("$row")
+    done
+    selections=("${ordered[@]}" "$self_row")
   fi
-  local T_MOVE_EXPECT_ROW=${selected#*$'\t'}
-  (( $#chosen )) || T_MOVE_EXPECT_ROW=
-  [[ -n $sid ]] && move_args+=(--session "$sid")
-  if [[ -z $sid && -n $repo ]]; then move_args+=("$repo"); [[ -n $slot ]] && move_args+=("$slot"); fi
-  move_args+=("${flags[@]}")
-  if [[ $source == local ]]; then
-    _t_beam "${move_args[@]}" --host "$host"
-  else
-    _t_beam "${move_args[@]}" --from "$source" --host "$host"
+  local T_MOVE_EXPECT_ROW= completed=0 rc=0 total=$#selections
+  (( total )) || total=1
+  if (( $#selections > 1 )); then
+    [[ ${(M)flags:#--fg} == '' && ${(M)flags:#-f} == '' ]] || {
+      print -u2 't session move: --fg requires a single session'; return 2;
+    }
+    flags+=(--detach)
   fi
+  (( $#selections )) || selections=('')
+  unattempted=("${selections[@]}")
+  for selected in "${selections[@]}"; do
+    unattempted=("${(@)unattempted[2,-1]}")
+    move_args=()
+    if [[ -n $selected ]]; then
+      chosen=("${(@ps:\t:)selected}"); source=$chosen[1]; sid=$chosen[2]
+      T_MOVE_EXPECT_ROW=${selected#*$'\t'}
+    fi
+    [[ -n $sid ]] && move_args+=(--session "$sid")
+    if [[ -z $sid && -n $repo ]]; then move_args+=("$repo"); [[ -n $slot ]] && move_args+=("$slot"); fi
+    move_args+=("${flags[@]}")
+    [[ $source == local ]] || move_args+=(--from "$source")
+    _t_beam "${move_args[@]}" --host "$host"; rc=$?
+    if (( rc )); then
+      if (( total > 1 )); then
+        print -u2 -- "t session move: $completed completed; 1 $([[ $rc == 130 ]] && print cancelled || print failed); $((total - completed - 1)) unattempted"
+        for row in "${completed_rows[@]}"; do
+          fields=("${(@ps:\t:)row}"); print -u2 -- "  completed: $fields[1]/$fields[4] ($fields[2])"
+        done
+        print -u2 -- "  $([[ $rc == 130 ]] && print cancelled || print failed): $source/$chosen[4] ($sid)"
+        for row in "${unattempted[@]}"; do
+          fields=("${(@ps:\t:)row}"); print -u2 -- "  unattempted: $fields[1]/$fields[4] ($fields[2])"
+        done
+      fi
+      return $rc
+    fi
+    completed_rows+=("$selected")
+    (( completed += 1 ))
+  done
+  (( total <= 1 )) || print -u2 -- "t session move: $completed completed; 0 failed; 0 unattempted"
+  return 0
 }

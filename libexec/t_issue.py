@@ -34,44 +34,12 @@ def workflow_policy():
 
 
 def install_workflow():
-    """Add the default workflow to agent-owned instruction files, preserving prose."""
-    home = Path.home()
-    codex = Path(os.environ.get('CODEX_HOME') or home / '.codex').expanduser()
-    claude = Path(os.environ.get('CLAUDE_CONFIG_DIR') or home / '.claude').expanduser()
-    paths = [codex / 'AGENTS.md', claude / 'CLAUDE.md']
-    override = codex / 'AGENTS.override.md'
-    if override.exists() or override.is_symlink():
-        paths.append(override)
-    start, end = '<!-- t public-issues: begin -->', '<!-- t public-issues: end -->'
-    block = start + '\n' + workflow_policy() + '\n' + end
-    failures = []
-    for path in paths:
-        try:
-            if path.is_symlink():
-                raise IssueError('instruction file is a symlink; add the issue-first rule at its source')
-            before = path.read_text(encoding='utf-8') if path.exists() else ''
-            # Codex skips empty overrides. Filling one would hide the user's
-            # base AGENTS.md; leave it empty so the updated base still loads.
-            if path == override and not before.strip():
-                continue
-            if start in before or end in before:
-                if before.count(start) != 1 or before.count(end) != 1 or before.index(start) > before.index(end):
-                    raise IssueError('malformed t public-issues markers; repair them before reinstalling')
-                after = before[:before.index(start)] + block + before[before.index(end) + len(end):]
-            else:
-                after = before + ('\n\n' if before else '') + block + '\n'
-            if after == before:
-                continue
-            path.parent.mkdir(parents=True, exist_ok=True)
-            mode = path.stat().st_mode & 0o777 if path.exists() else 0o600
-            if path.is_symlink() or (path.read_text(encoding='utf-8') if path.exists() else '') != before:
-                raise IssueError('instructions changed while updating; rerun the installer')
-            private_write(path, after, mode=mode)
-            print(f'Installed public-repository issue workflow in {path}')
-        except (OSError, UnicodeError, IssueError) as error:
-            print(f't install: {path}: {error}', file=sys.stderr)
-            failures.append(path)
-    return 1 if failures else 0
+    """Compatibility entry point; editable workflows own all managed policies."""
+    try:
+        return runpy.run_path(str(Path(__file__).with_name('t_workflow.py')))['sync']()
+    except (OSError, ValueError, UnicodeError) as error:
+        print(f't install: agent workflow: {error}', file=sys.stderr)
+        return 1
 
 
 def private_write(path, text, *, mode=0o600):
@@ -753,9 +721,10 @@ class IssueCommand:
                         f'Last turn started: {owner.get("last_turn_started_at") or "unknown"}']
             if re.fullmatch(r'.+-[0-9]+', owner['slot']):
                 alias, slot = owner['slot'].rsplit('-', 1)
-                words = ['t', 'session', 'open', alias, slot, '--app' if owner['state'] == 'app' else '--cli']
-                if owner['state'] != 'app':
-                    words.append('--local')
+                if owner['state'] == 'app':
+                    details.append('Retired integration: release this owner on its host, then use t session history.')
+                    continue
+                words = ['t', 'session', 'open', alias, slot, '--cli', '--local']
                 if row.get('provider') == 'remote':
                     words = ['ssh', '-t', self.cfg.hosts[row['host']], 'zsh -lic ' + shlex.quote(shlex.join(words))]
                 details.append('Open session: ' + shlex.join(words))
@@ -829,10 +798,7 @@ class IssueCommand:
 
     def attach_argv(self, row, *, new_terminal=False):
         if row.get('app'):
-            argv = ['t', 'session', 'open', row['alias'], row['slot'], '--app']
-            if row.get('host') == 'local':
-                return self.shell(shlex.join(['_t_open', *argv[3:]]))
-            return ['ssh', '-t', self.cfg.hosts[row['host']], 'zsh -lic ' + shlex.quote(shlex.join(argv))]
+            raise IssueError('this owner uses a retired integration; release it on its host, then use t session history')
         if row.get('resume'):
             argv = ['t', 'session', 'resume', row['alias'], row['slot'], '--days', 'all']
             if row.get('host') == 'local':
@@ -858,11 +824,10 @@ class IssueCommand:
         rows = list(unique.values())
         if not rows:
             return 0
+        if any(row.get('app') for row in rows):
+            raise IssueError('a selected owner uses a retired integration; release it on its host first')
         result = 0
         for row in rows[1:]:
-            if row.get('app'):
-                result = self.attach(row) or result
-                continue
             cmd = shlex.join(self.attach_argv(row, new_terminal=True))
             if subprocess.call(self.shell('_dev_open_tab ' + shlex.quote(cmd))):
                 print('Attach with: ' + cmd)

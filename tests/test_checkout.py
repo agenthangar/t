@@ -158,7 +158,8 @@ def test_checkout_rejects_same_basename_as_another_registered_repo(t_mod, box, t
     assert t_mod._repo_basename_conflict(str(other), [str(other)]) is None
 
 
-def test_checkout_custom_path_alias_and_non_main_warning(t_mod, box, tmp_path, capsys):
+@pytest.mark.parametrize("default", [None, "master", "release/stable"])
+def test_checkout_custom_path_alias_and_default_warning(t_mod, box, tmp_path, capsys, default):
     cfg, home, local = box
     destination = tmp_path / "different"
     git("init", "-q", "-b", "master", destination)
@@ -166,9 +167,12 @@ def test_checkout_custom_path_alias_and_non_main_warning(t_mod, box, tmp_path, c
     git("config", "user.name", "Tester", cwd=destination)
     git("commit", "-qm", "seed", "--allow-empty", cwd=destination)
     git("remote", "add", "origin", "git@github.com:owner/repo.git", cwd=destination)
+    if default:
+        git("update-ref", f"refs/remotes/origin/{default}", "HEAD", cwd=destination)
+        git("symbolic-ref", "refs/remotes/origin/HEAD", f"refs/remotes/origin/{default}", cwd=destination)
     assert t_mod.cmd_checkout(cfg, args(alias="other", path=str(destination))) == 0
     assert "DEV_REPOS[other]" in local.read_text()
-    assert "origin/main is missing" in capsys.readouterr().err
+    assert ("no fetched origin default branch" in capsys.readouterr().err) == (default is None)
     assert git("branch", "--show-current", cwd=destination) == "master"
 
 
@@ -411,7 +415,7 @@ def test_setup_rejects_second_repo_with_same_worktree_slot_name(t_mod, box, tmp_
 
 
 @pytest.mark.parametrize("mode", ["apply", "empty", "noop", "dry_run"])
-def test_setup_explains_desktop_hook_review(t_mod, box, monkeypatch, capsys, mode):
+def test_setup_explains_cli_hook_review(t_mod, box, monkeypatch, capsys, mode):
     cfg, home, local = box
     repo = home / "code" / "repo"
     git("init", "-q", "-b", "main", repo)
@@ -445,9 +449,7 @@ def test_setup_explains_desktop_hook_review(t_mod, box, monkeypatch, capsys, mod
                                     no_instructions=True)
     assert t_mod.cmd_setup(cfg, setup_args) == 0
     output = capsys.readouterr().out
-    assert "ChatGPT desktop app" in output
-    assert "Review hooks" in output and "Allow selected" in output
-    assert "User config / SessionStart" in output and "/hooks" in output
+    assert "/hooks" in output
     assert "t-session-start --agent codex" in output
     assert "Trust all" not in output and "Allow all" not in output
     assert (hook.read_bytes(), config.read_bytes()) == before[:2]

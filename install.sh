@@ -78,9 +78,11 @@ valid_source() {
     [[ "$(cat "$root/.t-install-version")" == 1 ]] || return 1
     for asset in install.sh t.plugin.zsh local.zsh.example \
         claude/settings.json.example bin/t bin/t-session-start bin/claude-stamp-tmux bin/cursor-beam \
-        libexec/t_progress.py libexec/t_shell_setup.py libexec/t_onboarding.py libexec/t_discovery.py \
-        libexec/t_workflow.py libexec/t_issue.py libexec/t_issue_policy.txt libexec/t_history.py libexec/t_candidates.py libexec/t_session_details.py libexec/t_picker_filters.py libexec/t_repos.py \
-        libexec/t_local_worker.py libexec/t_local_setup.py libexec/t_local_models.py libexec/local-models.json \
+        libexec/t_dev.py libexec/t_progress.py libexec/t_shell_setup.py libexec/t_onboarding.py libexec/t_discovery.py \
+        libexec/t_toml.py libexec/t_codex_socket.py libexec/vendor/SHA256SUMS libexec/vendor/tomli-LICENSE libexec/vendor/tomli/__init__.py libexec/vendor/tomli/_parser.py libexec/vendor/tomli/_re.py libexec/vendor/tomli/_types.py libexec/vendor/tomli/py.typed \
+        libexec/t_workflow.py libexec/t_workflow_sync.py libexec/t_issue.py libexec/t_issue_policy.txt libexec/t_resume_source.py libexec/t_history.py libexec/t_candidates.py libexec/t_session_details.py libexec/t_picker_filters.py libexec/t_repos.py \
+        libexec/t_local_worker.py libexec/t_local_setup.py libexec/t_local_models.py libexec/local-models.json libexec/t_mcp_setup.py \
+        libexec/t_runners.py libexec/t_runner_job.py share/runners/broker.yml share/runners/sweeper.yml \
         libexec/t_share.py libexec/t_share_sessions.py \
         libexec/t_share_context.py libexec/t_share_flow.py libexec/t_share_launch.py libexec/t_share_ui.py zsh/share.zsh \
         claude/commands/tpush.md claude/commands/tpop.md \
@@ -101,6 +103,19 @@ if ! valid_source "$T_LINK_SRC"; then
     echo "t install: $T_LINK_SRC lacks the standalone t installer capability (version 1)" >&2
     echo "  merge or check out a tested t revision, then rerun install.sh" >&2
     exit 1
+fi
+
+# Development follows the caller's worktree. Do not touch any shared user asset,
+# even in links-only mode (which normally also reconciles integrations).
+if [[ -n "${T_LINK_DEV:-}" ]]; then
+    if [[ "$T_RELEASE" == 1 || "$T_SCRIPT_DIR" == "$T_PRIMARY" ]] || \
+       [[ "$(python3 "$T_SCRIPT_DIR/libexec/t_dev.py" "$T_PRIMARY")" != "$T_SCRIPT_DIR" ]]; then
+        echo "t install: development setup requires the current t session worktree" >&2
+        exit 1
+    fi
+    echo "Development t is available automatically inside $T_SCRIPT_DIR."
+    echo "Shared commands, shell startup, hooks, prompts and settings are unchanged."
+    exit 0
 fi
 
 link() {
@@ -136,7 +151,6 @@ link_all
 
 # Agent instructions apply to new tasks in both terminal and desktop sessions.
 # Preserve user prose and surface files that could not safely be integrated.
-python3 "$T_LINK_SRC/libexec/t_issue.py" --install-workflow
 python3 "$T_LINK_SRC/libexec/t_workflow.py"
 
 # Remove only the retired status line that the old dotfiles installer wrote.
@@ -249,9 +263,8 @@ path, command = sys.argv[1:]
 
 def review_notice(hook_command):
     print("Codex hook registered; if it needs review, approval is still required.")
-    print("  In the ChatGPT desktop app, open Review hooks (or hooks in settings).")
     print("  Select the User config / SessionStart hook: " + hook_command)
-    print("  Click Allow selected. In the Codex CLI, use /hooks to review and trust it.")
+    print("  In the Codex CLI, use /hooks to review and trust it.")
     print("  Until approved, the hook is skipped and session tracking can be incomplete.")
 
 
@@ -301,7 +314,7 @@ PY
 }
 
 install_claude_mcp() {
-    [[ -z "${T_NO_MCP:-}" ]] || return 0
+    [[ -z "${T_NO_MCP:-}" && ! -e "${XDG_CONFIG_HOME:-$HOME/.config}/t/mcp-disabled" ]] || return 0
     command -v claude >/dev/null 2>&1 || return 0
     python3 - "$HOME/.claude.json" <<'PY' && return 0
 import json, sys
@@ -325,6 +338,9 @@ PY
 retire_statusline
 install_codex_hooks
 install_claude_mcp
+if [[ -z "${T_NO_MCP:-}" ]]; then
+    python3 "$T_LINK_SRC/libexec/t_mcp_setup.py" "$HOME/bin/t" || echo "t install: Codex MCP registration remains pending" >&2
+fi
 merge_claude_settings
 
 # A full install seeds per-machine settings before applying an explicit policy.

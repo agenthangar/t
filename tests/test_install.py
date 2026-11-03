@@ -267,7 +267,6 @@ def test_install_render_marks_and_host_trailer(t_mod):
     assert lines[0] == "= claude already logged in"
     assert lines[1] == "+ brew install --cask codex"
     assert lines[2].startswith("  ⚠ review t's hooks prompt")
-    assert "ChatGPT desktop app" in lines[2] and "Allow selected" in lines[2]
     assert lines[3] == "+ codex login"
     assert lines[4].startswith("✗ cursor login: not installed")
     # the hosts get every agent named for install OR login: a login the local box did
@@ -424,7 +423,8 @@ def test_parity_matrix_is_available_in_its_help_topic(t_mod, capsys):
     assert t_mod.main(["help", "agents"]) == 0
     help_text = capsys.readouterr().out
     for ln in t_mod._agent_parity_render():
-        assert ln in help_text
+        # Help wraps the reference table to the terminal width.
+        assert " ".join(ln.split()) in " ".join(help_text.split())
     assert "surface" not in t_mod.build_parser().format_help()
 
 
@@ -463,7 +463,7 @@ def test_doctor_findings_codex_hook_states(t_mod):
     out = t_mod._doctor_findings({"codex_hook": "none"})
     assert any("no t SessionStart hook" in l and "t system integrate" in l for l in out)
     out = t_mod._doctor_findings({"codex_hook": "registered", "codex_hook_trusted": False})
-    assert any("not trusted yet" in l and "Allow selected" in l for l in out)
+    assert any("not trusted yet" in l and "/hooks" in l for l in out)
     # trusted, or trust unknown (config unreadable) → quiet
     assert t_mod._doctor_findings({"codex_hook": "registered", "codex_hook_trusted": True}) == ["✓ nothing suspicious found"]
     assert t_mod._doctor_findings({"codex_hook": "registered", "codex_hook_trusted": None}) == ["✓ nothing suspicious found"]

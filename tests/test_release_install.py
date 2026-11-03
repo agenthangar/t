@@ -43,7 +43,7 @@ def artifact(version="v1.2.3", changed=None, extra=None):
     changed = changed or {}
     files = {name: (ROOT / name).read_bytes() for name in release.REQUIRED if name != ".t-release-version"}
     # Current installer integrations extend the backwards-compatible release minimum.
-    for name in ('libexec/t_progress.py', 'bin/t-session-start', 'libexec/t_shell_setup.py', 'libexec/t_onboarding.py', 'libexec/t_discovery.py', 'libexec/t_workflow.py', 'libexec/t_issue.py', 'libexec/t_issue_policy.txt', 'libexec/t_history.py', 'libexec/t_candidates.py', 'libexec/t_session_details.py', 'libexec/t_picker_filters.py', 'libexec/t_repos.py'):
+    for name in ('libexec/t_mcp_setup.py', 'libexec/t_runners.py', 'libexec/t_runner_job.py', 'share/runners/broker.yml', 'share/runners/sweeper.yml', 'libexec/t_dev.py', 'libexec/t_progress.py', 'bin/t-session-start', 'libexec/t_shell_setup.py', 'libexec/t_onboarding.py', 'libexec/t_discovery.py', 'libexec/t_toml.py', 'libexec/t_codex_socket.py', 'libexec/vendor/SHA256SUMS', 'libexec/vendor/tomli-LICENSE', 'libexec/vendor/tomli/__init__.py', 'libexec/vendor/tomli/_parser.py', 'libexec/vendor/tomli/_re.py', 'libexec/vendor/tomli/_types.py', 'libexec/vendor/tomli/py.typed', 'libexec/t_workflow.py', 'libexec/t_workflow_sync.py', 'libexec/t_issue.py', 'libexec/t_issue_policy.txt', 'libexec/t_resume_source.py', 'libexec/t_history.py', 'libexec/t_candidates.py', 'libexec/t_session_details.py', 'libexec/t_picker_filters.py', 'libexec/t_repos.py'):
         files[name] = (ROOT / name).read_bytes()
     files[".t-release-version"] = (version + "\n").encode()
     files.update(changed)
@@ -177,8 +177,12 @@ def test_build_archive_is_deterministic_and_runtime_only(tmp_path):
     with tarfile.open(one, "r:gz") as tar:
         names = {member.name for member in tar}
     assert "t/LICENSE" in names
+    assert "t/libexec/t_runners.py" in names
+    assert "t/libexec/t_runner_job.py" in names
+    assert "t/share/runners/broker.yml" in names
+    assert "t/share/runners/sweeper.yml" in names
     assert "t/libexec/t_updates.py" in names
-    assert "t/libexec/t_app_handoff.py" in names
+    assert "t/libexec/t_codex_ownership.py" in names
     assert "t/libexec/t_share.py" in names
     assert "t/libexec/t_share_sessions.py" in names
     assert "t/libexec/t_share_flow.py" in names
@@ -186,7 +190,6 @@ def test_build_archive_is_deterministic_and_runtime_only(tmp_path):
     assert "t/libexec/t_share_launch.py" in names
     assert "t/libexec/t_share_ui.py" in names
     assert "t/zsh/share.zsh" in names
-    assert "t/libexec/vendor/mistune/LICENSE" in names
     assert "t/.t-release-version" in names
     assert "t/private.txt" not in names
     assert not any(name.startswith("t/tests/") or name.startswith("t/docs/") for name in names)

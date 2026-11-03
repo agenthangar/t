@@ -2,8 +2,8 @@
 
 Attach [the short video](../media/demo.mp4) as a native LinkedIn video after the
 verified handoff capture is complete. The [social card](../media/social-card.png)
-is a static alternative. The desktop beat shows an open request sent to macOS;
-app delivery is not independently confirmed by the recording.
+is a static alternative. Replace the historical capture with a CLI-only demo
+before publishing; its final app-opening command has been retired.
 
 > Start a coding task at your desk. Keep it running when you leave. Pick it up
 > from wherever you are.
@@ -15,13 +15,8 @@ app delivery is not independently confirmed by the recording.
 > `t ls` shows what's running. `t beam` moves a live session over SSH to another
 > host and brings it back, stopping the old owner so two copies do not diverge.
 > You can connect to that host from a phone's SSH terminal and keep working.
-> On macOS, `t app` hands a local Codex CLI thread to the desktop app;
-> `t open --app` starts a fresh desktop worktree directly.
 >
-> The video follows a real Codex CLI session from Mac to mini and back, then
-> requests a desktop handoff. The same thread ID and the mini turn are
-> checked after the return. The final desktop step is an open request, not a
-> screen capture of the app.
+> The demo follows a Codex CLI session from Mac to mini and back.
 >
 > Install with Homebrew or the versioned release installer. `t checkout` clones
 > and registers a GitHub repo locally, and a reusable instructions profile can

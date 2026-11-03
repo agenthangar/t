@@ -1,3 +1,6 @@
+> Historical recording: Codex Desktop integration has been removed. The app
+> commands shown here are no longer supported; use CLI sessions and `t session move`.
+
 # Featured: a real bug fix across surfaces
 
 `workflow.mp4` / `workflow.gif` follow one disposable **Fix task CLI status

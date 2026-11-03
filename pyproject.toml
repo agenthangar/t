@@ -11,7 +11,7 @@ markers = ["macos_ui: opens native desktop windows and takes focus (requires --r
 # scope measurement to the bin script under test (the */ prefix tolerates the
 # absolute CWD). This keeps the percentage about the code we test rather than
 # letting unmeasured Bash/zsh dilute it.
-include = ["*/libexec/t_repos.py", "*/libexec/t_local_worker.py", "*/libexec/t_local_setup.py", "*/libexec/t_local_models.py", "*/libexec/t_workflow.py", "*/libexec/t_picker_filters.py", "*/libexec/t_tool_inventory.py", "*/libexec/t_advisory_service.py", "*/libexec/t_vulnerabilities.py", "*/libexec/t_progress.py", "*/bin/t", "*/libexec/t_mcp_controls.py", "*/libexec/t_shell_setup.py", "*/libexec/t_onboarding.py", "*/libexec/t_discovery.py", "*/libexec/t_app_window.py", "*/libexec/t_desktop.py", "*/libexec/t_session_details.py", "*/libexec/t_app_handoff.py", "*/libexec/t_markdown.py", "*/libexec/t_recovery.py", "*/libexec/t_updates.py", "*/libexec/t_agentcore.py", "*/libexec/t_issue.py", "*/libexec/t_history.py", "*/libexec/t_candidates.py", "*/libexec/t_share.py", "*/libexec/t_share_sessions.py", "*/libexec/t_share_context.py", "*/libexec/t_share_flow.py", "*/libexec/t_share_launch.py", "*/libexec/t_share_ui.py"]
+include = ["*/libexec/t_dev.py", "*/libexec/t_runners.py", "*/libexec/t_runner_job.py", "*/libexec/t_repos.py", "*/libexec/t_local_worker.py", "*/libexec/t_local_setup.py", "*/libexec/t_local_models.py", "*/libexec/t_workflow.py", "*/libexec/t_workflow_sync.py", "*/libexec/t_toml.py", "*/libexec/t_codex_socket.py", "*/libexec/t_picker_filters.py", "*/libexec/t_picker_close.py", "*/libexec/t_tool_inventory.py", "*/libexec/t_advisory_service.py", "*/libexec/t_vulnerabilities.py", "*/libexec/t_progress.py", "*/bin/t", "*/libexec/t_mcp_setup.py", "*/libexec/t_mcp_controls.py", "*/libexec/t_shell_setup.py", "*/libexec/t_onboarding.py", "*/libexec/t_discovery.py", "*/libexec/t_session_details.py", "*/libexec/t_codex_ownership.py", "*/libexec/t_recovery.py", "*/libexec/t_updates.py", "*/libexec/t_agentcore.py", "*/libexec/t_issue.py", "*/libexec/t_history.py", "*/libexec/t_resume_source.py", "*/libexec/t_candidates.py", "*/libexec/t_share.py", "*/libexec/t_share_sessions.py", "*/libexec/t_share_context.py", "*/libexec/t_share_flow.py", "*/libexec/t_share_launch.py", "*/libexec/t_share_ui.py"]
 
 [tool.coverage.report]
 # Exclude the subprocess/ssh/tmux shells and the argparse/CLI plumbing:
@@ -23,6 +23,7 @@ exclude_lines = [
     "pragma: no cover",
     "if __name__ == .__main__.:",
     "def main\\(",
+    "def _main\\(",
     "def build_parser\\(",
     "def cmd_",
     # bin/t subprocess / rendering / tty glue
@@ -36,9 +37,6 @@ exclude_lines = [
     "def _read_usage\\(",
     "def _columns\\(",
     "class Style",
-    # Thin macOS ctypes bridge: exercised by test_app_macos.py with --run-macos-ui.
-    "class Accessibility",
-    "class Element",
     # bin/t interactive setup glue (inline wizard + input() prompts)
     "def _tmux_session_name\\(",
     "def _setup_wizard\\(",
@@ -75,5 +73,5 @@ exclude_lines = [
     "def _git_brief\\(",
     "def _mcp_context\\(",
     "def _mcp_serve\\(",
-    "def _mcp_install\\(",
+    "def _mcp_install(?:_claude)?\\(",
 ]

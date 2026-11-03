@@ -2,17 +2,10 @@
 
 ![t — coding-agent sessions, under control](docs/media/hero.svg)
 
-**Your terminal. Your desktop. Same task.**
+**Your sessions. Any terminal.**
 
-Start in the terminal. Continue in the Codex desktop app. Keep your conversation,
-isolated Git worktree, and running web preview together. On macOS, use
-`t session open my-project 1 --app` to move a local Codex conversation to the
-desktop, and `t session open my-project 1 --cli` to return after following t’s
-instructions to release that desktop chat.
-
-Terminal workflows support macOS and Linux. Move sessions to a configured SSH
-host and check in from another computer or a phone’s terminal while that host
-stays awake and reachable. Desktop handoff is specific to Codex on macOS.
+Move Claude Code and Codex conversations between configured SSH hosts, keeping
+their Git worktrees and saved history together.
 
 t manages sessions in tmux and gives each task its own Git worktree. It includes
 Claude Code and Codex session workflows, plus Cursor transfer tools.
@@ -30,45 +23,6 @@ Supported workflows vary by agent; see the [support matrix](#agents).
 
 [Get started](#install) · [Work from anywhere](#work-from-anywhere) · [Commands](#commands) · [Configuration](#configuration) · [Agent support](#agents) · [Coming soon](#coming-soon) · [AgentHangar](https://agenthangar.ai)
 
-## Watch one task move
-
-![One task: terminal, mini, desktop, and resume](docs/media/terminal/workflow.gif)
-
-[Watch the 66-second demo](docs/media/terminal/workflow.mp4) ·
-[Static cover](docs/media/terminal/workflow-poster.png) ·
-[Capture notes and sources](docs/media/terminal/README.md)
-
-GPT-6.1-Sol fixes a real task-CLI bug: two failing tests become five passing tests,
-with the code change and actual CLI output visible. The same task moves to mini,
-runs the tests there, returns through Codex desktop, and resumes in the terminal
-for another verification turn. The 66-second cut keeps reading sections at normal
-speed and plays session setup at 2×. The app window was not filmed; mini needed
-Codex sign-in at capture time, so no remote model turn is shown.
-
-### Open → another host → desktop → resume
-
-```sh
-t open my-project --codex             # start in an isolated worktree
-t beam my-project 1 --host mini       # move to your configured host
-t beam my-project 1 --from mini       # bring it back locally
-t open my-project 1 --app             # continue in Codex desktop (macOS)
-t open my-project 1 --cli             # return after releasing the desktop chat
-t resume my-project 1                 # revive a saved conversation after its CLI ends
-t resume my-project 1 --app           # choose the exact saved Codex conversation for the Mac app
-```
-
-The [sample project and actual patch](docs/media/terminal/fixture/README.md)
-reproduce the bug fix. Host transfer uses `t beam`; `t push` backgrounds a local session.
-
-The same local conversation and worktree stay together. Desktop handoff can
-include its running web preview and referenced Markdown plan. See
-[the desktop workflow details](#work-from-anywhere) for ownership and release behavior.
-
-The earlier [host-handoff walkthrough](docs/media/demo.mp4) follows a Codex thread
-from Mac to mini and back. It is an edited rendering of verified command output;
-its final desktop open request was sent but app delivery was not confirmed.
-[Read its evidence notes](docs/media/README.md).
-
 ## Work from anywhere
 
 - **Start with your agent.** `t session open my-project` gives Claude Code an isolated
@@ -82,14 +36,6 @@ its final desktop open request was sent but app delivery was not confirmed.
   `t session list` shows the sessions, `t session read my-project 1 --dump`
   lets you scroll their output, and `t session open my-project 1` reconnects
   you. A detached session stays available while its host stays awake and reachable.
-- **Move between terminal and desktop.** On macOS, `t session open my-project 1 --app` opens
-  the same local Codex conversation in the desktop app, along with its web
-  preview and referenced Markdown plan. The worktree and dev server stay in
-  place. To return, run `t session open my-project 1 --cli`. If Codex still has that
-  conversation loaded, follow the command's release instructions and retry;
-  other desktop chats can stay open. It resumes the same conversation and
-  attaches automatically. The `t app` commands remain available for scripts and advanced options.
-
 - **Submit to an existing AgentCore runtime.** `t agentcore invoke` submits JSON
   using your existing AWS CLI profile; continue with the same session ID and use
   `t agentcore stop` to terminate it. See the [supported workflow](docs/agentcore.md)
@@ -102,7 +48,7 @@ its final desktop open request was sent but app delivery was not confirmed.
 
 You need **zsh, Python 3, Git, and tmux**. Install `fzf` for the interactive pickers,
 `gh` for GitHub integration, and `rsync`/SSH for moving sessions between hosts.
-The test suite runs on macOS and Linux with Python 3.12. Desktop handoff is macOS-only.
+The test suite runs on macOS and Linux with Python 3.12.
 
 To try a fresh install and worktree session in a disposable Docker container, see
 the [playground guide](docs/playground.md).
@@ -169,7 +115,8 @@ The installer appends a marked t startup block to `${ZDOTDIR:-$HOME}/.zshrc`,
 creating the file when needed and preserving existing content. Previously documented
 startup snippets are retained without adding a second plugin source. It prints an exact
 `source` command for the current terminal; a new interactive zsh loads t automatically.
-The block follows `~/bin/t`, including development worktrees and Homebrew upgrades.
+The block follows `~/bin/t` and Homebrew upgrades. A canonical Git installation
+automatically selects the current t development worktree without changing that link.
 Links-only updates do not edit shell startup files.
 
 For an older or incomplete installation, run:
@@ -194,7 +141,7 @@ t agent install            # choose and install agent CLIs; review their vendor 
 t repo add ~/config/my-project  # register a checkout you already have
 t config setup             # select checkouts under ~/config and optional SSH hosts
 t session open my-project  # start an isolated worktree + tmux slot
-t session list             # see your running sessions
+t session list             # running sessions across every repository
 ```
 
 Sessions open directly into the agent without displaying internal shell commands.
@@ -210,7 +157,7 @@ directory name when opening a workspace; this does not group every worktree
 under one common heading in the app. Live GUI rendering is not verified by the
 automated compatibility tests.
 
-Both layouts work with CLI open/resume, desktop discovery and handoff, navigation,
+Both layouts work with CLI open/resume, navigation,
 and retained history. If both `t/12` and `t/t-12` exist, slot actions refuse to
 choose: inspect the two worktrees and use `t session history t 12` to select a
 specific conversation. t never resolves this collision by moving either tree.
@@ -227,9 +174,8 @@ work, or use history's verified resume into a fresh local workspace. Existing
 worktrees and agent history should not be manually renamed to bridge hosts.
 
 `t open` browses sessions across all local repositories, including from inside a
-worktree; `t open my-project` filters to that repo. Attached CLI and loaded desktop
-sessions are hidden by default; `--attached` includes them. Idle sessions and
-unloaded desktop workspaces remain visible. An explicit slot still opens directly.
+worktree; `t open my-project` filters to that repo. Attached CLI sessions are hidden by default; `--attached` includes them. Idle sessions and
+inactive CLI sessions remain visible. An explicit slot still opens directly.
 
 `t history 5` browses every saved conversation associated with slot 5 in the
 current repository. `t history t 5` and `t session history t 5` name the repository
@@ -239,7 +185,7 @@ whose worktrees or transcripts have been removed. It always asks you to select a
 conversation before resuming, including when only one exists.
 
 History uses the same session information as `t ls`: status and active context,
-CLI or desktop interface, agent glyph and recorded model, host, session, and
+recorded interface, agent glyph and model, host, session, and
 working-on summary. Saved conversations keep their recorded metadata; missing
 historical model or interface evidence stays unknown. The picker aligns these
 fields and keeps the summary visible on small terminals. Its details pane shows
@@ -258,10 +204,14 @@ branches, PR states, and full conversation IDs. JSON also includes the normalize
 `display` fields and recorded metadata provenance. PR state reads use the cache;
 Ctrl-R or `--refresh` updates it explicitly.
 
-A live terminal conversation attaches to its existing owner. A desktop or
-foreground owner offers an explicit handoff path. An inactive conversation reuses
+A live terminal conversation attaches to its existing owner. A foreground owner
+offers an explicit handoff path. Legacy Desktop owners must release their writer
+before CLI resume. An inactive conversation reuses
 its original workspace only when recorded ownership and revision still match;
 otherwise it gets a new slot branch based on the verified historical commit.
+For example, `t session resume t 4` can resume an inactive conversation into a
+new slot while another conversation uses slot 4. Codex writer checks protect
+the selected conversation and its destination workspace.
 Existing dirty work stays in its source workspace. If the historical commit is
 unavailable, the picker explicitly offers current main or cancel. Legacy history
 can lack commit, host, title, or PR evidence; these details stay unknown. Associated
@@ -269,20 +219,6 @@ PRs require structured tool evidence or a matching branch and commit; incidental
 links appear separately in details. History records are private under
 `$XDG_STATE_HOME/t/history/v1` (default `~/.local/state/t/history/v1`).
 
-`t resume <repo> [slot] --app` selects one saved Codex conversation and opens its
-exact ID in the local macOS app, preserving its history and recorded worktree.
-It uses the existing guarded CLI-to-desktop handoff when that same conversation
-is running locally. A different conversation in the slot, a remote or foreground
-owner, unverifiable ownership, unsupported agent, or multiple marked rows stops
-the operation without substituting another conversation. `--app` conflicts with
-`--cli`, `--fg`, and `--host`; registered hosts contribute saved metadata by default.
-Without a terminal, an explicit slot selects its newest saved conversation as
-usual. Use `--days all` to include older histories. Desktop delivery remains an
-OS open request, not proof that the app loaded the conversation.
-Copied histories must already be indexed by the local Codex installation; otherwise
-the error gives the CLI selection command to index that exact conversation first.
-Older histories without a verifiable writer-lock contract are refused until a
-current Codex CLI owns them and can perform the guarded handoff.
 
 `t resume` includes saved conversations from every registered host by default.
 Discovery matches repository identity, so host aliases, home directories and
@@ -291,10 +227,40 @@ workspaces with the exact recorded Git origin also appear. `--remote` remains a
 compatibility option. Only a selected remote transcript is downloaded and its
 identity is checked before use; unavailable hosts retain cached history.
 
+Claude and Codex use **t transfer** for cross-host moves and resumes. Legacy
+`DEV_HANDOFF` and desktop opening settings are ignored. The transfer preserves
+its existing ownership, checkpoint, and worktree safety checks.
+
+Selected local resumes also reconcile the original workspace before creating a new
+worktree. If it still belongs to the conversation, current commits and eligible
+uncommitted changes are carried forward, including nonignored untracked files.
+Outstanding changes are committed as a local checkpoint using normal Git hooks.
+Missing or recycled workspaces use the recorded historical revision instead;
+unsafe current sources stop the resume without losing their work.
+
+With t transfer, after selection, cross-host saved resume verifies the latest recorded workspace on the
+prior host, including its conversation, repository, branch and worktree generation.
+It carries the actual branch tip, including unpushed commits. Outstanding tracked,
+staged and ordinary nonignored untracked code is committed there as a local
+checkpoint with normal Git identity and hooks, then transferred privately without
+pushing to origin. Private credentials or agent artifacts, a changed workspace,
+live ownership, conflicts, or diverged conversation revisions stop the resume.
+Existing destination branches and files are preserved by allocating a fresh slot.
+If the host is unreachable, a warning identifies the local-code fallback; a
+validated local or cached transcript is still required. Missing local revisions
+retain the explicit main-or-cancel choice. Discovery and cancellation never
+checkpoint work. Live moves using t retain the existing commit/push and transcript
+sync transaction; they require the source to reach the destination.
+
 An inactive conversation remains selectable when its historical slot now runs
 another conversation. It resumes in a safely allocated workspace; the existing
 owner and its files stay intact. Selecting an exact live conversation attaches
-to that owner. `--fg`, `--app`, and `--host` retain their selected destinations.
+to that owner. `--fg` and `--host` retain their selected destinations.
+`t resume api 2` opens the shared filtered picker for conversations associated
+with slot 2, including live and saved work and conversations later moved to
+another slot. Even one conversation waits for selection. Ctrl-F shows inactive
+work; Ctrl-A shows all, and Escape cancels without attaching or resuming.
+Without a terminal, an explicit slot retains newest-saved selection.
 
 Saved Codex candidates are cached under `${XDG_CACHE_HOME:-~/.cache}/claude-sessions`.
 Repeated `t resume` calls reuse unchanged metadata; each invocation checks for new,
@@ -312,32 +278,29 @@ commands also report discovery stages. Redirected output and JSON remain quiet.
 `t open`, `t resume`, and `t kill` share the compact resume picker design:
 **Space/Tab marks ✓ and Enter acts on the selection**. A plain green checkmark
 stays readable on the darker cyan focused row, without a colored block.
-In `t open`, **Ctrl-T** shows attached sessions only and **Ctrl-U** shows
-unattached sessions, preserving your other filters. **Ctrl-F** restores defaults
-(unattached, with column filters cleared); **Ctrl-A** shows all and clears filters.
-The attachment views and column filters have these shortcuts:
+In `t open`, press **k** to kill only the focused session, independently of
+marks. This confirms that session and retains close safety checks. For example,
+run `t open --attached`, focus a session, and press **k**.
+The picker stays open and removes the closed row without rediscovering sessions.
+Search, filters, and marks on other rows are preserved; failed or canceled closes
+leave the row available.
+The open picker reserves **k** as an action key rather than query text.
+**Ctrl-F** opens the Filters picker. Choose State or a column, select its value,
+then choose Apply filters. **Ctrl-A** turns filtering off to show the whole
+snapshot; **Ctrl-L** turns it back on with your saved choices.
 
-| Key | Filter |
-| --- | --- |
-| Ctrl-T | Attached only |
-| Ctrl-U | Unattached only (preserve other filters) |
-| Ctrl-F | Defaults (unattached, clear other filters) |
-| Ctrl-A | All (clear filters) |
-| Ctrl-G | Agent |
-| Ctrl-P | In-progress marker |
-| Ctrl-D | CLI/desktop interface |
-| Ctrl-B | Recorded model |
-| Ctrl-O | Host |
-| Ctrl-R | Repository |
-| Ctrl-V | Session/slot |
-| Ctrl-E | Context status |
-| Ctrl-W | Task (working on) |
+The settings picker includes attachment state for open, live sessions for resume,
+and attached/pending work for close. Columns include agent, host and repository;
+open also offers progress, interface, model, session, context and task, while close
+includes interface. Each value picker includes All to clear that column.
+Reset filters to defaults stages the original state and clears column choices.
+Enter chooses a setting; Esc in a value picker keeps that value, and Esc in the
+Filters picker discards all staged changes. Apply filters enables the saved choices.
 
-Column shortcuts open a searchable value picker. Enter applies a value;
-Esc keeps the current filter. “All (clear filter)” clears
-that column. Filters combine and keep your search. Narrow headers abbreviate
-Ctrl as `^`, retain every shortcut, and show the active filter count; opening a
-column picker shows its current value. Filters use the current snapshot without
+The main header shows one highlighted filter summary, with explicit ON/OFF text
+when color is unavailable. Narrow headers abbreviate Ctrl as `^` and show the
+selected column count; open Filters to see complete values. Filtering keeps your
+search and removes hidden marks. Choices use the current snapshot without
 expanding repository scope or fetching new sessions.
 
 `●` means a CLI terminal is attached or a desktop conversation is loaded;
@@ -347,16 +310,13 @@ agent is generating. `↻` means work continued after a merged PR (edits or comm
 not known to have landed); “not marked” is not proof that work is finished.
 The separate `✓` in the left selection gutter means you marked that row to open.
 
-Resume and close retain their existing controls: Ctrl-L toggles live resume
-sessions; Ctrl-T toggles attached close sessions; Ctrl-P toggles pending close
-work. Ctrl-G cycles agents, Ctrl-O hosts, Ctrl-R repositories, and Ctrl-D the
-close interface. Ctrl-A shows all and Ctrl-F resets these filters. Resume never
-invents a historical interface.
+Resume never invents a historical interface. Resume and close use the same
+Filters picker and on/off keys as open.
 Resume sorts by the last actual user turn, newest first; unknown times come last.
 Alt-T restores that sort, Alt-R sorts by repository, Alt-G by agent, Alt-O by
 host/origin, and Alt-V by session (numeric slots sort naturally, e.g. 2 before 10).
 Text sorts ascend, then use newest turn and session identity to break ties.
-Ctrl-A clears filters while keeping the selected sort; Ctrl-F resets both.
+Filter settings, reset and on/off preserve the selected sort; Alt-T restores last-turn sorting.
 For example, `t resume --live` followed by Alt-R groups live and saved sessions by
 repository. Live labels remain visible alongside their last-turn time.
 The open picker keeps session and task text prominent, without a last-turn
@@ -371,13 +331,18 @@ PRs and uncertain work stay hidden until Ctrl-P or Ctrl-A. `t resume --live`
 and `t open --attached` start with all rows; Ctrl-F restores their defaults.
 
 CLI opens use this terminal for the first selection and new tabs for the rest,
-with attach commands when tabs are unavailable; desktop selections open in the
-app. `--fg` opens one session. In `t kill`, mark sessions with Space/Tab and
+falling back to new windows in Terminal when tabs cannot be created safely
+(including switching away during creation). Attach commands remain available
+if opening a terminal fails. Commands never target an existing tab. `--fg` opens one session. In `t kill`, mark sessions with Space/Tab and
 press Enter to confirm and close the whole selection without further prompts.
 Explicit targets still confirm live-agent interruption unless `-y` is supplied.
 Desktop ownership checks apply in both cases.
 
-Repositories need a fetched `origin/main` for worktree sessions. `t repo create` can create
+Worktree sessions use the fetched default branch recorded in `origin/HEAD`,
+falling back to fetched `origin/main` or `origin/master` when that record is missing
+or dangling. After a remote default-branch change, refresh the record with
+`git fetch origin` and `git remote set-head origin -a`.
+`t repo create` can create
 and register a GitHub repository with the expected setup, showing its plan first.
 To use an existing GitHub repository, run `t repo clone https://github.com/owner/repo.git`.
 Use `t system diagnose` when something is missing.
@@ -390,11 +355,12 @@ with `t share` as the context sharing command.
 Contributors can find the behavior, keyboard, and appearance rules in the
 [command and terminal contract](ui/README.md).
 
-Every existing-repository argument accepts its registered short alias or checkout
-directory name. For example, with `app=/path/to/application`, `t session cd app 2`
+Every existing-repository argument accepts its registered short alias, checkout
+directory basename, or unambiguous local origin repository name. For example, with `app=/path/to/application`, `t session cd app 2`
 and `t session cd application 2` enter the same worktree. Exact aliases take
-precedence; if several different checkouts have the same directory name, use an
-explicit alias. Remote opens resolve names on the selected host. Remote resumes
+precedence; if several different checkouts match the same basename or origin name, use an
+explicit alias. Origin names come from local Git metadata, without a network request,
+and preserve case. Remote opens resolve names on the selected host. Remote resumes
 use verified repository identity for local matches; target-only names resolve on
 the selected host.
 New aliases, paths, search text and delegated commands keep their literal meaning.
@@ -423,7 +389,7 @@ for a host's login shell.
 
 | Command | Purpose |
 | --- | --- |
-| `t session open <repo> [slot]` | Open or reattach a task; `--new` starts another, `--codex` selects Codex, `--app` opens the desktop app, `--cli` resumes in the terminal |
+| `t session open <repo> [slot]` | Open or reattach a task; `--new` starts another, `--codex` selects Codex, `--cli` resumes in the terminal |
 | `t issue list [repo] [-a]` | List issues in the current, named, or all registered GitHub repositories |
 | `t issue status [repo] <number>` | Inspect existing work without starting an agent |
 | `t issue start [repo] [number ...]` | Continue or start work on one or several issues |
@@ -436,12 +402,11 @@ for a host's login shell.
 | `t session push` / `t session pop` | Move between foreground and detached tmux |
 | `t session resume` / `t session search <query>` | Find and resume saved conversations; search finds Claude transcripts by content, then resumes the selected one |
 | `t session cd [repo] [slot]` / `t session read <repo> [slot]` | Enter a worktree or read its terminal log (`--dump` writes plain output) |
-| `t session move [repo] [slot] --host <host>` | Pick a current session or move an explicit slot; `--from <host>` pulls it here or sends directly with `--host` |
-| `t remote open [repo] [slot] [--host <host>]` | Choose a host and attach to an existing session; `--new` starts fresh |
-| `t remote resume [repo] [slot] [--host <host>] [--all]` | Choose a host and resume saved history discovered there |
-| `t remote move [repo] [slot] [--from <source>] [--host <dest>]` | Choose a current local/remote conversation and its destination |
+| `t session move [repo] [slot] [-r] [--host <host>]` | Select current sessions, then a destination, or move an explicit slot; `--from <host>` pulls it here or sends directly with `--host` |
+| `t remote open [host] [repo] [slot]` | Choose a host and attach to an existing session; `--new` starts fresh |
+| `t remote resume [host] [repo] [slot] [--all]` | Choose a host and resume saved history discovered there |
+| `t move [repo] [slot] [-r] [--host <dest>]` | Alias for `t session move`; `t remote move` remains compatible with `--remote` |
 | `t session view-plan` / `t session paste` | View a Claude session plan or pass an attachment |
-| `t session open-app [push\|pull] [repo] [slot]` | Advanced Codex handoff options for macOS, including preview, plan, and thread selection; `t app` is the short form |
 | `t repo list` / `t repo locate <repo>` / `t repo cd <repo>` | List names and paths, print a checkout path, or enter it in the shell |
 | `t repo add [path] [--alias NAME]` | Register an existing checkout; omit path to use the current checkout |
 | `t repo create` / `t repo clone <github-url> [alias]` | Create a repository or clone and register an existing one |
@@ -453,12 +418,12 @@ for a host's login shell.
 | `t hosts add <alias> <target> [--default]` | Register an SSH config name, address, or user@host |
 | `t hosts edit <alias> <target> [--default]` | Change a registered host's target |
 | `t hosts remove <alias>` | Unregister a host and clear its defaults; `delete` and `rm` also work |
-| `t hosts default [alias] [--clear]` | Show, set, or clear the default destination for session moves |
+| `t hosts default [alias] [--clear]` | Show, set, or clear the legacy `t beam` default destination |
 
 `hosts` manages remote machines. Run `t hosts` to see its commands,
 `t hosts list` to list machines, and `t hosts <verb>` to manage them or run remote commands.
 For example, `t hosts add mini chris@mini.local --default` registers `mini` and
-makes it the default destination for `t session move`. Configure SSH keys,
+makes it the default destination for legacy `t beam`; `t session move` still asks for a destination. Configure SSH keys,
 ports, and jump hosts in `~/.ssh/config`; registering a host saves local
 settings without connecting to it or installing software there.
 
@@ -479,26 +444,37 @@ if needed). To rename a registered host, choose Hosts → host → Short name,
 then Save changes. SSH targets and default-host references are preserved.
 First-run onboarding also generates unique short names for selected hosts.
 
-`t session move --host mini` opens a single-selection picker of current local
-Claude and Codex CLI conversations in the current repository (all repositories
-outside a checkout). Use `t session move --all --host mini` to widen the scope,
-or `t session move api --host mini` to select within `api`. Attached and detached
-sessions are included; saved history and desktop reservations are excluded.
-`t session move api 2 --host mini` bypasses selection. Inside an agent, an omitted
-target moves that conversation; add `--pick` to choose another current session.
-Scripts must supply a slot or `--session ID` and `--detach`.
+`t session move` (also `t move`) opens a multi-selection picker of current local
+Claude and Codex CLI conversations, then a destination host picker. Space/Tab
+marks sessions; Enter moves the marks or the focused session. Use `-r`/`--remote`
+to include registered remote sources, `--all` to browse every repository, or name
+`api` to scope selection. The current checkout scopes the default view; outside
+a checkout all repositories appear. Attached and detached sessions are included;
+saved history and desktop reservations are excluded. Selection also opens inside
+an agent. `--host mini` supplies the destination explicitly; a configured default
+never bypasses selection. Every alias of each selected source host is excluded.
+
+Multiple selections move sequentially with detached destinations. All identities
+are rechecked after both pickers before any move. A failure or cancellation stops
+the remaining moves and reports completed, failed and unattempted sessions.
+`t session move api 2 --host mini` bypasses session selection. Scripts must supply
+a slot or `--session ID`, a destination, and `--detach`. `--from HOST` receives
+here; combine it with `--host DEST` for a direct remote-to-remote move. The legacy
+`t beam` shortcut retains its implicit-current and default-host behavior.
 
 Use the `remote` family to choose where to work:
 
 ```sh
 t remote open                         # choose a host, then an existing session there
-t remote open api 2 --host mini        # attach to this slot on mini
-t remote open api --host mini --new    # start fresh on mini
-t remote resume api --host mini        # choose saved history discovered on mini
-t remote resume --all --host mini       # all repositories, regardless of remote login directory
+t remote open mini api 2        # attach to this slot on mini
+t remote open mini api --new    # start fresh on mini
+t remote resume mini api        # choose saved history discovered on mini
+t remote resume mini --all       # all repositories, regardless of remote login directory
+t resume t 11                          # mark conversations with Space/Tab, then Enter
 t session resume --all                  # local and remote-only repositories; clone only after selection
-t remote move                         # choose a current session, then its destination
-t remote move api 2 --from mini --host cloud
+t session move -r                      # choose current sessions, then their destination
+t session move api 2 -r                # discover the source, then choose its destination
+t session move api 2 --from mini --host cloud
 t session move api 2 --from mini --host cloud --detach
 ```
 
@@ -507,10 +483,12 @@ open an existing session, start a new session, resume saved work, or move a sess
 For open, the selected host runs the session. For resume, it supplies the saved
 conversations and runs the resumed session. For move, it is the destination;
 the picker also names the current source host. Aliases and SSH targets appear
-below the action heading, and even one configured host waits for Enter. `remote move` includes current local
+below the action heading, and even one configured host waits for Enter. `remote move` remains a compatibility alias for `session move --remote`, including local
 and registered remote Claude/Codex CLI sessions, retains host identity when slot
 names repeat, and rechecks the selected conversation before moving. A named or
 current repository scopes selection; outside a checkout it spans all repositories.
+Repositories absent locally are resolved on each remote source. A unique repo/slot
+match proceeds directly to the destination picker; ambiguous repository selectors fail.
 `--all` widens the move picker. Explicit `--from` plus a slot or `--session ID`
 skips session selection. Esc/Ctrl-C cancels with status 130; an empty current
 session inventory does nothing. Nonterminal invocations require explicit choices.
@@ -523,11 +501,15 @@ worktree push, transcript sync, or landing checks stop the transfer. If a failur
 occurs after stopping the source, its transcript and worktree remain there for
 recovery; the destination is not launched with stale code.
 
-`remote open` browses on the chosen host; an empty inventory does not create a
-session. `--new` explicitly requests a fresh session. `remote resume --host H`
+`remote open` shows the chosen host’s sessions in a local picker and opens additional
+selections in local terminal tabs before attaching the first session.
+The explicit `[repo] [slot] --host HOST` form remains compatible. Unflagged
+repository-only targets that could be mistaken for hosts require `--host`.
+`remote open` browses the chosen host; an empty inventory does not create a
+session. `--new` explicitly requests a fresh session. `remote resume H`
 discovers saved history on H, while `session resume --host H` carries locally
 discovered history to H. A live selection with a different `--host` is refused
-before any batch action and provides an exact `remote move` command. Matching
+before any batch action and provides an exact `session move` command. Matching
 host aliases may attach to the existing owner. Desktop resume remains local.
 
 ### Configuration and tools
@@ -589,14 +571,30 @@ List returns structured session rows, history returns JSON, read dumps output,
 and cd returns the resolved directory. Terminal-dependent workflows (push, pop,
 move, interactive search/paste, and conditional lifecycle modes) return
 `terminal_required` with the exact command, without starting work or a picker.
-Explicit `open-app` uses the existing desktop handoff checks.
+Codex Desktop integration has been removed. `t app`, `t session open-app`, and
+`--app` are no longer supported. Use CLI session open/resume and `t session move`.
+Saved conversations and worktrees are preserved; old reservation markers prevent
+automatic worktree cleanup, and exact history resume still verifies writer locks.
 
 Pause requests the default Escape interrupt key; it does not suspend processes,
 stop background subagents, or guarantee queued work remains paused. Goal is a
 conversational objective change, not an agent-native goal API. Delivery results
 report `acknowledged: false`; inspect subsequent agent output to verify the effect.
+Installation registers the `sessions` MCP server with installed Codex and Claude Code
+clients. `t mcp install` retries registration; existing registrations, including
+custom or disabled entries, are preserved. Set `T_NO_MCP=1` to skip installation.
+Search includes saved Claude transcripts and Codex active/archived rollouts under
+`CODEX_HOME` (default `~/.codex`), excluding injected context and subagent rollouts.
+After registration, refresh MCP tools or reopen the client if tools are unavailable.
+The same lookup backend is available without runtime MCP tools:
+
+```sh
+t mcp --call find_sessions '{"query":"dashboard mobile","repo":"t"}'
+t mcp --call session_detail '{"session":"SESSION_ID"}'
+```
+
 Only the original three lookup tools are automatically allowed. Installing or
-running `t mcp --install` replaces the old blanket `mcp__sessions` permission with
+running `t mcp install` replaces the old blanket `mcp__sessions` permission with
 those lookup rules, preserving custom per-tool rules and deny/ask settings.
 
 Slow terminal session/host scans and saved-history discovery show a small spinner
@@ -604,7 +602,7 @@ after a short delay. It clears before results, pickers, or errors; redirected,
 JSON, MCP, and remote scanner output stays free of progress animation.
 
 `ls` and `list` are interchangeable for `session`, `repo`, `cursor`, `hosts`,
-`issue`, and `config workflow`. Root `t ls` and `t list` both list sessions.
+`issue`, and `workflow`. Root `t ls` and `t list` both list sessions.
 The old `t repos` family has been removed; use `t repo list`, `t repo locate`,
 `t repo cd`, and `t repo add`.
 
@@ -616,7 +614,7 @@ these are the common migrations:
 | Existing | Grouped command |
 | --- | --- |
 | `t open`, `t ls`, `t kill`, `t beam` | `t session open`, `t session list`, `t session close`, `t session move` |
-| `t push`, `t pop`, `t find`, `t plan`, `t app` | `t session push`, `t session pop`, `t session search`, `t session view-plan`, `t session open-app` |
+| `t push`, `t pop`, `t find`, `t plan` | `t session push`, `t session pop`, `t session search`, `t session view-plan` |
 | `t new`, `t checkout` | `t repo create`, `t repo clone` |
 | `t setup` | `t config setup` |
 | `t instructions --init/--edit/--show`; `t instructions <repo> --apply` | `t profile init/edit/show`; `t profile apply <repo>` |
@@ -663,16 +661,9 @@ before quitting and relaunching. It stays visible until dismissed. The monitor
 keeps checking and, after dismissal, can offer recovery once the conversation is
 verified.
 
-Fresh local slots can open while a configured remote host is offline, for example
-`t session open my-project --new --codex --cli` or
-`t session open my-project --new --app`. Automatic fresh-slot allocation skips
-known remote desktop reservations and chooses the next locally unused slot from
-one discovery snapshot. Explicit slot requests still refuse conflicting owners;
-`t session open my-project 3 --app` can also reopen a locally reserved desktop
-workspace when another host is offline, after checking local ownership. Saved
-CLI and desktop resumes warn and continue checking local and reachable owners;
-known owners still block conflicting launches. Other existing workspace claims
-and live transfers retain their ownership checks.
+Fresh local slots can open while a configured remote host is offline. Saved
+resumes warn and check reachable owners; known owners still block conflicting
+launches. Existing workspaces and live transfers retain their ownership checks.
 
 Codex CLI starts and resumes (including `--fg` and transfers) use `--no-daemon`.
 Each session uses its own backend, avoiding feature-setting conflicts with
@@ -772,7 +763,7 @@ t issue open                         # select issues to open interactively
 t issue open https://github.com/owner/repo/issues/123
 ```
 
-Every verb accepts a registered repository alias, checkout directory name, or GitHub `owner/repo`, either
+Every verb accepts a registered repository alias, checkout basename, local origin repository name, or GitHub `owner/repo`, either
 positionally or with `--repo`. `list` shows the current checkout's issues, or
 issues from all registered GitHub repositories when run outside a checkout;
 `-a`/`--all` widens the list from inside a checkout. Its `REPO`, `ISSUE`,
@@ -884,55 +875,248 @@ Use `--path DIR` to choose another destination, or `--dry-run` to inspect the pl
 It accepts GitHub HTTPS and SSH clone URLs. Re-running it preserves a matching
 clone, including uncommitted work; a conflicting destination or alias is refused.
 It registers only on this machine and leaves the GitHub repository and its settings
-unchanged. If the remote has no `main` branch, checkout succeeds with a warning:
-`t session open` needs a fetched `origin/main` to create task worktrees.
+unchanged. Sessions support `main`, `master`, and custom default branches through
+`origin/HEAD`. Checkout warns if no fetched origin default can be resolved.
 
-Configure named staged workflows in `t config open` → **Agent workflow**. Choose
-**Use recommended defaults** to activate planning with `gpt-6-astra`, implementation
+Configure named staged workflows in `t config open` → **Workflows**, or use
+`t workflow` for the editor (`t help workflow` for command help). The former `t config workflow` routes remain
+compatibility aliases.
+Start with **Codex**, **Claude**, or **Cursor**, then choose a workflow to edit.
+Each tool has its own workflows, default, and repository assignments. Browsing
+a tool's settings does not change which tool starts sessions; the default tool
+and repository tool overrides remain in `t config`.
+Existing workflows stay under Codex. Previously shared Claude preferences get
+an independent copy, retaining Claude model defaults, permissions, delivery
+preferences, instructions and assignments, with Codex model stages removed.
+New Claude and Cursor scopes start with one model and native defaults. Their
+model pickers query their own CLI; an unavailable catalogue still allows
+inheritance or a custom model ID.
+Workflow rows show **Global default**, **Assigned to N repos**, or **Not assigned**.
+Repository counts include explicit, non-excluded assignments; a disabled definition
+is marked **Disabled**. Being enabled does not mean a workflow is assigned.
+Choose **Use recommended defaults** to activate planning with `gpt-6-astra`, implementation
 with `gpt-6.1-sol`, and review with `gpt-6-astra`. **Edit default workflow** and
 **Edit named workflow** give each stage separate model and reasoning-effort controls.
+All three stages offer **Agent selects by task**. Before delegating, the agent
+chooses a concrete supported reasoning effort for that stage's worker.
+Task-based Implementation uses a bounded implementation worker; the main session
+coordinates the work and follows up on its results. The main session's fixed
+launch effort is shown separately and does not determine the worker's effort.
+An explicit Implementation effort keeps implementation in the main session at
+that level. Planning and Review use workers when selected. **Pull requests →
+Agent review before PR → Disabled** disables the pre-PR review step, including a
+selected review worker, while retaining its model and effort settings.
+These are delegation instructions for the agent;
+`t` does not change a running turn's effort or run its own task classifier.
+Reasoning pickers group **Agent selects by task** under **Automatic**, and
+explicit levels under **Fixed effort**. These headings are not selectable;
+reopening a picker preserves its selected effort.
+**Use this workflow** enables or suppresses the entire workflow. **Use multiple models**
+opens **Use one model for all work**, followed by checkboxes for **Planning**,
+**Implementation**, and **Review**. Mark the one-model choice with Space to clear
+all separate stages, then press Enter and save. Marking any stage clears the
+one-model choice; clearing the final stage selects it again.
+Unchecked Planning and Review use the main model;
+skipping review is a separate choice under Pull requests.
+Leave Implementation unchecked to use the session's default model and reasoning effort,
+which remain editable alongside any selected stages. Separate stage choices stay
+saved when unchecked. One-model mode uses the editable session model and effort.
+**Model** chooses a model for this workflow. **Inherit default** uses the tool's
+top-level `t config` model and displays that model beside the choice.
+**Reasoning effort** likewise shows a chosen level or the inherited setting.
+When the workflow chooses its own model and leaves effort unset, the tool's
+native effort setting applies. Unavailable native values are labeled **Tool setting**.
+Markdown and behavior preferences still apply.
+**Permissions** opens the selected tool's permission choices directly and shows
+the selected preset, such as **Full access**, in the workflow menu. Codex offers **Ask for approval**, **Approve for me**, **Full access**,
+and **Read only**. Claude offers **Ask for approval**, **Approve edits**, **Auto**,
+**Full access**, and **Plan only**. **Not set** clears the workflow override.
+These choices apply on the next CLI start or resume in the workflow's scope;
+running sessions keep their permissions. Explicit
+permission arguments take precedence. Saving a workflow does not rewrite native
+permission defaults or command allowlists.
+To apply different settings to one repository, create and edit a named workflow,
+then select it under **Repository assignments → your repository**.
+These defaults apply when starting or resuming a CLI session in that repository
+and its worktrees. Explicit launch arguments win; running turns keep their settings.
+
+Clearing a model uses the account's agent default. Choosing a model without an
+effort leaves effort selection to the native tool. Codex and Claude defaults are
+stored separately, and switching back to multiple models retains these choices.
 Model choices include the current and recommended values, a live Codex catalogue,
 a custom ID, and explicit refresh. Current, recommended and custom models remain
-usable offline. Changing a workflow model preserves its selected effort and does
-not change the agent's launch defaults. Planning and implementation accept `auto`
-or an explicit effort (`minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `ultra`);
-review accepts an explicit effort or `one-level-lower`.
+usable offline. Changing a stage model preserves its selected effort. Saving the
+implementation model updates this workflow's next Codex launch/resume defaults;
+task-based implementation delegates a worker using that model at a chosen effort.
+Every stage accepts `auto` or an explicit effort (`minimal`, `low`, `medium`,
+`high`, `xhigh`, `max`, `ultra`). Older saved `one-level-lower` values for
+Implementation and Review now behave as `auto` without rewriting settings on read.
+
+Open **t workflow → PRs, previews & tests → Tests → Test runners** to configure
+runners for the workflow you are editing. **t config → Test runners** also lets you
+choose a global default, named workflow, or registered repository. Use runner settings to test current uncommitted work on
+managed GitHub-hosted Linux/macOS machines or a registered SSH host. One immutable
+snapshot serves every target; source files need no commit or push. Bootstrap a
+dedicated private GitHub broker explicitly, then run:
+
+```sh
+t runners list
+t runners runs start -- python3 -m pytest
+t runners runs status RUN_UUID --json
+```
+
+See [test runners](docs/test-runners.md) for configuration, explicit untracked
+inputs, artifacts, costs, cancellation and resource cleanup.
 
 Create and assign reusable workflows directly:
 
 ```sh
-t config workflow add careful             # copy the current default, without selecting it
-t config workflow add quick --from careful
-t config workflow use careful              # select the global default
-t config workflow use quick --repo api     # api follows the shared quick definition
-t config workflow exclude --repo api       # disable only api; remember its source
-t config workflow inherit --repo api       # remove api's override; follow global
-t config workflow list --all               # list named definitions and usage
+t workflow add careful             # copy the current default, without selecting it
+t workflow add quick --from careful
+t workflow use careful              # select the global default
+t workflow use quick --repo api     # api follows the shared quick definition
+t workflow exclude --repo api       # disable only api; remember its source
+t workflow inherit --repo api       # remove api's override; follow global
+t workflow list --all               # list named definitions and usage
+t workflow open quick               # open quick in the staged editor
+t workflow quick                    # shorthand for open quick
+t workflow delete quick --replacement careful  # move its assignments, then delete
 ```
 
-Repository settings offer **Choose named workflow**, **Customize only this
-repository**, **Exclude workflow for this repository**, and **Use global default**.
-Editing a named definition affects all its consumers; a repository customization
-is an independent inline copy. Exclusion retains the source and suppresses both
-the staged rules and its Markdown instructions. Selecting a named workflow clears
-exclusion. **Resume workflow for this repository** restores the retained source,
-including repository-only customizations. Menu choices stay pending until
+The compatibility route `t config workflow quick` also opens the named editor.
+Use `--tool codex`, `--tool claude`, or `--tool cursor` to select its catalogue;
+otherwise the account tool is used. Existing verb names take precedence; use
+`open NAME` for a workflow named like a verb. **Delete workflow** in the editor
+stages removal until Save. A default or assigned workflow requires a replacement
+(including excluded assignments, whose exclusion is retained); the last workflow
+cannot be deleted. `t workflow delete NAME` deletes an unassigned definition.
+
+Repository settings open one workflow selector: **Inherit global**, the named
+workflows, or **Disabled**. Selecting a named workflow applies that definition;
+editing it affects all its consumers. Disabled retains the previous source and
+suppresses workflow instructions. Existing custom repository policies remain
+available as **Current custom workflow** without exposing another editor here.
+The tools screen shows the global choice and the current registered repository's
+effective assignment, including linked worktrees, for example
+**Global: standard · t: fast**. This summary does not change the editing scope.
+Menu choices stay pending until
 **Save changes**; discard publishes nothing.
 
-Use **Instructions · edit Markdown** inside a workflow to write ordinary headings,
+**PRs, previews & tests** provides optional choices within each workflow:
+
+| Setting | Choices |
+| --- | --- |
+| Pull requests → Agent review before PR | Enabled or Disabled |
+| Pull requests → When to open PR | Automatically when ready or Only when I ask |
+| Pull requests → PR type / Merge PR | Draft or ready; Automerge or When I ask |
+| Local preview → Global → Preview timing | Automatically when ready or Only when I ask |
+| Local preview → Global → Approval before PR | Wait for my approval or No approval needed |
+| Local preview → Frontend → Preview | Enabled or Disabled |
+| Local preview → Frontend → Preview timing | Inherit global or choose a timing override |
+| Local preview → Frontend → Approval before PR | Inherit global or choose an approval override |
+| Local preview → Frontend → Implement before approval | Yes or No |
+| Local preview → Frontend → Design approach | Separate HTML prototype or In the app |
+| Local preview → Frontend → Preview method | Fast reload or Build |
+| Local preview → Frontend → Open in browser | Not set, Automatically, or Only when I ask |
+| Local preview → CLI → Preview | Enabled or Disabled |
+| Local preview → CLI → Preview timing | Inherit global or choose a timing override |
+| Local preview → CLI → Approval before PR | Inherit global or choose an approval override |
+| Local preview → CLI → Preview method | Install locally or Run from the repo |
+| Local preview → CLI → Run command | Not set, Automatically, or Only when I ask |
+| Tests → When to run tests | Local during work, before preview, before PR, or On PR CI |
+| Tests → Test runners | Configure targets, defaults, and artifacts |
+
+Other preference choices also offer **Not set**, visually separated from the other choices,
+which removes that choice without instructing the agent to do its opposite.
+An unset preference leaves the decision to your existing instructions.
+Preview and validation instructions require accurate reporting of limitations and
+results. Opening a PR alone does not authorize a merge. These preferences guide
+agents; they do not enforce execution or grant permission beyond the task.
+
+**Agent review before PR → Disabled** lets the agent proceed from implementation
+and the selected tests/previews to the configured PR-opening action without a
+separate code-review pass. It suppresses review in the main conversation and a
+selected review worker. **Enabled** requires the agent to review the diff
+and validation before opening the PR. The model-stage selection decides who
+reviews when review is enabled. This is an Enabled/Disabled toggle, defaulting to
+Enabled; there is no Not set choice.
+Skipping this agent review does not change required repository approvals, checks,
+or explicit task instructions. To open a PR automatically without the review
+pass, select **Disabled** and **When to open PR → Automatically when ready**.
+
+Set **Preview timing** and **Approval before PR** in Local preview's **Global**
+section. Each submenu inherits these choices unless you choose an override.
+Rows show the setting followed by its effective value, such as **Inherit global**
+· Automatically when ready; the inherited value is dimmed. Choosing Inherit global
+removes the override, so future parent changes apply.
+**Approval before PR** controls whether the agent waits for preview approval
+before pushing or opening a PR.
+Launch is configured once per type: **Frontend → Open in browser** and
+**CLI → Run command**, each offering Not set, Automatically, or Only when I ask.
+The shared Open/run preview control is removed. Older shared launch settings
+remain effective; editing either type's launch choice preserves the other type's
+resolved choice and replaces the legacy shared setting with independent choices.
+**Frontend → Implement before approval: No** requires a lightweight frontend
+preview and approval before substantial implementation. Work needed to create
+that preview is allowed. **Yes** lets frontend implementation proceed without
+that approval gate. CLI previews do not impose an implementation approval gate;
+they let you try the working command. PR opening and
+merging remain controlled by their separate settings.
+**Local preview** contains **Frontend** and **CLI** submenus, each with its own
+Enabled/Disabled setting. Both remain accessible so you can re-enable them.
+Resolved preview preferences apply only to enabled types. Disabling a type
+retains its settings and suppresses its design and preview guidance; disabling
+both suppresses the shared preview rules too. Enabling alone does not start a preview.
+Frontend contains design approach, preview method, and browser
+opening. CLI contains the local install/run method and **Run command**. Choose
+**Automatically** to launch the project's supported preview command once the CLI
+preview is prepared, or **Only when I ask** to leave the command ready to run on
+request. The method determines whether to use the development installation or
+run from the repo. Interactive commands need a supported interactive terminal;
+if one is unavailable, the agent reports that and provides the command.
+Browser opening and CLI command launch do not change
+the resolved timing. An automatic launch waits
+until a request-only preview has been requested and prepared. Disabling CLI
+preview suppresses command-launch guidance while retaining the choice.
+For frontend work with Implement before approval set to No and automatic timing,
+prepare the initial lightweight preview before substantial implementation.
+With request-only timing, wait for the frontend preview request and subsequent approval.
+
+The host instruction hierarchy stays unchanged: explicit task instructions and
+repository rules remain authoritative. A selected repository assignment or inline
+policy replaces the global workflow rather than combining with it. Repository
+customization creates a copy; later edits to the original named workflow do not
+flow into it. Within that
+workflow, custom Markdown takes precedence over behavior preferences, which take
+precedence over generic model-stage guidance. `t` preserves Markdown as written;
+it does not try to interpret or detect conflicting prose.
+
+Use **Text instructions** inside a workflow to write ordinary headings,
 bullets and prose in your editor. No JSON is needed. The equivalent commands are:
 
 ```sh
-t config workflow instructions edit careful
-t config workflow instructions show careful
-t config workflow instructions edit --repo api
+t workflow instructions edit careful
+t workflow instructions show careful
+t workflow instructions edit --repo api
 ```
 
 Omitting both `NAME` and `--repo` selects the current global default. `show` prints
 only the original Markdown, including for an excluded repository. Editing with
 `--repo` creates a repository-only copy only when text actually changes; exclusion
 remains in effect. Named workflows carry their instructions when copied or assigned.
+Choose **Clear text instructions** to stage their removal, then save. Saving an
+empty file in the text editor also clears them. Discarding menu changes restores
+the saved text; clearing instructions preserves the other workflow settings.
 **Edit reusable instructions** still opens the separate `t profile edit` profile.
+
+The supplied public-repository issue-before-code rule is ordinary editable workflow
+Markdown. `t workflow list` shows whether the supplied text is included;
+use `t workflow instructions show` to read it and `instructions edit` to
+change it. Installation migrates older saved workflows once, preserving existing
+prose, and removes the separate managed public-issues block. Subsequent installs
+preserve your edits or deliberate removal. Repository/task rules still take
+precedence, and excluded workflows suppress their supplied instructions.
+
 
 The implementation stage asks agents to inherit the parent's current speed
 (including Fast or Ultrafast), independently of model and reasoning effort, and
@@ -942,22 +1126,62 @@ and inheritance depend on the runtime's exposed controls or documented behavior.
 Agents must disclose unsupported or unverifiable speed; the policy does not promise
 an immediate change during an active turn.
 
-`t config workflow edit [NAME]` is the advanced JSON editor for a shared definition;
+`t workflow edit [NAME]` is the advanced JSON editor for a shared definition;
 `--repo api` edits an independent repository policy. NAME and `--repo` cannot be
 combined. Set a repository editor's whole document to `null` to inherit the global
 settings. Both editors use `VISUAL`, then `EDITOR`, then `vi`; unchanged or invalid
 edits and unsuccessful editor exits publish nothing. Bare `t config edit` still
 edits local shell configuration.
 
-`t config workflow list [--repo api]` prints scope, source, exclusion, and the
-effective stage/model/effort table. Add `--json` for machine output. `--all` lists
+`t workflow list [--repo api]` prints scope, source, exclusion, model-stage
+state, permissions, work preferences, custom-text presence, precedence and the effective
+model settings. Single-model workflows show session defaults instead of inactive
+stage rows. Add `--json` for machine output. `--all` lists
 the named catalogue and usage; it cannot combine with `--repo`. A registered
 `--repo` alias explicitly selects a repository without checkout inference or a
 picker. Unsaved accounts show recommended defaults until explicitly activated.
 Preferences live in `${XDG_CONFIG_HOME:-~/.config}/t/workflow.json`. Existing v1
 preferences load as a `standard` named workflow and independent repository policies;
 reading or reinstalling preserves the original file. The next explicit change
-saves the v2 named-workflow format.
+saves the v3 named-workflow format.
+Existing v2 policies also remain valid without the optional `stages_enabled`
+boolean (defaults to true) or `behaviors` object (defaults to no preferences).
+Optional `model_stages` selects any nonempty combination of `planning`,
+`implementation`, and `review`. Deselecting all stages sets
+`stages_enabled=false` while retaining the saved selection. Legacy
+`separate_stages` still selects planning/review helpers with Implementation active;
+old settings keep their behavior and reads never rewrite them.
+The optional `session_defaults` object stores `codex` and `claude` model/effort
+defaults when Implementation is unchecked or all stages are off. Optional `permissions` maps `codex` to `ask`,
+`auto`, `full`, or `read_only`, and `claude` to `manual`, `acceptEdits`, `auto`,
+`bypassPermissions`, or `plan`. Omitted agents keep native permission defaults;
+permissions apply independently of model stages and are suppressed when the
+workflow is disabled or excluded. Inside `behaviors`, independent keys are
+`pr_review`, `pr_open`, `pr_state`, `pr_merge`, `frontend_enabled`, `cli_enabled`, `local_preview`, `cli_preview`, `cli_launch`,
+`frontend_implement_before_approval`, `frontend_design`, `frontend_preview`, `frontend_browser`, and `test_timing`.
+`pr_review` accepts `review` (Enabled) or `skip` (Disabled); omission means Enabled
+without materializing a stored value on read or an unchanged selection.
+Skipping review retains the saved model-stage selection and reviewer settings.
+`frontend_implement_before_approval` accepts `yes` or `no` directly.
+Optional `frontend_preview_timing` / `cli_preview_timing` override `local_preview`.
+Missing timing overrides inherit; they do not copy the current parent value.
+Legacy `implement_before_approval` resolves into the frontend-only setting when
+it is absent. Older `preview_approval` / `design_approval` also resolve there:
+required maps to no, and not-required or continue maps to yes. Explicit frontend
+values win. Retired `cli_implement_before_approval` is accepted in saved JSON but
+has no effect. Reading older configuration does not rewrite it; clearing the
+frontend choice must not restore retired aliases.
+`frontend_enabled` and `cli_enabled` accept `enabled` or `disabled` independently.
+Each explicit setting overrides the legacy `preview_target` (`frontend`, `cli`,
+or `both`). Without either setting or a legacy target, both types are enabled.
+Legacy targets remain readable without rewriting saved configuration.
+`frontend_browser` accepts `automatic` or `on_request`; omission leaves browser
+opening unspecified. `cli_launch` accepts the same values for running the prepared
+CLI preview command; omission preserves existing command guidance. Clearing it
+leaves the preview method and timing intact.
+The editor presents supported choices. Legacy `worktree`, `preview`,
+`validation`, and `delivery` fields remain readable; unknown keys or values are
+rejected before any write.
 Hidden `t config show --workflow` and `t config edit --workflow` compatibility
 forms remain available; the former retains its JSON output.
 Saving synchronizes a separate managed block in Codex's `AGENTS.md` (and existing
@@ -965,12 +1189,18 @@ nonempty `AGENTS.override.md`) and Claude's `CLAUDE.md`, honoring `CODEX_HOME` a
 `CLAUDE_CONFIG_DIR`. Personal prose and t's public-issue block are preserved;
 malformed managed blocks, symlinks, and concurrent edits are refused. Repository
 overrides follow the canonical checkout and its linked worktrees, including new
-worktrees. These agent instructions apply in terminal and desktop sessions; t
-does not switch models or enforce their execution. Task instructions and
+worktrees. These agent instructions apply in terminal and desktop sessions;
+stage delegation remains guidance. Saved workflow settings select models at
+supported CLI launch/resume boundaries, without switching active turns. Task instructions and
 repository rules remain authoritative. Reinstalling refreshes saved workflows
 without activating the defaults for other accounts.
 Existing sessions must reload the updated instructions, or start a new session,
 before relying on a changed workflow policy.
+
+Explicit Codex model/effort changes in `t config` also update those fields in
+native `config.toml`, preserving speed and other settings. Existing app
+conversations may retain their selected model; saving defaults does not confirm
+that a running conversation adopted them.
 
 For preferred agent instructions, run `t profile init` to create an editable
 profile at `${XDG_CONFIG_HOME:-~/.config}/t/instructions.md`, then
@@ -979,111 +1209,10 @@ Set `T_AGENT_INSTRUCTIONS` to use another template file. `t repo clone` and `t c
 offer to seed `AGENTS.md` from the profile when run interactively; use
 `--instructions` to apply it in a script or `--no-instructions` to skip the offer.
 Noninteractive runs skip seeding unless you explicitly pass `--instructions`.
-You can later run `t profile apply <repo>` for a registered alias or checkout directory name. t updates
+You can later run `t profile apply <repo>` for a registered alias, checkout basename, or local origin repository name. t updates
 only its marked block, preserves the rest of `AGENTS.md`, and refuses malformed
 markers or a symlink. Review the resulting diff and commit it when ready; t never
 commits or pushes these instructions for you.
-
-On macOS, `t session open my-project --app` creates a fresh isolated worktree and
-opens that folder in a new desktop app window with Codex mode explicitly selected,
-without starting a terminal agent. Name a reserved slot to reopen its saved
-conversation (`t session open my-project 3` automatically uses the app). A slot
-without a saved conversation opens its workspace in Codex mode. When several
-conversations share the worktree and no exact thread is recorded, reopening
-reports the ambiguity; select the intended conversation in the desktop app,
-or use `t app pull my-project 3 --thread <id>` to return that conversation to CLI.
-Exit any foreground terminal agent in that workspace before reopening. With `--app`, if
-that slot is running
-Codex in tmux, `t` hands the same conversation to the app. It waits for that
-conversation's backend to release ownership before opening it; a shared Codex
-backend can take about a minute after the CLI exits. The command shows progress
-and keeps the slot reserved if release cannot be verified within 75 seconds.
-`--app` requires a
-worktree-enabled repo and a local Codex installation. Creating a new window also
-requires Accessibility access for the terminal running `t` to invoke the app’s
-New Window menu. Reopening a saved conversation uses its native link directly
-and does not require Accessibility. It cannot launch a desktop workspace on a remote host.
-The desktop slot stays reserved in private Git worktree metadata so automatic
-cleanup and a later terminal launch cannot reuse it while the app may still be
-working. `t session list` has separate status, UI, model, session, and context
-columns, plus `LAST TURN` for the most recent turn initiation. This timestamp
-uses the viewer's local time with date, seconds, and timezone (for example,
-`2026-10-23 09:41:07 PDT`), including for remote sessions. It comes from a Codex
-turn-start event or a Claude user prompt, not subsequent tool or assistant activity.
-Older Codex transcripts can fall back to a user-message event. `-` means unknown;
-inactive desktop slots can show their last recorded conversation's turn. Narrow
-terminals keep one row per session: task text is clipped, UI/model columns are
-omitted when necessary, and LAST TURN uses `MM-DD HH:MM` (or `HH:MM` at the smallest
-widths). Compact status marks appear under S; remote lists retain HOST.
-Use `t ls | cat` or `t ls -r | cat` for all columns and complete values.
-`t ls -r` warns on stderr when a host is unavailable and still lists local and
-reachable sessions. Warnings are amber on capable stderr terminals, including
-with `t ls -r | cat`; `NO_COLOR`, `TERM=dumb`, or redirected stderr keeps them plain.
-UI shows `▣ desktop` or `› cli`; model keeps the agent icon and the last
-recorded model name (`-` when unavailable). Inactive desktop slots show their
-last recorded conversation title. Status uses `● ✓` for a loaded conversation
-and `○` for inactive. On macOS, live desktop context is verified from rollout files held open
-by the desktop backend; a saved reservation alone stays inactive. Loaded context
-can remain in the backend after a window closes, and does not mean a turn is
-currently generating. To continue in the CLI, run this on the Mac running the
-desktop session:
-
-```sh
-t session open my-project 3 --cli
-```
-
-`open --cli` checks whether that exact conversation is still loaded. If it is,
-finish its turn and follow the command's release instructions, then retry. For
-a `t` worktree, releasing the selected chat in Codex can leave other chats and
-the app open; the command restores an archived conversation on the next try.
-Codex-managed worktrees need different handling because archiving can also
-queue worktree cleanup, so follow the command's guidance for that workspace.
-Once released, `open --cli` resumes the same conversation and attaches.
-Opening a desktop slot without `--cli` continues in the app. The handoff preserves
-the worktree, changes, dev server, and thread history. For a
-worktree started with `t session open --app`, it selects the only saved conversation;
-if several chats share the worktree, use `t app pull my-project 3 --thread <id>`
-to select one, then open it. A previously pushed slot defaults to its handed-off
-thread. `t app pull` resumes without attaching; `--dry-run` previews either direction.
-Handoffs check Codex's per-conversation writer lock and refuse if another loaded
-conversation is known to share the worktree. The refusal names that conversation
-and gives release instructions plus the exact command to retry. Finish that
-other conversation's turn and exit its owning client; in a verified reserved
-`t` worktree, the message can instead suggest Archive in Codex. Wait for that
-conversation's backend to release its writer, then retry the selected slot.
-An inactive leftover lock file does not block the handoff. The missing-preview
-notice is independent: providing `--url` does not resolve an ownership conflict.
-Codex can hold other thread locks
-without entries in its saved-conversation index. Those unindexed locks produce
-a diagnostic during opening and handoffs; they do not block every worktree.
-An unindexed lock is not proof of an unrelated conversation, and the selected
-thread must still pass its own ownership checks. Closing a slot keeps stricter
-checks because it releases the worktree reservation.
-Pull resumes with `--no-daemon`, so an unrelated
-background server cannot stall the transfer. It never quits the app or stops
-its backend. Codex versions without a verifiable writer lock use conservative
-release checks. The reservation is released only after the exact CLI process
-owns the conversation's lock and its resumed thread is verified; a failed
-handoff keeps the worktree protected.
-
-Fresh Codex starts use `--no-daemon`; ordinary saved resumes retain their configured
-backend behavior. See the
-[session lifecycle validation guide](docs/session-lifecycle-validation.md) for
-the automated checks and the separate real-desktop acceptance procedure.
-
-To close a desktop slot, run `t kill my-project 3` (or `t session close my-project 3`). It stops that
-slot's parked terminal and dev server and releases its reservation while
-preserving the saved conversation and worktree. Saved, unloaded conversations
-can close while Codex and other chats stay open; missing archived history files
-do not block cleanup. A conversation that still holds its writer lock must be
-stopped and archived in Codex before closing the slot. Unassociated backend locks
-do not block cleanup: close checks the selected thread and other writers tied to
-this worktree through the conversation index or saved rollout metadata. Unreadable
-ownership data still blocks close. Shared backends and their processes remain protected;
-close does not delete locks or launch a replacement writer. The close rechecks ownership
-after cleanup and retains the reservation if a writer or new conversation appears.
-This releases t's slot reservation; it does not close app windows or delete the
-worktree.
 
 ## Configuration
 
@@ -1093,6 +1222,24 @@ vendors. `t config open` sets agent defaults, models, effort, speed (Fast and
 Ultrafast where supported), repository choices, and hosts. Teams can share those defaults alongside their preferred
 workflows and agent configurations to standardize the parts of their setup that
 matter.
+
+The settings screen groups **Session defaults**, **Agents**, **Workflows**, **Runners**, **MCP server**,
+**Repositories & worktrees**, **Remote hosts**, and **Finish**. Workflow has its
+own section, separate from agent settings and local model setup; host registration
+and the default beam destination stay together. Rows ending in **›** open a settings collection
+or setup screen. All existing choices remain directly accessible on this screen.
+
+The **MCP server → Sessions server** menu shows Codex enabled state and Claude
+user-scope registration on this machine. Refresh status is read-only.
+**Register missing clients now** reviews and applies registration immediately,
+separately from config Save; first save or discard pending edits. Existing custom
+or disabled entries are preserved. Reload the agent client to load newly registered
+tools; configuration status alone does not verify an active client connection.
+
+Manage the same server directly with `t mcp status [--json]`, `t mcp install`,
+and `t mcp uninstall`. Uninstall removes only t-owned registrations and disables
+automatic registration across updates until explicit install. Custom entries,
+permissions, and transcripts are preserved. Bare `t mcp` remains the stdio server.
 
 In `t config open` → Codex → Speed, choose the tool's own setting, Standard,
 Fast, or Ultrafast. Faster modes appear when the selected model reports support;
@@ -1116,11 +1263,6 @@ Changes in that menu stay pending until you review and save.
 To change a repository alias, open `t config open` → Repositories → select the
 repository → Short name, then Save changes. Its tool, branch, and worktree
 overrides move to the new name.
-
-Choose Default opening mode in `t config open` for CLI or Desktop app (Codex on
-macOS). Each repository also has an Opening mode override. `t session open --cli` and
-`t session open --app` override that choice for one command; foreground and remote opens
-use the CLI.
 
 Configure which MCP tools load in each agent's own settings. t preserves those
 settings and provides its own optional sessions MCP server for Claude Code;
@@ -1146,14 +1288,18 @@ No SSH server, credentials, or network tunnel is provisioned by t.
 
 ### Permissions and folder trust
 
+Use **t workflow → Permissions** for permissions scoped to a named workflow or
+repository. Those choices affect CLI launches and resumes through `t`.
+Codex presets use the native sandbox, approval-policy and reviewer settings
+described in the [official OpenAI documentation](https://learn.chatgpt.com/docs/sandboxing).
+
 Installing t preserves existing agent choices. Automatic folder trust and the
 maintainer's personal permission defaults are not enabled for a standalone install.
 Use `t agent trust <dir>` to make a deliberate folder-trust change. To opt into automatic
 trust for registered repositories, set `export T_AUTO_TRUST=1` in your local config.
 The `t config` TUI shows **Automatic folder trust** and lets you enable or disable it.
 Trust is synced when creating/reusing worktrees, starting or resuming terminal
-sessions, and opening Codex desktop workspaces. Claude Code desktop and Codex
-share their CLI trust stores; both canonical repositories and individual worktrees
+sessions, using each agent's CLI trust store; both canonical repositories and individual worktrees
 are registered. `t trust --all` also includes existing session worktrees.
 Cursor desktop and VS Code use a separate workspace trust database, which is
 updated when present; restart those apps after syncing to load the saved trust.
@@ -1176,7 +1322,7 @@ receive an explicitly chosen minor version. Nightly automation publishes a new
 patch when main has unreleased commits and passing Linux CI, then updates Homebrew.
 
 ```sh
-t --version       # installed release, or developer checkout revision
+t --version       # version, active source path/branch, and current worktree
 t system update --check   # check now for a newer release
 t system update           # latest tagged release; Git installs update main instead
 t system update --all     # this machine, then every registered SSH host
@@ -1184,6 +1330,21 @@ t system update --relink  # repair links from the selected source, without fetch
 t system update --local   # switch to the registered/local t checkout and update main
 t system update --local ~/code/t  # select a checkout explicitly, including from Homebrew
 ```
+
+`t --version` identifies the code being used separately from your current Git
+worktree. For example, inside a development worktree:
+
+```text
+t abc1234 (checkout)
+  Source: /code/.worktrees/t/t-6 (branch dev/t-6)
+  Worktree: /code/.worktrees/t/t-6 (branch dev/t-6)
+```
+
+The first line keeps the release or checkout revision. `Source` is the active
+installation, even when an explicit executable selects a different checkout.
+`Worktree` is the current directory's Git root (including from subdirectories),
+or `none (outside Git)`. Packaged sources show `release`; detached checkouts show
+`detached HEAD`. Version checks never prompt or check for updates.
 
 `--all` updates this machine first, then each registered host from `t hosts list`
 in alias order. Each machine uses its existing Homebrew, release, or Git updater.
@@ -1238,8 +1399,17 @@ git clone https://github.com/agenthangar/t.git ~/code/t
 
 For a Git installation, `t system update` fetches and fast-forwards `main`. The canonical
 clone stays on `main`; develop in a session worktree (`t session open t` after
-registering the t repository). From that worktree, `t system update --dev` makes its files
-live. Ordinary `t system update` switches back without resetting or removing the worktree.
+registering the t repository). Inside each `dev/t-*` or `cursor/*` worktree,
+`t` automatically uses that worktree's CLI and shell helpers. Two sessions can
+develop independently; commands outside those worktrees keep using canonical main.
+`t system update --dev` confirms scoped development availability and changes no
+shared links, hooks, prompts, settings, or shell startup. No combined preview or
+activation command is needed. Child helpers retain their command's source even
+when they change directory; a tmux server cannot retain that source for other sessions.
+Existing installations need this source-selection support installed once before
+automatic selection works. A development installer does not upgrade an older
+canonical installation. Ordinary `t system update` updates canonical main without
+resetting or removing development worktrees.
 Dirty or divergent canonical checkouts are refused. Avoid editing canonical main:
 its files are the installed command. A full install enables a repository-local
 pre-commit hook to guard that live checkout. If you already set `core.hooksPath`,
@@ -1255,16 +1425,10 @@ supports both Claude and Codex. Installation migrates standard legacy registrati
 to this name. `claude-stamp-tmux` remains a compatibility alias for existing custom
 commands; unrelated hooks and hook approval records are preserved.
 
-Registering the Codex hook does not approve it. After installing or running
-`t config setup ~/code`, finish hook review in the ChatGPT desktop app:
-open **Review hooks** (or hooks in settings), select the **User config** /
-**SessionStart** entry whose command is
-`$HOME/bin/t-session-start --agent codex`, and click **Allow selected**.
-In the Codex CLI, use `/hooks` to review and trust that entry. New or changed
-hooks are skipped until approved, so session tracking can be incomplete.
-`t config setup --dry-run ~/code` also prints this guidance when the hook is
-registered; `t system diagnose` provides the same desktop and CLI steps.
-Setup and installation leave hook approval to the app and preserve trust records.
+Registering the Codex hook does not approve it. In the Codex CLI, use `/hooks`
+to review and trust `t-session-start --agent codex`. New or changed hooks are
+skipped until approved, so session tracking can be incomplete. Setup, install,
+and `t system diagnose` provide this guidance and preserve approval records.
 
 [t's original dotfiles](https://github.com/agenthangar/dotfiles) provide optional
 clipboard bridging and personal shell utilities. They are
@@ -1283,8 +1447,7 @@ checked in CI; optional dotfiles integrations are identified explicitly.
   dev slots: t session open / list / close / read / paste     ✓                                          ✓ t session open --codex · DEV_AGENT                           ✗ no slot — t cursor list
   t session push / pop                                        ✓                                          ✓                                                              ✗ no slot
   t session resume (saved conversations)                      ✓                                          ✓ (rollouts and thread index)                                  → t cursor resume
-  t session move / --from                                     ✓                                          ✓ (rollout + .origin)                                          → t cursor send [id] --host / --from
-  t session open-app (desktop + browser preview)              ✗ Codex conversations only                 ✓ local macOS slot → same thread                               ✗
+  t session move / --from                                     ✓ (t)                                      ✓ (t)                                                          → t cursor send [id] --host / --from
   SessionStart stamps (registry · opened · origin)            ✓ settings.json hook                       ✓ hooks.json (trust once at startup)                           ✗ no hook wired
   t session view-plan                                         ✓                                          ✗ codex keeps no plan files (says so)                          ✗
   /tpush · /tpop slash commands                               ✓ ~/.claude/commands                       ✓ ~/.codex/prompts                                             ✗
@@ -1312,19 +1475,19 @@ zsh -n t.plugin.zsh
 ```
 
 Local test runs skip native macOS UI tests because their disposable app opens
-windows and takes desktop focus. Handoff logic still runs against fake UI APIs.
-For an intentional desktop check on macOS with Swift and Accessibility access:
+windows and takes desktop focus.
+For intentional native terminal verification on a disposable macOS runner:
 
 ```sh
-python3 -m pytest tests/test_app_macos.py --run-macos-ui
+python3 -m pytest --run-macos-ui
 ```
 
 Default CI runs Linux only. To explicitly run macOS and native desktop checks
 on disposable runners, manually launch CI with `run_macos=true`. Selecting the
 test file or `-m macos_ui` alone does not enable desktop interaction.
 
-The installer has no pip runtime dependencies. Markdown rendering uses a small
-vendored library with its [license and provenance](libexec/vendor/README.md).
+The installer has no pip runtime dependencies. Older Python versions use the
+[bundled TOML parser](libexec/vendor/README.md).
 Read [CONTRIBUTING.md](CONTRIBUTING.md) and [AGENTS.md](AGENTS.md) before changing
 session ownership, worktree cleanup, or the remote protocol.
 
@@ -1341,3 +1504,60 @@ Periodic checks are separately opt-in: `t system advisories enable` starts a
 per-user background worker; `status` reads results and `disable` stops it.
 No boot service is installed. See the advisory documentation for supported
 package identities, unknown coverage, local notices and OSV request metadata.
+
+Workflow changes automatically publish native instructions and attempt bounded
+propagation to supported running sessions and registered hosts. Inspect status with
+`t workflow list`. Later saves and session starts retry pending updates automatically.
+Live instruction reload and current-turn model changes cannot be verified or forced.
+See [the terminal contract](ui/README.md) for scope, retries and runtime limits.
+
+
+Run `t workflow` in a terminal to open the workflow editor, or `t workflow NAME`
+to open a named definition directly. In **Use multiple models**, Enter or Back
+(q/Esc) retains the checked choices as pending edits; Save still reviews and
+publishes the transaction. Choose a named
+workflow under its CLI tool, edit its model steps, work and delivery choices, or text instructions,
+then review and save. Repository assignments and the global default share this
+transaction. Cancel leaves saved settings unchanged.
+Use the footer's **Save changes** action (`s`) to review pending edits. The
+workflow and config menus do not repeat it as a menu row.
+Explicit commands accept `--tool codex|claude|cursor`, for example
+`t workflow list --tool claude --all` and
+`t workflow instructions show --tool cursor --repo api`.
+Without `--tool`, commands use the configured default tool, or the selected
+repository's tool override when `--repo` is supplied.
+`t runners list`, `t runners edit` and `t runners runs start` accept the same
+`--tool` selector for that tool's test runners.
+Cursor workflows apply through `t`'s Cursor launch and resume paths. Model
+parameters belong in its model ID. For Git workspaces, `t` prepares an ignored
+`.cursor/rules/t-agent-workflow.mdc` containing only that workspace's policy.
+Direct `cursor-agent` launches and live attachments do not refresh this rule.
+Outside Git, configured Cursor launches apply model defaults and report that
+workspace instructions could not be installed.
+The save review shows only pending changes, grouped by workflow or repository,
+with previous and new values. Text edits show changed lines; unchanged workflows
+and unchanged instruction text are omitted.
+In both `t config` and `t workflow`, Ctrl+C with unsaved edits offers **Keep
+editing**, **Review and save**, or **Discard changes and exit**, including from
+nested menus. Review and save still shows the changes before writing them.
+With no pending changes, Ctrl+C exits immediately.
+
+`t workflow list` prints a read-only summary; `--all` lists named workflows and
+`--json` preserves machine output. Text instructions override behavior preferences
+and model-stage guidance. **PRs, previews & tests** separates these decisions:
+
+| Group | Choices |
+| --- | --- |
+| Pull requests | Review Enabled/Disabled; open automatically or on instruction; create draft or ready; Automerge or When I ask. |
+| Local preview | Default for when to preview. |
+| Local preview → Frontend | Enabled/Disabled; inherit or override timing; implement before approval; standalone HTML or in-app design; Fast reload or Build; browser opening. |
+| Local preview → CLI | Enabled/Disabled; inherit or override timing; install locally or run from the repo; launch automatically or on request. |
+| Tests | When tests run, plus Test runners configuration. |
+
+**Not set** leaves a decision to your task, repository rules and text
+instructions. It does not inherit an individual value from the global workflow;
+**Use global default** changes the repository's whole workflow assignment.
+These preferences never bypass required checks. Selecting On PR CI avoids routine
+local test runs. Legacy saved choices remain readable and are converted into
+separate choices only when you edit them. Single-model launch defaults remain a
+separate setting from these instructions to the agent.

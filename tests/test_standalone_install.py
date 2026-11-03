@@ -35,6 +35,9 @@ def test_install_migrates_mcp_blanket_to_read_tools(box, tmp_path):
     claude = bins / 'claude'
     claude.write_text('#!/bin/sh\nexit 0\n')
     claude.chmod(0o755)
+    codex = bins / 'codex'
+    codex.write_text("#!/bin/sh\nprintf '[]\\n'\n")
+    codex.chmod(0o755)
     env = dict(T_NO_MCP='', PATH=f'{bins}:{os.environ["PATH"]}')
     outcome = run_install(checkout, home, **env)
     assert outcome.returncode == 0, outcome.stderr
@@ -88,7 +91,7 @@ def test_links_only_is_idempotent_and_does_not_seed_local_config(box, codex_hook
     second = run_install(checkout, home, **options)
     assert first.returncode == second.returncode == 0
     if codex_hooks:
-        assert "Review hooks" in second.stdout and "Allow selected" in second.stdout
+        assert "/hooks" in second.stdout and "t-session-start --agent codex" in second.stdout
         assert "Registered the SessionStart hook" not in second.stdout
         assert hooks.read_bytes() == before
     else:
@@ -118,7 +121,8 @@ def test_running_worktree_installer_selects_canonical_or_dev(box):
     assert (home / "bin/t").resolve() == checkout / "bin/t"
     selected = run_install(dev, home, T_LINKS_ONLY="1", T_LINK_DEV="1")
     assert selected.returncode == 0, selected.stderr
-    assert (home / "bin/t").resolve() == dev / "bin/t"
+    assert (home / "bin/t").resolve() == checkout / "bin/t"
+    assert "available automatically" in selected.stdout
 
 
 def test_invalid_marker_refuses_before_changing_home(box):
@@ -151,7 +155,7 @@ def test_homebrew_links_use_stable_opt_path_across_cellar_upgrade(tmp_path):
     opt.parent.parent.mkdir(parents=True)
     first = _brew_tree(tmp_path, "0.3.0", opt)
     opt.parent.symlink_to(first.parent, target_is_directory=True)
-    result = run_install(first, home, T_LINKS_ONLY="1", T_LINK_DEV="1")
+    result = run_install(first, home, T_LINKS_ONLY="1")
     assert result.returncode == 0, result.stderr
     links = {
         "bin/t": "bin/t", "bin/t-session-start": "bin/t-session-start",
@@ -282,23 +286,96 @@ def test_install_migrates_standard_hook_names_preserving_options_and_trust(box, 
     assert config.read_bytes() == trust
 
 
-def test_install_refreshes_only_explicitly_configured_agent_workflow(box):
+def test_install_seeds_editable_defaults_and_refreshes_configured_workflow(box):
     checkout, home = box
     native = home / '.codex/AGENTS.md'
     assert run_install(checkout, home).returncode == 0
-    assert '<!-- t agent-workflow: begin -->' not in native.read_text()
-    assert not (home / '.config/t/workflow.json').exists()
+    assert '<!-- t agent-workflow: begin -->' in native.read_text()
+    assert (home / '.config/t/workflow.json').exists()
     policy = {'enabled': True, 'planning': {'model': 'chosen-planner', 'effort': 'high'},
               'implementation': {'model': 'chosen-coder', 'effort': 'medium'},
-              'review': {'model': 'chosen-reviewer', 'effort': 'one-level-lower'}}
+              'review': {'model': 'chosen-reviewer', 'effort': 'one-level-lower'},
+              'instructions': 'Keep release notes concise.'}
     saved = home / '.config/t/workflow.json'
     saved.write_text(json.dumps({'version': 1, 'global': policy, 'repositories': {}}))
     original = native.read_text()
     result = run_install(checkout, home)
     assert result.returncode == 0, result.stderr
-    assert native.read_text().startswith(original)
+    assert native.read_text().split('<!-- t agent-workflow: begin -->')[0] == original.split('<!-- t agent-workflow: begin -->')[0]
     assert 'chosen-planner' in native.read_text()
-    assert 'chosen-coder' in (home / '.claude/CLAUDE.md').read_text()
-    assert native.read_text().count('<!-- t public-issues: begin -->') == 1
+    assert 'chosen-coder' in native.read_text()
+    claude = (home / '.claude/CLAUDE.md').read_text()
+    assert 'Keep release notes concise.' in native.read_text() and 'Keep release notes concise.' in claude
+    assert all(model not in claude for model in ('chosen-planner', 'chosen-coder', 'chosen-reviewer'))
+    stored = json.loads(saved.read_text())
+    claude_policy = stored['tools']['claude']['workflows']['standard']
+    assert claude_policy['stages_enabled'] is False
+    assert all(not claude_policy[stage]['model'] for stage in ('planning', 'implementation', 'review'))
+    assert '<!-- t public-issues: begin -->' not in native.read_text()
     assert native.read_text().count('<!-- t agent-workflow: begin -->') == 1
     assert not (checkout / 'AGENTS.md').exists()
+
+
+def test_install_registers_codex_once_with_isolated_custom_home(box, tmp_path):
+    checkout, home = box
+    native = home / 'custom-codex'
+    native.mkdir()
+    config = native / 'config.toml'
+    config.write_text('model = "keep-me"\n')
+    bins = tmp_path / 'bin'
+    bins.mkdir()
+    codex = bins / 'codex'
+    codex.write_text('''#!/usr/bin/env python3
+import json, os, pathlib, sys
+root = pathlib.Path(os.environ['CODEX_HOME'])
+assert str(root).startswith(os.environ['HOME'])
+if sys.argv[1:] == ['mcp', 'list', '--json']:
+    print(json.dumps([{'name': 'sessions', 'enabled': False}] if (root/'registered').exists() else []))
+elif sys.argv[1:5] == ['mcp', 'add', 'sessions', '--']:
+    assert sys.argv[5:] == [os.environ['HOME']+'/bin/t', 'mcp']
+    (root/'registered').write_text('yes')
+    with (root/'calls').open('a') as f: f.write('add\\n')
+''')
+    codex.chmod(0o755)
+    claude = bins / 'claude'
+    claude.write_text('#!/bin/sh\nexit 0\n')
+    claude.chmod(0o755)
+    env = dict(T_NO_MCP='', CODEX_HOME=str(native), PATH=f'{bins}:{os.environ["PATH"]}')
+    assert run_install(checkout, home, **env).returncode == 0
+    assert run_install(checkout, home, **env).returncode == 0
+    assert (native / 'calls').read_text() == 'add\n'
+    assert config.read_text() == 'model = "keep-me"\n'
+    (native / 'registered').unlink()
+    assert run_install(checkout, home, **{**env, 'T_NO_MCP': '1'}).returncode == 0
+    assert not (native / 'registered').exists()
+
+
+def test_dev_setup_never_installs_mcp_or_mutates_home(box, tmp_path):
+    checkout, home = box
+    dev = tmp_path / 'dev'
+    git('worktree', 'add', '-qb', 'dev/t-mcp', str(dev), cwd=checkout)
+    (dev / 'libexec/t_mcp_setup.py').write_text("from pathlib import Path\nPath.home().joinpath('mcp-source').write_text('dev')\n")
+    (checkout / 'libexec/t_mcp_setup.py').unlink()
+    result = run_install(dev, home, T_LINKS_ONLY='1', T_LINK_DEV='1', T_NO_MCP='')
+    assert result.returncode == 0, result.stderr
+    assert not list(home.iterdir())
+
+
+@pytest.mark.parametrize('xdg', ['empty', 'custom'])
+def test_install_preserves_mcp_uninstall_opt_out(box, tmp_path, xdg):
+    checkout, home = box
+    config = home / '.config' if xdg == 'empty' else tmp_path / 'custom-config'
+    marker = config / 't/mcp-disabled'
+    marker.parent.mkdir(parents=True)
+    marker.write_text('disabled\n')
+    bins = tmp_path / 'fake-bin'
+    bins.mkdir()
+    called = tmp_path / 'mcp-called'
+    for name in ('claude', 'codex'):
+        tool = bins / name
+        tool.write_text('#!/bin/sh\nif [ "$1" = mcp ]; then touch "$MCP_CALLED"; exit 1; fi\nexit 0\n')
+        tool.chmod(0o755)
+    result = run_install(checkout, home, T_NO_MCP='', XDG_CONFIG_HOME='' if xdg == 'empty' else str(config),
+                         PATH=f'{bins}:{os.environ["PATH"]}', MCP_CALLED=str(called))
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not called.exists() and marker.read_text() == 'disabled\n'

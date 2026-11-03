@@ -80,7 +80,7 @@ contain request/account details. No credential material is copied or persisted.
 
 These are remote runtime sessions, separate from numbered Git worktree/tmux
 sessions. Supported operations are invoke, continue by ID, and stop. Local
-`session open`, `list`, `move`, `push`, `pop`, `resume`, and desktop handoff do not
+`session open`, `list`, `move`, `push`, `pop`, `resume` do not
 operate on AgentCore sessions. No local worktree is uploaded or synchronized.
 Use your deployed agent's own remote workspace/storage integration if required.
 

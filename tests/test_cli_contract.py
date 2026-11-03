@@ -183,14 +183,14 @@ def test_cli_lint_recurses_into_resource_subgroups(t_mod):
     assert lint.check_command_patterns(t_mod.build_parser(), t_mod.COMMAND_GROUPS, contract) == []
 
     groups = copy.deepcopy(t_mod.COMMAND_GROUPS)
-    del groups['config']['workflow']['edit']
+    del groups['workflow']['edit']
     errors = lint.check(t_mod.build_parser(), groups, instructions)
-    assert any('config workflow registry' in error for error in errors)
+    assert any('workflow registry' in error for error in errors)
     assert any('matching nested verb parser' in error for error in errors)
 
     groups = copy.deepcopy(t_mod.COMMAND_GROUPS)
-    groups['config']['workflow']['list'] = ('config', '--show', '--workflow')
-    assert any('nested resource must route to its own parser' in error
+    groups['workflow']['list'] = ('config', '--show', '--workflow')
+    assert any('require a verb before target arguments' in error
                for error in lint.check(t_mod.build_parser(), groups, instructions))
 
     parser = t_mod.build_parser()
@@ -198,7 +198,7 @@ def test_cli_lint_recurses_into_resource_subgroups(t_mod):
     workflow = lint._subparsers(config)._name_parser_map['workflow']
     children = lint._subparsers(workflow)
     children._name_parser_map.pop('edit')
-    assert any('config workflow edit routes to an unknown parser verb' in error
+    assert any('workflow edit routes to an unknown parser verb' in error
                for error in lint.check(parser, t_mod.COMMAND_GROUPS, instructions))
 
     parser = t_mod.build_parser()
@@ -212,18 +212,18 @@ def test_cli_lint_recurses_into_resource_subgroups(t_mod):
     assert any('misrouted required form' in error for error in errors)
 
     missing = copy.deepcopy(contract)
-    del missing['commands']['config workflow edit']
-    assert any('missing config workflow edit' in error for error in
+    del missing['commands']['workflow edit']
+    assert any('missing workflow edit' in error for error in
                lint.check_command_patterns(t_mod.build_parser(), t_mod.COMMAND_GROUPS, missing))
     wrong = copy.deepcopy(contract)
-    wrong['commands']['config workflow list']['modes']['default']['read_only'] = False
+    wrong['commands']['workflow list']['modes']['default']['read_only'] = False
     assert any('list must be read-only' in error for error in
                lint.check_command_patterns(t_mod.build_parser(), t_mod.COMMAND_GROUPS, wrong))
-    wrong['commands']['config workflow list']['modes']['default']['patterns'] = ['single']
+    wrong['commands']['workflow list']['modes']['default']['patterns'] = ['single']
     assert any('without selection' in error for error in
                lint.check_command_patterns(t_mod.build_parser(), t_mod.COMMAND_GROUPS, wrong))
-    assert any('config workflow edit is missing' in error for error in
-               lint.check_group_help(lambda group: 'list  List workflow' if group == 'config workflow'
+    assert any('workflow edit is missing' in error for error in
+               lint.check_group_help(lambda group: 'list  List workflow' if group == 'workflow'
                                      else t_mod._group_help(group), t_mod.COMMAND_GROUPS))
     assert any('nested resources before verbs' in error for error in
                lint.check(t_mod.build_parser(), t_mod.COMMAND_GROUPS,

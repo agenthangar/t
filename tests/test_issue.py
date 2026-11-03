@@ -414,7 +414,7 @@ def test_owner_details_and_picker_preserve_identity(mod, app, issue, monkeypatch
                  '2026-10-23T12:00:00Z', interface):
         assert text in output
     assert '\x1b' not in output
-    assert ('Open session:' in output) == (interface != 'foreground')
+    assert ('Open session:' in output) == (interface == 'cli')
     monkeypatch.setattr(mod.sys.stdin, 'isatty', lambda: False)
     with pytest.raises(mod.IssueError, match='review'):
         app.choose(report)
@@ -1022,7 +1022,7 @@ def test_new_conversation_does_not_inherit_issue_owner(mod, app, issue, local_sc
     assert not app.local(issue)[0]['verified']
 
 
-def test_desktop_owner_uses_existing_app_path(mod, app, issue, local_scan, monkeypatch):
+def test_legacy_desktop_owner_refuses_launch(mod, app, issue, local_scan, monkeypatch):
     state, marker, tx = local_scan
     parse = app.api['_parse_rows']
     def app_rows(text):
@@ -1034,11 +1034,14 @@ def test_desktop_owner_uses_existing_app_path(mod, app, issue, local_scan, monke
     assert row['app'] and row['verified']
     calls = []
     monkeypatch.setattr(mod.subprocess, 'call', lambda a: calls.append(a) or 0)
-    app.attach(row)
-    assert '_t_open repo 1 --app' in calls[-1][-1]
+    with pytest.raises(mod.IssueError, match='retired integration'):
+        app.attach(row)
     app.cfg.hosts['cloud'] = 'host'
-    app.attach(dict(row, host='cloud'))
-    assert 't session open repo 1 --app' in calls[-1][-1]
+    with pytest.raises(mod.IssueError, match='retired integration'):
+        app.attach(dict(row, host='cloud'))
+    with pytest.raises(mod.IssueError, match='retired integration'):
+        app.attach_many([row])
+    assert not calls
 
 
 def test_install_workflow_preserves_prose_and_is_idempotent(mod, tmp_path, monkeypatch):
@@ -1058,8 +1061,9 @@ def test_install_workflow_preserves_prose_and_is_idempotent(mod, tmp_path, monke
     assert all(p.read_bytes() == data and p.stat().st_mtime_ns == stamp for p, data, stamp in snapshots)
     monkeypatch.setattr(mod, 'workflow_policy', lambda: 'Updated policy.')
     assert mod.install_workflow() == 0
-    assert 'Updated policy.' in base.read_text()
-    assert base.read_text().count('<!-- t public-issues: begin -->') == 1
+    assert 'Updated policy.' not in base.read_text()
+    assert '<!-- t public-issues: begin -->' not in base.read_text()
+    assert base.read_text().count('<!-- t agent-workflow: begin -->') == 1
 
 
 def test_install_workflow_uses_custom_agent_homes(mod, tmp_path, monkeypatch):
@@ -1103,13 +1107,19 @@ def test_install_workflow_detects_concurrent_edits(mod, tmp_path, monkeypatch):
     monkeypatch.setenv('HOME', str(tmp_path))
     path = tmp_path / '.codex/AGENTS.md'; path.parent.mkdir()
     path.write_text('before')
-    original = Path.read_text
+    # The consolidated installer uses snapshot identity checks during publication.
+    helper = mod.runpy.run_path(str(ROOT / 'libexec/t_workflow.py'))
+    original = helper['snapshot']
     reads = []
-    def read(file, *a, **kw):
+    def read(file):
         if file == path:
             reads.append(file)
-            if len(reads) == 2: file.write_text('concurrent edit')
-        return original(file, *a, **kw)
-    monkeypatch.setattr(Path, 'read_text', read)
+            if len(reads) == 3:
+                file.write_text('concurrent edit')
+        return original(file)
+    helper['sync'].__globals__['snapshot'] = read
+    original_run_path = mod.runpy.run_path
+    monkeypatch.setattr(mod.runpy, 'run_path', lambda path, *args, **kwargs:
+                        helper if Path(path).name == 't_workflow.py' else original_run_path(path, *args, **kwargs))
     assert mod.install_workflow() == 1
     assert path.read_text() == 'concurrent edit'

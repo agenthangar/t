@@ -104,7 +104,7 @@ class Menu:
 
     def pick(self, label, rows, default=0, **kwargs):
         pick = next(self.picks)
-        assert pick is None or pick in dict(rows), (label, pick, rows)
+        assert pick is None or pick in dict(rows) or pick in kwargs.get('shortcuts', {}).values(), (label, pick, rows)
         assert 0 <= default < len(rows)
         return pick
 
@@ -119,6 +119,84 @@ class Menu:
 
     def commit(self, lines):
         self.out.write("\n".join(lines))
+
+
+class InterruptMenu(Menu):
+    """Interrupt selected navigation boundaries without touching a terminal."""
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.labels = []
+
+    def pick(self, label, rows, default=0, **kwargs):
+        self.labels.append(label)
+        event = next(self.picks)
+        if event is KeyboardInterrupt:
+            raise KeyboardInterrupt
+        assert event is None or event in dict(rows) or event in kwargs.get('shortcuts', {}).values(), (label, event, rows)
+        assert 0 <= default < len(rows)
+        return event
+
+    def cooked_input(self, prompt, **kwargs):
+        event = next(self.inputs)
+        if event is KeyboardInterrupt:
+            raise KeyboardInterrupt
+        return event
+
+    def page(self, *args, **kwargs):
+        event = next(self.pages)
+        if event is KeyboardInterrupt:
+            raise KeyboardInterrupt
+        return event
+
+
+def test_config_clean_ctrl_c_exits_130_without_save_prompt(t_mod, config_cli, monkeypatch):
+    cfg, local = config_cli
+    ui = InterruptMenu([KeyboardInterrupt])
+    monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
+    assert t_mod.cmd_config(cfg, t_mod.build_parser().parse_args(['config'])) == 130
+    assert not any('unsaved' in label for label in ui.labels)
+    assert ui.restored and local.read_text() == '# keep me\n'
+
+
+@pytest.mark.parametrize('finish', ['save', 'discard'])
+def test_config_dirty_ctrl_c_uses_existing_unsaved_chooser(t_mod, config_cli, monkeypatch, finish):
+    cfg, local = config_cli
+    ui = InterruptMenu(['tool', 'codex', KeyboardInterrupt, finish], pages=['enter'])
+    monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
+    changed = t_mod._config_wizard(cfg)
+    assert (changed is not None) == (finish == 'save')
+    if changed:
+        assert changed.agent_default == 'codex'
+    assert any('unsaved' in label for label in ui.labels)
+    assert ui.restored and local.read_text() == '# keep me\n'
+
+
+def test_config_repeated_ctrl_c_and_interrupted_review_keep_pending_edits(t_mod, config_cli, monkeypatch):
+    cfg, local = config_cli
+    ui = InterruptMenu(['tool', 'codex', KeyboardInterrupt, KeyboardInterrupt, 'save',
+                        'keep', 'save'], pages=[KeyboardInterrupt, 'enter'])
+    monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
+    changed = t_mod._config_wizard(cfg)
+    assert changed.agent_default == 'codex'
+    assert sum('unsaved' in label for label in ui.labels) == 3
+    assert ui.restored and local.read_text() == '# keep me\n'
+
+
+@pytest.mark.parametrize('boundary', ['input', 'catalogue'])
+def test_config_nested_ctrl_c_preserves_prior_selections(t_mod, config_cli, monkeypatch, boundary):
+    cfg, local = config_cli
+    if boundary == 'input':
+        ui = InterruptMenu(['tool', 'codex', 'worktrees', 'root', 'save'], inputs=[KeyboardInterrupt], pages=['enter'])
+    else:
+        ui = InterruptMenu(['tool', 'codex', 'codex', 'model', 'save'], pages=['enter'])
+        def interrupted_catalogue(agent):
+            raise KeyboardInterrupt
+        monkeypatch.setattr(t_mod, '_config_live_models', interrupted_catalogue)
+    monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
+    changed = t_mod._config_wizard(cfg)
+    assert changed.agent_default == 'codex'
+    assert any('unsaved' in label for label in ui.labels)
+    assert ui.restored and local.read_text() == '# keep me\n'
 
 
 @pytest.mark.parametrize('before,after,expected', [
@@ -348,10 +426,69 @@ def test_config_main_menu_shows_repo_aliases(t_mod, config_cli, monkeypatch):
     def pick(label, rows, **kwargs):
         assert label == "Local settings"
         assert kwargs["values"]["repos"] == "api, t"
+        assert [key for key, _ in rows] == [
+            "tool", "trust", *t_mod.AGENTS, "local", "workflow", "runners",
+            "mcp", "repos", "worktrees", "hosts", "beam", "edit", "cancel",
+        ]
+        assert kwargs["sections"] == {
+            "tool": "Session defaults", t_mod.AGENTS[0]: "Agents", "workflow": "Workflows", "runners": "Runners",
+            "mcp": "MCP server", "repos": "Repositories & worktrees", "hosts": "Remote hosts", "edit": "Finish",
+        }
+        assert dict(rows)["workflow"] == "Workflows ›"
+        assert kwargs['primary'][:2] == ('s', 'SAVE CHANGES')
+        assert kwargs['shortcuts'] == {'s': 'save'}
+        collections = {*t_mod.AGENTS, "local", "workflow", "runners", "mcp", "repos", "worktrees", "hosts"}
+        assert {key for key, text in rows if text.endswith(" ›")} == collections
         return "cancel"
     ui.pick = pick
     monkeypatch.setattr(t_mod, "_RailUI", lambda: ui)
     assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == 130
+
+
+def test_config_group_navigation_retains_focus(t_mod, config_cli, monkeypatch):
+    cfg, local = config_cli
+    ui = Menu(["workflow", "repos", "worktrees", "hosts", "cancel"])
+    pick = ui.pick
+    previous = "tool"
+    visited = []
+    def choose(label, rows, **kwargs):
+        nonlocal previous
+        assert rows[kwargs["default"]][0] == previous
+        previous = pick(label, rows, **kwargs)
+        return previous
+    ui.pick = choose
+    monkeypatch.setattr(t_mod, "_workflow_hub", lambda ui, cfg, **kwargs: visited.append("workflow"))
+    for key in ("repos", "worktrees", "hosts"):
+        monkeypatch.setattr(t_mod, "_config_" + key,
+                            lambda ui, cfg, key=key: visited.append(key))
+    monkeypatch.setattr(t_mod, "_RailUI", lambda: ui)
+    assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == 130
+    assert visited == ["workflow", "repos", "worktrees", "hosts"]
+    assert local.read_text() == "# keep me\n" and ui.restored
+
+
+@pytest.mark.parametrize('width,height', [(80, 24), (44, 20), (32, 12)])
+def test_config_grouped_menu_narrow_navigation(t_mod, config_cli, monkeypatch, width, height):
+    from test_tui import make_ui
+    cfg, local = config_cli
+    cfg.repos = {"long-repository-alias-" + str(i): "/code/repo-" + str(i) for i in range(8)}
+    cfg.models = {agent: "long-model-name-with-context-window" for agent in t_mod.AGENTS}
+    before = t_mod._config_state(cfg)
+    # Visit each row in both directions without entering settings or saving.
+    moves = len(t_mod.AGENTS) + 14
+    ui = make_ui(t_mod, ["j"] * moves + ["k"] * moves + ["q"], width, height)
+    monkeypatch.setattr(t_mod, "_RailUI", lambda: ui)
+    assert t_mod._config_wizard(cfg) is None
+    assert ui.restored and t_mod._config_state(cfg) == before
+    assert local.read_text() == "# keep me\n"
+    # Exclude the separate cancellation summary from the navigation frames.
+    frames = [frame for frame in ui.frames if any("Local settings" in line for line in frame)]
+    assert len(frames) == 2 * moves + 1
+    for frame in frames:
+        assert sum(t_mod._term_rows(line, width) for line in frame) <= height
+        assert all(t_mod._vis_len(line) <= width for line in frame)
+        assert any("▸" in line for line in frame)
+        assert any("SAVE CHANGES" in line for line in frame)
 
 
 def test_config_menu_interrupt_restores_terminal(t_mod, config_cli, monkeypatch):
@@ -687,9 +824,8 @@ def test_config_repo_short_name_saves_overrides_and_reloads(t_mod, config_cli, m
     cfg.agents = {"long-name": "codex"}
     cfg.branches = {"long-name": "main"}
     cfg.worktree = {"long-name": "0"}
-    cfg.open_mode = {"long-name": "app"}
     before = t_mod._config_state(cfg)
-    ui = Menu(["repos", "long-name", "alias", "mode", "app", "back", "__back__", "save"], ["site"])
+    ui = Menu(["repos", "long-name", "alias", "back", "__back__", "save"], ["site"])
     original_pick = ui.pick
     labels = []
     def pick(label, rows, **kwargs):
@@ -706,8 +842,6 @@ def test_config_repo_short_name_saves_overrides_and_reloads(t_mod, config_cli, m
     assert labels[labels.index("Repository · long-name") + 1] == "Repository · site"
     # Saving is an overlay: the old registration must stay removed on reload.
     saved = local.read_text()
-    assert "DEV_OPEN_MODE[site]=app" in saved
-    assert "unset 'DEV_OPEN_MODE[long-name]'" in saved
     local.write_text(t_mod._config_text("", before) + saved)
     output = t_mod.subprocess.check_output([
         "zsh", "-f", "-c",
@@ -905,24 +1039,6 @@ def test_saved_speed_stays_selected_when_metadata_changes(t_mod, config_cli, mon
     assert cfg.fast['codex'] == saved
 
 
-def test_config_opening_mode_global_and_repo_defaults(t_mod, config_cli, monkeypatch):
-    cfg, local = config_cli
-    cfg.repos = {"site": "/code/site"}
-    ui = Menu(["mode", "app", "repos", "site", "mode", "cli", "back", "__back__", "save"])
-    monkeypatch.setattr(t_mod, "_RailUI", lambda: ui)
-    assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == 0
-    monkeypatch.setattr(t_mod, "CONFIG", str(local))
-    reloaded = t_mod.Config()
-    assert reloaded.open_mode_default == "app"
-    assert reloaded.open_mode == {"site": "cli"}
-    t_mod._config_remove_repo(reloaded, "site")
-    assert reloaded.open_mode == {}
-    with pytest.raises(ValueError, match="choose cli or app"):
-        t_mod._config_assignment("DEV_OPEN_MODE_DEFAULT", "other")
-    with pytest.raises(ValueError, match="choose cli or app"):
-        t_mod._config_assignment("DEV_OPEN_MODE[site]", "other")
-
-
 def test_config_tui_enables_and_displays_automatic_trust(t_mod, tmp_path, monkeypatch, config_cli):
     cfg, local = config_cli
     cfg.auto_trust = '0'
@@ -1010,3 +1126,172 @@ def test_config_host_rename_preserves_target_defaults_and_same_name(t_mod, confi
     assert (cfg.beam_host, cfg.mini_host) == ('old.example', 'new')
     with pytest.raises(ValueError, match='Use letters'):
         t_mod._config_rename_host(cfg, 'new', 'bad name')
+
+
+@pytest.mark.parametrize('pending,answer,expected', [(1, None, 0), (0, 'q', 0), (0, 'enter', 1)])
+def test_config_mcp_registration_review(t_mod, monkeypatch, pending, answer, expected):
+    ui = Menu(['codex', 'refresh', 'register', 'back'], pages=['enter'] + ([answer] if answer else []))
+    inspections, installs = [], []
+    monkeypatch.setattr(t_mod.runpy, 'run_path', lambda _: {'status': lambda home: inspections.append(home) or
+                        {'codex': 'Disabled', 'claude': 'Registered (user scope)'}})
+    monkeypatch.setattr(t_mod, '_mcp_install', lambda: installs.append(True) or 1)
+    t_mod._config_mcp(ui, pending)
+    assert len(installs) == expected
+    assert len(inspections) == 2 + expected
+    assert ui.restored == bool(expected)
+
+
+def test_config_mcp_hub_returns_to_same_row(t_mod, config_cli, monkeypatch):
+    cfg, local = config_cli
+    ui = Menu(['mcp', 'cancel'])
+    calls = []
+    monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
+    monkeypatch.setattr(t_mod, '_config_mcp', lambda ui, pending: calls.append(pending))
+    assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == 130
+    assert calls == [0] and local.read_text() == '# keep me\n'
+
+
+@pytest.mark.parametrize('pending,answer,expected', [(1, None, 0), (0, 'q', 0), (0, 'enter', 1)])
+def test_config_mcp_uninstall_review(t_mod, monkeypatch, pending, answer, expected):
+    ui = Menu(['uninstall', 'back'], pages=[answer] if answer else [])
+    installs = []
+    monkeypatch.setattr(t_mod.runpy, 'run_path', lambda _: {'status': lambda home: {'codex': 'Enabled'}})
+    monkeypatch.setattr(t_mod, '_mcp_uninstall', lambda: installs.append(True) or 0)
+    t_mod._config_mcp(ui, pending)
+    assert len(installs) == expected and ui.restored == bool(expected)
+
+
+@pytest.mark.parametrize('width,height', [(80, 24), (44, 20), (32, 12)])
+def test_config_mcp_narrow_navigation(t_mod, monkeypatch, width, height):
+    from test_tui import make_ui
+    ui = make_ui(t_mod, ['j'] * 5 + ['k'] * 5 + ['q'], width, height)
+    monkeypatch.setattr(t_mod.runpy, 'run_path', lambda _: {'status': lambda home: {
+        'codex': 'Registered; enabled state unknown', 'claude': 'Registered (user scope)'}})
+    t_mod._config_mcp(ui, 0)
+    for frame in ui.frames:
+        assert sum(t_mod._term_rows(line, width) for line in frame) <= height
+        assert any('▸' in line for line in frame)
+
+
+@pytest.fixture
+def native_defaults_config(t_mod, config_cli, tmp_path, monkeypatch):
+    """Exercise local publication without connecting to a runtime or remote host."""
+    monkeypatch.setenv('HOME', str(tmp_path))
+    monkeypatch.setattr(t_mod, 'HOME', str(tmp_path))
+    monkeypatch.setenv('T_SETUP_SHIM', '1')
+    cfg, local = config_cli
+    helper = t_mod._workflow()
+    sync = helper['propagation']()
+    monkeypatch.setitem(sync, 'retry', lambda **kwargs: {})
+    monkeypatch.setitem(helper, 'propagation', lambda: sync)
+    monkeypatch.setitem(helper['save'].__globals__, 'propagation', lambda: sync)
+    monkeypatch.setattr(t_mod, '_workflow', lambda: helper)
+    native = tmp_path / 'codex' / 'config.toml'
+    native.parent.mkdir()
+    native.write_text('model = "old-model"\nmodel_reasoning_effort = "high"\n'
+                      'service_tier = "ultrafast"\n[agents]\nmax_threads = 7\n')
+    cfg.models = {'codex': 'old-model'}
+    cfg.efforts = {'codex': 'high'}
+    return cfg, local, native, helper, sync
+
+
+@pytest.mark.parametrize('field,value,key', [
+    ('models', 'new-model', 'model'), ('efforts', 'low', 'effort'),
+    ('models', '', 'model'), ('efforts', '', 'effort'),
+])
+def test_config_local_defaults_publish_only_explicit_field(t_mod, native_defaults_config, monkeypatch,
+                                                          field, value, key):
+    import copy
+    cfg, local, native, _, sync = native_defaults_config
+    edited = copy.deepcopy(cfg)
+    getattr(edited, field)['codex'] = value
+    monkeypatch.setattr(t_mod, '_config_wizard', lambda cfg: edited)
+    assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == 0
+    text = native.read_text()
+    native_key = 'model' if key == 'model' else 'model_reasoning_effort'
+    if value:
+        assert f'{native_key} = "{value}"' in text
+    else:
+        assert f'{native_key} =' not in text
+    assert ('model_reasoning_effort = "high"' if key == 'model' else 'model = "old-model"') in text
+    assert 'service_tier = "ultrafast"\n[agents]\nmax_threads = 7\n' in text
+    assert sync['status']()['main_settings'] == {key: value or None}
+    assert local.read_text() != '# keep me\n'
+
+
+def test_config_local_unsupported_native_defaults_prevents_publication(t_mod, native_defaults_config,
+                                                                    monkeypatch, capsys):
+    import copy
+    cfg, local, native, helper, sync = native_defaults_config
+    native.write_text('"model" = "old-model"\n')
+    edited = copy.deepcopy(cfg)
+    edited.models['codex'] = 'new-model'
+    monkeypatch.setattr(t_mod, '_config_wizard', lambda cfg: edited)
+    # capsys replaces the streams after config_cli configures its terminal stub.
+    monkeypatch.setattr(t_mod.sys.stdin, 'isatty', lambda: True)
+    monkeypatch.setattr(t_mod.sys.stdout, 'isatty', lambda: True)
+    assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == 1
+    assert local.read_text() == '# keep me\n'
+    assert native.read_text() == '"model" = "old-model"\n'
+    assert not helper['config_path']().exists()
+    assert not sync['state_path']().exists()
+    assert 'native Codex defaults' in capsys.readouterr().err
+
+
+@pytest.mark.parametrize('change', ['unchanged', 'editor', 'show', 'speed', 'workflow'])
+def test_config_unrelated_edits_do_not_stage_native_defaults(t_mod, native_defaults_config,
+                                                            monkeypatch, change):
+    import copy
+    cfg, _, native, helper, sync = native_defaults_config
+    edited = copy.deepcopy(cfg)
+    if change == 'speed':
+        edited.fast['codex'] = 'ultrafast'
+    elif change == 'workflow':
+        edited._workflow_document, edited._workflow_before = helper['load']()
+        edited._workflow_initial = copy.deepcopy(edited._workflow_document)
+        edited._workflow_activate = False
+        edited._workflow_document['workflows']['standard']['planning']['effort'] = 'medium'
+    before = native.stat(), native.read_text()
+    monkeypatch.setitem(sync, 'native_defaults', lambda settings: pytest.fail('unrelated native write'))
+    monkeypatch.setitem(helper, 'propagation', lambda: sync)
+    monkeypatch.setattr(t_mod, '_config_wizard', lambda cfg: edited)
+    monkeypatch.setattr(t_mod, '_config_editor', lambda: 0)
+    monkeypatch.setattr(t_mod, 'Config', lambda: edited)
+    assert t_mod.cmd_config(cfg, SimpleNamespace(show=change == 'show', edit=change == 'editor')) == 0
+    assert (native.stat(), native.read_text()) == before
+    if change in ('unchanged', 'editor', 'show'):
+        assert not helper['config_path']().exists()
+        assert not sync['state_path']().exists()
+
+
+@pytest.mark.parametrize('failure', [None, 'unsupported', 'journal'])
+def test_config_editor_defaults_followup_reports_partial_failure(t_mod, native_defaults_config,
+                                                               monkeypatch, capsys, failure):
+    import copy
+    cfg, local, native, _, sync = native_defaults_config
+    edited = copy.deepcopy(cfg)
+    edited.models['codex'] = 'new-model'
+    if failure == 'unsupported':
+        native.write_text('"model" = "old-model"\n')
+    elif failure == 'journal':
+        def fail(*args, **kwargs):
+            raise OSError('journal unavailable')
+        monkeypatch.setitem(sync, 'desired', fail)
+    native_before = native.read_text()
+    def editor():
+        local.write_text('DEV_MODEL[codex]=new-model\n')
+        return 0
+    monkeypatch.setattr(t_mod, '_config_editor', editor)
+    monkeypatch.setattr(t_mod, 'Config', lambda: edited)
+    # Exercise the editor follow-up, rather than the nonterminal entry guard.
+    monkeypatch.setattr(t_mod.sys.stdin, 'isatty', lambda: True)
+    monkeypatch.setattr(t_mod.sys.stdout, 'isatty', lambda: True)
+    assert t_mod.cmd_config(cfg, SimpleNamespace(show=False, edit=True)) == int(bool(failure))
+    assert local.read_text() == 'DEV_MODEL[codex]=new-model\n'
+    if failure:
+        assert native.read_text() == native_before
+        assert not sync['state_path']().exists()
+        assert 'local settings saved; native defaults or propagation incomplete' in capsys.readouterr().err
+    else:
+        assert 'model = "new-model"' in native.read_text()
+        assert sync['status']()['main_settings'] == {'model': 'new-model'}

@@ -10,9 +10,11 @@ INSTALL_SH = REPO_ROOT / "install.sh"
 ASSETS = (
     ".t-install-version", "install.sh", "t.plugin.zsh", "local.zsh.example",
     "bin/t", "bin/t-session-start", "bin/claude-stamp-tmux", "bin/cursor-beam",
-    "libexec/t_progress.py", "libexec/t_shell_setup.py", "libexec/t_onboarding.py", "libexec/t_discovery.py",
-    "libexec/t_mcp_controls.py", "libexec/t_workflow.py", "libexec/t_issue.py", "libexec/t_issue_policy.txt", "libexec/t_history.py", "libexec/t_candidates.py", "libexec/t_session_details.py", "libexec/t_picker_filters.py", "libexec/t_repos.py",
+    "libexec/t_dev.py", "libexec/t_progress.py", "libexec/t_shell_setup.py", "libexec/t_onboarding.py", "libexec/t_discovery.py",
+    "libexec/t_toml.py", "libexec/t_codex_socket.py", "libexec/vendor/SHA256SUMS", "libexec/vendor/tomli-LICENSE", "libexec/vendor/tomli/__init__.py", "libexec/vendor/tomli/_parser.py", "libexec/vendor/tomli/_re.py", "libexec/vendor/tomli/_types.py", "libexec/vendor/tomli/py.typed",
+    "libexec/t_mcp_setup.py", "libexec/t_mcp_controls.py", "libexec/t_workflow.py", "libexec/t_workflow_sync.py", "libexec/t_issue.py", "libexec/t_issue_policy.txt", "libexec/t_resume_source.py", "libexec/t_history.py", "libexec/t_candidates.py", "libexec/t_session_details.py", "libexec/t_picker_filters.py", "libexec/t_repos.py",
     "libexec/t_local_worker.py", "libexec/t_local_setup.py", "libexec/t_local_models.py", "libexec/local-models.json",
+    "libexec/t_runners.py", "libexec/t_runner_job.py", "share/runners/broker.yml", "share/runners/sweeper.yml",
     "libexec/t_share.py", "libexec/t_share_sessions.py",
     "libexec/t_share_context.py", "libexec/t_share_flow.py", "libexec/t_share_launch.py", "libexec/t_share_ui.py",
     "zsh/share.zsh",

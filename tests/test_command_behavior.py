@@ -31,7 +31,7 @@ def test_readonly_commands_never_offer_updates(t_mod, monkeypatch, argv, termina
         monkeypatch.setitem(t_mod.IMPLEMENTED, name, handler)
     monkeypatch.setattr(t_mod, 'cmd_cursor', handler)
     assert t_mod.main(argv) == 0
-    assert len(seen) == (0 if argv == ['share'] and not terminal else 1)
+    assert len(seen) == (0 if argv in (['share'], ['workflow']) and not terminal else 1)
     assert t_mod._command_readonly(argv, terminal=terminal)
 
 
@@ -70,6 +70,31 @@ def test_history_readonly_follows_terminal_context(t_mod, monkeypatch):
         assert t_mod._command_readonly([*argv, '--json'])
         context.setattr(t_mod.sys, 'stdin', io.StringIO())
         assert t_mod._command_readonly(argv)
+
+
+@pytest.mark.parametrize('argv,target', [
+    (['resume', 'api', '3'], ['api', '3']),
+    (['session', 'resume', 'api', '3'], ['api', '3']),
+    (['resume', '3'], ['3']),
+])
+@pytest.mark.parametrize('terminal', [False, True])
+def test_plain_slot_resume_executable_uses_history(t_mod, monkeypatch, argv, target, terminal):
+    monkeypatch.setattr(t_mod.sys.stdin, 'isatty', lambda: terminal)
+    monkeypatch.setattr(t_mod.sys.stdout, 'isatty', lambda: terminal)
+    monkeypatch.setattr(t_mod, '_t_auto_update', lambda *a: None)
+    monkeypatch.setattr(t_mod, 'Config', lambda: object())
+    seen = []
+    monkeypatch.setitem(t_mod.IMPLEMENTED, 'history', lambda cfg, args: seen.append(args.target) or 130)
+    assert t_mod.main(argv) == 130
+    assert seen == [target]
+    assert t_mod._command_readonly(argv, terminal=terminal) is not terminal
+
+
+@pytest.mark.parametrize('words', [[], ['resume'], ['resume', 'api'],
+                                  ['resume', '--host', '3'], ['resume', 'api', '3', '--cli'],
+                                  ['open', 'api', '3']])
+def test_plain_slot_resume_does_not_capture_other_modes(t_mod, words):
+    assert not t_mod._plain_slot_resume(words)
 
 
 def test_share_machine_receipt_is_mutating_but_never_offers_update(t_mod, monkeypatch):
@@ -422,3 +447,47 @@ def test_history_display_contract_preserves_unknowns_preview_and_json(history, t
     assert lint_module().check_display_projection(CONTRACT, 'history_information', record['display']) == []
     assert record['display']['model'] == '-' and record['display']['interface'] == 'unknown'
     assert '\x1b' not in output and 'Enter ' not in output
+
+
+@pytest.mark.parametrize('command', [
+    ['ls'], ['list'], ['session', 'list'], ['session', 'ls'],
+])
+@pytest.mark.parametrize('remote', [False, True])
+@pytest.mark.parametrize('location', ['checkout', 'worktree', 'outside'])
+def test_session_list_default_includes_other_repositories(
+        t_mod, monkeypatch, capsys, tmp_path, command, remote, location):
+    checkout = tmp_path / 'code' / 'api'
+    worktrees = tmp_path / 'worktrees'
+    cwd = {'checkout': checkout, 'worktree': worktrees / 'api' / 'api-7',
+           'outside': tmp_path / 'outside'}[location]
+    cwd.mkdir(parents=True)
+    monkeypatch.chdir(cwd)
+    cfg = SimpleNamespace(repos={'api': str(checkout)}, worktree_root=str(worktrees), hosts={})
+    rows = [
+        ('local', 'api-1', str(checkout), 'attached', 'active', 'Current project'),
+        ('local', 'other-2', str(worktrees / 'other' / 'other-2'), 'detached', 'active', 'Other project'),
+        ('local', 'other-3', str(worktrees / 'other' / 'other-3'), 'attached', 'idle', 'Idle project'),
+    ]
+    if remote:
+        rows.append(('mini', 'other-4', '/home/remote/worktrees/other/other-4',
+                     'detached', 'active', 'Remote project'))
+
+    def scan(snippet):
+        assert snippet == ('_dev_rows_all --details' if remote else '_dev_session_rows --details')
+        return '\n'.join('\t'.join(([host] if remote else []) +
+                                  [slot, path, slot, state, context, title, 'codex'])
+                         for host, slot, path, state, context, title in rows)
+
+    monkeypatch.setattr(t_mod, 'Config', lambda: cfg)
+    monkeypatch.setattr(t_mod, 'zsh_capture', scan)
+    flags = ['-r'] if remote else []
+    for scope in ([], ['--all']):
+        assert t_mod.main([*command, *scope, *flags]) == 0
+        output = capsys.readouterr().out
+        for _, slot, *_ in rows:
+            assert slot in output
+        assert '(repo:' not in output
+    assert t_mod.main([*command, 'api', *flags]) == 0
+    output = capsys.readouterr().out
+    assert 'api-1' in output and 'other-' not in output
+    assert 'repo: api' in output

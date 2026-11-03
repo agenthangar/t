@@ -2,6 +2,9 @@
 
 import pathlib
 import re
+import pytest
+
+import pytest
 
 from test_agent_seam import zsh  # noqa: F401 — sandboxed shell fixture
 
@@ -74,7 +77,8 @@ def test_resume_multi_fg_guard_prevents_any_revive(zsh, tmp_path):
     assert "send-keys" not in (zsh.log.read_text() if zsh.log.exists() else "")
 
 
-def test_resume_multi_all_live_attaches_first_and_tabs_second(zsh, tmp_path):
+@pytest.mark.parametrize('tab_fails', [False, True])
+def test_resume_multi_all_live_attaches_first_and_tabs_second(zsh, tmp_path, tab_fails):
     stub = tmp_path / "stubbin" / "fzf"
     stub.write_text(FZF_ALL)
     stub.chmod(0o755)
@@ -92,8 +96,15 @@ def test_resume_multi_all_live_attaches_first_and_tabs_second(zsh, tmp_path):
         f"print -r -- '-{tab}{wt5}{tab}api-5{tab}detached{tab}active{tab}Second live{tab}claude'; }}; "
         "_dev_open_tab() { echo \"TAB $*\"; }; _t_dev() { echo \"ATTACH $*\"; }; "
     )
+    if tab_fails:
+        shell += '_dev_open_tab() { print -r -- "TAB $*"; return 1; }; '
     r = zsh(shell + "_t_resume api --live; echo rc=$?", _tty=True,
             FZF_LOG=str(tmp_path / "fzf.log"))
+    if tab_fails:
+        assert 'rc=1' in r.stdout and 'ATTACH' not in r.stdout
+        assert 'Ready — attach with: t session open api 4 --cli --local' in r.stdout
+        assert 'Ready — attach with: t session open api 5 --cli --local' in r.stdout
+        return
     assert "rc=0" in r.stdout, r.stdout
     assert ("ATTACH api 4" in r.stdout and "TAB t open api 5 --cli --local" in r.stdout) or (
         "ATTACH api 5" in r.stdout and "TAB t open api 4 --cli --local" in r.stdout
@@ -255,13 +266,13 @@ def test_resume_live_hotkey_hides_live_without_losing_saved_rows(zsh, tmp_path):
     log = tmp_path / "fzf.log"
     result = zsh(shell + "_t_resume api --live; echo rc=$?", _tty=True,
                  FAKE_SESSIONS="dev-api-4", FAKE_SESSION_PATH=str(wt4),
-                 FZF_LOG=str(log), PICK_ACTIONS="first", PICK_CANCEL="1")
+                 FZF_LOG=str(log), PICK_ACTIONS="on", PICK_CANCEL="1")
     assert "rc=1" in result.stdout, result.stdout
     initial = pathlib.Path(f"{log}.initial").read_text()
     filtered = pathlib.Path(f"{log}.step0").read_text()
     assert "Live work" in initial and "Dead work" in initial
     assert "Live work" not in filtered and "Dead work" in filtered
-    assert "live: hidden" in pathlib.Path(f"{log}.header0").read_text()
+    assert "Filters ON: saved only" in pathlib.Path(f"{log}.header0").read_text()
     assert "send-keys" not in (zsh.log.read_text() if zsh.log.exists() else "")
 
 
@@ -301,3 +312,63 @@ def test_resume_last_turn_overrides_mtime_and_sort_hotkeys_keep_rows(zsh, tmp_pa
     (project10 / 'c10.jsonl').rename(project2 / 'c10.jsonl')
     result = zsh('_t_resume api 2 --days all; echo rc=$?')
     assert 'Resuming c2 in dev-api-2' in result.stdout, result.stdout
+
+
+def test_mixed_host_batch_uses_transfer_for_both_agents(zsh, tmp_path):
+    import shlex
+    import time
+    stub = tmp_path / 'stubbin/fzf'
+    stub.write_text(FZF_ALL)
+    stub.chmod(0o755)
+    rows = ['\t'.join([str(int(time.time()) - index), 'api', str(index + 3),
+                       'saved-' + agent, '/gone/' + agent, 'Today', 'Saved ' + agent,
+                       'local', agent, '-', 'org/api'])
+            for index, agent in enumerate(['claude', 'codex'])]
+    setup = ('_t_resume_history_candidates() { print -rl -- ' + ' '.join(map(shlex.quote, rows)) + '; }; '
+             '_dev_rows_all() { :; }; '
+             '_t_resume_history_launch() { print -u2 WRONG_PREPARE; return 1; }; '
+             '_t_resume_on_host() { print -u2 WRONG_TRANSFER; return 1; }; ')
+    result = zsh(setup + '_t_resume api --host destination; print rc=$?', _tty=True,
+                 FZF_LOG=str(tmp_path / 'fzf.log'))
+    assert 'rc=1' in result.stdout and 'WRONG_PREPARE' in result.stdout
+    assert 'native desktop app' not in result.stdout
+
+
+@pytest.mark.parametrize('aggregate', [None, 'MIXED'])
+def test_resume_merged_badge_precedes_long_title_and_toggle_keeps_other_rows(zsh, tmp_path, aggregate):
+    stub = tmp_path / 'stubbin/fzf'
+    stub.write_text(FZF_ALL)
+    stub.chmod(0o755)
+    for slot in (2, 3):
+        wt = zsh.home / 'code/.worktrees/api' / str(slot)
+        wt.mkdir(parents=True)
+        project = zsh.home / '.claude/projects' / re.sub(r'[^A-Za-z0-9]', '-', str(wt))
+        project.mkdir(parents=True)
+        (project / f'c{slot}.jsonl').write_text('{"type":"user","message":{"content":"Task"}}\n')
+    log = tmp_path / 'fzf.log'
+    # Structured cache-derived output is independent of words in the task title.
+    shell = ('_transcript_meta_batch() { local tx; for tx in "$@"; do '
+             'if [[ $tx == */c2.jsonl ]]; then '
+             'print -r -- "$tx"$\'\\t\'"Long task title repeated many times to push suffix beyond the screen"$\'\\t\'github.com/org/api/pull/42; '
+             'else print -r -- "$tx"$\'\\t\'"Task · #99 merged"$\'\\t\'; fi; done; }; '
+             '_pr_state_flush() { :; }; '
+             'mkdir -p "$HOME/.cache/claude-sessions/pr"; '
+             'print -r -- MERGED > "$HOME/.cache/claude-sessions/pr/org#api#42"; ')
+    if aggregate:
+        record = '\t'.join(['1800000000', 'api', '2', 'c2', str(zsh.home / 'code/.worktrees/api/2'),
+                            'date', 'Associated open and merged PRs', 'local', 'claude', '-', 'org/api', aggregate])
+        shell += f"_t_resume_history_candidates() {{ print -r -- '{record}'; }}; "
+    result = zsh(shell + '_t_resume api; echo rc=$?', _tty=True, FZF_LOG=str(log),
+                 PICK_ACTIONS='merged,merged', PICK_CANCEL='1')
+    assert 'rc=1' in result.stdout, result.stdout
+    initial = pathlib.Path(f'{log}.initial').read_text().splitlines()
+    merged = next(row for row in initial if '\tc2\t' in row)
+    assert merged.split('\t')[-1].startswith('[MIXED ' if aggregate else '[MERGED ')
+    assert '#42 merged' in merged
+    hidden = pathlib.Path(f'{log}.step0').read_text()
+    assert ('\tc2\t' in hidden) == bool(aggregate)
+    assert '\tc3\t' in hidden
+    assert 'Task · #99 merged' in hidden
+    assert '\tc2\t' in pathlib.Path(f'{log}.step1').read_text()
+    assert 'alt-m:' in pathlib.Path(f'{log}.args').read_text()
+    assert 'send-keys' not in (zsh.log.read_text() if zsh.log.exists() else '')

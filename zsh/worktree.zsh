@@ -34,6 +34,23 @@ _dev_worktree_path() {
 # _dev_worktree_branch <repo> <slot> — the slot's dedicated branch.
 _dev_worktree_branch() { print -r -- "dev/${DEV_REPOS[$1]:t}-$2" }
 
+# Resolve fetched origin refs only; never branch from an arbitrary local checkout.
+# Clones record custom defaults in origin/HEAD. Older checkouts may lack it.
+_dev_origin_base() {
+  local repodir="$1" ref
+  ref=$(git -C "$repodir" symbolic-ref -q refs/remotes/origin/HEAD 2>/dev/null)
+  if [[ $ref == refs/remotes/origin/* && $ref != refs/remotes/origin/HEAD ]] &&
+     git -C "$repodir" rev-parse --verify -q "${ref}^{commit}" >/dev/null 2>&1; then
+    print -r -- "${ref#refs/remotes/}"; return 0
+  fi
+  for ref in origin/main origin/master; do
+    if git -C "$repodir" rev-parse --verify -q "refs/remotes/${ref}^{commit}" >/dev/null 2>&1; then
+      print -r -- "$ref"; return 0
+    fi
+  done
+  return 1
+}
+
 # Read-only transfer negotiation. The wire cwd is immutable: hosts with different
 # roots must attach at the source or use history's verified fresh-workspace resume.
 _dev_worktree_accept_cwd() {
@@ -68,18 +85,13 @@ _dev_worktree_remote_accept() {
   }
 }
 
-# A desktop-only Codex slot has no tmux owner. Keep its reservation in the
-# worktree's private Git metadata so commits cannot publish it and sweep cannot
-# mistake a clean, merged branch for an abandoned workspace.
-_dev_app_slot_marker() {
+# Retired integrations may have left a reservation in private Git metadata.
+# Do not freshen or sweep that workspace. Exact saved CLI resume still verifies
+# the conversation's writer locks; no new reservations are created.
+_dev_legacy_workspace_reserved() {
   local gitdir
   gitdir=$(git -C "$1" rev-parse --absolute-git-dir 2>/dev/null) || return 1
-  [[ -n $gitdir ]] || return 1
-  print -r -- "$gitdir/t-app-slot"
-}
-_dev_app_slot_reserved() {
-  local marker; marker=$(_dev_app_slot_marker "$1") || return 1
-  [[ -f $marker ]]
+  [[ -f "$gitdir/t-app-slot" ]]
 }
 
 # A t issue launch reserves its freshly created worktree until the task and
@@ -89,10 +101,6 @@ _dev_issue_preparing() {
   if [[ -f $reservation && $(<$reservation) != ${T_HISTORY_TOKEN:-} ]]; then return 0; fi
   gitdir=$(git -C "$1" rev-parse --absolute-git-dir 2>/dev/null) || return 1
   [[ -f "$gitdir/t-issue-preparing" ]]
-}
-_dev_app_slot_reserve() {
-  local marker; marker=$(_dev_app_slot_marker "$1") || return 1
-  print -r -- 'codex-app' >| "$marker"
 }
 
 # _dev_repo_slots <repo> — every slot NUMBER this repo has any trace of, ascending:
@@ -138,7 +146,7 @@ _dev_repo_slots() {
 # print its path. An already-present worktree is reused (reattach stays free: the one
 # check it pays is _dev_worktree_freshen, below — a tmux probe and a `git status`, with
 # the gh/fetch cost only on a dead+clean tree). A fresh slot branches off the just-fetched
-# origin/main. A slot whose tmux died but whose branch lingered resumes that branch ONLY
+# origin default branch. A slot whose tmux died but whose branch lingered resumes that branch ONLY
 # WHILE IT STILL CARRIES UNMERGED WORK: once the branch's PR has landed it is a dead line,
 # and resuming it starts a "fresh" session N commits behind origin/main with the merged
 # commit still riding on top (hive-4: 42 behind, PR #13's commit on the branch — hive
@@ -147,7 +155,7 @@ _dev_repo_slots() {
 # corpse out as the new session's start). A merged lingering branch is therefore dropped
 # (locally, and on origin via _dev_worktree_drop_remote — the delete GitHub itself does
 # under delete-branch-on-merge, and without which the slot's first push is rejected as
-# non-fast-forward in a squash-merge repo) and the slot is cut off origin/main like a
+# non-fast-forward in a squash-merge repo) and the slot is cut off the origin default like a
 # never-used one. Unmerged lingering work is resumed exactly as before — the sweep's
 # "any doubt = not merged" rule (_dev_branch_merged) is what decides, so nothing
 # unmerged is ever dropped. On failure (e.g. the branch is checked out in another
@@ -173,14 +181,9 @@ _dev_worktree_create_impl() {
   br="$(_dev_worktree_branch "$repo" "$slot")"
   if [[ -e "$wt/.git" ]]; then          # already materialized → reuse (idempotent)
     _dev_issue_preparing "$wt" && { print -u2 't: issue launch is reserved; rerun t issue start <issue> to recover it'; return 1; }
-    if _dev_app_slot_reserved "$wt"; then
-      print -u2 -- "t: $repo $slot is reserved for the Codex desktop app."
-      print -u2 -- '  To continue in the CLI, run this on the Mac with the conversation and follow its release instructions:'
-      print -u2 -- "    t open ${(q)repo} ${(q)slot} --cli"
-      print -u2 -- "  To reopen in the app: t open ${(q)repo} ${(q)slot} --app"
-      return 1
+    if ! _dev_legacy_workspace_reserved "$wt"; then
+      _dev_worktree_freshen "$repo" "$slot" "$wt" "$br"
     fi
-    _dev_worktree_freshen "$repo" "$slot" "$wt" "$br"
     _dev_auto_trust "$wt"
     print -r -- "$wt"; return 0
   fi
@@ -201,12 +204,14 @@ _dev_worktree_create_impl() {
   # THAT — so the merged-corpse bug is not hive-only, it reaches every delete-on-merge
   # repo whose remote-tracking refs were never pruned.
   git -C "$repodir" fetch -q --prune origin 2>/dev/null   # refresh origin/* before branching
+  local origin_base; origin_base=$(_dev_origin_base "$repodir")
   # Which line does the slot start on? `fresh` unless a lingering branch still carries
   # unmerged work: a local one (kill-without-merge) is resumed, an origin-only one (a
   # slot pushed from another machine, or a beam) is checked out tracking origin.
   local how=fresh why=
   if git -C "$repodir" show-ref --verify --quiet "refs/heads/$br"; then
     if _dev_branch_merged "$repodir" "$br"; then
+      [[ -n $origin_base ]] || return 1   # do not delete a branch without a replacement base
       why="$br was merged ($_DEV_MERGED_HOW)"
       git -C "$repodir" branch -q -D "$br" 2>/dev/null
     else
@@ -220,12 +225,13 @@ _dev_worktree_create_impl() {
       how=track
     fi
   fi
-  [[ -n $why ]] && print -r -- "↻ $repo $slot: $why — starting fresh off origin/main" >&2
+  [[ $how != fresh || -n $origin_base ]] || return 1
+  [[ -n $why ]] && print -r -- "↻ $repo $slot: $why — starting fresh off $origin_base" >&2
   [[ $how == fresh ]] && _dev_worktree_drop_remote "$repodir" "$br"
   case $how in
     resume) git -C "$repodir" worktree add -q "$wt" "$br" 2>/dev/null ;;               # resume lingering local slot branch
     track)  git -C "$repodir" worktree add -q -b "$br" "$wt" "origin/$br" 2>/dev/null ;; # branch exists only on origin → create local tracking + check out
-    *)      git -C "$repodir" worktree add -q -b "$br" "$wt" origin/main 2>/dev/null ;;  # fresh off main
+    *)      git -C "$repodir" worktree add -q -b "$br" "$wt" "refs/remotes/$origin_base" 2>/dev/null ;;
   esac
   [[ -e "$wt/.git" ]] || return 1
   _dev_auto_trust "$wt"
@@ -236,7 +242,7 @@ _dev_worktree_create_impl() {
 # above: a slot whose worktree is still on disk but whose tmux is DEAD, whose branch is
 # MERGED and whose tree is CLEAN is exactly what the sweep reaps — it just has not run
 # yet (≤10 min), or gh/network failed it that pass. Reopening the slot in that window
-# used to resume the merged line as-is. Now it is put back onto origin/main in place
+# used to resume the merged line as-is. Now it is put back onto the origin default in place
 # (`reset --hard`, safe precisely because merged+clean means every byte is already on
 # main), the merged remote branch dropped, and the session starts current. Any live
 # session rooted here (matched by session_path, like the sweep — alias drift cannot
@@ -245,7 +251,7 @@ _dev_worktree_create_impl() {
 # reuse pays only a tmux probe and a local `git status`.
 _dev_worktree_freshen() {
   local repo="$1" slot="$2" wt="$3" br="$4" repodir="${DEV_REPOS[$1]}"
-  _dev_app_slot_reserved "$wt" && return 0
+  _dev_legacy_workspace_reserved "$wt" && return 0
   local -a livepaths
   livepaths=("${(@f)$(tmux list-sessions -F '#{session_path}' 2>/dev/null)}")
   (( ${livepaths[(Ie)$wt]} )) && return 0
@@ -254,10 +260,9 @@ _dev_worktree_freshen() {
   [[ -z $dirt ]] || return 0
   git -C "$repodir" fetch -q --prune origin 2>/dev/null
   _dev_branch_merged "$repodir" "$br" || return 0
-  local main_oid; main_oid=$(git -C "$repodir" rev-parse --verify -q refs/remotes/origin/main 2>/dev/null)
-  [[ -n $main_oid ]] || return 0
-  if git -C "$wt" reset -q --hard origin/main 2>/dev/null; then
-    print -r -- "↻ $repo $slot: $br was merged ($_DEV_MERGED_HOW) — reset to origin/main" >&2
+  local origin_base; origin_base=$(_dev_origin_base "$repodir") || return 0
+  if git -C "$wt" reset -q --hard "refs/remotes/$origin_base" 2>/dev/null; then
+    print -r -- "↻ $repo $slot: $br was merged ($_DEV_MERGED_HOW) — reset to $origin_base" >&2
     _dev_worktree_drop_remote "$repodir" "$br"
   fi
 }
@@ -266,7 +271,7 @@ _dev_worktree_freshen() {
 # merged (judged on the REMOTE tip, independently of any local copy). This is the delete
 # GitHub performs under delete-branch-on-merge, which `t new` enables on every repo it
 # creates; a repo that predates that setting (hive) keeps every merged slot branch
-# forever, and a fresh slot cut off origin/main then cannot push under the same name in
+# forever, and a fresh slot cut off the origin default cannot push under the same name in
 # a squash-merge repo (non-fast-forward). Best-effort: offline, the slot still starts
 # fresh and the push problem is named rather than silently deferred. Nothing is lost by
 # the delete — the PR keeps the commits (refs/pull/N/head) and the branch is, by the
@@ -291,7 +296,7 @@ _dev_worktree_drop_remote() {
 # no worktree on disk (parked or merely unreaped work — the sweep clears merged+clean
 # ones within ~10 min) and no lingering branch, local OR on origin, that still carries
 # UNMERGED work. A merged leftover is fresh: _dev_worktree_create drops it and cuts the
-# slot off origin/main, so counting it would only skip slot numbers forever in a repo
+# slot off the origin default, so counting it would only skip slot numbers forever in a repo
 # without delete-branch-on-merge (hive). Cheap→dear: tmux, a stat, two show-refs; the
 # gh call is paid only for a slot that actually has a lingering branch, and the drop
 # makes it a one-time cost per slot. Shared-tree repos have no per-slot branch, so a slot
@@ -317,11 +322,13 @@ _dev_slot_fresh() {
 # before anyone noticed (ff-12, ff-15). Failing loudly is cheaper than that.
 _dev_worktree_refuse() {
   local repo="$1" slot="$2" repodir="${DEV_REPOS[$1]}"
-  # Creation already explained how to release a desktop reservation. The
-  # worktree exists; prune/add and disabling worktrees cannot fix ownership.
-  _dev_app_slot_reserved "$(_dev_worktree_path "$repo" "$slot")" && return 0
   print -r -- "✗ could not create the worktree for $repo $slot — refusing to start in the shared tree $repodir" >&2
-  print -r -- "  try: git -C $repodir worktree prune; git -C $repodir worktree add $(_dev_worktree_path "$repo" "$slot") -b $(_dev_worktree_branch "$repo" "$slot") origin/main" >&2
+  local origin_base; origin_base=$(_dev_origin_base "$repodir")
+  if [[ -n $origin_base ]]; then
+    print -r -- "  try: git -C ${(q)repodir} worktree prune; git -C ${(q)repodir} worktree add ${(q)$(_dev_worktree_path "$repo" "$slot")} -b ${(q)$(_dev_worktree_branch "$repo" "$slot")} refs/remotes/${(q)origin_base}" >&2
+  else
+    print -r -- "  no fetched origin default branch found; try: git -C ${(q)repodir} fetch origin; git -C ${(q)repodir} remote set-head origin -a" >&2
+  fi
   print -r -- "  (DEV_WORKTREE[$repo]=0 in ${T_LOCAL_RC} opts this repo out of worktrees entirely)" >&2
 }
 
@@ -402,8 +409,8 @@ _dev_worktree_beam_sync() {
   elif _dev_branch_merged "$wt" "$br" "refs/remotes/origin/${br}"; then
     # The beamed tip is already on main (the slot went on after its PR merged with
     # nothing new to commit) and _dev_worktree_create cut this tree fresh off
-    # origin/main instead of resurrecting it — not a divergence, the intended state.
-    print -r -- "↓ origin/${br} is already merged ($_DEV_MERGED_HOW) — ${br} continues from origin/main"
+    # the origin default instead of resurrecting it — the intended state.
+    print -r -- "↓ origin/${br} is already merged ($_DEV_MERGED_HOW) — ${br} continues on its current branch"
   else
     print -r -- "tbeam: ${wt} diverged from origin/${br} — left as-is (resolve manually)" >&2
   fi
@@ -449,7 +456,7 @@ _dev_beam_land_cwd() {
   # _dev_worktree_create would otherwise resume under the beamed conversation.
   local why= s p
   if [[ -e $cwd/.git ]]; then
-    _dev_app_slot_reserved "$cwd" && why="the Codex desktop app owns this worktree"
+    _dev_legacy_workspace_reserved "$cwd" && why="it has a retired integration reservation"
     for s in ${(f)"$(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep '^dev-')"}; do
       p=$(tmux display-message -p -t "=$s:" '#{session_path}' 2>/dev/null)
       [[ -n $p && ${p:A} == ${cwd:A} ]] && { why="$s is live in it"; break }
@@ -685,12 +692,12 @@ _dev_stop_rooted() {
 # inconclusive answer is treated as NOT merged, so the sweep never deletes on a maybe.
 # Both paths pin the answer to the CURRENT tip: per-slot branch names are reused after a
 # sweep (`dev/<basename>-<slot>`), so an unrelated historical merged PR with the same
-# head, OR a freshly-created branch sitting exactly at origin/main with uncommitted
+# head, OR a freshly-created branch sitting exactly at the origin default with uncommitted
 # working-tree edits, must NOT be reported as merged — that would destroy live work.
 # The tip defaults to the LOCAL branch; [tip-ref] (e.g. refs/remotes/origin/<branch>)
 # judges another ref under the same rules — how _dev_worktree_create tells a merged
 # origin-only lingering branch from one carrying another machine's live work. On success
-# $_DEV_MERGED_HOW names the proof (`#N` or `in origin/main`) for the caller's message.
+# $_DEV_MERGED_HOW names the proof (`#N` or `in origin/<default>`) for the caller's message.
 _dev_branch_merged() {
   local repodir="$1" br="$2" ref="${3:-refs/heads/$2}" tip pr merged_oid open main_oid
   _DEV_MERGED_HOW=
@@ -705,12 +712,13 @@ _dev_branch_merged() {
     open=$(cd "$repodir" 2>/dev/null && gh pr list --head "$br" --state open --json number -q '.[0].number' 2>/dev/null)
     [[ -n $open ]] && return 1
   fi
-  git -C "$repodir" fetch -q origin main 2>/dev/null
-  main_oid=$(git -C "$repodir" rev-parse --verify -q refs/remotes/origin/main 2>/dev/null)
+  local origin_base; origin_base=$(_dev_origin_base "$repodir") || return 1
+  git -C "$repodir" fetch -q origin "${origin_base#origin/}" 2>/dev/null
+  main_oid=$(git -C "$repodir" rev-parse --verify -q "refs/remotes/$origin_base" 2>/dev/null)
   [[ -n $main_oid ]] || return 1
-  [[ "$tip" != "$main_oid" ]] || return 1         # branch == origin/main → no unique history yet; uncommitted edits may still be live
-  git -C "$repodir" merge-base --is-ancestor "$tip" origin/main 2>/dev/null || return 1
-  _DEV_MERGED_HOW="in origin/main"
+  [[ "$tip" != "$main_oid" ]] || return 1         # equal to the default → no unique history yet; uncommitted edits may still be live
+  git -C "$repodir" merge-base --is-ancestor "$tip" "$main_oid" 2>/dev/null || return 1
+  _DEV_MERGED_HOW="in $origin_base"
 }
 # _dev_worktree_sweep_run — the actual reap (runs detached). Walks every
 # $DEV_WORKTREE_ROOT/<basename>/<slot> worktree; skips ones with a live tmux session
@@ -729,7 +737,7 @@ _dev_worktree_sweep_run() {
   for wt in $root/*/*(N/); do                       # <basename>/<slot> dirs
     [[ -e "$wt/.git" ]] || continue
     (( ${livepaths[(Ie)$wt]} )) && continue         # live session here → keep
-    _dev_app_slot_reserved "$wt" && continue      # desktop app owns this worktree
+    _dev_legacy_workspace_reserved "$wt" && continue
     _dev_issue_preparing "$wt" && continue        # issue launch is still being prepared
     # Unlike the dirty/merged skips below this one is LOGGED: a worktree that is
     # merged, clean, and never reaped is otherwise a silent mystery.

@@ -5,17 +5,15 @@ import pytest
 
 def test_registry_covers_the_public_groups(t_mod):
     assert tuple(t_mod.COMMAND_GROUPS) == (
-        "remote", "issue", "session", "repo", "cursor", "hosts", "agentcore", "config", "profile", "policy", "agent", "system")
+        "mcp", "remote", "issue", "session", "repo", "cursor", "hosts", "agentcore", "config", "workflow", "runners", "profile", "policy", "agent", "system")
     for path, legacy in t_mod._command_routes():
         assert t_mod._canonical_argv([*path, "payload"]) == [*legacy, "payload"]
-
 
 
 @pytest.mark.parametrize("argv,legacy", [
     (["session", "list", "-a"], ["ls", "-a"]),
     (["session", "open", "api", "2", "--codex", "--host", "mini"],
      ["open", "api", "2", "--codex", "--host", "mini"]),
-    (["session", "open-app", "api", "3"], ["app", "api", "3"]),
     (["repo", "locate", "api"], ["repo", "locate", "api"]),
     (["repo", "create", "name", "--dry-run"], ["new", "name", "--dry-run"]),
     (["profile", "apply", "api"], ["instructions", "--apply", "api"]),
@@ -148,7 +146,6 @@ def test_every_advertised_action_has_side_effect_free_help(t_mod, monkeypatch, c
         assert expected.startswith(concise.split("\nLEARN MORE", 1)[0].rstrip())
 
 
-
 @pytest.mark.parametrize("words", [["open"], ["session", "open"]])
 @pytest.mark.parametrize("width", [40, 80])
 def test_open_help_is_concise_with_discoverable_details(t_mod, monkeypatch, capsys, words, width):
@@ -162,20 +159,17 @@ def test_open_help_is_concise_with_discoverable_details(t_mod, monkeypatch, caps
     assert len(concise.split()) < 200
     assert max(map(len, concise.splitlines())) <= width
     assert "AGENT (FRESH SLOTS):" in concise and "LOCATION:" in concise
-    assert "--codex --new" in concise and "t help open" in concise
+    assert "--codex --new" in concise and "t help " + " ".join(words) in concise
     normalized = " ".join(concise.split())
-    assert "Follow its release instructions if the desktop conversation is still loaded" in normalized
-    assert "t app pull" not in normalized
-    assert "resumes the same conversation and attaches automatically" in normalized
-    assert "t " + " ".join(words) + " api 2 --cli" in normalized
-    for flag in ("--new", "--fg", "--cli", "--app", "--codex", "--claude",
+    assert "--app" not in normalized
+    for flag in ("--new", "--fg", "--cli", "--codex", "--claude",
                  "--local", "--here", "--remote", "--host", "--help"):
         assert flag in concise
     assert t_mod.main(["help", *words]) == 0
     detailed = capsys.readouterr().out
     assert len(detailed) > len(concise)
     assert all(section in detailed for section in (
-        "SESSION TARGETS", "OPENING DEFAULTS", "DESKTOP TO CLI", "REMOTE SESSIONS"))
+        "SESSION TARGETS", "OPENING DEFAULTS", "REMOTE SESSIONS"))
     assert "DEV_AGENT_DEFAULT" in detailed and "<repo>:p<pid>" in detailed
     assert max(map(len, detailed.splitlines())) <= width
 
@@ -205,18 +199,33 @@ def test_nested_resource_help_does_not_load_config(t_mod, monkeypatch, capsys, a
     monkeypatch.setattr(t_mod, "_t_auto_update", lambda argv: pytest.fail("subgroup help updated"))
     assert t_mod.main(argv) == 0
     output = capsys.readouterr().out
-    assert "t config workflow <verb>" in output
-    assert "--repo ALIAS" in output and "never inferred" in output
+    assert "t workflow <verb>" in output
+    assert "--repo ALIAS" in output and "Explicit verbs never infer the checkout" in output
+    assert "Bare t workflow opens the editor" in output
+    assert "t workflow sync" not in output and "Retry pending" not in output
 
 
 @pytest.mark.parametrize("argv", [
-    ["config", "workflow", "unknown"], ["config", "workflow", "list", "--edit"],
+    ["config", "workflow", "--unknown"], ["config", "workflow", "list", "--edit"],
     ["config", "workflow", "edit", "--workflow"],
+    ["config", "workflow", "sync"], ["workflow", "sync"],
 ])
 def test_nested_invalid_verbs_and_modes_fail_before_config(t_mod, monkeypatch, capsys, argv):
     monkeypatch.setattr(t_mod, "Config", lambda: pytest.fail("invalid nested command loaded config"))
     assert t_mod.main(argv) == 2
-    assert "t config workflow" in capsys.readouterr().err
+    assert "t workflow" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize('prefix', [[], ['config']])
+def test_workflow_receive_transport_is_hidden_and_compatible(t_mod, prefix):
+    parser = t_mod.build_parser()
+    words = [*prefix, 'workflow', 'sync', '--receive']
+    assert t_mod._canonical_error(words) is None
+    assert t_mod._canonical_argv(words) == ['config', 'workflow', 'sync', '--receive']
+    args = parser.parse_args(words)
+    assert args.verb == 'config' and args.workflow_action == 'sync' and args.workflow_receive
+    assert 'sync' not in t_mod.COMMAND_GROUPS['workflow']
+    assert 'sync' not in t_mod._group_help('workflow')
 
 
 @pytest.mark.parametrize("flag", ["--show", "--edit", "--workflow", "--onboard"])
@@ -266,7 +275,7 @@ def test_listing_alias_help_keeps_requested_spelling(t_mod, monkeypatch, capsys,
     words = [*prefix, verb]
     for argv in (["help", *words], [*words, "--help"]):
         assert t_mod.main(argv) == 0
-        assert f"usage: t {' '.join(words)}" in capsys.readouterr().out
+        assert f"usage: t {' '.join(t_mod._workflow_argv(words))}" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("argv", [
@@ -276,8 +285,9 @@ def test_listing_alias_help_keeps_requested_spelling(t_mod, monkeypatch, capsys,
     ["hosts", "run", "ls", "t", "config", "workflow", "ls", "--repo", "help"],
 ])
 def test_alias_resolution_preserves_payload_words(t_mod, argv):
-    path, route = t_mod._command_path(argv)
-    assert t_mod._canonical_argv(argv) == [*route, *argv[len(path):]]
+    normalized = t_mod._workflow_argv(argv)
+    path, route = t_mod._command_path(normalized)
+    assert t_mod._canonical_argv(argv) == [*route, *normalized[len(path):]]
 
 
 @pytest.mark.parametrize("tail", [[], ["ls"], ["list"], ["cd", "api"],
@@ -314,9 +324,9 @@ def test_list_alias_parser_help_dispatch_and_readonly(t_mod, monkeypatch, capsys
     monkeypatch.setattr(t_mod, 'Config', lambda: pytest.fail('help loaded config'))
     for words in (alias, canonical):
         assert t_mod.main([*words, '--help']) == 0
-        assert f"usage: t {' '.join(words)}" in capsys.readouterr().out
+        assert f"usage: t {' '.join(t_mod._workflow_argv(words))}" in capsys.readouterr().out
         assert t_mod.main(['help', *words]) == 0
-        assert f"usage: t {' '.join(words)}" in capsys.readouterr().out
+        assert f"usage: t {' '.join(t_mod._workflow_argv(words))}" in capsys.readouterr().out
     monkeypatch.setattr(t_mod, 'Config', lambda: object())
     # The real update gate must classify both spellings before prompting.
     monkeypatch.setattr(t_mod, '_t_update_interactive', lambda: pytest.fail('list prompted for update'))
@@ -351,7 +361,7 @@ def test_every_registry_list_leaf_accepts_ls(t_mod):
     (['cursor', 'send', 'ls', '--from', 'list'], ['cursor', 'send', 'ls', '--from', 'list']),
     (['cursor', '--ls', 'list'], ['cursor', '--ls', 'list']),
     (['session', '--', 'ls'], ['session', '--', 'ls']),
-    (['config', 'workflow', '--', 'ls'], ['config', 'workflow', '--', 'ls']),
+    (['config', 'workflow', '--', 'ls'], ['workflow', '--', 'ls']),
     (['ls', '--', 'list', 'ls'], ['ls', '--', 'list', 'ls']),
     (['repos', 'ls', '--', 'ls', 'list'], ['repos', 'ls', '--', 'ls', 'list']),
 ])
@@ -359,3 +369,25 @@ def test_list_alias_only_normalizes_command_boundaries(t_mod, words, expected):
     original = words[:]
     assert t_mod._canonical_argv(words) == expected
     assert words == original
+
+
+@pytest.mark.parametrize("suffix", [
+    ["list", "--repo", "list", "--json"],
+    ["add", "workflow", "--from", "config"],
+    ["instructions", "show", "list"],
+    ["runners", "edit", "workflow"],
+    ["runs", "start", "--", "t", "config", "workflow", "ls", "--edit", "--help"],
+])
+def test_workflow_family_keeps_payloads_and_compatibility(t_mod, suffix):
+    canonical = ["workflow", *suffix]
+    legacy = ["config", *canonical]
+    parser = t_mod.build_parser()
+    assert vars(parser.parse_args(canonical)) == vars(parser.parse_args(legacy))
+    expected = (["runners", *suffix[1:]] if suffix[0] == "runners" else
+                ["runners", *suffix] if suffix[0] == "runs" else legacy)
+    assert t_mod._canonical_argv(canonical) == expected
+    assert t_mod._canonical_argv(legacy) == expected
+    assert t_mod._canonical_error(canonical) is None
+    assert t_mod._canonical_error(legacy) is None
+    assert t_mod._workflow_argv(["help", *legacy]) == ["help", *canonical]
+    assert t_mod._workflow_argv(["hosts", "run", "mini", *legacy]) == ["hosts", "run", "mini", *legacy]

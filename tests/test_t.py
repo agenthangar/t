@@ -1952,7 +1952,7 @@ def test_mcp_registered(t_mod, tmp_path):
 
 
 def test_doctor_reports_unregistered_mcp(t_mod):
-    assert any("t mcp --install" in l for l in t_mod._doctor_findings({"mcp_sessions": False}))
+    assert any("t mcp install" in l for l in t_mod._doctor_findings({"mcp_sessions": False}))
     assert t_mod._doctor_findings({"mcp_sessions": True}) == ["✓ nothing suspicious found"]
     assert t_mod._doctor_findings({"mcp_sessions": None}) == ["✓ nothing suspicious found"]
 
@@ -2098,12 +2098,11 @@ def test_ls_scope_explicit_repo_from_anywhere(t_mod, tmp_path, monkeypatch):
     assert wt == "/Users/me/code/.worktrees/dotfiles"
 
 
-def test_ls_scope_defaults_to_cwd_repo(t_mod, tmp_path, monkeypatch):
+def test_ls_scope_defaults_to_all_repos(t_mod, tmp_path, monkeypatch):
     cfg = _config_with(t_mod, tmp_path, monkeypatch, {"api": "/Users/me/code/api"},
                        worktree_root="/Users/me/wt")
-    assert t_mod._ls_scope(cfg, None, False, "/Users/me/code/api/src") == \
-        ("/Users/me/code/api", "/Users/me/wt/api")
-    assert t_mod._ls_scope(cfg, None, False, "/Users/me") == ("", "")
+    for cwd in ("/Users/me/code/api/src", "/Users/me/wt/api/api-7", "/Users/me"):
+        assert t_mod._ls_scope(cfg, None, False, cwd) == ("", "")
 
 
 def test_ls_scope_all_widens(t_mod, tmp_path, monkeypatch):
@@ -2162,7 +2161,7 @@ def test_repo_group_help_and_command_usage(t_mod, capsys):
 
 
 @pytest.mark.parametrize("verb", [
-    "open", "app", "ls", "kill", "restart", "push", "pop", "resume", "cd",
+    "open", "ls", "kill", "restart", "push", "pop", "resume", "cd",
     "beam", "read", "plan", "paste", "find", "on", "repo", "cursor",
     "config", "setup", "new", "checkout", "instructions", "install",
     "integrate", "update", "permissions", "trust", "doctor",
@@ -2221,7 +2220,7 @@ def test_double_dash_preserves_literal_help_argument(t_mod, monkeypatch):
     assert seen == ["--help"]
 
 
-_INTERNAL_COMMANDS = ("session-rows", "land", "kill-owner", "new-land", "mcp", "__resolve")
+_INTERNAL_COMMANDS = ("session-rows", "land", "kill-owner", "new-land", "__resolve")
 
 
 @pytest.mark.parametrize("argv", [[], ["help"], ["-h"], ["--help"], ["version"], ["--bad-option"]])
@@ -2244,7 +2243,7 @@ def test_command_discovery_only_advertises_public_verbs(t_mod, capsys, monkeypat
         choices = output.split("choose from ", 1)[1]
         assert "session," in choices and "system" in choices
     elif argv != ["--bad-option"]:
-        assert "session" in output and "system" in output
+        assert "session" in output and "system" in output and "mcp" in output
 
 
 @pytest.mark.parametrize("command", _INTERNAL_COMMANDS)
@@ -2314,5 +2313,5 @@ def test_list_columns_align_interface_model_and_context(t_mod, capsys, remote):
         assert header.index(heading) == body.index(content)
     assert 'Codex desktop workspace' not in body
     if not remote:
-        assert 'follow release instructions if the conversation is still loaded' in lines[-1]
-        assert 't open <repo> <slot> --cli' in lines[-1]
+        assert '--app' not in lines[-1]
+        assert 't open <repo> <slot>' in lines[-1]

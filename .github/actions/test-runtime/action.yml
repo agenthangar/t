@@ -1,0 +1,62 @@
+name: Test runtime
+description: Install the pinned Python and real terminal test dependencies
+inputs:
+  fzf:
+    description: Pinned fzf release
+    required: true
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+    - name: Runtime dependencies
+      shell: bash
+      run: |
+        if [ "$RUNNER_OS" = Linux ]; then
+          sudo apt-get update -qq && sudo apt-get install -y -qq zsh tmux lsof
+        else
+          command -v tmux >/dev/null || brew install tmux
+        fi
+        python -m pip install -r requirements-dev.txt
+    - name: Pinned fzf
+      shell: bash
+      env:
+        FZF_VERSION: ${{ inputs.fzf }}
+      run: |
+        set -euo pipefail
+        version=$FZF_VERSION
+        case "$(uname -s)" in
+          Darwin) platform=darwin ;;
+          Linux) platform=linux ;;
+        esac
+        case "$(uname -m)" in
+          x86_64) arch=amd64 ;;
+          arm64|aarch64) arch=arm64 ;;
+        esac
+        extension=tar.gz
+        if [ "$platform" = darwin ] && [ "$version" = 0.44.1 ]; then extension=zip; fi
+        asset="fzf-${version}-${platform}_${arch}.${extension}"
+        tag="$version"
+        if [ "$version" = 0.74.5 ]; then tag="v$version"; fi
+        url="https://github.com/junegunn/fzf/releases/download/${tag}"
+        curl -fsSL --retry 3 "$url/$asset" -o "$RUNNER_TEMP/$asset"
+        curl -fsSL --retry 3 "$url/fzf_${version}_checksums.txt" -o "$RUNNER_TEMP/fzf-checksums.txt"
+        expected=$(awk -v asset="$asset" '$2 == asset {print $1}' "$RUNNER_TEMP/fzf-checksums.txt")
+        test -n "$expected"
+        actual=$(shasum -a 256 "$RUNNER_TEMP/$asset" | awk '{print $1}')
+        test "$actual" = "$expected"
+        mkdir -p "$RUNNER_TEMP/fzf-bin"
+        if [ "$extension" = zip ]; then
+          unzip -q "$RUNNER_TEMP/$asset" -d "$RUNNER_TEMP/fzf-bin"
+        else
+          tar -xzf "$RUNNER_TEMP/$asset" -C "$RUNNER_TEMP/fzf-bin"
+        fi
+        echo "$RUNNER_TEMP/fzf-bin" >> "$GITHUB_PATH"
+        "$RUNNER_TEMP/fzf-bin/fzf" --version
+    - name: Required real terminal dependencies
+      shell: bash
+      run: |
+        command -v fzf
+        command -v tmux
+        command -v zsh

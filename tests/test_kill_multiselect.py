@@ -338,7 +338,8 @@ def test_kill_picker_remote_rows_keep_host_and_route_each_selection(zsh, force):
     assert "mini.example" in calls and "studio.example" in calls
     assert "zsh -lic" in calls
     assert "api" in calls and "3" in calls and "4" in calls
-    assert "-y" in calls
+    assert "_dev_kill api 3 1" in calls
+    assert "_dev_kill api 4 1" in calls
     assert 'mini' in Path(f'{log}.all').read_text()
 
 
@@ -397,3 +398,41 @@ def test_picker_enter_authorizes_foreground_selection(zsh):
     result = zsh(code, _tty=True, FAKE_DETAILS=row, FZF_LOG=str(log), FZF_SELECT_ALL='1')
     assert result.returncode == 0, result.stdout
     assert 'FG api:p123 1' in result.stdout
+
+
+@pytest.mark.parametrize('label', ['api-3', 'api:abcdef12'])
+def test_selected_remote_close_cannot_fall_through_to_another_host(zsh, label):
+    result = zsh(r'''
+      typeset -gA REMOTE_HOSTS=(mini mini.example)
+      ssh() {
+        [[ $1 == -t && $2 == mini.example ]] || return 99
+        # Execute the real generated remote payload in a sandbox shell that
+        # starts with a different host configured. A bin-owned t kill route
+        # would reload it; selected close must invoke the shell helper directly.
+        local payload=${3#zsh -lic }
+        payload=${(Q)payload}
+        zsh -fc '
+          typeset -A REMOTE_HOSTS=(other other.example)
+          t() { print UNEXPECTED_BIN_DISPATCH; return 99; }
+          _dev_kill() { (( ${#REMOTE_HOSTS} == 0 )) || return 98; print "SLOT $*"; }
+          _dev_kill_fg() { (( ${#REMOTE_HOSTS} == 0 )) || return 98; print "FG $*"; }
+          eval "$1"
+        ' sandbox "$payload"
+      }
+      _dev_kill_selected $'mini\t''' + label + r'''\tdetached\tTask'
+    ''')
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert ('SLOT api 3 1' if '-' in label else 'FG api:abcdef12 1') in result.stdout
+    assert 'UNEXPECTED' not in result.stdout
+
+
+def test_selected_local_close_disables_remote_fallback(zsh):
+    result = zsh(r'''
+      typeset -gA REMOTE_HOSTS=(mini mini.example)
+      tmux() { return 0; }
+      _dev_kill() { (( ${#REMOTE_HOSTS} == 0 )) || return 98; print "CLOSE $*"; }
+      _dev_kill_selected $'local\tapi-3\tdetached\tTask'
+      print "RC=$? HOSTS=${#REMOTE_HOSTS}"
+    ''')
+    assert 'CLOSE api 3 1' in result.stdout
+    assert 'RC=0 HOSTS=1' in result.stdout

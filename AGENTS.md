@@ -24,8 +24,8 @@ must never open a picker or an automatic update prompt. Run
 `python3 scripts/lint_cli.py` to check these rules.
 
 Keep public commands in noun/verb families, with nested resources before verbs
-when a family has multiple resources. For example, use `t config workflow list`
-and `t config workflow edit`; flags select scope or format (`--repo ALIAS`,
+when a family has multiple resources. For example, use `t workflow list`
+and `t workflow edit`; flags select scope or format (`--repo ALIAS`,
 `--json`), not the resource or action. Retain old resource/mode flags only as
 hidden compatibility aliases, never as canonical examples or completion choices.
 The CLI lint must check nested registry leaves, parser routes, inventory, help,
@@ -38,11 +38,12 @@ the user's browser. Reuse the shared session picker for
 interactive issue selection; allow multiple independent issues to be selected,
 but never start a second live owner for one issue. Do not add a bare `t issue`
 target form or a new public single-word command except the reviewed `t share`
-context handoff command. Run `python3 scripts/lint_cli.py`
+context handoff command and the reviewed `t move` alias for `t session move`.
+Run `python3 scripts/lint_cli.py`
 after CLI changes; CI enforces this command contract.
 Command-group help must show repository argument positions and explain inference
 and selection. Keep `--repo` consistent across issue verbs. `t issue list` is a
-read-only display like `t session list`: scope to an explicit or current repo,
+read-only display: scope to an explicit or current repo,
 or show all registered GitHub repositories outside a checkout; `-a`/`--all`
 widens the view from inside a checkout. Keep `--state all` independent of repo
 scope. List must never open a picker. JSON, remote scanners, and non-interactive
@@ -56,6 +57,10 @@ or issue creation cannot be verified, resolve that before implementation.
 
 Work in a per-session worktree on `dev/t-<slot>` or a `cursor/*` feature branch.
 The canonical checkout is the live release on `main`; never develop or commit there.
+Development availability must remain scoped to the session's worktree. Never
+relink shared commands to a development worktree or combine other sessions' branches
+for a preview. The installed source selector automatically chooses the current
+t worktree's executable and shell helpers; outside it, canonical t remains active.
 
 When ready, commit, push, and open a PR to `main`. Immediately enable squash
 auto-merge with `gh pr merge <number> --auto --squash`. Verify state,

@@ -51,7 +51,7 @@ def app(history, store, tmp_path, monkeypatch, t_mod):
         return None, None
 
     cfg = SimpleNamespace(repos={'repo': str(repo)}, hosts={}, worktree_root=str(worktrees.parent),
-                          repo_of_dir=repo_of_dir)
+                          repo_of_dir=repo_of_dir, handoff_for=lambda agent: 'native' if agent == 'codex' else 't')
     value = history.HistoryCommand(cfg, {'_t_source_root': lambda: str(ROOT),
                                          '_parse_rows': lambda *a, **k: [],
                                          '_table_lines': t_mod._table_lines}, store)
@@ -788,9 +788,23 @@ def test_resume_candidates_refresh_all_hosts_and_deduplicate_sources(app, store,
     assert len(rows) == 1
     fields = rows[0].split('\t')
     assert fields[1:5] == ['repo', '42', 'same-sid', '/different/home/trees/old/old-42']
-    assert fields[7:] == ['remote', 'codex', '-', 'org/repo']
+    assert fields[7:] == ['remote', 'codex', '-', 'org/repo', 'NONE']
     with pytest.raises(ValueError, match='unknown repository'):
         list(app.resume_candidates(['missing']))
+
+
+def test_resume_candidates_match_any_recorded_slot_association(app, store, monkeypatch):
+    store.merge(conversation(sources=[dict(host='local', path='/saved.jsonl')], associations=[
+        dict(workspace='/trees/repo-3', slot='3', host='local', observed=10),
+        dict(workspace='/trees/repo-8', slot='8', host='local', observed=20),
+    ]))
+    monkeypatch.setattr(app, 'discover', lambda *args, **kwargs: None)
+    monkeypatch.setattr(app, 'refresh', lambda *args: None)
+    assert list(app.resume_candidates(['repo']))[0].split('\t')[2] == '8'
+    rows = list(app.resume_candidates(['repo'], slot='3'))
+    assert len(rows) == 1
+    assert rows[0].split('\t')[2:5] == ['3', 'same-sid', '/trees/repo-3']
+    assert list(app.resume_candidates(['repo'], slot='99')) == []
 
 
 @pytest.mark.parametrize('child_source', [{'source': {'subagent': {'thread_spawn': {}}}}, {'thread_source': 'subagent'}])
@@ -811,3 +825,38 @@ def test_resume_discovery_excludes_child_rollouts_and_keeps_turn_evidence(app, c
     # A full history scan must use its separate cache and retain the same turn.
     app.discover('repo')
     assert app.records('repo')[0]['last_turn'] == found[0]['last_turn']
+
+
+@pytest.mark.parametrize('states,expected', [([], 'NONE'), (['MERGED'], 'MERGED'),
+    (['MERGED', 'MERGED'], 'MERGED'), (['MERGED', 'OPEN'], 'MIXED'),
+    (['MERGED', None], 'MIXED'), ([None], 'UNKNOWN'), (['CLOSED'], 'CLOSED')])
+def test_resume_candidate_pr_state_is_cache_only(app, store, history, monkeypatch, states, expected):
+    refs = [dict(repo='org/repo', number=i + 1, url=f'https://github.com/org/repo/pull/{i + 1}', state=state)
+            for i, state in enumerate(states)]
+    store.merge(conversation(prs=refs, sources=[dict(host='local', path='/saved.jsonl')],
+                             associations=[dict(workspace='/trees/repo-3', slot='3', host='local')]))
+    monkeypatch.setattr(app, 'discover', lambda *args, **kwargs: None)
+    monkeypatch.setattr(app, 'refresh', lambda *args: None)
+    monkeypatch.setattr(history, 'run', lambda *args, **kwargs: pytest.fail('PR status must not fetch'))
+    if states == ['MERGED']:
+        store.db.execute('insert into prs values (?,?,?)', ('org/repo#1', 1, json.dumps({'state': 'OPEN'})))
+        store.db.commit()
+        expected = 'OPEN'  # The status cache overrides older transcript evidence.
+    fields = list(app.resume_candidates(['repo']))[0].split('\t')
+    assert fields[10:] == ['org/repo', expected]
+
+
+@pytest.mark.parametrize('state', ['MERGED', 'OPEN', 'CLOSED', 'garbage'])
+def test_resume_history_reuses_legacy_pr_cache_and_keeps_numbers(app, store, history, monkeypatch, state):
+    ref = dict(repo='org/repo', number=42, url='https://github.com/org/repo/pull/42')
+    store.merge(conversation(prs=[ref], sources=[dict(host='remote', path='/saved.jsonl')],
+                             associations=[dict(workspace='/trees/repo-3', slot='3', host='remote')]))
+    cache = Path(os.environ['XDG_CACHE_HOME']) / 'claude-sessions/pr/org#repo#42'
+    cache.parent.mkdir(parents=True)
+    cache.write_text(state)
+    monkeypatch.setattr(app, 'discover', lambda *args, **kwargs: None)
+    monkeypatch.setattr(app, 'refresh', lambda *args: None)
+    monkeypatch.setattr(history, 'run', lambda *args, **kwargs: pytest.fail('cache-only PR status'))
+    fields = list(app.resume_candidates(['repo']))[0].split('\t')
+    assert '#42[' in fields[6]
+    assert fields[11] == (state if state != 'garbage' else 'UNKNOWN')

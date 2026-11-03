@@ -26,6 +26,7 @@ _resolve_repo = runpy.run_path(str(Path(__file__).with_name("t_repos.py")))["res
 VERSION = 1
 PARSER_VERSION = 6
 _DISPLAY = runpy.run_path(str(Path(__file__).with_name('t_session_details.py')))
+_RESUME_SOURCE = runpy.run_path(str(Path(__file__).with_name('t_resume_source.py')))
 display_width = _DISPLAY['display_width']
 clip_columns = _DISPLAY['clip_columns']
 wrap_columns = _DISPLAY['wrap_columns']
@@ -657,8 +658,52 @@ class HistoryCommand:
         self.repository_proofs = {}
         self.fresh_repository_proofs = set()
         self.strict_identity = False
+        self.error, self.run, self.spinner = HistoryError, run, _spinner
+        self.validate, self.generation, self.slug = validate, generation, slug
         self.catalog_repositories = {}
         self.local_identities = {}
+        self.diagnostics_enabled = False
+        self.auth_checked = False
+        self.auth_targets = set()
+        self.diagnostics = {}
+
+    @_spinner('Checking GitHub authentication')
+    def check_auth(self):
+        """Probe effective credentials once, without prompting or changing auth state."""
+        if self.auth_checked or not self.diagnostics_enabled:
+            return
+        self.auth_checked = True
+        env = {k: v for k, v in os.environ.items() if not k.startswith('COV_CORE_')}
+        env.update(GH_PROMPT_DISABLED='1', GH_HOST='github.com')
+        try:
+            result = subprocess.run(['gh', 'api', '--hostname', 'github.com', 'user', '--silent'],
+                                    env=env, capture_output=True, text=True, timeout=3,
+                                    stdin=subprocess.DEVNULL, start_new_session=True)
+        except (OSError, subprocess.TimeoutExpired):
+            return
+        error = result.stderr.lower()
+        if result.returncode and (re.search(r'\bhttp\s+401\b', error) or
+                'bad credentials' in error or 'requires authentication' in error or
+                'to get started with github cli' in error or
+                'not logged into any github hosts' in error):
+            self.diagnostics['local'] = 'github_auth_failed'
+
+    def import_diagnostics(self, payload, host):
+        # Codes only: remote prose and claimed host names are never trusted.
+        if self.diagnostics_enabled and isinstance(payload, list) and any(
+                isinstance(item, dict) and item.get('code') == 'github_auth_failed'
+                for item in payload):
+            self.diagnostics[host] = 'github_auth_failed'
+
+    def diagnostic_rows(self):
+        return [dict(code=code, host=host) for host, code in self.diagnostics.items()]
+
+    def diagnostic_hosts(self):
+        # SSH targets disambiguate similarly named hosts; strip terminal controls.
+        return list(dict.fromkeys(clean(
+            os.environ.get('_T_RESUME_DESTINATION_HOST') or self.host
+            if host == 'local' else self.cfg.hosts.get(host, host))[:120]
+            for host in self.diagnostics))
 
     def repository_proof(self, identity):
         """Only authenticated GitHub evidence may equate different repository names."""
@@ -721,6 +766,7 @@ class HistoryCommand:
 
     def local_catalog(self):
         """Export host-local metadata, never evidence imported from another host."""
+        self.check_auth()
         repositories = {}
         for alias, path in self.cfg.repos.items():
             identity = self.canonical_identity(self.identity(alias))
@@ -764,7 +810,10 @@ class HistoryCommand:
                 row['repo'] = identity
                 repositories.setdefault(identity, dict(repo=identity, alias=identity, path=''))
                 rows.append(row)
-        return dict(version=1, repositories=list(repositories.values()), conversations=rows)
+        payload = dict(version=1, repositories=list(repositories.values()), conversations=rows)
+        if self.diagnostics_enabled:
+            payload['diagnostics'] = self.diagnostic_rows()
+        return payload
 
     def import_catalog(self, payload, host):
         if not isinstance(payload, dict) or payload.get('version') != 1:
@@ -804,6 +853,7 @@ class HistoryCommand:
             pending.append(row)
         for row in pending:
             self.store.merge(row)
+        self.import_diagnostics(payload.get('diagnostics'), host)
 
     def discover_catalog(self):
         local = self.local_catalog()
@@ -814,8 +864,17 @@ class HistoryCommand:
                 continue
             targets.add(target)
             try:
-                output = run(['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=3', target,
-                              'zsh -lic ' + shlex.quote('command t __history-catalog')], timeout=20)
+                command = 'command t __history-catalog'
+                try:
+                    output = run(['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=3', target,
+                                  'zsh -lic ' + shlex.quote(command +
+                                      (' --diagnostics' if self.diagnostics_enabled else ''))], timeout=20)
+                except HistoryError:
+                    if not self.diagnostics_enabled:
+                        raise
+                    # Preserve host-only repositories on peers predating diagnostics.
+                    output = run(['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=3', target,
+                                  'zsh -lic ' + shlex.quote(command)], timeout=20)
                 self.import_catalog(json.loads(output), host)
             except (HistoryError, ValueError, TypeError, AttributeError):
                 # Older hosts retain the scoped protocol for locally known repos.
@@ -1002,6 +1061,7 @@ class HistoryCommand:
                 continue
 
     def export(self, alias):
+        self.check_auth()
         rows = []
         for row in self.records(alias):
             row['associations'] = [a for a in row['associations'] if a.get('host') == 'local']
@@ -1019,9 +1079,23 @@ class HistoryCommand:
             targets.add(target)
             try:
                 # Metadata only: no transcript transfer or implicit remote calls on browse.
-                text = run(['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=3', target,
-                            'zsh -lic ' + shlex.quote('command t __history-export ' + shlex.quote(identity))], timeout=20)
+                command = 'command t __history-export ' + shlex.quote(identity)
+                diagnostic = self.diagnostics_enabled and target not in self.auth_targets
+                if diagnostic:
+                    self.auth_targets.add(target)
+                try:
+                    text = run(['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=3', target,
+                                'zsh -lic ' + shlex.quote(command + (' --diagnostics' if diagnostic else ''))], timeout=20)
+                except HistoryError:
+                    if not diagnostic:
+                        raise
+                    # Older peers only accept the original list protocol.
+                    text = run(['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=3', target,
+                                'zsh -lic ' + shlex.quote(command)], timeout=20)
                 rows = json.loads(text)
+                if diagnostic and isinstance(rows, dict) and rows.get('version') == 1:
+                    self.import_diagnostics(rows.get('diagnostics'), host)
+                    rows = rows.get('conversations')
                 if not isinstance(rows, list):
                     raise HistoryError('invalid remote history')
                 for row in rows:
@@ -1118,6 +1192,16 @@ class HistoryCommand:
             found = self.store.db.execute('select checked,record from prs where key=?', (key,)).fetchone()
             if found:
                 cached[(repo, number)] = json.loads(found[1])
+            # Resume's ordinary transcript rows use this shared legacy cache.
+            # Reuse newer cached evidence for swept/remote history as well.
+            legacy = Path(os.environ.get('XDG_CACHE_HOME', str(Path.home() / '.cache'))) / 'claude-sessions/pr' / (repo.replace('/', '#') + '#' + str(number))
+            try:
+                if not found or legacy.stat().st_mtime > found[0]:
+                    state = legacy.read_text().strip()
+                    if state in ('MERGED', 'OPEN', 'CLOSED'):
+                        cached[(repo, number)] = dict(state=state)
+            except OSError:
+                pass
             if refresh:
                 pending.setdefault(repo, []).append(number)
         for repo, numbers in pending.items():
@@ -1142,7 +1226,7 @@ class HistoryCommand:
         for row in rows:
             row['prs'] = [{**p, **cached.get((p['repo'], p['number']), {})} for p in row['prs']]
 
-    def pick(self, rows, alias, limit=50, page=1, query=''):
+    def pick(self, rows, alias, limit=50, page=1, query='', multi=False):
         with tempfile.TemporaryDirectory(prefix='t-history-') as directory:
             snapshot, state = Path(directory) / 'records.json', Path(directory) / 'page.json'
             private_write(snapshot, rows)
@@ -1158,7 +1242,7 @@ class HistoryCommand:
             snippet = '. "$1"; shift; _t_fzf_paginated "$@"'
             result = subprocess.run(['sh', '-c', snippet, 't-history', str(Path(self.root) / 'ui/fzf.sh'),
                     str(header), str(rows_file), helper, helper + ' details {1}', query,
-                    'history ' + alias + '> '],
+                    'history ' + alias + '> ', *(['multi'] if multi else [])],
                     stdout=subprocess.PIPE, text=True,
                     env={k: v for k, v in os.environ.items() if not k.startswith('COV_CORE_')})
             if result.returncode in (1, 130):
@@ -1171,16 +1255,30 @@ class HistoryCommand:
                 return None, key, query
             if len(lines) < 3:
                 return None, 'cancel', query
-            index = int(lines[2].split('\t')[0])
-            if not 0 <= index < len(rows):
-                raise HistoryError('invalid selection')
             settings = json.loads(state.read_text())
             matching, _ = page_rows(rows, query, limit, settings['page'])
-            selected = rows[index]
-            expected = f'{index}\t{format_row(selected, settings.get("width", 80))}\t{clean(json.dumps(selected, ensure_ascii=False))}'
-            if settings['query'] != query or selected not in matching or lines[2] != expected:
+            if settings['query'] != query:
                 return None, 'retry', query
-            return selected, key, query
+            selected, identities = [], set()
+            for line in lines[2:]:
+                try:
+                    index = int(line.split('\t')[0])
+                except ValueError as error:
+                    raise HistoryError('invalid selection') from error
+                if not 0 <= index < len(rows):
+                    raise HistoryError('invalid selection')
+                row = rows[index]
+                expected = f'{index}\t{format_row(row, settings.get("width", 80))}\t{clean(json.dumps(row, ensure_ascii=False))}'
+                if row not in matching or line != expected:
+                    return None, 'retry', query
+                identity = (row['repo'], row['agent'], row['sid'])
+                if identity in identities:
+                    raise HistoryError('duplicate conversation selection')
+                identities.add(identity)
+                selected.append(row)
+            if not multi and len(selected) != 1:
+                raise HistoryError('select one conversation')
+            return selected if multi else selected[0], key, query
 
     def choose_slot(self, rows, alias):
         slots = sorted({a.get('slot') for row in rows for a in row['associations'] if a.get('slot')}, key=int)
@@ -1201,6 +1299,7 @@ class HistoryCommand:
                 return association, commit
         return associations[0] if associations else {}, ''
 
+
     def source(self, row):
         for source in sorted(row['sources'], key=lambda source: (source.get('updated', 0), source.get('size', 0)), reverse=True):
             if source.get('host') == 'local' and Path(source.get('path', '')).is_file():
@@ -1214,7 +1313,15 @@ class HistoryCommand:
                 destination = self.store.directory / 'transcripts' / row['agent'] / basename
                 destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
                 remote = self.cfg.hosts[source['host']] + ':' + source['path']
-                run(['rsync', '-a', '--protect-args', '--timeout=10', '-e', 'ssh -o BatchMode=yes -o ConnectTimeout=3', remote, str(destination)])
+                try:
+                    run(['rsync', '-a', '--protect-args', '--timeout=10', '-e', 'ssh -o BatchMode=yes -o ConnectTimeout=3', remote, str(destination)])
+                except HistoryError:
+                    # A cached validated copy remains usable while its host is offline.
+                    if destination.is_file():
+                        if not self.verify_source(self.store.scan(destination, row['agent']), row):
+                            raise HistoryError('cached transcript identity changed; no session started')
+                        return destination
+                    continue
                 if not self.verify_source(self.store.scan(destination, row['agent']), row):
                     raise HistoryError('selected transcript identity changed; no session started')
                 return destination
@@ -1228,16 +1335,50 @@ class HistoryCommand:
         workspaces = {a['workspace'] for a in row['associations']}
         return any(a['workspace'] in workspaces for a in value.get('associations', []))
 
-    def attach(self, owner):
+    def attach_command(self, owner):
         if owner.get('state') == 'app':
-            raise HistoryError('conversation is owned by the desktop app on ' + owner['host'] + '; close and release it there, then use t app pull for the verified handoff')
+            raise HistoryError('conversation is owned by the desktop app on ' + owner['host'] + '; release it there, then retry t session history')
         if ':' in owner['slot']:
             raise HistoryError('conversation is already running in foreground ' + owner['slot'] + ' on ' + owner['host'] + '; return to that terminal or use t session push there for an explicit handoff')
         # Attach-only helper rechecks exact ID/path/agent and has no launch fallback.
         snippet = '_t_history_attach ' + shlex.join([owner['slot'], owner['sid'], owner['cwd'], owner['agent']])
         if owner['host'] == 'local':
-            return subprocess.call(self.shell(snippet))
-        return subprocess.call(['ssh', '-t', self.cfg.hosts[owner['host']], 'zsh -lic ' + shlex.quote(snippet)])
+            return self.shell(snippet)
+        return ['ssh', '-t', self.cfg.hosts[owner['host']], 'zsh -lic ' + shlex.quote(snippet)]
+
+    def attach(self, owner):
+        return subprocess.call(self.attach_command(owner))
+
+    def resume_many(self, alias, rows):
+        owners = []
+        for index, row in enumerate(rows):
+            try:
+                owner = self.resume(alias, row, return_owner=True)
+                self.attach_command(owner)  # Reject unsupported owners before tab handling.
+                owners.append(owner)
+            except HistoryCancelled:
+                print(f'Resume cancelled: {row["agent"]} {row["sid"]}', file=sys.stderr)
+                for owner in owners:
+                    print('Already resumed; attach: ' + shlex.join(self.attach_command(owner)), file=sys.stderr)
+                print(f'Not attempted: {len(rows) - index - 1} selection(s)', file=sys.stderr)
+                return 130
+            except (HistoryError, OSError, ValueError) as error:
+                print(f'Resume stopped after an error\nSelection: {row["agent"]} {row["sid"]}\nReason: {error}', file=sys.stderr)
+                print('Retry selection: t session history ' + shlex.quote(alias), file=sys.stderr)
+                for owner in owners:
+                    print('Already resumed; attach: ' + shlex.join(self.attach_command(owner)), file=sys.stderr)
+                print(f'Not attempted: {len(rows) - index - 1} selection(s)', file=sys.stderr)
+                return 1
+        for owner in owners[1:]:
+            command = shlex.join(self.attach_command(owner))
+            if subprocess.call(self.shell('_dev_open_tab ' + shlex.quote(command))):
+                print('Could not open tab; attach: ' + command, file=sys.stderr)
+                for ready in owners:
+                    print('Already resumed; attach: ' + shlex.join(self.attach_command(ready)), file=sys.stderr)
+                return 1
+        if owners:
+            return self.attach(owners[0])
+        return 0
 
     def fallback(self, alias):
         options = [dict(repo=self.identity(alias), sid=name, agent='revision', title=title, updated=0, associations=[], sources=[], prs=[], mentions=[]) for name, title in [('main', 'Historical revision unavailable: start from current main'), ('cancel', 'Cancel and keep history available')]]
@@ -1335,16 +1476,17 @@ class HistoryCommand:
             raise HistoryError('workspace is being prepared by another history action') from error
         self.reservation = marker
 
-    def codex_released(self, row, source):
+    def codex_released(self, row, source, *, workspace=None):
         if row['agent'] != 'codex':
             return
         value = transcript(source, 'codex')
-        helper = runpy.run_path(str(Path(self.root) / 'libexec/t_app_handoff.py'))
+        helper = runpy.run_path(str(Path(self.root) / 'libexec/t_codex_ownership.py'))
         try:
             helper['assert_released']('Codex', row['sid'], value['associations'][0]['workspace'], self.api['_run'],
+                ownership_cwd=workspace,
                 codex_home=str(Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex')),
                 rollout=str(source), archived=bool(row.get('archived')) and source.resolve().is_relative_to((Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex') / 'archived_sessions').resolve()),
-                retry='Release this conversation in its owning app or terminal, then reopen history.')
+                retry='Retry: t session history, then select the conversation again.')
         except ValueError as error:
             raise HistoryError(str(error)) from error
 
@@ -1439,7 +1581,7 @@ class HistoryCommand:
         if row['agent'] == 'codex':
             codex_home = str(Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex'))
             if row.get('archived'):
-                helper = runpy.run_path(str(Path(self.root) / 'libexec/t_app_handoff.py'))
+                helper = runpy.run_path(str(Path(self.root) / 'libexec/t_codex_ownership.py'))
                 value = self.store.scan(source, 'codex')
                 cwd = value['associations'][0]['workspace']
                 # The validated stdio unarchive contract requires its original cwd.
@@ -1460,7 +1602,13 @@ class HistoryCommand:
             self.publish_transcript(target, data, row)
         return target
 
-    def resume(self, alias, row, *, detached=False, prepare_only=False):
+    def resume_source(self, request):
+        return _RESUME_SOURCE['export'](self, request)
+
+    def reconcile_source(self, alias, row):
+        return _RESUME_SOURCE['reconcile'](self, alias, row)
+
+    def resume(self, alias, row, *, detached=False, prepare_only=False, return_owner=False):
         owners = self.owners(True)
         matches = [o for o in owners if o['sid'] == row['sid'] and o['agent'] == row['agent']]
         if len(matches) > 1:
@@ -1468,7 +1616,7 @@ class HistoryCommand:
         if matches and detached:
             raise HistoryError('conversation became live; select its current owner again')
         if matches:
-            return self.attach(matches[0])
+            return matches[0] if return_owner else self.attach(matches[0])
         destination_alias = alias if alias in self.cfg.repos else self.repository_alias(row['repo'])
         if not self.worktree_enabled(destination_alias):
             raise HistoryError('repository opts out of worktree-per-session; no saved conversation resumed')
@@ -1478,6 +1626,7 @@ class HistoryCommand:
         if not self.same_repository(self.identity(alias), row['repo']):
             raise HistoryError('repository identity changed before resume')
         association, revision = self.revision(row)
+        revision = self.reconcile_source(alias, row) or revision
         if not revision or run(['git', '-C', self.cfg.repos[alias], 'rev-parse', '--verify', revision + '^{commit}'], optional=True).strip() != revision:
             revision = self.fallback(alias)
         common = run(['git', '-C', self.cfg.repos[alias], 'rev-parse', '--git-common-dir']).strip()
@@ -1490,7 +1639,7 @@ class HistoryCommand:
                 raise HistoryError('conversation became live while selecting; rerun history to attach to its owner')
             try:
                 destination, slot, created = self.destination(alias, row, revision, owners)
-                print(f'Resume {row["agent"]} {row["sid"]} in {destination} at {revision}', file=sys.stderr)
+                print(f'Preparing {row["agent"]} {row["sid"]} in {destination} at {revision}', file=sys.stderr)
                 with self.launch_claims(destination, row['sid']):
                     final_owners = self.owners(True)
                     if any(owner['sid'] == row['sid'] or os.path.realpath(owner['cwd']) == os.path.realpath(destination) for owner in final_owners):
@@ -1502,7 +1651,9 @@ class HistoryCommand:
                         raise HistoryError('destination revision changed before restore; no conversation launched')
                     if not self.same_repository(self.identity(alias), row['repo']):
                         raise HistoryError('repository identity changed before restore')
-                    self.codex_released(row, source)
+                    # The rollout retains its creation cwd even after that slot
+                    # is reused. Check sibling writers in our claimed destination.
+                    self.codex_released(row, source, workspace=destination)
                     self.install_transcript(row, source, destination)
                     # Python holds the same POSIX cwd/SID locks as the zsh wrapper;
                     # use the claimed helper, never recursively acquire those locks.
@@ -1518,10 +1669,12 @@ class HistoryCommand:
             return f'dev-{alias}-{slot}\t{destination}'
         if detached:
             return f'dev-{alias}-{slot}'
-        return self.attach(dict(host='local', slot=f'{alias}-{slot}', sid=row['sid'], agent=row['agent'], cwd=destination, state='active'))
+        owner = dict(host='local', slot=f'{alias}-{slot}', sid=row['sid'], agent=row['agent'], cwd=destination, state='active')
+        return owner if return_owner else self.attach(owner)
 
-    def resume_candidates(self, aliases):
+    def resume_candidates(self, aliases, slot=None):
         """Private adapter: display aliases and immutable selection keys differ."""
+        self.check_auth()
         all_repositories = aliases == ['--all'] or not aliases
         if all_repositories:
             identities = list(self.discover_catalog())
@@ -1545,17 +1698,27 @@ class HistoryCommand:
             if not self.worktree_enabled(local_alias):
                 continue
             alias = local_alias or identity
-            for row in self.records(alias):
+            records = self.records(alias)
+            self.pr_states(records)  # Cache only; picker reloads never fetch PR state.
+            for row in records:
                 key = (identity, row['agent'], row['sid'])
                 if key in seen or not row.get('title') or not row.get('sources') or not row.get('associations'):
                     continue
                 seen.add(key)
-                association = max(row['associations'], key=lambda a: a.get('observed', 0))
+                associations = [a for a in row['associations'] if slot is None or a.get('slot') == slot]
+                if not associations:
+                    continue
+                association = max(associations, key=lambda a: a.get('observed', 0))
                 source = max(row['sources'], key=lambda s: (s.get('updated', 0), s.get('size', 0)))
                 updated = int(row.get('updated', 0))
                 when = datetime.datetime.fromtimestamp(updated).strftime('%b %d %H:%M')
+                states = {pr.get('state') or 'UNKNOWN' for pr in row['prs']}
+                pr_state = next(iter(states)) if len(states) == 1 else 'MIXED' if states else 'NONE'
+                title = clean(row['title'])
+                if row['prs']:
+                    title += ' · ' + pr_summary(row['prs'])
                 yield '\t'.join(map(str, [updated, alias, association.get('slot') or '-', row['sid'],
-                    association['workspace'], when, clean(row['title']), source.get('host') or '-', row['agent'], row.get('last_turn', '-'), identity]))
+                    association['workspace'], when, title, source.get('host') or '-', row['agent'], row.get('last_turn', '-'), identity, pr_state]))
 
     def execute(self, args):
         alias, slot = self.scope(args.target)
@@ -1592,7 +1755,7 @@ class HistoryCommand:
             return 0
         query = ''
         while rows:
-            row, key, query = self.pick(rows, alias + (f' {slot}' if slot else ''), args.limit, args.page, query)
+            row, key, query = self.pick(rows, alias + (f' {slot}' if slot else ''), args.limit, args.page, query, True)
             if key == 'retry':
                 continue
             if key == 'ctrl-r':
@@ -1603,14 +1766,17 @@ class HistoryCommand:
                 continue
             if not row:
                 return 130
+            if isinstance(row, list):
+                if len(row) > 1:
+                    return self.resume_many(alias, row)
+                row = row[0]
             try:
                 return self.resume(alias, row)
             except HistoryCancelled:
                 return 130
             except (HistoryError, OSError, ValueError) as error:
                 print(f't history: {error}', file=sys.stderr)
-                rows = self.records(alias, slot, owners)
-                self.pr_states(rows)
+                return 1
         print('No retained conversations for this slot.')
         return 0
 

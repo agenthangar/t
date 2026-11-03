@@ -132,8 +132,7 @@ def test_bounded_metadata_and_paths(tmp_path,monkeypatch):
     with pytest.raises(ValueError):i.document(put(tmp_path/'list.json','[]'))
     for relative in ['../escape','/abs','']:
         with pytest.raises(ValueError):i.within(tmp_path,relative)
-    monkeypatch.setattr(i,'tomllib',None)
-    with pytest.raises(ValueError):i.document(put(tmp_path/'x.toml',''))
+    assert i.document(put(tmp_path/'x.toml','version = \"1.0\"')) == {'version':'1.0'}
 
 
 def test_absent_tool_metadata_and_unmapped_agent(repo,monkeypatch):

@@ -102,6 +102,13 @@ if [[ -f $history_helper ]]; then
   python3 "$history_helper" record "$sid" "$agent" "$cwd" "$tx" launch >/dev/null 2>&1 || true
 fi
 
+# Retry saved workflow revisions at launch/resume without injecting turns or
+# relying on dotfiles/launchd. The helper is bounded and never blocks a launch.
+workflow_helper="${history_helper%/*}/t_workflow_sync.py"
+if [[ -f $workflow_helper ]]; then
+  python3 "$workflow_helper" >/dev/null 2>&1 || true
+fi
+
 # Codex: remember where this session's rollout lives (sid → transcript_path). The
 # rollouts/ subdir is a sibling of opened/ for the same reason — the registry prune
 # globs plain files only, so it is never swept as a dead pid.

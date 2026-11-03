@@ -93,10 +93,10 @@ def test_open_repo_filter_keeps_desktop_and_cli(zsh, tmp_path):
       _t_dev() { print UNEXPECTED_CLI; }
       _t_open api --attached
     ''', _tty=True, **env)
-    assert result.returncode == 0, result.stdout
+    assert result.returncode == 1, result.stdout
     rows = (tmp_path / 'picker.log').read_text().splitlines()
     assert [row.split('\t')[1] for row in rows] == ['api-2', 'api-4']
-    assert 'APP api 4 --app' in result.stdout
+    assert 'retired integration' in result.stdout
     assert 'UNEXPECTED' not in result.stdout
 
 
@@ -109,12 +109,11 @@ def test_open_mixed_batch_routes_each_interface_before_first_attach(zsh, tmp_pat
       _dev_open_tab() { print -r -- "TAB $*"; }
       _t_open --attached
     ''', _tty=True, **env)
-    assert result.returncode == 0, result.stdout
-    assert 'APP api 4 --app' in result.stdout
+    assert result.returncode == 1, result.stdout
+    assert 'retired integration' in result.stdout
     assert 'TAB t open web 6 --cli --local' in result.stdout
     assert 'TAB t open web:abcdef12 --cli --local' in result.stdout
     assert 'CLI api 2 --local' in result.stdout
-    assert result.stdout.index('APP') < result.stdout.index('CLI')
     assert result.stdout.index('TAB') < result.stdout.index('CLI')
 
 
@@ -162,8 +161,8 @@ def test_picker_formatter_preserves_full_metadata_and_legacy_rows(t_mod, monkeyp
     assert fallback[0].split('\t')[3].startswith('api  -  ✱ claude')
 
 
-@pytest.mark.parametrize('args,actions,selected,attached', [('', 'all', 'api-2', 'all'),
-                                                            ('--attached', 'default', 'web-6', 'unattached')])
+@pytest.mark.parametrize('args,actions,selected,attached', [('', 'off', 'api-2', 'OFF'),
+                                                            ('--attached', 'on', 'web-6', 'ON: unattached')])
 def test_open_hotkeys_show_all_and_restore_defaults(zsh, tmp_path, args, actions, selected, attached):
     env = picker_stub(tmp_path, selected)
     result = zsh(ROWS + r'''
@@ -172,7 +171,7 @@ def test_open_hotkeys_show_all_and_restore_defaults(zsh, tmp_path, args, actions
     assert result.returncode == 0, result.stdout
     assert 'CLI ' + selected.replace('-', ' ') + ' --local' in result.stdout
     header = (tmp_path / 'picker.log.header').read_text()
-    assert 'View: ' + attached in header
+    assert 'Filters ' + attached in header
     assert header.splitlines()[-1].endswith('WORKING ON')
 
 
@@ -181,12 +180,13 @@ def test_open_attached_view_selects_only_attached_after_show_all(zsh, tmp_path):
     result = zsh(ROWS + r'''
       _t_dev() { print -r -- "CLI $*"; }
       _t_open
-    ''', _tty=True, PICK_ACTIONS='all,first', **env)
+    ''', _tty=True, PICK_ACTIONS='first,off,on', **env)
     assert result.returncode == 0, result.stdout
     assert 'CLI api 2 --local' in result.stdout
     assert 'api-2' in (tmp_path / 'picker.log.step0').read_text()
-    assert 'web-6' not in (tmp_path / 'picker.log.step1').read_text()
-    assert 'View: attached' in (tmp_path / 'picker.log.header').read_text()
+    assert 'web-6' in (tmp_path / 'picker.log.step1').read_text()
+    assert 'web-6' not in (tmp_path / 'picker.log.step2').read_text()
+    assert 'Filters ON: attached' in (tmp_path / 'picker.log.header').read_text()
 
 
 def test_open_remote_picker_retains_model_and_selected_host(zsh, tmp_path):
@@ -258,15 +258,17 @@ def test_open_batch_tab_failure_reports_exact_attach_command(zsh):
       _t_open() { print -r -- "OPEN $*"; }
       _t_open_selected $'local\tapi-2\tdetached\tFirst\nlocal\tapi-4\tdetached\tSecond' '' ''
     ''')
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert 'Attach with: t open api 4 --cli --local' in result.stdout
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert 'Attach with: t open api 4 --cli --local' in result.stderr
     assert 'OPEN api 2 --cli --local' in result.stdout
 
 
 def test_open_help_describes_simple_picker(t_mod):
     parser = t_mod.build_parser()._subparsers._group_actions[0].choices['open']
     help_text = parser.format_help() + parser.help_details
-    assert 'Ctrl-T attached only' in help_text
+    assert 'Ctrl-F opens Filters' in help_text
+    assert 'Ctrl-A turns filters off' in help_text
+    assert 'Ctrl-L restores saved choices' in help_text
     assert '--new' in help_text
     assert 'Alt-N' not in help_text and 'LAST TURN' not in help_text
     assert 'Ctrl-/' not in help_text
@@ -299,3 +301,63 @@ def test_open_compact_layout_and_search(t_mod, monkeypatch, capsys, width, remot
         assert 'api-2' in first[4]
     if width >= 120:
         assert '⬡ codex' in first[4] and '› cli' in first[4]
+
+
+@pytest.mark.parametrize('status', [0, 7])
+def test_progress_animation_keeps_exit_hooks_in_parent(zsh, status):
+    result = zsh(r'''
+      autoload -Uz add-zsh-hook
+      terminal_save() { print -u2 -- "SESSION_SAVE subshell=$ZSH_SUBSHELL"; }
+      TRAPEXIT() { print -u2 -- "EXIT_TRAP subshell=$ZSH_SUBSHELL"; }
+      add-zsh-hook zshexit terminal_save
+      _T_PROGRESS=1
+      work() { sleep 0.4; print -u2 OPERATION_DIAGNOSTIC; return ''' + str(status) + r'''; }
+      _t_with_progress 'Testing animation' work
+      print -r -- "OPERATION_RC=$?"
+    ''', _tty=True, TERM='xterm-256color')
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, output
+    assert output.count('SESSION_SAVE') == 1, output
+    assert output.count('EXIT_TRAP') == 1, output
+    assert 'SESSION_SAVE subshell=0' in output
+    assert 'EXIT_TRAP subshell=0' in output
+    assert f'OPERATION_RC={status}' in output
+    assert 'OPERATION_DIAGNOSTIC' in output
+
+
+@pytest.mark.parametrize('close_rc', [0, 1, 130])
+def test_open_kill_callback_keeps_caller_context_and_never_starts_fresh(zsh, close_rc):
+    result = zsh(ROWS + r'''
+      _t_fzf_filtered() {
+        zsh -f "$T_PICKER_KILL_CALLBACK" "$(print -r -- "$2" | head -1)"
+        print -u2 -- "CLOSE_RC=$?"
+        return 130
+      }
+      _dev_kill_selected() {
+        print -u2 -- "CLOSE $1"
+        return ''' + str(close_rc) + r'''
+      }
+      _t_dev() { print UNEXPECTED_FRESH; }
+      _t_open --attached
+    ''', _tty=True)
+    assert result.returncode == 130, result.stdout + result.stderr
+    assert f'CLOSE_RC={close_rc}' in result.stdout + result.stderr
+    assert 'CLOSE local' in result.stdout + result.stderr
+    assert 'UNEXPECTED' not in result.stdout
+
+
+def test_open_kill_stale_local_row_never_closes_remote(zsh):
+    result = zsh(ROWS + r'''
+      _t_fzf_filtered() {
+        zsh -f "$T_PICKER_KILL_CALLBACK" "$(print -r -- "$2" | head -1)"
+        print -u2 -- "CLOSE_RC=$?"
+        return 130
+      }
+      tmux() { return 1; }
+      _dev_kill() { print UNEXPECTED_KILL; }
+      _t_open --attached
+    ''', _tty=True)
+    assert result.returncode == 130
+    assert 'CLOSE_RC=1' in result.stdout + result.stderr
+    assert 'no longer here' in result.stdout + result.stderr
+    assert 'UNEXPECTED' not in result.stdout
