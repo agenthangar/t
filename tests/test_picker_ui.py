@@ -136,12 +136,14 @@ def picker():
                 picker_cmd = '_t_fzf_multi open "Saved sessions" --delimiter="$(printf "\\t")" --with-nth=-1 --prompt="multi > " < "$HOME/default"'
             prefix = f'. {shlex.quote(str(ROOT / "ui/fzf.sh"))}\n'
             redirect = ' > "$HOME/selected"'
-            if profile in ('public-open', 'public-open-all', 'public-open-kill', 'public-kill'):
+            if profile in ('public-open', 'public-open-cli', 'public-open-all', 'public-open-kill', 'public-kill'):
                 from test_open_picker import ROWS
                 shell = 'zsh -f'
                 env.update(T_NO_UPDATE_CHECK='1', T_NO_AUTORELOAD='1',
                            T_LOCAL_RC=str(root / 'local.zsh'))
                 raw = ROWS.replace(r'\tapp\tnone', r'\tapp\tactive') if empty else ROWS
+                if profile in ('public-open-cli', 'public-open-kill'):
+                    raw = raw.replace(r'\tapp\tnone', r'\tdetached\tnone')
                 prefix = (f'source {shlex.quote(str(ROOT / "t.plugin.zsh"))}\n'
                           'unset TMUX\n'
                           'DEV_REPOS[api]="$HOME/code/api"\n'
@@ -158,7 +160,7 @@ def picker():
                                '    _rows_before_kill "$@" | grep -v api-4\n'
                                '  else _rows_before_kill "$@"; fi\n'
                                '}\n'
-                               '_dev_app_slot_reserved() { return 0; }\n'
+                               'tmux() { [[ $1 == has-session ]] || command tmux "$@"; }\n'
                                '_dev_kill() { print -r -- "KILL $*" >> "$HOME/selected"; touch "$HOME/killed"; }\n')
                 if profile == 'public-kill':
                     prefix += 'cd "$HOME"\n_dev_kill_completed_labels() { print -rl api-4 web-6; }\n'
@@ -388,7 +390,7 @@ def test_open_abort_does_not_start_or_attach_sessions(picker, key):
 
 def test_open_ctrl_n_still_navigates_and_enter_opens_selection(picker):
     start, wait, keys, finish = picker
-    start(profile='public-open')
+    start(profile='public-open-cli')
     wait('1/1 (0)')
     keys('C-a')
     wait('2/2 (0)')

@@ -182,7 +182,7 @@ def test_build_archive_is_deterministic_and_runtime_only(tmp_path):
     assert "t/share/runners/broker.yml" in names
     assert "t/share/runners/sweeper.yml" in names
     assert "t/libexec/t_updates.py" in names
-    assert "t/libexec/t_app_handoff.py" in names
+    assert "t/libexec/t_codex_ownership.py" in names
     assert "t/libexec/t_share.py" in names
     assert "t/libexec/t_share_sessions.py" in names
     assert "t/libexec/t_share_flow.py" in names
@@ -190,7 +190,6 @@ def test_build_archive_is_deterministic_and_runtime_only(tmp_path):
     assert "t/libexec/t_share_launch.py" in names
     assert "t/libexec/t_share_ui.py" in names
     assert "t/zsh/share.zsh" in names
-    assert "t/libexec/vendor/mistune/LICENSE" in names
     assert "t/.t-release-version" in names
     assert "t/private.txt" not in names
     assert not any(name.startswith("t/tests/") or name.startswith("t/docs/") for name in names)

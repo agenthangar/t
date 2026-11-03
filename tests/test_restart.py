@@ -84,7 +84,7 @@ def run_shell(tmp_path, code):
 
 
 @pytest.mark.skipif(not shutil.which("zsh"), reason="zsh required")
-@pytest.mark.parametrize("scenario", ["normal", "dry", "missing", "changed", "desktop", "no_pid", "self",
+@pytest.mark.parametrize("scenario", ["normal", "dry", "missing", "changed", "no_pid", "self",
                                       "capture_failed", "race", "still_running", "pane_alive", "respawn_failed",
                                       "locked", "term_failed", "multiple_panes", "stopped_dead",
                                       "zombie", "unknown_state", "stat_failed", "shared_server",

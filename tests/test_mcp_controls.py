@@ -201,11 +201,11 @@ def test_generic_read_help_and_conditional_modes(controls, cfg, t_mod, monkeypat
     monkeypatch.setattr(controls.subprocess, 'run', lambda a, **kw: calls.append((a, kw)) or result('output'))
     for verb, args, added in [('read', ['api', '1'], '--dump'), ('history', ['api', '1'], '--json'),
                               ('goal', ['api', '1', 'new objective'], 'new objective'),
-                              ('view-plan', ['api', '1'], '1'), ('open-app', ['api', '1'], '1')]:
+                              ('view-plan', ['api', '1'], '1')]:
         assert controls.session_command(cfg, {'command': verb, 'arguments': args}, vars(t_mod))['output'] == 'output'
         assert calls[-1][0][-1] == added
         assert calls[-1][1]['stdin'] == subprocess.DEVNULL
-    for args in [['api', '1', '--fg'], ['api', '1', '--app'], ['api', '1', '--host=mini']]:
+    for args in [['api', '1', '--fg'], ['api', '1', '--host=mini']]:
         assert controls.session_command(cfg, {'command': 'open', 'arguments': args}, vars(t_mod))['status'] == 'terminal_required'
     assert 'usage:' in controls.session_command(cfg, {'command': 'list', 'arguments': ['--help']}, vars(t_mod))['output'].lower()
     monkeypatch.setattr(controls, 'shell_run', lambda *a, **kw: '/some/worktree\n')

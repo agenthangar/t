@@ -1,4 +1,4 @@
-"""Desktop handoff checks use isolated Codex state and synthetic writer locks."""
+"""CLI ownership checks use isolated Codex state and synthetic writer locks."""
 
 from contextlib import contextmanager
 import importlib.util
@@ -15,12 +15,12 @@ import pytest
 
 SID = "01234567-89ab-cdef-0123-456789abcdef"
 OTHER = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
-MODULE = Path(__file__).resolve().parent.parent / "libexec" / "t_app_handoff.py"
+MODULE = Path(__file__).resolve().parent.parent / "libexec" / "t_codex_ownership.py"
 
 
 @pytest.fixture
 def handoff():
-    spec = importlib.util.spec_from_file_location("t_app_handoff", MODULE)
+    spec = importlib.util.spec_from_file_location("t_codex_ownership", MODULE)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -142,10 +142,10 @@ def test_selected_lock_blocks_and_suggests_archive_for_reserved_worktree(handoff
     (target["cwd"] / ".git").write_text("gitdir: ../private-git\n")
     run, calls = process_table(gitdir=private)
     with locked(target["locks"] / f"{SID}.lock", tmp_path):
-        with pytest.raises(ValueError, match="Archive it.*app can stay open") as error:
+        with pytest.raises(ValueError, match="owning client") as error:
             handoff.assert_released(None, SID, str(target["cwd"]), run, **options(target))
-    assert "t will restore it" in str(error.value)
-    assert any(call[0] == "git" for call in calls)
+    assert "writer lock is held" in str(error.value)
+    assert not any(call[0] == "git" for call in calls)
     assert not any(call[0] == "ps" for call in calls)
 
 
@@ -176,7 +176,7 @@ def test_selected_lock_avoids_unsafe_archive_hint(handoff, target, tmp_path, uns
             handoff.assert_released(None, SID, str(cwd), run,
                                     **options(target, archived=unsafe == "archived"))
     assert "Archive it" not in str(error.value)
-    assert "background backend" in str(error.value)
+    assert "backend to release" in str(error.value)
 
 
 def test_modern_missing_target_lock_allows_unloaded_thread_with_other_backend(handoff, target):
@@ -288,165 +288,28 @@ def test_old_active_history_suggests_archive_in_reserved_worktree(handoff, targe
     (private / "t-app-slot").write_text("codex-app\n")
     (target["cwd"] / ".git").write_text("gitdir: ../private-git\n")
     run, _ = process_table("44 /opt/bin/codex app-server --listen stdio://", gitdir=private)
-    with pytest.raises(ValueError, match="Archive it.*app can stay open"):
+    with pytest.raises(ValueError, match="owning client"):
         handoff.assert_released(None, SID, str(target["cwd"]), run, **options(target))
 
 
-def test_cli_release_preflight_accepts_shared_writer_and_waits_for_exact_thread(
-        handoff, target, tmp_path):
-    path = target["locks"] / f"{SID}.lock"
-    code = ("import fcntl,sys; f=open(sys.argv[1], 'r'); "
-            "fcntl.flock(f, fcntl.LOCK_EX); print('ready', flush=True); sys.stdin.read()")
-    env = {"HOME": str(tmp_path), "PATH": os.environ.get("PATH", os.defpath)}
-    owner = subprocess.Popen([sys.executable, "-c", code, str(path)], env=env,
-                             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                             stderr=subprocess.PIPE, text=True)
-    timer = None
-    try:
-        assert owner.stdout.readline().strip() == "ready"
-        contract = handoff.preflight_cli_release(
-            SID, str(target["cwd"]), **options(target))
-        assert contract == "modern"
-        messages = []
-        timer = threading.Timer(0.05, owner.stdin.close)
-        timer.start()
-        handoff.wait_cli_released(SID, str(target["cwd"]), **options(target),
-                                  contract=contract, interval=0.01,
-                                  on_wait=lambda: messages.append("waiting"))
-        assert messages == ["waiting"]
-        assert owner.wait(timeout=3) == 0
-    finally:
-        if timer:
-            timer.join(timeout=3)
-        if owner.poll() is None:
-            owner.stdin.close()
-            owner.wait(timeout=3)
-        owner.stdout.close()
-        owner.stderr.close()
 
 
-def test_cli_release_old_history_needs_positive_lock_before_stop(handoff, target, tmp_path):
-    target["rollout"].write_text(json.dumps({"type": "session_meta", "payload": {
-        "id": SID, "cwd": str(target["cwd"]), "cli_version": "0.158.0"}}) + "\n")
-    with pytest.raises(ValueError, match="no verifiable writer-lock contract"):
-        handoff.preflight_cli_release(SID, str(target["cwd"]), **options(target))
-    with locked(target["locks"] / f"{SID}.lock", tmp_path):
-        contract = handoff.preflight_cli_release(SID, str(target["cwd"]),
-                                                 **options(target))
-        assert contract == "held"
-    (target["locks"] / f"{SID}.lock").unlink()
-    handoff.wait_cli_released(SID, str(target["cwd"]), **options(target),
-                              contract=contract, interval=0.01)
 
 
-def test_cli_release_timeout_preserves_selected_writer(handoff, target, tmp_path):
-    with locked(target["locks"] / f"{SID}.lock", tmp_path):
-        contract = handoff.preflight_cli_release(SID, str(target["cwd"]),
-                                                 **options(target))
-        events = []
-        with pytest.raises(ValueError, match="still loaded.*Retry: t open v 9 --app"):
-            handoff.wait_cli_released(SID, str(target["cwd"]), **options(target),
-                                      contract=contract, timeout=0.03, interval=0.01,
-                                      on_wait=lambda: events.append("waiting"),
-                                      retry="Retry: t open v 9 --app")
-        assert events == ["waiting"]
 
 
-@pytest.mark.parametrize("reserved", [False, True])
-@pytest.mark.parametrize("stage", ["preflight", "wait"])
-def test_cli_release_preflight_rejects_sibling_same_worktree(handoff, target, tmp_path, reserved, stage):
-    db = sqlite3.connect(target["home"] / "state_5.sqlite")
-    db.execute("create table threads (id text, cwd text)")
-    db.execute("insert into threads values (?, ?)", (OTHER, str(target["cwd"])))
-    db.commit()
-    db.close()
-    sibling = target["locks"] / f"{OTHER}.lock"
-    sibling.touch()
-    private = tmp_path / "private-git"
-    private.mkdir()
-    (target["cwd"] / ".git").write_text("gitdir: ../private-git\n")
-    if reserved:
-        (private / "t-app-slot").write_text("codex-app\n")
-    run, _ = process_table(gitdir=private)
-    with locked(sibling, tmp_path):
-        with pytest.raises(ValueError, match="another Codex conversation") as error:
-            check = handoff.preflight_cli_release if stage == "preflight" else handoff.wait_cli_released
-            extra = {} if stage == "preflight" else {"contract": "modern"}
-            check(SID, str(target["cwd"]), **options(target), **extra,
-                  run=run, retry="Retry: t open v 9 --app")
-        message = str(error.value)
-        assert OTHER in message
-        assert "Retry: t open v 9 --app" in message
-        assert ("Archive it in Codex" in message) is reserved
-        assert handoff._lock_held(str(sibling)) is True
 
 
-def test_cli_release_wait_rejects_unverified_contract(handoff, target):
-    with pytest.raises(ValueError, match="not verified before stopping"):
-        handoff.wait_cli_released(SID, str(target["cwd"]), **options(target))
 
 
-def test_blank_workspace_requires_zero_saved_threads_and_free_writers(
-        handoff, target, tmp_path):
-    db = sqlite3.connect(target["home"] / "state_5.sqlite")
-    db.execute("create table threads (id text, cwd text, archived integer, rollout_path text)")
-    db.commit()
-    handoff.assert_workspace_released(str(target["home"]), str(target["cwd"]))
-    sibling = target["locks"] / f"{OTHER}.lock"
-    sibling.touch()
-    with locked(sibling, tmp_path):
-        handoff.assert_workspace_released(str(target["home"]), str(target["cwd"]))
-        assert handoff._lock_held(str(sibling)) is True
-    db.execute("insert into threads values (?, ?, 0, ?)", (SID, str(target["cwd"]), str(target["rollout"])))
-    db.commit()
-    db.close()
-    with pytest.raises(ValueError, match="saved Codex conversation"):
-        handoff.assert_workspace_released(str(target["home"]), str(target["cwd"]))
 
 
-def test_blank_workspace_rejects_missing_codex_index(handoff, target):
-    with pytest.raises(ValueError, match="could not verify the empty desktop workspace"):
-        handoff.assert_workspace_released(str(target["home"]), str(target["cwd"]))
 
 
-def test_blank_workspace_rejects_missing_lock_contract_or_nonregular_index(
-        handoff, target):
-    target["locks"].joinpath(f"{SID}.lock").unlink()
-    target["locks"].rmdir()
-    with pytest.raises(ValueError, match="writer-lock directory is unavailable"):
-        handoff.assert_workspace_released(str(target["home"]), str(target["cwd"]))
-    target["locks"].mkdir()
-    (target["home"] / "state_5.sqlite").symlink_to(target["rollout"])
-    with pytest.raises(ValueError, match="conversation index is unavailable"):
-        handoff.assert_workspace_released(str(target["home"]), str(target["cwd"]))
 
 
-def test_blank_workspace_rejects_writer_from_other_index(handoff, target, tmp_path):
-    db5 = sqlite3.connect(target["home"] / "state_5.sqlite")
-    db5.execute("create table threads (id text, cwd text, archived integer, rollout_path text)")
-    db5.commit()
-    db5.close()
-    db6 = sqlite3.connect(target["home"] / "state_6.sqlite")
-    db6.execute("create table threads (id text, cwd text, archived integer, rollout_path text)")
-    db6.execute("insert into threads values (?, ?, 0, ?)", (OTHER, str(target["cwd"]), str(target["rollout"])))
-    db6.commit()
-    db6.close()
-    sibling = target["locks"] / f"{OTHER}.lock"
-    sibling.touch()
-    with locked(sibling, tmp_path):
-        with pytest.raises(ValueError, match="conversation in this worktree is still loaded"):
-            handoff.assert_workspace_released(str(target["home"]), str(target["cwd"]))
 
 
-def test_cli_pid_must_hold_exact_selected_lock(handoff, target, tmp_path):
-    path = target["locks"] / f"{SID}.lock"
-    with locked(path, tmp_path) as owner:
-        wrong, _ = process_table(lsof_pids=(owner,))
-        with pytest.raises(ValueError, match="selected Codex conversation is still loaded"):
-            handoff.assert_released(None, SID, str(target["cwd"]), wrong,
-                                    **options(target, cli_pid=owner + 1))
-        handoff.assert_released(None, SID, str(target["cwd"]), wrong,
-                                **options(target, cli_pid=owner))
 
 
 @pytest.mark.parametrize("index", ["state_5.sqlite", "state_6.sqlite"])
@@ -480,23 +343,6 @@ def test_unknown_held_sibling_fails_closed(handoff, target, tmp_path):
             handoff.assert_released(None, SID, str(target["cwd"]), run, **options(target))
 
 
-def test_handoff_records_unknown_writer_without_global_veto(handoff, target, tmp_path):
-    path = target["locks"] / f"{OTHER}.lock"
-    path.touch()
-    run, _ = process_table()
-    with locked(path, tmp_path):
-        unknown = set()
-        handoff.assert_released(None, SID, str(target["cwd"]), run,
-                                **options(target, unknown=unknown))
-        assert unknown == {OTHER}
-        unknown.clear()
-        assert handoff.preflight_cli_release(SID, str(target["cwd"]),
-                                             **options(target, unknown=unknown)) == "modern"
-        assert unknown == {OTHER}
-        unknown.clear()
-        handoff.wait_cli_released(SID, str(target["cwd"]),
-                                  **options(target, contract="modern", unknown=unknown))
-        assert unknown == {OTHER}
 
 
 @pytest.mark.parametrize("for_close", [False, True])
@@ -767,14 +613,6 @@ def test_bad_or_incomplete_sibling_index_fails_closed(handoff, target, tmp_path)
             handoff.assert_released(None, SID, str(target["cwd"]), run, **options(target))
 
 
-def test_unheld_sibling_lock_and_bad_cli_pid_do_not_claim_ownership(handoff, target, tmp_path):
-    (target["locks"] / f"{OTHER}.lock").touch()
-    run, _ = process_table()
-    handoff.assert_released(None, SID, str(target["cwd"]), run, **options(target))
-    with locked(target["locks"] / f"{SID}.lock", tmp_path):
-        with pytest.raises(ValueError, match="still loaded"):
-            handoff.assert_released(None, SID, str(target["cwd"]), run,
-                                    **options(target, cli_pid="not-an-int"))
 
 
 def test_other_cwd_owner_archive_guidance_is_guarded(handoff, target, tmp_path):
@@ -791,7 +629,7 @@ def test_other_cwd_owner_archive_guidance_is_guarded(handoff, target, tmp_path):
     path.touch()
     run, _ = process_table(gitdir=private)
     with locked(path, tmp_path):
-        with pytest.raises(ValueError, match="Archive that other conversation"):
+        with pytest.raises(ValueError, match="another Codex conversation"):
             handoff.assert_released(None, SID, str(target["cwd"]), run, **options(target))
 
 
@@ -810,22 +648,6 @@ def test_archive_path_and_invalid_ids_rejected(handoff, target):
                                  codex_home=str(target["home"]), rollout=str(target["rollout"]))
 
 
-def test_archive_hint_requires_regular_gitfile_and_valid_git_directory(handoff, target):
-    run, _ = process_table()
-    (target["cwd"] / ".git").mkdir()
-    assert not handoff._safe_archive_hint(str(target["cwd"]), run)
-    (target["cwd"] / ".git").rmdir()
-    (target["cwd"] / ".git").write_text("gitdir: ../private\n")
-    assert not handoff._safe_archive_hint(str(target["cwd"]), run)
-    private = target["home"] / "private"
-    private.mkdir()
-    marker = private / "t-app-slot"
-    marker.mkdir()
-    valid_git, _ = process_table(gitdir=private)
-    assert not handoff._safe_archive_hint(str(target["cwd"]), valid_git)
-    marker.rmdir()
-    marker.write_text("wrong\n")
-    assert not handoff._safe_archive_hint(str(target["cwd"]), valid_git)
 
 
 @pytest.mark.parametrize("wrong", ["id", "cwd"])
@@ -864,55 +686,6 @@ def test_private_unarchive_rejects_wrong_rpc_and_reaps_stubborn_child(
     assert child.killed
 
 
-@pytest.mark.parametrize('problem', [None, 'active', 'existing', 'symlink', 'outside',
-                                    'relative', 'invalid_id', 'null_path', 'writer', 'unreadable'])
-def test_workspace_close_handles_missing_archives_without_ignoring_owners(
-        handoff, target, tmp_path, monkeypatch, problem):
-    archive = target['home'] / 'archived_sessions' / 'old.jsonl'
-    archive.parent.mkdir()
-    sid, archived, rollout = SID, 1, str(archive)
-    if problem == 'active':
-        archived = 0
-    elif problem == 'existing':
-        archive.write_text('retained history')
-    elif problem == 'symlink':
-        archive.symlink_to(tmp_path / 'missing')
-    elif problem == 'outside':
-        rollout = str(tmp_path / 'outside.jsonl')
-    elif problem == 'relative':
-        rollout = 'relative.jsonl'
-    elif problem == 'invalid_id':
-        sid = 'invalid'
-    elif problem == 'null_path':
-        rollout = None
-    with sqlite3.connect(target['home'] / 'state_5.sqlite') as db:
-        db.execute('create table threads (id text, cwd text, archived integer, rollout_path text)')
-        db.execute('insert into threads values (?,?,?,?)',
-                   (sid, str(target['cwd']), archived, rollout))
-        # Unrelated history must not block this workspace.
-        db.execute('insert into threads values (?,?,0,?)',
-                   (OTHER, str(tmp_path / 'elsewhere'), str(target['rollout'])))
-    before = (target['home'] / 'state_5.sqlite').read_bytes()
-    if problem == 'unreadable':
-        original_lstat = os.lstat
-        def unreadable(path, *args, **kwargs):
-            if str(path) == str(archive):
-                raise PermissionError('archive cannot be inspected')
-            return original_lstat(path, *args, **kwargs)
-        monkeypatch.setattr(os, 'lstat', unreadable)
-        with pytest.raises(ValueError, match='could not verify'):
-            handoff.assert_workspace_released(str(target['home']), str(target['cwd']))
-    elif problem == 'writer':
-        with locked(target['locks'] / f'{SID}.lock', tmp_path):
-            with pytest.raises(ValueError, match='still loaded'):
-                handoff.assert_workspace_released(str(target['home']), str(target['cwd']))
-    elif problem:
-        with pytest.raises(ValueError, match='saved Codex conversation'):
-            handoff.assert_workspace_released(str(target['home']), str(target['cwd']))
-    else:
-        handoff.assert_workspace_released(str(target['home']), str(target['cwd']))
-    assert (target['home'] / 'state_5.sqlite').read_bytes() == before
-    assert target['rollout'].exists()
 
 
 @pytest.mark.parametrize('for_close', [False, True])
@@ -1064,33 +837,6 @@ def unindexed_open_rollout(tmp_path, *, sid=OTHER, cwd=None, name='one'):
     return path
 
 
-@pytest.mark.parametrize('stage', ['resume', 'preflight', 'wait'])
-@pytest.mark.parametrize('workspace', ['other', 'same', 'symlink', 'conflicting'])
-def test_open_rollout_resolves_exact_unindexed_writer(handoff, target, tmp_path, stage, workspace):
-    lock = target['locks'] / f'{OTHER}.lock'
-    lock.touch()
-    alias = tmp_path / 'alias'
-    alias.symlink_to(target['cwd'], target_is_directory=True)
-    cwd = tmp_path / 'elsewhere' if workspace in ('other', 'conflicting') else alias if workspace == 'symlink' else target['cwd']
-    paths = [unindexed_open_rollout(tmp_path, cwd=cwd)]
-    if workspace == 'conflicting':
-        paths.append(unindexed_open_rollout(tmp_path, cwd=target['cwd'], name='two'))
-    run, calls = open_writer_probe(lock, paths)
-    def check():
-        if stage == 'resume':
-            return handoff.assert_released(None, SID, str(target['cwd']), run, **options(target))
-        if stage == 'preflight':
-            return handoff.preflight_cli_release(SID, str(target['cwd']), run=run, **options(target))
-        return handoff.wait_cli_released(SID, str(target['cwd']), run=run,
-                                         **options(target, contract='modern'))
-    with locked(lock, tmp_path):
-        if workspace == 'other':
-            check()
-        else:
-            with pytest.raises(ValueError, match='another Codex conversation in this worktree'):
-                check()
-        assert handoff._lock_held(str(lock)) is True
-    assert len(calls) == 2
 
 
 @pytest.mark.parametrize('problem', ['other_uuid', 'no_metadata', 'process_cwd', 'bad_json',
@@ -1229,3 +975,57 @@ def test_open_writer_rejects_oversized_first_metadata_record(handoff, tmp_path):
     path.write_text(' ' * (1024 * 1024 + 1))
     with pytest.raises(ValueError, match='oversized identity metadata'):
         handoff._rollout_cwd(str(path), OTHER)
+
+
+@pytest.mark.parametrize('legacy_error', [False, True])
+def test_index_retries_cantopen_with_query_only_existing_database(handoff, tmp_path, monkeypatch, legacy_error):
+    path = tmp_path / 'state.sqlite'
+    with sqlite3.connect(path) as db:
+        db.execute('create table threads(id text,cwd text)')
+        db.execute('insert into threads values(?,?)', (OTHER, '/other/worktree'))
+    connect = sqlite3.connect
+    modes = []
+    def apple_sqlite(uri, /, **kwargs):
+        modes.append(uri.rsplit('?', 1)[-1])
+        if uri.endswith('?mode=ro'):
+            error = sqlite3.OperationalError('unable to open database file')
+            if not legacy_error:
+                error.sqlite_errorcode = sqlite3.SQLITE_CANTOPEN
+            raise error
+        return connect(uri, **kwargs)
+    monkeypatch.setattr(handoff.sqlite3, 'connect', apple_sqlite)
+    assert handoff._index_rows(str(path), 'select cwd from threads where id=?', (OTHER,)) == [('/other/worktree',)]
+    assert modes == ['mode=ro', 'mode=rw']
+    with pytest.raises(sqlite3.OperationalError, match='readonly'):
+        handoff._index_rows(str(path), 'delete from threads', ())
+    with connect(path) as db:
+        assert db.execute('select count(*) from threads').fetchone() == (1,)
+    with pytest.raises(sqlite3.OperationalError):
+        handoff._index_rows(str(tmp_path/'missing.sqlite'), 'select 1', ())
+    assert not (tmp_path/'missing.sqlite').exists()
+
+
+def test_index_does_not_retry_schema_errors(handoff, tmp_path, monkeypatch):
+    path = tmp_path/'state.sqlite'
+    with sqlite3.connect(path) as db:
+        db.execute('create table unrelated(id text)')
+    connect = sqlite3.connect
+    modes = []
+    def record(uri, /, **kwargs):
+        modes.append(uri.rsplit('?', 1)[-1])
+        return connect(uri, **kwargs)
+    monkeypatch.setattr(handoff.sqlite3, 'connect', record)
+    with pytest.raises(sqlite3.OperationalError, match='no such table'):
+        handoff._index_rows(str(path), 'select cwd from threads', ())
+    assert modes == ['mode=ro']
+
+
+def test_index_reads_wal_database_without_sidecars(handoff, tmp_path):
+    path = tmp_path/'state.sqlite'
+    with sqlite3.connect(path) as db:
+        db.execute('pragma journal_mode=wal')
+        db.execute('create table threads(id text,cwd text)')
+        db.execute('insert into threads values(?,?)', (OTHER, '/other/worktree'))
+    db.close()
+    assert not Path(str(path)+'-wal').exists()
+    assert handoff._index_rows(str(path), 'select cwd from threads where id=?', (OTHER,)) == [('/other/worktree',)]

@@ -314,7 +314,7 @@ def test_resume_last_turn_overrides_mtime_and_sort_hotkeys_keep_rows(zsh, tmp_pa
     assert 'Resuming c2 in dev-api-2' in result.stdout, result.stdout
 
 
-def test_mixed_host_batch_preflights_native_before_first_launch(zsh, tmp_path):
+def test_mixed_host_batch_uses_transfer_for_both_agents(zsh, tmp_path):
     import shlex
     import time
     stub = tmp_path / 'stubbin/fzf'
@@ -330,8 +330,8 @@ def test_mixed_host_batch_preflights_native_before_first_launch(zsh, tmp_path):
              '_t_resume_on_host() { print -u2 WRONG_TRANSFER; return 1; }; ')
     result = zsh(setup + '_t_resume api --host destination; print rc=$?', _tty=True,
                  FZF_LOG=str(tmp_path / 'fzf.log'))
-    assert 'rc=1' in result.stdout and 'native desktop app' in result.stdout
-    assert 'WRONG_' not in result.stdout
+    assert 'rc=1' in result.stdout and 'WRONG_PREPARE' in result.stdout
+    assert 'native desktop app' not in result.stdout
 
 
 @pytest.mark.parametrize('aggregate', [None, 'MIXED'])

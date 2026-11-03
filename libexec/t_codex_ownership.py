@@ -1,4 +1,4 @@
-"""Verify per-conversation Codex ownership during CLI/desktop handoffs."""
+"""Verify Codex writer ownership before resuming saved CLI conversations."""
 
 import fcntl
 import glob
@@ -18,7 +18,7 @@ from pathlib import Path
 _spinner = runpy.run_path(str(Path(__file__).with_name("t_progress.py")))["spinner"]
 
 
-_RETRY = "Retry: t app pull."
+_RETRY = "Retry: t session resume."
 _UUID = re.compile(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}\Z")
 
 
@@ -256,6 +256,28 @@ def _unknown_writer_message(sid, pids):
             "allow any shared backend to release the writer, then retry resume")
 
 
+def _index_rows(db, query, parameters):
+    """Read an existing index, allowing SQLite to initialize missing WAL files.
+
+    Apple's SQLite can reject a read-only WAL connection after its sidecars
+    have been removed. Retry only CANTOPEN with an existing-file connection;
+    query_only still forbids SQL writes and SQLite retains its normal locking.
+    Never use immutable=1 for an index another Codex process may update.
+    """
+    uri = "file:" + quote(db, safe="/")
+    try:
+        with closing(sqlite3.connect(uri + "?mode=ro", uri=True, timeout=0.5)) as connection:
+            return connection.execute(query, parameters).fetchall()
+    except sqlite3.OperationalError as exc:
+        code = getattr(exc, "sqlite_errorcode", None)
+        if not (code is not None and code & 255 == sqlite3.SQLITE_CANTOPEN
+                or code is None and str(exc) == "unable to open database file"):
+            raise
+    with closing(sqlite3.connect(uri + "?mode=rw", uri=True, timeout=0.5)) as connection:
+        connection.execute("PRAGMA query_only=ON")
+        return connection.execute(query, parameters).fetchall()
+
+
 def _thread_cwds(codex_home, sid, *, for_close=False):
     """Resolve a held sibling lock through this Codex home's local state DBs."""
     known = set()
@@ -266,16 +288,14 @@ def _thread_cwds(codex_home, sid, *, for_close=False):
         try:
             if not stat.S_ISREG(os.lstat(db).st_mode):
                 raise ValueError("a Codex ownership index is not a regular file")
-            uri = "file:" + quote(db, safe="/") + "?mode=ro"
-            with closing(sqlite3.connect(uri, uri=True, timeout=0.5)) as connection:
-                rows = connection.execute("select cwd from threads where id=?", (sid,)).fetchall()
-                if any(not isinstance(row[0], str) or not os.path.isabs(row[0])
-                       for row in rows):
-                    raise ValueError("a Codex writer has invalid workspace metadata")
-                known.update(row[0] for row in rows
-                    if isinstance(row[0], str) and os.path.isabs(row[0]))
+            rows = _index_rows(db, "select cwd from threads where id=?", (sid,))
+            if any(not isinstance(row[0], str) or not os.path.isabs(row[0])
+                   for row in rows):
+                raise ValueError("a Codex writer has invalid workspace metadata")
+            known.update(row[0] for row in rows
+                if isinstance(row[0], str) and os.path.isabs(row[0]))
         except (OSError, sqlite3.Error) as exc:
-            raise ValueError("could not inspect the Codex ownership index") from exc
+            raise ValueError(f"could not inspect the Codex ownership index {os.path.basename(db)}: {exc}") from exc
     if not known:
         known = _rollout_cwds(codex_home, sid)
     return known
@@ -316,11 +336,6 @@ def _other_cwd_owner(folder, sid, cwd, codex_home, *, unknown=None, for_close=Fa
     return None
 
 
-def _pid_has_lock(path, pid, run):
-    if type(pid) is not int or pid <= 0:
-        return False
-    result = run(["lsof", "-nP", "-t", path], timeout=5)
-    return result.returncode == 0 and str(pid) in result.stdout.splitlines()
 
 
 def _selected_writer_hint(path, run):
@@ -343,44 +358,6 @@ def _selected_writer_hint(path, run):
         return ""
 
 
-def _safe_archive_hint(cwd, run):
-    """Only suggest archiving a reserved t worktree, never a Codex-managed one."""
-    canonical = os.path.realpath(cwd)
-    if "/codex-worktrees/" in canonical + "/" or "/.codex/worktrees/" in canonical + "/":
-        return False
-    try:
-        if not stat.S_ISREG(os.lstat(os.path.join(cwd, ".git")).st_mode):
-            return False
-        result = run(["git", "-C", cwd, "rev-parse", "--absolute-git-dir"], timeout=5)
-        if result.returncode or not os.path.isabs(result.stdout.strip()):
-            return False
-        private = result.stdout.strip()
-        marker = os.path.join(private, "t-app-slot")
-        if os.path.lexists(os.path.join(private, "codex-thread.json")):
-            return False
-        if not stat.S_ISREG(os.lstat(marker).st_mode):
-            return False
-        with open(marker, encoding="utf-8") as handle:
-            return handle.read(32) == "codex-app\n"
-    except (OSError, ValueError):
-        return False
-
-
-def _release_guidance(cwd, archived, run):
-    if not archived and _safe_archive_hint(cwd, run):
-        return ("Open this conversation in Codex, finish its turn, then Archive it "
-                "(Cmd-Shift-A) and retry; t will restore it in the CLI, and the app "
-                "can stay open. ")
-    return ("Finish its turn and quit Codex; if the app is already closed, "
-            "wait for its background backend to exit. ")
-
-
-def _other_release_guidance(cwd, run):
-    if run is not None and _safe_archive_hint(cwd, run):
-        return ("Finish that other conversation's turn and Archive it in Codex "
-                "(Cmd-Shift-A), then wait for its writer to release. ")
-    return ("Finish that other conversation's turn and exit its owning client, "
-            "then wait for its backend to release the writer. ")
 
 
 def _archived_in_home(codex_home, rollout):
@@ -401,10 +378,8 @@ def _archived_released(codex_home, sid, cwd, rollout, run):
     try:
         if not stat.S_ISREG(os.lstat(db).st_mode):
             return False
-        uri = "file:" + quote(db, safe="/") + "?mode=ro"
-        with closing(sqlite3.connect(uri, uri=True, timeout=0.5)) as connection:
-            rows = connection.execute(
-                "select id,cwd,archived,rollout_path from threads where id=?", (sid,)).fetchall()
+        rows = _index_rows(db,
+            "select id,cwd,archived,rollout_path from threads where id=?", (sid,))
     except (OSError, sqlite3.Error):
         return False
     if (len(rows) != 1 or rows[0][0] != sid or not isinstance(rows[0][1], str)
@@ -425,7 +400,7 @@ def _archived_released(codex_home, sid, cwd, rollout, run):
 
 
 def assert_released(bundle, sid, cwd, run, *, codex_home=None, rollout=None,
-                    archived=False, cli_pid=None, retry=_RETRY, unknown=None, for_close=False,
+                    archived=False, retry=_RETRY, unknown=None, for_close=False,
                     ownership_cwd=None):
     """Allow only a free selected writer lock and no other writer in its cwd.
 
@@ -455,22 +430,19 @@ def assert_released(bundle, sid, cwd, run, *, codex_home=None, rollout=None,
             app, backends = _owners(bundle, _processes(run, retry))
             if app or backends:
                 raise ValueError("this saved conversation has no verifiable writer lock "
-                                 "contract. " + _release_guidance(cwd, archived, run) + retry)
-        if held and not (cli_pid is not None and _pid_has_lock(target, cli_pid, run)):
+                                 "contract. " + "Exit the owning client and wait for its backend to release the writer. " + retry)
+        if held:
             raise ValueError("the selected Codex conversation is still loaded "
                              "(its writer lock is held). "
                              + _selected_writer_hint(target, run)
-                             + _release_guidance(cwd, archived, run) + retry)
+                             + "Exit the owning client and wait for its backend to release the writer. " + retry)
         try:
             other = _other_cwd_owner(folder, sid, ownership_cwd or cwd, codex_home, unknown=unknown,
                                      for_close=for_close, run=run)
         except ValueError as exc:
             raise ValueError(str(exc) + ". " + retry) from exc
         if other:
-            if _safe_archive_hint(cwd, run):
-                guidance = "Finish and Archive that other conversation in Codex before handoff. "
-            else:
-                guidance = "Wait for its owning backend to exit before handoff. "
+            guidance = "Wait for its owning backend to exit before resuming. "
             raise ValueError("another Codex conversation in this worktree is still loaded "
                              f"({other}). " + guidance + retry)
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
@@ -478,125 +450,10 @@ def assert_released(bundle, sid, cwd, run, *, codex_home=None, rollout=None,
                          + str(exc) + ". " + retry) from exc
 
 
-def preflight_cli_release(sid, cwd, *, codex_home, rollout, unknown=None,
-                          run=None, retry="Retry: t open <repo> <slot> --app."):
-    """Validate an exact CLI-to-app handoff before stopping its CLI frontend.
-
-    A shared app-server may own the writer lock instead of the CLI PID. A
-    positive held lock also establishes the contract for histories whose first
-    metadata line predates the writer-lock implementation.
-    """
-    if not _UUID.fullmatch(sid):
-        raise ValueError("the selected Codex thread id is invalid")
-    try:
-        version = _verify_rollout(rollout, sid, cwd)
-        folder = _lock_dir(codex_home)
-        if folder is None:
-            raise ValueError("the selected Codex conversation has no verifiable writer-lock directory")
-        held = _lock_held(os.path.join(folder, sid + ".lock"))
-        contract = "modern" if version is not None and version >= (0, 159, 0) else None
-        if contract is None and held is True:
-            contract = "held"
-        if contract is None:
-            raise ValueError("the selected Codex conversation has no verifiable writer-lock contract")
-        other = _other_cwd_owner(folder, sid, cwd, codex_home, unknown=unknown, run=run)
-        if other:
-            raise ValueError("another Codex conversation in this worktree is still loaded "
-                             f"({other}). " + _other_release_guidance(cwd, run) + retry)
-        return contract
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-        raise ValueError("could not verify the selected Codex conversation before stopping "
-                         f"its CLI: {exc}") from exc
 
 
-@_spinner('Waiting for conversation release')
-def wait_cli_released(sid, cwd, *, codex_home, rollout, contract=None,
-                      timeout=75, interval=0.2, on_wait=None,
-                      retry="Retry: t open <repo> <slot> --app.", unknown=None, run=None):
-    """Wait for this thread's writer to unload, without affecting other threads.
-
-    `contract` must come from preflight_cli_release before the CLI is stopped;
-    this matters for old saved metadata once Codex removes the target lock.
-    """
-    if not _UUID.fullmatch(sid):
-        raise ValueError("the selected Codex thread id is invalid. " + retry)
-    if contract not in ("modern", "held"):
-        raise ValueError("the CLI release was not verified before stopping it. " + retry)
-    if timeout <= 0 or interval <= 0:
-        raise ValueError("the CLI release wait duration is invalid")
-    try:
-        _verify_rollout(rollout, sid, cwd)
-        folder = _lock_dir(codex_home)
-        if folder is None:
-            raise ValueError("the Codex writer-lock directory disappeared. " + retry)
-        target = os.path.join(folder, sid + ".lock")
-        deadline = time.monotonic() + timeout
-        announced = False
-        while True:
-            other = _other_cwd_owner(folder, sid, cwd, codex_home, unknown=unknown, run=run)
-            if other:
-                raise ValueError("another Codex conversation in this worktree is still loaded "
-                                 f"({other}). " + _other_release_guidance(cwd, run) + retry)
-            if _lock_held(target) is not True:
-                return
-            if not announced and on_wait is not None:
-                on_wait()
-                announced = True
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise ValueError("the selected Codex conversation is still loaded after "
-                                 f"waiting {timeout:g}s for its CLI backend to release it. "
-                                 + retry)
-            time.sleep(min(interval, remaining))
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-        raise ValueError("could not verify the selected Codex conversation was released: "
-                         + str(exc) + ". " + retry) from exc
 
 
-def assert_workspace_released(codex_home, cwd, *, retry="Retry: t kill <repo> <slot>."):
-    """Verify an unselected workspace has only missing archives and no associated writer.
-
-    Codex can retain archived index rows after their rollout files disappear.
-    These are history, not owners. Keep the rows untouched and reject every
-    active, existing, malformed, or out-of-home record. Callers recheck after
-    cleanup so a new conversation still prevents reservation removal.
-    """
-    try:
-        folder = _lock_dir(codex_home)
-        if folder is None:
-            raise ValueError("the Codex writer-lock directory is unavailable. " + retry)
-        db = os.path.join(codex_home, "state_5.sqlite")
-        if not stat.S_ISREG(os.lstat(db).st_mode):
-            raise ValueError("the Codex conversation index is unavailable. " + retry)
-        uri = "file:" + quote(db, safe="/") + "?mode=ro"
-        with closing(sqlite3.connect(uri, uri=True, timeout=0.5)) as connection:
-            records = connection.execute(
-                "select id,cwd,archived,rollout_path from threads").fetchall()
-        for sid, recorded_cwd, archived, rollout in records:
-            if (not isinstance(recorded_cwd, str)
-                    or os.path.realpath(recorded_cwd) != os.path.realpath(cwd)):
-                continue
-            if (not isinstance(sid, str) or not _UUID.fullmatch(sid)
-                    or archived != 1 or not isinstance(rollout, str)
-                    or not os.path.isabs(rollout)
-                    or not _archived_in_home(codex_home, rollout)):
-                raise ValueError("this desktop workspace has a saved Codex conversation "
-                                 "that could not be selected. " + retry)
-            try:
-                os.lstat(rollout)
-            except FileNotFoundError:
-                pass
-            else:
-                raise ValueError("this desktop workspace has a saved Codex conversation "
-                                 "that could not be selected. " + retry)
-        other = _other_cwd_owner(folder, "00000000-0000-0000-0000-000000000000",
-                                 cwd, codex_home, for_close=True)
-        if other:
-            raise ValueError("a Codex conversation in this worktree is still loaded "
-                             f"({other}). " + retry)
-    except (OSError, sqlite3.Error) as exc:
-        raise ValueError("could not verify the empty desktop workspace: "
-                         + str(exc) + ". " + retry) from exc
 
 
 @_spinner('Restoring conversation')

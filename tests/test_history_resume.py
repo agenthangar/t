@@ -97,7 +97,7 @@ def test_reservation_collision_skips_slot(app, history, git_repo):
 def test_nonterminal_owners_offer_handoff_without_launch(app, history, monkeypatch, host, state, slot):
     calls = []
     monkeypatch.setattr(history.subprocess, 'call', lambda *a, **k: calls.append(a))
-    with pytest.raises(history.HistoryError, match='handoff'):
+    with pytest.raises(history.HistoryError, match='release it there' if state == 'app' else 'handoff'):
         app.attach(dict(host=host, state=state, slot=slot, sid='selected', cwd='/repo/1', agent='codex'))
     assert not calls
 
@@ -858,7 +858,6 @@ def test_interactive_history_controls_preserve_records(app, history, monkeypatch
         assert 'No retained conversations' in capsys.readouterr().out
 
 
-
 def tool_event(call_id, source):
     return dict(type='response_item', payload=dict(type='custom_tool_call', name='exec', call_id=call_id, input=source))
 
@@ -1076,7 +1075,7 @@ def test_private_saved_resume_reports_ownership_refusal_and_cleans_up(
         assert k['retry'] == 'Retry: t session history, then select the conversation again.'
         raise refusal
     def helpers(path):
-        if str(path).endswith('t_app_handoff.py'):
+        if str(path).endswith('t_codex_ownership.py'):
             return {'assert_released': refuse}
         return {'HistoryCommand': lambda cfg, api: app,
                 'HistoryError': history.HistoryError, 'HistoryCancelled': history.HistoryCancelled}
@@ -1126,7 +1125,7 @@ def test_moved_source_checks_current_workspace_owner_and_original_rollout(app, h
 
 
 @pytest.mark.parametrize('selection', ['missing-local', 'timestamp-tie'])
-def test_native_policy_checked_at_actual_remote_source(app, history, tmp_path, monkeypatch, selection):
+def test_legacy_native_setting_reaches_actual_remote_source(app, history, tmp_path, monkeypatch, selection):
     app.cfg.hosts = {'remote': 'remote.example'}
     workspace = Path(app.cfg.worktree_root) / 'repo/1'
     row = saved_row(app, 'a' * 40, workspace)
@@ -1136,10 +1135,18 @@ def test_native_policy_checked_at_actual_remote_source(app, history, tmp_path, m
     row['sources'] = [dict(host='local', path=str(local), updated=20, size=1),
                       dict(host='remote', path='/remote/rollout-selected.jsonl',
                            updated=20 if selection == 'timestamp-tie' else 10, size=100)]
-    monkeypatch.setattr(history, 'run', lambda *a, **kw: pytest.fail('native must not rsync'))
-    with pytest.raises(history.HistoryError, match='native desktop app'):
-        app.source(row)
-    assert not (app.store.directory / 'transcripts').exists()
+    app.cfg.handoff = {'codex': 'native'}
+    calls = []
+    def transfer(argv, **kwargs):
+        calls.append(argv)
+        raise history.HistoryError('transfer attempted')
+    monkeypatch.setattr(history, 'run', transfer)
+    if selection == 'timestamp-tie':
+        assert app.source(row) == local  # Unavailable remote retains a verified local fallback.
+    else:
+        with pytest.raises(history.HistoryError):
+            app.source(row)
+    assert calls and calls[0][0] == 'rsync'
 
 
 def test_native_policy_allows_verified_local_source_with_incidental_remote_record(app, history, tmp_path):

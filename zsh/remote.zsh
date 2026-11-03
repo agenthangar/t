@@ -1,60 +1,16 @@
-# Check a desktop claim with one discovery snapshot. A local desktop reservation
-# continues its existing owner; an unreserved saved workspace needs a complete
-# scan before acquiring one. Known remote owners always block either operation.
-_dev_remote_app_check() {
-  local repo=$1 slot=$2 allow_incomplete=$3 dir=${DEV_REPOS[$1]:-}
-  local rows scan_rc owner host state
-  if [[ ${_T_OPEN_REMOTE_APP_READY:-} == 1 ]]; then
-    rows=$_T_OPEN_REMOTE_APP_ROWS; scan_rc=$_T_OPEN_REMOTE_APP_RC
-  else
-    rows=$(_dev_rows_all); scan_rc=$?
-  fi
-  owner=$(print -r -- "$rows" | awk -F'\t' \
-    -v d="$(_dev_homerel "$dir")" -v s="$slot" \
-    -v wtr="$(_dev_homerel "${DEV_WORKTREE_ROOT:-}")" -v b="${dir:t}" '
-      $1 != "local" && $4 !~ /:/ {
-        c=$3; sub(/^\/(Users|home)\/[^\/]+\//, "", c)
-        n=$4; sub(/^.*-/, "", n)
-        if ((c==d || (wtr != "" && b != "" && index(c, wtr "/" b "/") == 1)) && n==s) {
-          print $1 "\t" $5; exit
-        }
-      }')
-  if [[ -n $owner ]]; then
-    host=${owner%%$'\t'*}; state=${owner#*$'\t'}
-    if [[ $state == app ]]; then
-      print -u2 -- "t open --app: $repo $slot is reserved by the Codex desktop app on $host; close it there and release the reservation before opening here"
-    else
-      print -u2 -- "t open --app: $repo $slot is live on $host; move it here with t beam before opening the app"
-    fi
-    return 1
-  fi
-  if (( scan_rc )); then
-    if [[ -z $allow_incomplete ]]; then
-      print -u2 -- 't open --app: ownership could not be verified for this existing workspace; retry when the skipped host is reachable'
-      return 3
-    fi
-    # The aggregate result includes local failures too. An offline host never
-    # excuses a failed local scan, even for a reserved or fresh workspace.
-    _dev_session_rows >/dev/null || {
-      print -u2 -- 't open --app: local ownership check failed; retry before opening'
-      return 3
-    }
-  fi
-}
-
 # → stderr (stdout is captured).
-# A desktop-only slot has no tmux process to attach, but it still owns its
-# worktree and conversation. Keep this separate from _dev_remote_resolve, whose
+# Older peers can report retired integration reservations without a tmux
+# process. Keep recognizing these as conflicts during rolling upgrades. Keep this separate from _dev_remote_resolve, whose
 # result is strictly an attachable tmux slot.
 # Optional third argument permits an incomplete scan only for a fresh local slot.
 # Positive remote ownership evidence always wins. Existing work stays strict.
-_dev_remote_app_owner() {
+_dev_remote_legacy_owner() {
   local repo="$1" slot="$2" dir="${DEV_REPOS[$1]:-}" base wtr
   [[ -n $dir ]] || return 1
   base=${dir:t}; wtr=${DEV_WORKTREE_ROOT:-}
   local rows result scan_rc
-  if [[ ${_T_OPEN_REMOTE_APP_READY:-} == 1 ]]; then
-    rows=$_T_OPEN_REMOTE_APP_ROWS; scan_rc=$_T_OPEN_REMOTE_APP_RC
+  if [[ ${_T_OPEN_REMOTE_ROWS_READY:-} == 1 ]]; then
+    rows=$_T_OPEN_REMOTE_ROWS_ROWS; scan_rc=$_T_OPEN_REMOTE_ROWS_RC
   else
     rows=$(_dev_rows_all); scan_rc=$?
   fi
@@ -84,7 +40,7 @@ _dev_slot_fresh_unreserved() {
   _dev_slot_fresh "$1" "$2" || return 1
   (( ${#REMOTE_HOSTS} )) || return 0
   local owner
-  owner=$(_dev_remote_app_owner "$1" "$2" 1)
+  owner=$(_dev_remote_legacy_owner "$1" "$2" 1)
   [[ -z $owner ]]
 }
 
@@ -638,7 +594,6 @@ _dev_pull() {
   local agent=${${(ps:\t:)row}[7]:-claude}; _dev_agent_valid "$agent" || agent=claude   # field 7 (a 6-field host = claude)
   [[ -n $sid && $sid != - ]] || { echo "dev: $host/$fslot has no active conversation to pull" >&2; return 1; }
 
-  _t_handoff_check "$agent" "$host" here || return $?
 
   # Check the source host's durable Codex rollout before stopping its owner.
   # A newer SQLite projection with a shorter JSONL file cannot be transferred
@@ -1424,7 +1379,7 @@ _t_remote() {
       if (( identity_rc == 0 )); then
         repository_identity=$(python3 "$T_HOME/bin/t" __repo-identity "$identity_alias") || return $?
       fi
-      local resume_environment="_T_HANDOFF_CODEX=${(q)${_T_HANDOFF_CODEX:-${DEV_HANDOFF[codex]:-native}}} _T_HANDOFF_CLAUDE=${(q)${_T_HANDOFF_CLAUDE:-${DEV_HANDOFF[claude]:-t}}} T_NO_UPDATE_CHECK=1 _T_RESUME_REPO_IDENTITY=${(q)repository_identity} _T_RESUME_REQUIRE_PICKER=1 _T_RESUME_OWNER_HOST=here _T_RESUME_DESTINATION_HOST=${(q)target}"
+      local resume_environment="_T_HANDOFF_CODEX=t _T_HANDOFF_CLAUDE=t T_NO_UPDATE_CHECK=1 _T_RESUME_REPO_IDENTITY=${(q)repository_identity} _T_RESUME_REQUIRE_PICKER=1 _T_RESUME_OWNER_HOST=here _T_RESUME_DESTINATION_HOST=${(q)target}"
       if [[ -n $repository_identity ]]; then
         # Resolve on the target before invoking its shell function. Older t
         # versions may ignore the identity environment and reuse a foreign alias.
@@ -1432,9 +1387,6 @@ _t_remote() {
       else
         worker="$resume_environment _t_resume ${(j: :)${(@q)worker_args}}"
       fi
-    fi
-    if [[ $action == resume ]]; then
-      worker="(( \$+functions[_t_handoff_check] )) || { print -u2 't: update t on the destination host before cross-host handoff'; return 1; }; $worker"
     fi
     _term_title "$host: t remote $action"
     {
@@ -1479,7 +1431,11 @@ _t_remote() {
       fi
       candidates+=("$row")
     done
-    (( $#candidates )) || { print -u2 "t session move: no current CLI conversations${repo:+ for '$repo'} to move"; return 0; }
+    if (( ! $#candidates )); then
+      print -u2 "t session move: no current CLI conversations${repo:+ for '$repo'}${slot:+ in slot $slot} to move"
+      print -u2 -- "t: To restore saved work, use t session resume${repo:+ ${(q)repo}}${slot:+ $slot}"
+      return 0
+    fi
     if (( $#candidates == 1 )) && [[ -z $pick && ( -n $sid || -n $slot ) ]]; then
       selected=$candidates[1]
     else
@@ -1548,7 +1504,6 @@ _t_remote() {
             $fields[4] == "$chosen[4]" && $fields[8] == "$chosen[8]" && $fields[5] == (attached|detached) ]]; then verified=1; break; fi
     done
     [[ -n $verified ]] || { print -u2 't session move: selected session changed or closed; select it again'; return 1; }
-    _t_handoff_check "$chosen[8]" "$source" "$target" || return $?
     [[ $source == local && $chosen[2] == "$self_sid" ]] && self_row=$selected
   done
   # Moving our own current process ends this controller, so do that last.

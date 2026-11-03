@@ -9,7 +9,7 @@ import pytest
 
 from conftest import REPO_ROOT
 from test_agent_seam import zsh  # noqa: F401
-from test_resume_app import saved_rollout, SID, OTHER
+from codex_history_helpers import saved_rollout, SID, OTHER
 
 
 SCANS = r'''
@@ -233,18 +233,7 @@ def test_resume_preflight_still_rejects_known_owners_and_local_failure(zsh, owne
     assert 'new-session' not in zsh.log.read_text()
 
 
-def test_saved_app_resume_preflight_continues_with_unavailable_host(zsh):
-    cwd, _ = saved_rollout(zsh)
-    result = zsh(SCANS + r'''
-      _dev_session_rows() { :; }
-      _t_resume_app_check api 3 "$SID" "$CWD"
-    ''', CWD=str(cwd), SID=SID)
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert result.stdout.strip() == 'saved\tapi-3'
-    assert 'ownership on unavailable hosts could not be verified' in result.stderr
-
-
-@pytest.mark.parametrize('phase', ['discovery', 'preflight', 'app', 'remote_detach'])
+@pytest.mark.parametrize('phase', ['discovery', 'preflight', 'remote_detach'])
 def test_resume_cancellation_stays_130(zsh, phase):
     cwd, _ = saved_rollout(zsh)
     result = zsh(r'''
@@ -256,7 +245,6 @@ def test_resume_cancellation_stays_130(zsh, phase):
       case $PHASE in
         discovery) REMOTE_HOSTS[offline]=offline; _t_resume api 3 ;;
         preflight) _T_RESUME_ALLOW_UNAVAILABLE=1 _dev_resume_session dev-api-3 "$CWD" "$SID" codex ;;
-        app) _t_resume_app_check api 3 "$SID" "$CWD" ;;
         remote_detach) _t_resume_on_host offline "$SID" "$CWD" codex detach ;;
       esac
     ''', PHASE=phase, CWD=str(cwd), SID=SID)

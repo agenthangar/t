@@ -134,11 +134,11 @@ def test_install_review_defaults_to_enter(t_mod, monkeypatch, key, confirmed):
 @pytest.mark.parametrize('save_key', ['enter', 'y'])
 def test_config_review_saves_with_enter_or_y(t_mod, monkeypatch, tmp_path, save_key):
     monkeypatch.setattr(t_mod, 'CONFIG', str(tmp_path / 'config.sh'))
-    # Choose Desktop app, review pending changes, and accept using the real page.
-    ui = make_ui(t_mod, ['j', 'enter', 'j', 'enter', 's', save_key])
+    # Choose Codex, review pending changes, and accept using the real page.
+    ui = make_ui(t_mod, ['enter', 'j', 'enter', 's', save_key])
     monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
     edited = t_mod._config_wizard(t_mod.Config())
-    assert edited.open_mode_default == 'app'
+    assert edited.agent_default == 'codex'
     assert ui.restored
     review = [line for frame in ui.frames if any('Review local settings' in line for line in frame)
               for line in frame]

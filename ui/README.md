@@ -145,15 +145,14 @@ destinations use a trailing `›`; scalar choices and immediate actions do not.
 All actions remain directly reachable, returning preserves row focus, and the
 shared viewport keeps the focused row and Save shortcut visible on narrow screens.
 
-Per-agent settings expose Cross-host handoff with staged review/save. Effective
-defaults are `DEV_HANDOFF[claude]=t` and `DEV_HANDOFF[codex]=native`; Codex can
-explicitly select `t`. Claude native is unsupported and rejected. `t config show`
-is read-only and prints the mechanism and app requirement. Native Codex transfer
-is a manual desktop Hand off action, not an automated CLI transfer: cross-host
-resume/move prints actionable steps and returns nonzero before stopping an owner,
-checkpointing, copying transcripts or allocating a destination. Local resume and
-remote attachment retain their existing behavior. Relays preserve the initiating
-host's policy and require a peer that understands it.
+Cross-host moves and resumes use guarded t transfer for both Claude and Codex.
+When no current owner is found, move points to `t session resume [repo] [slot]`
+for restoring saved work.
+Legacy `DEV_HANDOFF` and desktop opening defaults are ignored. Older remote peers
+receive explicit t transfer overrides. Codex Desktop launch, handoff, reservation
+creation and discovery are removed. Historical interface metadata stays readable.
+Old reservation markers protect worktrees from automatic cleanup; exact CLI history
+resume checks writer ownership before starting.
 
 Config → MCP server → Sessions server shows read-only Codex enabled state and
 Claude user-scope registration. Browsing and Refresh status never start servers or
@@ -367,8 +366,7 @@ Optional `session_defaults` stores independent Codex and Claude model/effort map
 these are active for enabled workflows with Implementation unchecked, including
 single-model workflows. Repository overrides
 apply to the canonical checkout and its worktrees, including destination paths
-for new and resumed CLI sessions. Native desktop launches keep the application's
-model settings. Explicit resume arguments win. An explicit model
+for new and resumed CLI sessions. Explicit resume arguments win. An explicit model
 without an effort uses that model's default, not an unrelated global effort.
 Empty choices fall back to account-level agent defaults. Excluded workflows and
 workflows with Implementation selected do not apply these session defaults. Never write scoped settings into
@@ -475,7 +473,7 @@ while retaining preferences and prose. The JSON policy optionally accepts
 `stages_enabled` (default true) and `behaviors` (default absent); older v1/v2
 documents remain untouched on reads and migrate when saved or synchronized.
 
-Guarded dormant Codex resume/restart and app-to-CLI handoff read the latest
+Guarded dormant Codex resume/restart read the latest
 applicable explicit main model/effort checkpoint immediately before constructing
 the launch command. Those overrides replace saved thread model/effort, with
 explicit invocation overrides taking precedence. Repository exclusions (including
@@ -485,8 +483,7 @@ retained unless the applicable workflow explicitly sets a permission preset;
 explicit invocation permission arguments win. A live
 attach preserves its existing owner, schedules a bounded service retry, and
 explains that isolated sessions require guarded resume/restart. Attaching does
-not restart a process or begin a turn. Native desktop URL reopen has no verified
-model override; its runtime/instruction refresh remains unverified.
+not restart a process or begin a turn.
 
 The installed package includes a pinned, licensed private Tomli fallback for
 Python 3.9 hosts. Update/install needs no network package download or system pip
@@ -591,7 +588,7 @@ The compatibility --attached flag starts with filtering off and defaults retaine
 There is no new-session shortcut or details preview in open; use `t open --new`.
 Press `k` to kill only the focused session, independently of multi-selection marks.
 The shortcut authorizes that session like Enter in close, retaining ownership
-and desktop safety checks. Keep the picker open and remove only successfully
+and ownership safety checks. Keep the picker open and remove only successfully
 closed rows from its cached snapshot, without inventory discovery. Preserve query,
 filters, and other marks on both supported fzf versions. Failed or canceled closes
 keep their row and show the outcome in the picker. Closing the last row leaves an
@@ -661,16 +658,9 @@ private snapshot as the rows. A named repository and prior discovery limits rema
 The kill multi-picker's Enter action confirms every marked session (or the
 focused row), including live local and remote agents; do not prompt again per
 target. Explicit close targets retain live-agent confirmation unless `-y` is
-supplied. Closing an unloaded desktop slot preserves history and its worktree;
-a running app or missing archived rollout alone does not block cleanup. Verify
-writer ownership before and after cleanup, and retain the reservation on failure.
-Close scopes sibling locks through readable conversation indexes and, for unindexed
-threads, validated rollout identity metadata. A lock with no workspace association
-does not veto every close. Selected and known same-worktree writers still block;
-shared backend processes and lock files remain untouched. These are safety rules
-within the existing close modes, with no new prompt or command.
+supplied.
 
-Saved Codex resume and handoffs also resolve unindexed held sibling locks from
+Saved Codex resumes also resolve unindexed held sibling locks from
 validated `session_meta` identity in active and archived rollouts. If that identity
 is not indexed or discoverable there, bounded open-file inspection of the exact
 lock holders can resolve it from their open rollout metadata. Process working
@@ -730,18 +720,6 @@ MCP uses the same operation; its session command gateway returns a terminal
 handoff descriptor for modes that need interactive control. Detached MCP opens
 and resumes retain the shared lifecycle checks and never attach a terminal.
 
-
-Desktop handoff refusals identify a verified conflicting conversation and give
-release instructions with the exact retry command before stopping the selected
-CLI. Keep missing-preview notices distinct from ownership failures. Retrying
-after the conflicting owner releases must preserve the selected conversation,
-recorded worktree and history, and unrelated writers.
-
-`session resume --app` retains the saved-conversation picker and accepts exactly
-one Codex row. Selection carries the immutable ID and recorded worktree through
-the existing guarded desktop handoff; live slots never substitute their current
-conversation. Remote owners, incompatible flags, unsupported agents, and multiple
-marks fail before launching. `--cli` explicitly selects the ordinary resume route.
 
 `session move` selects current CLI conversations through the shared multi picker
 when no exact slot or conversation ID is supplied, including inside an agent.
@@ -827,7 +805,7 @@ Its final summary names the conversation, reason, retry command, ready-session
 attach commands, and number not attempted. No automatic attachment hides errors.
 It has no default 30-day
 cutoff; Ctrl-F/B pages, Ctrl-R refreshes, and Ctrl-/ shows details.
-Explicit resume options (`--cli`, `--app`, `--fg`, `--host`, `--days`, `--live`,
+Explicit resume options (`--cli`, `--fg`, `--host`, `--days`, `--live`,
 `--remote`) retain the filtered resume picker and their existing semantics,
 including the recency limit and nonterminal saved selection. Internal resume
 callers retain their existing behavior.
@@ -848,7 +826,7 @@ from an empty picker; `--new` is explicit. `remote resume` selects saved history
 on the chosen host using the existing filtered resume picker. `session resume
 --host H` sends the selected saved history to H. Live rows attach only
 when their owner matches H (including host aliases); a mismatch gives an exact
-`session move` instruction before any batch mutation. Desktop resume stays local.
+`session move` instruction before any batch mutation.
 
 Existing `t/12` folders and recorded conversation paths remain valid. Both
 layouts appear in list and navigation results. Ambiguous simultaneous layouts
@@ -959,34 +937,9 @@ projection are additive metadata. They must not replace raw identity or evidence
 JSON and non-TTY listings never select or resume; JSON has no ANSI styling,
 presentation headers, or prompts.
 
-Automatic fresh-slot allocation skips known remote desktop reservations from
-one discovery snapshot; explicit slot requests still refuse conflicting owners.
-Fresh local opens may continue after incomplete remote discovery when the local
-slot is unused. Reopening a locally reserved desktop workspace also tolerates
-unavailable hosts after checking local ownership. Desktop claims scan remote
-owners once; known remote owners still block, and local terminal writers still
-prevent reopening. Open, close, resume, and remote move source pickers retain reachable rows when a
-registered host is unavailable. Saved CLI and desktop resumes warn that skipped
-ownership could not be verified, then continue through local locks and known-owner
-checks on reachable hosts. Failed local scans remain fatal. Other unreserved
-workspace claims and live transfers retain strict ownership checks.
-Warnings are amber on capable stderr terminals and plain with NO_COLOR, dumb
-terminals, or redirected stderr; scanner and machine stdout stay unchanged.
-This includes unavailable-host warnings from `t session list -r` (`t ls -r`):
-local and reachable sessions remain listed. Failed remote scans include the exit
-status and up to 1024 bytes of terminal-safe SSH stderr; exit 255 reports an SSH
-scan failure rather than asserting that the host is offline. Successful scans
-suppress SSH stderr, and scanner stdin is disconnected. Redirecting stdout alone keeps
-warnings amber when stderr is still a capable terminal.
-Picker helpers return without running the caller's
-shell exit hooks or saving its history. Zsh picker profiles wait for fzf in a
-noninteractive worker, retain ownership through child stop/resume, and clean up
-their private files after completion or cancellation. All Codex
-CLI starts and resumes use an invocation-local backend (`--no-daemon`).
-These are direct-action behaviors within the existing open/resume modes.
-Saved Codex resumes validate the original rollout identity and selected writer
-lock, then check sibling writers against the claimed destination workspace.
-A writer in a reused original slot does not block a different destination.
+Fresh local slots tolerate unavailable remote hosts while checking known owners,
+including legacy reservations reported by older peers. Saved CLI resumes warn
+and continue checking local and reachable owners.
 
 Issue starts warn and skip unavailable registered hosts and unconfigured optional
 cloud providers. Saved resume routes retain local checks and known owners while
@@ -1014,8 +967,8 @@ a no-op. Linked/session worktrees and conflicting aliases or checkout directory
 names are rejected. The config repository menu asks for a path (default
 `~/config`), suggests its directory name as the alias, and retains review before
 save. `t config setup [dirs ...]` defaults to scanning `~/config`.
-Successful setup (including no-op and dry-run) prints desktop **Review hooks →
-Allow selected** and CLI `/hooks` guidance when t's Codex hook is registered.
+Successful setup (including no-op and dry-run) prints CLI `/hooks` guidance
+when t's Codex hook is registered.
 This is informational output within the existing wizard/detail modes: no new
 picker, app launch, or hook trust mutation. Installation repeats the guidance
 for existing registrations; `t system diagnose` stays read-only.

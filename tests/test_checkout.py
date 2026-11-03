@@ -415,7 +415,7 @@ def test_setup_rejects_second_repo_with_same_worktree_slot_name(t_mod, box, tmp_
 
 
 @pytest.mark.parametrize("mode", ["apply", "empty", "noop", "dry_run"])
-def test_setup_explains_desktop_hook_review(t_mod, box, monkeypatch, capsys, mode):
+def test_setup_explains_cli_hook_review(t_mod, box, monkeypatch, capsys, mode):
     cfg, home, local = box
     repo = home / "code" / "repo"
     git("init", "-q", "-b", "main", repo)
@@ -449,9 +449,7 @@ def test_setup_explains_desktop_hook_review(t_mod, box, monkeypatch, capsys, mod
                                     no_instructions=True)
     assert t_mod.cmd_setup(cfg, setup_args) == 0
     output = capsys.readouterr().out
-    assert "ChatGPT desktop app" in output
-    assert "Review hooks" in output and "Allow selected" in output
-    assert "User config / SessionStart" in output and "/hooks" in output
+    assert "/hooks" in output
     assert "t-session-start --agent codex" in output
     assert "Trust all" not in output and "Allow all" not in output
     assert (hook.read_bytes(), config.read_bytes()) == before[:2]

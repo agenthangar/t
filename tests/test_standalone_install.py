@@ -91,7 +91,7 @@ def test_links_only_is_idempotent_and_does_not_seed_local_config(box, codex_hook
     second = run_install(checkout, home, **options)
     assert first.returncode == second.returncode == 0
     if codex_hooks:
-        assert "Review hooks" in second.stdout and "Allow selected" in second.stdout
+        assert "/hooks" in second.stdout and "t-session-start --agent codex" in second.stdout
         assert "Registered the SessionStart hook" not in second.stdout
         assert hooks.read_bytes() == before
     else:
