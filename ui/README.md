@@ -850,6 +850,15 @@ renderer projections, table output, details, and JSON against the definitions.
 | SESSION | The repository/slot or foreground-session label. It is distinct from the immutable conversation ID. |
 | WORKING ON | The current owner's working-on text, recorded summary, or retained conversation title. History includes up to three associated PR references and states, with an additional count when needed. |
 
+Bare `t session list` (`t ls` / `t list`) includes every repository, even inside
+another repository's checkout or worktree, matching bare `t session open`.
+An explicit repository scopes the list: `t session list api`; `--all` explicitly
+selects the default all-repository view and conflicts with an explicit repository.
+Attached, detached and idle sessions remain visible. `-r` adds registered remote
+hosts without changing repository scope; unavailable-host warnings preserve
+reachable results. For example, run `t ls -r` for all repositories across hosts,
+or `t ls api -r` for only api.
+
 `t session list` additionally places LAST TURN in the final column, after WORKING ON.
 It shows the latest turn initiation as `YYYY-MM-DD HH:MM:SS TZ` in the viewer's
 local timezone, including remote rows; unavailable evidence displays `-`.

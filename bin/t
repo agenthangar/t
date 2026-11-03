@@ -519,8 +519,10 @@ def _header(st, scope):
 
 
 def _ls_scope(cfg, repo, all_repos, cwd):
-    """Resolve `t ls [repo] [-a]` to (scope, wt_scope): the canonical repo dir the
-    rows are filtered to (plus its worktree root), or ("", "") for every repo.
+    """Resolve an explicit `t ls [repo] [-a]` scope, independent of cwd.
+
+    Bare lists include every repository, matching bare open. An explicit repo
+    returns its canonical directory and worktree root; otherwise ("", "").
 
     An explicit repo is the scope from ANY directory — `t ls dot -r` from ~ was the
     ask, and every other slot verb already takes `<repo>` this way. Unknown alias →
@@ -537,7 +539,7 @@ def _ls_scope(cfg, repo, all_repos, cwd):
                              % (repo, ", ".join(sorted(cfg.repos)) or "(none registered)"))
         scope = cfg.repos[repo]
     else:
-        scope = "" if all_repos else cfg.repo_dir_for_cwd(cwd)
+        scope = ""
     wt_scope = os.path.join(cfg.worktree_root, os.path.basename(os.path.normpath(scope))) if scope else ""
     return scope, wt_scope
 
@@ -11869,8 +11871,8 @@ REMOTE SESSIONS
     location.add_argument("--host", help="open or attach on this host")
 
     sp = sub.add_parser("ls", help="list dev sessions (attached + active context)",
-        description='List live sessions without prompting. Use the current repository by default; name one explicitly '
-            'or use --all for every repository. --remote includes registered hosts; unavailable hosts warn '
+        description='List live sessions across all repositories without prompting. Name a repository to scope the list. '
+            '--remote includes registered hosts; unavailable hosts warn '
             'while reachable sessions remain listed. LAST TURN shows turn initiation time. Pipe to cat for '
             'complete values on narrow terminals.',
         help_details="""DETAILS
@@ -11878,9 +11880,10 @@ REMOTE SESSIONS
   List dev sessions: whether each is attached, and whether it has an active
   conversation loaded (vs. parked on the startup splash).
 
-  Scoped to the repo your cwd is in by default (`t session list <repo>` scopes to a
-  named repo from anywhere); `-a` widens to every repo, and `-r` spans every
-  $REMOTE_HOSTS machine in one table with a HOST column.
+  Bare `t session list` shows every repository, including when run inside a
+  checkout or worktree, like bare `t session open`. Name a repo to scope the list:
+  `t session list <repo>`. `-a` explicitly selects every repo (the default).
+  `-r` spans every $REMOTE_HOSTS machine in one table with a HOST column.
 
   Unavailable hosts warn on stderr in amber on capable terminals (plain with
   NO_COLOR, TERM=dumb, or redirected stderr); local and reachable sessions remain
@@ -11895,9 +11898,9 @@ REMOTE SESSIONS
   Pipe to cat for complete values.
 
   Read-only — attach with `t session open`, move with `t session move`.""")
-    sp.add_argument("repo", nargs="?", help="repository alias, basename or origin name to scope from any directory (default: the repo cwd is in)")
+    sp.add_argument("repo", nargs="?", help="repository alias, basename or origin name to scope from any directory (default: all repositories)")
     sp.add_argument("-r", "--remote", action="store_true", help="span every $REMOTE_HOSTS host")
-    sp.add_argument("-a", "--all", action="store_true", help="every repo (not just the current)")
+    sp.add_argument("-a", "--all", action="store_true", help="every repository (the default)")
 
     sp = sub.add_parser("kill", help="tear down a session",
         description='Close sessions while preserving saved conversations and worktrees. With no target, select across '

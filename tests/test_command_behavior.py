@@ -447,3 +447,47 @@ def test_history_display_contract_preserves_unknowns_preview_and_json(history, t
     assert lint_module().check_display_projection(CONTRACT, 'history_information', record['display']) == []
     assert record['display']['model'] == '-' and record['display']['interface'] == 'unknown'
     assert '\x1b' not in output and 'Enter ' not in output
+
+
+@pytest.mark.parametrize('command', [
+    ['ls'], ['list'], ['session', 'list'], ['session', 'ls'],
+])
+@pytest.mark.parametrize('remote', [False, True])
+@pytest.mark.parametrize('location', ['checkout', 'worktree', 'outside'])
+def test_session_list_default_includes_other_repositories(
+        t_mod, monkeypatch, capsys, tmp_path, command, remote, location):
+    checkout = tmp_path / 'code' / 'api'
+    worktrees = tmp_path / 'worktrees'
+    cwd = {'checkout': checkout, 'worktree': worktrees / 'api' / 'api-7',
+           'outside': tmp_path / 'outside'}[location]
+    cwd.mkdir(parents=True)
+    monkeypatch.chdir(cwd)
+    cfg = SimpleNamespace(repos={'api': str(checkout)}, worktree_root=str(worktrees), hosts={})
+    rows = [
+        ('local', 'api-1', str(checkout), 'attached', 'active', 'Current project'),
+        ('local', 'other-2', str(worktrees / 'other' / 'other-2'), 'detached', 'active', 'Other project'),
+        ('local', 'other-3', str(worktrees / 'other' / 'other-3'), 'attached', 'idle', 'Idle project'),
+    ]
+    if remote:
+        rows.append(('mini', 'other-4', '/home/remote/worktrees/other/other-4',
+                     'detached', 'active', 'Remote project'))
+
+    def scan(snippet):
+        assert snippet == ('_dev_rows_all --details' if remote else '_dev_session_rows --details')
+        return '\n'.join('\t'.join(([host] if remote else []) +
+                                  [slot, path, slot, state, context, title, 'codex'])
+                         for host, slot, path, state, context, title in rows)
+
+    monkeypatch.setattr(t_mod, 'Config', lambda: cfg)
+    monkeypatch.setattr(t_mod, 'zsh_capture', scan)
+    flags = ['-r'] if remote else []
+    for scope in ([], ['--all']):
+        assert t_mod.main([*command, *scope, *flags]) == 0
+        output = capsys.readouterr().out
+        for _, slot, *_ in rows:
+            assert slot in output
+        assert '(repo:' not in output
+    assert t_mod.main([*command, 'api', *flags]) == 0
+    output = capsys.readouterr().out
+    assert 'api-1' in output and 'other-' not in output
+    assert 'repo: api' in output

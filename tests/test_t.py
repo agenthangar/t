@@ -2098,12 +2098,11 @@ def test_ls_scope_explicit_repo_from_anywhere(t_mod, tmp_path, monkeypatch):
     assert wt == "/Users/me/code/.worktrees/dotfiles"
 
 
-def test_ls_scope_defaults_to_cwd_repo(t_mod, tmp_path, monkeypatch):
+def test_ls_scope_defaults_to_all_repos(t_mod, tmp_path, monkeypatch):
     cfg = _config_with(t_mod, tmp_path, monkeypatch, {"api": "/Users/me/code/api"},
                        worktree_root="/Users/me/wt")
-    assert t_mod._ls_scope(cfg, None, False, "/Users/me/code/api/src") == \
-        ("/Users/me/code/api", "/Users/me/wt/api")
-    assert t_mod._ls_scope(cfg, None, False, "/Users/me") == ("", "")
+    for cwd in ("/Users/me/code/api/src", "/Users/me/wt/api/api-7", "/Users/me"):
+        assert t_mod._ls_scope(cfg, None, False, cwd) == ("", "")
 
 
 def test_ls_scope_all_widens(t_mod, tmp_path, monkeypatch):

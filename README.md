@@ -141,7 +141,7 @@ t agent install            # choose and install agent CLIs; review their vendor 
 t repo add ~/config/my-project  # register a checkout you already have
 t config setup             # select checkouts under ~/config and optional SSH hosts
 t session open my-project  # start an isolated worktree + tmux slot
-t session list             # see your running sessions
+t session list             # running sessions across every repository
 ```
 
 Sessions open directly into the agent without displaying internal shell commands.
