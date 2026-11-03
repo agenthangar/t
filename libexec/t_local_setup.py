@@ -134,10 +134,7 @@ def run(args, api):
                     return 130
                 disabling = choice == 'disable'
                 if not disabling:
-                    model = dialog.choose('Local model (downloaded on apply)', [
-                        ('gpt-oss:20b', 'gpt-oss:20b — starting baseline, ~14 GB download'),
-                        ('gpt-oss:120b', 'gpt-oss:120b — larger model, ~65 GB download'),
-                        ('custom', 'Enter another Ollama model name')])
+                    model = runpy.run_path(str(ROOT / 'libexec/t_local_models.py'))['choose'](dialog)
                     if model == 'custom':
                         with dialog.suspended():
                             model = input('Ollama model name: ').strip()

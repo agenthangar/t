@@ -805,7 +805,7 @@ _t() {
     cursor) actions=(list ls resume send) ;;
     agentcore) actions=(invoke stop) ;;
     hosts) actions=(list ls show add edit remove default run) ;;
-    config) actions=(open show edit setup onboard workflow local) ;;
+    config) actions=(open show edit setup onboard workflow local models) ;;
     profile) actions=(init edit show apply) ;;
     policy) actions=(check show apply) ;;
     agent) actions=(login install status trust) ;;
@@ -822,6 +822,16 @@ _t() {
       return
     fi
     _describe -t actions 't action' actions
+    return
+  fi
+  if [[ $group == config && $action == models ]]; then
+    if (( CURRENT == first )); then
+      _values 'models verb' list ls refresh
+    elif [[ ${words[CURRENT-1]} == --benchmark ]]; then
+      _message 'LiveBench release (YYYY-MM-DD)'
+    else
+      _values 'flag' --json --benchmark -h --help
+    fi
     return
   fi
   if [[ $group == config && $action == workflow ]]; then

@@ -13,12 +13,63 @@ Open **t config → Local worker & models**, or run:
 t config local
 ```
 
-The shared settings UI reviews the missing prerequisite installers, model download,
-and Codex MCP registration before applying. Choose `gpt-oss:20b` as a starting
-baseline, `gpt-oss:120b` for a larger model, or enter another Ollama model name.
-Model availability and performance depend on your hardware. Setup checks tool
-calling support, but does not claim a coding-quality benchmark or successful
-inference merely because a model downloaded.
+The shared settings UI reviews prerequisite installers, the model download and
+Codex MCP registration before applying. Its model picker ranks **evaluated fits**
+first, then fitting models with no matching evaluation. Other models remain
+inspectable and selectable, with their memory or disk limitation shown. Custom
+Ollama names remain available. Setup verifies tool support after downloading.
+
+```sh
+t config models list
+t config models list --json
+t config models refresh
+t config models list --benchmark 2025-04-25
+```
+
+`list` is offline and read-only: it never starts Ollama, refreshes metadata,
+changes settings, or downloads weights. `refresh` fetches public metadata only
+and atomically updates a user cache. The picker refreshes metadata older than
+seven days and has an explicit Refresh choice. Failed refreshes preserve the
+last complete cache; a bundled snapshot supports first use offline. Refresh
+errors are shown, not silently treated as current results.
+
+Availability comes from [Ollama's library](https://ollama.com/library) and tag
+pages: up to 64 tool-capable families and their canonical parameter-size tags.
+This discovers new families without a t release, but does not enumerate every
+community model or quantization. Published tag download sizes use the upper end
+of any range. Tool support still requires setup's actual model metadata check.
+
+Coding scores come from the official
+[LiveBench v1 data repository](https://github.com/LiveBench/livebench.github.io/tree/main/public).
+Refresh discovers its latest 12 releases. Scores are the arithmetic mean of the
+release's own Coding task columns, on a 0–100 scale. The default selects the newest
+release containing an evaluated estimated fit; if none exists, it shows the newest
+release without a recommendation. `--benchmark DATE` selects another cached
+release. All scores in a view belong to that single release; releases and other
+benchmarks are never blended. The selected and newest available dates are shown.
+This source currently covers v1, not the newer LiveBench 2.0 benchmark.
+
+**Best evaluated fit is not a claim of the best model overall.** Small, newer
+models often lack matching scores in this source. They remain unranked rather
+than receiving invented scores; a recommendation can therefore have older
+benchmark evidence. JSON records the exact evaluated model name and source URL.
+Matching uses explicit name/variant aliases, never fuzzy family matching. Hosted,
+thinking and instruction variants are base-model evidence: quantized Ollama
+weights, Codex's harness and local speed were not measured by these results.
+
+Suitability uses detected RAM, Apple unified memory or the largest NVIDIA GPU,
+and free space on the model volume. Unknown accelerators stay unknown; CPU/partial
+offload is not assumed fast enough. The estimate reserves max(4 GiB, 20% RAM) for
+the OS, 10% accelerator capacity, 20% weight overhead and a fixed 4 GiB allowance
+for the worker's 32K context. That allowance is a conservative heuristic, not
+architecture-specific KV sizing or an inference guarantee. Disk requires the
+estimated missing download plus 2 GiB free; complete installed blobs can be reused.
+Lists expose estimates and reasons, and never switch your configured worker.
+
+Metadata is cached in `$XDG_CACHE_HOME/t/local-models.json` (default
+`~/.cache/t/local-models.json`). Fetches are bounded by size, request timeout and
+a scheduling deadline. They send no local hardware, paths, repository context or
+credentials to the metadata sources.
 
 Explicit setup for automation:
 

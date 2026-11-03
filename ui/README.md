@@ -619,3 +619,10 @@ The executable budgets live in `command-contract.json` under `help_style`.
 mode-specific, and alias help at all three widths. CI rejects oversized summaries,
 option text, pages, missing public options, and undiscoverable commands. Add or
 update help regression tests with each public command change.
+
+`t config models list [--benchmark DATE] [--json]` reads cached local model
+availability and coding scores, with machine memory and disk estimates. It never
+refreshes or prompts. `refresh` updates public metadata only. Both are user-wide,
+with no repository inference or picker. The local setup wizard uses the shared
+Rail dialog to select ranked estimated fits, inspect other and unranked models,
+refresh stale metadata, or enter a custom name before installation review.

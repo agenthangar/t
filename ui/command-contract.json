@@ -3771,6 +3771,96 @@
           ]
         }
       }
+    },
+    "config models list": {
+      "patterns": [
+        "list",
+        "machine"
+      ],
+      "renderer": "mixed",
+      "scope": "local machine; cached public metadata",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_local_models.py::test_commands"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "config",
+            "models",
+            "list"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_models.py::test_commands"
+          ]
+        },
+        "json": {
+          "argv": [
+            "config",
+            "models",
+            "list",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_models.py::test_commands"
+          ]
+        }
+      }
+    },
+    "config models refresh": {
+      "patterns": [
+        "action",
+        "machine"
+      ],
+      "renderer": "mixed",
+      "scope": "local machine; cached public metadata",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_local_models.py::test_commands"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "config",
+            "models",
+            "refresh"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_models.py::test_commands"
+          ]
+        },
+        "json": {
+          "argv": [
+            "config",
+            "models",
+            "refresh",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": false,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_models.py::test_commands"
+          ]
+        }
+      }
     }
   },
   "display_schemas": {
@@ -4243,7 +4333,9 @@
     "config workflow exclude": "_cmd_workflow workflow_repo",
     "config workflow inherit": "_cmd_workflow workflow_repo",
     "config workflow instructions show": "_cmd_workflow workflow_repo",
-    "config workflow instructions edit": "_cmd_workflow workflow_repo"
+    "config workflow instructions edit": "_cmd_workflow workflow_repo",
+    "config models list": "user-wide model catalog; ignores workflow_repo inherited from the shared config parser",
+    "config models refresh": "user-wide model catalog; ignores workflow_repo inherited from the shared config parser"
   },
   "command_aliases": {
     "list_verbs": {

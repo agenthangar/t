@@ -200,6 +200,14 @@
     "libexec/t_local_worker.py:run_worker:subprocess.Popen": {
       "kind": "background",
       "reason": "Starts isolated Codex; its events are task artifacts and task_status provides status over MCP."
+    },
+    "libexec/t_local_models.py:probe:subprocess.run": {
+      "kind": "protocol",
+      "reason": "Read-only local hardware probes have a two-second deadline and remain quiet for catalog JSON output."
+    },
+    "libexec/t_local_models.py:fetch:urllib.request.urlopen": {
+      "kind": "phase",
+      "reason": "Bounded public metadata requests run inside the refresh spinner, including its parallel fetch workers."
     }
   },
   "shell": [

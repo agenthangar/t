@@ -2927,6 +2927,8 @@ def _local_setup(args):
 
 
 def cmd_config(cfg, args):
+    if getattr(args, "models_action", None):
+        return runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_local_models.py"))["run"](args)
     if getattr(args, "local", False):
         return _local_setup(args)
     if getattr(args, "local_model", None) or getattr(args, "disable_local", False) or getattr(args, "yes", False):
@@ -5806,6 +5808,8 @@ def _command_readonly(argv, *, terminal=None):
             terminal = sys.stdin.isatty() and sys.stdout.isatty()
         return not terminal
     verb, tail = words[0], words[1:]
+    if words[:2] == ["config", "models"]:
+        return len(words) == 2 or words[2] == "list"
     if words[:2] == ["config", "workflow"]:
         return len(words) == 2 or words[2] == "list" or (words[2:4] == ["instructions", "show"])
     if verb == "__advisories":
@@ -10306,6 +10310,7 @@ COMMAND_GROUPS = {
     "config": {"open": ("config",), "show": ("config", "--show"),
                "edit": ("config", "--edit"), "setup": ("setup",),
                "onboard": ("config", "--onboard"), "local": ("config", "--local"),
+               "models": {verb: ("config", "models", verb) for verb in ("list", "refresh")},
                "workflow": {"list": ("config", "workflow", "list"),
                             "edit": ("config", "workflow", "edit"),
                             **{verb: ("config", "workflow", verb) for verb in ("add", "use", "exclude", "inherit")},
@@ -10488,6 +10493,22 @@ def _wrap_help(body):
 
 
 def _group_help(group):
+    if group == "config models":
+        return _wrap_help("""USAGE
+  t config models <verb> [--benchmark DATE] [--json]
+
+COMMANDS
+  list     Show cached coding evaluations and estimated machine fit
+  refresh  Update public metadata; never download model weights
+
+SCOPE
+  User-wide catalog for this machine; no repository inference or picker.
+  Select models and review installation in t config local.
+  Scores compare one LiveBench v1 release; unknown scores stay unranked.
+
+LEARN MORE
+  t help config models <verb>
+""")
     if group == "config workflow instructions":
         return _wrap_help("""USAGE
   t config workflow instructions show [NAME] [--repo ALIAS]
@@ -10628,6 +10649,7 @@ def _command_description(group, action):
         "config": {"open": "Open settings; edit repository and host short names", "show": "Print current settings",
                    "edit": "Edit local configuration", "setup": "Register repos and hosts",
                    "onboard": "Guided setup: agents, GitHub repos, and hosts",
+                   "models": "Rank local models by coding evaluations and machine fit",
                    "workflow": "Manage named staged agent workflows and Markdown instructions",
                    "local": "Set up local models and Codex worker delegation (--show for status)"},
         "profile": {"init": "Create an instruction profile", "edit": "Edit the profile",
@@ -11632,6 +11654,19 @@ RECEIVE AND REMOTE MOVES
                     help="review agents, optional sign-ins, repositories, and hosts; terminal only. Choices: q/Esc back; review: n/Esc back, q quits; Ctrl-C cancels")
 
     config_sub = sp.add_subparsers(dest="config_resource")
+    models = config_sub.add_parser("models", help="rank local coding models for this machine",
+        description="User-wide local model catalog. No repository inference or selection.")
+    models_sub = models.add_subparsers(dest="models_action")
+    for verb in ("list", "refresh"):
+        leaf = models_sub.add_parser(verb,
+            help="show cached model rankings" if verb == "list" else "refresh public model and evaluation metadata",
+            description="Rank local models within one LiveBench v1 Coding release, with estimated machine fit. "
+                        "List reads cached metadata; refresh updates metadata only. No model downloads.",
+            epilog=f"EXAMPLES\n  t config models {verb}\n  t config models {verb} --json",
+            help_details="DETAILS\n\n  See docs/local-workers.md for sources, freshness and memory estimates. "
+                         "Use t config local to select and review installation.")
+        leaf.add_argument("--json", action="store_true", help="print structured metadata and estimates")
+        leaf.add_argument("--benchmark", metavar="DATE", help="choose a published evaluation release (YYYY-MM-DD)")
     workflow = config_sub.add_parser("workflow", help="manage named staged agent workflows")
     workflow_sub = workflow.add_subparsers(dest="workflow_action")
     for verb in ("list", "edit", "add", "use", "exclude", "inherit"):

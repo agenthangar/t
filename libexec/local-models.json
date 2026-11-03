@@ -1,0 +1,1445 @@
+{
+  "schema": 1,
+  "fetched_at": 1793216030.103909,
+  "models": [
+    {
+      "model": "athene-v2:72b",
+      "bytes": 47000000000,
+      "source": "https://ollama.com/library/athene-v2/tags"
+    },
+    {
+      "model": "aya-expanse:32b",
+      "bytes": 20000000000,
+      "source": "https://ollama.com/library/aya-expanse/tags"
+    },
+    {
+      "model": "aya-expanse:8b",
+      "bytes": 5100000000,
+      "source": "https://ollama.com/library/aya-expanse/tags"
+    },
+    {
+      "model": "cogito:14b",
+      "bytes": 9000000000,
+      "source": "https://ollama.com/library/cogito/tags"
+    },
+    {
+      "model": "cogito:32b",
+      "bytes": 20000000000,
+      "source": "https://ollama.com/library/cogito/tags"
+    },
+    {
+      "model": "cogito:3b",
+      "bytes": 2200000000,
+      "source": "https://ollama.com/library/cogito/tags"
+    },
+    {
+      "model": "cogito:70b",
+      "bytes": 43000000000,
+      "source": "https://ollama.com/library/cogito/tags"
+    },
+    {
+      "model": "cogito:8b",
+      "bytes": 4900000000,
+      "source": "https://ollama.com/library/cogito/tags"
+    },
+    {
+      "model": "command-r-plus:104b",
+      "bytes": 59000000000,
+      "source": "https://ollama.com/library/command-r-plus/tags"
+    },
+    {
+      "model": "command-r:35b",
+      "bytes": 19000000000,
+      "source": "https://ollama.com/library/command-r/tags"
+    },
+    {
+      "model": "deepseek-r1:1.5b",
+      "bytes": 1100000000,
+      "source": "https://ollama.com/library/deepseek-r1/tags"
+    },
+    {
+      "model": "deepseek-r1:14b",
+      "bytes": 9000000000,
+      "source": "https://ollama.com/library/deepseek-r1/tags"
+    },
+    {
+      "model": "deepseek-r1:32b",
+      "bytes": 20000000000,
+      "source": "https://ollama.com/library/deepseek-r1/tags"
+    },
+    {
+      "model": "deepseek-r1:671b",
+      "bytes": 404000000000,
+      "source": "https://ollama.com/library/deepseek-r1/tags"
+    },
+    {
+      "model": "deepseek-r1:70b",
+      "bytes": 43000000000,
+      "source": "https://ollama.com/library/deepseek-r1/tags"
+    },
+    {
+      "model": "deepseek-r1:7b",
+      "bytes": 4700000000,
+      "source": "https://ollama.com/library/deepseek-r1/tags"
+    },
+    {
+      "model": "deepseek-r1:8b",
+      "bytes": 5200000000,
+      "source": "https://ollama.com/library/deepseek-r1/tags"
+    },
+    {
+      "model": "deepseek-v3.1:671b",
+      "bytes": 404000000000,
+      "source": "https://ollama.com/library/deepseek-v3.1/tags"
+    },
+    {
+      "model": "devstral-small-2:24b",
+      "bytes": 15000000000,
+      "source": "https://ollama.com/library/devstral-small-2/tags"
+    },
+    {
+      "model": "devstral:24b",
+      "bytes": 14000000000,
+      "source": "https://ollama.com/library/devstral/tags"
+    },
+    {
+      "model": "firefunction-v2:70b",
+      "bytes": 40000000000,
+      "source": "https://ollama.com/library/firefunction-v2/tags"
+    },
+    {
+      "model": "gemma4:12b",
+      "bytes": 8000000000,
+      "source": "https://ollama.com/library/gemma4/tags"
+    },
+    {
+      "model": "gemma4:26b",
+      "bytes": 19000000000,
+      "source": "https://ollama.com/library/gemma4/tags"
+    },
+    {
+      "model": "gemma4:31b",
+      "bytes": 20000000000,
+      "source": "https://ollama.com/library/gemma4/tags"
+    },
+    {
+      "model": "gpt-oss:120b",
+      "bytes": 65000000000,
+      "source": "https://ollama.com/library/gpt-oss/tags"
+    },
+    {
+      "model": "gpt-oss:20b",
+      "bytes": 14000000000,
+      "source": "https://ollama.com/library/gpt-oss/tags"
+    },
+    {
+      "model": "granite3-dense:2b",
+      "bytes": 1600000000,
+      "source": "https://ollama.com/library/granite3-dense/tags"
+    },
+    {
+      "model": "granite3-dense:8b",
+      "bytes": 4900000000,
+      "source": "https://ollama.com/library/granite3-dense/tags"
+    },
+    {
+      "model": "granite3-moe:1b",
+      "bytes": 822000000,
+      "source": "https://ollama.com/library/granite3-moe/tags"
+    },
+    {
+      "model": "granite3-moe:3b",
+      "bytes": 2100000000,
+      "source": "https://ollama.com/library/granite3-moe/tags"
+    },
+    {
+      "model": "granite3.1-dense:2b",
+      "bytes": 1600000000,
+      "source": "https://ollama.com/library/granite3.1-dense/tags"
+    },
+    {
+      "model": "granite3.1-dense:8b",
+      "bytes": 5000000000,
+      "source": "https://ollama.com/library/granite3.1-dense/tags"
+    },
+    {
+      "model": "granite3.1-moe:1b",
+      "bytes": 1400000000,
+      "source": "https://ollama.com/library/granite3.1-moe/tags"
+    },
+    {
+      "model": "granite3.1-moe:3b",
+      "bytes": 2000000000,
+      "source": "https://ollama.com/library/granite3.1-moe/tags"
+    },
+    {
+      "model": "granite3.2-vision:2b",
+      "bytes": 2400000000,
+      "source": "https://ollama.com/library/granite3.2-vision/tags"
+    },
+    {
+      "model": "granite3.3:2b",
+      "bytes": 1500000000,
+      "source": "https://ollama.com/library/granite3.3/tags"
+    },
+    {
+      "model": "granite3.3:8b",
+      "bytes": 4900000000,
+      "source": "https://ollama.com/library/granite3.3/tags"
+    },
+    {
+      "model": "granite4.1:30b",
+      "bytes": 17000000000,
+      "source": "https://ollama.com/library/granite4.1/tags"
+    },
+    {
+      "model": "granite4.1:3b",
+      "bytes": 2100000000,
+      "source": "https://ollama.com/library/granite4.1/tags"
+    },
+    {
+      "model": "granite4.1:8b",
+      "bytes": 5300000000,
+      "source": "https://ollama.com/library/granite4.1/tags"
+    },
+    {
+      "model": "granite4:1b",
+      "bytes": 3300000000,
+      "source": "https://ollama.com/library/granite4/tags"
+    },
+    {
+      "model": "granite4:3b",
+      "bytes": 2100000000,
+      "source": "https://ollama.com/library/granite4/tags"
+    },
+    {
+      "model": "hermes3:3b",
+      "bytes": 2000000000,
+      "source": "https://ollama.com/library/hermes3/tags"
+    },
+    {
+      "model": "hermes3:405b",
+      "bytes": 229000000000,
+      "source": "https://ollama.com/library/hermes3/tags"
+    },
+    {
+      "model": "hermes3:70b",
+      "bytes": 40000000000,
+      "source": "https://ollama.com/library/hermes3/tags"
+    },
+    {
+      "model": "hermes3:8b",
+      "bytes": 4700000000,
+      "source": "https://ollama.com/library/hermes3/tags"
+    },
+    {
+      "model": "lfm2.5-thinking:1.2b",
+      "bytes": 731000000,
+      "source": "https://ollama.com/library/lfm2.5-thinking/tags"
+    },
+    {
+      "model": "lfm2:24b",
+      "bytes": 14000000000,
+      "source": "https://ollama.com/library/lfm2/tags"
+    },
+    {
+      "model": "llama3-groq-tool-use:70b",
+      "bytes": 40000000000,
+      "source": "https://ollama.com/library/llama3-groq-tool-use/tags"
+    },
+    {
+      "model": "llama3-groq-tool-use:8b",
+      "bytes": 4700000000,
+      "source": "https://ollama.com/library/llama3-groq-tool-use/tags"
+    },
+    {
+      "model": "llama3.1:405b",
+      "bytes": 243000000000,
+      "source": "https://ollama.com/library/llama3.1/tags"
+    },
+    {
+      "model": "llama3.1:70b",
+      "bytes": 43000000000,
+      "source": "https://ollama.com/library/llama3.1/tags"
+    },
+    {
+      "model": "llama3.1:8b",
+      "bytes": 4900000000,
+      "source": "https://ollama.com/library/llama3.1/tags"
+    },
+    {
+      "model": "llama3.2:1b",
+      "bytes": 1300000000,
+      "source": "https://ollama.com/library/llama3.2/tags"
+    },
+    {
+      "model": "llama3.2:3b",
+      "bytes": 2000000000,
+      "source": "https://ollama.com/library/llama3.2/tags"
+    },
+    {
+      "model": "llama3.3:70b",
+      "bytes": 43000000000,
+      "source": "https://ollama.com/library/llama3.3/tags"
+    },
+    {
+      "model": "magistral:24b",
+      "bytes": 14000000000,
+      "source": "https://ollama.com/library/magistral/tags"
+    },
+    {
+      "model": "ministral-3:14b",
+      "bytes": 9100000000,
+      "source": "https://ollama.com/library/ministral-3/tags"
+    },
+    {
+      "model": "ministral-3:3b",
+      "bytes": 3000000000,
+      "source": "https://ollama.com/library/ministral-3/tags"
+    },
+    {
+      "model": "ministral-3:8b",
+      "bytes": 6000000000,
+      "source": "https://ollama.com/library/ministral-3/tags"
+    },
+    {
+      "model": "mistral-large:123b",
+      "bytes": 73000000000,
+      "source": "https://ollama.com/library/mistral-large/tags"
+    },
+    {
+      "model": "mistral-nemo:12b",
+      "bytes": 7100000000,
+      "source": "https://ollama.com/library/mistral-nemo/tags"
+    },
+    {
+      "model": "mistral-small3.1:24b",
+      "bytes": 15000000000,
+      "source": "https://ollama.com/library/mistral-small3.1/tags"
+    },
+    {
+      "model": "mistral-small3.2:24b",
+      "bytes": 15000000000,
+      "source": "https://ollama.com/library/mistral-small3.2/tags"
+    },
+    {
+      "model": "mistral-small:22b",
+      "bytes": 13000000000,
+      "source": "https://ollama.com/library/mistral-small/tags"
+    },
+    {
+      "model": "mistral-small:24b",
+      "bytes": 14000000000,
+      "source": "https://ollama.com/library/mistral-small/tags"
+    },
+    {
+      "model": "mistral:7b",
+      "bytes": 4400000000,
+      "source": "https://ollama.com/library/mistral/tags"
+    },
+    {
+      "model": "nemotron-3-nano:30b",
+      "bytes": 24000000000,
+      "source": "https://ollama.com/library/nemotron-3-nano/tags"
+    },
+    {
+      "model": "nemotron-3-nano:4b",
+      "bytes": 2900000000,
+      "source": "https://ollama.com/library/nemotron-3-nano/tags"
+    },
+    {
+      "model": "nemotron-3-super:120b",
+      "bytes": 87000000000,
+      "source": "https://ollama.com/library/nemotron-3-super/tags"
+    },
+    {
+      "model": "nemotron-mini:4b",
+      "bytes": 2700000000,
+      "source": "https://ollama.com/library/nemotron-mini/tags"
+    },
+    {
+      "model": "nemotron3:33b",
+      "bytes": 28000000000,
+      "source": "https://ollama.com/library/nemotron3/tags"
+    },
+    {
+      "model": "nemotron:70b",
+      "bytes": 43000000000,
+      "source": "https://ollama.com/library/nemotron/tags"
+    },
+    {
+      "model": "olmo-3:32b",
+      "bytes": 19000000000,
+      "source": "https://ollama.com/library/olmo-3/tags"
+    },
+    {
+      "model": "olmo-3:7b",
+      "bytes": 4500000000,
+      "source": "https://ollama.com/library/olmo-3/tags"
+    },
+    {
+      "model": "ornith:35b",
+      "bytes": 21000000000,
+      "source": "https://ollama.com/library/ornith/tags"
+    },
+    {
+      "model": "ornith:9b",
+      "bytes": 5600000000,
+      "source": "https://ollama.com/library/ornith/tags"
+    },
+    {
+      "model": "phi4-mini:3.8b",
+      "bytes": 2500000000,
+      "source": "https://ollama.com/library/phi4-mini/tags"
+    },
+    {
+      "model": "qwen2.5-coder:0.5b",
+      "bytes": 398000000,
+      "source": "https://ollama.com/library/qwen2.5-coder/tags"
+    },
+    {
+      "model": "qwen2.5-coder:1.5b",
+      "bytes": 986000000,
+      "source": "https://ollama.com/library/qwen2.5-coder/tags"
+    },
+    {
+      "model": "qwen2.5-coder:14b",
+      "bytes": 9000000000,
+      "source": "https://ollama.com/library/qwen2.5-coder/tags"
+    },
+    {
+      "model": "qwen2.5-coder:32b",
+      "bytes": 20000000000,
+      "source": "https://ollama.com/library/qwen2.5-coder/tags"
+    },
+    {
+      "model": "qwen2.5-coder:3b",
+      "bytes": 1900000000,
+      "source": "https://ollama.com/library/qwen2.5-coder/tags"
+    },
+    {
+      "model": "qwen2.5-coder:7b",
+      "bytes": 4700000000,
+      "source": "https://ollama.com/library/qwen2.5-coder/tags"
+    },
+    {
+      "model": "qwen2.5:0.5b",
+      "bytes": 398000000,
+      "source": "https://ollama.com/library/qwen2.5/tags"
+    },
+    {
+      "model": "qwen2.5:1.5b",
+      "bytes": 986000000,
+      "source": "https://ollama.com/library/qwen2.5/tags"
+    },
+    {
+      "model": "qwen2.5:14b",
+      "bytes": 9000000000,
+      "source": "https://ollama.com/library/qwen2.5/tags"
+    },
+    {
+      "model": "qwen2.5:32b",
+      "bytes": 20000000000,
+      "source": "https://ollama.com/library/qwen2.5/tags"
+    },
+    {
+      "model": "qwen2.5:3b",
+      "bytes": 1900000000,
+      "source": "https://ollama.com/library/qwen2.5/tags"
+    },
+    {
+      "model": "qwen2.5:72b",
+      "bytes": 47000000000,
+      "source": "https://ollama.com/library/qwen2.5/tags"
+    },
+    {
+      "model": "qwen2.5:7b",
+      "bytes": 4700000000,
+      "source": "https://ollama.com/library/qwen2.5/tags"
+    },
+    {
+      "model": "qwen2:0.5b",
+      "bytes": 352000000,
+      "source": "https://ollama.com/library/qwen2/tags"
+    },
+    {
+      "model": "qwen2:1.5b",
+      "bytes": 935000000,
+      "source": "https://ollama.com/library/qwen2/tags"
+    },
+    {
+      "model": "qwen2:72b",
+      "bytes": 41000000000,
+      "source": "https://ollama.com/library/qwen2/tags"
+    },
+    {
+      "model": "qwen2:7b",
+      "bytes": 4400000000,
+      "source": "https://ollama.com/library/qwen2/tags"
+    },
+    {
+      "model": "qwen3-coder:30b",
+      "bytes": 19000000000,
+      "source": "https://ollama.com/library/qwen3-coder/tags"
+    },
+    {
+      "model": "qwen3-coder:480b",
+      "bytes": 290000000000,
+      "source": "https://ollama.com/library/qwen3-coder/tags"
+    },
+    {
+      "model": "qwen3-next:80b",
+      "bytes": 50000000000,
+      "source": "https://ollama.com/library/qwen3-next/tags"
+    },
+    {
+      "model": "qwen3-vl:235b",
+      "bytes": 143000000000,
+      "source": "https://ollama.com/library/qwen3-vl/tags"
+    },
+    {
+      "model": "qwen3-vl:2b",
+      "bytes": 1900000000,
+      "source": "https://ollama.com/library/qwen3-vl/tags"
+    },
+    {
+      "model": "qwen3-vl:30b",
+      "bytes": 20000000000,
+      "source": "https://ollama.com/library/qwen3-vl/tags"
+    },
+    {
+      "model": "qwen3-vl:32b",
+      "bytes": 21000000000,
+      "source": "https://ollama.com/library/qwen3-vl/tags"
+    },
+    {
+      "model": "qwen3-vl:4b",
+      "bytes": 3300000000,
+      "source": "https://ollama.com/library/qwen3-vl/tags"
+    },
+    {
+      "model": "qwen3-vl:8b",
+      "bytes": 6200000000,
+      "source": "https://ollama.com/library/qwen3-vl/tags"
+    },
+    {
+      "model": "qwen3.5:0.8b",
+      "bytes": 1300000000,
+      "source": "https://ollama.com/library/qwen3.5/tags"
+    },
+    {
+      "model": "qwen3.5:122b",
+      "bytes": 81000000000,
+      "source": "https://ollama.com/library/qwen3.5/tags"
+    },
+    {
+      "model": "qwen3.5:27b",
+      "bytes": 20000000000,
+      "source": "https://ollama.com/library/qwen3.5/tags"
+    },
+    {
+      "model": "qwen3.5:2b",
+      "bytes": 3100000000,
+      "source": "https://ollama.com/library/qwen3.5/tags"
+    },
+    {
+      "model": "qwen3.5:35b",
+      "bytes": 22000000000,
+      "source": "https://ollama.com/library/qwen3.5/tags"
+    },
+    {
+      "model": "qwen3.5:4b",
+      "bytes": 4000000000,
+      "source": "https://ollama.com/library/qwen3.5/tags"
+    },
+    {
+      "model": "qwen3.5:9b",
+      "bytes": 7600000000,
+      "source": "https://ollama.com/library/qwen3.5/tags"
+    },
+    {
+      "model": "qwen3.6:27b",
+      "bytes": 19000000000,
+      "source": "https://ollama.com/library/qwen3.6/tags"
+    },
+    {
+      "model": "qwen3.6:35b",
+      "bytes": 24000000000,
+      "source": "https://ollama.com/library/qwen3.6/tags"
+    },
+    {
+      "model": "qwen3.8:27b",
+      "bytes": 18000000000,
+      "source": "https://ollama.com/library/qwen3.8/tags"
+    },
+    {
+      "model": "qwen3:0.6b",
+      "bytes": 523000000,
+      "source": "https://ollama.com/library/qwen3/tags"
+    },
+    {
+      "model": "qwen3:1.7b",
+      "bytes": 1400000000,
+      "source": "https://ollama.com/library/qwen3/tags"
+    },
+    {
+      "model": "qwen3:14b",
+      "bytes": 9300000000,
+      "source": "https://ollama.com/library/qwen3/tags"
+    },
+    {
+      "model": "qwen3:235b",
+      "bytes": 142000000000,
+      "source": "https://ollama.com/library/qwen3/tags"
+    },
+    {
+      "model": "qwen3:30b",
+      "bytes": 19000000000,
+      "source": "https://ollama.com/library/qwen3/tags"
+    },
+    {
+      "model": "qwen3:32b",
+      "bytes": 20000000000,
+      "source": "https://ollama.com/library/qwen3/tags"
+    },
+    {
+      "model": "qwen3:4b",
+      "bytes": 2500000000,
+      "source": "https://ollama.com/library/qwen3/tags"
+    },
+    {
+      "model": "qwen3:8b",
+      "bytes": 5200000000,
+      "source": "https://ollama.com/library/qwen3/tags"
+    },
+    {
+      "model": "qwq:32b",
+      "bytes": 20000000000,
+      "source": "https://ollama.com/library/qwq/tags"
+    },
+    {
+      "model": "rnj-1:8b",
+      "bytes": 5100000000,
+      "source": "https://ollama.com/library/rnj-1/tags"
+    },
+    {
+      "model": "smollm2:1.7b",
+      "bytes": 1800000000,
+      "source": "https://ollama.com/library/smollm2/tags"
+    }
+  ],
+  "benchmarks": [
+    {
+      "release": "2026-06-25",
+      "source": "https://raw.githubusercontent.com/LiveBench/livebench.github.io/main/public/table_2026_06_25.csv",
+      "scores": {
+        "claude-opus-4-5-20251101-thinking-64k-high-effort": 79.654,
+        "claude-opus-4-6-thinking-auto-high-effort": 78.184,
+        "claude-opus-4-7-xhigh-effort": 82.088,
+        "claude-opus-4-8-xhigh-effort": 79.272,
+        "claude-sonnet-4-6-thinking-auto-medium-effort": 79.272,
+        "claude-sonnet-5-xhigh-effort": 80.68,
+        "deepseek-v4-flash": 69.228,
+        "deepseek-v4-pro": 69.994,
+        "gemini-3.1-pro-preview-high": 76.454,
+        "gemini-3.5-flash-high": 78.184,
+        "glm-5.2": 79.654,
+        "gpt-5.2-2025-12-11-high": 76.072,
+        "gpt-5.2-codex": 83.619,
+        "gpt-5.4-mini-xhigh": 71.624,
+        "gpt-5.4-nano-xhigh": 70.839,
+        "gpt-5.4-xhigh": 77.541,
+        "gpt-5.5": 78.629,
+        "gpt-5.5-high": 80.037,
+        "gpt-5.5-xhigh": 82.149,
+        "grok-4.3": 69.933,
+        "grok-build-0.1": 65.386,
+        "kimi-k2.6-thinking": 78.567,
+        "kimi-k2.7-code": 73.959,
+        "minimax-m3": 68.203,
+        "qwen3.6-27b": 71.785,
+        "qwen3.6-plus": 78.184,
+        "qwen3.7-max": 74.219,
+        "claude-fable-5-xhigh-effort": 82.532
+      }
+    },
+    {
+      "release": "2026-01-08",
+      "source": "https://raw.githubusercontent.com/LiveBench/livebench.github.io/main/public/table_2026_01_08.csv",
+      "scores": {
+        "arcee-trinity-large-preview": 65.647,
+        "claude-4-1-opus-20250805-base": 76.072,
+        "claude-4-1-opus-20250805-thinking-32k": 74.663,
+        "claude-4-sonnet-20250514-base": 80.741,
+        "claude-4-sonnet-20250514-thinking-64k": 77.48,
+        "claude-haiku-4-5-20251001": 72.168,
+        "claude-haiku-4-5-20251001-thinking-64k": 72.81,
+        "claude-opus-4-5-20251101-high-effort": 77.802,
+        "claude-opus-4-5-20251101-low-effort": 78.184,
+        "claude-opus-4-5-20251101-medium-effort": 78.506,
+        "claude-opus-4-5-20251101-thinking-64k-high-effort": 79.654,
+        "claude-opus-4-5-20251101-thinking-64k-low-effort": 77.48,
+        "claude-opus-4-5-20251101-thinking-64k-medium-effort": 77.48,
+        "claude-opus-4-6-thinking-auto-high-effort": 78.184,
+        "claude-sonnet-4-5-20250929": 76.072,
+        "claude-sonnet-4-5-20250929-thinking-64k": 80.358,
+        "claude-sonnet-4-6-thinking-auto-high-effort": 79.975,
+        "claude-sonnet-4-6-thinking-auto-medium-effort": 79.272,
+        "claude-sonnet-4-6-thinking-auto-low-effort": 74.28,
+        "claude-opus-4-7-high-effort": 83.175,
+        "claude-opus-4-7-xhigh-effort": 82.088,
+        "claude-opus-4-7-low-effort": 76.454,
+        "claude-opus-4-7-medium-effort": 79.975,
+        "claude-opus-4-8-high-effort": 76.393,
+        "claude-opus-4-8-low-effort": 76.454,
+        "claude-opus-4-8-medium-effort": 78.888,
+        "claude-opus-4-8-xhigh-effort": 79.272,
+        "deepseek-v3.2": 75.689,
+        "deepseek-v3.2-exp": 73.194,
+        "deepseek-v3.2-exp-thinking": 70.055,
+        "deepseek-v3.2-thinking": 64.62,
+        "deepseek-v4-pro": 69.994,
+        "deepseek-v4-flash": 69.228,
+        "devstral-2512": 66.794,
+        "elephant-alpha": 56.69,
+        "gemini-2.5-flash-06-05-highthinking": 66.028,
+        "gemini-2.5-flash-lite-highthinking": 66.411,
+        "gemini-2.5-flash-lite-preview-09-2025-highthinking": 65.386,
+        "gemini-2.5-flash-preview-09-2025-highthinking": 67.499,
+        "gemini-2.5-pro-06-05-highthinking": 75.689,
+        "gemini-3-flash-preview-high": 73.898,
+        "gemini-3-flash-preview-minimal": 78.567,
+        "gemini-3-pro-preview-11-2025-high": 74.602,
+        "gemini-3-pro-preview-11-2025-low": 70.636,
+        "gemini-3.1-pro-preview-high": 76.454,
+        "gemini-3.1-flash-lite-preview-high": 68.524,
+        "gemini-3.5-flash-high": 78.184,
+        "gemma-4-31b-it": 60.334,
+        "glm-4.6": 71.019,
+        "glm-4.6v": 64.238,
+        "glm-4.7": 73.132,
+        "glm-5": 73.637,
+        "glm-5v-turbo": 73.898,
+        "glm-5.1": 75.368,
+        "gpt-5-mini": 76.072,
+        "gpt-5-mini-high": 68.203,
+        "gpt-5-mini-low": 69.549,
+        "gpt-5-mini-minimal": 70.698,
+        "gpt-5-nano": 67.376,
+        "gpt-5-nano-high": 62.386,
+        "gpt-5-nano-low": 52.725,
+        "gpt-5-pro-2025-10-06": 72.106,
+        "gpt-5.1-2025-11-13-high": 72.489,
+        "gpt-5.1-2025-11-13-low": 80.297,
+        "gpt-5.1-2025-11-13-medium": 75.689,
+        "gpt-5.1-2025-11-13-nothinking": 77.48,
+        "gpt-5.1-codex": 71.785,
+        "gpt-5.1-codex-max": 81.384,
+        "gpt-5.1-codex-max-high": 80.68,
+        "gpt-5.1-codex-mini": 69.933,
+        "gpt-5.2-2025-12-11-high": 76.072,
+        "gpt-5.2-2025-12-11-low": 73.898,
+        "gpt-5.2-2025-12-11-medium": 72.106,
+        "gpt-5.2-2025-12-11-nothinking": 76.454,
+        "gpt-5.2-codex": 83.619,
+        "gpt-5.3-codex-high": 78.184,
+        "gpt-5.3-codex-xhigh": 77.48,
+        "gpt-5.3-instant": 78.629,
+        "gpt-5.4-high": 78.184,
+        "gpt-5.4-xhigh": 77.541,
+        "gpt-5.4-mini": 74.701,
+        "gpt-5.4-mini-high": 70.94,
+        "gpt-5.4-mini-low": 72.906,
+        "gpt-5.4-mini-medium": 71.453,
+        "gpt-5.4-mini-xhigh": 71.624,
+        "gpt-5.4-nano": 61.88,
+        "gpt-5.4-nano-high": 68.376,
+        "gpt-5.4-nano-low": 69.401,
+        "gpt-5.4-nano-medium": 70.257,
+        "gpt-5.4-nano-xhigh": 72.137,
+        "gpt-5.5-high": 82.532,
+        "gpt-5.5-xhigh": 82.471,
+        "gpt-5.5-medium": 78.629,
+        "gpt-oss-120b": 60.212,
+        "grok-4-0709": 73.132,
+        "grok-4-1-fast-non-reasoning": 54.256,
+        "grok-4-1-fast-reasoning": 69.611,
+        "grok-code-fast-1-0825": 64.436,
+        "grok-4.20-beta-0309-non-reasoning": 58.543,
+        "grok-4.20-beta-0309-reasoning": 66.09,
+        "grok-4.3": 69.933,
+        "kimi-k2-instruct": 74.28,
+        "kimi-k2-thinking": 67.437,
+        "kimi-k2.5-thinking": 77.863,
+        "kimi-k2.6-thinking": 78.567,
+        "minimax-m2.5": 70.698,
+        "mimo-v2-pro": 68.846,
+        "minimax-m2.7": 54.899,
+        "nemotron-3-super-120b-a12b": 54.072,
+        "qwen3-235b-a22b-instruct-2507": 69.611,
+        "qwen3-235b-a22b-thinking-2507": 68.968,
+        "qwen3-30b-a3b-thinking": 48.883,
+        "qwen3-32b-thinking": 66.028,
+        "qwen3-next-80b-a3b-instruct": 68.203,
+        "qwen3-next-80b-a3b-thinking": 60.656,
+        "qwen3.6-plus": 78.184,
+        "qwen3.6-27b": 71.785,
+        "qwen3.6-flash": 64.942,
+        "qwen3.7-max": 74.219,
+        "minimax-m3": 68.203,
+        "nemotron-3-ultra-550b-a55b": 71.341,
+        "grok-build-0.1": 65.386,
+        "claude-fable-5-high-effort": 76.393,
+        "claude-fable-5-xhigh-effort": 78.567,
+        "kimi-k2.7-code": 73.959,
+        "glm-5.2": 79.654,
+        "claude-sonnet-5-xhigh-effort": 78.567
+      }
+    },
+    {
+      "release": "2025-12-23",
+      "source": "https://raw.githubusercontent.com/LiveBench/livebench.github.io/main/public/table_2025_12_23.csv",
+      "scores": {
+        "claude-4-1-opus-20250805-base": 76.072,
+        "claude-4-1-opus-20250805-thinking-32k": 74.663,
+        "claude-4-sonnet-20250514-base": 80.741,
+        "claude-4-sonnet-20250514-thinking-64k": 77.48,
+        "claude-haiku-4-5-20251001": 72.168,
+        "claude-haiku-4-5-20251001-thinking-64k": 72.81,
+        "claude-opus-4-5-20251101-high-effort": 77.802,
+        "claude-opus-4-5-20251101-low-effort": 78.184,
+        "claude-opus-4-5-20251101-medium-effort": 78.506,
+        "claude-opus-4-5-20251101-thinking-64k-high-effort": 79.654,
+        "claude-opus-4-5-20251101-thinking-64k-low-effort": 77.48,
+        "claude-opus-4-5-20251101-thinking-64k-medium-effort": 77.48,
+        "claude-sonnet-4-5-20250929": 76.072,
+        "claude-sonnet-4-5-20250929-thinking-64k": 80.358,
+        "deepseek-v3.2": 75.689,
+        "deepseek-v3.2-exp": 73.194,
+        "deepseek-v3.2-exp-thinking": 70.055,
+        "deepseek-v3.2-thinking": 64.62,
+        "devstral-2512": 66.794,
+        "gemini-2.5-flash-06-05-highthinking": 66.028,
+        "gemini-2.5-flash-lite-highthinking": 66.411,
+        "gemini-2.5-flash-lite-preview-09-2025-highthinking": 65.386,
+        "gemini-2.5-flash-preview-09-2025-highthinking": 67.499,
+        "gemini-2.5-pro-06-05-highthinking": 75.689,
+        "gemini-3-flash-preview-high": 73.898,
+        "gemini-3-flash-preview-minimal": 78.567,
+        "gemini-3-pro-preview-11-2025-high": 74.602,
+        "gemini-3-pro-preview-11-2025-low": 70.636,
+        "glm-4.6": 71.019,
+        "glm-4.6v": 64.238,
+        "glm-4.7": 73.132,
+        "gpt-5-mini": 76.072,
+        "gpt-5-mini-high": 68.203,
+        "gpt-5-mini-low": 69.549,
+        "gpt-5-mini-minimal": 70.698,
+        "gpt-5-nano": 67.376,
+        "gpt-5-nano-high": 62.386,
+        "gpt-5-nano-low": 52.725,
+        "gpt-5-pro-2025-10-06": 72.106,
+        "gpt-5.1-2025-11-13-high": 72.489,
+        "gpt-5.1-2025-11-13-low": 80.297,
+        "gpt-5.1-2025-11-13-medium": 75.689,
+        "gpt-5.1-2025-11-13-nothinking": 77.48,
+        "gpt-5.1-codex": 71.785,
+        "gpt-5.1-codex-max": 81.384,
+        "gpt-5.1-codex-max-high": 80.68,
+        "gpt-5.1-codex-max-xhigh": 74.984,
+        "gpt-5.1-codex-mini": 69.933,
+        "gpt-5.2-2025-12-11-high": 76.072,
+        "gpt-5.2-2025-12-11-low": 73.898,
+        "gpt-5.2-2025-12-11-medium": 72.106,
+        "gpt-5.2-2025-12-11-nothinking": 76.454,
+        "gpt-oss-120b": 60.212,
+        "grok-4-0709": 73.132,
+        "grok-4-1-fast-non-reasoning": 54.256,
+        "grok-4-1-fast-reasoning": 69.611,
+        "grok-code-fast-1-0825": 64.436,
+        "kimi-k2-instruct": 74.28,
+        "kimi-k2-thinking": 67.437,
+        "qwen3-235b-a22b-instruct-2507": 69.611,
+        "qwen3-235b-a22b-thinking-2507": 68.968,
+        "qwen3-30b-a3b-thinking": 48.883,
+        "qwen3-32b-thinking": 66.028,
+        "qwen3-next-80b-a3b-instruct": 68.203,
+        "qwen3-next-80b-a3b-thinking": 60.656
+      }
+    },
+    {
+      "release": "2025-11-25",
+      "source": "https://raw.githubusercontent.com/LiveBench/livebench.github.io/main/public/table_2025_11_25.csv",
+      "scores": {
+        "claude-4-1-opus-20250805-base": 76.072,
+        "claude-4-1-opus-20250805-thinking-32k": 74.663,
+        "claude-4-sonnet-20250514-base": 80.741,
+        "claude-4-sonnet-20250514-thinking-64k": 77.48,
+        "claude-haiku-4-5-20251001": 72.168,
+        "claude-haiku-4-5-20251001-thinking-64k": 72.81,
+        "claude-opus-4-5-20251101-high-effort": 77.802,
+        "claude-opus-4-5-20251101-low-effort": 78.184,
+        "claude-opus-4-5-20251101-medium-effort": 78.506,
+        "claude-opus-4-5-20251101-thinking-64k-high-effort": 79.654,
+        "claude-opus-4-5-20251101-thinking-64k-low-effort": 77.48,
+        "claude-opus-4-5-20251101-thinking-64k-medium-effort": 77.48,
+        "claude-sonnet-4-5-20250929": 76.072,
+        "claude-sonnet-4-5-20250929-thinking-64k": 80.358,
+        "deepseek-v3.2": 75.689,
+        "deepseek-v3.2-exp": 73.194,
+        "deepseek-v3.2-exp-thinking": 70.055,
+        "deepseek-v3.2-speciale": 68.203,
+        "deepseek-v3.2-thinking": 64.62,
+        "devstral-2512": 66.794,
+        "gemini-2.5-flash-06-05-highthinking": 66.028,
+        "gemini-2.5-flash-lite-highthinking": 66.411,
+        "gemini-2.5-flash-lite-preview-09-2025-highthinking": 65.386,
+        "gemini-2.5-flash-preview-09-2025-highthinking": 67.499,
+        "gemini-2.5-pro-06-05-highthinking": 75.689,
+        "gemini-3-flash-preview-high": 73.898,
+        "gemini-3-flash-preview-minimal": 78.567,
+        "gemini-3-pro-preview-11-2025-high": 74.602,
+        "gemini-3-pro-preview-11-2025-low": 70.636,
+        "glm-4.6": 71.019,
+        "glm-4.6v": 64.238,
+        "gpt-5-mini": 76.072,
+        "gpt-5-mini-high": 68.203,
+        "gpt-5-mini-low": 69.549,
+        "gpt-5-mini-minimal": 70.698,
+        "gpt-5-nano": 67.376,
+        "gpt-5-nano-high": 62.386,
+        "gpt-5-nano-low": 52.725,
+        "gpt-5-pro-2025-10-06": 72.106,
+        "gpt-5.1-2025-11-13-high": 72.489,
+        "gpt-5.1-2025-11-13-low": 80.297,
+        "gpt-5.1-2025-11-13-medium": 75.689,
+        "gpt-5.1-2025-11-13-nothinking": 77.48,
+        "gpt-5.1-codex": 71.785,
+        "gpt-5.1-codex-max": 81.384,
+        "gpt-5.1-codex-max-high": 80.68,
+        "gpt-5.1-codex-max-xhigh": 74.984,
+        "gpt-5.1-codex-mini": 69.933,
+        "gpt-5.2-2025-12-11-high": 76.072,
+        "gpt-5.2-2025-12-11-low": 73.898,
+        "gpt-5.2-2025-12-11-medium": 72.106,
+        "gpt-5.2-2025-12-11-nothinking": 76.454,
+        "gpt-oss-120b": 60.212,
+        "grok-4-0709": 73.132,
+        "grok-4-1-fast-non-reasoning": 54.256,
+        "grok-4-1-fast-reasoning": 69.611,
+        "grok-code-fast-1-0825": 64.436,
+        "kimi-k2-instruct": 74.28,
+        "kimi-k2-thinking": 67.437,
+        "qwen3-235b-a22b-instruct-2507": 69.611,
+        "qwen3-235b-a22b-thinking-2507": 68.968,
+        "qwen3-30b-a3b-thinking": 48.883,
+        "qwen3-32b-thinking": 66.028,
+        "qwen3-next-80b-a3b-instruct": 68.203,
+        "qwen3-next-80b-a3b-thinking": 60.656
+      }
+    },
+    {
+      "release": "2025-05-30",
+      "source": "https://raw.githubusercontent.com/LiveBench/livebench.github.io/main/public/table_2025_05_30.csv",
+      "scores": {
+        "claude-3-7-sonnet-20250219-base": 76.072,
+        "claude-3-7-sonnet-20250219-thinking-64k": 74.984,
+        "claude-4-1-opus-20250805-base": 76.072,
+        "claude-4-1-opus-20250805-thinking-32k": 74.663,
+        "claude-4-sonnet-20250514-base": 80.741,
+        "claude-4-sonnet-20250514-thinking-64k": 77.48,
+        "claude-sonnet-4-5-20250929": 76.072,
+        "claude-sonnet-4-5-20250929-thinking-64k": 80.358,
+        "command-a-03-2025": 55.343,
+        "deepseek-r1-0528": 73.194,
+        "deepseek-v3.1-terminus": 69.611,
+        "deepseek-v3.1-terminus-thinking": 71.402,
+        "gemini-2.5-flash-06-05-highthinking": 66.028,
+        "gemini-2.5-flash-lite-highthinking": 66.411,
+        "gemini-2.5-flash-lite-preview-09-2025-highthinking": 65.386,
+        "gemini-2.5-flash-preview-09-2025-highthinking": 67.499,
+        "gemini-2.5-pro-06-05-highthinking": 75.689,
+        "glm-4.5": 62.125,
+        "glm-4.5-air": 60.273,
+        "glm-4.6": 71.019,
+        "gpt-5": 75.046,
+        "gpt-5-codex": 69.611,
+        "gpt-5-high": 77.097,
+        "gpt-5-low": 74.28,
+        "gpt-5-mini": 76.072,
+        "gpt-5-mini-high": 68.203,
+        "gpt-5-mini-low": 69.549,
+        "gpt-5-mini-minimal": 70.698,
+        "gpt-5-minimal": 72.55,
+        "gpt-5-nano": 67.376,
+        "gpt-5-nano-high": 62.386,
+        "gpt-5-nano-low": 52.725,
+        "gpt-5-pro-2025-10-06": 72.106,
+        "gpt-5-chat": 78.567,
+        "gpt-oss-120b": 60.212,
+        "grok-4-0709": 73.132,
+        "grok-code-fast-1-0825": 64.436,
+        "kimi-k2-instruct": 74.28,
+        "mistral-medium-2505": 63.977,
+        "qwen3-235b-a22b-instruct-2507": 69.611,
+        "qwen3-235b-a22b-thinking": 67.499,
+        "qwen3-235b-a22b-thinking-2507": 68.968,
+        "qwen3-30b-a3b-thinking": 48.883,
+        "qwen3-32b-thinking": 66.028,
+        "qwen3-coder-480b-a35b-instruct": 74.984,
+        "qwen3-max-2025-09-23": 71.785,
+        "qwen3-next-80b-a3b-instruct": 68.203,
+        "qwen3-next-80b-a3b-thinking": 60.656,
+        "claude-haiku-4-5-20251001": 72.168,
+        "claude-haiku-4-5-20251001-thinking-64k": 72.81,
+        "deepseek-v3.2-exp": 73.194,
+        "deepseek-v3.2-exp-thinking": 70.055,
+        "minimax-m2": 57.777,
+        "kimi-k2-thinking": 68.203,
+        "grok-4-fast-non-reasoning-2511": 58.543,
+        "grok-4-fast-reasoning-2511": 68.968,
+        "gpt-5.1-2025-11-13-high": 72.489,
+        "gpt-5.1-2025-11-13-nothinking": 77.48,
+        "gpt-5.1-codex": 71.785,
+        "gpt-5.1-codex-mini": 69.933,
+        "gemini-3-pro-preview-11-2025-high": 74.602,
+        "gemini-3-pro-preview-11-2025-low": 70.636,
+        "grok-4-1-fast-non-reasoning": 56.108,
+        "grok-4-1-fast-reasoning": 69.611,
+        "claude-opus-4-5-20251101-high-effort": 77.802,
+        "claude-opus-4-5-20251101-low-effort": 78.184,
+        "claude-opus-4-5-20251101-medium-effort": 78.506,
+        "claude-opus-4-5-20251101-thinking-high-effort": 79.654,
+        "claude-opus-4-5-20251101-thinking-low-effort": 77.48,
+        "claude-opus-4-5-20251101-thinking-medium-effort": 77.48
+      }
+    },
+    {
+      "release": "2025-04-25",
+      "source": "https://raw.githubusercontent.com/LiveBench/livebench.github.io/main/public/table_2025_04_25.csv",
+      "scores": {
+        "amazon.nova-lite-v1:0": 45.04,
+        "amazon.nova-micro-v1:0": 28.919,
+        "amazon.nova-pro-v1:0": 49.648,
+        "chatgpt-4o-latest-2025-03-27": 77.48,
+        "claude-3-5-haiku-20241022": 53.169,
+        "claude-3-5-sonnet-20241022": 73.898,
+        "claude-3-7-sonnet-20250219-base": 74.28,
+        "claude-3-7-sonnet-20250219-thinking-64k": 73.194,
+        "claude-4-opus-20250514-base": 72.872,
+        "claude-4-opus-20250514-thinking-32k": 73.255,
+        "claude-4-sonnet-20250514-base": 77.541,
+        "claude-4-sonnet-20250514-thinking-64k": 73.576,
+        "command-r-08-2024": 26.102,
+        "command-r-plus-08-2024": 27.128,
+        "deepseek-r1": 76.072,
+        "deepseek-r1-0528": 68.141,
+        "deepseek-r1-distill-llama-70b": 46.648,
+        "deepseek-r1-distill-qwen-32b": 47.03,
+        "deepseek-v3-0324": 68.907,
+        "dracarys2-72b-instruct": 58.726,
+        "dracarys2-llama-3.1-70b-instruct": 41.136,
+        "gemini-2.0-flash-lite-001": 59.308,
+        "gemini-2.5-flash-preview-04-17": 60.334,
+        "gemini-2.5-flash-preview-05-20": 62.829,
+        "gemini-2.5-pro-preview-03-25": 71.081,
+        "gemini-2.5-pro-preview-05-06": 72.872,
+        "gemma-3-27b-it": 48.944,
+        "gpt-4.1-2025-04-14": 73.194,
+        "gpt-4.1-mini-2025-04-14": 72.106,
+        "gpt-4.1-nano-2025-04-14": 63.212,
+        "gpt-4.5-preview-2025-02-27": 76.072,
+        "gpt-4o-2024-11-20": 69.29,
+        "gpt-4o-mini-2024-07-18": 55.022,
+        "grok-3-beta": 73.576,
+        "grok-3-mini-beta-high": 54.516,
+        "hunyuan-turbos-20250313": 50.352,
+        "learnlm-1.5-pro-experimental": 58.925,
+        "learnlm-2.0-flash-experimental": 64.299,
+        "llama-3.3-70b-instruct-turbo": 51.822,
+        "llama4-maverick-instruct-basic": 54.195,
+        "mistral-large-2411": 62.89,
+        "mistral-medium-2505": 61.481,
+        "mistral-small-2503": 49.648,
+        "o3-2025-04-16-high": 76.715,
+        "o3-2025-04-16-medium": 77.863,
+        "o4-mini-2025-04-16-high": 79.975,
+        "o4-mini-2025-04-16-medium": 74.219,
+        "phi-4-reasoning-plus": 60.594,
+        "qwen2.5-72b-instruct-turbo": 57.257,
+        "qwen2.5-7b-instruct-turbo": 34.293,
+        "qwen2.5-max": 66.794,
+        "qwen3-14b-thinking": 58.16,
+        "qwen3-235b-a22b-thinking": 66.411,
+        "qwen3-30b-a3b-thinking": 47.474,
+        "qwen3-32b-thinking": 64.238,
+        "qwq-32b": 61.359,
+        "step-2-16k-202411": 57.578
+      }
+    },
+    {
+      "release": "2025-04-02",
+      "source": "https://raw.githubusercontent.com/LiveBench/livebench.github.io/main/public/table_2025_04_02.csv",
+      "scores": {
+        "amazon.nova-lite-v1:0": 15.238,
+        "amazon.nova-micro-v1:0": 6.143,
+        "amazon.nova-pro-v1:0": 20.0,
+        "azerogpt": 15.952,
+        "chatgpt-4o-latest-2025-03-27": 38.666,
+        "claude-3-5-haiku-20241022": 19.857,
+        "claude-3-5-sonnet-20241022": 32.285,
+        "claude-3-7-sonnet-20250219-base": 32.428,
+        "claude-3-7-sonnet-20250219-thinking-64k": 44.666,
+        "claude-3-opus-20240229": 23.334,
+        "command-a-03-2025": 20.428,
+        "command-r-08-2024": 6.095,
+        "command-r-plus-08-2024": 8.191,
+        "deepseek-r1": 48.477,
+        "deepseek-r1-distill-llama-70b": 46.619,
+        "deepseek-r1-distill-qwen-32b": 52.334,
+        "deepseek-v3-0324": 40.523,
+        "dracarys2-72b-instruct": 25.428,
+        "dracarys2-llama-3.1-70b-instruct": 21.238,
+        "gemini-1.5-flash-8b-001": 16.477,
+        "gemini-2.0-flash-001": 26.191,
+        "gemini-2.0-flash-lite-001": 23.381,
+        "gemini-2.0-flash-thinking-exp-01-21": 35.715,
+        "gemini-2.0-pro-exp-02-05": 35.334,
+        "gemini-2.5-pro-exp-03-25": 58.095,
+        "gemma-3-12b-it": 19.095,
+        "gemma-3-27b-it": 25.428,
+        "gemma-3-4b-it": 11.715,
+        "gpt-4.5-preview-2025-02-27": 49.0,
+        "gpt-4o-2024-08-06": 31.809,
+        "gpt-4o-2024-11-20": 35.191,
+        "gpt-4o-mini-2024-07-18": 25.477,
+        "grok-2-1212": 26.143,
+        "hunyuan-turbos-20250313": 23.238,
+        "learnlm-1.5-pro-experimental": 32.381,
+        "meta-llama-3.1-405b-instruct-turbo": 28.809,
+        "meta-llama-3.1-70b-instruct-turbo": 19.857,
+        "meta-llama-3.1-8b-instruct-turbo": 11.048,
+        "mistral-large-2411": 26.952,
+        "mistral-small-2503": 21.285,
+        "o1-2024-12-17-high": 57.143,
+        "o1-mini-2024-09-12": 41.0,
+        "o3-mini-2025-01-31-high": 65.477,
+        "o3-mini-2025-01-31-low": 50.762,
+        "o3-mini-2025-01-31-medium": 58.428,
+        "phi-4": 29.095,
+        "qwen2.5-72b-instruct-turbo": 21.285,
+        "qwen2.5-7b-instruct-turbo": 11.0,
+        "qwen2.5-max": 33.809,
+        "qwq-32b": 43.0,
+        "step-2-16k-202411": 31.095,
+        "llama-4-maverick-17b-128e-instruct": 37.428,
+        "llama-3.3-70b-instruct-turbo": 24.048,
+        "grok-3-beta": 37.334,
+        "grok-3-mini-beta-high": 39.715,
+        "gpt-4.1-2025-04-14": 42.952,
+        "gpt-4.1-mini-2025-04-14": 47.572,
+        "gpt-4.1-nano-2025-04-14": 25.285,
+        "o3-2025-04-16-high": 73.334,
+        "o4-mini-2025-04-16-high": 74.334,
+        "o4-mini-2025-04-16-medium": 61.809,
+        "o3-2025-04-16-medium": 72.619,
+        "gemini-2.5-flash-preview-04-17": 58.381
+      }
+    },
+    {
+      "release": "2024-11-25",
+      "source": "https://raw.githubusercontent.com/LiveBench/livebench.github.io/main/public/table_2024_11_25.csv",
+      "scores": {
+        "amazon.nova-lite-v1:0": 27.462,
+        "amazon.nova-micro-v1:0": 20.18,
+        "amazon.nova-pro-v1:0": 38.154,
+        "chatgpt-4o-latest-2025-01-29": 60.564,
+        "claude-3-5-haiku-20241022": 51.359,
+        "claude-3-5-sonnet-20241022": 67.128,
+        "claude-3-7-sonnet-thinking": 74.538,
+        "claude-3-7-sonnet": 67.487,
+        "claude-3-opus-20240229": 38.59,
+        "command-r-08-2024": 17.898,
+        "command-r-plus-08-2024": 19.141,
+        "deepseek-r1": 66.743,
+        "deepseek-r1-distill-llama-70b": 51.615,
+        "deepseek-r1-distill-qwen-32b": 33.666,
+        "deepseek-v3": 61.769,
+        "dracarys2-72b-instruct": 58.923,
+        "dracarys2-llama-3.1-70b-instruct": 36.308,
+        "gemini-2.0-flash": 53.923,
+        "gemini-2.0-flash-exp": 54.359,
+        "gemini-2.0-flash-lite-preview-02-05": 43.795,
+        "gemini-2.0-flash-thinking-exp-01-21": 53.487,
+        "gemini-2.0-pro-exp-02-05": 63.487,
+        "gemini-exp-1206": 63.41,
+        "gemma-2-27b-it": 35.948,
+        "gemma-2-9b-it": 22.462,
+        "gpt-4o-2024-08-06": 51.436,
+        "gpt-4o-2024-11-20": 46.077,
+        "gpt-4o-mini-2024-07-18": 43.154,
+        "grok-2-1212": 46.436,
+        "grok-beta": 45.154,
+        "learnlm-1.5-pro-experimental": 46.872,
+        "llama-3.3-70b-instruct-turbo": 36.59,
+        "meta-llama-3.1-405b-instruct-turbo": 42.654,
+        "meta-llama-3.1-70b-instruct-turbo": 33.487,
+        "meta-llama-3.1-8b-instruct-turbo": 18.743,
+        "mistral-large-2411": 47.077,
+        "mistral-small-2501": 35.308,
+        "o1-mini-2024-09-12": 48.051,
+        "o1-2024-12-17-high": 69.692,
+        "o3-mini-2025-01-31-high": 82.743,
+        "o3-mini-2025-01-31-low": 61.462,
+        "o3-mini-2025-01-31-medium": 65.385,
+        "olmo-2-1124-13b-instruct": 10.41,
+        "perplexity-sonar": 35.154,
+        "perplexity-sonar-pro": 60.128,
+        "phi-3-mini-128k-instruct": 15.039,
+        "phi-3-mini-4k-instruct": 15.539,
+        "phi-3-small-8k-instruct": 20.264,
+        "phi-4": 30.666,
+        "qwen2.5-72b-instruct-turbo": 57.641,
+        "qwen2.5-7b-instruct-turbo": 38.372,
+        "qwen2.5-coder-32b-instruct": 56.846,
+        "qwen2.5-max": 64.41,
+        "qwq-32b-preview": 37.205,
+        "step-2-16k-202411": 47.192,
+        "gpt-4.5-preview": 75.179,
+        "gemini-2.0-flash-lite": 47.077,
+        "qwq-32b": 72.231,
+        "mistral-small-2503": 36.231,
+        "gemma-3-27b-it": 39.872,
+        "gemini-2.5-pro-exp-03-25": 85.872,
+        "deepseek-v3-0324": 70.898,
+        "chatgpt-4o-latest-2025-03-27": 64.975,
+        "azerogpt": 31.384,
+        "hunyuan-turbos-20250313": 46.564
+      }
+    },
+    {
+      "release": "2024-08-31",
+      "source": "https://raw.githubusercontent.com/LiveBench/livebench.github.io/main/public/table_2024_08_31.csv",
+      "scores": {
+        "chatgpt-4o-latest-0903": 49.718,
+        "claude-3-5-haiku-20241022": 51.359,
+        "claude-3-5-sonnet-20240620": 60.846,
+        "claude-3-5-sonnet-20241022": 67.128,
+        "claude-3-haiku-20240307": 24.462,
+        "claude-3-opus-20240229": 38.59,
+        "claude-3-sonnet-20240229": 26.384,
+        "command-r": 15.257,
+        "command-r-08-2024": 17.898,
+        "command-r-plus": 19.462,
+        "command-r-plus-08-2024": 19.462,
+        "deepseek-coder-v2": 41.513,
+        "deepseek-v2.5": 45.484,
+        "dracarys2-72b-instruct": 56.641,
+        "dracarys2-llama-3.1-70b-instruct": 36.308,
+        "gemini-1.5-flash-002": 41.872,
+        "gemini-1.5-flash-8b-exp-0827": 28.743,
+        "gemini-1.5-flash-api-0514": 34.308,
+        "gemini-1.5-flash-exp-0827": 40.59,
+        "gemini-1.5-pro-002": 48.795,
+        "gemini-1.5-pro-api-0514": 32.308,
+        "gemini-1.5-pro-exp-0801": 41.231,
+        "gemini-1.5-pro-exp-0827": 40.948,
+        "gemini-exp-1114": 52.359,
+        "gemini-exp-1121": 50.359,
+        "gemma-2-27b-it": 35.948,
+        "gemma-2-9b-it": 22.462,
+        "gpt-3.5-turbo-0125": 27.743,
+        "gpt-4-0125-preview": 41.795,
+        "gpt-4-0613": 37.308,
+        "gpt-4-turbo-2024-04-09": 49.0,
+        "gpt-4o-2024-05-13": 49.359,
+        "gpt-4o-2024-08-06": 51.436,
+        "gpt-4o-2024-11-20": 46.077,
+        "gpt-4o-mini-2024-07-18": 43.154,
+        "grok-2": 36.231,
+        "grok-2-mini": 37.513,
+        "llama-3.1-nemotron-70b-instruct": 32.666,
+        "meta-llama-3.1-405b-instruct-turbo": 43.795,
+        "meta-llama-3.1-70b-instruct-turbo": 32.666,
+        "meta-llama-3.1-8b-instruct-turbo": 19.743,
+        "mistral-large-2407": 47.077,
+        "mistral-small-2402": 21.18,
+        "mixtral-8x22b-instruct-v0.1": 32.026,
+        "o1-mini-2024-09-12": 48.051,
+        "o1-preview-2024-09-12": 50.846,
+        "open-mistral-nemo": 28.743,
+        "phi-3-medium-128k-instruct": 21.102,
+        "phi-3-medium-4k-instruct": 20.462,
+        "phi-3-mini-128k-instruct": 15.039,
+        "phi-3-mini-4k-instruct": 15.039,
+        "phi-3-small-128k-instruct": 24.566,
+        "phi-3-small-8k-instruct": 20.264,
+        "phi-3.5-mini-instruct": 15.898,
+        "phi-3.5-moe-instruct": 21.743,
+        "qwen2.5-72b-instruct": 56.564,
+        "qwen2.5-7b-instruct-turbo": 37.872,
+        "qwen2.5-coder-32b-instruct": 56.846,
+        "step-2-16k-202411": 46.872
+      }
+    },
+    {
+      "release": "2024-07-26",
+      "source": "https://raw.githubusercontent.com/LiveBench/livebench.github.io/main/public/table_2024_07_26.csv",
+      "scores": {
+        "chatgpt-4o-latest": 47.154,
+        "claude-3-5-sonnet-20240620": 60.846,
+        "claude-3-haiku-20240307": 24.462,
+        "claude-3-opus-20240229": 38.59,
+        "claude-3-sonnet-20240229": 26.384,
+        "command-r": 15.257,
+        "command-r-08-2024": 17.898,
+        "command-r-plus": 19.462,
+        "command-r-plus-08-2024": 19.462,
+        "deepseek-coder-v2": 41.513,
+        "deepseek-coder-v2-lite-instruct": 24.743,
+        "deepseek-v2-lite-chat": 7.128,
+        "deepseek-v2.5": 45.484,
+        "dracarys-72b-instruct": 38.948,
+        "dracarys-llama-3.1-70b-instruct": 35.231,
+        "gemini-1.5-flash-8b-exp-0827": 28.743,
+        "gemini-1.5-flash-api-0514": 34.308,
+        "gemini-1.5-flash-exp-0827": 40.59,
+        "gemini-1.5-pro-api-0514": 32.308,
+        "gemini-1.5-pro-exp-0801": 41.231,
+        "gemini-1.5-pro-exp-0827": 40.948,
+        "gemma-1.1-7b-it": 9.616,
+        "gemma-2-27b-it": 35.948,
+        "gemma-2-9b-it": 22.462,
+        "gpt-3.5-turbo-0125": 27.743,
+        "gpt-4-0125-preview": 41.795,
+        "gpt-4-0613": 37.308,
+        "gpt-4-turbo-2024-04-09": 49.0,
+        "gpt-4o-2024-05-13": 49.359,
+        "gpt-4o-2024-08-06": 51.436,
+        "gpt-4o-mini-2024-07-18": 43.154,
+        "hermes-3-llama-3.1-70b": 31.384,
+        "llama-2-7b-chat-hf": 1.282,
+        "mathstral-7b-v0.1": 14.539,
+        "meta-llama-3-70b-instruct": 22.026,
+        "meta-llama-3-8b-instruct": 19.82,
+        "meta-llama-3.1-405b-instruct-turbo": 43.795,
+        "meta-llama-3.1-70b-instruct-turbo": 32.666,
+        "meta-llama-3.1-8b-instruct-turbo": 19.743,
+        "mistral-7b-instruct-v0.2": 13.898,
+        "mistral-7b-instruct-v0.3": 10.975,
+        "mistral-large-2402": 27.384,
+        "mistral-large-2407": 47.077,
+        "mistral-small-2402": 21.18,
+        "mixtral-8x22b-instruct-v0.1": 32.026,
+        "mixtral-8x7b-instruct-v0.1": 11.616,
+        "open-mistral-nemo": 28.743,
+        "openhermes-2.5-mistral-7b": 13.257,
+        "phi-3-medium-128k-instruct": 21.102,
+        "phi-3-medium-4k-instruct": 20.462,
+        "phi-3-mini-128k-instruct": 15.039,
+        "phi-3-mini-4k-instruct": 15.039,
+        "phi-3-small-128k-instruct": 24.566,
+        "phi-3-small-8k-instruct": 20.264,
+        "phi-3.5-mini-instruct": 15.898,
+        "phi-3.5-moe-instruct": 21.743,
+        "qwen1.5-0.5b-chat": 0.0,
+        "qwen1.5-1.8b-chat": 0.0,
+        "qwen1.5-110b-chat": 21.82,
+        "qwen1.5-4b-chat": 4.487,
+        "qwen1.5-72b-chat": 22.82,
+        "qwen1.5-7b-chat": 9.41,
+        "qwen2-0.5b-instruct": 1.282,
+        "qwen2-1.5b-instruct": 5.205,
+        "qwen2-72b-instruct": 32.385,
+        "qwen2-7b-instruct": 28.948,
+        "smaug-qwen2-72b-instruct": 38.026,
+        "starling-lm-7b-beta": 18.462,
+        "vicuna-7b-v1.5": 1.923,
+        "vicuna-7b-v1.5-16k": 2.641,
+        "yi-6b-chat": 2.0,
+        "zephyr-7b-alpha": 12.257,
+        "zephyr-7b-beta": 8.052
+      }
+    },
+    {
+      "release": "2024-06-24",
+      "source": "https://raw.githubusercontent.com/LiveBench/livebench.github.io/main/public/table_2024_06_24.csv",
+      "scores": {
+        "chatgpt-4o-latest": 46.0,
+        "claude-3-5-sonnet-20240620": 63.211,
+        "claude-3-haiku-20240307": 24.526,
+        "claude-3-opus-20240229": 40.052,
+        "claude-3-sonnet-20240229": 25.21,
+        "command-r": 14.947,
+        "command-r-08-2024": 17.263,
+        "command-r-plus": 20.263,
+        "command-r-plus-08-2024": 16.947,
+        "deepseek-coder-v2": 41.052,
+        "deepseek-coder-v2-lite-instruct": 26.842,
+        "deepseek-v2-lite-chat": 8.631,
+        "deepseek-v2.5": 46.5,
+        "dracarys-72b-instruct": 41.052,
+        "dracarys-llama-3.1-70b-instruct": 36.105,
+        "gemini-1.5-flash-8b-exp-0827": 28.158,
+        "gemini-1.5-flash-api-0514": 39.052,
+        "gemini-1.5-flash-exp-0827": 39.737,
+        "gemini-1.5-pro-api-0514": 32.79,
+        "gemini-1.5-pro-exp-0801": 43.368,
+        "gemini-1.5-pro-exp-0827": 42.0,
+        "gemma-1.1-7b-it": 11.0,
+        "gemma-2-27b-it": 36.737,
+        "gemma-2-9b-it": 22.21,
+        "gpt-3.5-turbo-0125": 29.158,
+        "gpt-4-0125-preview": 44.052,
+        "gpt-4-0613": 37.052,
+        "gpt-4-turbo-2024-04-09": 47.052,
+        "gpt-4o-2024-05-13": 46.368,
+        "gpt-4o-2024-08-06": 50.632,
+        "gpt-4o-mini-2024-07-18": 43.368,
+        "hermes-3-llama-3.1-70b": 29.79,
+        "llama-2-7b-chat-hf": 0.0,
+        "mathstral-7b-v0.1": 15.631,
+        "meta-llama-3-70b-instruct": 20.947,
+        "meta-llama-3-8b-instruct": 18.263,
+        "meta-llama-3.1-405b-instruct-turbo": 45.684,
+        "meta-llama-3.1-70b-instruct-turbo": 33.105,
+        "meta-llama-3.1-8b-instruct-turbo": 21.579,
+        "mistral-7b-instruct-v0.2": 11.631,
+        "mistral-7b-instruct-v0.3": 9.0,
+        "mistral-large-2402": 26.842,
+        "mistral-large-2407": 46.368,
+        "mistral-small-2402": 24.21,
+        "mixtral-8x22b-instruct-v0.1": 33.105,
+        "mixtral-8x7b-instruct-v0.1": 11.316,
+        "open-mistral-nemo": 28.158,
+        "openhermes-2.5-mistral-7b": 11.631,
+        "phi-3-medium-128k-instruct": 21.579,
+        "phi-3-medium-4k-instruct": 20.579,
+        "phi-3-mini-128k-instruct": 14.29,
+        "phi-3-mini-4k-instruct": 14.79,
+        "phi-3-small-128k-instruct": 24.868,
+        "phi-3-small-8k-instruct": 21.237,
+        "phi-3.5-mini-instruct": 15.263,
+        "phi-3.5-moe-instruct": 19.263,
+        "qwen1.5-0.5b-chat": 0.0,
+        "qwen1.5-1.8b-chat": 0.0,
+        "qwen1.5-110b-chat": 22.21,
+        "qwen1.5-4b-chat": 4.0,
+        "qwen1.5-72b-chat": 22.895,
+        "qwen1.5-7b-chat": 6.631,
+        "qwen2-0.5b-instruct": 2.0,
+        "qwen2-1.5b-instruct": 5.631,
+        "qwen2-72b-instruct": 31.79,
+        "qwen2-7b-instruct": 29.21,
+        "smaug-qwen2-72b-instruct": 39.052,
+        "starling-lm-7b-beta": 18.263,
+        "vicuna-7b-v1.5": 1.0,
+        "vicuna-7b-v1.5-16k": 1.316,
+        "yi-6b-chat": 1.316,
+        "zephyr-7b-alpha": 11.316,
+        "zephyr-7b-beta": 8.316
+      }
+    }
+  ],
+  "coverage": "Up to 64 Ollama tool-capable families, canonical parameter tags; latest 12 LiveBench v1 releases."
+}
