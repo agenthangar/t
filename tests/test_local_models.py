@@ -177,7 +177,7 @@ def test_commands(models,t_mod,monkeypatch,capsys):
         assert parsed.models_action==action
         assert t_mod.main(['config','models',action,'--help'])==0
         assert 't help config models' in capsys.readouterr().out
-    monkeypatch.setattr(t_mod.runpy,'run_path',lambda *a,**kw:{'run':lambda args:37})
+    monkeypatch.setattr(t_mod.runpy,'run_path',lambda *a,**kw:{'command':lambda args:37})
     assert t_mod.cmd_config(None,parsed)==37
     monkeypatch.setattr(m,'load',lambda:(_ for _ in ()).throw(ValueError('offline')))
     assert m.run(SimpleNamespace(models_action='list'))==1

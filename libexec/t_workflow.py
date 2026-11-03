@@ -447,6 +447,11 @@ def validate_runners(value):
     return value
 
 
+def inference():
+    import runpy
+    return runpy.run_path(str(Path(__file__).with_name("t_local_inference.py")))
+
+
 def config_path():
     return Path(os.environ.get('XDG_CONFIG_HOME') or Path.home() / '.config').expanduser() / 't/workflow.json'
 
@@ -539,6 +544,7 @@ def _legacy_claude_catalogue(document):
     policies = [*catalogue['workflows'].values(),
                 *(entry['inline'] for entry in catalogue['repositories'].values() if 'inline' in entry)]
     for policy in policies:
+        policy.pop('inference', None)
         policy['stages_enabled'] = False
         for stage in MODEL_STAGES:
             policy[stage] = {'model': '', 'effort': 'auto'}
@@ -564,13 +570,15 @@ def _ensure_claude_catalogue(document, previous=None):
 
 
 def validate_policy(value):
-    if not isinstance(value, dict) or set(value) - {'instructions', 'stages_enabled', 'separate_stages', 'model_stages', 'behaviors', 'runners', 'session_defaults', 'permissions'} != set(DEFAULT):
+    if not isinstance(value, dict) or set(value) - {'instructions', 'stages_enabled', 'separate_stages', 'model_stages', 'behaviors', 'runners', 'session_defaults', 'permissions', 'inference'} != set(DEFAULT):
         raise ValueError('workflow requires enabled, planning, implementation and review')
     instructions = value.get('instructions', '')
     if not isinstance(instructions, str) or any(marker in instructions for marker in (BEGIN, END, ISSUE_BEGIN, ISSUE_END)):
         raise ValueError('workflow instructions must be Markdown text without managed workflow markers')
     if type(value['enabled']) is not bool:
         raise ValueError('workflow enabled must be true or false')
+    if 'inference' in value:
+        inference()['policy'](value['inference'])
     if 'runners' in value:
         validate_runners(value['runners'])
     permissions = value.get('permissions', {})
@@ -644,6 +652,9 @@ def validate(value, *, migrate=True):
             if not isinstance(catalogue, dict) or set(catalogue) != {'default', 'workflows', 'repositories'}:
                 raise ValueError('tool catalogue requires default, workflows and repositories')
             validate({'version': 3, **catalogue}, migrate=False)
+            policies = [*catalogue['workflows'].values(), *(entry['inline'] for entry in catalogue['repositories'].values() if 'inline' in entry)]
+            if any('inference' in policy for policy in policies):
+                raise ValueError('local inference workflows currently support Codex only')
     if not isinstance(value['repositories'], dict):
         raise ValueError('workflow repositories must be an object')
     if legacy:
@@ -768,6 +779,8 @@ def main_session_settings(policy, agent='codex'):
     """Launch values for a policy already resolved within the selected tool."""
     if agent not in TOOLS or not policy or not policy['enabled']:
         return {}
+    if agent == 'codex' and policy.get('inference', {}).get('mode') == 'local-only':
+        return {}  # The dedicated local launcher owns provider and model; never hot-switch cloud sessions.
     settings = {key: value for key, value in policy.get('session_defaults', {}).get(agent, {}).items() if value}
     if 'implementation' in model_stages(policy):
         implementation = policy['implementation']
@@ -777,6 +790,15 @@ def main_session_settings(policy, agent='codex'):
     if agent == 'cursor':
         settings.pop('effort', None)
     return settings
+
+
+def inference_args(policy, agent):
+    if agent != 'codex' or not policy or not policy['enabled'] or not policy.get('inference'):
+        return []
+    local = inference()
+    if not local['trusted_connection']():
+        return []
+    return local['approval_args'](policy['inference'])
 
 
 def permission_args(policy, agent):
@@ -831,6 +853,8 @@ def _retained_model_stages(policy):
 
 def model_stages(policy):
     """Read active selections, preserving legacy main-work model semantics."""
+    if policy.get('inference', {}).get('mode') == 'local-only':
+        return []
     return _retained_model_stages(policy) if policy.get('stages_enabled', True) else []
 
 
@@ -998,8 +1022,9 @@ def pr_review_skipped(policy):
 
 
 def policy_summary(policy):
-    return {'stages_enabled': policy.get('stages_enabled', True),
-            'stages_active': policy['enabled'] and policy.get('stages_enabled', True),
+    return {'inference': copy.deepcopy(policy.get('inference')),
+            'stages_enabled': policy.get('stages_enabled', True),
+            'stages_active': policy['enabled'] and policy.get('stages_enabled', True) and policy.get('inference', {}).get('mode') != 'local-only',
             'separate_stages': separate_stages(policy),
             'model_stages': model_stages(policy),
             'review_skipped': pr_review_skipped(policy),
@@ -1014,7 +1039,13 @@ def summary_lines(policy, tool='codex'):
     summary = policy_summary(policy)
     behaviors = visible_behaviors(summary['behaviors'])
     state = 'enabled' if summary['stages_active'] else 'disabled' if not summary['stages_enabled'] else 'inactive (workflow disabled)'
+    if policy.get('inference', {}).get('mode') == 'local-only':
+        state = 'inactive (local-only inference)'
     lines = ['Model stages: ' + state]
+    if policy.get('inference'):
+        routing = inference()['policy'](policy['inference'])
+        lines += [f"Inference: {routing['mode']} · {routing['provider']} · {routing['model']}",
+                  'Provider changes apply on a new launch; active session identity is not changed.']
     if summary['stages_enabled']:
         lines.append('Separate models: ' + (', '.join(stage.title() for stage in summary['separate_stages']) or 'none'))
         lines.append('Configured model stages: ' + ', '.join(
@@ -1025,7 +1056,7 @@ def summary_lines(policy, tool='codex'):
         settings = main_session_settings({**policy, 'enabled': True}, tool)
         lines.append('Main session: ' + (settings.get('model') or 'Agent default') + ' · ' +
                      (settings['effort'].capitalize() if settings.get('effort') else 'Model default'))
-    if 'implementation' not in summary['model_stages']:
+    if 'implementation' not in summary['model_stages'] and policy.get('inference', {}).get('mode') != 'local-only':
         for agent, settings in summary['session_defaults'].items():
             if agent != tool:
                 continue
@@ -1155,7 +1186,11 @@ def _stage_text(policy, tool='codex'):
                 't workflow instructions, behavior preferences or custom Markdown for this scope; '
                 'follow the task and repository rules.')
     parts = []
-    if policy.get('stages_enabled', True):
+    if 'inference' in policy:
+        parts.append(inference()['instructions'](policy['inference']) if tool == 'codex' else 'Local routing currently requires Codex; do not claim this tool uses it.')
+    if policy.get('inference', {}).get('mode') == 'local-only':
+        parts.append('Local-only model selection supersedes retained cloud model stages. Active cloud sessions require a new local launch.')
+    elif policy.get('stages_enabled', True):
         parts.append(_model_stage_text(policy, tool))
     else:
         parts.append('Model stages are disabled for this scope. Do not require staged model selection '

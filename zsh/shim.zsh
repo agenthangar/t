@@ -726,6 +726,14 @@ _t() {
     fi
     return
   fi
+  if [[ $group == config && $action == models ]]; then
+    if (( CURRENT == first + 2 )); then
+      _values 'model action' list refresh show install measure
+    else
+      _values 'model option' --provider --suite --benchmark --context --json --yes --download-only
+    fi
+    return
+  fi
   if [[ $group == workflow || ( $group == config && $action == workflow ) ]]; then
     [[ $group == workflow ]] && (( first-- ))
     if (( CURRENT == first )); then

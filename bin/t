@@ -2611,13 +2611,18 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
                 agent = "codex"
             defaults = policy.get("session_defaults", {}).get(agent, {})
             stages = helper["model_stages"](policy)
-            rows = [("enabled", "Use this workflow"), ("stages_enabled", "Use multiple models")]
+            local_only = policy.get("inference", {}).get("mode") == "local-only" and agent == "codex"
+            rows = [("enabled", "Use this workflow")]
+            if not local_only:
+                rows.append(("stages_enabled", "Use multiple models"))
             rows += [(stage, _workflow_stage_title(stage))
                      for stage in ("planning", "implementation", "review") if stage in stages]
-            if "implementation" not in stages:
+            if "implementation" not in stages and not local_only:
                 rows += [("main_model", "Model")]
                 if agent != "cursor":
                     rows.append(("main_effort", "Reasoning effort"))
+            if agent == "codex":
+                rows.append(("inference", "Inference & routing ›"))
             rows.append(("behaviors", "PRs, previews & tests ›"))
             if helper["PERMISSIONS"]:
                 rows.append(("permissions", "Permissions ›"))
@@ -2633,6 +2638,7 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
                       for stage in ("planning", "implementation", "review")}
             if helper["pr_review_skipped"](policy):
                 values["review"] = "Skipped before PR"
+            values["inference"] = policy.get("inference", {}).get("mode", "manual")
             values["enabled"] = "enabled" if policy["enabled"] else "disabled"
             values["stages_enabled"] = ", ".join(_workflow_stage_title(stage) for stage in stages) if stages else "No · one model"
             values["main_model"] = defaults.get("model") or _workflow_session_default_label(cfg, policy, agent, "model")
@@ -2668,6 +2674,8 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
                     changed["enabled"] = picked == "1"
             elif choice in ("main_model", "main_effort"):
                 changed = _workflow_session_setting(ui, cfg, policy, agent, choice.removeprefix("main_"))
+            elif choice == "inference":
+                changed["inference"] = helper["inference"]()["workflow_menu"](ui, policy.get("inference"))
             elif choice == "behaviors":
                 changed = _workflow_behaviors_menu(ui, helper, policy,
                     runners=lambda current: _workflow_behavior_runners(ui, cfg, helper, current, repository, name))
@@ -4233,7 +4241,10 @@ def _local_setup(args):
 
 def cmd_config(cfg, args):
     if getattr(args, "models_action", None):
-        return runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_local_models.py"))["run"](args)
+        try:
+            return runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_local_inference.py"))["command"](args)
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            die(str(exc))
     if getattr(args, "run_action", None):
         return _cmd_workflow_runs(cfg, args)
     if getattr(args, "runner_action", None):
@@ -4491,7 +4502,7 @@ class _RailUI:
             plain = _truncate(label, avail)
             body = styled(plain, color)
         if selected:
-            body = styled(plain.ljust(avail), st.b + st.rev)
+            body = styled(plain.ljust(avail), st.b + st.rev + color)
         lines = [f"{self.rail}  {pre} {box}{body}"]
         if stacked:
             detail = _truncate(value, width - 10)
@@ -4608,12 +4619,13 @@ class _RailUI:
 
     def pick(self, label, rows, multi=False, default=0, marked=None,
              values=None, sections=None, accents=None, primary=None, shortcuts=None,
-             on_back=None, back_label=None, empty_choice=None):
+             on_back=None, back_label=None, empty_choice=None, disabled=None):
         """Single/multiple selection on the shared row/frame template.
         Sections and unset-choice spacing are not selectable. An optional
         empty_choice makes that checklist row an exclusive reset selection.
         Optional shortcuts return an action key."""
         values, sections, accents = values or {}, sections or {}, accents or {}
+        disabled = disabled or {}
         cur = max(0, min(default or 0, len(rows) - 1))
         marks = set(marked or ())
         empty_index = next((i for i, (key, _) in enumerate(rows) if key == empty_choice), None) if multi and empty_choice is not None else None
@@ -4636,7 +4648,7 @@ class _RailUI:
                     display.append((self.section(sections[key]), None))
                 mark = ("◼" if n in marks else "◻") if multi else None
                 display += [(line, n) for line in self.row(text, values.get(key), selected=n == cur,
-                            mark=mark, label_width=label_width, accent=accents.get(key, ""))]
+                            mark=mark, label_width=label_width, accent="y" if key in disabled else accents.get(key, ""))]
             self.frame(label, display, cur, keys, primary, flash)
             flash = ""
             k = self.read_key()
@@ -4646,6 +4658,8 @@ class _RailUI:
                 cur = (cur - 1) % len(rows)
             elif k in ("down", "j"):
                 cur = (cur + 1) % len(rows)
+            elif k in ("space", "enter") and rows[cur][0] in disabled:
+                flash = disabled[rows[cur][0]]
             elif k == "space" and multi:
                 if empty_index is not None and cur == empty_index:
                     marks = {empty_index}
@@ -7250,7 +7264,7 @@ def _command_readonly(argv, *, terminal=None):
             return not terminal
         return True  # Incomplete resource paths and help remain read-only.
     if words[:2] == ["config", "models"]:
-        return len(words) == 2 or words[2] == "list"
+        return len(words) == 2 or words[2] in ("list", "show")
     if words[:2] == ["config", "workflow"]:
         return (len(words) == 2 or words[2] == "list" or words[2:4] == ["instructions", "show"] or
                 words[2:] in (["runners"], ["runs"]) or words[2:4] == ["runners", "list"] or
@@ -11047,7 +11061,7 @@ COMMAND_GROUPS = {
     "config": {"open": ("config",), "show": ("config", "--show"),
                "edit": ("config", "--edit"), "setup": ("setup",),
                "onboard": ("config", "--onboard"), "local": ("config", "--local"),
-               "models": {verb: ("config", "models", verb) for verb in ("list", "refresh")}},
+               "models": {verb: ("config", "models", verb) for verb in ("list", "refresh", "show", "install", "measure")}},
     "workflow": {"list": ("config", "workflow", "list"),
                  "edit": ("config", "workflow", "edit"),
                  **{verb: ("config", "workflow", verb) for verb in ("open", "delete", "add", "use", "exclude", "inherit")},
@@ -11290,16 +11304,19 @@ def _wrap_help(body):
 def _group_help(group):
     if group == "config models":
         return _wrap_help("""USAGE
-  t config models <verb> [--benchmark DATE] [--json]
+  t config models <verb> [MODEL] [--provider PROVIDER] [--json]
 
 COMMANDS
   list     Show cached coding evaluations and estimated machine fit
   refresh  Update public metadata; never download model weights
+  show     Inspect exact artifact, benchmark sources and measurements
+  install  Download and verify an explicit model
+  measure  Measure installed inference on this machine
 
 SCOPE
   User-wide catalog for this machine; no repository inference or picker.
-  Select models and review installation in t config local.
-  Scores compare one LiveBench v1 release; unknown scores stay unranked.
+  Select local models in t workflow → Inference & routing.
+  Use --suite to compare one evaluation; unknown scores remain blank.
 
 LEARN MORE
   t help config models <verb>
@@ -12525,8 +12542,8 @@ EXAMPLES
     cg = sp.add_mutually_exclusive_group()
     cg.add_argument("--show", action="store_true", help="print current settings without opening the menu")
     cg.add_argument("--edit", action="store_true", help="open T_LOCAL_RC in VISUAL/EDITOR directly")
-    sp.add_argument("--local", action="store_true", help="set up Ollama, local models and Codex worker MCP")
-    sp.add_argument("--model", dest="local_model", help="Ollama model to download for t config local")
+    sp.add_argument("--local", action="store_true", help="set up local models and Codex worker MCP")
+    sp.add_argument("--model", dest="local_model", help="exact Ollama or MLX artifact for t config local")
     sp.add_argument("--disable", dest="disable_local", action="store_true", help="disable local delegation, keeping models")
     sp.add_argument("-y", "--yes", action="store_true", help="apply explicit local model setup without prompting")
     sp.add_argument("--workflows-ui", action="store_true", help=argparse.SUPPRESS)
@@ -12539,16 +12556,25 @@ EXAMPLES
     models = config_sub.add_parser("models", help="rank local coding models for this machine",
         description="User-wide local model catalog. No repository inference or selection.")
     models_sub = models.add_subparsers(dest="models_action")
-    for verb in ("list", "refresh"):
+    for verb in ("list", "refresh", "show", "install", "measure"):
         leaf = models_sub.add_parser(verb,
-            help="show cached model rankings" if verb == "list" else "refresh public model and evaluation metadata",
-            description="Rank local models within one LiveBench v1 Coding release, with estimated machine fit. "
-                        "List reads cached metadata; refresh updates metadata only. No model downloads.",
-            epilog=f"EXAMPLES\n  t config models {verb}\n  t config models {verb} --json",
-            help_details="DETAILS\n\n  See docs/local-workers.md for sources, freshness and memory estimates. "
-                         "Use t config local to select and review installation.")
-        leaf.add_argument("--json", action="store_true", help="print structured metadata and estimates")
-        leaf.add_argument("--benchmark", metavar="DATE", help="choose a published evaluation release (YYYY-MM-DD)")
+            help={"list":"show cached models and memory fit", "refresh":"refresh public metadata",
+                  "show":"show artifact and benchmark details", "install":"download and verify a local model",
+                  "measure":"measure a local model on this machine"}[verb],
+            description="User-wide local model catalog. Explicit model selection; no repository inference. "
+                        "Memory fit is estimated. Publisher benchmarks are not local measurements.",
+            epilog=f"EXAMPLES\n  t config models {verb}" + (" mlx-community/Qwen3.8-27B-8bit" if verb not in ("list", "refresh") else ""))
+        leaf.add_argument("--provider", choices=("ollama", "lmstudio"), help="filter or select the local runtime")
+        leaf.add_argument("--context", type=int, default=32768, metavar="TOKENS", help="context capacity for fit and inference; default: 32768")
+        leaf.add_argument("--json", action="store_true", help="print structured artifact metadata")
+        if verb in ("list", "refresh"):
+            leaf.add_argument("--benchmark", metavar="DATE", help="choose a LiveBench release (YYYY-MM-DD)")
+            leaf.add_argument("--suite", choices=("swe-bench-verified-bash-only", "swe-bench-pro", "deepswe", "gpqa", "terminal-bench", "livebench-coding"), help="select one evaluation suite; default: SWE-bench Verified bash-only")
+        else:
+            leaf.add_argument("model_name", metavar="MODEL", help="exact artifact ID from models list")
+        if verb == "install":
+            leaf.add_argument("--download-only", action="store_true", help="download weights without claiming inference readiness")
+            leaf.add_argument("-y", "--yes", action="store_true", help="install the explicit model without confirmation")
     workflow = config_sub.add_parser("workflow", hidden=True, help="manage named agent workflows and behavior preferences")
     workflow_sub = workflow.add_subparsers(dest="workflow_action")
     for verb in ("list", "edit", "open", "delete", "add", "use", "exclude", "inherit"):
@@ -12974,7 +13000,7 @@ PERIODIC CHECKS
             "plus explicit session controls and the full session command family through session_command. "
             "Controls require user authorization; only the three lookup tools are automatically allowed. "
             "Use status, install, or uninstall to manage registration.")
-    mp.add_argument("--local-worker", action="store_true", help="serve bounded local Codex/Ollama worker tools")
+    mp.add_argument("--local-worker", action="store_true", help="serve bounded local Codex worker tools")
     mp.add_argument("--install", action="store_true", help=argparse.SUPPRESS)
     mp.add_argument("--list-tools", action="store_true", help="print the tool names")
     mp.add_argument("--reindex", action="store_true", help="(re)build the transcript index now")
@@ -13050,7 +13076,7 @@ def _print_command_help(target, words, canonical, *, detailed=False):
                          "Refresh MCP tools or reopen Codex after setup. Workers return proposed patches "
                          "from isolated snapshots for the lead to validate.")
         mode.add_argument("--show", action="store_true", help="print saved settings and prerequisite paths; no processes or writes")
-        mode.add_argument("--model", metavar="NAME", help="select an Ollama model, for example gpt-oss:20b")
+        mode.add_argument("--model", metavar="NAME", help="select an exact Ollama or MLX artifact")
         mode.add_argument("--disable", action="store_true", help="disable delegation; keep models and MCP registration")
         mode.add_argument("-y", "--yes", action="store_true", help="apply an explicit model or disable choice without prompting")
         if detailed:

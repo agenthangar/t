@@ -4875,7 +4875,7 @@
           "terminal": true
         }
       },
-      "notes": "Open the named workflow immediately, then return through the shared tool catalogue. Unknown names fail without writes. Existing verbs take precedence over names; use open NAME for collisions. config workflow NAME is a compatibility alias."
+      "notes": "Open the named workflow immediately, then return through the shared tool catalogue. Unknown names fail without writes. Existing verbs take precedence over names; use open NAME for collisions. config workflow NAME is a compatibility alias. Codex workflows include Inference & routing and the shared local artifact picker; local-only hides retained cloud-stage controls. Installing or measuring a selected model is immediate; changing the workflow remains staged."
     },
     "workflow delete": {
       "patterns": [
@@ -5023,6 +5023,184 @@
           "terminal": false,
           "tests": [
             "tests/test_local_models.py::test_commands"
+          ]
+        }
+      }
+    },
+    "config models show": {
+      "patterns": [
+        "detail",
+        "machine"
+      ],
+      "renderer": "mixed",
+      "scope": "local machine; explicit artifact",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_local_inference.py::test_commands"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "config",
+            "models",
+            "show",
+            "mlx-community/Qwen3.8-27B-8bit"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_inference.py::test_commands"
+          ]
+        },
+        "json": {
+          "argv": [
+            "config",
+            "models",
+            "show",
+            "mlx-community/Qwen3.8-27B-8bit",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_inference.py::test_commands"
+          ]
+        }
+      }
+    },
+    "config models install": {
+      "patterns": [
+        "action",
+        "machine",
+        "wizard"
+      ],
+      "renderer": "mixed",
+      "scope": "local machine; explicit artifact",
+      "confirmation": "review",
+      "tests": [
+        "tests/test_local_inference.py::test_commands"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "config",
+            "models",
+            "install",
+            "mlx-community/Qwen3.8-27B-8bit",
+            "--yes"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_inference.py::test_commands"
+          ]
+        },
+        "json": {
+          "argv": [
+            "config",
+            "models",
+            "install",
+            "mlx-community/Qwen3.8-27B-8bit",
+            "--json",
+            "--yes"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": false,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_inference.py::test_commands"
+          ]
+        },
+        "review": {
+          "argv": [
+            "config",
+            "models",
+            "install",
+            "mlx-community/Qwen3.8-27B-8bit"
+          ],
+          "patterns": [
+            "wizard"
+          ],
+          "read_only": false,
+          "terminal": true,
+          "tests": [
+            "tests/test_local_inference.py::test_install_review_and_download_only"
+          ]
+        },
+        "download-only": {
+          "argv": [
+            "config",
+            "models",
+            "install",
+            "nace-ai/Qwen3.8-Flash-Next-MLX-4bit",
+            "--download-only",
+            "--yes"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_inference.py::test_install_review_and_download_only"
+          ]
+        }
+      }
+    },
+    "config models measure": {
+      "patterns": [
+        "action",
+        "machine"
+      ],
+      "renderer": "mixed",
+      "scope": "local machine; explicit artifact",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_local_inference.py::test_commands"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "config",
+            "models",
+            "measure",
+            "mlx-community/Qwen3.8-27B-8bit"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_inference.py::test_commands"
+          ]
+        },
+        "json": {
+          "argv": [
+            "config",
+            "models",
+            "measure",
+            "mlx-community/Qwen3.8-27B-8bit",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": false,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_inference.py::test_commands"
           ]
         }
       }
@@ -5532,9 +5710,7 @@
     "workflow exclude": "_cmd_workflow workflow_repo",
     "workflow inherit": "_cmd_workflow workflow_repo",
     "workflow instructions show": "_cmd_workflow workflow_repo",
-    "workflow instructions edit": "_cmd_workflow workflow_repo",
-    "config models list": "user-wide model catalog; ignores workflow_repo inherited from the shared config parser",
-    "config models refresh": "user-wide model catalog; ignores workflow_repo inherited from the shared config parser"
+    "workflow instructions edit": "_cmd_workflow workflow_repo"
   },
   "command_aliases": {
     "list_verbs": {

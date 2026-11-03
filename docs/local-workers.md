@@ -1,99 +1,141 @@
-# Local coding workers
+# Local inference and coding workers
 
-`t` can connect a lead Codex conversation to a separate local Codex CLI worker,
-using Ollama for inference. The lead keeps its current model and conversation.
-The worker receives a bounded assignment and returns findings, a proposed patch,
-and observed command results. The lead reviews and validates those results.
+`t workflow` → select Codex and a workflow → **Inference & routing** selects a
+local model and one of four modes. `t config workflow` remains a compatibility
+alias. Saving a workflow uses the normal staged review/save transaction.
+
+| Mode | Behavior |
+| --- | --- |
+| Disabled | Reject new local delegations for that scope. |
+| Manual | The lead delegates only when asked. |
+| Automatic hybrid | The current cloud lead chooses bounded local subtasks, validates results, and owns final acceptance. |
+| Local only | New native Codex CLI launches use the exact selected local model; unavailable inference stops the launch without cloud fallback. |
+
+Automatic routing is agent-driven task selection, not a model proxy. Generated
+workflow instructions ask the lead to assess scope and available checks before
+each meaningful subtask. Bounded investigations, mechanical changes and small
+patches are candidates. Architecture, ambiguous debugging and final acceptance
+stay with the lead. The lead announces the model and routing reason, calls MCP,
+then receives a proposed patch and observed command evidence. Failed, busy or
+incorrect work is reported and continues in the lead. No hidden retry loop or
+full conversation transfer occurs. Automatic native CLI launches preapprove only this adapter’s start/status/cancel
+tools when setup is enabled; other MCP tools and managed approval constraints
+remain unchanged. Existing conversations need refreshed MCP
+tools and instructions; saving cannot hot-switch their underlying provider.
+
+Local-only is currently a **fresh native CLI launch** capability. The launcher
+isolates Codex HOME/configuration and credentials, pins the OSS provider/model,
+and disables cloud model stages, recursive subagents and inherited MCP servers.
+It reserves one local inference slot for the lead, so work stays in that lead.
+Cloud/local resume is rejected; start a new session. Desktop launch/provider
+switching is not supported by this launcher. A local-only workflow is an inference
+policy, not an offline-tools or filesystem security boundary.
+
+## Model picker and commands
+
+The picker shows **Memory fit ✓ / ✕ / ?**, one selected benchmark and installation
+state. Unsuitable or unknown-fit models are dimmed but remain inspectable.
+Use/Install actions are disabled when fit or readiness does not permit them;
+Download only remains available when disk space permits. Unknown speed is omitted.
+Details include artifact ID, precision, download/runtime estimates, source links,
+revision and any measured speed. Install and Measure are immediate explicit actions;
+workflow selection remains staged until Save.
+
+```sh
+t workflow
+t config models list --suite swe-bench-pro
+t config models show mlx-community/Qwen3.8-27B-8bit
+t config models install mlx-community/Qwen3.8-27B-8bit --yes
+t config models measure mlx-community/Qwen3.8-27B-8bit
+```
+
+`list` and `show` are read-only and never start inference or open a picker.
+`--provider lmstudio|ollama` filters or disambiguates artifacts. All commands
+accept `--json` and `--context TOKENS` (default 32768). `refresh` updates the existing public Ollama/LiveBench metadata
+cache; curated MLX identities and publisher scores ship with t and are not scraped
+or silently replaced. Model installation pins the current Hugging Face commit,
+resumes partial downloads and verifies published LFS SHA-256 checksums. A receipt
+is written only after every selected file is complete. Downloaded and inference
+verified are separate states. Flash-Next currently supports `--download-only`.
+
+The four curated MLX artifacts are:
+
+- `mlx-community/Qwen3.8-27B-8bit` — default candidate.
+- `nace-ai/Qwen3.8-Flash-Next-MLX-4bit` — specialized memory-mapping/runtime support unverified; downloaded only.
+- `mlx-community/Qwen3.5-122B-A10B-4bit`.
+- `lmstudio-community/Qwen3-Coder-Next-MLX-6bit`.
+
+SWE-bench Verified bash-only is the conservative initial suite: missing exact
+results stay blank. Choose Pro, DeepSWE, GPQA, Terminal-Bench or LiveBench Coding
+explicitly. Results from different suites, versions and harnesses are never
+combined into an overall ranking. Publisher scores refer to original models,
+not the quantized artifact or this Codex worker. Source/harness caveats appear in
+details and JSON. SWE-bench is useful coding-agent evidence, not a complete measure
+of local quality, speed or reliability. Acceptance rate and review/repair time on
+your own tasks are the more useful routing feedback.
+
+LiveBench v1 data comes from its official public repository; `--benchmark DATE`
+selects a cached release and requires `--suite livebench-coding` when a suite is
+explicit. Ollama availability uses tool-capable library families and canonical
+parameter-size tags, not every community artifact. Cached reads send no hardware,
+paths or repository information to metadata sources. Refresh failures preserve
+the previous cache. MLX fit uses Apple unified RAM minus 20% OS headroom, 20%
+weight overhead and a context allowance (4 GiB at 32K, scaled with configured
+capacity). This is an estimate, not an architecture-specific KV measurement or
+promise under memory pressure. Special runtime requirements remain unknown-fit.
 
 ## Setup
 
-Open **t config → Local worker & models**, or run:
+Install LM Studio or its headless llmster runtime and the MLX engine on Apple
+Silicon. For Ollama, existing setup can install the runtime and Codex using reviewed
+vendor commands. Then open **t config → Local worker & models**, or use:
 
 ```sh
-t config local
-```
-
-The shared settings UI reviews prerequisite installers, the model download and
-Codex MCP registration before applying. Its model picker ranks **evaluated fits**
-first, then fitting models with no matching evaluation. Other models remain
-inspectable and selectable, with their memory or disk limitation shown. Custom
-Ollama names remain available. Setup verifies tool support after downloading.
-
-```sh
-t config models list
-t config models list --json
-t config models refresh
-t config models list --benchmark 2025-04-25
-```
-
-`list` is offline and read-only: it never starts Ollama, refreshes metadata,
-changes settings, or downloads weights. `refresh` fetches public metadata only
-and atomically updates a user cache. The picker refreshes metadata older than
-seven days and has an explicit Refresh choice. Failed refreshes preserve the
-last complete cache; a bundled snapshot supports first use offline. Refresh
-errors are shown, not silently treated as current results.
-
-Availability comes from [Ollama's library](https://ollama.com/library) and tag
-pages: up to 64 tool-capable families and their canonical parameter-size tags.
-This discovers new families without a t release, but does not enumerate every
-community model or quantization. Published tag download sizes use the upper end
-of any range. Tool support still requires setup's actual model metadata check.
-
-Coding scores come from the official
-[LiveBench v1 data repository](https://github.com/LiveBench/livebench.github.io/tree/main/public).
-Refresh discovers its latest 12 releases. Scores are the arithmetic mean of the
-release's own Coding task columns, on a 0–100 scale. The default selects the newest
-release containing an evaluated estimated fit; if none exists, it shows the newest
-release without a recommendation. `--benchmark DATE` selects another cached
-release. All scores in a view belong to that single release; releases and other
-benchmarks are never blended. The selected and newest available dates are shown.
-This source currently covers v1, not the newer LiveBench 2.0 benchmark.
-
-**Best evaluated fit is not a claim of the best model overall.** Small, newer
-models often lack matching scores in this source. They remain unranked rather
-than receiving invented scores; a recommendation can therefore have older
-benchmark evidence. JSON records the exact evaluated model name and source URL.
-Matching uses explicit name/variant aliases, never fuzzy family matching. Hosted,
-thinking and instruction variants are base-model evidence: quantized Ollama
-weights, Codex's harness and local speed were not measured by these results.
-
-Suitability uses detected RAM, Apple unified memory or the largest NVIDIA GPU,
-and free space on the model volume. Unknown accelerators stay unknown; CPU/partial
-offload is not assumed fast enough. The estimate reserves max(4 GiB, 20% RAM) for
-the OS, 10% accelerator capacity, 20% weight overhead and a fixed 4 GiB allowance
-for the worker's 32K context. That allowance is a conservative heuristic, not
-architecture-specific KV sizing or an inference guarantee. Disk requires the
-estimated missing download plus 2 GiB free; complete installed blobs can be reused.
-Lists expose estimates and reasons, and never switch your configured worker.
-
-Metadata is cached in `$XDG_CACHE_HOME/t/local-models.json` (default
-`~/.cache/t/local-models.json`). Fetches are bounded by size, request timeout and
-a scheduling deadline. They send no local hardware, paths, repository context or
-credentials to the metadata sources.
-
-Explicit setup for automation:
-
-```sh
-t config local --model gpt-oss:20b --yes
+t config local --model mlx-community/Qwen3.8-27B-8bit --yes
 t config local --show
 t config local --disable --yes
 ```
 
-`--show` is read-only and never starts Ollama, downloads a model, registers MCP,
-or requests an update. `--disable` prevents new tasks; it keeps model files and
-registration. Setup and disabling refuse to change a running worker. Cancel that
-task first. Existing cloud-agent model defaults are not changed.
+Setup verifies the model, registers `t-local-worker` through `codex mcp add`, and
+enables delegation. A conflicting registration is preserved and reported. Refresh
+MCP tools or reopen Codex after setup. `--show` is read-only. Disable keeps models
+and registration, rejects new tasks, and cannot interrupt a running task. Model
+installation alone does not register MCP or change a workflow.
 
-On macOS with Homebrew, setup installs the Ollama formula and the existing Codex
-cask when missing. Otherwise it uses the vendor installation scripts shown in the
-review. Linux vendor installation may require sudo. There is no worker cloud
-login. Failed setup leaves completed installations/downloads in place so rerunning
-can continue. Configuration is enabled only after model checks and registration.
+## Measuring speed
 
-Codex owns registration through `codex mcp add t-local-worker`. A conflicting MCP
-server with that name is not overwritten. Refresh MCP tools or reopen Codex after
-setup; this adapter cannot inject new tools into clients that do not refresh their
-tool catalog during a conversation.
+`measure` acquires the same exclusive local slot as workers, loads only the
+selected artifact, runs one discarded warmup and three fixed short coding prompts,
+and saves median/min/max, runtime, artifact revision, hardware and configured
+context capacity. It does not score coding quality or run SWE-bench. The context
+capacity is 32K by default; the measurement does not prefill 32K tokens.
+
+Ollama supplies decode token counts and decode duration. The MLX path currently
+uses output token counts divided by total request time, **including prefill**;
+it labels that metric explicitly instead of presenting it as pure decode speed.
+Missing token usage fails measurement without fabricating a speed. Details mark
+measurements stale when artifact, context or hardware identity differs.
+Only an owned model alias is unloaded; a preexisting LM Studio server is retained.
+An owned loopback server is stopped on completion or failure.
+
+## Opt-in acceptance test
+
+After installing the 27B artifact, run:
+
+```sh
+python3 scripts/test_local_inference_e2e.py --mode hybrid
+python3 scripts/test_local_inference_e2e.py --mode local-only
+```
+
+These commands use real inference and are never invoked by routine CI. Hybrid
+uses the signed-in cloud Codex lead and requires an actual automatic MCP delegation,
+verified local model identity, worker patch, observed successful command, unchanged
+fixture tests and independently passing acceptance tests. Local-only uses the
+native launcher and requires local runtime identity and passing acceptance tests.
+Hybrid additionally requires the lead source edit to follow the worker result,
+so duplicate work cannot pass as patch handoff.
+Each run prints an evidence directory. They use temporary Git repositories and
+separate XDG state and never edit the developer's project or workflow configuration.
 
 ## Using the worker
 
@@ -149,8 +191,10 @@ is not appropriate for an entirely local-only repository when the lead is cloud-
 Settings live in `$XDG_CONFIG_HOME/t/local-worker.json` (default
 `~/.config/t/local-worker.json`). Private task artifacts live in
 `$XDG_STATE_HOME/t/local-worker/<task-id>` (default `~/.local/state/t/local-worker`).
-Results retain elapsed time, model, findings, command evidence, events, and a full
+Results retain provider, requested/resolved model, runtime alias, artifact revision,
+identity verification, routing reason, elapsed time, findings, command evidence, events, and a full
 patch for review. MCP returns bounded excerpts, with a truncation flag for patches.
+Caller-supplied parent session IDs are explicitly unverified and never become ownership evidence.
 Artifacts remain after completion for review; remove completed task directories
 when no longer needed. They are local data and must not be committed.
 

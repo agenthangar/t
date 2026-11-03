@@ -72,6 +72,14 @@ def check_codex(binary):
         raise ValueError('update Codex CLI: local workers require exec --ignore-user-config')
 
 
+def register(binary, command):
+    # MCP's default environment allowlist omits XDG paths. Preserve this user's
+    # explicitly configured t state without passing credentials or session IDs.
+    env_args = [part for key in ('XDG_CONFIG_HOME', 'XDG_STATE_HOME', 'XDG_CACHE_HOME') if os.environ.get(key)
+                for part in ('--env', key + '=' + os.environ[key])]
+    subprocess.run([binary, 'mcp', 'add', SERVER, *env_args, '--', command, 'mcp', '--local-worker'], check=True)
+
+
 def setup(api, model, steps):
     w = worker()
     with w['reservation']():
@@ -90,11 +98,29 @@ def setup(api, model, steps):
             subprocess.run([w['executable']('ollama'), 'pull', model], env=env, check=True)
             w['check_model'](base, model)
         # Codex writes its own config; never parse/rewrite unrelated auth or MCP entries.
-        subprocess.run([binary, 'mcp', 'add', SERVER, '--', command, 'mcp', '--local-worker'], check=True)
+        register(binary, command)
         check_registration(binary, command)
         w['save_settings']({'enabled': True, 'model': model})
     print('Local worker enabled. Refresh MCP tools or reopen Codex to load start_task, task_status and cancel_task.')
     print('Ollama starts only during local work. Cloud inference is disabled; findings return to the lead.')
+
+
+def setup_mlx(model):
+    local = runpy.run_path(str(ROOT / 'libexec/t_local_inference.py'))
+    w = worker()
+    binary = w['executable']('codex')
+    if not binary:
+        raise ValueError('Install Codex with t agent install first')
+    local['lms']()
+    check_codex(binary)
+    command = str(ROOT / 'bin/t')
+    check_registration(binary, command)
+    with w['reservation']():
+        local['install'](model)
+        register(binary, command)
+        check_registration(binary, command)
+        w['save_settings']({'enabled': True, 'model': model, 'provider': 'lmstudio'})
+    print('MLX local worker enabled. Refresh MCP tools or reopen Codex; select routing in t workflow.')
 
 
 def disable():
@@ -134,7 +160,13 @@ def run(args, api):
                     return 130
                 disabling = choice == 'disable'
                 if not disabling:
-                    model = runpy.run_path(str(ROOT / 'libexec/t_local_models.py'))['choose'](dialog)
+                    if getattr(dialog, 'ui', None):
+                        selected = runpy.run_path(str(ROOT / 'libexec/t_local_inference.py'))['select_model'](dialog.ui)
+                        if not selected:
+                            return 130
+                        model = selected['model']
+                    else:
+                        model = runpy.run_path(str(ROOT / 'libexec/t_local_models.py'))['choose'](dialog)
                     if model == 'custom':
                         with dialog.suspended():
                             model = input('Ollama model name: ').strip()
@@ -142,13 +174,18 @@ def run(args, api):
             lines, steps = ['Disable new local tasks; keep downloaded models and MCP registration.'], []
         else:
             model = worker()['model_name'](model)
-            steps = installation_plan(api, model)
+            is_mlx = any(row['model'] == model for row in runpy.run_path(str(ROOT / 'libexec/t_local_inference.py'))['artifacts']())
+            steps = [] if is_mlx else installation_plan(api, model)
             lines = [label for label, _ in steps] + [
                 f'Download {model} into {Path.home() / ".ollama/models"}. Large downloads may take time.',
                 'Run a private loopback Ollama process with cloud disabled; stop it after setup.',
                 f'Register Codex MCP server {SERVER} → {ROOT / "bin/t"} mcp --local-worker.',
                 'Enable bounded local delegation. Worker uses separate snapshots; lead reviews results.',
                 'No cloud sign-in is needed for the worker. Existing Codex model defaults stay unchanged.']
+            if is_mlx:
+                lines = [f'Install and verify MLX artifact {model} in ~/.lmstudio/models.',
+                         'Requires LM Studio or llmster with the MLX runtime installed.',
+                         f'Register {SERVER} and enable bounded local workers. Select routing in t workflow.']
         if dialog and not dialog.review(lines):
             return 130
         if dialog:
@@ -156,6 +193,8 @@ def run(args, api):
             dialog = None
         if disabling:
             disable()
+        elif is_mlx:
+            setup_mlx(model)
         else:
             setup(api, model, steps)
         return 0
