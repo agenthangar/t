@@ -985,7 +985,18 @@ t workflow use quick --repo api     # api follows the shared quick definition
 t workflow exclude --repo api       # disable only api; remember its source
 t workflow inherit --repo api       # remove api's override; follow global
 t workflow list --all               # list named definitions and usage
+t workflow open quick               # open quick in the staged editor
+t workflow quick                    # shorthand for open quick
+t workflow delete quick --replacement careful  # move its assignments, then delete
 ```
+
+The compatibility route `t config workflow quick` also opens the named editor.
+Use `--tool codex`, `--tool claude`, or `--tool cursor` to select its catalogue;
+otherwise the account tool is used. Existing verb names take precedence; use
+`open NAME` for a workflow named like a verb. **Delete workflow** in the editor
+stages removal until Save. A default or assigned workflow requires a replacement
+(including excluded assignments, whose exclusion is retained); the last workflow
+cannot be deleted. `t workflow delete NAME` deletes an unassigned definition.
 
 Repository settings open one workflow selector: **Inherit global**, the named
 workflows, or **Disabled**. Selecting a named workflow applies that definition;
@@ -1007,19 +1018,18 @@ Menu choices stay pending until
 | Pull requests → PR type / Merge PR | Draft or ready; Automerge or When I ask |
 | Local preview → Global → Preview timing | Automatically when ready or Only when I ask |
 | Local preview → Global → Approval before PR | Wait for my approval or No approval needed |
-| Local preview → Global → Open/run preview | Automatically or Only when I ask |
 | Local preview → Frontend → Preview | Enabled or Disabled |
 | Local preview → Frontend → Preview timing | Inherit global or choose a timing override |
 | Local preview → Frontend → Approval before PR | Inherit global or choose an approval override |
 | Local preview → Frontend → Implement before approval | Yes or No |
 | Local preview → Frontend → Design approach | Separate HTML prototype or In the app |
 | Local preview → Frontend → Preview method | Fast reload or Build |
-| Local preview → Frontend → Open in browser | Inherit global, Automatically, or Only when I ask |
+| Local preview → Frontend → Open in browser | Not set, Automatically, or Only when I ask |
 | Local preview → CLI → Preview | Enabled or Disabled |
 | Local preview → CLI → Preview timing | Inherit global or choose a timing override |
 | Local preview → CLI → Approval before PR | Inherit global or choose an approval override |
 | Local preview → CLI → Preview method | Install locally or Run from the repo |
-| Local preview → CLI → Run command | Inherit global, Automatically, or Only when I ask |
+| Local preview → CLI → Run command | Not set, Automatically, or Only when I ask |
 | Tests → When to run tests | Local during work, before preview, before PR, or On PR CI |
 | Tests → Test runners | Configure targets, defaults, and artifacts |
 
@@ -1041,17 +1051,18 @@ Skipping this agent review does not change required repository approvals, checks
 or explicit task instructions. To open a PR automatically without the review
 pass, select **Disabled** and **When to open PR → Automatically when ready**.
 
-Set **Preview timing**, **Approval before PR**, and **Open/run preview** in
-Local preview's **Global** section, above the Frontend and CLI submenus.
-Each submenu inherits these choices unless you choose an override. Its rows show the source and resolved value,
-such as **Inherit global · Automatically when ready**. Choosing Inherit global
-removes the override; future parent changes then apply. The parent menu keeps
-submenu summaries short; open a submenu for its design and launch settings.
-**Approval before PR** controls whether the agent waits for your approval of
-the preview before pushing or opening a PR. **Open/run preview** opens a ready
-frontend preview in the browser or runs the prepared CLI command; the child
-controls are named **Open in browser** and **Run command**. Existing explicit
-browser and command choices remain overrides when Global changes.
+Set **Preview timing** and **Approval before PR** in Local preview's **Global**
+section. Each submenu inherits these choices unless you choose an override.
+Rows show the setting followed by its effective value, such as **Inherit global**
+· Automatically when ready; the inherited value is dimmed. Choosing Inherit global
+removes the override, so future parent changes apply.
+**Approval before PR** controls whether the agent waits for preview approval
+before pushing or opening a PR.
+Launch is configured once per type: **Frontend → Open in browser** and
+**CLI → Run command**, each offering Not set, Automatically, or Only when I ask.
+The shared Open/run preview control is removed. Older shared launch settings
+remain effective; editing either type's launch choice preserves the other type's
+resolved choice and replaces the legacy shared setting with independent choices.
 **Frontend → Implement before approval: No** requires a lightweight frontend
 preview and approval before substantial implementation. Work needed to create
 that preview is allowed. **Yes** lets frontend implementation proceed without
@@ -1508,7 +1519,10 @@ Live instruction reload and current-turn model changes cannot be verified or for
 See [the terminal contract](ui/README.md) for scope, retries and runtime limits.
 
 
-Run `t workflow` in a terminal to open the workflow editor. Choose a named
+Run `t workflow` in a terminal to open the workflow editor, or `t workflow NAME`
+to open a named definition directly. In **Use multiple models**, Enter or Back
+(q/Esc) retains the checked choices as pending edits; Save still reviews and
+publishes the transaction. Choose a named
 workflow under its CLI tool, edit its model steps, work and delivery choices, or text instructions,
 then review and save. Repository assignments and the global default share this
 transaction. Cancel leaves saved settings unchanged.

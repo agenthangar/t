@@ -239,6 +239,8 @@ def preview_summary_lines(behaviors):
         return []
     lines = []
     for parent in PREVIEW_DEFAULTS.values():
+        if parent == 'preview_launch':
+            continue
         value = effective.get(parent)
         label = BEHAVIORS[parent]['choices'][value][0] if value else 'Not set'
         lines.append('Local preview · Global — ' + BEHAVIORS[parent]['label'] + ': ' + label)
@@ -250,8 +252,8 @@ def preview_summary_lines(behaviors):
             choice = resolved[setting]
             label = BEHAVIORS[parent]['choices'][choice['value']][0] if choice['value'] else 'Not set'
             field_label = BEHAVIORS[PREVIEW_OVERRIDES[kind][setting]]['label'] if setting == 'launch' else BEHAVIORS[parent]['label']
-            source = 'Inherit global' if choice['source'] == 'inherit' else 'Override'
-            lines.append(('CLI' if kind == 'cli' else 'Frontend') + ' — ' + field_label + ': ' + source + ' · ' + label)
+            source = '' if setting == 'launch' else ('Inherit global' if choice['source'] == 'inherit' else 'Override') + ' · '
+            lines.append(('CLI' if kind == 'cli' else 'Frontend') + ' — ' + field_label + ': ' + source + label)
         if kind == 'frontend' and 'frontend_implement_before_approval' in effective:
             spec = BEHAVIORS['frontend_implement_before_approval']
             lines.append('Frontend — ' + spec['label'] + ': ' +
@@ -351,6 +353,10 @@ def update_behavior(policy, key, value):
         raise ValueError('unknown workflow behavior choice')
     after = copy.deepcopy(policy)
     behaviors = effective_behaviors(after.get('behaviors', {}))
+    if key in ('frontend_browser', 'cli_launch') and 'preview_launch' in behaviors:
+        legacy = behaviors.pop('preview_launch')
+        for child in ('frontend_browser', 'cli_launch'):
+            behaviors.setdefault(child, legacy)
     if value:
         behaviors[key] = value
     else:
@@ -921,7 +927,7 @@ def update(document, value, repository=None, name=None):
     return validate(after)
 
 
-def action(document, verb, name=None, repository=None, from_name=None):
+def action(document, verb, name=None, repository=None, from_name=None, replacement=None):
     after = validate(document)
     if name is not None:
         validate_name(name)
@@ -932,6 +938,21 @@ def action(document, verb, name=None, repository=None, from_name=None):
         if original not in after['workflows']:
             raise ValueError(f'unknown workflow {original!r}')
         after['workflows'][name] = copy.deepcopy(after['workflows'][original])
+    elif verb == 'delete':
+        if name not in after['workflows']:
+            raise ValueError(f'unknown workflow {name!r}')
+        if len(after['workflows']) == 1:
+            raise ValueError('cannot delete the last workflow; add another workflow first')
+        if replacement is not None and (replacement == name or replacement not in after['workflows']):
+            raise ValueError('replacement must name another existing workflow')
+        assigned = [entry for entry in after['repositories'].values() if entry.get('workflow') == name]
+        if (after['default'] == name or assigned) and replacement is None:
+            raise ValueError('workflow is in use; choose --replacement NAME for its default and repository assignments')
+        if after['default'] == name:
+            after['default'] = replacement
+        for entry in assigned:
+            entry['workflow'] = replacement
+        del after['workflows'][name]
     elif verb == 'use':
         if name not in after['workflows']:
             raise ValueError(f'unknown workflow {name!r}')
