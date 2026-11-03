@@ -118,10 +118,10 @@ def test_frontend_browser_controls_opening_without_requesting_preview(workflow, 
     assert 'When to open PR:' not in text
     if value == 'automatic':
         assert 'after the preview server or build is ready' in text
-        assert 'Frontend — Open in browser: Override · Automatically' in workflow.summary_lines(policy)
+        assert 'Frontend — Open in browser: Automatically' in workflow.summary_lines(policy)
     else:
         assert 'wait for an explicit user request before opening' in text
-        assert 'Frontend — Open in browser: Override · Only when I ask' in workflow.summary_lines(policy)
+        assert 'Frontend — Open in browser: Only when I ask' in workflow.summary_lines(policy)
     assert workflow.update_behavior(policy, 'frontend_browser', '') == workflow.DEFAULT
 
 
@@ -133,7 +133,7 @@ def test_frontend_browser_render_and_summary_preserve_raw_legacy_policy(workflow
     before = copy.deepcopy(document)
     text = workflow.render(document)
     assert 'Open in browser: For frontend previews, wait for an explicit user request' in text
-    assert 'Frontend — Open in browser: Override · Only when I ask' in workflow.summary_lines(policy)
+    assert 'Frontend — Open in browser: Only when I ask' in workflow.summary_lines(policy)
     assert workflow.policy_summary(policy)['behaviors'] == policy['behaviors']
     assert document == before
     assert not workflow.config_path().exists()
@@ -468,10 +468,10 @@ def test_cli_launch_composes_with_method_and_preserves_other_preferences(workflo
     assert 'When to open PR:' in text and 'Merge pull request:' in text and 'When to run tests:' in text
     if launch == 'automatic':
         assert 'once the selected CLI preview has been prepared, launch its repository-supported preview command' in text
-        assert 'CLI — Run command: Override · Automatically' in workflow.summary_lines(after)
+        assert 'CLI — Run command: Automatically' in workflow.summary_lines(after)
     else:
         assert 'wait for an explicit user request before launching' in text
-        assert 'CLI — Run command: Override · Only when I ask' in workflow.summary_lines(after)
+        assert 'CLI — Run command: Only when I ask' in workflow.summary_lines(after)
         if method == 'run':
             assert 'prepare the repository-supported development command' in text
             assert 'run the repository-supported development command directly' not in text
@@ -613,7 +613,6 @@ def test_retired_cli_gate_remains_raw_and_inert_on_unrelated_edits(workflow):
 @pytest.mark.parametrize('kind', ['frontend', 'cli'])
 @pytest.mark.parametrize('setting,parent,initial,override,changed', [
     ('approval', 'preview_pr_approval', 'required', 'not_required', 'not_required'),
-    ('launch', 'preview_launch', 'automatic', 'on_request', 'on_request'),
 ])
 def test_preview_common_defaults_have_live_independent_child_overrides(workflow, kind, setting, parent, initial, override, changed):
     policy = workflow.update_behavior(workflow.DEFAULT, parent, initial)
@@ -709,10 +708,10 @@ def test_common_preview_launch_and_approval_both_disabled_are_inactive(workflow)
 
 def test_preview_summaries_name_global_inheritance_and_actual_child_actions(workflow):
     lines = workflow.preview_summary_lines({'preview_launch': 'automatic', 'preview_pr_approval': 'required'})
-    assert 'Local preview · Global — Open/run preview: Automatically' in lines
+    assert not any('Open/run preview' in line for line in lines)
     assert 'Local preview · Global — Approval before PR: Wait for my approval' in lines
-    assert 'Frontend — Open in browser: Inherit global · Automatically' in lines
-    assert 'CLI — Run command: Inherit global · Automatically' in lines
+    assert 'Frontend — Open in browser: Automatically' in lines
+    assert 'CLI — Run command: Automatically' in lines
     assert 'CLI — Approval before PR: Inherit global · Wait for my approval' in lines
     assert workflow.BEHAVIORS['preview_approval']['label'] == 'Preview approval before PR'
 

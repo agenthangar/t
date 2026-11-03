@@ -24,7 +24,15 @@ Every public `t` command and conditional mode has an entry in
 truth for classification and contract tests. Compatibility aliases inherit the
 canonical command's entry. `ls` and `list` are interchangeable in every listing
 family (including `workflow`); the former `t config workflow` routes remain
-compatibility aliases for `t workflow`. Root `t list` aliases `t ls`. Resolve only
+compatibility aliases for `t workflow`. `t workflow open NAME` and the shorthand
+`t workflow NAME` open a named definition directly in the staged editor; both
+accept `--tool`, otherwise using the account tool. Verbs take precedence over
+names, so use `open NAME` for collisions. Unknown names and nonterminal opens
+fail without writes. `t workflow delete NAME [--tool TOOL] [--replacement NAME]`
+is a direct action: require a replacement for a default or any repository
+assignment (including excluded ones), preserve exclusions and other catalogues,
+and reject deleting the last definition. Editor deletion uses the same rules,
+selects a replacement when needed, and stays pending until review/save. Root `t list` aliases `t ls`. Resolve only
 command words, preserving option values, repository names, and delegated commands.
 The old `t repos` family is removed; use `t repo` verbs. Existing repository selectors
 accept registered aliases, checkout basenames, and unambiguous local origin repository
@@ -225,8 +233,7 @@ choice, then Planning, Implementation and Review. Use the shared empty_choice
 multi profile: the one-model row is an exclusive reset, separated by a blank
 rail row. It clears all stages; selecting any stage clears it, and clearing the
 last stage restores it. Translate the empty-key selection into no active stages.
-Space marks choices, Enter applies the selection, q/Esc
-cancels. Unchecked Planning/Review use the main model; Agent review before PR controls
+Space marks choices; Enter and q/Esc Back retain the selection as pending edits. Unchecked Planning/Review use the main model; Agent review before PR controls
 whether the pre-PR review step runs. Unchecked Implementation uses
 per-tool session defaults, with default model/effort controls still available
 beside selected helpers. Selecting no stages enters single-model mode.
@@ -263,7 +270,7 @@ review requirements or required approvals. No new command or execution mode is
 added; this remains a staged preference in the shared editor.
 Local preview has a Global section with Preview timing (Automatically
 when ready / Only when I ask), Approval before PR (Wait for my approval /
-No approval needed), and Open/run preview (Automatically / Only when I ask),
+No approval needed),
 followed by a Preview types section containing
 Frontend and CLI. Keep these submenu summaries concise instead of repeating
 every nested preference. Each submenu starts with Preview (Enabled / Disabled).
@@ -282,19 +289,23 @@ enabled, suppress preview guidance.
 Disabled frontend suppresses design, method and browser guidance;
 disabled CLI suppresses its method and command-launch guidance. Enabling alone does not request a
 preview or change the separate PR-opening preference.
-Both submenus inherit Global timing, approval before PR, and launch choices;
-each field shows Inherit global or Override with the resolved value. Clearing
-an override restores live inheritance. Existing explicit frontend_browser and
-cli_launch choices remain launch overrides. The shared launch setting opens a
-prepared browser preview for Frontend and runs the prepared command for CLI.
-It never starts a request-only preview before the user requests it.
+Both submenus inherit Global timing and approval before PR; each field shows
+Inherit global or Override with its resolved value. Dim the inherited value after
+Inherit global/default in both value rows and choices, including focused rows;
+clip plain text before applying color and preserve narrow layouts.
+Launch has one independent control per type: Frontend Open in browser and CLI
+Run command. Do not show a shared Open/run preview row. Legacy preview_launch
+remains readable as a fallback; editing either launch control materializes both
+resolved choices and removes that legacy key, preserving the other type's choice.
+Reading, browsing or canceling does not migrate stored settings.
+Launch choices never start a request-only preview before the user requests it.
 The nested Frontend submenu contains Implement before approval (Yes / No, with
 Not set), Design approach (Separate HTML prototype /
 In the app), Preview method (Fast reload
 / Build), and Open in browser (Automatically / Only when I ask). The nested CLI
 submenu contains Preview method (Install locally / Run from the repo) and
-Run command (Inherit global / Automatically / Only when I ask), with the
-inherit choice separated from explicit choices.
+Run command (Not set / Automatically / Only when I ask), with Not set
+separated from explicit choices. Open in browser has the same choices.
 The optional cli_launch key accepts automatic/on_request and remains saved while
 CLI preview is disabled. Automatically launches the supported CLI preview command
 only after the selected preview is requested or due and prepared; request-only
@@ -305,7 +316,7 @@ if unavailable, report the limitation and exact command rather than claiming a
 launch. This preference does not run tests or alter PR choices. CLI previews have
 no preview-before-implementation approval setting. Approval before PR is
 independent of frontend implementation approval and applies only to enabled
-preview types. Clearing a launch override follows Global.
+preview types. Clearing a launch choice leaves that type unset.
 Menu, list, catalogue and save review reflect the choice and disabled state. Printed
 lists use the same indentation and hierarchy; summaries include nested choices.
 Returning from a child menu restores the parent focus and retains staged changes.
@@ -325,8 +336,8 @@ frontend-only implementation gate.
 Optional frontend_preview_timing/cli_preview_timing override local_preview;
 missing timing keys mean inheritance. preview_pr_approval is the shared PR
 approval choice; frontend_preview_pr_approval/cli_preview_pr_approval override
-it. preview_launch is the shared launch choice; frontend_browser/cli_launch
-override it. frontend_implement_before_approval is a
+it. preview_launch is a legacy shared launch fallback; frontend_browser/cli_launch
+are the independent per-type launch choices. frontend_implement_before_approval is a
 direct yes/no setting, not an override of a shared gate. Legacy
 implement_before_approval falls back to this frontend-only setting; explicit
 frontend values win. Older preview_approval/design_approval map inversely there.
@@ -1167,3 +1178,7 @@ Text instructions have higher precedence than those
 choices. List output presents that precedence before choices and humanizes model
 reasoning; the named catalogue avoids repeating complete per-workflow blocks.
 The hidden `t config workflows` compatibility route opens the same editor.
+
+In the Use multiple models checklist, Enter and q/Esc Back retain the current
+marks as staged policy changes, including the exclusive one-model reset. Back
+does not publish; normal review/save/discard applies to the complete transaction.

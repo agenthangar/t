@@ -212,7 +212,7 @@ def test_nested_resource_help_does_not_load_config(t_mod, monkeypatch, capsys, a
 
 
 @pytest.mark.parametrize("argv", [
-    ["config", "workflow", "unknown"], ["config", "workflow", "list", "--edit"],
+    ["config", "workflow", "--unknown"], ["config", "workflow", "list", "--edit"],
     ["config", "workflow", "edit", "--workflow"],
     ["config", "workflow", "sync"], ["workflow", "sync"],
 ])
