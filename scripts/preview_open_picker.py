@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Preview the real open picker using synthetic data; selection prints identities."""
+"""Preview the shared pickers using synthetic data; selection prints identities."""
 import argparse
 import os
 from pathlib import Path
@@ -73,6 +73,16 @@ def main(argv=None):
                                  '--remote', '--compact', '--header'], input=source,
                                 env=env, text=True, capture_output=True, check=True)
         columns, _, formatted = result.stdout.partition('\n')
+        if args.profile == 'resume':
+            columns = 'SESSION  WORKING ON'
+            formatted = ''.join('\t'.join((repo, slot, sid, '/demo/' + repo, '2026-11-03',
+                task, '-', '-', host, agent, turn, 'demo/' + repo, state,
+                '[' + state + '] ' + repo + '-' + slot + '  ' + task)) + '\n'
+                for repo, slot, sid, task, host, agent, turn, state in (
+                    ('api', '2', 'fixture-a', 'Fix login', 'local', 'codex', '2026-11-03T16:00:00Z', 'OPEN'),
+                    ('web', '4', 'fixture-b', 'Polish dashboard', 'mini', 'claude', '2026-11-02T16:00:00Z', 'MERGED'),
+                    ('tools', '3', 'fixture-c', 'Review CLI changes', 'local', 'codex', '-', 'NONE')))
+            env['T_PICKER_SOURCE_ROWS'] = formatted
         env['T_PICKER_COLUMNS'] = columns
         hidden = {(fields[0], fields[3]) for fields in
                   (line.split('\t') for line in source.splitlines())
@@ -85,7 +95,6 @@ def main(argv=None):
         (directory / 'all').write_text(formatted)
         (directory / 'default').write_text('\n'.join(visible) + '\n')
         if args.profile in ('resume', 'close'):
-            env.pop('T_PICKER_SOURCE_ROWS', None)
             env['T_PICKER_SESSION_FILTERS'] = 'resume' if args.profile == 'resume' else 'kill'
             if args.profile == 'close':
                 env['T_PICKER_WITH_ATTACHED'] = formatted
@@ -96,6 +105,9 @@ def main(argv=None):
             script = script.replace('open unattached', 'open all').replace('open preview', 'list preview')
         elif args.profile != 'open':
             script = script.replace(' open unattached ', ' ' + ('resume' if args.profile == 'resume' else 'kill') + ' defaults ')
+        if args.profile == 'resume':
+            script = script.replace('--with-nth=5,4', '--with-nth=-1')
+        script = script.replace('open preview', args.profile + ' preview')
         selected = subprocess.run(['sh', '-c', script], env=env, text=True,
                                   stdout=subprocess.PIPE, check=False)
         if selected.returncode:

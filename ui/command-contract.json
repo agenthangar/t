@@ -6,7 +6,7 @@
     "detail": "Read-only labeled values; no work starts or prompt appears.",
     "single": "Air shared picker or inline menu: cyan headings, muted hints, explicit dark cyan focus; Enter selects one target. Native macOS key labels change presentation only.",
     "multi": "Air shared picker or inline checklist: green check in its own gutter beside focus pointer. Space/Tab marks searchable rows; Enter accepts marks or focused row. Width and height preserve controls and focused identity.",
-    "filtered": "Session snapshots use Ctrl-F staged filter settings, Ctrl-A filters off and Ctrl-L filters on with saved state and column choices. Issue pickers retain Ctrl-A all and Ctrl-F defaults. Filters narrow the same snapshot and never rediscover.",
+    "filtered": "Open/resume/close snapshots use Ctrl-F staged filter settings, Ctrl-A filters off and Ctrl-L filters on with saved state and column choices. Session lists use direct column-filter and sort hotkeys, Ctrl-A clear and Ctrl-F reset. Issue pickers retain Ctrl-A all and Ctrl-F defaults. Filters narrow the same snapshot and never rediscover.",
     "wizard": "Stage edits and review before applying with the shared Rail UI.",
     "review": "Show selected install actions before running; Enter applies the reviewed plan.",
     "action": "Run an explicit target without unnecessary selection; confirm interruption when needed.",
@@ -5109,7 +5109,7 @@
     "labels_only": true,
     "focus": "light text on dark cyan with a separate pointer",
     "selection": "plain green check in an independent gutter",
-    "header": "HOTKEYS above session FILTERS; readable shortcuts with bright underlined active filter state and resume sort/toggle; cyan section titles and a blank gap before results when height permits",
+    "header": "HOTKEYS above session FILTERS; readable shortcuts with bright underlined active filter state, selected list facets and sort/toggle; cyan section titles and a blank gap before results when height permits",
     "terminal_sizes": [
       [
         80,

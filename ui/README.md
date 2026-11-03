@@ -45,7 +45,8 @@ Keep the green checkmark in its own gutter beside the pointer, with spaces betwe
 status icons inside rows. Give controls and results a blank separating row when
 height permits. Session pickers list HOTKEYS above FILTERS, with readable shortcuts
 and bright underlined labels for the current filter On/Off state, resume sort, and
-merged-session toggle when enabled. Plain output retains explicit state text.
+merged-session toggle when enabled. Session lists highlight selected column filters
+and the current sort key. Plain output retains explicit state text.
 Use FILTERS only for actual filter controls; other pickers use their
 action or resource title. Reduce spacing, borders and margins on short screens
 before losing controls or focus, including wide 120×12 terminals.
@@ -82,7 +83,7 @@ the command name.
 | **Detail/status** | Print labeled facts without changing state or prompting. Preserve raw text, paths, and streams when the command explicitly exposes them. |
 | **Single selection** | Use a searchable fzf picker or an inline `_RailUI` menu with one visibly focused row. Enter chooses exactly one item; Esc/Ctrl-C cancels. An explicit target bypasses selection. A paginated single picker uses Ctrl-F for the next page, Ctrl-B for the previous page, and Ctrl-R to refresh; those keys belong to pagination rather than the filtered picker's settings control. |
 | **Multi-selection** | Searchable pickers use Space/Tab to mark rows and Enter to accept the marks, or the focused row if none are marked. Inline checklists use Space to toggle and Enter to submit only checked items. Show marks and the Enter action independently of color. |
-| **Filtered selection** | Show active filters and hidden count in the header. Session pickers use Ctrl-F for staged filter settings, Ctrl-A to turn filters off, and Ctrl-L to restore saved choices. State and column choices live in settings. Filtering retains the search and removes hidden marks. Issue pickers retain Ctrl-A show-all and Ctrl-F defaults. Ctrl-/ toggles full details when rows have previews. |
+| **Filtered selection** | Show active filters and hidden count in the header. Open, resume and close pickers use Ctrl-F for staged filter settings, Ctrl-A to turn filters off, and Ctrl-L to restore saved choices. State and column choices live in settings. Terminal session lists expose column filter and sort hotkeys directly. Filtering retains the search and removes hidden marks. Issue pickers retain Ctrl-A show-all and Ctrl-F defaults. Ctrl-/ toggles full details when rows have previews. |
 | **Wizard/review** | Stage choices, then display the resulting changes before applying them. Config saves on Enter; install enters review and then runs on Enter; login runs the selected logins on its first Enter. Setup and repository creation keep their released `y` confirmation. Show the actual action in the footer. |
 | **Direct action/passthrough** | An explicit target acts without a needless picker. Retain ownership and worktree safety checks, confirmation before interrupting live work with an explicit target, and the delegated tool's input/output and exit status. |
 | **Machine output** | Preserve existing JSON, raw-value, and remote wire formats. Do not add presentation chrome, ANSI color, or prompts. The inventory identifies machine-facing modes; this does not imply universal JSON support. |
