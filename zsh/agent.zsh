@@ -132,6 +132,13 @@ _dev_agent_new_cmd() {
   local agent="$1"
   local executable; executable=$(_dev_agent_executable "$agent") || executable=$agent
   local -a launch_args=("$executable")
+  if [[ $agent == codex ]]; then
+    local inference_helper="${${(%):-%x}:A:h:h}/libexec/t_local_inference.py"
+    local -a local_prefix
+    local_prefix=("${(@f)$(python3 "$inference_helper" --launch-prefix "${4:-$PWD}")}") || local_prefix=(python3 "$inference_helper" --lead)
+    local_prefix=("${(@)local_prefix:#}")
+    launch_args=("${local_prefix[@]}" "$executable")
+  fi
   local -a defaults
   [[ $agent == claude && -n $2 ]] && launch_args+=(--session-id "$2")
   defaults=("${(@f)$(_dev_agent_default_args "$agent" "${4:-$PWD}")}")
@@ -222,6 +229,13 @@ _dev_agent_resume_cmd() {
 
     *) args=("$executable" -r "$sid" "${filtered[@]}" "$@") ;;
   esac
+  if [[ $agent == codex ]]; then
+    local inference_helper="${${(%):-%x}:A:h:h}/libexec/t_local_inference.py"
+    local -a local_prefix
+    local_prefix=("${(@f)$(python3 "$inference_helper" --launch-prefix "$target")}") || local_prefix=(python3 "$inference_helper" --lead)
+    local_prefix=("${(@)local_prefix:#}")
+    args=("${local_prefix[@]}" "${args[@]}")
+  fi
   print -r -- "${(j: :)${(@q)args}}"
 }
 # _dev_agent_at_welcome <agent> <session> [cwd] — live but no conversation yet.

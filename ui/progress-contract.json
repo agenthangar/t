@@ -276,6 +276,30 @@
     "libexec/t_picker_close.py:close:subprocess.Popen": {
       "kind": "background",
       "reason": "Starts a short-lived cached-view updater; it cannot contact fzf until the foreground action returns, and the picker owns its cleanup and rendering."
+    },
+    "libexec/t_local_models.py:probe:subprocess.run": {
+      "kind": "protocol",
+      "reason": "Read-only local hardware probes have a two-second deadline and remain quiet for catalog JSON output."
+    },
+    "libexec/t_local_models.py:fetch:urllib.request.urlopen": {
+      "kind": "phase",
+      "reason": "Bounded public metadata requests run inside the refresh spinner, including its parallel fetch workers."
+    },
+    "libexec/t_local_inference.py:install:subprocess.run": {
+      "kind": "passthrough",
+      "reason": "curl streams download progress on stderr; installation is explicitly requested."
+    },
+    "libexec/t_local_inference.py:ollama_action:subprocess.run": {
+      "kind": "passthrough",
+      "reason": "Ollama pull owns and streams download progress for the explicitly selected artifact."
+    },
+    "libexec/t_local_inference.py:lead:subprocess.call": {
+      "kind": "passthrough",
+      "reason": "The native Codex CLI owns the terminal for the entire session."
+    },
+    "libexec/t_local_setup.py:register:subprocess.run": {
+      "kind": "passthrough",
+      "reason": "Codex MCP registration streams its result during explicitly reviewed setup."
     }
   },
   "shell": [

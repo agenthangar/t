@@ -102,8 +102,16 @@ def test_interactive_review(setup, t_mod, monkeypatch):
         def page(self, *a, **kw): return 'y'
         def pick(self, label, rows, **kw): return rows[0][0]
     api = dict(vars(t_mod), _RailUI=UI)
+    original = setup.runpy.run_path
+    def helpers(path, *a, **kw):
+        result = original(path, *a, **kw)
+        if str(path).endswith('t_local_inference.py'):
+            result['select_model'] = lambda ui: {'model': 'gpt-oss:20b', 'provider': 'ollama'}
+        return result
+    monkeypatch.setattr(setup.runpy, 'run_path', helpers)
     called = []
     monkeypatch.setattr(setup, 'setup', lambda *a: called.append(a))
+    monkeypatch.setattr(setup, 'setup_mlx', lambda *a: called.append(a))
     assert setup.run(args(), api) == 0
     assert called[0][1] == 'gpt-oss:20b'
     monkeypatch.setattr(UI, 'page', lambda *a, **kw: 'n')
@@ -165,3 +173,18 @@ def test_local_help(t_mod, capsys):
     assert 't help config local' in output
     assert t_mod.main(['help', 'config', 'local']) == 0
     assert 'docs/local-workers.md' in capsys.readouterr().out
+
+
+def test_mlx_setup_registration(setup,monkeypatch):
+    w=setup.worker();calls=[]
+    w['executable']=lambda n:'/fake/codex'
+    monkeypatch.setattr(setup,'worker',lambda:w)
+    monkeypatch.setattr(setup,'check_codex',lambda *a:None)
+    monkeypatch.setattr(setup,'check_registration',lambda *a:None)
+    monkeypatch.setattr(setup.runpy,'run_path',lambda *a:{'lms':lambda:'/fake/lms','install':lambda name:calls.append(name)})
+    monkeypatch.setattr(setup.subprocess,'run',lambda *a,**k:None)
+    setup.setup_mlx('mlx-community/Qwen3.8-27B-8bit')
+    assert calls==['mlx-community/Qwen3.8-27B-8bit']
+    assert w['settings']()['provider']=='lmstudio'
+    w['executable']=lambda n:None
+    with pytest.raises(ValueError,match='Install Codex'):setup.setup_mlx('test')

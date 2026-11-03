@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import re
+import runpy
 import shutil
 import signal
 import socket
@@ -27,6 +28,10 @@ INSTRUCTIONS = (
     'Returned code and findings enter the lead conversation; local inference is not an '
     'end-to-end privacy boundary. Architecture and ambiguous changes stay with the lead.'
 )
+
+
+def inference():
+    return runpy.run_path(str(Path(__file__).with_name('t_local_inference.py')))
 
 
 def config_path():
@@ -52,7 +57,12 @@ def settings():
         return {'enabled': False, 'model': DEFAULT_MODEL}
     if not isinstance(data, dict) or type(data.get('enabled')) is not bool:
         raise ValueError('invalid local worker configuration')
-    return {'enabled': data['enabled'], 'model': model_name(data.get('model'))}
+    result = {'enabled': data['enabled'], 'model': model_name(data.get('model'))}
+    if 'provider' in data:
+        if data['provider'] not in ('ollama', 'lmstudio'):
+            raise ValueError('invalid local worker provider')
+        result['provider'] = data['provider']
+    return result
 
 
 def save_settings(data):
@@ -122,7 +132,7 @@ def request(base, path, payload=None):
 
 
 @contextmanager
-def ollama_server():
+def ollama_server(context=32768):
     binary = executable('ollama')
     if not binary:
         raise ValueError('Ollama is missing; run t config local')
@@ -134,7 +144,7 @@ def ollama_server():
     env = environment(root / 'ollama-home')
     env.update(OLLAMA_HOST=f'127.0.0.1:{port}', OLLAMA_NO_CLOUD='1',
                OLLAMA_MODELS=str(Path.home() / '.ollama/models'),
-               OLLAMA_CONTEXT_LENGTH='32768', OLLAMA_NUM_PARALLEL='1', OLLAMA_MAX_LOADED_MODELS='1')
+               OLLAMA_CONTEXT_LENGTH=str(context), OLLAMA_NUM_PARALLEL='1', OLLAMA_MAX_LOADED_MODELS='1')
     with (root / 'ollama.log').open('w') as log:
         proc = subprocess.Popen([binary, 'serve'], env=env, stdin=subprocess.DEVNULL,
                                 stdout=log, stderr=log, start_new_session=True)
@@ -224,7 +234,7 @@ def codex_command(workspace, output, model):
             '-C', str(workspace), '--output-last-message', str(output), '-']
 
 
-def run_worker(job, base, model, timeout, cancel):
+def run_worker(job, base, model, timeout, cancel, provider='ollama', context=32768):
     workspace = job / 'workspace'
     env = environment(job / 'home')
     env.update(OLLAMA_HOST=base, CODEX_OSS_BASE_URL=base + '/v1')
@@ -246,6 +256,9 @@ def run_worker(job, base, model, timeout, cancel):
     output = job / 'answer.txt'
     (job / 'prompt.txt').write_text(prompt)
     command = codex_command(workspace, output, model)
+    command[command.index('ollama')] = provider
+    command[command.index('model_context_window=32768')] = f'model_context_window={context}'
+    command[command.index('model_auto_compact_token_limit=24576')] = f'model_auto_compact_token_limit={int(context*.75)}'
     if assignment['mode'] == 'investigate':
         command[command.index('workspace-write')] = 'read-only'
     started = time.monotonic()
@@ -297,8 +310,11 @@ class Worker:
         self.threads = []
 
     def start(self, args):
-        if not isinstance(args, dict) or set(args) - {'workspace', 'assignment', 'mode', 'timeout_seconds'}:
+        if not isinstance(args, dict) or set(args) - {'workspace', 'assignment', 'mode', 'timeout_seconds', 'routing_reason', 'parent_session_id'}:
             raise ValueError('unexpected task arguments')
+        for key in ('routing_reason', 'parent_session_id'):
+            if key in args and (not isinstance(args[key], str) or len(args[key]) > 1000):
+                raise ValueError(key + ' must be a string of at most 1000 characters')
         text = args.get('assignment')
         if not isinstance(text, str) or not text.strip() or len(text) > 16000:
             raise ValueError('assignment must contain 1–16000 characters')
@@ -310,6 +326,14 @@ class Worker:
         if not isinstance(workspace, str) or not Path(workspace).is_absolute():
             raise ValueError('workspace must be an absolute repository root')
         config = settings()
+        routing = inference()['effective'](workspace)
+        if routing and routing['mode'] == 'disabled':
+            raise ValueError('local delegation is disabled by the repository workflow')
+        if routing and routing['mode'] == 'local-only':
+            raise ValueError('local-only work requires a new native local lead; this MCP connection cannot verify its lead identity')
+        if routing:
+            config = dict(config, model=routing['model'], provider=routing['provider'], context=routing['context_tokens'])
+            timeout = min(timeout, routing['timeout_seconds'])
         if not config['enabled']:
             raise ValueError('local worker is disabled; run t config local')
         lease = reservation()
@@ -321,7 +345,10 @@ class Worker:
             (job / 'assignment.json').write_text(json.dumps(dict(args, mode=mode)))
             cancel = threading.Event()
             task = {'task_id': task_id, 'status': 'running', 'model': config['model'],
-                    'workspace': str(job / 'workspace'), 'started_at': time.time()}
+                    'workspace': str(job / 'workspace'), 'source_workspace': workspace, 'started_at': time.time(),
+                    'provider': config.get('provider', 'ollama'), 'context_tokens': config.get('context', 32768),
+                    'routing_reason': str(args.get('routing_reason', 'explicit assignment'))[:1000],
+                    'parent_session_id': str(args.get('parent_session_id', '')), 'identity_verified': False, 'parent_identity_verified': False}
             self.tasks[task_id] = (task, cancel)
             thread = threading.Thread(target=self.execute,
                                       args=(task, cancel, lease, job, workspace, config['model'], timeout))
@@ -339,9 +366,19 @@ class Worker:
             if cancel.is_set():
                 status = 'cancelled'
             else:
-                with ollama_server() as (base, _):
-                    check_model(base, model)
-                    status = run_worker(job, base, model, timeout, cancel)
+                if task.get('provider') == 'lmstudio':
+                    local = inference()
+                    fit = local['report'](local['artifact'](model), local['helper']('t_local_models')['hardware'](), task['context_tokens'])
+                    if fit['fit'] is not True:
+                        raise ValueError(fit['reason'])
+                    with local['runtime'](model, task['context_tokens']) as (base, alias, info):
+                        task.update(resolved_model=model, revision=info['revision'], runtime_model=alias, runtime_details=info.get('runtime', {}), identity_verified=True)
+                        status = run_worker(job, base, alias, timeout, cancel, 'lmstudio', task['context_tokens'])
+                else:
+                    with ollama_server(task['context_tokens']) as (base, _):
+                        check_model(base, model)
+                        task.update(resolved_model=model)
+                        status = run_worker(job, base, model, timeout, cancel, 'ollama', task['context_tokens'])
                 task.update(collect(job))
                 if status != 'completed':
                     events = job / 'events.jsonl'
@@ -383,6 +420,8 @@ def tool_specs():
                          'required': ['workspace', 'assignment'], 'properties': {
                              'workspace': {'type': 'string', 'description': 'Absolute repository root; current tracked and nonignored files are snapshotted.'},
                              'assignment': {'type': 'string', 'minLength': 1, 'maxLength': 16000},
+                             'routing_reason': {'type': 'string', 'description': 'Why this bounded task is suitable for local delegation.'},
+                             'parent_session_id': {'type': 'string', 'description': 'Lead session ID if known; user-supplied, not verified ownership.'},
                              'mode': {'type': 'string', 'enum': ['investigate', 'patch'], 'default': 'investigate'},
                              'timeout_seconds': {'type': 'integer', 'minimum': 10, 'maximum': 1800, 'default': 300}}}},
         *[{'name': name, 'description': description,

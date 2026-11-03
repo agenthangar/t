@@ -1,0 +1,108 @@
+{
+  "schema": 1,
+  "models": [
+    {
+      "model": "mlx-community/Qwen3.8-27B-8bit",
+      "bytes": 29500000000,
+      "precision": "8-bit",
+      "base_model": "Qwen/Qwen3.8-27B",
+      "source": "https://huggingface.co/mlx-community/Qwen3.8-27B-8bit",
+      "special_runtime": false,
+      "benchmarks": {
+        "swe-bench-pro": {
+          "score": 61.7,
+          "source": "https://huggingface.co/Qwen/Qwen3.8-Flash-Next",
+          "kind": "publisher original-model result; quantization not evaluated",
+          "version": "publisher evaluation",
+          "verified_at": "2026-11-03",
+          "harness": "Publisher Claude Code evaluation with 256K context and a modified task set; see source methodology."
+        },
+        "deepswe": {
+          "score": 42.2,
+          "source": "https://huggingface.co/Qwen/Qwen3.8-Flash-Next",
+          "kind": "publisher original-model result; quantization not evaluated",
+          "version": "1.1",
+          "verified_at": "2026-11-03",
+          "harness": "Publisher best result across Claude Code and miniSWE-agent; original model, not local quantization."
+        },
+        "gpqa": {
+          "score": 89.2,
+          "source": "https://huggingface.co/Qwen/Qwen3.8-Flash-Next",
+          "kind": "publisher original-model result; quantization not evaluated",
+          "version": "Diamond",
+          "verified_at": "2026-11-03",
+          "harness": "Publisher evaluation; see linked methodology. Not reproduced on this quantization or local Codex harness."
+        }
+      }
+    },
+    {
+      "model": "nace-ai/Qwen3.8-Flash-Next-MLX-4bit",
+      "bytes": 106000000000,
+      "precision": "mixed 4-bit",
+      "base_model": "Qwen/Qwen3.8-Flash-Next",
+      "source": "https://huggingface.co/nace-ai/Qwen3.8-Flash-Next-MLX-4bit",
+      "special_runtime": true,
+      "benchmarks": {
+        "swe-bench-pro": {
+          "score": 62.5,
+          "source": "https://huggingface.co/Qwen/Qwen3.8-Flash-Next",
+          "kind": "publisher original-model result; quantization not evaluated",
+          "version": "publisher evaluation",
+          "verified_at": "2026-11-03",
+          "harness": "Publisher Claude Code evaluation with 256K context and a modified task set; see source methodology."
+        },
+        "deepswe": {
+          "score": 58.7,
+          "source": "https://huggingface.co/Qwen/Qwen3.8-Flash-Next",
+          "kind": "publisher original-model result; quantization not evaluated",
+          "version": "1.1",
+          "verified_at": "2026-11-03",
+          "harness": "Publisher best result across Claude Code and miniSWE-agent; original model, not local quantization."
+        },
+        "gpqa": {
+          "score": 91.7,
+          "source": "https://huggingface.co/Qwen/Qwen3.8-Flash-Next",
+          "kind": "publisher original-model result; quantization not evaluated",
+          "version": "Diamond",
+          "verified_at": "2026-11-03",
+          "harness": "Publisher evaluation; see linked methodology. Not reproduced on this quantization or local Codex harness."
+        }
+      }
+    },
+    {
+      "model": "mlx-community/Qwen3.5-122B-A10B-4bit",
+      "bytes": 69600000000,
+      "precision": "4-bit",
+      "base_model": "Qwen/Qwen3.5-122B-A10B",
+      "source": "https://huggingface.co/mlx-community/Qwen3.5-122B-A10B-4bit",
+      "special_runtime": false,
+      "benchmarks": {}
+    },
+    {
+      "model": "lmstudio-community/Qwen3-Coder-Next-MLX-6bit",
+      "bytes": 64700000000,
+      "precision": "6-bit",
+      "base_model": "Qwen/Qwen3-Coder-Next",
+      "source": "https://huggingface.co/lmstudio-community/Qwen3-Coder-Next-MLX-6bit",
+      "special_runtime": false,
+      "benchmarks": {
+        "swe-bench-pro": {
+          "score": 44.3,
+          "source": "https://huggingface.co/Qwen/Qwen3-Coder-Next",
+          "kind": "publisher original-model result; quantization not evaluated",
+          "version": "publisher evaluation",
+          "verified_at": "2026-11-03",
+          "harness": "Publisher evaluation; see linked methodology. Not reproduced on this quantization or local Codex harness."
+        },
+        "terminal-bench": {
+          "score": 36.2,
+          "source": "https://huggingface.co/Qwen/Qwen3-Coder-Next",
+          "kind": "publisher original-model result; quantization not evaluated",
+          "version": "2.0",
+          "verified_at": "2026-11-03",
+          "harness": "Publisher evaluation; see linked methodology. Not reproduced on this quantization or local Codex harness."
+        }
+      }
+    }
+  ]
+}

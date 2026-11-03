@@ -686,7 +686,7 @@ _t() {
     hosts) actions=(list ls show add edit remove default run) ;;
     workflow) actions=(list ls open delete add use exclude inherit edit instructions) ;;
     runners) actions=(list ls edit setup runs) ;;
-    config) actions=(open show edit setup onboard local) ;;
+    config) actions=(open show edit setup onboard local models) ;;
     profile) actions=(init edit show apply) ;;
     policy) actions=(check show apply) ;;
     agent) actions=(login install status trust) ;;
@@ -723,6 +723,14 @@ _t() {
       _values 'flag' --github-repo --create -h --help
     else
       _values 'flag' --tool --repo --json -h --help
+    fi
+    return
+  fi
+  if [[ $group == config && $action == models ]]; then
+    if (( CURRENT == first + 2 )); then
+      _values 'model action' list refresh show install measure
+    else
+      _values 'model option' --provider --suite --benchmark --context --json --yes --download-only
     fi
     return
   fi

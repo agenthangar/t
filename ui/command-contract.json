@@ -3503,7 +3503,7 @@
           "tests": [
             "tests/test_remote_commands.py::test_remote_host_picker_requires_explicit_enter_and_cancel"
           ],
-          "notes": "Single host picker waits for Enter even with one host; missing session uses shared selection on the source/target host. Cancellation returns 130. Unavailable registered hosts warn and are skipped; discovery retains local and reachable rows. SSH failures report status and bounded terminal-safe stderr without asserting host downtime; scanner stdin is disconnected. Saved resumes retain local locks and known-owner checks, but cannot verify ownership on unavailable hosts. Local scan failures remain fatal. Host picker says Resume saved work on which host? and Browse this host’s saved conversations; selected host supplies saved history and runs the resumed session. SSH alias/target context is subordinate to the action heading. Host-first positionals; explicit --host retains repo/slot compatibility. Ambiguous legacy targets fail before SSH."
+          "notes": "Single host picker waits for Enter even with one host; missing session uses shared selection on the source/target host. Cancellation returns 130. Unavailable registered hosts warn and are skipped; discovery retains local and reachable rows. SSH failures report status and bounded terminal-safe stderr without asserting host downtime; scanner stdin is disconnected. Saved resumes retain local locks and known-owner checks, but cannot verify ownership on unavailable hosts. Local scan failures remain fatal. Host picker says Resume saved work on which host? and Browse this host\u2019s saved conversations; selected host supplies saved history and runs the resumed session. SSH alias/target context is subordinate to the action heading. Host-first positionals; explicit --host retains repo/slot compatibility. Ambiguous legacy targets fail before SSH."
         },
         "explicit": {
           "argv": [
@@ -4877,7 +4877,7 @@
           "terminal": true
         }
       },
-      "notes": "Open the named workflow immediately, then return through the shared tool catalogue. Unknown names fail without writes. Existing verbs take precedence over names; use open NAME for collisions. config workflow NAME is a compatibility alias."
+      "notes": "Open the named workflow immediately, then return through the shared tool catalogue. Unknown names fail without writes. Existing verbs take precedence over names; use open NAME for collisions. config workflow NAME is a compatibility alias. Codex workflows include Inference & routing and the shared local artifact picker; local-only hides retained cloud-stage controls. Installing or measuring a selected model is immediate; changing the workflow remains staged."
     },
     "workflow delete": {
       "patterns": [
@@ -4938,6 +4938,274 @@
         }
       },
       "notes": "Require --replacement for a global default or any repository assignment, including excluded repositories. Preserve exclusion flags and other tool catalogues. Reject missing names, invalid replacements and deleting the last workflow. Editor deletion stays pending until Save."
+    },
+    "config models list": {
+      "patterns": [
+        "list",
+        "machine"
+      ],
+      "renderer": "mixed",
+      "scope": "local machine; cached public metadata",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_local_models.py::test_commands"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "config",
+            "models",
+            "list"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_models.py::test_commands"
+          ]
+        },
+        "json": {
+          "argv": [
+            "config",
+            "models",
+            "list",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_models.py::test_commands"
+          ]
+        }
+      }
+    },
+    "config models refresh": {
+      "patterns": [
+        "action",
+        "machine"
+      ],
+      "renderer": "mixed",
+      "scope": "local machine; cached public metadata",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_local_models.py::test_commands"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "config",
+            "models",
+            "refresh"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_models.py::test_commands"
+          ]
+        },
+        "json": {
+          "argv": [
+            "config",
+            "models",
+            "refresh",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": false,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_models.py::test_commands"
+          ]
+        }
+      }
+    },
+    "config models show": {
+      "patterns": [
+        "detail",
+        "machine"
+      ],
+      "renderer": "mixed",
+      "scope": "local machine; explicit artifact",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_local_inference.py::test_commands"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "config",
+            "models",
+            "show",
+            "mlx-community/Qwen3.8-27B-8bit"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_inference.py::test_commands"
+          ]
+        },
+        "json": {
+          "argv": [
+            "config",
+            "models",
+            "show",
+            "mlx-community/Qwen3.8-27B-8bit",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_inference.py::test_commands"
+          ]
+        }
+      }
+    },
+    "config models install": {
+      "patterns": [
+        "action",
+        "machine",
+        "wizard"
+      ],
+      "renderer": "mixed",
+      "scope": "local machine; explicit artifact",
+      "confirmation": "review",
+      "tests": [
+        "tests/test_local_inference.py::test_commands"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "config",
+            "models",
+            "install",
+            "mlx-community/Qwen3.8-27B-8bit",
+            "--yes"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_inference.py::test_commands"
+          ]
+        },
+        "json": {
+          "argv": [
+            "config",
+            "models",
+            "install",
+            "mlx-community/Qwen3.8-27B-8bit",
+            "--json",
+            "--yes"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": false,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_inference.py::test_commands"
+          ]
+        },
+        "review": {
+          "argv": [
+            "config",
+            "models",
+            "install",
+            "mlx-community/Qwen3.8-27B-8bit"
+          ],
+          "patterns": [
+            "wizard"
+          ],
+          "read_only": false,
+          "terminal": true,
+          "tests": [
+            "tests/test_local_inference.py::test_install_review_and_download_only"
+          ]
+        },
+        "download-only": {
+          "argv": [
+            "config",
+            "models",
+            "install",
+            "nace-ai/Qwen3.8-Flash-Next-MLX-4bit",
+            "--download-only",
+            "--yes"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_inference.py::test_install_review_and_download_only"
+          ]
+        }
+      }
+    },
+    "config models measure": {
+      "patterns": [
+        "action",
+        "machine"
+      ],
+      "renderer": "mixed",
+      "scope": "local machine; explicit artifact",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_local_inference.py::test_commands"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "config",
+            "models",
+            "measure",
+            "mlx-community/Qwen3.8-27B-8bit"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_inference.py::test_commands"
+          ]
+        },
+        "json": {
+          "argv": [
+            "config",
+            "models",
+            "measure",
+            "mlx-community/Qwen3.8-27B-8bit",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": false,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_inference.py::test_commands"
+          ]
+        }
+      }
     }
   },
   "display_schemas": {
@@ -5032,10 +5300,10 @@
         }
       ],
       "status_marks": {
-        "attached": "●",
-        "detached": "○",
-        "active_context": "✓",
-        "still_in_progress": "↻"
+        "attached": "\u25cf",
+        "detached": "\u25cb",
+        "active_context": "\u2713",
+        "still_in_progress": "\u21bb"
       },
       "layouts": {
         "table": {
@@ -5290,8 +5558,8 @@
         "tests/test_command_behavior.py::test_history_display_contract_preserves_unknowns_preview_and_json"
       ],
       "status_marks": {
-        "saved": "·",
-        "archived": "□",
+        "saved": "\u00b7",
+        "archived": "\u25a1",
         "missing": "!"
       }
     }

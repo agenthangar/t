@@ -1142,3 +1142,15 @@ The hidden `t config workflows` compatibility route opens the same editor.
 In the Use multiple models checklist, Enter and q/Esc Back retain the current
 marks as staged policy changes, including the exclusive one-model reset. Back
 does not publish; normal review/save/discard applies to the complete transaction.
+
+`t workflow` includes a Codex **Inference & routing** submenu with Disabled,
+Manual, Automatic hybrid and Local only modes, explicit local model, context and
+task budget. These are staged workflow choices. The shared model picker keeps
+Memory fit ✓/✕/? visible on narrow screens. Unknown/non-fitting models are dimmed
+and inspectable; disabled Use/Install actions explain why and never execute.
+Benchmark suite selection is explicit; missing scores and speed are not invented.
+Show benchmark sources/harnesses and measured speed only in model details.
+Installation and measurement are explicit immediate actions with model selection;
+model download review precedes installation. `t config models show` is read-only;
+`install` and `measure` are direct explicit-artifact actions. `--download-only`
+does not claim inference readiness. No list/show mode starts a runtime or picker.
