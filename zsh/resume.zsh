@@ -38,6 +38,13 @@ _t_resume_on_host() {
   local host="$1" sid="$2" wt="$3" agent="$4" mode="$5"
   local target="${REMOTE_HOSTS[$host]:-$host}"
   command -v rsync >/dev/null 2>&1 || { echo "t resume --host: rsync not found" >&2; return 1; }
+  local TB_TRANSFER_REF
+  TB_TRANSFER_REF=$(_dev_worktree_beam_prepare "$wt") || return $?
+  if [[ -n $TB_TRANSFER_REF ]]; then
+    ssh "$target" "zsh -lic '(( \${+functions[_dev_worktree_transfer_ref_valid]} ))'" || {
+      print -u2 't session move: update t on the destination to receive transfer snapshots'; return 1
+    }
+  fi
   _dev_worktree_beam_push "$wt" "$host" >&2 || {
     local push_rc=$?
     (( push_rc == 130 )) && return 130
@@ -45,7 +52,7 @@ _t_resume_on_host() {
     return $push_rc
   }
   _tbeam_sync_transcript "$wt" "$target" "$agent" "$sid" >&2 || return $?
-  local env="TB_CWD=${(q)wt} TB_SID=${(q)sid} TB_AGENT=${(q)agent} TB_RESUME_ALLOW_UNAVAILABLE=1"
+  local env="TB_TRANSFER_REF=${(q)TB_TRANSFER_REF} TB_CWD=${(q)wt} TB_SID=${(q)sid} TB_AGENT=${(q)agent} TB_RESUME_ALLOW_UNAVAILABLE=1"
   case $mode in
     fg)     ssh -t "$target" "$env TB_MODE=fg zsh -lic _tbeam_land" ;;
     attach) ssh -t "$target" "$env TB_MODE=tmux TB_ATTACH=1 zsh -lic _tbeam_land" ;;
@@ -2300,6 +2307,7 @@ _tbeam_land() {
   [[ -n $repo && -n $slot ]] || { echo "tbeam: couldn't map $land to a dev slot" >&2; return 1; }
   session="dev-${repo}-${slot}"
   _dev_resume_session "$session" "$land" "$TB_SID" "$agent" || return $?
+  _dev_worktree_beam_finish "$land"
   if [[ -n $TB_ATTACH ]]; then
     exec tmux attach -t "=$session:"              # drop the ssh caller straight in
   fi
@@ -2649,6 +2657,13 @@ _t_beam() {
     _dev_worktree_remote_accept "$host" "$cwd" || return 1
   fi
 
+  local TB_TRANSFER_REF
+  TB_TRANSFER_REF=$(_dev_worktree_beam_prepare "$cwd") || return $?
+  if [[ -n $TB_TRANSFER_REF ]]; then
+    ssh "$host" "zsh -lic '(( \${+functions[_dev_worktree_transfer_ref_valid]} ))'" || {
+      print -u2 't session move: update t on the destination to receive transfer snapshots; source was not stopped'; return 1
+    }
+  fi
   echo "⟳ Beaming ${sid[1,8]}… ($cwd) → $host"
   # It's a MOVE, not a copy: stop the origin BEFORE snapshotting code + transcript,
   # so a still-live claude can't keep editing files in the worktree (the push below
@@ -2697,20 +2712,20 @@ _t_beam() {
   # Foreground mode: resume straight in the ssh session (needs a real terminal).
   if [[ -n $fg ]]; then
     [[ -z $detach ]] || { echo "tbeam: -f needs a terminal; can't combine with -d / inside Claude." >&2; return 1; }
-    ssh -t "$host" "TB_CWD=${(q)cwd} TB_SID=${(q)sid} TB_AGENT=${(q)agent} TB_MODE=fg zsh -lic _tbeam_land"
+    ssh -t "$host" "TB_TRANSFER_REF=${(q)TB_TRANSFER_REF} TB_CWD=${(q)cwd} TB_SID=${(q)sid} TB_AGENT=${(q)agent} TB_MODE=fg zsh -lic _tbeam_land"
     return
   fi
 
   # tmux mode + auto-attach: -t lets _tbeam_land exec us into the landed session.
   if [[ -z $detach ]]; then
-    ssh -t "$host" "TB_CWD=${(q)cwd} TB_SID=${(q)sid} TB_AGENT=${(q)agent} TB_MODE=tmux TB_ATTACH=1 zsh -lic _tbeam_land"
+    ssh -t "$host" "TB_TRANSFER_REF=${(q)TB_TRANSFER_REF} TB_CWD=${(q)cwd} TB_SID=${(q)sid} TB_AGENT=${(q)agent} TB_MODE=tmux TB_ATTACH=1 zsh -lic _tbeam_land"
     return
   fi
 
   # tmux mode, detached: capture the landed session name, print an attach hint.
   local session=
   local landing_output landing_rc
-  landing_output=$(ssh "$host" "TB_CWD=${(q)cwd} TB_SID=${(q)sid} TB_AGENT=${(q)agent} TB_MODE=tmux zsh -lic _tbeam_land"); landing_rc=$?
+  landing_output=$(ssh "$host" "TB_TRANSFER_REF=${(q)TB_TRANSFER_REF} TB_CWD=${(q)cwd} TB_SID=${(q)sid} TB_AGENT=${(q)agent} TB_MODE=tmux zsh -lic _tbeam_land"); landing_rc=$?
   session=${landing_output##*$'\n'}
   (( landing_rc == 0 )) && [[ $session == dev-?*-<-> ]] || { echo "tbeam: landing on $host failed." >&2; return 1; }
   echo "✓ Running on $host as $session"

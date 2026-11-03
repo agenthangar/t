@@ -454,6 +454,13 @@ saved history and desktop reservations are excluded. Selection also opens inside
 an agent. `--host mini` supplies the destination explicitly; a configured default
 never bypasses selection. Every alias of each selected source host is excluded.
 
+Worktree moves check Git push access before stopping the source, then commit its
+final edits and publish a unique transfer snapshot. They do not overwrite a
+same-numbered branch from another host. A busy or divergent destination lands in
+a fresh slot at the exact source revision. Update t on both hosts for this protocol.
+If publication fails after stopping, the source files and checkpoint remain there;
+Git's diagnostic and source-history recovery guidance are shown.
+
 Multiple selections move sequentially with detached destinations. All identities
 are rechecked after both pickers before any move. A failure or cancellation stops
 the remaining moves and reports completed, failed and unattempted sessions.

@@ -146,6 +146,13 @@ All actions remain directly reachable, returning preserves row focus, and the
 shared viewport keeps the focused row and Save shortcut visible on narrow screens.
 
 Cross-host moves and resumes use guarded t transfer for both Claude and Codex.
+Worktree transfers preflight push access before stopping the source, then publish
+final edits under a unique `refs/heads/t-transfer/<token>` ref. Destination checks
+require snapshot-capable peers before stopping. Landings fetch the exact snapshot
+into `refs/t/transfers/<token>`, never overwriting an unrelated ordinary branch or
+falling back to main. Conflicting destination slots get fresh branches. Successful
+tmux landings remove only the matching remote snapshot with an exact lease; failed
+cleanup retains it for recovery. Git failure diagnostics remain visible.
 When no current owner is found, move points to `t session resume [repo] [slot]`
 for restoring saved work.
 Legacy `DEV_HANDOFF` and desktop opening defaults are ignored. Older remote peers

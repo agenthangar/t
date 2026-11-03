@@ -332,64 +332,84 @@ _dev_worktree_refuse() {
   print -r -- "  (DEV_WORKTREE[$repo]=0 in ${T_LOCAL_RC} opts this repo out of worktrees entirely)" >&2
 }
 
-# _dev_worktree_beam_push <wt> <host> — ON THE ORIGIN, carry the slot worktree's LIVE edits
-# with a beam. Beam otherwise moves only pushed commits + the transcript, stranding any
-# uncommitted work (the long-standing tbeam gap noted in CLAUDE.md). So before the move we
-# auto-commit ALL changes (tracked AND untracked) as a throwaway WIP commit and push the slot
-# branch to origin, where the destination fast-forwards to it (_dev_worktree_beam_sync). The
-# `[skip ci]` keeps a beam from burning CI on every hop; squash-merge collapses the WIP commits
-# at PR time. No-op unless <wt> is a per-session worktree (under $DEV_WORKTREE_ROOT): opt-out /
-# shared-tree repos are left exactly as before, so a commit here can never sweep up a sibling
-# slot's WIP (the trampling the worktree model exists to prevent). Shared dotfiles code — the
-# RECEIVE path (_dev_pull) runs it on the remote origin over ssh, so args fall back to TB_* env
-# (TB_WT/TB_HOST) to dodge nested-ssh quoting, exactly like _tbeam_land/_tbeam_kill_owner. A
-# failed commit or push WARNS and returns 1 — it never aborts the move (the work is safe in
-# git/on disk on the origin, just not yet on the destination — same degraded-not-lost contract
-# as the foreground-kill warning) but callers surface it loudly, and the collision reland
-# (_dev_beam_land_cwd) refuses to reland from a branch that never reached origin. The commit is
-# VERIFIED (porcelain re-check), not assumed: a hook that rewrites or rejects can leave paths
-# uncommitted even when `git commit` was attempted.
-_dev_worktree_beam_push() {
-  local wt="${1:-$TB_WT}" host="${2:-$TB_HOST}" rc=0
-  [[ -n $DEV_WORKTREE_ROOT && $wt == ${DEV_WORKTREE_ROOT}/*/* && -e $wt/.git ]] || return 0
-  local br; br=$(git -C "$wt" symbolic-ref --short -q HEAD) || return 0
-  if [[ -n "$(git -C "$wt" status --porcelain 2>/dev/null)" ]]; then
-    git -C "$wt" add -A 2>/dev/null
-    git -C "$wt" commit -q -m "wip: beam to ${host:-another host} [skip ci]" 2>/dev/null
-    if [[ -n "$(git -C "$wt" status --porcelain 2>/dev/null)" ]]; then
-      print -r -- "tbeam: couldn't commit everything in ${wt} (pre-commit hook?) — destination won't see the uncommitted edits" >&2
-      rc=1
-      # Still push: any earlier committed-but-unpushed work on this branch should still reach origin.
-    fi
-  fi
-  if git -C "$wt" push -q origin "HEAD:${br}" 2>/dev/null; then
-    print -r -- "↑ carried ${br} → origin"
-  else
-    print -r -- "tbeam: couldn't push ${br} to origin — destination won't see your latest edits (push them manually)" >&2
-    rc=1
-  fi
-  return $rc
+# New transfers publish an immutable snapshot instead of a shared slot branch.
+# A dry-run catches transport/auth failures before a live source is stopped.
+_dev_worktree_transfer_ref_valid() {
+  local token=${1#refs/heads/t-transfer/}
+  [[ $1 == refs/heads/t-transfer/* && ${#token} == 32 && $token != *[^0-9a-f]* ]]
 }
 
-# _dev_worktree_beam_sync <wt> — ON THE DESTINATION, fast-forward the slot worktree to the
-# branch tip the origin just pushed (_dev_worktree_beam_push), so a beam's uncommitted edits
-# actually land. A FRESHLY created worktree is already at origin/<br> (no-op); an ALREADY-present
-# one — a reattach, or a prior beam left it behind — is reused as-is by _dev_worktree_create and
-# would otherwise be STALE. No-op outside a per-session worktree, mirroring _dev_worktree_beam_push.
-# Shared code (runs on whichever host receives the session, incl. over ssh from _tbeam_land).
-#
-# CONFLICT POLICY: fast-forward ONLY. The origin always commits-all + pushes before a move, so in
-# steady state both ends are clean at beam boundaries and the FF always applies. Divergence here
-# (this worktree holds a local commit that was never pushed) only happens under manual
-# interference, since a move leaves no live session on the destination — so it is WARNED, never
-# `reset --hard`, which would silently destroy that local commit. Matches the conservative house
-# style (the sweep's "any inconclusive answer = do NOT clobber", _dev_repo_prepare's refuse-not-stash).
-# Both beam landings route through _dev_beam_land_cwd FIRST, which relands a colliding worktree
-# (live owner / dirty / diverged) into a fresh slot — so this never runs against a live sibling's
-# checkout, and its warn paths are backstops for the cases the reland deliberately passes through.
+_dev_worktree_beam_prepare() {
+  local wt=${1:-$TB_WT} ref output
+  [[ -n $DEV_WORKTREE_ROOT && $wt == $DEV_WORKTREE_ROOT/*/* && -e $wt/.git ]] || return 0
+  git -C "$wt" rev-parse --verify HEAD >/dev/null || return 1
+  ref="refs/heads/t-transfer/$(python3 -c 'import uuid; print(uuid.uuid4().hex)')" || return 1
+  _dev_worktree_transfer_ref_valid "$ref" || return 1
+  output=$(git -C "$wt" push --dry-run --porcelain --force-with-lease="$ref:" origin "HEAD:$ref" 2>&1) || {
+    print -u2 -- "t session move: cannot publish a worktree snapshot; source was not stopped"
+    print -u2 -r -- "$output"
+    return 1
+  }
+  print -r -- "$ref"
+}
+
+# Remove only the snapshot we fetched, after the destination starts successfully.
+# The private local ref remains available if the connection drops afterwards.
+_dev_worktree_beam_finish() {
+  [[ -n ${TB_TRANSFER_REF:-} ]] || return 0
+  _dev_worktree_transfer_ref_valid "$TB_TRANSFER_REF" || return 1
+  local tip
+  tip=$(git -C "$1" rev-parse --verify "refs/t/transfers/${TB_TRANSFER_REF:t}^{commit}" 2>/dev/null) || return 1
+  git -C "$1" push -q --force-with-lease="$TB_TRANSFER_REF:$tip" origin ":$TB_TRANSFER_REF" 2>/dev/null || {
+    print -u2 -- "t session move: snapshot retained on origin at $TB_TRANSFER_REF"
+  }
+  return 0
+}
+
+# Commit the stopped source's final edits and publish the prepared snapshot.
+# Older callers without a transfer ref keep their existing branch protocol.
+_dev_worktree_beam_push() {
+  local wt="${1:-$TB_WT}" host="${2:-$TB_HOST}" dirt br ref output
+  [[ -n $DEV_WORKTREE_ROOT && $wt == ${DEV_WORKTREE_ROOT}/*/* && -e $wt/.git ]] || return 0
+  br=$(git -C "$wt" symbolic-ref --short -q HEAD) || br='detached HEAD'
+  ref=${TB_TRANSFER_REF:-$br}
+  if [[ -n ${TB_TRANSFER_REF:-} ]]; then
+    _dev_worktree_transfer_ref_valid "$ref" || return 1
+  elif [[ $br == 'detached HEAD' ]]; then
+    print -u2 'tbeam: cannot publish a detached worktree without a transfer snapshot'; return 1
+  fi
+  dirt=$(git -C "$wt" status --porcelain) || return 1
+  if [[ -n $dirt ]]; then
+    git -C "$wt" add -A && git -C "$wt" commit -q -m "wip: beam to ${host:-another host} [skip ci]" || {
+      print -u2 -- "tbeam: couldn't commit all edits in $wt; source work was retained"; return 1
+    }
+    dirt=$(git -C "$wt" status --porcelain) || return 1
+    [[ -z $dirt ]] || { print -u2 -- "tbeam: source changed while committing $wt; no snapshot published"; return 1; }
+  fi
+  local -a lease
+  [[ -n ${TB_TRANSFER_REF:-} ]] && lease=("--force-with-lease=$ref:")
+  output=$(git -C "$wt" push -q "${lease[@]}" origin "HEAD:$ref" 2>&1) || {
+    print -u2 -- "tbeam: couldn't publish work from $wt; source commits and files were retained"
+    print -u2 -r -- "$output"
+    return 1
+  }
+  print -r -- "↑ carried $br → origin${TB_TRANSFER_REF:+ (transfer snapshot)}"
+}
+
+# Apply an exact fetched snapshot, failing closed on dirty/divergent work.
+# Older peers without a snapshot retain their branch-based synchronization.
 _dev_worktree_beam_sync() {
   local wt="$1"
   [[ -n $DEV_WORKTREE_ROOT && $wt == ${DEV_WORKTREE_ROOT}/*/* && -e $wt/.git ]] || return 0
+  if [[ -n ${TB_TRANSFER_REF:-} ]]; then
+    _dev_worktree_transfer_ref_valid "$TB_TRANSFER_REF" || return 1
+    local snapshot="refs/t/transfers/${TB_TRANSFER_REF:t}" dirt
+    git -C "$wt" rev-parse --verify "$snapshot^{commit}" >/dev/null 2>&1 || return 1
+    dirt=$(git -C "$wt" status --porcelain) || return 1
+    [[ -z $dirt ]] || { print -u2 'tbeam: destination changed before snapshot sync'; return 1; }
+    git -C "$wt" merge --ff-only -q "$snapshot" || return 1
+    return 0
+  fi
   local br; br=$(git -C "$wt" symbolic-ref --short -q HEAD) || return 0
   local fetched=1
   git -C "$wt" fetch -q origin 2>/dev/null || fetched=0
@@ -416,31 +436,10 @@ _dev_worktree_beam_sync() {
   fi
 }
 
-# _dev_beam_land_cwd <cwd> <sid> [origin-host] — decide WHERE a beamed session actually
-# lands, resolving the slot COLLISION case: the transcript records a per-session worktree
-# (say financial-forecast/5, beamed from another machine's ff-5), but THIS machine's slot 5
-# is already another session's — a live local dev session is rooted in it, or the dead
-# worktree/lingering branch holds a different line of work (uncommitted changes, or commits
-# that diverged from the beamed branch — two machines opening slot 5 independently create
-# colliding identities for different work, since path + branch are keyed on basename+slot
-# on purpose). Landing there would trample the local session (the old flow fast-forwarded a
-# LIVE sibling's checkout, then _dev_slot_for_cwd rightly refused the taken slot and the
-# whole pull aborted AFTER the origin copy was already stopped). Instead: RELAND into a
-# fresh slot — first slot with no live session, no worktree, and no dev/<basename>-<n>
-# branch locally OR on origin (an origin branch can be a slot live on a third machine);
-# create its worktree branched AT the beamed tip (origin/<br>, the commit-all
-# _dev_worktree_beam_push just carried, so the beamed edits land in the new slot); and copy
-# the sid's transcript files into the new path's project dir (`claude -r <sid>` only finds
-# transcripts under the project dir of the cwd it starts in). Copy, not move: the old
-# project dir is shared with the local sibling's conversations; preserving the
-# original also leaves its saved history available.
-# Prints the landing cwd — <cwd> unchanged when there is no collision (incl. non-worktree
-# paths and a still-absent worktree, which the callers materialize exactly as before), the
-# new worktree when relanded. Human messages go to stderr (stdout is captured). Returns 1
-# only on an unresolvable collision: origin has no beamed branch to reland from (the
-# worktree push failed — the work is safe on the origin machine; revive it there), or no
-# free slot. Shared code: both landing sides route through it (_dev_pull locally,
-# _tbeam_land over ssh), so it needs `dots` on the host like the rest of the beam family.
+# Resolve a transfer destination without changing another session's worktree.
+# New callers fetch an immutable snapshot; legacy callers use origin/<slot>.
+# Live, dirty and divergent destinations reland on a fresh branch at that revision.
+# Stdout contains only the selected directory; diagnostics go to stderr.
 _dev_beam_land_cwd() {
   local cwd="$1" sid="${2:-}" ohost="${3:-}" agent="${4:-claude}"
   [[ -n $DEV_WORKTREE_ROOT && $cwd == ${DEV_WORKTREE_ROOT}/*/* ]] || { print -r -- "$cwd"; return 0 }
@@ -454,33 +453,61 @@ _dev_beam_land_cwd() {
   # session's leftover work — a dirty worktree, a worktree whose HEAD diverged from the
   # beamed tip, or (worktree absent) a lingering local branch that diverged, which
   # _dev_worktree_create would otherwise resume under the beamed conversation.
-  local why= s p
+  local source_ref="refs/remotes/origin/$br"
+  local why= s p dirt
   if [[ -e $cwd/.git ]]; then
     _dev_legacy_workspace_reserved "$cwd" && why="it has a retired integration reservation"
     for s in ${(f)"$(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep '^dev-')"}; do
       p=$(tmux display-message -p -t "=$s:" '#{session_path}' 2>/dev/null)
       [[ -n $p && ${p:A} == ${cwd:A} ]] && { why="$s is live in it"; break }
     done
-    if [[ -z $why && -n "$(git -C "$cwd" status --porcelain 2>/dev/null)" ]]; then
+    dirt=$(git -C "$cwd" status --porcelain) || return 1
+    if [[ -z $why && -n $dirt ]]; then
       why="it holds another session's uncommitted work"
     fi
-  fi
-  git -C "$repodir" fetch -q origin 2>/dev/null   # fresh origin/* for the divergence + reland checks
-  if [[ -z $why ]] && git -C "$repodir" show-ref --verify --quiet "refs/remotes/origin/$br"; then
-    if [[ -e $cwd/.git ]]; then
-      git -C "$cwd" merge-base --is-ancestor HEAD "origin/$br" 2>/dev/null \
-        || why="it diverged from origin/$br"
-    elif git -C "$repodir" show-ref --verify --quiet "refs/heads/$br"; then
-      git -C "$repodir" merge-base --is-ancestor "refs/heads/$br" "origin/$br" 2>/dev/null \
-        || why="its lingering local branch diverged from origin/$br"
+    if [[ -z $why && -n ${TB_TRANSFER_REF:-} &&
+          $(git -C "$cwd" symbolic-ref --short -q HEAD) != $br ]]; then
+      why="its checked-out branch belongs to other work"
     fi
   fi
-  [[ -n $why ]] || { print -r -- "$cwd"; return 0 }
+  if [[ -n ${TB_TRANSFER_REF:-} ]]; then
+    _dev_worktree_transfer_ref_valid "$TB_TRANSFER_REF" || return 1
+    source_ref="refs/t/transfers/${TB_TRANSFER_REF:t}"
+    git -C "$repodir" fetch -q origin || return 1
+    git -C "$repodir" fetch -q --no-tags origin "$TB_TRANSFER_REF:$source_ref" || {
+      print -u2 'tbeam: could not fetch the exact transfer snapshot; no destination started'; return 1
+    }
+    git -C "$repodir" rev-parse --verify "$source_ref^{commit}" >/dev/null || return 1
+  else
+    git -C "$repodir" fetch -q origin 2>/dev/null
+  fi
+  if [[ -z $why && -n ${TB_TRANSFER_REF:-} ]] &&
+     git -C "$repodir" show-ref --verify --quiet "refs/remotes/origin/$br" &&
+     ! git -C "$repodir" merge-base --is-ancestor "refs/remotes/origin/$br" "$source_ref"; then
+    why="origin/$br belongs to a different line of work"
+  fi
+  if [[ -z $why ]] && git -C "$repodir" show-ref --verify --quiet "$source_ref"; then
+    if [[ -e $cwd/.git ]]; then
+      git -C "$cwd" merge-base --is-ancestor HEAD "$source_ref" 2>/dev/null \
+        || why="it diverged from the source revision"
+    elif git -C "$repodir" show-ref --verify --quiet "refs/heads/$br"; then
+      git -C "$repodir" merge-base --is-ancestor "refs/heads/$br" "$source_ref" 2>/dev/null \
+        || why="its lingering local branch diverged from the source revision"
+    fi
+  fi
+  if [[ -z $why ]]; then
+    if [[ -n ${TB_TRANSFER_REF:-} && ! -e $cwd/.git ]]; then
+      if git -C "$repodir" show-ref --verify --quiet "refs/heads/$br"; then
+        git -C "$repodir" worktree add -q "$cwd" "$br" || return 1
+      else
+        git -C "$repodir" worktree add -q --no-track -b "$br" "$cwd" "$source_ref" || return 1
+      fi
+    fi
+    print -r -- "$cwd"; return 0
+  fi
 
-  # Collision → reland. The beamed content can only arrive via origin/<br>; without it a
-  # fresh slot would resume the conversation over none of its code. Bail with a revive
-  # hint (the origin copy is already stopped) rather than land something misleading.
-  if ! git -C "$repodir" show-ref --verify --quiet "refs/remotes/origin/$br"; then
+  # A collision requires the verified source revision; never substitute main.
+  if ! git -C "$repodir" show-ref --verify --quiet "$source_ref"; then
     print -r -- "tbeam: slot $slot is taken here ($why) and origin has no $br to reland from (worktree push failed?) — the work is still on the origin machine; revive it there${ohost:+: t hosts run $ohost t session resume $repo $slot}" >&2
     return 1
   fi
@@ -498,7 +525,7 @@ _dev_beam_land_cwd() {
   git -C "$repodir" worktree prune 2>/dev/null
   # --no-track: the new branch starts AT origin/<br> but must not track it, or a plain
   # `git push` in the new slot would aim at the OLD slot's branch.
-  git -C "$repodir" worktree add -q --no-track -b "$nbr" "$nwt" "origin/$br" 2>/dev/null
+  git -C "$repodir" worktree add -q --no-track -b "$nbr" "$nwt" "$source_ref" 2>/dev/null
   [[ -e $nwt/.git ]] || { print -r -- "tbeam: couldn't create $nwt to reland into" >&2; return 1 }
   # claude only: a codex rollout is date-keyed, so there is nothing to relocate for a
   # relanded slot (codex indexes it wherever it resumes)
@@ -510,7 +537,7 @@ _dev_beam_land_cwd() {
     for f in "$pdir/$encold/$sid"*(N); do cp -Rp "$f" "$pdir/$encnew/${f:t}"; done
     [[ -e "$pdir/$encnew/$sid.jsonl" ]] || print -r -- "tbeam: no transcript for ${sid[1,8]}… under $encold — the relanded slot may not resume" >&2
   fi
-  print -r -- "⚠ slot $slot is taken here ($why) — relanding as $repo $n ($nbr @ origin/$br)" >&2
+  print -r -- "⚠ slot $slot is taken here ($why) — relanding as $repo $n ($nbr @ $source_ref)" >&2
   print -r -- "$nwt"
 }
 
