@@ -738,12 +738,16 @@ def test_list_sort_filter_query_and_cancel_at_terminal_sizes(picker, width, heig
     loading = tuple('⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏')
     keys('M-v')
     wait('Sort: session', absent=loading)
-    keys('C-g')  # First recorded agent is claude; attached row is hidden.
+    keys('C-g')
+    wait('agent >')
+    keys('-l', 'claude')
+    wait('1/')
+    keys('Enter')
     screen = wait('1/1 (0)', absent=loading)
     assert 'agent=claude' in screen and 'Older task' in screen and '▸' in screen
     keys('-l', 'Older')
     wait('list > Older')
-    keys('C-a')
+    keys('C-g')  # Repeating the active filter clears it, keeping search and sort.
     screen = wait('1/2 (0)', absent=loading)
     assert 'Sort: session' in screen and 'list > Older' in screen
     keys('C-f')

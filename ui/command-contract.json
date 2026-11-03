@@ -825,7 +825,7 @@
           "tests": [
             "tests/test_list_picker.py::test_terminal_list_uses_private_scoped_snapshot"
           ],
-          "notes": "Discover once using the existing local/remote scope; browse all attachment states. Raw last-turn descending is default, Alt-T/R/G/O/V sorts turn/repo/agent/host/natural session. Ctrl-G/D/O/R cycles agent/UI/host/repo filters. Ctrl-A clears filters and retains sort; Ctrl-F restores all sessions and turn sort. Enter rechecks every selected host/session/state/conversation identity before guarded open; changed owners refuse the whole batch. Esc cancels without rediscovery. No automatic update prompt. Without fzf, a usable terminal, or rows use the read-only table/empty state."
+          "notes": "Discover once using the existing local/remote scope; browse all attachment states. Raw last-turn descending is default, Alt-T/R/G/O/V sorts turn/repo/agent/host/natural session. Ctrl-G/D/O/R chooses agent/UI/host/repo filters; pressing an active filter hotkey again clears it. Ctrl-A clears filters and retains sort; Ctrl-F restores all sessions and turn sort. Enter rechecks every selected host/session/state/conversation identity before guarded open; changed owners refuse the whole batch. Esc cancels without rediscovery. No automatic update prompt. Without fzf, a usable terminal, or rows use the read-only table/empty state."
         }
       },
       "display_schema": "session_information",

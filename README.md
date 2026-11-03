@@ -682,7 +682,7 @@ JSON, MCP, and remote scanner output stays free of progress animation.
 `ls` and `list` are interchangeable for `session`, `repo`, `cursor`, `hosts`,
 `issue`, and `workflow`. Root `t ls` and `t list` both list sessions.
 In a terminal with fzf, browse all attachment states; Enter
-opens selected existing sessions and Esc cancels. Ctrl-G/D/O/R filters agent/UI/host/repo;
+opens selected existing sessions and Esc cancels. Ctrl-G/D/O/R chooses agent/UI/host/repo filters; repeat the same hotkey to clear it.
 Alt-T/R/G/O/V sorts last turn/repo/agent/host/session. Ctrl-A clears filters; Ctrl-F
 restores all sessions and last-turn sorting. Pipe to `cat` for the complete read-only table.
 The old `t repos` family has been removed; use `t repo list`, `t repo locate`,

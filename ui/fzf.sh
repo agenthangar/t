@@ -424,7 +424,9 @@ SH
     for _t_picker_spec in $_t_picker_specs; do
       _t_picker_key=${_t_picker_spec%:*} _t_picker_action=${_t_picker_spec#*:}
       _t_picker_execute=execute-silent
-      [ "$_t_picker_action" != settings ] || _t_picker_execute=execute
+      case $_t_picker_action in
+        settings|agent|interface|host|repo) _t_picker_execute=execute ;;
+      esac
       _t_picker_bind="${_t_picker_bind}${_t_picker_bind:+,}${_t_picker_key}:${T_PICKER_CLEAR_MARKS}${_t_picker_execute}(sh \"\$T_PICKER_TOGGLE\" $_t_picker_action)+reload-sync(cat \"\$T_PICKER_CURRENT\")+transform-header(cat \"\$T_PICKER_CURRENT_HEADER\")"
     done
   fi
@@ -445,6 +447,9 @@ SH
     FZF_API_KEY=$(python3 -c 'import secrets; print(secrets.token_hex(32))')
     # shellcheck disable=SC2016
     set -- --listen=127.0.0.1:0 --bind='start:unbind(change),change:transform-query(cat "$T_PICKER_VIEWS/action-query-locked"),k:rebind(change)+unbind(enter)+unbind(k)+unbind(space)+unbind(tab)+unbind(ctrl-a)+unbind(ctrl-f)+unbind(ctrl-l)+execute(python3 "$T_HOME/libexec/t_picker_close.py" close {} {q})' "$@"
+  fi
+  if [ "${T_PICKER_HEADER_HEIGHT:-24}" -le 14 ]; then
+    case ${T_PICKER_SESSION_FILTERS:-} in resume|list) set -- --info=inline "$@" ;; esac
   fi
   _t_fzf --height=100% --multi --no-hscroll --margin="$_t_picker_margin" --delimiter="$(printf '\t')" --with-nth=-1 \
     --bind="enter:accept,esc:abort,ctrl-c:abort,space:toggle+down,tab:toggle+down,shift-tab:up${_t_picker_preview_bind}" \

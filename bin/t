@@ -12105,7 +12105,8 @@ EXPLICIT PUSH AND PULL
   Pipe to cat for complete values.
 
   With fzf in a terminal, browse all sessions; Enter opens selected existing sessions.
-  Ctrl-G/D/O/R filters agent/UI/host/repo. Alt-T/R/G/O/V sorts turn/repo/agent/host/session.
+  Ctrl-G/D/O/R chooses agent/UI/host/repo filters; repeat to clear.
+  Alt-T/R/G/O/V sorts turn/repo/agent/host/session.
   Ctrl-A clears filters; Ctrl-F resets filters and last-turn sorting. Esc cancels.
   Without fzf or a usable terminal, print a read-only table.""")
     sp.add_argument("repo", nargs="?", help="repository alias, basename or origin name to scope from any directory (default: the repo cwd is in)")

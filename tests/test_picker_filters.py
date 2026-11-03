@@ -112,7 +112,7 @@ def test_every_filter_key_survives_long_values(filters, width, profile):
         assert ('^' if width <= 40 else 'Ctrl-') + letter in text
     assert '17 hidden' in text and text.count('Filters ON') == 1
     assert 'Ctrl-G' not in text and '^G' not in text
-    assert len(text.splitlines()) <= (9 if profile == 'resume' else 5) + (4 if width > 40 else 0)
+    assert len(text.splitlines()) <= (10 if profile == 'resume' else 5) + (6 if width > 40 and profile == 'resume' else 4 if width > 40 else 0)
 
 
 @pytest.mark.parametrize('width', [28, 32, 68])
@@ -305,7 +305,7 @@ def test_resume_header_retains_sort_controls_and_row_space(filters, width):
         assert ('^' if width <= 36 else 'Ctrl-') + letter in text
     assert 'Sort: last turn' in text
     if width <= 36:
-        assert len(text.splitlines()) <= 9
+        assert len(text.splitlines()) <= 10
 
 
 def test_resume_remote_history_retains_exported_turn_without_local_transcript(filters, tmp_path):
@@ -412,7 +412,7 @@ def test_resume_merged_toggle_uses_metadata_and_preserves_choices(filters, tmp_p
         return (tmp_path / 'current').read_text().splitlines()
     assert render('current') == rows
     assert render('merged') == rows[1:]
-    assert 'Alt-M show merged' in (tmp_path / 'current-header').read_text()
+    assert 'Alt-M hide merged' in (tmp_path / 'current-header').read_text()
     assert render('sort-repo') == rows[1:]
     assert render('off') == rows
     assert render('on') == rows[1:]
@@ -479,7 +479,8 @@ def test_hotkeys_highlight_only_current_states(filters, monkeypatch, platform, w
                           sort=sort, enabled=enabled, hide_merged=hide_merged, color=True) == plain
 
 
-def test_list_sort_filter_and_reset_use_raw_snapshot(filters, tmp_path):
+def test_list_sort_filter_and_reset_use_raw_snapshot(filters, tmp_path, monkeypatch):
+    monkeypatch.setattr(filters, 'pick_value', lambda *args: ('claude',))
     root = snapshot(tmp_path, 'list')
     source = SOURCE.replace('api-1', 'api-10')
     source = source.replace('codex\n', 'codex\t-\t2026-10-22T10:00:00Z\n', 1)
@@ -507,7 +508,7 @@ def test_list_sort_filter_and_reset_use_raw_snapshot(filters, tmp_path):
 def test_list_header_fits_with_active_filter(filters, width):
     text = filters.header('list', 0, dict(agent='codex', interface=None, host=None, repo=None), 3, 'SESSION TASK', width)
     assert all(filters.display_width(line) <= width for line in text.splitlines())
-    assert len(text.splitlines()) <= (9 if width == 28 else 15)
+    assert len(text.splitlines()) <= (10 if width == 28 else 17)
     assert '3 hidden' in text and 'agent=codex' in text
     for key in ('Ctrl-G', 'Ctrl-D', 'Ctrl-O', 'Ctrl-R', 'Alt-T', 'Alt-V'):
         assert (key.replace('Ctrl-', '^').replace('Alt-', 'M-') if width <= 40 else key) in text
@@ -531,3 +532,30 @@ def test_list_hotkeys_follow_active_facets_and_sort(filters, monkeypatch, platfo
         assert set(active) == {theme.key_labels(value, compact=compact) for value in (expected_filter, expected_sort)}
         plain = re.sub(r'\x1b\[[0-9;]*m', '', text)
         assert all(filters.display_width(line) <= width for line in plain.splitlines())
+
+
+@pytest.mark.parametrize('facet,value', [('agent', 'claude'), ('interface', 'desktop'), ('host', 'mini'), ('repo', 'web')])
+def test_list_filter_hotkey_selects_then_clears_and_cancel_keeps_state(filters, tmp_path, monkeypatch, facet, value):
+    root = snapshot(tmp_path, 'list')
+    (root / 'rows-0').write_text('\n'.join(ROWS) + '\n')
+    selections = iter([(value,), None])
+    monkeypatch.setattr(filters, 'pick_value', lambda *args: next(selections))
+    filters.render(root, 'list', 'sort-session', 68, '')
+    filters.render(root, 'list', facet, 68, '')
+    narrowed = (root / 'current').read_text()
+    assert 0 < len(narrowed.splitlines()) < len(ROWS)
+    filters.render(root, 'list', facet, 68, '')
+    assert set((root / 'current').read_text().splitlines()) == set(ROWS)
+    assert (root / 'sort').read_text() == 'session'
+    filters.render(root, 'list', facet, 68, '')
+    assert set((root / 'current').read_text().splitlines()) == set(ROWS)
+    assert (root / 'sort').read_text() == 'session'
+
+
+@pytest.mark.parametrize('profile', ['list', 'resume'])
+@pytest.mark.parametrize('width', [27, 68])
+def test_filter_and_sort_controls_have_separate_sections(filters, profile, width):
+    text = filters.header(profile, 0, dict.fromkeys(filters.FACETS), 2, 'SESSION TASK', width)
+    filter_section, sort_section = text.split('SORT', 1)
+    assert 'FILTERS' in filter_section and '2 hidden' in filter_section
+    assert 'Sort:' in sort_section and 'hidden' not in sort_section

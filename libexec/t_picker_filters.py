@@ -145,11 +145,11 @@ def header(profile, mask, filters, hidden, columns, width, sort='turn', enabled=
     def hotkeys(parts, selected=()):
         selected = {key(part) for part in selected}
         # Wrap plain labels first; ANSI sequences must not affect column budgets.
-        return [' · '.join(style(part, 'active' if part in selected else 'action')
+        return [' · '.join(style(part, 'heading' if part in ('FILTERS', 'SORT') else 'active' if part in selected else 'action')
                            for part in line.split(' · '))
                 for line in pack([key(part) for part in parts], width)]
 
-    controls = ['Enter/Esc' if compact and profile == 'resume' else f'Enter {profile}/Esc', 'Space/Tab ✓']
+    controls = ['Enter/Esc' if compact and profile == 'resume' else f'Enter {profile}/Esc', 'Space/Tab✓' if compact and profile == 'resume' else 'Space/Tab ✓']
     if profile == 'open':
         controls[0] = 'Enter/k kill/Esc' if compact else 'Enter open/k kill/Esc'
     if profile != 'open':
@@ -158,23 +158,15 @@ def header(profile, mask, filters, hidden, columns, width, sort='turn', enabled=
     lines += hotkeys(controls)
     if not compact:
         lines += ['', style('FILTERS', 'heading')]
-    lines += hotkeys(['Ctrl-F filters', 'Ctrl-A off', 'Ctrl-L on'],
-                     ['Ctrl-L on' if enabled else 'Ctrl-A off'])
+    filter_keys = ['Ctrl-F filters', 'Ctrl-A off', 'Ctrl-L on']
+    active_keys = ['Ctrl-L on' if enabled else 'Ctrl-A off']
     if profile == 'resume':
-        sorts = {name: f'{shortcut} {"turn" if compact and label == "last turn" else label}'
-                 for name, (shortcut, label) in RESUME_SORTS.items()}
-        lines += hotkeys(sorts.values(), [sorts[sort]])
-        merged_control = 'Alt-M ' + (
-            ('+' if enabled and hide_merged else '-') + 'merged' if compact
-            else 'show merged' if enabled and hide_merged else 'hide merged')
-        sort_control = 'Sort: ' + RESUME_SORTS[sort][1]
-        if compact:
-            # Keep the compact sort/state row within the existing height budget.
-            lines.append(style(sort_control + ' ') + style(key(merged_control),
-                'active' if enabled and hide_merged else 'action'))
-        else:
-            lines += hotkeys([sort_control, merged_control],
-                             [merged_control] if enabled and hide_merged else [])
+        merged_control = ('Alt-M' + ('-merged' if enabled and hide_merged else '+merged') if compact
+                          else 'Alt-M hide merged')
+        filter_keys.append(merged_control)
+        if enabled and hide_merged:
+            active_keys.append(merged_control)
+    lines += hotkeys((['FILTERS'] if compact and profile == 'resume' else []) + filter_keys, active_keys)
     active = [f'{name}={value}' for name, value in filters.items() if value is not None]
     summary = 'Filters ' + ('ON' if enabled else 'OFF')
     if enabled:
@@ -187,6 +179,13 @@ def header(profile, mask, filters, hidden, columns, width, sort='turn', enabled=
     # Clip plain text first: ANSI escapes must never count toward terminal width.
     summary = clip_columns(summary, width - display_width(suffix)) + suffix
     lines.append(style(summary, 'heading') if enabled else style(summary))
+    if profile == 'resume':
+        sorts = {name: f'{shortcut} {"turn" if compact and label == "last turn" else label}'
+                 for name, (shortcut, label) in RESUME_SORTS.items()}
+        if not compact:
+            lines += ['', style('SORT', 'heading')]
+        lines += hotkeys((['SORT'] if compact else []) + list(sorts.values()), [sorts[sort]])
+        lines.append(style('Sort: ' + RESUME_SORTS[sort][1], 'heading'))
     if not compact:
         lines.append('')
     if columns:
@@ -198,7 +197,7 @@ def list_header(filters, hidden, columns, width, sort, color=False):
     compact = width <= 40 or int(os.environ.get('T_PICKER_HEADER_HEIGHT') or '24') <= 14
     key = lambda text: key_labels(text, compact=compact)
     style = lambda text, role='hint': paint(text, role) if color else text
-    actions = ['Enter open/Esc', 'Space/Tab ✓', 'Ctrl-/' if compact else 'Ctrl-/ details']
+    actions = ['Enter/Esc' if compact else 'Enter open/Esc', 'Space/Tab✓' if compact else 'Space/Tab ✓', 'Ctrl-/' if compact else 'Ctrl-/ details']
     facets = [f'{shortcut} {label}' for shortcut, label in FACETS.values()]
     controls = ['Ctrl-A all', 'Ctrl-F reset'] + facets
     sorts = {name: f'{shortcut} {"turn" if compact and label == "last turn" else label}'
@@ -210,19 +209,22 @@ def list_header(filters, hidden, columns, width, sort, color=False):
     if not active:
         selected.add(key('Ctrl-A all'))
     def keys(parts):
-        return [' · '.join(style(part, 'active' if part in selected else 'action')
+        return [' · '.join(style(part, 'heading' if part in ('FILTERS', 'SORT') else 'active' if part in selected else 'action')
                            for part in line.split(' · '))
                 for line in pack([key(part) for part in parts], width)]
-    if compact:
-        lines = keys(actions + controls + list(sorts.values()))
-    else:
-        lines = [style('HOTKEYS', 'heading')] + keys(actions)
-        lines += ['', style('FILTERS', 'heading')] + keys(controls) + keys(sorts.values())
+    lines = [] if compact else [style('HOTKEYS', 'heading')]
+    lines += keys(actions)
+    if not compact:
+        lines += ['', style('FILTERS', 'heading')]
+    lines += keys((['FILTERS'] if compact else []) + controls)
+    suffix = f' · {hidden} hidden'
+    summary = ' · '.join(active) if active else '0 filters'
+    lines.append(style(clip_columns(summary, width - display_width(suffix)) + suffix, 'heading'))
+    if not compact:
+        lines += ['', style('SORT', 'heading')]
+    lines += keys((['SORT'] if compact else []) + list(sorts.values()))
     label = 'turn' if compact and sort == 'turn' else RESUME_SORTS[sort][1]
-    lines += [style(line, 'heading') for line in pack(
-        [f'Sort: {label}', f'{hidden} hidden'] + ([] if active and compact else [f'{len(active)} filters']), width)]
-    if active:
-        lines.append(style(clip_columns(' · '.join(active), width), 'heading'))
+    lines.append(style('Sort: ' + label, 'heading'))
     if not compact:
         lines.append('')
     if columns:
@@ -340,8 +342,16 @@ def render(directory, profile, action, width, columns='', facet=None):
     elif action in ('first', 'second'):
         mask ^= 1 if action == 'first' else 2
     elif action in names:
-        values = [None] + sorted({record.get(action, 'unknown') for record in records.values()})
-        filters[action] = values[(values.index(filters[action]) + 1) % len(values)]
+        if profile == 'list':
+            if filters[action] is not None:
+                filters[action] = None
+            else:
+                chosen = pick_value(directory, action, records, None)
+                if chosen is not None:
+                    filters[action] = chosen[0]
+        else:
+            values = [None] + sorted({record.get(action, 'unknown') for record in records.values()})
+            filters[action] = values[(values.index(filters[action]) + 1) % len(values)]
     elif action != 'current':
         raise ValueError('unknown picker filter: ' + action)
     if mask > (2 if profile == 'open' else maximum):

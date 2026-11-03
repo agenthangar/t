@@ -677,9 +677,11 @@ attached, detached, desktop and foreground rows in the command's existing scope.
 Enter rechecks every selected owner before opening through the guarded open path;
 changed or missing sessions are refused. Esc cancels.
 The compact task row stays searchable with full metadata and last-turn details
-available through Ctrl-/. Ctrl-G/D/O/R cycles agent/UI/host/repo filters. Alt-T/R/G/O/V
+available through Ctrl-/. Ctrl-G/D/O/R chooses agent/UI/host/repo filters; pressing an active filter hotkey again clears it. Alt-T/R/G/O/V
 sorts by last turn/repo/agent/host/natural session from raw snapshot metadata.
-Unknown turns sort last. Ctrl-A clears filters while retaining sort; Ctrl-F restores
+Filters and sorting have separate labeled sections, with active controls brightly
+highlighted; resume uses the same section layout. Unknown turns sort last.
+Ctrl-A clears filters while retaining sort; Ctrl-F restores
 all sessions and last-turn sort. Reloads preserve search and remove hidden marks,
 without discovery. Enter rechecks the selected host/session/state/conversation
 identities before opening any selection and refuses changed owners. Remote hosts are included by default; `--local` restricts discovery; empty results print the existing
