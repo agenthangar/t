@@ -448,7 +448,7 @@ def test_workflow_completion_offers_scopes_and_registered_repos(tmp_path):
     ''')
     assert result.returncode == 0, result.stderr
     assert result.stdout.splitlines() == [
-        "values:list,ls,add,use,exclude,inherit,edit,instructions", "values:--tool,--repo,--all,--json,-h,--help", "values:--tool,--repo,-h,--help",
+        "values:list,ls,open,delete,add,use,exclude,inherit,edit,instructions", "values:--tool,--repo,--all,--json,-h,--help", "values:--tool,--repo,-h,--help",
         "values:api", "values:api", "values:-h,--help", "values:api",
     ]
 
@@ -612,6 +612,8 @@ def test_canonical_workflow_completion_and_dispatch(tmp_path):
         _values() { print -r -- "values:${(j:,:)argv[2,-1]}"; }
         local -a words
         words=(t workflow '') CURRENT=3; _t
+        words=(t workflow open fast --) CURRENT=5; _t
+        words=(t workflow delete fast --) CURRENT=5; _t
         words=(t workflow list --) CURRENT=4; _t
         words=(t workflow list --repo '') CURRENT=5; _t
         words=(t workflow instructions '') CURRENT=4; _t
@@ -621,7 +623,8 @@ def test_canonical_workflow_completion_and_dispatch(tmp_path):
     ''')
     assert result.returncode == 0, result.stderr
     assert result.stdout.splitlines() == [
-        "actions:list,ls,add,use,exclude,inherit,edit,instructions",
+        "actions:list,ls,open,delete,add,use,exclude,inherit,edit,instructions",
+        "values:--tool,-h,--help", "values:--tool,--replacement,-h,--help",
         "values:--tool,--repo,--all,--json,-h,--help", "values:api",
         "values:show,edit", "values:start,list,ls,status,logs,artifacts,cancel,cleanup",
         "values:--github-repo,--create,-h,--help",

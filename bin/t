@@ -2694,7 +2694,7 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
                 picked = ui.pick("Use multiple models", [("", "Use one model for all work"), ("planning", "Planning"),
                                  ("implementation", "Implementation"), ("review", "Review")],
                                  multi=True, marked={i + 1 for i, stage in enumerate(("planning", "implementation", "review")) if stage in stages} or {0},
-                                 empty_choice="", on_back=backed.extend, back_label="keep choices and back")
+                                 empty_choice="", on_back=backed.extend, back_label="keep & back")
                 if picked is None and backed:
                     picked = backed
                 if picked is not None:

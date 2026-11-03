@@ -769,7 +769,7 @@ def test_stage_checkboxes_select_independent_helpers(workflow, t_mod, scope, sel
     assert picker[0] == 'Use multiple models'
     assert picker[1] == [('', 'Use one model for all work'), ('planning', 'Planning'), ('implementation', 'Implementation'), ('review', 'Review')]
     assert {key: picker[2][key] for key in ('multi', 'marked', 'empty_choice')} == {'multi': True, 'marked': {1, 2, 3}, 'empty_choice': ''}
-    assert callable(picker[2]['on_back']) and picker[2]['back_label'] == 'keep choices and back'
+    assert callable(picker[2]['on_back']) and picker[2]['back_label'] == 'keep & back'
     rows = dict(ui.views[-1][1])
     values = ui.views[-1][2]['values']
     assert ('implementation' in rows) is ('implementation' in selected)
