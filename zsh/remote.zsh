@@ -613,6 +613,16 @@ _dev_pull() {
     print -u2 -- "t: source path $cwd cannot be used here; align configured roots or attach on $host (source was not stopped)"
     return 1
   fi
+  local TB_TRANSFER_REF=
+  if [[ -n $DEV_WORKTREE_ROOT && $cwd == $DEV_WORKTREE_ROOT/*/* ]]; then
+    local prepare_worker="(( \${+functions[_dev_worktree_beam_prepare]} )) && _dev_worktree_beam_prepare ${(q)cwd}"
+    TB_TRANSFER_REF=$(ssh "$target" "zsh -lic ${(q)prepare_worker}") || {
+      print -u2 't session move: snapshot preflight failed; update t on the source if needed; source was not stopped'; return 1
+    }
+    _dev_worktree_transfer_ref_valid "$TB_TRANSFER_REF" || {
+      print -u2 't session move: source did not prepare a valid worktree snapshot; source was not stopped'; return 1
+    }
+  fi
   echo "⟳ Pulling ${sid[1,8]}… ($cwd) from $host → here"
   # It's a MOVE: stop the origin copy on <host> FIRST, before snapshotting its
   # worktree + transcript, so a still-live claude there can't keep editing files
@@ -627,12 +637,11 @@ _dev_pull() {
   killed=${killed##*$'\n'}
   [[ $killed == dev-* ]] && echo "✂ Stopped the live copy on $host ($killed)"
 
-  # Carry the origin worktree's uncommitted edits with the move: commit-all + push its branch
-  # ON the remote (over ssh, work passed in TB_* env like _tbeam_land) so the local worktree can
-  # fast-forward to them below. The mirror of the SEND path's local _dev_worktree_beam_push.
-  # A failed push must not launch a local copy with incomplete work.
-  if ! ssh "$target" "TB_WT=${(q)cwd} TB_HOST=${(q)$(hostname -s)} zsh -lic _dev_worktree_beam_push"; then
-    echo "t session move: $host couldn't commit/push the worktree; work remains at $cwd; nothing was started locally" >&2
+  # Commit the stopped source's final edits and publish its prepared snapshot.
+  # Publication failures retain source work and must not launch an incomplete copy.
+  if ! ssh "$target" "TB_TRANSFER_REF=${(q)TB_TRANSFER_REF} TB_WT=${(q)cwd} TB_HOST=${(q)$(hostname -s)} zsh -lic _dev_worktree_beam_push"; then
+    echo "t session move: $host couldn't publish the worktree; work remains at $cwd; nothing was started locally" >&2
+    print -u2 -- "Recover on $host: t session history ${fslot%-*} ${fslot##*-}"
     return 1
   fi
 
@@ -684,6 +693,7 @@ _dev_pull() {
     [[ -n $lrepo && -n $lslot ]] || { echo "dev: couldn't map $cwd to a dev slot" >&2; return 1; }
     session="dev-${lrepo}-${lslot}"
     _dev_resume_session "$session" "$cwd" "$sid" "$agent" || return 1
+    _dev_worktree_beam_finish "$cwd"
   fi
   echo "✓ Landed here as $session"
   if [[ -z $detach && -t 1 && -z $CLAUDE_CODE_SESSION_ID ]]; then
