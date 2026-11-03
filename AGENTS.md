@@ -43,7 +43,7 @@ Run `python3 scripts/lint_cli.py`
 after CLI changes; CI enforces this command contract.
 Command-group help must show repository argument positions and explain inference
 and selection. Keep `--repo` consistent across issue verbs. `t issue list` is a
-read-only display like `t session list`: scope to an explicit or current repo,
+read-only display: scope to an explicit or current repo,
 or show all registered GitHub repositories outside a checkout; `-a`/`--all`
 widens the view from inside a checkout. Keep `--state all` independent of repo
 scope. List must never open a picker. JSON, remote scanners, and non-interactive

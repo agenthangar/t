@@ -760,10 +760,11 @@
         "list"
       ],
       "renderer": "plain",
-      "scope": "explicit/inferred repository or all local/remote sessions",
+      "scope": "all repositories by default, or an explicit repository; local or remote sessions",
       "confirmation": "none",
       "tests": [
-        "tests/test_t.py::test_ls_scope_defaults_to_cwd_repo",
+        "tests/test_t.py::test_ls_scope_defaults_to_all_repos",
+        "tests/test_command_behavior.py::test_session_list_default_includes_other_repositories",
         "tests/test_command_behavior.py::test_session_and_history_display_follow_shared_schema"
       ],
       "modes": {
@@ -777,7 +778,7 @@
           ],
           "read_only": true,
           "tests": [
-            "tests/test_t.py::test_ls_scope_defaults_to_cwd_repo",
+            "tests/test_t.py::test_ls_scope_defaults_to_all_repos",
             "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
           ]
         },
