@@ -195,7 +195,7 @@ t agent install            # choose and install agent CLIs; review their vendor 
 t repo add ~/config/my-project  # register a checkout you already have
 t config setup             # select checkouts under ~/config and optional SSH hosts
 t session open my-project  # start an isolated worktree + tmux slot
-t session list             # see your running sessions
+t session list             # running sessions across every repository
 ```
 
 Sessions open directly into the agent without displaying internal shell commands.
@@ -1318,6 +1318,9 @@ terminals keep one row per session: task text is clipped, UI/model columns are
 omitted when necessary, and LAST TURN uses `MM-DD HH:MM` (or `HH:MM` at the smallest
 widths). Compact status marks appear under S; remote lists retain HOST.
 Use `t ls | cat` or `t ls -r | cat` for all columns and complete values.
+Bare `t ls` lists every repository even from inside a checkout or worktree;
+`t ls <repo>` limits the list to that repository, and `--all` remains an explicit
+way to select all repositories. `t ls -r` includes registered remote hosts.
 `t ls -r` warns on stderr when a host is unavailable and still lists local and
 reachable sessions. Warnings are amber on capable stderr terminals, including
 with `t ls -r | cat`; `NO_COLOR`, `TERM=dumb`, or redirected stderr keeps them plain.
