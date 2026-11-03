@@ -684,7 +684,7 @@ _t() {
     cursor) actions=(list ls resume send) ;;
     agentcore) actions=(invoke stop) ;;
     hosts) actions=(list ls show add edit remove default run) ;;
-    workflow) actions=(list ls add use exclude inherit edit instructions) ;;
+    workflow) actions=(list ls open delete add use exclude inherit edit instructions) ;;
     runners) actions=(list ls edit setup runs) ;;
     config) actions=(open show edit setup onboard local) ;;
     profile) actions=(init edit show apply) ;;
@@ -729,7 +729,7 @@ _t() {
   if [[ $group == workflow || ( $group == config && $action == workflow ) ]]; then
     [[ $group == workflow ]] && (( first-- ))
     if (( CURRENT == first )); then
-      _values 'workflow resource or verb' list ls add use exclude inherit edit instructions
+      _values 'workflow resource or verb' list ls open delete add use exclude inherit edit instructions
     elif [[ ${words[CURRENT-1]} == --tool ]]; then
       _values 'CLI tool' codex claude cursor
     elif [[ ${words[CURRENT-1]} == --repo ]]; then
@@ -740,6 +740,10 @@ _t() {
       _values 'flag' --tool --repo --all --json -h --help
     elif [[ ${words[first]} == add ]]; then
       _values 'flag' --tool --from -h --help
+    elif [[ ${words[first]} == delete ]]; then
+      _values 'flag' --tool --replacement -h --help
+    elif [[ ${words[first]} == open ]]; then
+      _values 'flag' --tool -h --help
     else
       _values 'flag' --tool --repo -h --help
     fi

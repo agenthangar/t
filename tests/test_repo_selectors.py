@@ -211,7 +211,8 @@ def test_named_workflow_routes_resolve_only_repo_selector(t_mod, cfg, tail, ambi
     helper = t_mod._workflow()
     document = helper["defaults"]()
     seen = []
-    def action(doc, verb, name, repository, source):
+    def action(doc, verb, name, repository, source, replacement=None):
+        assert replacement is None
         seen.append((repository, name))
         return doc
     def edit(doc, repository, name=None):
