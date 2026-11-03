@@ -138,25 +138,39 @@ def header(profile, mask, filters, hidden, columns, width, sort='turn', enabled=
     compact = width <= 40 or int(os.environ.get('T_PICKER_HEADER_HEIGHT') or '24') <= 14
     key = lambda text: key_labels(text, compact=compact)
     style = lambda text, role='hint': paint(text, role) if color else text
+    def hotkeys(parts, selected=()):
+        selected = {key(part) for part in selected}
+        # Wrap plain labels first; ANSI sequences must not affect column budgets.
+        return [' · '.join(style(part, 'active' if part in selected else 'action')
+                           for part in line.split(' · '))
+                for line in pack([key(part) for part in parts], width)]
+
     controls = ['Enter/Esc' if compact and profile == 'resume' else f'Enter {profile}/Esc', 'Space/Tab ✓']
     if profile == 'open':
         controls[0] = 'Enter/k kill/Esc' if compact else 'Enter open/k kill/Esc'
     if profile != 'open':
         controls.append('Ctrl-/' if compact and profile == 'resume' else 'Ctrl-/ details')
-    lines = [style(line, 'action') for line in pack([key(control) for control in controls], width)]
+    lines = [] if compact else [style('HOTKEYS', 'heading')]
+    lines += hotkeys(controls)
     if not compact:
         lines += ['', style('FILTERS', 'heading')]
-    lines += pack([key(control) for control in
-                   ['Ctrl-F filters', 'Ctrl-A off', 'Ctrl-L on']], width)
+    lines += hotkeys(['Ctrl-F filters', 'Ctrl-A off', 'Ctrl-L on'],
+                     ['Ctrl-L on' if enabled else 'Ctrl-A off'])
     if profile == 'resume':
-        lines += pack([key(f'{shortcut} {"turn" if compact and label == "last turn" else label}')
-                       for shortcut, label in RESUME_SORTS.values()], width)
-        merged_control = key('Alt-M ') + (
+        sorts = {name: f'{shortcut} {"turn" if compact and label == "last turn" else label}'
+                 for name, (shortcut, label) in RESUME_SORTS.items()}
+        lines += hotkeys(sorts.values(), [sorts[sort]])
+        merged_control = 'Alt-M ' + (
             ('+' if enabled and hide_merged else '-') + 'merged' if compact
             else 'show merged' if enabled and hide_merged else 'hide merged')
         sort_control = 'Sort: ' + RESUME_SORTS[sort][1]
-        lines += [clip_columns(sort_control + ' ' + merged_control, width)] if compact else pack([sort_control, merged_control], width)
-    lines = [style(line) if line and not line.startswith('\x1b') and line != 'FILTERS' else line for line in lines]
+        if compact:
+            # Keep the compact sort/state row within the existing height budget.
+            lines.append(style(sort_control + ' ') + style(key(merged_control),
+                'active' if enabled and hide_merged else 'action'))
+        else:
+            lines += hotkeys([sort_control, merged_control],
+                             [merged_control] if enabled and hide_merged else [])
     active = [f'{name}={value}' for name, value in filters.items() if value is not None]
     summary = 'Filters ' + ('ON' if enabled else 'OFF')
     if enabled:

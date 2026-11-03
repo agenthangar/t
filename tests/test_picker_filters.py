@@ -112,7 +112,7 @@ def test_every_filter_key_survives_long_values(filters, width, profile):
         assert ('^' if width <= 40 else 'Ctrl-') + letter in text
     assert '17 hidden' in text and text.count('Filters ON') == 1
     assert 'Ctrl-G' not in text and '^G' not in text
-    assert len(text.splitlines()) <= (9 if profile == 'resume' else 5) + (3 if width > 40 else 0)
+    assert len(text.splitlines()) <= (9 if profile == 'resume' else 5) + (4 if width > 40 else 0)
 
 
 @pytest.mark.parametrize('width', [28, 32, 68])
@@ -123,7 +123,7 @@ def test_open_header_keeps_every_column_shortcut_visible(filters, width):
     assert ('^F filters' if width <= 40 else 'Ctrl-F filters') in text
     assert 'Filters ON' in text and '17 hidden' in text
     assert 'Ctrl-T' not in text and 'Ctrl-G' not in text
-    assert len(text.splitlines()) <= 5 + (3 if width > 40 else 0)
+    assert len(text.splitlines()) <= 5 + (4 if width > 40 else 0)
 
 
 def test_open_exclusive_views_combine_column_choices_and_clear(filters, tmp_path, monkeypatch):
@@ -442,3 +442,38 @@ def test_resume_turns_preserve_explicit_pr_and_repository_identity(filters, tmp_
     result = filters.resume_turns(row, str(tmp_path), str(tmp_path))[0].split('\t')
     assert result[11:] == ['org/api', 'MERGED']
     assert filters.resume_turns(row.replace('MERGED', 'invalid'), str(tmp_path), str(tmp_path))[0].split('\t')[12] == 'UNKNOWN'
+
+
+@pytest.mark.parametrize('platform', ['darwin', 'linux'])
+@pytest.mark.parametrize('width,height', [(27, 12), (68, 24)])
+@pytest.mark.parametrize('enabled,sort,hide_merged', [
+    (True, 'turn', False), (True, 'repo', True),
+    (False, 'turn', False), (False, 'host', True),
+])
+def test_hotkeys_highlight_only_current_states(filters, monkeypatch, platform, width, height,
+                                                enabled, sort, hide_merged):
+    import re
+    import t_picker_theme as theme
+    monkeypatch.setattr(theme.sys, 'platform', platform)
+    monkeypatch.setenv('T_PICKER_HEADER_HEIGHT', str(height))
+    monkeypatch.setenv('TERM', 'xterm-256color')
+    monkeypatch.delenv('NO_COLOR', raising=False)
+    compact = height <= 14
+    text = filters.header('resume', 0, {}, 2, 'SESSION TASK', width,
+                          sort=sort, enabled=enabled, hide_merged=hide_merged, color=True)
+    active = re.findall(r'\x1b\[1;4;96m(.*?)\x1b\[0m', text)
+    state = theme.key_labels('Ctrl-L on' if enabled else 'Ctrl-A off', compact=compact)
+    shortcut, label = filters.RESUME_SORTS[sort]
+    selected_sort = theme.key_labels(shortcut + ' ' + ('turn' if compact and sort == 'turn' else label), compact=compact)
+    assert state in active and selected_sort in active
+    opposite = theme.key_labels('Ctrl-A off' if enabled else 'Ctrl-L on', compact=compact)
+    assert opposite not in active
+    assert any(theme.key_labels('Alt-M', compact=compact) in item for item in active) == (enabled and hide_merged)
+    assert len(active) == 2 + int(enabled and hide_merged)
+    plain = re.sub(r'\x1b\[[0-9;]*m', '', text)
+    assert all(filters.display_width(line) <= width for line in plain.splitlines())
+    if not compact:
+        assert plain.startswith('HOTKEYS\n') and '\n\nFILTERS\n' in plain
+    monkeypatch.setenv('NO_COLOR', '1')
+    assert filters.header('resume', 0, {}, 2, 'SESSION TASK', width,
+                          sort=sort, enabled=enabled, hide_merged=hide_merged, color=True) == plain

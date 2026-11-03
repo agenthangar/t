@@ -5088,7 +5088,7 @@
     "labels_only": true,
     "focus": "light text on dark cyan with a separate pointer",
     "selection": "plain green check in an independent gutter",
-    "header": "cyan section or resource title, muted hints, blank gap before results when height permits",
+    "header": "HOTKEYS above session FILTERS; readable shortcuts with bright underlined active filter state and resume sort/toggle; cyan section titles and a blank gap before results when height permits",
     "terminal_sizes": [
       [
         80,

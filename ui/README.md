@@ -43,7 +43,10 @@ showing the next action and keys. Focus and marks must remain distinguishable
 without color. Headings are cyan, hints muted, and focused text light on dark cyan.
 Keep the green checkmark in its own gutter beside the pointer, with spaces between
 status icons inside rows. Give controls and results a blank separating row when
-height permits. Use FILTERS only for actual filter controls; other pickers use their
+height permits. Session pickers list HOTKEYS above FILTERS, with readable shortcuts
+and bright underlined labels for the current filter On/Off state, resume sort, and
+merged-session toggle when enabled. Plain output retains explicit state text.
+Use FILTERS only for actual filter controls; other pickers use their
 action or resource title. Reduce spacing, borders and margins on short screens
 before losing controls or focus, including wide 120×12 terminals.
 
