@@ -28,7 +28,7 @@ def test_plain_slot_resume_routes_to_history(zsh, tmp_path, verb, target, expect
 
 
 @pytest.mark.parametrize('arguments', ['api', '', '--all', 'api 3 --cli',
-                                     'api 3 --app', 'api 3 --fg', 'api 3 --host mini',
+                                     'api 3 --fg', 'api 3 --host mini',
                                      'api 3 --days all', 'api 3 --live', 'api 3 --remote'])
 def test_resume_options_keep_existing_route(zsh, arguments):
     result = zsh('_t_resume() { print -r -- "RESUME $*"; return 7; }; '
@@ -163,16 +163,16 @@ def test_resume_history_live_id_attaches_exact_owner(zsh):
     assert 'ATTACH api 88' in result.stdout and 'UNEXPECTED' not in result.stdout
 
 
-def test_resume_history_app_rejects_claude_before_preparing(zsh):
+def test_resume_history_removed_app_rejects_before_preparing(zsh):
     row = history_row().removesuffix('codex') + 'claude'
     result = zsh(shell_candidates([row]) +
                  'OSTYPE=darwin; _t_resume_history_launch() { print -u2 UNEXPECTED; }; _t_resume api --app')
-    assert result.returncode == 1
-    assert 'only saved Codex' in result.stderr
+    assert result.returncode == 2
+    assert 'support has been removed' in result.stderr
     assert 'UNEXPECTED' not in result.stderr
 
 
-@pytest.mark.parametrize('owner', ['local', 'remote', 'collision', 'desktop', 'remote-desktop'])
+@pytest.mark.parametrize('owner', ['local', 'remote', 'collision', 'remote-desktop'])
 @pytest.mark.parametrize('command', ['t resume api 3 --days all', 't session resume api 3 --days all'])
 def test_explicit_slot_browses_live_and_saved_conversations_before_acting(zsh, owner, command):
     wt = zsh.home / 'code/.worktrees/api/3'

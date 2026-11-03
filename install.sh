@@ -263,9 +263,8 @@ path, command = sys.argv[1:]
 
 def review_notice(hook_command):
     print("Codex hook registered; if it needs review, approval is still required.")
-    print("  In the ChatGPT desktop app, open Review hooks (or hooks in settings).")
     print("  Select the User config / SessionStart hook: " + hook_command)
-    print("  Click Allow selected. In the Codex CLI, use /hooks to review and trust it.")
+    print("  In the Codex CLI, use /hooks to review and trust it.")
     print("  Until approved, the hook is skipped and session tracking can be incomplete.")
 
 

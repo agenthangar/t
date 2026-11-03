@@ -2162,7 +2162,7 @@ def test_repo_group_help_and_command_usage(t_mod, capsys):
 
 
 @pytest.mark.parametrize("verb", [
-    "open", "app", "ls", "kill", "restart", "push", "pop", "resume", "cd",
+    "open", "ls", "kill", "restart", "push", "pop", "resume", "cd",
     "beam", "read", "plan", "paste", "find", "on", "repo", "cursor",
     "config", "setup", "new", "checkout", "instructions", "install",
     "integrate", "update", "permissions", "trust", "doctor",
@@ -2314,5 +2314,5 @@ def test_list_columns_align_interface_model_and_context(t_mod, capsys, remote):
         assert header.index(heading) == body.index(content)
     assert 'Codex desktop workspace' not in body
     if not remote:
-        assert 'follow release instructions if the conversation is still loaded' in lines[-1]
-        assert 't open <repo> <slot> --cli' in lines[-1]
+        assert '--app' not in lines[-1]
+        assert 't open <repo> <slot>' in lines[-1]

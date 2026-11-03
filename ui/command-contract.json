@@ -691,9 +691,6 @@
         "tests/test_worktree_default_branch.py::test_new_worktree_uses_published_default_and_preserves_dirty_checkout",
         "tests/test_worktree_default_branch.py::test_missing_default_never_deletes_a_lingering_branch",
         "tests/test_offline_open.py::test_fresh_cli_open_with_offline_host",
-        "tests/test_offline_open.py::test_desktop_claim_offline_allows_fresh_or_reserved_local_slot",
-        "tests/test_offline_open.py::test_desktop_offline_reopen_retains_local_owner_checks",
-        "tests/test_plugin.py::test_open_app_creates_worktree_without_starting_tmux_or_cli",
         "tests/test_native_agent_shell.py::test_native_agent_generated_commands_execute_with_quoted_arguments",
         "tests/test_agent_seam.py::test_zsh_foreground_uses_native_agent_outside_path",
         "tests/test_agent_seam.py::test_session_startup_is_quiet_and_logged",
@@ -732,7 +729,7 @@
             "tests/test_open_tab.py::test_open_tab_automation_failure_preserves_fallback",
             "tests/test_open_tab.py::test_terminal_without_origin_can_create_dedicated_window"
           ],
-          "notes": "Default is unattached CLI and unloaded desktop sessions. k kills only the focused row independently of multi-selection marks through guarded close dispatch; keep the picker open and remove successfully closed rows from cached views without rediscovery, preserving query, filters and other marks on both supported fzf versions. Failed or canceled closes keep their row and report the outcome. Killing the last row leaves an empty picker until cancellation, never starting a session. Ctrl-F opens staged filter settings for State and every session column: agent, progress, interface, model, host, repository, session/slot, context and task. Enter chooses values; Apply filters commits and enables them. Esc in a nested picker keeps its value; Esc in settings discards staged edits. Reset filters to defaults stages unattached and clears columns. Ctrl-A disables filters without changing saved choices; Ctrl-L restores them. --attached starts with filters off and defaults retained. One highlighted ON/OFF summary replaces per-facet hotkeys; narrow headers show selected column count and settings retains full values. Progress follows the displayed continued-work marker, not current computation or completion. Search is preserved and hidden marks removed. Snapshot scope, action semantics, compact rows and selection gutter remain unchanged. No LAST TURN, preview, or new-session controls. Extra tabs bind to the originating terminal window and commands target only newly created tabs. Terminal focus changes, missing origins, timeouts and ambiguous creation fall back to atomic new-window creation without an activate call; if that fails, expose the automation error and retain attach commands."
+          "notes": "Default is unattached CLI sessions. Legacy remote interface metadata remains readable. k kills only the focused row independently of multi-selection marks through guarded close dispatch; keep the picker open and remove successfully closed rows from cached views without rediscovery, preserving query, filters and other marks on both supported fzf versions. Failed or canceled closes keep their row and report the outcome. Killing the last row leaves an empty picker until cancellation, never starting a session. Ctrl-F opens staged filter settings for State and every session column: agent, progress, interface, model, host, repository, session/slot, context and task. Enter chooses values; Apply filters commits and enables them. Esc in a nested picker keeps its value; Esc in settings discards staged edits. Reset filters to defaults stages unattached and clears columns. Ctrl-A disables filters without changing saved choices; Ctrl-L restores them. --attached starts with filters off and defaults retained. One highlighted ON/OFF summary replaces per-facet hotkeys; narrow headers show selected column count and settings retains full values. Progress follows the displayed continued-work marker, not current computation or completion. Search is preserved and hidden marks removed. Snapshot scope, action semantics, compact rows and selection gutter remain unchanged. No LAST TURN, preview, or new-session controls. Extra tabs bind to the originating terminal window and commands target only newly created tabs. Terminal focus changes, missing origins, timeouts and ambiguous creation fall back to atomic new-window creation without an activate call; if that fails, expose the automation error and retain attach commands."
         },
         "explicit": {
           "argv": [
@@ -748,7 +745,7 @@
           "tests": [
             "tests/test_open_picker.py::test_explicit_open_target_bypasses_picker"
           ],
-          "notes": "Fresh unused local slots and locally reserved desktop reopens tolerate unavailable remote hosts. Desktop claims scan once and still reject known remote owners and failed local ownership checks. Unreserved existing workspace claims retain strict ownership checks; explicit session resume warns and skips unavailable hosts while checking known owners. Automatic fresh-slot allocation skips known remote desktop reservations from one discovery snapshot; explicit slot requests still refuse conflicting owners."
+          "notes": "Fresh unused local slots tolerate unavailable remote hosts. Known remote owners, including retired integration reservations reported by older peers, still block conflicting launches. Existing workspaces retain ownership checks."
         }
       },
       "native_agents": "Terminal session launch/resume uses the native ~/.local/bin fallback, preserving PATH and shell wrappers; no global PATH changes.",
@@ -847,8 +844,6 @@
       "confirmation": "enter",
       "tests": [
         "tests/test_kill_multiselect.py::test_kill_picker_starts_with_only_proven_safe_rows",
-        "tests/test_app_close.py::test_close_python_preflight_allows_unassociated_writer",
-        "tests/test_desktop_close.py::test_desktop_close_scopes_unknown_locks_and_rechecks_new_ownership",
         "tests/test_host_resilience.py::test_remote_session_pickers_keep_reachable_rows_with_offline_peer"
       ],
       "modes": {
@@ -883,8 +878,7 @@
           ],
           "read_only": false,
           "tests": [
-            "tests/test_desktop_close.py::test_desktop_slot_close_dispatches_exact_slot_without_killing_tmux",
-            "tests/test_app_close.py::test_close_unloaded_saved_view_allows_running_app"
+            "tests/test_kill_multiselect.py::test_selected_local_close_disables_remote_fallback"
           ],
           "confirmation": "when_interrupting"
         }
@@ -1027,7 +1021,7 @@
         "tests/test_resume_repositories.py::test_remote_catalog_queries_distinct_targets_and_deduplicates_identity",
         "tests/test_resume_repositories.py::test_cancel_remoteonly_picker_never_prepares_or_registers",
         "tests/test_resume_repositories.py::test_remoteonly_prepare_refreshes_actual_alias_before_host_route",
-        "tests/test_app_handoff.py::test_handoff_scopes_unindexed_writers_using_rollout_metadata",
+        "tests/test_codex_ownership.py::test_handoff_scopes_unindexed_writers_using_rollout_metadata",
         "tests/test_history_resume.py::test_private_saved_resume_reports_ownership_refusal_and_cleans_up",
         "tests/test_history_resume.py::test_relocated_resume_checks_destination_and_selected_writer",
         "tests/test_history_resume.py::test_history_owner_waits_for_identity_without_following_replacement",
@@ -1078,26 +1072,6 @@
           ],
           "notes": "Plain public slot targets, including a lone inferred-repository slot, delegate to session history: paginated multi-selection of exact conversation identities, no default recency cutoff, no automatic single-result selection, and cancellation returns 130 without launch. Nonterminal use lists history read-only. Explicit resume options and internal callers retain existing resume modes."
         },
-        "desktop": {
-          "argv": [
-            "session",
-            "resume",
-            "api",
-            "3",
-            "--app"
-          ],
-          "patterns": [
-            "action",
-            "filtered",
-            "multi"
-          ],
-          "read_only": false,
-          "tests": [
-            "tests/test_resume_app.py::test_resume_app_exact_saved_route",
-            "tests/test_resume_app.py::test_resume_app_multiple_marks_never_launch"
-          ],
-          "notes": "Select exactly one saved Codex ID for local guarded desktop handoff; multiple marks, unsupported agents, remote owners and incompatible flags fail without substituting sessions."
-        },
         "cli": {
           "argv": [
             "session",
@@ -1113,7 +1087,7 @@
           ],
           "read_only": false,
           "tests": [
-            "tests/test_resume_app.py::test_resume_cli_retains_terminal_route"
+            "tests/test_desktop_removal.py::test_codex_remote_resume_reaches_guarded_transfer"
           ],
           "notes": "Explicit terminal destination; preserves existing saved resume behavior."
         },
@@ -1168,7 +1142,7 @@
         ]
       },
       "progress": "Terminal-only discovery stages on stderr; no progress in redirected output, JSON, or remote protocols.",
-      "notes": "Terminal launches run without echoing internal shell commands or exit instructions; agent output and diagnostics remain visible. Saved Codex resume resolves unindexed held sibling locks through validated session_meta workspace identity in active and archived rollouts. A still-unassociated exact lock is inspected through bounded lock-holder open rollout metadata; process cwd and other thread IDs never establish unrelatedness. Unknown, invalid or unreadable evidence fails closed; ownership refusals identify the conversation and verified PIDs with finish/exit recovery and a concise retry diagnostic, without process arguments or a traceback. Confirmed missing/invalid GitHub authentication warns once per affected host before selection, including empty and automatic results, without blocking available conversations; persistent compact picker warning survives filter/sort/reset/all. Remedy: gh auth login --hostname github.com on the named host. Network/rate-limit/permission failures and missing gh do not trigger auth warnings. Cross-host policy: Claude defaults to t transfer; Codex defaults to manual native desktop Hand off (no supported CLI adapter). Agent settings show/persist the effective mechanism and explicit Codex t override. Native returns nonzero with app steps before transfer mutations; local resume and remote attach unchanged. Batch failures stop on the first error or cancellation, print a final identity/reason/retry/ready/not-attempted summary, and never attach over failures. Tab failures retain successful sessions and exit nonzero.",
+      "notes": "Claude and Codex use guarded t transfers. Legacy native-handoff settings are ignored; older peers receive an explicit t policy.",
       "source_reconciliation": {
         "scope": "selected local and cross-host saved conversations",
         "checkpoint": "verified source workspace; normal Git identity/hooks; tracked, staged and nonignored untracked code",
@@ -1366,7 +1340,8 @@
         "tests/test_remote_commands.py::test_move_batch_stops_and_identifies_remaining_sessions",
         "tests/test_remote_commands.py::test_move_root_alias_operational_parser_route",
         "tests/test_remote_commands.py::test_remote_only_repo_reaches_destination_picker",
-        "tests/test_move_local_receive.py::test_selected_remote_conversation_lands_locally"
+        "tests/test_move_local_receive.py::test_selected_remote_conversation_lands_locally",
+        "tests/test_desktop_removal.py::test_move_without_live_owner_points_to_saved_resume"
       ],
       "modes": {
         "default": {
@@ -1523,7 +1498,7 @@
           "notes": "Discover the source across hosts; local is this machine. Reject local-to-local moves. Guard the selected identity through remote stop, push, transcript transfer and local landing. --detach never attaches."
         }
       },
-      "notes": " Cross-host policy: Claude defaults to t transfer; Codex defaults to manual native desktop Hand off (no supported CLI adapter). Agent settings show/persist the effective mechanism and explicit Codex t override. Native returns nonzero with app steps before transfer mutations; local resume and remote attach unchanged."
+      "notes": "Claude and Codex use guarded t transfers. Legacy native-handoff settings are ignored; older peers receive an explicit t policy. When no current owner is found, suggest t session resume [repo] [slot] for saved work."
     },
     "session read": {
       "patterns": [
@@ -1638,7 +1613,7 @@
           ],
           "read_only": false,
           "tests": [
-            "tests/test_agent_seam.py::test_paste_does_not_fall_back_to_shared_tree_when_desktop_worktree_is_reserved"
+            "tests/test_desktop_removal.py::test_legacy_workspace_cannot_start_fresh"
           ]
         }
       }
@@ -1666,52 +1641,6 @@
           "read_only": false,
           "tests": [
             "tests/test_command_groups_shell.py::test_grouped_shell_commands_keep_arguments_and_caller_shell"
-          ]
-        }
-      }
-    },
-    "session open-app": {
-      "patterns": [
-        "action",
-        "detail"
-      ],
-      "renderer": "plain",
-      "scope": "explicit/inferred repository or all local/remote sessions",
-      "confirmation": "when_interrupting",
-      "tests": [
-        "tests/test_app_pull.py::test_app_direction",
-        "tests/test_app.py::test_app_conflicting_owner_release_and_retry_preserves_exact_history"
-      ],
-      "modes": {
-        "default": {
-          "argv": [
-            "session",
-            "open-app"
-          ],
-          "patterns": [
-            "action"
-          ],
-          "read_only": false,
-          "tests": [
-            "tests/test_app_pull.py::test_app_direction",
-            "tests/test_app.py::test_app_conflicting_owner_release_and_retry_preserves_exact_history"
-          ]
-        },
-        "dry_run": {
-          "argv": [
-            "session",
-            "open-app",
-            "api",
-            "1",
-            "--dry-run"
-          ],
-          "patterns": [
-            "detail"
-          ],
-          "read_only": true,
-          "tests": [
-            "tests/test_app.py::test_app_command_dry_run_is_read_only",
-            "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
           ]
         }
       }
@@ -2494,7 +2423,7 @@
           "notes": "MCP submenu inspection and refresh are read-only. Registration requires immediate-action review and no pending hub edits; preserves existing client entries and disabled settings. Configuration state is not connection health."
         }
       },
-      "notes": " Cross-host policy: Claude defaults to t transfer; Codex defaults to manual native desktop Hand off (no supported CLI adapter). Agent settings show/persist the effective mechanism and explicit Codex t override. Native returns nonzero with app steps before transfer mutations; local resume and remote attach unchanged. Ctrl+C with pending staged changes opens Keep editing (default), Review and save, or Discard changes and exit, including from nested menus and save review. Preserve completed nested selections before prompting. Review and save uses the normal review; cancellation or repeated Ctrl+C never implicitly saves or discards. No pending changes exits immediately with 130. Always restore terminal state on exit; external editors and post-save actions retain their own behavior. Save changes appears once as the persistent footer action with the s shortcut, never as a duplicate menu row. The shortcut opens the existing final diff review. Tool Back navigation restores focus; reverting a newly materialized tool scope restores its absent baseline without discarding other tools edits."
+      "notes": " Claude and Codex use guarded t transfers. Legacy native-handoff settings are ignored; older peers receive an explicit t policy."
     },
     "config show": {
       "patterns": [
@@ -2523,7 +2452,7 @@
           ]
         }
       },
-      "notes": " Cross-host policy: Claude defaults to t transfer; Codex defaults to manual native desktop Hand off (no supported CLI adapter). Agent settings show/persist the effective mechanism and explicit Codex t override. Native returns nonzero with app steps before transfer mutations; local resume and remote attach unchanged."
+      "notes": " Claude and Codex use guarded t transfers. Legacy native-handoff settings are ignored; older peers receive an explicit t policy."
     },
     "config edit": {
       "patterns": [
@@ -2563,7 +2492,7 @@
       "tests": [
         "tests/test_t.py::test_setup_items_full_structure",
         "tests/test_repo_add.py::test_setup_defaults_to_config",
-        "tests/test_checkout.py::test_setup_explains_desktop_hook_review"
+        "tests/test_checkout.py::test_setup_explains_cli_hook_review"
       ],
       "modes": {
         "default": {
@@ -2596,7 +2525,7 @@
           ]
         }
       },
-      "hook_review": "Explain ChatGPT desktop Review hooks / Allow selected and Codex CLI /hooks; never grant hook trust."
+      "hook_review": "Explain Codex CLI /hooks; never grant hook trust."
     },
     "profile init": {
       "patterns": [
@@ -2893,7 +2822,7 @@
           ]
         }
       },
-      "hook_review": "Explain ChatGPT desktop Review hooks / Allow selected and Codex CLI /hooks; never grant hook trust."
+      "hook_review": "Explain Codex CLI /hooks; never grant hook trust."
     },
     "agent status": {
       "patterns": [
@@ -3021,7 +2950,7 @@
           ]
         }
       },
-      "hook_review": "Explain ChatGPT desktop Review hooks / Allow selected and Codex CLI /hooks; never grant hook trust."
+      "hook_review": "Explain Codex CLI /hooks; never grant hook trust."
     },
     "system update": {
       "patterns": [
@@ -3143,7 +3072,7 @@
           ]
         }
       },
-      "hook_review": "Explain ChatGPT desktop Review hooks / Allow selected and Codex CLI /hooks; never grant hook trust."
+      "hook_review": "Explain Codex CLI /hooks; never grant hook trust."
     },
     "repo add": {
       "patterns": [
@@ -3536,7 +3465,7 @@
           "notes": "Compatibility route for session move --remote: multi-select current local/remote owners, then choose one destination. Recheck every selected identity before mutation, exclude all source targets/aliases, move batches sequentially and detached, stop on the first failure or cancellation and report outcomes."
         }
       },
-      "notes": " Cross-host policy: Claude defaults to t transfer; Codex defaults to manual native desktop Hand off (no supported CLI adapter). Agent settings show/persist the effective mechanism and explicit Codex t override. Native returns nonzero with app steps before transfer mutations; local resume and remote attach unchanged."
+      "notes": "Claude and Codex use guarded t transfers. Legacy native-handoff settings are ignored; older peers receive an explicit t policy."
     },
     "remote resume": {
       "patterns": [
@@ -3633,7 +3562,7 @@
           "notes": "Explicit --all is forwarded to the selected host so its login directory cannot narrow discovery. A locally resolvable repository is forwarded by GitHub identity and resolved to the selected host alias; otherwise a literal host alias is preserved."
         }
       },
-      "notes": " Confirmed missing/invalid GitHub authentication warns once per affected host before selection, including empty and automatic results, without blocking available conversations; persistent compact picker warning survives filter/sort/reset/all. Remedy: gh auth login --hostname github.com on the named host. Network/rate-limit/permission failures and missing gh do not trigger auth warnings. Cross-host policy: Claude defaults to t transfer; Codex defaults to manual native desktop Hand off (no supported CLI adapter). Agent settings show/persist the effective mechanism and explicit Codex t override. Native returns nonzero with app steps before transfer mutations; local resume and remote attach unchanged."
+      "notes": "Claude and Codex use guarded t transfers. Legacy native-handoff settings are ignored; older peers receive an explicit t policy."
     },
     "workflow list": {
       "patterns": [
@@ -5385,7 +5314,6 @@
     "session read": "cmd_read",
     "session view-plan": "_t_plan",
     "session paste": "_t_paste",
-    "session open-app": "_slot_select",
     "session goal": "cmd_session_goal",
     "repo cd": "_t_repo_cd",
     "repo locate": "cmd_repo",

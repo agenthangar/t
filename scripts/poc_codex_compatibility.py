@@ -16,7 +16,7 @@ import tempfile
 import time
 import tomllib
 
-from poc_desktop_shared_backend import connect, stop
+from poc_codex_backend import connect, stop
 
 ROOT = Path(__file__).resolve().parent.parent
 

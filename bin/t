@@ -99,8 +99,8 @@ ZSH_PRELUDE = "setopt no_monitor no_notify 2>/dev/null; "
 # ─── config ──────────────────────────────────────────────────────────────────
 
 _CFG_LINE = re.compile(
-    r"^(DEV_REPOS|DEV_BRANCHES|REMOTE_HOSTS|DEV_WORKTREE|DEV_OPEN_MODE|DEV_AGENT|DEV_MODEL|DEV_EFFORT|DEV_FAST|DEV_HANDOFF)\[([^\]]+)\]=(.*)$"
-    r"|^(DEV_BRANCH|DEV_WORKTREE_ROOT|DEV_WORKTREE_DEFAULT|DEV_AGENT_DEFAULT|TBEAM_HOST|MINI_HOST|DEV_OPEN_MODE_DEFAULT|T_AUTO_TRUST|T_LOCAL_RC)=(.*)$")
+    r"^(DEV_REPOS|DEV_BRANCHES|REMOTE_HOSTS|DEV_WORKTREE|DEV_AGENT|DEV_MODEL|DEV_EFFORT|DEV_FAST)\[([^\]]+)\]=(.*)$"
+    r"|^(DEV_BRANCH|DEV_WORKTREE_ROOT|DEV_WORKTREE_DEFAULT|DEV_AGENT_DEFAULT|TBEAM_HOST|MINI_HOST|T_AUTO_TRUST|T_LOCAL_RC)=(.*)$")
 
 
 def _current_local_rc():
@@ -142,14 +142,11 @@ class Config:
         self.worktree = {}   # alias -> opt-out flag (0/no/off → shared-tree)
         self.worktree_root = os.path.join(HOME, "code", ".worktrees")
         self.worktree_default = "1"
-        self.open_mode = {}
-        self.open_mode_default = "cli"
         self.agents = {}     # alias -> claude|codex (DEV_AGENT[alias])
         self.agent_default = "claude"
         self.auto_trust = os.environ.get("T_AUTO_TRUST", "0")
         self.models = {}     # agent -> model for NEW sessions; empty defers to the CLI
         self.efforts = {}    # agent -> reasoning effort for NEW sessions
-        self.handoff = {}    # agent -> cross-host handoff: native (Codex app) or t
         self.fast = {}       # agent -> speed override; empty inherits the CLI setting
         self.beam_host = ""
         self.mini_host = ""  # legacy host seed; cleared if its host is removed
@@ -169,17 +166,15 @@ class Config:
             if m.group(1):
                 arr, key, val = m.group(1), m.group(2), _unquote(m.group(3))
                 {"DEV_REPOS": self.repos, "DEV_BRANCHES": self.branches,
-                 "REMOTE_HOSTS": self.hosts, "DEV_WORKTREE": self.worktree, "DEV_OPEN_MODE": self.open_mode,
+                 "REMOTE_HOSTS": self.hosts, "DEV_WORKTREE": self.worktree,
                  "DEV_AGENT": self.agents, "DEV_MODEL": self.models,
-                 "DEV_EFFORT": self.efforts, "DEV_FAST": self.fast, "DEV_HANDOFF": self.handoff}[arr][key] = val
+                 "DEV_EFFORT": self.efforts, "DEV_FAST": self.fast}[arr][key] = val
             elif m.group(4) == "DEV_BRANCH":
                 self.branch = _unquote(m.group(5))
             elif m.group(4) == "DEV_WORKTREE_ROOT":
                 self.worktree_root = _unquote(m.group(5))
             elif m.group(4) == "DEV_WORKTREE_DEFAULT":
                 self.worktree_default = _unquote(m.group(5))
-            elif m.group(4) == "DEV_OPEN_MODE_DEFAULT":
-                self.open_mode_default = _unquote(m.group(5))
             elif m.group(4) == "DEV_AGENT_DEFAULT":
                 self.agent_default = _unquote(m.group(5))
             elif m.group(4) == "T_AUTO_TRUST":
@@ -204,16 +199,6 @@ class Config:
                 return a
         return "claude"
 
-
-    def handoff_for(self, agent):
-        value = os.environ.get("_T_HANDOFF_" + agent.upper()) or self.handoff.get(agent, "native" if agent == "codex" else "t")
-        if value not in (("native", "t") if agent == "codex" else ("t",)):
-            raise ValueError(f"invalid cross-host handoff for {agent}: {value}; use t config")
-        return value
-
-    def handoff_label(self, agent):
-        return ("native · Codex desktop app (manual Hand off; no CLI transfer)"
-                if self.handoff_for(agent) == "native" else "t · Git checkpoint and transcript transfer")
 
     def repo_of_dir(self, cwd):
         """(alias, slot) for a path — the Python twin of zsh _dev_repo_of_dir. slot is
@@ -745,24 +730,17 @@ def _render_local(rows, scope, st, has_remote=False):
     print()
     for line in _session_table_lines(rows):
         print(line.replace("●", f"{st.g}●{st.r}").replace("✓", f"{st.c}✓{st.r}").replace("↻", f"{st.w}↻{st.r}"))
-    has_fg = has_app = False
+    has_fg = False
     for r in rows:
         if ":" in r["slot"]:                       # colon marks a foreground row
             has_fg = True
-        if r["state"] == "app" or "Codex desktop workspace" in r["summary"]:
-            has_app = True
     foot = "reattach: t open <repo> <slot>"
     if has_fg:
         foot += " · foreground: t open <its SESSION name>"
-    if has_app:
-        foot += " · ▣ desktop: t open <repo> <slot> --app"
     if has_remote:
         foot += " · other machines: t ls -r"
     print()
     print(f"  {st.y}{foot}{st.r}")
-    if has_app:
-        print(f"  {st.y}desktop → CLI: t open <repo> <slot> --cli "
-              f"(follow release instructions if the conversation is still loaded){st.r}")
 
 
 def _render_remote(rows, scope, st):
@@ -770,18 +748,14 @@ def _render_remote(rows, scope, st):
     print()
     for line in _session_table_lines(rows, remote=True):
         print(line.replace("●", f"{st.g}●{st.r}").replace("✓", f"{st.c}✓{st.r}").replace("↻", f"{st.w}↻{st.r}"))
-    has_fg = has_app = False
+    has_fg = False
     for r in rows:
         if ":" in r["slot"]:                       # colon marks a foreground row
             has_fg = True
-        if r["state"] == "app" or "Codex desktop workspace" in r["summary"]:
-            has_app = True
     foot = ("attach (auto-finds its host): t open <repo> <slot> · "
             "pull here: t beam <repo> <slot> --from <host>")
     if has_fg:
         foot += " · foreground: t open <its SESSION name>"
-    if has_app:
-        foot += " · ▣ desktop (on its host): t open <repo> <slot> --app"
     print()
     print(f"  {st.y}{foot}{st.r}")
 
@@ -1644,12 +1618,11 @@ _EFFORT_ID = re.compile(r"[a-z][a-z0-9_-]*\Z")
 
 
 _CONFIG_ARRAYS = {"DEV_REPOS": "repos", "REMOTE_HOSTS": "hosts", "DEV_BRANCHES": "branches",
-                  "DEV_AGENT": "agents", "DEV_WORKTREE": "worktree", "DEV_OPEN_MODE": "open_mode", "DEV_MODEL": "models",
-                  "DEV_EFFORT": "efforts", "DEV_FAST": "fast", "DEV_HANDOFF": "handoff"}
+                  "DEV_AGENT": "agents", "DEV_WORKTREE": "worktree", "DEV_MODEL": "models",
+                  "DEV_EFFORT": "efforts", "DEV_FAST": "fast"}
 _CONFIG_SCALARS = {"DEV_AGENT_DEFAULT": "agent_default", "DEV_BRANCH": "branch",
                    "T_AUTO_TRUST": "auto_trust",
                    "DEV_WORKTREE_ROOT": "worktree_root", "DEV_WORKTREE_DEFAULT": "worktree_default",
-                   "DEV_OPEN_MODE_DEFAULT": "open_mode_default",
                    "TBEAM_HOST": "beam_host", "MINI_HOST": "mini_host"}
 _CONFIG_ALIAS = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]*\Z")
 
@@ -1689,15 +1662,10 @@ def _config_assignment(key, value):
         raise ValueError("model IDs must contain no spaces or shell commands")
     if key.startswith("DEV_EFFORT[") and value and not _EFFORT_ID.fullmatch(value):
         raise ValueError("effort must be a level name reported by the tool")
-    if key.startswith("DEV_HANDOFF["):
-        if key not in ("DEV_HANDOFF[claude]", "DEV_HANDOFF[codex]") or value not in (("native", "t") if key == "DEV_HANDOFF[codex]" else ("t",)):
-            raise ValueError("cross-host handoff must be t, or native for Codex")
     if key.startswith("DEV_FAST["):
         allowed = ("", "1", "0", "fast", "ultrafast") if key == "DEV_FAST[codex]" else ("", "1", "0")
         if value not in allowed:
             raise ValueError("fast mode must be 1, 0, or empty to inherit; Codex also accepts fast and ultrafast")
-    if (key == "DEV_OPEN_MODE_DEFAULT" or key.startswith("DEV_OPEN_MODE[")) and value not in ("cli", "app"):
-        raise ValueError("choose cli or app for opening mode")
     if key == "T_AUTO_TRUST" and value not in ("1", "0"):
         raise ValueError("automatic trust must be 1 or 0")
     prefix = "export " if key in ("TBEAM_HOST", "T_AUTO_TRUST") else ""
@@ -1840,7 +1808,7 @@ def cmd_hosts(cfg, args):
 
 
 def _config_remove_repo(cfg, alias):
-    for attr in ("repos", "agents", "branches", "worktree", "open_mode"):
+    for attr in ("repos", "agents", "branches", "worktree"):
         getattr(cfg, attr).pop(alias, None)
 
 
@@ -1851,7 +1819,7 @@ def _config_rename_repo(cfg, alias, new_alias):
         raise ValueError("That short name is already in use or reserved.")
     if new_alias == alias:
         return
-    for attr in ("repos", "agents", "branches", "worktree", "open_mode"):
+    for attr in ("repos", "agents", "branches", "worktree"):
         entries = getattr(cfg, attr)
         if alias in entries:
             entries[new_alias] = entries.pop(alias)
@@ -2179,26 +2147,16 @@ def _config_tool_menu(ui, cfg, agent, catalogs):
     while True:
         rows = [("model", "Model"), ("effort", "Effort"),
                 ("fast", "Speed" if agent == "codex" else "Fast mode"),
-                ("handoff", "Cross-host handoff"), ("back", "Back to settings")]
+                ("back", "Back to settings")]
         choice = ui.pick(f"{agent.title()} settings", rows,
                          values={"model": cfg.models.get(agent) or "tool default",
                                  "effort": cfg.efforts.get(agent) or "tool default",
-                                 "fast": _config_speed_label(cfg.fast.get(agent)),
-                                 "handoff": cfg.handoff_label(agent)},
+                                 "fast": _config_speed_label(cfg.fast.get(agent))},
                          default=next(i for i, row in enumerate(rows) if row[0] == last))
         if choice in (None, "back"):
             return
         last = choice
-        if choice == "handoff":
-            options = [("t", "t · Git checkpoint and transcript transfer")]
-            if agent == "codex":
-                options.insert(0, ("native", "Native · Codex desktop app (manual Hand off)"))
-            picked = ui.pick("Cross-host only · local resume stays local", options,
-                             default=next(i for i, row in enumerate(options) if row[0] == cfg.handoff_for(agent)))
-            if picked is not None:
-                cfg.handoff[agent] = picked
-        else:
-            _config_model_menu(ui, cfg, agent, catalogs, setting=choice)
+        _config_model_menu(ui, cfg, agent, catalogs, setting=choice)
 
 
 def _config_input(ui, label, current="", kind="text"):
@@ -3301,10 +3259,10 @@ def _config_repos(ui, cfg):
                 ui.done("invalid", str(exc))
             continue
         action = ui.pick(f"Repository · {repo}", [
-            ("alias", "Short name"), ("mode", "Opening mode"),
+            ("alias", "Short name"),
             ("path", "Path"), ("tool", "Tool"), ("workflow", "Workflows"), ("branch", "Shared-tree branch"), ("worktree", "Worktrees"),
             ("remove", "Unregister (keep files and sessions)"), ("back", "Back")],
-            values={"mode": {"cli": "CLI", "app": "Desktop app (Codex, macOS)"}.get(cfg.open_mode.get(repo), "inherit default"), "alias": repo, "path": _tilde(cfg.repos[repo]), "tool": cfg.agents.get(repo) or "inherit default",
+            values={"alias": repo, "path": _tilde(cfg.repos[repo]), "tool": cfg.agents.get(repo) or "inherit default",
                     "branch": cfg.branches.get(repo) or "inherit default",
                     "worktree": cfg.worktree.get(repo) or "inherit default"}, accents={"remove": "w"})
         if action in (None, "back"):
@@ -3326,11 +3284,10 @@ def _config_repos(ui, cfg):
             value = _config_input(ui, "repo path", cfg.repos[repo], "path")
             if value is not None:
                 cfg.repos[repo] = value
-        elif action in ("tool", "worktree", "branch", "mode"):
-            attr = {"tool": "agents", "worktree": "worktree", "branch": "branches", "mode": "open_mode"}[action]
+        elif action in ("tool", "worktree", "branch"):
+            attr = {"tool": "agents", "worktree": "worktree", "branch": "branches"}[action]
             options = [("", "Inherit global default")]
-            options += ([("cli", "CLI"), ("app", "Desktop app (Codex, macOS)")] if action == "mode" else
-                        [(a, a) for a in AGENTS] if action == "tool" else
+            options += ([(a, a) for a in AGENTS] if action == "tool" else
                         [("1", "Enabled"), ("0", "Disabled (shared tree)")] if action == "worktree" else
                         [("custom", "Set branch")])
             value = ui.pick(f"{repo} {action}", options)
@@ -3415,7 +3372,6 @@ def _host_verify_offer(targets):
         _host_verify_targets(targets)
 
 
-
 def _config_mcp(ui, pending):
     helper = runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_mcp_setup.py"))
     states = helper["status"](HOME)
@@ -3493,8 +3449,8 @@ def _config_wizard(cfg, workflows_only=False):
     try:
         while True:
             try:
-                rows = [("tool", "Default tool"), ("mode", "Default opening mode"), ("trust", "Automatic folder trust")]
-                values = {"tool": edited.agent_default, "mode": "Desktop app (Codex, macOS)" if edited.open_mode_default == "app" else "CLI"}
+                rows = [("tool", "Default tool"), ("trust", "Automatic folder trust")]
+                values = {"tool": edited.agent_default}
                 values["trust"] = ("enabled" if edited.auto_trust == "1" else "disabled") + (" (T_NO_TRUST overrides)" if os.environ.get(_TRUST_NO_ENV) else "")
                 for a in AGENTS:
                     rows.append((a, f"{a.title()} settings ›"))
@@ -3586,13 +3542,8 @@ def _config_wizard(cfg, workflows_only=False):
                     picked = ui.pick("Default beam host", options, values=edited.hosts)
                     if picked is not None:
                         edited.beam_host = edited.hosts.get(picked, "")
-                elif choice == "mode":
-                    picked = ui.pick("Default opening mode", [("cli", "CLI"), ("app", "Desktop app (Codex, macOS)")],
-                                     default=1 if edited.open_mode_default == "app" else 0)
-                    if picked is not None:
-                        edited.open_mode_default = picked
                 elif choice == "trust":
-                    picked = ui.pick("Trust folders before terminal/desktop launches", [("1", "Enabled"), ("0", "Disabled")],
+                    picked = ui.pick("Trust folders before terminal launches", [("1", "Enabled"), ("0", "Disabled")],
                                      default=0 if edited.auto_trust == "1" else 1)
                     if picked is not None:
                         edited.auto_trust = picked
@@ -3969,7 +3920,7 @@ def _workflow_print(helper, result, catalogue=False):
             for agent, settings in defaults.items():
                 print("  " + agent.title() + ": " + (settings.get("model") or "agent default") +
                       ("" if agent == "cursor" else " · reasoning: " + (settings.get("effort") or "default for this model")))
-            print("  Applies to new/resumed CLI sessions; active turns and desktop launches keep their settings.")
+            print("  Applies to new/resumed CLI sessions; active turns keep their settings.")
     print("Propagation: " + result["propagation"]["runtime"])
 
 
@@ -4257,18 +4208,16 @@ def cmd_config(cfg, args):
     if args.show:
         print("\n".join(_config_summary(cfg.agent_default, cfg.models, cfg.agents)))
         for agent in AGENTS:
-            print(f"{agent} cross-host handoff: {cfg.handoff_label(agent)}")
             print(f"{agent} effort: {cfg.efforts.get(agent) or 'tool default'}")
             print(f"{agent} speed: {_config_speed_label(cfg.fast.get(agent))}")
         print(f"Local worker: t config local --show (setup: t config local)")
-        print(f"Default opening mode: {cfg.open_mode_default}")
         print(f"Default beam host: {cfg.beam_host or 'none'}")
         print(f"Worktrees: {cfg.worktree_default} · root: {cfg.worktree_root} · shared-tree branch: {cfg.branch}")
         for alias, target in sorted(cfg.hosts.items()):
             print(f"Host {alias}: {target}")
         for alias, repo_path in sorted(cfg.repos.items()):
             print(f"Repo {alias}: {repo_path} · tool: {cfg.agents.get(alias) or 'inherit'} · "
-                  f"opening mode: {cfg.open_mode.get(alias) or 'inherit'} · branch: {cfg.branches.get(alias) or 'inherit'} · worktrees: {cfg.worktree.get(alias) or 'inherit'}")
+                  f"branch: {cfg.branches.get(alias) or 'inherit'} · worktrees: {cfg.worktree.get(alias) or 'inherit'}")
         try:
             helper = _workflow()
             document, stored = helper["load"]()
@@ -6144,10 +6093,7 @@ def cmd_pending(cfg, args):
 # with -y, so a device-code login there prompts through the TTY.
 
 _CODEX_HOOK_REVIEW = (
-    "In the ChatGPT desktop app, open Review hooks (or hooks in settings), "
-    "select the User config / SessionStart hook running "
-    "t-session-start --agent codex, then click Allow selected. "
-    "In the Codex CLI, use /hooks to review and trust that hook. "
+    "In Codex CLI, use /hooks to review and trust t-session-start --agent codex. "
     "Until approved, the hook is skipped and session tracking can be incomplete."
 )
 
@@ -6306,7 +6252,6 @@ def _install_probe(agents=INSTALL_AGENTS):
         out[a] = {"bin": exe, "path": os.path.realpath(exe), "version": ver or "?",
                   "logged_in": _install_status_ok(a, s.returncode, s.stdout + s.stderr)}
     return out
-
 
 
 # Login expiry is advisory: these are cached access-token deadlines, not proof
@@ -7301,7 +7246,7 @@ def _command_readonly(argv, *, terminal=None):
 
 def _t_auto_update(argv):
     """Return None to continue, or replace this process with the updated CLI."""
-    public = {"open", "app", "ls", "kill", "restart", "push", "pop", "resume", "history", "cd",
+    public = {"open", "ls", "kill", "restart", "push", "pop", "resume", "history", "cd",
               "beam", "read", "plan", "paste", "find", "cursor", "repo", "config", "runners",
               "setup", "new", "checkout", "instructions", "install", "integrate",
               "permissions", "trust", "doctor"}
@@ -7856,8 +7801,7 @@ _AGENT_PARITY = [
     ("dev slots: t session open / list / close / read / paste", "✓", "✓ t session open --codex · DEV_AGENT", "✗ no slot — t cursor list"),
     ("t session push / pop", "✓", "✓", "✗ no slot"),
     ("t session resume (saved conversations)", "✓", "✓ (rollouts and thread index)", "→ t cursor resume"),
-    ("t session move / --from", "✓ (t)", "✓ (native app; t opt-in)", "→ t cursor send [id] --host / --from"),
-    ("t session open-app (desktop + browser preview)", "✗ Codex conversations only", "✓ local macOS slot → same thread", "✗"),
+    ("t session move / --from", "✓ (t)", "✓ (t)", "→ t cursor send [id] --host / --from"),
     ("SessionStart stamps (registry · opened · origin)", "✓ settings.json hook",
      "✓ hooks.json (trust once at startup)", "✗ no hook wired"),
     ("t session view-plan", "✓", "✗ codex keeps no plan files (says so)", "✗"),
@@ -9593,7 +9537,6 @@ def cmd_doctor(cfg, args):
     return repair_rc
 
 
-
 # ─── todo — retired ─────────────────────────────────────────────────────────────
 #
 # `t todo` (a per-slot task list with a /todo command, a statusline bar, a
@@ -9672,8 +9615,7 @@ def _dev_url(key, cwd):
     return "http://localhost:%d" % port if _port_is_live(port) else None
 
 
-
-# ─── desktop handoff ──────────────────────────────────────────────────────────
+# ─── session selection ──────────────────────────────────────────────────────────
 
 def _slot_select(cfg, rows, repo, slot, cwd, verb):
     """Resolve a LOCAL tmux slot without guessing among sibling conversations."""
@@ -9685,9 +9627,7 @@ def _slot_select(cfg, rows, repo, slot, cwd, verb):
         slot = slot or implied_slot
     repo = _resolve_repo_selector(cfg.repos, repo) or repo
     if repo not in cfg.repos:
-        usage = ("t app [push|pull] <repo> <slot>\n"
-                 "  push: CLI → desktop; pull: desktop → CLI. Run `t help app` for steps."
-                 if verb == "app" else f"t {verb} <repo> <slot>")
+        usage = f"t {verb} <repo> <slot>"
         raise ValueError(f"name a registered repo: {usage}")
     if slot and not slot.isdigit():
         raise ValueError(f"slot must be a number: t {verb} <repo> <slot>")
@@ -9706,316 +9646,6 @@ def _slot_select(cfg, rows, repo, slot, cwd, verb):
         raise ValueError(f"choose a slot: t {verb} {repo} <slot> ({choices})")
     row = candidates[0]
     return row
-
-
-def _app_select(cfg, rows, repo, slot, cwd):
-    row = _slot_select(cfg, rows, repo, slot, cwd, "app")
-    if row["agent"] != "codex":
-        raise ValueError(f"{row['slot']} runs {row['agent']}; the Codex app can resume "
-                         "Codex conversations only (t open <repo> --codex starts one)")
-    if row["context"] == "idle" or not re.fullmatch(
-            r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", row["sid"]):
-        raise ValueError(f"{row['slot']} has no recorded Codex conversation; "
-                         "send a message in the CLI first and check t doctor")
-    return row
-
-
-def _app_target(args):
-    """Keep the original positional form as shorthand for app push."""
-    words = [word for word in (args.repo, args.slot, args.app_slot) if word is not None]
-    direction = words.pop(0) if words and words[0] in ("push", "pull") else "push"
-    if len(words) > 2:
-        raise ValueError("usage: t app [push|pull] [repo] [slot]")
-    return direction, *(words + [None] * (2 - len(words)))
-
-
-def _app_pull_select(cfg, rows, repo, slot, cwd, thread=None):
-    row = _slot_select(cfg, rows, repo, slot, cwd, "app pull")
-    if row["agent"] != "codex":
-        raise ValueError(f"{row['slot']} runs {row['agent']}; only Codex conversations can be pulled")
-    return _app_saved_thread(row, thread)
-
-
-def _app_saved_thread(row, thread=None):
-    # Read through the login-shell seam that resolves Codex's actual store. An
-    # app-archived conversation still belongs to the reserved slot until CLI
-    # resume; its stamped id must remain selectable without guessing.
-    candidates = {}
-    raw = zsh_capture(shlex.join(["_codex_threads_for_cwd", row["cwd"], "--include-archived"]))
-    for line in raw.splitlines():
-        fields = line.split("\t")
-        if (len(fields) == 7 and fields[2] == row["cwd"] and os.path.isfile(fields[1])
-                and fields[5] in ("0", "1") and os.path.isabs(fields[6])
-                and re.fullmatch(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", fields[0])):
-            candidates[fields[0]] = (fields[1], fields[5] == "1", fields[6])
-    sid = thread or (row["sid"] if row["sid"] != "-" else None)
-    if sid is None and len(candidates) == 1:
-        sid = next(iter(candidates))
-    if sid not in candidates:
-        if sid:
-            raise ValueError(f"thread {sid} is not a saved Codex conversation in {row['cwd']}")
-        if candidates:
-            target_repo, _, target_slot = row["slot"].rpartition("-")
-            command = shlex.join(["t", "app", "pull", target_repo, target_slot])
-            raise ValueError("several conversations belong to this worktree; choose with "
-                             f"{command} --thread <id>: "
-                             + ", ".join(candidates))
-        raise ValueError("no saved Codex conversation in this worktree; send a message in the app first")
-    rollout, archived, codex_home = candidates[sid]
-    return dict(row, sid=sid, expected_sid=row["sid"], rollout=rollout,
-                archived=archived, codex_home=codex_home)
-
-
-def _app_cli_release(row, contract=None, *, unknown=None):
-    """Stopping a CLI client does not necessarily stop its conversation writer."""
-    try:
-        helper = runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_app_handoff.py"))
-        options = {key: row[key] for key in ("codex_home", "rollout")}
-        options["unknown"] = unknown if unknown is not None else set()
-        repo, _, slot = row["slot"].rpartition("-")
-        options["retry"] = row.get("resume_retry") or "Retry: " + shlex.join(["t", "open", repo, slot, "--app"])
-        options["run"] = _run
-        if contract is None:
-            return helper["preflight_cli_release"](row["sid"], row["cwd"], **options)
-        # An already transferred slot can be reopened without waiting for the
-        # destination to release itself. Require fresh direct-desktop backend
-        # evidence; the marker, source field, and stopped pane prove no ownership.
-        desktop = runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_desktop.py"))
-        lock = os.path.join(row["codex_home"], "thread-writer-locks", row["sid"] + ".lock")
-        if helper["_lock_held"](lock) and any(
-               sid == row["sid"] and os.path.realpath(cwd) == os.path.realpath(row["cwd"])
-               for sid, cwd, _ in desktop["loaded_threads"](row["codex_home"], require_writer=True)):
-            # The desktop may have loaded another conversation in this worktree
-            # since the preflight. Recheck known sibling owners before accepting
-            # a direct transfer of the selected thread.
-            helper["preflight_cli_release"](row["sid"], row["cwd"], **options)
-            return
-        helper["wait_cli_released"](
-            row["sid"], row["cwd"], **options, contract=contract,
-            on_wait=lambda: print("Waiting for Codex to release this conversation "
-                                  "(up to 75 seconds)…", flush=True))
-    except OSError as exc:
-        raise ValueError(f"could not check Codex conversation release: {exc}") from exc
-
-
-_APP_HANDOFF_HELD = set()
-
-
-@contextmanager
-def _app_handoff_lock(row):
-    """Serialize push and pull for a worktree, including sibling repo aliases."""
-    root = os.path.join(_cache_root(), "app-handoffs")
-    try:
-        os.makedirs(root, mode=0o700, exist_ok=True)
-        key = hashlib.sha256(os.path.realpath(row["cwd"]).encode()).hexdigest()
-        path = os.path.join(root, key + ".lock")
-        # POSIX locks are process-wide: closing *any* descriptor for this
-        # inode can release the outer lock. Reject nested calls before open.
-        if path in _APP_HANDOFF_HELD:
-            raise ValueError("another app handoff is in progress for this worktree")
-        fh = open(path, "a")
-    except OSError as e:
-        raise ValueError(f"could not lock the app handoff: {e}") from e
-    with fh:
-        try:
-            # zsh's zsystem flock uses POSIX fcntl locks. lockf speaks the
-            # same protocol on macOS and Linux; BSD flock does not on Linux.
-            fcntl.lockf(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as e:
-            raise ValueError("another app handoff is in progress for this worktree") from e
-        except OSError as e:
-            raise ValueError(f"could not lock the app handoff: {e}") from e
-        _APP_HANDOFF_HELD.add(path)
-        try:
-            yield
-        finally:
-            _APP_HANDOFF_HELD.remove(path)
-            fcntl.lockf(fh, fcntl.LOCK_UN)
-
-
-@contextmanager
-def _app_resume_lock(row):
-    """Share the SID lock with shell resumes, after taking the worktree lock."""
-    root = os.path.join(_cache_root(), "launch-sids")
-    key = hashlib.sha256(row["sid"].encode()).hexdigest()
-    try:
-        os.makedirs(root, mode=0o700, exist_ok=True)
-        with open(os.path.join(root, key + ".lock"), "a") as handle:
-            fcntl.lockf(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            try:
-                yield
-            finally:
-                fcntl.lockf(handle, fcntl.LOCK_UN)
-    except OSError as exc:
-        raise ValueError(f"could not lock the saved conversation for desktop resume: {exc}") from exc
-
-
-def _app_resume_check(row, repo, slot):
-    result = _run(["zsh", "-lic", ZSH_PRELUDE + shlex.join([
-        "_t_resume_app_check", repo, slot, row["sid"], row["cwd"]])], timeout=60)
-    fields = result.stdout.strip().split("\t")
-    if (result.returncode or len(fields) != 2 or fields[0] not in ("cli", "saved")
-            or not re.fullmatch(r"[A-Za-z0-9_.-]+-[0-9]+", fields[-1])):
-        raise ValueError(result.stderr.strip() or "saved conversation ownership could not be verified")
-    return fields
-
-
-def _app_assert_released(row, bundle, *, retry=None):
-    helper = os.path.join(_t_source_root(), "libexec", "t_app_handoff.py")
-    try:
-        # A slow earlier launch may already own the conversation. Only the
-        # exact, independently verified CLI in this slot can complete that retry.
-        owner = zsh_capture(shlex.join(["_t_app_pull_owner", "dev-" + row["slot"],
-                                       row["cwd"], row["sid"], row["codex_home"]])).strip()
-        options = {key: row[key] for key in ("codex_home", "rollout", "archived")}
-        unknown = set()
-        options["unknown"] = unknown
-        options["cli_pid"] = int(owner) if owner.isascii() and owner.isdecimal() else None
-        if retry is not None:
-            options["retry"] = retry
-        runpy.run_path(helper)["assert_released"](bundle, row["sid"], row["cwd"], _run, **options)
-        _app_unknown_warning(unknown)
-    except OSError as e:
-        raise ValueError(f"could not check desktop ownership: {e}") from e
-
-
-def _app_unknown_warning(unknown):
-    if unknown:
-        print(f"Note: {len(unknown)} other held Codex writer lock(s) have no worktree "
-              "mapping; this handoff checked the selected thread and known "
-              "worktree owners.", file=sys.stderr)
-
-
-def _app_pull_cli(row):
-    parts = ["_t_app_pull_slot", "dev-" + row["slot"], row["cwd"], row["sid"],
-             row["expected_sid"], row["codex_home"]]
-    return _run(["zsh", "-lic", ZSH_PRELUDE + shlex.join(parts)], timeout=30)
-
-
-def _app_restore_archived(row):
-    helper = os.path.join(_t_source_root(), "libexec", "t_app_handoff.py")
-    try:
-        runpy.run_path(helper)["unarchive_thread"](
-            row["sid"], row["cwd"], codex_home=row["codex_home"], rollout=row["rollout"])
-    except OSError as e:
-        raise ValueError(f"could not restore the archived conversation: {e}") from e
-
-
-def _app_pull(cfg, repo, slot, *, thread=None, dry_run=False, retry=None):
-    """Return the verified CLI owner after the shared desktop handoff checks."""
-    row = _app_pull_select(cfg, _parse_rows(zsh_capture("_dev_session_rows")),
-                           repo, slot, os.getcwd(), thread)
-    if not os.path.isdir(row["cwd"]):
-        raise ValueError(f"the session's worktree is missing: {row['cwd']}")
-    print(f"{row['slot']} → Codex CLI · thread {row['sid']}")
-    if dry_run:
-        print("Would verify this conversation is released, restore it if archived, resume it in tmux, "
-              "and release its desktop reservation; the worktree and dev server stay in place.")
-        return row
-    if sys.platform != "darwin":
-        raise ValueError("desktop handoff requires macOS; run t open <repo> <slot> --cli on the Mac with the desktop session")
-    with _app_handoff_lock(row):
-        _app_assert_released(row, _app_bundle(), retry=retry)
-        if row["archived"]:
-            _app_restore_archived(row)
-        _trust_auto([row["cwd"]])
-        result = _app_pull_cli(row)
-        if result.returncode:
-            raise ValueError(result.stderr.strip() or "could not resume the CLI; desktop reservation retained")
-    return row
-
-
-def cmd_app_pull(cfg, args, repo, slot):
-    if args.url or args.no_preview or args.plan or args.no_plan or args.reuse_window:
-        raise ValueError("preview, plan, and window options apply only to t app push")
-    row = _app_pull(cfg, repo, slot, thread=args.thread, dry_run=args.dry_run)
-    if args.dry_run:
-        return 0
-    repo, _, slot = row["slot"].rpartition("-")
-    print(f"Resumed the same conversation in tmux. Attach with: t open {repo} {slot} --cli")
-    return 0
-
-
-def cmd_app_open_cli(cfg, repo, slot):
-    """Private shell bridge: stdout is only the exact session to attach."""
-    retry = "Retry: " + shlex.join(["t", "open", repo, slot, "--cli"])
-    try:
-        with redirect_stdout(sys.stderr):
-            row = _app_pull(cfg, repo, slot, retry=retry)
-        print("dev-" + row["slot"])
-        return 0
-    except ValueError as e:
-        print(f"t open: {e}", file=sys.stderr)
-        return 1
-
-
-def _app_close(cfg, repo, slot):
-    """Close a released desktop slot while preserving its saved conversation."""
-    row = _slot_select(cfg, _parse_rows(zsh_capture("_dev_session_rows")),
-                       repo, slot, os.getcwd(), "kill")
-    if row["agent"] != "codex":
-        raise ValueError(f"{row['slot']} runs {row['agent']}; it is not a Codex desktop slot")
-    helper = runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_app_handoff.py"))
-    if not helper["_safe_archive_hint"](row["cwd"], _run):
-        raise ValueError(f"{row['slot']} is not a verified t-owned Codex desktop worktree")
-    repo, _, slot = row["slot"].rpartition("-")
-    retry = "Retry: " + shlex.join(["t", "kill", repo, slot])
-    with _app_handoff_lock(row):
-        try:
-            selected = _app_saved_thread(row)
-        except ValueError as exc:
-            if row["sid"] != "-" or "no saved Codex conversation" not in str(exc):
-                raise
-            db = zsh_capture("_codex_db").strip()
-            if not os.path.isabs(db) or os.path.basename(db) != "state_5.sqlite":
-                raise ValueError("could not locate the Codex conversation index for "
-                                 "this empty desktop workspace") from exc
-            selected = dict(row, sid="-", codex_home=os.path.dirname(db),
-                            rollout="-", archived=False)
-        if selected["sid"] == "-":
-            helper["assert_workspace_released"](
-                selected["codex_home"], selected["cwd"], retry=retry)
-        else:
-            try:
-                helper["assert_released"](
-                    _app_bundle(), selected["sid"], selected["cwd"], _run,
-                    codex_home=selected["codex_home"], rollout=selected["rollout"],
-                    archived=selected["archived"], retry=retry, for_close=True)
-            except ValueError as exc:
-                message = str(exc)
-                if "writer lock is held" in message or "no verifiable writer lock contract" in message:
-                    if selected["archived"]:
-                        raise ValueError("Codex is still releasing this archived conversation. "
-                                         + retry) from exc
-                    raise ValueError("Stop or finish the turn in this Codex conversation, "
-                                     "Archive it (Cmd-Shift-A), then retry; the app can stay open. "
-                                     + retry) from exc
-                if "another Codex conversation in this worktree" in message:
-                    raise ValueError("Another Codex conversation in this worktree is still loaded. "
-                                     "Stop or finish its turn and Archive it, then retry. "
-                                     + retry) from exc
-                raise
-        # Closing a reservation starts no replacement writer. A running app or
-        # an unloaded, unarchived saved tab alone must not block it.
-        parts = ["_t_app_close_slot", "dev-" + row["slot"], row["cwd"],
-                 selected["sid"], selected["codex_home"], selected["rollout"],
-                 "1" if selected["archived"] else "0"]
-        result = _run(["zsh", "-lic", ZSH_PRELUDE + shlex.join(parts)], timeout=30)
-        if result.returncode:
-            raise ValueError(result.stderr.strip() or "could not close the desktop slot; "
-                             "its reservation remains intact")
-    print(f"Closed {row['slot']}; its Codex conversation and worktree are preserved.")
-    return row
-
-
-def cmd_app_close(cfg, repo, slot):
-    """Private shell bridge for desktop slots routed from `t kill`."""
-    try:
-        _app_close(cfg, repo, slot)
-        return 0
-    except ValueError as exc:
-        print(f"t kill: {exc}", file=sys.stderr)
-        return 1
 
 
 def cmd_restart(cfg, args):
@@ -10040,512 +9670,6 @@ def cmd_restart(cfg, args):
         return result.returncode
     except ValueError as e:
         print(f"t restart: {e}", file=sys.stderr)
-        return 1
-
-
-def _app_link(sid, url=None, tab_id=None):
-    """Installed desktop app's threads deep link (verified on 26.924.20706).
-
-    browserUrl opens a browser tab alongside the EXISTING thread. codex app PATH
-    only selects a workspace. No prompt is sent and no new thread is created.
-    Stable browserTabId values keep the web page and plan in separate tabs.
-    The deep-link contract is app-version dependent, not a documented CLI flag.
-    """
-    if url is not None:
-        try:
-            parsed = urlsplit(url)
-            valid = (url == url.strip() and not any(c.isspace() for c in url)
-                     and parsed.scheme in ("http", "https") and parsed.hostname
-                     and parsed.username is None and parsed.password is None)
-            parsed.port  # rejects malformed/out-of-range ports too
-        except ValueError:
-            valid = False
-        if not valid:
-            raise ValueError("--url must be an http:// or https:// URL without credentials")
-    query = {"browserUrl": url, "browserTabId": tab_id or "t-preview-" + sid} if url else {}
-    return "codex://threads/" + sid + ("?" + urlencode(query) if query else "")
-
-
-def _app_bundle():
-    """Find the installed app before interrupting a CLI; the app was renamed."""
-    candidates = [os.path.join(root, name + ".app")
-                  for root in ("/Applications", os.path.join(HOME, "Applications"))
-                  for name in ("ChatGPT", "Codex")]
-    for bundle in candidates:
-        try:
-            with open(os.path.join(bundle, "Contents", "Info.plist"), "rb") as f:
-                if plistlib.load(f).get("CFBundleIdentifier") == "com.openai.codex":
-                    return bundle
-        except (OSError, ValueError, plistlib.InvalidFileException):
-            continue
-    return None
-
-
-def _app_reserve_worktree(cwd):
-    """Protect a desktop conversation's worktree after its tmux CLI exits."""
-    if not os.path.isfile(os.path.join(cwd, ".git")):
-        return
-    result = _run(["git", "-C", cwd, "rev-parse", "--absolute-git-dir"], timeout=10)
-    if result.returncode or not result.stdout.strip():
-        raise ValueError(f"could not locate Git metadata for the worktree: {cwd}")
-    marker = os.path.join(result.stdout.strip(), "t-app-slot")
-    try:
-        with open(marker, "w", encoding="utf-8") as f:
-            f.write("codex-app\n")
-    except OSError as e:
-        raise ValueError(f"could not reserve the worktree against automatic cleanup: {e}") from e
-
-
-def _app_preview_path(row):
-    return os.path.join(_cache_root(), "app-previews", row["sid"] + ".json")
-
-
-def _app_preview_url(row):
-    """Reuse this thread's chosen page, including its path, query, and hash.
-
-    A server port tells us the origin, not which page the user is reviewing.
-    --url selects that page explicitly; unrelated transcript URLs are not evidence.
-    A moved thread must choose again so it cannot inherit another slot's server.
-    """
-    try:
-        with open(_app_preview_path(row), encoding="utf-8") as f:
-            saved = json.load(f)
-        if isinstance(saved, dict) and saved.get("cwd") == row["cwd"]:
-            url = saved.get("url")
-            if isinstance(url, str):
-                _app_link(row["sid"], url)  # same validation as an explicit --url
-                return url
-    except (OSError, ValueError):
-        pass
-    return _dev_url(row["slot"], row["cwd"])
-
-
-def _app_remember_preview(row, url):
-    _app_link(row["sid"], url)
-    _index_save(_app_preview_path(row), {"cwd": row["cwd"], "url": url})
-
-
-def _app_plan_path(path):
-    path = os.path.abspath(os.path.expanduser(path))
-    if not path.lower().endswith((".md", ".markdown")) or not os.path.isfile(path):
-        raise ValueError(f"plan must be an existing Markdown file: {path}")
-    try:
-        with open(path, encoding="utf-8") as fh:
-            fh.read()
-    except (OSError, UnicodeError) as e:
-        raise ValueError(f"cannot read plan {path}: {e}") from e
-    return path
-
-
-def _app_plan_cache(row):
-    return os.path.join(_cache_root(), "app-plans", row["sid"] + ".json")
-
-
-def _app_find_plan(row):
-    """Last existing plan mentioned by this conversation, never another slot's mtime.
-
-    Read human/assistant messages only: tool output and system instructions can
-    contain unrelated paths. A --plan choice is a fallback when no plan is named.
-    """
-    transcript = zsh_capture(shlex.join(["_dev_agent_transcript", "codex", row["sid"], row["cwd"]])).strip()
-    pattern = re.compile(r"(?:" + re.escape(HOME) + r"|~)/\.claude/plans/[^\n\"<>]*?\.md\b")
-    found = None
-    try:
-        with open(transcript, encoding="utf-8") as fh:
-            for line in fh:
-                try:
-                    rec = json.loads(line)
-                except ValueError:
-                    continue
-                if not isinstance(rec, dict) or rec.get("type") != "response_item":
-                    continue
-                msg = rec.get("payload")
-                if not isinstance(msg, dict) or msg.get("type") != "message" or msg.get("role") not in ("user", "assistant"):
-                    continue
-                content = msg.get("content")
-                if not isinstance(content, list):
-                    continue
-                for block in content:
-                    if not isinstance(block, dict) or not isinstance(block.get("text"), str):
-                        continue
-                    for path in pattern.findall(block["text"]):
-                        try:
-                            found = _app_plan_path(path)
-                        except ValueError:
-                            pass
-    except (OSError, UnicodeError):
-        pass
-    if found:
-        return found
-    try:
-        with open(_app_plan_cache(row), encoding="utf-8") as fh:
-            saved = json.load(fh)
-        if isinstance(saved, dict) and saved.get("cwd") == row["cwd"] and isinstance(saved.get("path"), str):
-            return _app_plan_path(saved["path"])
-    except (OSError, ValueError):
-        pass
-    return None
-
-
-def _app_plan_html(path):
-    """Render Markdown for annotation, with embedded HTML escaped."""
-    with open(path, encoding="utf-8") as fh:
-        source = fh.read()
-    helper = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))),
-                          "libexec", "t_markdown.py")
-    content = runpy.run_path(helper)["render"](source)
-    title = html.escape(os.path.basename(path))
-    return ("<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width'>"
-            f"<title>{title}</title><style>"
-            "body{color:#e9e5db;background:#202124;font:16px/1.65 system-ui;margin:0}"
-            "main{max-width:960px;margin:auto;padding:32px}header{border-bottom:1px solid #555;padding-bottom:20px}"
-            "small{color:#b8b5ad;overflow-wrap:anywhere}article{overflow-wrap:anywhere}"
-            "h1,h2,h3,h4,h5,h6{line-height:1.25;color:#f0c778;margin:1.6em 0 .65em}"
-            "p,ul,ol,blockquote,pre,table{margin:0 0 1.15em}li{margin:.3em 0}"
-            "li>ul,li>ol{margin:.3em 0 .5em}a{color:#9bc5ff;text-underline-offset:3px}"
-            "code{font-family:ui-monospace,SFMono-Regular,monospace;font-size:.9em;background:#303134;"
-            "padding:.15em .35em;border-radius:4px}pre{overflow:auto;background:#151617;"
-            "padding:18px;border:1px solid #3d3f43;border-radius:8px}"
-            "pre code{background:none;padding:0;white-space:pre}"
-            "blockquote{border-left:3px solid #f0c778;padding:.2em 1em;color:#cfccc4}"
-            "blockquote>:last-child{margin-bottom:0}table{display:block;max-width:100%;"
-            "overflow:auto;border-collapse:collapse}th,td{padding:10px 14px;"
-            "border:1px solid #4b4d50;text-align:left;vertical-align:top}th{background:#2b2d30}"
-            "tr:nth-child(even){background:#252629}.task-list-item{list-style:none}"
-            ".task-list-item input{margin-right:.6em;accent-color:#f0c778}"
-            "hr{border:0;border-top:1px solid #4b4d50;margin:2em 0}img{max-width:100%}"
-            "@media(max-width:600px){main{padding:20px}body{font-size:15px}}"
-            "</style><main><header>"
-            f"<strong>{title}</strong><br><small>{html.escape(path)}</small>"
-            "<p>Use Annotation mode to leave comments. Refresh to load the latest saved plan.</p>"
-            "</header><article>" + content + "</article></main>").encode("utf-8")
-
-
-def _app_plan_server(path, token, port=0):
-    """Only one file, loopback only, unguessable URL; no directory/file serving."""
-    class LoopbackServer(HTTPServer):
-        def server_bind(self):
-            # HTTPServer.server_bind resolves 127.0.0.1 through getfqdn before
-            # publishing the ready URL. Reverse DNS can stall on managed Macs.
-            TCPServer.server_bind(self)
-            self.server_name = "127.0.0.1"
-            self.server_port = self.server_address[1]
-
-    class Handler(BaseHTTPRequestHandler):
-        def do_GET(self):
-            if self.path != "/" + token + "/" or self.headers.get("Host") != f"127.0.0.1:{self.server.server_port}":
-                self.send_error(404)
-                return
-            try:
-                body = _app_plan_html(path)
-            except (OSError, UnicodeError):
-                self.send_error(404, "Plan is no longer readable")
-                return
-            self.server.last_access = time.monotonic()
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Content-Length", str(len(body)))
-            self.send_header("Cache-Control", "no-store")
-            self.send_header("X-T-Plan", hashlib.sha256(path.encode()).hexdigest())
-            self.send_header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'")
-            self.end_headers()
-            if self.command != "HEAD":
-                self.wfile.write(body)
-
-        do_HEAD = do_GET
-
-        def log_message(self, *args):
-            pass
-
-    server = LoopbackServer(("127.0.0.1", port), Handler)
-    server.timeout = 1
-    server.last_access = time.monotonic()
-    return server
-
-
-def _app_plan_serve(path, token=None, port=0):
-    token = token or secrets.token_hex(24)
-    with _app_plan_server(path, token, port) as server:
-        print(json.dumps({"url": f"http://127.0.0.1:{server.server_port}/{token}/"}), flush=True)
-        sys.stdout.close()
-        # Exit after an hour without a page request; a later t app restarts it.
-        while time.monotonic() - server.last_access < 3600:
-            server.handle_request()
-
-
-@_spinner('Starting plan preview')
-def _app_plan_start(path):
-    key = hashlib.sha256(path.encode()).hexdigest()
-    cache = os.path.join(_cache_root(), "app-plan-servers", key + ".json")
-    try:
-        with open(cache, encoding="utf-8") as fh:
-            saved = json.load(fh)
-        url = saved.get("url") if isinstance(saved, dict) else None
-        if isinstance(url, str) and re.fullmatch(r"http://127\.0\.0\.1:\d+/[a-f0-9]{48}/", url):
-            with urlopen(Request(url, method="HEAD"), timeout=1) as response:
-                if response.headers.get("X-T-Plan") == key:
-                    return url
-    except (OSError, ValueError):
-        pass
-    process = subprocess.Popen([sys.executable, os.path.realpath(__file__), "_app-plan-server", path],
-        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, start_new_session=True)
-    try:
-        if not select.select([process.stdout], [], [], 5)[0]:
-            raise ValueError("plan preview did not start")
-        saved = json.loads(process.stdout.readline())
-        url = saved["url"]
-    except (OSError, ValueError, KeyError, TypeError) as e:
-        process.terminate()
-        process.wait(timeout=5)
-        raise ValueError(f"could not start plan preview: {e}") from e
-    finally:
-        process.stdout.close()
-    _index_save(cache, saved)
-    return url
-
-
-def _app_stop_cli(row):
-    """Revalidate the owner, stop only its agent, and wait before opening the app.
-
-    Keep the tmux slot: it reserves the worktree while the app uses it. In
-    particular do NOT use t kill, which also stops the preview's dev server.
-    Refuse when invoked from the very agent being moved (it would kill this tool).
-    """
-    session, sid, cwd = (shlex.quote(s) for s in ("dev-" + row["slot"], row["sid"], row["cwd"]))
-    return _run(["zsh", "-lic", ZSH_PRELUDE + f'''
-session={session}; expected_sid={sid}; expected_cwd={cwd}
-tmux has-session -t "=$session" 2>/dev/null || exit 1
-# display-message takes a pane target; ':' selects the exact session's active pane.
-actual_cwd=$(tmux display-message -p -t "=$session:" '#{{session_path}}')
-[[ $actual_cwd == $expected_cwd && $(_dev_agent_of_session "$session") == codex &&
-   $(_dev_session_sid "$session" "$actual_cwd") == $expected_sid ]] || {{
-  print -u2 -- 'The slot changed while preparing the handoff; run t app again.'; exit 1
-}}
-cpid=$(_dev_session_claude_pid "$session")
-[[ -n $cpid ]] || exit 0
-up=$PPID
-while [[ -n $up && $up != 0 && $up != 1 ]]; do
-  [[ $up == $cpid ]] && {{
-    print -u2 -- 'Run t app from a separate terminal, outside the session being moved.'; exit 1
-  }}
-  up=$(ps -o ppid= -p "$up" 2>/dev/null); up=${{up//[[:space:]]/}}
-done
-# Preserve a recovered identity after the CLI (and its live title) disappears.
-# This is deliberately after revalidation and the self-handoff guard.
-tmux set-environment -t "=$session" CLAUDE_RESUME_ID "$expected_sid" || exit 1
-tmux set-environment -t "=$session" DEV_AGENT codex || exit 1
-_dev_history_record "$expected_sid" codex "$expected_cwd" handoff
-# Some slots exec Codex as the pane process, with no shell to return to. Keep
-# that pane after exit too, or the session and its conversation stamp disappear.
-tmux set-option -p -t "=$session:" remain-on-exit on || exit 1
-kill -TERM "$cpid" || exit 1
-for attempt in {{1..100}}; do
-  kill -0 "$cpid" 2>/dev/null || exit 0
-  # An exited child can remain visible until tmux reaps it. Never treat an
-  # unreadable or live process state as proof of exit.
-  if pstate=$(ps -o stat= -p "$cpid" 2>/dev/null) && [[ $pstate == *Z* ]]; then
-    exit 0
-  fi
-  sleep 0.05
-done
-print -u2 -- 'Codex CLI has not exited; the app was not opened. Wait and run t app again.'
-exit 1
-'''], timeout=15)
-
-
-def _app_new_window(bundle):
-    helper = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))),
-                          "libexec", "t_app_window.py")
-    try:
-        return runpy.run_path(helper)["new_window"](bundle, _run)
-    except OSError as e:
-        raise ValueError(f"could not load the native window helper: {e}") from e
-
-
-def _app_workspace_link(cwd):
-    """Explicit mode + project route verified in desktop 26.928.20755's parser.
-
-    A workspace-only `codex app PATH` request leaves the mode unspecified in
-    the combined ChatGPT/Codex app. New Window can therefore remain plain chat.
-    Like _app_link, this is an app-version-dependent deep-link contract.
-    """
-    return "codex://threads/new?" + urlencode({"mode": "codex", "path": os.path.abspath(cwd)})
-
-
-def _app_workspace_thread(cwd):
-    """Resolve a reserved workspace's only saved conversation, without guessing."""
-    # The login shell may select a different CODEX_HOME from this Python
-    # process. Use the same store resolver as desktop pull and session rows.
-    db = zsh_capture("_codex_db").strip()
-    if not os.path.isabs(db) or os.path.basename(db) != "state_5.sqlite":
-        raise ValueError("could not locate the Codex conversation index for this workspace")
-    if not os.path.exists(db):
-        return None
-    try:
-        with closing(sqlite3.connect("file:" + quote(os.path.abspath(db), safe="/") + "?mode=ro",
-                                     uri=True, timeout=.5)) as connection:
-            rows = connection.execute(
-                "select id, rollout_path from threads where cwd=? and archived=0 "
-                "and instr(source, '\"subagent\"')=0", (cwd,)).fetchall()
-    except sqlite3.Error as e:
-        raise ValueError(f"could not read saved Codex conversations; retry before reopening: {e}") from e
-    if not rows:
-        return None
-    if len(rows) != 1:
-        raise ValueError("several saved conversations belong to this worktree; "
-                         "select the intended conversation in the desktop app")
-    sid, rollout = rows[0]
-    if (not isinstance(sid, str) or not re.fullmatch(
-            r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", sid)
-            or not isinstance(rollout, str) or not os.path.isfile(rollout)):
-        raise ValueError("the saved Codex conversation is unavailable; no new conversation was opened")
-    return sid
-
-
-def cmd_app_workspace(cwd, reopen=False):
-    """Reopen a saved conversation directly, or create a new workspace window."""
-    try:
-        if sys.platform != "darwin":
-            raise ValueError("desktop launch requires macOS")
-        if not os.path.exists(os.path.join(cwd, ".git")):
-            raise ValueError(f"the workspace is missing: {cwd}")
-        bundle = _app_bundle()
-        if not bundle:
-            raise ValueError("install the Codex desktop app first")
-        sid = _app_workspace_thread(cwd) if reopen else None
-        link = _app_link(sid) if sid else _app_workspace_link(cwd)
-        _trust_auto([cwd])
-        # Existing conversations have an exact native route. Reopening one
-        # should not depend on Accessibility or create an unrelated new window.
-        if not sid:
-            window = _app_new_window(bundle)
-            window.focus()
-        result = _run(["open", "-a", bundle, link], timeout=30)
-        if result.returncode:
-            detail = ": " + result.stderr.strip() if result.stderr.strip() else ""
-            raise ValueError("macOS could not confirm the app open request" + detail)
-        target = f"Saved conversation {sid}" if sid else "Codex-mode workspace"
-        prefix = "" if sid else "New app window created. "
-        print(f"{prefix}{target} request sent to macOS; "
-              "app delivery is not confirmed. Workspace: " + cwd)
-        return 0
-    except ValueError as e:
-        print(f"t open --app: {e}", file=sys.stderr)
-        return 1
-
-
-def cmd_app(cfg, args, *, saved=None):
-    try:
-        direction, repo, slot = _app_target(args)
-        repo = _resolve_repo_selector(cfg.repos, repo) or repo
-        if direction == "pull":
-            return cmd_app_pull(cfg, args, repo, slot)
-        if args.thread:
-            raise ValueError("--thread applies only to t app pull")
-        # Validate explicit URLs before scanning or changing any session.
-        if args.url is not None:
-            _app_link("", args.url)
-        plan = _app_plan_path(args.plan) if args.plan else None
-        if saved is None:
-            row = _app_select(cfg, _parse_rows(zsh_capture("_dev_session_rows")),
-                              repo, slot, os.getcwd())
-        else:
-            sid, cwd = saved
-            if repo not in cfg.repos or cfg.worktree_path(repo, slot) != cwd:
-                raise ValueError("recorded worktree does not match the selected repository and slot")
-            row = dict(host="local", sid=sid, cwd=cwd, slot=f"{repo}-{slot}",
-                       state="saved", context="none", agent="codex", summary="")
-            row["resume_retry"] = ("Retry: " + shlex.join([
-                "t", "session", "resume", repo, slot, "--days", "all", "--app"])
-                + f" and select conversation {sid}. ")
-        if not os.path.isdir(row["cwd"]):
-            raise ValueError(f"the session's worktree is missing: {row['cwd']}")
-        if not args.no_plan and plan is None:
-            plan = _app_find_plan(row)
-        url = None if args.no_preview else args.url or _app_preview_url(row)
-        link = _app_link(row["sid"], url)
-        print(f"{row['slot']} → Codex app · thread {row['sid']}")
-        if url:
-            print(f"Preview: {url} (use Annotation mode in the app to leave comments)")
-        elif not args.no_preview:
-            print("No running preview found; start the slot's dev server and rerun, or pass --url.")
-        if plan:
-            print(f"Plan: {plan} (opens in a separate browser tab for annotation)")
-        if args.dry_run:
-            window = "the existing app window" if args.reuse_window else "a new app window"
-            print(f"Would stop this slot's Codex CLI, keep its worktree/dev server, and open in {window}:")
-            print(link)
-            return 0
-        if sys.platform != "darwin":
-            raise ValueError("desktop handoff currently requires macOS; run t app on your desktop")
-        bundle = _app_bundle()
-        if not bundle:
-            raise ValueError("install the Codex desktop app in /Applications or ~/Applications first")
-        with _app_handoff_lock(row), (_app_resume_lock(row) if saved else nullcontext()):
-            try:
-                row = _app_saved_thread(row)
-            except ValueError as exc:
-                if saved:
-                    raise ValueError(f"{exc}. Desktop resume requires this exact thread in the local "
-                                     "Codex index. Run " + shlex.join([
-                                         "t", "session", "resume", repo, slot, "--days", "all", "--cli"])
-                                     + f" and select {row['sid']} to index it before retrying.") from exc
-                raise
-            if row["archived"]:
-                raise ValueError("this conversation is archived; restore it before opening it in the app")
-            unknown = set()
-            contract = _app_cli_release(row, unknown=unknown)
-            owner = _app_resume_check(row, repo, slot) if saved else None
-            if owner:
-                row["slot"] = owner[1]
-            _trust_auto([row["cwd"]])
-            # A new PROCESS is not a new WINDOW. Invoke the native New Window action
-            # and retain the verified new window before stopping the slot's CLI.
-            window = None if args.reuse_window else _app_new_window(bundle)
-            links = [link]
-            if plan:
-                try:
-                    plan_url = _app_plan_start(plan)
-                except OSError as e:
-                    raise ValueError(f"could not start plan preview: {e}") from e
-                # A second browser URL on the SAME thread keeps the web preview too.
-                # A raw Markdown OS-open would create a new projectless chat.
-                links.append(_app_link(row["sid"], plan_url, "t-plan-" + row["sid"]))
-            _app_reserve_worktree(row["cwd"])
-            if saved and _app_resume_check(row, repo, slot) != owner:
-                raise ValueError("selected owner changed while preparing desktop resume; retry")
-            if owner is None or owner[0] == "cli":
-                stopped = _app_stop_cli(row)
-                if stopped.returncode:
-                    raise ValueError(stopped.stderr.strip() or "could not stop the CLI; the app was not opened")
-            try:
-                _app_cli_release(row, contract, unknown=unknown)
-            except ValueError as exc:
-                raise ValueError(f"{exc}. The app conversation was not opened; "
-                                 "its history and worktree remain reserved.") from exc
-            try:
-                if window:
-                    window.focus()
-                result = _run(["open", "-a", bundle, *links], timeout=15)
-                if result.returncode:
-                    raise ValueError("could not open the app: " + result.stderr.strip())
-            except ValueError as e:
-                recovery = shlex.join(["codex", "resume", row["sid"]])
-                raise ValueError(f"{e}. To resume in a terminal: cd {shlex.quote(row['cwd'])} && {recovery}") from e
-            if url:
-                _app_remember_preview(row, url)
-            if plan:
-                _index_save(_app_plan_cache(row), {"cwd": row["cwd"], "path": plan})
-            if saved:
-                _run(["zsh", "-lic", ZSH_PRELUDE + shlex.join([
-                    "_dev_history_record", row["sid"], "codex", row["cwd"], "resume", "desktop"])], timeout=30)
-        _app_unknown_warning(unknown)
-        print(("New app window created. " if window else "") +
-              "Open request sent to macOS; app delivery is not confirmed. "
-              "The worktree slot remains reserved.")
-        return 0
-    except ValueError as e:
-        print(f"{'t resume --app' if saved else 't app'}: {e}", file=sys.stderr)
         return 1
 
 
@@ -11658,7 +10782,6 @@ def _mcp_allow_write(settings):
     return True
 
 
-
 def _mcp_uninstall():
     helper = runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_mcp_setup.py"))
     return helper["uninstall"](os.path.join(HOME, "bin", "t"), HOME)
@@ -11836,7 +10959,7 @@ COMMAND_GROUPS = {
         "restart": ("restart",), "push": ("push",), "pop": ("pop",),
         "resume": ("resume",), "history": ("history",), "cd": ("cd",), "move": ("beam",),
         "read": ("read",), "view-plan": ("plan",), "paste": ("paste",),
-        "search": ("find",), "open-app": ("app",),
+        "search": ("find",),
         "goal": ("__session-goal",),
     },
     "repo": {
@@ -12303,7 +11426,6 @@ def _command_description(group, action):
                     "move": "Move a session between machines", "read": "Read slot output",
                     "view-plan": "Show a Claude session plan", "paste": "Paste a recent file path",
                     "search": "Search and resume a saved conversation",
-                    "open-app": "Move a Codex slot between CLI and desktop",
                     "goal": "Send a new objective to a live agent"},
         "repo": {"list": "List registered repositories", "cd": "Enter a checkout",
                  "locate": "Print a checkout path", "create": "Create a GitHub repository",
@@ -12565,14 +11687,13 @@ def build_parser():
   Open an existing session there; --new starts a fresh session there."""),
         ('move', 'Move a current CLI conversation between hosts, including this machine. Infer the current repository; '
             'outside one, browse all. Omitted targets use a picker; scripts require explicit targets and --detach. '
-            'Codex defaults to native desktop Hand off; Claude uses t. Choose the mechanism in t config. ',
+            'Claude and Codex use guarded t transfers. ',
          """DETAILS
 
-  Claude defaults to t transfer; Codex defaults to native desktop Hand off.
-  Native prints app instructions without stopping the source or copying files.
-  Choose the mechanism in t config → agent settings → Cross-host handoff.
+  Claude and Codex use guarded t transfers. Legacy native-handoff settings
+  are ignored.
 
-  With t transfer, move a current conversation directly to another host.
+  Use t to move a current conversation directly to another host.
 
   The host picker selects the destination and names the current source host.
   Choose local (this machine), or pass --host local, to receive a remote session here.
@@ -12680,11 +11801,6 @@ SELECTION
   Space/Tab check; Enter open; k kill. Ctrl-F filter settings.
   Ctrl-A filters off; Ctrl-L filters on (restore saved choices).
 
-DESKTOP TO CLI
-  %(prog)s api 2 --cli
-  Follow its release instructions if the desktop conversation is still loaded.
-  It resumes the same conversation and attaches automatically.
-  Live attach retains its owner; guarded resume applies current defaults.
 """,
         help_details="""SESSION TARGETS
   A lone slot number targets the current repo: t open 3.
@@ -12693,8 +11809,8 @@ DESKTOP TO CLI
   in place; a foreground Claude session moves into this terminal.
   Use `t open <repo> fg` to select that repo's foreground sessions.
   Bare t open lists sessions across all local repos, even from a worktree.
-  t open <repo> filters. Attached CLI and loaded desktop rows are hidden;
-  Ctrl-F opens Filters: State, agent, progress, CLI/desktop, model, host,
+  t open <repo> filters. Attached CLI rows are hidden;
+  Ctrl-F opens Filters: State, agent, progress, interface, model, host,
   repo, session/slot, context and task. Choose a value, then Apply filters.
   All clears one column; Reset filters to defaults stages unattached and clears
   column choices. Esc in a value picker keeps it; Esc in Filters discards changes.
@@ -12705,21 +11821,20 @@ DESKTOP TO CLI
   Unattached and unmarked do not mean finished. The gutter ✓ marks selection.
   --attached starts with all rows.
   Explicit slots still open directly. Compact resume-style rows retain agent,
-  UI, status, model, session and task details, including idle/desktop rows.
+  UI, status, model, session and task details, including idle rows.
   Column headers stay visible; narrow rows prioritize session and task.
   Space/Tab marks ✓ independently of focus; Enter opens marked rows.
   Press k to kill only the focused row, ignoring marks, with close safety checks.
   Killing removes that row in place; the picker, search, filters and other marks stay.
   Failed or canceled closes keep the row. No session inventory refresh is performed.
   Use --new to start a new session. The first CLI opens here, others use tabs;
-  desktop rows open in the app. Remote pickers add HOST. --fg opens one.
+  Remote pickers add HOST. --fg opens one.
   Extra tabs stay in the originating window. If Terminal cannot safely create
   a tab, it opens a new window. Commands never target an existing tab.
 
 OPENING DEFAULTS
-  The configured opening mode chooses CLI or app; --cli and --app override
-  it. The CLI uses an isolated worktree and tmux; --fg runs inline.
-  --app opens an isolated worktree in the macOS Codex desktop app.
+  Sessions use an isolated worktree and tmux; --fg runs inline.
+  Legacy desktop opening defaults are ignored.
   --codex and --claude select the agent for a fresh slot. Otherwise,
   DEV_AGENT[repo] overrides DEV_AGENT_DEFAULT (fallback: claude).
   Guarded Codex resume applies the latest applicable explicit main model/effort
@@ -12727,16 +11842,6 @@ OPENING DEFAULTS
   apply at CLI launch/resume; speed stays unchanged. Live attach retains its owner;
   isolated sessions apply changes at
   guarded resume/restart.
-
-DESKTOP TO CLI
-  On the Mac running the desktop session, run `t open <repo> <slot> --cli`.
-  If Codex still has that conversation loaded, follow the command's
-  release instructions and retry. Other desktop chats can stay open.
-  It verifies release, restores the exact saved conversation in tmux,
-  and attaches. A failed handoff keeps the desktop reservation intact.
-  Without --cli, opening a desktop slot continues in the app.
-  A locally reserved desktop slot can reopen when another host is offline;
-  reachable remote owners and local terminal writers still block reopening.
 
 REMOTE SESSIONS
   A slot live only on another host attaches there automatically.
@@ -12754,8 +11859,7 @@ REMOTE SESSIONS
     sp.add_argument("--new", action="store_true", help="start a fresh session")
     sp.add_argument("--attached", action="store_true", help="include attached/loaded sessions in the picker")
     sp.add_argument("--fg", action="store_true", help="run in this terminal, without tmux")
-    sp.add_argument("--cli", action="store_true", help="open in the CLI; resume desktop conversations")
-    sp.add_argument("--app", action="store_true", help="open in the Codex desktop app (macOS)")
+    sp.add_argument("--cli", action="store_true", help="open in the CLI")
     ag = sp.add_argument_group("agent (fresh slots)").add_mutually_exclusive_group()
     ag.add_argument("--codex", action="store_true", help="use Codex")
     ag.add_argument("--claude", action="store_true", help="use Claude Code")
@@ -12763,78 +11867,6 @@ REMOTE SESSIONS
     location.add_argument("-l", "--local", "--here", dest="local", action="store_true", help="use this machine only")
     location.add_argument("-r", "--remote", action="store_true", help="attach remotely; --new starts a session")
     location.add_argument("--host", help="open or attach on this host")
-
-    sp = sub.add_parser("app", help="push a local Codex conversation into the app or pull it back to CLI",
-        description='Move the same local Codex conversation between desktop and CLI on macOS. Usually use t session '
-            'open REPO SLOT --app or --cli. Infer the current repository and its unambiguous slot. Desktop '
-            'release and writer checks protect both owners; remote slots must move here first. Accessibility '
-            'access is required.',
-        help_details="""DETAILS
-
-  Move the same local Codex conversation between desktop and CLI.
-
-  Usually, use `t open <repo> <slot> --app` or `--cli`; open handles the handoff.
-
-  To return to the CLI, run `t open <repo> <slot> --cli` on the Mac running the
-  desktop conversation, then follow its release instructions if needed.
-
-PUSH TO DESKTOP
-  Before stopping the slot's CLI, `t app [push] [repo] [slot]` checks for a
-  different loaded conversation in the same worktree.
-
-  A refusal gives release instructions and an exact retry command, preserving both
-  owners.
-
-  After preflight succeeds, it stops the selected CLI, waits for its writer to
-  release (up to 75 seconds), and opens the SAME conversation in the Codex desktop
-  app on macOS, with its running web preview and referenced Markdown plan in
-  separate built-in browser tabs.
-
-  Use Annotation mode there to leave comments.
-
-  The tmux slot stays reserved, and the worktree and dev server keep running.
-
-  A lone number means the cwd repo; bare `t session open-app` uses the cwd
-  worktree's slot, or the repo's only slot.
-
-  Several slots require an explicit number.
-
-  Claude conversations cannot be converted.
-
-  Remote slots must be brought here first with `t session move … --here`.
-
-WINDOWS AND ACCESSIBILITY
-  Creates a new window automatically using the app's New Window menu; macOS
-  Accessibility access for your terminal is required. --reuse-window uses the
-  existing window instead.
-
-  The browser deep link requires a recent desktop app.
-
-  Run from a separate terminal if the command would stop the agent executing it.
-
-EXPLICIT PUSH AND PULL
-  `t app push [repo] [slot]` is the explicit form of `t app [repo] [slot]`.
-
-  `t app pull [repo] [slot]` resumes without attaching, for scripts or advanced
-  selection.
-
-  Pull resumes the saved conversation in tmux and releases the desktop reservation
-  only after verifying the CLI is live.
-
-  App-created worktrees are supported; choose --thread ID when several chats share
-  one.""")
-    sp.add_argument("repo", nargs="?", metavar="push|pull|repo", help="direction, repository alias, basename or origin name (default: push, cwd repo)")
-    sp.add_argument("slot", nargs="?", metavar="repo|slot", help="repository alias, basename, origin name or local slot number")
-    sp.add_argument("app_slot", nargs="?", metavar="slot", help="local slot number with an explicit direction")
-    sp.add_argument("--thread", metavar="ID", help="saved conversation to pull from this worktree (default: handed-off thread, or its only conversation)")
-    preview = sp.add_mutually_exclusive_group()
-    preview.add_argument("--url", help="preview page to open and remember for this thread (default: remembered URL, then slot's live dev URL)")
-    preview.add_argument("--no-preview", action="store_true", help="skip the web preview (plans still open unless --no-plan)")
-    plan = sp.add_mutually_exclusive_group()
-    plan.add_argument("--plan", metavar="PATH", help="Markdown plan to open (default: last plan referenced in the session, then remembered choice)")
-    plan.add_argument("--no-plan", action="store_true", help="skip opening a plan")
-    sp.add_argument("--reuse-window", action="store_true", help="use the existing app window instead of automatically creating a new one")
-    sp.add_argument("--dry-run", action="store_true", help="show the proposed handoff without stopping or opening anything")
 
     sp = sub.add_parser("ls", help="list dev sessions (attached + active context)",
         description='List live sessions without prompting. Use the current repository by default; name one explicitly '
@@ -12870,36 +11902,22 @@ EXPLICIT PUSH AND PULL
     sp = sub.add_parser("kill", help="tear down a session",
         description='Close sessions while preserving saved conversations and worktrees. With no target, select across '
             'local repositories; Space/Tab marks rows and Enter confirms the selection. An explicit live '
-            'target requires confirmation unless --yes. Desktop writers must release ownership first. Pending '
+            'target requires confirmation unless --yes. Pending '
             'work and attached sessions are initially hidden; use picker filters to show them.',
         help_details="""DETAILS
 
   Tear down a dev session.
 
-  A released Codex desktop slot can be closed without resuming it in the CLI; its
-  conversation and worktree are preserved.
-
-  Saved, unloaded chats and stale missing archives do not block close while the app
-  runs.
-
-  A chat that still holds its writer lock must be stopped and archived in Codex
-  first.
-
-  Other desktop chats can stay open.
-
-  Unassociated backend locks do not block cleanup; known writers in this worktree
-  and unreadable ownership data still do.
-
   Bare `t kill` picks across all local sessions; `t kill <repo>` filters to that
   repo.
 
   Space/Tab marks multiple rows and Enter confirms and closes the selection without
-  further prompts; desktop ownership checks still apply.
+  further prompts; ownership checks still apply.
 
   Initially shows only unattached sessions with clean, merged work; pending or
   uncertain work stays hidden.
 
-  Ctrl-F opens Filters for attached/pending state, agent, CLI/desktop, host
+  Ctrl-F opens Filters for attached/pending state, agent, interface, host
   and repository. Choose values, then Apply filters; Esc discards staged changes.
   Reset filters to defaults stages unattached/clean and clears column choices.
   Ctrl-A turns filtering off; Ctrl-L restores saved choices, keeping your search.
@@ -12940,7 +11958,7 @@ EXPLICIT PUSH AND PULL
 
   Does not submit the saved draft.
 
-  Refuses desktop reservations and commands run inside the agent being restarted.
+  Refuses commands run inside the agent being restarted.
 
   Leaves the slot detached unless already attached; use t session open to attach.
 
@@ -13015,8 +12033,7 @@ EXPLICIT PUSH AND PULL
     sp = sub.add_parser("resume", help="select and resume saved conversations",
         description='Resume saved conversations. A plain slot target opens conversation history. Infer the current repository; '
             'outside one, browse local and remote repositories. Enter selects; Space/Tab marks several. Live selections '
-            'attach to their owner. Repositories are cloned only after selection. Cross-host defaults: Claude uses t; Codex uses native '
-            'desktop Hand off. Choose the mechanism in t config.',
+            'attach to their owner. Repositories are cloned only after selection. Claude and Codex use guarded t transfers.',
 
         epilog="""EXAMPLES
   %(prog)s                   Browse the current repository
@@ -13038,11 +12055,10 @@ EXPLICIT PUSH AND PULL
   last; conversationless stubs skipped), rebuilding a reaped worktree from its
   branch first, then resumes the pick in a fresh dev slot and attaches.
 
-  Cross-host defaults: Claude uses t; Codex uses native desktop Hand off.
-  Native requires the chat and repository project on both Codex hosts; t prints
-  app instructions without starting a transfer. Choose an explicit t override in
-  t config → Codex settings → Cross-host handoff. Local resume is unchanged.
-  With t transfer, verify the prior workspace and carry its latest commits,
+  Claude and Codex use guarded t transfers. Legacy native-handoff settings
+  are ignored.
+
+  Use t to verify the prior workspace and carry its latest commits,
   checkpointing outstanding code first. Unreachable hosts use local code.
 
   Names default to the cwd repo; outside any repo dir a bare `t session resume`
@@ -13083,18 +12099,12 @@ PICKER CONTROLS
   open` hints when tabs are impossible — ssh, unrecognized terminal, no
   Accessibility; --fg takes a single pick only).
 
-LIVE OWNERS AND DESKTOP
+LIVE OWNERS
   LIVE slots are excluded from the initial view but remain available through Ctrl-L
   or Ctrl-A; -l/--live starts with all rows and Ctrl-F restores the inactive view.
 
   Live rows show '● active' / '● on <host>'; picking one attaches to its existing
   owner (locally or on its host) instead of resuming, only after selection.
-  --app selects ONE exact saved Codex
-  conversation for the local macOS app, including histories in a live slot; only
-  that same local owner can be handed off.
-
-  Other owners are refused.
-
   A conversation is live by its ID too: one resumed into ANOTHER slot (or run as a
   foreground session) is shown as a row pointing at that owner — never resumed a
   second time.
@@ -13129,8 +12139,6 @@ REQUIREMENTS AND DISCOVERY
     sp.add_argument("repo", nargs="?", help="repository alias, basename or origin name; defaults to the repo your cwd is in")
     sp.add_argument("slot", nargs="?", help="slot number; a lone slot implies the cwd repo")
     sp.add_argument("-f", "--fg", action="store_true", help="resume inline in this terminal (no tmux slot)")
-    sp.add_argument("--app", action="store_true",
-        help="open one exact Codex conversation in the local macOS app; refuses other owners, agents, multiple picks, --cli, --fg, and --host")
     sp.add_argument("--cli", action="store_true", help="resume in the terminal (the default)")
     sp.add_argument("-a", "--all", action="store_true", help="discover local and remote-only repositories (default outside a repo dir)")
     sp.add_argument("-l", "--live", action="store_true",
@@ -13168,14 +12176,13 @@ REQUIREMENTS AND DISCOVERY
         description='Move current Claude or Codex CLI conversations. Exact targets search local and remote hosts. '
             'Select sessions, then a destination, including local; -r includes remote sources when browsing. '
             'Scripts require an explicit target and --detach. --from receives here; add --host to move '
-            'between remote hosts. Codex defaults to native desktop Hand off; Claude uses t.',
+            'between remote hosts. Claude and Codex use guarded t transfers.',
         help_details="""DETAILS
 
-  Cross-host defaults: Claude uses t; Codex uses native desktop Hand off.
-  Native prints app instructions and starts no transfer. Choose an explicit
-  t override in t config → Codex settings → Cross-host handoff.
+  Claude and Codex use guarded t transfers. Legacy native-handoff settings
+  are ignored.
 
-  With t transfer, move a session between machines (a cross-host push/pop).
+  Use t to move a session between machines (a cross-host push/pop).
 
   Without a slot or --session ID, select one or more current local CLI conversations,
   then choose the destination host (or name --host HOST). Use -r/--remote to include
@@ -13184,7 +12191,8 @@ REQUIREMENTS AND DISCOVERY
   --all widens the scope).
 
   The picker includes attached and detached sessions, not saved history or desktop
-  reservations.
+  reservations. Use t session resume [repo] [slot] to restore saved work when
+  no current conversation is available to move.
 
   Selection also opens inside an agent; --pick forces it for explicit slots.
   Space/Tab marks sessions; Enter accepts marks or the focused row.
@@ -13390,11 +12398,6 @@ EXAMPLES
   offers Refresh or manual entry); register or unregister repos and set their tool,
   branch and worktree overrides; choose the default beam host and worktree defaults.
 
-  Cross-host handoff in each agent submenu shows the effective mechanism:
-  Claude defaults to t; Codex defaults to native desktop Hand off (manual app
-  action, no CLI adapter). Codex may explicitly choose t instead. This affects
-  cross-host resume and moves; same-host resume and attach stay unchanged.
-
   Save changes reviews then writes a managed block in T_LOCAL_RC.
 
   New or changed SSH targets then offer Verify SSH now or Later; native OpenSSH asks
@@ -13542,7 +12545,7 @@ EXAMPLES
   shortcuts and host shorthands go live.
 
   When t's Codex hook is registered, also shows how to approve it in the ChatGPT
-  desktop app (Review hooks → Allow selected) or Codex CLI (/hooks).
+  Codex CLI (/hooks).
 
   Setup does not grant hook approval.""")
     sp.add_argument("dirs", nargs="*", help="directories to scan for git repos (default: ~/config)")
@@ -13782,7 +12785,7 @@ PERIODIC CHECKS
 
   Use --all for every registered repo and its existing session worktrees.
 
-  Set T_AUTO_TRUST=1 to sync trust before terminal/desktop launches and during
+  Set T_AUTO_TRUST=1 to sync trust before terminal launches and during
   setup/new/install.
 
   Cursor desktop and VS Code stores are updated when present (restart the editor
@@ -13890,7 +12893,7 @@ IMPLEMENTED = {
     "checkout": cmd_checkout, "instructions": cmd_instructions,
     "login": cmd_login, "install": cmd_install, "integrate": cmd_integrate,
     "permissions": cmd_permissions, "trust": cmd_trust,
-    "app": cmd_app, "restart": cmd_restart,
+    "restart": cmd_restart,
     "__session-goal": cmd_session_goal,
     "config": cmd_config, "runners": cmd_config,
     "repo": cmd_repo,
@@ -14170,18 +13173,6 @@ def _main(argv):
     if argv and argv[0] == "__recovery":
         helper = os.path.join(_t_source_root(), "libexec", "t_recovery.py")
         os.execv(sys.executable, [sys.executable, helper, *argv[1:]])
-    if (len(argv) == 2 or len(argv) == 3 and argv[2] == "--reopen") and argv[0] == "_app-workspace":
-        return cmd_app_workspace(argv[1], reopen=len(argv) == 3)
-    if len(argv) == 3 and argv[0] == "_app-open-cli":
-        return cmd_app_open_cli(Config(), argv[1], argv[2])
-    if len(argv) == 5 and argv[0] == "_app-resume":
-        args = build_parser().parse_args(["app", "push", argv[1], argv[2], "--reuse-window"])
-        return cmd_app(Config(), args, saved=(argv[3], argv[4]))
-    if len(argv) == 3 and argv[0] == "_app-close":
-        return cmd_app_close(Config(), argv[1], argv[2])
-    if len(argv) == 2 and argv[0] == "_app-plan-server":
-        _app_plan_serve(_app_plan_path(argv[1]))
-        return 0
     parser = build_parser()
     if not argv:
         return _bare_entry()

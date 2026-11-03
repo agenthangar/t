@@ -585,8 +585,9 @@ _t_remote_open_inventory beta unknown; print unknown=$?
 
 
 @pytest.mark.parametrize('route', ['send', 'pull', 'saved'])
-def test_native_default_routes_leave_source_and_destination_untouched(zsh, route):
+def test_native_legacy_routes_reach_guarded_transfer(zsh, route):
     setup = SETUP + r'''
+DEV_HANDOFF[codex]=native
 _dev_self_sid() { :; }
 _codex_thread_lookup() { printf 'codex-id\trollout\t%s\n' "$HOME/code/api"; }
 _dev_codex_rollout_integrity() { print -u2 WRONG_INTEGRITY; return 1; }
@@ -594,32 +595,27 @@ _tbeam_kill_owner() { print -u2 WRONG_STOP; return 1; }
 _dev_worktree_beam_push() { print -u2 WRONG_CHECKPOINT; return 1; }
 _tbeam_sync_transcript() { print -u2 WRONG_SYNC; return 1; }
 _tbeam_pull_transcript() { print -u2 WRONG_SYNC; return 1; }
-ssh() { printf 'codex-id\t%s\tapi-2\tattached\tactive\tTask\tcodex\n' "$HOME/code/api"; }
+ssh() { [[ $* == *_dev_codex_rollout_integrity* ]] && { print -u2 WRONG_INTEGRITY; return 1; }; printf 'codex-id\t%s\tapi-2\tattached\tactive\tTask\tcodex\n' "$HOME/code/api"; }
 '''
     invocation = {'send': 't session move --session codex-id --host mini --detach',
                   'pull': '_dev_pull mini mini api 2',
                   'saved': '_t_resume_on_host mini codex-id "$HOME/code/api" codex detach'}[route]
     result = zsh(setup + invocation + '; print rc=$?')
     text = output(result)
-    assert 'rc=1' in text and 'native desktop app' in text and 'Hand off' in text
-    assert 'no transfer was started' in text and 'WRONG_' not in text
+    assert 'rc=1' in text and 'WRONG_' in text
+    assert 'native desktop app' not in text
 
 
 def test_remote_relay_preserves_initiator_policy_and_checks_peer(zsh):
     result = zsh(HOSTS + r'''
-DEV_HANDOFF[codex]=t
+DEV_HANDOFF[codex]=native
 ssh() { print -r -- "$*"; }
 t session move api 2 --from alpha --host beta --detach
 ''')
     text = output(result)
     assert '_T_HANDOFF_CODEX=t' in text
-    assert '_t_handoff_check' in text and 'update' in text
-
-
-@pytest.mark.parametrize('agent,value,success', [('claude', 't', True), ('codex', 't', True), ('codex', 'native', False), ('claude', 'native', False), ('codex', 'typo', False)])
-def test_handoff_shell_policy_validation(zsh, agent, value, success):
-    result = zsh(f'DEV_HANDOFF[{agent}]={value}; _t_handoff_check {agent} alpha beta')
-    assert (result.returncode == 0) is success
+    assert '_T_HANDOFF_CLAUDE=t' in text
+    assert '_t_handoff_check' not in text
 
 
 @pytest.mark.parametrize('command', ['t session move', 't move'])
@@ -689,7 +685,10 @@ _t_remote_move_rows() { [[ -f $CHANGE_ROWS && $1 == alpha ]] && return 1; _dev_r
 _t_beam() { print WRONG_MOVE; }
 t session move -r; print rc=$?
 ''', _tty=True, **env)
-    assert 'rc=1' in output(result) and 'WRONG_MOVE' not in output(result), output(result)
+    if change == 'native':
+        assert 'rc=0' in output(result) and output(result).count('WRONG_MOVE') == 2
+    else:
+        assert 'rc=1' in output(result) and 'WRONG_MOVE' not in output(result), output(result)
 
 
 def test_move_batch_keeps_snapshot_identity_for_identical_display_rows(zsh, tmp_path):

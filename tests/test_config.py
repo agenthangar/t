@@ -161,23 +161,23 @@ def test_config_clean_ctrl_c_exits_130_without_save_prompt(t_mod, config_cli, mo
 @pytest.mark.parametrize('finish', ['save', 'discard'])
 def test_config_dirty_ctrl_c_uses_existing_unsaved_chooser(t_mod, config_cli, monkeypatch, finish):
     cfg, local = config_cli
-    ui = InterruptMenu(['mode', 'app', KeyboardInterrupt, finish], pages=['enter'])
+    ui = InterruptMenu(['tool', 'codex', KeyboardInterrupt, finish], pages=['enter'])
     monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
     changed = t_mod._config_wizard(cfg)
     assert (changed is not None) == (finish == 'save')
     if changed:
-        assert changed.open_mode_default == 'app'
+        assert changed.agent_default == 'codex'
     assert any('unsaved' in label for label in ui.labels)
     assert ui.restored and local.read_text() == '# keep me\n'
 
 
 def test_config_repeated_ctrl_c_and_interrupted_review_keep_pending_edits(t_mod, config_cli, monkeypatch):
     cfg, local = config_cli
-    ui = InterruptMenu(['mode', 'app', KeyboardInterrupt, KeyboardInterrupt, 'save',
+    ui = InterruptMenu(['tool', 'codex', KeyboardInterrupt, KeyboardInterrupt, 'save',
                         'keep', 'save'], pages=[KeyboardInterrupt, 'enter'])
     monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
     changed = t_mod._config_wizard(cfg)
-    assert changed.open_mode_default == 'app'
+    assert changed.agent_default == 'codex'
     assert sum('unsaved' in label for label in ui.labels) == 3
     assert ui.restored and local.read_text() == '# keep me\n'
 
@@ -186,15 +186,15 @@ def test_config_repeated_ctrl_c_and_interrupted_review_keep_pending_edits(t_mod,
 def test_config_nested_ctrl_c_preserves_prior_selections(t_mod, config_cli, monkeypatch, boundary):
     cfg, local = config_cli
     if boundary == 'input':
-        ui = InterruptMenu(['mode', 'app', 'worktrees', 'root', 'save'], inputs=[KeyboardInterrupt], pages=['enter'])
+        ui = InterruptMenu(['tool', 'codex', 'worktrees', 'root', 'save'], inputs=[KeyboardInterrupt], pages=['enter'])
     else:
-        ui = InterruptMenu(['mode', 'app', 'codex', 'model', 'save'], pages=['enter'])
+        ui = InterruptMenu(['tool', 'codex', 'codex', 'model', 'save'], pages=['enter'])
         def interrupted_catalogue(agent):
             raise KeyboardInterrupt
         monkeypatch.setattr(t_mod, '_config_live_models', interrupted_catalogue)
     monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
     changed = t_mod._config_wizard(cfg)
-    assert changed.open_mode_default == 'app'
+    assert changed.agent_default == 'codex'
     assert any('unsaved' in label for label in ui.labels)
     assert ui.restored and local.read_text() == '# keep me\n'
 
@@ -427,7 +427,7 @@ def test_config_main_menu_shows_repo_aliases(t_mod, config_cli, monkeypatch):
         assert label == "Local settings"
         assert kwargs["values"]["repos"] == "api, t"
         assert [key for key, _ in rows] == [
-            "tool", "mode", "trust", *t_mod.AGENTS, "local", "workflow", "runners",
+            "tool", "trust", *t_mod.AGENTS, "local", "workflow", "runners",
             "mcp", "repos", "worktrees", "hosts", "beam", "edit", "cancel",
         ]
         assert kwargs["sections"] == {
@@ -824,9 +824,8 @@ def test_config_repo_short_name_saves_overrides_and_reloads(t_mod, config_cli, m
     cfg.agents = {"long-name": "codex"}
     cfg.branches = {"long-name": "main"}
     cfg.worktree = {"long-name": "0"}
-    cfg.open_mode = {"long-name": "app"}
     before = t_mod._config_state(cfg)
-    ui = Menu(["repos", "long-name", "alias", "mode", "app", "back", "__back__", "save"], ["site"])
+    ui = Menu(["repos", "long-name", "alias", "back", "__back__", "save"], ["site"])
     original_pick = ui.pick
     labels = []
     def pick(label, rows, **kwargs):
@@ -843,8 +842,6 @@ def test_config_repo_short_name_saves_overrides_and_reloads(t_mod, config_cli, m
     assert labels[labels.index("Repository · long-name") + 1] == "Repository · site"
     # Saving is an overlay: the old registration must stay removed on reload.
     saved = local.read_text()
-    assert "DEV_OPEN_MODE[site]=app" in saved
-    assert "unset 'DEV_OPEN_MODE[long-name]'" in saved
     local.write_text(t_mod._config_text("", before) + saved)
     output = t_mod.subprocess.check_output([
         "zsh", "-f", "-c",
@@ -1042,24 +1039,6 @@ def test_saved_speed_stays_selected_when_metadata_changes(t_mod, config_cli, mon
     assert cfg.fast['codex'] == saved
 
 
-def test_config_opening_mode_global_and_repo_defaults(t_mod, config_cli, monkeypatch):
-    cfg, local = config_cli
-    cfg.repos = {"site": "/code/site"}
-    ui = Menu(["mode", "app", "repos", "site", "mode", "cli", "back", "__back__", "save"])
-    monkeypatch.setattr(t_mod, "_RailUI", lambda: ui)
-    assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == 0
-    monkeypatch.setattr(t_mod, "CONFIG", str(local))
-    reloaded = t_mod.Config()
-    assert reloaded.open_mode_default == "app"
-    assert reloaded.open_mode == {"site": "cli"}
-    t_mod._config_remove_repo(reloaded, "site")
-    assert reloaded.open_mode == {}
-    with pytest.raises(ValueError, match="choose cli or app"):
-        t_mod._config_assignment("DEV_OPEN_MODE_DEFAULT", "other")
-    with pytest.raises(ValueError, match="choose cli or app"):
-        t_mod._config_assignment("DEV_OPEN_MODE[site]", "other")
-
-
 def test_config_tui_enables_and_displays_automatic_trust(t_mod, tmp_path, monkeypatch, config_cli):
     cfg, local = config_cli
     cfg.auto_trust = '0'
@@ -1147,37 +1126,6 @@ def test_config_host_rename_preserves_target_defaults_and_same_name(t_mod, confi
     assert (cfg.beam_host, cfg.mini_host) == ('old.example', 'new')
     with pytest.raises(ValueError, match='Use letters'):
         t_mod._config_rename_host(cfg, 'new', 'bad name')
-
-
-def test_handoff_defaults_persistence_and_validation(t_mod, tmp_path, monkeypatch):
-    path = tmp_path / 'config.sh'
-    monkeypatch.setattr(t_mod, 'CONFIG', str(path))
-    cfg = t_mod.Config()
-    assert cfg.handoff_for('claude') == 't'
-    assert cfg.handoff_for('codex') == 'native'
-    assert 'manual Hand off' in cfg.handoff_label('codex')
-    assert 'Git checkpoint' in cfg.handoff_label('claude')
-    changes = {'DEV_HANDOFF[codex]': 't', 'DEV_HANDOFF[claude]': 't'}
-    path.write_text(t_mod._config_text('', changes))
-    assert t_mod.Config().handoff_for('codex') == 't'
-    assert t_mod._config_state(t_mod.Config())['DEV_HANDOFF[codex]'] == 't'
-    for key, value in [('DEV_HANDOFF[claude]', 'native'), ('DEV_HANDOFF[codex]', 'unknown'), ('DEV_HANDOFF[other]', 't')]:
-        with pytest.raises(ValueError, match='cross-host handoff'):
-            t_mod._config_assignment(key, value)
-    cfg.handoff['codex'] = 'typo'
-    with pytest.raises(ValueError, match='invalid cross-host'):
-        cfg.handoff_for('codex')
-
-
-def test_handoff_menu_stages_selection_and_cancel(t_mod):
-    cfg = t_mod.Config()
-    choices = iter(['handoff', 't', 'back'])
-    ui = SimpleNamespace(pick=lambda *a, **kw: next(choices))
-    t_mod._config_tool_menu(ui, cfg, 'codex', {})
-    assert cfg.handoff['codex'] == 't'
-    choices = iter(['handoff', None, 'back'])
-    t_mod._config_tool_menu(ui, cfg, 'codex', {})
-    assert cfg.handoff['codex'] == 't'
 
 
 @pytest.mark.parametrize('pending,answer,expected', [(1, None, 0), (0, 'q', 0), (0, 'enter', 1)])

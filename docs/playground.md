@@ -64,5 +64,4 @@ t session close playground 1
 If you want to test a real agent, remove the stub with `rm ~/bin/claude` and run
 `t agent install` in the container. The agent's own installer and sign-in flow may need
 network access. The Linux playground covers installation, shell integration,
-repository setup, worktrees, and tmux. macOS desktop handoff requires macOS or a
-macOS VM.
+repository setup, worktrees, and tmux.

@@ -823,7 +823,7 @@ def config_transaction(sync, t_mod, monkeypatch, tmp_path):
     cache=tmp_path/'cache.sh';cache.write_text('')
     monkeypatch.setattr(t_mod,'CONFIG',str(cache))
     cfg=t_mod.Config();cfg.models={'codex':'preferred'};cfg.efforts={'codex':'medium'}
-    cfg.fast={'codex':'ultrafast'};cfg.handoff={'codex':'native'}
+    cfg.fast={'codex':'ultrafast'}
     calls=fake_proxy(sync,monkeypatch,{None:{'data':['root']}},{'root':{'source':'cli','model':'old','reasoningEffort':'medium'}})
     sync.changed(doc,doc,settings={'model':'preferred','effort':'medium'},
                  context={'settings_source':{'path':str(source),'hash':sync.digest(source.read_text())}})
@@ -840,7 +840,7 @@ def config_transaction(sync, t_mod, monkeypatch, tmp_path):
 def test_known_unrelated_config_transaction_rebinds_checkpoint_without_model_replay(sync,t_mod,monkeypatch,tmp_path):
     cfg,source,calls=config_transaction(sync,t_mod,monkeypatch,tmp_path)
     initial_ack=copy.deepcopy(sync.status()['threads'])
-    edited=copy.deepcopy(cfg);edited.handoff['codex']='t'
+    edited=copy.deepcopy(cfg);edited.worktree_default='0'
     monkeypatch.setattr(t_mod,'_config_wizard',lambda _:edited)
     args=t_mod.build_parser().parse_args(['config'])
     assert t_mod.cmd_config(cfg,args)==0
@@ -862,7 +862,7 @@ def test_external_source_edit_is_not_rebound_by_unrelated_config_transaction(syn
     cfg,source,calls=config_transaction(sync,t_mod,monkeypatch,tmp_path)
     original_guard=copy.deepcopy(sync.status()['context']['settings_source'])
     source.write_text(source.read_text().replace('=preferred','=external-choice'))
-    edited=copy.deepcopy(cfg);edited.handoff['codex']='t'
+    edited=copy.deepcopy(cfg);edited.worktree_default='0'
     monkeypatch.setattr(t_mod,'_config_wizard',lambda _:edited)
     assert t_mod.cmd_config(cfg,t_mod.build_parser().parse_args(['config']))==0
     assert sync.status()['context']['settings_source']==original_guard
@@ -873,7 +873,7 @@ def test_external_source_edit_is_not_rebound_by_unrelated_config_transaction(syn
 def test_source_rebind_rolls_back_with_failed_config_publication(sync,t_mod,monkeypatch,tmp_path):
     cfg,source,_=config_transaction(sync,t_mod,monkeypatch,tmp_path)
     before=source.read_text();guard=copy.deepcopy(sync.status()['context']['settings_source'])
-    edited=copy.deepcopy(cfg);edited.handoff['codex']='t'
+    edited=copy.deepcopy(cfg);edited.worktree_default='0'
     monkeypatch.setattr(t_mod,'_config_wizard',lambda _:edited)
     replace=os.replace
     def fail(pending,target):

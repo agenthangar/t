@@ -118,7 +118,7 @@ Run the focused regressions with:
 
 ```sh
 python3 -m pytest -q \
-  tests/test_app_close.py tests/test_desktop_close.py tests/test_recovery_tmux.py \
+  tests/test_recovery_tmux.py \
   -k 'blank_workspace_with_unrelated or empty_desktop or public_open_new'
 ```
 

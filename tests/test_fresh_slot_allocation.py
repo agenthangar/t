@@ -64,7 +64,7 @@ def test_explicit_reserved_slot_still_refuses(zsh):
 def test_remote_allocation_uses_home_relative_path_identity(zsh):
     result = zsh(SETUP + r'''
 DEV_REPOS[api]=/Users/local/code/api
-_dev_remote_app_owner api 2 1; print rc=$?
+_dev_remote_legacy_owner api 2 1; print rc=$?
 ''')
     assert 'mini' in result.stdout and 'rc=0' in result.stdout
 

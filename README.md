@@ -2,17 +2,10 @@
 
 ![t — coding-agent sessions, under control](docs/media/hero.svg)
 
-**Your terminal. Your desktop. Same task.**
+**Your sessions. Any terminal.**
 
-Start in the terminal. Continue in the Codex desktop app. Keep your conversation,
-isolated Git worktree, and running web preview together. On macOS, use
-`t session open my-project 1 --app` to move a local Codex conversation to the
-desktop, and `t session open my-project 1 --cli` to return after following t’s
-instructions to release that desktop chat.
-
-Terminal workflows support macOS and Linux. Move sessions to a configured SSH
-host and check in from another computer or a phone’s terminal while that host
-stays awake and reachable. Desktop handoff is specific to Codex on macOS.
+Move Claude Code and Codex conversations between configured SSH hosts, keeping
+their Git worktrees and saved history together.
 
 t manages sessions in tmux and gives each task its own Git worktree. It includes
 Claude Code and Codex session workflows, plus Cursor transfer tools.
@@ -30,45 +23,6 @@ Supported workflows vary by agent; see the [support matrix](#agents).
 
 [Get started](#install) · [Work from anywhere](#work-from-anywhere) · [Commands](#commands) · [Configuration](#configuration) · [Agent support](#agents) · [Coming soon](#coming-soon) · [AgentHangar](https://agenthangar.ai)
 
-## Watch one task move
-
-![One task: terminal, mini, desktop, and resume](docs/media/terminal/workflow.gif)
-
-[Watch the 66-second demo](docs/media/terminal/workflow.mp4) ·
-[Static cover](docs/media/terminal/workflow-poster.png) ·
-[Capture notes and sources](docs/media/terminal/README.md)
-
-GPT-6.1-Sol fixes a real task-CLI bug: two failing tests become five passing tests,
-with the code change and actual CLI output visible. The same task moves to mini,
-runs the tests there, returns through Codex desktop, and resumes in the terminal
-for another verification turn. The 66-second cut keeps reading sections at normal
-speed and plays session setup at 2×. The app window was not filmed; mini needed
-Codex sign-in at capture time, so no remote model turn is shown.
-
-### Open → another host → desktop → resume
-
-```sh
-t open my-project --codex             # start in an isolated worktree
-t beam my-project 1 --host mini       # move to your configured host
-t beam my-project 1 --from mini       # bring it back locally
-t open my-project 1 --app             # continue in Codex desktop (macOS)
-t open my-project 1 --cli             # return after releasing the desktop chat
-t resume my-project 1                 # revive a saved conversation after its CLI ends
-t resume my-project 1 --app           # choose the exact saved Codex conversation for the Mac app
-```
-
-The [sample project and actual patch](docs/media/terminal/fixture/README.md)
-reproduce the bug fix. Host transfer uses `t beam`; `t push` backgrounds a local session.
-
-The same local conversation and worktree stay together. Desktop handoff can
-include its running web preview and referenced Markdown plan. See
-[the desktop workflow details](#work-from-anywhere) for ownership and release behavior.
-
-The earlier [host-handoff walkthrough](docs/media/demo.mp4) follows a Codex thread
-from Mac to mini and back. It is an edited rendering of verified command output;
-its final desktop open request was sent but app delivery was not confirmed.
-[Read its evidence notes](docs/media/README.md).
-
 ## Work from anywhere
 
 - **Start with your agent.** `t session open my-project` gives Claude Code an isolated
@@ -82,14 +36,6 @@ its final desktop open request was sent but app delivery was not confirmed.
   `t session list` shows the sessions, `t session read my-project 1 --dump`
   lets you scroll their output, and `t session open my-project 1` reconnects
   you. A detached session stays available while its host stays awake and reachable.
-- **Move between terminal and desktop.** On macOS, `t session open my-project 1 --app` opens
-  the same local Codex conversation in the desktop app, along with its web
-  preview and referenced Markdown plan. The worktree and dev server stay in
-  place. To return, run `t session open my-project 1 --cli`. If Codex still has that
-  conversation loaded, follow the command's release instructions and retry;
-  other desktop chats can stay open. It resumes the same conversation and
-  attaches automatically. The `t app` commands remain available for scripts and advanced options.
-
 - **Submit to an existing AgentCore runtime.** `t agentcore invoke` submits JSON
   using your existing AWS CLI profile; continue with the same session ID and use
   `t agentcore stop` to terminate it. See the [supported workflow](docs/agentcore.md)
@@ -102,7 +48,7 @@ its final desktop open request was sent but app delivery was not confirmed.
 
 You need **zsh, Python 3, Git, and tmux**. Install `fzf` for the interactive pickers,
 `gh` for GitHub integration, and `rsync`/SSH for moving sessions between hosts.
-The test suite runs on macOS and Linux with Python 3.12. Desktop handoff is macOS-only.
+The test suite runs on macOS and Linux with Python 3.12.
 
 To try a fresh install and worktree session in a disposable Docker container, see
 the [playground guide](docs/playground.md).
@@ -211,7 +157,7 @@ directory name when opening a workspace; this does not group every worktree
 under one common heading in the app. Live GUI rendering is not verified by the
 automated compatibility tests.
 
-Both layouts work with CLI open/resume, desktop discovery and handoff, navigation,
+Both layouts work with CLI open/resume, navigation,
 and retained history. If both `t/12` and `t/t-12` exist, slot actions refuse to
 choose: inspect the two worktrees and use `t session history t 12` to select a
 specific conversation. t never resolves this collision by moving either tree.
@@ -228,9 +174,8 @@ work, or use history's verified resume into a fresh local workspace. Existing
 worktrees and agent history should not be manually renamed to bridge hosts.
 
 `t open` browses sessions across all local repositories, including from inside a
-worktree; `t open my-project` filters to that repo. Attached CLI and loaded desktop
-sessions are hidden by default; `--attached` includes them. Idle sessions and
-unloaded desktop workspaces remain visible. An explicit slot still opens directly.
+worktree; `t open my-project` filters to that repo. Attached CLI sessions are hidden by default; `--attached` includes them. Idle sessions and
+inactive CLI sessions remain visible. An explicit slot still opens directly.
 
 `t history 5` browses every saved conversation associated with slot 5 in the
 current repository. `t history t 5` and `t session history t 5` name the repository
@@ -240,7 +185,7 @@ whose worktrees or transcripts have been removed. It always asks you to select a
 conversation before resuming, including when only one exists.
 
 History uses the same session information as `t ls`: status and active context,
-CLI or desktop interface, agent glyph and recorded model, host, session, and
+recorded interface, agent glyph and model, host, session, and
 working-on summary. Saved conversations keep their recorded metadata; missing
 historical model or interface evidence stays unknown. The picker aligns these
 fields and keeps the summary visible on small terminals. Its details pane shows
@@ -259,8 +204,9 @@ branches, PR states, and full conversation IDs. JSON also includes the normalize
 `display` fields and recorded metadata provenance. PR state reads use the cache;
 Ctrl-R or `--refresh` updates it explicitly.
 
-A live terminal conversation attaches to its existing owner. A desktop or
-foreground owner offers an explicit handoff path. An inactive conversation reuses
+A live terminal conversation attaches to its existing owner. A foreground owner
+offers an explicit handoff path. Legacy Desktop owners must release their writer
+before CLI resume. An inactive conversation reuses
 its original workspace only when recorded ownership and revision still match;
 otherwise it gets a new slot branch based on the verified historical commit.
 For example, `t session resume t 4` can resume an inactive conversation into a
@@ -273,20 +219,6 @@ PRs require structured tool evidence or a matching branch and commit; incidental
 links appear separately in details. History records are private under
 `$XDG_STATE_HOME/t/history/v1` (default `~/.local/state/t/history/v1`).
 
-`t resume <repo> [slot] --app` selects one saved Codex conversation and opens its
-exact ID in the local macOS app, preserving its history and recorded worktree.
-It uses the existing guarded CLI-to-desktop handoff when that same conversation
-is running locally. A different conversation in the slot, a remote or foreground
-owner, unverifiable ownership, unsupported agent, or multiple marked rows stops
-the operation without substituting another conversation. `--app` conflicts with
-`--cli`, `--fg`, and `--host`; registered hosts contribute saved metadata by default.
-Without a terminal, an explicit slot selects its newest saved conversation as
-usual. Use `--days all` to include older histories. Desktop delivery remains an
-OS open request, not proof that the app loaded the conversation.
-Copied histories must already be indexed by the local Codex installation; otherwise
-the error gives the CLI selection command to index that exact conversation first.
-Older histories without a verifiable writer-lock contract are refused until a
-current Codex CLI owns them and can perform the guarded handoff.
 
 `t resume` includes saved conversations from every registered host by default.
 Discovery matches repository identity, so host aliases, home directories and
@@ -295,18 +227,9 @@ workspaces with the exact recorded Git origin also appear. `--remote` remains a
 compatibility option. Only a selected remote transcript is downloaded and its
 identity is checked before use; unavailable hosts retain cached history.
 
-Cross-host defaults are **t transfer for Claude** and **native desktop Hand off
-for Codex**. `t config show` prints the effective mechanism; change it in
-**t config → agent settings → Cross-host handoff**, then Save changes. Codex
-can explicitly opt into t transfer. For scripted configuration, persist
-`DEV_HANDOFF[codex]=t` (or `native`) in `T_LOCAL_RC`; Claude accepts only
-`DEV_HANDOFF[claude]=t`. Native host handoff is app-mediated: open
-the chat in Codex, choose its footer run location, select the destination, then
-**Hand off**. Save the same repository as a project on both hosts. There is no
-supported CLI adapter, so t prints these steps and returns nonzero before
-stopping an owner or transferring files. This applies to saved cross-host resume
-and moves in either direction; same-host resume and remote attach stay unchanged.
-See [Codex remote connections](https://learn.chatgpt.com/docs/remote-connections#hand-off-a-chat-between-hosts).
+Claude and Codex use **t transfer** for cross-host moves and resumes. Legacy
+`DEV_HANDOFF` and desktop opening settings are ignored. The transfer preserves
+its existing ownership, checkpoint, and worktree safety checks.
 
 Selected local resumes also reconcile the original workspace before creating a new
 worktree. If it still belongs to the conversation, current commits and eligible
@@ -332,7 +255,7 @@ sync transaction; they require the source to reach the destination.
 An inactive conversation remains selectable when its historical slot now runs
 another conversation. It resumes in a safely allocated workspace; the existing
 owner and its files stay intact. Selecting an exact live conversation attaches
-to that owner. `--fg`, `--app`, and `--host` retain their selected destinations.
+to that owner. `--fg` and `--host` retain their selected destinations.
 `t resume api 2` opens the shared filtered picker for conversations associated
 with slot 2, including live and saved work and conversations later moved to
 another slot. Even one conversation waits for selection. Ctrl-F shows inactive
@@ -410,8 +333,7 @@ and `t open --attached` start with all rows; Ctrl-F restores their defaults.
 CLI opens use this terminal for the first selection and new tabs for the rest,
 falling back to new windows in Terminal when tabs cannot be created safely
 (including switching away during creation). Attach commands remain available
-if opening a terminal fails. Commands never target an existing tab; desktop selections open in the
-app. `--fg` opens one session. In `t kill`, mark sessions with Space/Tab and
+if opening a terminal fails. Commands never target an existing tab. `--fg` opens one session. In `t kill`, mark sessions with Space/Tab and
 press Enter to confirm and close the whole selection without further prompts.
 Explicit targets still confirm live-agent interruption unless `-y` is supplied.
 Desktop ownership checks apply in both cases.
@@ -467,7 +389,7 @@ for a host's login shell.
 
 | Command | Purpose |
 | --- | --- |
-| `t session open <repo> [slot]` | Open or reattach a task; `--new` starts another, `--codex` selects Codex, `--app` opens the desktop app, `--cli` resumes in the terminal |
+| `t session open <repo> [slot]` | Open or reattach a task; `--new` starts another, `--codex` selects Codex, `--cli` resumes in the terminal |
 | `t issue list [repo] [-a]` | List issues in the current, named, or all registered GitHub repositories |
 | `t issue status [repo] <number>` | Inspect existing work without starting an agent |
 | `t issue start [repo] [number ...]` | Continue or start work on one or several issues |
@@ -485,7 +407,6 @@ for a host's login shell.
 | `t remote resume [host] [repo] [slot] [--all]` | Choose a host and resume saved history discovered there |
 | `t move [repo] [slot] [-r] [--host <dest>]` | Alias for `t session move`; `t remote move` remains compatible with `--remote` |
 | `t session view-plan` / `t session paste` | View a Claude session plan or pass an attachment |
-| `t session open-app [push\|pull] [repo] [slot]` | Advanced Codex handoff options for macOS, including preview, plan, and thread selection; `t app` is the short form |
 | `t repo list` / `t repo locate <repo>` / `t repo cd <repo>` | List names and paths, print a checkout path, or enter it in the shell |
 | `t repo add [path] [--alias NAME]` | Register an existing checkout; omit path to use the current checkout |
 | `t repo create` / `t repo clone <github-url> [alias]` | Create a repository or clone and register an existing one |
@@ -650,7 +571,10 @@ List returns structured session rows, history returns JSON, read dumps output,
 and cd returns the resolved directory. Terminal-dependent workflows (push, pop,
 move, interactive search/paste, and conditional lifecycle modes) return
 `terminal_required` with the exact command, without starting work or a picker.
-Explicit `open-app` uses the existing desktop handoff checks.
+Codex Desktop integration has been removed. `t app`, `t session open-app`, and
+`--app` are no longer supported. Use CLI session open/resume and `t session move`.
+Saved conversations and worktrees are preserved; old reservation markers prevent
+automatic worktree cleanup, and exact history resume still verifies writer locks.
 
 Pause requests the default Escape interrupt key; it does not suspend processes,
 stop background subagents, or guarantee queued work remains paused. Goal is a
@@ -690,7 +614,7 @@ these are the common migrations:
 | Existing | Grouped command |
 | --- | --- |
 | `t open`, `t ls`, `t kill`, `t beam` | `t session open`, `t session list`, `t session close`, `t session move` |
-| `t push`, `t pop`, `t find`, `t plan`, `t app` | `t session push`, `t session pop`, `t session search`, `t session view-plan`, `t session open-app` |
+| `t push`, `t pop`, `t find`, `t plan` | `t session push`, `t session pop`, `t session search`, `t session view-plan` |
 | `t new`, `t checkout` | `t repo create`, `t repo clone` |
 | `t setup` | `t config setup` |
 | `t instructions --init/--edit/--show`; `t instructions <repo> --apply` | `t profile init/edit/show`; `t profile apply <repo>` |
@@ -737,16 +661,9 @@ before quitting and relaunching. It stays visible until dismissed. The monitor
 keeps checking and, after dismissal, can offer recovery once the conversation is
 verified.
 
-Fresh local slots can open while a configured remote host is offline, for example
-`t session open my-project --new --codex --cli` or
-`t session open my-project --new --app`. Automatic fresh-slot allocation skips
-known remote desktop reservations and chooses the next locally unused slot from
-one discovery snapshot. Explicit slot requests still refuse conflicting owners;
-`t session open my-project 3 --app` can also reopen a locally reserved desktop
-workspace when another host is offline, after checking local ownership. Saved
-CLI and desktop resumes warn and continue checking local and reachable owners;
-known owners still block conflicting launches. Other existing workspace claims
-and live transfers retain their ownership checks.
+Fresh local slots can open while a configured remote host is offline. Saved
+resumes warn and check reachable owners; known owners still block conflicting
+launches. Existing workspaces and live transfers retain their ownership checks.
 
 Codex CLI starts and resumes (including `--fg` and transfers) use `--no-daemon`.
 Each session uses its own backend, avoiding feature-setting conflicts with
@@ -1015,14 +932,14 @@ the selected preset, such as **Full access**, in the workflow menu. Codex offers
 and **Read only**. Claude offers **Ask for approval**, **Approve edits**, **Auto**,
 **Full access**, and **Plan only**. **Not set** clears the workflow override.
 These choices apply on the next CLI start or resume in the workflow's scope;
-running sessions and native desktop launches keep their permissions. Explicit
+running sessions keep their permissions. Explicit
 permission arguments take precedence. Saving a workflow does not rewrite native
 permission defaults or command allowlists.
 To apply different settings to one repository, create and edit a named workflow,
 then select it under **Repository assignments → your repository**.
 These defaults apply when starting or resuming a CLI session in that repository
 and its worktrees. Explicit launch arguments win; running turns keep their settings.
-Native desktop launches keep the application's model settings.
+
 Clearing a model uses the account's agent default. Choosing a model without an
 effort leaves effort selection to the native tool. Codex and Claude defaults are
 stored separately, and switching back to multiple models retains these choices.
@@ -1286,107 +1203,6 @@ only its marked block, preserves the rest of `AGENTS.md`, and refuses malformed
 markers or a symlink. Review the resulting diff and commit it when ready; t never
 commits or pushes these instructions for you.
 
-On macOS, `t session open my-project --app` creates a fresh isolated worktree and
-opens that folder in a new desktop app window with Codex mode explicitly selected,
-without starting a terminal agent. Name a reserved slot to reopen its saved
-conversation (`t session open my-project 3` automatically uses the app). A slot
-without a saved conversation opens its workspace in Codex mode. When several
-conversations share the worktree and no exact thread is recorded, reopening
-reports the ambiguity; select the intended conversation in the desktop app,
-or use `t app pull my-project 3 --thread <id>` to return that conversation to CLI.
-Exit any foreground terminal agent in that workspace before reopening. With `--app`, if
-that slot is running
-Codex in tmux, `t` hands the same conversation to the app. It waits for that
-conversation's backend to release ownership before opening it; a shared Codex
-backend can take about a minute after the CLI exits. The command shows progress
-and keeps the slot reserved if release cannot be verified within 75 seconds.
-`--app` requires a
-worktree-enabled repo and a local Codex installation. Creating a new window also
-requires Accessibility access for the terminal running `t` to invoke the app’s
-New Window menu. Reopening a saved conversation uses its native link directly
-and does not require Accessibility. It cannot launch a desktop workspace on a remote host.
-The desktop slot stays reserved in private Git worktree metadata so automatic
-cleanup and a later terminal launch cannot reuse it while the app may still be
-working. `t session list` has separate status, UI, model, session, and context
-columns, plus `LAST TURN` for the most recent turn initiation. This timestamp
-uses the viewer's local time with date, seconds, and timezone (for example,
-`2026-10-23 09:41:07 PDT`), including for remote sessions. It comes from a Codex
-turn-start event or a Claude user prompt, not subsequent tool or assistant activity.
-Older Codex transcripts can fall back to a user-message event. `-` means unknown;
-inactive desktop slots can show their last recorded conversation's turn. Narrow
-terminals keep one row per session: task text is clipped, UI/model columns are
-omitted when necessary, and LAST TURN uses `MM-DD HH:MM` (or `HH:MM` at the smallest
-widths). Compact status marks appear under S; remote lists retain HOST.
-Use `t ls | cat` or `t ls -r | cat` for all columns and complete values.
-`t ls -r` warns on stderr when a host is unavailable and still lists local and
-reachable sessions. Warnings are amber on capable stderr terminals, including
-with `t ls -r | cat`; `NO_COLOR`, `TERM=dumb`, or redirected stderr keeps them plain.
-UI shows `▣ desktop` or `› cli`; model keeps the agent icon and the last
-recorded model name (`-` when unavailable). Inactive desktop slots show their
-last recorded conversation title. Status uses `● ✓` for a loaded conversation
-and `○` for inactive. On macOS, live desktop context is verified from rollout files held open
-by the desktop backend; a saved reservation alone stays inactive. Loaded context
-can remain in the backend after a window closes, and does not mean a turn is
-currently generating. To continue in the CLI, run this on the Mac running the
-desktop session:
-
-```sh
-t session open my-project 3 --cli
-```
-
-`open --cli` checks whether that exact conversation is still loaded. If it is,
-finish its turn and follow the command's release instructions, then retry. For
-a `t` worktree, releasing the selected chat in Codex can leave other chats and
-the app open; the command restores an archived conversation on the next try.
-Codex-managed worktrees need different handling because archiving can also
-queue worktree cleanup, so follow the command's guidance for that workspace.
-Once released, `open --cli` resumes the same conversation and attaches.
-Opening a desktop slot without `--cli` continues in the app. The handoff preserves
-the worktree, changes, dev server, and thread history. For a
-worktree started with `t session open --app`, it selects the only saved conversation;
-if several chats share the worktree, use `t app pull my-project 3 --thread <id>`
-to select one, then open it. A previously pushed slot defaults to its handed-off
-thread. `t app pull` resumes without attaching; `--dry-run` previews either direction.
-Handoffs check Codex's per-conversation writer lock and refuse if another loaded
-conversation is known to share the worktree. The refusal names that conversation
-and gives release instructions plus the exact command to retry. Finish that
-other conversation's turn and exit its owning client; in a verified reserved
-`t` worktree, the message can instead suggest Archive in Codex. Wait for that
-conversation's backend to release its writer, then retry the selected slot.
-An inactive leftover lock file does not block the handoff. The missing-preview
-notice is independent: providing `--url` does not resolve an ownership conflict.
-Codex can hold other thread locks
-without entries in its saved-conversation index. Those unindexed locks produce
-a diagnostic during opening and handoffs; they do not block every worktree.
-An unindexed lock is not proof of an unrelated conversation, and the selected
-thread must still pass its own ownership checks. Closing a slot keeps stricter
-checks because it releases the worktree reservation.
-Pull resumes with `--no-daemon`, so an unrelated
-background server cannot stall the transfer. It never quits the app or stops
-its backend. Codex versions without a verifiable writer lock use conservative
-release checks. The reservation is released only after the exact CLI process
-owns the conversation's lock and its resumed thread is verified; a failed
-handoff keeps the worktree protected.
-
-Fresh Codex starts use `--no-daemon`; ordinary saved resumes retain their configured
-backend behavior. See the
-[session lifecycle validation guide](docs/session-lifecycle-validation.md) for
-the automated checks and the separate real-desktop acceptance procedure.
-
-To close a desktop slot, run `t kill my-project 3` (or `t session close my-project 3`). It stops that
-slot's parked terminal and dev server and releases its reservation while
-preserving the saved conversation and worktree. Saved, unloaded conversations
-can close while Codex and other chats stay open; missing archived history files
-do not block cleanup. A conversation that still holds its writer lock must be
-stopped and archived in Codex before closing the slot. Unassociated backend locks
-do not block cleanup: close checks the selected thread and other writers tied to
-this worktree through the conversation index or saved rollout metadata. Unreadable
-ownership data still blocks close. Shared backends and their processes remain protected;
-close does not delete locks or launch a replacement writer. The close rechecks ownership
-after cleanup and retains the reservation if a writer or new conversation appears.
-This releases t's slot reservation; it does not close app windows or delete the
-worktree.
-
 ## Configuration
 
 **Your preferences, or shared enterprise defaults.** Choose the agents and models
@@ -1437,11 +1253,6 @@ To change a repository alias, open `t config open` → Repositories → select t
 repository → Short name, then Save changes. Its tool, branch, and worktree
 overrides move to the new name.
 
-Choose Default opening mode in `t config open` for CLI or Desktop app (Codex on
-macOS). Each repository also has an Opening mode override. `t session open --cli` and
-`t session open --app` override that choice for one command; foreground and remote opens
-use the CLI.
-
 Configure which MCP tools load in each agent's own settings. t preserves those
 settings and provides its own optional sessions MCP server for Claude Code;
 it does not centrally manage other MCP servers. The optional permission policy
@@ -1477,8 +1288,7 @@ Use `t agent trust <dir>` to make a deliberate folder-trust change. To opt into 
 trust for registered repositories, set `export T_AUTO_TRUST=1` in your local config.
 The `t config` TUI shows **Automatic folder trust** and lets you enable or disable it.
 Trust is synced when creating/reusing worktrees, starting or resuming terminal
-sessions, and opening Codex desktop workspaces. Claude Code desktop and Codex
-share their CLI trust stores; both canonical repositories and individual worktrees
+sessions, using each agent's CLI trust store; both canonical repositories and individual worktrees
 are registered. `t trust --all` also includes existing session worktrees.
 Cursor desktop and VS Code use a separate workspace trust database, which is
 updated when present; restart those apps after syncing to load the saved trust.
@@ -1604,16 +1414,10 @@ supports both Claude and Codex. Installation migrates standard legacy registrati
 to this name. `claude-stamp-tmux` remains a compatibility alias for existing custom
 commands; unrelated hooks and hook approval records are preserved.
 
-Registering the Codex hook does not approve it. After installing or running
-`t config setup ~/code`, finish hook review in the ChatGPT desktop app:
-open **Review hooks** (or hooks in settings), select the **User config** /
-**SessionStart** entry whose command is
-`$HOME/bin/t-session-start --agent codex`, and click **Allow selected**.
-In the Codex CLI, use `/hooks` to review and trust that entry. New or changed
-hooks are skipped until approved, so session tracking can be incomplete.
-`t config setup --dry-run ~/code` also prints this guidance when the hook is
-registered; `t system diagnose` provides the same desktop and CLI steps.
-Setup and installation leave hook approval to the app and preserve trust records.
+Registering the Codex hook does not approve it. In the Codex CLI, use `/hooks`
+to review and trust `t-session-start --agent codex`. New or changed hooks are
+skipped until approved, so session tracking can be incomplete. Setup, install,
+and `t system diagnose` provide this guidance and preserve approval records.
 
 [t's original dotfiles](https://github.com/agenthangar/dotfiles) provide optional
 clipboard bridging and personal shell utilities. They are
@@ -1632,8 +1436,7 @@ checked in CI; optional dotfiles integrations are identified explicitly.
   dev slots: t session open / list / close / read / paste     ✓                                          ✓ t session open --codex · DEV_AGENT                           ✗ no slot — t cursor list
   t session push / pop                                        ✓                                          ✓                                                              ✗ no slot
   t session resume (saved conversations)                      ✓                                          ✓ (rollouts and thread index)                                  → t cursor resume
-  t session move / --from                                     ✓ (t)                                      ✓ (native app; t opt-in)                                       → t cursor send [id] --host / --from
-  t session open-app (desktop + browser preview)              ✗ Codex conversations only                 ✓ local macOS slot → same thread                               ✗
+  t session move / --from                                     ✓ (t)                                      ✓ (t)                                                          → t cursor send [id] --host / --from
   SessionStart stamps (registry · opened · origin)            ✓ settings.json hook                       ✓ hooks.json (trust once at startup)                           ✗ no hook wired
   t session view-plan                                         ✓                                          ✗ codex keeps no plan files (says so)                          ✗
   /tpush · /tpop slash commands                               ✓ ~/.claude/commands                       ✓ ~/.codex/prompts                                             ✗
@@ -1661,19 +1464,19 @@ zsh -n t.plugin.zsh
 ```
 
 Local test runs skip native macOS UI tests because their disposable app opens
-windows and takes desktop focus. Handoff logic still runs against fake UI APIs.
-For an intentional desktop check on macOS with Swift and Accessibility access:
+windows and takes desktop focus.
+For intentional native terminal verification on a disposable macOS runner:
 
 ```sh
-python3 -m pytest tests/test_app_macos.py --run-macos-ui
+python3 -m pytest --run-macos-ui
 ```
 
 Default CI runs Linux only. To explicitly run macOS and native desktop checks
 on disposable runners, manually launch CI with `run_macos=true`. Selecting the
 test file or `-m macos_ui` alone does not enable desktop interaction.
 
-The installer has no pip runtime dependencies. Markdown rendering uses a small
-vendored library with its [license and provenance](libexec/vendor/README.md).
+The installer has no pip runtime dependencies. Older Python versions use the
+[bundled TOML parser](libexec/vendor/README.md).
 Read [CONTRIBUTING.md](CONTRIBUTING.md) and [AGENTS.md](AGENTS.md) before changing
 session ownership, worktree cleanup, or the remote protocol.
 

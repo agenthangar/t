@@ -121,8 +121,8 @@ def test_open_mode_and_exact_keyword_alias_settings(tmp_path):
         t session open ls 2 --cli
     ''')
     assert result.returncode == 1
-    assert result.stdout.splitlines() == ['APP application 2', f'Repo dir not found: {tmp_path}/home/code/ls']
-    assert result.stderr == 'BRANCH ls\n'
+    assert result.stdout.splitlines() == [f'Repo dir not found: {tmp_path}/home/code/application', f'Repo dir not found: {tmp_path}/home/code/ls']
+    assert result.stderr == 'BRANCH app\nBRANCH ls\n'
 
 
 def test_direct_workers_resolve_before_existing_target_lookup(tmp_path):
