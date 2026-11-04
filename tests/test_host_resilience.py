@@ -221,13 +221,16 @@ def test_partial_resume_checks_selected_saved_writer_and_starts(zsh):
 def test_resume_preflight_still_rejects_known_owners_and_local_failure(zsh, owner):
     cwd, _ = saved_rollout(zsh)
     result = zsh(SCANS + r'''
-      _dev_session_rows() { [[ $OWNER != local_failure ]]; }
+      _dev_session_rows() {
+        [[ $OWNER == local_failure ]] && return 1
+        if [[ $OWNER == same_worktree ]]; then
+          printf 'different-id\t%s\tapi-3\tdetached\tactive\tLive\tcodex\n' "$CWD"
+        fi
+      }
       _dev_remote_scan_with_timeout() {
         [[ $1 == offline ]] && return 255
         if [[ $OWNER == same_sid ]]; then
           printf '%s\t/other/worktree\tapi-9\tdetached\tactive\tLive\tcodex\n' "$SID"
-        elif [[ $OWNER == same_worktree ]]; then
-          printf 'different-id\t%s\tapi-3\tdetached\tactive\tLive\tcodex\n' "$CWD"
         fi
       }
       _T_RESUME_ALLOW_UNAVAILABLE=1 _dev_resume_session dev-api-3 "$CWD" "$SID" codex
@@ -235,6 +238,20 @@ def test_resume_preflight_still_rejects_known_owners_and_local_failure(zsh, owne
     assert result.returncode == 1, result.stdout + result.stderr
     assert 'already live' in result.stderr or 'local session scan failed' in result.stderr
     assert 'new-session' not in zsh.log.read_text()
+
+
+def test_resume_preflight_remote_matching_path_is_independent(zsh):
+    cwd, _ = saved_rollout(zsh)
+    result = zsh(SCANS + r'''
+      _dev_session_rows() { :; }
+      _dev_remote_scan_with_timeout() {
+        [[ $1 == offline ]] && return 255
+        printf 'different-id\t%s\tapi-3\tdetached\tactive\tOther work\tcodex\n' "$CWD"
+      }
+      _T_RESUME_ALLOW_UNAVAILABLE=1 _dev_resume_session dev-api-3 "$CWD" "$SID" codex
+    ''', CWD=str(cwd), SID=SID)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'new-session' in zsh.log.read_text()
 
 
 @pytest.mark.parametrize('phase', ['discovery', 'preflight', 'remote_detach'])

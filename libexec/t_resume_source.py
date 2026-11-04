@@ -143,7 +143,11 @@ def prepared_source(history, request, *, historical_fallback=False):
         actual = history.run(['git', '-C', workspace, 'rev-parse', '--show-toplevel']).strip()
         if os.path.realpath(actual) != os.path.realpath(workspace):
             raise error('source workspace is not the recorded Git root')
-        identity = history.slug(history.run(['git', '-C', workspace, 'remote', 'get-url', 'origin']).strip())
+        identity = history.slug(history.run(['git', '-C', workspace, 'remote', 'get-url', 'origin'], optional=True).strip())
+        if not identity:
+            common = history.run(['git', '-C', workspace, 'rev-parse', '--path-format=absolute', '--git-common-dir'], optional=True).strip()
+            if common:
+                identity = 'local:' + str(Path(common).parent.resolve())
         if not identity or not history.same_repository(identity, row['repo']):
             raise error('source repository identity changed')
         def released():
