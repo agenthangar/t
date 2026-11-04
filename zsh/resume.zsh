@@ -490,7 +490,8 @@ _t_resume() {
   local -A history_seen history_emitted history_pr_state
   for _p in "${(@)pending}"; do
     _mf=("${(@ps:\t:)_p}")
-    history_seen[${DEV_REPOS[$_mf[2]]:-$_mf[2]}/$(_dev_transcript_agent "$_mf[5]")/$(_dev_transcript_sid "$_mf[5]")]=1
+    history_key=${DEV_REPOS[$_mf[2]]:-$_mf[2]}/$(_dev_transcript_agent "$_mf[5]")/$(_dev_transcript_sid "$_mf[5]")
+    (( _mf[1] > ${history_seen[$history_key]:-0} )) && history_seen[$history_key]=$_mf[1]
   done
   local -a history_scope=("${(@)repos}")
   [[ -n $all_mode ]] && history_scope=(--all)
@@ -518,22 +519,9 @@ _t_resume() {
     if (( $#history_fields >= 12 )) && [[ $history_fields[12] != NONE ]]; then
       history_pr_state[$history_fields[2]/$history_fields[9]/$history_fields[4]]=$history_fields[12]
     fi
-    if [[ -n ${history_seen[$history_key]:-} ]]; then
-      # Use the same source verifier and guarded allocator for local and remote
-      # copies. Remove every old-layout/index copy of this conversation.
-      history_keep=()
-      for _p in "${(@)pending}"; do
-        _mf=("${(@ps:\t:)_p}")
-        if [[ ${DEV_REPOS[$_mf[2]]:-$_mf[2]}/$(_dev_transcript_agent "$_mf[5]")/$(_dev_transcript_sid "$_mf[5]") == $history_key ]]; then
-          # Keep the local reopened-stamp eligibility when history takes over.
-          (( _mf[1] > history_fields[1] )) && history_fields[1]=$_mf[1]
-        else
-          history_keep+=("$_p")
-        fi
-      done
-      pending=("${(@)history_keep}")
-    fi
-    history_seen[$history_key]=1
+    # Keep reopened-stamp eligibility when history takes over, without scanning
+    # every pending transcript again for each history row.
+    (( ${history_seen[$history_key]:-0} > history_fields[1] )) && history_fields[1]=$history_seen[$history_key]
     [[ -z $slot || $history_fields[3] == $slot ]] || continue
     if [[ -n ${live_sid[$history_fields[4]]:-} && ${live_sid_agent[$history_fields[4]]:-} == $history_fields[9] ]]; then
       sidlive+=("$history_fields[2]"$'\t'"$history_fields[4]"$'\t'"$history_fields[5]"$'\t'"${live_sid[$history_fields[4]]}")
@@ -545,6 +533,13 @@ _t_resume() {
     org=$history_fields[8]; [[ $org == local ]] && org=-
     cands+=("$history_fields[1]"$'\t'"$history_fields[2]"$'\t'"$history_fields[3]"$'\t'"$history_fields[4]"$'\t'"$history_fields[5]"$'\t'"$history_fields[6]"$'\t'"$history_fields[7]"$'\t'-$'\t'history$'\t'"$org"$'\t'"$history_fields[9]"$'\t'-$'\t'"${history_fields[10]:--}"$'\t'"${history_fields[11]:--}"$'\t'"${history_fields[12]:-UNKNOWN}")
   done
+  # One linear pass removes every local layout/alias copy handled by history.
+  for _p in "${(@)pending}"; do
+    _mf=("${(@ps:\t:)_p}")
+    history_key=${DEV_REPOS[$_mf[2]]:-$_mf[2]}/$(_dev_transcript_agent "$_mf[5]")/$(_dev_transcript_sid "$_mf[5]")
+    [[ -n ${history_emitted[$history_key]:-} ]] || history_keep+=("$_p")
+  done
+  pending=("${(@)history_keep}")
 
   # Conversations live under ANOTHER slot's session (or a foreground one). One row
   # per owner — skipped when the owner's own slot row was already counted/emitted.
