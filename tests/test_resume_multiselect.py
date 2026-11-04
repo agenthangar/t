@@ -356,7 +356,7 @@ def test_resume_merged_badge_precedes_long_title_and_toggle_keeps_other_rows(zsh
              'print -r -- MERGED > "$HOME/.cache/claude-sessions/pr/org#api#42"; ')
     if aggregate:
         record = '\t'.join(['1800000000', 'api', '2', 'c2', str(zsh.home / 'code/.worktrees/api/2'),
-                            'date', 'Associated open and merged PRs', 'local', 'claude', '-', 'org/api', aggregate])
+                            'date', 'Associated open and merged PRs · #42 merged', 'local', 'claude', '-', 'org/api', aggregate])
         shell += f"_t_resume_history_candidates() {{ print -r -- '{record}'; }}; "
     result = zsh(shell + '_t_resume api; echo rc=$?', _tty=True, FZF_LOG=str(log),
                  PICK_ACTIONS='merged,merged', PICK_CANCEL='1')

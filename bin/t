@@ -12159,6 +12159,7 @@ REMOTE SESSIONS
   Codex checks the selected conversation's writer lock and the destination
   workspace. Another conversation in a reused original slot can keep running
   when the saved conversation resumes into a different workspace.
+  Saved selections sharing an original slot get independent safe destinations.
 
   Offers EVERY conversation associated with the repository across registered hosts,
   including swept and renamed workspaces and the canonical checkout (one global

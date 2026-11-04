@@ -109,8 +109,8 @@ _t_resume_history_registered() {
 # attaches, the rest open in NEW terminal tabs (_dev_open_tab above; attach-hint
 # fallback when tabs are impossible — ssh, unrecognized terminal, no
 # Accessibility). A live mark attaches to its existing owner (never
-# resumed — one-live-owner), a second conversation marked for a slot an earlier mark
-# just took is skipped (one tmux session per dev-<repo>-<slot> name), and --fg
+# resumed — one-live-owner). Retained history allocates independent destinations
+# when multiple conversations share a historical slot, and --fg
 # refuses a multi-pick (one terminal, one inline claude); outside any DEV_REPOS dir a bare
 # `t resume` scans EVERY worktree repo (the
 # `t ls` unscoped convention) with a repo column in the picker; -a/--all forces that
@@ -482,14 +482,15 @@ _t_resume() {
 
   # Include conversations retained outside today's slot layout (canonical
   # checkouts, renamed roots, swept rollouts and independent chats in live slots).
-  # Keep ordinary local rows on their released route; extra rows use history's
-  # guarded allocator instead of borrowing an occupied or unrelated worktree.
+  # Retained history is authoritative even when a transcript was also found by
+  # its original slot. That slot is provenance, not a launch destination: the
+  # conversation may have moved, or several selections may share it.
   local history_rows history_rc=0 history_row history_key
   local -a history_fields history_keep
-  local -A history_seen history_pr_state
+  local -A history_seen history_emitted history_pr_state
   for _p in "${(@)pending}"; do
     _mf=("${(@ps:\t:)_p}")
-    history_seen[$_mf[2]/$(_dev_transcript_agent "$_mf[5]")/$(_dev_transcript_sid "$_mf[5]")]=1
+    history_seen[${DEV_REPOS[$_mf[2]]:-$_mf[2]}/$(_dev_transcript_agent "$_mf[5]")/$(_dev_transcript_sid "$_mf[5]")]=1
   done
   local -a history_scope=("${(@)repos}")
   [[ -n $all_mode ]] && history_scope=(--all)
@@ -509,21 +510,26 @@ _t_resume() {
   for history_row in "${(@f)history_rows}"; do
     history_fields=("${(@ps:\t:)history_row}")
     (( $#history_fields >= 9 && $#history_fields <= 12 )) || continue
-    history_key=$history_fields[2]/$history_fields[9]/$history_fields[4]
+    history_key=${DEV_REPOS[$history_fields[2]]:-$history_fields[2]}/$history_fields[9]/$history_fields[4]
+    [[ -z ${history_emitted[$history_key]:-} ]] || continue
+    history_emitted[$history_key]=1
     # Retained local transcript rows need the full associated-PR aggregate too;
     # their last-mentioned PR alone cannot prove all work's PRs have merged.
     if (( $#history_fields >= 12 )) && [[ $history_fields[12] != NONE ]]; then
-      history_pr_state[$history_key]=$history_fields[12]
+      history_pr_state[$history_fields[2]/$history_fields[9]/$history_fields[4]]=$history_fields[12]
     fi
     if [[ -n ${history_seen[$history_key]:-} ]]; then
-      [[ $history_fields[8] != local ]] || continue
-      # A newer remote source supersedes an already discovered local copy.
-      # Leave transcript selection to history's source verifier, rather than
-      # resuming the stale file through the ordinary local route.
+      # Use the same source verifier and guarded allocator for local and remote
+      # copies. Remove every old-layout/index copy of this conversation.
       history_keep=()
       for _p in "${(@)pending}"; do
         _mf=("${(@ps:\t:)_p}")
-        [[ $_mf[2]/$(_dev_transcript_agent "$_mf[5]")/$(_dev_transcript_sid "$_mf[5]") == $history_key ]] || history_keep+=("$_p")
+        if [[ ${DEV_REPOS[$_mf[2]]:-$_mf[2]}/$(_dev_transcript_agent "$_mf[5]")/$(_dev_transcript_sid "$_mf[5]") == $history_key ]]; then
+          # Keep the local reopened-stamp eligibility when history takes over.
+          (( _mf[1] > history_fields[1] )) && history_fields[1]=$_mf[1]
+        else
+          history_keep+=("$_p")
+        fi
       done
       pending=("${(@)history_keep}")
     fi
@@ -944,7 +950,7 @@ _t_resume() {
     # Inside tmux / no TTY the first cannot attach here either, so it gets a
     # tab too.
     for mp_pair in "${(@)mp_rest}"; do
-      _dev_open_tab "t open $mp_pair" || {
+      _dev_open_tab "t open ${(q)${mp_pair%% *}} ${(q)${mp_pair##* }} --cli --local" || {
         _t_resume_batch_stop 1 'terminal tabs' 't session resume' 'could not open resumed session tabs' 0 "${mp_ready[@]}"
         return 1
       }
@@ -952,7 +958,7 @@ _t_resume() {
     if [[ -z $TMUX && -t 0 && -t 1 ]]; then
       tmux attach-session -t "=dev-${mp_first_repo}-${mp_first_slot}:"
     else
-      _dev_open_tab "t open $mp_first_repo $mp_first_slot" \
+      _dev_open_tab "t open ${(q)mp_first_repo} ${(q)mp_first_slot} --cli --local" \
         || {
           _t_resume_batch_stop 1 'terminal tab' 't session resume' 'could not open resumed session' 0 "${mp_ready[@]}"
           return 1
