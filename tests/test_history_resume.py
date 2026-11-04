@@ -1089,6 +1089,28 @@ def test_private_resume_bridge_dispatches_exact_identity_and_closes_store(
         assert out.err.startswith('t resume: ')
 
 
+@pytest.mark.parametrize('selection', ['matching', 'different-path', 'unknown-alias', 'changed-origin'])
+def test_saved_resume_accepts_only_registered_local_repository_identity(
+        app, history, t_mod, monkeypatch, capsys, selection):
+    identity = 'local:' + app.cfg.repos['repo']
+    monkeypatch.setattr(app, 'identity', lambda alias: 'org/repo' if selection == 'changed-origin' else identity)
+    monkeypatch.setattr(t_mod, 'Config', lambda: app.cfg)
+    monkeypatch.setattr(t_mod.runpy, 'run_path', lambda path: {
+        'HistoryCommand': lambda cfg, api: app, 'REPO_IDENTITY': history.REPO_IDENTITY,
+        'HistoryError': history.HistoryError, 'HistoryCancelled': history.HistoryCancelled})
+    calls = []
+    monkeypatch.setattr(app, 'records', lambda alias: calls.append(alias) or [dict(sid='selected', agent='claude')])
+    monkeypatch.setattr(app, 'resume', lambda *args, **kwargs: 'dev-repo-7')
+    alias = 'missing' if selection == 'unknown-alias' else 'repo'
+    selected_identity = 'local:/unregistered' if selection == 'different-path' else identity
+    status = t_mod.main(['__resume-saved', alias, 'selected', 'claude', 'launch', selected_identity])
+    assert status == (0 if selection == 'matching' else 1)
+    assert calls == (['repo'] if selection == 'matching' else [])
+    output = capsys.readouterr()
+    assert ('dev-repo-7' in output.out) == (selection == 'matching')
+    assert ('invalid saved repository identity' in output.err) == (selection != 'matching')
+
+
 @pytest.mark.parametrize('prepare_only', [False, True])
 def test_private_saved_resume_reports_ownership_refusal_and_cleans_up(
         app, history, git_repo, store, t_mod, monkeypatch, tmp_path, capsys, prepare_only):

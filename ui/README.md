@@ -830,6 +830,8 @@ rechecks ownership before restoring a transcript. An unrelated remote slot with
 the same number or path does not occupy a local destination; conversation owners
 are still checked across hosts. For example, mark two saved conversations from
 slot 21 in `t session resume api`; both can resume without replacing a live owner.
+Repositories without a GitHub origin retain their exact local registration
+identity through selection and launch; an unregistered or changed path is refused.
 Paginated history has no default 30-day
 cutoff; Ctrl-F/B pages, Ctrl-R refreshes, and Ctrl-/ shows details.
 Explicit resume options (`--cli`, `--fg`, `--host`, `--days`, `--live`,

@@ -13242,6 +13242,11 @@ def _main(argv):
                 identity = argv[5] if len(argv) == 6 else alias
                 if identity == '-':
                     identity = alias
+                # Local-only repositories have an exact path identity, not a
+                # GitHub owner/name. Accept it only through its current registered
+                # alias; never materialize an arbitrary path supplied by a row.
+                if identity.startswith('local:') and alias in history.cfg.repos and identity == history.identity(alias):
+                    identity = alias
                 if identity not in history.cfg.repos and not helper['REPO_IDENTITY'].fullmatch(identity):
                     raise helper['HistoryError']('invalid saved repository identity')
                 rows = [row for row in history.records(identity) if row['sid'] == sid and row['agent'] == agent]
