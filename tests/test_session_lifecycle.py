@@ -42,6 +42,9 @@ def lifecycle(tmp_path):
     repo = base / "repo"
     for directory in (home, bindir, base / "tmux", base / "codex"):
         directory.mkdir()
+    # Pin the checkout under test; an installed t earlier on the developer's
+    # PATH otherwise makes the plugin select canonical main in this sandbox.
+    (bindir / "t").symlink_to(ROOT / "bin/t")
     real_tmux = shutil.which("tmux")
     # Unix socket paths have a small kernel length limit on macOS. Use a unique
     # short /tmp name while keeping all server contents in the isolated HOME.
@@ -287,6 +290,7 @@ def test_public_resume_revives_saved_thread_once(lifecycle, agent, leaf, swept):
     assert checkout.returncode == 0, checkout.stderr
     if agent == "codex":
         codex_home = base / "codex"
+        (codex_home / "thread-writer-locks").mkdir()
         transcript = codex_home / ("rollout-2026-10-11T00-00-00-" + SID + ".jsonl")
         transcript.write_text(json.dumps({"type": "session_meta", "payload": {
             "id": SID, "cwd": str(worktree), "source": "cli", "cli_version": "0.160.0"}}) + "\n" +
@@ -309,10 +313,15 @@ def test_public_resume_revives_saved_thread_once(lifecycle, agent, leaf, swept):
             "sessionId": SID, "message": {
             "role": "user", "content": "Resume my saved work"}},
             separators=(",", ":")) + "\n")
+    # Real lifecycle hooks retain the conversation's revision and workspace
+    # generation. Without that evidence safe history resume must ask before
+    # choosing a revision, rather than borrowing today's slot branch.
+    recorded = _shell(base, env, f'_dev_history_record {SID} {agent} {shlex.quote(str(worktree))} resume')
+    assert recorded.returncode == 0, recorded.stderr
     if swept:
         removed = _run(["git", "-C", str(repo), "worktree", "remove", str(worktree)], env=env, cwd=base)
         assert removed.returncode == 0, removed.stderr
-    (base / "cache" / "claude-sessions").mkdir(parents=True)
+    (base / "cache" / "claude-sessions").mkdir(parents=True, exist_ok=True)
     listed = _shell(base, env, "t session resume repo 1")
     assert listed.returncode == 0, listed.stderr
     assert "1 conversations" in listed.stdout
@@ -322,10 +331,12 @@ def test_public_resume_revives_saved_thread_once(lifecycle, agent, leaf, swept):
     log = base / "agents.log"
     launches = _until(lambda: log.read_text().splitlines() if log.exists() else None)
     assert len(launches) == 1
-    expected = "|resume|" + SID + "|--no-daemon" if agent == "codex" else "|-r|" + SID
+    destination = base / "worktrees/repo/repo-2" if swept else worktree
+    expected = "|resume|" + SID + "|--cd|" + str(destination) + "|--no-daemon" if agent == "codex" else "|-r|" + SID
     assert launches[0].endswith(expected)
-    assert str(worktree) in launches[0]
-    opened = _shell(base, env, "t session open repo 1")
+    assert str(destination) in launches[0]
+    assert destination.is_dir()
+    opened = _shell(base, env, f"t session open repo {2 if swept else 1}")
     assert opened.returncode == 0, opened.stderr
     assert log.read_text().splitlines() == launches
     assert transcript.is_file()

@@ -93,6 +93,42 @@ def test_reservation_collision_skips_slot(app, history, git_repo):
     app.reservation.unlink()
 
 
+@pytest.mark.parametrize('reuse', [False, True])
+@pytest.mark.parametrize('owner_alias', ['repo', 'short-name'])
+def test_destination_skips_occupied_name_even_when_owner_path_differs(app, history, store, git_repo, reuse, owner_alias):
+    app.cfg.repos['short-name'] = app.cfg.repos['repo']
+    root = Path(app.cfg.worktree_root) / 'repo'
+    original = root / 'repo-1'
+    if reuse:
+        history.run(['git', '-C', app.cfg.repos['repo'], 'worktree', 'add', '-b', 'dev/repo-1', str(original), git_repo])
+    row = store.merge(saved_row(app, git_repo, original))
+    owners = [dict(host='local', slot=f'{owner_alias}-1', cwd=app.cfg.repos['repo'])]
+    destination, slot, created = app.destination('repo', row, git_repo, owners)
+    assert created and slot == '2'
+    assert Path(destination).name == 'repo-2'
+    app.reservation.unlink()
+
+
+def test_remote_path_and_slot_do_not_occupy_local_destination(app, history, store, git_repo):
+    path = Path(app.cfg.worktree_root) / 'repo/repo-1'
+    history.run(['git', '-C', app.cfg.repos['repo'], 'worktree', 'add', '-b', 'dev/repo-1', str(path), git_repo])
+    row = store.merge(saved_row(app, git_repo, path))
+    assert app.destination('repo', row, git_repo, [dict(host='remote', slot='repo-1', cwd=str(path))]) == (str(path), '1', False)
+    app.reservation.unlink()
+
+
+def test_resume_rechecks_name_collision_before_restoring_transcript(app, history, git_repo, monkeypatch, tmp_path):
+    row = saved_row(app, git_repo, Path(app.cfg.worktree_root) / 'repo/9')
+    app.cfg.repos['short-name'] = app.cfg.repos['repo']
+    scans = iter([[], [], [dict(host='local', slot='short-name-1', cwd='/elsewhere', sid='other', agent='claude')]])
+    monkeypatch.setattr(app, 'owners', lambda *a: next(scans))
+    monkeypatch.setattr(app, 'source', lambda *a: tmp_path / 'unused')
+    monkeypatch.setattr(app, 'install_transcript', lambda *a: pytest.fail('must not restore into occupied destination'))
+    with pytest.raises(history.HistoryError, match='became live before restore'):
+        app.resume('repo', row)
+    assert not list(Path(app.cfg.worktree_root).glob('repo/.*history-reservation'))
+
+
 @pytest.mark.parametrize('host,state,slot', [('local', 'app', 'repo-1'), ('remote', 'app', 'repo-1'), ('local', 'active', 'repo:foreground'), ('remote', 'active', 'repo:foreground')])
 def test_nonterminal_owners_offer_handoff_without_launch(app, history, monkeypatch, host, state, slot):
     calls = []
@@ -1051,6 +1087,28 @@ def test_private_resume_bridge_dispatches_exact_identity_and_closes_store(
         assert out.out == 'saved metadata\n'
     elif mode in ('missing', 'invalid', 'invalid-slot', 'missing-slot'):
         assert out.err.startswith('t resume: ')
+
+
+@pytest.mark.parametrize('selection', ['matching', 'different-path', 'unknown-alias', 'changed-origin'])
+def test_saved_resume_accepts_only_registered_local_repository_identity(
+        app, history, t_mod, monkeypatch, capsys, selection):
+    identity = 'local:' + app.cfg.repos['repo']
+    monkeypatch.setattr(app, 'identity', lambda alias: 'org/repo' if selection == 'changed-origin' else identity)
+    monkeypatch.setattr(t_mod, 'Config', lambda: app.cfg)
+    monkeypatch.setattr(t_mod.runpy, 'run_path', lambda path: {
+        'HistoryCommand': lambda cfg, api: app, 'REPO_IDENTITY': history.REPO_IDENTITY,
+        'HistoryError': history.HistoryError, 'HistoryCancelled': history.HistoryCancelled})
+    calls = []
+    monkeypatch.setattr(app, 'records', lambda alias: calls.append(alias) or [dict(sid='selected', agent='claude')])
+    monkeypatch.setattr(app, 'resume', lambda *args, **kwargs: 'dev-repo-7')
+    alias = 'missing' if selection == 'unknown-alias' else 'repo'
+    selected_identity = 'local:/unregistered' if selection == 'different-path' else identity
+    status = t_mod.main(['__resume-saved', alias, 'selected', 'claude', 'launch', selected_identity])
+    assert status == (0 if selection == 'matching' else 1)
+    assert calls == (['repo'] if selection == 'matching' else [])
+    output = capsys.readouterr()
+    assert ('dev-repo-7' in output.out) == (selection == 'matching')
+    assert ('invalid saved repository identity' in output.err) == (selection != 'matching')
 
 
 @pytest.mark.parametrize('prepare_only', [False, True])

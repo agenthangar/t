@@ -2202,8 +2202,11 @@ _dev_launch_preflight() {
       print -u2 -- "t: saved conversation is already live in $row_name on $host"
       return 1
     fi
-    if [[ ${_T_RESUME_ALLOW_UNAVAILABLE:-} == 1 && -n $row_cwd &&
-          $(_dev_homerel "$row_cwd") == $(_dev_homerel "$dir") ]]; then
+    # A path is a workspace identity only on its own host. Another machine can
+    # reuse the same slot/path for independent work; the SID check above still
+    # prevents launching a second owner of the selected conversation anywhere.
+    if [[ ${_T_RESUME_ALLOW_UNAVAILABLE:-} == 1 && $host == local && -n $row_cwd &&
+          ${row_cwd:A} == $dir ]]; then
       print -u2 -- "t: saved conversation worktree is already live in $row_name on $host"
       return 1
     fi

@@ -821,7 +821,18 @@ actual destination for inspection.
 The filtered resume batch also stops at the first failed or cancelled selection.
 Its final summary names the conversation, reason, retry command, ready-session
 attach commands, and number not attempted. No automatic attachment hides errors.
-It has no default 30-day
+Retained local transcripts use the same guarded destination allocator as remote
+history. Historical slot numbers are provenance, not reserved destinations:
+multiple conversations from one slot get independent safe destinations, and
+copies attributed to different slots launch only once. Allocation checks both
+local workspace paths and tmux names under every alias for the repository, then
+rechecks ownership before restoring a transcript. An unrelated remote slot with
+the same number or path does not occupy a local destination; conversation owners
+are still checked across hosts. For example, mark two saved conversations from
+slot 21 in `t session resume api`; both can resume without replacing a live owner.
+Repositories without a GitHub origin retain their exact local registration
+identity through selection and launch; an unregistered or changed path is refused.
+Paginated history has no default 30-day
 cutoff; Ctrl-F/B pages, Ctrl-R refreshes, and Ctrl-/ shows details.
 Explicit resume options (`--cli`, `--fg`, `--host`, `--days`, `--live`,
 `--remote`) retain the filtered resume picker and their existing semantics,

@@ -24,6 +24,10 @@ def test_issue_resume_skips_offline_host(zsh, mode):
         if [[ $MODE == local_guard ]]; then print -u2 LOCAL_GUARD; return 1; fi
         print -r -- "RESUMED $*"
       }
+      _t_resume_history_launch() {
+        _dev_resume_session dev-api-3 "$CWD" "$2" "$3" >&2 || return $?
+        print dev-api-3
+      }
       _dev_remote_attach() { print -r -- "REMOTE $*"; }
       if [[ $MODE == standalone ]]; then
         _t_resume api 3 --days all
@@ -31,7 +35,7 @@ def test_issue_resume_skips_offline_host(zsh, mode):
         _T_ISSUE_SKIP_UNAVAILABLE=1 _t_resume api 3 --days all
       fi
     ''', MODE=mode, SID=SID, CWD=str(cwd))
-    assert ('RESUMED' in result.stdout) == (mode == 'issue'), result.stdout + result.stderr
+    assert ('RESUMED' in result.stdout + result.stderr) == (mode == 'issue'), result.stdout + result.stderr
     assert (result.returncode == 0) == (mode == 'issue'), result.stdout + result.stderr
     if mode == 'known_owner':
         assert 'on online' in result.stderr

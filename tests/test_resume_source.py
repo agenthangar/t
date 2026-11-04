@@ -42,6 +42,22 @@ def test_selected_prefers_lifecycle_over_newer_transcript(protocol):
     assert protocol.selected(conversation()) is None
 
 
+@pytest.mark.parametrize('origin', ['none', 'local'])
+def test_local_only_source_reconciles_recorded_identity_and_dirty_work(app, source, history, protocol, store, origin):
+    path, row, request = source
+    if origin == 'none':
+        history.run(['git', '-C', str(path), 'remote', 'remove', 'origin'])
+    else:
+        history.run(['git', '-C', str(path), 'remote', 'set-url', 'origin', str(path.parent / 'origin.git')])
+    row['repo'] = 'local:' + str(Path(app.cfg.repos['repo']).resolve())
+    row = store.merge(row)
+    Path(path, 'tracked').write_text('preserved local work\n')
+    revision = protocol.reconcile(app, 'repo', row)
+    assert revision != row['associations'][0]['commit']
+    assert history.run(['git', '-C', str(path), 'show', revision + ':tracked']) == 'preserved local work\n'
+    assert not history.run(['git', '-C', str(path), 'status', '--porcelain'])
+
+
 @pytest.mark.parametrize('dirty', [False, True])
 def test_export_carries_actual_unpushed_tip_and_checkpoint(app, source, history, protocol, dirty):
     path, row, request = source

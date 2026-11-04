@@ -2144,7 +2144,7 @@ def test_zsh_resume_picker_shows_the_display_column_for_every_row(zsh, tmp_path)
     proj = zsh.home / ".claude" / "projects" / re.sub(r"[^A-Za-z0-9]", "-", wt3)
     proj.mkdir(parents=True)
     (proj / "c1.jsonl").write_text('{"type":"user","message":{"content":"fix the login bug"}}\n')
-    _codex_home(zsh, [(SID, wt3, "t", 100, 0, None),
+    _codex_home(zsh, [(SID, wt3, "Indexed task title", 100, 0, None),
                       ("aaaaaaaa-0000-0000-0000-00000000000b", wt3, "", 200, 0, None, SUBAGENT_SOURCE)])
     log = tmp_path / "fzf.log"
     r = zsh("_t_resume api --live; echo rc=$?", _tty=True, FZF_LOG=str(log),
@@ -2159,7 +2159,7 @@ def test_zsh_resume_picker_shows_the_display_column_for_every_row(zsh, tmp_path)
     assert rows[-1].split()[:5] == ["4", "✱", "claude", "●", "active"]
     dead = sorted(rows[:-1])
     assert dead[0].split()[:3] == ["3", "✱", "claude"] and dead[0].endswith("fix the login bug")
-    assert dead[1].split()[:3] == ["3", "⬡", "codex"] and "Reply with exactly the word OK" in dead[1]
+    assert dead[1].split()[:3] == ["3", "⬡", "codex"] and "Indexed task title" in dead[1]
     assert not any(row.strip() in ("claude", "codex", "-") for row in rows)   # never a bare field
     # the padded layout: slot right-aligned in 2, then the `<icon> <name>` column padded
     # to the widest agent, then the 14-wide date cell
@@ -2176,9 +2176,8 @@ def test_zsh_resume_picker_shows_the_display_column_for_every_row(zsh, tmp_path)
 
 
 def test_zsh_resume_pick_revives_the_row_with_its_own_agent(zsh, tmp_path):
-    """A picked codex row revives through `codex resume <thread>`, a picked claude row
-    through `claude -r <sid>` — the agent rides in the row (field 10) and the sid is the
-    transcript's own (a rollout's trailing uuid; a claude file's basename)."""
+    """Retained Codex rows use history's allocator with the exact agent and ID;
+    older Claude rows without retained metadata keep their compatibility route."""
     for name, body in (("fzf", FZF_STUB), ("gh", "#!/bin/bash\nexit 1\n")):
         stub = tmp_path / "stubbin" / name
         stub.write_text(body)
@@ -2190,12 +2189,12 @@ def test_zsh_resume_pick_revives_the_row_with_its_own_agent(zsh, tmp_path):
     (proj / "c1.jsonl").write_text('{"type":"user","message":{"content":"fix the login bug"}}\n')
     _codex_home(zsh, [(SID, wt3, "t", 100, 0, None)])
     log = tmp_path / "fzf.log"
-    r = zsh("_t_resume api; echo rc=$?", _tty=True, FZF_LOG=str(log), FZF_PICK="word OK")
-    assert "rc=0" in r.stdout and f"Resuming {SID[:8]} in dev-api-3 ({wt3})" in r.stdout, r.stdout
+    r = zsh('_t_resume_history_launch() { print -u2 -- "HISTORY $*"; print dev-api-99; }; '
+            '_t_resume api; echo rc=$?', _tty=True, FZF_LOG=str(log), FZF_PICK="codex")
+    assert "rc=0" in r.stdout and f"HISTORY api {SID} codex launch" in r.stdout, r.stdout
     tlog = zsh.log.read_text().splitlines()
-    assert f"respawn-pane -k -t =dev-api-3: env SHELL_SESSIONS_DISABLE=1 zsh -lic setopt no_monitor no_notify; codex resume {SID} --no-daemon" in tlog
-    assert "set-environment -t =dev-api-3 DEV_AGENT codex" in tlog
-    assert "attach-session -t =dev-api-3:" in tlog
+    assert not any('respawn-pane' in line for line in tlog)
+    assert "attach-session -t =dev-api-99:" in tlog
     zsh.log.write_text("")
     r = zsh("_t_resume api 3; echo rc=$?", _tty=True, FZF_LOG=str(log), FZF_PICK="login bug")
     assert "rc=0" in r.stdout, r.stdout
