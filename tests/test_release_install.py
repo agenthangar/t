@@ -293,3 +293,27 @@ def test_installed_nosleep_runs_without_shell_integration(sandbox):
                             env=env, capture_output=True, text=True, timeout=10)
     assert result.returncode == 0, result.stderr
     assert "nosleep defaults" in result.stdout
+
+
+@pytest.mark.parametrize("wrong_version", [False, True])
+def test_release_workflow_verifies_installed_version_with_source_details(sandbox, tmp_path, monkeypatch, wrong_version):
+    import sys
+    import textwrap
+    workflow = (ROOT / ".github/workflows/release.yml").read_text()
+    step = workflow.split("- name: Verify archive installation in an isolated home", 1)[1]
+    snippet = textwrap.dedent(step.split("python3 - <<'PY'\n", 1)[1].split("          PY", 1)[0])
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    (scripts / "install-release.py").write_bytes((ROOT / "scripts/install-release.py").read_bytes())
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    changed = {"bin/t": b"#!/usr/bin/env python3\nprint('t v9.9.9\\n  Source: release\\n  Worktree: none')\n"} if wrong_version else None
+    archive, sums = artifact(changed=changed)
+    (dist / "t.tar.gz").write_bytes(archive)
+    (dist / "SHA256SUMS").write_bytes(sums)
+    monkeypatch.setenv("RELEASE_TAG", "v1.2.3")
+    result = subprocess.run([sys.executable, "-c", snippet], cwd=tmp_path,
+                            capture_output=True, text=True, timeout=30)
+    assert result.returncode == (1 if wrong_version else 0), result.stdout + result.stderr
+    if wrong_version:
+        assert "AssertionError" in result.stderr
