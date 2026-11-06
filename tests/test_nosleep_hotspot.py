@@ -1,6 +1,5 @@
 """Hotspot joins use fake macOS commands; process tests own all spawned children."""
 
-import hashlib
 import importlib.util
 import json
 import os
@@ -23,7 +22,7 @@ PASSWORD = " fake-password-with-spaces "
 def commands(tmp_path, monkeypatch):
     log = tmp_path / "commands.jsonl"
     monkeypatch.setenv("HOTSPOT_TEST_LOG", str(log))
-    body = '''import hashlib, json, os, pathlib, sys, time
+    body = '''import json, os, pathlib, sys, time
 args = sys.argv[1:]
 with open(os.environ["HOTSPOT_TEST_LOG"], "a") as f:
     f.write(json.dumps(args) + "\\n")
@@ -40,7 +39,7 @@ elif args[0] == "find-generic-password":
 elif args[0] == "-setairportnetwork":
     secret = sys.stdin.buffer.read()
     with open(os.environ["HOTSPOT_TEST_LOG"], "a") as f:
-        f.write(json.dumps({"input_sha256": hashlib.sha256(secret).hexdigest()}) + "\\n")
+        f.write(json.dumps({"input_matches": secret == b" fake-password-with-spaces \\n"}) + "\\n")
     if mode == "association": print("Failed to join network: secret diagnostic")
     if mode == "stderr": print("Error joining network", file=sys.stderr)
 '''
@@ -61,7 +60,7 @@ def test_join_discovers_wifi_and_transfers_password_only_via_stdin(commands):
     assert rows[1] == ["-getairportpower", "en7"]
     assert rows[2] == ["find-generic-password", "-a", ssid, "-s", hotspot.SERVICE, "-w"]
     assert rows[3] == ["-setairportnetwork", "en7", ssid, "-"]
-    assert rows[4] == {"input_sha256": hashlib.sha256((PASSWORD + "\n").encode()).hexdigest()}
+    assert rows[4] == {"input_matches": True}
     assert PASSWORD not in log.read_text()
     assert not (log.parent / "BAD").exists()
 
