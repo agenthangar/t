@@ -56,6 +56,19 @@ def test_mode_classification(t_mod, remote, words, expected):
     assert remote['policy'](path, tail) == expected
 
 
+@pytest.mark.parametrize('prefix', [['remote'], ['remote', '--host', 'alpha']])
+@pytest.mark.parametrize('words', [
+    ['config', 'local', '--show'], ['config', 'local', '--edit'],
+    ['workflow', 'instructions', 'show', '--edit'],
+])
+def test_remote_inherits_native_action_boundary(t_mod, prefix, words):
+    assert t_mod._canonical_error([*prefix, *words]) == t_mod._canonical_error(words)
+
+
+def test_remote_action_boundary_rejects_incomplete_command(t_mod):
+    assert 'complete public command' in t_mod._canonical_error(['remote', 'session'])
+
+
 @pytest.mark.parametrize('words,path,tail,host', [
     (['session', 'ls', 'alpha', 'api'], ('session', 'list'), ['alpha', 'api'], None),
     (['--host', 'alpha', 'session', 'ls', 'api'], ('session', 'list'), ['api'], 'alpha'),

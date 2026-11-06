@@ -7527,7 +7527,8 @@
           "argv": [
             "remote",
             "profile",
-            "apply"
+            "apply",
+            "api"
           ],
           "patterns": [
             "action"

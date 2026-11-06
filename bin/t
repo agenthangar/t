@@ -11218,6 +11218,12 @@ def _canonical_argv(argv):
 def _canonical_error(argv):
     """Validate the public action boundary before legacy argparse sees it."""
     argv = _workflow_argv(_runners_argv(argv))
+    if _REMOTE['nested'](argv):
+        try:
+            path, tail, _ = _REMOTE['split'](argv[1:], COMMAND_GROUPS)
+        except ValueError as error:
+            return f't remote: {error}'
+        return _canonical_error([*path, *tail])
     if argv == ["workflow", "sync", "--receive"]:
         return None
     if len(argv) < 2 or argv[0] not in COMMAND_GROUPS:
