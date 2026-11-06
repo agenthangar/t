@@ -336,6 +336,22 @@
     "libexec/nosleep_hotspot.py:setup:subprocess.run": {
       "kind": "passthrough",
       "reason": "The native security command owns the terminal password prompt, bounded to 120 seconds; nosleep never handles or renders the password."
+    },
+    "libexec/t_remote.py:run_host:subprocess.run": {
+      "kind": "phase",
+      "reason": "Bounded parallel queries are covered by the controller Checking remote hosts spinner; JSON and redirected output stay quiet."
+    },
+    "libexec/t_remote.py:run_host:subprocess.call": {
+      "kind": "passthrough",
+      "reason": "Single-host SSH commands stream output and own any interactive terminal; no spinner may overlap their UI."
+    },
+    "libexec/t_remote.py:execute:subprocess.call": {
+      "kind": "passthrough",
+      "reason": "Existing session orchestrators own shared pickers, transfer progress, and foreground attachment."
+    },
+    "libexec/t_remote.py:peer:subprocess.call": {
+      "kind": "passthrough",
+      "reason": "The validated peer command owns its normal progress and terminal; its output is preserved for the controller."
     }
   },
   "shell": [

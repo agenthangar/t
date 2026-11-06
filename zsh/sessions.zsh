@@ -1434,6 +1434,9 @@ _dev_rows_all() {
 }
 
 _dev_rows_all_impl() {
+  # Remote aggregate queries enumerate this host only. Lifecycle workers do not
+  # set this marker and retain their cross-host ownership checks.
+  [[ ${T_REMOTE_QUERY_LOCAL:-} == 1 ]] && local -A REMOTE_HOSTS=()
   # no_monitor/no_notify: this fans out with `&` + `wait`; in a monitor-mode shell that
   # would print in-run job-control notices ("[2] 67794", "exit 1 …", "done"). Silences
   # them for a *direct* interactive call. local_options restores the caller's settings
@@ -1979,6 +1982,7 @@ _dev_kill_local_selected() {
 # Keyed on session NAMES, not DEV_REPOS, so it also reaches orphaned sessions
 # whose repo alias is gone. With no slot, the detailed picker selects targets.
 _dev_kill() {
+  [[ ${T_REMOTE_ACTION_LOCAL:-} == 1 ]] && local -A REMOTE_HOSTS=()
   local _T_PROGRESS=0
   [[ -t 1 && -t 2 ]] && _T_PROGRESS=1
   local repo="$1" slot="$2" force="$3"

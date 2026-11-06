@@ -3559,7 +3559,7 @@
           "notes": "Compatibility route for session move --remote: multi-select current local/remote owners, then choose one destination. Recheck every selected identity before mutation, exclude all source targets/aliases, move batches sequentially and detached, stop on the first failure or cancellation and report outcomes."
         }
       },
-      "notes": "Claude and Codex use guarded t transfers. Legacy native-handoff settings are ignored; older peers receive an explicit t policy."
+      "notes": "Claude and Codex use guarded t transfers. Legacy native-handoff settings are ignored; older peers receive an explicit t policy. Host-first [host] [repo] [slot] names the source. --to selects the destination; --from/--host remain compatibility input."
     },
     "remote resume": {
       "patterns": [
@@ -5300,6 +5300,2628 @@
           ]
         }
       }
+    },
+    "remote mcp status": {
+      "patterns": [
+        "detail"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "none",
+      "remote_policy": "query",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "mcp",
+            "status"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote mcp install": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "mcp",
+            "install"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote mcp uninstall": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "mcp",
+            "uninstall"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote issue list": {
+      "patterns": [
+        "list"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "none",
+      "remote_policy": "query",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "issue",
+            "list"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote issue status": {
+      "patterns": [
+        "detail"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "none",
+      "remote_policy": "query",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "issue",
+            "status"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote issue start": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "issue",
+            "start"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote issue open": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "unsupported",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "issue",
+            "open"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "opens a browser; use t issue open locally"
+    },
+    "remote session open": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "session",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "session",
+            "open"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote session list": {
+      "patterns": [
+        "list"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "none",
+      "remote_policy": "query",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "session",
+            "list"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote session close": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "session",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "session",
+            "close"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote session restart": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "session",
+            "restart"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote session push": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "unsupported",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "session",
+            "push"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "requires the current agent shell"
+    },
+    "remote session pop": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "unsupported",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "session",
+            "pop"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "requires the current agent shell"
+    },
+    "remote session resume": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "session",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "session",
+            "resume"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote session history": {
+      "patterns": [
+        "action",
+        "detail"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "session",
+            "history"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        },
+        "conditional": {
+          "argv": [
+            "remote",
+            "session",
+            "history",
+            "api",
+            "1",
+            "--json"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_remote_prefix.py::test_mode_classification"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote session cd": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "unsupported",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "session",
+            "cd"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "changes the calling shell; open a remote shell with t hosts run HOST"
+    },
+    "remote session move": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "session",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "session",
+            "move"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote session read": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "session",
+            "read"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote session view-plan": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "session",
+            "view-plan"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote session paste": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "session",
+            "paste"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote session search": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "session",
+            "search"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote session goal": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "session",
+            "goal"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote repo list": {
+      "patterns": [
+        "list"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "none",
+      "remote_policy": "query",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "repo",
+            "list"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote repo cd": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "unsupported",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "repo",
+            "cd"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "changes the calling shell; open a remote shell with t hosts run HOST"
+    },
+    "remote repo locate": {
+      "patterns": [
+        "detail"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "none",
+      "remote_policy": "query",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "repo",
+            "locate"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote repo create": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "repo",
+            "create"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote repo clone": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "repo",
+            "clone"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote repo add": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "repo",
+            "add"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote cursor list": {
+      "patterns": [
+        "list"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "none",
+      "remote_policy": "query",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "cursor",
+            "list"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote cursor resume": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "cursor",
+            "resume"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote cursor send": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "cursor",
+            "send"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote hosts list": {
+      "patterns": [
+        "list"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "none",
+      "remote_policy": "query",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "hosts",
+            "list"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote hosts show": {
+      "patterns": [
+        "detail"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "none",
+      "remote_policy": "query",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "hosts",
+            "show"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote hosts add": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "hosts",
+            "add"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote hosts edit": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "hosts",
+            "edit"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote hosts remove": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "hosts",
+            "remove"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote hosts default": {
+      "patterns": [
+        "action",
+        "detail"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "none",
+      "remote_policy": "query",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "hosts",
+            "default"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        },
+        "conditional": {
+          "argv": [
+            "remote",
+            "hosts",
+            "default",
+            "mini"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_mode_classification"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote hosts run": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "unsupported",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "hosts",
+            "run"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "already delegates arbitrary commands; use t hosts run directly"
+    },
+    "remote agentcore invoke": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "agentcore",
+            "invoke"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote agentcore stop": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "agentcore",
+            "stop"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote config open": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "config",
+            "open"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote config show": {
+      "patterns": [
+        "detail"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "none",
+      "remote_policy": "query",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "config",
+            "show"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote config edit": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "config",
+            "edit"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote config setup": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "config",
+            "setup"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote config onboard": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "config",
+            "onboard"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote config local": {
+      "patterns": [
+        "action",
+        "detail"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "config",
+            "local"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        },
+        "conditional": {
+          "argv": [
+            "remote",
+            "config",
+            "local",
+            "--show"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_remote_prefix.py::test_mode_classification"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote config models list": {
+      "patterns": [
+        "list"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "none",
+      "remote_policy": "query",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "config",
+            "models",
+            "list"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote config models refresh": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "config",
+            "models",
+            "refresh"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote config models show": {
+      "patterns": [
+        "detail"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "none",
+      "remote_policy": "query",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "config",
+            "models",
+            "show"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote config models install": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "config",
+            "models",
+            "install"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote config models measure": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "config",
+            "models",
+            "measure"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote workflow list": {
+      "patterns": [
+        "list"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "none",
+      "remote_policy": "query",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "workflow",
+            "list"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote workflow edit": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "workflow",
+            "edit"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote workflow open": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "workflow",
+            "open"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote workflow delete": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "workflow",
+            "delete"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote workflow add": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "workflow",
+            "add"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote workflow use": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "workflow",
+            "use"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote workflow exclude": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "workflow",
+            "exclude"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote workflow inherit": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "workflow",
+            "inherit"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote workflow instructions show": {
+      "patterns": [
+        "detail"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "none",
+      "remote_policy": "query",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "workflow",
+            "instructions",
+            "show"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote workflow instructions edit": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "workflow",
+            "instructions",
+            "edit"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote runners list": {
+      "patterns": [
+        "list"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "none",
+      "remote_policy": "query",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "runners",
+            "list"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote runners edit": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "runners",
+            "edit"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote runners setup": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "runners",
+            "setup"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote runners runs start": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "runners",
+            "runs",
+            "start"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote runners runs list": {
+      "patterns": [
+        "list"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "none",
+      "remote_policy": "query",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "runners",
+            "runs",
+            "list"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote runners runs status": {
+      "patterns": [
+        "detail"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "none",
+      "remote_policy": "query",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "runners",
+            "runs",
+            "status"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote runners runs logs": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "runners",
+            "runs",
+            "logs"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote runners runs artifacts": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "runners",
+            "runs",
+            "artifacts"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote runners runs cancel": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "runners",
+            "runs",
+            "cancel"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote runners runs cleanup": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "runners",
+            "runs",
+            "cleanup"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote profile init": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "profile",
+            "init"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote profile edit": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "profile",
+            "edit"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote profile show": {
+      "patterns": [
+        "detail"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "none",
+      "remote_policy": "query",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "profile",
+            "show"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote profile apply": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "profile",
+            "apply"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote policy check": {
+      "patterns": [
+        "detail"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "none",
+      "remote_policy": "query",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "policy",
+            "check"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote policy show": {
+      "patterns": [
+        "detail"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "none",
+      "remote_policy": "query",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "policy",
+            "show"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote policy apply": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "policy",
+            "apply"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote agent login": {
+      "patterns": [
+        "action",
+        "detail"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "agent",
+            "login"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        },
+        "conditional": {
+          "argv": [
+            "remote",
+            "agent",
+            "login",
+            "--status"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_remote_prefix.py::test_mode_classification"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote agent install": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "agent",
+            "install"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote agent status": {
+      "patterns": [
+        "detail"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "none",
+      "remote_policy": "query",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "agent",
+            "status"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote agent trust": {
+      "patterns": [
+        "action",
+        "detail"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "agent",
+            "trust"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        },
+        "conditional": {
+          "argv": [
+            "remote",
+            "agent",
+            "trust",
+            "--status"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_remote_prefix.py::test_mode_classification"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote system integrate": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "system",
+            "integrate"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote system update": {
+      "patterns": [
+        "action",
+        "detail"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "system",
+            "update"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        },
+        "conditional": {
+          "argv": [
+            "remote",
+            "system",
+            "update",
+            "--check"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_remote_prefix.py::test_mode_classification"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote system diagnose": {
+      "patterns": [
+        "action",
+        "detail"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "none",
+      "remote_policy": "query",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "system",
+            "diagnose"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        },
+        "conditional": {
+          "argv": [
+            "remote",
+            "system",
+            "diagnose",
+            "--repair"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_mode_classification"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote system advisories": {
+      "patterns": [
+        "detail"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "none",
+      "remote_policy": "query",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "system",
+            "advisories"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
     }
   },
   "display_schemas": {

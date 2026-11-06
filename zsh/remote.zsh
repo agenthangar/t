@@ -1123,6 +1123,7 @@ _pr_state_flush() {
 _t_remote_host_pick() {
   local excluded=${1:-} purpose=${2:-open} source=${3:-} host target rows= selected heading
   case $purpose in
+    execute) heading='Run this command on which host?' ;;
     new) heading='Start a new session on which host?' ;;
     resume) heading=$'Resume saved work on which host?\nBrowse this host’s saved conversations' ;;
     move) heading="Move this session to which host?"$'\n'"Destination host · current host: $source" ;;
@@ -1303,6 +1304,17 @@ _t_remote() {
         *) kill_targets+=("$kill_arg") ;;
       esac
     done
+    if [[ -n ${REMOTE_HOSTS[$kill_targets[1]]:-} ]]; then
+      local kill_host_repo kill_host_rc
+      kill_host_repo=$(_dev_resolve_repo "$kill_targets[1]"); kill_host_rc=$?
+      if (( kill_host_rc == 0 || kill_host_rc == 2 )); then
+        print -u2 't remote kill: ambiguous host/repository; use t remote --host HOST session close'; return 2
+      fi
+      local -a close_args=("${(@)kill_targets[2,-1]}")
+      [[ -n $force ]] && close_args+=(--yes)
+      command t remote --host "$kill_targets[1]" session close "${close_args[@]}"
+      return $?
+    fi
     (( $#kill_targets <= 2 )) || { print -u2 't remote kill: expected [repo] [slot|all]'; return 2; }
     _dev_remote_kill "${kill_targets[1]}" "${kill_targets[2]}" "$force"
     return $?
@@ -1316,16 +1328,22 @@ _t_remote() {
   while (( $# )); do
     arg=$1; shift
     case $arg in
-      --host|--from|--session|-s|--id|--days)
+      --host|--to|--from|--session|-s|--id|--days)
         (( $# )) && [[ -n $1 && $1 != -* ]] || { print -u2 "t remote $action: $arg requires a value"; return 2; }
         case $arg in
-          --host) host=$1 ;;
+          --host|--to)
+            [[ $arg != --to || $action == move ]] || return 2
+            [[ -z $host || $host == "$1" ]] || { print -u2 't remote move: conflicting destinations'; return 2; }
+            host=$1 ;;
           --from) [[ $action == move ]] || return 2; source=$1 ;;
           --session|-s|--id) [[ $action == move ]] || return 2; sid=$1 ;;
           --days) [[ $action == resume ]] || return 2; flags+=(--days "$1") ;;
         esac
         shift ;;
-      --host=*) host=${arg#*=}; [[ -n $host ]] || return 2 ;;
+      --host=*|--to=*)
+        [[ $arg != --to=* || $action == move ]] || return 2
+        [[ -z $host || $host == "${arg#*=}" ]] || { print -u2 't remote move: conflicting destinations'; return 2; }
+        host=${arg#*=}; [[ -n $host ]] || return 2 ;;
       --from=*) [[ $action == move ]] || return 2; source=${arg#*=}; [[ -n $source ]] || return 2 ;;
       --session=*|-s=*|--id=*) [[ $action == move ]] || return 2; sid=${arg#*=}; [[ -n $sid ]] || return 2 ;;
       --days=*) [[ $action == resume ]] || return 2; flags+=("$arg") ;;
@@ -1338,6 +1356,17 @@ _t_remote() {
       *) pos+=("$arg") ;;
     esac
   done
+  # In host-first move syntax the host is the SOURCE, like remote resume.
+  # Released repo/slot and --from/--host forms keep their original behavior.
+  if [[ $action == move && $#pos -gt 0 && ( -n ${REMOTE_HOSTS[$pos[1]]:-} || $#pos == 3 ) ]]; then
+    [[ -z $source ]] || { print -u2 't remote move: source specified twice'; return 2; }
+    local host_repo host_repo_rc
+    host_repo=$(_dev_resolve_repo "$pos[1]"); host_repo_rc=$?
+    if (( host_repo_rc == 0 || host_repo_rc == 2 )); then
+      print -u2 't remote move: ambiguous host/repository; use --from HOST and --to DESTINATION'; return 2
+    fi
+    source=$pos[1]; pos=("${(@)pos[2,-1]}")
+  fi
   if [[ $action != move && -z $host && $#pos -gt 0 ]]; then
     (( $#pos <= 3 )) || { print -u2 "t remote $action: expected [host] [repo] [slot]"; return 2; }
     # Old repo-only/repo-slot commands must not silently become SSH targets.

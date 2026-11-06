@@ -152,6 +152,8 @@ class Config:
         self.mini_host = ""  # legacy host seed; cleared if its host is removed
         self.local_rc = _current_local_rc()
         self._load()
+        if os.environ.get('T_REMOTE_QUERY_LOCAL') == '1':
+            self.hosts = {}
 
     def _load(self):
         try:
@@ -7251,6 +7253,12 @@ def _command_readonly(argv, *, terminal=None):
     Forwarded command arguments belong to the child, so a literal --json or
     --status after a passthrough target must not change t's classification.
     """
+    if _REMOTE['nested'](argv):
+        try:
+            path, tail, host = _REMOTE['split'](argv[1:], COMMAND_GROUPS)
+            return _REMOTE['policy'](path, tail) == 'query'
+        except ValueError:
+            return True
     words = _canonical_argv(argv)
     if not words:
         if terminal is None:
@@ -11084,9 +11092,32 @@ COMMAND_GROUPS = {
                "diagnose": ("doctor",), "advisories": ("__advisories",)},
 }
 
+_REMOTE = runpy.run_path(str(Path(__file__).resolve().parent.parent / 'libexec/t_remote.py'))
+_REMOTE['extend_registry'](COMMAND_GROUPS)
+
+
+def _remote_history(cfg):
+    helper = runpy.run_path(os.path.join(_t_source_root(), 'libexec/t_history.py'))
+    return helper['HistoryCommand'](cfg, globals())
+
+
+def cmd_remote(cfg, args):
+    if args.action == 'execute':
+        return _REMOTE['execute'](cfg, args, globals())
+    if args.action == 'kill':
+        if args.repo in getattr(cfg, 'hosts', {}) or getattr(args, 'kill_slot', None) is not None:
+            rest = ['session', 'close', *[v for v in (args.repo, args.slot, getattr(args, 'kill_slot', None)) if v]]
+            if args.yes:
+                rest.append('--yes')
+            return _REMOTE['execute'](cfg, argparse.Namespace(rest=rest), globals())
+        return cmd_kill(cfg, args)
+    args._verb = 'remote'
+    return cmd_pending(cfg, args)
+
+
 GROUP_DESCRIPTIONS = {
     "mcp": "Inspect and manage the sessions MCP server on this machine",
-    "remote": "Open, move, resume, and close sessions on SSH hosts",
+    "remote": "Run command families on registered SSH hosts",
     "issue": "List GitHub issues, inspect work, start agents, or open issues in a browser",
     "agentcore": "Submit work to an existing Amazon Bedrock AgentCore runtime",
     "session": "Open, find, and move work sessions",
@@ -11227,7 +11258,7 @@ def _root_help():
 WORK
   session    Open, find, and move work sessions
   move       Alias for session move
-  remote     Open, move, resume, and close sessions on SSH hosts
+  remote     Run command families on registered SSH hosts
   issue      List, inspect, work on, and open GitHub issues
   share      Share context between agent conversations
   repo       List and manage repositories
@@ -11305,6 +11336,15 @@ def _wrap_help(body):
 
 
 def _group_help(group):
+    if group.startswith('remote '):
+        path, node = _command_path(group.split())
+        if isinstance(node, dict):
+            rows = [f"  {name:<14} " + ("Remote command family" if isinstance(value, dict)
+                    else "Run " + ' '.join([*path[1:], name]) + " on an SSH host")
+                    for name, value in node.items()]
+            return _wrap_help(f"USAGE\n  t {group} <verb> [host] [arguments] [flags]\n\nCOMMANDS\n" +
+                '\n'.join(rows) + "\n\nHost identifies the source machine. Lists query all registered hosts when omitted.\n" +
+                f"Run t help {group} <verb> for details.\n")
     if group == "config models":
         return _wrap_help("""USAGE
   t config models <verb> [MODEL] [--provider PROVIDER] [--json]
@@ -11498,20 +11538,19 @@ Run `t help issue <verb>` for flags and arguments.
                  "Add infers the checkout directory name; --alias sets a short name.\n"
                  "Use `t config setup [dirs ...]` to select several checkouts (default ~/config).\n")
     if group == "remote":
-        extra = ("\nTARGETS\n  t remote open [host] [repo] [slot] [--new]\n"
-                 "  t remote move [repo] [slot] [--session ID] [--from SOURCE] [--host DEST]\n"
-                 "  t remote resume [host] [repo] [slot] [--days N] [--all]\n"
-                 "  t remote kill [repo] [slot|all] [-y|--yes]\n"
-                 "\nUse a registered alias, checkout basename or origin name on the selected host.\n"
-                 "Infer the repository from the current checkout, or browse all repositories outside one.\n"
-                 "Omitted hosts use a picker labeled for opening, starting fresh, resuming, or moving.\n"
-                 "Open's chosen host runs the session; --new explicitly starts fresh there.\n"
-                 "Resume's host supplies saved history and runs the resumed session.\n"
-                 "Move's chosen host is the destination; its picker names the current source host.\n"
-                 "Kill discovers the owning host; its first target is a repository, not a host.\n"
-                 "Session resume --host sends locally discovered history there instead.\n"
-                 "Move sends directly from source to destination;\n"
-                 "the source must be able to SSH and rsync to the destination.\n")
+        extra = ("\nTARGETS\n  t remote <family> <action> [host] [arguments] [flags]\n"
+                 "  t remote session ls [host]\n"
+                 "  t remote move [host] [repo] [slot] [--to DESTINATION]\n"
+                 "  t remote resume [host] [repo] [slot]\n"
+                 "  t remote kill [host] [repo] [slot|all] [-y|--yes]\n"
+                 "\nHost follows the complete action and identifies the source machine.\n"
+                 "Lists and status query registered remote hosts when omitted; actions select one host.\n"
+                 "Use t remote --host HOST <command> to disambiguate host and repository names.\n"
+                 "Move selects the destination separately; --to local receives here.\n"
+                 "Repo-first move/kill and move --from SOURCE --host DEST retain compatibility.\n"
+                 "Existing commands infer the current checkout only where they normally do.\n"
+                 "Repository identities are verified on the source; paths and aliases may differ.\n"
+                 "Use t hosts run HOST t system update to upgrade an older remote host.\n")
     if group == "session":
         extra = ("\nTARGETS\n  t session <verb> [repo] [slot] [flags]\n"
                  "  Repositories accept an alias, checkout basename or local origin repository name.\n"
@@ -11564,6 +11603,8 @@ def _command_description(group, action):
         "system": {"integrate": "Link t and its hooks", "update": "Update t",
                    "diagnose": "Diagnose the local setup", "advisories": "Manage periodic advisory checks"},
     }
+    if group == 'remote' and action not in descriptions['remote']:
+        return "Run " + action + " commands on an SSH host"
     return descriptions[group][action]
 
 
@@ -11641,6 +11682,13 @@ class _CommandParser(argparse.ArgumentParser):
         super()._check_value(action, value)
 
     def parse_args(self, args=None, namespace=None):
+        if self.prog == "t" and args is not None and _REMOTE['nested'](list(args)):
+            try:
+                path, tail, host = _REMOTE['split'](list(args)[1:], COMMAND_GROUPS)
+            except ValueError as error:
+                self.error(str(error))
+            rest = (["--host", host] if host else []) + list(path) + tail
+            return argparse.Namespace(verb="remote", action="execute", rest=rest)
         if self.prog == "t" and args is not None:
             args = ["config", "--workflows-ui"] if list(args) == ["workflow"] else _canonical_argv(list(args))
             if len(args) >= 2 and args[0] == "remote" and args[1] in ("open", "resume", "move", "kill"):
@@ -11651,7 +11699,7 @@ class _CommandParser(argparse.ArgumentParser):
                 for word in rest:
                     if word.startswith("-"):
                         options.append(word)
-                        if word in ("--host", "--from", "--session", "-s", "--days"):
+                        if word in ("--host", "--from", "--to", "--session", "-s", "--days"):
                             value = next(rest, None)
                             if value is None:
                                 self.error(f"remote: {word} requires a value")
@@ -11839,10 +11887,12 @@ def build_parser():
 
   Owner scans warn and skip unavailable peers; known local and reachable-host owners still block duplicate resumes.""")):
         leaf = remote_sub.add_parser(action, help=_command_description("remote", action),
+            usage="%(prog)s [host] [repo] [slot] [--to HOST] [flags]" if action == "move" else None,
             description=summary, help_details=details + """
 
 TARGETS
-  Open/resume use [host] [repo] [slot]; move uses [repo] [slot] --host HOST.
+  Open/resume/move use [host] [repo] [slot]. Move names the source host;
+  --to HOST selects its destination. Repo-first move targets remain supported.
   Infer the current checkout, or browse all repositories outside one.
   Omit the host to choose a registered SSH host with Enter.
   Compatibility: [repo] [slot] --host HOST retains its original meaning.
@@ -11853,14 +11903,15 @@ TARGETS
             leaf.add_argument("target_host", metavar="host", nargs="?", help="SSH host alias or target (default: host picker)")
         leaf.add_argument("repo", nargs="?", help="repository alias, basename or origin name (default: current checkout or all)")
         leaf.add_argument("slot", nargs="?", help="slot number; a lone number uses the current repository")
-        leaf.add_argument("--host", help=("destination SSH host or local (this machine); omitted: host picker"
-                                         if action == "move" else argparse.SUPPRESS))
+        leaf.add_argument("--host", help=(argparse.SUPPRESS))
         if action == "open":
             leaf.add_argument("--new", action="store_true", help="start a fresh session on the chosen host")
         elif action == "resume":
             leaf.add_argument("--days", default="30", help="saved-history age in days, or all (default: 30)")
             leaf.add_argument("-a", "--all", action="store_true", help="browse all repositories on the selected host")
         else:
+            leaf.add_argument("move_slot", nargs="?", help="slot in host-first [host] [repo] [slot] form")
+            leaf.add_argument("--to", dest="to_host", help="destination SSH host or local; omitted: destination picker")
             leaf.add_argument("--from", dest="from_host", help="source SSH host; local selects this machine")
             leaf.add_argument("-s", "--session", help="exact conversation ID, bypassing session selection when unique")
             leaf.add_argument("-a", "--all", action="store_true", help="browse current conversations in every repository")
@@ -11869,10 +11920,10 @@ TARGETS
             mode.add_argument("-f", "--fg", action="store_true", help="run in the destination SSH foreground")
 
     remote_kill = remote_sub.add_parser("kill", help=_command_description("remote", "kill"),
-        usage="%(prog)s [repo] [slot|all] [-y|--yes]",
+        usage="%(prog)s [host] [repo] [slot|all] [-y|--yes]",
         description="Close sessions on their remote hosts, preserving saved conversations and worktrees. "
             "Use the same discovery and confirmation as t session close --remote. "
-            "The first target is a repository, not a host; discover its owner across registered SSH hosts. "
+            "A registered host first scopes execution there; repo-first targets discover the owner across SSH hosts. "
             "Infer the current repository when omitted; outside one, select across remote repositories.",
         help_details="""DETAILS
 
@@ -11888,6 +11939,7 @@ EXAMPLES
   t remote kill api all --yes""")
     remote_kill.add_argument("repo", nargs="?", help="repository alias, basename, origin name or foreground session")
     remote_kill.add_argument("slot", nargs="?", help="slot number or all; a lone slot uses the current repository")
+    remote_kill.add_argument("kill_slot", nargs="?", help=argparse.SUPPRESS)
     remote_kill.add_argument("-y", "--yes", action="store_true", help="skip the live-agent confirmation for explicit targets")
     remote_kill.set_defaults(remote=True)
 
@@ -13052,10 +13104,36 @@ PERIODIC CHECKS
     rp = sub.add_parser("__resolve", hidden=True, help="(internal) resolve a shell action for the t() shim",
         description="Internal: resolve a shell action for the t() zsh shim. Not for direct use.")
     rp.add_argument("rest", nargs=argparse.REMAINDER)
+    def add_remote_commands(parent, node, prefix):
+        for name, value in node.items():
+            if isinstance(value, dict):
+                child = parent.add_parser(name, help="Remote " + name,
+                    description="Run this command family on a source SSH host.")
+                children = child.add_subparsers(dest="remote_resource_" + str(len(prefix)))
+                add_remote_commands(children, value, (*prefix, name))
+            else:
+                command = (*prefix, name)
+                child_path = command[1:]
+                reason = _REMOTE['UNSUPPORTED'].get(' '.join(child_path))
+                child = parent.add_parser(name,
+                    help=("Unavailable: " + reason if reason else "Run " + ' '.join(child_path) + " remotely"),
+                    usage="%(prog)s [host] [command arguments] [flags]",
+                    description=(reason.replace("HOST", "the-host") if reason else
+                        "The optional host follows the complete action and identifies the source machine. "
+                        "Lists and status query all registered hosts when omitted; actions select one host. "
+                        "Use t remote --host HOST to disambiguate a host and repository name."),
+                    help_details="Child command flags retain their meaning. "
+                        "Run t help " + ' '.join(child_path) + " for the underlying arguments. "
+                        "Move uses --to HOST for its destination. Missing interactive choices require a terminal.")
+                child.add_argument("arguments", nargs=argparse.REMAINDER, help="host and child command arguments")
+    for group, node in COMMAND_GROUPS['remote'].items():
+        if isinstance(node, dict):
+            add_remote_commands(remote_sub, {group: node}, ('remote',))
     return p
 
 
 IMPLEMENTED = {
+    "remote": cmd_remote,
     "__advisories": cmd_advisories,
     "issue": cmd_issue,
     "history": cmd_history,
@@ -13235,6 +13313,22 @@ def _bare_entry():
 
 
 def _main(argv):
+    if argv == ['__remote-protocol']:
+        print(_REMOTE['PROTOCOL'])
+        return 0
+    if len(argv) == 2 and argv[0] == '__remote-exec':
+        return _REMOTE['peer'](argv[1], globals())
+    if argv == ['__remote-completions']:
+        for path in _REMOTE['leaves'](COMMAND_GROUPS['remote']):
+            print(' '.join(path))
+        return 0
+    if _REMOTE['nested'](argv) and any(w in ('--help', '-h') for w in argv[:argv.index('--') if '--' in argv else len(argv)]):
+        help_words = list(argv[1:])
+        if help_words and help_words[0] == '--host' and len(help_words) > 1:
+            help_words = help_words[2:]
+        elif help_words and help_words[0].startswith('--host='):
+            help_words = help_words[1:]
+        argv = ['remote', *help_words]
     argv = _hosts_argv(_runners_argv(argv))
     if len(argv) == 2 and argv[0] == '__resume-source':
         helper = runpy.run_path(os.path.join(_t_source_root(), 'libexec', 't_history.py'))
@@ -13414,6 +13508,13 @@ def _main(argv):
         if target is not None:
             _print_command_help(target, words, canonical)
             return 0
+    if _REMOTE['nested'](argv):
+        try:
+            remote_args = parser.parse_args(argv)
+        except ValueError as error:
+            print(f"t remote: {error}", file=sys.stderr)
+            return 2
+        return IMPLEMENTED['remote'](Config(), remote_args)
     error = _canonical_error(argv)
     if error:
         print(error, file=sys.stderr)
@@ -13470,8 +13571,6 @@ def _main(argv):
     if update_result is not None:
         return update_result
     cfg = Config()
-    if args.verb == "remote" and args.action == "kill":
-        return cmd_kill(cfg, args)
     handler = IMPLEMENTED.get(args.verb)
     if handler:
         return handler(cfg, args)
