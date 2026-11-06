@@ -1047,9 +1047,12 @@ Menu choices stay pending until
 | Local preview → Frontend → Approval before PR | Inherit global or choose an approval override |
 | Local preview → Frontend → Implement before approval | Yes or No |
 | Local preview → Frontend → Design approach | Separate HTML prototype or In the app |
+| Local preview → Frontend → Design system | Not set or Use repository design system |
 | Local preview → Frontend → Preview method | Fast reload or Build |
 | Local preview → Frontend → Open in browser | Not set, Automatically, or Only when I ask |
 | Local preview → CLI → Preview | Enabled or Disabled |
+| Local preview → CLI → Planning preview | Not set, Before implementation, or Only when requested |
+| Local preview → CLI → Planning preview approval | Not set, Required, or Not required |
 | Local preview → CLI → Preview timing | Inherit global or choose a timing override |
 | Local preview → CLI → Approval before PR | Inherit global or choose an approval override |
 | Local preview → CLI → Preview method | Install locally or Run from the repo |
@@ -1090,14 +1093,39 @@ resolved choice and replaces the legacy shared setting with independent choices.
 **Frontend → Implement before approval: No** requires a lightweight frontend
 preview and approval before substantial implementation. Work needed to create
 that preview is allowed. **Yes** lets frontend implementation proceed without
-that approval gate. CLI previews do not impose an implementation approval gate;
-they let you try the working command. PR opening and
+that approval gate. CLI planning previews have independent timing and approval choices, using an
+isolated interactive HTML prototype of proposed command behavior. Required approval
+applies when a planning preview is due or requested; prototype work is allowed.
+The existing CLI preview lets you try the working command separately. PR opening and
 merging remain controlled by their separate settings.
 **Local preview** contains **Frontend** and **CLI** submenus, each with its own
 Enabled/Disabled setting. Both remain accessible so you can re-enable them.
 Resolved preview preferences apply only to enabled types. Disabling a type
-retains its settings and suppresses its design and preview guidance; disabling
+retains its settings and suppresses its preview guidance; disabling
 both suppresses the shared preview rules too. Enabling alone does not start a preview.
+The design-system preference remains active independently of preview enablement.
+
+Choose **Frontend → Design system → Use repository design system** in a reusable
+workflow. Then open **Repository assignments → repository** to assign that workflow
+and select the repository's source. Assignment offers discovery immediately if the
+workflow requests a source and none is selected; **Set up later** retains the assignment.
+Discovery looks only at repository-owned documentation and implementations, including
+terminal design systems. Results show paths and evidence; you can refresh, enter a
+relative path, or clear the selection. Different repos using one workflow retain
+independent sources, including when they inherit the global workflow.
+
+**Add design-system guidance…** prepares an agent-assisted draft in an isolated
+worktree after pending settings are saved or discarded and the launch is reviewed.
+It inspects existing UI and documentation, drafts `DESIGN.md`, an `AGENTS.md`
+reference, and grounded design/preview conventions. Review the actual changes in
+that session; the task stops before publishing. Afterwards, refresh discovery from
+the accepted worktree and select its source. Existing docs are preserved and
+workflow approval policy is not copied into repository prose.
+
+For example, edit `t workflow open standard`, enable repository design-system use,
+then open `t workflow` → Repository assignments → your repo. Inspect the saved source
+without scanning or prompting with `t workflow list --repo ALIAS --json`.
+
 Frontend contains design approach, preview method, and browser
 opening. CLI contains the local install/run method and **Run command**. Choose
 **Automatically** to launch the project's supported preview command once the CLI
@@ -1189,7 +1217,13 @@ defaults when Implementation is unchecked or all stages are off. Optional `permi
 permissions apply independently of model stages and are suppressed when the
 workflow is disabled or excluded. Inside `behaviors`, independent keys are
 `pr_review`, `pr_open`, `pr_state`, `pr_merge`, `frontend_enabled`, `cli_enabled`, `local_preview`, `cli_preview`, `cli_launch`,
-`frontend_implement_before_approval`, `frontend_design`, `frontend_preview`, `frontend_browser`, and `test_timing`.
+`frontend_implement_before_approval`, `frontend_design`, `design_system`,
+`cli_planning_preview`, `cli_planning_approval`, `frontend_preview`, `frontend_browser`, and `test_timing`.
+`design_system` accepts `repo`; CLI planning timing accepts `before_implementation`
+or `on_request`, and approval accepts `required` or `not_required`. A repository entry
+may independently contain `"design_system": {"path": "DESIGN.md"}`. Paths are relative
+to the active worktree, never external or generated/dependency locations. Missing
+sources remain stored until explicitly replaced or cleared. No read-time migration occurs.
 `pr_review` accepts `review` (Enabled) or `skip` (Disabled); omission means Enabled
 without materializing a stored value on read or an unchanged selection.
 Skipping review retains the saved model-stage selection and reviewer settings.

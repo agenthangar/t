@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import re
+import runpy
 import shlex
 import stat
 import subprocess
@@ -39,6 +40,17 @@ PERMISSIONS = {
 # One catalogue drives validation, menu choices, summaries and native instructions.
 # Absent keys mean no preference, not a directive to do the opposite.
 BEHAVIORS = {
+    'design_system': {'label': 'Design system', 'choices': {
+        'repo': ('Use repository design system', 'For user-facing design, including terminal interfaces, inspect and reuse the repository-selected design system, components, tokens and guidance. Extend established patterns consistently. Standalone prototypes should reflect the same system and disclose approximations. If no source is selected, ask the user to configure it through repository assignments; do not invent or automatically create a system. This preference is independent of preview enablement and timing.'),
+    }},
+    'cli_planning_preview': {'label': 'CLI planning preview', 'choices': {
+        'before_implementation': ('Before implementation', 'For new public commands and command improvements, prepare a local interactive HTML planning preview before substantial implementation. Follow repository design guidance, demonstrate affected flows and relevant empty/error states with labeled sample data, and isolate the prototype from real configuration. This is separate from trying the implemented command.'),
+        'on_request': ('Only when requested', 'Prepare a CLI planning preview only when explicitly requested, unless repository or task instructions require one. This is separate from previewing the working command.'),
+    }},
+    'cli_planning_approval': {'label': 'CLI planning preview approval', 'choices': {
+        'required': ('Required', 'When a CLI planning preview is requested or due, wait for explicit user approval before substantial implementation. Work needed for the prototype is allowed. This choice alone does not request a preview or override request-only planning timing; working-command previews and PR approvals remain separate.'),
+        'not_required': ('Not required', 'Do not add an approval gate solely for a CLI planning preview. Honor repository and task instructions and separate PR approval requirements.'),
+    }},
     'worktree': {'label': 'Worktree', 'choices': {
         'isolated': ('Isolated worktree', 'Reuse an appropriate existing isolated worktree, or create one before implementation.'),
         'current': ('Current worktree', 'Use the current worktree, subject to explicit task instructions and repository safety rules.'),
@@ -315,6 +327,8 @@ def visible_behaviors(behaviors):
     if not cli:
         result.pop('cli_preview', None)
         result.pop('cli_launch', None)
+        result.pop('cli_planning_preview', None)
+        result.pop('cli_planning_approval', None)
     for kind, keys in PREVIEW_OVERRIDES.items():
         if not preview_enabled(result, kind):
             for key in keys.values():
@@ -674,7 +688,7 @@ def validate(value, *, migrate=True):
         if legacy:
             validate_policy(entry)
             continue
-        if not isinstance(entry, dict) or not entry or set(entry) - {'workflow', 'inline', 'excluded'} or ('workflow' in entry and 'inline' in entry):
+        if not isinstance(entry, dict) or not entry or set(entry) - {'workflow', 'inline', 'excluded', 'design_system'} or ('workflow' in entry and 'inline' in entry):
             raise ValueError('repository workflow requires one workflow or inline source, and optional excluded: true')
         if 'excluded' in entry and entry['excluded'] is not True:
             raise ValueError('repository excluded must be true')
@@ -684,6 +698,8 @@ def validate(value, *, migrate=True):
                 raise ValueError('repository workflow must name an existing workflow')
         if 'inline' in entry:
             validate_policy(entry['inline'])
+        if 'design_system' in entry:
+            design_system()['validate_source'](entry['design_system'])
     if legacy:
         result = {'version': 3, 'default': 'standard', 'workflows': {'standard': copy.deepcopy(value['global'])},
                   'repositories': {path: {'inline': copy.deepcopy(policy)} for path, policy in value['repositories'].items()}}
@@ -760,6 +776,22 @@ def load():
 def source(document, repository=None):
     entry = document['repositories'].get(repository, {})
     return 'repository override' if 'inline' in entry else entry.get('workflow', document['default'])
+
+
+def design_system():
+    return runpy.run_path(str(Path(__file__).with_name('t_design_system.py')))
+
+
+def select_design_system(document, repository, path):
+    after = validate(document)
+    entry = after['repositories'].setdefault(repository, {})
+    if path is None:
+        entry.pop('design_system', None)
+        if not entry:
+            after['repositories'].pop(repository)
+    else:
+        entry['design_system'] = design_system()['validate_source']({'path': path})
+    return validate(after)
 
 
 def resolved(document, repository=None):
@@ -936,6 +968,7 @@ def scoped(document, repository=None, name=None):
 
 def update(document, value, repository=None, name=None):
     after = validate(document)
+    selected = copy.deepcopy(after['repositories'].get(repository, {}).get('design_system'))
     if repository and value is None:
         after['repositories'].pop(repository, None)
     else:
@@ -948,11 +981,14 @@ def update(document, value, repository=None, name=None):
             if target not in after['workflows']:
                 raise ValueError(f'unknown workflow {target!r}')
             after['workflows'][target] = copy.deepcopy(value)
+    if repository and selected:
+        after['repositories'].setdefault(repository, {})['design_system'] = selected
     return validate(after)
 
 
 def action(document, verb, name=None, repository=None, from_name=None, replacement=None):
     after = validate(document)
+    selected = copy.deepcopy(after['repositories'].get(repository, {}).get('design_system'))
     if name is not None:
         validate_name(name)
     if verb == 'add':
@@ -998,12 +1034,15 @@ def action(document, verb, name=None, repository=None, from_name=None, replaceme
             after['repositories'].pop(repository, None)
     else:
         raise ValueError(f'unknown workflow action {verb!r}')
+    if repository and selected:
+        after['repositories'].setdefault(repository, {})['design_system'] = selected
     return validate(after)
 
 
 def catalogue(document):
     return {'default': document['default'], 'workflows': {
         name: {'workflow': copy.deepcopy(policy), **policy_summary(policy), 'default': name == document['default'],
+               'assignment_count': sum(entry.get('workflow') == name and not entry.get('excluded') for entry in document['repositories'].values()),
                'repositories': sorted(path for path in document['repositories']
                                       if source(document, path) == name),
                'excluded_repositories': sorted(path for path, entry in document['repositories'].items()
@@ -1180,7 +1219,7 @@ def edit_instructions(document, repository=None, name=None):
         return 0, update(document, policy, repository, name)
 
 
-def _stage_text(policy, tool='codex'):
+def _stage_text(policy, tool='codex', design_source=None):
     if not policy['enabled']:
         return ('The entire workflow is disabled for this scope. Do not require '
                 'these stages or delegation solely because of t preferences. Do not apply inherited '
@@ -1212,6 +1251,15 @@ def _stage_text(policy, tool='codex'):
                           for key in BEHAVIORS if key in behaviors and key not in _preview_rule_keys()]
         behavior_lines.extend(_preview_instruction_lines(behaviors))
         parts.append('Selected behavior preferences:\n' + '\n'.join(behavior_lines))
+    if behaviors.get('design_system') == 'repo':
+        if design_source:
+            parts.append('Selected repository design-system source: ' + json.dumps(design_source['path']) +
+                         '. Resolve this path inside the active worktree, never another checkout. '
+                         'Read it before design work. If missing or unsafe, report the problem and '
+                         'ask for a corrected selection; do not silently replace it or create a new system.')
+        else:
+            parts.append('Repository design-system source: not configured. Select a source in '
+                         't workflow → Repository assignments → repository → Frontend · Design system.')
     if policy.get('runners', {}).get('targets'):
         parts.append(f'Test runners are configured. Use `t runners list --tool {tool}` '
                      '(with `--repo ALIAS` for repository settings) to inspect targets. '
@@ -1315,14 +1363,14 @@ def _model_stage_text(policy, tool='codex'):
             f'These instructions do not enforce model selection or switch an active conversation.')
 
 
-def render(document, tool='codex'):
+def render(document, tool='codex', design_source=None):
     document = tool_document(document, tool)
     text = ('Agent workflow preferences supplied by t. These managed defaults supersede older '
             'general staged-model defaults in personal instructions. Explicit task instructions '
             'and repository-specific rules remain authoritative. These are instructions for the '
             f'agent; saved staged workflows set {tool.title()} main launch/resume defaults, while stage delegation '
             'remains guidance and does not switch active conversations. The host instruction hierarchy is unchanged.\n' + PRECEDENCE + '\n\n'
-            'Global default (unless a repository scope below matches):\n' + _stage_text(effective(document), tool))
+            'Global default (unless a repository scope below matches):\n' + _stage_text(effective(document), tool, design_source))
     for repository in sorted(document['repositories']):
         policy = effective(document, repository)
         text += ('\n\nRepository scope: ' + json.dumps(repository, ensure_ascii=False) + '.\n'
@@ -1330,7 +1378,8 @@ def render(document, tool='codex'):
                  'worktrees, including worktrees created later. Resolve the current checkout with '
                  '`git rev-parse --show-toplevel` and its canonical repository with '
                  '`git rev-parse --path-format=absolute --git-common-dir`; the common Git directory '
-                 'must belong to the canonical checkout above. Other repositories use the global default.\n' + _stage_text(policy, tool))
+                 'must belong to the canonical checkout above. Other repositories use the global default.\n' +
+                 _stage_text(policy, tool, document['repositories'][repository].get('design_system')))
     return BEGIN + '\n' + text + '\n' + END
 
 

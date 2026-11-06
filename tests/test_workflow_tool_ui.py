@@ -101,7 +101,7 @@ def test_repository_workflow_tool_chooser_edits_only_selected_tool(workflow, t_m
     monkeypatch.setattr(t_mod, '_workflow', lambda: vars(workflow))
     cfg = config(workflow)
     before = copy.deepcopy(cfg._workflow_document)
-    ui = ToolMenu(['claude', '__disabled__', 'back'])
+    ui = ToolMenu(['claude', 'workflow', '__disabled__', 'back', 'back'])
     t_mod._config_workflow(ui, cfg, 'api')
     assert ui.views[0][0] == 'Workflow tool · api'
     assert ui.views[-1][0] == 'Workflow tool · api' and ui.views[-1][1][ui.views[-1][2]['default']][0] == 'claude'

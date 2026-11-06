@@ -190,7 +190,7 @@ def test_workflow_tui_review_back_and_keep(workflow, t_mod, monkeypatch, tmp_pat
 def test_workflow_tui_add_assign_and_repository_scope(workflow, t_mod, monkeypatch, tmp_path):
     cfg, _ = config(workflow, t_mod, monkeypatch, tmp_path)
     cfg.repos = {'api': str(tmp_path / 'api')}
-    ui = Menu(['codex', 'add', 'back', 'choose', 'local', 'repos', 'api', '__disabled__', 'name:standard', 'back', 'save'], inputs=['local'])
+    ui = Menu(['codex', 'add', 'back', 'choose', 'local', 'repos', 'api', 'workflow', '__disabled__', 'back', 'name:standard', 'back', 'save'], inputs=['local'])
     assert t_mod._workflow_hub(ui, cfg, standalone=True) == 'save'
     assert cfg._workflow_document['default'] == 'local'
     assert cfg._workflow_document['repositories'][cfg.repos['api']]['excluded']
@@ -344,7 +344,7 @@ def test_repository_workflow_selector_only_assigns_or_preserves_policy(workflow,
             assert ('', 'Inherit global · standard') in rows
             return super().pick(label, rows, **kwargs)
 
-    t_mod._config_workflow_tool(Selector([choice]), cfg, 'api')
+    t_mod._workflow_repository_selector(Selector([choice]), cfg, vars(workflow), 'api', repository)
     entry = cfg._workflow_document['repositories'].get(repository)
     if expected == 'unchanged':
         assert cfg._workflow_document == before

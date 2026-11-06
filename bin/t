@@ -2366,6 +2366,9 @@ def _workflow_tool_scope(ui, cfg, tool, action):
     scoped._workflow_tool = tool
     scoped._workflow_document = helper["tool_document"](cfg._workflow_document, tool)
     scoped._workflow_initial = helper["tool_document"](cfg._workflow_initial, tool)
+    scoped._workflow_external_pending = getattr(cfg, "_workflow_external_pending", False) or any(
+        helper["tool_document"](cfg._workflow_document, other) != helper["tool_document"](cfg._workflow_initial, other)
+        for other in helper["TOOLS"] if other != tool)
     try:
         return action(scoped)
     finally:
@@ -2896,9 +2899,126 @@ def _workflow_repository_selector(ui, cfg, helper, repo, repository):
             else:
                 after = helper["action"](document, "use", selected.removeprefix("name:"), repository)
             cfg._workflow_document = after
+            policy = helper["effective"](after, repository)
+            if (policy['enabled'] and policy.get('behaviors', {}).get('design_system') == 'repo'
+                    and not after['repositories'].get(repository, {}).get('design_system')):
+                _workflow_design_system_menu(ui, cfg, helper, repo, repository)
             return
         except (OSError, ValueError) as exc:
             ui.done("invalid", str(exc))
+
+
+def _workflow_design_source_label(helper, document, repository):
+    selected = document['repositories'].get(repository, {}).get('design_system')
+    if selected:
+        return selected['path']
+    policy = helper['effective'](document, repository)
+    return 'Not configured' if policy.get('behaviors', {}).get('design_system') == 'repo' else 'Not set'
+
+
+def _workflow_repository_settings(ui, cfg, helper, repo, repository):
+    focus = 0
+    while True:
+        document = cfg._workflow_document
+        entry = document['repositories'].get(repository, {})
+        value = helper['source'](document, repository)
+        if 'workflow' not in entry and 'inline' not in entry:
+            value = 'Inherit global · ' + value
+        if entry.get('excluded'):
+            value += ' · Disabled'
+        selected = _workflow_design_source_label(helper, document, repository)
+        choice = ui.pick('Repository · ' + repo, [('workflow', 'Workflow ›'),
+            ('design_system', 'Frontend · Design system ›'), ('back', 'Back')],
+            values={'workflow': value, 'design_system': selected}, default=focus)
+        if choice in (None, 'back'):
+            return
+        focus = 0 if choice == 'workflow' else 1
+        if choice == 'workflow':
+            _workflow_repository_selector(ui, cfg, helper, repo, repository)
+        else:
+            _workflow_design_system_menu(ui, cfg, helper, repo, repository)
+
+
+def _workflow_design_draft(ui, cfg, helper, repo, root):
+    if (_workflow_pending(cfg) or getattr(cfg, '_workflow_external_pending', False)
+            or getattr(cfg, '_workflow_shell_pending', False)):
+        ui.done('pending', 'Save or discard pending settings before starting design-guidance drafting; then return here.')
+        return
+    launcher = runpy.run_path(str(Path(__file__).resolve().parent.parent / 'libexec/t_share_launch.py'))
+    agent = getattr(cfg, '_workflow_tool', cfg.agent_default)
+    source = {'cwd': str(root), 'title': 'Draft repository design guidance', 'address': ''}
+    try:
+        plan = launcher['preview'](cfg, source, agent)
+        ui.done('Draft design guidance', 'Inspect existing UI; draft DESIGN.md, an AGENTS.md reference and design/preview conventions. '
+                'Review the actual diff in the agent session; workflow approval policy stays in configuration.')
+        if plan['dirty']:
+            ui.done('Source has local edits', 'The new worktree starts from the committed source. Uncommitted changes stay here.')
+        choice = ui.pick('Draft guidance · ' + repo, [('start', 'Start ' + agent.title() + ' in a new worktree'),
+                                                    ('back', 'Back')], default=1)
+        if choice != 'start':
+            return
+        result = launcher['launch'](cfg, source, agent, helper['design_system']()['draft_prompt'](), plan=plan)
+        ui.done('Draft session started', result['open_command'])
+        ui.done('Next', 'Review the draft in that session. After accepting it, refresh discovery in its worktree and select DESIGN.md.')
+    except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+        ui.done('Draft unavailable', str(exc))
+
+
+def _workflow_design_system_menu(ui, cfg, helper, repo, repository):
+    design = helper['design_system']()
+    root = design['workspace'](repository)
+    results = None
+    focus_key = 'current' if cfg._workflow_document['repositories'].get(repository, {}).get('design_system') else ''
+    while True:
+        if results is None:
+            try:
+                results = design['discover'](root)
+            except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+                results = {'candidates': [], 'warnings': [str(exc)]}
+            for warning in results['warnings']:
+                ui.done('Discovery', warning)
+            if not results['candidates']:
+                ui.done('Design system', 'No repository-owned design systems found. Enter a path, draft guidance, or set up later.')
+        selected = cfg._workflow_document['repositories'].get(repository, {}).get('design_system', {}).get('path')
+        values, rows = {}, [('', 'Not set')]
+        if selected:
+            try:
+                design['source_path'](root, selected)
+                status = 'Selected'
+            except ValueError:
+                status = 'Selected · missing or unsafe; replace or clear'
+            rows.append(('current', selected))
+            values['current'] = status
+        for index, candidate in enumerate(results['candidates']):
+            key = 'candidate:' + str(index)
+            rows.append((key, candidate['path']))
+            values[key] = '; '.join(candidate['evidence'])
+        rows += [('manual', 'Enter a repository path'), ('refresh', 'Refresh discovery'),
+                 ('draft', 'Add design-system guidance…'), ('back', 'Set up later / Back')]
+        choice = ui.pick(repo + ' · Design system', rows, values=values,
+                         default=next((index for index, row in enumerate(rows) if row[0] == focus_key), 0))
+        if choice in (None, 'back', 'current'):
+            return
+        focus_key = choice
+        if choice == 'refresh':
+            results = None
+            continue
+        if choice == 'draft':
+            _workflow_design_draft(ui, cfg, helper, repo, root)
+            continue
+        if choice == '':
+            cfg._workflow_document = helper['select_design_system'](cfg._workflow_document, repository, None)
+            return
+        path = (_config_input(ui, 'Repository-relative design-system path', selected or 'DESIGN.md')
+                if choice == 'manual' else results['candidates'][int(choice.split(':')[1])]['path'])
+        if path is None:
+            continue
+        try:
+            design['source_path'](root, path)
+            cfg._workflow_document = helper['select_design_system'](cfg._workflow_document, repository, path)
+            return
+        except ValueError as exc:
+            ui.done('Invalid source', str(exc))
 
 
 def _config_workflow_tool(ui, cfg, repo=None):
@@ -2906,7 +3026,7 @@ def _config_workflow_tool(ui, cfg, repo=None):
     _workflow_session(cfg)
     repository = os.path.realpath(cfg.repos[repo]) if repo else None
     if repo:
-        return _workflow_repository_selector(ui, cfg, helper, repo, repository)
+        return _workflow_repository_settings(ui, cfg, helper, repo, repository)
     while True:
         document = cfg._workflow_document
         policy = helper["effective"](document)
@@ -3057,6 +3177,7 @@ def _workflow_hub(ui, cfg, standalone=False, shell_pending=False):
 def _workflow_tool_hub(ui, cfg, standalone=False, shell_pending=False):
     helper = _workflow_cfg_helper(cfg)
     _workflow_session(cfg)
+    cfg._workflow_external_pending = getattr(cfg, '_workflow_external_pending', False) or shell_pending
     last = "customize"
     while True:
         document = cfg._workflow_document
@@ -3105,6 +3226,8 @@ def _workflow_tool_hub(ui, cfg, standalone=False, shell_pending=False):
             elif choice == "repos":
                 repo = ui.pick("Repository assignments", [(name, name) for name in sorted(cfg.repos)] + [("__back__", "Back")],
                                values={name: helper["source"](document, os.path.realpath(path)) +
+                                       (' · Design: ' + document['repositories'][os.path.realpath(path)]['design_system']['path']
+                                        if document['repositories'].get(os.path.realpath(path), {}).get('design_system') else '') +
                                        (" · Excluded" if document["repositories"].get(os.path.realpath(path), {}).get("excluded") else
                                         " · Disabled" if not helper["effective"](document, os.path.realpath(path))["enabled"] else "")
                                        for name, path in cfg.repos.items()})
@@ -3218,6 +3341,9 @@ def _workflow_changed_review(helper, document, before, activate=False):
             changes.append('Source: ' + old_source + ' → ' + new_source)
         if old.get('excluded', False) != new.get('excluded', False):
             changes.append('Excluded: ' + ('Yes' if old.get('excluded') else 'No') + ' → ' + ('Yes' if new.get('excluded') else 'No'))
+        if old.get('design_system') != new.get('design_system'):
+            changes.append('Frontend · Design system: ' + old.get('design_system', {}).get('path', 'Not set') +
+                           ' → ' + new.get('design_system', {}).get('path', 'Not set'))
         if 'inline' in new:
             changes.extend(policy_changes(helper['resolved'](before, repository), new['inline']))
         if changes:
@@ -3259,6 +3385,8 @@ def _workflow_scope_review(helper, document):
     for path, entry in sorted(document["repositories"].items()):
         lines.append(f"Repository {path}: {helper['source'](document, path)}" +
                      (" · excluded" if entry.get("excluded") else ""))
+        if entry.get('design_system'):
+            lines.append('  Frontend · Design system source: ' + entry['design_system']['path'])
         lines.extend("  " + line for line in helper["summary_lines"](helper["effective"](document, path)))
         if "inline" in entry:
             lines.append(f"  Workflow: {'enabled' if entry['inline']['enabled'] else 'disabled'}")
@@ -3508,6 +3636,7 @@ def _config_wizard(cfg, workflows_only=False, workflow_target=None):
                          ("hosts", "Hosts ›"), ("beam", "Default beam host"), ("nosleep", "Nosleep ›"), ("edit", "Open config in editor"),
                          ("cancel", "Cancel")]
                 pending = len(_config_diff(initial, _config_state(edited))) + _workflow_pending(edited)
+                edited._workflow_shell_pending = bool(_config_diff(initial, _config_state(edited)))
                 values.update({"hosts": f"{len(edited.hosts)} registered",
                                "repos": ", ".join(sorted(edited.repos)) or "none registered",
                                "beam": edited.beam_host or "none", "save": f"{pending} pending"})
@@ -3748,10 +3877,13 @@ _WORKFLOW_SECTIONS = {
     "tests": ("Tests", ("test_timing",)),
 }
 _WORKFLOW_PREVIEW_SUBMENUS = {
-    "frontend": ("Frontend", ("frontend_enabled", "frontend_preview_timing", "frontend_preview_pr_approval", "frontend_implement_before_approval", "frontend_design", "frontend_preview", "frontend_browser")),
-    "cli": ("CLI", ("cli_enabled", "cli_preview_timing", "cli_preview_pr_approval", "cli_preview", "cli_launch")),
+    "frontend": ("Frontend", ("frontend_enabled", "frontend_preview_timing", "frontend_preview_pr_approval", "frontend_implement_before_approval", "frontend_design", "design_system", "frontend_preview", "frontend_browser")),
+    "cli": ("CLI", ("cli_enabled", "cli_planning_preview", "cli_planning_approval", "cli_preview_timing", "cli_preview_pr_approval", "cli_preview", "cli_launch")),
 }
 _WORKFLOW_TOPICS = {
+    "design_system": ("Design system", "Use repository-owned design guidance; choose each source under Repository assignments."),
+    "cli_planning_preview": ("Planning preview", "Show proposed command behavior before implementation, separately from trying the working command."),
+    "cli_planning_approval": ("Planning preview approval", "Require approval of a requested or due CLI planning preview before substantial implementation."),
     "frontend_enabled": ("Preview", "Enable or disable frontend preview preferences."),
     "cli_enabled": ("Preview", "Enable or disable CLI preview preferences."),
     "pr_review": ("Agent review before PR", "Enable or disable the agent review before opening a pull request."),
@@ -3815,6 +3947,8 @@ def _workflow_preview_parent_value(helper, behaviors, field):
 def _workflow_preview_type_summary(helper, kind, behaviors):
     preferences = helper["preview_preferences"](behaviors, kind)
     if not preferences["enabled"]:
+        if kind == 'frontend' and behaviors.get('design_system'):
+            return 'Disabled · Design system: ' + _workflow_field_value(helper, behaviors, 'design_system')
         return "Disabled"
     overrides = [field for field in helper["PREVIEW_DEFAULTS"] if preferences[field]["source"] == "override"]
     if not overrides:
@@ -3842,6 +3976,8 @@ def _workflow_field_value(helper, behaviors, key):
 
 def _workflow_section_summary(helper, section, behaviors):
     if section in _WORKFLOW_PREVIEW_SUBMENUS and not helper["preview_enabled"](behaviors, section):
+        if section == 'frontend' and behaviors.get('design_system'):
+            return 'Disabled · Design system: ' + _workflow_field_value(helper, behaviors, 'design_system')
         return "Disabled"
     visible = helper["visible_behaviors"](behaviors)
     parts = [_WORKFLOW_TOPICS[key][0] + ": " + _workflow_field_value(helper, behaviors, key)
@@ -3862,6 +3998,8 @@ def _workflow_behavior_lines(helper, section, behaviors, indent=2, policy=None):
     enabled = helper["preview_enabled"](behaviors, section) if child else True
     lines = [" " * indent + _workflow_section_spec(section)[0] + (" · " + ("Enabled" if enabled else "Disabled") if child else "")]
     if not enabled:
+        if section == 'frontend' and behaviors.get('design_system'):
+            lines.append(' ' * (indent + 2) + 'Design system: ' + _workflow_field_value(helper, behaviors, 'design_system'))
         return lines
     active_shared = section != "local_preview" or any(helper["preview_enabled"](behaviors, kind) for kind in _WORKFLOW_PREVIEW_SUBMENUS)
     field_indent = indent + 2
@@ -3895,7 +4033,7 @@ def _workflow_catalogue_summary(helper, policy):
 
 
 def _workflow_choice(helper, key, value):
-    if key in ("pr_review", "pr_open", "frontend_enabled", "cli_enabled", "local_preview", "preview_pr_approval", "preview_launch", "frontend_implement_before_approval", "cli_preview", "cli_launch", "frontend_preview", "frontend_browser") or _workflow_preview_override(helper, key):
+    if key in ("design_system", "cli_planning_preview", "cli_planning_approval", "pr_review", "pr_open", "frontend_enabled", "cli_enabled", "local_preview", "preview_pr_approval", "preview_launch", "frontend_implement_before_approval", "cli_preview", "cli_launch", "frontend_preview", "frontend_browser") or _workflow_preview_override(helper, key):
         return helper["BEHAVIORS"][key]["choices"][value][0]
     return _WORKFLOW_CHOICE_LABELS.get(value, helper["BEHAVIORS"][key]["choices"][value][0])
 
@@ -3934,7 +4072,7 @@ def _workflow_print(helper, result, catalogue=False):
         print("Named workflows; default: " + result["default"] + ".")
         print("\n".join(_table_lines(("WORKFLOW", "APPLIES TO", "TEXT INSTRUCTIONS", "PERMISSIONS", "WORK AND DELIVERY"), [
             (name, _workflow_assignment_label(name, result["default"], item["workflow"]["enabled"],
-                                             len(set(item["repositories"]) - set(item["excluded_repositories"]))),
+                                             item.get('assignment_count', len(set(item["repositories"]) - set(item["excluded_repositories"])))),
              "present" if item["workflow"].get("instructions") else "none",
              _workflow_permission_summary(helper, item["workflow"]),
              _workflow_catalogue_summary(helper, item["workflow"]))
@@ -3948,6 +4086,8 @@ def _workflow_print(helper, result, catalogue=False):
         print("Workflow for " + scope + ".")
         print("Source: " + result["source"] + (" · " + result["workflow_name"] if result["workflow_name"] else ""))
         print("Enabled: " + ("yes" if policy["enabled"] else "no") + (" · repository excluded" if result["excluded"] else ""))
+        if result.get('design_system'):
+            print('Repository design-system source: ' + result['design_system']['path'])
         text = policy.get("instructions", "")
         print("Text instructions: " + (f"present ({len(text.splitlines())} lines); override work preferences and stage guidance" if text else "none"))
         if text:
@@ -4049,6 +4189,8 @@ def _cmd_workflow(cfg, args):
                       "workflow_name": None if "inline" in entry else helper["source"](document, repository),
                       "excluded": entry.get("excluded", False),
                       "workflow": helper["effective"](document, repository)}
+            if entry.get('design_system'):
+                result['design_system'] = copy.deepcopy(entry['design_system'])
             result["propagation"] = helper["propagation"]()["status"]()
             result.update(helper["policy_summary"](result["workflow"]))
             result["preference_source"] = helper["source"](document, repository)
@@ -11498,11 +11640,12 @@ SCOPE
   all its consumers. --all lists named workflows; it cannot combine with --repo.
   Save review shows only changed settings, with before and after values.
   Ctrl+C offers Keep editing, Review and save, or Discard when changes are pending.
-  Workflow rows show Global default, assigned repository counts, or Not assigned.
+  Rows show global defaults and repository assignments.
   Permissions selects Codex and Claude access for new and resumed CLI sessions.
   Inference & routing: local models; opt-in Continue locally on cloud outage.
-  PRs, previews & tests controls PR opening and merging, preview timing and approval,
-  frontend design, preview updates and test timing independently.
+  PRs, previews & tests controls delivery, previews, design systems and tests.
+  CLI planning previews have independent timing and approval settings.
+  Repository assignments select design sources or start guidance drafting.
   Text instructions can override work preferences and model-stage guidance.
   Task/repo rules prevail; Markdown overrides preferences, then stage guidance.
   Edits publish native instructions, then reconcile supported loaded sessions.

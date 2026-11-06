@@ -252,7 +252,7 @@ def test_preview_methods_and_approval_choices_keep_context(workflow, t_mod):
     assert dict(ui.views[7][1]) == {'': 'Not set', 'yes': 'Yes', 'no': 'No'}
     assert ui.views[8][0] == 'Frontend'
     assert dict(ui.views[8][1]) == {'frontend_enabled': 'Preview', 'frontend_preview_timing': 'Preview timing', 'frontend_preview_pr_approval': 'Approval before PR',
-                                   'frontend_implement_before_approval': 'Implement before approval', 'frontend_design': 'Design approach',
+                                   'frontend_implement_before_approval': 'Implement before approval', 'frontend_design': 'Design approach', 'design_system': 'Design system',
                                    'frontend_preview': 'Preview method', 'frontend_browser': 'Open in browser', 'back': 'Back'}
     assert ui.views[5][1][ui.views[5][2]['default']][0] == 'cli'
     assert ui.views[11][1][ui.views[11][2]['default']][0] == 'frontend'
@@ -416,7 +416,7 @@ def test_retired_design_approval_uses_single_preview_gate_without_rewriting(work
     assert ui.views[2][2]['values']['frontend_implement_before_approval'] == label
     assert 'design_approval' not in dict(ui.views[2][1])
     assert dict(ui.views[2][1]) == {'frontend_enabled': 'Preview', 'frontend_preview_timing': 'Preview timing', 'frontend_preview_pr_approval': 'Approval before PR',
-                                   'frontend_implement_before_approval': 'Implement before approval', 'frontend_design': 'Design approach',
+                                   'frontend_implement_before_approval': 'Implement before approval', 'frontend_design': 'Design approach', 'design_system': 'Design system',
                                    'frontend_preview': 'Preview method', 'frontend_browser': 'Open in browser', 'back': 'Back'}
     t_mod._workflow_print(vars(workflow), {'scope': 'global', 'source': 'global', 'workflow_name': 'standard',
         'excluded': False, 'workflow': original, 'propagation': {'runtime': 'pending'}})
@@ -556,7 +556,7 @@ def test_frontend_browser_setting_is_independent_and_clearable(workflow, t_mod, 
     policy = t_mod._workflow_behaviors_menu(ui, vars(workflow), original)
     assert ui.views[2][0] == 'Frontend'
     assert dict(ui.views[2][1]) == {'frontend_enabled': 'Preview', 'frontend_preview_timing': 'Preview timing', 'frontend_preview_pr_approval': 'Approval before PR',
-                                  'frontend_implement_before_approval': 'Implement before approval', 'frontend_design': 'Design approach',
+                                  'frontend_implement_before_approval': 'Implement before approval', 'frontend_design': 'Design approach', 'design_system': 'Design system',
                                   'frontend_preview': 'Preview method', 'frontend_browser': 'Open in browser', 'back': 'Back'}
     assert ui.views[3][0] == 'Open in browser'
     assert dict(ui.views[3][1]) == {'': 'Not set', 'automatic': 'Automatically', 'on_request': 'Only when I ask'}

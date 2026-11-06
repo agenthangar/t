@@ -1,5 +1,44 @@
 # Command and terminal contract
 
+This is the repository's terminal design system, indexed by [DESIGN.md](../DESIGN.md).
+
+## Planning previews
+
+When a workflow or task calls for a planning preview, use a local interactive HTML
+prototype to demonstrate the proposed command flow before application changes.
+Follow this terminal contract: shared layout, focus, keyboard controls, spacing,
+and narrow-screen behavior. Show affected navigation, selection, review,
+cancellation, and relevant empty/error states. Label sample data and simulated
+actions. Keep real agent sessions, repository files, configuration, and services
+untouched by prototype interactions. Make the preview easy to open locally and
+report browser or verification limitations accurately.
+
+After design approval when required by the workflow or task, implement using the
+shared terminal components. A planning prototype does not verify the working CLI:
+prepare a separate worktree-scoped command preview with isolated sample settings
+at the selected delivery checkpoint. Never relink shared installed commands to a
+development worktree. Workflow configuration owns preview timing and approval;
+this document defines how to make the previews faithful and safe.
+
+## Repository design-system configuration
+
+Frontend → Design system selects reusable workflow behavior, not a repository.
+Repository assignments → repository exposes Workflow and Frontend · Design system.
+Assigning a workflow that requests a source opens read-only local discovery when
+no source is selected. Offer candidates with evidence, manual repository-relative
+paths, refresh, clearing, and Set up later. A source is independent of workflow
+assignment, retained when inheriting/changing/disabling workflows, and scoped to
+the selected tool and canonical repo; relative paths use the active worktree.
+Missing sources remain visible until corrected. Lists never scan or prompt.
+
+Add design-system guidance is an explicit agent-assisted drafting action. Save or
+discard pending settings first. Review the task, then start the existing guarded
+agent launcher in a new isolated worktree. Draft an entry point, agent-instruction
+reference and evidence-backed design/preview guidance without overwriting existing
+content or duplicating workflow approval rules. Drafting does not publish changes
+or select a source. Review the actual diff in the agent session, then refresh
+discovery from the accepted worktree to select the resulting source.
+
 Development availability is scoped to the caller's t worktree. With a canonical
 Git installation, each `dev/t-*` or `cursor/*` worktree supplies its own executable
 and shell helpers automatically, including subdirectories and invocation-local
@@ -319,8 +358,12 @@ timing still takes precedence. Only when I ask prepares the command without
 launching it, including with the Run from the repo method. The method determines
 the executable source. Interactive commands use a supported interactive terminal;
 if unavailable, report the limitation and exact command rather than claiming a
-launch. This preference does not run tests or alter PR choices. CLI previews have
-no preview-before-implementation approval setting. Approval before PR is
+launch. This preference does not run tests or alter PR choices. CLI planning previews
+have separate optional timing (Before implementation / Only when requested) and
+approval (Required / Not required). Both offer Not set; neither changes working-command
+preview timing or launch. Required approval applies when a planning preview is due
+or requested, allowing prototype work before substantial implementation. Retired
+cli_implement_before_approval remains inert. Approval before PR is
 independent of frontend implementation approval and applies only to enabled
 preview types. Clearing a launch choice leaves that type unset.
 Menu, list, catalogue and save review reflect the choice and disabled state. Printed
