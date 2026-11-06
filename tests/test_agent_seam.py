@@ -2239,7 +2239,7 @@ def test_zsh_resume_picker_shows_the_display_column_for_every_row(zsh, tmp_path)
     # The header exposes every available filter; agent names remain in the rows.
     header = semantic_chrome((tmp_path / "fzf.log.header").read_text()).splitlines()
     controls = "\n".join(header)
-    for control in ("Ctrl-F filters", "Ctrl-A off", "Ctrl-L on", "0 hidden",
+    for control in ("Ctrl-F toggle", "Ctrl-X reset", "Ctrl-G agent", "0 hidden",
                     "Filters OFF", "Sort: last turn", "Alt-T last turn", "Alt-R repo",
                     "Alt-G agent", "Alt-O host", "Alt-V session"):
         assert control in controls
@@ -2640,10 +2640,10 @@ def test_open_local_multi_picker(zsh, tmp_path, tabs):
     assert "new-session" not in calls and "dev-web-3" not in calls
     args = semantic_chrome(log.read_text())
     assert "--multi" in args and "space:toggle+down" in args
-    assert "Enter open/k kill/Esc · Space/Tab ✓" in args
-    for control in ("Ctrl-F filters", "Ctrl-A off", "Ctrl-L on"):
+    assert "Enter open/Esc · Space/Tab✓ · k kill" in args
+    for control in ("Ctrl-F toggle", "Ctrl-X reset", "Ctrl-G agent"):
         assert control in args
-    assert "Filters ON: unattached" in args
+    assert "Filters ON" in args and "unattached" in args
 
 
 def test_open_picker_cancel_does_not_create_session(zsh, tmp_path):

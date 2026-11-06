@@ -83,7 +83,7 @@ the command name.
 | **Detail/status** | Print labeled facts without changing state or prompting. Preserve raw text, paths, and streams when the command explicitly exposes them. |
 | **Single selection** | Use a searchable fzf picker or an inline `_RailUI` menu with one visibly focused row. Enter chooses exactly one item; Esc/Ctrl-C cancels. An explicit target bypasses selection. A paginated single picker uses Ctrl-F for the next page, Ctrl-B for the previous page, and Ctrl-R to refresh; those keys belong to pagination rather than the filtered picker's settings control. |
 | **Multi-selection** | Searchable pickers use Space/Tab to mark rows and Enter to accept the marks, or the focused row if none are marked. Inline checklists use Space to toggle and Enter to submit only checked items. Show marks and the Enter action independently of color. |
-| **Filtered selection** | Show active filters and hidden count in the header. Open, resume and close pickers use Ctrl-F for staged filter settings, Ctrl-A to turn filters off, and Ctrl-L to restore saved choices. State and column choices live in settings. Filtering retains the search and removes hidden marks. Issue pickers retain Ctrl-A show-all and Ctrl-F defaults. Ctrl-/ toggles full details when rows have previews. |
+| **Filtered selection** | Show active filters and hidden count in the header. Open, resume and close pickers use Ctrl-F to toggle filters, Ctrl-X to reset, and direct shortcuts to match the highlighted row. No nested filter screens. Alt-S toggles sorting. Filtering retains the search and removes hidden marks. Issue pickers retain Ctrl-A show-all and Ctrl-F defaults. Ctrl-/ toggles full details when rows have previews. |
 | **Wizard/review** | Stage choices, then display the resulting changes before applying them. Config saves on Enter; install enters review and then runs on Enter; login runs the selected logins on its first Enter. Setup and repository creation keep their released `y` confirmation. Show the actual action in the footer. |
 | **Direct action/passthrough** | An explicit target acts without a needless picker. Retain ownership and worktree safety checks, confirmation before interrupting live work with an explicit target, and the delegated tool's input/output and exit status. |
 | **Machine output** | Preserve existing JSON, raw-value, and remote wire formats. Do not add presentation chrome, ANSI color, or prompts. The inventory identifies machine-facing modes; this does not imply universal JSON support. |
@@ -358,18 +358,10 @@ Session lists (`t ls` / `t session list`) also include remote hosts by default;
 of host scope. Session lists always print a read-only table, including in terminals.
 
 The open picker hides attached CLI and loaded desktop sessions by default.
-Ctrl-F opens the shared single-picker Filters settings. Choose State for attached,
-unattached or all attachment states, or choose a column for searchable exact values.
-Open includes agent, progress, interface, model, host, repo, session, context and task;
-resume includes agent, host/origin and repo; close includes agent, interface, host
-and repo. Resume State includes saved-only/live; close State independently includes
-attached and pending work. An explicit All choice clears one column.
-Reset filters to defaults stages the original state and clears column choices.
-Apply filters commits staged choices and enables them; Esc discards settings changes.
-Esc in a nested value/state picker keeps its existing choice.
+Ctrl-F toggles filters without leaving the list; Ctrl-X resets filters. Ctrl-T cycles state. Ctrl-G/O/R matches the highlighted row’s agent/host/repo; repeat the shortcut to clear that filter. Ctrl-D matches UI in open and close. Alt-S toggles sorting; Alt-R/G/O/V sorts repo/agent/host/session. Resume also offers Alt-T for newest turn. Turning filters or sorting off preserves their choices. Sorting off restores snapshot order.
 
-Ctrl-A turns filters off without changing saved choices; Ctrl-L restores those
-choices. Both are idempotent. Opening settings while off retains the saved values.
+Open also supports Ctrl-P/B/V/E/W for the highlighted row’s progress/model/session/context/task.
+Ctrl-A (off) and Ctrl-L (on) remain compatibility shortcuts.
 The compatibility --attached flag starts with filtering off and defaults retained.
 There is no new-session shortcut or details preview in open; use `t open --new`.
 Press `k` to kill only the focused session, independently of multi-selection marks.
@@ -411,7 +403,7 @@ newest first by default, with unknown times last; live rows have no artificial p
 Alt-T selects last turn, Alt-R repository, Alt-G agent, Alt-O host/origin, and
 Alt-V session (natural numeric order). Text modes ascend with newest turn and
 stable identity as tie-breakers. Sorts apply within the private filtered snapshot
-and preserve query and identities. Filter settings, reset and on/off preserve sorting.
+and preserve query and identities. Filters, reset and on/off preserve sorting.
 Compact headers use M for Alt and ^ for Ctrl. Resume disables fzf relevance sorting
 so searching preserves the chosen order. Saved transcript mtime/reopen time still
 controls --days eligibility.

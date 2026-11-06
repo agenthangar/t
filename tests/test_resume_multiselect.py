@@ -271,7 +271,8 @@ def test_resume_live_hotkey_hides_live_without_losing_saved_rows(zsh, tmp_path):
     filtered = pathlib.Path(f"{log}.step0").read_text()
     assert "Live work" in initial and "Dead work" in initial
     assert "Live work" not in filtered and "Dead work" in filtered
-    assert "Filters ON: saved only" in pathlib.Path(f"{log}.header0").read_text()
+    header = pathlib.Path(f"{log}.header0").read_text()
+    assert "Filters ON" in header and "saved only" in header
     assert "send-keys" not in (zsh.log.read_text() if zsh.log.exists() else "")
 
 

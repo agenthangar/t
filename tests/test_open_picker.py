@@ -172,7 +172,9 @@ def test_open_hotkeys_show_all_and_restore_defaults(zsh, tmp_path, args, actions
     assert result.returncode == 0, result.stdout
     assert 'CLI ' + selected.replace('-', ' ') + ' --local' in result.stdout
     header = (tmp_path / 'picker.log.header').read_text()
-    assert 'Filters ' + attached in header
+    assert 'Filters ' + attached.split(':')[0] in header
+    if ': ' in attached:
+        assert attached.split(': ', 1)[1] in header
     assert header.splitlines()[-1].endswith('WORKING ON')
 
 
@@ -187,7 +189,8 @@ def test_open_attached_view_selects_only_attached_after_show_all(zsh, tmp_path):
     assert 'api-2' in (tmp_path / 'picker.log.step0').read_text()
     assert 'web-6' in (tmp_path / 'picker.log.step1').read_text()
     assert 'web-6' not in (tmp_path / 'picker.log.step2').read_text()
-    assert 'Filters ON: attached' in (tmp_path / 'picker.log.header').read_text()
+    header = (tmp_path / 'picker.log.header').read_text()
+    assert 'Filters ON' in header and 'attached ·' in header
 
 
 def test_open_remote_picker_retains_model_and_selected_host(zsh, tmp_path):
@@ -267,9 +270,9 @@ def test_open_batch_tab_failure_reports_exact_attach_command(zsh):
 def test_open_help_describes_simple_picker(t_mod):
     parser = t_mod.build_parser()._subparsers._group_actions[0].choices['open']
     help_text = parser.format_help() + parser.help_details
-    assert 'Ctrl-F opens Filters' in help_text
-    assert 'Ctrl-A turns filters off' in help_text
-    assert 'Ctrl-L restores saved choices' in help_text
+    assert 'Ctrl-F toggles filters' in help_text
+    assert 'Ctrl-X resets them' in help_text
+    assert 'repeat to clear' in help_text
     assert '--new' in help_text
     assert 'Alt-N' not in help_text and 'LAST TURN' not in help_text
     assert 'Ctrl-/' not in help_text

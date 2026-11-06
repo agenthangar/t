@@ -366,21 +366,11 @@ The picker stays open and removes the closed row without rediscovering sessions.
 Search, filters, and marks on other rows are preserved; failed or canceled closes
 leave the row available.
 The open picker reserves **k** as an action key rather than query text.
-**Ctrl-F** opens the Filters picker. Choose State or a column, select its value,
-then choose Apply filters. **Ctrl-A** turns filtering off to show the whole
-snapshot; **Ctrl-L** turns it back on with your saved choices.
+Ctrl-F toggles filters without leaving the list; Ctrl-X resets filters. Ctrl-T cycles state. Ctrl-G/O/R matches the highlighted row’s agent/host/repo; repeat the shortcut to clear that filter. Ctrl-D matches UI in open and close. Alt-S toggles sorting; Alt-R/G/O/V sorts repo/agent/host/session. Resume also offers Alt-T for newest turn. Turning filters or sorting off preserves their choices. Sorting off restores snapshot order.
 
-The settings picker includes attachment state for open, live sessions for resume,
-and attached/pending work for close. Columns include agent, host and repository;
-open also offers progress, interface, model, session, context and task, while close
-includes interface. Each value picker includes All to clear that column.
-Reset filters to defaults stages the original state and clears column choices.
-Enter chooses a setting; Esc in a value picker keeps that value, and Esc in the
-Filters picker discards all staged changes. Apply filters enables the saved choices.
-
-The main header shows one highlighted filter summary, with explicit ON/OFF text
-when color is unavailable. Narrow headers use compact platform key labels (`⌃` on macOS, `^` elsewhere) and show the
-selected column count; open Filters to see complete values. Filtering keeps your
+The header highlights active filters and sorting, with explicit ON/OFF text.
+Mac shortcuts use ⌃ and ⌥; other systems show Ctrl and Alt.
+Filtering keeps your
 search and removes hidden marks. Choices use the current snapshot without
 expanding repository scope or fetching new sessions.
 
@@ -392,12 +382,12 @@ not known to have landed); “not marked” is not proof that work is finished.
 The separate `✓` in the left selection gutter means you marked that row to open.
 
 Resume never invents a historical interface. Resume and close use the same
-Filters picker and on/off keys as open.
+inline filter shortcuts and on/off keys as open.
 Resume sorts by the last actual user turn, newest first; unknown times come last.
 Alt-T restores that sort, Alt-R sorts by repository, Alt-G by agent, Alt-O by
 host/origin, and Alt-V by session (numeric slots sort naturally, e.g. 2 before 10).
 Text sorts ascend, then use newest turn and session identity to break ties.
-Filter settings, reset and on/off preserve the selected sort; Alt-T restores last-turn sorting.
+Filters, reset and on/off preserve the selected sort; Alt-T restores last-turn sorting.
 For example, `t resume --live` followed by Alt-R groups live and saved sessions by
 repository. Live labels remain visible alongside their last-turn time.
 The open picker keeps session and task text prominent, without a last-turn

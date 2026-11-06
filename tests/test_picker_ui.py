@@ -454,127 +454,54 @@ def test_open_removed_shortcuts_never_launch_or_preview(picker, empty, source):
     assert finish('Escape', status=130) == []
 
 
-def choose_setting(wait, keys, field, value):
-    keys('C-f')
-    wait('Filters >')
-    keys('-l', field + ':')
-    wait('1/')
-    keys('Enter')
-    wait(field + ' >')
-    keys('-l', value)
-    wait('1/')
-    keys('Enter')
-    wait('Filters >')
-    keys('Enter')  # Apply filters is the initial focused choice.
-
-
-@pytest.mark.parametrize('width,height', [(80, 24), (44, 20), (32, 12)])
+@pytest.mark.parametrize('width,height', [(80, 24), (44, 20), (32, 12), (120, 12)])
 @pytest.mark.parametrize('profile', ['public-open-all', 'public-kill'])
-def test_session_pickers_display_every_filter_key(picker, width, height, profile):
+def test_inline_filters_keep_the_list_visible_and_repeat_clears(picker, width, height, profile):
     start, wait, keys, finish = picker
     start(profile=profile, width=width, height=height)
     screen = wait('2/2 (0)')
-    for letter in ('A', 'F', 'L'):
-        assert 'Ctrl-' + letter in screen or '^' + letter in screen, screen
-    assert 'Ctrl-G' not in screen and '^G' not in screen
-    assert screen.count('Filters ON') == 1 and '▸' in screen and 'hidden' in screen
-    keys('C-f')
-    screen = wait('Filters >')
-    assert '▸' in screen and 'Enter choose' in screen
-    keys('Escape')
+    assert 'Filters ON' in screen and 'Sort: OFF' in screen and '▸' in screen
+    for letter in ('F', 'G', 'O', 'R'):
+        assert 'Ctrl-' + letter in screen
+    keys('C-g')
+    screen = wait('1/1 (0)')
+    assert 'Filters >' not in screen and '▸' in screen
+    if width >= 80:
+        assert 'agent=codex' in screen
+    keys('C-g')
     wait('2/2 (0)')
+    keys('C-f')
+    screen = wait('4/4 (0)')
+    assert 'Filters OFF' in screen and 'Filters >' not in screen
+    keys('C-f')
+    wait('2/2 (0)')
+    keys('M-r')
+    wait('Sort: repo')
+    keys('M-s')
+    wait('Sort: OFF')
+    keys('M-s')
+    wait('Sort: repo')
     assert finish('Escape', status=130) == []
 
 
-def test_public_open_settings_keep_query_restore_saved_choices_and_remove_hidden_marks(picker):
+def test_inline_filter_toggle_preserves_query_and_removes_hidden_marks(picker):
     start, wait, keys, finish = picker
     start(profile='public-open-all')
     wait('2/2 (0)')
-    choose_setting(wait, keys, 'agent', 'codex')
-    screen = wait('1/1 (0)')
-    assert 'agent=codex' in screen
-    keys('C-a')
+    keys('C-g')
+    wait('1/1 (0)')
+    keys('C-f')
     wait('4/4 (0)')
     keys('-l', 'First')
     wait('1/4 (0)')
     keys('Space')
     wait('1/4 (1)')
-    keys('C-l')
+    keys('C-f')
     screen = wait('0/1 (0)')
     assert 'open > First' in screen and 'agent=codex' in screen
-    keys('C-a')
+    keys('C-f')
     wait('1/4 (0)')
-    keys('C-f')
-    wait('Filters >')
-    keys('Escape')
-    screen = wait('1/4 (0)')
-    assert 'Filters OFF' in screen and 'open > First' in screen
     assert finish() == ['api 2 --local']
-
-
-@pytest.mark.parametrize('width,height', [(80, 24), (32, 12)])
-@pytest.mark.parametrize('field,query,count', [
-    ('agent', 'codex', 2), ('progress', 'in progress', 1),
-    ('UI', 'desktop', 1), ('model', 'gpt-test-astra', 1),
-    ('host', 'local', 4), ('repo', 'api', 2),
-    ('session', 'api-2', 1), ('context', 'active', 2),
-    ('task', 'First task', 1),
-])
-def test_open_each_column_opens_searchable_value_picker(picker, field, query, count, width, height):
-    start, wait, keys, finish = picker
-    start(profile='public-open-all', width=width, height=height)
-    wait('2/2 (0)')
-    choose_setting(wait, keys, 'State', 'all attachment states')
-    wait('4/4 (0)')
-    choose_setting(wait, keys, field, query)
-    wait(f'{count}/{count} (0)')
-    # Cancel a nested value picker and discard the settings: no changes.
-    keys('C-f')
-    wait('Filters >')
-    keys('-l', field + ':')
-    wait('1/')
-    keys('Enter')
-    wait(field + ' >')
-    keys('Escape')
-    wait('Filters >')
-    keys('Escape')
-    wait(f'{count}/{count} (0)')
-    choose_setting(wait, keys, field, 'All (clear filter)')
-    wait('4/4 (0)')
-    assert finish('Escape', status=130) == []
-
-
-def test_open_attachment_views_are_exclusive_and_idempotent(picker):
-    start, wait, keys, finish = picker
-    start(profile='public-open-all')
-    wait('2/2 (0)')
-    wait('api-4', absent=('api-2',))
-    choose_setting(wait, keys, 'State', '^attached$')
-    wait('2/2 (0)')
-    wait('api-2', absent=('api-4',))
-    keys('C-a')
-    wait('4/4 (0)')
-    keys('C-l')
-    wait('2/2 (0)')
-    wait('api-2', absent=('api-4',))
-    keys('C-l')
-    wait('api-2', absent=('api-4',))
-    choose_setting(wait, keys, 'State', '^unattached$')
-    wait('2/2 (0)')
-    wait('api-4', absent=('api-2',))
-    assert finish('Escape', status=130) == []
-
-
-@pytest.mark.parametrize('width,height', [(80, 24), (44, 20), (32, 12), (120, 12)])
-def test_air_open_keeps_controls_focus_and_nested_filters(picker, width, height):
-    start, wait, keys, finish = picker
-    start(profile='public-open-all', width=width, height=height)
-    screen = wait('2/2 (0)')
-    assert '▸' in screen and ('api-4' in screen or re.search(r'api\s+4\b', screen))
-    assert all('Ctrl-' + letter in screen for letter in 'FAL')
-    choose_setting(wait, keys, 'agent', 'claude')
-    wait('1/1 (0)')
-    assert finish() == ['web 6 --local']
 
 
 @pytest.mark.parametrize('width,height', [(80, 24), (44, 20), (32, 12)])
@@ -583,11 +510,11 @@ def test_resume_sort_controls_keep_focused_row_and_change_order(picker, width, h
     start, wait, keys, finish = picker
     start(profile='resume-rich', mode='resume', width=width, height=height, auth_warning=auth_warning)
     screen = wait('2/2 (0)')
-    assert 'Sort: last turn' in screen and 'Newest web' in screen
+    assert ('Sort: turn' if width <= 48 else 'Sort: last turn') in screen and 'Newest web' in screen
     if auth_warning:
         assert 'GitHub auth failed:' in screen
     assert '▸' in screen
-    for letter in ('T', 'R', 'G', 'O', 'V'):
+    for letter in (('T', 'R', 'V') if width <= 48 else ('T', 'R', 'G', 'O', 'V')):
         assert 'Alt-' + letter in screen or 'M-' + letter in screen
     keys('M-r')
     # Headers can repaint before reload-sync applies the new rows. Wait for
@@ -602,9 +529,9 @@ def test_resume_sort_controls_keep_focused_row_and_change_order(picker, width, h
     assert 'Older api' in screen and '▸' in screen
     keys('M-t')
     if height > 12:
-        wait('Sort: last turn', absent=loading, ordered=('Newest web', 'Older api'))
+        wait('Sort: turn' if width <= 48 else 'Sort: last turn', absent=loading, ordered=('Newest web', 'Older api'))
     else:
-        wait('Sort: last turn', absent=loading, focused='Newest web')
+        wait('Sort: turn', absent=loading, focused='Newest web')
     keys('Up', 'Up')
     wait('Newest web', focused='Newest web')
     assert finish()[0].split('\t')[2] == 'sid1'
@@ -733,7 +660,7 @@ def test_list_sort_filter_query_and_cancel_at_terminal_sizes(picker, width, heig
     start(profile='list-rich', mode='list', width=width, height=height)
     screen = wait('2/2 (0)')
     assert 'Newest task' in screen and '▸' in screen
-    for letter in ('T', 'R', 'G', 'O', 'V'):
+    for letter in (('T', 'R', 'V') if width <= 48 else ('T', 'R', 'G', 'O', 'V')):
         assert 'Alt-' + letter in screen or 'M-' + letter in screen
     loading = tuple('⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏')
     keys('M-v')

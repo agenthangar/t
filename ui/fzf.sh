@@ -417,25 +417,36 @@ SH
   fi
   if [ -n "${T_PICKER_FILTER_HELPER:-}" ]; then
     _t_picker_bind=
-    _t_picker_specs='ctrl-a:off ctrl-l:on ctrl-f:settings'
+    _t_picker_specs='ctrl-a:off ctrl-l:on ctrl-f:toggle-filters ctrl-x:reset-filters ctrl-t:state ctrl-g:match-agent ctrl-o:match-host ctrl-r:match-repo alt-s:toggle-sort'
+    if [ "$T_PICKER_SESSION_FILTERS" != resume ]; then
+      _t_picker_specs="$_t_picker_specs ctrl-d:match-interface"
+    fi
+    if [ "$T_PICKER_SESSION_FILTERS" = open ]; then
+      _t_picker_specs="$_t_picker_specs ctrl-p:match-progress ctrl-b:match-model ctrl-v:match-session ctrl-e:match-context ctrl-w:match-task"
+    fi
     if [ "$T_PICKER_SESSION_FILTERS" = list ]; then
       _t_picker_specs='ctrl-a:all ctrl-f:default ctrl-g:agent ctrl-d:interface ctrl-o:host ctrl-r:repo'
     fi
     for _t_picker_spec in $_t_picker_specs; do
       _t_picker_key=${_t_picker_spec%:*} _t_picker_action=${_t_picker_spec#*:}
       _t_picker_execute=execute-silent
+      _t_picker_args=
+      case $_t_picker_action in match-*) _t_picker_args=' - {1} {2} {3}' ;; esac
       case $_t_picker_action in
         settings|agent|interface|host|repo) _t_picker_execute=execute ;;
       esac
-      _t_picker_bind="${_t_picker_bind}${_t_picker_bind:+,}${_t_picker_key}:${T_PICKER_CLEAR_MARKS}${_t_picker_execute}(sh \"\$T_PICKER_TOGGLE\" $_t_picker_action)+reload-sync(cat \"\$T_PICKER_CURRENT\")+transform-header(cat \"\$T_PICKER_CURRENT_HEADER\")"
+      _t_picker_bind="${_t_picker_bind}${_t_picker_bind:+,}${_t_picker_key}:${T_PICKER_CLEAR_MARKS}${_t_picker_execute}(sh \"\$T_PICKER_TOGGLE\" $_t_picker_action$_t_picker_args)+reload-sync(cat \"\$T_PICKER_CURRENT\")+transform-header(cat \"\$T_PICKER_CURRENT_HEADER\")"
     done
   fi
-  if [ "${T_PICKER_SESSION_FILTERS:-}" = resume ] || [ "${T_PICKER_SESSION_FILTERS:-}" = list ]; then
+  if [ -n "${T_PICKER_FILTER_HELPER:-}" ]; then
     set -- --no-sort "$@"
     if [ "$T_PICKER_SESSION_FILTERS" = resume ]; then
       _t_picker_bind="${_t_picker_bind},alt-m:${T_PICKER_CLEAR_MARKS}execute-silent(sh \"\$T_PICKER_TOGGLE\" merged)+reload-sync(cat \"\$T_PICKER_CURRENT\")+transform-header(cat \"\$T_PICKER_CURRENT_HEADER\")"
     fi
     for _t_picker_spec in alt-t:turn alt-r:repo alt-g:agent alt-o:host alt-v:session; do
+      if [ "$_t_picker_spec" = alt-t:turn ]; then
+        case $T_PICKER_SESSION_FILTERS in open|kill) continue ;; esac
+      fi
       _t_picker_key=${_t_picker_spec%:*} _t_picker_action=${_t_picker_spec#*:}
       _t_picker_bind="${_t_picker_bind},${_t_picker_key}:${T_PICKER_CLEAR_MARKS}execute-silent(sh \"\$T_PICKER_TOGGLE\" sort-$_t_picker_action)+reload-sync(cat \"\$T_PICKER_CURRENT\")+transform-header(cat \"\$T_PICKER_CURRENT_HEADER\")"
     done
@@ -446,10 +457,10 @@ SH
     export FZF_API_KEY
     FZF_API_KEY=$(python3 -c 'import secrets; print(secrets.token_hex(32))')
     # shellcheck disable=SC2016
-    set -- --listen=127.0.0.1:0 --bind='start:unbind(change),change:transform-query(cat "$T_PICKER_VIEWS/action-query-locked"),k:rebind(change)+unbind(enter)+unbind(k)+unbind(space)+unbind(tab)+unbind(ctrl-a)+unbind(ctrl-f)+unbind(ctrl-l)+execute(python3 "$T_HOME/libexec/t_picker_close.py" close {} {q})' "$@"
+    set -- --listen=127.0.0.1:0 --bind='start:unbind(change),change:transform-query(cat "$T_PICKER_VIEWS/action-query-locked"),k:rebind(change)+unbind(enter)+unbind(k)+unbind(space)+unbind(tab)+unbind(ctrl-a)+unbind(ctrl-f)+unbind(ctrl-l)+unbind(ctrl-x)+unbind(ctrl-t)+unbind(ctrl-g)+unbind(ctrl-d)+unbind(ctrl-o)+unbind(ctrl-r)+unbind(ctrl-p)+unbind(ctrl-b)+unbind(ctrl-v)+unbind(ctrl-e)+unbind(ctrl-w)+unbind(alt-s)+unbind(alt-t)+unbind(alt-r)+unbind(alt-g)+unbind(alt-o)+unbind(alt-v)+execute(python3 "$T_HOME/libexec/t_picker_close.py" close {} {q})' "$@"
   fi
   if [ "${T_PICKER_HEADER_HEIGHT:-24}" -le 14 ]; then
-    case ${T_PICKER_SESSION_FILTERS:-} in resume|list) set -- --info=inline "$@" ;; esac
+    case ${T_PICKER_SESSION_FILTERS:-} in open|resume|kill|list) set -- --info=inline "$@" ;; esac
   fi
   _t_fzf --height=100% --multi --no-hscroll --margin="$_t_picker_margin" --delimiter="$(printf '\t')" --with-nth=-1 \
     --bind="enter:accept,esc:abort,ctrl-c:abort,space:toggle+down,tab:toggle+down,shift-tab:up${_t_picker_preview_bind}" \

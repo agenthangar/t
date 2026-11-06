@@ -108,22 +108,22 @@ def test_every_filter_key_survives_long_values(filters, width, profile):
     facets = dict(agent='codex-long-界面', host='a-very-long-host-alias', repo='long-repository-name')
     text = filters.header(profile, 0, facets, 17, 'SESSION  WORKING ON', width)
     assert all(filters.display_width(line) <= width for line in text.splitlines())
-    for letter in ('A', 'F', 'L'):
+    for letter in ('F', 'X', 'G'):
         assert ('^' if width <= 40 else 'Ctrl-') + letter in text
     assert '17 hidden' in text and text.count('Filters ON') == 1
-    assert 'Ctrl-G' not in text and '^G' not in text
-    assert len(text.splitlines()) <= (10 if profile == 'resume' else 5) + (6 if width > 40 and profile == 'resume' else 4 if width > 40 else 0)
+    assert 'Sort:' in text
+    assert len(text.splitlines()) <= (10 if width <= 40 else 19)
 
 
 @pytest.mark.parametrize('width', [28, 32, 68])
 def test_open_header_keeps_every_column_shortcut_visible(filters, width):
-    # Facet controls live inside settings; the main header advertises one entry.
+    # Common facets are visible and operate on the highlighted row.
     text = filters.header('open', 0, dict(agent='codex-long-界面'), 17, 'SESSION  TASK', width)
     assert all(filters.display_width(line) <= width for line in text.splitlines())
-    assert ('^F filters' if width <= 40 else 'Ctrl-F filters') in text
+    assert ('^F' if width <= 40 else 'Ctrl-F toggle') in text
     assert 'Filters ON' in text and '17 hidden' in text
-    assert 'Ctrl-T' not in text and 'Ctrl-G' not in text
-    assert len(text.splitlines()) <= 5 + (4 if width > 40 else 0)
+    assert ('^G' if width <= 40 else 'Ctrl-G') in text
+    assert len(text.splitlines()) <= (10 if width <= 40 else 19)
 
 
 def test_open_exclusive_views_combine_column_choices_and_clear(filters, tmp_path, monkeypatch):
@@ -199,15 +199,15 @@ def test_air_headers_preserve_keys_width_and_state(filters, monkeypatch, platfor
     plain = re.sub(r'\x1b\[[0-9;]*m', '', text)
     assert all(filters.display_width(line) <= width for line in plain.splitlines())
     compact = width <= 40 or height <= 14
-    assert all(theme.key_labels('Ctrl-' + letter, compact=compact) in plain for letter in 'FAL')
+    assert all(theme.key_labels('Ctrl-' + letter, compact=compact) in plain for letter in 'FXG')
     assert '2 hidden' in plain and 'Filters ON' in plain
-    if compact and active:
-        assert '+1' in plain
-    assert '\x1b[36m' in text and '\x1b[90m' in text
+    if active:
+        assert '\x1b[1;4;96m' + theme.key_labels('Ctrl-G agent', compact=compact) in text
+    assert '\x1b[36m' in text
     if height <= 14:
         assert len(plain.splitlines()) <= 9
     else:
-        assert 'FILTERS' in plain and '\n\n' in plain
+        assert 'Filters ON' in plain and '\n\n' in plain
     monkeypatch.setenv('NO_COLOR', '')
     assert '\x1b' not in filters.header('open', 1, facets, 0, '', width, color=True)
 
@@ -299,11 +299,11 @@ def test_resume_turn_enrichment_uses_exact_sources_and_never_remote_local_copy(f
 def test_resume_header_retains_sort_controls_and_row_space(filters, width):
     text = filters.header('resume', 0, dict.fromkeys(['agent', 'host', 'repo']), 2, '', width)
     assert all(filters.display_width(line) <= width for line in text.splitlines())
-    for letter in ('T', 'R', 'G', 'O', 'V'):
+    for letter in (('T', 'R', 'V') if width <= 36 else ('T', 'R', 'G', 'O', 'V')):
         assert ('M-' if width <= 36 else 'Alt-') + letter in text
-    for letter in ('L', 'A', 'F', '/'):
+    for letter in ('F', 'X', 'G', '/'):
         assert ('^' if width <= 36 else 'Ctrl-') + letter in text
-    assert 'Sort: last turn' in text
+    assert ('Sort: turn' if width <= 36 else 'Sort: last turn') in text
     if width <= 36:
         assert len(text.splitlines()) <= 10
 
@@ -395,7 +395,7 @@ def test_header_color_clips_before_ansi_and_plain_has_explicit_state(filters, mo
         colored = filters.header('resume', 0, {'agent': '界' * 40}, 3, '', 28, enabled=enabled, color=True)
         assert re.sub(r'\x1b\[[0-9;]*m', '', colored) == plain
         assert '\x1b' in colored
-        assert ('\x1b[36mFilters' in colored) == enabled
+        assert ('\x1b[1;4;96mFilters' in colored) == enabled
         assert 'Filters ' + ('ON' if enabled else 'OFF') in plain
         assert all(filters.display_width(line) <= 28 for line in plain.splitlines())
 
@@ -412,7 +412,7 @@ def test_resume_merged_toggle_uses_metadata_and_preserves_choices(filters, tmp_p
         return (tmp_path / 'current').read_text().splitlines()
     assert render('current') == rows
     assert render('merged') == rows[1:]
-    assert 'Alt-M hide merged' in (tmp_path / 'current-header').read_text()
+    assert 'Alt-M merged' in (tmp_path / 'current-header').read_text()
     assert render('sort-repo') == rows[1:]
     assert render('off') == rows
     assert render('on') == rows[1:]
@@ -462,18 +462,13 @@ def test_hotkeys_highlight_only_current_states(filters, monkeypatch, platform, w
     text = filters.header('resume', 0, {}, 2, 'SESSION TASK', width,
                           sort=sort, enabled=enabled, hide_merged=hide_merged, color=True)
     active = re.findall(r'\x1b\[1;4;96m(.*?)\x1b\[0m', text)
-    state = theme.key_labels('Ctrl-L on' if enabled else 'Ctrl-A off', compact=compact)
-    shortcut, label = filters.RESUME_SORTS[sort]
-    selected_sort = theme.key_labels(shortcut + ' ' + ('turn' if compact and sort == 'turn' else label), compact=compact)
-    assert state in active and selected_sort in active
-    opposite = theme.key_labels('Ctrl-A off' if enabled else 'Ctrl-L on', compact=compact)
-    assert opposite not in active
+    assert ('Filters ON' in active) == enabled
+    assert any(item.startswith('Sort:') for item in active)
     assert any(theme.key_labels('Alt-M', compact=compact) in item for item in active) == (enabled and hide_merged)
-    assert len(active) == 2 + int(enabled and hide_merged)
     plain = re.sub(r'\x1b\[[0-9;]*m', '', text)
     assert all(filters.display_width(line) <= width for line in plain.splitlines())
     if not compact:
-        assert plain.startswith('HOTKEYS\n') and '\n\nFILTERS\n' in plain
+        assert plain.startswith('HOTKEYS\n') and 'Filters ' in plain
     monkeypatch.setenv('NO_COLOR', '1')
     assert filters.header('resume', 0, {}, 2, 'SESSION TASK', width,
                           sort=sort, enabled=enabled, hide_merged=hide_merged, color=True) == plain
@@ -556,6 +551,45 @@ def test_list_filter_hotkey_selects_then_clears_and_cancel_keeps_state(filters, 
 @pytest.mark.parametrize('width', [27, 68])
 def test_filter_and_sort_controls_have_separate_sections(filters, profile, width):
     text = filters.header(profile, 0, dict.fromkeys(filters.FACETS), 2, 'SESSION TASK', width)
-    filter_section, sort_section = text.split('SORT', 1)
-    assert 'FILTERS' in filter_section and '2 hidden' in filter_section
-    assert 'Sort:' in sort_section and 'hidden' not in sort_section
+    filter_section, sort_section = text.split('SORT' if profile == 'list' else 'Sort:', 1)
+    assert ('FILTERS' if profile == 'list' else 'Filters ON') in filter_section and '2 hidden' in filter_section
+    assert 'hidden' not in sort_section
+
+
+@pytest.mark.parametrize('facet', list(['agent', 'interface', 'host', 'repo', 'model', 'progress', 'session', 'context', 'task']))
+def test_inline_match_filters_toggle_without_subprocess(filters, tmp_path, monkeypatch, facet):
+    root = snapshot(tmp_path)
+    (root / 'rows-0').write_text('\n'.join(ROWS) + '\n')
+    monkeypatch.setattr(filters.subprocess, 'run', lambda *a, **k: pytest.fail('filter opened another screen'))
+    identity = tuple(ROWS[0].split('\t')[:3])
+    def render(action, focused=identity):
+        filters.render(root, 'open', action, 68, identity=focused)
+        return (root / 'current').read_text().splitlines()
+    render('match-' + facet)
+    chosen = json.loads((root / 'facets.json').read_text())[facet]
+    assert chosen == filters.metadata(SOURCE, 'open')[identity][facet]
+    assert render('toggle-filters') == ROWS
+    assert json.loads((root / 'facets.json').read_text())[facet] == chosen
+    render('toggle-filters')
+    assert render('match-' + facet, ()) == ROWS  # Clear even with no visible focus.
+    assert json.loads((root / 'facets.json').read_text())[facet] is None
+    assert render('match-' + facet, ()) == ROWS  # No focus cannot invent a filter.
+
+
+def test_sort_toggle_preserves_choice_and_restores_snapshot_order(filters, tmp_path):
+    root = snapshot(tmp_path)
+    rows = list(reversed(ROWS))
+    for name in ('all', 'rows-0'):
+        (root / name).write_text('\n'.join(rows) + '\n')
+    def render(action):
+        filters.render(root, 'open', action, 68)
+        return (root / 'current').read_text().splitlines()
+    assert render('current') == rows
+    sorted_rows = render('sort-session')
+    assert sorted_rows != rows
+    assert render('toggle-sort') == rows
+    assert (root / 'sort').read_text() == 'session'
+    assert render('toggle-sort') == sorted_rows
+    render('match-agent')
+    assert render('reset-filters') == sorted_rows
+    assert (root / 'sort-enabled').read_text() == '1'

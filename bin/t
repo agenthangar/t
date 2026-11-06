@@ -11897,8 +11897,8 @@ TARGETS
   %(prog)s --codex --new        Start Codex directly
 
 SELECTION
-  Space/Tab check; Enter open; k kill. Ctrl-F filter settings.
-  Ctrl-A filters off; Ctrl-L filters on (restore saved choices).
+  Space/Tab check; Enter open; k kill. Ctrl-F toggles filters.
+  Ctrl-G/O/R matches row agent/host/repo; repeat to clear. Alt-S toggles sorting.
 
 DESKTOP TO CLI
   %(prog)s api 2 --cli
@@ -11915,12 +11915,12 @@ DESKTOP TO CLI
   Bare t open browses all repos on local and registered remote hosts,
   even from a worktree. --local limits browsing to this machine.
   t open <repo> filters. Attached CLI and loaded desktop rows are hidden;
-  Ctrl-F opens Filters: State, agent, progress, CLI/desktop, model, host,
-  repo, session/slot, context and task. Choose a value, then Apply filters.
-  All clears one column; Reset filters to defaults stages unattached and clears
-  column choices. Esc in a value picker keeps it; Esc in Filters discards changes.
-  Ctrl-A turns filters off; Ctrl-L restores saved choices. Filters keep your search.
-  Headers use native Mac labels, or Ctrl and Alt elsewhere; Filters shows full values.
+  Ctrl-F toggles filters in place; Ctrl-X resets them; Ctrl-T cycles state.
+  Ctrl-G/D/O/R matches the highlighted row's agent/UI/host/repo; repeat to clear.
+  Ctrl-P/B/V/E/W matches progress/model/session/context/task. No filter pop-ups.
+  Alt-S toggles sorting; Alt-R/G/O/V sorts by repo/agent/host/session.
+  Turning filters or sorting off preserves their choices. Search stays in place.
+  Headers use native Mac labels, or Ctrl and Alt elsewhere.
   Status: ● attached/loaded; ○ unattached/unloaded; ✓ loaded context.
   ↻ marks work continued after a merged PR, not current agent computation.
   Unattached and unmarked do not mean finished. The gutter ✓ marks selection.
@@ -12122,24 +12122,10 @@ EXPLICIT PUSH AND PULL
   Initially shows only unattached sessions with clean, merged work; pending or
   uncertain work stays hidden.
 
-  Ctrl-F opens Filters for attached/pending state, agent, CLI/desktop, host
-  and repository. Choose values, then Apply filters; Esc discards staged changes.
-  Reset filters to defaults stages unattached/clean and clears column choices.
-  Ctrl-A turns filtering off; Ctrl-L restores saved choices, keeping your search.
-
-  Column headers label the picker rows; Ctrl-/ opens the full session details.
-
-  `-r` picks remote sessions with their host.
-
-  Explicit numbers default to the cwd repo, so `t session close 3` kills this repo's
-  slot 3 and `t session close all` kills every slot for it.
-
-  A foreground / :fg row from `t session list` (a bare `claude`, or one in a tmux
-  session of its own) is killed by its shown SESSION name — `t session close
-  ff:p4242` or `t session close <short-id>` — since it is not a dev slot.
-
-  Explicit targets confirm while an agent is live unless `-y`; `-r` kills it on its
-  remote host instead.""")
+  Ctrl-F toggles filters in place; Ctrl-X resets them; Ctrl-T cycles state.
+  Ctrl-G/D/O/R matches the highlighted row's agent/UI/host/repo; repeat to clear.
+  Alt-S toggles sorting; Alt-R/G/O/V sorts repo/agent/host/session.
+  Filter and sort choices are retained while off. Search stays in place.""")
     sp.add_argument("repo", nargs="?", help="repository alias, basename, origin name or foreground session; default: pick across local repos")
     sp.add_argument("slot", nargs="?", help="slot number; a lone slot implies the cwd repo")
     sp.add_argument("-y", "--yes", action="store_true", help="skip the live-agent confirmation for explicit targets")
@@ -12284,10 +12270,9 @@ EXPLICIT PUSH AND PULL
 
 PICKER CONTROLS
   The picker MULTI-SELECTS: Space/Tab marks rows with a ✓.
-  Ctrl-F opens Filters for live state, agent, host/origin and repository.
-  Choose values, then Apply filters; Esc discards staged changes. Reset filters
-  to defaults stages saved-only and clears columns. Ctrl-A turns filtering off;
-  Ctrl-L restores saved choices. Filtering keeps your search.
+  Ctrl-F toggles filters in place; Ctrl-X resets them; Ctrl-T cycles live state.
+  Ctrl-G/O/R matches the highlighted row's agent/host/repo; repeat to clear.
+  Filtering keeps your search. No filter pop-ups.
 
   Leading PR badges show cached state. Alt-M hides/shows merged PR sessions;
   unknown, no-PR and mixed-state histories stay visible. Merged is not completion.
@@ -12295,7 +12280,8 @@ PICKER CONTROLS
   Alt-T sorts by last turn (newest first, the default), Alt-R by repository, Alt-G
   by agent, Alt-O by host/origin, and Alt-V by session.
 
-  Text sorts ascend, with newest turn breaking ties. Filter settings, reset and
+  Alt-S toggles sorting, retaining the chosen sort while off.
+  Text sorts ascend, with newest turn breaking ties. Filters, reset and
   on/off preserve sorting. Ctrl-/ shows full row details.
 
   Batch failures stop immediately with identity, reason, retry selection, ready
