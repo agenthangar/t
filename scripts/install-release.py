@@ -24,6 +24,7 @@ VERSION = re.compile(r"v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\
 SHA256 = re.compile(r"([0-9a-fA-F]{64})[ \t]+\*?t\.tar\.gz\Z")
 OWNED_LINKS = (
     ("bin/t", "bin/t"),
+    ("bin/nosleep", "bin/nosleep"),
     ("bin/t-session-start", "bin/t-session-start"),
     ("bin/claude-stamp-tmux", "bin/claude-stamp-tmux"),
     ("bin/cursor-beam", "bin/cursor-beam"),
@@ -46,6 +47,8 @@ REQUIRED = (
     "claude/commands/tpop.md", "codex/prompts/tpush.md", "codex/prompts/tpop.md",
     "scripts/install-release.py",
 )
+NOSLEEP_ASSETS = ("bin/nosleep", "zsh/nosleep.zsh", "zsh/nosleep-fallback.zsh",
+                  "libexec/nosleep_config.py", "libexec/nosleep_hotspot.py")
 MAX_ARCHIVE = 64 * 1024 * 1024
 MAX_MEMBER = 32 * 1024 * 1024
 
@@ -82,6 +85,14 @@ def validate_tree(root, expected_version=None):
                  "bin/cursor-beam", "scripts/install-release.py"):
         if not os.access(root / name, os.X_OK):
             raise ValueError("release executable is not executable: " + name)
+    # A published pre-nosleep release remains installable. New payloads must
+    # include the complete companion, never a dangling executable or adapter.
+    if any((root / name).exists() or (root / name).is_symlink() for name in NOSLEEP_ASSETS):
+        for name in NOSLEEP_ASSETS:
+            if not (root / name).is_file() or (root / name).is_symlink():
+                raise ValueError("release is missing a regular nosleep file: " + name)
+        if not os.access(root / "bin/nosleep", os.X_OK):
+            raise ValueError("release nosleep executable is not executable")
     # Releases before the neutral hook name remain installable.
     hook = root / "bin/t-session-start"
     if hook.exists() or hook.is_symlink():

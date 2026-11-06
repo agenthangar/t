@@ -316,6 +316,26 @@
     "libexec/t_offline.py:stop_runtime:time.sleep": {
       "kind": "passthrough",
       "reason": "Runtime shutdown runs while the native terminal client owns the screen; bounded process checks must not draw a competing spinner."
+    },
+    "libexec/nosleep_config.py:key:select.select": {
+      "kind": "passthrough",
+      "reason": "The visible configuration menu owns terminal input; two 50ms probes decode escape sequences without competing progress output."
+    },
+    "libexec/nosleep_config.py:edit:subprocess.call": {
+      "kind": "passthrough",
+      "reason": "The configured editor owns the terminal until saved defaults are returned for validation."
+    },
+    "libexec/nosleep_hotspot.py:Runner.close:time.sleep": {
+      "kind": "background",
+      "reason": "Bounded process-group teardown runs inside the owned hotspot worker while the monitor continues rendering status."
+    },
+    "libexec/nosleep_hotspot.py:Runner.run:subprocess.Popen": {
+      "kind": "background",
+      "reason": "The monitor launches this bounded worker asynchronously and displays fallback progress; protocol output and credentials must remain private."
+    },
+    "libexec/nosleep_hotspot.py:setup:subprocess.run": {
+      "kind": "passthrough",
+      "reason": "The native security command owns the terminal password prompt, bounded to 120 seconds; nosleep never handles or renders the password."
     }
   },
   "shell": [

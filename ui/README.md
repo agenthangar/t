@@ -1181,3 +1181,19 @@ Installation and measurement are explicit immediate actions with model selection
 model download review precedes installation. `t config models show` is read-only;
 `install` and `measure` are direct explicit-artifact actions. `--download-only`
 does not claim inference readiness. No list/show mode starts a runtime or picker.
+
+## Standalone companion: nosleep
+
+The package installs `nosleep` alongside `t`; it is not a `t` subcommand.
+`standalone_commands` in the inventory classifies its monitoring, help,
+configuration and hotspot setup modes. The standalone executable loads only its
+own runtime, without dotfiles, user startup files or session registration.
+The optional zsh adapter shares that runtime and preserves shell-local activity
+thresholds and application mappings. Loading either adapter never starts a hold.
+
+`nosleep config` uses `_RailUI` and stages edits until reviewed and saved.
+`nosleep --help` and `nosleep config --show` never prompt, change power settings,
+join networks or write configuration. Existing flags, machine-local config paths
+and Keychain identifiers remain compatible. Installation does not grant sudo or
+start monitoring. Runtime monitoring and hotspot joins require macOS; help and
+configuration remain usable elsewhere. Native macOS assertion tests are opt-in.
