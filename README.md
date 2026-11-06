@@ -405,7 +405,7 @@ for a host's login shell.
 | `t session move [repo] [slot] [-r] [--host <host>]` | Select current sessions, then a destination, or move an explicit slot; `--from <host>` pulls it here or sends directly with `--host` |
 | `t remote open [host] [repo] [slot]` | Choose a host and attach to an existing session; `--new` starts fresh |
 | `t remote resume [host] [repo] [slot] [--all]` | Choose a host and resume saved history discovered there |
-| `t remote kill [repo] [slot|all] [-y|--yes]` | Close sessions on their discovered remote hosts; preserve saved conversations and worktrees |
+| `t remote kill [host] [repo] [slot|all] [-y|--yes]` | Close sessions on their discovered remote hosts; preserve saved conversations and worktrees |
 | `t move [repo] [slot] [-r] [--host <dest>]` | Alias for `t session move`; `t remote move` remains compatible with `--remote` |
 | `t session view-plan` / `t session paste` | View a Claude session plan or pass an attachment |
 | `t repo list` / `t repo locate <repo>` / `t repo cd <repo>` | List names and paths, print a checkout path, or enter it in the shell |
@@ -490,33 +490,47 @@ t session move api 2 --from mini --host cloud
 t session move api 2 --from mini --host cloud --detach
 ```
 
-Omitting `--host` opens a single host picker whose heading names the action:
-open an existing session, start a new session, resume saved work, or move a session.
-For open, the selected host runs the session. For resume, it supplies the saved
-conversations and runs the resumed session. For move, it is the destination;
-the picker also names the current source host. Aliases and SSH targets appear
-below the action heading, and even one configured host waits for Enter. `remote move` remains a compatibility alias for `session move --remote`, including local
-and registered remote Claude/Codex CLI sessions, retains host identity when slot
-names repeat, and rechecks the selected conversation before moving. A named or
-current repository scopes selection; outside a checkout it spans all repositories.
-Repositories absent locally are resolved on each remote source. A unique repo/slot
-match proceeds directly to the destination picker; ambiguous repository selectors fail.
-`--all` widens the move picker. Explicit `--from` plus a slot or `--session ID`
-skips session selection. Esc/Ctrl-C cancels with status 130; an empty current
-session inventory does nothing. Nonterminal invocations require explicit choices.
+`remote` also accepts command families. The host follows the complete action
+and always identifies the source machine:
 
-Combining `--from SOURCE --host DEST` moves directly from SOURCE to DEST through
-the source's guarded transfer path. SOURCE needs working SSH and rsync access to
-DEST, and both must have compatible `t` installations and repository paths.
-The controller never resumes a temporary local copy. Failed ownership, stop,
-worktree push, transcript sync, or landing checks stop the transfer. If a failure
-occurs after stopping the source, its transcript and worktree remain there for
-recovery; the destination is not launched with stale code.
+```sh
+t remote session ls                        # list all registered remote hosts
+t remote session ls mini                   # list only mini
+t remote workflow list mini --json         # inspect mini's workflows
+t remote config show mini                  # inspect mini's settings
+t remote move mini api 2                    # move FROM mini; choose a destination
+t remote move mini api 2 --to local         # bring that session here
+t remote session move mini api 2 --to cloud --detach
+t remote kill mini api 9                    # close only mini's session
+```
 
-`remote kill` uses repository/slot targets, as `session close --remote` does.
-It discovers the owning host automatically. A lone slot uses the current repository;
-omitting a slot opens the shared remote session picker. Explicit live targets require
-confirmation unless `--yes`; saved conversations and worktrees are preserved.
+Finite lists and status queries query distinct registered SSH targets once, in
+host order, without opening a picker. Actions operate on one chosen host; missing
+choices require a terminal. `t remote --host mini session ls` makes the host
+explicit if its name could also mean a repository. Repo-first `remote move` and
+`remote kill` keep their existing owner discovery. The released move form
+`--from SOURCE --host DEST` remains compatible; use `--to` for new remote examples.
+Open/resume run on their chosen source host. Move asks separately for its destination.
+Explicit live close targets still confirm unless `--yes`, and saved work remains.
+
+Nested commands reuse the normal command implementation, flags, review screens,
+and safeguards. A normally inferred current repository follows its verified
+identity to the source host; checkout paths and aliases may differ. Lists that
+normally cover every repository keep that behavior. Unsupported caller-shell or
+browser operations explain the limitation before connecting.
+
+Single-host output and exit status are preserved. Multi-host text uses host headings;
+commands supporting JSON return `{"results": {"host": ...}, "errors": {"host":
+{"status": 255, "message": "..."}}}`. Partial results remain visible and any failure
+returns nonzero. An empty host list is a successful empty result. Queries are
+bounded and never recursively query the peers' own hosts. Mutations never fan out
+implicitly; session lifecycle ownership checks still span hosts where required.
+
+Basic unscoped lists also work with older peers. Other commands check protocol
+support before execution; upgrade an older peer with
+`t hosts run mini t system update`. Cancel selection with Esc/Ctrl-C (130).
+Transfer failures preserve the existing recovery behavior: the destination never
+starts from an unverified or stale snapshot.
 
 `remote open` shows the chosen host’s sessions in a local picker and opens additional
 selections in local terminal tabs before attaching the first session.

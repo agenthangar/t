@@ -59,7 +59,7 @@ def test_remote_parser_and_help(t_mod, capsys, action, flags):
     assert t_mod.main(['remote', action, '--help']) == 0
     help_text = capsys.readouterr().out
     assert f'usage: t remote {action}' in help_text
-    assert ('--host' if action == 'move' else '[host]') in help_text
+    assert ('--to' if action == 'move' else '[host]') in help_text
 
 
 def test_remote_group_requires_verb(t_mod):
@@ -867,12 +867,12 @@ def test_remote_kill_help_is_read_only(t_mod, monkeypatch, capsys, argv):
     monkeypatch.setattr(t_mod, '_t_auto_update', lambda argv: pytest.fail('help checked updates'))
     assert t_mod.main(argv) == 0
     text = capsys.readouterr().out
-    assert 'usage: t remote kill [repo] [slot|all]' in text
+    assert 'usage: t remote kill [host] [repo] [slot|all]' in text
     assert 'confirmation' in text and '--yes' in text
     assert 'kill' in t_mod._group_help('remote')
 
 
-@pytest.mark.parametrize('args', ['--host alpha api 9', '--new', '--all', 'alpha api 9', '--bogus'])
+@pytest.mark.parametrize('args', ['--host alpha api 9', '--new', '--all', 'alpha api 9 extra', '--bogus'])
 def test_remote_kill_rejects_invalid_arguments_before_mutation(t_mod, zsh, args):
     with pytest.raises(SystemExit) as exc:
         t_mod.build_parser().parse_args(['remote', 'kill', *shlex.split(args)])

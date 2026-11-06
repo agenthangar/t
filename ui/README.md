@@ -843,16 +843,39 @@ callers retain their existing behavior.
 Progress spinner and canceled picker children never run the caller's shell
 session/history exit hooks; the caller's own hooks remain unchanged.
 
-`remote open [host] [repo] [slot]` and `remote resume [host] [repo] [slot]`
-use host-first targets. Explicit `[repo] [slot] --host HOST` retains compatibility;
-ambiguous legacy repository-only targets fail with guidance before SSH.
-`remote move` retains its source/destination flags and repo/slot positionals.
-`remote kill [repo] [slot|all] [-y|--yes]` retains the repository-first targets,
-host discovery, filtered multi-selection, and confirmation rules of
-`session close --remote`. A lone slot or `all` infers the current repository.
-Omitting the slot selects remote sessions; outside a repository, browse all
-remote repositories. Explicit live targets confirm unless `--yes`. Preserve
-saved conversations, worktrees, remote `zsh -lic`, and delegated exit status.
+`remote <family> <action> [host] [arguments]` mirrors public command families.
+The optional host follows the complete action (including nested resources) and
+identifies the source/execution machine. `remote session ls` queries all registered
+remote hosts; `remote session ls mini` queries only mini. Prefix `remote --host HOST`
+disambiguates a host from a repository. Never consume child option values or
+payloads as command words. Aliases normalize only at command boundaries.
+
+`remote open/resume/move [host] [repo] [slot]` use the same source-host position.
+`remote move mini api 2` selects mini as source, then asks for a destination;
+`--to local` receives here. Keep repo-first move/kill owner discovery and the
+released move `--from SOURCE --host DEST` spelling as compatibility input.
+`remote kill [host] [repo] [slot|all] [-y|--yes]` retains close confirmation and
+saved-work preservation. A lone slot still infers the repository. A chosen close
+host is final even if its owner disappears; never fall back to another host.
+
+Remote policy is explicit per command and mode: finite query, single-host action,
+session orchestration, or unsupported. JSON alone never makes an action read-only.
+Finite queries deduplicate SSH targets, retain stable host order and partial results,
+and return nonzero for any failure. Single-host output stays unchanged; multi-host
+JSON is one object with host-keyed `results` and `errors` (status and message).
+Lists/status never prompt or check for updates. Queries do not recursively fan out.
+Interactive actions select one host through shared UI; nonterminal actions require
+an explicit or verified target. Lifecycle workers retain cross-host ownership checks.
+
+Only commands that normally infer a current repository carry that scope. Map its
+verified identity on the source; fail on an unavailable mapping rather than using
+an unrelated alias. Never rewrite payload arguments that merely equal a repo name.
+Generic workers validate public command paths and protocol before acting, use
+quoted `zsh -lic` execution, and preserve return status. Basic unscoped finite lists
+have a read-only compatibility path for older peers; other modes require an update.
+Caller-shell-only operations, browser launches, private workers, and nested remote
+wrappers are rejected before connecting. Underlying command help remains local.
+
 Remote open reads and scopes inventory on the selected host, then uses the shared
 local picker and opens extra local tabs before the first attachment. Failed tab
 creation reports an exact attach command and a nonzero result. Desktop rows are
