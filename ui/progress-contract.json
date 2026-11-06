@@ -300,6 +300,22 @@
     "libexec/t_local_setup.py:register:subprocess.run": {
       "kind": "passthrough",
       "reason": "Codex MCP registration streams its result during explicitly reviewed setup."
+    },
+    "libexec/t_offline.py:supervise:subprocess.Popen": {
+      "kind": "passthrough",
+      "reason": "The owned native Codex terminal client displays connection retries, progress and approvals; a parallel spinner would corrupt its terminal UI."
+    },
+    "libexec/t_offline.py:supervise:time.sleep": {
+      "kind": "passthrough",
+      "reason": "The owned native Codex terminal client displays connection retries, progress and approvals; a parallel spinner would corrupt its terminal UI."
+    },
+    "libexec/t_offline.py:process_table:subprocess.run": {
+      "kind": "passthrough",
+      "reason": "Runtime shutdown runs while the native terminal client owns the screen; bounded process checks must not draw a competing spinner."
+    },
+    "libexec/t_offline.py:stop_runtime:time.sleep": {
+      "kind": "passthrough",
+      "reason": "Runtime shutdown runs while the native terminal client owns the screen; bounded process checks must not draw a competing spinner."
     }
   },
   "shell": [

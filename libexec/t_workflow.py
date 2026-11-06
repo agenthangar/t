@@ -1045,6 +1045,7 @@ def summary_lines(policy, tool='codex'):
     if policy.get('inference'):
         routing = inference()['policy'](policy['inference'])
         lines += [f"Inference: {routing['mode']} · {routing['provider']} · {routing['model']}",
+                  'On cloud connection failure: ' + ('Continue locally' if routing['on_cloud_failure'] == 'local' else 'Pause and retry'),
                   'Provider changes apply on a new launch; active session identity is not changed.']
     if summary['stages_enabled']:
         lines.append('Separate models: ' + (', '.join(stage.title() for stage in summary['separate_stages']) or 'none'))

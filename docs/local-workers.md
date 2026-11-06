@@ -31,6 +31,53 @@ Cloud/local resume is rejected; start a new session. Desktop launch/provider
 switching is not supported by this launcher. A local-only workflow is an inference
 policy, not an offline-tools or filesystem security boundary.
 
+## When the internet is unavailable
+
+Open `t workflow` → Codex → your workflow → **Inference & routing** →
+**On cloud connection failure**. Choose **Pause and retry** (the default) or
+**Continue locally with selected model**, then review and save. This extends the
+existing workflow command; it adds no new public command or required flag.
+Install and verify the model beforehand with `t config models install MODEL`.
+For planned offline work, choose **Local only** and the explicit model directly.
+
+Continue locally applies to **fresh native Codex CLI launches** made through t.
+It starts an owned Codex app-server and attaches the native terminal UI through a
+private Unix socket. This requires app-server stdio and Unix `--remote` support
+(verified with Codex CLI 0.164.0). Approvals pass through unchanged. The supervisor watches
+typed transport errors for the primary conversation: it switches when that turn
+exhausts connection retries, or after 30 seconds of unsuccessful reconnection.
+Useful progress resets that window. It ignores auxiliary title/subagent threads,
+authentication/quota failures, HTTP application errors and user interruption.
+The default Pause setting preserves Codex's normal retries and error handling.
+
+Before switching, t checks that the selected artifact is installed and ready and
+that a usable task checkpoint exists. It stops its owned cloud runtime before
+starting a **new local-only conversation** in the same working tree. The transition
+shows the reason, provider, exact model and checkpoint path; local launch also
+prints the verified artifact revision. It stays local when connectivity returns.
+There is no automatic cloud switch-back or download during recovery. If readiness
+or checkpoint validation fails, the cloud UI stays available with an explanation.
+If local startup fails, the checkpoint remains and the launch reports failure.
+
+The private checkpoint contains the user requests (up to 32,000 characters) and
+eight bounded recent messages, command results, plans or changed-file lists.
+It is not the complete conversation or hidden reasoning. The continuation must
+inspect current files, preserve existing changes and avoid repeating completed
+external actions. Non-text input or oversized task instructions pause recovery
+instead of silently dropping context. Checkpoints and runtime diagnostics live in
+`$XDG_STATE_HOME/t/local-worker/outage-*` (default `~/.local/state/t/local-worker`).
+Directories are private and checkpoint files are mode 0600; remove completed
+directories when no longer needed.
+
+Existing cloud sessions, resume/fork, exec/review, Desktop, and custom
+remote/profile/OSS/worktree overrides are outside this initial continuation path;
+select Pause for those invocations. Saving a setting cannot replace the model in
+an already-running conversation. Local launches copy only an existing explicit
+trust decision for the exact workspace, never cloud credentials or provider
+configuration. Untrusted workspaces still require native trust confirmation.
+Downloads, web search, package installation, pushes and other network-dependent
+tools may remain unavailable offline even though local inference works.
+
 ## Model picker and commands
 
 The picker shows **Memory fit ✓ / ✕ / ?**, one selected benchmark and installation
@@ -125,6 +172,7 @@ After installing the 27B artifact, run:
 ```sh
 python3 scripts/test_local_inference_e2e.py --mode hybrid
 python3 scripts/test_local_inference_e2e.py --mode local-only
+python3 scripts/test_offline_e2e.py
 ```
 
 These commands use real inference and are never invoked by routine CI. Hybrid
@@ -136,6 +184,17 @@ Hybrid additionally requires the lead source edit to follow the worker result,
 so duplicate work cannot pass as patch handoff.
 Each run prints an evidence directory. They use temporary Git repositories and
 separate XDG state and never edit the developer's project or workflow configuration.
+
+The offline test is macOS-only and uses a headless terminal, without opening
+desktop windows. It denies external connections for the launcher, cloud/local
+clients and descendant tools, verifies that denial, and permits loopback access to
+the installed LM Studio runtime. The preexisting model daemon is outside that
+test sandbox; it does not disable the laptop's network. The outer test sandbox
+also bounds writes to fixture/temporary paths; native sandboxing is disabled only
+inside this fixture because macOS cannot nest sandbox-exec. Acceptance requires
+the original task checkpoint, the announced exact local model, an unchanged test
+file, a completed local turn and independently passing tests. It retains terminal,
+network-boundary and checkpoint evidence in the printed temporary directory.
 
 ## Using the worker
 
@@ -202,4 +261,5 @@ Measure accepted changes and time to completion, including review and repair eff
 A local worker is worthwhile only for tasks where delegation improves those results.
 
 References: [Codex non-interactive mode](https://learn.chatgpt.com/docs/non-interactive-mode),
+[Codex app-server](https://learn.chatgpt.com/docs/app-server),
 [Ollama configuration](https://docs.ollama.com/faq).

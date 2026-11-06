@@ -22,7 +22,7 @@ _spinner = runpy.run_path(str(ROOT / 'libexec/t_progress.py'))['spinner']
 DEFAULT_MODEL = 'mlx-community/Qwen3.8-27B-8bit'
 MODES = ('disabled', 'manual', 'automatic', 'local-only')
 DEFAULT = {'mode': 'manual', 'provider': 'lmstudio', 'model': DEFAULT_MODEL,
-           'context_tokens': 32768, 'timeout_seconds': 300}
+           'context_tokens': 32768, 'timeout_seconds': 300, 'on_cloud_failure': 'pause'}
 SUITES = ('swe-bench-verified-bash-only', 'swe-bench-pro', 'deepswe', 'gpqa', 'terminal-bench', 'livebench-coding')
 
 
@@ -34,10 +34,14 @@ def policy(value=None):
     if value is None:
         return dict(DEFAULT)
     if not isinstance(value, dict) or set(value) - set(DEFAULT):
-        raise ValueError('inference requires mode, provider, model, context_tokens and timeout_seconds')
+        raise ValueError('unsupported inference policy fields')
     result = dict(DEFAULT, **value)
     if result['mode'] not in MODES or result['provider'] not in ('ollama', 'lmstudio'):
         raise ValueError('unsupported inference mode or provider')
+    if result['on_cloud_failure'] not in ('pause', 'local'):
+        raise ValueError('on_cloud_failure must be pause or local')
+    if result['mode'] == 'disabled' and result['on_cloud_failure'] != 'pause':
+        raise ValueError('disabled routing cannot continue locally on a cloud failure')
     name = result['model']
     if not isinstance(name, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}', name) or '..' in name or 'cloud' in name.lower() or '://' in name:
         raise ValueError('select an explicit local model artifact')
@@ -71,6 +75,10 @@ def instructions(value):
             'Announce provider, model and reason before delegating and report the result or escalation. '
             'The adapter snapshots the repository; review its patch and observed command evidence before applying. '
             'Do not claim the selected model ran without runtime evidence. ')
+    if p['on_cloud_failure'] == 'local' and p['mode'] != 'local-only':
+        base += ('Cloud connection failure policy: the native launch supervisor can stop its owned cloud runtime and '
+                 'start a fresh local session from a bounded private checkpoint. Authentication and quota errors do not trigger this. '
+                 'Once local, stay local until the user explicitly starts a cloud session. ')
     if p['mode'] == 'local-only':
         return base + ('LOCAL ONLY: lead and every worker must use this exact local model. Never call cloud models or cloud subagents. '
                        'If local inference is unavailable, stop and report it; no cloud fallback. Ignore retained cloud model-stage preferences. '
@@ -447,7 +455,10 @@ def workflow_menu(ui, value=None):
     current = policy(value)
     while True:
         choice = ui.pick('Inference & routing', [('mode', 'Routing'), ('model', 'Local model'),
-                         ('context_tokens', 'Context'), ('timeout_seconds', 'Task budget'), ('back', 'Back')], values={k: str(v) for k,v in current.items()})
+                         ('on_cloud_failure', 'On cloud connection failure'),
+                         ('context_tokens', 'Context'), ('timeout_seconds', 'Task budget'), ('back', 'Back')],
+                         values={**{k: str(v) for k,v in current.items()}, 'on_cloud_failure':
+                                 'Continue locally' if current['on_cloud_failure'] == 'local' else 'Pause and retry'})
         if choice in (None, 'back'):
             return current
         if choice == 'model':
@@ -459,6 +470,14 @@ def workflow_menu(ui, value=None):
                                              'manual':'Manual delegation', 'disabled':'Disabled'}[v]) for v in MODES])
             if selected:
                 current['mode'] = selected
+                if selected == 'disabled':
+                    current['on_cloud_failure'] = 'pause'
+        elif choice == 'on_cloud_failure':
+            selected = ui.pick('On cloud connection failure', [('pause', 'Pause and retry'),
+                               ('local', 'Continue locally with selected model')],
+                               disabled={'local': 'Enable routing first.'} if current['mode'] == 'disabled' else {})
+            if selected:
+                current['on_cloud_failure'] = selected
         else:
             values = (8192, 16384, 32768, 65536) if choice == 'context_tokens' else (60, 300, 900, 1800)
             selected = ui.pick(choice.replace('_', ' ').title(), [(str(v),str(v)) for v in values])
@@ -567,10 +586,24 @@ def provider_runtime(chosen):
             yield base, chosen['model'], {'revision': info['digest']}
 
 
-def lead(argv, cwd=None):
+def trusted_workspace(cwd):
+    """Carry only an existing explicit trust decision for this exact workspace."""
+    try:
+        config = Path(os.environ.get('CODEX_HOME', Path.home()/'.codex'))/'config.toml'
+        projects = helper('t_toml')['loads'](config.read_text()).get('projects', {})
+        return any(Path(path).is_absolute() and Path(path).resolve() == Path(cwd).resolve()
+                   and isinstance(value, dict) and value.get('trust_level') == 'trusted'
+                   for path, value in projects.items())
+    except (OSError, ValueError, TypeError, AttributeError):
+        return False
+
+
+def lead(argv, cwd=None, chosen=None):
     """Dedicated native CLI launch: no cloud auth, models or providers inherited."""
-    chosen = effective(cwd or os.getcwd())
+    chosen = policy(chosen) if chosen is not None else effective(cwd or os.getcwd())
     if not chosen or chosen['mode'] != 'local-only':
+        if chosen and chosen['mode'] != 'disabled' and chosen['on_cloud_failure'] == 'local':
+            return helper('t_offline')['supervise'](argv, chosen, cwd or os.getcwd())
         return subprocess.call(argv)
     if '--approve-for-me' in argv[1:]:
         raise ValueError('Local-only inference requires user approval review; automatic cloud review is unavailable')
@@ -590,6 +623,8 @@ def lead(argv, cwd=None):
         env = w['environment'](home)
         env.update(CODEX_OSS_BASE_URL=base + '/v1')
         codex_home = Path(env['CODEX_HOME'])
+        if trusted_workspace(cwd or os.getcwd()):
+            (codex_home/'config.toml').write_text('[projects.'+json.dumps(str(Path(cwd or os.getcwd()).resolve()))+']\ntrust_level = "trusted"\n')
         workflow = helper('t_workflow')
         document, _ = workflow['load']()
         (codex_home / 'AGENTS.md').write_text(workflow['render'](document) + '\n' + instructions(chosen) + '\nDo work in this lead; the single local inference slot is reserved for this session.\n')
@@ -627,7 +662,8 @@ if __name__ == '__main__':
         if sys.argv[1:2] == ['--launch-prefix']:
             try:
                 selected = effective(sys.argv[2])
-                required = selected and selected['mode'] == 'local-only'
+                required = selected and (selected['mode'] == 'local-only' or
+                                         (selected['mode'] != 'disabled' and selected['on_cloud_failure'] == 'local'))
             except (OSError, ValueError):
                 required = True  # Launch guard reports the invalid policy; never fall back.
             if required:

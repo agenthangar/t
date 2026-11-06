@@ -152,7 +152,8 @@ def test_local_lead_fails_closed(local,monkeypatch,tmp_path):
     with pytest.raises(ValueError,match='cloud review'):m.lead(['codex','--approve-for-me'])
     worker=load_script(Path(__file__).parents[1]/'libexec/t_local_worker.py','inference_worker')
     workflow=m.helper('t_workflow')
-    monkeypatch.setattr(m,'helper',lambda n: {'hardware':hardware} if n=='t_local_models' else workflow if n=='t_workflow' else {'reservation':nullcontext,'state_root':lambda:tmp_path,'environment':worker.environment})
+    toml=m.helper('t_toml')
+    monkeypatch.setattr(m,'helper',lambda n: toml if n=='t_toml' else {'hardware':hardware} if n=='t_local_models' else workflow if n=='t_workflow' else {'reservation':nullcontext,'state_root':lambda:tmp_path,'environment':worker.environment})
     @contextmanager
     def runtime(*a):yield 'http://127.0.0.1:1234','local-alias',{'revision':'a'*40}
     monkeypatch.setattr(m,'runtime',runtime)
@@ -373,3 +374,41 @@ def test_ollama_catalogue_surfaces_measurement_without_starting_runtime(local, m
     for invalid in ('{invalid','{}',json.dumps(dict(measured,model='other:8b'))):
         path.write_text(invalid)
         assert 'measurement' not in m.catalogue()['models'][-1]
+
+
+def test_outage_policy_and_routing(local,monkeypatch):
+    m=local
+    assert m.policy()['on_cloud_failure']=='pause'
+    for value in ({'on_cloud_failure':'guess'},{'mode':'disabled','on_cloud_failure':'local'}):
+        with pytest.raises(ValueError):m.policy(value)
+    assert 'connection' in m.instructions({'mode':'automatic','on_cloud_failure':'local'})
+    calls=[]
+    monkeypatch.setattr(m,'helper',lambda n:{'supervise':lambda *a:calls.append(a) or 7})
+    assert m.lead(['codex'],cwd='/repo',chosen={'mode':'automatic','on_cloud_failure':'local'})==7
+    assert calls[0][2]=='/repo'
+    class UI:
+        def __init__(self,choices):self.choices=iter(choices)
+        def pick(self,*a,**kw):return next(self.choices)
+    assert m.workflow_menu(UI(['on_cloud_failure','local','back']))['on_cloud_failure']=='local'
+    assert m.workflow_menu(UI(['on_cloud_failure','local','mode','disabled','back']))['on_cloud_failure']=='pause'
+
+
+def test_exact_workspace_trust_only(local,tmp_path):
+    m=local;home=Path(m.os.environ['CODEX_HOME']);home.mkdir()
+    path=home/'config.toml';workspace=tmp_path/'repo';workspace.mkdir()
+    assert not m.trusted_workspace(workspace)
+    path.write_text('not TOML');assert not m.trusted_workspace(workspace)
+    path.write_text('[projects]\n'+json.dumps(str(workspace))+' = {trust_level="trusted"}\n')
+    assert m.trusted_workspace(workspace)
+    assert not m.trusted_workspace(workspace/'child')
+    assert not m.trusted_workspace(tmp_path)
+    path.write_text('[projects]\n'+json.dumps(str(workspace))+' = {trust_level="untrusted"}\n')
+    assert not m.trusted_workspace(workspace)
+
+
+@pytest.mark.parametrize('width,height',[(80,24),(44,20),(32,12)])
+def test_outage_picker_narrow(local,t_mod,width,height):
+    from test_tui import make_ui
+    ui=make_ui(t_mod,['j','j','enter','j','enter','q'],width,height)
+    assert local.workflow_menu(ui)['on_cloud_failure']=='local'
+    assert any('Pause and retry' in ''.join(frame) for frame in ui.frames)
