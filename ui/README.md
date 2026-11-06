@@ -79,11 +79,11 @@ the command name.
 
 | Type | Behavior and appearance |
 | --- | --- |
-| **List** | Print a scoped, aligned table immediately. Name its scope, label columns, and give a clear empty state. No picker, confirmation, or update prompt. `t issue list` is an example. Terminal session list is the explicit filtered-selection exception below. |
+| **List** | Print a scoped, aligned table immediately. Name its scope, label columns, and give a clear empty state. No picker, confirmation, or update prompt. `t issue list` is an example. |
 | **Detail/status** | Print labeled facts without changing state or prompting. Preserve raw text, paths, and streams when the command explicitly exposes them. |
 | **Single selection** | Use a searchable fzf picker or an inline `_RailUI` menu with one visibly focused row. Enter chooses exactly one item; Esc/Ctrl-C cancels. An explicit target bypasses selection. A paginated single picker uses Ctrl-F for the next page, Ctrl-B for the previous page, and Ctrl-R to refresh; those keys belong to pagination rather than the filtered picker's settings control. |
 | **Multi-selection** | Searchable pickers use Space/Tab to mark rows and Enter to accept the marks, or the focused row if none are marked. Inline checklists use Space to toggle and Enter to submit only checked items. Show marks and the Enter action independently of color. |
-| **Filtered selection** | Show active filters and hidden count in the header. Open, resume and close pickers use Ctrl-F for staged filter settings, Ctrl-A to turn filters off, and Ctrl-L to restore saved choices. State and column choices live in settings. Terminal session lists expose column filter and sort hotkeys directly. Filtering retains the search and removes hidden marks. Issue pickers retain Ctrl-A show-all and Ctrl-F defaults. Ctrl-/ toggles full details when rows have previews. |
+| **Filtered selection** | Show active filters and hidden count in the header. Open, resume and close pickers use Ctrl-F for staged filter settings, Ctrl-A to turn filters off, and Ctrl-L to restore saved choices. State and column choices live in settings. Filtering retains the search and removes hidden marks. Issue pickers retain Ctrl-A show-all and Ctrl-F defaults. Ctrl-/ toggles full details when rows have previews. |
 | **Wizard/review** | Stage choices, then display the resulting changes before applying them. Config saves on Enter; install enters review and then runs on Enter; login runs the selected logins on its first Enter. Setup and repository creation keep their released `y` confirmation. Show the actual action in the footer. |
 | **Direct action/passthrough** | An explicit target acts without a needless picker. Retain ownership and worktree safety checks, confirmation before interrupting live work with an explicit target, and the delegated tool's input/output and exit status. |
 | **Machine output** | Preserve existing JSON, raw-value, and remote wire formats. Do not add presentation chrome, ANSI color, or prompts. The inventory identifies machine-facing modes; this does not imply universal JSON support. |
@@ -355,7 +355,7 @@ limits discovery to this machine. `-r`/`--remote` retains inclusive browsing.
 Fresh sessions and explicit targets retain their existing location routing.
 Session lists (`t ls` / `t session list`) also include remote hosts by default;
 `-l`/`--local` lists only this machine. Repository scope and `--all` are independent
-of host scope. Noninteractive lists remain read-only; terminal session lists use the shared picker.
+of host scope. Session lists always print a read-only table, including in terminals.
 
 The open picker hides attached CLI and loaded desktop sessions by default.
 Ctrl-F opens the shared single-picker Filters settings. Choose State for attached,
@@ -671,21 +671,11 @@ Redirected output retains all columns and complete values: `t ls | cat` or
   ●✓↻ mini api-17 Fix… 09:41
 ```
 
-With stdin and stdout attached to a usable terminal and fzf available, `t session
-list` (`t ls`, `t list`) uses the shared filtered multi-picker. It starts with all
-attached, detached, desktop and foreground rows in the command's existing scope.
-Enter rechecks every selected owner before opening through the guarded open path;
-changed or missing sessions are refused. Esc cancels.
-The compact task row stays searchable with full metadata and last-turn details
-available through Ctrl-/. Ctrl-G/D/O/R chooses agent/UI/host/repo filters; pressing an active filter hotkey again clears it. Alt-T/R/G/O/V
-sorts by last turn/repo/agent/host/natural session from raw snapshot metadata.
-Filters and sorting have separate labeled sections, with active controls brightly
-highlighted; resume uses the same section layout. Unknown turns sort last.
-Ctrl-A clears filters while retaining sort; Ctrl-F restores
-all sessions and last-turn sort. Reloads preserve search and remove hidden marks,
-without discovery. Enter rechecks the selected host/session/state/conversation
-identities before opening any selection and refuses changed owners. Remote hosts are included by default; `--local` restricts discovery; empty results print the existing
-empty state. No list mode offers an automatic update prompt.
+`t session list` (`t ls`, `t list`) always prints the scoped, read-only session table.
+It never opens a picker or offers an automatic update prompt, even with a usable
+terminal and fzf available. Remote hosts are included by default; `--local`
+restricts discovery. Empty results print the existing empty state. Use
+`t session open` for interactive selection.
 
 The filtered multi-selection mode of `t session open` prioritizes session identity
 and working-on text. It omits LAST TURN, previews, and the new-session shortcut.

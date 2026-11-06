@@ -139,8 +139,7 @@ _dev_session_rows() {
   printf 'local-id\t%s\tapi-3\tdetached\tnone\tLocal\tcodex\n' "$HOME/code/.worktrees/api/3"
 }
 ''')
-    # Terminal lists now enter the shared picker. Cancel deterministically after
-    # recording its reachable rows independently of stderr redirection.
+    # Even with fzf available, terminal lists must print without opening it.
     picker = tmp_path / 'stubbin/fzf'
     picker.write_text('#!/bin/sh\nif [ "$1" = --help ]; then printf "%s\\n" --id-nth; exit 0; fi\ncat > "$PICKER_ROWS"\nexit 130\n')
     picker.chmod(0o755)
@@ -159,13 +158,11 @@ _dev_session_rows() {
     text = result.stdout + result.stderr
     if error_file.exists():
         text += error_file.read_text()
-    expected_rc = 130 if mode in ('tty', 'stderr_redirected', 'no_color') else 0
-    assert f'rc={expected_rc}' in text
+    assert 'rc=0' in text
     assert 'warning: dev: offline SSH session scan failed (rc=255) — skipped' in text
     assert ('\x1b[33mwarning: dev: offline' in text) == color
-    assert picker_rows.exists() == (expected_rc == 130)
-    rows = (picker_rows.read_text() if picker_rows.exists() else
-            output_file.read_text() if output_file.exists() else result.stdout)
+    assert not picker_rows.exists()
+    rows = output_file.read_text() if output_file.exists() else result.stdout
     assert 'api-3' in rows and 'api-4' in rows
     assert 'Local' in rows and 'Reachable' in rows
     if output_file.exists():

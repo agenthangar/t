@@ -19,9 +19,8 @@ and [the command inventory](ui/command-contract.json). Classify every new comman
 and conditional mode; compatibility aliases inherit the canonical entry. Use
 the shared `_RailUI` or `_t_fzf_single`/`_t_fzf_multi`/`_t_fzf_filtered`/`_t_fzf_paginated`
 profile for interactive behavior. Update the inventory, help, examples, and
-contract tests with the implementation. Lists and status must never open an
-automatic update prompt. Terminal `t session list` alone may use its documented
-filtered picker; other lists and all status commands remain read-only and never select. Run
+contract tests with the implementation. Lists and status are read-only and must never open a picker or an automatic
+update prompt. Run
 `python3 scripts/lint_cli.py` to check these rules.
 
 Keep public commands in noun/verb families, with nested resources before verbs

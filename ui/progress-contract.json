@@ -268,10 +268,6 @@
     "libexec/t_picker_close.py:close:subprocess.Popen": {
       "kind": "background",
       "reason": "Starts a short-lived cached-view updater; it cannot contact fzf until the foreground action returns, and the picker owns its cleanup and rendering."
-    },
-    "bin/t:_session_list_picker:subprocess.run": {
-      "kind": "passthrough",
-      "reason": "The shared terminal session-list picker owns input and rendering through selection or cancellation."
     }
   },
   "shell": [

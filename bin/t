@@ -579,32 +579,11 @@ def cmd_ls(cfg, args):
             tail = f"  ({' · '.join(hints)})" if hints else ""
             print(f"No dev sessions running{where}.{tail}")
         return 0
-    if (sys.stdin.isatty() and sys.stdout.isatty() and os.environ.get("TERM") != "dumb"
-            and shutil.which("fzf") and shutil.which("zsh")):
-        return _session_list_picker(rows, args.remote, bool(scope))
     if args.remote:
         _render_remote(rows, scope, st)
     else:
         _render_local(rows, scope, st, bool(cfg.hosts))
     return 0
-
-
-def _session_list_picker(rows, remote=False, scoped=False):
-    """Pass one private discovery snapshot to the matching plugin for browsing."""
-    with tempfile.TemporaryDirectory(prefix="t-list-") as directory:
-        snapshot = os.path.join(directory, "source")
-        keys = ("host", "sid", "cwd", "slot", "state", "context", "summary", "agent", "model", "last_turn_started_at")
-        with open(os.open(snapshot, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as stream:
-            for row in rows:
-                stream.write("\t".join(str(row.get(key) or "-").replace("\t", " ").replace("\n", " ") for key in keys) + "\n")
-        plugin = os.path.join(_t_source_root(), "t.plugin.zsh")
-        args = [snapshot] + (["--remote"] if remote else []) + (["--repo"] if scoped else [])
-        snippet = ZSH_PRELUDE + "source " + shlex.quote(plugin) + " && _t_list_snapshot " + shlex.join(args)
-        try:
-            return subprocess.run(["zsh", "-lic", snippet]).returncode
-        except OSError as error:
-            print(f"t: could not browse sessions: {error}", file=sys.stderr)
-            return 1
 
 
 _PR_WIP_RE = re.compile(r"#\d+ merged, still in progress")
@@ -6536,9 +6515,7 @@ def _command_readonly(argv, *, terminal=None):
     if verb == "doctor":
         return "--repair" not in options
     if verb == "ls":
-        if terminal is None:
-            terminal = sys.stdin.isatty() and sys.stdout.isatty()
-        return not terminal
+        return True
     if verb in ("help", "read", "plan", "session-rows"):
         return True
     if verb == "issue":
@@ -12104,11 +12081,7 @@ EXPLICIT PUSH AND PULL
 
   Pipe to cat for complete values.
 
-  With fzf in a terminal, browse all sessions; Enter opens selected existing sessions.
-  Ctrl-G/D/O/R chooses agent/UI/host/repo filters; repeat to clear.
-  Alt-T/R/G/O/V sorts turn/repo/agent/host/session.
-  Ctrl-A clears filters; Ctrl-F resets filters and last-turn sorting. Esc cancels.
-  Without fzf or a usable terminal, print a read-only table.""")
+  Always prints a read-only table; use t open to select a session.""")
     sp.add_argument("repo", nargs="?", help="repository alias, basename or origin name to scope from any directory (default: the repo cwd is in)")
     location = sp.add_mutually_exclusive_group()
     location.add_argument("-r", "--remote", dest="remote", action="store_true", default=True,

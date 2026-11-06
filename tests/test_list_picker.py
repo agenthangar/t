@@ -1,5 +1,4 @@
-"""Session list keeps discovery/scope and enters only its explicit terminal mode."""
-from pathlib import Path
+"""Session lists always print tables; internal snapshot selection remains guarded."""
 from types import SimpleNamespace
 import shlex
 
@@ -27,64 +26,29 @@ def setup_list(t_mod, monkeypatch, remote=False):
 
 
 @pytest.mark.parametrize('remote', [False, True])
-@pytest.mark.parametrize('status', [0, 130])
-def test_terminal_list_uses_private_scoped_snapshot(t_mod, monkeypatch, remote, status):
+@pytest.mark.parametrize('terminal', [False, True])
+def test_list_always_prints_scoped_table(t_mod, monkeypatch, capsys, remote, terminal):
     cfg, args, calls = setup_list(t_mod, monkeypatch, remote)
-    snapshots = []
-    def run(argv):
-        assert argv[:2] == ['zsh', '-lic']
-        words = shlex.split(argv[2])
-        assert str(Path(t_mod._t_source_root()) / 't.plugin.zsh') in words
-        source = Path(words[words.index('_t_list_snapshot') + 1])
-        snapshots.append(source)
-        assert source.stat().st_mode & 0o077 == 0
-        rows = source.read_text().splitlines()
-        assert [line.split('\t')[3] for line in rows] == ['api-10', 'api-2']
-        assert rows[0].split('\t')[0] == ('mini' if remote else 'local')
-        assert rows[0].endswith('2026-10-23T16:41:07Z')
-        assert '--repo' in words and ('--remote' in words) == remote
-        return SimpleNamespace(returncode=status)
-    monkeypatch.setattr(t_mod.subprocess, 'run', run)
-    assert t_mod.cmd_ls(cfg, args) == status
-    assert calls == ['_dev_rows_all --details' if remote else '_dev_session_rows --details']
-    assert not snapshots[0].exists()
-
-
-@pytest.mark.parametrize('fallback', ['stdin', 'stdout', 'fzf', 'zsh', 'dumb'])
-def test_list_falls_back_to_existing_table(t_mod, monkeypatch, capsys, fallback):
-    cfg, args, _ = setup_list(t_mod, monkeypatch)
-    if fallback in ('stdin', 'stdout'):
-        monkeypatch.setattr(getattr(t_mod.sys, fallback), 'isatty', lambda: False)
-    elif fallback == 'dumb':
-        monkeypatch.setenv('TERM', 'dumb')
-    else:
-        monkeypatch.setattr(t_mod.shutil, 'which', lambda name: None if name == fallback else '/bin/' + name)
-    monkeypatch.setattr(t_mod, '_session_list_picker', lambda *a: pytest.fail('table opened a picker'))
+    monkeypatch.setattr(t_mod.sys.stdin, 'isatty', lambda: terminal)
+    monkeypatch.setattr(t_mod.sys.stdout, 'isatty', lambda: terminal)
+    monkeypatch.setattr(t_mod.subprocess, 'run', lambda *a, **k: pytest.fail('list launched a picker'))
     assert t_mod.cmd_ls(cfg, args) == 0
     output = capsys.readouterr().out
     assert 'Latest task' in output and 'Older task' in output and 'LAST TURN' in output
     assert 'Other task' not in output
+    assert calls == ['_dev_rows_all --details' if remote else '_dev_session_rows --details']
 
 
-def test_empty_list_and_launch_error(t_mod, monkeypatch, capsys):
+def test_empty_list_prints_empty_state(t_mod, monkeypatch, capsys):
     cfg, args, _ = setup_list(t_mod, monkeypatch)
     monkeypatch.setattr(t_mod, 'zsh_capture', lambda command: '')
-    monkeypatch.setattr(t_mod, '_session_list_picker', lambda *a: pytest.fail('empty picker'))
     assert t_mod.cmd_ls(cfg, args) == 0
     assert 'No dev sessions running' in capsys.readouterr().out
 
 
-def test_list_picker_start_error(t_mod, monkeypatch, capsys):
-    def fail(*a):
-        raise OSError('missing shell')
-    monkeypatch.setattr(t_mod.subprocess, 'run', fail)
-    assert t_mod._session_list_picker([]) == 1
-    assert 'could not browse sessions' in capsys.readouterr().err
-
-
 @pytest.mark.parametrize('argv', [['ls'], ['list'], ['session', 'list'], ['session', 'ls']])
 def test_list_alias_terminal_mode_bypasses_update(t_mod, monkeypatch, argv):
-    assert not t_mod._command_readonly(argv, terminal=True)
+    assert t_mod._command_readonly(argv, terminal=True)
     assert t_mod._command_readonly(argv, terminal=False)
     monkeypatch.setattr(t_mod, '_t_update_interactive', lambda: pytest.fail('list checked updates'))
     assert t_mod._t_auto_update(argv) is None
