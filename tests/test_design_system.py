@@ -424,3 +424,13 @@ def test_incomplete_discovery_requires_choice_except_root_entry(design):
     assert design.automatic_source(result) is None
     result['candidates'].append({'path': 'DESIGN.md'})
     assert design.automatic_source(result) == 'DESIGN.md'
+
+
+@pytest.mark.parametrize('approach', ['standalone_html', 'in_app'])
+def test_design_approach_does_not_request_disabled_preview(workflow, approach):
+    policy = dict(workflow.DEFAULT, behaviors={'frontend_enabled': 'disabled', 'frontend_design': approach})
+    text = workflow._stage_text(policy)
+    assert 'When a frontend design prototype is requested or due' in text
+    assert 'preview by itself' in text
+    assert 'For frontend changes — When to preview:' not in text
+    assert 'Design system:' in text

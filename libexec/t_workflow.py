@@ -121,8 +121,8 @@ BEHAVIORS = {
         'on_request': ('Only when I ask', 'For command-line tool previews, prepare the invocation using the configured preview method, then wait for an explicit user request before launching its repository-supported preview command. Honor the CLI preview\'s resolved timing. This launch preference does not itself request a preview or change PR or test preferences. Launch only the supported preview command, never arbitrary production or destructive commands. For an interactive CLI, use a supported usable interactive terminal when available; if launch is unavailable, report the limitation and exact command without claiming it ran. Honor repository and task instructions.'),
     }},
     'frontend_design': {'label': 'Design approach', 'choices': {
-        'standalone_html': ('Separate HTML prototype', 'For frontend design, create an interactive standalone HTML prototype outside the application so the user can preview the design before app implementation.'),
-        'in_app': ('In the app', 'For frontend design, implement and preview the design within the actual application using its existing components and development setup.'),
+        'standalone_html': ('Separate HTML prototype', 'When a frontend design prototype is requested or due, create an interactive standalone HTML prototype outside the application. This design approach does not request a preview by itself; honor preview enablement, timing, approval and explicit task instructions.'),
+        'in_app': ('In the app', 'When a frontend design prototype is requested or due, use the actual application and its existing components and development setup. This design approach does not authorize substantial implementation before required approval or request a preview by itself; honor preview enablement, timing and explicit task instructions.'),
     }},
     'design_approval': {'label': 'Design approval', 'choices': {
         'required': ('Required', 'For design and UI work, prepare and show a design preview before substantial implementation, then wait for user feedback and approval before continuing. Report unavailable preview tools accurately.'),
