@@ -145,7 +145,7 @@ Fresh and resumed tmux panes start without echoing internal launch commands or
 exit instructions. Agent output is logged from startup; failures retain diagnostics.
 
 The config hub groups Session defaults, Agents, Workflows, Runners, MCP server, Repositories &
-worktrees, Remote hosts, and Finish. Keep agent settings and local worker/model
+worktrees, Remote hosts, Sleep & connectivity, and Finish. Keep agent settings and local worker/model
 setup together, with workflow in its own section; keep repository/worktree choices
 separate from
 host registration and the default beam host. Settings collections and setup
@@ -1191,7 +1191,19 @@ own runtime, without dotfiles, user startup files or session registration.
 The optional zsh adapter shares that runtime and preserves shell-local activity
 thresholds and application mappings. Loading either adapter never starts a hold.
 
-`nosleep config` uses `_RailUI` and stages edits until reviewed and saved.
+`t config → Nosleep` opens the same `_RailUI` editor as `nosleep config`,
+returning to the hub afterward. Save or discard hub edits before opening the
+independently saved editor. Blank, nonselectable rail rows separate its sections.
+Nearby-network selection includes refresh, the saved network and manual entry.
+Explicit **Enable network discovery** builds the local CoreWLAN/CoreLocation app
+and requests Location permission; browsing and monitoring never request it.
+Password setup stays pending until review, then uses a private Keychain prompt.
+`nosleep hotspot setup` remains a compatibility route.
+
+The runtime observes the selected SSID asynchronously even when fallback or
+checks are disabled. The dashboard separates fallback policy from association and
+availability. Missing permission, radio off, timeouts and stale observations never
+claim a network is absent. Observations do not alter the existing outage policy.
 `nosleep --help` and `nosleep config --show` never prompt, change power settings,
 join networks or write configuration. Existing flags, machine-local config paths
 and Keychain identifiers remain compatible. Installation does not grant sudo or

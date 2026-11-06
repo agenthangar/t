@@ -3503,7 +3503,7 @@ def _config_wizard(cfg, workflows_only=False, workflow_target=None):
                         values[a] += " · fast"
                 rows += [("local", "Local worker & models ›"), ("workflow", "Workflows ›"), ("runners", "Test runners ›"),
                          ("mcp", "Sessions server ›"), ("repos", "Repositories ›"), ("worktrees", "Worktrees & branches ›"),
-                         ("hosts", "Hosts ›"), ("beam", "Default beam host"), ("edit", "Open config in editor"),
+                         ("hosts", "Hosts ›"), ("beam", "Default beam host"), ("nosleep", "Nosleep ›"), ("edit", "Open config in editor"),
                          ("cancel", "Cancel")]
                 pending = len(_config_diff(initial, _config_state(edited))) + _workflow_pending(edited)
                 values.update({"hosts": f"{len(edited.hosts)} registered",
@@ -3525,7 +3525,7 @@ def _config_wizard(cfg, workflows_only=False, workflow_target=None):
                 else:
                     choice = ui.pick("Local settings", rows, values=values,
                                      sections={"tool": "Session defaults", AGENTS[0]: "Agents", "workflow": "Workflows", "runners": "Runners",
-                                               "mcp": "MCP server", "repos": "Repositories & worktrees", "hosts": "Remote hosts", "edit": "Finish"},
+                                               "mcp": "MCP server", "repos": "Repositories & worktrees", "hosts": "Remote hosts", "nosleep": "Sleep & connectivity", "edit": "Finish"},
                                      accents={"cancel": "y"},
                                      primary=("s", "SAVE CHANGES", f"{pending} pending"), shortcuts={"s": "save"},
                                      default=next(i for i, row in enumerate(rows) if row[0] == last))
@@ -3544,6 +3544,16 @@ def _config_wizard(cfg, workflows_only=False, workflow_target=None):
                 last = choice if choice in dict(rows) else last
                 if choice == "mcp":
                     _config_mcp(ui, pending)
+                    continue
+                if choice == "nosleep":
+                    if pending:
+                        ui.done("pending", "Save or discard pending settings before opening Nosleep.")
+                        continue
+                    ui.restore()
+                    try:
+                        subprocess.call([sys.executable, os.path.join(_t_source_root(), "libexec", "nosleep_config.py")])
+                    finally:
+                        ui.raw()
                     continue
                 if choice == "local":
                     if pending:
@@ -4286,6 +4296,7 @@ def cmd_config(cfg, args):
             print(f"{agent} effort: {cfg.efforts.get(agent) or 'tool default'}")
             print(f"{agent} speed: {_config_speed_label(cfg.fast.get(agent))}")
         print(f"Local worker: t config local --show (setup: t config local)")
+        print("Nosleep: nosleep config --show (setup: t config → Nosleep)")
         print(f"Default beam host: {cfg.beam_host or 'none'}")
         print(f"Worktrees: {cfg.worktree_default} · root: {cfg.worktree_root} · shared-tree branch: {cfg.branch}")
         for alias, target in sorted(cfg.hosts.items()):
@@ -12545,6 +12556,9 @@ EXAMPLES
   levels; add, edit or remove hosts (Add host discovers new Tailscale peers and
   offers Refresh or manual entry); register or unregister repos and set their tool,
   branch and worktree overrides; choose the default beam host and worktree defaults.
+
+  Nosleep opens its own reviewed editor for sleep settings, nearby Wi-Fi discovery,
+  macOS Location permission and hotspot credentials. Save or discard hub edits first.
 
   Save changes reviews then writes a managed block in T_LOCAL_RC.
 

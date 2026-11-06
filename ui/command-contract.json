@@ -2356,7 +2356,7 @@
             "tests/test_config.py::test_config_grouped_menu_narrow_navigation",
             "tests/test_workflow_review.py::test_config_save_review_passes_baseline_without_dumping_workflows"
           ],
-          "notes": "Suggest unique host short names on addition; allow host renaming with defaults preserved and review before saving. Group the hub into Session defaults, Agents, Workflows, Runners, MCP server, Repositories & worktrees, Remote hosts, and Finish. Keep all actions directly reachable with stable focus and Save/Discard behavior; collection/setup rows use a trailing submenu cue. Focus and Save remain visible at narrow terminal sizes. Workflow save review displays only changes against the initial staged-document snapshot, with before/after values and changed text lines."
+          "notes": "Suggest unique host short names on addition; allow host renaming with defaults preserved and review before saving. Group the hub into Session defaults, Agents, Workflows, Runners, MCP server, Repositories & worktrees, Remote hosts, Sleep & connectivity, and Finish. Keep all actions directly reachable with stable focus and Save/Discard behavior; collection/setup rows use a trailing submenu cue. Focus and Save remain visible at narrow terminal sizes. Workflow save review displays only changes against the initial staged-document snapshot, with before/after values and changed text lines."
         },
         "host_add": {
           "argv": [
@@ -2431,6 +2431,22 @@
             "tests/test_config.py::test_config_mcp_registration_review"
           ],
           "notes": "MCP submenu inspection and refresh are read-only. Registration requires immediate-action review and no pending hub edits; preserves existing client entries and disabled settings. Configuration state is not connection health."
+        },
+        "nosleep": {
+          "argv": [
+            "config",
+            "open"
+          ],
+          "patterns": [
+            "wizard",
+            "action"
+          ],
+          "read_only": false,
+          "terminal": true,
+          "tests": [
+            "tests/test_config.py::test_config_nosleep_opens_shared_editor_only_with_clean_hub"
+          ],
+          "notes": "Nosleep opens its own reviewed machine-local editor after hub edits are saved or discarded. Network selection is read-only; only explicit Enable network discovery may build the local helper and request macOS Location permission. Credentials are requested privately after review."
         }
       },
       "notes": " Claude and Codex use guarded t transfers. Legacy native-handoff settings are ignored; older peers receive an explicit t policy."
@@ -5937,7 +5953,8 @@
           "terminal": false,
           "tests": [
             "tests/test_nosleep_runtime.py::test_zsh_nosleep_plain_snapshot_shows_sampling_then_idle"
-          ]
+          ],
+          "notes": "Observe configured-network availability independently of fallback and monitoring policy. Scans run asynchronously and never prompt; permission, Wi-Fi, association, absence and unknown states are distinct."
         },
         "help": {
           "argv": [
@@ -5964,8 +5981,11 @@
           "read_only": false,
           "terminal": true,
           "tests": [
-            "tests/test_nosleep_config.py::test_tty_requirement_cycle_review_and_save"
-          ]
+            "tests/test_nosleep_config.py::test_tty_requirement_cycle_review_and_save",
+            "tests/test_nosleep_config.py::test_new_hotspot_is_selected_and_password_saved_only_after_review",
+            "tests/test_nosleep_config.py::test_frame_inserts_nonselectable_breaks_between_sections"
+          ],
+          "notes": "Shared editor reachable through t config \u2192 Nosleep. Blank rail lines separate sections. Select one nearby fallback or enter an SSID manually; explicit discovery setup requests Location access. Password changes stay pending until reviewed and use Keychain\u2019s private prompt."
         },
         "show": {
           "argv": [
@@ -6010,7 +6030,8 @@
           "terminal": true,
           "tests": [
             "tests/test_nosleep_hotspot.py::test_setup_prompts_locally_and_only_enables_after_keychain_success"
-          ]
+          ],
+          "notes": "Compatibility setup route; new users configure hotspot settings and credentials through t config \u2192 Nosleep or nosleep config."
         }
       }
     }

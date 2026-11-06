@@ -173,6 +173,9 @@ def nosleep_loop(zsh, tmp_path):
         zmodload -u zsh/datetime
         typeset -gi EPOCHSECONDS=1000 online_probe=0 busy_probe=0 pmset_reset=0 restore_attempts=0
         typeset -a online_results=( ${=FAKE_ONLINE} ) busy_results=( ${=FAKE_BUSY} )
+        if [[ -n ${FAKE_WIFI_STATE:-} ]]; then
+            _nosleep_wifi_tick() { wifi_text=$FAKE_WIFI_STATE; }
+        fi
         if [[ -n ${FAKE_HOTSPOT:-} ]]; then
             _nosleep_config() {
                 python3 "$_NOSLEEP_ROOT/libexec/nosleep_config.py" "$@" || return $?
@@ -1608,3 +1611,61 @@ def test_zsh_nosleep_invalid_saved_requirement_does_not_touch_power(zsh, require
     result = zsh('sudo() { print unexpected-power; }; nosleep --require all; print rc=$?')
     assert "rc=1" in result.stdout and "unexpected-power" not in result.stdout
     assert "requirement must be" in result.stderr
+
+
+@pytest.mark.parametrize('flags,enabled', [('', '0'), ('--forever', '1'), ('--no-internet', '1'), ('', '1')])
+@pytest.mark.parametrize('state', ['Available · not connected', 'Connected', 'Permission needed', 'Not detected'])
+def test_network_observation_visible_independently_of_fallback_policy(nosleep_loop, flags, enabled, state):
+    result, log = nosleep_loop(flags, FAKE_HOTSPOT=enabled, FAKE_WIFI_STATE=state,
+                               FAKE_STOP_AT='1002', FAKE_ONLINE='1')
+    assert f'Network   Fake hotspot · {state}' in result.stdout
+    assert 'attempting hotspot' not in result.stdout
+    assert not any(line.startswith('hotspot ') for line in log)
+
+
+def test_async_wifi_observation_refresh_expiry_and_cleanup(zsh, tmp_path):
+    root = tmp_path / 'wifi-root'
+    (root / 'libexec').mkdir(parents=True)
+    (root / 'libexec/nosleep_wifi.py').write_text("print('Available · not connected')\n")
+    result = zsh(r'''
+        _NOSLEEP_ROOT=$WIFI_ROOT
+        hotspot_ssid=Phone now=1000 wifi_next_scan=0 wifi_observed_at=0 show_snapshot=0
+        _NOSLEEP_WIFI_PID='' _NOSLEEP_WIFI_DIR=''
+        _nosleep_wifi_tick
+        first_pid=$_NOSLEEP_WIFI_PID
+        temp=$_NOSLEEP_WIFI_DIR
+        zmodload zsh/zselect
+        for i in {1..100}; do
+            [[ -z ${jobstates[(r)*:${first_pid}=*]} ]] && break
+            zselect -t 2
+        done
+        _nosleep_wifi_tick
+        print -r -- "observed=$wifi_text snapshot=$show_snapshot next=$wifi_next_scan"
+        now=1046 wifi_next_scan=1100
+        _nosleep_wifi_tick
+        print -r -- "stale=$wifi_text"
+        _nosleep_wifi_cancel
+        [[ ! -e $temp && -z $_NOSLEEP_WIFI_PID && -z $_NOSLEEP_WIFI_DIR ]] && print cleaned
+    ''', WIFI_ROOT=str(root))
+    assert 'observed=Available · not connected snapshot=1 next=1030' in result.stdout
+    assert 'stale=Unknown (observation expired)' in result.stdout
+    assert 'cleaned' in result.stdout
+
+
+def test_async_wifi_cancellation_is_bounded(zsh, tmp_path):
+    root = tmp_path / 'wifi-root'
+    (root / 'libexec').mkdir(parents=True)
+    (root / 'libexec/nosleep_wifi.py').write_text('import time\ntime.sleep(60)\n')
+    started = time.monotonic()
+    result = zsh(r'''
+        _NOSLEEP_ROOT=$WIFI_ROOT
+        hotspot_ssid=Phone now=1000 wifi_next_scan=0 wifi_observed_at=0 show_snapshot=0
+        _NOSLEEP_WIFI_PID='' _NOSLEEP_WIFI_DIR=''
+        _nosleep_wifi_tick
+        child=$_NOSLEEP_WIFI_PID
+        temp=$_NOSLEEP_WIFI_DIR
+        _nosleep_wifi_cancel
+        if ! kill -0 $child 2>/dev/null && [[ ! -e $temp ]]; then print cleaned; fi
+    ''', WIFI_ROOT=str(root))
+    assert time.monotonic() - started < 5
+    assert 'cleaned' in result.stdout

@@ -1585,3 +1585,6 @@ The `t` package also installs [`nosleep`](docs/nosleep.md), a standalone macOS
 command for keeping the machine awake while work is active. Run `nosleep --help`,
 `nosleep config`, or `nosleep config --show`. It starts only when requested and
 retains existing nosleep settings and hotspot credentials.
+Use **t config → Nosleep** for the same settings editor, nearby-network selection,
+macOS discovery permission setup, and hotspot passwords. Its live dashboard shows
+the selected network's availability even when fallback is disabled.

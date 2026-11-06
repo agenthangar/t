@@ -192,33 +192,58 @@ known Wi-Fi is available; it may not leave connected Wi-Fi whose internet uplink
 is broken. `nosleep` does not toggle Wi-Fi or change those auto-join settings.
 These auto-join settings are per-machine and are not changed by `dots --all`.
 
-For an explicit fallback to an already broadcasting iPhone hotspot, run this once
-in an unlocked terminal on each Mac:
+Configure fallback from **t config → Nosleep** or `nosleep config`; no separate
+setup command is needed. The nosleep editor saves independently of the hub, so
+save or discard pending hub changes before opening it. Settings sections are
+separated by blank rail lines and remain navigable in small terminals.
+
+Select **Hotspot Wi-Fi name** to discover nearby networks, refresh the list, or
+enter a name manually. Select one trusted fallback network. The current connection
+is marked, duplicate SSIDs are combined, and other networks are ordered by signal
+strength. A saved network remains selectable when it is not currently detected.
+
+Use **Enable network discovery** to set up the local macOS helper and request
+Location permission. Apple requires Location access to expose Wi-Fi names; allow
+**Nosleep Wi-Fi** under **System Settings → Privacy & Security → Location Services**.
+If permission is denied or Location Services are off, config explains how to fix
+it. Discovery does not collect geographic coordinates. The helper is built locally
+on explicit setup using Apple command-line tools (`xcode-select --install` if
+missing). It is stored under `~/Library/Application Support/t/nosleep`, with separate
+identities for different source checkouts. Unchanged builds reuse the helper;
+a rebuild or source change may require permission again. No background service is
+installed, and normal monitoring never requests permission or installs the helper.
+
+Selecting a new network stages its password setup. **Set/change hotspot password**
+also stages a credential update. Review and save first, then macOS `security`
+prompts privately for the password. Configuration is written only after credential
+storage succeeds. Passwords never appear in arguments, logs, review output or JSON.
+The existing `nosleep hotspot setup` command remains compatible.
 
 ```sh
-nosleep hotspot setup
-nosleep config                 # Wi-Fi name, outage delay and attempt limit
-nosleep --hotspot off           # disable the saved fallback for this run
+t config                       # select Nosleep
+nosleep config                 # open the same editor directly
+nosleep --hotspot off           # disable fallback for this run
 nosleep --hotspot=on            # enable the configured fallback for this run
 ```
 
-Setup asks for the exact Wi-Fi name and lets macOS `security` prompt for the
-password locally. It saves the password in this Mac's Keychain and enables the
-machine's private configuration only after setup succeeds. Passwords never appear
-in shell arguments, logs, or the JSON config. `nosleep config` can change the
-fallback toggle, Wi-Fi name, delay and attempt limit; changing the Wi-Fi name may
-require running setup again for its credentials. `--hotspot on|off` overrides the
-saved toggle for one run; both separate and `=` values work. The default delay is
-five minutes of continuous internet outage. Configure the Wi-Fi name, delay and
-attempt limit in `nosleep config` (limit 1–300 seconds, default 30).
+The default outage delay is five minutes. Configure the delay and bounded attempt
+limit (1–300 seconds, default 30) in the same editor.
+
+The live **Hotspot** row reports fallback policy; **Network** reports the selected
+SSID and whether it is connected, available but not connected, not detected, or
+unknown. Wi-Fi off and permission problems have separate messages. Availability
+is checked every 30 seconds, including when fallback or automatic checks are off.
+Scans have a 10-second native deadline and do not block the sleep-control loop.
+Expired observations become unknown. Availability means the SSID was observed;
+it does not prove credentials, internet access, or the phone's hotspot toggle.
+Without a configured network, the row says **Not configured**.
 
 After the delay, `nosleep` makes one directed join to that exact SSID with
 `networksetup`, even if the current Wi-Fi uplink is broken. This can work with the
 lid closed when the hotspot is advertising, Wi-Fi is already on, Keychain is
-accessible and macOS permits the Wi-Fi change. It does not scan all nearby phones
-or wake a dormant Instant Hotspot. Turn on Personal Hotspot's **Allow Others to
+accessible and macOS permits the Wi-Fi change. Discovery sees broadcasting Wi-Fi networks; it does not wake a dormant Instant Hotspot. Turn on Personal Hotspot's **Allow Others to
 Join** and keep it broadcasting nearby. A locked Keychain or permission policy
-can prevent joining; unlock the Mac and rerun setup to repair credentials.
+can prevent joining; unlock the Mac and use config to repair credentials.
 
 Internet checks verify recovery independently of a successful association.
 Automatic sleep waits for the outage delay and bounded attempt/recovery window,
