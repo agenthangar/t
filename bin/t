@@ -2675,7 +2675,10 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
             elif choice in ("main_model", "main_effort"):
                 changed = _workflow_session_setting(ui, cfg, policy, agent, choice.removeprefix("main_"))
             elif choice == "inference":
-                changed["inference"] = helper["inference"]()["workflow_menu"](ui, policy.get("inference"))
+                routing = helper["inference"]()
+                selected = routing["workflow_menu"](ui, policy.get("inference"))
+                if selected != routing["policy"](policy.get("inference")):
+                    changed["inference"] = selected
             elif choice == "behaviors":
                 changed = _workflow_behaviors_menu(ui, helper, policy,
                     runners=lambda current: _workflow_behavior_runners(ui, cfg, helper, current, repository, name))
@@ -11436,11 +11439,11 @@ SCOPE
   Delete keeps at least one workflow and preserves repository exclusions.
   NAME and --repo cannot be combined for edit. Shared definition edits affect
   all its consumers. --all lists named workflows; it cannot combine with --repo.
-  `ls` is an alias for `list`.
   Save review shows only changed settings, with before and after values.
   Ctrl+C offers Keep editing, Review and save, or Discard when changes are pending.
   Workflow rows show Global default, assigned repository counts, or Not assigned.
   Permissions selects Codex and Claude access for new and resumed CLI sessions.
+  Inference & routing: local models; opt-in Continue locally on cloud outage.
   PRs, previews & tests controls PR opening and merging, preview timing and approval,
   frontend design, preview updates and test timing independently.
   Text instructions can override work preferences and model-stage guidance.

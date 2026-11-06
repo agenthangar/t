@@ -1156,7 +1156,15 @@ does not publish; normal review/save/discard applies to the complete transaction
 
 `t workflow` includes a Codex **Inference & routing** submenu with Disabled,
 Manual, Automatic hybrid and Local only modes, explicit local model, context and
-task budget. These are staged workflow choices. The shared model picker keeps
+task budget. **On cloud connection failure** stages Pause and retry (default) or
+Continue locally with selected model. Only new native CLI launches opt into the
+owned runtime supervisor; the native client supplies progress and approvals.
+The transition displays the connection-failure reason, exact provider/model and
+private checkpoint path, then stays local. It never downloads weights or treats
+authentication, quota, HTTP application failures, auxiliary threads or cancellation
+as an outage. Unsupported resume/fork/exec/review or remote/profile/OSS/worktree
+overrides fail before launch and explain how to select Pause. These are conditional
+launch modes, not new public command families. These are staged workflow choices. The shared model picker keeps
 Memory fit ✓/✕/? visible on narrow screens. Unknown/non-fitting models are dimmed
 and inspectable; disabled Use/Install actions explain why and never execute.
 Benchmark suite selection is explicit; missing scores and speed are not invented.

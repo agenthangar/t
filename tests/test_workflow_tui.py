@@ -363,3 +363,14 @@ def test_repository_workflow_selector_only_assigns_or_preserves_policy(workflow,
         assert entry == {'inline': inline}
     assert cfg._workflow_document['workflows'] == before['workflows']
     assert local.read_text() == '# unchanged\n' and not workflow.config_path().exists()
+
+
+def test_routing_browse_does_not_stage_defaults(workflow,t_mod,monkeypatch,tmp_path):
+    cfg, local = config(workflow,t_mod,monkeypatch,tmp_path)
+    cfg._workflow_document = workflow.defaults()
+    cfg._workflow_tool = 'codex'
+    baseline=copy.deepcopy(cfg._workflow_document)
+    ui=InterruptMenu(['inference','back','back'])
+    t_mod._workflow_policy_menu(ui,cfg,vars(workflow),name='standard')
+    assert cfg._workflow_document==baseline
+    assert not workflow.config_path().exists()
