@@ -11811,7 +11811,8 @@ def build_parser():
   The host picker selects the destination and names the current source host.
   Choose local (this machine), or pass --host local, to receive a remote session here.
 
-  Repositories absent locally are resolved on each remote source host.
+  Repositories absent locally, or with differing checkout paths, are resolved
+  on the remote source host before selection.
   A unique repo/slot match goes directly to the destination picker.
 
   Compatibility alias for `t session move --remote`: select sessions first, then
@@ -12304,6 +12305,9 @@ REQUIREMENTS AND DISCOVERY
   registered remote sources. `t move` aliases `t session move`. Selection is
   scoped to the named or current repository (all repositories outside a checkout;
   --all widens the scope).
+
+  When checkout paths differ across hosts, the source registry verifies repository
+  scope before including the live owner. Matching slot labels alone are insufficient.
 
   The picker includes attached and detached sessions, not saved history or desktop
   reservations. Use t session resume [repo] [slot] to restore saved work when
