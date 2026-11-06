@@ -847,6 +847,12 @@ session/history exit hooks; the caller's own hooks remain unchanged.
 use host-first targets. Explicit `[repo] [slot] --host HOST` retains compatibility;
 ambiguous legacy repository-only targets fail with guidance before SSH.
 `remote move` retains its source/destination flags and repo/slot positionals.
+`remote kill [repo] [slot|all] [-y|--yes]` retains the repository-first targets,
+host discovery, filtered multi-selection, and confirmation rules of
+`session close --remote`. A lone slot or `all` infers the current repository.
+Omitting the slot selects remote sessions; outside a repository, browse all
+remote repositories. Explicit live targets confirm unless `--yes`. Preserve
+saved conversations, worktrees, remote `zsh -lic`, and delegated exit status.
 Remote open reads and scopes inventory on the selected host, then uses the shared
 local picker and opens extra local tabs before the first attachment. Failed tab
 creation reports an exact attach command and a nonzero result. Desktop rows are

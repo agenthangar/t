@@ -405,6 +405,7 @@ for a host's login shell.
 | `t session move [repo] [slot] [-r] [--host <host>]` | Select current sessions, then a destination, or move an explicit slot; `--from <host>` pulls it here or sends directly with `--host` |
 | `t remote open [host] [repo] [slot]` | Choose a host and attach to an existing session; `--new` starts fresh |
 | `t remote resume [host] [repo] [slot] [--all]` | Choose a host and resume saved history discovered there |
+| `t remote kill [repo] [slot|all] [-y|--yes]` | Close sessions on their discovered remote hosts; preserve saved conversations and worktrees |
 | `t move [repo] [slot] [-r] [--host <dest>]` | Alias for `t session move`; `t remote move` remains compatible with `--remote` |
 | `t session view-plan` / `t session paste` | View a Claude session plan or pass an attachment |
 | `t repo list` / `t repo locate <repo>` / `t repo cd <repo>` | List names and paths, print a checkout path, or enter it in the shell |
@@ -480,6 +481,7 @@ t remote open mini api 2        # attach to this slot on mini
 t remote open mini api --new    # start fresh on mini
 t remote resume mini api        # choose saved history discovered on mini
 t remote resume mini --all       # all repositories, regardless of remote login directory
+t remote kill api 9             # discover slot 9's remote host and confirm before stopping a live agent
 t resume t 11                          # mark conversations with Space/Tab, then Enter
 t session resume --all                  # local and remote-only repositories; clone only after selection
 t session move -r                      # choose current sessions, then their destination
@@ -510,6 +512,11 @@ The controller never resumes a temporary local copy. Failed ownership, stop,
 worktree push, transcript sync, or landing checks stop the transfer. If a failure
 occurs after stopping the source, its transcript and worktree remain there for
 recovery; the destination is not launched with stale code.
+
+`remote kill` uses repository/slot targets, as `session close --remote` does.
+It discovers the owning host automatically. A lone slot uses the current repository;
+omitting a slot opens the shared remote session picker. Explicit live targets require
+confirmation unless `--yes`; saved conversations and worktrees are preserved.
 
 `remote open` shows the chosen host’s sessions in a local picker and opens additional
 selections in local terminal tabs before attaching the first session.
