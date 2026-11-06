@@ -41,7 +41,7 @@ def sandbox(tmp_path, monkeypatch):
 
 def artifact(version="v1.2.3", changed=None, extra=None):
     changed = changed or {}
-    files = {name: (ROOT / name).read_bytes() for name in (*release.REQUIRED, *release.NOSLEEP_ASSETS) if name != ".t-release-version"}
+    files = {name: (ROOT / name).read_bytes() for name in (*release.REQUIRED, *release.NOSLEEP_ASSETS, *release.NOSLEEP_WIFI_ASSETS) if name != ".t-release-version"}
     # Current installer integrations extend the backwards-compatible release minimum.
     for name in ('libexec/t_mcp_setup.py', 'libexec/t_runners.py', 'libexec/t_runner_job.py', 'share/runners/broker.yml', 'share/runners/sweeper.yml', 'libexec/t_dev.py', 'libexec/t_progress.py', 'bin/t-session-start', 'libexec/t_shell_setup.py', 'libexec/t_onboarding.py', 'libexec/t_discovery.py', 'libexec/t_toml.py', 'libexec/t_codex_socket.py', 'libexec/vendor/SHA256SUMS', 'libexec/vendor/tomli-LICENSE', 'libexec/vendor/tomli/__init__.py', 'libexec/vendor/tomli/_parser.py', 'libexec/vendor/tomli/_re.py', 'libexec/vendor/tomli/_types.py', 'libexec/vendor/tomli/py.typed', 'libexec/t_workflow.py', 'libexec/t_workflow_sync.py', 'libexec/t_issue.py', 'libexec/t_issue_policy.txt', 'libexec/t_resume_source.py', 'libexec/t_history.py', 'libexec/t_candidates.py', 'libexec/t_session_details.py', 'libexec/t_picker_filters.py', 'libexec/t_repos.py'):
         files[name] = (ROOT / name).read_bytes()
@@ -272,7 +272,7 @@ def test_release_validator_checks_neutral_hook_when_present(tmp_path, invalid):
 
 def test_release_validator_accepts_pre_nosleep_payload(tmp_path):
     release.extract_verified(artifact()[0], tmp_path)
-    for name in release.NOSLEEP_ASSETS:
+    for name in (*release.NOSLEEP_ASSETS, *release.NOSLEEP_WIFI_ASSETS):
         (tmp_path / name).unlink()
     assert release.validate_tree(tmp_path) == "v1.2.3"
 
@@ -317,3 +317,18 @@ def test_release_workflow_verifies_installed_version_with_source_details(sandbox
     assert result.returncode == (1 if wrong_version else 0), result.stdout + result.stderr
     if wrong_version:
         assert "AssertionError" in result.stderr
+
+
+@pytest.mark.parametrize('asset', release.NOSLEEP_WIFI_ASSETS)
+def test_release_validator_rejects_partial_discovery_payload(tmp_path, asset):
+    release.extract_verified(artifact()[0], tmp_path)
+    (tmp_path / asset).unlink()
+    with pytest.raises(ValueError, match='nosleep discovery'):
+        release.validate_tree(tmp_path)
+
+
+def test_release_validator_accepts_pre_discovery_nosleep(tmp_path):
+    release.extract_verified(artifact()[0], tmp_path)
+    for name in release.NOSLEEP_WIFI_ASSETS:
+        (tmp_path / name).unlink()
+    assert release.validate_tree(tmp_path) == 'v1.2.3'

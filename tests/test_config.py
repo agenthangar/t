@@ -428,16 +428,16 @@ def test_config_main_menu_shows_repo_aliases(t_mod, config_cli, monkeypatch):
         assert kwargs["values"]["repos"] == "api, t"
         assert [key for key, _ in rows] == [
             "tool", "trust", *t_mod.AGENTS, "local", "workflow", "runners",
-            "mcp", "repos", "worktrees", "hosts", "beam", "recovery", "edit", "cancel",
+            "mcp", "repos", "worktrees", "hosts", "beam", "nosleep", "recovery", "edit", "cancel",
         ]
         assert kwargs["sections"] == {
             "tool": "Session defaults", t_mod.AGENTS[0]: "Agents", "workflow": "Workflows", "runners": "Runners",
-            "mcp": "MCP server", "repos": "Repositories & worktrees", "hosts": "Remote hosts", "edit": "Finish",
+            "mcp": "MCP server", "repos": "Repositories & worktrees", "hosts": "Remote hosts", "nosleep": "Sleep & connectivity", "edit": "Finish",
         }
         assert dict(rows)["workflow"] == "Workflows ›"
         assert kwargs['primary'][:2] == ('s', 'SAVE CHANGES')
         assert kwargs['shortcuts'] == {'s': 'save'}
-        collections = {*t_mod.AGENTS, "local", "workflow", "runners", "mcp", "repos", "worktrees", "hosts", "recovery"}
+        collections = {*t_mod.AGENTS, "local", "workflow", "runners", "mcp", "repos", "worktrees", "hosts", "nosleep", "recovery"}
         assert {key for key, text in rows if text.endswith(" ›")} == collections
         return "cancel"
     ui.pick = pick
@@ -1310,3 +1310,21 @@ def test_config_editor_defaults_followup_reports_partial_failure(t_mod, native_d
     else:
         assert 'model = "new-model"' in native.read_text()
         assert sync['status']()['main_settings'] == {'model': 'new-model'}
+
+
+@pytest.mark.parametrize('dirty', [False, True])
+def test_config_nosleep_opens_shared_editor_only_with_clean_hub(t_mod, config_cli, monkeypatch, dirty):
+    cfg, _ = config_cli
+    ui = Menu(['trust', '1' if cfg.auto_trust != '1' else '0', 'nosleep', 'cancel', 'discard'] if dirty else ['nosleep', 'cancel'])
+    monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
+    calls = []
+    def launch(argv):
+        assert ui.restored
+        calls.append(argv)
+        return 0
+    monkeypatch.setattr(t_mod.subprocess, 'call', launch)
+    assert t_mod._config_wizard(cfg) is None
+    assert len(calls) == (0 if dirty else 1)
+    if calls:
+        assert calls[0][0] == t_mod.sys.executable
+        assert calls[0][1].endswith('/libexec/nosleep_config.py')

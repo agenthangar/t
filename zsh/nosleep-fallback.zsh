@@ -67,7 +67,7 @@ _nosleep_fallback_tick() {
       wait "$_NOSLEEP_HOTSPOT_PID" 2>/dev/null
       if (( $? != 0 )); then
         _nosleep_status_clear
-        print -r -- 'nosleep: hotspot join failed — confirm broadcasting Wi-Fi, permissions and unlocked Keychain; run nosleep hotspot setup'
+        print -r -- 'nosleep: hotspot join failed — confirm broadcasting Wi-Fi, permissions and unlocked Keychain; open nosleep config'
       fi
       _NOSLEEP_HOTSPOT_PID=''
       next_check=$now
@@ -87,4 +87,49 @@ _nosleep_fallback_tick() {
 
 _nosleep_fallback_holds() {
   (( hotspot && monitoring && internet && ! online && ! fallback_done ))
+}
+
+# Availability is independent of fallback policy, and never blocks the control loop.
+_nosleep_wifi_cancel() {
+  if [[ -n $_NOSLEEP_WIFI_PID && -n ${jobstates[(r)*:${_NOSLEEP_WIFI_PID}=*]} ]]; then
+    kill -TERM "$_NOSLEEP_WIFI_PID" 2>/dev/null
+    local tries=0
+    zmodload zsh/zselect
+    while [[ -n ${jobstates[(r)*:${_NOSLEEP_WIFI_PID}=*]} ]] && (( ++tries <= 20 )); do
+      zselect -t 5
+    done
+    [[ -n ${jobstates[(r)*:${_NOSLEEP_WIFI_PID}=*]} ]] && kill -KILL "$_NOSLEEP_WIFI_PID" 2>/dev/null
+    wait "$_NOSLEEP_WIFI_PID" 2>/dev/null
+  fi
+  _NOSLEEP_WIFI_PID=''
+  [[ -n $_NOSLEEP_WIFI_DIR ]] && command rm -rf -- "$_NOSLEEP_WIFI_DIR"
+  _NOSLEEP_WIFI_DIR=''
+  return 0
+}
+
+_nosleep_wifi_tick() {
+  [[ -n $hotspot_ssid ]] || return 0
+  if [[ -n $_NOSLEEP_WIFI_PID && -z ${jobstates[(r)*:${_NOSLEEP_WIFI_PID}=*]} ]]; then
+    wait "$_NOSLEEP_WIFI_PID" 2>/dev/null
+    wifi_text='Unknown'
+    if [[ -f $_NOSLEEP_WIFI_DIR/result ]]; then
+      IFS= read -r wifi_text < "$_NOSLEEP_WIFI_DIR/result"
+    fi
+    wifi_observed_at=$now
+    _NOSLEEP_WIFI_PID=''
+    show_snapshot=1
+  fi
+  if (( wifi_observed_at > 0 && now - wifi_observed_at > 45 )); then
+    wifi_text='Unknown (observation expired)'
+  fi
+  if [[ -z $_NOSLEEP_WIFI_PID ]] && (( now >= wifi_next_scan )); then
+    wifi_next_scan=$(( now + 30 ))
+    if [[ -z $_NOSLEEP_WIFI_DIR ]]; then
+      _NOSLEEP_WIFI_DIR=$(mktemp -d "${TMPDIR:-/tmp}/nosleep-wifi-status.XXXXXXXX") || return 0
+    fi
+    ( trap - EXIT INT TERM; exec python3 "$_NOSLEEP_ROOT/libexec/nosleep_wifi.py" "$hotspot_ssid" ) > "$_NOSLEEP_WIFI_DIR/result" 2>/dev/null &
+    _NOSLEEP_WIFI_PID=$!
+    (( _NOSLEEP_DONE )) && _nosleep_wifi_cancel
+  fi
+  return 0
 }

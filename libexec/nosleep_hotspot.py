@@ -106,7 +106,7 @@ class Runner:
         # Reap/cancel any descendants before dropping ownership of this group.
         self.close()
         if code:
-            raise HotspotError("hotspot command failed; check Wi-Fi and unlock Keychain, then rerun nosleep hotspot setup")
+            raise HotspotError("hotspot command failed; check Wi-Fi and unlock Keychain, then reopen nosleep config")
         return (output or b"") + (errors if include_stderr else b"")
 
 
@@ -126,30 +126,38 @@ def connect(ssid, timeout=30, *, networksetup=NETWORKSETUP, security=SECURITY):
         if password.endswith(b"\n"):
             password = password[:-1]
         if not password or b"\n" in password or b"\r" in password or b"\0" in password:
-            raise HotspotError("hotspot password unavailable; unlock Keychain or run nosleep hotspot setup")
+            raise HotspotError("hotspot password unavailable; unlock Keychain or open nosleep config")
         output = runner.run([networksetup, "-setairportnetwork", device, ssid, "-"],
                             input=password + b"\n", include_stderr=True)
         if re.search(rb"error|failed|could not|cannot|not find|incorrect|unsupported", output, re.I):
-            raise HotspotError("could not join hotspot; confirm it is broadcasting and rerun nosleep hotspot setup")
+            raise HotspotError("could not join hotspot; confirm it is broadcasting and reopen nosleep config")
     finally:
         runner.finish()
+
+
+def save_password(ssid, *, security=SECURITY):
+    """Ask security directly in a cooked terminal; never handle the secret."""
+    validate_ssid(ssid)
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        raise HotspotError("open nosleep config in an unlocked Mac terminal")
+    result = subprocess.run([security, "add-generic-password", "-U", "-a", ssid,
+                             "-s", SERVICE, "-T", SECURITY, "-w"], timeout=120)
+    if result.returncode:
+        raise HotspotError("Keychain setup failed; configuration unchanged")
 
 
 def setup(*, security=SECURITY):
     import nosleep_config
 
     if not sys.stdin.isatty() or not sys.stdout.isatty():
-        raise HotspotError("run nosleep hotspot setup in an unlocked Mac terminal")
+        raise HotspotError("open nosleep config in an unlocked Mac terminal")
     values, before = nosleep_config.read()
     print("Use a broadcasting Personal Hotspot. The password is saved in this Mac's Keychain.")
     ssid = validate_ssid(input("Hotspot Wi-Fi name (SSID): "))
     updated = nosleep_config.validate({**values, "hotspot": True, "hotspot_ssid": ssid})
     # Bare -w LAST makes security prompt privately; the password never enters argv,
     # our input handling, environment, configuration, or status output.
-    result = subprocess.run([security, "add-generic-password", "-U", "-a", ssid,
-                             "-s", SERVICE, "-T", SECURITY, "-w"], timeout=120)
-    if result.returncode:
-        raise HotspotError("Keychain setup failed; configuration unchanged")
+    save_password(ssid, security=security)
     nosleep_config.write(nosleep_config.config_path(), before, updated)
     nosleep_config.config_path().chmod(0o600)
     print("Hotspot fallback enabled for this Mac. Keep the hotspot broadcasting nearby.")
@@ -181,9 +189,9 @@ def main(argv=None):
         if args.mode == "setup":
             message = "hotspot setup failed; use an unlocked Mac terminal and confirm Keychain access; configuration was not saved"
         elif args.mode == "validate":
-            message = "hotspot SSID must contain 1–32 UTF-8 bytes without control characters; run nosleep hotspot setup"
+            message = "hotspot SSID must contain 1–32 UTF-8 bytes without control characters; open nosleep config"
         else:
-            message = "hotspot attempt failed; confirm broadcasting Wi-Fi, Wi-Fi permissions and unlocked Keychain, or run nosleep hotspot setup"
+            message = "hotspot attempt failed; confirm broadcasting Wi-Fi, Wi-Fi permissions and unlocked Keychain, or open nosleep config"
         print("nosleep: " + message, file=sys.stderr)
         return 1
     finally:
