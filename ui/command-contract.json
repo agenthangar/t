@@ -5803,6 +5803,7 @@
   "progress_contract": "ui/progress-contract.json",
   "repository_selectors": {
     "remote open": "target host shell worker",
+    "remote kill": "_dev_remote_kill repository resolution and owning-host discovery",
     "remote move": "source host shell worker or local source scope",
     "remote resume": "target host shell worker",
     "issue list": "libexec/t_issue.py repository",
