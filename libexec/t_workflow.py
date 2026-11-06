@@ -41,7 +41,9 @@ PERMISSIONS = {
 # Absent keys mean no preference, not a directive to do the opposite.
 BEHAVIORS = {
     'design_system': {'label': 'Design system', 'choices': {
-        'repo': ('Use repository design system', 'For user-facing design, including terminal interfaces, inspect and reuse the repository-selected design system, components, tokens and guidance. Extend established patterns consistently. Standalone prototypes should reflect the same system and disclose approximations. If no source is selected, ask the user to configure it through repository assignments; do not invent or automatically create a system. This preference is independent of preview enablement and timing.'),
+        'auto': ('Automatically', 'For user-facing design, including terminal interfaces, automatically discover repository-owned design guidance in the active worktree. Reuse its components, tokens, styles and interaction patterns in prototypes and implementation. Prefer a safe root DESIGN.md, then a single root design-system.md or design_system.md, then a single discovered source. Discovery considers design documentation, links from agent instructions, and local tokens/components/Storybook; exclude dependencies, generated files and symlinks. If candidates are ambiguous, ask the user to choose; if none exists, report that and offer to draft guidance. Never invent a source or create files automatically. Explicit repository selections override discovery. This preference is independent of previews.'),
+        'off': ('Off', 'Do not add design-system discovery or a selected design-source instruction from this workflow. Continue following repository and task instructions.'),
+        'repo': ('Automatically', 'Compatibility spelling for automatic repository design-system discovery.'),
     }},
     'cli_planning_preview': {'label': 'CLI planning preview', 'choices': {
         'before_implementation': ('Before implementation', 'For new public commands and command improvements, prepare a local interactive HTML planning preview before substantial implementation. Follow repository design guidance, demonstrate affected flows and relevant empty/error states with labeled sample data, and isolate the prototype from real configuration. This is separate from trying the implemented command.'),
@@ -173,6 +175,33 @@ for _kind, _keys in PREVIEW_OVERRIDES.items():
         }
 
 
+# Canonical fallbacks are resolved at use time, never copied into saved overrides.
+BEHAVIOR_DEFAULTS = {
+    'design_system': 'auto', 'frontend_design': 'standalone_html',
+    'pr_review': 'review', 'pr_open': 'on_request', 'pr_state': 'ready', 'pr_merge': 'on_request',
+    'frontend_enabled': 'enabled', 'cli_enabled': 'enabled',
+    'local_preview': 'when_ready', 'preview_pr_approval': 'required', 'preview_launch': 'on_request',
+    'frontend_implement_before_approval': 'no', 'frontend_preview': 'fast_reload',
+    'frontend_browser': 'automatic', 'cli_preview': 'run', 'cli_launch': 'on_request',
+    'cli_planning_preview': 'before_implementation', 'cli_planning_approval': 'required',
+    'test_timing': 'before_pr',
+}
+
+
+def resolved_behaviors(behaviors):
+    explicit = effective_behaviors(behaviors)
+    result = dict(BEHAVIOR_DEFAULTS, **explicit)
+    if explicit.get('design_system') == 'repo':
+        result['design_system'] = 'auto'
+    for kind in ('frontend', 'cli'):
+        result[kind + '_enabled'] = 'enabled' if preview_enabled(explicit, kind) else 'disabled'
+    if 'preview_launch' in explicit:
+        for child in ('frontend_browser', 'cli_launch'):
+            if child not in explicit:
+                result[child] = explicit['preview_launch']
+    return result
+
+
 def effective_behaviors(behaviors):
     """Resolve legacy choices without changing the saved workflow or raw JSON."""
     result = {}
@@ -228,12 +257,12 @@ def preview_enabled(behaviors, kind):
 def preview_preferences(behaviors, kind):
     """Resolve live defaults and child overrides, retaining each choice's source."""
     enabled = preview_enabled(behaviors, kind)
-    effective = effective_behaviors(behaviors)
+    effective = resolved_behaviors(behaviors)
     result = {'enabled': enabled}
     for setting, parent in PREVIEW_DEFAULTS.items():
         child = PREVIEW_OVERRIDES[kind][setting]
         result[setting] = {'value': effective.get(child, effective.get(parent)),
-                           'source': 'override' if child in effective else 'inherit'}
+                           'source': 'override' if child in effective_behaviors(behaviors) else 'inherit'}
     return result
 
 
@@ -244,7 +273,7 @@ def _preview_rule_keys():
 
 def preview_summary_lines(behaviors):
     """Describe defaults once, then each enabled kind's live inherited choices."""
-    effective = effective_behaviors(behaviors)
+    effective = resolved_behaviors(behaviors)
     configured = 'frontend_implement_before_approval' in effective or any(key in effective for key in PREVIEW_DEFAULTS.values()) or any(
         key in effective for keys in PREVIEW_OVERRIDES.values() for key in keys.values())
     if not configured:
@@ -254,15 +283,15 @@ def preview_summary_lines(behaviors):
         if parent == 'preview_launch':
             continue
         value = effective.get(parent)
-        label = BEHAVIORS[parent]['choices'][value][0] if value else 'Not set'
+        label = BEHAVIORS[parent]['choices'][value][0]
         lines.append('Local preview · Global — ' + BEHAVIORS[parent]['label'] + ': ' + label)
     for kind in PREVIEW_OVERRIDES:
-        resolved = preview_preferences(effective, kind)
+        resolved = preview_preferences(behaviors, kind)
         if not resolved['enabled']:
             continue
         for setting, parent in PREVIEW_DEFAULTS.items():
             choice = resolved[setting]
-            label = BEHAVIORS[parent]['choices'][choice['value']][0] if choice['value'] else 'Not set'
+            label = BEHAVIORS[parent]['choices'][choice['value']][0]
             field_label = BEHAVIORS[PREVIEW_OVERRIDES[kind][setting]]['label'] if setting == 'launch' else BEHAVIORS[parent]['label']
             source = '' if setting == 'launch' else ('Inherit global' if choice['source'] == 'inherit' else 'Override') + ' · '
             lines.append(('CLI' if kind == 'cli' else 'Frontend') + ' — ' + field_label + ': ' + source + label)
@@ -281,7 +310,7 @@ def _preview_instruction_lines(behaviors):
         if not resolved['enabled']:
             continue
         timing = resolved['timing']['value']
-        implementation = effective_behaviors(behaviors).get('frontend_implement_before_approval') if kind == 'frontend' else None
+        implementation = resolved_behaviors(behaviors).get('frontend_implement_before_approval') if kind == 'frontend' else None
         scope = 'For frontend changes' if kind == 'frontend' else 'For command-line tool changes'
         if timing == 'when_ready':
             if implementation == 'no':
@@ -314,7 +343,7 @@ def _preview_instruction_lines(behaviors):
 
 def visible_behaviors(behaviors):
     """Active instructions and display choices; saved inactive values remain intact."""
-    result = effective_behaviors(behaviors)
+    result = resolved_behaviors(behaviors)
     frontend = preview_enabled(result, 'frontend')
     cli = preview_enabled(result, 'cli')
     if any(key in result for key in ('preview_target', 'frontend_enabled', 'cli_enabled')):
@@ -322,7 +351,7 @@ def visible_behaviors(behaviors):
         result['cli_enabled'] = 'enabled' if cli else 'disabled'
     result.pop('preview_target', None)
     if not frontend:
-        for key in ('frontend_design', 'frontend_implement_before_approval', 'frontend_preview', 'frontend_browser'):
+        for key in ('frontend_implement_before_approval', 'frontend_preview', 'frontend_browser'):
             result.pop(key, None)
     if not cli:
         result.pop('cli_preview', None)
@@ -782,10 +811,14 @@ def design_system():
     return runpy.run_path(str(Path(__file__).with_name('t_design_system.py')))
 
 
-def select_design_system(document, repository, path):
+def select_design_system(document, repository, path=None, *, mode=None):
     after = validate(document)
     entry = after['repositories'].setdefault(repository, {})
-    if path is None:
+    if mode == 'off':
+        entry['design_system'] = {'mode': 'off'}
+    elif mode is not None:
+        raise ValueError('unsupported design system mode')
+    elif path is None:
         entry.pop('design_system', None)
         if not entry:
             after['repositories'].pop(repository)
@@ -1104,7 +1137,7 @@ def summary_lines(policy, tool='codex'):
                          '; reasoning: ' + (settings.get('effort') or 'default for this model'))
     for agent, presets in PERMISSIONS.items():
         preset = summary['permissions'].get(agent)
-        lines.append(agent.title() + ' permissions: ' + (presets[preset]['label'] if preset else 'Not set'))
+        lines.append(agent.title() + ' permissions: ' + (presets[preset]['label'] if preset else 'Default · Tool permissions'))
     if behaviors:
         for key, spec in BEHAVIORS.items():
             if key in behaviors and key not in _preview_rule_keys():
@@ -1246,20 +1279,19 @@ def _stage_text(policy, tool='codex', design_source=None):
                              'They do not change an active turn or require switching models during a task.')
     behaviors = visible_behaviors(policy.get('behaviors', {}))
     behaviors.setdefault('pr_review', pr_review_value(policy))
+    if design_source:
+        behaviors['design_system'] = 'auto' if design_source.get('path') else 'off'
     if behaviors:
         behavior_lines = [_behavior_instructions(behaviors, key)
                           for key in BEHAVIORS if key in behaviors and key not in _preview_rule_keys()]
         behavior_lines.extend(_preview_instruction_lines(behaviors))
         parts.append('Selected behavior preferences:\n' + '\n'.join(behavior_lines))
-    if behaviors.get('design_system') == 'repo':
-        if design_source:
-            parts.append('Selected repository design-system source: ' + json.dumps(design_source['path']) +
-                         '. Resolve this path inside the active worktree, never another checkout. '
-                         'Read it before design work. If missing or unsafe, report the problem and '
-                         'ask for a corrected selection; do not silently replace it or create a new system.')
-        else:
-            parts.append('Repository design-system source: not configured. Select a source in '
-                         't workflow → Repository assignments → repository → Frontend · Design system.')
+    if design_source and design_source.get('path'):
+        parts.append('Selected repository design-system source: ' + json.dumps(design_source['path']) +
+                     '. This repository selection overrides the workflow discovery default. '
+                     'Resolve it inside the active worktree. Read it and its linked guidance before design work. '
+                     'If missing or unsafe, report the problem and ask for a corrected selection; '
+                     'do not silently replace it or create a new system.')
     if policy.get('runners', {}).get('targets'):
         parts.append(f'Test runners are configured. Use `t runners list --tool {tool}` '
                      '(with `--repo ALIAS` for repository settings) to inspect targets. '

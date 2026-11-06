@@ -166,10 +166,10 @@ def test_launch_controls_are_per_type_and_preserve_legacy(workflow, t_mod):
     ui = HubMenu(['local_preview', 'frontend', 'frontend_browser', '', 'back', 'cli', 'back', 'back', 'back'])
     after = t_mod._workflow_behaviors_menu(ui, vars(workflow), policy)
     assert 'preview_launch' not in dict(ui.views[1][1])
-    assert ui.views[2][2]['values']['frontend_browser'] == 'Automatically'
-    assert ui.views[3][1][0] == ('', 'Not set')
-    assert ui.views[3][1][ui.views[3][2]['default']][0] == 'automatic'
-    assert after['behaviors'] == {'cli_launch': 'on_request'}
+    assert ui.views[2][2]['values']['frontend_browser'] == 'Inherited · Automatically'
+    assert ui.views[3][1][0] == ('', 'Use default · Automatically')
+    assert ui.views[3][1][ui.views[3][2]['default']][0] == ''
+    assert after == before
     assert policy == before
     inherited = {**policy, 'behaviors': {'preview_launch': 'automatic'}}
     changed = workflow.update_behavior(inherited, 'cli_launch', 'on_request')

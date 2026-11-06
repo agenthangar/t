@@ -2450,7 +2450,7 @@ def _workflow_behaviors_menu(ui, helper, policy, runners=None):
             values = {key: _workflow_section_summary(helper, key, behaviors)
                       for key, (label, fields) in _WORKFLOW_SECTIONS.items()}
             if changed.get("runners"):
-                values["tests"] = (values["tests"] + "; " if values["tests"] != "Not set" else "") + "Test runners: " + helper["runners_summary"](changed)
+                values["tests"] = (values["tests"] + "; " if values["tests"] != "Defaults" else "") + "Test runners: " + helper["runners_summary"](changed)
             section = ui.pick("PRs, previews & tests", rows, values=values, default=focus)
             if section in (None, "back"):
                 return changed
@@ -2510,10 +2510,9 @@ def _workflow_behavior_section(ui, helper, policy, section, runners=None):
             spec = helper["BEHAVIORS"][choice]
             override = _workflow_preview_override(helper, choice)
             current = behaviors.get(choice, "")
-            if override and override[1] == "launch":
-                current = helper["preview_preferences"](behaviors, override[0])["launch"]["value"] or ""
-                override = None
-            reset = "Inherit global · " + _workflow_preview_parent_value(helper, behaviors, override[1]) if override else "Not set"
+            inherited = dict(behaviors)
+            inherited.pop(choice, None)
+            reset = 'Use default · ' + _workflow_field_value(helper, inherited, choice).split(' · ', 1)[-1]
             options = [("", reset)] + [(key, _workflow_choice(helper, choice, key)) for key in spec["choices"]
                                             if not (choice == "local_preview" and key == "before_pr")]
             selected = ui.pick(_WORKFLOW_TOPICS[choice][0], options,
@@ -2533,9 +2532,9 @@ def _workflow_permission_summary(helper, policy):
     permissions = policy.get("permissions", {})
     if helper.get("TOOL"):
         tool = helper["TOOL"]
-        return helper["PERMISSIONS"][tool][permissions[tool]]["label"] if tool in permissions else "Not set"
+        return helper["PERMISSIONS"][tool][permissions[tool]]["label"] if tool in permissions else "Default · Tool permissions"
     return "; ".join(agent.title() + ": " + helper["PERMISSIONS"][agent][permissions[agent]]["label"]
-                     for agent in ("codex", "claude") if agent in permissions and agent in helper["PERMISSIONS"]) or "Not set"
+                     for agent in ("codex", "claude") if agent in permissions and agent in helper["PERMISSIONS"]) or "Default · Tool permissions"
 
 
 def _workflow_permissions_menu(ui, helper, policy):
@@ -2545,19 +2544,19 @@ def _workflow_permissions_menu(ui, helper, policy):
         if len(helper["PERMISSIONS"]) == 1:
             agent = next(iter(helper["PERMISSIONS"]))
             current = policy.get("permissions", {}).get(agent, "")
-            options = [("", "Not set")] + [(preset, item["label"]) for preset, item in helper["PERMISSIONS"][agent].items()]
+            options = [("", "Default · Tool permissions")] + [(preset, item["label"]) for preset, item in helper["PERMISSIONS"][agent].items()]
             picked = ui.pick("Permissions", options, default=next(i for i, row in enumerate(options) if row[0] == current))
             return helper["update_permission"](changed, agent, picked) if picked is not None and picked != current else changed
         while True:
             permissions = changed.get("permissions", {})
             rows = [(agent, agent.title()) for agent in helper["PERMISSIONS"]] + [("back", "Back")]
             values = {agent: helper["PERMISSIONS"][agent][permissions[agent]]["label"]
-                      if agent in permissions else "Not set" for agent in helper["PERMISSIONS"]}
+                      if agent in permissions else "Default · Tool permissions" for agent in helper["PERMISSIONS"]}
             agent = ui.pick("Permissions", rows, values=values, default=focus)
             if agent in (None, "back"):
                 return changed
             focus = next(i for i, row in enumerate(rows) if row[0] == agent)
-            options = [("", "Not set")] + [(preset, item["label"]) for preset, item in helper["PERMISSIONS"][agent].items()]
+            options = [("", "Default · Tool permissions")] + [(preset, item["label"]) for preset, item in helper["PERMISSIONS"][agent].items()]
             picked = ui.pick(agent.title() + " permissions", options,
                              default=next(i for i, row in enumerate(options) if row[0] == permissions.get(agent, "")))
             if picked is not None and picked != permissions.get(agent, ""):
@@ -2628,6 +2627,7 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
                     rows.append(("main_effort", "Reasoning effort"))
             if agent == "codex":
                 rows.append(("inference", "Inference & routing ›"))
+            rows.append(("frontend_design", "Frontend design ›"))
             rows.append(("behaviors", "PRs, previews & tests ›"))
             if helper["PERMISSIONS"]:
                 rows.append(("permissions", "Permissions ›"))
@@ -2649,10 +2649,11 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
             values["main_model"] = defaults.get("model") or _workflow_session_default_label(cfg, policy, agent, "model")
             values["main_effort"] = _workflow_effort(defaults["effort"]) if defaults.get("effort") else _workflow_session_default_label(cfg, policy, agent, "effort")
             selected = helper["effective_behaviors"](policy.get("behaviors", {}))
-            count = sum(key in _WORKFLOW_TOPICS for key in selected)
-            values["behaviors"] = f"{count} choices set" if count else "Not set"
+            count = sum(key in _WORKFLOW_TOPICS and key not in ("frontend_design", "design_system") for key in selected)
+            values["behaviors"] = f"{count} overrides" if count else "Defaults"
+            values["frontend_design"] = _workflow_field_value(helper, selected, "frontend_design")
             values["instructions"] = (f"text · {len(policy['instructions'].splitlines())} lines · Enter to edit"
-                                      if policy.get("instructions") else "Add text instructions")
+                                      if policy.get("instructions") else "Default · No additional instructions")
             values["permissions"] = _workflow_permission_summary(helper, policy)
             choice = ui.pick(title, rows, values=values, accents={"delete": "w"})
             if choice in (None, "back"):
@@ -2684,6 +2685,9 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
                 selected = routing["workflow_menu"](ui, policy.get("inference"))
                 if selected != routing["policy"](policy.get("inference")):
                     changed["inference"] = selected
+            elif choice == "frontend_design":
+                changed = _workflow_frontend_design_menu(ui, cfg, helper, policy, repository, name)
+                document = cfg._workflow_document
             elif choice == "behaviors":
                 changed = _workflow_behaviors_menu(ui, helper, policy,
                     runners=lambda current: _workflow_behavior_runners(ui, cfg, helper, current, repository, name))
@@ -2899,21 +2903,99 @@ def _workflow_repository_selector(ui, cfg, helper, repo, repository):
             else:
                 after = helper["action"](document, "use", selected.removeprefix("name:"), repository)
             cfg._workflow_document = after
-            policy = helper["effective"](after, repository)
-            if (policy['enabled'] and policy.get('behaviors', {}).get('design_system') == 'repo'
-                    and not after['repositories'].get(repository, {}).get('design_system')):
-                _workflow_design_system_menu(ui, cfg, helper, repo, repository)
             return
         except (OSError, ValueError) as exc:
             ui.done("invalid", str(exc))
 
 
-def _workflow_design_source_label(helper, document, repository):
+def _workflow_saved_design_label(selected):
+    return selected.get('path', 'Off') if selected else 'Use workflow default'
+
+
+def _workflow_design_source_label(helper, document, repository, results=None, policy=None):
     selected = document['repositories'].get(repository, {}).get('design_system')
     if selected:
-        return selected['path']
-    policy = helper['effective'](document, repository)
-    return 'Not configured' if policy.get('behaviors', {}).get('design_system') == 'repo' else 'Not set'
+        return selected.get('path', 'Off')
+    policy = policy or helper['effective'](document, repository)
+    if helper['resolved_behaviors'](policy.get('behaviors', {}))['design_system'] == 'off':
+        return 'Off'
+    if results is None:
+        return 'Auto-detect'
+    path = helper['design_system']()['automatic_source'](results)
+    return 'Auto · ' + (path or ('Choose a source' if results['candidates'] else
+                               'Scan unavailable' if results.get('warnings') else 'No system found'))
+
+
+def _workflow_frontend_design_menu(ui, cfg, helper, policy, repository=None, name=None):
+    changed, focus = copy.deepcopy(policy), 0
+    try:
+        while True:
+            behaviors = changed.get('behaviors', {})
+            choice = ui.pick('Frontend design', [('approach', 'Design approach ›'),
+                ('systems', 'Design systems ›'), ('back', 'Back')], values={
+                    'approach': _workflow_field_value(helper, behaviors, 'frontend_design'),
+                    'systems': 'Auto-detect per repository' if helper['resolved_behaviors'](behaviors)['design_system'] == 'auto' else 'Off'},
+                default=focus)
+            if choice in (None, 'back'):
+                return changed
+            focus = 0 if choice == 'approach' else 1
+            if choice == 'systems':
+                changed = _workflow_design_systems_menu(ui, cfg, helper, changed, repository, name)
+            else:
+                current = behaviors.get('frontend_design', '')
+                picked = ui.pick('Design approach', [('', 'Use default · Separate HTML prototype'),
+                    ('standalone_html', 'Separate HTML prototype'), ('in_app', 'In the app')],
+                    default=['', 'standalone_html', 'in_app'].index(current))
+                if picked is not None and picked != current:
+                    changed = helper['update_behavior'](changed, 'frontend_design', picked)
+    except KeyboardInterrupt as exc:
+        if not hasattr(exc, 'workflow_policy'):
+            exc.workflow_policy = changed
+        raise
+
+
+def _workflow_design_systems_menu(ui, cfg, helper, policy, repository=None, name=None):
+    changed, scans, focus = copy.deepcopy(policy), {}, 'default'
+    design = helper['design_system']()
+    try:
+        while True:
+            document = cfg._workflow_document
+            repos = {alias: os.path.realpath(path) for alias, path in cfg.repos.items()
+                     if (os.path.realpath(path) == repository if repository else
+                         helper['source'](document, os.path.realpath(path)) == (name or document['default']))}
+            rows = [('default', 'Find design systems')]
+            mode = helper['resolved_behaviors'](changed.get('behaviors', {}))['design_system']
+            values = {'default': 'Automatically' if mode == 'auto' else 'Off'}
+            sections = {'default': 'Default', 'back': 'Navigation'}
+            for alias, path in sorted(repos.items()):
+                if path not in scans:
+                    try:
+                        scans[path] = design['discover'](design['workspace'](path))
+                    except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+                        scans[path] = {'candidates': [], 'warnings': [str(exc)]}
+                if len(rows) == 1:
+                    sections['repo:' + alias] = 'Repositories'
+                key = 'repo:' + alias
+                rows.append((key, alias + ' ›'))
+                values[key] = _workflow_design_source_label(helper, document, path, scans[path], changed)
+            rows.append(('back', 'Back'))
+            choice = ui.pick('Design systems', rows, values=values, sections=sections,
+                             default=next((i for i, row in enumerate(rows) if row[0] == focus), 0))
+            if choice in (None, 'back'):
+                return changed
+            focus = choice
+            if choice == 'default':
+                picked = ui.pick('Find design systems', [('auto', 'Automatically'), ('off', 'Off')],
+                                 default=0 if mode == 'auto' else 1)
+                if picked is not None and picked != mode:
+                    changed = helper['update_behavior'](changed, 'design_system', '' if picked == 'auto' else picked)
+            else:
+                alias = choice.removeprefix('repo:')
+                _workflow_design_system_menu(ui, cfg, helper, alias, repos[alias], policy=changed)
+                scans.pop(repos[alias], None)
+    except KeyboardInterrupt as exc:
+        exc.workflow_policy = changed
+        raise
 
 
 def _workflow_repository_settings(ui, cfg, helper, repo, repository):
@@ -2923,12 +3005,12 @@ def _workflow_repository_settings(ui, cfg, helper, repo, repository):
         entry = document['repositories'].get(repository, {})
         value = helper['source'](document, repository)
         if 'workflow' not in entry and 'inline' not in entry:
-            value = 'Inherit global · ' + value
+            value = 'Default · ' + value
         if entry.get('excluded'):
             value += ' · Disabled'
         selected = _workflow_design_source_label(helper, document, repository)
         choice = ui.pick('Repository · ' + repo, [('workflow', 'Workflow ›'),
-            ('design_system', 'Frontend · Design system ›'), ('back', 'Back')],
+            ('design_system', 'Design system ›'), ('back', 'Back')],
             values={'workflow': value, 'design_system': selected}, default=focus)
         if choice in (None, 'back'):
             return
@@ -2964,11 +3046,21 @@ def _workflow_design_draft(ui, cfg, helper, repo, root):
         ui.done('Draft unavailable', str(exc))
 
 
-def _workflow_design_system_menu(ui, cfg, helper, repo, repository):
+def _workflow_design_evidence(candidate):
+    labels = {'Design-system entry point': 'Repo entry point',
+              'Design or terminal contract documentation': 'Design guidance',
+              'Local component library': 'Components', 'Local design tokens': 'Tokens',
+              'Storybook configuration': 'Storybook'}
+    evidence = candidate['evidence']
+    if 'Design-system entry point' in evidence:
+        return 'Repo entry point'
+    return ' · '.join(labels.get(item, item) for item in evidence)
+
+
+def _workflow_design_system_menu(ui, cfg, helper, repo, repository, policy=None):
     design = helper['design_system']()
     root = design['workspace'](repository)
-    results = None
-    focus_key = 'current' if cfg._workflow_document['repositories'].get(repository, {}).get('design_system') else ''
+    results, focus_key = None, ''
     while True:
         if results is None:
             try:
@@ -2977,26 +3069,39 @@ def _workflow_design_system_menu(ui, cfg, helper, repo, repository):
                 results = {'candidates': [], 'warnings': [str(exc)]}
             for warning in results['warnings']:
                 ui.done('Discovery', warning)
-            if not results['candidates']:
-                ui.done('Design system', 'No repository-owned design systems found. Enter a path, draft guidance, or set up later.')
-        selected = cfg._workflow_document['repositories'].get(repository, {}).get('design_system', {}).get('path')
-        values, rows = {}, [('', 'Not set')]
-        if selected:
+        entry = cfg._workflow_document['repositories'].get(repository, {})
+        selected = entry.get('design_system', {})
+        path = selected.get('path')
+        inherited = copy.deepcopy(cfg._workflow_document)
+        inherited['repositories'].get(repository, {}).pop('design_system', None)
+        label = _workflow_design_source_label(helper, inherited, repository, results, policy)
+        rows, values = [('', 'Use workflow default')], {'': ('✓ ' if not selected else '') + label}
+        sections = {'': 'Default', 'manual': 'Choose a source', 'draft': 'Manage', 'back': 'Navigation'}
+        candidates = results['candidates']
+        current_exists = False
+        if path:
             try:
-                design['source_path'](root, selected)
-                status = 'Selected'
+                design['source_path'](root, path)
+                current_exists = True
             except ValueError:
-                status = 'Selected · missing or unsafe; replace or clear'
-            rows.append(('current', selected))
-            values['current'] = status
-        for index, candidate in enumerate(results['candidates']):
+                pass
+            if not current_exists or path not in {item['path'] for item in candidates}:
+                rows.append(('current', path))
+                values['current'] = '✓ Selected' if current_exists else 'Selected · missing or unsafe'
+                sections['current'] = 'Choose a source'
+                sections.pop('manual')
+        for index, candidate in enumerate(candidates):
             key = 'candidate:' + str(index)
+            if len(rows) == 1:
+                sections[key] = 'Choose a source'
+                sections.pop('manual', None)
             rows.append((key, candidate['path']))
-            values[key] = '; '.join(candidate['evidence'])
-        rows += [('manual', 'Enter a repository path'), ('refresh', 'Refresh discovery'),
-                 ('draft', 'Add design-system guidance…'), ('back', 'Set up later / Back')]
-        choice = ui.pick(repo + ' · Design system', rows, values=values,
-                         default=next((index for index, row in enumerate(rows) if row[0] == focus_key), 0))
+            values[key] = ('✓ ' if candidate['path'] == path else '') + _workflow_design_evidence(candidate)
+        rows += [('manual', 'Choose file or folder…'), ('draft', 'Create design system…'),
+                 ('refresh', 'Scan again'), ('off', 'Off'), ('back', 'Back')]
+        values['off'] = '✓ Selected' if selected.get('mode') == 'off' else ''
+        choice = ui.pick(repo + ' · Design system', rows, values=values, sections=sections,
+                         default=next((i for i, row in enumerate(rows) if row[0] == focus_key), 0))
         if choice in (None, 'back', 'current'):
             return
         focus_key = choice
@@ -3006,16 +3111,17 @@ def _workflow_design_system_menu(ui, cfg, helper, repo, repository):
         if choice == 'draft':
             _workflow_design_draft(ui, cfg, helper, repo, root)
             continue
-        if choice == '':
-            cfg._workflow_document = helper['select_design_system'](cfg._workflow_document, repository, None)
+        if choice in ('', 'off'):
+            cfg._workflow_document = helper['select_design_system'](cfg._workflow_document, repository,
+                                                                   mode='off' if choice == 'off' else None)
             return
-        path = (_config_input(ui, 'Repository-relative design-system path', selected or 'DESIGN.md')
-                if choice == 'manual' else results['candidates'][int(choice.split(':')[1])]['path'])
-        if path is None:
+        chosen = (_config_input(ui, 'Repository-relative path', path or 'DESIGN.md')
+                  if choice == 'manual' else candidates[int(choice.split(':')[1])]['path'])
+        if chosen is None:
             continue
         try:
-            design['source_path'](root, path)
-            cfg._workflow_document = helper['select_design_system'](cfg._workflow_document, repository, path)
+            design['source_path'](root, chosen)
+            cfg._workflow_document = helper['select_design_system'](cfg._workflow_document, repository, chosen)
             return
         except ValueError as exc:
             ui.done('Invalid source', str(exc))
@@ -3122,7 +3228,7 @@ def _workflow_hub_repository(cfg):
 
 def _workflow_hub_scope_summary(helper, document, tool, repository, configured=True):
     if not configured:
-        return "Not configured"
+        return "Default · standard (not activated)"
     selected = helper["tool_document"](document, tool)
     default = selected["default"]
     global_disabled = not selected["workflows"][default]["enabled"]
@@ -3226,7 +3332,7 @@ def _workflow_tool_hub(ui, cfg, standalone=False, shell_pending=False):
             elif choice == "repos":
                 repo = ui.pick("Repository assignments", [(name, name) for name in sorted(cfg.repos)] + [("__back__", "Back")],
                                values={name: helper["source"](document, os.path.realpath(path)) +
-                                       (' · Design: ' + document['repositories'][os.path.realpath(path)]['design_system']['path']
+                                       (' · Design: ' + document['repositories'][os.path.realpath(path)]['design_system'].get('path', 'Off')
                                         if document['repositories'].get(os.path.realpath(path), {}).get('design_system') else '') +
                                        (" · Excluded" if document["repositories"].get(os.path.realpath(path), {}).get("excluded") else
                                         " · Disabled" if not helper["effective"](document, os.path.realpath(path))["enabled"] else "")
@@ -3248,6 +3354,8 @@ def _workflow_changed_review(helper, document, before, activate=False):
 
     def value_text(path, value, policy):
         if value is missing:
+            if path[0] == 'behaviors' and len(path) == 2 and path[1] in helper['BEHAVIOR_DEFAULTS']:
+                return _workflow_field_value(helper, policy.get('behaviors', {}), path[1])
             if path == ('behaviors', 'pr_review'):
                 return 'Enabled'
             if path in (('behaviors', 'frontend_enabled'), ('behaviors', 'cli_enabled')):
@@ -3258,7 +3366,7 @@ def _workflow_changed_review(helper, document, before, activate=False):
                 return 'Inherit default · Tool setting' if path[-1] == 'effort' and settings.get('model') else 'Inherit default'
             return ('Tool default' if path[0] == 'permissions' else
                     'Inherit global' if path[0] == 'behaviors' and any(path[-1] in fields.values() for fields in helper['PREVIEW_OVERRIDES'].values()) else
-                    'Not set')
+                    'Default')
         if path[0] == 'behaviors' and len(path) == 2:
             spec = helper['BEHAVIORS'].get(path[1], {})
             return spec.get('choices', {}).get(value, (str(value),))[0]
@@ -3342,8 +3450,8 @@ def _workflow_changed_review(helper, document, before, activate=False):
         if old.get('excluded', False) != new.get('excluded', False):
             changes.append('Excluded: ' + ('Yes' if old.get('excluded') else 'No') + ' → ' + ('Yes' if new.get('excluded') else 'No'))
         if old.get('design_system') != new.get('design_system'):
-            changes.append('Frontend · Design system: ' + old.get('design_system', {}).get('path', 'Not set') +
-                           ' → ' + new.get('design_system', {}).get('path', 'Not set'))
+            changes.append('Frontend · Design system: ' + _workflow_saved_design_label(old.get('design_system')) +
+                           ' → ' + _workflow_saved_design_label(new.get('design_system')))
         if 'inline' in new:
             changes.extend(policy_changes(helper['resolved'](before, repository), new['inline']))
         if changes:
@@ -3386,7 +3494,7 @@ def _workflow_scope_review(helper, document):
         lines.append(f"Repository {path}: {helper['source'](document, path)}" +
                      (" · excluded" if entry.get("excluded") else ""))
         if entry.get('design_system'):
-            lines.append('  Frontend · Design system source: ' + entry['design_system']['path'])
+            lines.append('  Frontend · Design system source: ' + entry['design_system'].get('path', 'Off'))
         lines.extend("  " + line for line in helper["summary_lines"](helper["effective"](document, path)))
         if "inline" in entry:
             lines.append(f"  Workflow: {'enabled' if entry['inline']['enabled'] else 'disabled'}")
@@ -3877,11 +3985,11 @@ _WORKFLOW_SECTIONS = {
     "tests": ("Tests", ("test_timing",)),
 }
 _WORKFLOW_PREVIEW_SUBMENUS = {
-    "frontend": ("Frontend", ("frontend_enabled", "frontend_preview_timing", "frontend_preview_pr_approval", "frontend_implement_before_approval", "frontend_design", "design_system", "frontend_preview", "frontend_browser")),
+    "frontend": ("Frontend", ("frontend_enabled", "frontend_preview_timing", "frontend_preview_pr_approval", "frontend_implement_before_approval", "frontend_preview", "frontend_browser")),
     "cli": ("CLI", ("cli_enabled", "cli_planning_preview", "cli_planning_approval", "cli_preview_timing", "cli_preview_pr_approval", "cli_preview", "cli_launch")),
 }
 _WORKFLOW_TOPICS = {
-    "design_system": ("Design system", "Use repository-owned design guidance; choose each source under Repository assignments."),
+    "design_system": ("Design system", "Automatically find each repository's design system or select its source."),
     "cli_planning_preview": ("Planning preview", "Show proposed command behavior before implementation, separately from trying the working command."),
     "cli_planning_approval": ("Planning preview approval", "Require approval of a requested or due CLI planning preview before substantial implementation."),
     "frontend_enabled": ("Preview", "Enable or disable frontend preview preferences."),
@@ -3923,6 +4031,8 @@ _WORKFLOW_CHOICE_LABELS = {
 
 
 def _workflow_section_spec(section):
+    if section == "design":
+        return ("Frontend design", ("frontend_design", "design_system"))
     return (_WORKFLOW_SECTIONS if section in _WORKFLOW_SECTIONS else _WORKFLOW_PREVIEW_SUBMENUS)[section]
 
 
@@ -3941,14 +4051,12 @@ def _workflow_preview_override(helper, key):
 
 def _workflow_preview_parent_value(helper, behaviors, field):
     key = helper["PREVIEW_DEFAULTS"][field]
-    return _workflow_choice(helper, key, behaviors[key]) if behaviors.get(key) else "Not set"
+    return _workflow_choice(helper, key, helper['resolved_behaviors'](behaviors)[key])
 
 
 def _workflow_preview_type_summary(helper, kind, behaviors):
     preferences = helper["preview_preferences"](behaviors, kind)
     if not preferences["enabled"]:
-        if kind == 'frontend' and behaviors.get('design_system'):
-            return 'Disabled · Design system: ' + _workflow_field_value(helper, behaviors, 'design_system')
         return "Disabled"
     overrides = [field for field in helper["PREVIEW_DEFAULTS"] if preferences[field]["source"] == "override"]
     if not overrides:
@@ -3961,23 +4069,22 @@ def _workflow_preview_type_summary(helper, kind, behaviors):
 
 
 def _workflow_field_value(helper, behaviors, key):
-    if key == "pr_review":
-        return "Disabled" if behaviors.get(key) == "skip" else "Enabled"
+    explicit = helper['effective_behaviors'](behaviors)
+    resolved = helper['resolved_behaviors'](behaviors)
     override = _workflow_preview_override(helper, key)
     if override:
         kind, field = override
-        setting = helper["preview_preferences"](behaviors, kind)[field]
-        label = _workflow_choice(helper, helper["PREVIEW_DEFAULTS"][field], setting["value"]) if setting["value"] else "Not set"
-        if field == "launch":
-            return label
-        return ("Inherit global" if setting["source"] == "inherit" else "Override") + " · " + label
-    return _workflow_choice(helper, key, behaviors[key]) if key in behaviors else "Not set"
+        setting = helper['preview_preferences'](behaviors, kind)[field]
+        label = _workflow_choice(helper, helper['PREVIEW_DEFAULTS'][field], setting['value'])
+        origin = ('Override' if key in explicit else 'Default' if field == 'launch' and
+                  'preview_launch' not in explicit else 'Inherited')
+        return origin + ' · ' + label
+    label = _workflow_choice(helper, key, resolved[key])
+    return ('' if key in explicit else 'Default · ') + label
 
 
 def _workflow_section_summary(helper, section, behaviors):
     if section in _WORKFLOW_PREVIEW_SUBMENUS and not helper["preview_enabled"](behaviors, section):
-        if section == 'frontend' and behaviors.get('design_system'):
-            return 'Disabled · Design system: ' + _workflow_field_value(helper, behaviors, 'design_system')
         return "Disabled"
     visible = helper["visible_behaviors"](behaviors)
     parts = [_WORKFLOW_TOPICS[key][0] + ": " + _workflow_field_value(helper, behaviors, key)
@@ -3987,10 +4094,10 @@ def _workflow_section_summary(helper, section, behaviors):
         parts = ["Global: " + "; ".join(parts)]
     for child in _workflow_section_children(section, behaviors):
         summary = _workflow_section_summary(helper, child, behaviors)
-        if summary != "Not set":
+        if summary != "Defaults":
             parts.append(_workflow_section_spec(child)[0] + ": " + summary)
     summary = "; ".join(parts)
-    return ("Enabled" + (" · " + summary if summary else "")) if section in _WORKFLOW_PREVIEW_SUBMENUS else summary or "Not set"
+    return ("Enabled" + (" · " + summary if summary else "")) if section in _WORKFLOW_PREVIEW_SUBMENUS else summary or "Defaults"
 
 
 def _workflow_behavior_lines(helper, section, behaviors, indent=2, policy=None):
@@ -3998,8 +4105,6 @@ def _workflow_behavior_lines(helper, section, behaviors, indent=2, policy=None):
     enabled = helper["preview_enabled"](behaviors, section) if child else True
     lines = [" " * indent + _workflow_section_spec(section)[0] + (" · " + ("Enabled" if enabled else "Disabled") if child else "")]
     if not enabled:
-        if section == 'frontend' and behaviors.get('design_system'):
-            lines.append(' ' * (indent + 2) + 'Design system: ' + _workflow_field_value(helper, behaviors, 'design_system'))
         return lines
     active_shared = section != "local_preview" or any(helper["preview_enabled"](behaviors, kind) for kind in _WORKFLOW_PREVIEW_SUBMENUS)
     field_indent = indent + 2
@@ -4021,7 +4126,7 @@ def _workflow_catalogue_summary(helper, policy):
     behaviors = helper["effective_behaviors"](policy.get("behaviors", {}))
     visible = helper["visible_behaviors"](behaviors)
     parts = []
-    for section in _WORKFLOW_SECTIONS:
+    for section in ("design", *_WORKFLOW_SECTIONS):
         fields = set(_workflow_section_fields(section, behaviors))
         for child in _workflow_section_children(section, behaviors):
             fields.update(_workflow_section_fields(child, behaviors))
@@ -4087,7 +4192,7 @@ def _workflow_print(helper, result, catalogue=False):
         print("Source: " + result["source"] + (" · " + result["workflow_name"] if result["workflow_name"] else ""))
         print("Enabled: " + ("yes" if policy["enabled"] else "no") + (" · repository excluded" if result["excluded"] else ""))
         if result.get('design_system'):
-            print('Repository design-system source: ' + result['design_system']['path'])
+            print('Repository design-system source: ' + result['design_system'].get('path', 'Off'))
         text = policy.get("instructions", "")
         print("Text instructions: " + (f"present ({len(text.splitlines())} lines); override work preferences and stage guidance" if text else "none"))
         if text:
@@ -4101,9 +4206,10 @@ def _workflow_print(helper, result, catalogue=False):
             print("Permissions: New and resumed CLI sessions")
         for agent in (() if helper.get("TOOL") else helper["PERMISSIONS"]):
             preset = policy.get("permissions", {}).get(agent)
-            print("  " + agent.title() + ": " + (helper["PERMISSIONS"][agent][preset]["label"] if preset else "Not set"))
-        print("PRs, previews & tests:")
+            print("  " + agent.title() + ": " + (helper["PERMISSIONS"][agent][preset]["label"] if preset else "Default · Tool permissions"))
         behaviors = helper["effective_behaviors"](policy.get("behaviors", {}))
+        print("\n".join(_workflow_behavior_lines(helper, "design", behaviors, indent=0)))
+        print("PRs, previews & tests:")
         for section in _WORKFLOW_SECTIONS:
             print("\n".join(_workflow_behavior_lines(helper, section, behaviors, policy=policy)))
         for key, value in helper["visible_behaviors"](behaviors).items():
@@ -11643,7 +11749,7 @@ SCOPE
   Rows show global defaults and repository assignments.
   Permissions selects Codex and Claude access for new and resumed CLI sessions.
   Inference & routing: local models; opt-in Continue locally on cloud outage.
-  PRs, previews & tests controls delivery, previews, design systems and tests.
+  Frontend design configures prototypes and repository design systems.
   CLI planning previews have independent timing and approval settings.
   Repository assignments select design sources or start guidance drafting.
   Text instructions can override work preferences and model-stage guidance.

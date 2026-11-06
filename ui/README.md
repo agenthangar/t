@@ -22,16 +22,36 @@ this document defines how to make the previews faithful and safe.
 
 ## Repository design-system configuration
 
-Frontend → Design system selects reusable workflow behavior, not a repository.
-Repository assignments → repository exposes Workflow and Frontend · Design system.
-Assigning a workflow that requests a source opens read-only local discovery when
-no source is selected. Offer candidates with evidence, manual repository-relative
-paths, refresh, clearing, and Set up later. A source is independent of workflow
-assignment, retained when inheriting/changing/disabling workflows, and scoped to
-the selected tool and canonical repo; relative paths use the active worktree.
-Missing sources remain visible until corrected. Lists never scan or prompt.
+Frontend design is a top-level workflow page, above PRs, previews & tests. It
+contains Design approach and Design systems. Design systems shows a Default
+section (Find design systems: Automatically / Off), then the registered repositories
+using that workflow, including inherited assignments. Each repository shows its
+resolved source: Auto · DESIGN.md, an explicit path, Off, Auto · Choose a source,
+or Auto · No system found. Do not display explanatory paragraphs in these pickers.
 
-Add design-system guidance is an explicit agent-assisted drafting action. Save or
+The repository source picker uses separate Default, Choose a source, Manage and
+Navigation groups. Use workflow default restores live inheritance; explicit paths
+and Off override it. Each candidate appears once, with evidence and a selection
+mark. Choose file or folder, Create design system, and Scan again are actions.
+Retain missing explicit paths with a visible error; never silently replace them.
+Repository source settings survive assignment changes and are tool-scoped.
+
+Automatic discovery prefers safe root DESIGN.md, then one root design-system.md
+or design_system.md, then a sole discovered candidate. Multiple remaining
+candidates require a choice. No candidates means no system found; creation is
+always explicit. Discovery reads repository-owned docs, linked guidance, tokens,
+components and Storybook, excluding dependencies, generated directories and
+symlinks. Resolve relative paths in the matching active worktree. Lists never
+scan or prompt; managed agent instructions describe the same resolution rule.
+
+Every workflow choice has an effective default. Behavior defaults come from
+BEHAVIOR_DEFAULTS; type overrides inherit shared preview defaults. Label the
+resolved default and reset destination instead of Not set. Native model, effort
+and permission choices may inherit tool settings; never invent an unavailable
+native value. Reads do not materialize defaults or rewrite saved choices.
+Design approach and source use remain active when previews are disabled.
+
+Create design system is an explicit agent-assisted drafting action. Save or
 discard pending settings first. Review the task, then start the existing guarded
 agent launcher in a new isolated worktree. Draft an entry point, agent-instruction
 reference and evidence-backed design/preview guidance without overwriting existing
@@ -325,17 +345,17 @@ Optional frontend_enabled/cli_enabled values override legacy preview_target for
 each type independently. Without flags or a legacy target, both are enabled.
 Read-only operations do not migrate storage. Each submenu's Preview timing can
 Inherit global or override it independently. Show the resolved timing and source
-in detailed rows and printed lists: Inherit global · value or Override · value.
+in detailed rows and printed lists: Inherited · value or Override · value.
 The Inherit global choice is separated from explicit values and removes only that
-override. Inheriting an unset parent displays Inherit global · Not set. Changing a parent
+override. An absent parent resolves to the built-in default; display its effective value. Changing a parent
 updates inheriting children while preserving explicit overrides, even overrides
 equal to the parent. Resolved rules apply only to enabled types; with neither
 enabled, suppress preview guidance.
-Disabled frontend suppresses design, method and browser guidance;
+Disabled frontend suppresses preview method and browser guidance; design approach and design-system use remain active;
 disabled CLI suppresses its method and command-launch guidance. Enabling alone does not request a
 preview or change the separate PR-opening preference.
 Both submenus inherit Global timing and approval before PR; each field shows
-Inherit global or Override with its resolved value. Dim the inherited value after
+Inherited or Override with its resolved value. Dim the inherited value after
 Inherit global/default in both value rows and choices, including focused rows;
 clip plain text before applying color and preserve narrow layouts.
 Launch has one independent control per type: Frontend Open in browser and CLI
@@ -345,11 +365,11 @@ resolved choices and removes that legacy key, preserving the other type's choice
 Reading, browsing or canceling does not migrate stored settings.
 Launch choices never start a request-only preview before the user requests it.
 The nested Frontend submenu contains Implement before approval (Yes / No, with
-Not set), Design approach (Separate HTML prototype /
-In the app), Preview method (Fast reload
-/ Build), and Open in browser (Automatically / Only when I ask). The nested CLI
+Use default), Preview method (Fast reload / Build), and Open in browser
+(Automatically / Only when I ask). Design approach is on the top-level Frontend
+design page (Separate HTML prototype / In the app). The nested CLI
 submenu contains Preview method (Install locally / Run from the repo) and
-Run command (Not set / Automatically / Only when I ask), with Not set
+Run command (Use default / Automatically / Only when I ask), with Use default
 separated from explicit choices. Open in browser has the same choices.
 The optional cli_launch key accepts automatic/on_request and remains saved while
 CLI preview is disabled. Automatically launches the supported CLI preview command
@@ -360,12 +380,12 @@ the executable source. Interactive commands use a supported interactive terminal
 if unavailable, report the limitation and exact command rather than claiming a
 launch. This preference does not run tests or alter PR choices. CLI planning previews
 have separate optional timing (Before implementation / Only when requested) and
-approval (Required / Not required). Both offer Not set; neither changes working-command
+approval (Required / Not required). Both offer Use default with its effective value; neither changes working-command
 preview timing or launch. Required approval applies when a planning preview is due
 or requested, allowing prototype work before substantial implementation. Retired
 cli_implement_before_approval remains inert. Approval before PR is
 independent of frontend implementation approval and applies only to enabled
-preview types. Clearing a launch choice leaves that type unset.
+preview types. Clearing a launch choice restores its effective default.
 Menu, list, catalogue and save review reflect the choice and disabled state. Printed
 lists use the same indentation and hierarchy; summaries include nested choices.
 Returning from a child menu restores the parent focus and retains staged changes.
@@ -398,7 +418,7 @@ prototype. Test timing
 is labeled When to run tests and chooses local during work, local before preview,
 local before PR, or On PR CI;
 required repository checks always apply. Unset rows and picker choices say
-Not set. Task, repository and text instructions supply
+the displayed default. Task, repository and text instructions override
 the behavior. Menus show concise choices without routine explanatory preambles.
 Use inheritance wording only where values really follow a parent: preview
 defaults, main-session settings, native tool defaults, and workflow assignments.
@@ -491,7 +511,7 @@ arguments and report the unavailable instruction publication. No Cursor dev slot
 or unsupported standalone effort/permission controls are introduced.
 Permissions is a separate submenu available with either model mode. Show only
 the selected tool's supported presets. Codex and Claude have independent native
-presets and a Not set choice that removes the
+presets and a Default · Tool permissions choice that removes the
 workflow override. The policy's optional permissions object maps codex to
 ask/auto/full/read_only and claude to manual/acceptEdits/auto/bypassPermissions/plan;
 unknown tools or values are rejected. Missing permissions preserve native defaults.

@@ -961,7 +961,7 @@ Markdown and behavior preferences still apply.
 **Permissions** opens the selected tool's permission choices directly and shows
 the selected preset, such as **Full access**, in the workflow menu. Codex offers **Ask for approval**, **Approve for me**, **Full access**,
 and **Read only**. Claude offers **Ask for approval**, **Approve edits**, **Auto**,
-**Full access**, and **Plan only**. **Not set** clears the workflow override.
+**Full access**, and **Plan only**. **Default · Tool permissions** clears the workflow override and uses native permissions.
 These choices apply on the next CLI start or resume in the workflow's scope;
 running sessions keep their permissions. Explicit
 permission arguments take precedence. Saving a workflow does not rewrite native
@@ -1033,7 +1033,7 @@ effective assignment, including linked worktrees, for example
 Menu choices stay pending until
 **Save changes**; discard publishes nothing.
 
-**PRs, previews & tests** provides optional choices within each workflow:
+**Frontend design** and **PRs, previews & tests** provide choices with explicit defaults:
 
 | Setting | Choices |
 | --- | --- |
@@ -1046,23 +1046,40 @@ Menu choices stay pending until
 | Local preview → Frontend → Preview timing | Inherit global or choose a timing override |
 | Local preview → Frontend → Approval before PR | Inherit global or choose an approval override |
 | Local preview → Frontend → Implement before approval | Yes or No |
-| Local preview → Frontend → Design approach | Separate HTML prototype or In the app |
-| Local preview → Frontend → Design system | Not set or Use repository design system |
+| Frontend design → Design approach | Separate HTML prototype or In the app |
+| Frontend design → Design systems | Automatically (default) or Off; choose sources per repository |
 | Local preview → Frontend → Preview method | Fast reload or Build |
-| Local preview → Frontend → Open in browser | Not set, Automatically, or Only when I ask |
+| Local preview → Frontend → Open in browser | Use default, Automatically, or Only when I ask |
 | Local preview → CLI → Preview | Enabled or Disabled |
-| Local preview → CLI → Planning preview | Not set, Before implementation, or Only when requested |
-| Local preview → CLI → Planning preview approval | Not set, Required, or Not required |
+| Local preview → CLI → Planning preview | Before implementation (default) or Only when requested |
+| Local preview → CLI → Planning preview approval | Required (default) or Not required |
 | Local preview → CLI → Preview timing | Inherit global or choose a timing override |
 | Local preview → CLI → Approval before PR | Inherit global or choose an approval override |
 | Local preview → CLI → Preview method | Install locally or Run from the repo |
-| Local preview → CLI → Run command | Not set, Automatically, or Only when I ask |
+| Local preview → CLI → Run command | Use default, Automatically, or Only when I ask |
 | Tests → When to run tests | Local during work, before preview, before PR, or On PR CI |
 | Tests → Test runners | Configure targets, defaults, and artifacts |
 
-Other preference choices also offer **Not set**, visually separated from the other choices,
-which removes that choice without instructing the agent to do its opposite.
-An unset preference leaves the decision to your existing instructions.
+**Use default** removes an override and displays the effective fallback. Defaults
+are resolved at use time and are never copied into stored overrides. Preview
+subtypes inherit shared preview timing and approval. Native model, effort and
+permissions can inherit the selected tool's settings.
+
+The default behavior is: review enabled; PR opening and merging on request; ready
+PRs; previews enabled and prepared when ready; preview approval required; a
+standalone HTML design prototype with approval before implementation; fast web
+reload and automatic browser opening; CLI planning before implementation with
+approval; working CLI previews run from the repo and launch on request; relevant
+local tests before PR. Existing explicit choices and repository/task rules win.
+
+**Frontend design → Design systems** shows a workflow default and its repositories.
+Automatic discovery prefers root `DESIGN.md`, then a single root `design-system.md`
+or `design_system.md`, then a single candidate. Ambiguous candidates require a
+choice; an empty scan shows **No system found**. Each repository can inherit,
+select a file/folder, or choose Off. Source pickers group defaults, candidates,
+setup actions and navigation, without explanatory paragraphs. **Create design
+system…** starts the reviewed drafting flow; it never silently creates files.
+
 Preview and validation instructions require accurate reporting of limitations and
 results. Opening a PR alone does not authorize a merge. These preferences guide
 agents; they do not enforce execution or grant permission beyond the task.
@@ -1086,7 +1103,7 @@ removes the override, so future parent changes apply.
 **Approval before PR** controls whether the agent waits for preview approval
 before pushing or opening a PR.
 Launch is configured once per type: **Frontend → Open in browser** and
-**CLI → Run command**, each offering Not set, Automatically, or Only when I ask.
+**CLI → Run command**, each offering Use default, Automatically, or Only when I ask.
 The shared Open/run preview control is removed. Older shared launch settings
 remain effective; editing either type's launch choice preserves the other type's
 resolved choice and replaces the legacy shared setting with independent choices.
@@ -1219,9 +1236,9 @@ workflow is disabled or excluded. Inside `behaviors`, independent keys are
 `pr_review`, `pr_open`, `pr_state`, `pr_merge`, `frontend_enabled`, `cli_enabled`, `local_preview`, `cli_preview`, `cli_launch`,
 `frontend_implement_before_approval`, `frontend_design`, `design_system`,
 `cli_planning_preview`, `cli_planning_approval`, `frontend_preview`, `frontend_browser`, and `test_timing`.
-`design_system` accepts `repo`; CLI planning timing accepts `before_implementation`
+`design_system` accepts `auto` (default) or `off`; `repo` remains a compatibility spelling for `auto`; CLI planning timing accepts `before_implementation`
 or `on_request`, and approval accepts `required` or `not_required`. A repository entry
-may independently contain `"design_system": {"path": "DESIGN.md"}`. Paths are relative
+may independently contain `"design_system": {"path": "DESIGN.md"}` or `"design_system": {"mode": "off"}`. Omitting this setting inherits the workflow default. Paths are relative
 to the active worktree, never external or generated/dependency locations. Missing
 sources remain stored until explicitly replaced or cleared. No read-time migration occurs.
 `pr_review` accepts `review` (Enabled) or `skip` (Disabled); omission means Enabled
@@ -1615,13 +1632,13 @@ and model-stage guidance. **PRs, previews & tests** separates these decisions:
 | --- | --- |
 | Pull requests | Review Enabled/Disabled; open automatically or on instruction; create draft or ready; Automerge or When I ask. |
 | Local preview | Default for when to preview. |
-| Local preview → Frontend | Enabled/Disabled; inherit or override timing; implement before approval; standalone HTML or in-app design; Fast reload or Build; browser opening. |
+| Local preview → Frontend | Enabled/Disabled; inherit or override timing; implement before approval; Fast reload or Build; browser opening. |
 | Local preview → CLI | Enabled/Disabled; inherit or override timing; install locally or run from the repo; launch automatically or on request. |
 | Tests | When tests run, plus Test runners configuration. |
 
-**Not set** leaves a decision to your task, repository rules and text
-instructions. It does not inherit an individual value from the global workflow;
-**Use global default** changes the repository's whole workflow assignment.
+Every workflow setting resolves to a displayed default. **Use default** removes
+an override; **Use global default** changes the repository's whole workflow
+assignment. Repository design-source overrides survive assignment changes.
 These preferences never bypass required checks. Selecting On PR CI avoids routine
 local test runs. Legacy saved choices remain readable and are converted into
 separate choices only when you edit them. Single-model launch defaults remain a

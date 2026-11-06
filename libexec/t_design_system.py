@@ -15,6 +15,8 @@ MAX_BYTES = 65536
 
 
 def validate_source(value):
+    if value == {'mode': 'off'}:
+        return value
     if not isinstance(value, dict) or set(value) != {'path'}:
         raise ValueError('design system requires a repository-relative path')
     path = value['path']
@@ -138,6 +140,21 @@ def discover(root):
                            for path, evidence in sorted(candidates.items(),
                                key=lambda item: (-('Design-system entry point' in item[1]), -len(item[1]), item[0]))],
             'warnings': warnings}
+
+
+def automatic_source(result):
+    """Deterministic preference, without silently resolving ambiguous evidence."""
+    candidates = result['candidates']
+    paths = [item['path'] for item in candidates]
+    if 'DESIGN.md' in paths:
+        return 'DESIGN.md'
+    if result.get('warnings'):
+        return None
+    roots = [path for path in paths if '/' not in path and path.lower() in
+             ('design-system.md', 'design_system.md')]
+    if len(roots) == 1:
+        return roots[0]
+    return paths[0] if len(paths) == 1 else None
 
 
 def draft_prompt():
