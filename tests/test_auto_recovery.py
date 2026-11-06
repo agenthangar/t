@@ -644,6 +644,22 @@ def test_ssh_unavailable_probe_retries_but_auth_probe_stops(auto, monkeypatch):
         auto.reconnect('host', 'api', '1')
 
 
+def test_reconnect_probe_timeout_keeps_retrying(auto, monkeypatch):
+    enable(auto)
+    attempts = []
+    def probe(*args):
+        attempts.append(args)
+        if len(attempts) == 2:
+            raise subprocess.TimeoutExpired('ssh', 15)
+        return result(json.dumps({'sid': SID}))
+    responses = iter([(255, 'reset'), (0, '')])
+    monkeypatch.setattr(auto, 'ssh_probe', probe)
+    monkeypatch.setattr(auto, 'ssh_once', lambda *a: next(responses))
+    monkeypatch.setattr(auto.time, 'sleep', lambda n: None)
+    assert auto.reconnect('host', 'api', '1') == 0
+    assert len(attempts) == 3
+
+
 def test_atomic_failure_cleans_temporary_file(auto, monkeypatch):
     path = auto.root()/'file.json'
     monkeypatch.setattr(auto.os, 'replace', lambda *a: (_ for _ in ()).throw(OSError('fixture')))

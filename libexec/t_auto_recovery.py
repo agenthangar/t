@@ -836,7 +836,8 @@ def ssh_once(target, expected, repo, slot):
     # Reserve 255 for OpenSSH transport failure, not a normal remote command exit.
     command = ('t __auto-recovery attach ' + shlex.join([expected['sid'], repo, slot, fingerprint(expected)]) +
                '; recovery_rc=$?; (( recovery_rc == 255 )) && recovery_rc=254; exit $recovery_rc')
-    process = subprocess.Popen(['ssh', '-t', '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=3',
+    process = subprocess.Popen(['ssh', '-t', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5',
+                                '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=3',
                                 target, 'zsh -lic ' + shlex.quote(command)], stderr=subprocess.PIPE)
     errors = bytearray()
     def drain():
@@ -877,6 +878,8 @@ def reconnect(target, repo, slot):
                 probe = ssh_probe(target, repo, slot)
             except KeyboardInterrupt:
                 return 130
+            except subprocess.TimeoutExpired:
+                continue
             if ssh_fatal(probe.stderr):
                 print(probe.stderr, file=sys.stderr)
                 return 255
