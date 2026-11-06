@@ -454,6 +454,9 @@ a checkout all repositories appear. Attached and detached sessions are included;
 saved history and desktop reservations are excluded. Selection also opens inside
 an agent. `--host mini` supplies the destination explicitly; a configured default
 never bypasses selection. Every alias of each selected source host is excluded.
+When checkout names differ across machines, the source host verifies repository
+scope before including the session. For example, `t move api 2 --host local`
+can receive a session whose remote checkout has a different directory name.
 
 Worktree moves check Git push access before stopping the source, then commit its
 final edits and publish a unique transfer snapshot. They do not overwrite a

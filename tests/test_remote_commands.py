@@ -151,6 +151,53 @@ def test_remote_only_repo_reaches_destination_picker(zsh, tmp_path, host, comman
     assert 'unrelated' not in text
 
 
+@pytest.mark.parametrize('command', ['t remote move', 't session move', 't move'])
+@pytest.mark.parametrize('host', ['local', 'beta', 'cancel'])
+def test_move_resolves_different_checkout_layout_on_source(zsh, tmp_path, command, host):
+    env = fake_picker(tmp_path, host=host)
+    result = zsh(REMOTE_ONLY + r'''
+DEV_REPOS[auth]="$HOME/code/controller-auth"
+''' + command + ' auth 1; print rc=$?', _tty=True, **env)
+    text = output(result)
+    assert f'rc={130 if host == "cancel" else 0}' in text, text
+    logs = [json.loads(line) for line in (tmp_path / 'picker.jsonl').read_text().splitlines()]
+    assert len(logs) == 1
+    assert any('current host: alpha' in arg for arg in logs[0]['args'])
+    if host == 'cancel':
+        assert 'MOVE ' not in text
+    else:
+        assert f'MOVE --session|auth-id|--from|alpha|--host|{host}' in text
+        assert 'EXPECTED auth-id\t' in text and 'remote-auth-1' in text
+    assert 'unrelated' not in text
+
+
+@pytest.mark.parametrize('mode,expected', [('missing', 0), ('ambiguous', 2), ('offline', 1), ('changed', 0)])
+def test_move_different_layout_requires_source_scope_proof(zsh, mode, expected):
+    result = zsh(REMOTE_ONLY + r'''
+DEV_REPOS[auth]="$HOME/code/controller-auth"
+_dev_rows_all() {
+  printf 'alpha\tauth-id\t%s\tremote-auth-1\tattached\tactive\tAuth\tcodex\n' "$HOME/foreign/auth"
+}
+functions[_original_scan]=$functions[_dev_remote_scan_with_timeout]
+_dev_remote_scan_with_timeout() {
+  case $SCOPE_MODE in
+    missing) return 0 ;;
+    ambiguous) return 2 ;;
+    offline) return 255 ;;
+    changed) _original_scan "$@" | sed 's/auth-id/replacement-id/' ;;
+  esac
+}
+t move auth 1 --host local --detach; print rc=$?
+''', SCOPE_MODE=mode)
+    text = output(result)
+    assert f'rc={expected}' in text, text
+    assert 'MOVE ' not in text and 'EXPECTED ' not in text
+    if expected:
+        assert 'repository scope could not be verified' in text
+    else:
+        assert 'no current CLI conversations' in text
+
+
 @pytest.mark.parametrize('args,ambiguous,expected', [
     ('auth 1', '1', 2),
     ('missing 1', '0', 0),

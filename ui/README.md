@@ -780,9 +780,11 @@ desktop reservations, saved history and unknown IDs. Select sessions first, then
 select one destination; explicitly named destinations skip the second picker.
 Multiple sessions move sequentially and detached. Stop on the first failure or
 cancellation and identify completed, failed and unattempted sessions.
-Repository scope uses home-relative checkout/worktree paths across hosts.
-If a named repository is absent locally, each remote source resolves the selector
-in its own registry; ambiguous selectors stop selection. A unique repo/slot match
+Repository scope accepts matching home-relative checkout/worktree paths across hosts.
+When a remote path differs, its source registry must resolve the repository selector
+and return the same live owner before it is included. If a named repository is absent
+locally, each remote source resolves the selector in its own registry. Ambiguous
+selectors or failed scope verification stop selection. A unique repo/slot match
 goes directly to the destination-host picker when `--host` is omitted. Duplicate
 slot labels retain their host identity. Explicit source plus slot/ID bypasses the
 session picker; an explicit target without source resolves a unique snapshot or
