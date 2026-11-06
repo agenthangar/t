@@ -155,7 +155,7 @@ def enroll(rows):
             spec.pop('sid', None)
             data['sessions'][identity] = {**row, 'workspace': workspace(row['cwd']),
                 **spec,
-                'boot': current_boot, 'phase': 'unknown', 'open': True, 'paused': False,
+                'boot': current_boot, 'generation': uuid.uuid4().hex, 'phase': 'unknown', 'open': True, 'paused': False,
                 'reason': 'Existing session: waiting for verified lifecycle events', 'updated': time.time()}
     update(change)
 
@@ -283,9 +283,11 @@ def event(agent, payload, token=None):
         elif kind in ('SessionEnd', 'sessionEnd'):
             if payload.get('reason') in ('prompt_input_exit', 'logout', 'user_close', 'window_close', 'clear'):
                 row['open'] = False
-            phase = 'unknown'
+            phase = {'completed': 'idle', 'aborted': 'interrupted'}.get(payload.get('reason'), 'unknown')
             if payload.get('reason') == 'error' and helper('t_recovery')['failure'](agent, payload.get('error_message', '')):
                 phase = 'outage'
+        if payload.get('is_interrupt') is True:
+            phase = 'interrupted'
         if phase:
             row['phase'] = phase
             row['reason'] = payload.get('reason', '')[:500]
@@ -560,11 +562,20 @@ def transcript_state(row):
                 item.get('payload', {}).get('type'), phase)
         elif row['agent'] == 'claude':
             message = item.get('message', {})
+            if item.get('type') == 'system' and item.get('subtype') == 'turn_duration':
+                phase = 'idle'
             if item.get('type') == 'assistant' and message.get('stop_reason') == 'end_turn':
                 phase = 'idle'
             if item.get('type') == 'user' and (isinstance(message.get('content'), str) or
                     any(c.get('type') == 'text' for c in message.get('content', []) if isinstance(c, dict))):
                 phase = 'running'
+                content = message.get('content')
+                text = content if isinstance(content, str) else '\n'.join(
+                    part.get('text', '') for part in content if isinstance(part, dict) and part.get('type') == 'text')
+                # Native cancellation sentinel: this can only suppress recovery,
+                # never authorize it. Claude's Stop hook does not cover Esc.
+                if text.strip() in ('[Request interrupted by user]', '[Request interrupted by user for tool use]'):
+                    phase = 'interrupted'
     return phase
 
 
@@ -798,7 +809,15 @@ def identity(repo, slot):
     rows = [row for row in snapshot() if row['session'] == name]
     if len(rows) != 1:
         raise ValueError('the selected remote session is not a verified live owner')
-    return {k: rows[0][k] for k in ('agent', 'sid', 'session', 'cwd')}
+    return {**{k: rows[0][k] for k in ('agent', 'sid', 'session', 'cwd')},
+            'workspace': workspace(rows[0]['cwd']), 'socket': rows[0].get('socket', '')}
+
+
+def fingerprint(row):
+    # A reboot may change the tmux socket, but never the selected conversation
+    # or workspace. Recheck this descriptor immediately before remote attach.
+    descriptor = {k: v for k, v in row.items() if k != 'socket'}
+    return hashlib.sha256(json.dumps(descriptor, sort_keys=True).encode()).hexdigest()
 
 
 def ssh_probe(target, repo, slot):
@@ -815,7 +834,7 @@ def ssh_fatal(text):
 
 def ssh_once(target, expected, repo, slot):
     # Reserve 255 for OpenSSH transport failure, not a normal remote command exit.
-    command = ('t __auto-recovery attach ' + shlex.join([expected['sid'], repo, slot]) +
+    command = ('t __auto-recovery attach ' + shlex.join([expected['sid'], repo, slot, fingerprint(expected)]) +
                '; recovery_rc=$?; (( recovery_rc == 255 )) && recovery_rc=254; exit $recovery_rc')
     process = subprocess.Popen(['ssh', '-t', '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=3',
                                 target, 'zsh -lic ' + shlex.quote(command)], stderr=subprocess.PIPE)
@@ -864,7 +883,7 @@ def reconnect(target, repo, slot):
             if probe.returncode:
                 continue
             actual = json.loads(probe.stdout)
-            if actual != expected:
+            if fingerprint(actual) != fingerprint(expected):
                 raise ValueError('remote conversation or workspace changed; reconnect stopped')
             break
         else:
@@ -877,11 +896,12 @@ def internal(args):
     if len(args) == 3 and args[0] == 'identity':
         print(json.dumps(identity(*args[1:])))
         return 0
-    if len(args) == 4 and args[0] == 'attach':
-        row = identity(*args[2:])
-        if row['sid'] != args[1]:
+    if len(args) == 5 and args[0] == 'attach':
+        row = identity(*args[2:4])
+        if row['sid'] != args[1] or fingerprint(row) != args[4]:
             raise ValueError('remote slot belongs to another conversation')
-        return subprocess.call(['tmux', 'attach-session', '-t', '='+row['session']])
+        return subprocess.call(['tmux', *(['-S', row['socket']] if row.get('socket') else []),
+                                'attach-session', '-t', '='+row['session']])
     raise ValueError('unknown internal recovery operation')
 
 

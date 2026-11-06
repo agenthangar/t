@@ -47,6 +47,10 @@ t() {
       label+=" runs"
       case ${3:-} in start|list|ls|status|logs|artifacts|cancel|cleanup) label+=" $3" ;; esac
     fi
+    if [[ $1 == (system|session) && $2 == recovery ]]; then
+      label+=" recovery"
+      case ${3:-} in pause|resume|status) label+=" $3" ;; esac
+    fi
     _term_title "$label"
     title_active=1
   fi
@@ -679,7 +683,7 @@ _t() {
   case $group in
     mcp) actions=(status install uninstall) ;;
     remote) actions=(open move resume kill) ;;
-    session) actions=(open list ls close restart push pop resume history cd move read view-plan paste search goal) ;;
+    session) actions=(open list ls close restart push pop resume history cd move read view-plan paste search goal recovery) ;;
     repo) actions=(list ls cd locate create clone add) ;;
     cursor) actions=(list ls resume send) ;;
     agentcore) actions=(invoke stop) ;;
@@ -690,7 +694,7 @@ _t() {
     profile) actions=(init edit show apply) ;;
     policy) actions=(check show apply) ;;
     agent) actions=(login install status trust) ;;
-    system) actions=(integrate update diagnose advisories) ;;
+    system) actions=(integrate update diagnose advisories recovery) ;;
   esac
   [[ $group == hosts && ( $action == delete || $action == rm ) ]] && action=remove
   if (( ${#actions} )) && (( CURRENT == first - 1 )); then
@@ -708,6 +712,21 @@ _t() {
   if [[ $group == mcp ]]; then
     if [[ $action == status ]]; then _values 'flag' --json -h --help
     else _values 'flag' -h --help; fi
+    return
+  fi
+  if [[ $group == (session|system) && $action == recovery ]]; then
+    if (( CURRENT == first )); then
+      local -a recovery_actions=(status)
+      [[ $group == session ]] && recovery_actions=(pause resume status)
+      _values 'recovery action' "${recovery_actions[@]}"
+    elif [[ ${words[CURRENT]} == -* || $group == system ]]; then
+      if [[ ${words[first]} == status ]]; then _values 'flag' --json -h --help
+      else _values 'flag' -h --help; fi
+    elif (( CURRENT == first + 1 )); then
+      _values 'repo or conversation ID' "${(@f)$(_dev_repo_selectors)}"
+    else
+      _message 'local slot number'
+    fi
     return
   fi
   if [[ $group == runners ]]; then

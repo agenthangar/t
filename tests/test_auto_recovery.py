@@ -251,6 +251,7 @@ def test_native_lifecycle_deduplicates_generation_and_preserves_pause(auto, tmp_
 
 @pytest.mark.parametrize('agent,kind,payload,expected', [
     ('claude', 'PostToolUse', {}, 'running'), ('claude', 'Elicitation', {}, 'waiting'),
+    ('claude', 'PostToolUseFailure', {'is_interrupt': True}, 'interrupted'),
     ('claude', 'StopFailure', {'last_assistant_message': 'API Error: 401 unauthorized'}, 'attention'),
     ('cursor', 'stop', {'status': 'completed'}, 'idle'), ('cursor', 'stop', {'status': 'aborted'}, 'interrupted'),
     ('cursor', 'stop', {'status': 'error'}, 'attention'),
@@ -566,15 +567,19 @@ def test_connection_probe_is_bounded_and_never_submits_work(auto, monkeypatch):
 
 
 def test_identity_and_internal_attach_never_choose_reused_slot(auto, monkeypatch):
-    row = dict(sid=SID, agent='claude', session='dev-api-1', cwd='/repo')
+    row = dict(sid=SID, agent='claude', session='dev-api-1', cwd='/repo', socket='/fixture-socket', workspace={'inode': 2})
+    monkeypatch.setattr(auto, 'workspace', lambda cwd: {'inode': 2})
     monkeypatch.setattr(auto, 'snapshot', lambda: [row])
     assert auto.identity('api', '1') == row
     calls = []
     monkeypatch.setattr(auto.subprocess, 'call', lambda args: calls.append(args) or 0)
-    assert auto.internal(['attach', SID, 'api', '1']) == 0
-    assert calls == [['tmux', 'attach-session', '-t', '=dev-api-1']]
+    assert auto.internal(['attach', SID, 'api', '1', auto.fingerprint(row)]) == 0
+    assert calls == [['tmux', '-S', '/fixture-socket', 'attach-session', '-t', '=dev-api-1']]
     with pytest.raises(ValueError, match='another'):
-        auto.internal(['attach', 'different', 'api', '1'])
+        auto.internal(['attach', 'different', 'api', '1', auto.fingerprint(row)])
+    with pytest.raises(ValueError, match='another'):
+        auto.internal(['attach', SID, 'api', '1', 'replaced-workspace'])
+    assert auto.fingerprint(row) == auto.fingerprint({**row, 'socket': '/new-socket'})
     with pytest.raises(ValueError, match='not a verified'):
         auto.identity('api', '2')
     with pytest.raises(ValueError, match='unknown'):
@@ -728,3 +733,17 @@ def test_close_pause_and_disable_win_before_native_launch(auto, tmp_path, monkey
     auto.write(auto.settings_path(), {'enabled': False})
     with pytest.raises(ValueError, match='disabled before launch'):
         auto.launch('claude', auto.resume_argv(row))
+
+
+@pytest.mark.parametrize('record', [
+    {'type': 'user', 'message': {'content': '[Request interrupted by user]'}},
+    {'type': 'user', 'message': {'content': [{'type': 'text', 'text': '[Request interrupted by user for tool use]'}]}},
+    {'type': 'system', 'subtype': 'turn_duration'},
+])
+def test_native_claude_cancellation_never_receives_continuation(auto, tmp_path, record):
+    enable(auto)
+    tx = tmp_path/'native.jsonl'; tx.write_text(json.dumps(record)+'\n')
+    session(auto, tmp_path, transcript=str(tx))
+    runtime = FakeRuntime()
+    auto.Engine(runtime).tick()
+    assert runtime.started[0][1] == ''
