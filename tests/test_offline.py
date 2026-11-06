@@ -170,6 +170,7 @@ def fake_codex(tmp_path):
     script=tmp_path/'codex'
     script.write_text('#!'+sys.executable+'\n'+'''import json,os,sys,socket,runpy,time
 from pathlib import Path
+assert not any(key.startswith('COV_CORE_') for key in os.environ)
 root=Path(os.environ['FIXTURE_ROOT']);mode=os.environ.get('FIXTURE_MODE','outage')
 role='backend' if sys.argv[1]=='app-server' else 'frontend'
 (root/(role+'.pid')).write_text(str(os.getpid()))
@@ -211,9 +212,11 @@ def test_owned_supervisor(offline,tmp_path,monkeypatch,fake_codex,mode):
     m=offline;calls=[]
     monkeypatch.setenv('FIXTURE_ROOT',str(tmp_path));monkeypatch.setenv('FIXTURE_MODE',mode)
     monkeypatch.setenv('SOCKET_HELPER',str(ROOT/'libexec/t_codex_socket.py'))
+    monkeypatch.setenv('COV_CORE_T_OFFLINE_FIXTURE','must not reach generated executables')
     monkeypatch.setattr(m,'RETRY_WINDOW',.1)
     real_popen=m.subprocess.Popen;processes=[]
     def popen(*a,**kw):
+        kw['env']={k:v for k,v in kw.get('env',os.environ).items() if not k.startswith('COV_CORE_')}
         p=real_popen(*a,**kw);processes.append(p);return p
     monkeypatch.setattr(m.subprocess,'Popen',popen)
     def lead(argv,**kwargs):
@@ -241,7 +244,8 @@ def test_owned_detached_descendant_stops(offline,tmp_path):
     m=offline
     code='import subprocess,sys,time; from pathlib import Path; p=subprocess.Popen([sys.executable,"-c","import time; time.sleep(60)"],start_new_session=True); Path(sys.argv[1]).write_text(str(p.pid)); time.sleep(60)'
     path=tmp_path/'pid'
-    p=subprocess.Popen([sys.executable,'-c',code,str(path)],start_new_session=True)
+    p=subprocess.Popen([sys.executable,'-c',code,str(path)],start_new_session=True,
+                       env={k:v for k,v in os.environ.items() if not k.startswith('COV_CORE_')})
     try:
         deadline=time.monotonic()+5
         while not path.exists() and time.monotonic()<deadline:time.sleep(.01)
