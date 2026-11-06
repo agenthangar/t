@@ -278,7 +278,13 @@ _dev_remote_attach() {
   [[ -n $fg ]] && rcmd+=" --fg"
   _term_title "$host: $prepo $pslot"
   local rc=0
-  ssh -t "$target" "zsh -lic ${(qq)rcmd}" || rc=$?
+  local recovery_prefix
+  recovery_prefix=$(python3 "$T_HOME/libexec/t_auto_recovery.py" prefix codex)
+  if [[ -n $recovery_prefix && -z $fg ]]; then
+    python3 "$T_HOME/libexec/t_auto_recovery.py" reconnect "$target" "$prepo" "$pslot" || rc=$?
+  else
+    ssh -t "$target" "zsh -lic ${(qq)rcmd}" || rc=$?
+  fi
   _term_title ""
   return $rc
 }

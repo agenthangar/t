@@ -1677,6 +1677,26 @@ _dev_resume_session() {
   _dev_with_launch_locks "$2" "$3" _dev_resume_session_claimed "$@"
 }
 
+# Automatic recovery uses the same strict ownership locks but never materializes
+# a missing worktree, changes trust, selects history, or types into a live pane.
+_t_auto_restore_claimed() {
+  emulate -L zsh
+  local session=$1 dir=$2 sid=$3 agent=$4 launch=$5 repo slot
+  if [[ -z $session ]]; then
+    read -r repo slot < <(_dev_slot_for_cwd "$dir")
+    [[ -n $repo && -n $slot ]] || return 1
+    session="dev-${repo}-${slot}"
+  fi
+  [[ -d $dir && $session == (dev-*|t-cursor-*) ]] || return 1
+  _dev_launch_preflight "$session" "$dir" "$sid" || return $?
+  python3 "$T_HOME/libexec/t_auto_recovery.py" guard "$agent" "$sid" "$dir" || return $?
+  tmux new-session -d -s "$session" -c "$dir" sleep 86400 || return 1
+  tmux set-environment -t "=$session" CLAUDE_RESUME_ID "$sid" || { tmux kill-session -t "=$session"; return 1; }
+  tmux set-environment -t "=$session" DEV_AGENT "$agent" || { tmux kill-session -t "=$session"; return 1; }
+  _dev_start_session_command "$session" "$launch" || { tmux kill-session -t "=$session"; return 1; }
+  _dev_recovery_watch "$session"
+}
+
 _dev_foreground_resume_preflight() {
   _dev_launch_preflight "dev-foreground-$1" "$2" "$1"
 }
@@ -2190,7 +2210,7 @@ _tbeam_kill_owner() {
       local source_dir source_agent
       source_dir=$(tmux display-message -p -t "=$s:" '#{session_path}' 2>/dev/null)
       source_agent=$(_dev_agent_of_session "$s")
-      _dev_history_record "$sid" "$source_agent" "$source_dir" handoff
+      _dev_history_record "$sid" "$source_agent" "$source_dir" handoff || return 2
       tmux kill-session -t "=$s:" 2>/dev/null && { print -r -- "$s"; return 0; }
       print -u2 -- "tbeam: could not stop $s; destination was not started"
       return 2
@@ -2666,6 +2686,7 @@ _t_beam() {
     }
   fi
   echo "⟳ Beaming ${sid[1,8]}… ($cwd) → $host"
+  _dev_history_record "$sid" "$agent" "$cwd" handoff || return 1
   # It's a MOVE, not a copy: stop the origin BEFORE snapshotting code + transcript,
   # so a still-live claude can't keep editing files in the worktree (the push below
   # would miss those edits) or appending to the transcript (the sync below would

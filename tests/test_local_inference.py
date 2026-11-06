@@ -383,7 +383,7 @@ def test_outage_policy_and_routing(local,monkeypatch):
         with pytest.raises(ValueError):m.policy(value)
     assert 'connection' in m.instructions({'mode':'automatic','on_cloud_failure':'local'})
     calls=[]
-    monkeypatch.setattr(m,'helper',lambda n:{'supervise':lambda *a:calls.append(a) or 7})
+    monkeypatch.setattr(m,'helper',lambda n:({'enabled':lambda:False} if n=='t_auto_recovery' else {'supervise':lambda *a:calls.append(a) or 7}))
     assert m.lead(['codex'],cwd='/repo',chosen={'mode':'automatic','on_cloud_failure':'local'})==7
     assert calls[0][2]=='/repo'
     class UI:

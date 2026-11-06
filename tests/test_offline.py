@@ -240,6 +240,25 @@ def test_owned_supervisor(offline,tmp_path,monkeypatch,fake_codex,mode):
     if mode=='local_failure':assert json.loads((root/'status.json').read_text())['state']=='local_stopped'
 
 
+def test_recovery_observes_native_resume_without_local_fallback(offline, tmp_path, monkeypatch, fake_codex):
+    m = offline
+    monkeypatch.setenv('FIXTURE_ROOT', str(tmp_path))
+    monkeypatch.setenv('FIXTURE_MODE', 'auth')
+    monkeypatch.setenv('SOCKET_HELPER', str(ROOT/'libexec/t_codex_socket.py'))
+    real = m.subprocess.Popen
+    def popen(*a, **kw):
+        kw['env'] = {k:v for k,v in os.environ.items() if not k.startswith('COV_CORE_')}
+        return real(*a, **kw)
+    monkeypatch.setattr(m.subprocess, 'Popen', popen)
+    monkeypatch.setattr(m, 'inference', lambda: {'helper': lambda n: {'state_root': lambda: tmp_path/'state'}})
+    incoming, outgoing = [], []
+    observer = SimpleNamespace(client=incoming.append, server=outgoing.append)
+    assert m.supervise([str(fake_codex), 'resume', 'exact-thread', '--no-daemon'], None, str(tmp_path), observer=observer) == 0
+    assert any(message.get('method') == 'turn/start' for message in incoming)
+    assert any(message.get('method') == 'item/commandExecution/requestApproval' for message in outgoing)
+    assert json.loads((tmp_path/'approval.json').read_text())['result']['decision'] == 'accept'
+
+
 def test_owned_detached_descendant_stops(offline,tmp_path):
     m=offline
     code='import subprocess,sys,time; from pathlib import Path; p=subprocess.Popen([sys.executable,"-c","import time; time.sleep(60)"],start_new_session=True); Path(sys.argv[1]).write_text(str(p.pid)); time.sleep(60)'

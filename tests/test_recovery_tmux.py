@@ -58,6 +58,54 @@ def until(check, timeout=5, detail=lambda: ""):
     pytest.fail("timed out waiting for isolated tmux state: " + detail())
 
 
+def test_automatic_restore_uses_real_tmux_and_refuses_duplicate_owner(terminal):
+    _, tmux, _, env, home = terminal
+    auto = load_script(REPO_ROOT/'libexec/t_auto_recovery.py', 'auto_real')
+    work = home/'work with spaces'; work.mkdir()
+    (work/'dirty.txt').write_text('preserve edits')
+    fake = home/'fake-claude'
+    fake.write_text(f'''#!{sys.executable}
+import json, os, pathlib, runpy, sys, time
+auto = runpy.run_path({str(REPO_ROOT/'libexec/t_auto_recovery.py')!r})
+auto['event']('claude', {{'session_id': {SID!r}, 'event': 'SessionStart'}})
+pathlib.Path({str(home/'restored.json')!r}).write_text(json.dumps(sys.argv[1:]))
+time.sleep(60)
+''')
+    fake.chmod(0o755)
+    # Keep the real lock/preflight/tmux/guard code; isolate discovery from personal
+    # processes and hosts, as the other recovery terminal fixtures do.
+    (home/'.zshrc').write_text(f'''
+export PATH={shlex.quote(str(REPO_ROOT/'bin'))}:$PATH
+export T_HOME={shlex.quote(str(REPO_ROOT))}
+source "$T_HOME/zsh/sessions.zsh"
+source "$T_HOME/zsh/resume.zsh"
+_dev_fg_rows() {{ :; }}
+_dev_rows_all() {{ :; }}
+_dev_recovery_watch() {{ :; }}
+''')
+    assert tmux('new-session', '-d', '-s', 'fixture-anchor', '-c', str(home), 'sleep', '60').returncode == 0
+    socket = tmux('display-message', '-p', '-t', '=fixture-anchor:', '#{socket_path}').stdout.strip()
+    env['TMUX'] = socket+',0,0'
+    auto.write(auto.settings_path(), {'enabled': True})
+    row = dict(agent='claude', sid=SID, cwd=str(work.resolve()), workspace=auto.workspace(work),
+               open=True, paused=False, phase='idle', generation='original', executable=str(fake),
+               options=['--model', 'chosen-model'], safe=True, session='dev-api-1')
+    auto.update(lambda data: data['sessions'].update({'claude:'+SID: row}))
+    launch = shlex.join([sys.executable, str(REPO_ROOT/'libexec/t_auto_recovery.py'), 'launch',
+                        'claude', *auto.resume_argv(row)])
+    script = '_dev_with_launch_locks ' + shlex.join([str(work), SID, '_t_auto_restore_claimed',
+                                                     'dev-api-1', str(work), SID, 'claude', launch])
+    started = subprocess.run(['zsh', '-lic', script], env=env, capture_output=True, text=True, timeout=20)
+    assert started.returncode == 0, started.stderr
+    until(lambda: (home/'restored.json').exists(), timeout=10,
+          detail=lambda: tmux('capture-pane', '-p', '-t', '=dev-api-1:').stdout)
+    assert json.loads((home/'restored.json').read_text()) == ['--resume', SID, '--model', 'chosen-model']
+    assert (work/'dirty.txt').read_text() == 'preserve edits'
+    duplicate = subprocess.run(['zsh', '-lic', script], env=env, capture_output=True, text=True, timeout=20)
+    assert duplicate.returncode != 0 and 'already owns' in duplicate.stderr
+    assert auto.read(auto.root()/'journal.json')['sessions']['claude:'+SID]['generation'] != 'original'
+
+
 @pytest.mark.parametrize("compatible", [True, False])
 @pytest.mark.parametrize("foreground", [False, True])
 @pytest.mark.parametrize("resume", [False, True])

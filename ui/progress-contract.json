@@ -336,6 +336,34 @@
     "libexec/nosleep_hotspot.py:setup:subprocess.run": {
       "kind": "passthrough",
       "reason": "The native security command owns the terminal password prompt, bounded to 120 seconds; nosleep never handles or renders the password."
+    },
+    "libexec/t_auto_recovery.py:run:subprocess.run": {
+      "kind": "background",
+      "reason": "Bounded recovery probes run in a background supervisor or lifecycle hook; configuration save reports its service transition and reconnect reports the retry phase."
+    },
+    "libexec/t_auto_recovery.py:Runtime.stop:time.sleep": {
+      "kind": "background",
+      "reason": "Bounded old-runtime shutdown is performed by the opted-in background recovery service."
+    },
+    "libexec/t_auto_recovery.py:watch:time.sleep": {
+      "kind": "background",
+      "reason": "The optional per-user supervisor waits between recovery polls without writing terminal output."
+    },
+    "libexec/t_auto_recovery.py:launch:subprocess.call": {
+      "kind": "passthrough",
+      "reason": "The native agent owns terminal rendering, input, progress and approval prompts."
+    },
+    "libexec/t_auto_recovery.py:ssh_once:subprocess.Popen": {
+      "kind": "passthrough",
+      "reason": "OpenSSH and the attached remote terminal own interactive output and authentication."
+    },
+    "libexec/t_auto_recovery.py:reconnect:time.sleep": {
+      "kind": "phase",
+      "reason": "Each retry prints the target, delay and cancellation instruction before waiting."
+    },
+    "libexec/t_auto_recovery.py:internal:subprocess.call": {
+      "kind": "passthrough",
+      "reason": "The verified attach-only operation gives terminal control to tmux."
     }
   },
   "shell": [

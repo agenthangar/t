@@ -1627,7 +1627,7 @@ _dev_kill_one() {
   # keeps the tie but starts EMPTY — so every command below (the kill itself) was
   # "command not found". Pinned by test_zshrc_never_declares_a_tied_special_….
   local wt; wt=$(tmux display-message -p -t "=$session:" '#{session_path}' 2>/dev/null)
-  _dev_history_record "$(_dev_session_sid "$session")" "$agent" "$wt" close
+  _dev_history_record "$(_dev_session_sid "$session")" "$agent" "$wt" close || return 1
   local _kerr
   if _kerr=$(tmux kill-session -t "=$session:" 2>&1); then echo "Killed $session"
   else echo "t kill: tmux kill-session $session failed${_kerr:+: $_kerr}" >&2; return 1; fi
@@ -1755,6 +1755,7 @@ _dev_kill_fg() {
       print
     fi
     tsess=$(_dev_tmux_session_of_pid "$pid")
+    _dev_history_record "$sid" "$agent" "$cwd" close || continue
     if [[ -n $tsess ]]; then
       tmux kill-session -t "=$tsess:" 2>/dev/null && { echo "Killed $label (tmux session $tsess)"; killed=1; }
     else
@@ -2130,6 +2131,10 @@ _dev_history_record() {
   [[ -n $sid && $sid != - ]] || return 0
   tx=$(_dev_agent_transcript "$agent" "$sid" "$dir" 2>/dev/null)
   python3 "$T_HOME/libexec/t_history.py" record "$sid" "$agent" "$dir" "$tx" "$event" "$interface" >/dev/null 2>&1 || true
+  if [[ $event == (close|handoff) && -f $T_HOME/libexec/t_auto_recovery.py ]]; then
+    python3 "$T_HOME/libexec/t_auto_recovery.py" retire "$agent" "$sid" || return 1
+  fi
+  return 0
 }
 
 _dev_with_launch_locks() {

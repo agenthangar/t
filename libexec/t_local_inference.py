@@ -602,6 +602,10 @@ def lead(argv, cwd=None, chosen=None):
     """Dedicated native CLI launch: no cloud auth, models or providers inherited."""
     chosen = policy(chosen) if chosen is not None else effective(cwd or os.getcwd())
     if not chosen or chosen['mode'] != 'local-only':
+        recovery = helper('t_auto_recovery')
+        if recovery['enabled']():
+            fallback = chosen if chosen and chosen['mode'] != 'disabled' and chosen['on_cloud_failure'] == 'local' else None
+            return recovery['launch']('codex', argv, chosen=fallback)
         if chosen and chosen['mode'] != 'disabled' and chosen['on_cloud_failure'] == 'local':
             return helper('t_offline')['supervise'](argv, chosen, cwd or os.getcwd())
         return subprocess.call(argv)
@@ -664,6 +668,7 @@ if __name__ == '__main__':
                 selected = effective(sys.argv[2])
                 required = selected and (selected['mode'] == 'local-only' or
                                          (selected['mode'] != 'disabled' and selected['on_cloud_failure'] == 'local'))
+                required = required or helper('t_auto_recovery')['enabled']()
             except (OSError, ValueError):
                 required = True  # Launch guard reports the invalid policy; never fall back.
             if required:

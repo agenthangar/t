@@ -154,6 +154,12 @@ _dev_agent_new_cmd() {
   # A fresh slot must not inherit an independently updated shared daemon's
   # feature settings. Keep its backend local, as with desktop handoffs/recovery.
   [[ $agent == codex ]] && launch_args+=(--no-daemon)
+  if [[ $agent == claude ]]; then
+    local -a recovery_prefix
+    recovery_prefix=("${(@f)$(python3 "$T_HOME/libexec/t_auto_recovery.py" prefix claude)}")
+    recovery_prefix=("${(@)recovery_prefix:#}")
+    launch_args=("${recovery_prefix[@]}" "${launch_args[@]}")
+  fi
   # Read the optional task in the pane, as one quoted argument. Keep its body
   # out of the command sent to tmux and the interactive shell's history.
   local brief_arg=""
@@ -235,6 +241,11 @@ _dev_agent_resume_cmd() {
     local_prefix=("${(@f)$(python3 "$inference_helper" --launch-prefix "$target")}") || local_prefix=(python3 "$inference_helper" --lead)
     local_prefix=("${(@)local_prefix:#}")
     args=("${local_prefix[@]}" "${args[@]}")
+  else
+    local -a recovery_prefix
+    recovery_prefix=("${(@f)$(python3 "$T_HOME/libexec/t_auto_recovery.py" prefix claude)}")
+    recovery_prefix=("${(@)recovery_prefix:#}")
+    args=("${recovery_prefix[@]}" "${args[@]}")
   fi
   print -r -- "${(j: :)${(@q)args}}"
 }

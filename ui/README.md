@@ -1182,6 +1182,23 @@ model download review precedes installation. `t config models show` is read-only
 `install` and `measure` are direct explicit-artifact actions. `--download-only`
 does not claim inference readiness. No list/show mode starts a runtime or picker.
 
+## Automatic recovery
+
+`t config` includes **Recovery → Automatic recovery** as a host-local staged
+setting. Review/save applies it; cancel writes nothing. Enabling from a stable
+macOS installation installs the user login service and merges owned agent hooks.
+Disabling removes those integrations without stopping running agents. The setting
+is not propagated to other hosts or written to shell configuration.
+
+`t system recovery status [--json]` and
+`t session recovery status [repo] [slot] [--json]` are read-only detail/machine
+outputs. `t session recovery pause|resume [repo] [slot]` are direct eligibility
+actions. An exact conversation ID is also accepted; missing targets infer only an
+unambiguous current workspace. These commands never open a picker, update prompt,
+or submit a continuation. There is no public recovery enable/disable command.
+Session details expose phase, pause, eligibility, and retry reason. See
+[automatic recovery](../docs/automatic-recovery.md) for the runtime contract.
+
 ## Standalone companion: nosleep
 
 The package installs `nosleep` alongside `t`; it is not a `t` subcommand.

@@ -2334,7 +2334,8 @@
         "tests/test_workflow_tool_ui.py::test_tool_hub_browsing_does_not_materialize_native_scopes_or_change_launch_tool",
         "tests/test_workflow_tool_ui.py::test_tool_interrupt_merges_completed_nested_edit_into_full_transaction",
         "tests/test_workflow_tool_runners.py::test_config_runner_tool_picker_keeps_edits_in_selected_tool",
-        "tests/test_workflow_tool_ui.py::test_save_footer_shortcut_works_without_duplicate_menu_row"
+        "tests/test_workflow_tool_ui.py::test_save_footer_shortcut_works_without_duplicate_menu_row",
+        "tests/test_auto_recovery.py::test_menu_stages_changes_without_writing"
       ],
       "modes": {
         "default": {
@@ -5298,6 +5299,170 @@
           "tests": [
             "tests/test_local_inference.py::test_commands"
           ]
+        }
+      }
+    },
+    "system recovery status": {
+      "patterns": [
+        "detail",
+        "machine"
+      ],
+      "renderer": "plain",
+      "scope": "this host; explicit session or unambiguous current workspace",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_auto_recovery.py::test_public_routes_and_readonly_modes",
+        "tests/test_auto_recovery.py::test_commands_pause_resume_and_status"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "system",
+            "recovery",
+            "status"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_auto_recovery.py::test_public_routes_and_readonly_modes",
+            "tests/test_auto_recovery.py::test_commands_pause_resume_and_status"
+          ],
+          "notes": "Read-only status; configure automatic recovery in t config."
+        },
+        "json": {
+          "argv": [
+            "system",
+            "recovery",
+            "status",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_auto_recovery.py::test_public_routes_and_readonly_modes",
+            "tests/test_auto_recovery.py::test_commands_pause_resume_and_status"
+          ],
+          "notes": "Read-only status; configure automatic recovery in t config."
+        }
+      }
+    },
+    "session recovery pause": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "plain",
+      "scope": "this host; explicit session or unambiguous current workspace",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_auto_recovery.py::test_public_routes_and_readonly_modes",
+        "tests/test_auto_recovery.py::test_commands_pause_resume_and_status"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "session",
+            "recovery",
+            "pause",
+            "api",
+            "1"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_auto_recovery.py::test_public_routes_and_readonly_modes",
+            "tests/test_auto_recovery.py::test_commands_pause_resume_and_status"
+          ],
+          "notes": "Change recovery eligibility for one exact enrolled session without stopping its agent."
+        }
+      }
+    },
+    "session recovery resume": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "plain",
+      "scope": "this host; explicit session or unambiguous current workspace",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_auto_recovery.py::test_public_routes_and_readonly_modes",
+        "tests/test_auto_recovery.py::test_commands_pause_resume_and_status"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "session",
+            "recovery",
+            "resume",
+            "api",
+            "1"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_auto_recovery.py::test_public_routes_and_readonly_modes",
+            "tests/test_auto_recovery.py::test_commands_pause_resume_and_status"
+          ],
+          "notes": "Change recovery eligibility for one exact enrolled session without stopping its agent."
+        }
+      }
+    },
+    "session recovery status": {
+      "patterns": [
+        "detail",
+        "machine"
+      ],
+      "renderer": "plain",
+      "scope": "this host; explicit session or unambiguous current workspace",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_auto_recovery.py::test_public_routes_and_readonly_modes",
+        "tests/test_auto_recovery.py::test_commands_pause_resume_and_status"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "session",
+            "recovery",
+            "status",
+            "api",
+            "1"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_auto_recovery.py::test_public_routes_and_readonly_modes",
+            "tests/test_auto_recovery.py::test_commands_pause_resume_and_status"
+          ],
+          "notes": "Read-only status; configure automatic recovery in t config."
+        },
+        "json": {
+          "argv": [
+            "session",
+            "recovery",
+            "status",
+            "api",
+            "1",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_auto_recovery.py::test_public_routes_and_readonly_modes",
+            "tests/test_auto_recovery.py::test_commands_pause_resume_and_status"
+          ],
+          "notes": "Read-only status; configure automatic recovery in t config."
         }
       }
     }

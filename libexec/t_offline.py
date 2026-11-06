@@ -255,10 +255,13 @@ class WebSocket:
             fragmented = True
 
 
-def launch_options(argv, cwd):
+def launch_options(argv, cwd, *, recovery=False):
     server, local = [], [argv[0], '--no-daemon', '-C', str(Path(cwd).resolve())]
     args = iter(argv[1:])
     for arg in args:
+        if recovery and arg == 'resume':
+            next(args, None)
+            continue
         if arg in ('exec', 'e', 'review', 'resume', 'fork', '--remote', '--remote-auth-token-env', '--profile', '-p', '--oss', '--local-provider', '--worktree') or arg.startswith(('--remote=', '--profile=', '--local-provider=')):
             raise ValueError('Automatic local continuation supports fresh native CLI sessions without remote/profile/OSS/worktree overrides; select Pause and retry for this invocation.')
         if arg == '--':
@@ -389,9 +392,9 @@ def stop_runtime(process):
         time.sleep(.05)
 
 
-def supervise(argv, chosen, cwd):
+def supervise(argv, chosen, cwd, observer=None):
     local = inference()
-    server_options, continuation = launch_options(argv, cwd)
+    server_options, continuation = launch_options(argv, cwd, recovery=observer is not None and chosen is None)
     root = local['helper']('t_local_worker')['state_root']() / ('outage-'+uuid.uuid4().hex)
     root.mkdir(parents=True, mode=0o700)
     checkpoint = Checkpoint(root, cwd)
@@ -431,7 +434,10 @@ def supervise(argv, chosen, cwd):
                     while True:
                         raw = channel.receive()
                         message = json.loads(raw)
-                        checkpoint.client(message)
+                        if chosen is not None:
+                            checkpoint.client(message)
+                        if observer is not None:
+                            observer.client(message)
                         backend.stdin.write(raw+b'\n'); backend.stdin.flush()
                 except Exception as exc:
                     failures.append(str(exc))
@@ -444,7 +450,10 @@ def supervise(argv, chosen, cwd):
                             raise EOFError('owned runtime disconnected')
                         if len(raw) > FRAME_LIMIT:
                             raise ValueError('runtime message exceeds limit')
-                        checkpoint.server(json.loads(raw))
+                        if chosen is not None:
+                            checkpoint.server(json.loads(raw))
+                        if observer is not None:
+                            observer.server(json.loads(raw))
                         channel.send(raw.rstrip(b'\n'))
                 except Exception as exc:
                     failures.append(str(exc))
@@ -459,7 +468,7 @@ def supervise(argv, chosen, cwd):
                         break
                     except subprocess.TimeoutExpired:
                         raise ValueError('Owned runtime transport stopped; no local switch. Checkpoint: '+str(root))
-                if checkpoint.due():
+                if chosen is not None and checkpoint.due():
                     try:
                         handoff = checkpoint.prompt()
                         row = next((r for r in local['catalogue'](context=chosen['context_tokens'])['models']
@@ -505,6 +514,8 @@ def supervise(argv, chosen, cwd):
                 raise shutdown_error
     if handoff is None:
         return result if result is not None else 1
+    if observer is not None and observer.sid:
+        runpy.run_path(str(ROOT/'libexec/t_auto_recovery.py'))['retire']('codex', observer.sid)
     print('\nCloud connection unavailable → Local only · '+chosen['provider']+' · '+chosen['model']+'\n'
           'Checkpoint: '+str(root)+'\nCloud runtime stopped. Local mode stays selected for this session; approvals require local user review.', flush=True)
     status = {'state':'starting_local','provider':chosen['provider'],'model':chosen['model'],

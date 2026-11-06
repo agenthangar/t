@@ -3469,6 +3469,15 @@ def _config_mcp(ui, pending):
             states = helper["status"](HOME)
 
 
+def _automatic_recovery():
+    return runpy.run_path(os.path.join(_t_source_root(), 'libexec', 't_auto_recovery.py'))
+
+
+def _recovery_pending(cfg):
+    return (getattr(cfg, '_recovery_enabled', False) != getattr(cfg, '_recovery_initial', False) or
+            getattr(cfg, '_recovery_repair', False))
+
+
 def _config_wizard(cfg, workflows_only=False, workflow_target=None):
     ui = _RailUI()
     ui._config_interrupts = True
@@ -3482,6 +3491,7 @@ def _config_wizard(cfg, workflows_only=False, workflow_target=None):
         ui.read_key = interrupt_key
     _workflow_session(cfg)
     edited = copy.deepcopy(cfg)
+    edited._recovery_initial = edited._recovery_enabled = _automatic_recovery()['enabled']()
     initial = _config_state(cfg)
     catalogs = {}
     st = Style()
@@ -3503,9 +3513,10 @@ def _config_wizard(cfg, workflows_only=False, workflow_target=None):
                         values[a] += " · fast"
                 rows += [("local", "Local worker & models ›"), ("workflow", "Workflows ›"), ("runners", "Test runners ›"),
                          ("mcp", "Sessions server ›"), ("repos", "Repositories ›"), ("worktrees", "Worktrees & branches ›"),
-                         ("hosts", "Hosts ›"), ("beam", "Default beam host"), ("edit", "Open config in editor"),
+                         ("hosts", "Hosts ›"), ("beam", "Default beam host"), ("recovery", "Recovery ›"), ("edit", "Open config in editor"),
                          ("cancel", "Cancel")]
-                pending = len(_config_diff(initial, _config_state(edited))) + _workflow_pending(edited)
+                pending = len(_config_diff(initial, _config_state(edited))) + _workflow_pending(edited) + _recovery_pending(edited)
+                values['recovery'] = 'Enabled · this Mac' if edited._recovery_enabled else 'Disabled · this Mac'
                 values.update({"hosts": f"{len(edited.hosts)} registered",
                                "repos": ", ".join(sorted(edited.repos)) or "none registered",
                                "beam": edited.beam_host or "none", "save": f"{pending} pending"})
@@ -3529,7 +3540,7 @@ def _config_wizard(cfg, workflows_only=False, workflow_target=None):
                                      accents={"cancel": "y"},
                                      primary=("s", "SAVE CHANGES", f"{pending} pending"), shortcuts={"s": "save"},
                                      default=next(i for i, row in enumerate(rows) if row[0] == last))
-                pending = len(_config_diff(initial, _config_state(edited))) + _workflow_pending(edited)
+                pending = len(_config_diff(initial, _config_state(edited))) + _workflow_pending(edited) + _recovery_pending(edited)
                 if choice in (None, "cancel"):
                     if pending:
                         choice = ui.pick(f"{pending} unsaved change{'s' if pending != 1 else ''}", [
@@ -3542,6 +3553,11 @@ def _config_wizard(cfg, workflows_only=False, workflow_target=None):
                         ui.done("cancelled", "nothing written")
                         return None
                 last = choice if choice in dict(rows) else last
+                if choice == 'recovery':
+                    recovery = _automatic_recovery()
+                    edited._recovery_enabled = recovery['menu'](ui, edited._recovery_enabled)
+                    edited._recovery_repair = edited._recovery_enabled and not recovery['status']()['running']
+                    continue
                 if choice == "mcp":
                     _config_mcp(ui, pending)
                     continue
@@ -3571,7 +3587,13 @@ def _config_wizard(cfg, workflows_only=False, workflow_target=None):
                         lines += ["      " + line for line in _workflow_review(
                             edited._workflow_document, before=edited._workflow_initial,
                             activate=edited._workflow_activate)]
-                    if changes or _workflow_pending(edited):
+                    if _recovery_pending(edited):
+                        lines += (["      Enable automatic recovery on this Mac after login.",
+                                   "      Enroll open and future managed sessions; resume interrupted work in background.",
+                                   "      Approval waits and explicit pauses remain waiting; nosleep stays manual."]
+                                  if edited._recovery_enabled else
+                                  ["      Disable automatic recovery and remove its login service; running agents continue."])
+                    if changes or _workflow_pending(edited) or _recovery_pending(edited):
                         answer = ui.page("Review local settings", lines, ("enter", "y", "n", "q", "esc", "abort"),
                                          keys="y save · n / esc / q back", primary=("enter", "SAVE CHANGES", f"{pending} pending"))
                         if answer == "abort":
@@ -4287,6 +4309,7 @@ def cmd_config(cfg, args):
             print(f"{agent} speed: {_config_speed_label(cfg.fast.get(agent))}")
         print(f"Local worker: t config local --show (setup: t config local)")
         print(f"Default beam host: {cfg.beam_host or 'none'}")
+        print('Automatic recovery: ' + ('enabled' if _automatic_recovery()['enabled']() else 'disabled') + ' · this Mac')
         print(f"Worktrees: {cfg.worktree_default} · root: {cfg.worktree_root} · shared-tree branch: {cfg.branch}")
         for alias, target in sorted(cfg.hosts.items()):
             print(f"Host {alias}: {target}")
@@ -4329,7 +4352,7 @@ def cmd_config(cfg, args):
             changes = _config_diff(current, _config_state(result))
             shell_changed = bool(changes)
             workflow_changed = _workflow_pending(result)
-            if not changes and not workflow_changed:
+            if not changes and not workflow_changed and not _recovery_pending(result):
                 print("Settings unchanged — nothing written")
                 return 0
             after = _config_text(before, changes, current)
@@ -4359,8 +4382,11 @@ def cmd_config(cfg, args):
                     context["settings_source"] = rebound
                 helper["save"](workflow_doc, workflow_before, extra, main_settings=main_settings,
                                refresh_source=bool(rebound), propagation_context=context)
-            else:
+            elif changes:
                 _config_write(_current_local_rc(), before, after)
+            if _recovery_pending(result):
+                _automatic_recovery()['configure'](result._recovery_enabled, result._recovery_initial)
+                print('✓ saved automatic recovery for this Mac')
             targets = _host_new_targets(cfg.hosts, result.hosts)
     except (OSError, ValueError) as exc:
         print(f"t config: {exc}", file=sys.stderr)
@@ -7257,6 +7283,8 @@ def _command_readonly(argv, *, terminal=None):
             terminal = sys.stdin.isatty() and sys.stdout.isatty()
         return not terminal
     verb, tail = words[0], words[1:]
+    if verb in ('system', 'session') and tail[:1] == ['recovery']:
+        return len(tail) == 1 or tail[1] == 'status'
     if verb == "runners":
         return (not tail or tail == ["runs"] or tail[0] == "list" or
                 (len(tail) > 1 and tail[0] == "runs" and tail[1] in ("list", "status", "logs")))
@@ -10678,6 +10706,7 @@ def _tool_detail(cfg, ctx, args):
                            for p in prompts[-10:]] if len(prompts) > 3 else []
     row["last_assistant"] = rec.get("last_asst")
     row["also_at"] = rec.get("also_at") or []
+    row['recovery'] = _automatic_recovery()['detail'](row.get('agent', ''), rec.get('sid', ''))
     if row.get("slot") and row.get("cwd"):
         row["url"] = _dev_url(row["slot"], row["cwd"])
     row["git"] = _git_brief(row["worktree"] if row.get("worktree_exists") else row["cwd"])
@@ -10982,6 +11011,14 @@ def cmd_mcp(cfg, args):
     return _mcp_serve(cfg)
 
 
+def cmd_automatic_recovery(cfg, args):
+    try:
+        return _automatic_recovery()['command'](args, cfg)
+    except (ValueError, OSError, subprocess.SubprocessError) as exc:
+        print('t recovery: ' + str(exc), file=sys.stderr)
+        return 1
+
+
 def cmd_session_goal(cfg, args):
     try:
         args.repo = _resolve_repo_selector(cfg.repos, args.repo) or args.repo
@@ -11042,6 +11079,7 @@ COMMAND_GROUPS = {
     "issue": {"list": ("issue", "list"), "status": ("issue", "status"),
               "start": ("issue", "start"), "open": ("issue", "open")},
     "session": {
+        "recovery": {verb: ('session', 'recovery', verb) for verb in ('pause', 'resume', 'status')},
         "open": ("open",), "list": ("ls",), "close": ("kill",),
         "restart": ("restart",), "push": ("push",), "pop": ("pop",),
         "resume": ("resume",), "history": ("history",), "cd": ("cd",), "move": ("beam",),
@@ -11081,6 +11119,7 @@ COMMAND_GROUPS = {
     "agent": {"login": ("login",), "install": ("install",), "status": ("install", "--status"),
               "trust": ("trust",)},
     "system": {"integrate": ("integrate",), "update": ("update",),
+               "recovery": {'status': ('system', 'recovery', 'status')},
                "diagnose": ("doctor",), "advisories": ("__advisories",)},
 }
 
@@ -11305,6 +11344,13 @@ def _wrap_help(body):
 
 
 def _group_help(group):
+    if group in ('system recovery', 'session recovery'):
+        verbs = ('status',) if group.startswith('system') else ('pause', 'resume', 'status')
+        return _wrap_help('USAGE\n  t ' + group + ' <verb>' + (' [repo] [slot]' if group.startswith('session') else '') +
+                          '\n\nConfigure automatic recovery in t config → Recovery.\n\nCOMMANDS\n' +
+                          '\n'.join('  ' + verb + '  ' + {'status': 'Read recovery state (--json for machine output)',
+                            'pause': 'Pause automatic recovery for a session', 'resume': 'Restore recovery eligibility for a session'}[verb] for verb in verbs) +
+                          '\n\nSession targets accept an exact conversation ID or REPO SLOT.\nOmit the target to infer an unambiguous current workspace. No picker opens.\nRun t help ' + group + ' <verb> for details.\n')
     if group == "config models":
         return _wrap_help("""USAGE
   t config models <verb> [MODEL] [--provider PROVIDER] [--json]
@@ -11540,7 +11586,7 @@ def _command_description(group, action):
                     "move": "Move a session between machines", "read": "Read slot output",
                     "view-plan": "Show a Claude session plan", "paste": "Paste a recent file path",
                     "search": "Search and resume a saved conversation",
-                    "goal": "Send a new objective to a live agent"},
+                    "goal": "Send a new objective to a live agent", "recovery": "Inspect or pause automatic recovery"},
         "repo": {"list": "List registered repositories", "cd": "Enter a checkout",
                  "locate": "Print a checkout path", "create": "Create a GitHub repository",
                  "clone": "Clone and register a repository", "add": "Register an existing checkout"},
@@ -11562,6 +11608,7 @@ def _command_description(group, action):
         "agent": {"login": "Log in logged-out or expiring agents", "install": "Install and log in agent CLIs", "status": "Show agent state",
                   "trust": "Trust a folder in installed agents"},
         "system": {"integrate": "Link t and its hooks", "update": "Update t",
+                   "recovery": "Inspect automatic recovery; configure with t config",
                    "diagnose": "Diagnose the local setup", "advisories": "Manage periodic advisory checks"},
     }
     return descriptions[group][action]
@@ -13014,6 +13061,21 @@ PERIODIC CHECKS
     lp.add_argument("url")
     lp.add_argument("name")
     lp.add_argument("alias")
+    for scope in ('system', 'session'):
+        family = sub.add_parser(scope, hidden=True, help='session and system resources')
+        resources = family.add_subparsers(dest='resource', required=True)
+        rp = resources.add_parser('recovery', help='automatic recovery status and session eligibility')
+        rp.set_defaults(scope=scope)
+        actions = rp.add_subparsers(dest='action', required=True)
+        for action in (('status',) if scope == 'system' else ('pause', 'resume', 'status')):
+            leaf = actions.add_parser(action, help=('show read-only recovery status' if action == 'status' else action + ' automatic recovery eligibility'),
+                description='Configure automatic recovery in t config. Session controls accept [repo] [slot] or an exact conversation ID; infer the current workspace only when unambiguous. They never stop a running agent.')
+            if scope == 'session':
+                leaf.add_argument('repo', nargs='?', help='repository alias or exact conversation ID; infer current workspace when omitted')
+                leaf.add_argument('slot', nargs='?', help='slot number')
+            if action == 'status':
+                leaf.add_argument('--json', action='store_true', help='print read-only machine output')
+
     gp = sub.add_parser("__session-goal", hidden=True, help="send a new objective to a live agent",
         description="Send a new objective to a live local Claude or Codex tmux session. "
                     "REPO and SLOT are explicit; there is no inference or picker. "
@@ -13056,6 +13118,8 @@ PERIODIC CHECKS
 
 
 IMPLEMENTED = {
+    'system': cmd_automatic_recovery,
+    'session': cmd_automatic_recovery,
     "__advisories": cmd_advisories,
     "issue": cmd_issue,
     "history": cmd_history,
@@ -13236,6 +13300,12 @@ def _bare_entry():
 
 def _main(argv):
     argv = _hosts_argv(_runners_argv(argv))
+    if argv[:1] == ['__auto-recovery']:
+        try:
+            return _automatic_recovery()['internal'](argv[1:])
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            print('t recovery: ' + str(exc), file=sys.stderr)
+            return 1
     if len(argv) == 2 and argv[0] == '__resume-source':
         helper = runpy.run_path(os.path.join(_t_source_root(), 'libexec', 't_history.py'))
         history = helper['HistoryCommand'](Config(), globals())

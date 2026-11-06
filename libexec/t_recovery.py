@@ -599,7 +599,8 @@ def install_cursor_hook():
 def cursor_launch(cwd, sid):
     helper = __import__('runpy').run_path(str(ROOT / 'libexec/t_workflow_cursor.py'))
     args = helper['prepare'](cwd)
-    return 'exec ' + shlex.join(['cursor-agent', '--resume=' + sid, *args])
+    recovery = __import__('runpy').run_path(str(ROOT / 'libexec/t_auto_recovery.py'))
+    return 'exec ' + shlex.join([*recovery['prefix']('cursor'), 'cursor-agent', '--resume=' + sid, *args])
 
 
 def cursor_resume(sid, cwd):

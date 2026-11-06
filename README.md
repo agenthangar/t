@@ -638,6 +638,14 @@ these are the common migrations:
 | `t permissions`, `t permissions --show/--apply` | `t policy check`, `t policy show/apply` |
 | `t install`, `t trust`, `t integrate`, `t update`, `t doctor` | `t agent install`, `t agent trust`, `t system integrate`, `t system update`, `t system diagnose` |
 
+For opt-in recovery after login or lost connections, use **`t config` → Recovery →
+Automatic recovery**, then review and save. Recovery restores managed CLI sessions
+in detached tmux and continues only verified interrupted work. Inspect it with
+`t system recovery status`; pause a session with `t session recovery pause <repo> <slot>`.
+It is disabled by default and configured separately on each Mac. See
+[automatic recovery](docs/automatic-recovery.md) for eligibility, SSH reconnect,
+and capability boundaries. `nosleep` remains manual.
+
 If a CLI cannot reconnect but its tmux slot is still live, run
 `t session restart <repo> <slot>` from a separate terminal. `--dry-run` shows the target
 first. Restart saves the pane text, including any visible unsent draft, to a

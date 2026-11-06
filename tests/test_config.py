@@ -428,7 +428,7 @@ def test_config_main_menu_shows_repo_aliases(t_mod, config_cli, monkeypatch):
         assert kwargs["values"]["repos"] == "api, t"
         assert [key for key, _ in rows] == [
             "tool", "trust", *t_mod.AGENTS, "local", "workflow", "runners",
-            "mcp", "repos", "worktrees", "hosts", "beam", "edit", "cancel",
+            "mcp", "repos", "worktrees", "hosts", "beam", "recovery", "edit", "cancel",
         ]
         assert kwargs["sections"] == {
             "tool": "Session defaults", t_mod.AGENTS[0]: "Agents", "workflow": "Workflows", "runners": "Runners",
@@ -437,12 +437,27 @@ def test_config_main_menu_shows_repo_aliases(t_mod, config_cli, monkeypatch):
         assert dict(rows)["workflow"] == "Workflows ›"
         assert kwargs['primary'][:2] == ('s', 'SAVE CHANGES')
         assert kwargs['shortcuts'] == {'s': 'save'}
-        collections = {*t_mod.AGENTS, "local", "workflow", "runners", "mcp", "repos", "worktrees", "hosts"}
+        collections = {*t_mod.AGENTS, "local", "workflow", "runners", "mcp", "repos", "worktrees", "hosts", "recovery"}
         assert {key for key, text in rows if text.endswith(" ›")} == collections
         return "cancel"
     ui.pick = pick
     monkeypatch.setattr(t_mod, "_RailUI", lambda: ui)
     assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == 130
+
+
+@pytest.mark.parametrize('save', [True, False])
+def test_recovery_toggle_applies_only_after_config_review(t_mod, config_cli, monkeypatch, save):
+    cfg, local = config_cli
+    calls = []
+    helper = {'enabled': lambda: False, 'status': lambda: {'running': False},
+              'menu': lambda ui, value: not value,
+              'configure': lambda value, before: calls.append((value, before))}
+    monkeypatch.setattr(t_mod, '_automatic_recovery', lambda: helper)
+    ui = Menu(['recovery', 'save'] if save else ['recovery', 'cancel', 'discard'])
+    monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
+    assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == (0 if save else 130)
+    assert calls == ([(True, False)] if save else [])
+    assert local.read_text() == '# keep me\n'
 
 
 def test_config_group_navigation_retains_focus(t_mod, config_cli, monkeypatch):
@@ -1251,14 +1266,14 @@ def test_config_unrelated_edits_do_not_stage_native_defaults(t_mod, native_defau
         edited._workflow_initial = copy.deepcopy(edited._workflow_document)
         edited._workflow_activate = False
         edited._workflow_document['workflows']['standard']['planning']['effort'] = 'medium'
-    before = native.stat(), native.read_text()
+    before = native.stat().st_mtime_ns, native.stat().st_ino, native.read_text()
     monkeypatch.setitem(sync, 'native_defaults', lambda settings: pytest.fail('unrelated native write'))
     monkeypatch.setitem(helper, 'propagation', lambda: sync)
     monkeypatch.setattr(t_mod, '_config_wizard', lambda cfg: edited)
     monkeypatch.setattr(t_mod, '_config_editor', lambda: 0)
     monkeypatch.setattr(t_mod, 'Config', lambda: edited)
     assert t_mod.cmd_config(cfg, SimpleNamespace(show=change == 'show', edit=change == 'editor')) == 0
-    assert (native.stat(), native.read_text()) == before
+    assert (native.stat().st_mtime_ns, native.stat().st_ino, native.read_text()) == before
     if change in ('unchanged', 'editor', 'show'):
         assert not helper['config_path']().exists()
         assert not sync['state_path']().exists()

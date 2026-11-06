@@ -626,6 +626,9 @@ def details(row, alias='', width=None, compact=False):
               f'Summary evidence: {row.get("summary_source") or "unknown"}']
     if compact:
         fields = [f'Model: {display["model"]}', f'UI: {display["interface"]}', f'Status: {display["status"]} · {display["context"]}', *fields]
+    recovery = runpy.run_path(str(Path(__file__).with_name('t_auto_recovery.py')))['detail'](row['agent'], row['sid'])
+    if recovery:
+        fields += [f"Recovery: {'paused' if recovery['paused'] else recovery['phase']} · {recovery['reason'] or ''}"]
     fields += ['', 'Workspace history']
     for association in row.get('associations', []):
         fields.extend([f'  Workspace: {association.get("workspace")}',
