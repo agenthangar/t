@@ -791,3 +791,113 @@ t beam -r --host beta; print rc=$?
 ''')
     assert 'rc=0' in output(result) and 'CANONICAL -r|--host|beta' in output(result)
     assert 'WRONG_ENGINE' not in output(result)
+
+
+@pytest.mark.parametrize('targets,expected', [
+    ([], (None, None, False)),
+    (['api', '9'], ('api', '9', False)),
+    (['9', '--yes'], ('9', None, True)),
+    (['api', '-y', 'all'], ('api', 'all', True)),
+])
+def test_remote_kill_parser_and_executable_delegate(t_mod, monkeypatch, targets, expected):
+    args = t_mod.build_parser().parse_args(['remote', 'kill', *targets])
+    assert (args.repo, args.slot, args.yes) == expected
+    assert args.remote is True
+    seen = []
+    monkeypatch.setattr(t_mod, 'Config', lambda: object())
+    monkeypatch.setattr(t_mod, '_t_auto_update', lambda argv: None)
+    monkeypatch.setattr(t_mod, '_delegate', seen.append)
+    t_mod.main(['remote', 'kill', *targets])
+    repo, slot, yes = expected
+    assert shlex.split(seen[0]) == ['_t_dev', '-r', 'kill',
+                                   *([repo] if repo else []), *([slot] if slot else []),
+                                   *(['-y'] if yes else [])]
+
+
+@pytest.mark.parametrize('argv', [['remote', 'kill', '--help'], ['help', 'remote', 'kill']])
+def test_remote_kill_help_is_read_only(t_mod, monkeypatch, capsys, argv):
+    monkeypatch.setattr(t_mod, 'Config', lambda: pytest.fail('help loaded configuration'))
+    monkeypatch.setattr(t_mod, '_t_auto_update', lambda argv: pytest.fail('help checked updates'))
+    assert t_mod.main(argv) == 0
+    text = capsys.readouterr().out
+    assert 'usage: t remote kill [repo] [slot|all]' in text
+    assert 'confirmation' in text and '--yes' in text
+    assert 'kill' in t_mod._group_help('remote')
+
+
+@pytest.mark.parametrize('args', ['--host alpha api 9', '--new', '--all', 'alpha api 9', '--bogus'])
+def test_remote_kill_rejects_invalid_arguments_before_mutation(t_mod, zsh, args):
+    with pytest.raises(SystemExit) as exc:
+        t_mod.build_parser().parse_args(['remote', 'kill', *shlex.split(args)])
+    assert exc.value.code == 2
+    result = zsh('_dev_remote_kill() { print WRONG_KILL; }; t remote kill ' + args + '; print rc=$?')
+    assert 'rc=2' in output(result) and 'WRONG_KILL' not in output(result)
+
+
+@pytest.mark.parametrize('flag', ['', '-y', '--yes'])
+def test_remote_kill_discovers_owner_and_preserves_confirmation_and_status(zsh, flag):
+    result = zsh(HOSTS + '''
+_dev_remote_resolve() { print -u2 -r -- "RESOLVE ${(j:|:)@}"; printf 'alpha\tremote-api\t9\n'; }
+_dev_kill() { print WRONG_LOCAL_KILL; }
+ssh() { print -r -- "SSH ${(j:|:)@}"; return 17; }
+''' + f't remote kill api {flag} 9; print rc=$?')
+    text = output(result)
+    assert 'RESOLVE api|9' in text and 'WRONG_LOCAL_KILL' not in text
+    assert 'rc=17' in text
+    remote = shlex.split(text.split('SSH -t|user@alpha|', 1)[1].splitlines()[0])
+    assert remote[:2] == ['zsh', '-lic']
+    words = shlex.split(remote[2])
+    assert words[1:] == ['t', 'kill', 'remote-api', '9', *(['-y'] if flag else [])]
+
+
+@pytest.mark.parametrize('args,repo', [('', ''), ('api', 'api')])
+@pytest.mark.parametrize('rc', [0, 130])
+def test_remote_kill_uses_shared_picker_and_preserves_cancellation(zsh, args, repo, rc):
+    result = zsh(HOSTS + f'''
+_dev_kill_pick() {{ print -r -- "PICK $1|$2|$3"; return {rc}; }}
+ssh() {{ print WRONG_SSH; }}
+t remote kill {args}; print rc=$?
+''')
+    text = output(result)
+    assert f'PICK {repo}||1' in text and f'rc={rc}' in text
+    assert 'WRONG_SSH' not in text
+
+
+def test_remote_kill_lone_slot_infers_repository(zsh):
+    result = zsh(HOSTS + '''
+_t_infer_repo() { print api; }
+_dev_remote_resolve() { print -u2 -r -- "RESOLVE ${(j:|:)@}"; return 23; }
+ssh() { print WRONG_SSH; }
+t remote kill 9; print rc=$?
+''')
+    assert 'RESOLVE api|9' in output(result) and 'rc=23' in output(result)
+    assert 'WRONG_SSH' not in output(result)
+
+
+def test_remote_kill_all_keeps_remote_alias_and_force(zsh):
+    result = zsh(HOSTS + '''
+DEV_REPOS[api]=/home/local/code/api
+_dev_rows_all() { printf 'alpha\tid\t/home/remote/code/api\tremote-api-9\tdetached\tactive\n'; }
+ssh() { print -r -- "SSH ${(j:|:)@}"; }
+t remote kill api all --yes; print rc=$?
+''')
+    text = output(result)
+    remote = shlex.split(text.split('SSH -t|user@alpha|', 1)[1].splitlines()[0])
+    assert remote[:2] == ['zsh', '-lic']
+    assert shlex.split(remote[2])[1:] == ['t', 'kill', 'remote-api', 'all', '-y']
+    assert 'rc=0' in text
+
+
+def test_remote_kill_completions_are_repository_first(zsh):
+    result = zsh(HOSTS + '''
+_values() { print -rl -- "$@"; }
+_describe() { print -rl -- "${actions[@]}"; }
+words=(t remote ''); CURRENT=3; _t
+words=(t remote kill ''); CURRENT=4; _t
+words=(t remote kill api ''); CURRENT=5; _t
+words=(t remote kill api 9 --); CURRENT=6; _t
+''')
+    text = output(result)
+    assert 'kill\n' in text and 'repo or slot\n' in text and 'api\n' in text
+    assert 'all\n' in text and '--yes\n' in text
+    assert 'alpha\n' not in text and '--host\n' not in text and '--new\n' not in text

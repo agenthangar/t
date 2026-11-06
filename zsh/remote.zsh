@@ -1293,10 +1293,24 @@ _t_session_move() {
 
 _t_remote() {
   local action=$1; shift
+  if [[ $action == kill ]]; then
+    local force= kill_arg
+    local -a kill_targets
+    for kill_arg in "$@"; do
+      case $kill_arg in
+        -y|--yes) force=1 ;;
+        -*) print -u2 "t remote kill: unknown flag $kill_arg"; return 2 ;;
+        *) kill_targets+=("$kill_arg") ;;
+      esac
+    done
+    (( $#kill_targets <= 2 )) || { print -u2 't remote kill: expected [repo] [slot|all]'; return 2; }
+    _dev_remote_kill "${kill_targets[1]}" "${kill_targets[2]}" "$force"
+    return $?
+  fi
   local host= source= sid= all= pick= remote=${T_MOVE_REMOTE:-1} repo= slot= arg rows row scope= scope_rel= wt_rel= cwd_rel= selected= source_target= target=
   local -a pos flags fields candidates format_args chosen move_args selections displays excluded completed_rows unattempted
   local -A seen
-  case $action in open|resume|move) ;; *) print -u2 't remote: choose open, move, or resume'; return 2 ;; esac
+  case $action in open|resume|move) ;; *) print -u2 't remote: choose open, move, resume, or kill'; return 2 ;; esac
   while (( $# )); do
     arg=$1; shift
     case $arg in
