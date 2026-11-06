@@ -66,7 +66,7 @@ jobs:
             --ci-manifest=artifacts/manifest.json \
             --durations=30 --junitxml=artifacts/junit.xml \
             --cov --cov-report= --cov-fail-under=0
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: shard-${{ matrix.shard }}
@@ -87,7 +87,7 @@ jobs:
           python -m pytest -p scripts.ci_shards --ci-legacy
           --ci-manifest=artifacts/manifest.json
           --durations=30 --junitxml=artifacts/junit.xml
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: fzf-legacy
@@ -110,7 +110,7 @@ jobs:
           path: shards
       - name: Exact-once outcomes and combined 97 percent coverage
         run: python scripts/ci_shards.py combine shards
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: combined
@@ -136,7 +136,7 @@ jobs:
             --ci-manifest=artifacts/manifest.json \
             --durations=30 --junitxml=artifacts/junit.xml \
             --cov --cov-report= --cov-fail-under=0
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: reference
@@ -179,7 +179,7 @@ jobs:
           fzf: ${{ matrix.fzf }}
       # Native windows only on explicitly requested disposable macOS runners.
       - run: python -m pytest --cov --cov-report=term-missing --cov-fail-under=97 --run-macos-ui --durations=30 --junitxml=artifacts/junit.xml
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: macos-${{ matrix.fzf }}
