@@ -1309,7 +1309,9 @@ _t_remote() {
   fi
   local host= source= sid= all= pick= remote=${T_MOVE_REMOTE:-1} repo= slot= arg rows row scope= scope_rel= wt_rel= cwd_rel= selected= source_target= target=
   local -a pos flags fields candidates format_args chosen move_args selections displays excluded completed_rows unattempted
-  local -A seen
+  local -A seen scoped_source_rows
+  local scoped_rows scoped_rc scoped_row scope_verified
+  local -a scoped_fields
   case $action in open|resume|move) ;; *) print -u2 't remote: choose open, move, resume, or kill'; return 2 ;; esac
   while (( $# )); do
     arg=$1; shift
@@ -1451,7 +1453,30 @@ _t_remote() {
       [[ -z $slot || $fields[4] == *-$slot ]] || continue
       if [[ -n $scope ]]; then
         cwd_rel=$(_dev_homerel "$fields[3]")
-        [[ $cwd_rel == $scope_rel || $cwd_rel == $scope_rel/* || ( -n $DEV_WORKTREE_ROOT && $cwd_rel == $wt_rel/* ) ]] || continue
+        if [[ $cwd_rel != $scope_rel && $cwd_rel != $scope_rel/* &&
+              ( -z $DEV_WORKTREE_ROOT || $cwd_rel != $wt_rel/* ) ]]; then
+          [[ $fields[1] != local ]] || continue
+          # Different checkout names/layouts are valid across hosts. Ask the
+          # source registry to prove scope; never trust a matching slot label.
+          if [[ -z ${scoped_source_rows[$fields[1]]+present} ]]; then
+            scoped_rows=$(_t_remote_move_rows "$fields[1]" "$repo"); scoped_rc=$?
+            (( scoped_rc == 0 )) || {
+              print -u2 't session move: repository scope could not be verified; no conversation was moved'
+              return $scoped_rc
+            }
+            scoped_source_rows[$fields[1]]=$scoped_rows
+          fi
+          scope_verified=
+          for scoped_row in "${(@f)scoped_source_rows[$fields[1]]}"; do
+            scoped_fields=("${(@ps:\t:)scoped_row}")
+            if [[ $scoped_fields[1] == "$fields[1]" && $scoped_fields[2] == "$fields[2]" &&
+                  $scoped_fields[3] == "$fields[3]" && $scoped_fields[4] == "$fields[4]" &&
+                  $scoped_fields[5] == "$fields[5]" && $scoped_fields[8] == "$fields[8]" ]]; then
+              scope_verified=1; break
+            fi
+          done
+          [[ -n $scope_verified ]] || continue
+        fi
       fi
       candidates+=("$row")
     done
