@@ -68,7 +68,7 @@ def test_release_installs_without_git_and_preserves_user_settings(sandbox):
     root = release.install(archive, sums, base, home)
     assert root == base / "releases/v1.2.3"
     assert not (root / ".git").exists()
-    assert len([1 for _, dst in release.OWNED_LINKS if (home / dst).is_symlink()]) == 8
+    assert len([1 for _, dst in release.OWNED_LINKS if (home / dst).is_symlink()]) == 9
     assert (home / "bin/t").resolve() == root / "bin/t"
     assert (home / ".zshrc").read_text().startswith("# mine\n# >>> t shell integration >>>")
     assert (home / ".config/t/local.zsh").is_file()

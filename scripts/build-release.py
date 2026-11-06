@@ -12,8 +12,8 @@ import tarfile
 VERSION = re.compile(r"v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\Z")
 EXACT = {
     ".t-install-version", "install.sh", "t.plugin.zsh", "local.zsh.example",
-    "LICENSE", "README.md",
-    "bin/t", "bin/t-session-start", "bin/claude-stamp-tmux", "bin/cursor-beam",
+    "LICENSE", "README.md", "docs/nosleep.md",
+    "bin/t", "bin/nosleep", "bin/t-session-start", "bin/claude-stamp-tmux", "bin/cursor-beam",
     "claude/settings.json.example", "claude/commands/tpush.md",
     "claude/commands/tpop.md", "codex/prompts/tpush.md",
     "codex/prompts/tpop.md", "scripts/install-release.py", "ui/fzf.sh",

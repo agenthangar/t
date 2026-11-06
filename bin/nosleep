@@ -1,0 +1,23 @@
+#!/usr/bin/env python3
+# nosleep — prevent system sleep
+"""Run the standalone sleep monitor without loading user shell startup files."""
+import os
+from pathlib import Path
+import runpy
+import sys
+
+
+def main():
+    source = Path(__file__).resolve().parent.parent
+    select_root = runpy.run_path(str(source / "libexec/t_dev.py"))["select_root"]
+    root = select_root(source, explicit=True)
+    # An older worktree may not yet contain the companion command.
+    if not (root / "zsh/nosleep.zsh").is_file():
+        root = source
+    os.execvp("zsh", ["zsh", "-f", "-c",
+                     'source "$1/zsh/nosleep.zsh" || exit; shift; nosleep "$@"',
+                     "nosleep", str(root), *sys.argv[1:]])
+
+
+if __name__ == "__main__":
+    sys.exit(main())

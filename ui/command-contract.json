@@ -5827,5 +5827,105 @@
     "tests": [
       "tests/test_terminal_titles.py"
     ]
+  },
+  "standalone_commands": {
+    "nosleep": {
+      "patterns": [
+        "action",
+        "detail",
+        "wizard"
+      ],
+      "renderer": "mixed",
+      "scope": "this machine; local CLI and desktop agents, including outside t",
+      "confirmation": "external",
+      "modes": {
+        "default": {
+          "argv": [
+            "nosleep"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "terminal": false,
+          "tests": [
+            "tests/test_nosleep_runtime.py::test_zsh_nosleep_plain_snapshot_shows_sampling_then_idle"
+          ]
+        },
+        "help": {
+          "argv": [
+            "nosleep",
+            "--help"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_nosleep_standalone.py::test_clean_shell_help_and_defaults"
+          ]
+        },
+        "config": {
+          "argv": [
+            "nosleep",
+            "config"
+          ],
+          "patterns": [
+            "wizard"
+          ],
+          "read_only": false,
+          "terminal": true,
+          "tests": [
+            "tests/test_nosleep_config.py::test_tty_requirement_cycle_review_and_save"
+          ]
+        },
+        "show": {
+          "argv": [
+            "nosleep",
+            "config",
+            "--show"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_nosleep_standalone.py::test_clean_shell_help_and_defaults"
+          ]
+        },
+        "edit": {
+          "argv": [
+            "nosleep",
+            "config",
+            "--edit"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "terminal": false,
+          "tests": [
+            "tests/test_nosleep_config.py::test_editor_saves_and_rejects_requirement"
+          ]
+        },
+        "hotspot": {
+          "argv": [
+            "nosleep",
+            "hotspot",
+            "setup"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "terminal": true,
+          "tests": [
+            "tests/test_nosleep_hotspot.py::test_setup_prompts_locally_and_only_enables_after_keychain_success"
+          ]
+        }
+      }
+    }
   }
 }

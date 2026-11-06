@@ -894,6 +894,40 @@ def check_help_style(module, parser, contract):
     return list(dict.fromkeys(errors))
 
 
+def check_standalone_commands(contract, root=ROOT):
+    """Companion executables are inventoried without becoming t parser routes."""
+    entries = contract.get("standalone_commands", {})
+    if set(entries) != {"nosleep"}:
+        return ["standalone inventory must classify nosleep"]
+    errors = []
+    entry = entries["nosleep"]
+    modes = entry.get("modes", {})
+    expected = {"default": ["nosleep"], "help": ["nosleep", "--help"],
+                "config": ["nosleep", "config"], "show": ["nosleep", "config", "--show"],
+                "edit": ["nosleep", "config", "--edit"], "hotspot": ["nosleep", "hotspot", "setup"]}
+    if set(modes) != set(expected):
+        errors.append("nosleep must classify monitoring, help, configuration and hotspot setup")
+    patterns = set()
+    for name, argv in expected.items():
+        mode = modes.get(name, {})
+        if mode.get("argv") != argv or mode.get("read_only") != (name in {"help", "show"}):
+            errors.append(f"nosleep {name} must preserve its argv and read-only contract")
+        if not mode.get("patterns") or not set(mode["patterns"]) <= {"action", "detail", "wizard"}:
+            errors.append(f"nosleep {name} must classify its interaction")
+        patterns.update(mode.get("patterns", []))
+        if not mode.get("tests"):
+            errors.append(f"nosleep {name} needs a behavior test")
+        for reference in mode.get("tests", []):
+            errors.extend(_check_test_reference(reference, root))
+    if set(entry.get("patterns", [])) != patterns:
+        errors.append("nosleep patterns must match its modes")
+    if not (root / "bin/nosleep").is_file():
+        errors.append("nosleep standalone executable is missing")
+    if 'shared["_RailUI"]' not in (root / "libexec/nosleep_config.py").read_text():
+        errors.append("nosleep config must use the shared _RailUI")
+    return errors
+
+
 def main():
     loader = SourceFileLoader("t_cli_lint", str(ROOT / "bin/t"))
     spec = importlib.util.spec_from_loader(loader.name, loader)
@@ -911,6 +945,7 @@ def main():
     else:
         errors.extend(check_command_patterns(module.build_parser(), module.COMMAND_GROUPS, contract))
         errors.extend(check_help_style(module, module.build_parser(), contract))
+        errors.extend(check_standalone_commands(contract))
     errors.extend(check_picker_boundaries())
     for path in (ROOT / "AGENTS.md", ROOT / "CONTRIBUTING.md"):
         if "ui/command-contract.json" not in path.read_text():

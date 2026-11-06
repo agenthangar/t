@@ -24,6 +24,7 @@ VERSION = re.compile(r"v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\
 SHA256 = re.compile(r"([0-9a-fA-F]{64})[ \t]+\*?t\.tar\.gz\Z")
 OWNED_LINKS = (
     ("bin/t", "bin/t"),
+    ("bin/nosleep", "bin/nosleep"),
     ("bin/t-session-start", "bin/t-session-start"),
     ("bin/claude-stamp-tmux", "bin/claude-stamp-tmux"),
     ("bin/cursor-beam", "bin/cursor-beam"),
@@ -34,7 +35,8 @@ OWNED_LINKS = (
 )
 REQUIRED = (
     ".t-install-version", ".t-release-version", "install.sh", "t.plugin.zsh",
-    "local.zsh.example", "bin/t", "bin/claude-stamp-tmux", "bin/cursor-beam",
+    "local.zsh.example", "bin/t", "bin/nosleep", "zsh/nosleep.zsh", "zsh/nosleep-fallback.zsh",
+    "libexec/nosleep_config.py", "libexec/nosleep_hotspot.py", "bin/claude-stamp-tmux", "bin/cursor-beam",
     "LICENSE", "README.md", "ui/fzf.sh",
     "libexec/t_session_details.py", "libexec/t_codex_ownership.py", "libexec/t_recovery.py",
     "libexec/t_resume_source.py", "libexec/t_local_worker.py", "libexec/t_local_setup.py", "libexec/t_local_models.py", "libexec/t_local_inference.py", "libexec/t_offline.py", "libexec/mlx-models.json", "libexec/local-models.json",
@@ -78,7 +80,7 @@ def validate_tree(root, expected_version=None):
     version = (root / ".t-release-version").read_text().strip()
     if not VERSION.fullmatch(version) or (expected_version and version != expected_version):
         raise ValueError("invalid or unexpected t release version")
-    for name in ("install.sh", "bin/t", "bin/claude-stamp-tmux",
+    for name in ("install.sh", "bin/t", "bin/nosleep", "bin/claude-stamp-tmux",
                  "bin/cursor-beam", "scripts/install-release.py"):
         if not os.access(root / name, os.X_OK):
             raise ValueError("release executable is not executable: " + name)
