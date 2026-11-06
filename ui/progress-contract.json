@@ -333,9 +333,13 @@
       "kind": "background",
       "reason": "The monitor launches this bounded worker asynchronously and displays fallback progress; protocol output and credentials must remain private."
     },
-    "libexec/nosleep_hotspot.py:setup:subprocess.run": {
+    "libexec/nosleep_hotspot.py:save_password:subprocess.run": {
       "kind": "passthrough",
       "reason": "The native security command owns the terminal password prompt, bounded to 120 seconds; nosleep never handles or renders the password."
+    },
+    "bin/t:_config_wizard:subprocess.call": {
+      "kind": "passthrough",
+      "reason": "The shared nosleep editor owns the cooked terminal until it returns to the hub."
     },
     "libexec/t_remote.py:run_host:subprocess.run": {
       "kind": "phase",

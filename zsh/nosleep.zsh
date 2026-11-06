@@ -127,7 +127,7 @@ source "$_NOSLEEP_ROOT/zsh/nosleep-fallback.zsh"
 # USAGE
 #   nosleep [flags]
 #   nosleep config [--show | --edit]
-#   nosleep hotspot setup   Save hotspot credentials locally in Keychain
+#   t config                Nosleep settings, nearby networks and Keychain setup
 #
 # ON CLOSE
 #   -d, --display MODE  off | on | dim
@@ -383,6 +383,7 @@ nosleep() {
     (( _NOSLEEP_DONE )) && return 0; _NOSLEEP_DONE=1
     _nosleep_status_clear
     _nosleep_fallback_cancel
+    _nosleep_wifi_cancel
     [[ -n $_NOSLEEP_CAF ]] && kill "$_NOSLEEP_CAF" 2>/dev/null
     # Restore a dimmed panel even when stopping behind a closed lid, then release
     # the display hold. Locking is independent of brightness restoration.
@@ -433,6 +434,8 @@ nosleep() {
   local retry_count=0 retry_delay=$backoff retry_for='' missing online=1 was_online=1 refreshed_at=0
   local failed_agent=0 failed_internet=0 effective_passes=0
   local fallback_outage_at=-1 fallback_started_at=-1 fallback_deadline=0 fallback_done=0
+  local wifi_text='Checking availability…' wifi_next_scan=0 wifi_observed_at=0
+  typeset -g _NOSLEEP_WIFI_PID='' _NOSLEEP_WIFI_DIR=''
   # Presentation tracks observed signals separately from the grace timestamps,
   # which are seeded at startup and reset on reconnect without observing work.
   local busy_now=0 detected_at=0 online_checked_at=0 sleep_held=1 show_snapshot=1 status_shown=0
@@ -500,6 +503,7 @@ nosleep() {
       status_shown=1
     fi
     _nosleep_fallback_tick
+    _nosleep_wifi_tick
     if (( monitoring && now >= next_check )); then
       show_snapshot=1
       checked_at=$now
@@ -740,11 +744,17 @@ _nosleep_status() {
       hotspot_text="Waiting for continuous outage · $REPLY left"
     else
       _nosleep_duration "$hotspot_after"
-      hotspot_text="Ready · after $REPLY offline"
+      hotspot_text="On · after $REPLY offline"
     fi
   fi
   rows+=("  Hotspot   $hotspot_text")
   styles+=("$hotspot_style")
+  if [[ -n $hotspot_ssid ]]; then
+    rows+=("  Network   $hotspot_ssid · $wifi_text")
+  else
+    rows+=('  Network   Not configured')
+  fi
+  styles+=(0)
   if [[ -n $notice_text ]]; then
     rows+=("  Notice    $notice_text")
     styles+=("$notice_style")
