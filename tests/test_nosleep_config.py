@@ -390,7 +390,7 @@ def test_tty_requirement_cancel_and_restore_defaults(isolated):
                            (b"Unsaved changes", b"d")], lines=40)
     assert not path.exists()
     config.write(path, None, config.DEFAULTS | {"requirement": "none"})
-    defaults_index = len(config.LABELS)
+    defaults_index = len(config.LABELS) + 2
     _pty_config(isolated, [(b"Local settings", b"j" * defaults_index + b"\rs"),
                            (b"Review changes", b"y")], lines=40)
     assert json.loads(path.read_text())["requirement"] == "all"
@@ -418,3 +418,143 @@ def test_none_requirement_marks_check_timing_and_hotspot_inactive(isolated):
     assert "Inactive (require none; saved on)" in shown
     assert "timing settings inactive" in shown and "Hotspot   on (inactive)" in shown
     assert "inactive" in config._choice("hotspot_after", values)
+
+
+@pytest.mark.parametrize('columns,lines', [(80, 24), (44, 20), (32, 12)])
+def test_section_spacing_and_finish_remain_navigable(isolated, columns, lines):
+    output = _pty_config(isolated, [(b'Local settings', b'k\r')], columns=columns, lines=lines)
+    assert b'nothing written' in output
+    assert b'ON CLOSE' in output and b'\xe2\x94\x82' in output
+
+
+def test_frame_inserts_nonselectable_breaks_between_sections():
+    from types import SimpleNamespace
+    frames = []
+    rail = object.__new__(config.Rail)
+    rail.ui = SimpleNamespace(rail='  │', section=lambda label: label,
+                              row=lambda label, value, **kw: [label],
+                              frame=lambda *args, **kw: frames.append(args))
+    rail.frame('Settings', [('a', 'First', ''), ('b', 'Second', '')], 1,
+               sections={'a': 'ONE', 'b': 'TWO'})
+    assert frames[0][1] == [('ONE', None), ('First', 0), ('  │', None), ('TWO', None), ('Second', 1)]
+
+
+@pytest.mark.parametrize('finish', ['save', 'cancel', 'failure'])
+def test_new_hotspot_is_selected_and_password_saved_only_after_review(monkeypatch, finish):
+    class Rail:
+        def start(self): pass
+        def stop(self): pass
+        def commit(self, lines): pass
+        def frame(self, *args, **kwargs): pass
+    monkeypatch.setattr(config, 'Rail', Rail)
+    monkeypatch.setattr(config, 'network_picker', lambda ui, current: 'Phone')
+    saved = []
+    def password(ui, ssid):
+        saved.append(ssid)
+        return 'failure' if finish == 'failure' else ''
+    monkeypatch.setattr(config, 'store_password', password)
+    keys = ['j'] * list(config.LABELS).index('hotspot') + ['enter']
+    keys += ['q', 'd'] if finish == 'cancel' else ['s', 'y']
+    if finish == 'failure': keys += ['q', 'd']
+    events = iter(keys)
+    monkeypatch.setattr(config, 'key', lambda: next(events))
+    result = config.menu(config.DEFAULTS)
+    if finish == 'save':
+        assert result['hotspot'] and result['hotspot_ssid'] == 'Phone'
+    else:
+        assert result is None
+    assert saved == ([] if finish == 'cancel' else ['Phone'])
+
+
+def test_network_picker_refresh_manual_and_permission_setup(monkeypatch):
+    from types import SimpleNamespace
+    monkeypatch.syspath_prepend(str(MODULE.parent))
+    import nosleep_wifi
+    observations = []
+    def observe(authorize=False):
+        observations.append(authorize)
+        return {'state': 'ok', 'current': 'Elsewhere', 'networks': [{'ssid': 'Nearby', 'rssi': -40}]}
+    monkeypatch.setattr(nosleep_wifi, 'observe', observe)
+    picks = iter(['refresh', 'authorize', 'manual'])
+    seen = []
+    def pick(title, rows, **kwargs):
+        seen.append(rows)
+        return next(picks)
+    ui = SimpleNamespace(ui=SimpleNamespace(pick=pick), start=lambda: None, stop=lambda: None,
+                         commit=lambda lines: None, prompt_ssid=lambda value: ('Manual', ''))
+    assert config.network_picker(ui, 'Saved') == 'Manual'
+    assert observations == [False, False, True]
+    assert seen[0][0] == ('current', 'Saved')
+    assert ('0', 'Nearby') in seen[0]
+
+
+@pytest.mark.parametrize('selection,expected', [('0', 'Nearby'), ('current', 'Saved'), ('back', 'Saved'), (None, 'Saved')])
+def test_network_picker_select_and_cancel(monkeypatch, selection, expected):
+    from types import SimpleNamespace
+    monkeypatch.syspath_prepend(str(MODULE.parent))
+    import nosleep_wifi
+    monkeypatch.setattr(nosleep_wifi, 'observe', lambda: {'state': 'ok', 'current': 'Nearby',
+                        'networks': [{'ssid': 'Nearby', 'rssi': -30}]})
+    ui = SimpleNamespace(ui=SimpleNamespace(pick=lambda *a, **kw: selection), commit=lambda lines: None)
+    assert config.network_picker(ui, 'Saved') == expected
+
+
+def test_network_picker_handles_invalid_name_and_setup_failure(monkeypatch):
+    from types import SimpleNamespace
+    monkeypatch.syspath_prepend(str(MODULE.parent))
+    import nosleep_wifi
+    def observe(authorize=False):
+        if authorize: raise ValueError('Install command-line tools')
+        return {'state': 'setup', 'current': '', 'networks': []}
+    monkeypatch.setattr(nosleep_wifi, 'observe', observe)
+    keys = iter(['manual', 'authorize', 'back'])
+    messages = []
+    ui = SimpleNamespace(ui=SimpleNamespace(pick=lambda *a, **kw: next(keys)),
+                         commit=lambda lines: messages.extend(lines), start=lambda: None, stop=lambda: None,
+                         prompt_ssid=lambda value: (value, 'Invalid SSID'))
+    assert config.network_picker(ui, '') == ''
+    assert any('Invalid SSID' in line for line in messages)
+    assert any('command-line tools' in line for line in messages)
+
+
+@pytest.mark.parametrize('failure', [False, True])
+def test_password_prompt_restores_terminal_and_reports_failure(monkeypatch, failure):
+    from types import SimpleNamespace
+    monkeypatch.syspath_prepend(str(MODULE.parent))
+    import nosleep_hotspot
+    events = []
+    def save(ssid):
+        assert events[-1] == 'stop'
+        if failure: raise nosleep_hotspot.HotspotError('private data')
+    monkeypatch.setattr(nosleep_hotspot, 'save_password', save)
+    ui = SimpleNamespace(commit=lambda lines: None, stop=lambda: events.append('stop'),
+                         start=lambda: events.append('start'))
+    result = config.store_password(ui, 'Phone')
+    assert bool(result) == failure
+    assert events == ['stop', 'start']
+    assert 'private data' not in result
+
+
+@pytest.mark.parametrize('action', ['hotspot_ssid', 'password', 'discovery'])
+def test_config_hotspot_actions_are_reachable_and_staged(monkeypatch, action):
+    monkeypatch.syspath_prepend(str(MODULE.parent))
+    import nosleep_wifi
+    class Rail:
+        def start(self): pass
+        def stop(self): pass
+        def commit(self, lines): pass
+        def frame(self, *args, **kwargs): pass
+    monkeypatch.setattr(config, 'Rail', Rail)
+    monkeypatch.setattr(config, 'network_picker', lambda ui, current: 'New phone')
+    def observe(authorize=False):
+        assert authorize
+        raise ValueError('Permission setup failed')
+    monkeypatch.setattr(nosleep_wifi, 'observe', observe)
+    names = list(config.LABELS) + ['password', 'discovery']
+    keys = ['j'] * names.index(action) + ['enter', 'q']
+    if action != 'discovery': keys.append('d')
+    events = iter(keys)
+    monkeypatch.setattr(config, 'key', lambda: next(events))
+    values = config.DEFAULTS | {'hotspot_ssid': 'Saved'}
+    assert config.menu(values) is None
+    assert values['hotspot_ssid'] == 'Saved'
