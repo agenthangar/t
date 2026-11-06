@@ -91,7 +91,7 @@ _t_dispatch() {
     [[ -n $shell_verb ]] && shell_args=("${@:3}")
   elif [[ $verb == remote ]]; then
     shell_verb=
-    [[ $action == (open|move|resume) ]] && { shell_verb=remote; shell_args=("${@:2}"); }
+    [[ $action == (open|move|resume|kill) ]] && { shell_verb=remote; shell_args=("${@:2}"); }
   elif [[ $verb == repo ]]; then
     shell_verb=
     case $action in
@@ -678,7 +678,7 @@ _t() {
   fi
   case $group in
     mcp) actions=(status install uninstall) ;;
-    remote) actions=(open move resume) ;;
+    remote) actions=(open move resume kill) ;;
     session) actions=(open list ls close restart push pop resume history cd move read view-plan paste search goal) ;;
     repo) actions=(list ls cd locate create clone add) ;;
     cursor) actions=(list ls resume send) ;;
@@ -778,6 +778,11 @@ _t() {
     esac
   fi
   case "$group/$action" in
+    remote/kill)
+      if [[ ${words[CURRENT]} == -* ]] || (( CURRENT > first + 1 )); then
+        _values 'flag' -y --yes -h --help
+      elif (( CURRENT == first )); then _values 'repo or slot' "${(@f)$(_dev_repo_selectors)}" 1 2 3 4 all
+      else _values 'slot' 1 2 3 4 all; fi ;;
     remote/open|remote/move|remote/resume)
       local remote_legacy= remote_skip= remote_count=0 remote_word
       for remote_word in "${(@)words[first,CURRENT-1]}"; do

@@ -3401,6 +3401,88 @@
         }
       }
     },
+    "remote kill": {
+      "patterns": [
+        "action",
+        "filtered",
+        "multi"
+      ],
+      "renderer": "fzf",
+      "scope": "explicit/inferred repository or all remote repositories; owning hosts discovered",
+      "confirmation": "enter",
+      "tests": [
+        "tests/test_remote_commands.py::test_remote_kill_parser_and_executable_delegate"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "kill"
+          ],
+          "patterns": [
+            "filtered",
+            "multi"
+          ],
+          "read_only": false,
+          "terminal": true,
+          "confirmation": "enter",
+          "tests": [
+            "tests/test_remote_commands.py::test_remote_kill_uses_shared_picker_and_preserves_cancellation"
+          ]
+        },
+        "explicit": {
+          "argv": [
+            "remote",
+            "kill",
+            "api",
+            "9"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "confirmation": "when_interrupting",
+          "tests": [
+            "tests/test_remote_commands.py::test_remote_kill_discovers_owner_and_preserves_confirmation_and_status",
+            "tests/test_remote_commands.py::test_remote_kill_lone_slot_infers_repository"
+          ]
+        },
+        "all": {
+          "argv": [
+            "remote",
+            "kill",
+            "api",
+            "all"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "confirmation": "when_interrupting",
+          "tests": [
+            "tests/test_remote_commands.py::test_remote_kill_all_keeps_remote_alias_and_force"
+          ]
+        },
+        "yes": {
+          "argv": [
+            "remote",
+            "kill",
+            "api",
+            "9",
+            "--yes"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "confirmation": "none",
+          "tests": [
+            "tests/test_remote_commands.py::test_remote_kill_discovers_owner_and_preserves_confirmation_and_status"
+          ]
+        }
+      },
+      "notes": "Repository-first targets reuse session close --remote discovery, shared filtered multi-picker and confirmation safeguards. Preserve saved conversations, worktrees, remote zsh -lic and delegated exit status."
+    },
     "remote move": {
       "patterns": [
         "multi",

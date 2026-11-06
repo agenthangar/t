@@ -11038,7 +11038,7 @@ def cmd_share(cfg, args):
 COMMAND_GROUPS = {
     "mcp": {"status": ("mcp", "status"), "install": ("mcp", "install"), "uninstall": ("mcp", "uninstall")},
     "remote": {"open": ("remote", "open"), "move": ("remote", "move"),
-               "resume": ("remote", "resume")},
+               "resume": ("remote", "resume"), "kill": ("remote", "kill")},
     "issue": {"list": ("issue", "list"), "status": ("issue", "status"),
               "start": ("issue", "start"), "open": ("issue", "open")},
     "session": {
@@ -11086,7 +11086,7 @@ COMMAND_GROUPS = {
 
 GROUP_DESCRIPTIONS = {
     "mcp": "Inspect and manage the sessions MCP server on this machine",
-    "remote": "Open, move, and resume sessions on SSH hosts",
+    "remote": "Open, move, resume, and close sessions on SSH hosts",
     "issue": "List GitHub issues, inspect work, start agents, or open issues in a browser",
     "agentcore": "Submit work to an existing Amazon Bedrock AgentCore runtime",
     "session": "Open, find, and move work sessions",
@@ -11227,7 +11227,7 @@ def _root_help():
 WORK
   session    Open, find, and move work sessions
   move       Alias for session move
-  remote     Open, move, and resume sessions on SSH hosts
+  remote     Open, move, resume, and close sessions on SSH hosts
   issue      List, inspect, work on, and open GitHub issues
   share      Share context between agent conversations
   repo       List and manage repositories
@@ -11501,12 +11501,14 @@ Run `t help issue <verb>` for flags and arguments.
         extra = ("\nTARGETS\n  t remote open [host] [repo] [slot] [--new]\n"
                  "  t remote move [repo] [slot] [--session ID] [--from SOURCE] [--host DEST]\n"
                  "  t remote resume [host] [repo] [slot] [--days N] [--all]\n"
+                 "  t remote kill [repo] [slot|all] [-y|--yes]\n"
                  "\nUse a registered alias, checkout basename or origin name on the selected host.\n"
                  "Infer the repository from the current checkout, or browse all repositories outside one.\n"
                  "Omitted hosts use a picker labeled for opening, starting fresh, resuming, or moving.\n"
                  "Open's chosen host runs the session; --new explicitly starts fresh there.\n"
                  "Resume's host supplies saved history and runs the resumed session.\n"
                  "Move's chosen host is the destination; its picker names the current source host.\n"
+                 "Kill discovers the owning host; its first target is a repository, not a host.\n"
                  "Session resume --host sends locally discovered history there instead.\n"
                  "Move sends directly from source to destination;\n"
                  "the source must be able to SSH and rsync to the destination.\n")
@@ -11527,7 +11529,7 @@ def _command_description(group, action):
     descriptions = {
         "mcp": {"status": "Show client registration and enabled state", "install": "Register missing clients", "uninstall": "Remove t-owned registrations"},
         "remote": {"open": "Open a session on a chosen host", "move": "Move a current conversation between hosts",
-                   "resume": "Resume saved history on a chosen host"},
+                   "resume": "Resume saved history on a chosen host", "kill": "Close sessions on their remote hosts"},
         "issue": {"list": "List repository issues", "status": "Inspect existing issue work",
                   "start": "Continue or start work on issues", "open": "Open issues in your browser"},
         "agentcore": {"invoke": "Submit JSON or continue a runtime session", "stop": "Stop a runtime session"},
@@ -11641,7 +11643,7 @@ class _CommandParser(argparse.ArgumentParser):
     def parse_args(self, args=None, namespace=None):
         if self.prog == "t" and args is not None:
             args = ["config", "--workflows-ui"] if list(args) == ["workflow"] else _canonical_argv(list(args))
-            if len(args) >= 2 and args[0] == "remote" and args[1] in ("open", "resume", "move"):
+            if len(args) >= 2 and args[0] == "remote" and args[1] in ("open", "resume", "move", "kill"):
                 # Optional positionals otherwise stop at an intervening flag in
                 # argparse. Match the shell's flags-anywhere target grammar.
                 options, targets = [], []
@@ -11785,7 +11787,7 @@ def build_parser():
     issue_open.add_argument("target", nargs="*", help="issue numbers, repository and numbers, or GitHub issue URLs")
     issue_open.add_argument("--repo", help="registered repository alias, basename or origin name or GitHub owner/name")
 
-    remote = sub.add_parser("remote", help="open, move, and resume sessions on SSH hosts",
+    remote = sub.add_parser("remote", help="open, move, resume, and close sessions on SSH hosts",
         description="Choose SSH hosts and sessions, or name explicit targets to skip selection.")
     remote_sub = remote.add_subparsers(dest="action", metavar="<verb>")
     p._group_parsers["remote"] = remote
@@ -11864,6 +11866,29 @@ TARGETS
             mode = leaf.add_mutually_exclusive_group()
             mode.add_argument("-d", "--detach", action="store_true", help="leave the destination detached; required without a terminal")
             mode.add_argument("-f", "--fg", action="store_true", help="run in the destination SSH foreground")
+
+    remote_kill = remote_sub.add_parser("kill", help=_command_description("remote", "kill"),
+        usage="%(prog)s [repo] [slot|all] [-y|--yes]",
+        description="Close sessions on their remote hosts, preserving saved conversations and worktrees. "
+            "Use the same discovery and confirmation as t session close --remote. "
+            "The first target is a repository, not a host; discover its owner across registered SSH hosts. "
+            "Infer the current repository when omitted; outside one, select across remote repositories.",
+        help_details="""DETAILS
+
+  A lone slot number or all uses the current repository.
+  Without a slot, select remote sessions with the shared filtered multi-picker.
+  Space/Tab marks rows; Enter confirms the selection. Cancellation returns 130.
+  Explicit live targets require confirmation unless --yes.
+  Remote commands retain zsh -lic and the remote exit status.
+
+EXAMPLES
+  t remote kill api 9
+  t remote kill 9
+  t remote kill api all --yes""")
+    remote_kill.add_argument("repo", nargs="?", help="repository alias, basename, origin name or foreground session")
+    remote_kill.add_argument("slot", nargs="?", help="slot number or all; a lone slot uses the current repository")
+    remote_kill.add_argument("-y", "--yes", action="store_true", help="skip the live-agent confirmation for explicit targets")
+    remote_kill.set_defaults(remote=True)
 
     share = sub.add_parser("share", help="share context with another agent conversation",
         description="Continue your current conversation with Claude, Codex, or Cursor. "
@@ -13441,6 +13466,8 @@ def _main(argv):
     if update_result is not None:
         return update_result
     cfg = Config()
+    if args.verb == "remote" and args.action == "kill":
+        return cmd_kill(cfg, args)
     handler = IMPLEMENTED.get(args.verb)
     if handler:
         return handler(cfg, args)
