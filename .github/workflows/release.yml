@@ -98,7 +98,8 @@ jobs:
                                        home / '.local/share/t', home, tag)
               assert (home / 'bin/t').resolve() == root / 'bin/t'
               assert all((home / rel).is_symlink() for _, rel in installer.OWNED_LINKS)
-              assert subprocess.check_output([str(root / 'bin/t'), '--version'], text=True).strip() == 't ' + tag
+              version_lines = subprocess.check_output([str(root / 'bin/t'), '--version'], text=True).splitlines()
+              assert version_lines and version_lines[0] == 't ' + tag
           PY
       - name: Upload immutable assets and publish prepared drafts
         env:

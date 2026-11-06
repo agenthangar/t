@@ -1578,3 +1578,10 @@ These preferences never bypass required checks. Selecting On PR CI avoids routin
 local test runs. Legacy saved choices remain readable and are converted into
 separate choices only when you edit them. Single-model launch defaults remain a
 separate setting from these instructions to the agent.
+
+## Standalone sleep protection
+
+The `t` package also installs [`nosleep`](docs/nosleep.md), a standalone macOS
+command for keeping the machine awake while work is active. Run `nosleep --help`,
+`nosleep config`, or `nosleep config --show`. It starts only when requested and
+retains existing nosleep settings and hotspot credentials.
