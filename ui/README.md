@@ -360,7 +360,7 @@ of host scope. Session lists always print a read-only table, including in termin
 Session picker and history searches accept full literal phrases, ignoring case. Spaces and letters stay in the query; Tab marks rows. Saved-history search covers all pages and cached metadata. Ctrl-S toggles sorting without requiring terminal Option/Meta configuration; Ctrl-Y cycles sort choices.
 
 The open picker hides attached CLI and loaded desktop sessions by default.
-Ctrl-F toggles filters without leaving the list; Ctrl-X resets filters. Ctrl-T cycles state. Ctrl-G/O/R matches the highlighted row’s agent/host/repo; repeat the shortcut to clear that filter. Ctrl-D matches interface (CLI or desktop) in open and close. Ctrl-S toggles sorting; Ctrl-Y cycles sort choices; Alt-R/G/O/V sorts repo/agent/host/session. Resume also offers Alt-T for newest turn. Turning filters or sorting off preserves their choices. Sorting off restores snapshot order.
+Ctrl-F toggles filters without leaving the list; Ctrl-X resets filters. Ctrl-T cycles state and is highlighted whenever the enabled state filter narrows the view, including the default state. Ctrl-G/O/R matches the highlighted row’s agent/host/repo; repeat the shortcut to clear that filter. Ctrl-D matches interface (CLI or desktop) in open and close. Ctrl-S toggles sorting; Ctrl-Y cycles sort choices; Alt-R/G/O/V sorts repo/agent/host/session. Resume also offers Alt-T for newest turn. Turning filters or sorting off preserves their choices. Sorting off restores snapshot order.
 
 Open also supports Ctrl-P/B/V/E/W for the highlighted row’s progress/model/session/context/task.
 Ctrl-A (off) and Ctrl-L (on) remain compatibility shortcuts.

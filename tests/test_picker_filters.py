@@ -463,6 +463,8 @@ def test_hotkeys_highlight_only_current_states(filters, monkeypatch, platform, w
                           sort=sort, enabled=enabled, hide_merged=hide_merged, color=True)
     active = re.findall(r'\x1b\[1;4;96m(.*?)\x1b\[0m', text)
     assert ('Filters ON' in active) == enabled
+    state_key = theme.key_labels('Ctrl-T', compact=compact)
+    assert any(item.startswith(state_key) for item in active) == enabled
     assert any(item.startswith('Sort:') for item in active)
     assert any(theme.key_labels('Alt-M', compact=compact) in item for item in active) == (enabled and hide_merged)
     plain = re.sub(r'\x1b\[[0-9;]*m', '', text)

@@ -155,6 +155,9 @@ def header(profile, mask, filters, hidden, columns, width, sort='turn', enabled=
                                   if profile != 'resume' or name != 'interface']
     active = [f'{FACETS[name][0]} {FACETS[name][1]}' for name, value in filters.items()
               if enabled and value is not None and name in FACETS]
+    state_active = enabled and mask != (3 if profile == 'kill' else 1)
+    if state_active:
+        active.append('Ctrl-T state')
     if profile == 'resume':
         controls.append('Alt-M merged')
         if enabled and hide_merged:
@@ -165,7 +168,9 @@ def header(profile, mask, filters, hidden, columns, width, sort='turn', enabled=
     if compact:
         summary = key('Ctrl-T ') + summary
     suffix = f' · {hidden} hidden'
-    lines.append(style(clip_columns(summary if enabled else 'Saved filters paused', width - display_width(suffix)) + suffix, 'heading'))
+    summary = clip_columns(summary if enabled else 'Saved filters paused', width - display_width(suffix))
+    lines.append(style(summary, 'active' if compact and state_active else 'heading' if enabled else 'hint')
+                 + style(suffix, 'heading' if enabled else 'hint'))
     if not compact:
         lines += [style('Match highlighted row; repeat key to clear'), '']
     sorts = {name: f'{shortcut} {"turn" if compact and name == "turn" else label}'
