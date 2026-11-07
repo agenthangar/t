@@ -4575,7 +4575,8 @@ def cmd_config(cfg, args):
         try:
             return runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_local_inference.py"))["command"](args)
         except (OSError, ValueError, subprocess.SubprocessError) as exc:
-            die(str(exc))
+            print('t config models: ' + str(exc), file=sys.stderr)
+            return 1
     if getattr(args, "run_action", None):
         return _cmd_workflow_runs(cfg, args)
     if getattr(args, "runner_action", None):
@@ -4951,7 +4952,7 @@ class _RailUI:
 
     def pick(self, label, rows, multi=False, default=0, marked=None,
              values=None, sections=None, accents=None, primary=None, shortcuts=None,
-             on_back=None, back_label=None, empty_choice=None, disabled=None, exclusive_choices=()):
+             on_back=None, back_label=None, empty_choice=None, disabled=None, exclusive_choices=(), context=()):
         """Single/multiple selection on the shared row/frame template.
         Sections and unset-choice spacing are not selectable. An optional
         empty_choice makes that checklist row an exclusive reset selection.
@@ -4971,7 +4972,8 @@ class _RailUI:
         keys += (f" · q/esc {back_label} · ctrl-c cancel" if back_label else " · q back")
         flash = ""
         while True:
-            display = []
+            display = [(f"{self.rail}   {part}", None) for text in context
+                       for part in _wrap_columns(text, max(1, self.cols() - 6))]
             label_width = max((len(text) for key, text in rows if key in values), default=0)
             for n, (key, text) in enumerate(rows):
                 if n == 1 and rows[0][0] == '' and key not in sections:
@@ -12989,7 +12991,8 @@ EXAMPLES
                   "show":"show artifact and benchmark details", "install":"download and verify a local model",
                   "measure":"measure a local model on this machine"}[verb],
             description="User-wide local model catalog. Explicit model selection; no repository inference. "
-                        "Memory fit is estimated. Publisher benchmarks are not local measurements.",
+                        "Memory fit is estimated. Publisher benchmarks are not local measurements." +
+                        (" Install reuses downloaded files and verifies a response at the requested context." if verb == "install" else ""),
             epilog=f"EXAMPLES\n  t config models {verb}" + (" mlx-community/Qwen3.8-27B-8bit" if verb not in ("list", "refresh") else ""))
         leaf.add_argument("--provider", choices=("ollama", "lmstudio"), help="filter or select the local runtime")
         leaf.add_argument("--context", type=int, default=32768, metavar="TOKENS", help="context capacity for fit and inference; default: 32768")

@@ -550,7 +550,11 @@ For local coding delegation, open **t config → Local worker & models** or run
 model, and connect the worker to Codex through MCP. The lead keeps its conversation;
 workers use isolated repository snapshots and return findings, patches, and test
 evidence. `t config local --show` is read-only. See [local workers](docs/local-workers.md)
-for setup, cancellation, limits, and automated setup examples.
+for setup, cancellation, limits, and automated setup examples. In **Workflow →
+Inference & routing → Local model**, downloaded artifacts offer **Verify readiness**
+without downloading them again. Benchmarks and artifact/runtime details have
+separate views. `t config models install MODEL --yes` also reuses completed files
+and verifies inference; downloaded weights alone do not mean Ready.
 
 | Command | Purpose |
 | --- | --- |

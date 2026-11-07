@@ -1322,3 +1322,22 @@ join networks or write configuration. Existing flags, machine-local config paths
 and Keychain identifiers remain compatible. Installation does not grant sudo or
 start monitoring. Runtime monitoring and hotspot joins require macOS; help and
 configuration remain usable elsewhere. Native macOS assertion tests are opt-in.
+
+### Workflow model overview
+
+The existing local-model single-selection mode opens a compact RailUI overview
+with model identity, readiness, file size, memory fit, context and the next action.
+Use shared nonselectable context rows and the shared viewport; keep the focused
+action and footer visible at 80×24, 44×20 and 32×12. Benchmarks and Artifact &
+runtime are separate read-only views; sources/methodology remains accessible.
+Wrap detail text within the rail, including URLs and revisions. Back retains focus.
+
+Downloaded models offer Verify readiness with a review of file reuse and context.
+The explicit action reuses complete files, loads the exact artifact, checks its
+context and response text, releases owned resources and refreshes the overview.
+Use in workflow requires readiness and remains staged; verification is immediate.
+A failed check retains files and shows the runtime error; cancellation invalidates
+old verification evidence. Special memory-mapped artifacts may be checked when
+the publisher's resident estimate and minimum RAM fit; fit remains unknown until
+verified. Runtime guardrails are never bypassed. These extend existing wizard,
+single-selection, detail and install action modes; no new public command.
