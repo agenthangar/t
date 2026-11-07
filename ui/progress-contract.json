@@ -356,6 +356,14 @@
     "libexec/t_remote.py:peer:subprocess.call": {
       "kind": "passthrough",
       "reason": "The validated peer command owns its normal progress and terminal; its output is preserved for the controller."
+    },
+    "libexec/t_local_status.py:tmux:subprocess.run": {
+      "kind": "protocol",
+      "reason": "Bounded ownership and pane metadata probes feed the quiet tmux statusline; no terminal output or picker."
+    },
+    "libexec/t_local_status.py:ancestry:subprocess.run": {
+      "kind": "protocol",
+      "reason": "Bounded ownership and pane metadata probes feed the quiet tmux statusline; no terminal output or picker."
     }
   },
   "shell": [

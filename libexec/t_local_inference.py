@@ -618,7 +618,7 @@ def lead(argv, cwd=None, chosen=None):
     if fit['fit'] is not True:
         raise ValueError(fit['reason'])
     w = helper('t_local_worker')
-    with w['reservation'](), provider_runtime(chosen) as (base, alias, info):
+    with w['reservation'](), helper('t_local_status')['Activity'](chosen['model']) as activity, provider_runtime(chosen) as (base, alias, info):
         home = w['state_root']() / ('lead-' + uuid.uuid4().hex)
         env = w['environment'](home)
         env.update(CODEX_OSS_BASE_URL=base + '/v1')
@@ -654,7 +654,9 @@ def lead(argv, cwd=None, chosen=None):
                   '-c', f'model_context_window={chosen["context_tokens"]}',
                   '-c', f'model_auto_compact_token_limit={int(chosen["context_tokens"]*.75)}']
         print(f"Local only · {chosen['model']} · {chosen['provider']} · revision {info['revision'][:12]}", file=sys.stderr)
-        return subprocess.call([argv[0], *forced, *filtered], env=env)
+        with activity.endpoint(base) as observed:
+            env['CODEX_OSS_BASE_URL'] = observed + '/v1'
+            return subprocess.call([argv[0], *forced, *filtered], env=env)
 
 
 if __name__ == '__main__':
