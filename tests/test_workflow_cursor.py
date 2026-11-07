@@ -54,6 +54,19 @@ def test_unsaved_defaults_do_not_create_rules_or_model_arguments(cursor, repo):
     assert cursor.EXCLUDE not in (repo / '.git/info/exclude').read_text()
 
 
+def test_selected_design_source_reaches_only_workspace_rule(cursor, workflow, repo):
+    document = save_cursor(workflow, repo)
+    selected = workflow.tool_document(document, 'cursor')
+    selected['repositories'][str(repo)]['inline']['behaviors'] = {'design_system': 'repo', 'frontend_enabled': 'disabled'}
+    selected = workflow.select_design_system(selected, str(repo), 'DESIGN.md')
+    document = workflow.with_tool_document(document, 'cursor', selected)
+    path = workflow.config_path()
+    workflow.publish([(path, workflow.snapshot(path), workflow.encode(document))])
+    cursor.prepare(repo)
+    assert 'Selected repository design-system source: "DESIGN.md"' in (repo / cursor.RULE).read_text()
+    assert 'CODEX ONLY' not in (repo / cursor.RULE).read_text()
+
+
 def test_prepare_selects_cursor_model_and_private_instructions(cursor, workflow, repo):
     save_cursor(workflow, repo)
     raw = workflow.config_path().read_bytes()

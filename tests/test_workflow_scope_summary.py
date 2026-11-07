@@ -56,7 +56,7 @@ def test_hub_summary_keeps_tool_catalogues_independent_and_absence_visible(t_mod
     document = workflow.with_tool_document(document, 'claude', claude)
     assert t_mod._workflow_hub_scope_summary(vars(workflow), document, 'claude', ('t', '/code/t')) == (
         'Global: quick (Disabled) · t: Inherit global (Disabled)')
-    assert t_mod._workflow_hub_scope_summary(vars(workflow), document, 'cursor', ('t', '/code/t'), False) == 'Not configured'
+    assert t_mod._workflow_hub_scope_summary(vars(workflow), document, 'cursor', ('t', '/code/t'), False) == 'Default · standard (not activated)'
     assert t_mod._workflow_hub_scope_summary(vars(workflow), document, 'codex', ('t', '/code/t')) == 'Global: standard · t: fast'
 
 
@@ -114,5 +114,5 @@ def test_hub_resolves_context_once_and_only_changes_display(t_mod, workflow, mon
     assert len(reads) == 1 and scopes == ['codex']
     assert len(views) == 2
     assert all(view['codex'] == 'Global: standard · t: fast' for view in views)
-    assert all(view['cursor'] == 'Not configured' for view in views)
+    assert all(view['cursor'] == 'Default · standard (not activated)' for view in views)
     assert document == before

@@ -395,7 +395,7 @@ def test_menu_workflow_save_and_cancel(workflow, t_mod, tmp_path, monkeypatch, c
     monkeypatch.setattr(t_mod, 'zsh_capture', lambda snippet: '')
     cfg = t_mod.Config()
     cfg.repos = {'api': str(tmp_path.resolve() / 'repo')}
-    choices = ['workflow', 'codex', 'defaults', 'back', 'back', 'repos', 'api', 'workflow', 'codex', '__disabled__', 'back', 'back', '__back__']
+    choices = ['workflow', 'codex', 'defaults', 'back', 'back', 'repos', 'api', 'workflow', 'codex', 'workflow', '__disabled__', 'back', 'back', 'back', '__back__']
     choices += ['save'] if save else ['cancel', 'discard']
     ui = Menu(choices)
     monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
@@ -424,8 +424,8 @@ def test_menu_workflow_selector_inherit_and_profile(workflow, t_mod, tmp_path, m
     ui = Menu(['back'])
     t_mod._config_workflow_tool(ui, cfg, 'api')
     assert not t_mod._workflow_pending(cfg)
-    t_mod._config_workflow_tool(Menu(['__disabled__']), cfg, 'api')
-    t_mod._config_workflow_tool(Menu(['']), cfg, 'api')
+    t_mod._config_workflow_tool(Menu(['workflow', '__disabled__', 'back']), cfg, 'api')
+    t_mod._config_workflow_tool(Menu(['workflow', '', 'back']), cfg, 'api')
     assert not cfg._workflow_document['repositories']
     calls = []
     monkeypatch.setattr(t_mod, '_instructions_init', lambda: calls.append('init'))
@@ -776,7 +776,7 @@ def test_workflow_stage_controls_preserve_launch_settings(workflow, t_mod, monke
     assert cfg.models == {'codex': 'launch'} and cfg.efforts == {'codex': 'high'}
     assert discoveries == ['codex', 'codex']
     assert t_mod._workflow_pending(cfg) and not w.config_path().exists()
-    ui = Menu(['name:standard'])
+    ui = Menu(['workflow', 'name:standard', 'back'])
     t_mod._config_workflow_tool(ui, cfg, 'api')
     # Explicit assignment is an override; unchanged stage choices do not turn it into an inline copy.
     assert cfg._workflow_document['repositories'][cfg.repos['api']] == {'workflow': 'standard'}
@@ -834,7 +834,7 @@ def test_repository_menu_resumes_preserved_workflow(workflow, t_mod, monkeypatch
         document = w.action(document, 'use', 'standard', repository)
     cfg._workflow_document = w.action(document, 'exclude', repository=repository)
     selection = '__current__' if source == 'inline' else 'name:standard' if source == 'named' else ''
-    t_mod._config_workflow_tool(Menu([selection]), cfg, 'api')
+    t_mod._config_workflow_tool(Menu(['workflow', selection, 'back']), cfg, 'api')
     assert cfg._workflow_document == document
     assert not w.config_path().exists()
     if source == 'inline':
@@ -1095,7 +1095,7 @@ def test_behavior_menu_narrow_screens(workflow, t_mod, monkeypatch, width, heigh
     cfg = SimpleNamespace(repos={})
     t_mod._workflow_session(cfg)
     # Disable stages, choose automatic PR creation and return through the nested menus.
-    keys = ['j', 'enter', 'space', 'enter', 'j', 'j', 'j', 'j', 'j', 'enter',
+    keys = ['j', 'enter', 'space', 'enter', 'j', 'j', 'j', 'j', 'j', 'j', 'enter',
             'enter', 'j', 'enter', 'j', 'enter', 'q', 'q', 'q']
     ui = make_ui(t_mod, keys, width, height)
     t_mod._workflow_policy_menu(ui, cfg, vars(workflow), name='standard')
