@@ -12,8 +12,8 @@ from t_picker_filters import render
 from t_progress import spinner as _spinner
 from t_session_details import clip_columns
 
-KEYS = ('enter', 'k', 'space', 'tab', 'ctrl-a', 'ctrl-f', 'ctrl-l', 'ctrl-x', 'ctrl-t', 'ctrl-g', 'ctrl-d', 'ctrl-o', 'ctrl-r',
-        'ctrl-p', 'ctrl-b', 'ctrl-v', 'ctrl-e', 'ctrl-w', 'alt-s', 'alt-t', 'alt-r', 'alt-g', 'alt-o', 'alt-v')
+KEYS = ('enter', 'ctrl-k', 'space', 'tab', 'ctrl-a', 'ctrl-f', 'ctrl-l', 'ctrl-x', 'ctrl-t', 'ctrl-g', 'ctrl-d', 'ctrl-o', 'ctrl-r',
+        'ctrl-p', 'ctrl-b', 'ctrl-v', 'ctrl-e', 'ctrl-w', 'ctrl-s', 'ctrl-y', 'alt-s', 'alt-t', 'alt-r', 'alt-g', 'alt-o', 'alt-v')
 HEADER = 'transform-header(cat "$T_PICKER_CURRENT_HEADER")'
 
 

@@ -299,9 +299,9 @@ def test_resume_turn_enrichment_uses_exact_sources_and_never_remote_local_copy(f
 def test_resume_header_retains_sort_controls_and_row_space(filters, width):
     text = filters.header('resume', 0, dict.fromkeys(['agent', 'host', 'repo']), 2, '', width)
     assert all(filters.display_width(line) <= width for line in text.splitlines())
-    for letter in (('T', 'R', 'V') if width <= 36 else ('T', 'R', 'G', 'O', 'V')):
+    for letter in (() if width <= 36 else ('T', 'R', 'G', 'O', 'V')):
         assert ('M-' if width <= 36 else 'Alt-') + letter in text
-    for letter in ('F', 'X', 'G', '/'):
+    for letter in ('F', 'X', 'G', 'S', 'Y', '/'):
         assert ('^' if width <= 36 else 'Ctrl-') + letter in text
     assert ('Sort: turn' if width <= 36 else 'Sort: last turn') in text
     if width <= 36:
@@ -593,3 +593,13 @@ def test_sort_toggle_preserves_choice_and_restores_snapshot_order(filters, tmp_p
     render('match-agent')
     assert render('reset-filters') == sorted_rows
     assert (root / 'sort-enabled').read_text() == '1'
+
+
+def test_next_sort_cycles_available_modes_and_enables_sort(filters, tmp_path):
+    root = snapshot(tmp_path)
+    for expected in ('repo', 'agent', 'host', 'session', 'repo'):
+        filters.render(root, 'open', 'next-sort', 68)
+        assert (root / 'sort').read_text() == expected
+        assert (root / 'sort-enabled').read_text() == '1'
+        filters.render(root, 'open', 'toggle-sort', 68)
+        assert (root / 'sort-enabled').read_text() == '0'

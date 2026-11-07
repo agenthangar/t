@@ -82,8 +82,8 @@ the command name.
 | **List** | Print a scoped, aligned table immediately. Name its scope, label columns, and give a clear empty state. No picker, confirmation, or update prompt. `t issue list` is an example. |
 | **Detail/status** | Print labeled facts without changing state or prompting. Preserve raw text, paths, and streams when the command explicitly exposes them. |
 | **Single selection** | Use a searchable fzf picker or an inline `_RailUI` menu with one visibly focused row. Enter chooses exactly one item; Esc/Ctrl-C cancels. An explicit target bypasses selection. A paginated single picker uses Ctrl-F for the next page, Ctrl-B for the previous page, and Ctrl-R to refresh; those keys belong to pagination rather than the filtered picker's settings control. |
-| **Multi-selection** | Searchable pickers use Space/Tab to mark rows and Enter to accept the marks, or the focused row if none are marked. Inline checklists use Space to toggle and Enter to submit only checked items. Show marks and the Enter action independently of color. |
-| **Filtered selection** | Show active filters and hidden count in the header. Open, resume and close pickers use Ctrl-F to toggle filters, Ctrl-X to reset, and direct shortcuts to match the highlighted row. No nested filter screens. Alt-S toggles sorting. Filtering retains the search and removes hidden marks. Issue pickers retain Ctrl-A show-all and Ctrl-F defaults. Ctrl-/ toggles full details when rows have previews. |
+| **Multi-selection** | Space types into search. Searchable pickers use Tab to mark rows and Enter to accept the marks, or the focused row if none are marked. Inline checklists use Space to toggle and Enter to submit only checked items. Show marks and the Enter action independently of color. |
+| **Filtered selection** | Show active filters and hidden count in the header. Open, resume and close pickers use Ctrl-F to toggle filters, Ctrl-X to reset, and direct shortcuts to match the highlighted row. No nested filter screens. Ctrl-S toggles sorting; Ctrl-Y cycles sort choices. Filtering retains the search and removes hidden marks. Issue pickers retain Ctrl-A show-all and Ctrl-F defaults. Ctrl-/ toggles full details when rows have previews. |
 | **Wizard/review** | Stage choices, then display the resulting changes before applying them. Config saves on Enter; install enters review and then runs on Enter; login runs the selected logins on its first Enter. Setup and repository creation keep their released `y` confirmation. Show the actual action in the footer. |
 | **Direct action/passthrough** | An explicit target acts without a needless picker. Retain ownership and worktree safety checks, confirmation before interrupting live work with an explicit target, and the delegated tool's input/output and exit status. |
 | **Machine output** | Preserve existing JSON, raw-value, and remote wire formats. Do not add presentation chrome, ANSI color, or prompts. The inventory identifies machine-facing modes; this does not imply universal JSON support. |
@@ -340,7 +340,7 @@ dev sessions   ● attached/loaded · ✓ active context · ↻ still in progres
 
   reattach: t open <repo> <slot>
 
-Enter open/Esc · Space/Tab ✓
+Enter open/Esc · Tab ✓
 Ctrl-F filters · Ctrl-A off · Ctrl-L on
 Filters ON: unattached · 2 hidden
   SESSION  WORKING ON
@@ -357,14 +357,16 @@ Session lists (`t ls` / `t session list`) also include remote hosts by default;
 `-l`/`--local` lists only this machine. Repository scope and `--all` are independent
 of host scope. Session lists always print a read-only table, including in terminals.
 
+Session picker and history searches accept full literal phrases, ignoring case. Spaces and letters stay in the query; Tab marks rows. Saved-history search covers all pages and cached metadata. Ctrl-S toggles sorting without requiring terminal Option/Meta configuration; Ctrl-Y cycles sort choices.
+
 The open picker hides attached CLI and loaded desktop sessions by default.
-Ctrl-F toggles filters without leaving the list; Ctrl-X resets filters. Ctrl-T cycles state. Ctrl-G/O/R matches the highlighted row’s agent/host/repo; repeat the shortcut to clear that filter. Ctrl-D matches UI in open and close. Alt-S toggles sorting; Alt-R/G/O/V sorts repo/agent/host/session. Resume also offers Alt-T for newest turn. Turning filters or sorting off preserves their choices. Sorting off restores snapshot order.
+Ctrl-F toggles filters without leaving the list; Ctrl-X resets filters. Ctrl-T cycles state. Ctrl-G/O/R matches the highlighted row’s agent/host/repo; repeat the shortcut to clear that filter. Ctrl-D matches interface (CLI or desktop) in open and close. Ctrl-S toggles sorting; Ctrl-Y cycles sort choices; Alt-R/G/O/V sorts repo/agent/host/session. Resume also offers Alt-T for newest turn. Turning filters or sorting off preserves their choices. Sorting off restores snapshot order.
 
 Open also supports Ctrl-P/B/V/E/W for the highlighted row’s progress/model/session/context/task.
 Ctrl-A (off) and Ctrl-L (on) remain compatibility shortcuts.
 The compatibility --attached flag starts with filtering off and defaults retained.
 There is no new-session shortcut or details preview in open; use `t open --new`.
-Press `k` to kill only the focused session, independently of multi-selection marks.
+Press `Ctrl-K` to kill only the focused session, independently of multi-selection marks.
 The shortcut authorizes that session like Enter in close, retaining ownership
 and desktop safety checks. Keep the picker open and remove only successfully
 closed rows from its cached snapshot, without inventory discovery. Preserve query,
@@ -547,7 +549,7 @@ automatic update prompts.
 `session move` and its `move` alias use the shared multi-selection picker of current
 local CLI owners; `-r`/`--remote` adds registered remote sources. `remote move` is
 a compatibility route with remote sources included. Selection always opens without
-an exact target, including inside an agent. Space/Tab marks sessions; Enter accepts
+an exact target, including inside an agent. Tab marks sessions; Enter accepts
 marks or the focused row. Include attached and detached owners and exclude
 desktop reservations, saved history and unknown IDs. Select sessions first, then
 select one destination; explicitly named destinations skip the second picker.
@@ -579,7 +581,7 @@ and the inferred-repository `t resume 2`) runs `t session history api 2`.
 It uses the shared paginated multi-picker over retained conversation identities,
 including all recorded slot associations. Even one result requires selection;
 cancellation returns 130 without launching. Empty history never creates a session.
-Without a terminal it lists history without launching. Space/Tab marks conversations on the current page; Enter accepts marks or focus.
+Without a terminal it lists history without launching. Tab marks conversations on the current page; Enter accepts marks or focus.
 Search, page changes, and refresh clear marks. Extra selections open in tabs before
 the first attaches. A resume failure exits nonzero without reopening the picker;
 batches stop and report any conversations already resumed.
@@ -699,7 +701,7 @@ association and branch/commit/evidence, all associated PRs and their states,
 incidental mentions labeled separately, and transcript availability. Show it by
 default at 70 or more columns and 22 or more rows, in a bottom preview occupying
 35% of the full-height picker; Ctrl-/ toggles it at every size. Use the shared
-paginated multi-picker: Space/Tab marks exact conversations, Enter accepts marks
+paginated multi-picker: Tab marks exact conversations, Enter accepts marks
 or the focused row, and Esc/Ctrl-C cancels. Marks clear on search, page change,
 or refresh. Slot and revision choices remain single-selection.
 Ctrl-F/Ctrl-B changes pages, and Ctrl-R explicitly refreshes metadata. Search runs
@@ -797,7 +799,7 @@ should be added here with their disposition before becoming a precedent.
 | Read-only issue table ([#108](https://github.com/agenthangar/t/pull/108)) | Apply the list contract. |
 | Open GitHub issues in the browser ([#118](https://github.com/agenthangar/t/issues/118)) | Explicit IDs or URLs act directly; omitted IDs use the shared filtered multi picker. |
 | Noun/verb help, added command groups, and speed submenu ([#101](https://github.com/agenthangar/t/pull/101)) | Retain and classify each mode in the inventory. |
-| Paginated history selection ([#113](https://github.com/agenthangar/t/pull/113)) | Treat as multi-selection with Space/Tab marks, Ctrl-F next, Ctrl-B previous, and Ctrl-R refresh; do not apply the filtered picker's Ctrl-F defaults binding. |
+| Paginated history selection ([#113](https://github.com/agenthangar/t/pull/113)) | Treat as multi-selection with Tab marks, Ctrl-F next, Ctrl-B previous, and Ctrl-R refresh; do not apply the filtered picker's Ctrl-F defaults binding. |
 | Conversation context sharing ([#112](https://github.com/agenthangar/t/pull/112), [#122](https://github.com/agenthangar/t/issues/122)) | Bare `t share` in a terminal is a source, recipient, context, and launch review wizard; after review it enters the new session. A known source and agent-only `--to` can launch without a terminal and leave the new session detached; `--json` returns the result without prompting or entering. An exact destination with `--file` still sends directly. `targets` and `inbox` are read-only lists; `read` is detail or raw attachment output. Cancellation leaves sessions and inboxes untouched. |
 
 ## Verification

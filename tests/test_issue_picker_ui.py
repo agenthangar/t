@@ -75,7 +75,7 @@ def picker(tmp_path, *, ids="42", actions=(), cancel=False, legacy=False, all_la
     cmd = [
         "sh", "-c",
         '. "$1"; _t_fzf_filtered "$2" "$3" start "Open issues" "$4" ""',
-        "sh", str(PICKER), default, all_rows, "Space/Tab mark issues to start",
+        "sh", str(PICKER), default, all_rows, "Tab mark issues to start",
     ]
     return subprocess.run(cmd, env=env, capture_output=True, text=True, check=False)
 
@@ -88,13 +88,13 @@ def test_issue_picker_uses_shared_multiselect_and_preserves_full_rows(tmp_path):
     assert "--multi" in args
     assert "--id-nth=1,2,3" in args
     assert "--with-nth=-1" in args
-    assert "enter:accept,esc:abort,ctrl-c:abort,space:toggle+down,tab:toggle+down" in args
+    assert "enter:accept,esc:abort,ctrl-c:abort,space:put,tab:toggle+down" in args
     assert "ctrl-/:toggle-preview" in args
     assert 'ctrl-a:execute-silent(sh "$T_PICKER_TOGGLE" all)+reload-sync(cat "$T_PICKER_CURRENT")' in args
     assert 'ctrl-f:execute-silent(sh "$T_PICKER_TOGGLE" default)+reload-sync(cat "$T_PICKER_CURRENT")' in args
     assert 'transform-header(cat "$T_PICKER_CURRENT_HEADER")' in args
     assert "--preview-window=hidden:wrap:down:40%" in args
-    assert key_labels("Enter start · Esc · Space/Tab mark ✓ · Ctrl-/ details") in (tmp_path / "default-header").read_text()
+    assert key_labels("Enter start · Esc · Tab mark ✓ · Ctrl-/ details") in (tmp_path / "default-header").read_text()
     assert key_labels("Open issues · Ctrl-A show all · Ctrl-F defaults · 1 hidden") in (tmp_path / "default-header").read_text()
     assert key_labels("All issues · Ctrl-A show all · Ctrl-F defaults") in (tmp_path / "all-header").read_text()
     assert list(tmp_path.glob("t-picker.*")) == []

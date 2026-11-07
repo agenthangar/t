@@ -2639,8 +2639,8 @@ def test_open_local_multi_picker(zsh, tmp_path, tabs):
     assert "attach-session -t =dev-api-2:" in calls
     assert "new-session" not in calls and "dev-web-3" not in calls
     args = semantic_chrome(log.read_text())
-    assert "--multi" in args and "space:toggle+down" in args
-    assert "Enter open/Esc · Space/Tab✓ · k kill" in args
+    assert "--multi" in args and "space:put" in args
+    assert "Enter open/Esc · Tab✓ · Ctrl-K kill" in args
     for control in ("Ctrl-F toggle", "Ctrl-X reset", "Ctrl-G agent"):
         assert control in args
     assert "Filters ON" in args and "unattached" in args

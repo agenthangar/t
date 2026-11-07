@@ -353,20 +353,20 @@ and metadata loading. Open/close session scans, session lists, history, and issu
 commands also report discovery stages. Redirected output and JSON remain quiet.
 
 `t open`, `t resume`, and `t kill` share the Air picker design:
-**Space/Tab marks ✓ and Enter acts on the selection**. A plain green checkmark
+**Tab marks ✓ and Enter acts on the selection**. A plain green checkmark
 stays readable in its own gutter beside the pointer on the dark cyan focused row.
 All searchable pickers and inline menus share cyan headings, muted hints and
 spacing that adapts to terminal width and height. macOS shows native key labels
 such as `⌃F`, `⌥T`, `↩ Return`, `⎋ Esc` and `⇥ Tab`; other systems show Ctrl-F,
 Alt-T, Enter, Esc and Tab. The shortcuts below work on both.
-In `t open`, press **k** to kill only the focused session, independently of
+In `t open`, press **Ctrl-K** to kill only the focused session, independently of
 marks. This confirms that session and retains close safety checks. For example,
-run `t open --attached`, focus a session, and press **k**.
+run `t open --attached`, focus a session, and press **Ctrl-K**.
 The picker stays open and removes the closed row without rediscovering sessions.
 Search, filters, and marks on other rows are preserved; failed or canceled closes
 leave the row available.
-The open picker reserves **k** as an action key rather than query text.
-Ctrl-F toggles filters without leaving the list; Ctrl-X resets filters. Ctrl-T cycles state. Ctrl-G/O/R matches the highlighted row’s agent/host/repo; repeat the shortcut to clear that filter. Ctrl-D matches UI in open and close. Alt-S toggles sorting; Alt-R/G/O/V sorts repo/agent/host/session. Resume also offers Alt-T for newest turn. Turning filters or sorting off preserves their choices. Sorting off restores snapshot order.
+Type full phrases to search, including spaces and the letter k. Tab marks rows; Ctrl-K closes the focused session. Session searches match literal phrases, ignoring case.
+Ctrl-F toggles filters without leaving the list; Ctrl-X resets filters. Ctrl-T cycles state. Ctrl-G/O/R matches the highlighted row’s agent/host/repo; repeat the shortcut to clear that filter. Ctrl-D matches interface (CLI or desktop) in open and close. Ctrl-S toggles sorting; Ctrl-Y cycles sort choices; Alt-R/G/O/V sorts repo/agent/host/session. Resume also offers Alt-T for newest turn. Turning filters or sorting off preserves their choices. Sorting off restores snapshot order.
 
 The header highlights active filters and sorting, with explicit ON/OFF text.
 Mac shortcuts use ⌃ and ⌥; other systems show Ctrl and Alt.
@@ -403,7 +403,7 @@ and `t open --attached` start with all rows; Ctrl-F restores their defaults.
 
 CLI opens use this terminal for the first selection and new tabs for the rest,
 with attach commands when tabs are unavailable; desktop selections open in the
-app. `--fg` opens one session. In `t kill`, mark sessions with Space/Tab and
+app. `--fg` opens one session. In `t kill`, mark sessions with Tab and
 press Enter to confirm and close the whole selection without further prompts.
 Explicit targets still confirm live-agent interruption unless `-y` is supplied.
 Desktop ownership checks apply in both cases.
@@ -516,7 +516,7 @@ then Save changes. SSH targets and default-host references are preserved.
 First-run onboarding also generates unique short names for selected hosts.
 
 `t session move` (also `t move`) opens a multi-selection picker of current local
-Claude and Codex CLI conversations, then a destination host picker. Space/Tab
+Claude and Codex CLI conversations, then a destination host picker. Tab
 marks sessions; Enter moves the marks or the focused session. Use `-r`/`--remote`
 to include registered remote sources, `--all` to browse every repository, or name
 `api` to scope selection. The current checkout scopes the default view; outside
@@ -541,7 +541,7 @@ t remote open mini api 2        # attach to this slot on mini
 t remote open mini api --new    # start fresh on mini
 t remote resume mini api        # choose saved history discovered on mini
 t remote resume mini --all       # all repositories, regardless of remote login directory
-t resume t 11                          # mark conversations with Space/Tab, then Enter
+t resume t 11                          # mark conversations with Tab, then Enter
 t session resume --all                  # local and remote-only repositories; clone only after selection
 t session move -r                      # choose current sessions, then their destination
 t session move api 2 -r                # discover the source, then choose its destination

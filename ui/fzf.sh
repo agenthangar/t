@@ -106,9 +106,9 @@ _t_fzf_multi() (
   _t_fzf_action=$1 _t_fzf_legend=$2
   shift 2
   _t_fzf_content_options "$@" || return $?
-  _t_multi_header="Enter $_t_fzf_action · Esc · Space/Tab mark ✓
+  _t_multi_header="Enter $_t_fzf_action · Esc · Tab mark ✓
 ${_t_fzf_legend}"
-  _t_fzf --multi --bind='enter:accept,esc:abort,ctrl-c:abort,space:toggle+down,tab:toggle+down,shift-tab:up' \
+  _t_fzf --multi --bind='enter:accept,esc:abort,ctrl-c:abort,space:put,tab:toggle+down,shift-tab:up' \
     --header="$(printf '%s\n' "$_t_multi_header" | _t_fzf_chrome "$_t_fzf_action")" "$@"
 )
 
@@ -140,9 +140,9 @@ Ctrl-/ details'
   _t_paged_keys='tab:down,shift-tab:up'
   if [ "${7:-}" = multi ]; then
     _t_paged_cardinality=--multi
-    _t_paged_keys='space:toggle,tab:toggle+down,shift-tab:toggle+up'
+    _t_paged_keys='space:put,tab:toggle+down,shift-tab:toggle+up'
     T_PICKER_PAGED_CONTROLS="$T_PICKER_PAGED_CONTROLS
-Space/Tab mark · page/search clears marks"
+Tab mark · page/search clears marks"
   fi
   _t_paged_preview_window='hidden:wrap:down:40%:~1'
   _t_paged_margin='1,2' _t_paged_info=default
@@ -232,11 +232,11 @@ _t_fzf_filtered() (
   [ -z "$_t_picker_default" ] || printf '%s\n' "$_t_picker_default" > "$T_PICKER_DEFAULT"
   [ -z "$_t_picker_all" ] || printf '%s\n' "$_t_picker_all" > "$T_PICKER_ALL"
   _t_picker_hidden=$(( $(wc -l < "$T_PICKER_ALL") - $(wc -l < "$T_PICKER_DEFAULT") ))
-  _t_picker_controls="Enter $_t_picker_action · Esc · Space/Tab mark ✓"
+  _t_picker_controls="Enter $_t_picker_action · Esc · Tab mark ✓"
   _t_picker_preview_bind=,ctrl-/:toggle-preview
   if [ "${T_PICKER_SESSION_FILTERS:-}" = open ]; then
-    _t_picker_preview_bind=,ctrl-/:ignore,alt-n:ignore
-    _t_picker_controls="Enter open · k kill · Esc · Space/Tab mark ✓"
+    _t_picker_preview_bind=,ctrl-/:ignore,alt-n:ignore,k:put
+    _t_picker_controls="Enter open · Ctrl-K kill · Esc · Tab mark ✓"
     set -- --preview= "$@"
   else
     _t_picker_controls="$_t_picker_controls · Ctrl-/ details"
@@ -250,10 +250,10 @@ _t_fzf_filtered() (
     _t_picker_legend=
     _t_picker_margin=0,1
     _t_picker_controls="Enter $_t_picker_action · Esc
-Space/Tab mark ✓"
+Tab mark ✓"
     [ "${T_PICKER_SESSION_FILTERS:-}" = open ] || _t_picker_controls="$_t_picker_controls · Ctrl-/ details"
-    [ "${T_PICKER_SESSION_FILTERS:-}" != open ] || _t_picker_controls="Enter/k kill/Esc
-Space/Tab mark ✓"
+    [ "${T_PICKER_SESSION_FILTERS:-}" != open ] || _t_picker_controls="Enter/Ctrl-K kill/Esc
+Tab mark ✓"
     set -- --height=100% "$@"
   fi
   printf '%s\n%s\n' "$_t_picker_controls" \
@@ -417,7 +417,7 @@ SH
   fi
   if [ -n "${T_PICKER_FILTER_HELPER:-}" ]; then
     _t_picker_bind=
-    _t_picker_specs='ctrl-a:off ctrl-l:on ctrl-f:toggle-filters ctrl-x:reset-filters ctrl-t:state ctrl-g:match-agent ctrl-o:match-host ctrl-r:match-repo alt-s:toggle-sort'
+    _t_picker_specs='ctrl-a:off ctrl-l:on ctrl-f:toggle-filters ctrl-x:reset-filters ctrl-t:state ctrl-g:match-agent ctrl-o:match-host ctrl-r:match-repo ctrl-s:toggle-sort ctrl-y:next-sort alt-s:toggle-sort'
     if [ "$T_PICKER_SESSION_FILTERS" != resume ]; then
       _t_picker_specs="$_t_picker_specs ctrl-d:match-interface"
     fi
@@ -457,13 +457,13 @@ SH
     export FZF_API_KEY
     FZF_API_KEY=$(python3 -c 'import secrets; print(secrets.token_hex(32))')
     # shellcheck disable=SC2016
-    set -- --listen=127.0.0.1:0 --bind='start:unbind(change),change:transform-query(cat "$T_PICKER_VIEWS/action-query-locked"),k:rebind(change)+unbind(enter)+unbind(k)+unbind(space)+unbind(tab)+unbind(ctrl-a)+unbind(ctrl-f)+unbind(ctrl-l)+unbind(ctrl-x)+unbind(ctrl-t)+unbind(ctrl-g)+unbind(ctrl-d)+unbind(ctrl-o)+unbind(ctrl-r)+unbind(ctrl-p)+unbind(ctrl-b)+unbind(ctrl-v)+unbind(ctrl-e)+unbind(ctrl-w)+unbind(alt-s)+unbind(alt-t)+unbind(alt-r)+unbind(alt-g)+unbind(alt-o)+unbind(alt-v)+execute(python3 "$T_HOME/libexec/t_picker_close.py" close {} {q})' "$@"
+    set -- --listen=127.0.0.1:0 --bind='start:unbind(change),change:transform-query(cat "$T_PICKER_VIEWS/action-query-locked"),ctrl-k:rebind(change)+unbind(enter)+unbind(ctrl-k)+unbind(space)+unbind(tab)+unbind(ctrl-a)+unbind(ctrl-f)+unbind(ctrl-l)+unbind(ctrl-x)+unbind(ctrl-t)+unbind(ctrl-g)+unbind(ctrl-d)+unbind(ctrl-o)+unbind(ctrl-r)+unbind(ctrl-p)+unbind(ctrl-b)+unbind(ctrl-v)+unbind(ctrl-e)+unbind(ctrl-w)+unbind(ctrl-s)+unbind(ctrl-y)+unbind(alt-s)+unbind(alt-t)+unbind(alt-r)+unbind(alt-g)+unbind(alt-o)+unbind(alt-v)+execute(python3 "$T_HOME/libexec/t_picker_close.py" close {} {q})' "$@"
   fi
   if [ "${T_PICKER_HEADER_HEIGHT:-24}" -le 14 ]; then
     case ${T_PICKER_SESSION_FILTERS:-} in open|resume|kill|list) set -- --info=inline "$@" ;; esac
   fi
-  _t_fzf --height=100% --multi --no-hscroll --margin="$_t_picker_margin" --delimiter="$(printf '\t')" --with-nth=-1 \
-    --bind="enter:accept,esc:abort,ctrl-c:abort,space:toggle+down,tab:toggle+down,shift-tab:up${_t_picker_preview_bind}" \
+  _t_fzf --height=100% --multi --no-hscroll --exact --no-extended --ignore-case --margin="$_t_picker_margin" --delimiter="$(printf '\t')" --with-nth=-1 \
+    --bind="enter:accept,esc:abort,ctrl-c:abort,space:put,tab:toggle+down,shift-tab:up${_t_picker_preview_bind}" \
     --bind="$_t_picker_bind" \
     --preview='printf "%s\n" {-1}' --preview-window='hidden:wrap:down:40%' \
     --header="$(cat "$_t_picker_header")" "$@" < "$T_PICKER_CURRENT" > "$_t_picker_dir/result"

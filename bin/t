@@ -11897,8 +11897,8 @@ TARGETS
   %(prog)s --codex --new        Start Codex directly
 
 SELECTION
-  Space/Tab check; Enter open; k kill. Ctrl-F toggles filters.
-  Ctrl-G/O/R matches row agent/host/repo; repeat to clear. Alt-S toggles sorting.
+  Tab check; Enter open; Ctrl-K kill. Ctrl-F toggles filters.
+  Ctrl-G/O/R matches row agent/host/repo; repeat to clear. Ctrl-S toggles sorting; Ctrl-Y cycles sort choices.
 
 DESKTOP TO CLI
   %(prog)s api 2 --cli
@@ -11916,9 +11916,9 @@ DESKTOP TO CLI
   even from a worktree. --local limits browsing to this machine.
   t open <repo> filters. Attached CLI and loaded desktop rows are hidden;
   Ctrl-F toggles filters in place; Ctrl-X resets them; Ctrl-T cycles state.
-  Ctrl-G/D/O/R matches the highlighted row's agent/UI/host/repo; repeat to clear.
+  Ctrl-G/D/O/R matches the highlighted row's agent/interface/host/repo; repeat to clear.
   Ctrl-P/B/V/E/W matches progress/model/session/context/task. No filter pop-ups.
-  Alt-S toggles sorting; Alt-R/G/O/V sorts by repo/agent/host/session.
+  Ctrl-S toggles sorting; Ctrl-Y cycles sort choices; Alt-R/G/O/V sorts by repo/agent/host/session.
   Turning filters or sorting off preserves their choices. Search stays in place.
   Headers use native Mac labels, or Ctrl and Alt elsewhere.
   Status: ● attached/loaded; ○ unattached/unloaded; ✓ loaded context.
@@ -11928,7 +11928,7 @@ DESKTOP TO CLI
   Explicit slots still open directly. Compact resume-style rows retain agent,
   UI, status, model, session and task details, including idle/desktop rows.
   Column headers stay visible; narrow rows prioritize host/session and task.
-  Space/Tab marks ✓ independently of focus; Enter opens marked rows.
+  Tab marks ✓ independently of focus; Enter opens marked rows.
   Press k to kill only the focused row, ignoring marks, with close safety checks.
   Killing removes that row in place; the picker, search, filters and other marks stay.
   Failed or canceled closes keep the row. No session inventory refresh is performed.
@@ -12092,7 +12092,7 @@ EXPLICIT PUSH AND PULL
 
     sp = sub.add_parser("kill", help="tear down a session",
         description='Close sessions while preserving saved conversations and worktrees. With no target, select across '
-            'local repositories; Space/Tab marks rows and Enter confirms the selection. An explicit live '
+            'local repositories; Tab marks rows and Enter confirms the selection. An explicit live '
             'target requires confirmation unless --yes. Desktop writers must release ownership first. Pending '
             'work and attached sessions are initially hidden; use picker filters to show them.',
         help_details="""DETAILS
@@ -12116,15 +12116,15 @@ EXPLICIT PUSH AND PULL
   Bare `t kill` picks across all local sessions; `t kill <repo>` filters to that
   repo.
 
-  Space/Tab marks multiple rows and Enter confirms and closes the selection without
+  Tab marks multiple rows and Enter confirms and closes the selection without
   further prompts; desktop ownership checks still apply.
 
   Initially shows only unattached sessions with clean, merged work; pending or
   uncertain work stays hidden.
 
   Ctrl-F toggles filters in place; Ctrl-X resets them; Ctrl-T cycles state.
-  Ctrl-G/D/O/R matches the highlighted row's agent/UI/host/repo; repeat to clear.
-  Alt-S toggles sorting; Alt-R/G/O/V sorts repo/agent/host/session.
+  Ctrl-G/D/O/R matches the highlighted row's agent/interface/host/repo; repeat to clear.
+  Ctrl-S toggles sorting; Ctrl-Y cycles sort choices; Alt-R/G/O/V sorts repo/agent/host/session.
   Filter and sort choices are retained while off. Search stays in place.""")
     sp.add_argument("repo", nargs="?", help="repository alias, basename, origin name or foreground session; default: pick across local repos")
     sp.add_argument("slot", nargs="?", help="slot number; a lone slot implies the cwd repo")
@@ -12176,7 +12176,7 @@ EXPLICIT PUSH AND PULL
 
     sp = sub.add_parser("history", help="browse every conversation associated with a slot",
         description='Browse every conversation associated with a slot. Infer the current repository and slot, or '
-            'choose a slot interactively. Space/Tab marks conversations; Enter resumes the selection. '
+            'choose a slot interactively. Tab marks conversations; Enter resumes the selection. '
             'Ctrl-F/B changes page, Ctrl-R refreshes metadata, and Ctrl-/ shows details. Without a terminal, '
             'list only. History never automatically resumes a sole result.',
         help_details="""DETAILS
@@ -12207,7 +12207,7 @@ EXPLICIT PUSH AND PULL
   Resume errors exit nonzero without reopening the picker; batches stop and
   report already-resumed conversations.
 
-  Space/Tab marks conversations; Enter resumes marks or focus. Ctrl-F/B change page, Ctrl-R refreshes
+  Tab marks conversations; Enter resumes marks or focus. Ctrl-F/B change page, Ctrl-R refreshes
   remote metadata, Ctrl-/ shows details, and Escape cancels.
 
   Without a terminal this command lists only.
@@ -12223,7 +12223,7 @@ EXPLICIT PUSH AND PULL
 
     sp = sub.add_parser("resume", help="select and resume saved conversations",
         description='Resume saved conversations. A plain slot target opens conversation history. Infer the current repository; '
-            'outside one, browse local and remote repositories. Enter selects; Space/Tab marks several. Live selections '
+            'outside one, browse local and remote repositories. Enter selects; Tab marks several. Live selections '
             'attach to their owner. Repositories are cloned only after selection. Cross-host defaults: Claude uses t; Codex uses native '
             'desktop Hand off. Choose the mechanism in t config.',
 
@@ -12262,14 +12262,14 @@ EXPLICIT PUSH AND PULL
   gh auth login --hostname github.com on that host, then retry.
 
   A plain slot target runs `t session history REPO SLOT`: select exact
-  conversations with Space/Tab, then Enter, even with only one result. Ctrl-F/B pages, Ctrl-R refreshes,
+  conversations with Tab, then Enter, even with only one result. Ctrl-F/B pages, Ctrl-R refreshes,
   and Ctrl-/ shows details. Without a terminal, history lists without launching.
   Explicit options use the resume picker below and retain their mode semantics.
   Without a slot, one inactive candidate is taken if no live rows are excluded.
   With explicit options, a slot without a terminal takes its newest saved chat.
 
 PICKER CONTROLS
-  The picker MULTI-SELECTS: Space/Tab marks rows with a ✓.
+  The picker MULTI-SELECTS: Tab marks rows with a ✓.
   Ctrl-F toggles filters in place; Ctrl-X resets them; Ctrl-T cycles live state.
   Ctrl-G/O/R matches the highlighted row's agent/host/repo; repeat to clear.
   Filtering keeps your search. No filter pop-ups.
@@ -12280,7 +12280,7 @@ PICKER CONTROLS
   Alt-T sorts by last turn (newest first, the default), Alt-R by repository, Alt-G
   by agent, Alt-O by host/origin, and Alt-V by session.
 
-  Alt-S toggles sorting, retaining the chosen sort while off.
+  Ctrl-S toggles sorting, retaining the chosen sort while off.
   Text sorts ascend, with newest turn breaking ties. Filters, reset and
   on/off preserve sorting. Ctrl-/ shows full row details.
 
@@ -12396,7 +12396,7 @@ REQUIREMENTS AND DISCOVERY
   reservations.
 
   Selection also opens inside an agent; --pick forces it for explicit slots.
-  Space/Tab marks sessions; Enter accepts marks or the focused row.
+  Tab marks sessions; Enter accepts marks or the focused row.
   Batches run sequentially with detached destinations and stop at the first failure
   or cancellation. Completed, failed and unattempted counts are reported.
   All selected identities are rechecked after both selections before any move.

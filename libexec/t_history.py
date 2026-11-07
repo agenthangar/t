@@ -486,8 +486,17 @@ def transcript(path, agent, previous=None, *, metadata_only=False):
 def page_rows(rows, query='', limit=50, page=1):
     if limit < 1 or page < 1:
         raise HistoryError('--limit and --page must be positive integers')
-    terms = clean(query).casefold().split()
-    matches = [row for row in rows if all(term in json.dumps(row, ensure_ascii=False).casefold() for term in terms)]
+    phrase = clean(query).casefold()
+    def values(value):
+        if isinstance(value, dict):
+            for item in value.values():
+                yield from values(item)
+        elif isinstance(value, (list, tuple)):
+            for item in value:
+                yield from values(item)
+        else:
+            yield str(value).casefold()
+    matches = [row for row in rows if not phrase or any(phrase in text for text in values(row))]
     matches.sort(key=lambda row: (-row.get('updated', 0), row['agent'], row['sid']))
     return matches[(page - 1) * limit:page * limit], len(matches)
 

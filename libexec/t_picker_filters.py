@@ -10,11 +10,11 @@ import sys
 from t_session_details import clip_columns, display_width, enrich, format_last_turn
 from t_picker_theme import key_labels, paint
 
-FACETS = {'agent': ('Ctrl-G', 'agent'), 'interface': ('Ctrl-D', 'UI'),
+FACETS = {'agent': ('Ctrl-G', 'agent'), 'interface': ('Ctrl-D', 'interface'),
           'host': ('Ctrl-O', 'host'), 'repo': ('Ctrl-R', 'repo')}
 
 OPEN_FACETS = {'agent': ('Ctrl-G', 'agent'), 'progress': ('Ctrl-P', 'progress'),
-               'interface': ('Ctrl-D', 'UI'), 'model': ('Ctrl-B', 'model'),
+               'interface': ('Ctrl-D', 'interface'), 'model': ('Ctrl-B', 'model'),
                'host': ('Ctrl-O', 'host'), 'repo': ('Ctrl-R', 'repo'),
                'session': ('Ctrl-V', 'session'), 'context': ('Ctrl-E', 'context'),
                'task': ('Ctrl-W', 'task')}
@@ -147,7 +147,7 @@ def header(profile, mask, filters, hidden, columns, width, sort='turn', enabled=
         return [' · '.join(style(part, 'active' if part in active else 'action') for part in line.split(' · '))
                 for line in pack([key(part) for part in parts], width)]
     lines = [] if compact else [style('HOTKEYS', 'heading')]
-    lines += keys(['Enter/Esc' if compact else f'Enter {profile}/Esc', 'Space/Tab✓', 'k kill' if profile == 'open' else 'Ctrl-/'])
+    lines += keys(['Enter/Esc' if compact else f'Enter {profile}/Esc', 'Tab✓', 'Ctrl-K kill' if profile == 'open' else 'Ctrl-/'])
     if not compact:
         lines += ['']
     lines += keys(['Filters ' + ('ON' if enabled else 'OFF'), 'Ctrl-F' if compact else 'Ctrl-F toggle', 'Ctrl-X reset'], ['Filters ON'] if enabled else [])
@@ -171,8 +171,9 @@ def header(profile, mask, filters, hidden, columns, width, sort='turn', enabled=
     sorts = {name: f'{shortcut} {"turn" if compact and name == "turn" else label}'
              for name, (shortcut, label) in RESUME_SORTS.items() if (profile == 'resume' or name != 'turn') and (not compact or name in ('turn', 'repo', 'session'))}
     label = ('turn' if compact and sort == 'turn' else RESUME_SORTS[sort][1]) if sort_enabled else 'OFF'
-    lines += keys(['Sort: ' + label, 'Alt-S toggle'], ['Sort: ' + label] if sort_enabled else [])
-    lines += keys(list(sorts.values()), [sorts[sort]] if sort_enabled and sort in sorts else [])
+    lines += keys(['Sort: ' + label, 'Ctrl-S toggle'], ['Sort: ' + label] if sort_enabled else [])
+    lines += keys((['Ctrl-Y next'] if compact else ['Ctrl-Y next'] + list(sorts.values())),
+                  [sorts[sort]] if sort_enabled and sort in sorts and not compact else [])
     if not compact:
         lines += ['']
     if columns:
@@ -184,7 +185,7 @@ def list_header(filters, hidden, columns, width, sort, color=False):
     compact = width <= 40 or int(os.environ.get('T_PICKER_HEADER_HEIGHT') or '24') <= 14
     key = lambda text: key_labels(text, compact=compact)
     style = lambda text, role='hint': paint(text, role) if color else text
-    actions = ['Enter/Esc' if compact else 'Enter open/Esc', 'Space/Tab✓' if compact else 'Space/Tab ✓', 'Ctrl-/' if compact else 'Ctrl-/ details']
+    actions = ['Enter/Esc' if compact else 'Enter open/Esc', 'Tab✓' if compact else 'Tab ✓', 'Ctrl-/' if compact else 'Ctrl-/ details']
     facets = [f'{shortcut} {label}' for shortcut, label in FACETS.values()]
     controls = ['Ctrl-A all', 'Ctrl-F reset'] + facets
     sorts = {name: f'{shortcut} {"turn" if compact and label == "last turn" else label}'
@@ -308,6 +309,10 @@ def render(directory, profile, action, width, columns='', facet=None, identity=(
         enabled = not enabled
     elif action == 'toggle-sort':
         sort_enabled = not sort_enabled
+    elif action == 'next-sort':
+        modes = [name for name in RESUME_SORTS if profile in ('resume', 'list') or name != 'turn']
+        sort = modes[(modes.index(sort) + 1) % len(modes)]
+        sort_enabled = True
     elif action == 'state':
         mask = (mask + 1) % (3 if profile == 'open' else maximum + 1)
         enabled = True

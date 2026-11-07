@@ -56,7 +56,9 @@ def test_default_pages_are_50_and_global_search_precedes_slicing(history):
     assert total == 1
     assert selected[0]['sid'] == 'session-119'
     # Search includes branch/SID/workspace metadata and case-insensitive terms.
-    assert history.page_rows(data, 'BRANCH-117 session-117')[1] == 1
+    assert history.page_rows(data, 'BRANCH-117')[1] == 1
+    assert history.page_rows(data, 'session-117')[1] == 1
+    assert history.page_rows(data, 'result Needle')[1] == 0
 
 
 @pytest.mark.parametrize('limit,page', [(0, 1), (-1, 1), (50, 0), (50, -1)])
@@ -311,7 +313,7 @@ finally:
                 tmux('new-session', '-d', '-s', 'picker', '-x', '220', '-y', '45', command)
                 tmux('set-option', '-t', 'picker', 'remain-on-exit', 'on')
                 wait_for(lambda text: 'Conversation 0' in text, 'multi picker')
-                tmux('send-keys', '-t', 'picker', 'Tab', 'Space', 'Enter')
+                tmux('send-keys', '-t', 'picker', 'Tab', 'Tab', 'Enter')
                 deadline = time.monotonic() + 10
                 while not result.exists() and time.monotonic() < deadline:
                     time.sleep(.05)
@@ -400,3 +402,14 @@ def test_picker_hidden_metadata_retains_full_sid_for_native_exact_filtering(hist
     assert len(raw) == 3
     assert json.loads(raw[2])['sid'] == 'session-119'
     assert 'session-119' not in raw[1]
+
+
+def test_history_search_matches_literal_phrases_across_all_pages(history):
+    data = rows()
+    data[119]['title'] = 'Fix "awkward | keys" and café search'
+    data[118]['title'] = 'Fix awkward other keys'
+    for query in ('"awkward | keys"', 'CAFÉ SEARCH', 'fix "awkward'):
+        selected, count = history.page_rows(data, query)
+        assert count == 1 and selected[0]['sid'] == 'session-119'
+    assert history.page_rows(data, 'keys awkward')[1] == 0
+    assert history.page_rows(data, 'awk keys')[1] == 0
