@@ -409,7 +409,7 @@ for a host's login shell.
 | `t session move [repo] [slot] [-r] [--host <host>]` | Select current sessions, then a destination, or move an explicit slot; `--from <host>` pulls it here or sends directly with `--host` |
 | `t remote open [host] [repo] [slot]` | Choose a host and attach to an existing session; `--new` starts fresh |
 | `t remote resume [host] [repo] [slot] [--all]` | Choose a host and resume saved history discovered there |
-| `t remote kill [repo] [slot|all] [-y|--yes]` | Close sessions on their discovered remote hosts; preserve saved conversations and worktrees |
+| `t remote kill [host] [repo] [slot|all] [-y|--yes]` | Close sessions on their discovered remote hosts; preserve saved conversations and worktrees |
 | `t move [repo] [slot] [-r] [--host <dest>]` | Alias for `t session move`; `t remote move` remains compatible with `--remote` |
 | `t session view-plan` / `t session paste` | View a Claude session plan or pass an attachment |
 | `t repo list` / `t repo locate <repo>` / `t repo cd <repo>` | List names and paths, print a checkout path, or enter it in the shell |
@@ -494,33 +494,47 @@ t session move api 2 --from mini --host cloud
 t session move api 2 --from mini --host cloud --detach
 ```
 
-Omitting `--host` opens a single host picker whose heading names the action:
-open an existing session, start a new session, resume saved work, or move a session.
-For open, the selected host runs the session. For resume, it supplies the saved
-conversations and runs the resumed session. For move, it is the destination;
-the picker also names the current source host. Aliases and SSH targets appear
-below the action heading, and even one configured host waits for Enter. `remote move` remains a compatibility alias for `session move --remote`, including local
-and registered remote Claude/Codex CLI sessions, retains host identity when slot
-names repeat, and rechecks the selected conversation before moving. A named or
-current repository scopes selection; outside a checkout it spans all repositories.
-Repositories absent locally are resolved on each remote source. A unique repo/slot
-match proceeds directly to the destination picker; ambiguous repository selectors fail.
-`--all` widens the move picker. Explicit `--from` plus a slot or `--session ID`
-skips session selection. Esc/Ctrl-C cancels with status 130; an empty current
-session inventory does nothing. Nonterminal invocations require explicit choices.
+`remote` also accepts command families. The host follows the complete action
+and always identifies the source machine:
 
-Combining `--from SOURCE --host DEST` moves directly from SOURCE to DEST through
-the source's guarded transfer path. SOURCE needs working SSH and rsync access to
-DEST, and both must have compatible `t` installations and repository paths.
-The controller never resumes a temporary local copy. Failed ownership, stop,
-worktree push, transcript sync, or landing checks stop the transfer. If a failure
-occurs after stopping the source, its transcript and worktree remain there for
-recovery; the destination is not launched with stale code.
+```sh
+t remote session ls                        # list all registered remote hosts
+t remote session ls mini                   # list only mini
+t remote workflow list mini --json         # inspect mini's workflows
+t remote config show mini                  # inspect mini's settings
+t remote move mini api 2                    # move FROM mini; choose a destination
+t remote move mini api 2 --to local         # bring that session here
+t remote session move mini api 2 --to cloud --detach
+t remote kill mini api 9                    # close only mini's session
+```
 
-`remote kill` uses repository/slot targets, as `session close --remote` does.
-It discovers the owning host automatically. A lone slot uses the current repository;
-omitting a slot opens the shared remote session picker. Explicit live targets require
-confirmation unless `--yes`; saved conversations and worktrees are preserved.
+Finite lists and status queries query distinct registered SSH targets once, in
+host order, without opening a picker. Actions operate on one chosen host; missing
+choices require a terminal. `t remote --host mini session ls` makes the host
+explicit if its name could also mean a repository. Repo-first `remote move` and
+`remote kill` keep their existing owner discovery. The released move form
+`--from SOURCE --host DEST` remains compatible; use `--to` for new remote examples.
+Open/resume run on their chosen source host. Move asks separately for its destination.
+Explicit live close targets still confirm unless `--yes`, and saved work remains.
+
+Nested commands reuse the normal command implementation, flags, review screens,
+and safeguards. A normally inferred current repository follows its verified
+identity to the source host; checkout paths and aliases may differ. Lists that
+normally cover every repository keep that behavior. Unsupported caller-shell or
+browser operations explain the limitation before connecting.
+
+Single-host output and exit status are preserved. Multi-host text uses host headings;
+commands supporting JSON return `{"results": {"host": ...}, "errors": {"host":
+{"status": 255, "message": "..."}}}`. Partial results remain visible and any failure
+returns nonzero. An empty host list is a successful empty result. Queries are
+bounded and never recursively query the peers' own hosts. Mutations never fan out
+implicitly; session lifecycle ownership checks still span hosts where required.
+
+Basic unscoped lists also work with older peers. Other commands check protocol
+support before execution; upgrade an older peer with
+`t hosts run mini t system update`. Cancel selection with Esc/Ctrl-C (130).
+Transfer failures preserve the existing recovery behavior: the destination never
+starts from an unverified or stale snapshot.
 
 `remote open` shows the chosen host’s sessions in a local picker and opens additional
 selections in local terminal tabs before attaching the first session.
@@ -951,7 +965,7 @@ Markdown and behavior preferences still apply.
 **Permissions** opens the selected tool's permission choices directly and shows
 the selected preset, such as **Full access**, in the workflow menu. Codex offers **Ask for approval**, **Approve for me**, **Full access**,
 and **Read only**. Claude offers **Ask for approval**, **Approve edits**, **Auto**,
-**Full access**, and **Plan only**. **Not set** clears the workflow override.
+**Full access**, and **Plan only**. **Default · Tool permissions** clears the workflow override and uses native permissions.
 These choices apply on the next CLI start or resume in the workflow's scope;
 running sessions keep their permissions. Explicit
 permission arguments take precedence. Saving a workflow does not rewrite native
@@ -1023,7 +1037,7 @@ effective assignment, including linked worktrees, for example
 Menu choices stay pending until
 **Save changes**; discard publishes nothing.
 
-**PRs, previews & tests** provides optional choices within each workflow:
+**Frontend design** and **PRs, previews & tests** provide choices with explicit defaults:
 
 | Setting | Choices |
 | --- | --- |
@@ -1036,20 +1050,40 @@ Menu choices stay pending until
 | Local preview → Frontend → Preview timing | Inherit global or choose a timing override |
 | Local preview → Frontend → Approval before PR | Inherit global or choose an approval override |
 | Local preview → Frontend → Implement before approval | Yes or No |
-| Local preview → Frontend → Design approach | Separate HTML prototype or In the app |
+| Frontend design → Design approach | Separate HTML prototype or In the app |
+| Frontend design → Design systems | Automatically (default) or Off; choose sources per repository |
 | Local preview → Frontend → Preview method | Fast reload or Build |
-| Local preview → Frontend → Open in browser | Not set, Automatically, or Only when I ask |
+| Local preview → Frontend → Open in browser | Use default, Automatically, or Only when I ask |
 | Local preview → CLI → Preview | Enabled or Disabled |
+| Local preview → CLI → Planning preview | Before implementation (default) or Only when requested |
+| Local preview → CLI → Planning preview approval | Required (default) or Not required |
 | Local preview → CLI → Preview timing | Inherit global or choose a timing override |
 | Local preview → CLI → Approval before PR | Inherit global or choose an approval override |
 | Local preview → CLI → Preview method | Install locally or Run from the repo |
-| Local preview → CLI → Run command | Not set, Automatically, or Only when I ask |
+| Local preview → CLI → Run command | Use default, Automatically, or Only when I ask |
 | Tests → When to run tests | Local during work, before preview, before PR, or On PR CI |
 | Tests → Test runners | Configure targets, defaults, and artifacts |
 
-Other preference choices also offer **Not set**, visually separated from the other choices,
-which removes that choice without instructing the agent to do its opposite.
-An unset preference leaves the decision to your existing instructions.
+**Use default** removes an override and displays the effective fallback. Defaults
+are resolved at use time and are never copied into stored overrides. Preview
+subtypes inherit shared preview timing and approval. Native model, effort and
+permissions can inherit the selected tool's settings.
+
+The default behavior is: review enabled; PR opening and merging on request; ready
+PRs; previews enabled and prepared when ready; preview approval required; a
+standalone HTML design prototype with approval before implementation; fast web
+reload and automatic browser opening; CLI planning before implementation with
+approval; working CLI previews run from the repo and launch on request; relevant
+local tests before PR. Existing explicit choices and repository/task rules win.
+
+**Frontend design → Design systems** shows a workflow default and its repositories.
+Automatic discovery prefers root `DESIGN.md`, then a single root `design-system.md`
+or `design_system.md`, then a single candidate. Ambiguous candidates require a
+choice; an empty scan shows **No system found**. Each repository can inherit,
+select a file/folder, or choose Off. Source pickers group defaults, candidates,
+setup actions and navigation, without explanatory paragraphs. **Create design
+system…** starts the reviewed drafting flow; it never silently creates files.
+
 Preview and validation instructions require accurate reporting of limitations and
 results. Opening a PR alone does not authorize a merge. These preferences guide
 agents; they do not enforce execution or grant permission beyond the task.
@@ -1073,21 +1107,46 @@ removes the override, so future parent changes apply.
 **Approval before PR** controls whether the agent waits for preview approval
 before pushing or opening a PR.
 Launch is configured once per type: **Frontend → Open in browser** and
-**CLI → Run command**, each offering Not set, Automatically, or Only when I ask.
+**CLI → Run command**, each offering Use default, Automatically, or Only when I ask.
 The shared Open/run preview control is removed. Older shared launch settings
 remain effective; editing either type's launch choice preserves the other type's
 resolved choice and replaces the legacy shared setting with independent choices.
 **Frontend → Implement before approval: No** requires a lightweight frontend
 preview and approval before substantial implementation. Work needed to create
 that preview is allowed. **Yes** lets frontend implementation proceed without
-that approval gate. CLI previews do not impose an implementation approval gate;
-they let you try the working command. PR opening and
+that approval gate. CLI planning previews have independent timing and approval choices, using an
+isolated interactive HTML prototype of proposed command behavior. Required approval
+applies when a planning preview is due or requested; prototype work is allowed.
+The existing CLI preview lets you try the working command separately. PR opening and
 merging remain controlled by their separate settings.
 **Local preview** contains **Frontend** and **CLI** submenus, each with its own
 Enabled/Disabled setting. Both remain accessible so you can re-enable them.
 Resolved preview preferences apply only to enabled types. Disabling a type
-retains its settings and suppresses its design and preview guidance; disabling
+retains its settings and suppresses its preview guidance; disabling
 both suppresses the shared preview rules too. Enabling alone does not start a preview.
+The design-system preference remains active independently of preview enablement.
+
+Choose **Frontend → Design system → Use repository design system** in a reusable
+workflow. Then open **Repository assignments → repository** to assign that workflow
+and select the repository's source. Assignment offers discovery immediately if the
+workflow requests a source and none is selected; **Set up later** retains the assignment.
+Discovery looks only at repository-owned documentation and implementations, including
+terminal design systems. Results show paths and evidence; you can refresh, enter a
+relative path, or clear the selection. Different repos using one workflow retain
+independent sources, including when they inherit the global workflow.
+
+**Add design-system guidance…** prepares an agent-assisted draft in an isolated
+worktree after pending settings are saved or discarded and the launch is reviewed.
+It inspects existing UI and documentation, drafts `DESIGN.md`, an `AGENTS.md`
+reference, and grounded design/preview conventions. Review the actual changes in
+that session; the task stops before publishing. Afterwards, refresh discovery from
+the accepted worktree and select its source. Existing docs are preserved and
+workflow approval policy is not copied into repository prose.
+
+For example, edit `t workflow open standard`, enable repository design-system use,
+then open `t workflow` → Repository assignments → your repo. Inspect the saved source
+without scanning or prompting with `t workflow list --repo ALIAS --json`.
+
 Frontend contains design approach, preview method, and browser
 opening. CLI contains the local install/run method and **Run command**. Choose
 **Automatically** to launch the project's supported preview command once the CLI
@@ -1179,7 +1238,13 @@ defaults when Implementation is unchecked or all stages are off. Optional `permi
 permissions apply independently of model stages and are suppressed when the
 workflow is disabled or excluded. Inside `behaviors`, independent keys are
 `pr_review`, `pr_open`, `pr_state`, `pr_merge`, `frontend_enabled`, `cli_enabled`, `local_preview`, `cli_preview`, `cli_launch`,
-`frontend_implement_before_approval`, `frontend_design`, `frontend_preview`, `frontend_browser`, and `test_timing`.
+`frontend_implement_before_approval`, `frontend_design`, `design_system`,
+`cli_planning_preview`, `cli_planning_approval`, `frontend_preview`, `frontend_browser`, and `test_timing`.
+`design_system` accepts `auto` (default) or `off`; `repo` remains a compatibility spelling for `auto`; CLI planning timing accepts `before_implementation`
+or `on_request`, and approval accepts `required` or `not_required`. A repository entry
+may independently contain `"design_system": {"path": "DESIGN.md"}` or `"design_system": {"mode": "off"}`. Omitting this setting inherits the workflow default. Paths are relative
+to the active worktree, never external or generated/dependency locations. Missing
+sources remain stored until explicitly replaced or cleared. No read-time migration occurs.
 `pr_review` accepts `review` (Enabled) or `skip` (Disabled); omission means Enabled
 without materializing a stored value on read or an unchanged selection.
 Skipping review retains the saved model-stage selection and reviewer settings.
@@ -1571,13 +1636,13 @@ and model-stage guidance. **PRs, previews & tests** separates these decisions:
 | --- | --- |
 | Pull requests | Review Enabled/Disabled; open automatically or on instruction; create draft or ready; Automerge or When I ask. |
 | Local preview | Default for when to preview. |
-| Local preview → Frontend | Enabled/Disabled; inherit or override timing; implement before approval; standalone HTML or in-app design; Fast reload or Build; browser opening. |
+| Local preview → Frontend | Enabled/Disabled; inherit or override timing; implement before approval; Fast reload or Build; browser opening. |
 | Local preview → CLI | Enabled/Disabled; inherit or override timing; install locally or run from the repo; launch automatically or on request. |
 | Tests | When tests run, plus Test runners configuration. |
 
-**Not set** leaves a decision to your task, repository rules and text
-instructions. It does not inherit an individual value from the global workflow;
-**Use global default** changes the repository's whole workflow assignment.
+Every workflow setting resolves to a displayed default. **Use default** removes
+an override; **Use global default** changes the repository's whole workflow
+assignment. Repository design-source overrides survive assignment changes.
 These preferences never bypass required checks. Selecting On PR CI avoids routine
 local test runs. Legacy saved choices remain readable and are converted into
 separate choices only when you edit them. Single-model launch defaults remain a

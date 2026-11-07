@@ -485,7 +485,7 @@ def test_remote_host_first_completion_and_legacy_host_flag(tmp_path):
     assert result.returncode == 0, result.stderr
     assert result.stdout.splitlines() == [
         'values:host:lab', 'values:repo:api', 'message:slot', 'values:repo:api',
-        'message:slot', 'values:host:lab', 'values:repo:api', 'values:flag:-h,--help,--new',
+        'message:slot', 'values:host:lab', 'values:host or repository:lab,api', 'values:flag:-h,--help,--new',
     ]
 
 

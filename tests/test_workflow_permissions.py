@@ -67,7 +67,7 @@ def test_unset_permissions_are_read_only_and_never_model_prose(workflow):
     assert workflow.permission_args(policy, 'codex') == []
     assert workflow.permission_args(policy, 'claude') == []
     assert workflow.permission_args(None, 'codex') == []
-    assert 'Codex permissions: Not set' in workflow.summary_lines(policy)
+    assert 'Codex permissions: Default · Tool permissions' in workflow.summary_lines(policy)
     selected = workflow.update_permission(policy, 'codex', 'full')
     assert workflow.main_session_settings(selected) == workflow.main_session_settings(policy)
     assert workflow._stage_text(selected) == workflow._stage_text(policy)

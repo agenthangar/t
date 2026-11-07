@@ -628,6 +628,10 @@ _t() {
     group=${words[3]} action=${words[4]} first=5
   fi
   [[ $action == ls && $group == (session|repo|cursor|hosts|issue) ]] && action=list
+  if [[ $group == remote && $action != (open|move|resume|kill) ]]; then
+    _t_remote_complete
+    return
+  fi
   local -a actions
   if [[ $group == eval ]]; then
     if (( CURRENT == first - 1 )); then
@@ -814,26 +818,29 @@ _t() {
         case $remote_word in
           --host) remote_legacy=1; remote_skip=1 ;;
           --host=*) remote_legacy=1 ;;
-          --from|--session|-s|--days) remote_skip=1 ;;
+          --from|--to|--session|-s|--days) remote_skip=1 ;;
           -*) ;;
           *) (( ++remote_count )) ;;
         esac
       done
       case ${words[CURRENT-1]} in
-        --host|--from)
-          if [[ $action == move && ${words[CURRENT-1]} == --host ]]; then _values 'host' local ${(k)REMOTE_HOSTS}
+        --host|--from|--to)
+          if [[ $action == move && ${words[CURRENT-1]} == (--host|--to) ]]; then _values 'host' local ${(k)REMOTE_HOSTS}
           else _values 'host' ${(k)REMOTE_HOSTS}; fi ;;
         --session|-s) _message 'conversation ID' ;;
         --days) _message 'number of days or all' ;;
         *)
           if [[ ${words[CURRENT]} == -* ]]; then
             local -a remote_flags=(-h --help)
-            case $action in open) remote_flags+=(--new) ;; move) remote_flags+=(--host --from --session --all --detach --fg) ;; resume) remote_flags+=(--days --all) ;; esac
+            case $action in open) remote_flags+=(--new) ;; move) remote_flags+=(--to --from --session --all --detach --fg) ;; resume) remote_flags+=(--days --all) ;; esac
             _values 'flag' $remote_flags
           elif [[ $action != move && -z $remote_legacy ]] && (( remote_count == 0 )); then
             _values 'host' ${(k)REMOTE_HOSTS}
+          elif [[ -z $remote_legacy ]] && (( remote_count == 0 )); then
+            _values 'host or repository' ${(k)REMOTE_HOSTS} \
+              "${(@f)$(_dev_repo_selectors)}"
           elif { [[ $action == move || -n $remote_legacy ]] && (( remote_count == 0 )); } \
-            || { [[ $action != move && -z $remote_legacy ]] && (( remote_count == 1 )); }; then
+            || { [[ -z $remote_legacy && ( $action != move || -n ${REMOTE_HOSTS[$words[first]]:-} ) ]] && (( remote_count == 1 )); }; then
             _values 'repo' "${(@f)$(_dev_repo_selectors)}"
           else _message 'slot'; fi ;;
       esac ;;
@@ -976,4 +983,58 @@ _t() {
     system/update)
       _values 'flag' --all --dev --local --relink --check -h --help ;;
   esac
+}
+
+# Remote command paths come from the same registry as parsing/help. Once a
+# complete action is present, reuse its normal argument completion.
+_t_remote_complete() {
+  local -a remote_paths supplied parts choices child_words
+  local line next prefix matched= consumed=0 host_at
+  remote_paths=("${(@f)$(python3 "$T_HOME/bin/t" __remote-completions)}")
+  supplied=("${(@)words[3,CURRENT-1]}")
+  if [[ ${supplied[1]:-} == --host ]]; then
+    if (( $#supplied == 1 )); then _values host ${(k)REMOTE_HOSTS}; return; fi
+    supplied=("${(@)supplied[3,-1]}"); consumed=2
+  fi
+  for line in "${remote_paths[@]}"; do
+    parts=( ${=line} )
+    local i=1
+    while (( i <= $#parts && i <= $#supplied )); do
+      next=$supplied[$i]; [[ $next == ls ]] && next=list
+      [[ $next == $parts[$i] ]] || break
+      (( ++i ))
+    done
+    if (( i > $#parts )); then
+      matched=$line; break
+    elif (( i > $#supplied )); then
+      choices+=("$parts[$i]")
+      [[ $parts[$i] == list ]] && choices+=(ls)
+    fi
+  done
+  if [[ -z $matched ]]; then
+    local -a actions=( ${(u)choices} )
+    _describe -t actions 'remote command' actions
+    return
+  fi
+  parts=( ${=matched} )
+  host_at=$((3 + consumed + $#parts))
+  if (( CURRENT == host_at )) && [[ ${words[CURRENT]} != -* ]]; then
+    _values 'source host or command argument' ${(k)REMOTE_HOSTS} "${(@f)$(_dev_repo_selectors)}"
+    return
+  fi
+  if [[ $matched == 'session move' && ${words[CURRENT]} == -* ]]; then
+    _values flag --to --from --session --all --detach --fg -h --help
+    return
+  fi
+  if [[ $matched == 'session move' && ${words[CURRENT-1]} == --to ]]; then
+    _values 'destination host' local ${(k)REMOTE_HOSTS}
+    return
+  fi
+  child_words=(t "${parts[@]}" "${(@)words[host_at,CURRENT]}")
+  if [[ -n ${REMOTE_HOSTS[$child_words[$((2 + $#parts))]]:-} ]]; then
+    child_words[$((2 + $#parts))]=()
+  fi
+  local -a words=("${child_words[@]}")
+  local CURRENT=$#words
+  _t
 }

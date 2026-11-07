@@ -45,6 +45,16 @@ def test_changed_scopes_preserves_tool_identity(sync):
     assert before == w['defaults']()
 
 
+def test_source_only_edit_is_a_repository_propagation_change(sync):
+    w = sync.workflow()
+    before = w['defaults']()
+    after = w['select_design_system'](before, '/source', 'DESIGN.md')
+    assert w['effective'](before, '/source') == w['effective'](after, '/source')
+    assert sync.changed_scopes(before, after) == ['/source']
+    cleared = w['select_design_system'](after, '/source', None)
+    assert sync.changed_scopes(after, cleared) == ['/source']
+
+
 def test_portable_tools_round_trip_without_local_paths_or_cross_tool_changes(sync, monkeypatch, tmp_path):
     w = sync.workflow()
     local = tool_model(w, w['defaults'](), 'codex', 'keep-codex')
@@ -53,7 +63,8 @@ def test_portable_tools_round_trip_without_local_paths_or_cross_tool_changes(syn
     incoming = tool_model(w, incoming, 'cursor', 'remote-cursor')
     for tool in ('claude', 'cursor'):
         scoped = w['tool_document'](incoming, tool)
-        scoped['repositories']['/source/private/path'] = {'workflow': 'standard', 'excluded': tool == 'cursor'}
+        scoped['repositories']['/source/private/path'] = {'workflow': 'standard', 'excluded': tool == 'cursor',
+                                                         'design_system': {'path': 'DESIGN.md'}}
         if tool == 'claude':
             scoped['repositories']['/source/private/path'].pop('excluded')
         incoming = w['with_tool_document'](incoming, tool, scoped)
@@ -71,6 +82,8 @@ def test_portable_tools_round_trip_without_local_paths_or_cross_tool_changes(syn
     assert w['main_session_settings'](w['effective'](claude, str(tmp_path)), 'claude')['model'] == 'remote-claude'
     assert not w['effective'](cursor, str(tmp_path))['enabled']
     assert not cursor['repositories'].get('/source/private/path')
+    assert claude['repositories'][str(tmp_path)]['design_system'] == {'path': 'DESIGN.md'}
+    assert cursor['repositories'][str(tmp_path)]['design_system'] == {'path': 'DESIGN.md'}
 
 
 def test_legacy_payload_preserves_other_tools(sync, monkeypatch):

@@ -86,9 +86,9 @@ def test_workflow_review_review_toggle_missing_value_means_enabled(review, workf
     after = copy.deepcopy(before)
     after['workflows']['standard']['behaviors'] = {'pr_review': 'skip'}
     text = '\n'.join(review(after, before))
-    assert 'Agent review before PR: Enabled → Disabled' in text
+    assert 'Agent review before PR: Default · Enabled → Disabled' in text
     restored = '\n'.join(review(before, after))
-    assert 'Agent review before PR: Disabled → Enabled' in restored
+    assert 'Agent review before PR: Disabled → Default · Enabled' in restored
     assert 'Not set' not in text and 'Not set' not in restored
 
 
@@ -102,9 +102,9 @@ def test_workflow_review_preview_toggle_missing_values_resolve_legacy_defaults(r
     other = 'Disabled' if initial == 'Enabled' else 'Enabled'
     label = workflow.BEHAVIORS[kind + '_enabled']['label']
     text = '\n'.join(review(after, before))
-    assert label + ': ' + initial + ' → ' + other in text
+    assert label + ': Default · ' + initial + ' → ' + other in text
     restored = '\n'.join(review(before, after))
-    assert label + ': ' + other + ' → ' + initial in restored
+    assert label + ': ' + other + ' → Default · ' + initial in restored
     assert 'Not set' not in text and 'Not set' not in restored
 
 
