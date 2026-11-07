@@ -2418,6 +2418,8 @@ def _workflow_model(ui, cfg, helper, stage, current):
             choices.setdefault(recommended, f"{recommended} (recommended)")
         for model in catalog:
             choices.setdefault(model["id"], model["label"])
+        if recommended:
+            choices[recommended] = 'Use default · ' + recommended + (' (current)' if recommended == current else '')
         rows = list(choices.items()) + [("__custom__", "Enter a custom model ID…"),
                                         ("__refresh__", "Refresh model list")]
         picked = ui.pick(_workflow_stage_title(stage) + " model", rows,
@@ -2440,22 +2442,46 @@ def _workflow_model(ui, cfg, helper, stage, current):
         return picked
 
 
+def _workflow_reset_value(before, after):
+    def count(left, right):
+        if isinstance(left, dict) or isinstance(right, dict):
+            left, right = left or {}, right or {}
+            return sum(count(left.get(key), right.get(key)) for key in left.keys() | right.keys())
+        return int(left != right)
+    changes = count(before, after)
+    return f"{changes} override" + ("s" if changes != 1 else "") if changes else "Already at defaults"
+
+
+def _workflow_reset_behaviors(helper, policy, section):
+    sections = tuple(_WORKFLOW_SECTIONS) if section == 'all' else (section,)
+    keys = set()
+    for name in sections:
+        keys.update(_workflow_section_spec(name)[1])
+        if name == 'local_preview':
+            keys.add('preview_launch')
+            for _, fields in _WORKFLOW_PREVIEW_SUBMENUS.values():
+                keys.update(fields)
+    return helper['reset_behaviors'](policy, keys, runners='tests' in sections)
+
+
 def _workflow_behaviors_menu(ui, helper, policy, runners=None):
     changed = copy.deepcopy(policy)
     focus = 0
     try:
         while True:
             behaviors = helper["effective_behaviors"](changed.get("behaviors", {}))
-            rows = [(key, label + " ›") for key, (label, fields) in _WORKFLOW_SECTIONS.items()] + [("back", "Back")]
+            rows = [(key, label + " ›") for key, (label, fields) in _WORKFLOW_SECTIONS.items()] + [("reset", "Reset to defaults"), ("back", "Back")]
             values = {key: _workflow_section_summary(helper, key, behaviors)
                       for key, (label, fields) in _WORKFLOW_SECTIONS.items()}
             if changed.get("runners"):
                 values["tests"] = (values["tests"] + "; " if values["tests"] != "Defaults" else "") + "Test runners: " + helper["runners_summary"](changed)
-            section = ui.pick("PRs, previews & tests", rows, values=values, default=focus)
+            reset = _workflow_reset_behaviors(helper, changed, 'all')
+            values['reset'] = _workflow_reset_value(changed, reset)
+            section = ui.pick("PRs, previews & tests", rows, values=values, default=focus, sections={'reset': 'Manage'})
             if section in (None, "back"):
                 return changed
             focus = next(i for i, row in enumerate(rows) if row[0] == section)
-            changed = _workflow_behavior_section(ui, helper, changed, section, runners=runners)
+            changed = reset if section == 'reset' else _workflow_behavior_section(ui, helper, changed, section, runners=runners)
 
     except KeyboardInterrupt as exc:
         if not hasattr(exc, "workflow_policy"):
@@ -2474,18 +2500,22 @@ def _workflow_behavior_section(ui, helper, policy, section, runners=None):
             rows += [(key, _WORKFLOW_PREVIEW_SUBMENUS[key][0] + " ›") for key in children]
             if section == "tests":
                 rows.append(("runners", "Test runners ›"))
-            rows.append(("back", "Back"))
+            rows += [("reset", "Reset to defaults"), ("back", "Back")]
             values = {key: _workflow_field_value(helper, behaviors, key) for key in fields}
-            if section in _WORKFLOW_PREVIEW_SUBMENUS:
-                values[section + "_enabled"] = "Enabled" if helper["preview_enabled"](behaviors, section) else "Disabled"
             if section == "tests":
                 values["runners"] = helper["runners_summary"](changed)
             values.update({key: _workflow_preview_type_summary(helper, key, behaviors) for key in children})
+            reset = _workflow_reset_behaviors(helper, changed, section)
+            values['reset'] = _workflow_reset_value(changed, reset)
+            groups = {"local_preview": "Global", "frontend": "Preview types"} if section == "local_preview" else {}
             choice = ui.pick(_workflow_section_spec(section)[0], rows, values=values, default=min(focus, len(rows) - 1),
-                             sections={"local_preview": "Global", "frontend": "Preview types"} if section == "local_preview" else {})
+                             sections={**groups, 'reset': 'Manage'})
             if choice in (None, "back"):
                 return changed
             focus = next(i for i, row in enumerate(rows) if row[0] == choice)
+            if choice == 'reset':
+                changed = reset
+                continue
             if choice in children:
                 changed = _workflow_behavior_section(ui, helper, changed, choice, runners=runners)
                 continue
@@ -2493,32 +2523,21 @@ def _workflow_behavior_section(ui, helper, policy, section, runners=None):
                 if runners:
                     changed = runners(changed)
                 continue
-            if choice == "pr_review":
-                current = helper["pr_review_value"](changed)
-                picked = ui.pick("Agent review before PR", [("review", "Enabled"), ("skip", "Disabled")],
-                                 default=0 if current == "review" else 1)
-                if picked is not None and picked != current:
-                    changed = helper["update_behavior"](changed, choice, picked)
-                continue
-            if choice in ("frontend_enabled", "cli_enabled"):
-                current = "enabled" if helper["preview_enabled"](behaviors, section) else "disabled"
-                picked = ui.pick(_workflow_section_spec(section)[0] + " preview", [("enabled", "Enabled"), ("disabled", "Disabled")],
-                                 default=0 if current == "enabled" else 1)
-                if picked is not None and picked != current:
-                    changed = helper["update_behavior"](changed, choice, picked)
-                continue
             spec = helper["BEHAVIORS"][choice]
             override = _workflow_preview_override(helper, choice)
             current = behaviors.get(choice, "")
-            inherited = dict(behaviors)
-            inherited.pop(choice, None)
+            if choice in ('frontend_enabled', 'cli_enabled') and 'preview_target' in behaviors and choice not in behaviors:
+                current = helper['resolved_behaviors'](behaviors)[choice]
+            inherited = helper['reset_behaviors'](changed, [choice]).get('behaviors', {})
             reset = 'Use default · ' + _workflow_field_value(helper, inherited, choice).split(' · ', 1)[-1]
             options = [("", reset)] + [(key, _workflow_choice(helper, choice, key)) for key in spec["choices"]
                                             if not (choice == "local_preview" and key == "before_pr")]
-            selected = ui.pick(_WORKFLOW_TOPICS[choice][0], options,
+            title = _workflow_section_spec(section)[0] + ' preview' if choice in ('frontend_enabled', 'cli_enabled') else _WORKFLOW_TOPICS[choice][0]
+            selected = ui.pick(title, options,
                                default=next(i for i, row in enumerate(options) if row[0] == current))
-            if selected is not None and selected != current:
-                changed = helper["update_behavior"](changed, choice, selected)
+            if selected is not None and (selected != current or selected == ''):
+                changed = (helper['reset_behaviors'](changed, [choice]) if selected == '' else
+                           helper["update_behavior"](changed, choice, selected))
 
     except KeyboardInterrupt as exc:
         if not hasattr(exc, "workflow_policy"):
@@ -2549,13 +2568,17 @@ def _workflow_permissions_menu(ui, helper, policy):
             return helper["update_permission"](changed, agent, picked) if picked is not None and picked != current else changed
         while True:
             permissions = changed.get("permissions", {})
-            rows = [(agent, agent.title()) for agent in helper["PERMISSIONS"]] + [("back", "Back")]
+            rows = [(agent, agent.title()) for agent in helper["PERMISSIONS"]] + [("reset", "Reset to defaults"), ("back", "Back")]
             values = {agent: helper["PERMISSIONS"][agent][permissions[agent]]["label"]
                       if agent in permissions else "Default · Tool permissions" for agent in helper["PERMISSIONS"]}
-            agent = ui.pick("Permissions", rows, values=values, default=focus)
+            agent = ui.pick("Permissions", rows, values=values, default=focus, sections={'reset': 'Manage'})
             if agent in (None, "back"):
                 return changed
             focus = next(i for i, row in enumerate(rows) if row[0] == agent)
+            if agent == 'reset':
+                for tool in helper['PERMISSIONS']:
+                    changed = helper['update_permission'](changed, tool, '')
+                continue
             options = [("", "Default · Tool permissions")] + [(preset, item["label"]) for preset, item in helper["PERMISSIONS"][agent].items()]
             picked = ui.pick(agent.title() + " permissions", options,
                              default=next(i for i, row in enumerate(options) if row[0] == permissions.get(agent, "")))
@@ -2604,6 +2627,7 @@ def _workflow_session_setting(ui, cfg, policy, agent, field):
 
 def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
     title = f"Workflow · {name}" if name else "Customize only this repository"
+    focus = 'enabled'
     try:
         while True:
             document = cfg._workflow_document
@@ -2634,7 +2658,7 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
             rows += [("instructions", "Text instructions")]
             if policy.get("instructions"):
                 rows.append(("clear_instructions", "Clear text instructions"))
-            rows += [("edit", "Advanced JSON editor")]
+            rows += [("edit", "Advanced JSON editor"), ("reset", "Reset workflow to defaults")]
             if name:
                 rows.append(("delete", "Delete workflow"))
             rows.append(("back", "Back"))
@@ -2655,36 +2679,52 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
             values["instructions"] = (f"text · {len(policy['instructions'].splitlines())} lines · Enter to edit"
                                       if policy.get("instructions") else "Default · No additional instructions")
             values["permissions"] = _workflow_permission_summary(helper, policy)
-            choice = ui.pick(title, rows, values=values, accents={"delete": "w"})
+            reset = helper['reset_policy'](policy, tool=agent)
+            values['reset'] = _workflow_reset_value(policy, reset)
+            model_key = next((key for key, _ in rows if key in ('stages_enabled', 'inference')), None)
+            sections = {'frontend_design': 'Behavior', 'edit': 'Manage'}
+            if model_key:
+                sections[model_key] = 'Models'
+            choice = ui.pick(title, rows, values=values, accents={"delete": "w"}, sections=sections,
+                             default=next((i for i, row in enumerate(rows) if row[0] == focus), 0))
             if choice in (None, "back"):
                 return
+            focus = choice
             changed = copy.deepcopy(policy)
-            if choice == "stages_enabled":
+            if choice == 'reset':
+                changed = reset
+            elif choice == "stages_enabled":
                 backed = []
                 picked = ui.pick("Use multiple models", [("", "Use one model for all work"), ("planning", "Planning"),
-                                 ("implementation", "Implementation"), ("review", "Review")],
+                                 ("implementation", "Implementation"), ("review", "Review"),
+                                 ('__default__', 'Use default · ' + (', '.join(_workflow_stage_title(key) for key in helper['model_stages'](helper['DEFAULT'])) or 'One model'))],
                                  multi=True, marked={i + 1 for i, stage in enumerate(("planning", "implementation", "review")) if stage in stages} or {0},
-                                 empty_choice="", on_back=backed.extend, back_label="keep & back")
+                                 empty_choice="", exclusive_choices=('__default__',),
+                                 sections={'__default__': 'Default'}, on_back=backed.extend, back_label="keep & back")
                 if picked is None and backed:
                     picked = backed
                 if picked is not None:
-                    changed = helper["select_model_stages"](policy, [] if "" in picked else picked)
+                    changed = (helper['reset_policy'](policy, 'model_stages', agent) if '__default__' in picked else
+                               helper["select_model_stages"](policy, [] if "" in picked else picked))
             elif choice == "delete":
                 if _workflow_delete_menu(ui, cfg, helper, name):
                     return
                 continue
             elif choice == "enabled":
-                picked = ui.pick("Use this workflow", [("1", "Enabled"), ("0", "Disabled")],
-                                 default=0 if policy["enabled"] else 1)
-                if picked is not None and (picked == "1") != policy["enabled"]:
-                    changed["enabled"] = picked == "1"
+                picked = ui.pick("Use this workflow", [("", "Use default · Enabled"), ("1", "Enabled"), ("0", "Disabled")],
+                                 default=0 if policy["enabled"] else 2)
+                if picked is not None:
+                    changed["enabled"] = picked in ('', '1')
             elif choice in ("main_model", "main_effort"):
                 changed = _workflow_session_setting(ui, cfg, policy, agent, choice.removeprefix("main_"))
             elif choice == "inference":
                 routing = helper["inference"]()
                 selected = routing["workflow_menu"](ui, policy.get("inference"))
                 if selected != routing["policy"](policy.get("inference")):
-                    changed["inference"] = selected
+                    if selected == routing['policy']():
+                        changed.pop('inference', None)
+                    else:
+                        changed["inference"] = selected
             elif choice == "frontend_design":
                 changed = _workflow_frontend_design_menu(ui, cfg, helper, policy, repository, name)
                 document = cfg._workflow_document
@@ -2713,9 +2753,13 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
             else:
                 stage = choice
                 stage_title = _workflow_stage_title(stage) + (" · worker" if stage == "implementation" and helper["implementation_worker"](policy) else "")
-                field = ui.pick(stage_title, [("model", "Model")] + ([] if agent == "cursor" else [("effort", "Reasoning effort")]) + [("back", "Back")],
-                                values={"model": policy[stage]["model"], "effort": _workflow_effort(policy[stage]["effort"], stage)})
+                field = ui.pick(stage_title, [("model", "Model")] + ([] if agent == "cursor" else [("effort", "Reasoning effort")]) + [("reset", "Reset to defaults"), ("back", "Back")],
+                                values={"model": policy[stage]["model"], "effort": _workflow_effort(policy[stage]["effort"], stage),
+                                        'reset': _workflow_reset_value(policy[stage], helper['DEFAULT'][stage])}, sections={'reset': 'Manage'})
                 if field in (None, "back"):
+                    continue
+                if field == 'reset':
+                    cfg._workflow_document = helper['update'](document, helper['reset_policy'](policy, stage, agent), repository, name)
                     continue
                 if field == "model":
                     picked = _workflow_model(ui, cfg, helper, stage, policy[stage]["model"])
@@ -2743,6 +2787,14 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
                 cfg._workflow_document = helper["update"](document, changed, repository, name)
 
     except KeyboardInterrupt as exc:
+        if hasattr(exc, 'workflow_inference'):
+            current = (copy.deepcopy(cfg._workflow_document['workflows'][name]) if name else
+                       helper['resolved'](cfg._workflow_document, repository))
+            if exc.workflow_inference == helper['inference']()['policy']():
+                current.pop('inference', None)
+            else:
+                current['inference'] = exc.workflow_inference
+            exc.workflow_policy = current
         if hasattr(exc, "workflow_policy"):
             current = (cfg._workflow_document["workflows"][name] if name else
                        helper["resolved"](cfg._workflow_document, repository))
@@ -2789,10 +2841,17 @@ def _workflow_runners_menu(ui, cfg, helper, repository=None, name=None):
         alias = next((key for key, path in cfg.repos.items() if os.path.realpath(path) == repository), repository)
         scope = name or (alias + " · " + helper["source"](document, repository) if repository else document["default"])
         choice = ui.pick("Test runners · " + scope, [("edit", "Edit targets, defaults and artifacts · JSON"),
-                         ("show", "Show configured targets"), ("back", "Back")],
-                         values={"edit": f"{len(value['targets'])} targets · {value['timeout_seconds']}s timeout"})
+                         ("show", "Show configured targets"), ("reset", "Reset to defaults"), ("back", "Back")],
+                         values={"edit": f"{len(value['targets'])} targets · {value['timeout_seconds']}s timeout"},
+                         sections={'reset': 'Manage'})
         if choice in (None, "back"):
             return
+        if choice == 'reset':
+            current = document['workflows'][name] if name else helper['resolved'](document, repository)
+            after = helper['reset_policy'](current, 'runners', helper.get('TOOL', 'codex'))
+            if after != current:
+                cfg._workflow_document = helper['update'](document, after, repository, name)
+            continue
         if choice == "show":
             lines = [f"Defaults: {', '.join(value['default_targets']) or 'none'}",
                      f"Timeout: {value['timeout_seconds']}s · queue: {value['queue_timeout_seconds']}s",
@@ -2932,13 +2991,17 @@ def _workflow_frontend_design_menu(ui, cfg, helper, policy, repository=None, nam
         while True:
             behaviors = changed.get('behaviors', {})
             choice = ui.pick('Frontend design', [('approach', 'Design approach ›'),
-                ('systems', 'Design systems ›'), ('back', 'Back')], values={
+                ('systems', 'Design systems ›'), ('reset', 'Reset to defaults'), ('back', 'Back')], values={
+                    'reset': _workflow_reset_value(changed, _workflow_reset_behaviors(helper, changed, 'design')),
                     'approach': _workflow_field_value(helper, behaviors, 'frontend_design'),
                     'systems': 'Auto-detect per repository' if helper['resolved_behaviors'](behaviors)['design_system'] == 'auto' else 'Off'},
-                default=focus)
+                default=focus, sections={'reset': 'Manage'})
             if choice in (None, 'back'):
                 return changed
-            focus = 0 if choice == 'approach' else 1
+            focus = ['approach', 'systems', 'reset', 'back'].index(choice)
+            if choice == 'reset':
+                changed = _workflow_reset_behaviors(helper, changed, 'design')
+                continue
             if choice == 'systems':
                 changed = _workflow_design_systems_menu(ui, cfg, helper, changed, repository, name)
             else:
@@ -2965,8 +3028,9 @@ def _workflow_design_systems_menu(ui, cfg, helper, policy, repository=None, name
                          helper['source'](document, os.path.realpath(path)) == (name or document['default']))}
             rows = [('default', 'Find design systems')]
             mode = helper['resolved_behaviors'](changed.get('behaviors', {}))['design_system']
-            values = {'default': 'Automatically' if mode == 'auto' else 'Off'}
-            sections = {'default': 'Default', 'back': 'Navigation'}
+            values = {'default': _workflow_field_value(helper, changed.get('behaviors', {}), 'design_system'),
+                      'reset': _workflow_reset_value(changed, helper['reset_behaviors'](changed, ['design_system']))}
+            sections = {'default': 'Default', 'reset': 'Manage'}
             for alias, path in sorted(repos.items()):
                 if path not in scans:
                     try:
@@ -2978,17 +3042,20 @@ def _workflow_design_systems_menu(ui, cfg, helper, policy, repository=None, name
                 key = 'repo:' + alias
                 rows.append((key, alias + ' ›'))
                 values[key] = _workflow_design_source_label(helper, document, path, scans[path], changed)
-            rows.append(('back', 'Back'))
+            rows += [('reset', 'Reset to defaults'), ('back', 'Back')]
             choice = ui.pick('Design systems', rows, values=values, sections=sections,
                              default=next((i for i, row in enumerate(rows) if row[0] == focus), 0))
             if choice in (None, 'back'):
                 return changed
             focus = choice
-            if choice == 'default':
-                picked = ui.pick('Find design systems', [('auto', 'Automatically'), ('off', 'Off')],
-                                 default=0 if mode == 'auto' else 1)
-                if picked is not None and picked != mode:
-                    changed = helper['update_behavior'](changed, 'design_system', '' if picked == 'auto' else picked)
+            if choice == 'reset':
+                changed = helper['reset_behaviors'](changed, ['design_system'])
+            elif choice == 'default':
+                current = changed.get('behaviors', {}).get('design_system', '')
+                picked = ui.pick('Find design systems', [('', 'Use default · Automatically'), ('auto', 'Automatically'), ('off', 'Off')],
+                                 default=['', 'auto', 'off'].index('auto' if current == 'repo' else current))
+                if picked is not None and picked != current:
+                    changed = helper['update_behavior'](changed, 'design_system', picked)
             else:
                 alias = choice.removeprefix('repo:')
                 _workflow_design_system_menu(ui, cfg, helper, alias, repos[alias], policy=changed)
@@ -3098,7 +3165,8 @@ def _workflow_design_system_menu(ui, cfg, helper, repo, repository, policy=None)
             rows.append((key, candidate['path']))
             values[key] = ('✓ ' if candidate['path'] == path else '') + _workflow_design_evidence(candidate)
         rows += [('manual', 'Choose file or folder…'), ('draft', 'Create design system…'),
-                 ('refresh', 'Scan again'), ('off', 'Off'), ('back', 'Back')]
+                 ('refresh', 'Scan again'), ('off', 'Off'), ('reset', 'Reset to defaults'), ('back', 'Back')]
+        values['reset'] = 'Use workflow default' if selected else 'Already at defaults'
         values['off'] = '✓ Selected' if selected.get('mode') == 'off' else ''
         choice = ui.pick(repo + ' · Design system', rows, values=values, sections=sections,
                          default=next((i for i, row in enumerate(rows) if row[0] == focus_key), 0))
@@ -3111,7 +3179,7 @@ def _workflow_design_system_menu(ui, cfg, helper, repo, repository, policy=None)
         if choice == 'draft':
             _workflow_design_draft(ui, cfg, helper, repo, root)
             continue
-        if choice in ('', 'off'):
+        if choice in ('', 'off', 'reset'):
             cfg._workflow_document = helper['select_design_system'](cfg._workflow_document, repository,
                                                                    mode='off' if choice == 'off' else None)
             return
@@ -4507,7 +4575,8 @@ def cmd_config(cfg, args):
         try:
             return runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_local_inference.py"))["command"](args)
         except (OSError, ValueError, subprocess.SubprocessError) as exc:
-            die(str(exc))
+            print('t config models: ' + str(exc), file=sys.stderr)
+            return 1
     if getattr(args, "run_action", None):
         return _cmd_workflow_runs(cfg, args)
     if getattr(args, "runner_action", None):
@@ -4883,7 +4952,7 @@ class _RailUI:
 
     def pick(self, label, rows, multi=False, default=0, marked=None,
              values=None, sections=None, accents=None, primary=None, shortcuts=None,
-             on_back=None, back_label=None, empty_choice=None, disabled=None):
+             on_back=None, back_label=None, empty_choice=None, disabled=None, exclusive_choices=(), context=()):
         """Single/multiple selection on the shared row/frame template.
         Sections and unset-choice spacing are not selectable. An optional
         empty_choice makes that checklist row an exclusive reset selection.
@@ -4893,7 +4962,9 @@ class _RailUI:
         cur = max(0, min(default or 0, len(rows) - 1))
         marks = set(marked or ())
         empty_index = next((i for i, (key, _) in enumerate(rows) if key == empty_choice), None) if multi and empty_choice is not None else None
+        exclusive = {i for i, (key, _) in enumerate(rows) if key in exclusive_choices}
         if empty_index is not None:
+            exclusive.add(empty_index)
             marks.discard(empty_index)
             if not marks:
                 marks.add(empty_index)
@@ -4901,7 +4972,8 @@ class _RailUI:
         keys += (f" · q/esc {back_label} · ctrl-c cancel" if back_label else " · q back")
         flash = ""
         while True:
-            display = []
+            display = [(f"{self.rail}   {part}", None) for text in context
+                       for part in _wrap_columns(text, max(1, self.cols() - 6))]
             label_width = max((len(text) for key, text in rows if key in values), default=0)
             for n, (key, text) in enumerate(rows):
                 if n == 1 and rows[0][0] == '' and key not in sections:
@@ -4925,14 +4997,13 @@ class _RailUI:
             elif k in ("space", "enter") and rows[cur][0] in disabled:
                 flash = disabled[rows[cur][0]]
             elif k == "space" and multi:
-                if empty_index is not None and cur == empty_index:
-                    marks = {empty_index}
+                if cur in exclusive:
+                    marks = {cur}
                 else:
                     marks.symmetric_difference_update({cur})
-                    if empty_index is not None:
-                        marks.discard(empty_index)
-                        if not marks:
-                            marks.add(empty_index)
+                    marks.difference_update(exclusive)
+                    if empty_index is not None and not marks:
+                        marks.add(empty_index)
                 cur = min(cur + 1, len(rows) - 1)
             elif k == "enter":
                 return [rows[i][0] for i in sorted(marks)] if multi else rows[cur][0]
@@ -11744,9 +11815,9 @@ SCOPE
   Delete keeps at least one workflow and preserves repository exclusions.
   NAME and --repo cannot be combined for edit. Shared definition edits affect
   all its consumers. --all lists named workflows; it cannot combine with --repo.
-  Save review shows only changed settings, with before and after values.
+  Reset a page or workflow to defaults; Save reviews before and after values.
   Ctrl+C offers Keep editing, Review and save, or Discard when changes are pending.
-  Rows show global defaults and repository assignments.
+  Models, Behavior and Manage group the editor; resets stay pending until Save.
   Permissions selects Codex and Claude access for new and resumed CLI sessions.
   Inference & routing: local models; opt-in Continue locally on cloud outage.
   Frontend design configures prototypes and repository design systems.
@@ -12920,7 +12991,8 @@ EXAMPLES
                   "show":"show artifact and benchmark details", "install":"download and verify a local model",
                   "measure":"measure a local model on this machine"}[verb],
             description="User-wide local model catalog. Explicit model selection; no repository inference. "
-                        "Memory fit is estimated. Publisher benchmarks are not local measurements.",
+                        "Memory fit is estimated. Publisher benchmarks are not local measurements." +
+                        (" Install reuses downloaded files and verifies a response at the requested context." if verb == "install" else ""),
             epilog=f"EXAMPLES\n  t config models {verb}" + (" mlx-community/Qwen3.8-27B-8bit" if verb not in ("list", "refresh") else ""))
         leaf.add_argument("--provider", choices=("ollama", "lmstudio"), help="filter or select the local runtime")
         leaf.add_argument("--context", type=int, default=32768, metavar="TOKENS", help="context capacity for fit and inference; default: 32768")

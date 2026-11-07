@@ -92,7 +92,7 @@ def test_runtime_lease(local,monkeypatch):
     with pytest.raises(RuntimeError):
         with m.runtime(m.DEFAULT_MODEL):raise RuntimeError('fixture')
     assert [c[:2] for c in calls if c[0]=='server']==[('server','start'),('server','stop')]
-    with pytest.raises(ValueError,match='unverified'):
+    with pytest.raises(ValueError,match='uniquely'):
         with m.runtime(m.artifacts()[1]['model']):pass
     monkeypatch.setattr(m,'receipt',lambda n:{})
     with pytest.raises(ValueError,match='downloaded'):
@@ -104,7 +104,7 @@ def test_install_verify_and_measure(local,monkeypatch):
     monkeypatch.setattr(m,'lms',lambda:'/fake/lms')
     monkeypatch.setattr(m,'helper',lambda n:{'hardware':hardware})
     manifest={'sha':'b'*40,'siblings':[{'rfilename':'weights.safetensors','size':3,'lfs':{'sha256':m.hashlib.sha256(payload).hexdigest()}},{'rfilename':'.hidden'},{'rfilename':'skip.bin'}]}
-    monkeypatch.setattr(m,'request',lambda url,*a,**k:manifest if 'huggingface' in url else {'output':[{}],'usage':{'completion_tokens':30}})
+    monkeypatch.setattr(m,'request',lambda url,*a,**k:manifest if 'huggingface' in url else {'output':[{'type':'message','content':[{'type':'output_text','text':'OK'}]}],'usage':{'completion_tokens':30}})
     def download(cmd,**kw):Path(cmd[cmd.index('-o')+1]).write_bytes(payload)
     monkeypatch.setattr(m.subprocess,'run',download)
     @contextmanager
@@ -347,13 +347,13 @@ def test_picker_install_measure_and_unavailable(local,monkeypatch):
         def restore(self):pass
         def raw(self):pass
     for action in ('install','download','measure'):
-        choices=[m.DEFAULT_MODEL,action]+(['yes'] if action!='measure' else [])+['__back']
+        choices=[m.DEFAULT_MODEL,action]+(['yes'] if action!='measure' else [])+['back','__back']
         assert m.select_model(UI(choices)) is None
     assert len(calls)==3
     assert m.select_model(UI([m.DEFAULT_MODEL,'use']))=={'model':m.DEFAULT_MODEL,'provider':'lmstudio'}
-    assert m.select_model(UI([m.DEFAULT_MODEL,'install','no','__back'])) is None
+    assert m.select_model(UI([m.DEFAULT_MODEL,'install','no','back','__back'])) is None
     monkeypatch.setattr(m,'measure',lambda *a:(_ for _ in ()).throw(ValueError('unavailable')))
-    assert m.select_model(UI([m.DEFAULT_MODEL,'measure','__back'])) is None
+    assert m.select_model(UI([m.DEFAULT_MODEL,'measure','back','__back'])) is None
     row.update(fit=None,ready=False,disk_fit=False)
     assert m.select_model(UI([m.DEFAULT_MODEL,'back','__back'])) is None
 
@@ -409,6 +409,124 @@ def test_exact_workspace_trust_only(local,tmp_path):
 @pytest.mark.parametrize('width,height',[(80,24),(44,20),(32,12)])
 def test_outage_picker_narrow(local,t_mod,width,height):
     from test_tui import make_ui
-    ui=make_ui(t_mod,['j','j','enter','j','enter','q'],width,height)
+    ui=make_ui(t_mod,['j','j','enter','j','j','enter','q'],width,height)
     assert local.workflow_menu(ui)['on_cloud_failure']=='local'
     assert any('Pause and retry' in ''.join(frame) for frame in ui.frames)
+
+
+def test_special_runtime_verification_evidence(local, monkeypatch):
+    m = local
+    row = m.artifacts()[1]
+    name = row['model']
+    directory = m.model_directory(name)
+    directory.mkdir(parents=True)
+    (directory / 'weights.safetensors').write_bytes(b'123')
+    receipt = directory / '.t-artifact.json'
+    receipt.write_text(json.dumps({'model': name, 'revision': 'a'*40,
+                                 'files': [{'name': 'weights.safetensors', 'size': 3}]}))
+    machine = hardware()
+    monkeypatch.setattr(m, 'helper', lambda n: {'hardware': lambda: machine})
+    monkeypatch.setattr(m, 'lms', lambda: '/fake/lms')
+    calls = []
+    @contextmanager
+    def runtime(*args):
+        calls.append(args)
+        yield 'http://fixture', 'alias', m.receipt(name)
+    monkeypatch.setattr(m, 'runtime', runtime)
+    monkeypatch.setattr(m, 'request', lambda *a, **k: {'output': [{'type': 'message', 'content': [{'type': 'output_text', 'text': 'OK'}]}]})
+    before = m.report(row, machine)
+    assert before['fit'] is None and before['verification_allowed'] and not before['ready']
+    assert m.install(name)['ready']
+    assert calls == [(name, 32768)]
+    assert m.report(row, machine)['ready']
+    assert not m.report(row, machine, 65536)['ready']
+    assert not m.report(row, dict(machine, accelerator='Apple other'))['ready']
+    assert m.report(row, dict(machine, ram_bytes=64*1024**3))['fit'] is False
+    # Download-only never expands prior context evidence or starts inference.
+    assert not m.install(name, True, 65536)['ready']
+    assert len(calls) == 1
+    monkeypatch.setattr(m, 'request', lambda *a, **k: {'output': [{'type': 'reasoning'}]})
+    with pytest.raises(ValueError, match='no output text'):
+        m.install(name)
+    assert not m.report(row, machine)['ready']
+    assert not m.receipt(name).get('verified_context')
+    assert m.model_status(m.report(row, machine)) == 'Verification failed'
+    assert (directory / 'weights.safetensors').read_bytes() == b'123'
+    # Cancellation invalidates old evidence, without deleting files.
+    @contextmanager
+    def interrupted(*args):
+        raise KeyboardInterrupt
+        yield
+    monkeypatch.setattr(m, 'runtime', interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        m.install(name)
+    assert not m.receipt(name).get('verified_context')
+
+
+def test_special_runtime_exact_lease_and_failure_cleanup(local, monkeypatch):
+    m = local; name = m.artifacts()[1]['model']; calls = []
+    monkeypatch.setattr(m, 'receipt', lambda n: {'revision': 'a'*40})
+    monkeypatch.setattr(m, 'request', lambda *a, **k: {})
+    def lms(*args, **kwargs):
+        calls.append(args)
+        if args[0] == 'ls':
+            return json.dumps([{'indexedModelIdentifier': name, 'modelKey': 'flash'}])
+        if args[0] == 'ps':
+            load = next(c for c in calls if c[0] == 'load')
+            return json.dumps([{'identifier': load[load.index('--identifier')+1],
+                               'indexedModelIdentifier': name, 'contextLength': 32768}])
+        return ''
+    monkeypatch.setattr(m, 'run_lms', lms)
+    with m.runtime(name):
+        pass
+    assert [c[0] for c in calls] == ['ls', 'load', 'ps', 'unload']
+    assert not any('guardrail' in arg for c in calls for arg in c)
+
+
+@pytest.mark.parametrize('width,height', [(80,24), (44,20), (32,12)])
+def test_model_overview_navigation_and_provenance(local, t_mod, monkeypatch, width, height):
+    from test_tui import make_ui
+    m = local; row = m.report(m.artifacts()[1], hardware())
+    # No default detail dump. Context and the focused action stay in the viewport.
+    ui = make_ui(t_mod, ['q'], width, height)
+    assert m.model_menu(ui, row, 32768) is None
+    frame = '\n'.join(ui.frames[0])
+    assert 'Install and verify' in frame
+    assert 'https://' not in frame and 'Publisher' not in frame
+    for captured in ui.frames:
+        assert sum(t_mod._term_rows(line, width) for line in captured) <= height
+    # Read-only drilldowns preserve focus and never call install.
+    class UI:
+        def __init__(self, choices):
+            self.choices = iter(choices); self.pages = []; self.menus = []
+        def pick(self, label, rows, **kwargs):
+            self.menus.append((label, rows, kwargs)); return next(self.choices)
+        def page(self, title, body, **kwargs):
+            self.pages.append((title, body)); return 'q'
+        def cols(self): return width
+    row.update(installed=True, verification_error='Unsupported architecture', measurement={
+        'median':2, 'min':1, 'max':3, 'metric':'tokens/s', 'context_tokens':32768, 'stale':True})
+    ui = UI(['benchmarks', 'sources', 'artifact', 'back'])
+    assert m.model_menu(ui, row, 32768) is None
+    assert len(ui.pages) == 2
+    assert 'Unsupported architecture' in '\n'.join(ui.pages[-1][1])
+    assert 'Stale measurement' in '\n'.join(ui.pages[-1][1])
+    assert all(t_mod._display_width(line) <= width for _, body in ui.pages for line in body)
+    row['benchmarks'] = {}
+    ui = UI(['benchmarks', 'sources', 'back'])
+    m.model_menu(ui, row, 32768)
+    assert 'No published' in '\n'.join(ui.pages[0][1])
+    assert 'No published' in '\n'.join(ui.menus[1][2]['context'])
+    ui.page = lambda *a, **k: 'abort'
+    with pytest.raises(KeyboardInterrupt):
+        m.model_page(ui, 'Title', ['body'])
+
+
+def test_model_command_error_is_actionable(t_mod, monkeypatch, capsys):
+    def failure(args):
+        raise ValueError('Model loading was stopped due to insufficient system resources')
+    monkeypatch.setattr(t_mod.runpy, 'run_path', lambda path: {'command': failure})
+    assert t_mod.cmd_config(None, SimpleNamespace(models_action='install')) == 1
+    error = capsys.readouterr().err
+    assert error.startswith('t config models: Model loading')
+    assert 'Traceback' not in error

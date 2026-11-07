@@ -103,12 +103,30 @@ cache; curated MLX identities and publisher scores ship with t and are not scrap
 or silently replaced. Model installation pins the current Hugging Face commit,
 resumes partial downloads and verifies published LFS SHA-256 checksums. A receipt
 is written only after every selected file is complete. Downloaded and inference
-verified are separate states. Flash-Next currently supports `--download-only`.
+verified are separate states. The workflow model overview shows status, file size,
+memory fit and context beside its next action. Benchmarks and Artifact & runtime
+open separate detail views; sources and methodology remain available.
+
+For an existing download, choose **Verify readiness**, or rerun
+`t config models install MODEL --context 32768 --yes`. This reuses complete files,
+loads the exact artifact at the requested context, tests response text, then releases
+the owned model. A failed or cancelled re-verification clears previous readiness;
+errors retain the downloaded files. New verification evidence records the machine
+and context. Browsing does not verify, load or install anything.
+
+Flash-Next can be explicitly verified on supported hardware with a compatible
+LM Studio runtime. Its [publisher model card](https://huggingface.co/nace-ai/Qwen3.8-Flash-Next-MLX-4bit)
+describes about 73 GB resident weights and a 32 GB memory-mapped n-gram table on a
+128 GB Mac. t uses that resident estimate plus overhead for verification eligibility;
+Memory fit remains unknown until successful inference. This estimate does not
+prove LM Studio supports the mapping. Runtime architecture and memory-guardrail
+failures remain visible; t never overrides those guardrails or marks a failed load
+Ready. Update the runtime or choose another artifact when verification fails.
 
 The four curated MLX artifacts are:
 
 - `mlx-community/Qwen3.8-27B-8bit` — default candidate.
-- `nace-ai/Qwen3.8-Flash-Next-MLX-4bit` — specialized memory-mapping/runtime support unverified; downloaded only.
+- `nace-ai/Qwen3.8-Flash-Next-MLX-4bit` — requires memory-mapping runtime verification; at least 128 GB RAM.
 - `mlx-community/Qwen3.5-122B-A10B-4bit`.
 - `lmstudio-community/Qwen3-Coder-Next-MLX-6bit`.
 

@@ -42,6 +42,9 @@
       "base_model": "Qwen/Qwen3.8-Flash-Next",
       "source": "https://huggingface.co/nace-ai/Qwen3.8-Flash-Next-MLX-4bit",
       "special_runtime": true,
+      "resident_bytes": 73000000000,
+      "minimum_ram_bytes": 137438953472,
+      "memory_note": "Publisher: about 73 GB resident; 32 GB n-gram table memory-mapped. Requires compatible runtime and 128 GB RAM.",
       "benchmarks": {
         "swe-bench-pro": {
           "score": 62.5,
