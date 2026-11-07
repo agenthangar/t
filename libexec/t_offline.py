@@ -389,7 +389,7 @@ def stop_runtime(process):
         time.sleep(.05)
 
 
-def supervise(argv, chosen, cwd):
+def supervise(argv, chosen, cwd, observer=None):
     local = inference()
     server_options, continuation = launch_options(argv, cwd)
     root = local['helper']('t_local_worker')['state_root']() / ('outage-'+uuid.uuid4().hex)
@@ -444,7 +444,10 @@ def supervise(argv, chosen, cwd):
                             raise EOFError('owned runtime disconnected')
                         if len(raw) > FRAME_LIMIT:
                             raise ValueError('runtime message exceeds limit')
-                        checkpoint.server(json.loads(raw))
+                        message = json.loads(raw)
+                        checkpoint.server(message)
+                        if observer is not None:
+                            observer(message)
                         channel.send(raw.rstrip(b'\n'))
                 except Exception as exc:
                     failures.append(str(exc))
@@ -462,7 +465,8 @@ def supervise(argv, chosen, cwd):
                 if checkpoint.due():
                     try:
                         handoff = checkpoint.prompt()
-                        row = next((r for r in local['catalogue'](context=chosen['context_tokens'])['models']
+                        leased = local['leased_runtime'](chosen)
+                        row = {'ready': True} if leased else next((r for r in local['catalogue'](context=chosen['context_tokens'])['models']
                                     if r['model'] == chosen['model'] and r['provider'] == chosen['provider']), None)
                         if not row or not row.get('ready'):
                             raise ValueError('Selected local model is not installed and ready; no download was attempted.')

@@ -383,7 +383,7 @@ def check_command_patterns(parser, command_groups, contract, *, root=ROOT):
         errors.append("command patterns must define the ten approved behavior types")
     registry_routes = {" ".join(path): route for path, route in command_routes(command_groups)}
     routes = (set(registry_routes)
-              | {SHARE_COMMAND, "share targets", "share inbox", "share read", "workflow"})
+              | {SHARE_COMMAND, "share targets", "share inbox", "share read", "workflow", "eval", "eval config"})
     top = _subparsers(parser)
     commands = contract.get("commands", {})
     if set(commands) != routes:

@@ -377,6 +377,25 @@ def catalogue(suite='swe-bench-verified-bash-only', context=32768):
     return {'hardware': machine, 'suite': suite, 'context_tokens': context, 'models': rows}
 
 
+def leased_runtime(chosen):
+    """Verify a host-owned runtime capability when executing in an eval container."""
+    path = os.environ.get('T_LOCAL_RUNTIME_RECEIPT')
+    if not path:
+        return None
+    info = json.loads(Path(path).read_text())
+    if (info.get('model') != chosen['model'] or info.get('provider') != chosen['provider'] or
+            info.get('context_tokens') != chosen['context_tokens'] or not info.get('revision')):
+        raise ValueError('runtime lease does not match the selected model/context')
+    from urllib.parse import urlsplit
+    url = urlsplit(info.get('base', ''))
+    if url.scheme != 'http' or url.hostname not in ('127.0.0.1', '192.168.5.2') or not url.port or url.username:
+        raise ValueError('runtime lease requires a local capability endpoint')
+    actual = request(info['base'] + '/identity')
+    if any(actual.get(key) != info.get(key) for key in ('model', 'alias', 'revision', 'context_tokens')):
+        raise ValueError('runtime lease identity verification failed')
+    return info
+
+
 def detail_lines(row):
     lines = [row['model'], f"Provider: {row['provider']} · Precision: {row.get('precision', 'runtime metadata')}",
              f"Memory fit {'✓' if row['fit'] is True else '✕' if row['fit'] is False else '?'} · {row['reason']}",
@@ -572,6 +591,10 @@ def command(args):
 
 @contextmanager
 def provider_runtime(chosen):
+    leased = leased_runtime(chosen)
+    if leased:
+        yield leased['base'], leased['alias'], leased
+        return
     if chosen['provider'] == 'lmstudio':
         with runtime(chosen['model'], chosen['context_tokens'], None) as value:
             yield value
@@ -609,7 +632,10 @@ def lead(argv, cwd=None, chosen=None):
         raise ValueError('Local-only inference requires user approval review; automatic cloud review is unavailable')
     if 'resume' in argv[1:]:
         raise ValueError('Local-only provider changes require a new session; cloud/local resume is not verified')
-    if chosen['provider'] == 'lmstudio':
+    leased = leased_runtime(chosen)
+    if leased:
+        fit = {'fit': True}
+    elif chosen['provider'] == 'lmstudio':
         fit = report(artifact(chosen['model']), helper('t_local_models')['hardware'](), chosen['context_tokens'])
     else:
         fit = next((r for r in catalogue(context=chosen['context_tokens'])['models'] if r['model'] == chosen['model'] and r['provider'] == 'ollama'), None)

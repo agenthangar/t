@@ -126,6 +126,7 @@ def test_task_lifecycle_and_exclusivity(worker, repo, monkeypatch):
     def server(*args): yield 'http://127.0.0.1:1234', {}
     monkeypatch.setattr(worker, 'ollama_server', server)
     monkeypatch.setattr(worker, 'check_model', lambda *a: None)
+    monkeypatch.setattr(worker, 'request', lambda *a: {'models': [{'name': 'gpt-oss:20b', 'digest': 'fixture-digest'}]})
     def run(job, base, model, timeout, cancel, *args):
         started.set()
         assert cancel.wait(10)
@@ -307,7 +308,7 @@ def test_mlx_routing_identity_context_and_local_only_gate(worker,repo,monkeypatc
     def runtime(model,context):
         observed.append((model,context))
         yield 'http://127.0.0.1:1234','owned-alias',{'revision':'a'*40,'runtime':{'contextLength':context}}
-    local={'effective':lambda workspace:routing,'report':lambda *a:{'fit':True},'artifact':lambda n:{},
+    local={'leased_runtime':lambda chosen:None,'effective':lambda workspace:routing,'report':lambda *a:{'fit':True},'artifact':lambda n:{},
            'helper':lambda n:{'hardware':lambda:{}},'runtime':runtime}
     monkeypatch.setattr(worker,'inference',lambda:local)
     monkeypatch.setattr(worker,'run_worker',lambda *a:observed.append(a[3:]) or 'completed')

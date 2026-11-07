@@ -36,7 +36,7 @@ t() {
   [[ "$*" == 'config workflow instructions show'* || "$*" == 'workflow instructions show'* || "$*" == 'share read'* ]] && machine=1
   if [[ -t 1 && ${TERM:-dumb} != dumb && -z $machine && -z ${T_TITLE_ACTIVE:-} ]]; then
     case ${1:-} in
-      session|remote|issue|repo|cursor|hosts|agentcore|workflow|runners|config|profile|policy|agent|system)
+      session|remote|issue|repo|cursor|hosts|agentcore|workflow|runners|eval|config|profile|policy|agent|system)
         label+=" $1"
         case ${2:-} in
           open|move|resume|list|ls|status|start|close|restart|push|pop|history|cd|read|view-plan|paste|search|goal|locate|create|clone|add|show|edit|remove|delete|rm|default|run|invoke|stop|setup|onboard|local|workflow|init|apply|check|login|install|trust|integrate|update|diagnose|advisories) label+=" $2" ;;
@@ -613,7 +613,7 @@ _t_beam_xlate() {
 # key for `on`), and slot/flags after. Pulls live from the ${(k)DEV_REPOS} /
 # ${(k)REMOTE_HOSTS} arrays so it stays current with ${T_LOCAL_RC}.
 _t() {
-  local -a nouns=(session move issue share remote repo cursor hosts agentcore workflow runners config mcp profile policy agent system login help)
+  local -a nouns=(session move issue share remote repo cursor hosts agentcore workflow runners eval config mcp profile policy agent system login help)
   if (( CURRENT == 2 )); then
     _describe -t nouns 't command group' nouns
     return
@@ -629,6 +629,30 @@ _t() {
   fi
   [[ $action == ls && $group == (session|repo|cursor|hosts|issue) ]] && action=list
   local -a actions
+  if [[ $group == eval ]]; then
+    if (( CURRENT == first - 1 )); then
+      actions=(config benchmarks runs)
+      _describe -t actions 'evaluation resource' actions
+    elif (( CURRENT == first )); then
+      case $action in
+        config) _values 'configuration action' list ls show edit ;;
+        benchmarks) _values 'benchmark action' list ls ;;
+        runs) _values 'run action' start list ls show compare resume cancel ;;
+      esac
+    elif [[ ${words[CURRENT-1]} == --config ]]; then
+      _files
+    elif [[ ${words[CURRENT]} == -* ]]; then
+      case ${words[first]} in
+        start) _values 'flag' --config --dry-run --frontier-model --local-model --local-provider --reasoning-effort --json -h --help ;;
+        resume) _values 'flag' --retry-interrupted -h --help ;;
+        list|ls|show|compare) _values 'flag' --json -h --help ;;
+        *) _values 'flag' -h --help ;;
+      esac
+    else
+      _message 'saved configuration name or run ID (omit for fzf)'
+    fi
+    return
+  fi
   if [[ $group == issue ]]; then
     if (( CURRENT == first - 1 )); then
       local -a issue_actions=(list ls status start open)

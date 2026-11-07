@@ -73,6 +73,14 @@ foreground workers use single-quoted outer commands to avoid escaped-space title
 
 ## Command types
 
+`t eval` is the evaluation hub. `t eval config` manages persistent named
+configurations using the shared rail editor and review/save. `t eval runs start`
+uses the shared fzf configuration picker; Enter starts immediately. Missing detail
+or action targets use fzf, while all `list` forms remain read-only. Run rows include
+progress/phase, selected models and separate per-mode benchmark results, observed
+tok/s and estimated cloud cost; unavailable measurements remain labeled unavailable.
+JSON never prompts. See [evaluation commands](../docs/evaluations.md).
+
 The types compose: `t session open` can be a direct action with an explicit
 slot, or a filtered multi-selection without one. Choose by behavior rather than
 the command name.

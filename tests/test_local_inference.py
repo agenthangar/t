@@ -32,6 +32,26 @@ def test_policy_and_instructions(local):
     assert 'task delegation' in m.instructions({'mode':'automatic'})
 
 
+def test_runtime_lease_pins_provider_artifact_and_context(local, monkeypatch, tmp_path):
+    m = local
+    chosen = m.policy()
+    assert m.leased_runtime(chosen) is None
+    path = tmp_path / 'lease.json'; monkeypatch.setenv('T_LOCAL_RUNTIME_RECEIPT', str(path))
+    receipt = {'model': chosen['model'], 'provider': chosen['provider'], 'context_tokens': chosen['context_tokens'],
+               'revision': 'pinned', 'alias': 'selected-alias', 'base': 'http://127.0.0.1:1234/capability/local'}
+    path.write_text(json.dumps(receipt))
+    monkeypatch.setattr(m, 'request', lambda url: receipt)
+    assert m.leased_runtime(chosen) == receipt
+    with m.provider_runtime(chosen) as (base, alias, identity):
+        assert base == receipt['base'] and alias == 'selected-alias' and identity['revision'] == 'pinned'
+    for change in ({'model': 'different'}, {'context_tokens': 4096}, {'base': 'https://external.invalid:1234'}):
+        path.write_text(json.dumps({**receipt, **change}))
+        with pytest.raises(ValueError): m.leased_runtime(chosen)
+    path.write_text(json.dumps(receipt))
+    monkeypatch.setattr(m, 'request', lambda url: {**receipt, 'revision': 'different'})
+    with pytest.raises(ValueError, match='identity'): m.leased_runtime(chosen)
+
+
 def test_receipts_fit_and_identity(local):
     m=local;name=m.DEFAULT_MODEL
     assert len(m.artifacts())==4

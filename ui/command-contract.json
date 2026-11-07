@@ -5316,6 +5316,501 @@
           ]
         }
       }
+    },
+    "eval": {
+      "patterns": [
+        "detail",
+        "single"
+      ],
+      "renderer": "mixed",
+      "scope": "user-wide saved evaluation configurations and durable runs",
+      "confirmation": "enter",
+      "tests": [
+        "tests/test_eval.py::test_command_contract"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "eval"
+          ],
+          "patterns": [
+            "single"
+          ],
+          "read_only": false,
+          "terminal": true,
+          "tests": [
+            "tests/test_eval.py::test_command_contract"
+          ]
+        },
+        "nonterminal_help": {
+          "argv": [
+            "eval"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_eval.py::test_command_contract"
+          ]
+        }
+      }
+    },
+    "eval config": {
+      "patterns": [
+        "review",
+        "single",
+        "wizard"
+      ],
+      "renderer": "mixed",
+      "scope": "user-wide saved evaluation configurations and durable runs",
+      "confirmation": "review",
+      "tests": [
+        "tests/test_eval.py::test_command_contract"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "eval",
+            "config"
+          ],
+          "patterns": [
+            "single",
+            "wizard",
+            "review"
+          ],
+          "read_only": false,
+          "terminal": true,
+          "tests": [
+            "tests/test_eval.py::test_command_contract"
+          ]
+        }
+      }
+    },
+    "eval config list": {
+      "patterns": [
+        "list",
+        "machine"
+      ],
+      "renderer": "plain",
+      "scope": "user-wide saved evaluation configurations and durable runs",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_eval.py::test_command_contract"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "eval",
+            "config",
+            "list"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_eval.py::test_command_contract"
+          ]
+        },
+        "json": {
+          "argv": [
+            "eval",
+            "config",
+            "list",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_eval.py::test_command_contract"
+          ]
+        }
+      }
+    },
+    "eval config show": {
+      "patterns": [
+        "machine",
+        "single"
+      ],
+      "renderer": "mixed",
+      "scope": "user-wide saved evaluation configurations and durable runs",
+      "confirmation": "enter",
+      "tests": [
+        "tests/test_eval.py::test_command_contract"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "eval",
+            "config",
+            "show"
+          ],
+          "patterns": [
+            "single"
+          ],
+          "read_only": true,
+          "terminal": true,
+          "tests": [
+            "tests/test_eval.py::test_command_contract"
+          ]
+        },
+        "json": {
+          "argv": [
+            "eval",
+            "config",
+            "show",
+            "example",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_eval.py::test_command_contract"
+          ]
+        }
+      }
+    },
+    "eval config edit": {
+      "patterns": [
+        "review",
+        "single",
+        "wizard"
+      ],
+      "renderer": "mixed",
+      "scope": "user-wide saved evaluation configurations and durable runs",
+      "confirmation": "review",
+      "tests": [
+        "tests/test_eval.py::test_command_contract"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "eval",
+            "config",
+            "edit"
+          ],
+          "patterns": [
+            "single",
+            "wizard",
+            "review"
+          ],
+          "read_only": false,
+          "terminal": true,
+          "tests": [
+            "tests/test_eval.py::test_command_contract"
+          ]
+        }
+      }
+    },
+    "eval benchmarks list": {
+      "patterns": [
+        "list",
+        "machine"
+      ],
+      "renderer": "plain",
+      "scope": "user-wide saved evaluation configurations and durable runs",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_eval.py::test_command_contract"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "eval",
+            "benchmarks",
+            "list"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_eval.py::test_command_contract"
+          ]
+        },
+        "json": {
+          "argv": [
+            "eval",
+            "benchmarks",
+            "list",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_eval.py::test_command_contract"
+          ]
+        }
+      }
+    },
+    "eval runs start": {
+      "patterns": [
+        "action",
+        "detail",
+        "machine",
+        "single"
+      ],
+      "renderer": "mixed",
+      "scope": "user-wide saved evaluation configurations and durable runs",
+      "confirmation": "enter",
+      "tests": [
+        "tests/test_eval.py::test_command_contract"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "eval",
+            "runs",
+            "start"
+          ],
+          "patterns": [
+            "single",
+            "action"
+          ],
+          "read_only": false,
+          "terminal": true,
+          "tests": [
+            "tests/test_eval.py::test_command_contract"
+          ]
+        },
+        "json": {
+          "argv": [
+            "eval",
+            "runs",
+            "start",
+            "example",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_eval.py::test_command_contract"
+          ]
+        },
+        "dry_run": {
+          "argv": [
+            "eval",
+            "runs",
+            "start",
+            "example",
+            "--dry-run"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_eval.py::test_command_contract"
+          ]
+        }
+      }
+    },
+    "eval runs list": {
+      "patterns": [
+        "list",
+        "machine"
+      ],
+      "renderer": "plain",
+      "scope": "user-wide saved evaluation configurations and durable runs",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_eval.py::test_command_contract"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "eval",
+            "runs",
+            "list"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_eval.py::test_command_contract"
+          ]
+        },
+        "json": {
+          "argv": [
+            "eval",
+            "runs",
+            "list",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_eval.py::test_command_contract"
+          ]
+        }
+      }
+    },
+    "eval runs show": {
+      "patterns": [
+        "machine",
+        "single"
+      ],
+      "renderer": "mixed",
+      "scope": "user-wide saved evaluation configurations and durable runs",
+      "confirmation": "enter",
+      "tests": [
+        "tests/test_eval.py::test_command_contract"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "eval",
+            "runs",
+            "show"
+          ],
+          "patterns": [
+            "single"
+          ],
+          "read_only": true,
+          "terminal": true,
+          "tests": [
+            "tests/test_eval.py::test_command_contract"
+          ]
+        },
+        "json": {
+          "argv": [
+            "eval",
+            "runs",
+            "show",
+            "eval-20261106-012345abcdef",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_eval.py::test_command_contract"
+          ]
+        }
+      }
+    },
+    "eval runs compare": {
+      "patterns": [
+        "machine",
+        "single"
+      ],
+      "renderer": "mixed",
+      "scope": "user-wide saved evaluation configurations and durable runs",
+      "confirmation": "enter",
+      "tests": [
+        "tests/test_eval.py::test_command_contract"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "eval",
+            "runs",
+            "compare"
+          ],
+          "patterns": [
+            "single"
+          ],
+          "read_only": true,
+          "terminal": true,
+          "tests": [
+            "tests/test_eval.py::test_command_contract"
+          ]
+        },
+        "json": {
+          "argv": [
+            "eval",
+            "runs",
+            "compare",
+            "eval-20261106-012345abcdef",
+            "eval-20261106-012345abcdef",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_eval.py::test_command_contract"
+          ]
+        }
+      }
+    },
+    "eval runs resume": {
+      "patterns": [
+        "action",
+        "single"
+      ],
+      "renderer": "mixed",
+      "scope": "user-wide saved evaluation configurations and durable runs",
+      "confirmation": "enter",
+      "tests": [
+        "tests/test_eval.py::test_command_contract"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "eval",
+            "runs",
+            "resume"
+          ],
+          "patterns": [
+            "single",
+            "action"
+          ],
+          "read_only": false,
+          "terminal": true,
+          "tests": [
+            "tests/test_eval.py::test_command_contract"
+          ]
+        }
+      }
+    },
+    "eval runs cancel": {
+      "patterns": [
+        "action",
+        "single"
+      ],
+      "renderer": "mixed",
+      "scope": "user-wide saved evaluation configurations and durable runs",
+      "confirmation": "when_interrupting",
+      "tests": [
+        "tests/test_eval.py::test_command_contract"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "eval",
+            "runs",
+            "cancel"
+          ],
+          "patterns": [
+            "single",
+            "action"
+          ],
+          "read_only": false,
+          "terminal": true,
+          "tests": [
+            "tests/test_eval.py::test_command_contract"
+          ]
+        }
+      }
     }
   },
   "display_schemas": {

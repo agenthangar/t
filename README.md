@@ -1,5 +1,9 @@
 # t
 
+Evaluate coding workflows with `t eval config`, then `t eval runs start`.
+The configuration picker launches the selected run directly; `t eval runs list`
+shows progress and per-workflow benchmark results. See [workflow evaluations](docs/evaluations.md).
+
 ![t — coding-agent sessions, under control](docs/media/hero.svg)
 
 **Your sessions. Any terminal.**
