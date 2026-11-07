@@ -2240,10 +2240,10 @@ def test_zsh_resume_picker_shows_the_display_column_for_every_row(zsh, tmp_path)
     header = semantic_chrome((tmp_path / "fzf.log.header").read_text()).splitlines()
     controls = "\n".join(header)
     for control in ("Ctrl-F toggle", "Ctrl-X reset", "Ctrl-G agent", "0 hidden",
-                    "Filters OFF", "Sort: last turn", "Alt-T last turn", "Alt-R repo",
-                    "Alt-G agent", "Alt-O host", "Alt-V session"):
+                    "Filters OFF", "Sort: last turn", "Ctrl-S toggle", "Ctrl-Y next",
+                    "last turn", "repo", "agent", "host", "session"):
         assert control in controls
-    assert "Ctrl-D" not in controls  # Resume has no historical interface metadata.
+    assert "Ctrl-D merged" in controls  # Resume uses this key for its merged filter.
 
 
 def test_zsh_resume_pick_revives_the_row_with_its_own_agent(zsh, tmp_path):

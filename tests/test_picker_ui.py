@@ -475,7 +475,7 @@ def test_inline_filters_keep_the_list_visible_and_repeat_clears(picker, width, h
     assert 'Filters OFF' in screen and 'Filters >' not in screen
     keys('C-f')
     wait('2/2 (0)')
-    keys('M-r')
+    keys('C-y')
     wait('Sort: repo')
     keys('C-s')
     wait('Sort: OFF')
@@ -514,9 +514,9 @@ def test_resume_sort_controls_keep_focused_row_and_change_order(picker, width, h
     if auth_warning:
         assert 'GitHub auth failed:' in screen
     assert '▸' in screen
-    for letter in (() if width <= 48 else ('T', 'R', 'G', 'O', 'V')):
-        assert 'Alt-' + letter in screen or 'M-' + letter in screen
-    keys('M-r')
+    assert 'Alt-' not in screen and 'M-' not in screen
+    assert 'Ctrl-Y' in screen and 'Ctrl-S' in screen
+    keys('C-y')
     # Headers can repaint before reload-sync applies the new rows. Wait for
     # the actual order before moving focus, then verify its rendered identity.
     loading = tuple('⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏')
@@ -527,7 +527,7 @@ def test_resume_sort_controls_keep_focused_row_and_change_order(picker, width, h
     keys('Up', 'Up')
     screen = wait('Older api', focused='Older api')
     assert 'Older api' in screen and '▸' in screen
-    keys('M-t')
+    keys('C-y', 'C-y', 'C-y', 'C-y')
     if height > 12:
         wait('Sort: turn' if width <= 48 else 'Sort: last turn', absent=loading, ordered=('Newest web', 'Older api'))
     else:
@@ -544,11 +544,11 @@ def test_resume_merged_key_preserves_query_and_removes_hidden_marks(picker, widt
     start(profile='resume-merged', mode='resume', width=width, height=height,
           auth_warning=True, monochrome=monochrome)
     screen = wait('2/2 (0)', focused='[MERGED]')
-    assert 'Alt-M' in screen or 'M-M' in screen
+    assert 'Ctrl-D' in screen
     keys('Tab')
     wait('2/2 (1)')
     keys('-l', 'e')  # Both titles match; the query must survive each reload.
-    keys('M-m')
+    keys('C-d')
     screen = wait('1/1 (0)', focused='[OPEN]')
     assert '[MERGED]' not in screen
     assert 'resume > e' in screen
@@ -556,9 +556,9 @@ def test_resume_merged_key_preserves_query_and_removes_hidden_marks(picker, widt
     wait('2/2 (0)')
     keys('C-l')
     wait('1/1 (0)')
-    keys('M-m')
+    keys('C-d')
     wait('2/2 (0)')
-    keys('M-m')
+    keys('C-d')
     wait('1/1 (0)', focused='[OPEN]')
     assert finish()[0].split('\t')[2] == 'sid2'
 

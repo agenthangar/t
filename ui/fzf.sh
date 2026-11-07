@@ -418,7 +418,9 @@ SH
   if [ -n "${T_PICKER_FILTER_HELPER:-}" ]; then
     _t_picker_bind=
     _t_picker_specs='ctrl-a:off ctrl-l:on ctrl-f:toggle-filters ctrl-x:reset-filters ctrl-t:state ctrl-g:match-agent ctrl-o:match-host ctrl-r:match-repo ctrl-s:toggle-sort ctrl-y:next-sort alt-s:toggle-sort'
-    if [ "$T_PICKER_SESSION_FILTERS" != resume ]; then
+    if [ "$T_PICKER_SESSION_FILTERS" = resume ]; then
+      _t_picker_specs="$_t_picker_specs ctrl-d:merged"
+    else
       _t_picker_specs="$_t_picker_specs ctrl-d:match-interface"
     fi
     if [ "$T_PICKER_SESSION_FILTERS" = open ]; then

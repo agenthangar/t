@@ -299,8 +299,9 @@ def test_resume_turn_enrichment_uses_exact_sources_and_never_remote_local_copy(f
 def test_resume_header_retains_sort_controls_and_row_space(filters, width):
     text = filters.header('resume', 0, dict.fromkeys(['agent', 'host', 'repo']), 2, '', width)
     assert all(filters.display_width(line) <= width for line in text.splitlines())
-    for letter in (() if width <= 36 else ('T', 'R', 'G', 'O', 'V')):
-        assert ('M-' if width <= 36 else 'Alt-') + letter in text
+    assert 'Alt-' not in text and 'M-' not in text
+    if width > 36:
+        assert all(label in text for label in ('last turn', 'repo', 'agent', 'host', 'session'))
     for letter in ('F', 'X', 'G', 'S', 'Y', '/'):
         assert ('^' if width <= 36 else 'Ctrl-') + letter in text
     assert ('Sort: turn' if width <= 36 else 'Sort: last turn') in text
@@ -412,7 +413,7 @@ def test_resume_merged_toggle_uses_metadata_and_preserves_choices(filters, tmp_p
         return (tmp_path / 'current').read_text().splitlines()
     assert render('current') == rows
     assert render('merged') == rows[1:]
-    assert 'Alt-M merged' in (tmp_path / 'current-header').read_text()
+    assert 'Ctrl-D merged' in (tmp_path / 'current-header').read_text()
     assert render('sort-repo') == rows[1:]
     assert render('off') == rows
     assert render('on') == rows[1:]
@@ -466,7 +467,7 @@ def test_hotkeys_highlight_only_current_states(filters, monkeypatch, platform, w
     state_key = theme.key_labels('Ctrl-T', compact=compact)
     assert any(item.startswith(state_key) for item in active) == enabled
     assert any(item.startswith('Sort:') for item in active)
-    assert any(theme.key_labels('Alt-M', compact=compact) in item for item in active) == (enabled and hide_merged)
+    assert any(theme.key_labels('Ctrl-D', compact=compact) in item for item in active) == (enabled and hide_merged)
     plain = re.sub(r'\x1b\[[0-9;]*m', '', text)
     assert all(filters.display_width(line) <= width for line in plain.splitlines())
     if not compact:

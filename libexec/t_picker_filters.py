@@ -159,9 +159,9 @@ def header(profile, mask, filters, hidden, columns, width, sort='turn', enabled=
     if state_active:
         active.append('Ctrl-T state')
     if profile == 'resume':
-        controls.append('Alt-M merged')
+        controls.append('Ctrl-D merged')
         if enabled and hide_merged:
-            active.append('Alt-M merged')
+            active.append('Ctrl-D merged')
     lines += keys(controls, active)
     summary = ', '.join(f'{name}={value}' for name, value in filters.items() if value is not None)
     summary = state_label(profile, mask) + (' · ' + summary if summary else '')
@@ -173,8 +173,8 @@ def header(profile, mask, filters, hidden, columns, width, sort='turn', enabled=
                  + style(suffix, 'heading' if enabled else 'hint'))
     if not compact:
         lines += [style('Match highlighted row; repeat key to clear'), '']
-    sorts = {name: f'{shortcut} {"turn" if compact and name == "turn" else label}'
-             for name, (shortcut, label) in RESUME_SORTS.items() if (profile == 'resume' or name != 'turn') and (not compact or name in ('turn', 'repo', 'session'))}
+    sorts = {name: ('turn' if compact and name == 'turn' else label)
+             for name, (_, label) in RESUME_SORTS.items() if (profile == 'resume' or name != 'turn') and (not compact or name in ('turn', 'repo', 'session'))}
     label = ('turn' if compact and sort == 'turn' else RESUME_SORTS[sort][1]) if sort_enabled else 'OFF'
     lines += keys(['Sort: ' + label, 'Ctrl-S toggle'], ['Sort: ' + label] if sort_enabled else [])
     lines += keys((['Ctrl-Y next'] if compact else ['Ctrl-Y next'] + list(sorts.values())),

@@ -51,8 +51,8 @@ Use FILTERS only for actual filter controls; other pickers use their
 action or resource title. Reduce spacing, borders and margins on short screens
 before losing controls or focus, including wide 120×12 terminals.
 
-Display native Mac labels (`⌃T`, `⌥T`, `↩ Return`, `⎋ Esc`, `⇥ Tab`) on macOS;
-other hosts use `Ctrl-T`, `Alt-T`, `Enter`, `Esc`, `Tab`. Compact headers use the short
+Display native Mac labels (`⌃T`, `⌃S`, `↩ Return`, `⎋ Esc`, `⇥ Tab`) on macOS;
+other hosts use `Ctrl-T`, `Ctrl-S`, `Enter`, `Esc`, `Tab`. Compact headers use the short
 Mac symbols or `^T` on other systems. Only labels change: bindings remain the
 same control keys, Return, Escape and Tab. Align labels on wide terminals and stack them below 60 columns.
 Clip text before applying color and count physical rows when repainting; at
@@ -360,7 +360,7 @@ of host scope. Session lists always print a read-only table, including in termin
 Session picker and history searches accept full literal phrases, ignoring case. Spaces and letters stay in the query; Tab marks rows. Saved-history search covers all pages and cached metadata. Ctrl-S toggles sorting without requiring terminal Option/Meta configuration; Ctrl-Y cycles sort choices.
 
 The open picker hides attached CLI and loaded desktop sessions by default.
-Ctrl-F toggles filters without leaving the list; Ctrl-X resets filters. Ctrl-T cycles state and is highlighted whenever the enabled state filter narrows the view, including the default state. Ctrl-G/O/R matches the highlighted row’s agent/host/repo; repeat the shortcut to clear that filter. Ctrl-D matches interface (CLI or desktop) in open and close. Ctrl-S toggles sorting; Ctrl-Y cycles sort choices; Alt-R/G/O/V sorts repo/agent/host/session. Resume also offers Alt-T for newest turn. Turning filters or sorting off preserves their choices. Sorting off restores snapshot order.
+Ctrl-F toggles filters without leaving the list; Ctrl-X resets filters. Ctrl-T cycles state and is highlighted whenever the enabled state filter narrows the view, including the default state. Ctrl-G/O/R matches the highlighted row’s agent/host/repo; repeat the shortcut to clear that filter. Ctrl-D matches interface (CLI or desktop) in open and close. Ctrl-S toggles sorting; Ctrl-Y cycles sort choices. Choices are repository, agent, host and session; resume also offers newest turn. Turning filters or sorting off preserves their choices. Sorting off restores snapshot order.
 
 Open also supports Ctrl-P/B/V/E/W for the highlighted row’s progress/model/session/context/task.
 Ctrl-A (off) and Ctrl-L (on) remain compatibility shortcuts.
@@ -402,15 +402,15 @@ Lists, discovery and canceled selections never create checkpoints.
 
 Resume never invents a historical UI. Resume uses actual user-turn timestamps,
 newest first by default, with unknown times last; live rows have no artificial priority.
-Alt-T selects last turn, Alt-R repository, Alt-G agent, Alt-O host/origin, and
-Alt-V session (natural numeric order). Text modes ascend with newest turn and
+Ctrl-Y cycles last turn, repository, agent, host/origin, and session
+(natural numeric order). Ctrl-S toggles the selected sort. Text modes ascend with newest turn and
 stable identity as tie-breakers. Sorts apply within the private filtered snapshot
 and preserve query and identities. Filters, reset and on/off preserve sorting.
-Compact headers use M for Alt and ^ for Ctrl. Resume disables fzf relevance sorting
+Compact headers use ⌃ for Control on macOS and ^ elsewhere. Resume disables fzf relevance sorting
 so searching preserves the chosen order. Saved transcript mtime/reopen time still
 controls --days eligibility.
 Resume rows begin with a cached PR badge: MERGED, OPEN, CLOSED, NONE (no PR
-recorded), UNKNOWN, or MIXED. Alt-M toggles hiding MERGED rows and advertises the
+recorded), UNKNOWN, or MIXED. Ctrl-D toggles hiding MERGED rows and advertises the
 next action in the header. It uses explicit snapshot metadata, never title text.
 Compact headers show `M-M -merged` to hide and `M-M +merged` to show them.
 For histories with multiple associated PRs, all must be explicitly merged before
@@ -418,7 +418,7 @@ the row is hidden; mixed or unknown states remain visible. Live rows without
 structured PR metadata stay UNKNOWN. A merged PR does not imply completed work.
 The toggle enables filtering, preserves query and sort, and removes hidden marks.
 Ctrl-A disables it with other filters; Ctrl-L restores it. Reset clears it.
-For example, run `t session resume --all`, then Alt-M to hide merged PR histories.
+For example, run `t session resume --all`, then Ctrl-D to hide merged PR histories.
 Every column value comes from raw metadata,
 not truncated display text. The progress value exactly follows the ↻ marker:
 work continued after a merged PR; its absence is not completion evidence.

@@ -357,8 +357,8 @@ commands also report discovery stages. Redirected output and JSON remain quiet.
 stays readable in its own gutter beside the pointer on the dark cyan focused row.
 All searchable pickers and inline menus share cyan headings, muted hints and
 spacing that adapts to terminal width and height. macOS shows native key labels
-such as `⌃F`, `⌥T`, `↩ Return`, `⎋ Esc` and `⇥ Tab`; other systems show Ctrl-F,
-Alt-T, Enter, Esc and Tab. The shortcuts below work on both.
+such as `⌃F`, `⌃S`, `↩ Return`, `⎋ Esc` and `⇥ Tab`; other systems show Ctrl-F,
+Ctrl-S, Enter, Esc and Tab. The shortcuts below work on both.
 In `t open`, press **Ctrl-K** to kill only the focused session, independently of
 marks. This confirms that session and retains close safety checks. For example,
 run `t open --attached`, focus a session, and press **Ctrl-K**.
@@ -366,7 +366,7 @@ The picker stays open and removes the closed row without rediscovering sessions.
 Search, filters, and marks on other rows are preserved; failed or canceled closes
 leave the row available.
 Type full phrases to search, including spaces and the letter k. Tab marks rows; Ctrl-K closes the focused session. Session searches match literal phrases, ignoring case.
-Ctrl-F toggles filters without leaving the list; Ctrl-X resets filters. Ctrl-T cycles state. Ctrl-G/O/R matches the highlighted row’s agent/host/repo; repeat the shortcut to clear that filter. Ctrl-D matches interface (CLI or desktop) in open and close. Ctrl-S toggles sorting; Ctrl-Y cycles sort choices; Alt-R/G/O/V sorts repo/agent/host/session. Resume also offers Alt-T for newest turn. Turning filters or sorting off preserves their choices. Sorting off restores snapshot order.
+Ctrl-F toggles filters without leaving the list; Ctrl-X resets filters. Ctrl-T cycles state. Ctrl-G/O/R matches the highlighted row’s agent/host/repo; repeat the shortcut to clear that filter. Ctrl-D matches interface (CLI or desktop) in open and close. Ctrl-S toggles sorting; Ctrl-Y cycles sort choices. Choices are repository, agent, host and session; resume also offers newest turn. Turning filters or sorting off preserves their choices. Sorting off restores snapshot order.
 
 The header highlights active filters and sorting, with explicit ON/OFF text.
 Mac shortcuts use ⌃ and ⌥; other systems show Ctrl and Alt.
@@ -384,11 +384,11 @@ The separate `✓` in the left selection gutter means you marked that row to ope
 Resume never invents a historical interface. Resume and close use the same
 inline filter shortcuts and on/off keys as open.
 Resume sorts by the last actual user turn, newest first; unknown times come last.
-Alt-T restores that sort, Alt-R sorts by repository, Alt-G by agent, Alt-O by
-host/origin, and Alt-V by session (numeric slots sort naturally, e.g. 2 before 10).
+Ctrl-Y cycles last turn, repository, agent, host/origin and session.
+Numeric slots sort naturally, e.g. 2 before 10.
 Text sorts ascend, then use newest turn and session identity to break ties.
-Filters, reset and on/off preserve the selected sort; Alt-T restores last-turn sorting.
-For example, `t resume --live` followed by Alt-R groups live and saved sessions by
+Filters, reset and on/off preserve the selected sort; Ctrl-Y cycles back to last-turn sorting.
+For example, `t resume --live` followed by Ctrl-Y groups live and saved sessions by
 repository. Live labels remain visible alongside their last-turn time.
 The open picker keeps session and task text prominent, without a last-turn
 column, details preview, or new-session shortcut. Start fresh explicitly with
