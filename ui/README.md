@@ -20,6 +20,33 @@ at the selected delivery checkpoint. Never relink shared installed commands to a
 development worktree. Workflow configuration owns preview timing and approval;
 this document defines how to make the previews faithful and safe.
 
+## Workflow settings and resets
+
+Group the main workflow editor into Models, Behavior and Manage using shared
+RailUI sections. Use this workflow stays above the groups. Keep focus on the
+selected row when returning, including after a reset; headings are not selectable.
+
+Every settings page offers Reset to defaults, and individual selectors offer a
+resolved default or inheritance choice, including binary toggles. The multiple-model
+checklist offers an exclusive Use default preset alongside the exclusive one-model
+choice. Reset only settings owned by that page, including hidden fields. Parent
+pages include their nested settings: Local preview resets global and both type
+preferences; Tests includes runners. Type overrides resume live global inheritance.
+Model and permission defaults use the selected native tool; reset never invents an
+unverified effective native value. Routing and model resets do not download or run
+models, change credentials, or alter readiness requirements.
+
+Reset workflow to defaults restores that tool's built-in policy, preserving the
+workflow name, repository assignments, repository design sources, other workflows
+and other tool catalogues. Frontend design and Design systems page resets affect
+the workflow defaults; only the individual repository source picker resets its
+source. Keep legacy choices outside the reset scope semantically unchanged.
+
+All resets share the existing staged review/save/discard transaction, including
+completed resets before interruption. Already at defaults is a no-op; browsing and
+no-op resets never materialize inherited repository overrides. This extends the
+existing workflow wizard/single-selection modes, not the public command surface.
+
 ## Repository design-system configuration
 
 Frontend design is a top-level workflow page, above PRs, previews & tests. It

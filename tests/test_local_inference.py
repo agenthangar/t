@@ -409,6 +409,6 @@ def test_exact_workspace_trust_only(local,tmp_path):
 @pytest.mark.parametrize('width,height',[(80,24),(44,20),(32,12)])
 def test_outage_picker_narrow(local,t_mod,width,height):
     from test_tui import make_ui
-    ui=make_ui(t_mod,['j','j','enter','j','enter','q'],width,height)
+    ui=make_ui(t_mod,['j','j','enter','j','j','enter','q'],width,height)
     assert local.workflow_menu(ui)['on_cloud_failure']=='local'
     assert any('Pause and retry' in ''.join(frame) for frame in ui.frames)

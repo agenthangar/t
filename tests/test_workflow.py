@@ -1095,7 +1095,7 @@ def test_behavior_menu_narrow_screens(workflow, t_mod, monkeypatch, width, heigh
     cfg = SimpleNamespace(repos={})
     t_mod._workflow_session(cfg)
     # Disable stages, choose automatic PR creation and return through the nested menus.
-    keys = ['j', 'enter', 'space', 'enter', 'j', 'j', 'j', 'j', 'j', 'j', 'enter',
+    keys = ['j', 'enter', 'space', 'enter', 'j', 'j', 'j', 'j', 'j', 'enter',
             'enter', 'j', 'enter', 'j', 'enter', 'q', 'q', 'q']
     ui = make_ui(t_mod, keys, width, height)
     t_mod._workflow_policy_menu(ui, cfg, vars(workflow), name='standard')
