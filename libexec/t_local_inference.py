@@ -72,7 +72,10 @@ def instructions(value):
     identity = f"{p['provider']} / {p['model']}"
     base = (f"Local inference: {identity}; context {p['context_tokens']}; task budget {p['timeout_seconds']} seconds. "
             'Use the t-local-worker MCP start_task/task_status/cancel_task tools for local delegation. '
-            'Announce provider, model and reason before delegating and report the result or escalation. '
+            'Announce Local requested with provider, model and reason before delegating. '
+            'Say Local accepted only after start_task succeeds; a request is not proof of inference. '
+            'Label returned findings Local result with the verified model, and label your own validation Lead checked. '
+            'If busy or unavailable, say Local unavailable; lead continuing. '
             'The adapter snapshots the repository; review its patch and observed command evidence before applying. '
             'Do not claim the selected model ran without runtime evidence. ')
     if p['on_cloud_failure'] == 'local' and p['mode'] != 'local-only':

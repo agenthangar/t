@@ -31,6 +31,8 @@ def test_policy_and_instructions(local):
         with pytest.raises(ValueError):m.policy(value)
     assert 'no cloud fallback' in m.instructions({'mode':'local-only'})
     assert 'task delegation' in m.instructions({'mode':'automatic'})
+    for label in ('Local requested', 'Local accepted', 'Local result', 'Lead checked', 'Local unavailable'):
+        assert label in m.instructions({'mode':'automatic'})
 
 
 def test_receipts_fit_and_identity(local):
