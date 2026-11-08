@@ -419,6 +419,66 @@ def update_behavior(policy, key, value):
     return after
 
 
+def reset_behaviors(policy, keys, *, runners=False):
+    """Remove only this page's overrides, including their legacy spellings."""
+    keys = set(keys)
+    if keys - set(BEHAVIORS):
+        raise ValueError('unknown workflow reset field')
+    original = policy.get('behaviors', {})
+    behaviors = effective_behaviors(original)
+    # Split an old combined switch before resetting one side; retain the other.
+    if 'preview_target' in behaviors and keys & {'frontend_enabled', 'cli_enabled'}:
+        for kind in ('frontend', 'cli'):
+            behaviors.setdefault(kind + '_enabled', 'enabled' if preview_enabled(original, kind) else 'disabled')
+        behaviors.pop('preview_target')
+    # Inert legacy fields still belong to their page and must be reset with it.
+    if 'cli_implement_before_approval' in original:
+        behaviors['cli_implement_before_approval'] = original['cli_implement_before_approval']
+    remove = set(keys)
+    if 'pr_open' in keys:
+        remove.add('delivery')
+    if 'test_timing' in keys:
+        remove.add('validation')
+    if 'cli_enabled' in keys:
+        remove.add('cli_implement_before_approval')
+    if not remove.intersection(behaviors) and not (runners and 'runners' in policy):
+        return copy.deepcopy(policy)
+    after = copy.deepcopy(policy)
+    for key in remove:
+        behaviors.pop(key, None)
+    if behaviors:
+        after['behaviors'] = behaviors
+    else:
+        after.pop('behaviors', None)
+    if runners:
+        after.pop('runners', None)
+    validate_policy(after)
+    return after
+
+
+def reset_policy(policy, scope='workflow', tool='codex'):
+    """Reset a policy scope without touching its document or repository sources."""
+    default = tool_defaults(tool)['workflows']['standard']
+    after = copy.deepcopy(policy)
+    if scope == 'workflow':
+        return copy.deepcopy(default)
+    if scope in MODEL_STAGES:
+        after[scope] = copy.deepcopy(default[scope])
+    elif scope == 'model_stages':
+        for key in ('stages_enabled', 'model_stages', 'separate_stages'):
+            after.pop(key, None)
+            if key in default:
+                after[key] = copy.deepcopy(default[key])
+    elif scope in ('runners', 'inference'):
+        after.pop(scope, None)
+    elif scope == 'permissions':
+        after = update_permission(after, tool, '')
+    else:
+        raise ValueError('unknown workflow reset scope')
+    validate_policy(after)
+    return after
+
+
 PRECEDENCE = ('Explicit task instructions > repository rules > custom Markdown > behavior preferences > model-stage guidance. '
               'The selected repository workflow replaces the global default; exclusion suppresses all workflow instructions.')
 DEFAULT = {

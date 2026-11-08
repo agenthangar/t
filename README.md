@@ -550,7 +550,11 @@ For local coding delegation, open **t config → Local worker & models** or run
 model, and connect the worker to Codex through MCP. The lead keeps its conversation;
 workers use isolated repository snapshots and return findings, patches, and test
 evidence. `t config local --show` is read-only. See [local workers](docs/local-workers.md)
-for setup, cancellation, limits, and automated setup examples.
+for setup, cancellation, limits, and automated setup examples. In **Workflow →
+Inference & routing → Local model**, downloaded artifacts offer **Verify readiness**
+without downloading them again. Benchmarks and artifact/runtime details have
+separate views. `t config models install MODEL --yes` also reuses completed files
+and verifies inference; downloaded weights alone do not mean Ready.
 
 | Command | Purpose |
 | --- | --- |
@@ -1071,6 +1075,18 @@ standalone HTML design prototype with approval before implementation; fast web
 reload and automatic browser opening; CLI planning before implementation with
 approval; working CLI previews run from the repo and launch on request; relevant
 local tests before PR. Existing explicit choices and repository/task rules win.
+
+The workflow editor groups **Models**, **Behavior**, and **Manage**. Every settings
+page has **Reset to defaults**; each individual choice also shows its default or
+inherited value. Resets stay pending until **Save changes**. A page reset clears
+only that page and its nested settings. **Reset workflow to defaults** restores
+the selected tool's built-in policy while keeping the workflow's name, repository
+assignments and per-repository design sources.
+
+To inspect a repository's design source directly, open `t workflow`, choose its
+agent, then **Repository assignments → your repository → Design system**.
+The selection is stored in `~/.config/t/workflow.json` (or `$XDG_CONFIG_HOME/t/workflow.json`);
+the referenced guidance stays in the repository, such as `DESIGN.md`.
 
 **Frontend design → Design systems** shows a workflow default and its repositories.
 Automatic discovery prefers root `DESIGN.md`, then a single root `design-system.md`
