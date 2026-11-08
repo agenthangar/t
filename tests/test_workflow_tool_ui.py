@@ -214,7 +214,7 @@ def test_cursor_offline_stage_model_supports_native_parameter_ids_without_effort
                    '__custom__', 'back', 'back', 'back'], inputs=[native_id])
     assert t_mod._workflow_hub(ui, cfg) is None
     stage = next(view for view in ui.views if view[0] == 'Implementation · worker')
-    assert stage[1] == [('model', 'Model'), ('back', 'Back')]
+    assert stage[1] == [('model', 'Model'), ('reset', 'Reset to defaults'), ('back', 'Back')]
     picker = next(view for view in ui.views if view[0] == 'Implementation model')
     assert dict(picker[1]) == {'': 'Inherit default · Tool setting', '__custom__': 'Enter a custom model ID…', '__refresh__': 'Refresh model list'}
     assert any(label == 'unavailable' for label, _ in ui.messages)

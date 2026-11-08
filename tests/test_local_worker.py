@@ -14,6 +14,7 @@ from conftest import load_script
 
 @pytest.fixture
 def worker(tmp_path, monkeypatch):
+    monkeypatch.delenv('TMUX', raising=False)
     monkeypatch.setenv('HOME', str(tmp_path / 'home'))
     monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path / 'config'))
     monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path / 'state'))
@@ -308,8 +309,9 @@ def test_mlx_routing_identity_context_and_local_only_gate(worker,repo,monkeypatc
     def runtime(model,context):
         observed.append((model,context))
         yield 'http://127.0.0.1:1234','owned-alias',{'revision':'a'*40,'runtime':{'contextLength':context}}
+    status=worker.inference()['helper']('t_local_status')
     local={'leased_runtime':lambda chosen:None,'effective':lambda workspace:routing,'report':lambda *a:{'fit':True},'artifact':lambda n:{},
-           'helper':lambda n:{'hardware':lambda:{}},'runtime':runtime}
+           'helper':lambda n:status if n=='t_local_status' else {'hardware':lambda:{}},'runtime':runtime}
     monkeypatch.setattr(worker,'inference',lambda:local)
     monkeypatch.setattr(worker,'run_worker',lambda *a:observed.append(a[3:]) or 'completed')
     manager=worker.Worker();args={'workspace':str(repo),'assignment':'inspect','timeout_seconds':300,'routing_reason':'bounded fixture'}

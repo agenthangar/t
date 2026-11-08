@@ -20,6 +20,33 @@ at the selected delivery checkpoint. Never relink shared installed commands to a
 development worktree. Workflow configuration owns preview timing and approval;
 this document defines how to make the previews faithful and safe.
 
+## Workflow settings and resets
+
+Group the main workflow editor into Models, Behavior and Manage using shared
+RailUI sections. Use this workflow stays above the groups. Keep focus on the
+selected row when returning, including after a reset; headings are not selectable.
+
+Every settings page offers Reset to defaults, and individual selectors offer a
+resolved default or inheritance choice, including binary toggles. The multiple-model
+checklist offers an exclusive Use default preset alongside the exclusive one-model
+choice. Reset only settings owned by that page, including hidden fields. Parent
+pages include their nested settings: Local preview resets global and both type
+preferences; Tests includes runners. Type overrides resume live global inheritance.
+Model and permission defaults use the selected native tool; reset never invents an
+unverified effective native value. Routing and model resets do not download or run
+models, change credentials, or alter readiness requirements.
+
+Reset workflow to defaults restores that tool's built-in policy, preserving the
+workflow name, repository assignments, repository design sources, other workflows
+and other tool catalogues. Frontend design and Design systems page resets affect
+the workflow defaults; only the individual repository source picker resets its
+source. Keep legacy choices outside the reset scope semantically unchanged.
+
+All resets share the existing staged review/save/discard transaction, including
+completed resets before interruption. Already at defaults is a no-op; browsing and
+no-op resets never materialize inherited repository overrides. This extends the
+existing workflow wizard/single-selection modes, not the public command surface.
+
 ## Repository design-system configuration
 
 Frontend design is a top-level workflow page, above PRs, previews & tests. It
@@ -1303,3 +1330,41 @@ join networks or write configuration. Existing flags, machine-local config paths
 and Keychain identifiers remain compatible. Installation does not grant sudo or
 start monitoring. Runtime monitoring and hotspot joins require macOS; help and
 configuration remain usable elsewhere. Native macOS assertion tests are opt-in.
+
+### Local inference activity
+
+In an owned tmux pane, local lead and worker launches add a compact
+`local MODEL · inferring` status segment only during observed model requests.
+Loading, work between requests, idle and failure are separate states. Pane ancestry
+and pane generation prevent activity from another session being shown. Missing
+ownership hides the indicator; records expire after twelve seconds and the bar
+refreshes at least every two seconds.
+No prompts or credentials are stored. Outside tmux inference is unchanged.
+
+The session name and worktree sit at the left; existing custom tmux content is
+retained. Codex's native model, effort and context footer remains unchanged.
+Long labels are bounded, and the full artifact remains in local-worker details.
+This adds no public command and does not select or install a model.
+
+Development preview: `python3 scripts/preview_local_status.py` from this
+worktree in a terminal. It uses an isolated tmux server, sample activity and
+temporary HOME/state; it never calls a model or edits real configuration.
+
+### Workflow model overview
+
+The existing local-model single-selection mode opens a compact RailUI overview
+with model identity, readiness, file size, memory fit, context and the next action.
+Use shared nonselectable context rows and the shared viewport; keep the focused
+action and footer visible at 80×24, 44×20 and 32×12. Benchmarks and Artifact &
+runtime are separate read-only views; sources/methodology remains accessible.
+Wrap detail text within the rail, including URLs and revisions. Back retains focus.
+
+Downloaded models offer Verify readiness with a review of file reuse and context.
+The explicit action reuses complete files, loads the exact artifact, checks its
+context and response text, releases owned resources and refreshes the overview.
+Use in workflow requires readiness and remains staged; verification is immediate.
+A failed check retains files and shows the runtime error; cancellation invalidates
+old verification evidence. Special memory-mapped artifacts may be checked when
+the publisher's resident estimate and minimum RAM fit; fit remains unknown until
+verified. Runtime guardrails are never bypassed. These extend existing wizard,
+single-selection, detail and install action modes; no new public command.

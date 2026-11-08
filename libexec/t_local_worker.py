@@ -366,29 +366,33 @@ class Worker:
             if cancel.is_set():
                 status = 'cancelled'
             else:
-                local = inference()
-                chosen = {'model': model, 'provider': task.get('provider', 'ollama'), 'context_tokens': task['context_tokens']}
-                leased = local['leased_runtime'](chosen)
-                if leased:
-                    task.update(resolved_model=model, revision=leased['revision'], runtime_model=leased['alias'], identity_verified=True)
-                    status = run_worker(job, leased['base'], leased['alias'], timeout, cancel, task['provider'], task['context_tokens'])
-                elif task.get('provider') == 'lmstudio':
+                with inference()['helper']('t_local_status')['Activity'](model) as activity:
                     local = inference()
-                    fit = local['report'](local['artifact'](model), local['helper']('t_local_models')['hardware'](), task['context_tokens'])
-                    if fit['fit'] is not True:
-                        raise ValueError(fit['reason'])
-                    with local['runtime'](model, task['context_tokens']) as (base, alias, info):
-                        task.update(resolved_model=model, revision=info['revision'], runtime_model=alias, runtime_details=info.get('runtime', {}), identity_verified=True)
-                        status = run_worker(job, base, alias, timeout, cancel, 'lmstudio', task['context_tokens'])
-                else:
-                    with ollama_server(task['context_tokens']) as (base, _):
-                        check_model(base, model)
-                        tags = request(base, '/api/tags')['models']
-                        identity = next((r for r in tags if r['name'] == model), None)
-                        if not identity or not identity.get('digest'):
-                            raise ValueError('Ollama did not confirm the selected model digest')
-                        task.update(resolved_model=model, revision=identity['digest'], runtime_model=model, identity_verified=True)
-                        status = run_worker(job, base, model, timeout, cancel, 'ollama', task['context_tokens'])
+                    chosen = {'model': model, 'provider': task.get('provider', 'ollama'), 'context_tokens': task['context_tokens']}
+                    leased = local['leased_runtime'](chosen)
+                    if leased:
+                        task.update(resolved_model=model, revision=leased['revision'], runtime_model=leased['alias'], identity_verified=True)
+                        with activity.endpoint(leased['base']) as observed:
+                            status = run_worker(job, observed, leased['alias'], timeout, cancel, task['provider'], task['context_tokens'])
+                    elif task.get('provider') == 'lmstudio':
+                        local = inference()
+                        fit = local['report'](local['artifact'](model), local['helper']('t_local_models')['hardware'](), task['context_tokens'])
+                        if fit['fit'] is not True:
+                            raise ValueError(fit['reason'])
+                        with local['runtime'](model, task['context_tokens']) as (base, alias, info):
+                            task.update(resolved_model=model, revision=info['revision'], runtime_model=alias, runtime_details=info.get('runtime', {}), identity_verified=True)
+                            with activity.endpoint(base) as observed:
+                                status = run_worker(job, observed, alias, timeout, cancel, 'lmstudio', task['context_tokens'])
+                    else:
+                        with ollama_server(task['context_tokens']) as (base, _):
+                            check_model(base, model)
+                            tags = request(base, '/api/tags')['models']
+                            identity = next((r for r in tags if r['name'] == model), None)
+                            if not identity or not identity.get('digest'):
+                                raise ValueError('Ollama did not confirm the selected model digest')
+                            task.update(resolved_model=model, revision=identity['digest'], runtime_model=model, identity_verified=True)
+                            with activity.endpoint(base) as observed:
+                                status = run_worker(job, observed, model, timeout, cancel, 'ollama', task['context_tokens'])
                 task.update(collect(job))
                 if status != 'completed':
                     events = job / 'events.jsonl'
