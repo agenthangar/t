@@ -93,11 +93,47 @@ def test_reservation_collision_skips_slot(app, history, git_repo):
     app.reservation.unlink()
 
 
+@pytest.mark.parametrize('reuse', [False, True])
+@pytest.mark.parametrize('owner_alias', ['repo', 'short-name'])
+def test_destination_skips_occupied_name_even_when_owner_path_differs(app, history, store, git_repo, reuse, owner_alias):
+    app.cfg.repos['short-name'] = app.cfg.repos['repo']
+    root = Path(app.cfg.worktree_root) / 'repo'
+    original = root / 'repo-1'
+    if reuse:
+        history.run(['git', '-C', app.cfg.repos['repo'], 'worktree', 'add', '-b', 'dev/repo-1', str(original), git_repo])
+    row = store.merge(saved_row(app, git_repo, original))
+    owners = [dict(host='local', slot=f'{owner_alias}-1', cwd=app.cfg.repos['repo'])]
+    destination, slot, created = app.destination('repo', row, git_repo, owners)
+    assert created and slot == '2'
+    assert Path(destination).name == 'repo-2'
+    app.reservation.unlink()
+
+
+def test_remote_path_and_slot_do_not_occupy_local_destination(app, history, store, git_repo):
+    path = Path(app.cfg.worktree_root) / 'repo/repo-1'
+    history.run(['git', '-C', app.cfg.repos['repo'], 'worktree', 'add', '-b', 'dev/repo-1', str(path), git_repo])
+    row = store.merge(saved_row(app, git_repo, path))
+    assert app.destination('repo', row, git_repo, [dict(host='remote', slot='repo-1', cwd=str(path))]) == (str(path), '1', False)
+    app.reservation.unlink()
+
+
+def test_resume_rechecks_name_collision_before_restoring_transcript(app, history, git_repo, monkeypatch, tmp_path):
+    row = saved_row(app, git_repo, Path(app.cfg.worktree_root) / 'repo/9')
+    app.cfg.repos['short-name'] = app.cfg.repos['repo']
+    scans = iter([[], [], [dict(host='local', slot='short-name-1', cwd='/elsewhere', sid='other', agent='claude')]])
+    monkeypatch.setattr(app, 'owners', lambda *a: next(scans))
+    monkeypatch.setattr(app, 'source', lambda *a: tmp_path / 'unused')
+    monkeypatch.setattr(app, 'install_transcript', lambda *a: pytest.fail('must not restore into occupied destination'))
+    with pytest.raises(history.HistoryError, match='became live before restore'):
+        app.resume('repo', row)
+    assert not list(Path(app.cfg.worktree_root).glob('repo/.*history-reservation'))
+
+
 @pytest.mark.parametrize('host,state,slot', [('local', 'app', 'repo-1'), ('remote', 'app', 'repo-1'), ('local', 'active', 'repo:foreground'), ('remote', 'active', 'repo:foreground')])
 def test_nonterminal_owners_offer_handoff_without_launch(app, history, monkeypatch, host, state, slot):
     calls = []
     monkeypatch.setattr(history.subprocess, 'call', lambda *a, **k: calls.append(a))
-    with pytest.raises(history.HistoryError, match='handoff'):
+    with pytest.raises(history.HistoryError, match='release it there' if state == 'app' else 'handoff'):
         app.attach(dict(host=host, state=state, slot=slot, sid='selected', cwd='/repo/1', agent='codex'))
     assert not calls
 
@@ -498,8 +534,15 @@ def test_generation_race_after_destination_is_blocked_under_claim(app, history, 
     workspace = Path(app.cfg.worktree_root) / 'repo/1'
     history.run(['git', '-C', app.cfg.repos['repo'], 'worktree', 'add', '-b', 'dev/repo-1', str(workspace), git_repo])
     row = store.merge(saved_row(app, git_repo, workspace))
-    monkeypatch.setattr(app, 'source', lambda *a: tmp_path / 'unused')
+    source = transcript_file(tmp_path / 'rollout-selected.jsonl',
+                             codex_rows(workspace, sid='selected', branch='dev/repo-1'))
+    monkeypatch.setattr(app, 'source', lambda *a: source)
     monkeypatch.setattr(app, 'owners', lambda *a: [])
+    # This test isolates the workspace generation guard; native release checks
+    # have dedicated coverage and require a real command-runner adapter.
+    releases = []
+    monkeypatch.setattr(app, 'codex_released', lambda *a, **kw: releases.append(kw['workspace']))
+    monkeypatch.setattr(app, 'install_transcript', lambda *a: pytest.fail('changed generation cannot restore'))
     original = app.destination
     def modified(*args):
         result = original(*args)
@@ -508,6 +551,7 @@ def test_generation_race_after_destination_is_blocked_under_claim(app, history, 
     monkeypatch.setattr(app, 'destination', modified)
     with pytest.raises(history.HistoryError, match='generation changed'):
         app.resume('repo', row)
+    assert releases and all(Path(path) == workspace for path in releases)
 
 
 @pytest.mark.parametrize('ready', [True, False])
@@ -850,7 +894,6 @@ def test_interactive_history_controls_preserve_records(app, history, monkeypatch
         assert 'No retained conversations' in capsys.readouterr().out
 
 
-
 def tool_event(call_id, source):
     return dict(type='response_item', payload=dict(type='custom_tool_call', name='exec', call_id=call_id, input=source))
 
@@ -1046,6 +1089,28 @@ def test_private_resume_bridge_dispatches_exact_identity_and_closes_store(
         assert out.err.startswith('t resume: ')
 
 
+@pytest.mark.parametrize('selection', ['matching', 'different-path', 'unknown-alias', 'changed-origin'])
+def test_saved_resume_accepts_only_registered_local_repository_identity(
+        app, history, t_mod, monkeypatch, capsys, selection):
+    identity = 'local:' + app.cfg.repos['repo']
+    monkeypatch.setattr(app, 'identity', lambda alias: 'org/repo' if selection == 'changed-origin' else identity)
+    monkeypatch.setattr(t_mod, 'Config', lambda: app.cfg)
+    monkeypatch.setattr(t_mod.runpy, 'run_path', lambda path: {
+        'HistoryCommand': lambda cfg, api: app, 'REPO_IDENTITY': history.REPO_IDENTITY,
+        'HistoryError': history.HistoryError, 'HistoryCancelled': history.HistoryCancelled})
+    calls = []
+    monkeypatch.setattr(app, 'records', lambda alias: calls.append(alias) or [dict(sid='selected', agent='claude')])
+    monkeypatch.setattr(app, 'resume', lambda *args, **kwargs: 'dev-repo-7')
+    alias = 'missing' if selection == 'unknown-alias' else 'repo'
+    selected_identity = 'local:/unregistered' if selection == 'different-path' else identity
+    status = t_mod.main(['__resume-saved', alias, 'selected', 'claude', 'launch', selected_identity])
+    assert status == (0 if selection == 'matching' else 1)
+    assert calls == (['repo'] if selection == 'matching' else [])
+    output = capsys.readouterr()
+    assert ('dev-repo-7' in output.out) == (selection == 'matching')
+    assert ('invalid saved repository identity' in output.err) == (selection != 'matching')
+
+
 @pytest.mark.parametrize('prepare_only', [False, True])
 def test_private_saved_resume_reports_ownership_refusal_and_cleans_up(
         app, history, git_repo, store, t_mod, monkeypatch, tmp_path, capsys, prepare_only):
@@ -1068,7 +1133,7 @@ def test_private_saved_resume_reports_ownership_refusal_and_cleans_up(
         assert k['retry'] == 'Retry: t session history, then select the conversation again.'
         raise refusal
     def helpers(path):
-        if str(path).endswith('t_app_handoff.py'):
+        if str(path).endswith('t_codex_ownership.py'):
             return {'assert_released': refuse}
         return {'HistoryCommand': lambda cfg, api: app,
                 'HistoryError': history.HistoryError, 'HistoryCancelled': history.HistoryCancelled}
@@ -1118,7 +1183,7 @@ def test_moved_source_checks_current_workspace_owner_and_original_rollout(app, h
 
 
 @pytest.mark.parametrize('selection', ['missing-local', 'timestamp-tie'])
-def test_native_policy_checked_at_actual_remote_source(app, history, tmp_path, monkeypatch, selection):
+def test_legacy_native_setting_reaches_actual_remote_source(app, history, tmp_path, monkeypatch, selection):
     app.cfg.hosts = {'remote': 'remote.example'}
     workspace = Path(app.cfg.worktree_root) / 'repo/1'
     row = saved_row(app, 'a' * 40, workspace)
@@ -1128,10 +1193,18 @@ def test_native_policy_checked_at_actual_remote_source(app, history, tmp_path, m
     row['sources'] = [dict(host='local', path=str(local), updated=20, size=1),
                       dict(host='remote', path='/remote/rollout-selected.jsonl',
                            updated=20 if selection == 'timestamp-tie' else 10, size=100)]
-    monkeypatch.setattr(history, 'run', lambda *a, **kw: pytest.fail('native must not rsync'))
-    with pytest.raises(history.HistoryError, match='native desktop app'):
-        app.source(row)
-    assert not (app.store.directory / 'transcripts').exists()
+    app.cfg.handoff = {'codex': 'native'}
+    calls = []
+    def transfer(argv, **kwargs):
+        calls.append(argv)
+        raise history.HistoryError('transfer attempted')
+    monkeypatch.setattr(history, 'run', transfer)
+    if selection == 'timestamp-tie':
+        assert app.source(row) == local  # Unavailable remote retains a verified local fallback.
+    else:
+        with pytest.raises(history.HistoryError):
+            app.source(row)
+    assert calls and calls[0][0] == 'rsync'
 
 
 def test_native_policy_allows_verified_local_source_with_incidental_remote_record(app, history, tmp_path):

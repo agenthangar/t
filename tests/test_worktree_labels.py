@@ -118,23 +118,6 @@ _dev_worktree_remote_accept test-host {shlex.quote(str(cwd))}
 
 
 @pytest.mark.parametrize('leaf', ['4', 'api-4'])
-def test_desktop_discovery_and_navigation_preserve_full_path(tmp_path, leaf):
-    cwd = tmp_path / 'home/work trees/api' / leaf
-    (cwd / '.git').mkdir(parents=True)
-    result = configured_shell(tmp_path, '''
-_dev_app_slot_reserved() { [[ -e $1/.git ]]; }
-_dev_ps_snapshot() { :; }
-_dev_fg_rows() { :; }
-_dev_session_rows
-_t_cd api 4 || return
-print -r -- "cwd=$PWD"
-''')
-    assert result.returncode == 0, result.stderr
-    assert f'\t{cwd}\tapi-4\tapp\t' in result.stdout
-    assert f'cwd={cwd}' in result.stdout
-
-
-@pytest.mark.parametrize('leaf', ['4', 'api-4'])
 def test_transcript_projection_keeps_exact_recorded_workspace(tmp_path, monkeypatch, t_mod, leaf):
     root = tmp_path / 'wt'
     cfg = _config_with(t_mod, tmp_path, monkeypatch, {'api': '/code/api'}, shlex.quote(str(root)))
@@ -174,19 +157,3 @@ def test_navigation_ignores_unmanaged_worktree_names(tmp_path):
     assert result.returncode == 0 and result.stdout.strip() == str(canonical)
     result = configured_shell(tmp_path, '_t_cd')
     assert result.returncode != 0 and 'no managed worktrees' in result.stderr
-
-
-def test_desktop_claim_cannot_switch_layout_after_lock_selection(tmp_path):
-    old = tmp_path / 'home/work trees/api/4'
-    (old / '.git').mkdir(parents=True)
-    named = old.parent / 'api-4'
-    result = configured_shell(tmp_path, f'''
-_dev_ps_snapshot() {{ :; }}
-_dev_cwd_pids() {{ :; }}
-_dev_app_slot_reserve() {{ print -u2 UNEXPECTED_RESERVATION; return 99; }}
-_t_open_app_claim api 4 {shlex.quote(str(named))}
-''')
-    assert result.returncode != 0
-    assert 'another worktree path' in result.stderr
-    assert 'UNEXPECTED_RESERVATION' not in result.stderr
-    assert old.is_dir() and not named.exists()

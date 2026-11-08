@@ -118,70 +118,6 @@ def test_registered_repo_named_codex_still_opens(tmp_path):
 
 
 @pytest.mark.skipif(not shutil.which("zsh"), reason="zsh is required")
-@pytest.mark.parametrize("command,placeholder,case", [
-    ("t open api 3 --cli", False, "success"),
-    ("t open api 3 --cli", True, "success"),
-    ("t session open api 3 --cli", False, "success"),
-    ("t open alias 3 --cli", False, "success"),
-    ("t open 3 --cli", False, "success"),
-    ("t open --cli", False, "success"),
-    ("t open api 3 --fg", False, "success"),
-    *[("t open api 3 --cli", placeholder, case)
-      for placeholder in (False, True)
-      for case in ("blocked", "malformed", "wrong_repo", "cli_exited")],
-])
-def test_open_hands_desktop_slot_to_cli_before_attaching(tmp_path, monkeypatch,
-                                                       command, placeholder, case):
-    home = tmp_path / "home"
-    (home / "code" / "api").mkdir(parents=True)
-    marker = home / "app-slot"
-    marker.write_text("codex-app\n")
-    monkeypatch.setenv("TMUX_TMPDIR", str(tmp_path / "tmux"))
-    monkeypatch.delenv("TMUX", raising=False)
-    result = shell(tmp_path, f'''
-        DEV_REPOS=(api "$HOME/code/api" alias "$HOME/code/api")
-        DEV_WORKTREE_ROOT="$HOME/worktrees"
-        _dev_branch_for() {{ print main; }}
-        _t_infer_repo() {{ print api; }}
-        _dev_repo_of_dir() {{ print -r -- $'api\\t3'; }}
-        _dev_app_slot_marker() {{ print -r -- "$HOME/app-slot"; }}
-        _dev_worktree_create() {{ print BAD-create >> "$HOME/actions"; return 99; }}
-        _dev_worktree_freshen() {{ print BAD-freshen >> "$HOME/actions"; return 99; }}
-        _dev_new_session() {{ print BAD-launch >> "$HOME/actions"; return 99; }}
-        _dev_agent_check() {{ print BAD-agent >> "$HOME/actions"; return 99; }}
-        _t_pop() {{ print -r -- "pop:$1" >> "$HOME/actions"; }}
-        tmux() {{
-          case $1 in
-            has-session) [[ {int(placeholder)} == 1 && $3 == '=dev-api-3:' ]] ;;
-            attach-session)
-              print -r -- "attach:$3" >> "$HOME/actions"
-              return {19 if case == 'cli_exited' else 0} ;;
-            *) print -r -- "BAD-tmux:$*" >> "$HOME/actions"; return 99 ;;
-          esac
-        }}
-        {command}
-    ''', bin_text=f'''#!/bin/sh
-printf '%s\\n' "$*" >> "$HOME/bridge-calls"
-[ "$1" = _app-open-cli ] || exit 98
-case {shlex.quote(case)} in
-  blocked) printf '%s\\n' 't open: quit Codex and retry t open api 3 --cli' >&2; exit 7 ;;
-  malformed) printf '%s\\n' 'unexpected output'; exit 0 ;;
-  wrong_repo) printf '%s\\n' dev-other-3; exit 0 ;;
-esac
-rm "$HOME/app-slot"
-printf '%s\\n' dev-api-3
-''')
-    assert result.returncode == {"success": 0, "blocked": 7, "malformed": 1, "wrong_repo": 1, "cli_exited": 19}[case], result.stderr
-    repo = "alias" if " alias " in command else "api"
-    assert (home / "bridge-calls").read_text() == f"_app-open-cli {repo} 3\n"
-    actions = (home / "actions").read_text() if (home / "actions").exists() else ""
-    expected = "pop:dev-api-3\n" if "--fg" in command else "attach:=dev-api-3:\n"
-    assert actions == (expected if case in ("success", "cli_exited") else "")
-    assert marker.exists() is (case in ("blocked", "malformed", "wrong_repo"))
-    assert "could not create the worktree" not in result.stderr
-
-
-@pytest.mark.skipif(not shutil.which("zsh"), reason="zsh is required")
 def test_legacy_and_grouped_config_edits_reload_the_caller(tmp_path):
     result = shell(tmp_path, '''
         _t_reload() { print -r -- reloaded; }
@@ -283,26 +219,6 @@ def test_completion_exposes_groups_and_group_actions(tmp_path):
     assert lines[3].startswith("values:")
     source = (ROOT / "zsh" / "shim.zsh").read_text()
     assert "local -a nouns=(session move issue share remote repo cursor hosts agentcore workflow runners config mcp profile policy agent system login help)" in source
-
-
-@pytest.mark.skipif(not shutil.which("zsh"), reason="zsh is required")
-def test_app_completion_tracks_direction_and_arguments(tmp_path):
-    result = shell(tmp_path, '''
-        DEV_REPOS=(api /tmp/api)
-        _values() { print -r -- "values:${(j:,:)argv[2,-1]}"; }
-        _message() { print -r -- "message:$1"; }
-        local -a words
-        words=(t app '') CURRENT=3; _t
-        words=(t app push '') CURRENT=4; _t
-        words=(t session open-app pull api '') CURRENT=6; _t
-        words=(t app pull api 3 --) CURRENT=6; _t
-        words=(t session open-app pull api 3 --thread '') CURRENT=8; _t
-    ''')
-    assert result.returncode == 0, result.stderr
-    assert result.stdout.splitlines() == [
-        "values:push,pull,api", "values:api", "message:local slot number",
-        "values:--thread,--dry-run,-h,--help", "message:saved conversation ID",
-    ]
 
 
 @pytest.mark.skipif(not shutil.which("zsh"), reason="zsh is required")
@@ -448,7 +364,7 @@ def test_workflow_completion_offers_scopes_and_registered_repos(tmp_path):
     ''')
     assert result.returncode == 0, result.stderr
     assert result.stdout.splitlines() == [
-        "values:list,ls,add,use,exclude,inherit,edit,instructions,sync", "values:--repo,--all,--json,-h,--help", "values:--repo,-h,--help",
+        "values:list,ls,open,delete,add,use,exclude,inherit,edit,instructions", "values:--tool,--repo,--all,--json,-h,--help", "values:--tool,--repo,-h,--help",
         "values:api", "values:api", "values:-h,--help", "values:api",
     ]
 
@@ -569,8 +485,23 @@ def test_remote_host_first_completion_and_legacy_host_flag(tmp_path):
     assert result.returncode == 0, result.stderr
     assert result.stdout.splitlines() == [
         'values:host:lab', 'values:repo:api', 'message:slot', 'values:repo:api',
-        'message:slot', 'values:host:lab', 'values:repo:api', 'values:flag:-h,--help,--new',
+        'message:slot', 'values:host:lab', 'values:host or repository:lab,api', 'values:flag:-h,--help,--new',
     ]
+
+
+def test_move_destination_completion_includes_local(tmp_path):
+    result = shell(tmp_path, '''
+        REMOTE_HOSTS=(lab user@lab)
+        _values() { print -r -- "${(j:,:)argv[2,-1]}"; }
+        local -a words
+        words=(t session move --host '') CURRENT=5; _t
+        words=(t move --host '') CURRENT=4; _t
+        words=(t remote move --host '') CURRENT=5; _t
+        words=(t session move --from '') CURRENT=5; _t
+        words=(t remote open --host '') CURRENT=5; _t
+    ''')
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == ['local,lab'] * 3 + ['lab'] * 2
 
 
 @pytest.mark.skipif(not shutil.which("zsh"), reason="zsh is required")
@@ -597,6 +528,8 @@ def test_canonical_workflow_completion_and_dispatch(tmp_path):
         _values() { print -r -- "values:${(j:,:)argv[2,-1]}"; }
         local -a words
         words=(t workflow '') CURRENT=3; _t
+        words=(t workflow open fast --) CURRENT=5; _t
+        words=(t workflow delete fast --) CURRENT=5; _t
         words=(t workflow list --) CURRENT=4; _t
         words=(t workflow list --repo '') CURRENT=5; _t
         words=(t workflow instructions '') CURRENT=4; _t
@@ -606,8 +539,9 @@ def test_canonical_workflow_completion_and_dispatch(tmp_path):
     ''')
     assert result.returncode == 0, result.stderr
     assert result.stdout.splitlines() == [
-        "actions:list,ls,add,use,exclude,inherit,edit,instructions,sync",
-        "values:--repo,--all,--json,-h,--help", "values:api",
+        "actions:list,ls,open,delete,add,use,exclude,inherit,edit,instructions",
+        "values:--tool,-h,--help", "values:--tool,--replacement,-h,--help",
+        "values:--tool,--repo,--all,--json,-h,--help", "values:api",
         "values:show,edit", "values:start,list,ls,status,logs,artifacts,cancel,cleanup",
         "values:--github-repo,--create,-h,--help",
         "bin:<workflow><list><--repo><api><--json>",

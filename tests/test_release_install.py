@@ -41,9 +41,9 @@ def sandbox(tmp_path, monkeypatch):
 
 def artifact(version="v1.2.3", changed=None, extra=None):
     changed = changed or {}
-    files = {name: (ROOT / name).read_bytes() for name in release.REQUIRED if name != ".t-release-version"}
+    files = {name: (ROOT / name).read_bytes() for name in (*release.REQUIRED, *release.NOSLEEP_ASSETS, *release.NOSLEEP_WIFI_ASSETS) if name != ".t-release-version"}
     # Current installer integrations extend the backwards-compatible release minimum.
-    for name in ('libexec/t_mcp_setup.py', 'libexec/t_runners.py', 'libexec/t_runner_job.py', 'share/runners/broker.yml', 'share/runners/sweeper.yml', 'libexec/t_dev.py', 'libexec/t_progress.py', 'bin/t-session-start', 'libexec/t_shell_setup.py', 'libexec/t_onboarding.py', 'libexec/t_discovery.py', 'libexec/t_toml.py', 'libexec/t_codex_socket.py', 'libexec/vendor/SHA256SUMS', 'libexec/vendor/tomli-LICENSE', 'libexec/vendor/tomli/__init__.py', 'libexec/vendor/tomli/_parser.py', 'libexec/vendor/tomli/_re.py', 'libexec/vendor/tomli/_types.py', 'libexec/vendor/tomli/py.typed', 'libexec/t_workflow.py', 'libexec/t_workflow_sync.py', 'libexec/t_issue.py', 'libexec/t_issue_policy.txt', 'libexec/t_resume_source.py', 'libexec/t_history.py', 'libexec/t_candidates.py', 'libexec/t_session_details.py', 'libexec/t_picker_filters.py', 'libexec/t_picker_theme.py', 'libexec/t_repos.py'):
+    for name in ('libexec/t_mcp_setup.py', 'libexec/t_runners.py', 'libexec/t_runner_job.py', 'share/runners/broker.yml', 'share/runners/sweeper.yml', 'libexec/t_dev.py', 'libexec/t_progress.py', 'bin/t-session-start', 'libexec/t_shell_setup.py', 'libexec/t_onboarding.py', 'libexec/t_discovery.py', 'libexec/t_toml.py', 'libexec/t_codex_socket.py', 'libexec/vendor/SHA256SUMS', 'libexec/vendor/tomli-LICENSE', 'libexec/vendor/tomli/__init__.py', 'libexec/vendor/tomli/_parser.py', 'libexec/vendor/tomli/_re.py', 'libexec/vendor/tomli/_types.py', 'libexec/vendor/tomli/py.typed', 'libexec/t_workflow.py', 'libexec/t_design_system.py', 'libexec/t_workflow_sync.py', 'libexec/t_issue.py', 'libexec/t_issue_policy.txt', 'libexec/t_resume_source.py', 'libexec/t_history.py', 'libexec/t_candidates.py', 'libexec/t_session_details.py', 'libexec/t_picker_filters.py', 'libexec/t_picker_theme.py', 'libexec/t_repos.py', 'libexec/t_remote.py'):
         files[name] = (ROOT / name).read_bytes()
     files[".t-release-version"] = (version + "\n").encode()
     files.update(changed)
@@ -68,7 +68,7 @@ def test_release_installs_without_git_and_preserves_user_settings(sandbox):
     root = release.install(archive, sums, base, home)
     assert root == base / "releases/v1.2.3"
     assert not (root / ".git").exists()
-    assert len([1 for _, dst in release.OWNED_LINKS if (home / dst).is_symlink()]) == 8
+    assert len([1 for _, dst in release.OWNED_LINKS if (home / dst).is_symlink()]) == 9
     assert (home / "bin/t").resolve() == root / "bin/t"
     assert (home / ".zshrc").read_text().startswith("# mine\n# >>> t shell integration >>>")
     assert (home / ".config/t/local.zsh").is_file()
@@ -182,7 +182,7 @@ def test_build_archive_is_deterministic_and_runtime_only(tmp_path):
     assert "t/share/runners/broker.yml" in names
     assert "t/share/runners/sweeper.yml" in names
     assert "t/libexec/t_updates.py" in names
-    assert "t/libexec/t_app_handoff.py" in names
+    assert "t/libexec/t_codex_ownership.py" in names
     assert "t/libexec/t_share.py" in names
     assert "t/libexec/t_share_sessions.py" in names
     assert "t/libexec/t_share_flow.py" in names
@@ -190,10 +190,10 @@ def test_build_archive_is_deterministic_and_runtime_only(tmp_path):
     assert "t/libexec/t_share_launch.py" in names
     assert "t/libexec/t_share_ui.py" in names
     assert "t/zsh/share.zsh" in names
-    assert "t/libexec/vendor/mistune/LICENSE" in names
     assert "t/.t-release-version" in names
     assert "t/private.txt" not in names
-    assert not any(name.startswith("t/tests/") or name.startswith("t/docs/") for name in names)
+    assert "t/docs/nosleep.md" in names
+    assert not any(name.startswith("t/tests/") or (name.startswith("t/docs/") and name != "t/docs/nosleep.md") for name in names)
 
 
 def test_main_downloads_selected_version_and_reports_network_error(sandbox, monkeypatch, capsys):
@@ -268,3 +268,67 @@ def test_release_validator_checks_neutral_hook_when_present(tmp_path, invalid):
         hook.chmod(0o644)
     with pytest.raises(ValueError, match="regular executable"):
         release.validate_tree(root)
+
+
+def test_release_validator_accepts_pre_nosleep_payload(tmp_path):
+    release.extract_verified(artifact()[0], tmp_path)
+    for name in (*release.NOSLEEP_ASSETS, *release.NOSLEEP_WIFI_ASSETS):
+        (tmp_path / name).unlink()
+    assert release.validate_tree(tmp_path) == "v1.2.3"
+
+
+@pytest.mark.parametrize("asset", release.NOSLEEP_ASSETS)
+def test_release_validator_rejects_partial_nosleep_payload(tmp_path, asset):
+    release.extract_verified(artifact()[0], tmp_path)
+    (tmp_path / asset).unlink()
+    with pytest.raises(ValueError, match="nosleep"):
+        release.validate_tree(tmp_path)
+
+
+def test_installed_nosleep_runs_without_shell_integration(sandbox):
+    home, base = sandbox
+    release.install(*artifact(), base, home)
+    env = {k: v for k, v in os.environ.items() if not k.startswith("COV_CORE_")}
+    result = subprocess.run([str(home / "bin/nosleep"), "config", "--show"],
+                            env=env, capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+    assert "nosleep defaults" in result.stdout
+
+
+@pytest.mark.parametrize("wrong_version", [False, True])
+def test_release_workflow_verifies_installed_version_with_source_details(sandbox, tmp_path, monkeypatch, wrong_version):
+    import sys
+    import textwrap
+    workflow = (ROOT / ".github/workflows/release.yml").read_text()
+    step = workflow.split("- name: Verify archive installation in an isolated home", 1)[1]
+    snippet = textwrap.dedent(step.split("python3 - <<'PY'\n", 1)[1].split("          PY", 1)[0])
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    (scripts / "install-release.py").write_bytes((ROOT / "scripts/install-release.py").read_bytes())
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    changed = {"bin/t": b"#!/usr/bin/env python3\nprint('t v9.9.9\\n  Source: release\\n  Worktree: none')\n"} if wrong_version else None
+    archive, sums = artifact(changed=changed)
+    (dist / "t.tar.gz").write_bytes(archive)
+    (dist / "SHA256SUMS").write_bytes(sums)
+    monkeypatch.setenv("RELEASE_TAG", "v1.2.3")
+    result = subprocess.run([sys.executable, "-c", snippet], cwd=tmp_path,
+                            capture_output=True, text=True, timeout=30)
+    assert result.returncode == (1 if wrong_version else 0), result.stdout + result.stderr
+    if wrong_version:
+        assert "AssertionError" in result.stderr
+
+
+@pytest.mark.parametrize('asset', release.NOSLEEP_WIFI_ASSETS)
+def test_release_validator_rejects_partial_discovery_payload(tmp_path, asset):
+    release.extract_verified(artifact()[0], tmp_path)
+    (tmp_path / asset).unlink()
+    with pytest.raises(ValueError, match='nosleep discovery'):
+        release.validate_tree(tmp_path)
+
+
+def test_release_validator_accepts_pre_discovery_nosleep(tmp_path):
+    release.extract_verified(artifact()[0], tmp_path)
+    for name in release.NOSLEEP_WIFI_ASSETS:
+        (tmp_path / name).unlink()
+    assert release.validate_tree(tmp_path) == 'v1.2.3'

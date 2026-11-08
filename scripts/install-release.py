@@ -24,6 +24,7 @@ VERSION = re.compile(r"v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\
 SHA256 = re.compile(r"([0-9a-fA-F]{64})[ \t]+\*?t\.tar\.gz\Z")
 OWNED_LINKS = (
     ("bin/t", "bin/t"),
+    ("bin/nosleep", "bin/nosleep"),
     ("bin/t-session-start", "bin/t-session-start"),
     ("bin/claude-stamp-tmux", "bin/claude-stamp-tmux"),
     ("bin/cursor-beam", "bin/cursor-beam"),
@@ -35,17 +36,20 @@ OWNED_LINKS = (
 REQUIRED = (
     ".t-install-version", ".t-release-version", "install.sh", "t.plugin.zsh",
     "local.zsh.example", "bin/t", "bin/claude-stamp-tmux", "bin/cursor-beam",
-    "LICENSE", "README.md", "ui/fzf.sh", "libexec/t_app_window.py",
-    "libexec/t_desktop.py", "libexec/t_session_details.py", "libexec/t_markdown.py", "libexec/t_recovery.py",
-    "libexec/t_resume_source.py", "libexec/t_local_worker.py", "libexec/t_local_setup.py",
+    "LICENSE", "README.md", "ui/fzf.sh",
+    "libexec/t_session_details.py", "libexec/t_codex_ownership.py", "libexec/t_recovery.py",
+    "libexec/t_resume_source.py", "libexec/t_local_worker.py", "libexec/t_local_setup.py", "libexec/t_local_models.py", "libexec/t_local_inference.py", "libexec/t_offline.py", "libexec/mlx-models.json", "libexec/local-models.json",
     "libexec/t_share.py", "libexec/t_share_sessions.py",
-    "libexec/t_share_context.py", "libexec/t_share_flow.py", "libexec/t_share_launch.py", "libexec/t_share_ui.py", "libexec/vendor/mistune/LICENSE",
+    "libexec/t_share_context.py", "libexec/t_share_flow.py", "libexec/t_share_launch.py", "libexec/t_share_ui.py",
     "zsh/config.zsh", "zsh/agent.zsh", "zsh/worktree.zsh",
     "zsh/share.zsh", "zsh/sessions.zsh", "zsh/remote.zsh", "zsh/resume.zsh", "zsh/shim.zsh",
     "claude/settings.json.example", "claude/commands/tpush.md",
     "claude/commands/tpop.md", "codex/prompts/tpush.md", "codex/prompts/tpop.md",
     "scripts/install-release.py",
 )
+NOSLEEP_ASSETS = ("bin/nosleep", "zsh/nosleep.zsh", "zsh/nosleep-fallback.zsh",
+                  "libexec/nosleep_config.py", "libexec/nosleep_hotspot.py")
+NOSLEEP_WIFI_ASSETS = ("libexec/nosleep_wifi.py", "libexec/nosleep_wifi.swift")
 MAX_ARCHIVE = 64 * 1024 * 1024
 MAX_MEMBER = 32 * 1024 * 1024
 
@@ -82,6 +86,19 @@ def validate_tree(root, expected_version=None):
                  "bin/cursor-beam", "scripts/install-release.py"):
         if not os.access(root / name, os.X_OK):
             raise ValueError("release executable is not executable: " + name)
+    # A published pre-nosleep release remains installable. New payloads must
+    # include the complete companion, never a dangling executable or adapter.
+    if any((root / name).exists() or (root / name).is_symlink() for name in NOSLEEP_ASSETS):
+        for name in NOSLEEP_ASSETS:
+            if not (root / name).is_file() or (root / name).is_symlink():
+                raise ValueError("release is missing a regular nosleep file: " + name)
+        if not os.access(root / "bin/nosleep", os.X_OK):
+            raise ValueError("release nosleep executable is not executable")
+    # Preserve pre-discovery releases, while rejecting partial helper payloads.
+    if any((root / name).exists() or (root / name).is_symlink() for name in NOSLEEP_WIFI_ASSETS):
+        for name in (*NOSLEEP_ASSETS, *NOSLEEP_WIFI_ASSETS):
+            if not (root / name).is_file() or (root / name).is_symlink():
+                raise ValueError("release is missing a regular nosleep discovery file: " + name)
     # Releases before the neutral hook name remain installable.
     hook = root / "bin/t-session-start"
     if hook.exists() or hook.is_symlink():

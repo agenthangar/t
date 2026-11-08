@@ -1,6 +1,9 @@
 """The shared resume picker also carries host-independent saved identities."""
 import shlex
 import time
+import json
+import os
+import re
 
 import pytest
 
@@ -28,7 +31,7 @@ def test_plain_slot_resume_routes_to_history(zsh, tmp_path, verb, target, expect
 
 
 @pytest.mark.parametrize('arguments', ['api', '', '--all', 'api 3 --cli',
-                                     'api 3 --app', 'api 3 --fg', 'api 3 --host mini',
+                                     'api 3 --fg', 'api 3 --host mini',
                                      'api 3 --days all', 'api 3 --live', 'api 3 --remote'])
 def test_resume_options_keep_existing_route(zsh, arguments):
     result = zsh('_t_resume() { print -r -- "RESUME $*"; return 7; }; '
@@ -44,6 +47,53 @@ def history_row(sid='saved', slot='3', workspace='/former/home/trees/old/old-3',
 
 def shell_candidates(rows):
     return '_t_resume_history_candidates() { print -r -- ' + shlex.quote('\n'.join(rows)) + '; }; '
+
+
+@pytest.mark.parametrize('agent', ['claude', 'codex'])
+@pytest.mark.parametrize('batch', [False, True])
+@pytest.mark.parametrize('aliases', [False, True])
+def test_local_transcripts_use_history_allocation_once_per_conversation(zsh, agent, batch, aliases):
+    """Original cwd/index copies must not turn a conversation into two launches."""
+    sids = [f'00000000-0000-0000-0000-{n:012d}' for n in range(1, 3 if batch else 2)]
+    paths, rows = [], []
+    for slot in (21, 57):
+        wt = zsh.home / f'code/.worktrees/api/{slot}'
+        wt.mkdir(parents=True)
+        project = zsh.home / '.claude/projects' / re.sub(r'[^A-Za-z0-9]', '-', str(wt))
+        project.mkdir(parents=True)
+        for sid in sids:
+            path = project / (f'rollout-{sid}.jsonl' if agent == 'codex' else f'{sid}.jsonl')
+            path.write_text(json.dumps({'type': 'user', 'message': {'content': 'Saved work'}}) + '\n')
+            os.utime(path, (1, 1))
+            paths.append(str(path))
+    opened = zsh.home / '.cache/claude-sessions/opened'
+    opened.mkdir(parents=True)
+    for sid in sids:
+        # All conversations share their historical slot, even though current
+        # local indexes also attribute copies to slot 57. Last-opened stamps
+        # keep these old history records eligible within the default window.
+        rows.append(history_row(sid, slot='21', updated=1).removesuffix('codex') + agent)
+        (opened / sid).touch()
+    setup = shell_candidates(rows + rows) + (
+        '_dev_agent_transcripts_for_cwd() { [[ $1 == codex ]] || return; '
+        + ('print -rl -- ' + ' '.join(map(shlex.quote, paths)) if agent == 'codex' else ':') + '; }; '
+        '_t_fzf_filtered() { print -r -- "$1"; }; '
+        '_t_resume_history_launch() { print -u2 -- "HISTORY $2 $3 $4"; '
+        '[[ $2 == *0001 ]] && print dev-api-98 || print dev-api-99; }; '
+        '_dev_resume_session() { print -u2 UNEXPECTED_LEGACY_LAUNCH; return 1; }; '
+        '_dev_open_tab() { print -r -- "TAB $*"; }; '
+    )
+    if aliases:
+        setup += 'DEV_REPOS=(api "$DEV_REPOS[api]" alternate "$DEV_REPOS[api]"); '
+    result = zsh(setup + ('_t_resume --all' if aliases else '_t_resume api'), _tty=True)
+    assert result.returncode == 0, result.stdout
+    for sid in sids:
+        assert result.stdout.count(f'HISTORY {sid} {agent} launch') == 1
+    assert 'UNEXPECTED_LEGACY_LAUNCH' not in result.stdout
+    assert 'slot already used' not in result.stdout
+    assert 'attach-session -t =dev-api-98:' in zsh.log.read_text()
+    if batch:
+        assert 'TAB t open api 99 --cli --local' in result.stdout
 
 
 def test_resume_history_selects_inactive_conversation_from_busy_slot(zsh):
@@ -163,16 +213,16 @@ def test_resume_history_live_id_attaches_exact_owner(zsh):
     assert 'ATTACH api 88' in result.stdout and 'UNEXPECTED' not in result.stdout
 
 
-def test_resume_history_app_rejects_claude_before_preparing(zsh):
+def test_resume_history_removed_app_rejects_before_preparing(zsh):
     row = history_row().removesuffix('codex') + 'claude'
     result = zsh(shell_candidates([row]) +
                  'OSTYPE=darwin; _t_resume_history_launch() { print -u2 UNEXPECTED; }; _t_resume api --app')
-    assert result.returncode == 1
-    assert 'only saved Codex' in result.stderr
+    assert result.returncode == 2
+    assert 'support has been removed' in result.stderr
     assert 'UNEXPECTED' not in result.stderr
 
 
-@pytest.mark.parametrize('owner', ['local', 'remote', 'collision', 'desktop', 'remote-desktop'])
+@pytest.mark.parametrize('owner', ['local', 'remote', 'collision', 'remote-desktop'])
 @pytest.mark.parametrize('command', ['t resume api 3 --days all', 't session resume api 3 --days all'])
 def test_explicit_slot_browses_live_and_saved_conversations_before_acting(zsh, owner, command):
     wt = zsh.home / 'code/.worktrees/api/3'

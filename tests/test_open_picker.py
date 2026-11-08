@@ -93,10 +93,10 @@ def test_open_repo_filter_keeps_desktop_and_cli(zsh, tmp_path):
       _t_dev() { print UNEXPECTED_CLI; }
       _t_open api --attached
     ''', _tty=True, **env)
-    assert result.returncode == 0, result.stdout
+    assert result.returncode == 1, result.stdout
     rows = (tmp_path / 'picker.log').read_text().splitlines()
     assert [row.split('\t')[1] for row in rows] == ['api-2', 'api-4']
-    assert 'APP api 4 --app' in result.stdout
+    assert 'retired integration' in result.stdout
     assert 'UNEXPECTED' not in result.stdout
 
 
@@ -109,12 +109,11 @@ def test_open_mixed_batch_routes_each_interface_before_first_attach(zsh, tmp_pat
       _dev_open_tab() { print -r -- "TAB $*"; }
       _t_open --attached
     ''', _tty=True, **env)
-    assert result.returncode == 0, result.stdout
-    assert 'APP api 4 --app' in result.stdout
+    assert result.returncode == 1, result.stdout
+    assert 'retired integration' in result.stdout
     assert 'TAB t open web 6 --cli --local' in result.stdout
     assert 'TAB t open web:abcdef12 --cli --local' in result.stdout
     assert 'CLI api 2 --local' in result.stdout
-    assert result.stdout.index('APP') < result.stdout.index('CLI')
     assert result.stdout.index('TAB') < result.stdout.index('CLI')
 
 

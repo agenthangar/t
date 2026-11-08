@@ -77,11 +77,11 @@ valid_source() {
     [[ -f "$root/.t-install-version" ]] || return 1
     [[ "$(cat "$root/.t-install-version")" == 1 ]] || return 1
     for asset in install.sh t.plugin.zsh local.zsh.example \
-        claude/settings.json.example bin/t bin/t-session-start bin/claude-stamp-tmux bin/cursor-beam \
+        claude/settings.json.example bin/t bin/nosleep zsh/nosleep.zsh zsh/nosleep-fallback.zsh libexec/nosleep_config.py libexec/nosleep_hotspot.py libexec/nosleep_wifi.py libexec/nosleep_wifi.swift bin/t-session-start bin/claude-stamp-tmux bin/cursor-beam \
         libexec/t_dev.py libexec/t_progress.py libexec/t_shell_setup.py libexec/t_onboarding.py libexec/t_discovery.py \
         libexec/t_toml.py libexec/t_codex_socket.py libexec/vendor/SHA256SUMS libexec/vendor/tomli-LICENSE libexec/vendor/tomli/__init__.py libexec/vendor/tomli/_parser.py libexec/vendor/tomli/_re.py libexec/vendor/tomli/_types.py libexec/vendor/tomli/py.typed \
-        libexec/t_workflow.py libexec/t_workflow_sync.py libexec/t_issue.py libexec/t_issue_policy.txt libexec/t_resume_source.py libexec/t_history.py libexec/t_candidates.py libexec/t_session_details.py libexec/t_picker_filters.py libexec/t_picker_theme.py libexec/t_repos.py \
-        libexec/t_local_worker.py libexec/t_local_setup.py libexec/t_mcp_setup.py \
+        libexec/t_workflow.py libexec/t_design_system.py libexec/t_workflow_sync.py libexec/t_issue.py libexec/t_issue_policy.txt libexec/t_resume_source.py libexec/t_history.py libexec/t_candidates.py libexec/t_session_details.py libexec/t_picker_filters.py libexec/t_picker_theme.py libexec/t_repos.py \
+        libexec/t_local_worker.py libexec/t_local_setup.py libexec/t_local_models.py libexec/t_local_inference.py libexec/t_offline.py libexec/mlx-models.json libexec/local-models.json libexec/t_mcp_setup.py \
         libexec/t_runners.py libexec/t_runner_job.py share/runners/broker.yml share/runners/sweeper.yml \
         libexec/t_share.py libexec/t_share_sessions.py \
         libexec/t_share_context.py libexec/t_share_flow.py libexec/t_share_launch.py libexec/t_share_ui.py zsh/share.zsh \
@@ -139,6 +139,7 @@ link() {
 
 link_all() {
     link "$T_LINK_SRC/bin/t" "$HOME/bin/t"
+    link "$T_LINK_SRC/bin/nosleep" "$HOME/bin/nosleep"
     link "$T_LINK_SRC/bin/t-session-start" "$HOME/bin/t-session-start"
     link "$T_LINK_SRC/bin/claude-stamp-tmux" "$HOME/bin/claude-stamp-tmux"
     link "$T_LINK_SRC/bin/cursor-beam" "$HOME/bin/cursor-beam"
@@ -263,9 +264,8 @@ path, command = sys.argv[1:]
 
 def review_notice(hook_command):
     print("Codex hook registered; if it needs review, approval is still required.")
-    print("  In the ChatGPT desktop app, open Review hooks (or hooks in settings).")
     print("  Select the User config / SessionStart hook: " + hook_command)
-    print("  Click Allow selected. In the Codex CLI, use /hooks to review and trust it.")
+    print("  In the Codex CLI, use /hooks to review and trust it.")
     print("  Until approved, the hook is skipped and session tracking can be incomplete.")
 
 

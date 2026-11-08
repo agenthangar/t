@@ -14,6 +14,7 @@ from conftest import load_script
 
 @pytest.fixture
 def worker(tmp_path, monkeypatch):
+    monkeypatch.delenv('TMUX', raising=False)
     monkeypatch.setenv('HOME', str(tmp_path / 'home'))
     monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path / 'config'))
     monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path / 'state'))
@@ -123,10 +124,10 @@ def test_task_lifecycle_and_exclusivity(worker, repo, monkeypatch):
     worker.save_settings({'enabled': True, 'model': 'gpt-oss:20b'})
     started = threading.Event()
     @contextmanager
-    def server(): yield 'http://127.0.0.1:1234', {}
+    def server(*args): yield 'http://127.0.0.1:1234', {}
     monkeypatch.setattr(worker, 'ollama_server', server)
     monkeypatch.setattr(worker, 'check_model', lambda *a: None)
-    def run(job, base, model, timeout, cancel):
+    def run(job, base, model, timeout, cancel, *args):
         started.set()
         assert cancel.wait(10)
         return 'cancelled'
@@ -297,3 +298,36 @@ def test_snapshot_limits(worker, repo, tmp_path, monkeypatch):
     with (repo / 'large').open('wb') as stream:
         stream.truncate(257 * 1024 * 1024)
     with pytest.raises(ValueError, match='256 MiB'): worker.snapshot(repo, tmp_path / 'large-copy')
+
+
+def test_mlx_routing_identity_context_and_local_only_gate(worker,repo,monkeypatch):
+    worker.save_settings({'enabled':True,'model':'mlx-community/Qwen3.8-27B-8bit','provider':'lmstudio'})
+    routing={'mode':'automatic','provider':'lmstudio','model':'mlx-community/Qwen3.8-27B-8bit','context_tokens':8192,'timeout_seconds':60}
+    observed=[]
+    @contextmanager
+    def runtime(model,context):
+        observed.append((model,context))
+        yield 'http://127.0.0.1:1234','owned-alias',{'revision':'a'*40,'runtime':{'contextLength':context}}
+    status=worker.inference()['helper']('t_local_status')
+    local={'effective':lambda workspace:routing,'report':lambda *a:{'fit':True},'artifact':lambda n:{},
+           'helper':lambda n:status if n=='t_local_status' else {'hardware':lambda:{}},'runtime':runtime}
+    monkeypatch.setattr(worker,'inference',lambda:local)
+    monkeypatch.setattr(worker,'run_worker',lambda *a:observed.append(a[3:]) or 'completed')
+    manager=worker.Worker();args={'workspace':str(repo),'assignment':'inspect','timeout_seconds':300,'routing_reason':'bounded fixture'}
+    task=manager.start(args)
+    for thread in manager.threads:thread.join(2)
+    result=manager.call('task_status',{'task_id':task['task_id']})
+    assert result['status']=='completed' and result['identity_verified']
+    assert result['context_tokens']==8192 and result['revision']=='a'*40
+    assert observed[1][0]==60 and observed[1][-2:]==('lmstudio',8192)
+    manager.close()
+    for mode in ('disabled','local-only'):
+        routing['mode']=mode
+        with pytest.raises(ValueError):manager.start(args)
+    for key in ('parent_session_id','routing_reason'):
+        with pytest.raises(ValueError):manager.start(dict(args,**{key:5}))
+    routing['mode']='automatic';local['report']=lambda *a:{'fit':False,'reason':'does not fit'}
+    failed=manager.start(args)
+    for thread in manager.threads:thread.join(2)
+    assert manager.call('task_status',{'task_id':failed['task_id']})['error']=='does not fit'
+    manager.close()

@@ -18,7 +18,7 @@ CONTRACT = ROOT / "ui" / "command-contract.json"
 # Existing single-word spellings remain available as compatibility shortcuts.
 # A new public command must enter a noun/verb family instead of growing this set.
 LEGACY_SHORTCUTS = frozenset({
-    "help", "open", "app", "ls", "list", "kill", "restart", "push", "pop",
+    "help", "open", "ls", "list", "kill", "restart", "push", "pop",
     "resume", "history", "cd", "beam", "move", "read", "plan", "paste", "find", "on",
     "setup", "new", "checkout", "instructions", "login",
     "install", "integrate", "update", "permissions", "trust", "doctor",
@@ -31,12 +31,12 @@ ISSUE_VERBS = {"list", "status", "start", "open"}
 # accepted verbs so extending one requires an intentional contract review.
 LEGACY_GROUP_VERBS = {
     "session": {"open", "list", "close", "restart", "push", "pop", "resume", "history", "cd",
-                "move", "read", "view-plan", "paste", "search", "open-app", "goal"},
+                "move", "read", "view-plan", "paste", "search", "goal"},
     "repo": {"list", "cd", "locate", "create", "clone", "add"},
     "cursor": {"list", "resume", "send"},
     "hosts": {"list", "show", "add", "edit", "remove", "default", "run"},
     "agentcore": {"invoke", "stop"},
-    "config": {"open", "show", "edit", "setup", "onboard", "local"},
+    "config": {"open", "show", "edit", "setup", "onboard", "local", "models"},
     "profile": {"init", "edit", "show", "apply"},
     "policy": {"check", "show", "apply"},
     "agent": {"login", "install", "status", "trust"},
@@ -279,7 +279,7 @@ def check(parser, command_groups, instructions):
         return True, args
 
     workflow_registry = command_groups.get("workflow", {})
-    if not isinstance(workflow_registry, dict) or set(workflow_registry) != {"list", "edit", "add", "use", "exclude", "inherit", "sync", "instructions"}:
+    if not isinstance(workflow_registry, dict) or set(workflow_registry) != {"list", "edit", "open", "delete", "add", "use", "exclude", "inherit", "instructions"}:
         errors.append("workflow registry must expose named workflows and instructions")
     config = top._name_parser_map.get("config")
     config_sub = _subparsers(config) if config else None
@@ -295,7 +295,14 @@ def check(parser, command_groups, instructions):
             valid, args = accepts(words)
             if not valid or args.verb != "config" or getattr(args, "workflow_action", None) != verb:
                 errors.append("workflow parser rejected or misrouted required form: " + " ".join(words))
-    for words in (["sync"], ["add", "quick"], ["add", "quick", "--from", "standard"], ["use", "quick"],
+    receive = workflow_sub._name_parser_map.get("sync") if workflow_sub else None
+    if receive is None or "sync" in workflow_sub.choices:
+        errors.append("workflow receive transport must remain private")
+    valid, args = accepts(["config", "workflow", "sync", "--receive"])
+    if not valid or not getattr(args, "workflow_receive", False):
+        errors.append("workflow receive transport must retain existing host compatibility")
+    for words in (["open", "quick"], ["delete", "quick"], ["delete", "quick", "--replacement", "standard"],
+                  ["add", "quick"], ["add", "quick", "--from", "standard"], ["use", "quick"],
                   ["use", "quick", "--repo", "api"], ["exclude", "--repo", "api"], ["inherit", "--repo", "api"],
                   ["edit", "quick"], ["list", "--all", "--json"], ["instructions", "show"],
                   ["instructions", "edit", "quick"], ["instructions", "show", "--repo", "api"],
@@ -308,7 +315,8 @@ def check(parser, command_groups, instructions):
         valid, args = accepts(["config", "workflow", *words])
         if not valid or args.verb != ("runners" if words[0] in ("runners", "runs") else "config"):
             errors.append("workflow parser rejected required form: " + " ".join(words))
-    for words in (["add"], ["use"], ["exclude"], ["inherit"], ["add", "quick", "--repo", "api"]):
+    for words in (["sync"], ["open"], ["delete"], ["open", "quick", "--repo", "api"],
+                  ["delete", "quick", "--repo", "api"], ["add"], ["use"], ["exclude"], ["inherit"], ["add", "quick", "--repo", "api"]):
         valid, _ = accepts(["config", "workflow", *words])
         if valid:
             errors.append("workflow parser accepted invalid form: " + " ".join(words))
@@ -886,6 +894,40 @@ def check_help_style(module, parser, contract):
     return list(dict.fromkeys(errors))
 
 
+def check_standalone_commands(contract, root=ROOT):
+    """Companion executables are inventoried without becoming t parser routes."""
+    entries = contract.get("standalone_commands", {})
+    if set(entries) != {"nosleep"}:
+        return ["standalone inventory must classify nosleep"]
+    errors = []
+    entry = entries["nosleep"]
+    modes = entry.get("modes", {})
+    expected = {"default": ["nosleep"], "help": ["nosleep", "--help"],
+                "config": ["nosleep", "config"], "show": ["nosleep", "config", "--show"],
+                "edit": ["nosleep", "config", "--edit"], "hotspot": ["nosleep", "hotspot", "setup"]}
+    if set(modes) != set(expected):
+        errors.append("nosleep must classify monitoring, help, configuration and hotspot setup")
+    patterns = set()
+    for name, argv in expected.items():
+        mode = modes.get(name, {})
+        if mode.get("argv") != argv or mode.get("read_only") != (name in {"help", "show"}):
+            errors.append(f"nosleep {name} must preserve its argv and read-only contract")
+        if not mode.get("patterns") or not set(mode["patterns"]) <= {"action", "detail", "wizard"}:
+            errors.append(f"nosleep {name} must classify its interaction")
+        patterns.update(mode.get("patterns", []))
+        if not mode.get("tests"):
+            errors.append(f"nosleep {name} needs a behavior test")
+        for reference in mode.get("tests", []):
+            errors.extend(_check_test_reference(reference, root))
+    if set(entry.get("patterns", [])) != patterns:
+        errors.append("nosleep patterns must match its modes")
+    if not (root / "bin/nosleep").is_file():
+        errors.append("nosleep standalone executable is missing")
+    if 'shared["_RailUI"]' not in (root / "libexec/nosleep_config.py").read_text():
+        errors.append("nosleep config must use the shared _RailUI")
+    return errors
+
+
 def main():
     loader = SourceFileLoader("t_cli_lint", str(ROOT / "bin/t"))
     spec = importlib.util.spec_from_loader(loader.name, loader)
@@ -903,6 +945,7 @@ def main():
     else:
         errors.extend(check_command_patterns(module.build_parser(), module.COMMAND_GROUPS, contract))
         errors.extend(check_help_style(module, module.build_parser(), contract))
+        errors.extend(check_standalone_commands(contract))
     errors.extend(check_picker_boundaries())
     for path in (ROOT / "AGENTS.md", ROOT / "CONTRIBUTING.md"):
         if "ui/command-contract.json" not in path.read_text():

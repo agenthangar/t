@@ -16,24 +16,6 @@ _t_resume_batch_stop() {
   return "$result"
 }
 
-# Cross-host policy is explicit; native Codex host transfer is app-mediated.
-# Return before stopping owners, checkpointing, copying transcripts or allocating.
-_t_handoff_check() {
-  local agent=${1:-claude} source_host=${2:-here} destination=${3:-here}
-  local mechanism=${DEV_HANDOFF[$agent]:-t}
-  [[ $agent != codex ]] || mechanism=${_T_HANDOFF_CODEX:-${DEV_HANDOFF[codex]:-native}}
-  [[ $agent != claude ]] || mechanism=${_T_HANDOFF_CLAUDE:-${DEV_HANDOFF[claude]:-t}}
-  if [[ $mechanism == t ]]; then return 0; fi
-  if [[ $agent != codex || $mechanism != native ]]; then
-    print -u2 -- "t: invalid cross-host handoff for $agent: $mechanism; use t config"
-    return 1
-  fi
-  print -u2 -- "t: Codex cross-host handoff uses the native desktop app ($source_host → $destination)."
-  print -u2 -- 'Open this chat in Codex, choose the run location in its footer, select the destination, then Hand off.'
-  print -u2 -- 'Save the same repository as a project on both hosts. Native host handoff has no supported CLI adapter; no transfer was started.'
-  print -u2 -- 'To explicitly use t transfer instead: t config → Codex settings → Cross-host handoff → t, then Save changes.'
-  return 1
-}
 
 # A destination on resume applies to saved history. Live owners may only attach
 # on that same host; moving an owner uses the guarded move transaction.
@@ -54,9 +36,15 @@ _t_resume_rsync() { rsync "$@" 2>/dev/null; }
 
 _t_resume_on_host() {
   local host="$1" sid="$2" wt="$3" agent="$4" mode="$5"
-  _t_handoff_check "$agent" here "$host" || return $?
   local target="${REMOTE_HOSTS[$host]:-$host}"
   command -v rsync >/dev/null 2>&1 || { echo "t resume --host: rsync not found" >&2; return 1; }
+  local TB_TRANSFER_REF
+  TB_TRANSFER_REF=$(_dev_worktree_beam_prepare "$wt") || return $?
+  if [[ -n $TB_TRANSFER_REF ]]; then
+    ssh "$target" "zsh -lic '(( \${+functions[_dev_worktree_transfer_ref_valid]} ))'" || {
+      print -u2 't session move: update t on the destination to receive transfer snapshots'; return 1
+    }
+  fi
   _dev_worktree_beam_push "$wt" "$host" >&2 || {
     local push_rc=$?
     (( push_rc == 130 )) && return 130
@@ -64,7 +52,7 @@ _t_resume_on_host() {
     return $push_rc
   }
   _tbeam_sync_transcript "$wt" "$target" "$agent" "$sid" >&2 || return $?
-  local env="TB_CWD=${(q)wt} TB_SID=${(q)sid} TB_AGENT=${(q)agent} TB_RESUME_ALLOW_UNAVAILABLE=1"
+  local env="TB_TRANSFER_REF=${(q)TB_TRANSFER_REF} TB_CWD=${(q)wt} TB_SID=${(q)sid} TB_AGENT=${(q)agent} TB_RESUME_ALLOW_UNAVAILABLE=1"
   case $mode in
     fg)     ssh -t "$target" "$env TB_MODE=fg zsh -lic _tbeam_land" ;;
     attach) ssh -t "$target" "$env TB_MODE=tmux TB_ATTACH=1 zsh -lic _tbeam_land" ;;
@@ -121,8 +109,8 @@ _t_resume_history_registered() {
 # attaches, the rest open in NEW terminal tabs (_dev_open_tab above; attach-hint
 # fallback when tabs are impossible — ssh, unrecognized terminal, no
 # Accessibility). A live mark attaches to its existing owner (never
-# resumed — one-live-owner), a second conversation marked for a slot an earlier mark
-# just took is skipped (one tmux session per dev-<repo>-<slot> name), and --fg
+# resumed — one-live-owner). Retained history allocates independent destinations
+# when multiple conversations share a historical slot, and --fg
 # refuses a multi-pick (one terminal, one inline claude); outside any DEV_REPOS dir a bare
 # `t resume` scans EVERY worktree repo (the
 # `t ls` unscoped convention) with a repo column in the picker; -a/--all forces that
@@ -154,13 +142,13 @@ _t_resume() {
   local _T_PROGRESS=0
   [[ -t 1 && -t 2 ]] && _T_PROGRESS=1
   setopt local_options null_glob bare_glob_qual
-  local a no_tmux= app= cli= all_flag= remote_flag= live_flag= days=30 _expect_days= on_host= _expect_host=; local -a pos
+  local a no_tmux= cli= all_flag= remote_flag= live_flag= days=30 _expect_days= on_host= _expect_host=; local -a pos
   for a in "$@"; do
     if [[ -n $_expect_days ]]; then days=$a; _expect_days=; continue; fi
     if [[ -n $_expect_host ]]; then on_host=$a; _expect_host=; continue; fi
     case "$a" in
       -f|--fg)     no_tmux=1 ;;
-      --app)      app=1 ;;
+      --app) print -u2 -- "t: Codex Desktop support has been removed; use t session resume --cli"; return 2 ;;
       --cli)      cli=1 ;;
       -a|--all)    all_flag=1 ;;
       -r|--remote) remote_flag=1 ;;
@@ -173,13 +161,6 @@ _t_resume() {
       *)           pos+=("$a") ;;
     esac
   done
-  if [[ -n $app ]]; then
-    [[ -z $cli && -z $no_tmux && -z $on_host && -z $_expect_host ]] || {
-      print -u2 -- 't resume: --app cannot be combined with --cli, --fg, or --host; the desktop destination is local'
-      return 1
-    }
-    [[ $OSTYPE == darwin* ]] || { print -u2 -- 't resume --app: the Codex desktop app requires macOS'; return 1; }
-  fi
   if [[ $days != all && $days != <-> ]]; then
     echo "t resume: --days takes a number of days or 'all' (got: ${days:-nothing})." >&2; return 1
   fi
@@ -275,7 +256,7 @@ _t_resume() {
   # needs no second scan.
   _t_progress "Checking conversation owners"
   local all_rows= remote_rows= live_all= live_scan_rc=0
-  if [[ -n $app ]] || (( ${#REMOTE_HOSTS} )); then
+  if (( ${#REMOTE_HOSTS} )); then
     live_all=$(_dev_rows_all --best-effort) || live_scan_rc=$?
   else
     live_all=$(_dev_session_rows 2>/dev/null) || live_scan_rc=$?
@@ -284,7 +265,7 @@ _t_resume() {
   (( live_scan_rc == 130 )) && return 130
   # Issue starts explicitly tolerate unavailable hosts. Revalidate local rows
   # separately so a local scanner failure cannot be mistaken for an offline host.
-  if (( live_scan_rc )) && [[ ${_T_ISSUE_SKIP_UNAVAILABLE:-} == 1 && -z $app && -n $slot ]]; then
+  if (( live_scan_rc )) && [[ ${_T_ISSUE_SKIP_UNAVAILABLE:-} == 1 && -n $slot ]]; then
     local issue_local_rows
     issue_local_rows=$(_dev_session_rows) || {
       print -u2 -- 't issue start: local ownership check failed; no saved conversation resumed'
@@ -404,14 +385,8 @@ _t_resume() {
       for candidate in "${(@f)$(_dev_worktree_paths "$repo" "$n")}"; do
         [[ -n ${live[${candidate:A}]:-} ]] && { wt=$candidate; break; }
       done
-      if [[ -z $app ]] && _dev_app_slot_reserved "$wt"; then
-        live_seen[app/${repo}-$n]=1
-        [[ -n $live_flag ]] || (( hidden_live++ ))
-        cands+=(9999999999$'\t'"$repo"$'\t'"$n"$'\t'-$'\t'"$wt"$'\t'"◉ desktop here"$'\t'"(Codex desktop workspace)"$'\t'app:here$'\t'-$'\t'-$'\t'codex)
-        continue
-      fi
       busy=${live[${wt:A}]:-}
-      if [[ -n $busy && -z $app ]]; then
+      if [[ -n $busy ]]; then
         # Scan: retain live local slots for Ctrl-A, while the initial view
         # filters them (unless --live was passed). The legacy leading key is
         # discarded; actual turn evidence orders live and saved rows together.
@@ -422,7 +397,7 @@ _t_resume() {
       fi
       # Remote-live: same treatment as local live (see the scan note above).
       rhost=${remote_live_host[$n]:-}
-      if [[ -n $rhost && -z $app ]]; then
+      if [[ -n $rhost ]]; then
         if [[ ${remote_live_state[$n]} == app ]]; then
           live_seen[app/$rhost/${remote_live_alias[$n]}-$n]=1
           [[ -n $live_flag ]] || (( hidden_live++ ))
@@ -452,7 +427,7 @@ _t_resume() {
         [[ ${DEV_REPOS[$_ok]} != $_rdir ]] && continue
         tmux has-session -t "=dev-${_ok}-${n}:" 2>/dev/null && { _stale="dev-${_ok}-${n}"; break; }
       done
-      if [[ -n $_stale && -z $app ]]; then
+      if [[ -n $_stale ]]; then
         stale_path=$(tmux display-message -p -t "=$_stale:" '#{session_path}' 2>/dev/null)
         live_seen[here/${_stale#dev-}]=1
         [[ -n $live_flag ]] || (( hidden_live++ ))
@@ -475,7 +450,7 @@ _t_resume() {
           # the owner's own slot already produced its row. Checked before --days:
           # a running conversation is current whatever its file's mtime says.
           sid=$(_dev_transcript_sid "$txf")
-          if [[ -n ${live_sid[$sid]:-} && -z $app ]]; then
+          if [[ -n ${live_sid[$sid]:-} ]]; then
             sidlive+=("$repo"$'\t'"$sid"$'\t'"$wt"$'\t'"${live_sid[$sid]}")
             continue
           fi
@@ -507,14 +482,16 @@ _t_resume() {
 
   # Include conversations retained outside today's slot layout (canonical
   # checkouts, renamed roots, swept rollouts and independent chats in live slots).
-  # Keep ordinary local rows on their released route; extra rows use history's
-  # guarded allocator instead of borrowing an occupied or unrelated worktree.
+  # Retained history is authoritative even when a transcript was also found by
+  # its original slot. That slot is provenance, not a launch destination: the
+  # conversation may have moved, or several selections may share it.
   local history_rows history_rc=0 history_row history_key
   local -a history_fields history_keep
-  local -A history_seen history_pr_state
+  local -A history_seen history_emitted history_pr_state
   for _p in "${(@)pending}"; do
     _mf=("${(@ps:\t:)_p}")
-    history_seen[$_mf[2]/$(_dev_transcript_agent "$_mf[5]")/$(_dev_transcript_sid "$_mf[5]")]=1
+    history_key=${DEV_REPOS[$_mf[2]]:-$_mf[2]}/$(_dev_transcript_agent "$_mf[5]")/$(_dev_transcript_sid "$_mf[5]")
+    (( _mf[1] > ${history_seen[$history_key]:-0} )) && history_seen[$history_key]=$_mf[1]
   done
   local -a history_scope=("${(@)repos}")
   [[ -n $all_mode ]] && history_scope=(--all)
@@ -534,27 +511,19 @@ _t_resume() {
   for history_row in "${(@f)history_rows}"; do
     history_fields=("${(@ps:\t:)history_row}")
     (( $#history_fields >= 9 && $#history_fields <= 12 )) || continue
-    history_key=$history_fields[2]/$history_fields[9]/$history_fields[4]
+    history_key=${DEV_REPOS[$history_fields[2]]:-$history_fields[2]}/$history_fields[9]/$history_fields[4]
+    [[ -z ${history_emitted[$history_key]:-} ]] || continue
+    history_emitted[$history_key]=1
     # Retained local transcript rows need the full associated-PR aggregate too;
     # their last-mentioned PR alone cannot prove all work's PRs have merged.
     if (( $#history_fields >= 12 )) && [[ $history_fields[12] != NONE ]]; then
-      history_pr_state[$history_key]=$history_fields[12]
+      history_pr_state[$history_fields[2]/$history_fields[9]/$history_fields[4]]=$history_fields[12]
     fi
-    if [[ -n ${history_seen[$history_key]:-} ]]; then
-      [[ $history_fields[8] != local ]] || continue
-      # A newer remote source supersedes an already discovered local copy.
-      # Leave transcript selection to history's source verifier, rather than
-      # resuming the stale file through the ordinary local route.
-      history_keep=()
-      for _p in "${(@)pending}"; do
-        _mf=("${(@ps:\t:)_p}")
-        [[ $_mf[2]/$(_dev_transcript_agent "$_mf[5]")/$(_dev_transcript_sid "$_mf[5]") == $history_key ]] || history_keep+=("$_p")
-      done
-      pending=("${(@)history_keep}")
-    fi
-    history_seen[$history_key]=1
+    # Keep reopened-stamp eligibility when history takes over, without scanning
+    # every pending transcript again for each history row.
+    (( ${history_seen[$history_key]:-0} > history_fields[1] )) && history_fields[1]=$history_seen[$history_key]
     [[ -z $slot || $history_fields[3] == $slot ]] || continue
-    if [[ -n ${live_sid[$history_fields[4]]:-} && ${live_sid_agent[$history_fields[4]]:-} == $history_fields[9] && -z $app ]]; then
+    if [[ -n ${live_sid[$history_fields[4]]:-} && ${live_sid_agent[$history_fields[4]]:-} == $history_fields[9] ]]; then
       sidlive+=("$history_fields[2]"$'\t'"$history_fields[4]"$'\t'"$history_fields[5]"$'\t'"${live_sid[$history_fields[4]]}")
       continue
     fi
@@ -564,6 +533,13 @@ _t_resume() {
     org=$history_fields[8]; [[ $org == local ]] && org=-
     cands+=("$history_fields[1]"$'\t'"$history_fields[2]"$'\t'"$history_fields[3]"$'\t'"$history_fields[4]"$'\t'"$history_fields[5]"$'\t'"$history_fields[6]"$'\t'"$history_fields[7]"$'\t'-$'\t'history$'\t'"$org"$'\t'"$history_fields[9]"$'\t'-$'\t'"${history_fields[10]:--}"$'\t'"${history_fields[11]:--}"$'\t'"${history_fields[12]:-UNKNOWN}")
   done
+  # One linear pass removes every local layout/alias copy handled by history.
+  for _p in "${(@)pending}"; do
+    _mf=("${(@ps:\t:)_p}")
+    history_key=${DEV_REPOS[$_mf[2]]:-$_mf[2]}/$(_dev_transcript_agent "$_mf[5]")/$(_dev_transcript_sid "$_mf[5]")
+    [[ -n ${history_emitted[$history_key]:-} ]] || history_keep+=("$_p")
+  done
+  pending=("${(@)history_keep}")
 
   # Conversations live under ANOTHER slot's session (or a foreground one). One row
   # per owner — skipped when the owner's own slot row was already counted/emitted.
@@ -800,16 +776,9 @@ _t_resume() {
   for pick in "${(@)picks}"; do
     f=("${(@ps:\t:)pick}")
     _t_resume_host_check "${f[7]:-}" "$on_host" "$f[1]" "$f[2]" || return 1
-    if [[ -n $on_host && ( -z ${f[7]:-} || $f[7] == - ) ]]; then
-      _t_handoff_check "${f[10]:-claude}" here "$on_host" || return $?
-    fi
   done
   pick=$picks[1]
   if (( $#picks > 1 )); then
-    if [[ -n $app ]]; then
-      print -u2 -- 't resume --app opens ONE saved conversation — mark a single row.'
-      return 1
-    fi
     if [[ -n $no_tmux ]]; then
       echo "t resume --fg resumes ONE conversation inline in this terminal — mark a single row (or drop --fg)." >&2
       return 1
@@ -835,10 +804,6 @@ _t_resume() {
         [[ -n ${f[8]:-} && $f[8] != - ]] && repo=$f[8]
         mp_live+=("$mp_loc"$'\t'"$repo"$'\t'"$slot"$'\t'-)
         mp_ready+=("t session open ${(q)repo} ${(q)slot} --cli --local")
-        continue
-      elif [[ $mp_loc == app:here ]]; then
-        mp_live+=("$mp_loc"$'\t'"$repo"$'\t'"$slot"$'\t'-)
-        mp_ready+=("t session open ${(q)repo} ${(q)slot} --app")
         continue
       elif [[ $mp_loc == app:* ]]; then
         _t_resume_batch_stop 1 "$mp_identity" "$mp_retry" "desktop app is on ${mp_loc#app:}; open it on that Mac" "$mp_remaining" "${mp_ready[@]}"
@@ -936,7 +901,6 @@ _t_resume() {
         fg:*)     mp_live_cmd="t open ${(q)mp_live_alias} --cli"
                   [[ $mp_live_loc != fg:here ]] && mp_live_cmd+=" --host ${(q)${mp_live_loc#fg:}}" ;;
         here)     mp_live_cmd="t open ${(q)mp_live_repo} ${(q)mp_live_slot} --cli --local" ;;
-        app:here) mp_live_cmd="t open ${(q)mp_live_repo} ${(q)mp_live_slot} --app" ;;
         *)        mp_live_cmd="t open ${(q)mp_live_repo} ${(q)mp_live_slot} --cli --host ${(q)mp_live_loc}" ;;
       esac
       _dev_open_tab "$mp_live_cmd" || {
@@ -952,7 +916,6 @@ _t_resume() {
         fg:here)  _dev_open_fg "$mp_live_alias" ;;
         fg:*)     _dev_remote_open "${mp_live_loc#fg:}" "$mp_live_alias" --cli ;;
         here)     _dev_open_picks "local"$'\t'"$mp_live_repo"$'\t'"$mp_live_slot" ;;
-        app:here) _t_open "$mp_live_repo" "$mp_live_slot" --app ;;
         *)        _dev_remote_attach "$mp_live_loc"$'\t'"$mp_live_repo"$'\t'"$mp_live_slot" "" ;;
       esac
       return
@@ -982,7 +945,7 @@ _t_resume() {
     # Inside tmux / no TTY the first cannot attach here either, so it gets a
     # tab too.
     for mp_pair in "${(@)mp_rest}"; do
-      _dev_open_tab "t open $mp_pair" || {
+      _dev_open_tab "t open ${(q)${mp_pair%% *}} ${(q)${mp_pair##* }} --cli --local" || {
         _t_resume_batch_stop 1 'terminal tabs' 't session resume' 'could not open resumed session tabs' 0 "${mp_ready[@]}"
         return 1
       }
@@ -990,7 +953,7 @@ _t_resume() {
     if [[ -z $TMUX && -t 0 && -t 1 ]]; then
       tmux attach-session -t "=dev-${mp_first_repo}-${mp_first_slot}:"
     else
-      _dev_open_tab "t open $mp_first_repo $mp_first_slot" \
+      _dev_open_tab "t open ${(q)mp_first_repo} ${(q)mp_first_slot} --cli --local" \
         || {
           _t_resume_batch_stop 1 'terminal tab' 't session resume' 'could not open resumed session' 0 "${mp_ready[@]}"
           return 1
@@ -1003,27 +966,12 @@ _t_resume() {
   repo=$f[1]; slot=$f[2]; sid=$f[3]; wt=$f[4]; agent="${f[10]:-claude}"
   local loc="${f[7]:-}" lalias="${f[8]:-}"
 
-  if [[ -n $app ]]; then
-    [[ $agent == codex ]] || {
-      print -u2 -- "t resume --app: selected conversation uses $agent; only saved Codex conversations are supported. Use --cli."
-      return 1
-    }
-  fi
-
-  if [[ $lalias == history && ( -n $app || -n $no_tmux || -n $on_host ) ]]; then
+  if [[ $lalias == history && ( -n $no_tmux || -n $on_host ) ]]; then
     local prepared
     prepared=$(_t_resume_history_launch "$repo" "$sid" "$agent" prepare "${f[12]:--}") || return $?
     local prepared_session=${prepared%%$'\t'*}
     slot=${prepared_session##*-}; repo=${${prepared_session#dev-}%-*}; wt=${prepared#*$'\t'}; lalias=-
     _t_resume_history_registered "$repo" || return 1
-  fi
-
-  if [[ -n $app ]]; then
-    local app_cwd
-    app_cwd=$(_dev_ensure_session_cwd "$wt") || return 1
-    [[ $app_cwd == $wt ]] || { print -u2 -- 't resume --app: recorded worktree changed; no conversation was opened'; return 1; }
-    command t _app-resume "$repo" "$slot" "$sid" "$wt"
-    return $?
   fi
 
   # A LIVE row was picked: attach in place (local or on its host) — resuming it
@@ -1114,66 +1062,6 @@ _t_resume() {
 
 # Called while Python holds the shared worktree and conversation launch locks.
 # A saved selection never borrows the current slot's identity or attaches remotely.
-_t_resume_app_check() {
-  emulate -L zsh
-  local _T_RESUME_ALLOW_UNAVAILABLE=1
-  local repo=$1 slot=$2 sid=$3 dir=$4 resolved rows host row_sid row_cwd label state context summary agent
-  local owner= cli_owner= expects_cli= name owner_dir alias number
-  resolved=$(_dev_worktree_path "$repo" "$slot") || return 1
-  [[ $resolved == $dir && -d $dir && -n $sid && $sid != - ]] || {
-    print -u2 -- 't resume --app: recorded worktree changed; no conversation was opened'; return 1
-  }
-  if _dev_issue_preparing "$dir" || [[ -f ${dir:h}/.${dir:t}.history-reservation ]]; then
-    print -u2 -- 't resume --app: workspace preparation is in progress; retry when it completes'; return 1
-  fi
-  rows=$(_dev_rows_all --best-effort) || {
-    local scan_rc=$?
-    (( scan_rc == 130 )) && return 130
-    _t_warn 't resume --app: local ownership could not be verified; retry after checking the local shell integration'; return 1
-  }
-  while IFS=$'\t' read -r host row_sid row_cwd label state context summary agent; do
-    [[ -n $host ]] || continue
-    alias=${label%-*}; number=${label##*-}
-    if [[ $row_sid == $sid || ${row_cwd:A} == ${dir:A} ||
-          ( $number == $slot && -n ${DEV_REPOS[$alias]:-} && ${DEV_REPOS[$alias]} == ${DEV_REPOS[$repo]} ) ||
-          ( $host != local && $(_dev_homerel "$row_cwd") == $(_dev_homerel "$dir") ) ]]; then
-      [[ $host == local ]] || {
-        print -u2 -- "t resume --app: selected conversation or worktree is owned on $host ($label); release it there or use t session move before retrying"
-        return 1
-      }
-      # Our own reservation is also listed between preflight and open. It is
-      # not evidence that any conversation is loaded; Python checks writer locks.
-      if [[ $state == app && $context == none && $row_sid == - &&
-            $row_cwd == $dir && $agent == codex && $label != *:* ]]; then
-        continue
-      fi
-      [[ $row_sid == $sid && $row_cwd == $dir && $agent == codex && $label != *:* ]] || {
-        print -u2 -- "t resume --app: $label owns a different conversation or workspace; release it before retrying (selected $sid)"
-        return 1
-      }
-      [[ -z $owner || $owner == $label ]] || { print -u2 -- 't resume --app: multiple local owners; no handoff attempted'; return 1; }
-      owner=$label
-      [[ $state == app ]] || expects_cli=1
-    fi
-  done <<< "$rows"
-  while IFS='|' read -r name owner_dir; do
-    [[ -n $name ]] || continue
-    alias=${${name#dev-}%-*}; number=${name##*-}
-    if [[ ${owner_dir:A} == ${dir:A} ||
-          ( $number == $slot && -n ${DEV_REPOS[$alias]:-} && ${DEV_REPOS[$alias]} == ${DEV_REPOS[$repo]} ) ]]; then
-      [[ $name == dev-$owner && $owner_dir == $dir &&
-         $(_dev_agent_of_session "$name") == codex && $(_dev_session_sid "$name" "$dir") == $sid ]] || {
-        print -u2 -- 't resume --app: local slot changed or has an unverified owner; retry after checking t session list'; return 1
-      }
-      cli_owner=$owner
-    fi
-  done < <(tmux list-sessions -F '#{session_name}|#{session_path}' 2>/dev/null)
-  if [[ -n $expects_cli && -z $cli_owner ]]; then
-    print -u2 -- 't resume --app: selected CLI exited while checking ownership; retry'; return 1
-  fi
-  if [[ -n $cli_owner ]]; then print -r -- "cli"$'\t'"$cli_owner"
-  else print -r -- "saved"$'\t'"$repo-$slot"; fi
-}
 
 # _t_find — the `t find` verb: find the Claude session working on something you describe.
 # Semantic search, not grep: a keyword pass over titles + your prompts gathers candidates
@@ -1624,9 +1512,6 @@ _t_restart_slot() {
      $(_dev_session_sid "$session" "$dir") == $sid ]] || {
     print -u2 -- 't restart: the slot changed; inspect it and try again'; return 1
   }
-  _dev_app_slot_reserved "$dir" && {
-    print -u2 -- 't restart: the desktop app owns this worktree; close and release it first'; return 1
-  }
   pane=$(tmux display-message -p -t "=$session:" '#{pane_id}') || return 1
   [[ $(tmux list-panes -s -t "=$session" -F '#{pane_id}') == $pane ]] || {
     print -u2 -- 't restart: multiple panes in this slot; keep only the agent pane before restarting'; return 1
@@ -1723,12 +1608,12 @@ _t_restart_slot() {
         print -u2 -- 't restart: the startup failure cleared; nothing was stopped'; return 1
       }
       if [[ -n $sid ]]; then
-        launch=$(_dev_agent_resume_cmd "$agent" "$sid")
+        launch=$(T_WORKFLOW_CWD="$dir" _dev_agent_resume_cmd "$agent" "$sid")
       else
-        launch=$(_dev_agent_new_cmd "$agent")
+        launch=$(_dev_agent_new_cmd "$agent" '' '' "$dir")
       fi
     else
-      launch=$(_dev_agent_resume_cmd "$agent" "$sid")
+      launch=$(T_WORKFLOW_CWD="$dir" _dev_agent_resume_cmd "$agent" "$sid")
       if [[ $agent == codex ]]; then
         # Reconnecting through the shared daemon can disturb other windows.
         # Every recovery must be invocation-local, including exited panes.
@@ -1788,399 +1673,6 @@ _t_restart_slot() {
 
 # Independent proof that this live Codex PID owns the requested thread. A tmux
 # CLAUDE_RESUME_ID stamp is intentionally insufficient: we write it before launch.
-_t_app_pull_ui_ready() {
-  local session="$1" dir="$2" sid="$3" pid="$4" codex_home="${5:-${CODEX_HOME:-$HOME/.codex}}" db args pane_text
-  db="$codex_home/state_5.sqlite"; [[ -r $db ]] || return 1
-  args=$(ps -ww -o args= -p "$pid" 2>/dev/null) || return 1
-  pane_text=$(tmux capture-pane -p -t "=$session:" 2>/dev/null) || return 1
-  LC_ALL=C python3 - "$db" "$dir" "$sid" "$args" "$pane_text" <<'PY' 2>/dev/null
-import json, os, re, sqlite3, sys
-
-try:
-    db, cwd, sid, args, pane = sys.argv[1:]
-    # The process walker has already identified this PID as Codex. Its own argv,
-    # rather than a prewritten tmux stamp, binds the live process to the thread.
-    prefix, sep, tail = args.partition(' resume ')
-    if (not sep or not re.fullmatch(r'codex(?:-(?:aarch64|x86_64)-[\w.-]+)?',
-                                     os.path.basename(prefix)) or
-            tail != f'{sid} --cd {cwd} --no-daemon'):
-        sys.exit(1)
-    # The default empty composer shows that the interactive TUI is drawn; exact
-    # resume argv and rollout metadata supply the thread identity. An error
-    # screen mentioning Codex lacks this anchored input prompt.
-    if not any(re.fullmatch(r'\s*[›»]\s+Ask Codex to do anything\s*', line)
-               for line in pane.splitlines()[-12:]):
-        sys.exit(1)
-    c = sqlite3.connect('file:%s?mode=ro' % db, uri=True, timeout=0.5)
-    rows = c.execute('select rollout_path from threads where id=? and cwd=? '
-                     'and archived=0 and trim(first_user_message)<>\'\' '
-                     'and instr(source, \'"subagent"\')=0', (sid, cwd)).fetchall()
-    if len(rows) != 1:
-        sys.exit(1)
-    with open(rows[0][0]) as f:
-        meta = json.loads(f.readline())
-    payload = meta.get('payload', {})
-    if (meta.get('type') != 'session_meta' or payload.get('id') != sid or
-            payload.get('cwd') != cwd or payload.get('source') not in ('cli', 'vscode') or
-            payload.get('thread_source') == 'subagent'):
-        sys.exit(1)
-except (OSError, ValueError, TypeError, AttributeError, sqlite3.Error):
-    sys.exit(1)
-PY
-}
-
-_t_app_pull_lock_owned() {
-  local pid="$1" sid="$2" codex_home="$3"
-  [[ $pid == <-> && -n $sid && -n $codex_home ]] || return 1
-  LC_ALL=C python3 - "$pid" "$sid" "$codex_home" <<'PY' 2>/dev/null
-import errno, fcntl, os, stat, subprocess, sys
-
-try:
-    pid, sid, home = sys.argv[1:]
-    path = os.path.join(home, 'thread-writer-locks', sid + '.lock')
-    fd = os.open(path, os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0))
-    try:
-        if not stat.S_ISREG(os.fstat(fd).st_mode):
-            sys.exit(1)
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError as error:
-            if error.errno not in (errno.EAGAIN, errno.EACCES):
-                raise
-        else:
-            fcntl.flock(fd, fcntl.LOCK_UN)
-            sys.exit(1)  # No process currently owns the writer lock.
-    finally:
-        os.close(fd)
-    listed = subprocess.run(['lsof', '-a', '-p', pid, '-Fn', '--', path],
-                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                            text=True, timeout=2, check=False)
-    if listed.returncode or not any(
-            line.startswith('n') and os.path.realpath(line[1:]) == os.path.realpath(path)
-            for line in listed.stdout.splitlines()):
-        sys.exit(1)
-except (OSError, ValueError, subprocess.TimeoutExpired):
-    sys.exit(1)
-PY
-}
-
-_t_app_pull_ready() {
-  local session="$1" dir="$2" sid="$3" pid="$4" codex_home="${5:-${CODEX_HOME:-$HOME/.codex}}"
-  local reg line reg_sid reg_cwd started
-  [[ $pid == <-> ]] || return 1
-  _t_app_pull_lock_owned "$pid" "$sid" "$codex_home" || return 1
-  reg="${XDG_CACHE_HOME:-$HOME/.cache}/claude-sessions/$pid"
-  if [[ -r $reg ]]; then
-    line="$(<"$reg")"
-    reg_sid=${line%%$'\t'*}; reg_cwd=${line#*$'\t'}
-    if [[ $reg_sid == $sid && $reg_cwd == $dir ]]; then
-      started=$(LC_ALL=C ps -o lstart= -p "$pid" 2>/dev/null)
-      if [[ -n $started ]] && LC_ALL=C python3 - "$reg" "$started" <<'PY' 2>/dev/null; then
-import datetime, os, sys
-try:
-    born = datetime.datetime.strptime(sys.argv[2].strip(), '%a %b %d %H:%M:%S %Y').timestamp()
-    sys.exit(0 if os.stat(sys.argv[1]).st_mtime >= born else 1)
-except (OSError, ValueError):
-    sys.exit(1)
-PY
-        return 0
-      fi
-    fi
-  fi
-  [[ $(_codex_pane_sid "$session" "$dir" "$pid" 2>/dev/null) == $sid ]] ||
-    _t_app_pull_ui_ready "$session" "$dir" "$sid" "$pid" "$codex_home"
-}
-
-# Read-only ownership probe used before retrying a handoff interrupted after
-# CLI launch. Output is a PID only when this exact session owns the thread.
-_t_app_pull_owner() {
-  emulate -L zsh
-  local session="$1" dir="$2" sid="$3" codex_home="${4:-${CODEX_HOME:-$HOME/.codex}}"
-  local actual pid
-  tmux has-session -t "=$session:" 2>/dev/null || return 1
-  actual=$(tmux display-message -p -t "=$session:" '#{session_path}' 2>/dev/null) || return 1
-  [[ -n $actual && ${actual:A} == ${dir:A} && $(_dev_agent_of_session "$session") == codex ]] || return 1
-  local _DEV_PS_AT=0
-  pid=$(_dev_session_claude_pid "$session")
-  [[ -n $pid ]] && _t_app_pull_ready "$session" "$dir" "$sid" "$pid" "$codex_home" || return 1
-  print -r -- "$pid"
-}
-
-# Return a desktop-reserved Codex worktree to its original tmux slot. The caller
-# serializes handoffs and has verified that this exact thread was released.
-# expected_sid is '-' for a desktop-only row with no prior tmux session.
-_t_app_pull_slot() {
-  emulate -L zsh
-  local session="$1" dir="$2" sid="$3" expected_sid="$4" codex_home="${5:-${CODEX_HOME:-$HOME/.codex}}"
-  local marker actual actual_sid pane panes owner owner_dir pid attempt found=0 launch
-  local -a owners
-  [[ $session == dev-* && -n $dir && -d $dir && -n $sid && $sid != - && -n $expected_sid ]] || {
-    print -u2 -- 't app pull: invalid slot, worktree, or thread'; return 1
-  }
-  [[ $sid =~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' &&
-     ( $expected_sid == - || $expected_sid =~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' ) ]] || {
-    print -u2 -- 't app pull: invalid thread identifier'; return 1
-  }
-  marker=$(_dev_app_slot_marker "$dir") && [[ -f $marker ]] || {
-    print -u2 -- 't app pull: this worktree has no desktop reservation'; return 1
-  }
-  command -v codex >/dev/null 2>&1 || { print -u2 -- 't app pull: codex is unavailable'; return 1; }
-  [[ $codex_home == /* && -d $codex_home ]] || {
-    print -u2 -- 't app pull: the selected Codex home is unavailable'; return 1
-  }
-  local resume_command
-  resume_command=$(CODEX_HOME="$codex_home" _dev_agent_resume_cmd codex "$sid" --cd "$dir") || {
-    print -u2 -- 't app pull: could not prepare the guarded resume command'; return 1
-  }
-  [[ -n $resume_command ]] || { print -u2 -- 't app pull: empty guarded resume command'; return 1; }
-  launch="export CODEX_HOME=${(q)codex_home}; exec $resume_command"
-  local fg_sid fg_rest fg_cwd
-  while IFS=$'\t' read -r fg_sid fg_rest; do
-    fg_cwd=${fg_rest%%$'\t'*}
-    if [[ $fg_sid == $sid || ( -n $fg_cwd && ${fg_cwd:A} == ${dir:A} ) ]]; then
-      print -u2 -- 't app pull: a foreground CLI already owns this thread or worktree'
-      return 1
-    fi
-  done < <(_dev_fg_rows 2>/dev/null)
-  # Check every alias, including sessions whose names differ from the selected
-  # slot. A second owner of the same cwd must never be silently ignored.
-  # tmux 3.7c replaces literal tabs in -F with `_`; a printable separator
-  # preserves the complete path in the final read field, including any `|`.
-  while IFS='|' read -r owner owner_dir; do
-    [[ -n $owner && -n $owner_dir ]] || continue
-    [[ ${owner_dir:A} == ${dir:A} ]] && owners+=("$owner")
-    if [[ $owner != $session ]]; then
-      local _DEV_PS_AT=0
-      pid=$(_dev_session_claude_pid "$owner")
-      if [[ -n $pid && $(_dev_session_sid "$owner" "$owner_dir") == $sid ]]; then
-        print -u2 -- 't app pull: this thread is already live in another tmux session'
-        return 1
-      fi
-    fi
-  done < <(tmux list-sessions -F '#{session_name}|#{session_path}' 2>/dev/null)
-  (( $#owners <= 1 )) || { print -u2 -- 't app pull: multiple tmux sessions own this worktree'; return 1; }
-  if (( $#owners )); then
-    [[ $owners[1] == $session ]] || { print -u2 -- 't app pull: another tmux session owns this worktree'; return 1; }
-    tmux has-session -t "=$session:" 2>/dev/null || return 1
-    actual=$(tmux display-message -p -t "=$session:" '#{session_path}') || return 1
-    [[ ${actual:A} == ${dir:A} ]] || { print -u2 -- 't app pull: slot directory changed'; return 1; }
-    actual_sid=$(_dev_session_sid "$session" "$dir")
-    [[ $(_dev_agent_of_session "$session") == codex &&
-       ( $actual_sid == $expected_sid || ( $expected_sid == - && -z $actual_sid ) ) ]] || {
-      print -u2 -- 't app pull: slot agent or thread changed'; return 1
-    }
-    local _DEV_PS_AT=0
-    pid=$(_dev_session_claude_pid "$session")
-    if [[ -n $pid ]]; then
-      if _t_app_pull_ready "$session" "$dir" "$sid" "$pid" "$codex_home"; then
-        rm -- "$marker" || return 1
-        tmux set-option -t "=$session:" window-size latest 2>/dev/null
-        _dev_recovery_watch "$session"
-        return 0
-      fi
-      print -u2 -- 't app pull: an unverified CLI already owns this slot'
-      return 1
-    fi
-    panes=$(tmux list-panes -s -t "=$session" -F '#{pane_id}') || return 1
-    [[ -n $panes && $panes != *$'\n'* ]] || {
-      print -u2 -- 't app pull: slot has multiple panes'; return 1
-    }
-    pane=${panes%%$'\n'*}
-    command codex resume --help 2>/dev/null | command grep -q -- '--no-daemon' || {
-      print -u2 -- 't app pull: this Codex version does not support --no-daemon; upgrade Codex and retry'; return 1
-    }
-    tmux set-environment -t "=$session" CLAUDE_RESUME_ID "$sid" || return 1
-    tmux set-environment -t "=$session" DEV_AGENT codex || return 1
-    if [[ $(tmux display-message -p -t "$pane" '#{pane_dead}') == 1 ]]; then
-      tmux set-option -p -t "$pane" remain-on-exit on || return 1
-      tmux respawn-pane -t "$pane" -c "$dir" "zsh -lic ${(q)launch}" || return 1
-    else
-      # Keep the idle shell intact. A new window gives the CLI an independent
-      # process tree, without injecting keystrokes into an interactive shell.
-      launch="tmux set-option -p -t \"\$TMUX_PANE\" remain-on-exit on; $launch"
-      tmux new-window -t "=$session:" -c "$dir" "zsh -lic ${(q)launch}" || return 1
-    fi
-  else
-    tmux has-session -t "=$session:" 2>/dev/null && {
-      print -u2 -- 't app pull: slot name is occupied elsewhere'; return 1
-    }
-    command codex resume --help 2>/dev/null | command grep -q -- '--no-daemon' || {
-      print -u2 -- 't app pull: this Codex version does not support --no-daemon; upgrade Codex and retry'; return 1
-    }
-    # The pane enables remain-on-exit before exec, including a fast Codex
-    # startup failure. No default shell or personal tmux configuration is used.
-    launch="tmux set-option -p -t \"\$TMUX_PANE\" remain-on-exit on; $launch"
-    tmux new-session -d -s "$session" -c "$dir" \
-      -e "CLAUDE_RESUME_ID=$sid" -e 'DEV_AGENT=codex' \
-      "zsh -lic ${(q)launch}" || return 1
-  fi
-  # A stamp alone is not success. Wait for a real Codex process in this exact
-  # slot and for the thread resolver to agree before releasing the reservation.
-  # Process scans can be slow on a busy host; include their time in the bound.
-  zmodload zsh/datetime
-  local -F deadline=$(( EPOCHREALTIME + 5 ))
-  for attempt in {1..100}; do
-    (( EPOCHREALTIME < deadline )) || break
-    local _DEV_PS_AT=0
-    pid=$(_dev_session_claude_pid "$session")
-    if [[ -n $pid && $(_dev_agent_of_session "$session") == codex &&
-          $(tmux display-message -p -t "=$session:" '#{session_path}' 2>/dev/null) == $dir ]] &&
-       _t_app_pull_ready "$session" "$dir" "$sid" "$pid" "$codex_home"; then
-      found=1; break
-    fi
-    sleep 0.05
-  done
-  (( found )) || {
-    local short=${session#dev-}
-    print -u2 -- "t app pull: CLI thread could not be verified; worktree remains reserved. Inspect startup with tmux attach-session -t ${(q)session}, then retry t open ${short%-*} ${short##*-} --cli"
-    return 1
-  }
-  # A process observed for one snapshot may be a client that failed instantly.
-  sleep 0.1
-  local _DEV_PS_AT=0
-  [[ $(_dev_session_claude_pid "$session") == $pid ]] &&
-    _t_app_pull_ready "$session" "$dir" "$sid" "$pid" "$codex_home" || {
-    print -u2 -- 't app pull: Codex exited during startup; the worktree remains reserved'
-    return 1
-  }
-  tmux set-option -t "=$session:" window-size latest 2>/dev/null
-  rm -- "$marker" || { print -u2 -- 't app pull: CLI started but reservation could not be released'; return 1; }
-  _dev_recovery_watch "$session"
-  return 0
-}
-
-# Release one desktop reservation after the selected conversation has been
-# unloaded. The Python caller resolves the exact saved thread and serializes
-# handoffs; recheck it here immediately before changing tmux or the marker.
-# Archive in the owning desktop app is required while its private backend holds
-# the writer lock. This helper never signals the app or edits its history.
-_t_app_close_verify() {
-  local dir="$1" sid="$2" codex_home="$3" rollout="$4" archived="$5"
-  python3 - "$T_HOME/libexec/t_app_handoff.py" "$dir" "$sid" "$codex_home" "$rollout" "$archived" <<'PY'
-import os, runpy, sqlite3, subprocess, sys
-from pathlib import Path
-
-helper, cwd, sid, home, rollout, archived = sys.argv[1:]
-def run(argv, **kwargs):
-    return subprocess.run(argv, capture_output=True, text=True, **kwargs)
-try:
-    mod = runpy.run_path(helper)
-    if not mod['_safe_archive_hint'](cwd, run):
-        raise ValueError('this is not a reserved t worktree safe to close')
-    if sid == '-':
-        mod['assert_workspace_released'](home, cwd,
-                                         retry='Retry t kill after Codex releases this worktree.')
-    else:
-        db = Path(home) / 'state_5.sqlite'
-        with sqlite3.connect(db.as_uri() + '?mode=ro', uri=True, timeout=0.5) as conn:
-            rows = conn.execute('select cwd,rollout_path,archived from threads where id=?',
-                                (sid,)).fetchall()
-        if (len(rows) != 1 or not isinstance(rows[0][0], str)
-                or not isinstance(rows[0][1], str)
-                or os.path.realpath(rows[0][0]) != os.path.realpath(cwd)
-                or os.path.realpath(rows[0][1]) != os.path.realpath(rollout)
-                or rows[0][2] != int(archived)):
-            raise ValueError('the selected saved conversation changed during close')
-        mod['assert_released'](None, sid, cwd, run, codex_home=home,
-                               rollout=rollout, archived=archived == '1', for_close=True,
-                               retry='Retry t kill after the conversation is released.')
-except (OSError, ValueError, sqlite3.Error) as exc:
-    message = str(exc)
-    if ('selected Codex conversation is still loaded' in message
-            or 'no verifiable writer lock contract' in message):
-        message = ('the selected chat is still loaded. Finish its turn and Archive it '
-                   'in Codex, then retry t kill; the worktree remains reserved')
-    print('t kill: ' + message, file=sys.stderr)
-    sys.exit(1)
-PY
-}
-
-_t_app_close_slot() {
-  emulate -L zsh
-  local session="$1" dir="$2" sid="$3" codex_home="$4" rollout="$5" archived="$6"
-  local alias_key slot expected marker actual stamp owner owner_dir pid pids comm
-  [[ $session == dev-*-<-> && -d $dir && $dir == /*
-     && $codex_home == /* &&
-     ( ( $sid == - && $rollout == - && $archived == 0 ) ||
-       ( $sid =~ '^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$'
-         && $rollout == /* && $archived == (0|1) ) ) ]] || {
-    print -u2 -- 't kill: invalid desktop slot or saved conversation'; return 1
-  }
-  alias_key=${${session#dev-}%-*}; slot=${session##*-}
-  [[ -n ${DEV_REPOS[$alias_key]:-} && -n $DEV_WORKTREE_ROOT ]] || {
-    print -u2 -- 't kill: the desktop slot is not registered here'; return 1
-  }
-  expected=$(_dev_worktree_path "$alias_key" "$slot") || return 1
-  [[ ${expected:A} == ${dir:A} ]] || {
-    print -u2 -- 't kill: the desktop worktree changed'; return 1
-  }
-  marker=$(_dev_app_slot_marker "$dir") || return 1
-  [[ -f $marker && ! -L $marker && $(<"$marker") == codex-app ]] || {
-    print -u2 -- 't kill: the desktop reservation changed'; return 1
-  }
-  # A live CLI may have taken this path under any registered alias, not just
-  # the selected session name. A second parked session also makes ownership
-  # ambiguous, so leave both untouched.
-  while IFS='|' read -r owner owner_dir; do
-    [[ -n $owner && $owner_dir == /* && ${owner_dir:A} == ${dir:A} ]] || continue
-    if _dev_session_has_claude "$owner"; then
-      print -u2 -- 't kill: a CLI is still running in this worktree'; return 1
-    fi
-    if [[ $owner != $session ]]; then
-      print -u2 -- 't kill: another tmux session reserves this worktree'; return 1
-    fi
-  done < <(tmux list-sessions -F '#{session_name}|#{session_path}' 2>/dev/null)
-  if tmux has-session -t "=$session:" 2>/dev/null; then
-    actual=$(tmux display-message -p -t "=$session:" '#{session_path}') || return 1
-    [[ ${actual:A} == ${dir:A} ]] || {
-      print -u2 -- 't kill: the parked slot changed directory'; return 1
-    }
-    stamp=$(tmux show-environment -t "=$session" CLAUDE_RESUME_ID 2>/dev/null)
-    [[ $stamp == "CLAUDE_RESUME_ID=$sid" || ( $sid == - && -z $stamp ) ]] || {
-      print -u2 -- 't kill: the parked slot names another conversation'; return 1
-    }
-  fi
-  # An independent foreground CLI can use the same worktree without tmux.
-  pids=$(_dev_cwd_pids "$dir") || {
-    print -u2 -- 't kill: could not inspect worktree processes'; return 1
-  }
-  for pid in ${(f)pids}; do
-    comm=$(ps -o comm= -p "$pid" 2>/dev/null) || {
-      print -u2 -- 't kill: a worktree process could not be identified'; return 1
-    }
-    if _dev_agent_is_proc "$comm" && ! _dev_agent_is_service "$pid"; then
-      print -u2 -- 't kill: a foreground CLI is still running in this worktree'; return 1
-    fi
-  done
-  _t_app_close_verify "$dir" "$sid" "$codex_home" "$rollout" "$archived" || return 1
-  _dev_history_record "$sid" codex "$dir" close desktop
-  if tmux has-session -t "=$session:" 2>/dev/null; then
-    tmux kill-session -t "=$session:" || {
-      print -u2 -- 't kill: could not close the parked tmux slot'; return 1
-    }
-  fi
-  _dev_stop_rooted "$dir" || {
-    print -u2 -- 't kill: could not stop leftover worktree processes'; return 1
-  }
-  # Recheck after tmux/process cleanup: another writer may have claimed this
-  # thread in the meantime. The marker is the final mutation.
-  _t_app_close_verify "$dir" "$sid" "$codex_home" "$rollout" "$archived" || return 1
-  _dev_history_record "$sid" codex "$dir" close desktop
-  [[ -f $marker && ! -L $marker && $(<"$marker") == codex-app ]] || {
-    print -u2 -- 't kill: desktop reservation changed during close'; return 1
-  }
-  rm -- "$marker" || return 1
-  if [[ $sid == - ]]; then
-    print -r -- "Closed empty desktop slot $session."
-  else
-    print -r -- "Closed desktop slot $session; saved conversation $sid remains available."
-  fi
-}
-
-# _dev_resume_session <session> <dir> <session-id> — sibling of _dev_new_session:
-# create a detached, logged tmux session in <dir>, but RESUME an existing Claude
-# conversation (claude -r) rather than starting fresh on $DEV_BRANCH. Same name
-# + log path convention so dev/tread/tpaste treat it like any dev session.
 _dev_resume_session() {
   _dev_with_launch_locks "$2" "$3" _dev_resume_session_claimed "$@"
 }
@@ -2209,7 +1701,7 @@ _dev_resume_session_claimed() {
   tmux set-environment -t "=$session" CLAUDE_RESUME_ID "$sid" || { tmux kill-session -t "=$session:"; return 1; }
   tmux set-environment -t "=$session" DEV_AGENT "$agent" || { tmux kill-session -t "=$session:"; return 1; }
   # Run without typing the internal command into the pane (see _dev_new_session).
-  local resume_command; resume_command=$(_dev_agent_resume_cmd "$agent" "$sid")
+  local resume_command; resume_command=$(T_WORKFLOW_CWD="$dir" _dev_agent_resume_cmd "$agent" "$sid")
   if [[ $5 == history && $agent == codex ]]; then
     resume_command=$(_dev_agent_resume_cmd "$agent" "$sid" --cd "$dir")
   fi
@@ -2816,6 +2308,7 @@ _tbeam_land() {
   [[ -n $repo && -n $slot ]] || { echo "tbeam: couldn't map $land to a dev slot" >&2; return 1; }
   session="dev-${repo}-${slot}"
   _dev_resume_session "$session" "$land" "$TB_SID" "$agent" || return $?
+  _dev_worktree_beam_finish "$land"
   if [[ -n $TB_ATTACH ]]; then
     exec tmux attach -t "=$session:"              # drop the ssh caller straight in
   fi
@@ -2916,6 +2409,11 @@ _t_beam() {
 
   [[ -z $here || -z $host_arg ]] || { print -u2 'tbeam: --here and --host are mutually exclusive'; return 2; }
   [[ -z $fg || -z $detach ]] || { print -u2 'tbeam: --fg and --detach are mutually exclusive'; return 2; }
+  if [[ $host_arg == local ]]; then
+    [[ -n $from_host && $from_host != local ]] || { print -u2 't session move: source and destination are the same host'; return 2; }
+    [[ -t 0 && -t 1 || -n $detach ]] || { print -u2 't session move: nonterminal moves require --detach'; return 1; }
+    host_arg=
+  fi
   # The controller resolves aliases once. The source owns the stop/push/sync/land
   # transaction and connects directly to the destination; nothing resumes here.
   if [[ -n $from_host && -n $host_arg ]]; then
@@ -2935,7 +2433,7 @@ _t_beam() {
     [[ -n $detach ]] && relay+=(--detach)
     [[ -n $pick ]] && relay+=(--pick)
     [[ -n $all ]] && relay+=(--all)
-    local relay_cmd="(( \$+functions[_t_handoff_check] )) || { print -u2 't: update t on the source host before cross-host handoff'; return 1; }; _T_HANDOFF_CODEX=${(q)${_T_HANDOFF_CODEX:-${DEV_HANDOFF[codex]:-native}}} _T_HANDOFF_CLAUDE=${(q)${_T_HANDOFF_CLAUDE:-${DEV_HANDOFF[claude]:-t}}} T_NO_UPDATE_CHECK=1 _T_BEAM_HOST_IS_TARGET=1 T_MOVE_EXPECT_ROW=${(q)${T_MOVE_EXPECT_ROW:-}} _t_beam ${(j: :)${(@q)relay}}"
+    local relay_cmd="_T_HANDOFF_CODEX=t _T_HANDOFF_CLAUDE=t T_NO_UPDATE_CHECK=1 _T_BEAM_HOST_IS_TARGET=1 T_MOVE_EXPECT_ROW=${(q)${T_MOVE_EXPECT_ROW:-}} _t_beam ${(j: :)${(@q)relay}}"
     # Selection on the source needs its own terminal, including detached moves.
     if [[ -t 0 && -t 1 ]]; then
       ssh -t "$source_target" "zsh -lic ${(qq)relay_cmd}"
@@ -2971,7 +2469,7 @@ _t_beam() {
     slot_arg=${res##*$'\t'}
     [[ -n $CLAUDE_CODE_SESSION_ID ]] && fg=
     local target="${REMOTE_HOSTS[$from_host]:-$from_host}"
-    _dev_pull "$from_host" "$target" "$repo_arg" "$slot_arg" "$fg"
+    _dev_pull "$from_host" "$target" "$repo_arg" "$slot_arg" "$fg" "$detach"
     return
   fi
 
@@ -2990,11 +2488,11 @@ _t_beam() {
     # _t_infer_repo): the slot lives on the REMOTE host, so a same-numbered local
     # session's name would be a coincidence, not evidence.
     if [[ $repo_arg == <-> && -z $slot_arg ]]; then slot_arg=$repo_arg; repo_arg=$(_t_infer_repo); fi
-    [[ -z $repo_arg ]] && repo_arg=$(_t_infer_repo)
-    [[ -n $repo_arg ]] || { echo "tbeam: --from needs a <repo> to pull (e.g. t session move dot 1 --from $from_host)" >&2; return 1; }
+    [[ -n $repo_arg || -n $sid_arg ]] || repo_arg=$(_t_infer_repo)
+    [[ -n $repo_arg || -n $sid_arg ]] || { echo "tbeam: --from needs a <repo> or --session ID to pull (e.g. t session move dot 1 --from $from_host)" >&2; return 1; }
     [[ -n $CLAUDE_CODE_SESSION_ID ]] && fg=
     local target="${REMOTE_HOSTS[$from_host]:-$from_host}"
-    _dev_pull "$from_host" "$target" "$repo_arg" "$slot_arg" "$fg"
+    _dev_pull "$from_host" "$target" "$repo_arg" "$slot_arg" "$fg" "$detach" "$sid_arg"
     return
   fi
 
@@ -3140,11 +2638,6 @@ _t_beam() {
     done
     [[ -n $matched ]] || { print -u2 't session move: selected session changed or closed; select it again'; return 1; }
   fi
-  _t_handoff_check "$agent" here "$host" || return $?
-  if _dev_app_slot_reserved "$cwd"; then
-    print -u2 -- "tbeam: $cwd is reserved for the Codex desktop app; close it and release the reservation before moving its conversation"
-    return 1
-  fi
   [[ $agent != codex ]] || _dev_codex_rollout_integrity "$sid" || return 1
   [[ $sid == "$self_sid" && -n $self_sid ]] && self_move=1
   [[ -n $self_sid ]] && detach=1                    # no TTY in an agent's tool subprocess to ssh -t into
@@ -3165,6 +2658,13 @@ _t_beam() {
     _dev_worktree_remote_accept "$host" "$cwd" || return 1
   fi
 
+  local TB_TRANSFER_REF
+  TB_TRANSFER_REF=$(_dev_worktree_beam_prepare "$cwd") || return $?
+  if [[ -n $TB_TRANSFER_REF ]]; then
+    ssh "$host" "zsh -lic '(( \${+functions[_dev_worktree_transfer_ref_valid]} ))'" || {
+      print -u2 't session move: update t on the destination to receive transfer snapshots; source was not stopped'; return 1
+    }
+  fi
   echo "⟳ Beaming ${sid[1,8]}… ($cwd) → $host"
   # It's a MOVE, not a copy: stop the origin BEFORE snapshotting code + transcript,
   # so a still-live claude can't keep editing files in the worktree (the push below
@@ -3213,20 +2713,20 @@ _t_beam() {
   # Foreground mode: resume straight in the ssh session (needs a real terminal).
   if [[ -n $fg ]]; then
     [[ -z $detach ]] || { echo "tbeam: -f needs a terminal; can't combine with -d / inside Claude." >&2; return 1; }
-    ssh -t "$host" "TB_CWD=${(q)cwd} TB_SID=${(q)sid} TB_AGENT=${(q)agent} TB_MODE=fg zsh -lic _tbeam_land"
+    ssh -t "$host" "TB_TRANSFER_REF=${(q)TB_TRANSFER_REF} TB_CWD=${(q)cwd} TB_SID=${(q)sid} TB_AGENT=${(q)agent} TB_MODE=fg zsh -lic _tbeam_land"
     return
   fi
 
   # tmux mode + auto-attach: -t lets _tbeam_land exec us into the landed session.
   if [[ -z $detach ]]; then
-    ssh -t "$host" "TB_CWD=${(q)cwd} TB_SID=${(q)sid} TB_AGENT=${(q)agent} TB_MODE=tmux TB_ATTACH=1 zsh -lic _tbeam_land"
+    ssh -t "$host" "TB_TRANSFER_REF=${(q)TB_TRANSFER_REF} TB_CWD=${(q)cwd} TB_SID=${(q)sid} TB_AGENT=${(q)agent} TB_MODE=tmux TB_ATTACH=1 zsh -lic _tbeam_land"
     return
   fi
 
   # tmux mode, detached: capture the landed session name, print an attach hint.
   local session=
   local landing_output landing_rc
-  landing_output=$(ssh "$host" "TB_CWD=${(q)cwd} TB_SID=${(q)sid} TB_AGENT=${(q)agent} TB_MODE=tmux zsh -lic _tbeam_land"); landing_rc=$?
+  landing_output=$(ssh "$host" "TB_TRANSFER_REF=${(q)TB_TRANSFER_REF} TB_CWD=${(q)cwd} TB_SID=${(q)sid} TB_AGENT=${(q)agent} TB_MODE=tmux zsh -lic _tbeam_land"); landing_rc=$?
   session=${landing_output##*$'\n'}
   (( landing_rc == 0 )) && [[ $session == dev-?*-<-> ]] || { echo "tbeam: landing on $host failed." >&2; return 1; }
   echo "✓ Running on $host as $session"

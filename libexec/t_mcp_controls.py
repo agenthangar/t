@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parent.parent
 _resolve_repo = runpy.run_path(str(ROOT / 'libexec/t_repos.py'))['resolve_repo']
 READ_TOOLS = ('find_sessions', 'list_sessions', 'session_detail')
 SESSION_VERBS = ('open', 'list', 'close', 'restart', 'push', 'pop', 'resume', 'history',
-                 'cd', 'move', 'read', 'view-plan', 'paste', 'search', 'open-app', 'goal')
+                 'cd', 'move', 'read', 'view-plan', 'paste', 'search', 'goal')
 DESCRIPTIONS = {
     'open_session': 'Open or create an explicit local CLI slot, detached. Reuses t session open ownership and worktree checks. Does not open a terminal window.',
     'resume_session': 'Resume the newest saved conversation in a stopped local slot, detached. For a live or paused agent, use send_instructions to ask it to continue.',
@@ -193,7 +193,7 @@ def session_command(cfg, args, api):
         snippet = ['_dev_rows_all' if parsed.remote else '_dev_session_rows', '--details']
         rows = api['_parse_rows'](shell_run(snippet), host_prefixed=parsed.remote)
         return {'status': 'completed', 'sessions': api['_scope_filter'](rows, scope, wt_scope)}
-    if verb in ('read', 'view-plan', 'open-app') and (not getattr(parsed, 'repo', None)
+    if verb in ('read', 'view-plan') and (not getattr(parsed, 'repo', None)
                                                   or not getattr(parsed, 'slot', None)):
         raise ValueError('MCP session actions require an explicit repository and slot')
     if verb == 'history' and '--json' not in arguments:

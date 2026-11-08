@@ -132,10 +132,7 @@ _t_sync_config() {
     for k in ${(k)DEV_AGENT};     do print -r -- "DEV_AGENT[$k]=${(q)DEV_AGENT[$k]}"; done
     for k in ${(k)DEV_MODEL};     do print -r -- "DEV_MODEL[$k]=${(q)DEV_MODEL[$k]}"; done
     for k in ${(k)DEV_EFFORT};    do print -r -- "DEV_EFFORT[$k]=${(q)DEV_EFFORT[$k]}"; done
-    for k in ${(k)DEV_HANDOFF}; do print -r -- "DEV_HANDOFF[$k]=${(q)DEV_HANDOFF[$k]}"; done
     for k in ${(k)DEV_FAST};      do print -r -- "DEV_FAST[$k]=${(q)DEV_FAST[$k]}"; done
-    for k in ${(k)DEV_OPEN_MODE}; do print -r -- "DEV_OPEN_MODE[$k]=${(q)DEV_OPEN_MODE[$k]}"; done
-    print -r -- "DEV_OPEN_MODE_DEFAULT=${(q)DEV_OPEN_MODE_DEFAULT}"
     print -r -- "T_AUTO_TRUST=${(q)${T_AUTO_TRUST:-0}}"
     print -r -- "DEV_AGENT_DEFAULT=${(q)DEV_AGENT_DEFAULT}"
     print -r -- "TBEAM_HOST=${(q)TBEAM_HOST}"

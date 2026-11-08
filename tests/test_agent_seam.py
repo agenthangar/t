@@ -344,7 +344,7 @@ def zsh(tmp_path):
     def call(snippet, _tty=False, **extra):
         env = {"HOME": str(home), "XDG_CACHE_HOME": str(home / ".cache"), "T_LOCAL_RC": str(home / ".zshrc.local"),
                "PATH": f"{bins}:{os.environ.get('PATH', '')}", "TERM": "dumb",
-               "TMUX_TMPDIR": os.environ.get("TMUX_TMPDIR", "/tmp"), "T_RECOVERY_DISABLE": "1",
+               "TMUX_TMPDIR": os.environ.get("TMUX_TMPDIR", "/tmp"), "T_RECOVERY_DISABLE": "1", "T_NO_AUTORELOAD": "1",
                "TMUX_LOG": str(log), "FAKE_PS": str(tmp_path / "ps.txt"), **extra}
         argv = ["zsh", "-c", f"source {ZSHRC} >/dev/null 2>&1; {snippet}"]
         if not _tty:
@@ -620,7 +620,7 @@ def test_here_new_can_launch_when_remote_owner_is_unknown(zsh, slot, should_laun
     (zsh.home / "code/api").mkdir(parents=True)
     result = zsh(f'''
       REMOTE_HOSTS[mini]=mini
-      _dev_remote_app_owner() {{ return 3; }}
+      _dev_remote_legacy_owner() {{ return 3; }}
       _dev_worktree_enabled() {{ return 1; }}
       _dev_slot_fresh() {{ [[ $2 == 1 ]]; }}
       _dev_agent_check() {{ return 0; }}
@@ -642,16 +642,7 @@ def test_startup_exit_reports_saved_log(zsh, tmp_path):
     assert str(zsh.home / ".tmux-logs/dev-api-3.log") in result.stderr
 
 
-def test_app_claim_rechecks_sibling_alias_owner_under_lock(zsh):
-    worktree = zsh.home / "worktrees/api/3"
-    result = zsh('_dev_with_launch_locks "$HOME/worktrees/api/3" "" '
-                 '_t_open_app_claim api 3 "$HOME/worktrees/api/3"',
-                 FAKE_SESSION_ROWS=f"dev-other-3|{worktree}")
-    assert result.returncode == 1
-    assert "now owns this worktree" in result.stderr
-
-
-def test_cli_and_python_app_handoff_share_process_lock(zsh, tmp_path):
+def test_cli_and_python_history_share_process_lock(zsh, tmp_path):
     cwd = tmp_path / "worktree"
     cwd.mkdir()
     cache = zsh.home / ".cache"
@@ -1914,67 +1905,6 @@ def test_zsh_open_rejects_an_unknown_flag_instead_of_naming_a_slot_after_it(zsh)
     assert "unknown flag" not in r.stderr, r.stderr
 
 
-def test_remote_desktop_reservation_blocks_local_slot_without_becoming_attachable(zsh):
-    """A remote app row has no tmux to attach, yet owns its slot's worktree."""
-    (zsh.home / "code" / "api").mkdir(parents=True)
-    icloud = zsh.home / "Library/Mobile Documents/com~apple~CloudDocs"
-    icloud.mkdir(parents=True)
-    (icloud / "demo.txt").write_text("disposable")
-    row = "\t".join(["mini", "-", "/Users/other/code/.worktrees/api/3",
-                     "api-3", "app", "none", "(Codex desktop workspace)", "codex"])
-    snippet = (
-        'REMOTE_HOSTS[mini]=unused; DEV_WORKTREE_ROOT=/Users/local/code/.worktrees; '
-        '_dev_homerel() { case $1 in */code/api) print -r -- code/api;; */code/.worktrees) print -r -- code/.worktrees;; esac; }; '
-        f'_dev_rows_all() {{ print -r -- {shlex.quote(row)}; }}; '
-        '_t_resume_history_candidates() { :; }; '
-        'print -r -- "owner=$(_dev_remote_app_owner api 3)"; '
-        '_dev_remote_resolve api 3 >/dev/null 2>&1; print -r -- "attachable=$?"; '
-        '_t_dev api 3 --codex; print -r -- "cli=$?"; '
-        '_t_dev api 3 --codex -f; print -r -- "foreground=$?"; '
-        '_t_open api 3 --app; print -r -- "desktop=$?"; '
-        '_t_paste -n api 3; print -r -- "paste=$?"; '
-        '_t_resume api 3; print -r -- "resume=$?"'
-    )
-    r = zsh(snippet)
-    assert "owner=mini" in r.stdout, r.stdout
-    assert "attachable=1" in r.stdout, r.stdout
-    assert all(f"{name}=1" in r.stdout for name in ("cli", "foreground", "desktop", "paste", "resume")), r.stdout
-    assert r.stderr.count("reserved by the Codex desktop app on mini") == (4 if sys.platform == "darwin" else 3)
-    if sys.platform != "darwin":
-        assert "requires macOS" in r.stderr
-    assert "◉ desktop on mini" in r.stderr
-    assert not zsh.log.exists() or "new-session" not in zsh.log.read_text()
-
-
-def test_paste_does_not_fall_back_to_shared_tree_when_desktop_worktree_is_reserved(zsh):
-    icloud = zsh.home / "Library/Mobile Documents/com~apple~CloudDocs"
-    icloud.mkdir(parents=True)
-    (icloud / "demo.txt").write_text("disposable")
-    r = zsh(
-        '_dev_worktree_enabled() { return 0; }; '
-        '_dev_worktree_create() { print -u2 -- "reserved desktop worktree"; return 1; }; '
-        '_t_paste -n api 3; print -r -- "paste=$?"'
-    )
-    assert "paste=1" in r.stdout, r.stdout
-    assert "reserved desktop worktree" in r.stderr, r.stderr
-    assert "Starting dev-api-3" not in r.stdout
-    assert not zsh.log.exists() or "new-session" not in zsh.log.read_text()
-
-
-def test_beam_refuses_desktop_owned_codex_thread_before_move(zsh):
-    row = "thread-123\tcodex\t/tmp/desktop-slot"
-    r = zsh(
-        'DEV_HANDOFF[codex]=t; '
-        f'_codex_thread_lookup() {{ print -r -- {shlex.quote(row)}; }}; '
-        '_dev_app_slot_reserved() { [[ "$1" == /tmp/desktop-slot ]]; }; '
-        '_tbeam_kill_owner() { print -r -- SHOULD_NOT_KILL; }; '
-        '_t_beam -s thread-123 mini; print -r -- "beam=$?"'
-    )
-    assert "beam=1" in r.stdout, r.stdout
-    assert "reserved for the Codex desktop app" in r.stderr, r.stderr
-    assert "SHOULD_NOT_KILL" not in r.stdout
-
-
 def test_beam_refuses_paginated_codex_rollout_behind_sqlite_checkpoint(zsh, tmp_path):
     codex_home = zsh.home / ".codex"
     codex_home.mkdir()
@@ -2215,7 +2145,7 @@ def test_zsh_resume_picker_shows_the_display_column_for_every_row(zsh, tmp_path)
     proj = zsh.home / ".claude" / "projects" / re.sub(r"[^A-Za-z0-9]", "-", wt3)
     proj.mkdir(parents=True)
     (proj / "c1.jsonl").write_text('{"type":"user","message":{"content":"fix the login bug"}}\n')
-    _codex_home(zsh, [(SID, wt3, "t", 100, 0, None),
+    _codex_home(zsh, [(SID, wt3, "Indexed task title", 100, 0, None),
                       ("aaaaaaaa-0000-0000-0000-00000000000b", wt3, "", 200, 0, None, SUBAGENT_SOURCE)])
     log = tmp_path / "fzf.log"
     r = zsh("_t_resume api --live; echo rc=$?", _tty=True, FZF_LOG=str(log),
@@ -2230,7 +2160,7 @@ def test_zsh_resume_picker_shows_the_display_column_for_every_row(zsh, tmp_path)
     assert rows[-1].split()[:5] == ["4", "✱", "claude", "●", "active"]
     dead = sorted(rows[:-1])
     assert dead[0].split()[:3] == ["3", "✱", "claude"] and dead[0].endswith("fix the login bug")
-    assert dead[1].split()[:3] == ["3", "⬡", "codex"] and "Reply with exactly the word OK" in dead[1]
+    assert dead[1].split()[:3] == ["3", "⬡", "codex"] and "Indexed task title" in dead[1]
     assert not any(row.strip() in ("claude", "codex", "-") for row in rows)   # never a bare field
     # the padded layout: slot right-aligned in 2, then the `<icon> <name>` column padded
     # to the widest agent, then the 14-wide date cell
@@ -2247,9 +2177,8 @@ def test_zsh_resume_picker_shows_the_display_column_for_every_row(zsh, tmp_path)
 
 
 def test_zsh_resume_pick_revives_the_row_with_its_own_agent(zsh, tmp_path):
-    """A picked codex row revives through `codex resume <thread>`, a picked claude row
-    through `claude -r <sid>` — the agent rides in the row (field 10) and the sid is the
-    transcript's own (a rollout's trailing uuid; a claude file's basename)."""
+    """Retained Codex rows use history's allocator with the exact agent and ID;
+    older Claude rows without retained metadata keep their compatibility route."""
     for name, body in (("fzf", FZF_STUB), ("gh", "#!/bin/bash\nexit 1\n")):
         stub = tmp_path / "stubbin" / name
         stub.write_text(body)
@@ -2261,12 +2190,12 @@ def test_zsh_resume_pick_revives_the_row_with_its_own_agent(zsh, tmp_path):
     (proj / "c1.jsonl").write_text('{"type":"user","message":{"content":"fix the login bug"}}\n')
     _codex_home(zsh, [(SID, wt3, "t", 100, 0, None)])
     log = tmp_path / "fzf.log"
-    r = zsh("_t_resume api; echo rc=$?", _tty=True, FZF_LOG=str(log), FZF_PICK="word OK")
-    assert "rc=0" in r.stdout and f"Resuming {SID[:8]} in dev-api-3 ({wt3})" in r.stdout, r.stdout
+    r = zsh('_t_resume_history_launch() { print -u2 -- "HISTORY $*"; print dev-api-99; }; '
+            '_t_resume api; echo rc=$?', _tty=True, FZF_LOG=str(log), FZF_PICK="codex")
+    assert "rc=0" in r.stdout and f"HISTORY api {SID} codex launch" in r.stdout, r.stdout
     tlog = zsh.log.read_text().splitlines()
-    assert f"respawn-pane -k -t =dev-api-3: env SHELL_SESSIONS_DISABLE=1 zsh -lic setopt no_monitor no_notify; codex resume {SID} --no-daemon" in tlog
-    assert "set-environment -t =dev-api-3 DEV_AGENT codex" in tlog
-    assert "attach-session -t =dev-api-3:" in tlog
+    assert not any('respawn-pane' in line for line in tlog)
+    assert "attach-session -t =dev-api-99:" in tlog
     zsh.log.write_text("")
     r = zsh("_t_resume api 3; echo rc=$?", _tty=True, FZF_LOG=str(log), FZF_PICK="login bug")
     assert "rc=0" in r.stdout, r.stdout
@@ -2359,7 +2288,7 @@ def test_fast_mode_reaches_new_tmux_and_foreground_launches(zsh, agent, fast, ar
 
 
 @pytest.mark.parametrize('live', [False, True])
-def test_retained_tmux_slot_shows_app_only_after_cli_exits(zsh, live):
+def test_retained_tmux_slot_stays_cli_after_exit(zsh, live):
     wt = f'{zsh.home}/code/.worktrees/api/3'
     r = zsh(f'_dev_session_has_claude() {{ return {0 if live else 1}; }}; '
             '_dev_session_sid() { print -r -- saved-thread; }; '
@@ -2371,51 +2300,8 @@ def test_retained_tmux_slot_shows_app_only_after_cli_exits(zsh, live):
             FAKE_DEV_AGENT='codex', FAKE_SESSION_ROWS=f'dev-api-3\t{wt}\tdetached')
     assert r.returncode == 0, r.stderr
     row = r.stdout.strip().split('\t')
-    assert row[3:5] == (['detached', 'idle'] if live else ['app', 'none'])
+    assert row[3:5] == (['detached', 'idle'] if live else ['detached', 'none'])
     assert row[-1] == 'codex'
-
-
-def test_retained_dead_tmux_pane_lists_reserved_desktop_slot(zsh, tmp_path):
-    """Read actual tmux 3.7c formatting, including a pipe in the final cwd field."""
-    binary = shutil.which("tmux")
-    if not binary:
-        pytest.skip("tmux required")
-    import uuid
-    # macOS Unix socket paths are short; keep the random socket under /tmp.
-    socket = pathlib.Path("/tmp") / ("t-list-" + uuid.uuid4().hex[:12] + ".sock")
-    wrapper = tmp_path / "stubbin" / "tmux"
-    wrapper.write_text("#!/bin/sh\nexec " + shlex.quote(binary) + " -S "
-                       + shlex.quote(str(socket)) + " -f /dev/null \"$@\"\n")
-    wrapper.chmod(0o755)
-    wt = tmp_path / "work|tree"
-    wt.mkdir()
-    env = {"HOME": str(zsh.home), "PATH": str(wrapper.parent) + os.pathsep + os.environ["PATH"],
-           "TERM": "xterm-256color", "LANG": "C", "LC_ALL": "C"}
-    tmux = [str(wrapper)]
-    def run(*args):
-        result = subprocess.run(tmux + list(args), env=env, capture_output=True, text=True)
-        assert result.returncode == 0, result.stderr
-        return result
-    try:
-        run("new-session", "-d", "-s", "dev-api-3", "-c", str(wt), "sleep 30")
-        pane = run("display-message", "-p", "-t", "=dev-api-3:", "#{pane_id}").stdout.strip()
-        run("set-option", "-p", "-t", pane, "remain-on-exit", "on")
-        run("respawn-pane", "-k", "-t", pane, "false")
-        r = zsh('_dev_agent_of_session() { print codex; }; '
-                f'_dev_session_sid() {{ print {SID}; }}; '
-                '_dev_session_has_claude() { return 1; }; '
-                '_dev_desktop_threads() { :; }; '
-                '_dev_app_slot_reserved() { return 0; }; '
-                '_dev_agent_transcript() { :; }; '
-                '_dev_fg_rows() { :; }; _pr_state_flush() { :; }; '
-                '_dev_session_rows', LANG="C", LC_ALL="C")
-        assert r.returncode == 0, r.stderr
-        rows = [line.split("\t") for line in r.stdout.splitlines()]
-        assert len(rows) == 1, r.stdout
-        assert rows[0][:5] == [SID, str(wt), "api-3", "app", "none"]
-        assert rows[0][-1] == "codex"
-    finally:
-        subprocess.run(tmux + ["kill-server"], env=env, capture_output=True)
 
 
 @pytest.mark.parametrize('agent', ['claude', 'codex'])
@@ -2452,47 +2338,6 @@ def test_shell_auto_trust_is_opt_in_and_keeps_stdout_clean(zsh, tmp_path):
     assert r.stdout == '' and 'trust call: trust -q ' in r.stderr
 
 
-@pytest.mark.parametrize('desktop_live,cli_live', [(False, False), (True, False), (True, True)])
-def test_desktop_context_uses_live_evidence_independently_of_reservation(zsh, desktop_live, cli_live):
-    wt = f'{zsh.home}/code/.worktrees/api/3'
-    evidence = f'print -r -- "{SID}\t{wt}\tDesktop title"' if desktop_live else ':'
-    r = zsh(f'_dev_desktop_threads() {{ {evidence}; }}; '
-            f'_dev_session_has_claude() {{ return {0 if cli_live else 1}; }}; '
-            f'_dev_session_sid() {{ print -r -- {SID}; }}; '
-            '_dev_agent_at_welcome() { return 0; }; '
-            '_dev_app_slot_reserved() { return 0; }; '
-            '_dev_agent_transcript() { :; }; _dev_session_summary() { :; }; '
-            '_dev_fg_rows() { :; }; _pr_state_flush() { :; }; '
-            '_dev_session_rows', FAKE_DEV_AGENT='codex',
-            FAKE_SESSION_ROWS=f'dev-api-3\t{wt}\tdetached')
-    assert r.returncode == 0, r.stderr
-    row = r.stdout.strip().split('\t')
-    assert row[3:5] == (['detached', 'idle'] if cli_live else ['app', 'active' if desktop_live else 'none'])
-    if desktop_live and not cli_live:
-        assert row[5] == 'Desktop title'
-
-
-@pytest.mark.parametrize('live,reserved,ambiguous', [(True, False, False), (False, True, False), (True, True, True)])
-def test_desktop_only_slot_rows_and_ambiguous_context(zsh, live, reserved, ambiguous):
-    wt = zsh.home / 'worktrees/api/3'
-    (wt / '.git').mkdir(parents=True)
-    evidence = f'print -r -- "{SID}\t{wt}\tDesktop title"' if live else ':'
-    if ambiguous:
-        evidence += f'; print -r -- "aaaaaaaa-0000-0000-0000-000000000002\t{wt}\tOther title"'
-    r = zsh(f'DEV_WORKTREE_ROOT="$HOME/worktrees"; '
-            f'_dev_desktop_threads() {{ {evidence}; }}; '
-            f'_dev_app_slot_reserved() {{ return {0 if reserved else 1}; }}; '
-            '_dev_repo_of_dir() { print -r -- "api\t3"; }; '
-            '_dev_fg_rows() { :; }; _pr_state_flush() { :; }; '
-            '_dev_session_rows', FAKE_SESSION_ROWS='')
-    assert r.returncode == 0, r.stderr
-    row = r.stdout.strip().split('\t')
-    active = live and not ambiguous
-    assert row[:5] == [SID if active else '-', str(wt), 'api-3', 'app', 'active' if active else 'none']
-    if active:
-        assert row[5] == 'Desktop title'
-
-
 def test_rich_session_rows_keep_targeting_and_activity_while_recovering_context(zsh):
     wt = f'{zsh.home}/code/.worktrees/api/3'
     _codex_home(zsh, [(SID, wt, 'Fix the queue', 200, 0, 'Investigate cache invalidation')])
@@ -2504,7 +2349,7 @@ def test_rich_session_rows_keep_targeting_and_activity_while_recovering_context(
             FAKE_SESSION_ROWS=f'dev-api-3\t{wt}\tdetached')
     assert r.returncode == 0, r.stderr
     fields = r.stdout.strip().split('\t')
-    assert fields[:5] == [SID, wt, 'api-3', 'app', 'none']
+    assert fields[:5] == [SID, wt, 'api-3', 'detached', 'none']
     assert fields[5:] == ['Investigate cache invalidation', 'codex', '-', '2026-09-10T05:20:10Z']
 
 

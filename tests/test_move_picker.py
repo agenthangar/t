@@ -70,6 +70,7 @@ def test_move_picker_uses_current_sessions(zsh, tmp_path, args, location, inside
       print -r -- "rc=$?"
     ''', _tty=True, **env)
     assert 'rc=0' in result.stdout, result.stdout
+    assert (tmp_path / 'picker.json').exists(), result.stdout + result.stderr
     log = json.loads((tmp_path / 'picker.json').read_text())
     assert [row.split('\t')[1] for row in log['rows']] == expected
     assert '--multi' in log['args']

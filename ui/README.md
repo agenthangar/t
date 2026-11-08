@@ -1,5 +1,91 @@
 # Command and terminal contract
 
+This is the repository's terminal design system, indexed by [DESIGN.md](../DESIGN.md).
+
+## Planning previews
+
+When a workflow or task calls for a planning preview, use a local interactive HTML
+prototype to demonstrate the proposed command flow before application changes.
+Follow this terminal contract: shared layout, focus, keyboard controls, spacing,
+and narrow-screen behavior. Show affected navigation, selection, review,
+cancellation, and relevant empty/error states. Label sample data and simulated
+actions. Keep real agent sessions, repository files, configuration, and services
+untouched by prototype interactions. Make the preview easy to open locally and
+report browser or verification limitations accurately.
+
+After design approval when required by the workflow or task, implement using the
+shared terminal components. A planning prototype does not verify the working CLI:
+prepare a separate worktree-scoped command preview with isolated sample settings
+at the selected delivery checkpoint. Never relink shared installed commands to a
+development worktree. Workflow configuration owns preview timing and approval;
+this document defines how to make the previews faithful and safe.
+
+## Workflow settings and resets
+
+Group the main workflow editor into Models, Behavior and Manage using shared
+RailUI sections. Use this workflow stays above the groups. Keep focus on the
+selected row when returning, including after a reset; headings are not selectable.
+
+Every settings page offers Reset to defaults, and individual selectors offer a
+resolved default or inheritance choice, including binary toggles. The multiple-model
+checklist offers an exclusive Use default preset alongside the exclusive one-model
+choice. Reset only settings owned by that page, including hidden fields. Parent
+pages include their nested settings: Local preview resets global and both type
+preferences; Tests includes runners. Type overrides resume live global inheritance.
+Model and permission defaults use the selected native tool; reset never invents an
+unverified effective native value. Routing and model resets do not download or run
+models, change credentials, or alter readiness requirements.
+
+Reset workflow to defaults restores that tool's built-in policy, preserving the
+workflow name, repository assignments, repository design sources, other workflows
+and other tool catalogues. Frontend design and Design systems page resets affect
+the workflow defaults; only the individual repository source picker resets its
+source. Keep legacy choices outside the reset scope semantically unchanged.
+
+All resets share the existing staged review/save/discard transaction, including
+completed resets before interruption. Already at defaults is a no-op; browsing and
+no-op resets never materialize inherited repository overrides. This extends the
+existing workflow wizard/single-selection modes, not the public command surface.
+
+## Repository design-system configuration
+
+Frontend design is a top-level workflow page, above PRs, previews & tests. It
+contains Design approach and Design systems. Design systems shows a Default
+section (Find design systems: Automatically / Off), then the registered repositories
+using that workflow, including inherited assignments. Each repository shows its
+resolved source: Auto · DESIGN.md, an explicit path, Off, Auto · Choose a source,
+or Auto · No system found. Do not display explanatory paragraphs in these pickers.
+
+The repository source picker uses separate Default, Choose a source, Manage and
+Navigation groups. Use workflow default restores live inheritance; explicit paths
+and Off override it. Each candidate appears once, with evidence and a selection
+mark. Choose file or folder, Create design system, and Scan again are actions.
+Retain missing explicit paths with a visible error; never silently replace them.
+Repository source settings survive assignment changes and are tool-scoped.
+
+Automatic discovery prefers safe root DESIGN.md, then one root design-system.md
+or design_system.md, then a sole discovered candidate. Multiple remaining
+candidates require a choice. No candidates means no system found; creation is
+always explicit. Discovery reads repository-owned docs, linked guidance, tokens,
+components and Storybook, excluding dependencies, generated directories and
+symlinks. Resolve relative paths in the matching active worktree. Lists never
+scan or prompt; managed agent instructions describe the same resolution rule.
+
+Every workflow choice has an effective default. Behavior defaults come from
+BEHAVIOR_DEFAULTS; type overrides inherit shared preview defaults. Label the
+resolved default and reset destination instead of Not set. Native model, effort
+and permission choices may inherit tool settings; never invent an unavailable
+native value. Reads do not materialize defaults or rewrite saved choices.
+Design approach and source use remain active when previews are disabled.
+
+Create design system is an explicit agent-assisted drafting action. Save or
+discard pending settings first. Review the task, then start the existing guarded
+agent launcher in a new isolated worktree. Draft an entry point, agent-instruction
+reference and evidence-backed design/preview guidance without overwriting existing
+content or duplicating workflow approval rules. Drafting does not publish changes
+or select a source. Review the actual diff in the agent session, then refresh
+discovery from the accepted worktree to select the resulting source.
+
 Development availability is scoped to the caller's t worktree. With a canonical
 Git installation, each `dev/t-*` or `cursor/*` worktree supplies its own executable
 and shell helpers automatically, including subdirectories and invocation-local
@@ -24,7 +110,15 @@ Every public `t` command and conditional mode has an entry in
 truth for classification and contract tests. Compatibility aliases inherit the
 canonical command's entry. `ls` and `list` are interchangeable in every listing
 family (including `workflow`); the former `t config workflow` routes remain
-compatibility aliases for `t workflow`. Root `t list` aliases `t ls`. Resolve only
+compatibility aliases for `t workflow`. `t workflow open NAME` and the shorthand
+`t workflow NAME` open a named definition directly in the staged editor; both
+accept `--tool`, otherwise using the account tool. Verbs take precedence over
+names, so use `open NAME` for collisions. Unknown names and nonterminal opens
+fail without writes. `t workflow delete NAME [--tool TOOL] [--replacement NAME]`
+is a direct action: require a replacement for a default or any repository
+assignment (including excluded ones), preserve exclusions and other catalogues,
+and reject deleting the last definition. Editor deletion uses the same rules,
+selects a replacement when needed, and stays pending until review/save. Root `t list` aliases `t ls`. Resolve only
 command words, preserving option values, repository names, and delegated commands.
 The old `t repos` family is removed; use `t repo` verbs. Existing repository selectors
 accept registered aliases, checkout basenames, and unambiguous local origin repository
@@ -55,9 +149,15 @@ Display native Mac labels (`⌃T`, `⌃S`, `↩ Return`, `⎋ Esc`, `⇥ Tab`) o
 other hosts use `Ctrl-T`, `Ctrl-S`, `Enter`, `Esc`, `Tab`. Compact headers use the short
 Mac symbols or `^T` on other systems. Only labels change: bindings remain the
 same control keys, Return, Escape and Tab. Align labels on wide terminals and stack them below 60 columns.
-Clip text before applying color and count physical rows when repainting; at
+Let label columns use available width before truncating; never cap wide-terminal
+labels at 24 characters. Clip text before applying color and count physical rows when repainting; at
 80×24, 44×20, and 32×12 interactive screens the focused row and primary action
 must remain visible.
+Separate a leading unset/default choice (empty key) from the remaining choices
+with a nonselectable blank rail row in every shared picker. It adds no option or
+explanatory heading. A checklist with an explicit empty choice treats that row as
+an exclusive reset: selecting it clears all other marks, selecting a real option
+clears it, and unchecking the last real option restores it.
 The 60-column breakpoint applies to `_RailUI` inline menus. Most printed tables
 switch to labeled, wrapped cells when their actual columns no longer fit.
 Session lists instead keep one physical row per session, as described below.
@@ -145,7 +245,7 @@ Fresh and resumed tmux panes start without echoing internal launch commands or
 exit instructions. Agent output is logged from startup; failures retain diagnostics.
 
 The config hub groups Session defaults, Agents, Workflows, Runners, MCP server, Repositories &
-worktrees, Remote hosts, and Finish. Keep agent settings and local worker/model
+worktrees, Remote hosts, Sleep & connectivity, and Finish. Keep agent settings and local worker/model
 setup together, with workflow in its own section; keep repository/worktree choices
 separate from
 host registration and the default beam host. Settings collections and setup
@@ -153,15 +253,21 @@ destinations use a trailing `›`; scalar choices and immediate actions do not.
 All actions remain directly reachable, returning preserves row focus, and the
 shared viewport keeps the focused row and Save shortcut visible on narrow screens.
 
-Per-agent settings expose Cross-host handoff with staged review/save. Effective
-defaults are `DEV_HANDOFF[claude]=t` and `DEV_HANDOFF[codex]=native`; Codex can
-explicitly select `t`. Claude native is unsupported and rejected. `t config show`
-is read-only and prints the mechanism and app requirement. Native Codex transfer
-is a manual desktop Hand off action, not an automated CLI transfer: cross-host
-resume/move prints actionable steps and returns nonzero before stopping an owner,
-checkpointing, copying transcripts or allocating a destination. Local resume and
-remote attachment retain their existing behavior. Relays preserve the initiating
-host's policy and require a peer that understands it.
+Cross-host moves and resumes use guarded t transfer for both Claude and Codex.
+Worktree transfers preflight push access before stopping the source, then publish
+final edits under a unique `refs/heads/t-transfer/<token>` ref. Destination checks
+require snapshot-capable peers before stopping. Landings fetch the exact snapshot
+into `refs/t/transfers/<token>`, never overwriting an unrelated ordinary branch or
+falling back to main. Conflicting destination slots get fresh branches. Successful
+tmux landings remove only the matching remote snapshot with an exact lease; failed
+cleanup retains it for recovery. Git failure diagnostics remain visible.
+When no current owner is found, move points to `t session resume [repo] [slot]`
+for restoring saved work.
+Legacy `DEV_HANDOFF` and desktop opening defaults are ignored. Older remote peers
+receive explicit t transfer overrides. Codex Desktop launch, handoff, reservation
+creation and discovery are removed. Historical interface metadata stays readable.
+Old reservation markers protect worktrees from automatic cleanup; exact CLI history
+resume checks writer ownership before starting.
 
 Config → MCP server → Sessions server shows read-only Codex enabled state and
 Claude user-scope registration. Browsing and Refresh status never start servers or
@@ -187,6 +293,14 @@ and default-host references. Changes remain staged until review and save.
 Config quitting with pending edits offers Keep editing (default), Review and
 save, and Discard changes and exit. Review screens keep their primary action
 visible while scrolling.
+Ctrl+C in `t config` and `t workflow` uses that same unsaved-change choice from
+the hub, nested settings menus and the save review. Preserve completed selections
+from nested editors before showing the prompt. Keep editing retains all staged
+changes; Review and save opens the normal review before writing; only explicit
+Discard changes and exit discards them. Interrupting the prompt never implicitly
+saves or discards changes. With no edits, Ctrl+C exits immediately with status
+130. Restore terminal state on every exit. These rules apply to the staged menu
+transaction; external editors and post-save operations retain their own behavior.
 
 Config → Hosts → Add host runs fresh Tailscale discovery on each entry and
 offers an explicit Refresh action. The shared single picker shows online Unix
@@ -206,26 +320,247 @@ the next verification runs. Ctrl-C stops with 130 and reports that configuration
 was already saved. Native SSH owns the restored terminal for each check; no
 fingerprint is automatically accepted. Onboarding uses the same reviewed offer.
 
-Config includes Workflows globally and in each repository submenu. The global
-menu chooses a named default, adds or edits shared workflows, or activates recommended
-defaults. Each workflow exposes an overall Workflow switch and an independent
-Model stages switch. Disabling stages retains their model/effort settings and keeps
-behavior preferences and Markdown active; disabling the workflow suppresses all
-three. Active stages expose Planning, Implementation and Review with separate
+Config includes Workflows globally and in each repository submenu. Start with a
+Codex, Claude, or Cursor tool picker, then show that tool's named workflows,
+default and repository assignments. Tool selection is navigation only; it never
+changes session launch tool preferences. The full staged document and immutable
+baseline span all tool menus, including interrupts, review, save and discard.
+Show Save changes once in the persistent footer, with the `s` shortcut; do not
+duplicate it as a row in config, the tool chooser or the workflow catalogue.
+The per-tool menu chooses a named default, adds or edits workflows, or activates recommended
+defaults. Hub and catalogue rows show Global default, Assigned to N repos, or
+Not assigned, with Disabled appended only for a disabled definition. Count
+non-excluded named assignments; exclude inline copies and implicit global inheritance
+from explicit repository counts. An enabled definition is not proof of assignment.
+The catalogue uses APPLIES TO instead of ambiguous STATUS on/off and ASSIGNED columns.
+Each workflow exposes an overall Workflow switch and an independent
+Use multiple models checkbox picker with a leading Use one model for all work
+choice, then Planning, Implementation and Review. Use the shared empty_choice
+multi profile: the one-model row is an exclusive reset, separated by a blank
+rail row. It clears all stages; selecting any stage clears it, and clearing the
+last stage restores it. Translate the empty-key selection into no active stages.
+Space marks choices; Enter and q/Esc Back retain the selection as pending edits. Unchecked Planning/Review use the main model; Agent review before PR controls
+whether the pre-PR review step runs. Unchecked Implementation uses
+per-tool session defaults, with default model/effort controls still available
+beside selected helpers. Selecting no stages enters single-model mode.
+Model catalogues come from the selected tool. The workflow row is Model;
+its reset choice says Inherit default and shows the top-level tool model.
+Reasoning effort shows an explicit level or Inherit default with the known
+top-level effort. Unset effort inherits top-level effort only when the model is
+also inherited; an explicit workflow model leaves effort to the native tool.
+Unknown native values say Tool setting; model catalogue metadata alone is not
+proof of the effective native configuration. Permissions shows the preset
+without repeating the selected tool name and opens its choices directly.
+Cursor uses model IDs with any supported parameters; do not expose a separate
+reasoning-effort flag or unsupported permission presets. Unavailable model
+catalogues retain inheritance and custom model entry without invented choices.
+Deselecting stages retains their model/effort settings and keeps
+permissions, behavior preferences and Markdown active; disabling the workflow
+suppresses every workflow setting. Selected stages expose separate
 model and effort controls, plus Instructions for ordinary Markdown in VISUAL/EDITOR.
-Behavior preferences uses a shared `_RailUI` submenu for Worktree (isolated/current),
-Local preview (UI changes/on request), Validation (relevant/full documented checks),
-and Delivery (review/PR/authorized auto-merge). Every setting offers No preference,
-which removes its key; no behavior is enabled by default. Model-stage rows are hidden
-while stages are off and their stored values are preserved.
+PRs, previews & tests uses shared `_RailUI` submenus for Pull requests, Local
+preview and Tests. PR opening (automatic/on instruction), initial
+state (ready/draft) and merging (automatic/on instruction) are independent.
+When to open PR offers Automatically when ready or Only when I ask.
+Agent review before PR is an Enabled/Disabled toggle with no Not set choice. Omission
+means Enabled without changing storage on read or an unchanged selection. Enabled requires a diff and
+validation review before PR opening; the selected review worker handles it when
+enabled, otherwise the main agent does. Disabled suppresses the pre-PR review
+pass in both the main conversation and a selected review worker without deleting
+its saved model, effort, or stage selection. The menu and effective stage displays
+identify it as Skipped before PR, rather than presenting a reviewer as active.
+Choosing Enabled restores normal review
+guidance. Delivery instructions retain fixes and the selected validation/preview,
+PR timing/state/merge requirements. This preference does not bypass repository
+review requirements or required approvals. No new command or execution mode is
+added; this remains a staged preference in the shared editor.
+Local preview has a Global section with Preview timing (Automatically
+when ready / Only when I ask), Approval before PR (Wait for my approval /
+No approval needed),
+followed by a Preview types section containing
+Frontend and CLI. Keep these submenu summaries concise instead of repeating
+every nested preference. Each submenu starts with Preview (Enabled / Disabled).
+Remove the separate Applies to control. Both submenus stay visible and show
+their enabled/disabled state; disabled settings remain saved and editable.
+Optional frontend_enabled/cli_enabled values override legacy preview_target for
+each type independently. Without flags or a legacy target, both are enabled.
+Read-only operations do not migrate storage. Each submenu's Preview timing can
+Inherit global or override it independently. Show the resolved timing and source
+in detailed rows and printed lists: Inherited · value or Override · value.
+The Inherit global choice is separated from explicit values and removes only that
+override. An absent parent resolves to the built-in default; display its effective value. Changing a parent
+updates inheriting children while preserving explicit overrides, even overrides
+equal to the parent. Resolved rules apply only to enabled types; with neither
+enabled, suppress preview guidance.
+Disabled frontend suppresses preview method and browser guidance; design approach and design-system use remain active;
+disabled CLI suppresses its method and command-launch guidance. Enabling alone does not request a
+preview or change the separate PR-opening preference.
+Both submenus inherit Global timing and approval before PR; each field shows
+Inherited or Override with its resolved value. Dim the inherited value after
+Inherit global/default in both value rows and choices, including focused rows;
+clip plain text before applying color and preserve narrow layouts.
+Launch has one independent control per type: Frontend Open in browser and CLI
+Run command. Do not show a shared Open/run preview row. Legacy preview_launch
+remains readable as a fallback; editing either launch control materializes both
+resolved choices and removes that legacy key, preserving the other type's choice.
+Reading, browsing or canceling does not migrate stored settings.
+Launch choices never start a request-only preview before the user requests it.
+The nested Frontend submenu contains Implement before approval (Yes / No, with
+Use default), Preview method (Fast reload / Build), and Open in browser
+(Automatically / Only when I ask). Design approach is on the top-level Frontend
+design page (Separate HTML prototype / In the app). The nested CLI
+submenu contains Preview method (Install locally / Run from the repo) and
+Run command (Use default / Automatically / Only when I ask), with Use default
+separated from explicit choices. Open in browser has the same choices.
+The optional cli_launch key accepts automatic/on_request and remains saved while
+CLI preview is disabled. Automatically launches the supported CLI preview command
+only after the selected preview is requested or due and prepared; request-only
+timing still takes precedence. Only when I ask prepares the command without
+launching it, including with the Run from the repo method. The method determines
+the executable source. Interactive commands use a supported interactive terminal;
+if unavailable, report the limitation and exact command rather than claiming a
+launch. This preference does not run tests or alter PR choices. CLI planning previews
+have separate optional timing (Before implementation / Only when requested) and
+approval (Required / Not required). Both offer Use default with its effective value; neither changes working-command
+preview timing or launch. Required approval applies when a planning preview is due
+or requested, allowing prototype work before substantial implementation. Retired
+cli_implement_before_approval remains inert. Approval before PR is
+independent of frontend implementation approval and applies only to enabled
+preview types. Clearing a launch choice restores its effective default.
+Menu, list, catalogue and save review reflect the choice and disabled state. Printed
+lists use the same indentation and hierarchy; summaries include nested choices.
+Returning from a child menu restores the parent focus and retains staged changes.
+Disabled summaries show the status without presenting retained settings as active.
+Tests contains When to run tests and Test runners; remove the separate Test runners row
+from the workflow menu. Nested runner edits share the same staged Save/discard
+transaction and preserve behavior changes made before or after them.
+Browser opening applies only once a local frontend preview is available; it does
+not start previews or change resolved timing or approval. Frontend Implement before
+approval: No requires a lightweight frontend preview and user approval before substantial
+implementation; work needed for the preview itself is allowed. With automatic
+timing, prepare that initial preview before implementation. With request-only
+timing, wait for the preview request and then approval. Yes permits implementation
+without this gate; PR preferences stay independent. Runtime instructions emit
+only resolved timing, PR approval, and launch rules per type and the
+frontend-only implementation gate.
+Optional frontend_preview_timing/cli_preview_timing override local_preview;
+missing timing keys mean inheritance. preview_pr_approval is the shared PR
+approval choice; frontend_preview_pr_approval/cli_preview_pr_approval override
+it. preview_launch is a legacy shared launch fallback; frontend_browser/cli_launch
+are the independent per-type launch choices. frontend_implement_before_approval is a
+direct yes/no setting, not an override of a shared gate. Legacy
+implement_before_approval falls back to this frontend-only setting; explicit
+frontend values win. Older preview_approval/design_approval map inversely there.
+Retired cli_implement_before_approval remains valid raw JSON but has no effect on
+instructions or summaries. Read-only JSON retains raw keys, and clearing the
+frontend setting must not revive a retired alias. CLI When to preview prepares
+the working command when ready or on request, never a required pre-implementation
+prototype. Test timing
+is labeled When to run tests and chooses local during work, local before preview,
+local before PR, or On PR CI;
+required repository checks always apply. Unset rows and picker choices say
+the displayed default. Task, repository and text instructions override
+the behavior. Menus show concise choices without routine explanatory preambles.
+Use inheritance wording only where values really follow a parent: preview
+defaults, main-session settings, native tool defaults, and workflow assignments.
+The repository workflow UI is a single selector: Inherit global with its named
+source, named workflows, and Disabled. Selection stages the assignment and returns;
+cancel or reselecting the current value changes nothing. An existing inline
+policy may appear as Current custom workflow so it can be retained or restored.
+Do not expose copy, edit, exclusion, or advanced JSON actions in this selector.
+The tool hub summarizes Global and the current registered repository's effective
+assignment, including linked worktrees. Scope discovery is display-only and does
+not implicitly select a repository for edits or read-only workflow commands.
+Use Automerge for automatic PR merging. Preview methods use Install locally, Run from the repo,
+Fast reload and Build. Test choices name Local or On PR CI explicitly.
+Clearing a choice removes its key. Preserve focused rows when returning.
+Legacy delivery/preview values are interpreted without rewriting read-only
+configuration; editing materializes equivalent separate choices. Working-folder
+and generic validation choices are no longer in the menu. Existing unrelated
+legacy rules are retained and displayed separately; explicit test timing supersedes
+legacy validation. Model-stage rows are hidden while stages are off.
+Legacy local_preview=before_pr resolves automatic preview and frontend implementation
+approval. Explicit frontend_implement_before_approval wins over the old shared
+gate and older preview_approval. Edits materialize independent settings without
+changing raw JSON on reads. The combined legacy choice is hidden in menus.
+Instead show the selected session tool's default model and reasoning effort.
+Optional `session_defaults` stores independent Codex and Claude model/effort maps;
+these are active for enabled workflows with Implementation unchecked, including
+single-model workflows. Repository overrides
+apply to the canonical checkout and its worktrees, including destination paths
+for new and resumed CLI sessions. Explicit resume arguments win. An explicit model
+without an effort uses that model's default, not an unrelated global effort.
+Empty choices fall back to account-level agent defaults. Excluded workflows and
+workflows with Implementation selected do not apply these session defaults. Never write scoped settings into
+global agent settings or change active turns; indexed Codex child agents retain
+their own settings. The UI discovers supported efforts from the selected tool.
+Saved enabled workflows with Implementation selected use the implementation model for Codex root
+launches and guarded resumes. An automatic implementation effort resolves to medium
+for the main conversation; explicit efforts remain explicit. These scoped values
+override stale resume checkpoints, including a previous planning model or effort.
+Every stage offers Agent selects by task alongside explicit effort levels.
+Reasoning pickers use shared nonselectable Automatic and Fixed effort section
+headings: Agent selects by task belongs to Automatic; explicit levels belong to
+Fixed effort. Preserve the selected effort when reopening the picker. Use the
+same labels in menus, choices, save review and printed lists. Selected Implementation with auto
+effort delegates a bounded worker at a concrete supported effort;
+explicit Implementation effort keeps the work in the main session at that level.
+Show the main session's fixed model/effort separately when a worker implements,
+and identify worker versus main-session values. Unselected stages inherit the
+main session's actual effort, not the worker's task-based setting. The generated
+instructions require reporting unavailable delegation instead of pretending the
+main session changed effort. No task classifier or active-turn switch is implied.
+Unsaved recommended defaults supply no launch overrides. Claude launch settings
+are not inferred from Codex stage models. Planning, review and automatic
+implementation use bounded delegations only when selected, with explicit model/effort and fresh context when
+required by the host. Optional model_stages is a nonempty unique subset of
+planning/implementation/review. Without it, legacy separate_stages selects helpers
+with implementation still active; omission of both preserves all three stages.
+Selecting none sets stages_enabled false and retains the saved selection. List and save review label unselected stages as
+using the main model and never present inactive model/effort choices as effective.
+Legacy one-level-lower values for Implementation and Review are accepted as auto;
+there is no relative effort option or delegation rule. Display and reopen these
+saved choices as Agent selects by task, preserving stored values on read or cancel.
+Native model/effort defaults are shown as defaults when unspecified, never inferred
+from inactive saved stages.
 Models load lazily from Codex once per menu session; current, recommended and custom
-values remain available offline, with explicit Refresh. Changing a model preserves
-its effort and never changes launch defaults. Shared-definition editing explains
-its affected repository consumers. Repository menus display their source and offer
+values remain available offline, with explicit Refresh. Changing a stage model preserves
+its effort; changing a session default model clears incompatible effort. Shared-definition edits
+affect all repository consumers. Repository menus display their source and offer
 named assignment, repository-only customization, explicit exclusion retaining the
 source, resuming that retained source, or inheritance. All menu changes remain pending until review and Save;
 unchanged selections, canceled editors and discarded changes write nothing.
-The menu and save review explain precedence: the host instruction hierarchy is
+Save review compares the staged document with its initial snapshot and shows
+only changed workflows, assignments and fields. Use readable previous/new values,
+changed text lines, and changed runner fields; omit unchanged definitions,
+precedence and unchanged instruction text. Show additions, removals, default changes,
+exclusions and initial activation explicitly. Ctrl+C uses the same pending-edits
+prompt while reviewing these differences.
+Workflow verbs and instructions support `--tool codex|claude|cursor`; omitted tool
+uses the explicit repository's configured tool or the account default. Lists
+remain read-only and identify the selected tool in text and JSON. Runner list,
+edit and start support the same selector. Retain root v3 data as Codex and store
+independent complete Claude/Cursor catalogues in the optional `tools` map.
+Existing shared Claude preferences migrate in memory to an independent catalogue
+with native model stages; no read writes settings. The next save freezes that
+copy. Native Codex and Claude instructions render their respective catalogues.
+Cursor's existing launch/resume routes prepare only its resolved workspace policy
+in an always-applied managed rule excluded through local Git metadata; refuse
+tracked, unmanaged or symlink destinations. Unconfigured Cursor launches and
+live attachments remain unchanged. Outside Git, configured launches apply model
+arguments and report the unavailable instruction publication. No Cursor dev slots
+or unsupported standalone effort/permission controls are introduced.
+Permissions is a separate submenu available with either model mode. Show only
+the selected tool's supported presets. Codex and Claude have independent native
+presets and a Default · Tool permissions choice that removes the
+workflow override. The policy's optional permissions object maps codex to
+ask/auto/full/read_only and claude to manual/acceptEdits/auto/bypassPermissions/plan;
+unknown tools or values are rejected. Missing permissions preserve native defaults.
+The list and save review show saved choices. Permissions apply only on CLI start
+or guarded resume/restart, after scope, exclusion and root-session checks. Any
+explicit invocation permission option suppresses the workflow permission preset
+as a whole. A save never changes native permission config or a live conversation.
+The host instruction hierarchy is
 unchanged; explicit task and repository rules remain authoritative; one selected
 repository workflow replaces the global default; exclusion suppresses the entire
 workflow. Within a workflow, custom Markdown overrides selected behavior preferences,
@@ -246,6 +581,9 @@ without prompts, model discovery or writes. `instructions edit` uses a private .
 file in VISUAL/EDITOR, preserves formatting and editor status, and rejects embedded
 managed-block markers. Repository edits create an inline policy only after an actual
 change and preserve exclusion; inspection includes the stored prose when excluded.
+Clear text instructions appears when text is present and stages its removal in the
+same save transaction. Empty editor contents clear text too. Cancellation/discard
+preserves saved instructions, and clearing leaves other workflow settings intact.
 The issue-before-code rule is seeded once as editable Markdown in schema v3.
 Reading v1/v2 migrates in memory without writes; installation or explicit save
 persists v3 and replaces the legacy public-issues block transactionally. Existing
@@ -257,16 +595,17 @@ while retaining preferences and prose. The JSON policy optionally accepts
 `stages_enabled` (default true) and `behaviors` (default absent); older v1/v2
 documents remain untouched on reads and migrate when saved or synchronized.
 
-Guarded dormant Codex resume/restart and app-to-CLI handoff read the latest
+Guarded dormant Codex resume/restart read the latest
 applicable explicit main model/effort checkpoint immediately before constructing
 the launch command. Those overrides replace saved thread model/effort, with
 explicit invocation overrides taking precedence. Repository exclusions (including
 linked worktrees), indexed child agents, changed source guards, and malformed
-checkpoints suppress these overrides. Speed and permissions are retained. A live
+checkpoints suppress these model overrides. Speed is retained. Permissions are
+retained unless the applicable workflow explicitly sets a permission preset;
+explicit invocation permission arguments win. A live
 attach preserves its existing owner, schedules a bounded service retry, and
 explains that isolated sessions require guarded resume/restart. Attaching does
-not restart a process or begin a turn. Native desktop URL reopen has no verified
-model override; its runtime/instruction refresh remains unverified.
+not restart a process or begin a turn.
 
 The installed package includes a pinned, licensed private Tomli fallback for
 Python 3.9 hosts. Update/install needs no network package download or system pip
@@ -277,16 +616,20 @@ that service are reachable; isolated `--no-daemon` owners remain pending until a
 guarded resume boundary.
 
 Successful workflow mutations publish native instruction files atomically, then
-reconcile an account-local revision outside the save lock. `t workflow sync`
-retries pending work; later saves and SessionStart launch/resume hooks also retry.
+reconcile an account-local revision outside the save lock. Later saves and
+SessionStart launch/resume hooks retry pending updates automatically.
 `list` and `list --json` report saved propagation status without writing or
-connecting. Explicit sync also adopts saved preferences that predate propagation.
+connecting. There is no public manual retry action.
 Unused named-definition edits do not affect unrelated consumers.
 
-Workflow stage models remain guidance and never select a main-session model.
-Explicit Codex model/effort changes in `t config` separately reconcile loaded root
+The saved implementation stage selects Codex main launch/resume defaults; planning
+and review delegation remains guidance. Explicit Codex model/effort changes in
+`t config` publish account-owned native root defaults in the same transaction as
+the shell defaults and journal, then separately reconcile loaded root
 threads through the running app-server control socket. Pagination is bounded;
-stage agents are skipped. Explicit main model/effort deltas also persist through
+stage agents are skipped. The external shell editor has already saved its file;
+native/journal publication failures are reported as partial saves without claiming
+runtime adoption. Explicit main model/effort deltas also persist through
 the receiving host's authoritative launch-config writer and account-owned native
 Codex root defaults. Unsupported TOML/ownership or unavailable writers leave
 those defaults explicitly pending. No other native fields are changed. Runtime coverage is limited to the connected owning
@@ -368,7 +711,7 @@ The compatibility --attached flag starts with filtering off and defaults retaine
 There is no new-session shortcut or details preview in open; use `t open --new`.
 Press `Ctrl-K` to kill only the focused session, independently of multi-selection marks.
 The shortcut authorizes that session like Enter in close, retaining ownership
-and desktop safety checks. Keep the picker open and remove only successfully
+and ownership safety checks. Keep the picker open and remove only successfully
 closed rows from its cached snapshot, without inventory discovery. Preserve query,
 filters, and other marks on both supported fzf versions. Failed or canceled closes
 keep their row and show the outcome in the picker. Closing the last row leaves an
@@ -438,16 +781,9 @@ private snapshot as the rows. A named repository and prior discovery limits rema
 The kill multi-picker's Enter action confirms every marked session (or the
 focused row), including live local and remote agents; do not prompt again per
 target. Explicit close targets retain live-agent confirmation unless `-y` is
-supplied. Closing an unloaded desktop slot preserves history and its worktree;
-a running app or missing archived rollout alone does not block cleanup. Verify
-writer ownership before and after cleanup, and retain the reservation on failure.
-Close scopes sibling locks through readable conversation indexes and, for unindexed
-threads, validated rollout identity metadata. A lock with no workspace association
-does not veto every close. Selected and known same-worktree writers still block;
-shared backend processes and lock files remain untouched. These are safety rules
-within the existing close modes, with no new prompt or command.
+supplied.
 
-Saved Codex resume and handoffs also resolve unindexed held sibling locks from
+Saved Codex resumes also resolve unindexed held sibling locks from
 validated `session_meta` identity in active and archived rollouts. If that identity
 is not indexed or discoverable there, bounded open-file inspection of the exact
 lock holders can resolve it from their open rollout metadata. Process working
@@ -508,18 +844,6 @@ handoff descriptor for modes that need interactive control. Detached MCP opens
 and resumes retain the shared lifecycle checks and never attach a terminal.
 
 
-Desktop handoff refusals identify a verified conflicting conversation and give
-release instructions with the exact retry command before stopping the selected
-CLI. Keep missing-preview notices distinct from ownership failures. Retrying
-after the conflicting owner releases must preserve the selected conversation,
-recorded worktree and history, and unrelated writers.
-
-`session resume --app` retains the saved-conversation picker and accepts exactly
-one Codex row. Selection carries the immutable ID and recorded worktree through
-the existing guarded desktop handoff; live slots never substitute their current
-conversation. Remote owners, incompatible flags, unsupported agents, and multiple
-marks fail before launching. `--cli` explicitly selects the ordinary resume route.
-
 `session move` selects current CLI conversations through the shared multi picker
 when no exact slot or conversation ID is supplied, including inside an agent.
 A named repository or current checkout scopes selection; outside a checkout it
@@ -527,7 +851,9 @@ shows all repositories, and `--all` widens the scope. `--remote` adds registered
 remote sources. Select sessions first, then one destination host; `--host` supplies
 that destination explicitly. Esc/Ctrl-C cancels with 130 before starting work and
 an empty inventory is a successful no-op. Without a terminal/fzf, require explicit
-targets. Explicit slot/ID sends and `--from`/`--here` receives retain guarded routes.
+targets. Exact slots/IDs discover local and registered remote owners before
+destination selection, without requiring `--remote`. `--host local` receives here;
+`--from`/`--here` receives retain guarded routes.
 The legacy `beam` shortcut retains its implicit-current and default-host behavior.
 
 New worktree folders include the repository basename (`t/t-12`); numeric slot
@@ -538,7 +864,11 @@ Host picker headings state the action: Open a session on which host?, Start a
 new session on which host? with `--new`, Resume saved work on which host?, and
 Move this session to which host?. Resume explains that it browses that host's
 saved conversations; the selected host also runs the resumed session. Move
-labels the destination and current source host. Aliases and SSH targets remain
+labels the destination and verified source host. For remote-only selections it
+offers `local` / `this machine` before SSH hosts; selecting local receives here.
+For example, `t session move api 2` discovers its owner and offers destinations,
+and `t session move api 2 --host local` explicitly brings that conversation here.
+Aliases and SSH targets remain
 subordinate to the action heading. Missing
 hosts use `_t_fzf_single`, displaying alias and SSH target; Enter chooses exactly
 one, including when only one host exists. Esc/Ctrl-C returns 130 without starting
@@ -555,14 +885,19 @@ desktop reservations, saved history and unknown IDs. Select sessions first, then
 select one destination; explicitly named destinations skip the second picker.
 Multiple sessions move sequentially and detached. Stop on the first failure or
 cancellation and identify completed, failed and unattempted sessions.
-Repository scope uses home-relative checkout/worktree paths across hosts.
-If a named repository is absent locally, each remote source resolves the selector
-in its own registry; ambiguous selectors stop selection. A unique repo/slot match
+Repository scope accepts matching home-relative checkout/worktree paths across hosts.
+When a remote path differs, its source registry must resolve the repository selector
+and return the same live owner before it is included. If a named repository is absent
+locally, each remote source resolves the selector in its own registry. Ambiguous
+selectors or failed scope verification stop selection. A unique repo/slot match
 goes directly to the destination-host picker when `--host` is omitted. Duplicate
 slot labels retain their host identity. Explicit source plus slot/ID bypasses the
 session picker; an explicit target without source resolves a unique snapshot or
 requires selection when ambiguous. Destination selection excludes every alias of
-every selected source target, and never silently chooses the default host. Recheck host, ID,
+every selected source target (including local), and never silently chooses the
+default host. Local receives honor `--detach`, preserve the selected conversation
+identity through a source-side recheck, and stop on failed stop/push/sync steps.
+Recheck host, ID,
 path, label, agent and live ownership for every selection after both pickers before
 any mutation, then again on each source before stopping it. Failed scans or transfer steps fail closed. `session move --from A
 --host B` delegates the whole guarded send to A over `zsh -lic`, using controller
@@ -593,19 +928,59 @@ actual destination for inspection.
 The filtered resume batch also stops at the first failed or cancelled selection.
 Its final summary names the conversation, reason, retry command, ready-session
 attach commands, and number not attempted. No automatic attachment hides errors.
-It has no default 30-day
+Retained local transcripts use the same guarded destination allocator as remote
+history. Historical slot numbers are provenance, not reserved destinations:
+multiple conversations from one slot get independent safe destinations, and
+copies attributed to different slots launch only once. Allocation checks both
+local workspace paths and tmux names under every alias for the repository, then
+rechecks ownership before restoring a transcript. An unrelated remote slot with
+the same number or path does not occupy a local destination; conversation owners
+are still checked across hosts. For example, mark two saved conversations from
+slot 21 in `t session resume api`; both can resume without replacing a live owner.
+Repositories without a GitHub origin retain their exact local registration
+identity through selection and launch; an unregistered or changed path is refused.
+Paginated history has no default 30-day
 cutoff; Ctrl-F/B pages, Ctrl-R refreshes, and Ctrl-/ shows details.
-Explicit resume options (`--cli`, `--app`, `--fg`, `--host`, `--days`, `--live`,
+Explicit resume options (`--cli`, `--fg`, `--host`, `--days`, `--live`,
 `--remote`) retain the filtered resume picker and their existing semantics,
 including the recency limit and nonterminal saved selection. Internal resume
 callers retain their existing behavior.
 Progress spinner and canceled picker children never run the caller's shell
 session/history exit hooks; the caller's own hooks remain unchanged.
 
-`remote open [host] [repo] [slot]` and `remote resume [host] [repo] [slot]`
-use host-first targets. Explicit `[repo] [slot] --host HOST` retains compatibility;
-ambiguous legacy repository-only targets fail with guidance before SSH.
-`remote move` retains its source/destination flags and repo/slot positionals.
+`remote <family> <action> [host] [arguments]` mirrors public command families.
+The optional host follows the complete action (including nested resources) and
+identifies the source/execution machine. `remote session ls` queries all registered
+remote hosts; `remote session ls mini` queries only mini. Prefix `remote --host HOST`
+disambiguates a host from a repository. Never consume child option values or
+payloads as command words. Aliases normalize only at command boundaries.
+
+`remote open/resume/move [host] [repo] [slot]` use the same source-host position.
+`remote move mini api 2` selects mini as source, then asks for a destination;
+`--to local` receives here. Keep repo-first move/kill owner discovery and the
+released move `--from SOURCE --host DEST` spelling as compatibility input.
+`remote kill [host] [repo] [slot|all] [-y|--yes]` retains close confirmation and
+saved-work preservation. A lone slot still infers the repository. A chosen close
+host is final even if its owner disappears; never fall back to another host.
+
+Remote policy is explicit per command and mode: finite query, single-host action,
+session orchestration, or unsupported. JSON alone never makes an action read-only.
+Finite queries deduplicate SSH targets, retain stable host order and partial results,
+and return nonzero for any failure. Single-host output stays unchanged; multi-host
+JSON is one object with host-keyed `results` and `errors` (status and message).
+Lists/status never prompt or check for updates. Queries do not recursively fan out.
+Interactive actions select one host through shared UI; nonterminal actions require
+an explicit or verified target. Lifecycle workers retain cross-host ownership checks.
+
+Only commands that normally infer a current repository carry that scope. Map its
+verified identity on the source; fail on an unavailable mapping rather than using
+an unrelated alias. Never rewrite payload arguments that merely equal a repo name.
+Generic workers validate public command paths and protocol before acting, use
+quoted `zsh -lic` execution, and preserve return status. Basic unscoped finite lists
+have a read-only compatibility path for older peers; other modes require an update.
+Caller-shell-only operations, browser launches, private workers, and nested remote
+wrappers are rejected before connecting. Underlying command help remains local.
+
 Remote open reads and scopes inventory on the selected host, then uses the shared
 local picker and opens extra local tabs before the first attachment. Failed tab
 creation reports an exact attach command and a nonzero result. Desktop rows are
@@ -616,7 +991,7 @@ from an empty picker; `--new` is explicit. `remote resume` selects saved history
 on the chosen host using the existing filtered resume picker. `session resume
 --host H` sends the selected saved history to H. Live rows attach only
 when their owner matches H (including host aliases); a mismatch gives an exact
-`session move` instruction before any batch mutation. Desktop resume stays local.
+`session move` instruction before any batch mutation.
 
 Existing `t/12` folders and recorded conversation paths remain valid. Both
 layouts appear in list and navigation results. Ambiguous simultaneous layouts
@@ -639,6 +1014,15 @@ renderer projections, table output, details, and JSON against the definitions.
 | HOST | The reported owner or retained association host. Local `t ls` can omit this column; history includes it. |
 | SESSION | The repository/slot or foreground-session label. It is distinct from the immutable conversation ID. |
 | WORKING ON | The current owner's working-on text, recorded summary, or retained conversation title. History includes up to three associated PR references and states, with an additional count when needed. |
+
+Bare `t session list` (`t ls` / `t list`) includes every repository, even inside
+another repository's checkout or worktree, matching bare `t session open`.
+An explicit repository scopes the list: `t session list api`; `--all` explicitly
+selects the default all-repository view and conflicts with an explicit repository.
+Attached, detached and idle sessions remain visible. `-r` adds registered remote
+hosts without changing repository scope; unavailable-host warnings preserve
+reachable results. For example, run `t ls -r` for all repositories across hosts,
+or `t ls api -r` for only api.
 
 `t session list` additionally places LAST TURN in the final column, after WORKING ON.
 It shows the latest turn initiation as `YYYY-MM-DD HH:MM:SS TZ` in the viewer's
@@ -675,6 +1059,13 @@ The filtered multi-selection mode of `t session open` prioritizes session identi
 and working-on text. It omits LAST TURN, previews, and the new-session shortcut.
 Compact rows use the shared Unicode width helpers; full task text and metadata
 remain searchable. Hidden host/session/state identity fields remain unchanged.
+Extra tabs target the originating terminal window and commands target only the
+new tab. Switching tabs or windows never redirects commands into an existing tab.
+Terminal tab creation requires the originating window in front. If focus moves
+away, the origin is unavailable, or tab creation fails or is ambiguous, create a
+new window with its command atomically, without an activate call. If window
+creation also fails, retain the attach-command fallback and expose the automation
+error. iTerm uses the tab returned by its creation API.
 Explicit targets still bypass selection. Open and close pickers label displayed
 columns in a non-selectable header preserved across filter changes. Narrow
 filtered views use full height and smaller margins to retain controls and rows.
@@ -717,34 +1108,9 @@ projection are additive metadata. They must not replace raw identity or evidence
 JSON and non-TTY listings never select or resume; JSON has no ANSI styling,
 presentation headers, or prompts.
 
-Automatic fresh-slot allocation skips known remote desktop reservations from
-one discovery snapshot; explicit slot requests still refuse conflicting owners.
-Fresh local opens may continue after incomplete remote discovery when the local
-slot is unused. Reopening a locally reserved desktop workspace also tolerates
-unavailable hosts after checking local ownership. Desktop claims scan remote
-owners once; known remote owners still block, and local terminal writers still
-prevent reopening. Open, close, resume, and remote move source pickers retain reachable rows when a
-registered host is unavailable. Saved CLI and desktop resumes warn that skipped
-ownership could not be verified, then continue through local locks and known-owner
-checks on reachable hosts. Failed local scans remain fatal. Other unreserved
-workspace claims and live transfers retain strict ownership checks.
-Warnings are amber on capable stderr terminals and plain with NO_COLOR, dumb
-terminals, or redirected stderr; scanner and machine stdout stay unchanged.
-This includes unavailable-host warnings from `t session list -r` (`t ls -r`):
-local and reachable sessions remain listed. Failed remote scans include the exit
-status and up to 1024 bytes of terminal-safe SSH stderr; exit 255 reports an SSH
-scan failure rather than asserting that the host is offline. Successful scans
-suppress SSH stderr, and scanner stdin is disconnected. Redirecting stdout alone keeps
-warnings amber when stderr is still a capable terminal.
-Picker helpers return without running the caller's
-shell exit hooks or saving its history. Zsh picker profiles wait for fzf in a
-noninteractive worker, retain ownership through child stop/resume, and clean up
-their private files after completion or cancellation. All Codex
-CLI starts and resumes use an invocation-local backend (`--no-daemon`).
-These are direct-action behaviors within the existing open/resume modes.
-Saved Codex resumes validate the original rollout identity and selected writer
-lock, then check sibling writers against the claimed destination workspace.
-A writer in a reused original slot does not block a different destination.
+Fresh local slots tolerate unavailable remote hosts while checking known owners,
+including legacy reservations reported by older peers. Saved CLI resumes warn
+and continue checking local and reachable owners.
 
 Issue starts warn and skip unavailable registered hosts and unconfigured optional
 cloud providers. Saved resume routes retain local checks and known owners while
@@ -772,8 +1138,8 @@ a no-op. Linked/session worktrees and conflicting aliases or checkout directory
 names are rejected. The config repository menu asks for a path (default
 `~/config`), suggests its directory name as the alias, and retains review before
 save. `t config setup [dirs ...]` defaults to scanning `~/config`.
-Successful setup (including no-op and dry-run) prints desktop **Review hooks →
-Allow selected** and CLI `/hooks` guidance when t's Codex hook is registered.
+Successful setup (including no-op and dry-run) prints CLI `/hooks` guidance
+when t's Codex hook is registered.
 This is informational output within the existing wizard/detail modes: no new
 picker, app launch, or hook trust mutation. Installation repeats the guidance
 for existing registrations; `t system diagnose` stays read-only.
@@ -920,8 +1286,99 @@ Bare `t workflow` in a terminal opens the shared RailUI workflow editor. Outside
 a terminal, or with `--help`, it prints group help without writes. `t workflow
 list` stays read-only and never opens the editor. The editor lists named workflows
 and repository assignments, stages all edits, and reviews before saving. Its
-work and delivery menu explains working folders, design previews, checks and
-where delivery stops. Text instructions have higher precedence than those
+PRs, previews & tests menu offers concise choices for pull requests, local
+preview and tests, with Frontend and CLI settings nested under Local preview.
+Text instructions have higher precedence than those
 choices. List output presents that precedence before choices and humanizes model
 reasoning; the named catalogue avoids repeating complete per-workflow blocks.
 The hidden `t config workflows` compatibility route opens the same editor.
+
+In the Use multiple models checklist, Enter and q/Esc Back retain the current
+marks as staged policy changes, including the exclusive one-model reset. Back
+does not publish; normal review/save/discard applies to the complete transaction.
+
+`t workflow` includes a Codex **Inference & routing** submenu with Disabled,
+Manual, Automatic hybrid and Local only modes, explicit local model, context and
+task budget. **On cloud connection failure** stages Pause and retry (default) or
+Continue locally with selected model. Only new native CLI launches opt into the
+owned runtime supervisor; the native client supplies progress and approvals.
+The transition displays the connection-failure reason, exact provider/model and
+private checkpoint path, then stays local. It never downloads weights or treats
+authentication, quota, HTTP application failures, auxiliary threads or cancellation
+as an outage. Unsupported resume/fork/exec/review or remote/profile/OSS/worktree
+overrides fail before launch and explain how to select Pause. These are conditional
+launch modes, not new public command families. These are staged workflow choices. The shared model picker keeps
+Memory fit ✓/✕/? visible on narrow screens. Unknown/non-fitting models are dimmed
+and inspectable; disabled Use/Install actions explain why and never execute.
+Benchmark suite selection is explicit; missing scores and speed are not invented.
+Show benchmark sources/harnesses and measured speed only in model details.
+Installation and measurement are explicit immediate actions with model selection;
+model download review precedes installation. `t config models show` is read-only;
+`install` and `measure` are direct explicit-artifact actions. `--download-only`
+does not claim inference readiness. No list/show mode starts a runtime or picker.
+
+## Standalone companion: nosleep
+
+The package installs `nosleep` alongside `t`; it is not a `t` subcommand.
+`standalone_commands` in the inventory classifies its monitoring, help,
+configuration and hotspot setup modes. The standalone executable loads only its
+own runtime, without dotfiles, user startup files or session registration.
+The optional zsh adapter shares that runtime and preserves shell-local activity
+thresholds and application mappings. Loading either adapter never starts a hold.
+
+`t config → Nosleep` opens the same `_RailUI` editor as `nosleep config`,
+returning to the hub afterward. Save or discard hub edits before opening the
+independently saved editor. Blank, nonselectable rail rows separate its sections.
+Nearby-network selection includes refresh, the saved network and manual entry.
+Explicit **Enable network discovery** builds the local CoreWLAN/CoreLocation app
+and requests Location permission; browsing and monitoring never request it.
+Password setup stays pending until review, then uses a private Keychain prompt.
+`nosleep hotspot setup` remains a compatibility route.
+
+The runtime observes the selected SSID asynchronously even when fallback or
+checks are disabled. The dashboard separates fallback policy from association and
+availability. Missing permission, radio off, timeouts and stale observations never
+claim a network is absent. Observations do not alter the existing outage policy.
+`nosleep --help` and `nosleep config --show` never prompt, change power settings,
+join networks or write configuration. Existing flags, machine-local config paths
+and Keychain identifiers remain compatible. Installation does not grant sudo or
+start monitoring. Runtime monitoring and hotspot joins require macOS; help and
+configuration remain usable elsewhere. Native macOS assertion tests are opt-in.
+
+### Local inference activity
+
+In an owned tmux pane, local lead and worker launches add a compact
+`local MODEL · inferring` status segment only during observed model requests.
+Loading, work between requests, idle and failure are separate states. Pane ancestry
+and pane generation prevent activity from another session being shown. Missing
+ownership hides the indicator; records expire after twelve seconds and the bar
+refreshes at least every two seconds.
+No prompts or credentials are stored. Outside tmux inference is unchanged.
+
+The session name and worktree sit at the left; existing custom tmux content is
+retained. Codex's native model, effort and context footer remains unchanged.
+Long labels are bounded, and the full artifact remains in local-worker details.
+This adds no public command and does not select or install a model.
+
+Development preview: `python3 scripts/preview_local_status.py` from this
+worktree in a terminal. It uses an isolated tmux server, sample activity and
+temporary HOME/state; it never calls a model or edits real configuration.
+
+### Workflow model overview
+
+The existing local-model single-selection mode opens a compact RailUI overview
+with model identity, readiness, file size, memory fit, context and the next action.
+Use shared nonselectable context rows and the shared viewport; keep the focused
+action and footer visible at 80×24, 44×20 and 32×12. Benchmarks and Artifact &
+runtime are separate read-only views; sources/methodology remains accessible.
+Wrap detail text within the rail, including URLs and revisions. Back retains focus.
+
+Downloaded models offer Verify readiness with a review of file reuse and context.
+The explicit action reuses complete files, loads the exact artifact, checks its
+context and response text, releases owned resources and refreshes the overview.
+Use in workflow requires readiness and remains staged; verification is immediate.
+A failed check retains files and shows the runtime error; cancellation invalidates
+old verification evidence. Special memory-mapped artifacts may be checked when
+the publisher's resident estimate and minimum RAM fit; fit remains unknown until
+verified. Runtime guardrails are never bypassed. These extend existing wizard,
+single-selection, detail and install action modes; no new public command.

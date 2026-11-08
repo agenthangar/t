@@ -42,6 +42,9 @@ def lifecycle(tmp_path):
     repo = base / "repo"
     for directory in (home, bindir, base / "tmux", base / "codex"):
         directory.mkdir()
+    # Pin the checkout under test; an installed t earlier on the developer's
+    # PATH otherwise makes the plugin select canonical main in this sandbox.
+    (bindir / "t").symlink_to(ROOT / "bin/t")
     real_tmux = shutil.which("tmux")
     # Unix socket paths have a small kernel length limit on macOS. Use a unique
     # short /tmp name while keeping all server contents in the isolated HOME.
@@ -287,6 +290,7 @@ def test_public_resume_revives_saved_thread_once(lifecycle, agent, leaf, swept):
     assert checkout.returncode == 0, checkout.stderr
     if agent == "codex":
         codex_home = base / "codex"
+        (codex_home / "thread-writer-locks").mkdir()
         transcript = codex_home / ("rollout-2026-10-11T00-00-00-" + SID + ".jsonl")
         transcript.write_text(json.dumps({"type": "session_meta", "payload": {
             "id": SID, "cwd": str(worktree), "source": "cli", "cli_version": "0.160.0"}}) + "\n" +
@@ -309,10 +313,15 @@ def test_public_resume_revives_saved_thread_once(lifecycle, agent, leaf, swept):
             "sessionId": SID, "message": {
             "role": "user", "content": "Resume my saved work"}},
             separators=(",", ":")) + "\n")
+    # Real lifecycle hooks retain the conversation's revision and workspace
+    # generation. Without that evidence safe history resume must ask before
+    # choosing a revision, rather than borrowing today's slot branch.
+    recorded = _shell(base, env, f'_dev_history_record {SID} {agent} {shlex.quote(str(worktree))} resume')
+    assert recorded.returncode == 0, recorded.stderr
     if swept:
         removed = _run(["git", "-C", str(repo), "worktree", "remove", str(worktree)], env=env, cwd=base)
         assert removed.returncode == 0, removed.stderr
-    (base / "cache" / "claude-sessions").mkdir(parents=True)
+    (base / "cache" / "claude-sessions").mkdir(parents=True, exist_ok=True)
     listed = _shell(base, env, "t session resume repo 1")
     assert listed.returncode == 0, listed.stderr
     assert "1 conversations" in listed.stdout
@@ -322,256 +331,12 @@ def test_public_resume_revives_saved_thread_once(lifecycle, agent, leaf, swept):
     log = base / "agents.log"
     launches = _until(lambda: log.read_text().splitlines() if log.exists() else None)
     assert len(launches) == 1
-    expected = "|resume|" + SID + "|--no-daemon" if agent == "codex" else "|-r|" + SID
+    destination = base / "worktrees/repo/repo-2" if swept else worktree
+    expected = "|resume|" + SID + "|--cd|" + str(destination) + "|--no-daemon" if agent == "codex" else "|-r|" + SID
     assert launches[0].endswith(expected)
-    assert str(worktree) in launches[0]
-    opened = _shell(base, env, "t session open repo 1")
+    assert str(destination) in launches[0]
+    assert destination.is_dir()
+    opened = _shell(base, env, f"t session open repo {2 if swept else 1}")
     assert opened.returncode == 0, opened.stderr
     assert log.read_text().splitlines() == launches
     assert transcript.is_file()
-
-
-def _install_app_bridge(base):
-    bindir = base / "bin"
-    bridge = bindir / "t"
-    bridge.write_text("#!/bin/sh\n" +
-                      "case \"$1\" in\n" +
-                      "  _app-workspace) printf 'workspace|%s|%s\\n' \"$2\" \"$3\" >> \"$T_TEST_APP_LOG\"; exit 0 ;;\n" +
-                      "  _app-open-cli)\n" +
-                      "    gitdir=$(git -C \"$T_TEST_WT\" rev-parse --absolute-git-dir) || exit 1\n" +
-                      "    tmux new-session -d -s dev-repo-1 -c \"$T_TEST_WT\" \"$T_TEST_BIN/codex\" resume " + SID + " || exit 1\n" +
-                      "    tmux set-environment -t =dev-repo-1 CLAUDE_RESUME_ID " + SID + " || exit 1\n" +
-                      "    tmux set-environment -t =dev-repo-1 DEV_AGENT codex || exit 1\n" +
-                      "    rm \"$gitdir/t-app-slot\" || exit 1\n" +
-                      "    printf 'pull|%s|%s\\n' \"$2\" \"$3\" >> \"$T_TEST_APP_LOG\"\n" +
-                      "    printf 'dev-repo-1\\n'; exit 0 ;;\n" +
-                      "  app)\n" +
-                      "    gitdir=$(git -C \"$T_TEST_WT\" rev-parse --absolute-git-dir) || exit 1\n" +
-                      "    tmux show-environment -t =dev-repo-1 CLAUDE_RESUME_ID >> \"$T_TEST_APP_LOG\" || exit 1\n" +
-                      "    tmux kill-session -t =dev-repo-1 || exit 1\n" +
-                      "    printf 'codex-app\\n' > \"$gitdir/t-app-slot\"\n" +
-                      "    printf 'push|%s|%s\\n' \"$2\" \"$3\" >> \"$T_TEST_APP_LOG\"\n" +
-                      "    exit 0 ;;\n" +
-                      "esac\n" +
-                      "exec " + shlex.quote(sys.executable) + " " +
-                      shlex.quote(str(ROOT / "bin" / "t")) + " \"$@\"\n")
-    bridge.chmod(0o755)
-
-
-def _install_production_bridge(base):
-    """Load production bin/t, replacing only native Codex app delivery."""
-    bridge = base / "bin" / "t"
-    bridge.write_text("#!/usr/bin/env python3\n" +
-        "import importlib.util, os, subprocess, sys\n" +
-        "from importlib.machinery import SourceFileLoader\n" +
-        "path = " + repr(str(ROOT / "bin" / "t")) + "\n" +
-        "loader = SourceFileLoader('t_lifecycle_bin', path)\n" +
-        "spec = importlib.util.spec_from_loader('t_lifecycle_bin', loader)\n" +
-        "mod = importlib.util.module_from_spec(spec)\n" +
-        "sys.modules[spec.name] = mod\n" +
-        "loader.exec_module(mod)\n" +
-        "mod._app_bundle = lambda: '/tmp/disposable-codex.app'\n" +
-        "class Window:\n    def focus(self): pass\n" +
-        "mod._app_new_window = lambda bundle: Window()\n" +
-        "real_run = mod._run\n" +
-        "def run(argv, **kwargs):\n" +
-        "    if argv and argv[0] == 'open':\n" +
-        "        with open(os.environ['T_TEST_APP_LOG'], 'a') as out:\n" +
-        "            out.write('native|' + '|'.join(argv[3:]) + '\\n')\n" +
-        "        return subprocess.CompletedProcess(argv, 0, '', '')\n" +
-        "    return real_run(argv, **kwargs)\n" +
-        "mod._run = run\n" +
-        "sys.exit(mod.main(sys.argv[1:]))\n")
-    bridge.chmod(0o755)
-
-
-@pytest.mark.skipif(sys.platform != "darwin", reason="app opening requires macOS")
-def test_public_app_cli_app_round_trip_keeps_worktree_and_thread(lifecycle):
-    base, env = lifecycle
-    _install_app_bridge(base)
-    worktree = base / "worktrees" / "repo" / "repo-1"
-    fresh = _shell(base, env, "t session open repo 1 --app")
-    assert fresh.returncode == 0, fresh.stderr
-    gitdir = _run(["git", "-C", str(worktree), "rev-parse", "--absolute-git-dir"],
-                  env=env, cwd=base).stdout.strip()
-    marker = Path(gitdir) / "t-app-slot"
-    assert marker.read_text() == "codex-app\n"
-    assert not (base / "agents.log").exists()
-    history = base / "codex" / "history.jsonl"
-    history.write_text(json.dumps({"thread": SID, "cwd": str(worktree),
-                                   "message": "Keep this work"}) + "\n")
-    # Reproduce the reported failure alongside this round trip: two unrelated
-    # desktop backends hold locks with no local state DB row. The production
-    # ownership helper must allow a target-scoped open, while destructive close
-    # retains its strict unknown-owner check.
-    rollout = base / "codex" / "rollout.jsonl"
-    rollout.write_text(json.dumps({"type": "session_meta", "payload": {
-        "id": SID, "cwd": str(worktree), "cli_version": "0.160.0"}}) + "\n")
-    locks = base / "codex" / "thread-writer-locks"
-    locks.mkdir()
-    (locks / (SID + ".lock")).touch()
-    paths = [locks / (other + ".lock") for other in UNINDEXED]
-    for path in paths:
-        path.touch()
-    with sqlite3.connect(base / "codex" / "state_5.sqlite") as db:
-        db.execute("create table threads (id text, cwd text)")
-        db.execute("insert into threads values (?, ?)", (SID, str(worktree)))
-    holder = subprocess.Popen([sys.executable, "-c",
-        "import fcntl,sys; files=[open(p,'r') for p in sys.argv[1:]]; "
-        "[fcntl.flock(f,fcntl.LOCK_EX) for f in files]; "
-        "print('ready',flush=True); sys.stdin.read()", *map(str, paths)],
-        env=env, cwd=base, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE, text=True)
-    try:
-        assert holder.stdout.readline().strip() == "ready"
-        handoff = runpy.run_path(str(ROOT / "libexec" / "t_app_handoff.py"))
-        options = dict(codex_home=str(base / "codex"), rollout=str(rollout))
-        unknown = set()
-        fake_run = lambda argv, **kwargs: subprocess.CompletedProcess(argv, 1, "", "")
-        handoff["assert_released"](None, SID, str(worktree), fake_run,
-                                   **options, unknown=unknown)
-        assert unknown == set(UNINDEXED)
-        assert handoff["preflight_cli_release"](SID, str(worktree),
-                                                **options, unknown=set()) == "modern"
-        with pytest.raises(ValueError, match="could not be matched to its worktree"):
-            handoff["assert_released"](None, SID, str(worktree), fake_run, **options)
-    finally:
-        holder.stdin.close()
-        holder.wait(timeout=5)
-        holder.stdout.close()
-        holder.stderr.close()
-    for cycle in range(2):
-        pulled = _shell(base, env, "t session open repo 1 --cli")
-        assert pulled.returncode == 0, pulled.stderr
-        assert not marker.exists()
-        launches = _until(lambda: (base / "agents.log").read_text().splitlines()
-                          if (base / "agents.log").exists() and
-                          len((base / "agents.log").read_text().splitlines()) == cycle + 1
-                          else None)
-        assert launches[-1].endswith("|resume|" + SID)
-        assert str(worktree) in launches[-1]
-        pushed = _shell(base, env, "t session open repo 1 --app")
-        assert pushed.returncode == 0, pushed.stderr
-        assert marker.read_text() == "codex-app\n"
-        reopened = _shell(base, env, "t session open repo 1")
-        assert reopened.returncode == 0, reopened.stderr
-        assert marker.read_text() == "codex-app\n"
-        assert (base / "agents.log").read_text().splitlines() == launches
-        assert json.loads(history.read_text())["thread"] == SID
-        assert worktree.is_dir()
-    assert (base / "app.log").read_text().splitlines() == [
-        f"workspace|{worktree}|", "pull|repo|1", f"CLAUDE_RESUME_ID={SID}",
-        "push|repo|1", f"workspace|{worktree}|--reopen", "pull|repo|1",
-        f"CLAUDE_RESUME_ID={SID}", "push|repo|1",
-        f"workspace|{worktree}|--reopen"]
-
-
-@pytest.mark.skipif(sys.platform != "darwin", reason="app opening requires macOS")
-def test_public_cli_first_sends_exact_thread_to_app(lifecycle):
-    base, env = lifecycle
-    _install_app_bridge(base)
-    started = _shell(base, env, "t session open repo 1 --codex")
-    assert started.returncode == 0, started.stderr
-    worktree = base / "worktrees" / "repo" / "repo-1"
-    _until(lambda: (base / "agents.log").is_file())
-    stamped = _run([str(base / "bin" / "tmux"), "set-environment", "-t",
-                    "=dev-repo-1", "CLAUDE_RESUME_ID", SID], env=env, cwd=base)
-    assert stamped.returncode == 0, stamped.stderr
-    history = base / "codex" / "history.jsonl"
-    history.write_text(json.dumps({"thread": SID, "cwd": str(worktree),
-                                   "message": "Started in the CLI"}) + "\n")
-    sent = _shell(base, env, "t session open repo 1 --app")
-    assert sent.returncode == 0, sent.stderr
-    gitdir = _run(["git", "-C", str(worktree), "rev-parse", "--absolute-git-dir"],
-                  env=env, cwd=base).stdout.strip()
-    assert (Path(gitdir) / "t-app-slot").read_text() == "codex-app\n"
-    assert (base / "app.log").read_text().splitlines() == [
-        f"CLAUDE_RESUME_ID={SID}", "push|repo|1"]
-    assert json.loads(history.read_text())["thread"] == SID
-    assert _run([str(base / "bin" / "tmux"), "has-session", "-t", "=dev-repo-1:"],
-                env=env, cwd=base).returncode != 0
-
-
-@pytest.mark.skipif(sys.platform != "darwin", reason="app opening requires macOS")
-@pytest.mark.parametrize("first_mode", ["app", "cli"])
-def test_production_app_coordinator_round_trip_with_unindexed_writers(lifecycle, first_mode):
-    base, env = lifecycle
-    _install_production_bridge(base)
-    worktree = base / "worktrees" / "repo" / "repo-1"
-    if first_mode == "app":
-        with (base / "config" / "t" / "local.zsh").open("a") as config:
-            config.write("DEV_OPEN_MODE_DEFAULT=app\n")
-        opened = _shell(base, env, "t session open repo 1")
-    else:
-        (base / "cache" / "claude-sessions").mkdir(parents=True)
-        env["T_TEST_FRESH_SID"] = SID
-        opened = _shell(base, env, "t session open repo 1 --codex --cli")
-    assert opened.returncode == 0, opened.stderr
-    gitdir = _run(["git", "-C", str(worktree), "rev-parse", "--absolute-git-dir"],
-                  env=env, cwd=base).stdout.strip()
-    marker = Path(gitdir) / "t-app-slot"
-    if first_mode == "app":
-        assert marker.read_text() == "codex-app\n"
-    else:
-        assert not marker.exists()
-        _until(lambda: (base / "agents.log").is_file())
-        stamped = _run([str(base / "bin" / "tmux"), "set-environment", "-t",
-                        "=dev-repo-1", "CLAUDE_RESUME_ID", SID], env=env, cwd=base)
-        assert stamped.returncode == 0, stamped.stderr
-    codex_home = base / "codex"
-    rollout = codex_home / "rollout.jsonl"
-    rollout.write_text(json.dumps({"type": "session_meta", "payload": {
-        "id": SID, "cwd": str(worktree), "source": "cli", "cli_version": "0.160.0"}}) + "\n" +
-        json.dumps({"type": "response_item", "payload": {"type": "message",
-                    "role": "user", "content": [{"type": "input_text",
-                    "text": "Keep the original conversation"}]}}) + "\n")
-    with sqlite3.connect(codex_home / "state_5.sqlite") as db:
-        db.execute("create table threads (id text, rollout_path text, cwd text, "
-                   "name text, title text, updated_at integer, archived integer, "
-                   "source text, first_user_message text)")
-        db.execute("insert into threads values (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                   (SID, str(rollout), str(worktree), None, "Original task", 1, 0,
-                    "cli", "Keep the original conversation"))
-    locks = codex_home / "thread-writer-locks"
-    locks.mkdir(exist_ok=True)
-    (locks / (SID + ".lock")).touch()
-    other_locks = [locks / (other + ".lock") for other in UNINDEXED]
-    for path in other_locks:
-        path.touch()
-    holder = subprocess.Popen([sys.executable, "-c",
-        "import fcntl,sys; files=[open(p,'r') for p in sys.argv[1:]]; "
-        "[fcntl.flock(f,fcntl.LOCK_EX) for f in files]; "
-        "print('ready',flush=True); sys.stdin.read()", *map(str, other_locks)],
-        env=env, cwd=base, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE, text=True)
-    try:
-        assert holder.stdout.readline().strip() == "ready"
-        if first_mode == "cli":
-            pushed_first = _shell(base, env, "t session open repo 1 --app")
-            assert pushed_first.returncode == 0, pushed_first.stderr
-            assert "other held Codex writer lock(s)" in pushed_first.stderr
-            assert marker.read_text() == "codex-app\n"
-            assert (base / "agents.log").read_text().count(str(worktree)) == 1
-        pulled = _shell(base, env, "t session open repo 1 --cli")
-        assert pulled.returncode == 0, pulled.stderr
-        assert "other held Codex writer lock(s)" in pulled.stderr
-        assert not marker.exists()
-        agent_log = base / "agents.log"
-        _until(lambda: agent_log.is_file() and "|resume|" + SID in agent_log.read_text())
-        assert str(worktree) in agent_log.read_text()
-        pushed = _shell(base, env, "t session open repo 1 --app")
-        assert pushed.returncode == 0, pushed.stderr
-        assert "other held Codex writer lock(s)" in pushed.stderr
-        assert marker.read_text() == "codex-app\n"
-        assert rollout.read_text().count("Keep the original conversation") == 1
-        native = (base / "app.log").read_text().splitlines()
-        if first_mode == "app":
-            assert native[0].startswith("native|codex://threads/new?mode=codex&path=")
-        else:
-            assert native[0] == "native|codex://threads/" + SID
-        assert native[-1] == "native|codex://threads/" + SID
-    finally:
-        holder.stdin.close()
-        holder.wait(timeout=5)
-        holder.stdout.close()
-        holder.stderr.close()

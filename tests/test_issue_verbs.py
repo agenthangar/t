@@ -185,12 +185,13 @@ def test_attach_many_opens_extra_tabs_after_dedup_and_prints_fallback(mod, cfg, 
     assert app.attach_many([]) == 0
 
 
-def test_attach_many_keeps_app_resume_path_and_first_result(mod, cfg, monkeypatch):
+def test_attach_many_rejects_legacy_app_before_any_attachment(mod, cfg, monkeypatch):
     app = mod.IssueCommand(cfg, {'_t_source_root': lambda: str(ROOT)})
     app_row = {'host': 'local', 'session': 'dev-repo-2', 'alias': 'repo', 'slot': '2', 'app': True}
     main_row = {'host': 'local', 'session': 'dev-repo-1'}
-    monkeypatch.setattr(mod.subprocess, 'call', lambda argv: 7 if argv[0] == 'zsh' else 0)
-    assert app.attach_many([main_row, app_row]) == 7
+    monkeypatch.setattr(mod.subprocess, 'call', lambda argv: pytest.fail('must reject before attaching'))
+    with pytest.raises(mod.IssueError, match='retired integration'):
+        app.attach_many([main_row, app_row])
 
 
 def test_mixed_number_and_url_deduplicate_canonical_issue(mod, cfg, monkeypatch):

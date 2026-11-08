@@ -29,6 +29,7 @@ def setup_list(t_mod, monkeypatch, remote=False):
 @pytest.mark.parametrize('terminal', [False, True])
 def test_list_always_prints_scoped_table(t_mod, monkeypatch, capsys, remote, terminal):
     cfg, args, calls = setup_list(t_mod, monkeypatch, remote)
+    args.repo = 'api'
     monkeypatch.setattr(t_mod.sys.stdin, 'isatty', lambda: terminal)
     monkeypatch.setattr(t_mod.sys.stdout, 'isatty', lambda: terminal)
     monkeypatch.setattr(t_mod.subprocess, 'run', lambda *a, **k: pytest.fail('list launched a picker'))

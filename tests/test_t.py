@@ -767,7 +767,8 @@ def test_parse_install_links_matches_the_real_install_sh(t_mod):
     root = os.path.dirname(os.path.dirname(os.path.abspath(t_mod.__file__)))
     with open(os.path.join(root, "install.sh")) as f:
         pairs = t_mod._parse_install_links(f.read())
-    assert len(pairs) == 8
+    assert len(pairs) == 9
+    assert ("bin/nosleep", "$HOME/bin/nosleep") in pairs
     assert ("bin/t-session-start", "$HOME/bin/t-session-start") in pairs
     assert ("bin/claude-stamp-tmux", "$HOME/bin/claude-stamp-tmux") in pairs
     dsts = [d for _, d in pairs]
@@ -2102,12 +2103,11 @@ def test_ls_scope_explicit_repo_from_anywhere(t_mod, tmp_path, monkeypatch):
     assert wt == "/Users/me/code/.worktrees/dotfiles"
 
 
-def test_ls_scope_defaults_to_cwd_repo(t_mod, tmp_path, monkeypatch):
+def test_ls_scope_defaults_to_all_repos(t_mod, tmp_path, monkeypatch):
     cfg = _config_with(t_mod, tmp_path, monkeypatch, {"api": "/Users/me/code/api"},
                        worktree_root="/Users/me/wt")
-    assert t_mod._ls_scope(cfg, None, False, "/Users/me/code/api/src") == \
-        ("/Users/me/code/api", "/Users/me/wt/api")
-    assert t_mod._ls_scope(cfg, None, False, "/Users/me") == ("", "")
+    for cwd in ("/Users/me/code/api/src", "/Users/me/wt/api/api-7", "/Users/me"):
+        assert t_mod._ls_scope(cfg, None, False, cwd) == ("", "")
 
 
 def test_ls_scope_all_widens(t_mod, tmp_path, monkeypatch):
@@ -2177,7 +2177,7 @@ def test_repo_group_help_and_command_usage(t_mod, capsys):
 
 
 @pytest.mark.parametrize("verb", [
-    "open", "app", "ls", "kill", "restart", "push", "pop", "resume", "cd",
+    "open", "ls", "kill", "restart", "push", "pop", "resume", "cd",
     "beam", "read", "plan", "paste", "find", "on", "repo", "cursor",
     "config", "setup", "new", "checkout", "instructions", "install",
     "integrate", "update", "permissions", "trust", "doctor",
@@ -2329,8 +2329,8 @@ def test_list_columns_align_interface_model_and_context(t_mod, capsys, remote):
         assert header.index(heading) == body.index(content)
     assert 'Codex desktop workspace' not in body
     if not remote:
-        assert 'follow release instructions if the conversation is still loaded' in lines[-1]
-        assert 't open <repo> <slot> --cli' in lines[-1]
+        assert '--app' not in lines[-1]
+        assert 't open <repo> <slot>' in lines[-1]
 
 
 @pytest.mark.parametrize('flags,scan', [([], '_dev_rows_all --details'),

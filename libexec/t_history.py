@@ -1308,14 +1308,6 @@ class HistoryCommand:
                 return association, commit
         return associations[0] if associations else {}, ''
 
-    def cross_host_handoff(self, row, host):
-        if not host or host == 'local':
-            return
-        if self.cfg.handoff_for(row['agent']) == 'native':
-            raise HistoryError('Codex cross-host handoff uses the native desktop app from ' + host +
-                '; open this chat in Codex, choose its footer run location, select the destination, then Hand off. '
-                'Save the same repository as a project on both hosts. No supported CLI adapter; no transfer started. '
-                'To explicitly choose t transfer: t config → Codex settings → Cross-host handoff → t, then Save changes.')
 
     def source(self, row):
         for source in sorted(row['sources'], key=lambda source: (source.get('updated', 0), source.get('size', 0)), reverse=True):
@@ -1327,7 +1319,6 @@ class HistoryCommand:
                 basename = Path(source['path']).name
                 if row['agent'] == 'codex' and (not basename.startswith('rollout-') or row['sid'] not in basename):
                     raise HistoryError('remote Codex rollout filename does not match its identity')
-                self.cross_host_handoff(row, source['host'])
                 destination = self.store.directory / 'transcripts' / row['agent'] / basename
                 destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
                 remote = self.cfg.hosts[source['host']] + ':' + source['path']
@@ -1355,7 +1346,7 @@ class HistoryCommand:
 
     def attach_command(self, owner):
         if owner.get('state') == 'app':
-            raise HistoryError('conversation is owned by the desktop app on ' + owner['host'] + '; close and release it there, then use t app pull for the verified handoff')
+            raise HistoryError('conversation is owned by the desktop app on ' + owner['host'] + '; release it there, then retry t session history')
         if ':' in owner['slot']:
             raise HistoryError('conversation is already running in foreground ' + owner['slot'] + ' on ' + owner['host'] + '; return to that terminal or use t session push there for an explicit handoff')
         # Attach-only helper rechecks exact ID/path/agent and has no launch fallback.
@@ -1407,6 +1398,16 @@ class HistoryCommand:
         run(['git', '-C', directory, 'fetch', 'origin', 'main'])
         return run(['git', '-C', directory, 'rev-parse', 'origin/main^{commit}']).strip()
 
+    def destination_busy(self, alias, slot, paths, owners):
+        """A local slot is occupied by either its path or any repository alias."""
+        directory = os.path.realpath(self.cfg.repos[alias])
+        names = {f'{name}-{slot}' for name, path in self.cfg.repos.items()
+                 if os.path.realpath(path) == directory}
+        paths = {os.path.realpath(path) for path in paths}
+        return any(owner.get('host', 'local') == 'local' and
+                   (owner['slot'] in names or os.path.realpath(owner['cwd']) in paths)
+                   for owner in owners)
+
     def destination(self, alias, row, revision, owners):
         if not self.worktree_enabled(alias):
             raise HistoryError('repository opts out of worktree-per-session; no workspace was created')
@@ -1421,7 +1422,7 @@ class HistoryCommand:
         historical_path = workspace if workspace in candidates else None
         if any(os.path.lexists(p) for p in candidates if p != workspace):
             historical_path = None
-        busy = {os.path.realpath(owner['cwd']) for owner in owners}
+        busy = self.destination_busy(alias, historical_slot, candidates, owners)
         latest = []
         if historical_path:
             for conversation in self.store.records():
@@ -1430,7 +1431,7 @@ class HistoryCommand:
                         latest.append((a.get('observed', 0), conversation['sid'], conversation['agent']))
         current_identity = max(latest, default=(0, '', ''))[1:]
         # Reuse only when both revision and provenance match, never by branch name alone.
-        if historical_path and association.get('generation') and association['generation'] == generation(historical_path) and current_identity == (row['sid'], row['agent']) and recorded == revision and association.get('host') == 'local' and os.path.realpath(association.get('workspace', '')) == os.path.realpath(historical_path) and historical_path.is_dir() and os.path.realpath(historical_path) not in busy:
+        if historical_path and association.get('generation') and association['generation'] == generation(historical_path) and current_identity == (row['sid'], row['agent']) and recorded == revision and association.get('host') == 'local' and os.path.realpath(association.get('workspace', '')) == os.path.realpath(historical_path) and historical_path.is_dir() and not busy:
             head = run(['git', '-C', str(historical_path), 'rev-parse', 'HEAD'], optional=True).strip()
             actual = run(['git', '-C', str(historical_path), 'branch', '--show-current'], optional=True).strip()
             if head == revision and actual == association.get('branch'):
@@ -1440,7 +1441,7 @@ class HistoryCommand:
         for slot in range(1, 10001):
             path, branch = root / f'{base}-{slot}', f'dev/{base}-{slot}'
             legacy = root / str(slot)
-            if any(os.path.lexists(p) for p in (path, legacy, root / f'.{slot}.history-reservation')) or any(owner['slot'] == f'{alias}-{slot}' for owner in owners):
+            if any(os.path.lexists(p) for p in (path, legacy, root / f'.{slot}.history-reservation')) or self.destination_busy(alias, slot, (path, legacy), owners):
                 continue
             if run(['git', '-C', directory, 'rev-parse', '--verify', 'refs/heads/' + branch], optional=True) or run(['git', '-C', directory, 'rev-parse', '--verify', 'refs/remotes/origin/' + branch], optional=True):
                 continue
@@ -1498,7 +1499,7 @@ class HistoryCommand:
         if row['agent'] != 'codex':
             return
         value = transcript(source, 'codex')
-        helper = runpy.run_path(str(Path(self.root) / 'libexec/t_app_handoff.py'))
+        helper = runpy.run_path(str(Path(self.root) / 'libexec/t_codex_ownership.py'))
         try:
             helper['assert_released']('Codex', row['sid'], value['associations'][0]['workspace'], self.api['_run'],
                 ownership_cwd=workspace,
@@ -1599,7 +1600,7 @@ class HistoryCommand:
         if row['agent'] == 'codex':
             codex_home = str(Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex'))
             if row.get('archived'):
-                helper = runpy.run_path(str(Path(self.root) / 'libexec/t_app_handoff.py'))
+                helper = runpy.run_path(str(Path(self.root) / 'libexec/t_codex_ownership.py'))
                 value = self.store.scan(source, 'codex')
                 cwd = value['associations'][0]['workspace']
                 # The validated stdio unarchive contract requires its original cwd.
@@ -1639,9 +1640,6 @@ class HistoryCommand:
         if not self.worktree_enabled(destination_alias):
             raise HistoryError('repository opts out of worktree-per-session; no saved conversation resumed')
         self.strict_identity = True
-        association = _RESUME_SOURCE['selected'](row)
-        if association:
-            self.cross_host_handoff(row, association.get('host'))
         source = self.source(row)
         alias = self.materialize_repository(row['repo']) if alias not in self.cfg.repos else alias
         if not self.same_repository(self.identity(alias), row['repo']):
@@ -1663,7 +1661,7 @@ class HistoryCommand:
                 print(f'Preparing {row["agent"]} {row["sid"]} in {destination} at {revision}', file=sys.stderr)
                 with self.launch_claims(destination, row['sid']):
                     final_owners = self.owners(True)
-                    if any(owner['sid'] == row['sid'] or os.path.realpath(owner['cwd']) == os.path.realpath(destination) for owner in final_owners):
+                    if any(owner['sid'] == row['sid'] and owner['agent'] == row['agent'] for owner in final_owners) or self.destination_busy(alias, slot, (destination,), final_owners):
                         raise HistoryError('conversation or workspace became live before restore; reopen history')
                     if not created and association.get('generation') != generation(destination):
                         raise HistoryError('workspace generation changed before restore')

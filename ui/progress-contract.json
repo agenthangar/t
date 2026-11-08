@@ -1,6 +1,14 @@
 {
   "description": "Quiet blocking operations use _spinner; reviewed terminal, protocol, and background exceptions remain explicit. New blocking sites fail CI until classified. Shell progress is enforced at shared scanner and resume seams.",
   "exceptions": {
+    "bin/t:_workflow_hub_repository:subprocess.run": {
+      "kind": "protocol",
+      "reason": "A local Git common-directory probe, bounded to half a second, resolves the initial repository scope before the workflow picker without prompting or repainting the terminal."
+    },
+    "libexec/t_workflow_cursor.py:git:subprocess.run": {
+      "kind": "protocol",
+      "reason": "Local Git scope and safety probes are bounded to five seconds and run inside the Cursor launch-argument protocol; startup must remain quiet and stdout contains only launch flags."
+    },
     "libexec/t_dev.py:git:subprocess.run": {
       "kind": "protocol",
       "reason": "Bounded local Git metadata probes select the command source before UI initialization; startup and machine-output callers must remain quiet."
@@ -268,6 +276,94 @@
     "libexec/t_picker_close.py:close:subprocess.Popen": {
       "kind": "background",
       "reason": "Starts a short-lived cached-view updater; it cannot contact fzf until the foreground action returns, and the picker owns its cleanup and rendering."
+    },
+    "libexec/t_local_models.py:probe:subprocess.run": {
+      "kind": "protocol",
+      "reason": "Read-only local hardware probes have a two-second deadline and remain quiet for catalog JSON output."
+    },
+    "libexec/t_local_models.py:fetch:urllib.request.urlopen": {
+      "kind": "phase",
+      "reason": "Bounded public metadata requests run inside the refresh spinner, including its parallel fetch workers."
+    },
+    "libexec/t_local_inference.py:install:subprocess.run": {
+      "kind": "passthrough",
+      "reason": "curl streams download progress on stderr; installation is explicitly requested."
+    },
+    "libexec/t_local_inference.py:ollama_action:subprocess.run": {
+      "kind": "passthrough",
+      "reason": "Ollama pull owns and streams download progress for the explicitly selected artifact."
+    },
+    "libexec/t_local_inference.py:lead:subprocess.call": {
+      "kind": "passthrough",
+      "reason": "The native Codex CLI owns the terminal for the entire session."
+    },
+    "libexec/t_local_setup.py:register:subprocess.run": {
+      "kind": "passthrough",
+      "reason": "Codex MCP registration streams its result during explicitly reviewed setup."
+    },
+    "libexec/t_offline.py:supervise:subprocess.Popen": {
+      "kind": "passthrough",
+      "reason": "The owned native Codex terminal client displays connection retries, progress and approvals; a parallel spinner would corrupt its terminal UI."
+    },
+    "libexec/t_offline.py:supervise:time.sleep": {
+      "kind": "passthrough",
+      "reason": "The owned native Codex terminal client displays connection retries, progress and approvals; a parallel spinner would corrupt its terminal UI."
+    },
+    "libexec/t_offline.py:process_table:subprocess.run": {
+      "kind": "passthrough",
+      "reason": "Runtime shutdown runs while the native terminal client owns the screen; bounded process checks must not draw a competing spinner."
+    },
+    "libexec/t_offline.py:stop_runtime:time.sleep": {
+      "kind": "passthrough",
+      "reason": "Runtime shutdown runs while the native terminal client owns the screen; bounded process checks must not draw a competing spinner."
+    },
+    "libexec/nosleep_config.py:key:select.select": {
+      "kind": "passthrough",
+      "reason": "The visible configuration menu owns terminal input; two 50ms probes decode escape sequences without competing progress output."
+    },
+    "libexec/nosleep_config.py:edit:subprocess.call": {
+      "kind": "passthrough",
+      "reason": "The configured editor owns the terminal until saved defaults are returned for validation."
+    },
+    "libexec/nosleep_hotspot.py:Runner.close:time.sleep": {
+      "kind": "background",
+      "reason": "Bounded process-group teardown runs inside the owned hotspot worker while the monitor continues rendering status."
+    },
+    "libexec/nosleep_hotspot.py:Runner.run:subprocess.Popen": {
+      "kind": "background",
+      "reason": "The monitor launches this bounded worker asynchronously and displays fallback progress; protocol output and credentials must remain private."
+    },
+    "libexec/nosleep_hotspot.py:save_password:subprocess.run": {
+      "kind": "passthrough",
+      "reason": "The native security command owns the terminal password prompt, bounded to 120 seconds; nosleep never handles or renders the password."
+    },
+    "bin/t:_config_wizard:subprocess.call": {
+      "kind": "passthrough",
+      "reason": "The shared nosleep editor owns the cooked terminal until it returns to the hub."
+    },
+    "libexec/t_remote.py:run_host:subprocess.run": {
+      "kind": "phase",
+      "reason": "Bounded parallel queries are covered by the controller Checking remote hosts spinner; JSON and redirected output stay quiet."
+    },
+    "libexec/t_remote.py:run_host:subprocess.call": {
+      "kind": "passthrough",
+      "reason": "Single-host SSH commands stream output and own any interactive terminal; no spinner may overlap their UI."
+    },
+    "libexec/t_remote.py:execute:subprocess.call": {
+      "kind": "passthrough",
+      "reason": "Existing session orchestrators own shared pickers, transfer progress, and foreground attachment."
+    },
+    "libexec/t_remote.py:peer:subprocess.call": {
+      "kind": "passthrough",
+      "reason": "The validated peer command owns its normal progress and terminal; its output is preserved for the controller."
+    },
+    "libexec/t_local_status.py:tmux:subprocess.run": {
+      "kind": "protocol",
+      "reason": "Bounded ownership and pane metadata probes feed the quiet tmux statusline; no terminal output or picker."
+    },
+    "libexec/t_local_status.py:ancestry:subprocess.run": {
+      "kind": "protocol",
+      "reason": "Bounded ownership and pane metadata probes feed the quiet tmux statusline; no terminal output or picker."
     }
   },
   "shell": [

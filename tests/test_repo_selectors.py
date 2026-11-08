@@ -208,9 +208,11 @@ def test_repo_selector_route_inventory_tracks_every_public_parser_boundary(t_mod
 def test_named_workflow_routes_resolve_only_repo_selector(t_mod, cfg, tail, ambiguous, monkeypatch, capsys):
     if ambiguous:
         cfg.repos["other"] = "/other/application"
-    document = {"repositories": {}}
+    helper = t_mod._workflow()
+    document = helper["defaults"]()
     seen = []
-    def action(doc, verb, name, repository, source):
+    def action(doc, verb, name, repository, source, replacement=None):
+        assert replacement is None
         seen.append((repository, name))
         return doc
     def edit(doc, repository, name=None):
@@ -219,7 +221,7 @@ def test_named_workflow_routes_resolve_only_repo_selector(t_mod, cfg, tail, ambi
     def instructions(doc, repository, name):
         seen.append((repository, name))
         return "literal application instructions"
-    helper = dict(load=lambda: (document, None), action=action, edit=edit,
+    helper.update(load=lambda: (document, None), action=action, edit=edit,
                   edit_instructions=edit, instructions=instructions)
     monkeypatch.setattr(t_mod, "_workflow", lambda: helper)
     monkeypatch.setattr(t_mod.sys.stdin, "isatty", lambda: True)

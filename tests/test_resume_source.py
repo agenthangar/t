@@ -42,6 +42,22 @@ def test_selected_prefers_lifecycle_over_newer_transcript(protocol):
     assert protocol.selected(conversation()) is None
 
 
+@pytest.mark.parametrize('origin', ['none', 'local'])
+def test_local_only_source_reconciles_recorded_identity_and_dirty_work(app, source, history, protocol, store, origin):
+    path, row, request = source
+    if origin == 'none':
+        history.run(['git', '-C', str(path), 'remote', 'remove', 'origin'])
+    else:
+        history.run(['git', '-C', str(path), 'remote', 'set-url', 'origin', str(path.parent / 'origin.git')])
+    row['repo'] = 'local:' + str(Path(app.cfg.repos['repo']).resolve())
+    row = store.merge(row)
+    Path(path, 'tracked').write_text('preserved local work\n')
+    revision = protocol.reconcile(app, 'repo', row)
+    assert revision != row['associations'][0]['commit']
+    assert history.run(['git', '-C', str(path), 'show', revision + ':tracked']) == 'preserved local work\n'
+    assert not history.run(['git', '-C', str(path), 'status', '--porcelain'])
+
+
 @pytest.mark.parametrize('dirty', [False, True])
 def test_export_carries_actual_unpushed_tip_and_checkpoint(app, source, history, protocol, dirty):
     path, row, request = source
@@ -506,13 +522,13 @@ def test_private_rpc_returns_safety_errors_as_versioned_json(app, history, t_mod
 
 
 @pytest.mark.parametrize('local_copy', [False, True])
-def test_native_remote_saved_resume_stops_before_any_transfer(app, source, history, monkeypatch, local_copy):
+def test_legacy_native_setting_reaches_remote_saved_transfer(app, source, history, monkeypatch, local_copy):
     path, row, request = source
     row['associations'][0]['host'] = 'other'
     row['sources'] = [dict(host='local' if local_copy else 'other', path='/unused', updated=1)]
-    def forbidden(*args, **kwargs):
-        pytest.fail('native handoff must not transfer or allocate')
-    for name in ('source', 'reconcile_source', 'materialize_repository', 'destination', 'install_transcript'):
-        monkeypatch.setattr(app, name, forbidden)
-    with pytest.raises(history.HistoryError, match='native desktop app.*footer run location'):
+    app.cfg.handoff = {'codex': 'native'}
+    def transfer(*args, **kwargs):
+        raise history.HistoryError('reached guarded transfer')
+    monkeypatch.setattr(app, 'source', transfer)
+    with pytest.raises(history.HistoryError, match='reached guarded transfer'):
         app.resume('repo', row, detached=True, prepare_only=True)

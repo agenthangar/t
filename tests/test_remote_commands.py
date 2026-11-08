@@ -59,7 +59,7 @@ def test_remote_parser_and_help(t_mod, capsys, action, flags):
     assert t_mod.main(['remote', action, '--help']) == 0
     help_text = capsys.readouterr().out
     assert f'usage: t remote {action}' in help_text
-    assert ('--host' if action == 'move' else '[host]') in help_text
+    assert ('--to' if action == 'move' else '[host]') in help_text
 
 
 def test_remote_group_requires_verb(t_mod):
@@ -131,21 +131,71 @@ _t_beam() { print -r -- "MOVE ${(j:|:)@}"; print -r -- "EXPECTED $T_MOVE_EXPECT_
 '''
 
 
-@pytest.mark.parametrize('host', ['beta', 'cancel'])
-def test_remote_only_repo_reaches_destination_picker(zsh, tmp_path, host):
+@pytest.mark.parametrize('command', ['t remote move', 't session move', 't move'])
+@pytest.mark.parametrize('host', ['local', 'beta', 'cancel'])
+def test_remote_only_repo_reaches_destination_picker(zsh, tmp_path, host, command):
     env = fake_picker(tmp_path, host=host)
-    result = zsh(REMOTE_ONLY + 't remote move auth 1; print rc=$?', _tty=True, **env)
+    result = zsh(REMOTE_ONLY + command + ' auth 1; print rc=$?', _tty=True, **env)
     text = output(result)
     assert f'rc={130 if host == "cancel" else 0}' in text, text
     logs = [json.loads(line) for line in (tmp_path / 'picker.jsonl').read_text().splitlines()]
     assert len(logs) == 1  # unique source goes straight to the destination picker
     assert all(not row.startswith('alpha\t') for row in logs[0]['rows'])
+    assert 'local\tthis machine' in logs[0]['rows']
+    assert any('current host: alpha' in arg for arg in logs[0]['args'])
     if host == 'cancel':
         assert 'MOVE ' not in text
     else:
-        assert 'MOVE --session|auth-id|--from|alpha|--host|beta' in text
+        assert f'MOVE --session|auth-id|--from|alpha|--host|{host}' in text
         assert 'EXPECTED auth-id\t' in text and 'remote-auth-1' in text
     assert 'unrelated' not in text
+
+
+@pytest.mark.parametrize('command', ['t remote move', 't session move', 't move'])
+@pytest.mark.parametrize('host', ['local', 'beta', 'cancel'])
+def test_move_resolves_different_checkout_layout_on_source(zsh, tmp_path, command, host):
+    env = fake_picker(tmp_path, host=host)
+    result = zsh(REMOTE_ONLY + r'''
+DEV_REPOS[auth]="$HOME/code/controller-auth"
+''' + command + ' auth 1; print rc=$?', _tty=True, **env)
+    text = output(result)
+    assert f'rc={130 if host == "cancel" else 0}' in text, text
+    logs = [json.loads(line) for line in (tmp_path / 'picker.jsonl').read_text().splitlines()]
+    assert len(logs) == 1
+    assert any('current host: alpha' in arg for arg in logs[0]['args'])
+    if host == 'cancel':
+        assert 'MOVE ' not in text
+    else:
+        assert f'MOVE --session|auth-id|--from|alpha|--host|{host}' in text
+        assert 'EXPECTED auth-id\t' in text and 'remote-auth-1' in text
+    assert 'unrelated' not in text
+
+
+@pytest.mark.parametrize('mode,expected', [('missing', 0), ('ambiguous', 2), ('offline', 1), ('changed', 0)])
+def test_move_different_layout_requires_source_scope_proof(zsh, mode, expected):
+    result = zsh(REMOTE_ONLY + r'''
+DEV_REPOS[auth]="$HOME/code/controller-auth"
+_dev_rows_all() {
+  printf 'alpha\tauth-id\t%s\tremote-auth-1\tattached\tactive\tAuth\tcodex\n' "$HOME/foreign/auth"
+}
+functions[_original_scan]=$functions[_dev_remote_scan_with_timeout]
+_dev_remote_scan_with_timeout() {
+  case $SCOPE_MODE in
+    missing) return 0 ;;
+    ambiguous) return 2 ;;
+    offline) return 255 ;;
+    changed) _original_scan "$@" | sed 's/auth-id/replacement-id/' ;;
+  esac
+}
+t move auth 1 --host local --detach; print rc=$?
+''', SCOPE_MODE=mode)
+    text = output(result)
+    assert f'rc={expected}' in text, text
+    assert 'MOVE ' not in text and 'EXPECTED ' not in text
+    if expected:
+        assert 'repository scope could not be verified' in text
+    else:
+        assert 'no current CLI conversations' in text
 
 
 @pytest.mark.parametrize('args,ambiguous,expected', [
@@ -582,8 +632,9 @@ _t_remote_open_inventory beta unknown; print unknown=$?
 
 
 @pytest.mark.parametrize('route', ['send', 'pull', 'saved'])
-def test_native_default_routes_leave_source_and_destination_untouched(zsh, route):
+def test_native_legacy_routes_reach_guarded_transfer(zsh, route):
     setup = SETUP + r'''
+DEV_HANDOFF[codex]=native
 _dev_self_sid() { :; }
 _codex_thread_lookup() { printf 'codex-id\trollout\t%s\n' "$HOME/code/api"; }
 _dev_codex_rollout_integrity() { print -u2 WRONG_INTEGRITY; return 1; }
@@ -591,32 +642,27 @@ _tbeam_kill_owner() { print -u2 WRONG_STOP; return 1; }
 _dev_worktree_beam_push() { print -u2 WRONG_CHECKPOINT; return 1; }
 _tbeam_sync_transcript() { print -u2 WRONG_SYNC; return 1; }
 _tbeam_pull_transcript() { print -u2 WRONG_SYNC; return 1; }
-ssh() { printf 'codex-id\t%s\tapi-2\tattached\tactive\tTask\tcodex\n' "$HOME/code/api"; }
+ssh() { [[ $* == *_dev_codex_rollout_integrity* ]] && { print -u2 WRONG_INTEGRITY; return 1; }; printf 'codex-id\t%s\tapi-2\tattached\tactive\tTask\tcodex\n' "$HOME/code/api"; }
 '''
     invocation = {'send': 't session move --session codex-id --host mini --detach',
                   'pull': '_dev_pull mini mini api 2',
                   'saved': '_t_resume_on_host mini codex-id "$HOME/code/api" codex detach'}[route]
     result = zsh(setup + invocation + '; print rc=$?')
     text = output(result)
-    assert 'rc=1' in text and 'native desktop app' in text and 'Hand off' in text
-    assert 'no transfer was started' in text and 'WRONG_' not in text
+    assert 'rc=1' in text and 'WRONG_' in text
+    assert 'native desktop app' not in text
 
 
 def test_remote_relay_preserves_initiator_policy_and_checks_peer(zsh):
     result = zsh(HOSTS + r'''
-DEV_HANDOFF[codex]=t
+DEV_HANDOFF[codex]=native
 ssh() { print -r -- "$*"; }
 t session move api 2 --from alpha --host beta --detach
 ''')
     text = output(result)
     assert '_T_HANDOFF_CODEX=t' in text
-    assert '_t_handoff_check' in text and 'update' in text
-
-
-@pytest.mark.parametrize('agent,value,success', [('claude', 't', True), ('codex', 't', True), ('codex', 'native', False), ('claude', 'native', False), ('codex', 'typo', False)])
-def test_handoff_shell_policy_validation(zsh, agent, value, success):
-    result = zsh(f'DEV_HANDOFF[{agent}]={value}; _t_handoff_check {agent} alpha beta')
-    assert (result.returncode == 0) is success
+    assert '_T_HANDOFF_CLAUDE=t' in text
+    assert '_t_handoff_check' not in text
 
 
 @pytest.mark.parametrize('command', ['t session move', 't move'])
@@ -650,7 +696,7 @@ t session move --remote; print rc=$?
     assert 'EXPECTED remote-id\t/home/source/code/api' in text
     assert 'EXPECTED remote-id\t/home/dest/code/api' in text
     logs = [json.loads(line) for line in (tmp_path / 'picker.jsonl').read_text().splitlines()]
-    assert [row.split('\t')[0] for row in logs[1]['rows']] == ['gamma']
+    assert [row.split('\t')[0] for row in logs[1]['rows']] == ['local', 'gamma']
 
 
 @pytest.mark.parametrize('failure', [17, 130])
@@ -686,7 +732,10 @@ _t_remote_move_rows() { [[ -f $CHANGE_ROWS && $1 == alpha ]] && return 1; _dev_r
 _t_beam() { print WRONG_MOVE; }
 t session move -r; print rc=$?
 ''', _tty=True, **env)
-    assert 'rc=1' in output(result) and 'WRONG_MOVE' not in output(result), output(result)
+    if change == 'native':
+        assert 'rc=0' in output(result) and output(result).count('WRONG_MOVE') == 2
+    else:
+        assert 'rc=1' in output(result) and 'WRONG_MOVE' not in output(result), output(result)
 
 
 def test_move_batch_keeps_snapshot_identity_for_identical_display_rows(zsh, tmp_path):
@@ -789,3 +838,113 @@ t beam -r --host beta; print rc=$?
 ''')
     assert 'rc=0' in output(result) and 'CANONICAL -r|--host|beta' in output(result)
     assert 'WRONG_ENGINE' not in output(result)
+
+
+@pytest.mark.parametrize('targets,expected', [
+    ([], (None, None, False)),
+    (['api', '9'], ('api', '9', False)),
+    (['9', '--yes'], ('9', None, True)),
+    (['api', '-y', 'all'], ('api', 'all', True)),
+])
+def test_remote_kill_parser_and_executable_delegate(t_mod, monkeypatch, targets, expected):
+    args = t_mod.build_parser().parse_args(['remote', 'kill', *targets])
+    assert (args.repo, args.slot, args.yes) == expected
+    assert args.remote is True
+    seen = []
+    monkeypatch.setattr(t_mod, 'Config', lambda: object())
+    monkeypatch.setattr(t_mod, '_t_auto_update', lambda argv: None)
+    monkeypatch.setattr(t_mod, '_delegate', seen.append)
+    t_mod.main(['remote', 'kill', *targets])
+    repo, slot, yes = expected
+    assert shlex.split(seen[0]) == ['_t_dev', '-r', 'kill',
+                                   *([repo] if repo else []), *([slot] if slot else []),
+                                   *(['-y'] if yes else [])]
+
+
+@pytest.mark.parametrize('argv', [['remote', 'kill', '--help'], ['help', 'remote', 'kill']])
+def test_remote_kill_help_is_read_only(t_mod, monkeypatch, capsys, argv):
+    monkeypatch.setattr(t_mod, 'Config', lambda: pytest.fail('help loaded configuration'))
+    monkeypatch.setattr(t_mod, '_t_auto_update', lambda argv: pytest.fail('help checked updates'))
+    assert t_mod.main(argv) == 0
+    text = capsys.readouterr().out
+    assert 'usage: t remote kill [host] [repo] [slot|all]' in text
+    assert 'confirmation' in text and '--yes' in text
+    assert 'kill' in t_mod._group_help('remote')
+
+
+@pytest.mark.parametrize('args', ['--host alpha api 9', '--new', '--all', 'alpha api 9 extra', '--bogus'])
+def test_remote_kill_rejects_invalid_arguments_before_mutation(t_mod, zsh, args):
+    with pytest.raises(SystemExit) as exc:
+        t_mod.build_parser().parse_args(['remote', 'kill', *shlex.split(args)])
+    assert exc.value.code == 2
+    result = zsh('_dev_remote_kill() { print WRONG_KILL; }; t remote kill ' + args + '; print rc=$?')
+    assert 'rc=2' in output(result) and 'WRONG_KILL' not in output(result)
+
+
+@pytest.mark.parametrize('flag', ['', '-y', '--yes'])
+def test_remote_kill_discovers_owner_and_preserves_confirmation_and_status(zsh, flag):
+    result = zsh(HOSTS + '''
+_dev_remote_resolve() { print -u2 -r -- "RESOLVE ${(j:|:)@}"; printf 'alpha\tremote-api\t9\n'; }
+_dev_kill() { print WRONG_LOCAL_KILL; }
+ssh() { print -r -- "SSH ${(j:|:)@}"; return 17; }
+''' + f't remote kill api {flag} 9; print rc=$?')
+    text = output(result)
+    assert 'RESOLVE api|9' in text and 'WRONG_LOCAL_KILL' not in text
+    assert 'rc=17' in text
+    remote = shlex.split(text.split('SSH -t|user@alpha|', 1)[1].splitlines()[0])
+    assert remote[:2] == ['zsh', '-lic']
+    words = shlex.split(remote[2])
+    assert words[1:] == ['t', 'kill', 'remote-api', '9', *(['-y'] if flag else [])]
+
+
+@pytest.mark.parametrize('args,repo', [('', ''), ('api', 'api')])
+@pytest.mark.parametrize('rc', [0, 130])
+def test_remote_kill_uses_shared_picker_and_preserves_cancellation(zsh, args, repo, rc):
+    result = zsh(HOSTS + f'''
+_dev_kill_pick() {{ print -r -- "PICK $1|$2|$3"; return {rc}; }}
+ssh() {{ print WRONG_SSH; }}
+t remote kill {args}; print rc=$?
+''')
+    text = output(result)
+    assert f'PICK {repo}||1' in text and f'rc={rc}' in text
+    assert 'WRONG_SSH' not in text
+
+
+def test_remote_kill_lone_slot_infers_repository(zsh):
+    result = zsh(HOSTS + '''
+_t_infer_repo() { print api; }
+_dev_remote_resolve() { print -u2 -r -- "RESOLVE ${(j:|:)@}"; return 23; }
+ssh() { print WRONG_SSH; }
+t remote kill 9; print rc=$?
+''')
+    assert 'RESOLVE api|9' in output(result) and 'rc=23' in output(result)
+    assert 'WRONG_SSH' not in output(result)
+
+
+def test_remote_kill_all_keeps_remote_alias_and_force(zsh):
+    result = zsh(HOSTS + '''
+DEV_REPOS[api]=/home/local/code/api
+_dev_rows_all() { printf 'alpha\tid\t/home/remote/code/api\tremote-api-9\tdetached\tactive\n'; }
+ssh() { print -r -- "SSH ${(j:|:)@}"; }
+t remote kill api all --yes; print rc=$?
+''')
+    text = output(result)
+    remote = shlex.split(text.split('SSH -t|user@alpha|', 1)[1].splitlines()[0])
+    assert remote[:2] == ['zsh', '-lic']
+    assert shlex.split(remote[2])[1:] == ['t', 'kill', 'remote-api', 'all', '-y']
+    assert 'rc=0' in text
+
+
+def test_remote_kill_completions_are_repository_first(zsh):
+    result = zsh(HOSTS + '''
+_values() { print -rl -- "$@"; }
+_describe() { print -rl -- "${actions[@]}"; }
+words=(t remote ''); CURRENT=3; _t
+words=(t remote kill ''); CURRENT=4; _t
+words=(t remote kill api ''); CURRENT=5; _t
+words=(t remote kill api 9 --); CURRENT=6; _t
+''')
+    text = output(result)
+    assert 'kill\n' in text and 'repo or slot\n' in text and 'api\n' in text
+    assert 'all\n' in text and '--yes\n' in text
+    assert 'alpha\n' not in text and '--host\n' not in text and '--new\n' not in text

@@ -1,60 +1,16 @@
-# Check a desktop claim with one discovery snapshot. A local desktop reservation
-# continues its existing owner; an unreserved saved workspace needs a complete
-# scan before acquiring one. Known remote owners always block either operation.
-_dev_remote_app_check() {
-  local repo=$1 slot=$2 allow_incomplete=$3 dir=${DEV_REPOS[$1]:-}
-  local rows scan_rc owner host state
-  if [[ ${_T_OPEN_REMOTE_APP_READY:-} == 1 ]]; then
-    rows=$_T_OPEN_REMOTE_APP_ROWS; scan_rc=$_T_OPEN_REMOTE_APP_RC
-  else
-    rows=$(_dev_rows_all); scan_rc=$?
-  fi
-  owner=$(print -r -- "$rows" | awk -F'\t' \
-    -v d="$(_dev_homerel "$dir")" -v s="$slot" \
-    -v wtr="$(_dev_homerel "${DEV_WORKTREE_ROOT:-}")" -v b="${dir:t}" '
-      $1 != "local" && $4 !~ /:/ {
-        c=$3; sub(/^\/(Users|home)\/[^\/]+\//, "", c)
-        n=$4; sub(/^.*-/, "", n)
-        if ((c==d || (wtr != "" && b != "" && index(c, wtr "/" b "/") == 1)) && n==s) {
-          print $1 "\t" $5; exit
-        }
-      }')
-  if [[ -n $owner ]]; then
-    host=${owner%%$'\t'*}; state=${owner#*$'\t'}
-    if [[ $state == app ]]; then
-      print -u2 -- "t open --app: $repo $slot is reserved by the Codex desktop app on $host; close it there and release the reservation before opening here"
-    else
-      print -u2 -- "t open --app: $repo $slot is live on $host; move it here with t beam before opening the app"
-    fi
-    return 1
-  fi
-  if (( scan_rc )); then
-    if [[ -z $allow_incomplete ]]; then
-      print -u2 -- 't open --app: ownership could not be verified for this existing workspace; retry when the skipped host is reachable'
-      return 3
-    fi
-    # The aggregate result includes local failures too. An offline host never
-    # excuses a failed local scan, even for a reserved or fresh workspace.
-    _dev_session_rows >/dev/null || {
-      print -u2 -- 't open --app: local ownership check failed; retry before opening'
-      return 3
-    }
-  fi
-}
-
 # → stderr (stdout is captured).
-# A desktop-only slot has no tmux process to attach, but it still owns its
-# worktree and conversation. Keep this separate from _dev_remote_resolve, whose
+# Older peers can report retired integration reservations without a tmux
+# process. Keep recognizing these as conflicts during rolling upgrades. Keep this separate from _dev_remote_resolve, whose
 # result is strictly an attachable tmux slot.
 # Optional third argument permits an incomplete scan only for a fresh local slot.
 # Positive remote ownership evidence always wins. Existing work stays strict.
-_dev_remote_app_owner() {
+_dev_remote_legacy_owner() {
   local repo="$1" slot="$2" dir="${DEV_REPOS[$1]:-}" base wtr
   [[ -n $dir ]] || return 1
   base=${dir:t}; wtr=${DEV_WORKTREE_ROOT:-}
   local rows result scan_rc
-  if [[ ${_T_OPEN_REMOTE_APP_READY:-} == 1 ]]; then
-    rows=$_T_OPEN_REMOTE_APP_ROWS; scan_rc=$_T_OPEN_REMOTE_APP_RC
+  if [[ ${_T_OPEN_REMOTE_ROWS_READY:-} == 1 ]]; then
+    rows=$_T_OPEN_REMOTE_ROWS_ROWS; scan_rc=$_T_OPEN_REMOTE_ROWS_RC
   else
     rows=$(_dev_rows_all); scan_rc=$?
   fi
@@ -84,7 +40,7 @@ _dev_slot_fresh_unreserved() {
   _dev_slot_fresh "$1" "$2" || return 1
   (( ${#REMOTE_HOSTS} )) || return 0
   local owner
-  owner=$(_dev_remote_app_owner "$1" "$2" 1)
+  owner=$(_dev_remote_legacy_owner "$1" "$2" 1)
   [[ -z $owner ]]
 }
 
@@ -591,29 +547,53 @@ _dev_remote_kill() {
   return $rc
 }
 
-# _dev_pull <host> <target> <repo> <slot> <fg> — pull a remote dev slot's session
-# onto THIS machine and land it (the engine behind `tbeam <repo> <slot> --from <host>` —
-# the RECEIVE direction, mirror of the default send). Finds the live dev-<repo>-<slot> on <host> via its
-# _dev_session_rows (sid + cwd; slot omitted → the repo's first live slot), rsync's
-# the transcript back, then stops the origin copy there (the MOVE — _tbeam_kill_owner,
-# so exactly one live claude owns the id) and resumes it locally: a dev-<repo>-<slot>
-# by default, or this terminal with <fg>. Reuses a local slot already running that id.
+# Match immutable conversation identity while allowing attached/detached changes.
+# The receive path ships this small verifier to older source installations too.
+_t_move_match_row() {
+  local expected=$1 rows=$2 row
+  local -a wanted=("${(@ps:\t:)expected}") fields
+  for row in "${(@f)rows}"; do
+    fields=("${(@ps:\t:)row}")
+    if [[ $fields[1] == "$wanted[1]" && $fields[2] == "$wanted[2]" &&
+          $fields[3] == "$wanted[3]" && ${fields[7]:-claude} == "${wanted[7]:-claude}" &&
+          $fields[4] == (attached|detached) ]]; then
+      print -r -- "$row"; return 0
+    fi
+  done
+  print -u2 't session move: selected session changed or closed; select it again'
+  return 1
+}
+
+# Bring a remote conversation here: verify and stop its owner, push its work,
+# copy the transcript, then resume locally. Optional arguments 6/7 are detach/ID.
 _dev_pull() {
-  local host="$1" target="$2" repo="$3" slot="$4" fg="$5"
+  local host="$1" target="$2" repo="$3" slot="$4" fg="$5" detach=${6:-} sid_arg=${7:-}
   command -v rsync >/dev/null 2>&1 || { echo "dev: rsync not found" >&2; return 1; }
-  local worker; worker=$(_dev_repo_rows_command "$repo" "$slot")
+  local worker
+  if [[ -n ${T_MOVE_EXPECT_ROW:-} || -z $repo ]]; then worker='_dev_session_rows --details'
+  else worker=$(_dev_repo_rows_command "$repo" "$slot"); fi
   local rows; rows=$(ssh "$target" "zsh -lic ${(q)worker}") || return $?
   [[ -n $rows ]] || { echo "dev: no live sessions for '$repo${slot:+ $slot}' on $host (check that t is installed and up to date there)" >&2; return 1; }
   # The source resolved the selector against its own registrations. Keep its
   # immutable label and path, including sibling aliases for the same checkout.
   local row=${rows%%$'\n'*}
+  if [[ -n ${T_MOVE_EXPECT_ROW:-} ]]; then
+    row=$(_t_move_match_row "$T_MOVE_EXPECT_ROW" "$rows") || return $?
+  elif [[ -n $sid_arg ]]; then
+    local candidate
+    local -a matches
+    for candidate in "${(@f)rows}"; do
+      [[ ${candidate%%$'\t'*} == "$sid_arg"* ]] && matches+=("$candidate")
+    done
+    (( $#matches == 1 )) || { print -u2 't session move: source session ID must match exactly one current conversation'; return 1; }
+    row=$(_t_move_match_row "$matches[1]" "$rows") || return $?
+  fi
   local sid=${row%%$'\t'*}
   local cwd=${${row#*$'\t'}%%$'\t'*}
   local fslot=${${${row#*$'\t'}#*$'\t'}%%$'\t'*}
   local agent=${${(ps:\t:)row}[7]:-claude}; _dev_agent_valid "$agent" || agent=claude   # field 7 (a 6-field host = claude)
   [[ -n $sid && $sid != - ]] || { echo "dev: $host/$fslot has no active conversation to pull" >&2; return 1; }
 
-  _t_handoff_check "$agent" "$host" here || return $?
 
   # Check the source host's durable Codex rollout before stopping its owner.
   # A newer SQLite projection with a shorter JSONL file cannot be transferred
@@ -633,6 +613,16 @@ _dev_pull() {
     print -u2 -- "t: source path $cwd cannot be used here; align configured roots or attach on $host (source was not stopped)"
     return 1
   fi
+  local TB_TRANSFER_REF=
+  if [[ -n $DEV_WORKTREE_ROOT && $cwd == $DEV_WORKTREE_ROOT/*/* ]]; then
+    local prepare_worker="(( \${+functions[_dev_worktree_beam_prepare]} )) && _dev_worktree_beam_prepare ${(q)cwd}"
+    TB_TRANSFER_REF=$(ssh "$target" "zsh -lic ${(q)prepare_worker}") || {
+      print -u2 't session move: snapshot preflight failed; update t on the source if needed; source was not stopped'; return 1
+    }
+    _dev_worktree_transfer_ref_valid "$TB_TRANSFER_REF" || {
+      print -u2 't session move: source did not prepare a valid worktree snapshot; source was not stopped'; return 1
+    }
+  fi
   echo "⟳ Pulling ${sid[1,8]}… ($cwd) from $host → here"
   # It's a MOVE: stop the origin copy on <host> FIRST, before snapshotting its
   # worktree + transcript, so a still-live claude there can't keep editing files
@@ -640,16 +630,19 @@ _dev_pull() {
   # pull below would miss the tail) between the snapshot and the move — the same
   # invariant tpush/tpop/tbeam protect.
   local killed
-  killed=$(ssh "$target" "TB_SID=${(q)sid} zsh -lic _tbeam_kill_owner" 2>/dev/null | tail -1)
+  local stop_worker="functions[_t_move_match_row]=${(q)functions[_t_move_match_row]}; move_rows=\$(_dev_session_rows --details) || exit 1; _t_move_match_row ${(q)row} \"\$move_rows\" >/dev/null && TB_SID=${(q)sid} _tbeam_kill_owner"
+  killed=$(ssh "$target" "zsh -lic ${(q)stop_worker}") || {
+    print -u2 't session move: could not stop the source; nothing was started locally'; return 1
+  }
+  killed=${killed##*$'\n'}
   [[ $killed == dev-* ]] && echo "✂ Stopped the live copy on $host ($killed)"
 
-  # Carry the origin worktree's uncommitted edits with the move: commit-all + push its branch
-  # ON the remote (over ssh, work passed in TB_* env like _tbeam_land) so the local worktree can
-  # fast-forward to them below. The mirror of the SEND path's local _dev_worktree_beam_push.
-  # Nonzero = the commit or push could not fully carry the work — land anyway (degraded, the
-  # edits stay safe on $host; the reland path re-verifies what it needs) but say so loudly.
-  if ! ssh "$target" "TB_WT=${(q)cwd} TB_HOST=${(q)$(hostname -s)} zsh -lic _dev_worktree_beam_push"; then
-    echo "⚠ $host couldn't fully commit/push the worktree — the landing may miss its latest edits (they remain on $host at $cwd)" >&2
+  # Commit the stopped source's final edits and publish its prepared snapshot.
+  # Publication failures retain source work and must not launch an incomplete copy.
+  if ! ssh "$target" "TB_TRANSFER_REF=${(q)TB_TRANSFER_REF} TB_WT=${(q)cwd} TB_HOST=${(q)$(hostname -s)} zsh -lic _dev_worktree_beam_push"; then
+    echo "t session move: $host couldn't publish the worktree; work remains at $cwd; nothing was started locally" >&2
+    print -u2 -- "Recover on $host: t session history ${fslot%-*} ${fslot##*-}"
+    return 1
   fi
 
   # Transcript first: the collision reland below copies this sid's files into the new
@@ -669,7 +662,7 @@ _dev_pull() {
       [[ -n $_pr && -n $_ps ]] && _dev_worktree_enabled "$_pr" && _dev_worktree_create "$_pr" "$_ps" "$cwd" >/dev/null || return 1
     fi
     [[ -d $cwd ]] || { echo "dev: $cwd doesn't exist here — clone/sync the repo first." >&2; return 1; }
-    _dev_worktree_beam_sync "$cwd"      # fast-forward to the edits the origin just pushed
+    _dev_worktree_beam_sync "$cwd" || return 1  # fast-forward to the edits the origin just pushed
   else
     cwd="$land"                          # relanded: resume in the fresh slot's worktree
   fi
@@ -688,7 +681,7 @@ _dev_pull() {
     _term_title ""
     [[ -n $existing ]] && { echo "dev: already running locally in $existing — attaching."; tmux attach-session -t "=$existing:"; return; }
     echo "✓ Resuming ${sid[1,8]}… here"
-    if [[ $agent == codex ]]; then ( cd "$cwd" && exec codex resume "$sid" --no-daemon ); else ( cd "$cwd" && exec claude -r "$sid" ); fi
+    ( cd "$cwd" && eval "exec $(_dev_agent_resume_cmd "$agent" "$sid")" )
     return
   fi
 
@@ -700,9 +693,10 @@ _dev_pull() {
     [[ -n $lrepo && -n $lslot ]] || { echo "dev: couldn't map $cwd to a dev slot" >&2; return 1; }
     session="dev-${lrepo}-${lslot}"
     _dev_resume_session "$session" "$cwd" "$sid" "$agent" || return 1
+    _dev_worktree_beam_finish "$cwd"
   fi
   echo "✓ Landed here as $session"
-  if [[ -t 1 && -z $CLAUDE_CODE_SESSION_ID ]]; then
+  if [[ -z $detach && -t 1 && -z $CLAUDE_CODE_SESSION_ID ]]; then
     # Title the local landing so the header reads "$session" (clearly local), NOT the
     # stale "<host>: …" a prior remote attach set — tmux (set-titles off) swallows OSC
     # from inside the pane, so this pre-attach write is the title that sticks.
@@ -804,48 +798,97 @@ _t_plan() {
   fi
 }
 
-# _dev_open_tab <cmd…> — run a command in a NEW tab of the local terminal app.
-# The tab engine for multi-pick `t resume` (each extra revived slot gets its own
-# tab running the ordinary `t open` attach). Terminal.app has no AppleScript
-# verb for tabs, so the tab is a System Events Cmd+T — which needs Terminal
-# granted Accessibility (System Settings → Privacy & Security) — and the script
-# POLLS the front window's tab count before `do script in front window` (that
-# phrasing targets the ACTIVE tab, which post-Cmd+T is the new one; a blind
-# delay would race slow tab creation). iTerm2 has a first-class tab API, no
-# Accessibility needed. Inside tmux the pane's $TERM_PROGRAM reads "tmux" — the
-# real app is recovered from the server's launch env (tmux show-environment -g).
-# rc 1 whenever a tab is impossible here — over ssh (the GUI is not where you
-# are), an unrecognized terminal, osascript refused — so callers print attach
-# hints instead.
+# _dev_open_tab <cmd…> — open an extra session in the originating GUI window.
+# Resolve the caller by tty, never by the user's current/front window. Terminal
+# needs a foreground Cmd+T; if unavailable, create a new window atomically.
+# Address only a proven new tab after successful creation. iTerm returns the new tab directly. No activate calls:
+# navigating away must not steal focus or inject commands into an existing tab.
 _dev_open_tab() {
-  local cmd="$*" tp=${TERM_PROGRAM:-}
+  local cmd="$*" tp=${TERM_PROGRAM:-} origin_tty=${TTY:-}
+  local -a client_args=()
   [[ -z ${SSH_CONNECTION:-} ]] || return 1
-  if [[ -n ${TMUX:-} && ( -z $tp || $tp == tmux ) ]]; then
-    tp=$(tmux show-environment -g TERM_PROGRAM 2>/dev/null); tp=${tp#TERM_PROGRAM=}
+  if [[ -n ${TMUX:-} ]]; then
+    if [[ -z $tp || $tp == tmux ]]; then
+      tp=$(tmux show-environment -g TERM_PROGRAM 2>/dev/null); tp=${tp#TERM_PROGRAM=}
+    fi
+    [[ -n ${TMUX_PANE:-} ]] && client_args=(-t "$TMUX_PANE")
+    origin_tty=$(tmux display-message -p "${client_args[@]}" '#{client_tty}' 2>/dev/null)
+  fi
+  if [[ $origin_tty != /dev/* || $origin_tty == *$'\n'* ]]; then
+    [[ $tp == Apple_Terminal ]] || return 1
+    origin_tty=
   fi
   cmd=${cmd//\\/\\\\}; cmd=${cmd//\"/\\\"}
+  origin_tty=${origin_tty//\\/\\\\}; origin_tty=${origin_tty//\"/\\\"}
   case $tp in
     Apple_Terminal)
-      osascript >/dev/null 2>&1 <<EOS || return 1
+      osascript >/dev/null <<EOS || return 1
+set newTTY to missing value
+set originID to missing value
+try
+  tell application "Terminal"
+    set originWindow to missing value
+    repeat with candidateWindow in windows
+      repeat with candidateTab in tabs of candidateWindow
+        if tty of candidateTab is "$origin_tty" then set originWindow to contents of candidateWindow
+      end repeat
+    end repeat
+    if originWindow is missing value then error "Origin terminal is unavailable"
+    set originID to id of originWindow
+    set oldTTYs to tty of every tab of originWindow
+    if not frontmost then error "Terminal focus changed"
+    if id of front window is not originID then error "Terminal window changed"
+  end tell
+  tell application "System Events"
+    tell process "Terminal"
+      if not frontmost then error "Terminal focus changed"
+      keystroke "t" using command down
+    end tell
+  end tell
+  tell application "Terminal"
+    repeat 40 times
+      set newTabs to {}
+      repeat with candidateTab in tabs of window id originID
+        set candidateTTY to tty of candidateTab
+        if candidateTTY is not "" and candidateTTY is not in oldTTYs then set end of newTabs to candidateTTY
+      end repeat
+      if (count newTabs) > 1 then error "Ambiguous new terminal tab"
+      if (count newTabs) is 1 then
+        set newTTY to item 1 of newTabs
+        exit repeat
+      end if
+      if not frontmost then error "Terminal focus changed"
+      if id of front window is not originID then error "Terminal window changed"
+      delay 0.05
+    end repeat
+  end tell
+on error
+  set newTTY to missing value
+end try
 tell application "Terminal"
-  activate
-  set tabCount to count tabs of front window
-end tell
-tell application "System Events" to keystroke "t" using command down
-tell application "Terminal"
-  repeat 40 times
-    if (count tabs of front window) > tabCount then exit repeat
-    delay 0.05
-  end repeat
-  do script "$cmd" in front window
+  if newTTY is missing value then
+    -- With no target, do script creates a new window atomically.
+    do script "$cmd"
+  else
+    do script "$cmd" in (first tab of window id originID whose tty is newTTY)
+  end if
 end tell
 EOS
       ;;
     iTerm.app)
       osascript >/dev/null 2>&1 <<EOS || return 1
 tell application "iTerm2"
-  tell current window to create tab with default profile
-  tell current session of current window to write text "$cmd"
+  set originWindow to missing value
+  repeat with candidateWindow in windows
+    repeat with candidateTab in tabs of candidateWindow
+      repeat with candidateSession in sessions of candidateTab
+        if tty of candidateSession is "$origin_tty" then set originWindow to contents of candidateWindow
+      end repeat
+    end repeat
+  end repeat
+  if originWindow is missing value then error "Origin terminal is unavailable"
+  tell originWindow to set newTab to create tab with default profile
+  tell current session of newTab to write text "$cmd"
 end tell
 EOS
       ;;
@@ -1080,13 +1123,19 @@ _pr_state_flush() {
 _t_remote_host_pick() {
   local excluded=${1:-} purpose=${2:-open} source=${3:-} host target rows= selected heading
   case $purpose in
+    execute) heading='Run this command on which host?' ;;
     new) heading='Start a new session on which host?' ;;
     resume) heading=$'Resume saved work on which host?\nBrowse this host’s saved conversations' ;;
     move) heading="Move this session to which host?"$'\n'"Destination host · current host: $source" ;;
     *) heading='Open a session on which host?' ;;
   esac
-  heading+=$'\nSSH hosts · alias and target'
-  (( ${#REMOTE_HOSTS} )) || { print -u2 't remote: no hosts configured; run t hosts add <alias> <target>'; return 1; }
+  if [[ $purpose == move ]]; then
+    heading+=$'\nHosts · local or SSH alias and target'
+    [[ $'\n'$excluded$'\n' == *$'\nlocal\n'* ]] || rows+=$'local\tthis machine\n'
+  else
+    heading+=$'\nSSH hosts · alias and target'
+  fi
+  (( ${#REMOTE_HOSTS} )) || [[ -n $rows ]] || { print -u2 't remote: no hosts configured; run t hosts add <alias> <target>'; return 1; }
   [[ -t 0 ]] && command -v fzf >/dev/null 2>&1 || {
     print -u2 't remote: host selection requires a terminal and fzf; use --host HOST'; return 1;
   }
@@ -1099,7 +1148,7 @@ _t_remote_host_pick() {
   selected=$(print -rn -- "$rows" | _t_fzf_single host "$heading" --delimiter=$'\t' --prompt='host> ') || return $?
   [[ -n $selected ]] || return 130
   host=${selected%%$'\t'*}
-  [[ -n ${REMOTE_HOSTS[$host]:-} ]] || return 1
+  [[ ( $purpose == move && $host == local ) || -n ${REMOTE_HOSTS[$host]:-} ]] || return 1
   print -r -- "$host"
 }
 
@@ -1227,11 +1276,7 @@ _t_session_move() {
   fi
   # Let the engine validate malformed flags and the mutually exclusive receive
   # modes before discovery. --from alone continues to mean receive here.
-  if [[ -n $receive || ( -n $exact && -z $pick ) ]]; then
-    if [[ -z $receive && -z $host ]]; then
-      host=$(_t_remote_host_pick local move local) || return $?
-      args+=(--host "$host")
-    fi
+  if [[ -n $receive || -n ${T_MOVE_EXPECT_ROW:-} || ${_T_BEAM_HOST_IS_TARGET:-0} == 1 ]]; then
     # --remote controls source discovery; it is not a transfer-engine flag.
     local -a engine_args
     for arg in "${args[@]}"; do
@@ -1240,29 +1285,65 @@ _t_session_move() {
     _t_beam "${engine_args[@]}"
     return
   fi
+  # Exact targets can live on any registered host. Resolve ownership before
+  # labeling the source or asking for a destination, even without --remote.
+  [[ ( -n $exact && -z $pick ) || $host == local ]] && remote=1
   local T_MOVE_REMOTE=${remote:-0}
   _t_remote move "${args[@]}"
 }
 
 _t_remote() {
   local action=$1; shift
+  if [[ $action == kill ]]; then
+    local force= kill_arg
+    local -a kill_targets
+    for kill_arg in "$@"; do
+      case $kill_arg in
+        -y|--yes) force=1 ;;
+        -*) print -u2 "t remote kill: unknown flag $kill_arg"; return 2 ;;
+        *) kill_targets+=("$kill_arg") ;;
+      esac
+    done
+    if [[ -n ${REMOTE_HOSTS[$kill_targets[1]]:-} ]]; then
+      local kill_host_repo kill_host_rc
+      kill_host_repo=$(_dev_resolve_repo "$kill_targets[1]"); kill_host_rc=$?
+      if (( kill_host_rc == 0 || kill_host_rc == 2 )); then
+        print -u2 't remote kill: ambiguous host/repository; use t remote --host HOST session close'; return 2
+      fi
+      local -a close_args=("${(@)kill_targets[2,-1]}")
+      [[ -n $force ]] && close_args+=(--yes)
+      command t remote --host "$kill_targets[1]" session close "${close_args[@]}"
+      return $?
+    fi
+    (( $#kill_targets <= 2 )) || { print -u2 't remote kill: expected [repo] [slot|all]'; return 2; }
+    _dev_remote_kill "${kill_targets[1]}" "${kill_targets[2]}" "$force"
+    return $?
+  fi
   local host= source= sid= all= pick= remote=${T_MOVE_REMOTE:-1} repo= slot= arg rows row scope= scope_rel= wt_rel= cwd_rel= selected= source_target= target=
   local -a pos flags fields candidates format_args chosen move_args selections displays excluded completed_rows unattempted
-  local -A seen
-  case $action in open|resume|move) ;; *) print -u2 't remote: choose open, move, or resume'; return 2 ;; esac
+  local -A seen scoped_source_rows
+  local scoped_rows scoped_rc scoped_row scope_verified
+  local -a scoped_fields
+  case $action in open|resume|move) ;; *) print -u2 't remote: choose open, move, resume, or kill'; return 2 ;; esac
   while (( $# )); do
     arg=$1; shift
     case $arg in
-      --host|--from|--session|-s|--id|--days)
+      --host|--to|--from|--session|-s|--id|--days)
         (( $# )) && [[ -n $1 && $1 != -* ]] || { print -u2 "t remote $action: $arg requires a value"; return 2; }
         case $arg in
-          --host) host=$1 ;;
+          --host|--to)
+            [[ $arg != --to || $action == move ]] || return 2
+            [[ -z $host || $host == "$1" ]] || { print -u2 't remote move: conflicting destinations'; return 2; }
+            host=$1 ;;
           --from) [[ $action == move ]] || return 2; source=$1 ;;
           --session|-s|--id) [[ $action == move ]] || return 2; sid=$1 ;;
           --days) [[ $action == resume ]] || return 2; flags+=(--days "$1") ;;
         esac
         shift ;;
-      --host=*) host=${arg#*=}; [[ -n $host ]] || return 2 ;;
+      --host=*|--to=*)
+        [[ $arg != --to=* || $action == move ]] || return 2
+        [[ -z $host || $host == "${arg#*=}" ]] || { print -u2 't remote move: conflicting destinations'; return 2; }
+        host=${arg#*=}; [[ -n $host ]] || return 2 ;;
       --from=*) [[ $action == move ]] || return 2; source=${arg#*=}; [[ -n $source ]] || return 2 ;;
       --session=*|-s=*|--id=*) [[ $action == move ]] || return 2; sid=${arg#*=}; [[ -n $sid ]] || return 2 ;;
       --days=*) [[ $action == resume ]] || return 2; flags+=("$arg") ;;
@@ -1275,6 +1356,17 @@ _t_remote() {
       *) pos+=("$arg") ;;
     esac
   done
+  # In host-first move syntax the host is the SOURCE, like remote resume.
+  # Released repo/slot and --from/--host forms keep their original behavior.
+  if [[ $action == move && $#pos -gt 0 && ( -n ${REMOTE_HOSTS[$pos[1]]:-} || $#pos == 3 ) ]]; then
+    [[ -z $source ]] || { print -u2 't remote move: source specified twice'; return 2; }
+    local host_repo host_repo_rc
+    host_repo=$(_dev_resolve_repo "$pos[1]"); host_repo_rc=$?
+    if (( host_repo_rc == 0 || host_repo_rc == 2 )); then
+      print -u2 't remote move: ambiguous host/repository; use --from HOST and --to DESTINATION'; return 2
+    fi
+    source=$pos[1]; pos=("${(@)pos[2,-1]}")
+  fi
   if [[ $action != move && -z $host && $#pos -gt 0 ]]; then
     (( $#pos <= 3 )) || { print -u2 "t remote $action: expected [host] [repo] [slot]"; return 2; }
     # Old repo-only/repo-slot commands must not silently become SSH targets.
@@ -1290,6 +1382,10 @@ _t_remote() {
   fi
   (( $#pos <= 2 )) || { print -u2 "t remote $action: expected [repo] [slot] with --host"; return 2; }
   repo=${pos[1]:-}; slot=${pos[2]:-}
+  if [[ $action == move && -z $sid && ${pos[-1]:-} == *:* ]]; then
+    sid=${pos[-1]##*:}
+    if (( $#pos == 1 )); then repo=; else slot=; fi
+  fi
   [[ -z $slot || $slot == <-> ]] || { print -u2 "t remote $action: slot must be a number"; return 2; }
   if [[ $repo == <-> && -z $slot ]]; then
     slot=$repo; repo=$(_t_infer_repo) || { print -u2 't remote: name the repository for a numeric slot'; return 1; }
@@ -1297,9 +1393,9 @@ _t_remote() {
     repo=$(_t_infer_repo)
   fi
   [[ -z $all || ( -z $repo && -z $slot ) ]] || { print -u2 "t remote $action: --all cannot be combined with a repository or slot"; return 2; }
-  [[ $host != local ]] || { print -u2 't remote: --host names a remote SSH host; use t session move --from HOST to receive here'; return 2; }
+  [[ $action == move || $host != local ]] || { print -u2 't remote: --host names a remote SSH host; use t session move --from HOST to receive here'; return 2; }
   # An exact conversation ID is global unless a repository was explicit.
-  [[ -z $sid || $#pos != 0 ]] || repo=
+  if [[ -n $sid && ( $#pos == 0 || ( $#pos == 1 && $pos[1] == *:* ) ) ]]; then repo=; fi
   if [[ $action != move ]]; then
     if [[ -z $host ]]; then
       local purpose=$action
@@ -1338,7 +1434,7 @@ _t_remote() {
       if (( identity_rc == 0 )); then
         repository_identity=$(python3 "$T_HOME/bin/t" __repo-identity "$identity_alias") || return $?
       fi
-      local resume_environment="_T_HANDOFF_CODEX=${(q)${_T_HANDOFF_CODEX:-${DEV_HANDOFF[codex]:-native}}} _T_HANDOFF_CLAUDE=${(q)${_T_HANDOFF_CLAUDE:-${DEV_HANDOFF[claude]:-t}}} T_NO_UPDATE_CHECK=1 _T_RESUME_REPO_IDENTITY=${(q)repository_identity} _T_RESUME_REQUIRE_PICKER=1 _T_RESUME_OWNER_HOST=here _T_RESUME_DESTINATION_HOST=${(q)target}"
+      local resume_environment="_T_HANDOFF_CODEX=t _T_HANDOFF_CLAUDE=t T_NO_UPDATE_CHECK=1 _T_RESUME_REPO_IDENTITY=${(q)repository_identity} _T_RESUME_REQUIRE_PICKER=1 _T_RESUME_OWNER_HOST=here _T_RESUME_DESTINATION_HOST=${(q)target}"
       if [[ -n $repository_identity ]]; then
         # Resolve on the target before invoking its shell function. Older t
         # versions may ignore the identity environment and reuse a foreign alias.
@@ -1346,9 +1442,6 @@ _t_remote() {
       else
         worker="$resume_environment _t_resume ${(j: :)${(@q)worker_args}}"
       fi
-    fi
-    if [[ $action == resume ]]; then
-      worker="(( \$+functions[_t_handoff_check] )) || { print -u2 't: update t on the destination host before cross-host handoff'; return 1; }; $worker"
     fi
     _term_title "$host: t remote $action"
     {
@@ -1385,15 +1478,42 @@ _t_remote() {
       # Unknown local selectors are resolved only on remote source hosts.
       [[ -z $source && -n $repo && -z $scope && $fields[1] == local ]] && continue
       [[ -n $fields[2] && $fields[2] != - && $fields[5] == (attached|detached) && $fields[8] == (claude|codex) ]] || continue
-      [[ -z $sid || $fields[2] == "$sid" ]] || continue
+      [[ -z $sid || $fields[2] == "$sid"* ]] || continue
       [[ -z $slot || $fields[4] == *-$slot ]] || continue
       if [[ -n $scope ]]; then
         cwd_rel=$(_dev_homerel "$fields[3]")
-        [[ $cwd_rel == $scope_rel || $cwd_rel == $scope_rel/* || ( -n $DEV_WORKTREE_ROOT && $cwd_rel == $wt_rel/* ) ]] || continue
+        if [[ $cwd_rel != $scope_rel && $cwd_rel != $scope_rel/* &&
+              ( -z $DEV_WORKTREE_ROOT || $cwd_rel != $wt_rel/* ) ]]; then
+          [[ $fields[1] != local ]] || continue
+          # Different checkout names/layouts are valid across hosts. Ask the
+          # source registry to prove scope; never trust a matching slot label.
+          if [[ -z ${scoped_source_rows[$fields[1]]+present} ]]; then
+            scoped_rows=$(_t_remote_move_rows "$fields[1]" "$repo"); scoped_rc=$?
+            (( scoped_rc == 0 )) || {
+              print -u2 't session move: repository scope could not be verified; no conversation was moved'
+              return $scoped_rc
+            }
+            scoped_source_rows[$fields[1]]=$scoped_rows
+          fi
+          scope_verified=
+          for scoped_row in "${(@f)scoped_source_rows[$fields[1]]}"; do
+            scoped_fields=("${(@ps:\t:)scoped_row}")
+            if [[ $scoped_fields[1] == "$fields[1]" && $scoped_fields[2] == "$fields[2]" &&
+                  $scoped_fields[3] == "$fields[3]" && $scoped_fields[4] == "$fields[4]" &&
+                  $scoped_fields[5] == "$fields[5]" && $scoped_fields[8] == "$fields[8]" ]]; then
+              scope_verified=1; break
+            fi
+          done
+          [[ -n $scope_verified ]] || continue
+        fi
       fi
       candidates+=("$row")
     done
-    (( $#candidates )) || { print -u2 "t session move: no current CLI conversations${repo:+ for '$repo'} to move"; return 0; }
+    if (( ! $#candidates )); then
+      print -u2 "t session move: no current CLI conversations${repo:+ for '$repo'}${slot:+ in slot $slot} to move"
+      print -u2 -- "t: To restore saved work, use t session resume${repo:+ ${(q)repo}}${slot:+ $slot}"
+      return 0
+    fi
     if (( $#candidates == 1 )) && [[ -z $pick && ( -n $sid || -n $slot ) ]]; then
       selected=$candidates[1]
     else
@@ -1462,7 +1582,6 @@ _t_remote() {
             $fields[4] == "$chosen[4]" && $fields[8] == "$chosen[8]" && $fields[5] == (attached|detached) ]]; then verified=1; break; fi
     done
     [[ -n $verified ]] || { print -u2 't session move: selected session changed or closed; select it again'; return 1; }
-    _t_handoff_check "$chosen[8]" "$source" "$target" || return $?
     [[ $source == local && $chosen[2] == "$self_sid" ]] && self_row=$selected
   done
   # Moving our own current process ends this controller, so do that last.

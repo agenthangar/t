@@ -44,6 +44,8 @@ _t_load_plugin() {
   [[ -r "$T_HOME/ui/fzf.sh" ]] || { print -u2 -- "t: shared picker is missing: $T_HOME/ui/fzf.sh"; return 1; }
   source "$T_HOME/ui/fzf.sh"
 
+  source "$T_HOME/zsh/nosleep.zsh"
+
   # The cached local data must be rebuilt before the Python executable runs.
   source "$T_HOME/zsh/config.zsh"
   source "$T_HOME/zsh/agent.zsh"
