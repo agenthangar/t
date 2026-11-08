@@ -85,8 +85,8 @@ def native_command(job, workspace, logs, chosen):
             instructions += '\nYou must delegate a bounded patch assignment through the local worker before editing that assignment yourself. Collect its result, inspect the patch and run validation before accepting it. You remain the lead.'
         command += local['approval_args'](chosen)
         command += ['-c', 'developer_instructions=' + json.dumps(instructions),
-                    '-c', 'mcp_servers.t-local-worker.command=' + json.dumps(str(ROOT / 'bin/t')),
-                    '-c', 'mcp_servers.t-local-worker.args=["mcp","--local-worker"]']
+                    '-c', 'mcp_servers.t-local-worker.command=' + json.dumps(sys.executable),
+                    '-c', 'mcp_servers.t-local-worker.args=' + json.dumps([str(ROOT / 'bin/t'), 'mcp', '--local-worker'])]
         for key in ('XDG_CONFIG_HOME', 'XDG_STATE_HOME', 'XDG_CACHE_HOME', 'T_LOCAL_RUNTIME_RECEIPT'):
             if key in os.environ:
                 command += ['-c', 'mcp_servers.t-local-worker.env.' + key + '=' + json.dumps(os.environ[key])]

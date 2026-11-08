@@ -428,6 +428,10 @@
     "libexec/t_local_status.py:ancestry:subprocess.run": {
       "kind": "protocol",
       "reason": "Bounded ownership and pane metadata probes feed the quiet tmux statusline; no terminal output or picker."
+    },
+    "libexec/t_eval_engine.py:workflow_python:urllib.request.urlopen": {
+      "kind": "background",
+      "reason": "Detached evaluation preparation checkpoints the pinned workflow interpreter download before bounded network access."
     }
   },
   "shell": [

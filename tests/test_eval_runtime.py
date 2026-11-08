@@ -254,6 +254,7 @@ def test_engine_resume_preserves_completed_attempts(evaluation, tmp_path, monkey
     tasks = [tmp_path / name for name in ('a', 'b', 'c')]
     monkeypatch.setattr(e, 'prepare_runtime', lambda *a: ('1.0.0', 8))
     monkeypatch.setattr(e, 'native_codex', lambda *a: '/fixture/native-codex')
+    monkeypatch.setattr(e, 'workflow_python', lambda *a: '/fixture/python.tar.gz')
     monkeypatch.setattr(e, 'harbor_python', lambda *a: Path('/fake/python'))
     monkeypatch.setattr(e, 'prepare_benchmark', lambda *a: (tmp_path, tasks))
     monkeypatch.setattr(e, 'pin_image', lambda *a: 'sha256:fixed')
@@ -300,6 +301,7 @@ def test_hybrid_reservation_recovery_and_cleanup(evaluation, tmp_path, monkeypat
     monkeypatch.setattr(e, 'prepare_runtime', lambda *a: ('1.0.0', 8))
     monkeypatch.setattr(e, 'prepare_worker_sandbox', lambda *a: ['scoped-policy'])
     monkeypatch.setattr(e, 'native_codex', lambda *a: '/fixture/codex')
+    monkeypatch.setattr(e, 'workflow_python', lambda *a: '/fixture/python.tar.gz')
     monkeypatch.setattr(e, 'harbor_python', lambda *a: '/fixture/python')
     monkeypatch.setattr(e, 'prepare_benchmark', lambda *a: (tmp_path, [tmp_path / n for n in ('a', 'b', 'c')]))
     monkeypatch.setattr(e, 'pin_image', lambda *a: 'sha256:fixed')
@@ -575,6 +577,39 @@ def test_frontier_gateway_budget_outage_and_nested_tools(evaluation, monkeypatch
             assert gateway.routes[second['token']]['offline']
     finally:
         upstream.shutdown();upstream.server_close();thread.join()
+
+
+def test_workflow_python_cache_is_pinned_and_offline(evaluation, monkeypatch):
+    import hashlib
+    import io
+    m, _ = evaluation
+    e = load_script(ROOT / 'libexec/t_eval_engine.py', 'eval_python_runtime')
+    monkeypatch.setattr(e, 'core', lambda: vars(m))
+    journal = m.Journal(m.create_run(m.defaults()))
+    content = b'isolated Python archive fixture'
+    monkeypatch.setattr(e, 'WORKFLOW_PYTHON_SHA256', hashlib.sha256(content).hexdigest())
+    requested = []
+    def fetch(url, **kwargs):
+        requested.append(url)
+        return io.BytesIO(content)
+    monkeypatch.setattr(e.urllib.request, 'urlopen', fetch)
+    archive = Path(e.workflow_python(journal))
+    assert archive.read_bytes() == content
+    assert requested == [e.WORKFLOW_PYTHON_URL]
+    assert journal.state['workflow_python']['sha256'] == hashlib.sha256(content).hexdigest()
+    assert journal.state['workflow_python']['version'] == e.WORKFLOW_PYTHON_VERSION
+    def offline(*args, **kwargs):
+        pytest.fail('cached interpreter must not require network access')
+    monkeypatch.setattr(e.urllib.request, 'urlopen', offline)
+    assert e.workflow_python(journal) == str(archive)
+    archive.write_bytes(b'corrupt cache')
+    with pytest.raises(ValueError, match='checksum mismatch'):
+        e.workflow_python(journal)
+    archive.unlink()
+    monkeypatch.setattr(e.urllib.request, 'urlopen', lambda *a, **kw: io.BytesIO(b'corrupt download'))
+    with pytest.raises(ValueError, match='checksum mismatch'):
+        e.workflow_python(journal)
+    assert not archive.exists()
 
 
 def test_native_codex_package_pins_architecture_and_integrity(evaluation, tmp_path, monkeypatch):

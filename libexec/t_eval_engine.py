@@ -25,6 +25,10 @@ ROOT = Path(__file__).resolve().parents[1]
 HARBOR_VERSION = '0.25.0'
 SECCOMP_URL = 'https://raw.githubusercontent.com/moby/profiles/4b8214fc4971e06172938a1f1554ccff6647ee80/seccomp/default.json'
 SECCOMP_SHA256 = '6416b47770785a41ac59073cdc77d9fe98517df2799dc83ef207e622de3053f6'
+WORKFLOW_PYTHON_VERSION = '3.12.16'
+WORKFLOW_PYTHON_URL = ('https://github.com/astral-sh/python-build-standalone/releases/download/20261026/'
+                       'cpython-3.12.16%2B20261026-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz')
+WORKFLOW_PYTHON_SHA256 = 'ce4f6d0a6cfdb3bed6e44c2f9affd85943c76a42e25ad3a259002f31d6fb8a20'
 
 
 def core():
@@ -229,6 +233,31 @@ def prepare_worker_sandbox(journal):
     return options
 
 
+def workflow_python(journal):
+    """The adapter has its own interpreter; task images retain their Python."""
+    m = core()
+    archive = m['paths']()['cache'] / ('cpython-' + WORKFLOW_PYTHON_VERSION + '-linux-x86_64.tar.gz')
+    with m['lock'](archive.with_suffix('.lock')):
+        if archive.exists():
+            content = archive.read_bytes()
+        else:
+            journal.event('preparation', action='cache pinned workflow Python', version=WORKFLOW_PYTHON_VERSION)
+            with urllib.request.urlopen(WORKFLOW_PYTHON_URL, timeout=300) as response:
+                content = response.read()
+        if hashlib.sha256(content).hexdigest() != WORKFLOW_PYTHON_SHA256:
+            raise ValueError('workflow Python archive checksum mismatch')
+        if not archive.exists():
+            temporary = archive.with_suffix('.tmp')
+            try:
+                temporary.write_bytes(content)
+                temporary.replace(archive)
+            finally:
+                temporary.unlink(missing_ok=True)
+    journal.checkpoint(workflow_python={'version': WORKFLOW_PYTHON_VERSION, 'architecture': 'x86_64',
+                                       'source': WORKFLOW_PYTHON_URL, 'sha256': WORKFLOW_PYTHON_SHA256})
+    return str(archive)
+
+
 def native_codex(version, journal):
     """Pin official Linux binaries to the VM CPU, independently of task images."""
     architecture = run(['docker', 'info', '--format', '{{.Architecture}}'])
@@ -361,6 +390,7 @@ def execute(journal, retry_interrupted=False):
     codex_version, memory = prepare_runtime(config, journal)
     worker_sandbox = prepare_worker_sandbox(journal) if set(config['modes']) & {'automatic', 'required-local'} else []
     native = native_codex(codex_version, journal)
+    adapter_python = workflow_python(journal)
     python = harbor_python(journal)
     benchmark, tasks = prepare_benchmark(journal)
     images = dict(journal.state.get('images', {}))
@@ -403,6 +433,7 @@ def execute(journal, retry_interrupted=False):
             started = time.time()
             job = {'config': config, 'mode': mode, 'task': str(journal.directory / 'tasks' / task),
                    'benchmark_root': str(benchmark), 'directory': str(directory), 'codex_version': codex_version, 'native_codex': native,
+                   'workflow_python': adapter_python,
                    'capability': capability, 'trial_id': trial_id}
             if mode in ('automatic', 'required-local'):
                 job['worker_sandbox'] = worker_sandbox

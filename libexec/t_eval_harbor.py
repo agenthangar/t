@@ -16,6 +16,7 @@ from harbor.trial.trial import Trial
 
 ROOT = Path(__file__).resolve().parents[1]
 REPO = 'cd /app 2>/dev/null || cd /testbed; '
+WORKFLOW_PYTHON = '/opt/t-eval-python/bin/python3'
 
 
 async def checked(environment, command, **kwargs):
@@ -89,11 +90,15 @@ class WorkflowAgent(Codex):
         # benchmark userspace stays x86; Rosetta cannot run every Codex binary.
         await environment.upload_dir(source_dir=Path(self.job['native_codex']), target_dir='/opt/t-eval-codex')
         await checked(environment, 'ln -sf /opt/t-eval-codex/bin/codex /usr/local/bin/codex && codex --version', timeout_sec=30)
+        await environment.upload_file(source_path=Path(self.job['workflow_python']), target_path='/tmp/t-eval-python.tar.gz')
+        await checked(environment, 'mkdir -p /opt/t-eval-python && '
+                      'tar -xzf /tmp/t-eval-python.tar.gz --strip-components=1 -C /opt/t-eval-python && '
+                      'rm /tmp/t-eval-python.tar.gz', timeout_sec=120)
         await self.configure(environment)
 
     async def configure(self, environment):
         # Do not use Harbor's credential/config forwarding. The gateway owns credentials.
-        await checked(environment, 'python3 -c "import sys; assert sys.version_info >= (3, 11)"', timeout_sec=30)
+        await checked(environment, WORKFLOW_PYTHON + ' -I -c "import sys,tomllib; assert sys.version_info >= (3, 11)"', timeout_sec=30)
         with tempfile.TemporaryDirectory(prefix='t-eval-bundle-') as directory:
             bundle(Path(directory))
             await environment.upload_dir(source_dir=Path(directory), target_dir='/opt/t-eval')
@@ -115,7 +120,7 @@ class WorkflowAgent(Codex):
         try:
             execution = await environment.exec(
                 command='timeout -k 15 ' + str(job['config']['task_seconds'] + 30) +
-                        ' python3 /opt/t-eval/libexec/t_eval_trial.py /tmp/t-eval-job.json',
+                        ' ' + WORKFLOW_PYTHON + ' /opt/t-eval/libexec/t_eval_trial.py /tmp/t-eval-job.json',
                 cwd=workspace, timeout_sec=job['config']['task_seconds'] + 60)
             (Path(job['directory']) / 'entrypoint.json').write_text(json.dumps({
                 'exit_code': execution.return_code, 'stdout': execution.stdout, 'stderr': execution.stderr}))

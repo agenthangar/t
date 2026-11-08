@@ -86,6 +86,13 @@ and runs natively on the VM CPU while benchmark task containers stay x86. Missin
 a resumable blocked run. Benchmark downloads, images and packages need internet
 until cached; an inference-only offline run still requires those assets.
 
+The workflow adapter also uses a checksum-pinned [standalone Python](https://github.com/astral-sh/python-build-standalone/releases/tag/20261026)
+3.12.16 interpreter. It is cached on the host and installed under `/opt/t-eval-python`
+only in candidate containers. The adapter and its local-worker MCP process use
+that interpreter explicitly; the task's `python3`, reference environment, and
+fresh grading environment retain the publisher's versions. This supports task
+images whose bundled Python is older than the adapter requires.
+
 The local model stays on the host. Containers receive run-scoped gateway leases,
 not cloud credentials. Agent-phase egress allows only the gateway's address and
 port. Setup and official verification use their published network policies.

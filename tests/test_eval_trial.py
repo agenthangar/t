@@ -30,7 +30,9 @@ def test_container_configuration_uses_production_workflow(evaluation, tmp_path, 
         document, _ = workflow['load']()
         assert document['workflows']['standard']['inference']['model'] == m.defaults()['local_model']
         command = t.native_command(job, tmp_path, logs, chosen)
-        assert ('mcp_servers.t-local-worker.args=["mcp","--local-worker"]' in command) == (mode in ('automatic', 'required-local'))
+        assert ('mcp_servers.t-local-worker.command=' + json.dumps(sys.executable) in command) == (mode in ('automatic', 'required-local'))
+        if mode in ('automatic', 'required-local'):
+            assert 'mcp_servers.t-local-worker.args=' + json.dumps([str(ROOT / 'bin/t'), 'mcp', '--local-worker']) in command
         native = (logs / 'runtime/.codex/config.toml').read_text()
         assert 'OPENAI_API_KEY' not in native
         assert ('request_max_retries = 0' in native) == (mode == 'outage')
@@ -180,7 +182,7 @@ def test_harbor_controls_and_fresh_grading(harbor_adapter, evaluation, tmp_path,
 def test_harbor_trial_config_and_candidate_bundle(harbor_adapter, evaluation, tmp_path, monkeypatch):
     h = harbor_adapter; m, _ = evaluation
     job = {'task': str(tmp_path), 'directory': str(tmp_path / 'attempt'), 'trial_id': 'c'*32,
-           'config': m.defaults(), 'native_codex':str(tmp_path/'native'), 'capability': {'port': 1234}, 'mode': 'automatic',
+           'config': m.defaults(), 'native_codex':str(tmp_path/'native'), 'workflow_python':str(tmp_path/'python.tar.gz'), 'capability': {'port': 1234}, 'mode': 'automatic',
            'worker_sandbox': ['seccomp=/fixture/policy.json', 'apparmor=t-eval-userns']}
     configs = []
     class Trial:
@@ -201,7 +203,11 @@ def test_harbor_trial_config_and_candidate_bundle(harbor_adapter, evaluation, tm
             return SimpleNamespace(return_code=0, stdout='/app', stderr='')
         async def upload_dir(self, **kw):
             assert kw['target_dir']=='/opt/t-eval-codex' or (kw['source_dir'] / 'libexec/mlx-models.json').is_file()
-        async def upload_file(self, **kw): payloads.append(json.loads(kw['source_path'].read_text()))
+        async def upload_file(self, **kw):
+            if kw['target_path'] == '/tmp/t-eval-python.tar.gz':
+                assert kw['source_path'] == Path(job['workflow_python'])
+            else:
+                payloads.append(json.loads(kw['source_path'].read_text()))
     async def restrict(*a): pass
     monkeypatch.setattr(h, 'restrict_network', restrict)
     job_file = tmp_path / 'job.json'; job_file.write_text(json.dumps(job))
