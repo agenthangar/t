@@ -404,7 +404,7 @@ def select_model(ui, current=DEFAULT_MODEL, context=32768):
     suite = 'swe-bench-verified-bash-only'
     while True:
         view = catalogue(suite, context)
-        rows = [(r['model'], r['model'].split('/')[-1]) for r in view['models']]
+        rows = [('', 'Use default · ' + DEFAULT_MODEL.split('/')[-1])] + [(r['model'], r['model'].split('/')[-1]) for r in view['models']]
         values = {r['model']: f"Memory fit {'✓' if r['fit'] is True else '✕' if r['fit'] is False else '?'} · "
                   f"{r['benchmark']['score'] if r['benchmark'] else '—'} · "
                   f"{'Ready' if r.get('ready') else 'Downloaded' if r['installed'] else 'Not installed'}" for r in view['models']}
@@ -413,6 +413,8 @@ def select_model(ui, current=DEFAULT_MODEL, context=32768):
                          accents={r['model']: 'y' for r in view['models'] if r['fit'] is not True})
         if choice in (None, '__back'):
             return None
+        if choice == '':
+            return {'provider': DEFAULT['provider'], 'model': DEFAULT_MODEL}
         if choice == '__suite':
             suite = ui.pick('Benchmark suite', [(v,v) for v in SUITES]) or suite
             continue
@@ -452,37 +454,51 @@ def select_model(ui, current=DEFAULT_MODEL, context=32768):
 
 
 def workflow_menu(ui, value=None):
-    current = policy(value)
-    while True:
-        choice = ui.pick('Inference & routing', [('mode', 'Routing'), ('model', 'Local model'),
-                         ('on_cloud_failure', 'On cloud connection failure'),
-                         ('context_tokens', 'Context'), ('timeout_seconds', 'Task budget'), ('back', 'Back')],
-                         values={**{k: str(v) for k,v in current.items()}, 'on_cloud_failure':
-                                 'Continue locally' if current['on_cloud_failure'] == 'local' else 'Pause and retry'})
-        if choice in (None, 'back'):
-            return current
-        if choice == 'model':
-            selection = select_model(ui, current['model'], current['context_tokens'])
-            if selection:
-                current.update(selection)
-        elif choice == 'mode':
-            selected = ui.pick('Routing', [(v, {'automatic':'Automatic hybrid · approve local worker tools', 'local-only':'Local only · no cloud fallback',
-                                             'manual':'Manual delegation', 'disabled':'Disabled'}[v]) for v in MODES])
-            if selected:
-                current['mode'] = selected
-                if selected == 'disabled':
-                    current['on_cloud_failure'] = 'pause'
-        elif choice == 'on_cloud_failure':
-            selected = ui.pick('On cloud connection failure', [('pause', 'Pause and retry'),
-                               ('local', 'Continue locally with selected model')],
-                               disabled={'local': 'Enable routing first.'} if current['mode'] == 'disabled' else {})
-            if selected:
-                current['on_cloud_failure'] = selected
-        else:
-            values = (8192, 16384, 32768, 65536) if choice == 'context_tokens' else (60, 300, 900, 1800)
-            selected = ui.pick(choice.replace('_', ' ').title(), [(str(v),str(v)) for v in values])
-            if selected:
-                current[choice] = int(selected)
+    current, focus = policy(value), 'mode'
+    try:
+        while True:
+            rows = [('mode', 'Routing'), ('model', 'Local model'),
+                    ('on_cloud_failure', 'On cloud connection failure'),
+                    ('context_tokens', 'Context'), ('timeout_seconds', 'Task budget'),
+                    ('reset', 'Reset to defaults'), ('back', 'Back')]
+            choice = ui.pick('Inference & routing', rows,
+                            default=next(i for i, row in enumerate(rows) if row[0] == focus),
+                            sections={'reset': 'Manage'},
+                            values={**{k: str(v) for k, v in current.items()}, 'on_cloud_failure':
+                                    'Continue locally' if current['on_cloud_failure'] == 'local' else 'Pause and retry',
+                                    'reset': 'Already at defaults' if current == DEFAULT else 'Routing settings'})
+            if choice in (None, 'back'):
+                return current
+            focus = choice
+            if choice == 'reset':
+                current = policy()
+            elif choice == 'model':
+                selection = select_model(ui, current['model'], current['context_tokens'])
+                if selection:
+                    current.update(selection)
+            elif choice == 'mode':
+                selected = ui.pick('Routing', [('', 'Use default · Manual delegation')] + [(v, {
+                    'automatic': 'Automatic hybrid · approve local worker tools', 'local-only': 'Local only · no cloud fallback',
+                    'manual': 'Manual delegation', 'disabled': 'Disabled'}[v]) for v in MODES])
+                if selected is not None:
+                    current['mode'] = selected or DEFAULT['mode']
+                    if current['mode'] == 'disabled':
+                        current['on_cloud_failure'] = 'pause'
+            elif choice == 'on_cloud_failure':
+                selected = ui.pick('On cloud connection failure', [('', 'Use default · Pause and retry'),
+                                   ('pause', 'Pause and retry'), ('local', 'Continue locally with selected model')],
+                                   disabled={'local': 'Enable routing first.'} if current['mode'] == 'disabled' else {})
+                if selected is not None:
+                    current['on_cloud_failure'] = selected or DEFAULT['on_cloud_failure']
+            else:
+                values = (8192, 16384, 32768, 65536) if choice == 'context_tokens' else (60, 300, 900, 1800)
+                selected = ui.pick(choice.replace('_', ' ').title(), [('', 'Use default · ' + str(DEFAULT[choice]))] +
+                                   [(str(v), str(v)) for v in values])
+                if selected is not None:
+                    current[choice] = int(selected) if selected else DEFAULT[choice]
+    except KeyboardInterrupt as exc:
+        exc.workflow_inference = current
+        raise
 
 
 def ollama_action(name, action, download_only=False, context=32768):

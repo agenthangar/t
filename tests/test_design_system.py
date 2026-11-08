@@ -369,11 +369,11 @@ def test_workflow_design_menu_stages_defaults_sources_and_reset(workflow, t_mod,
     systems = [view for view in ui.views if view[0] == 'Design systems']
     assert systems[0][2]['values']['repo:web'] == 'Auto · DESIGN.md'
     assert systems[-1][2]['values']['repo:web'] == 'ui/README.md'
-    assert systems[0][2]['sections'] == {'default': 'Default', 'repo:web': 'Repositories', 'back': 'Navigation'}
+    assert systems[0][2]['sections'] == {'default': 'Default', 'repo:web': 'Repositories', 'reset': 'Manage'}
     picker = next(view for view in ui.views if view[0] == 'web · Design system')
     assert [label for _, label in picker[1]].count('DESIGN.md') == 1
     assert 'Manage' in picker[2]['sections'].values()
-    t_mod._workflow_policy_menu(ToolMenu(['frontend_design', 'systems', 'default', 'auto', 'back',
+    t_mod._workflow_policy_menu(ToolMenu(['frontend_design', 'systems', 'default', '', 'back',
         'approach', '', 'back', 'back']), cfg, vars(workflow), name='standard')
     assert cfg._workflow_document['workflows']['standard'] == before['workflows']['standard']
     assert cfg._workflow_document['repositories'][str(repo)]['design_system']['path'] == 'ui/README.md'
@@ -389,7 +389,7 @@ def test_design_menu_scopes_repos_and_keeps_workflow_changes_on_interrupt(workfl
     before = copy.deepcopy(cfg._workflow_document)
     t_mod._workflow_policy_menu(ui, cfg, vars(workflow), name='standard')
     assert dict(next(view for view in ui.views if view[0] == 'Design systems')[1]) == {
-        'default': 'Find design systems', 'back': 'Back'}
+        'default': 'Find design systems', 'reset': 'Reset to defaults', 'back': 'Back'}
     assert cfg._workflow_document == before
     with pytest.raises(KeyboardInterrupt):
         t_mod._workflow_policy_menu(InterruptMenu(['frontend_design', 'systems', 'default', 'off', KeyboardInterrupt]),

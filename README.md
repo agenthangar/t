@@ -1072,6 +1072,26 @@ reload and automatic browser opening; CLI planning before implementation with
 approval; working CLI previews run from the repo and launch on request; relevant
 local tests before PR. Existing explicit choices and repository/task rules win.
 
+The workflow editor groups **Models**, **Behavior**, and **Manage**. Every settings
+page has **Reset to defaults**; each individual choice also shows its default or
+inherited value. Resets stay pending until **Save changes**. A page reset clears
+only that page and its nested settings. **Reset workflow to defaults** restores
+the selected tool's built-in policy while keeping the workflow's name, repository
+assignments and per-repository design sources.
+
+Inside a named workflow, open **Repositories → Assign repositories…** to assign
+one or several registered repositories. Space marks repositories; Enter stages
+the selected assignments. The page separates repositories using this workflow
+from other repositories and distinguishes explicit assignments, global inheritance,
+custom settings and disabled workflows. Select a repository to use this workflow,
+restore its global default, choose another workflow, disable workflows, or inspect
+its **Design system**. Assignments and design sources share the normal Save review.
+
+To inspect a repository's design source directly, open `t workflow`, choose its
+agent, then **Repository assignments → your repository → Design system**.
+The selection is stored in `~/.config/t/workflow.json` (or `$XDG_CONFIG_HOME/t/workflow.json`);
+the referenced guidance stays in the repository, such as `DESIGN.md`.
+
 **Frontend design → Design systems** shows a workflow default and its repositories.
 Automatic discovery prefers root `DESIGN.md`, then a single root `design-system.md`
 or `design_system.md`, then a single candidate. Ambiguous candidates require a

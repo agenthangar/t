@@ -20,6 +20,52 @@ at the selected delivery checkpoint. Never relink shared installed commands to a
 development worktree. Workflow configuration owns preview timing and approval;
 this document defines how to make the previews faithful and safe.
 
+## Workflow settings and resets
+
+Group the main workflow editor into Models, Behavior and Manage using shared
+RailUI sections. Use this workflow stays above the groups. Keep focus on the
+selected row when returning, including after a reset; headings are not selectable.
+
+Named workflow editors include Repositories directly below Use this workflow.
+Group registered repositories into Using this workflow and Other repositories,
+including inherited global assignments without materializing them. Distinguish
+explicit assignments, inheritance, custom inline settings, exclusions and disabled
+definitions. Assign repositories uses the shared multi-picker with no initial
+marks; Space marks and Enter stages the entire selection. Back cancels those marks.
+Already using this workflow is omitted from the batch picker; no registered or
+available repositories is an explicit disabled-action state, never an empty picker.
+Individual repository actions offer this workflow, global inheritance, another
+workflow, disable, and the existing design-source picker.
+
+Assignments remain tool-scoped in the existing transaction. Use the shared action
+semantics: explicit assignment replaces custom overrides and clears exclusion,
+while retaining the design source. Build batches before replacing staged state.
+Refresh membership and preserve focus on return; all assignment changes appear in
+the final before/after review. Browsing never scans repositories or writes settings.
+An explicit Design system choice opens the existing read-only discovery picker.
+These extend the existing workflow wizard/single/multiple-selection modes.
+
+Every settings page offers Reset to defaults, and individual selectors offer a
+resolved default or inheritance choice, including binary toggles. The multiple-model
+checklist offers an exclusive Use default preset alongside the exclusive one-model
+choice. Reset only settings owned by that page, including hidden fields. Parent
+pages include their nested settings: Local preview resets global and both type
+preferences; Tests includes runners. Type overrides resume live global inheritance.
+Model and permission defaults use the selected native tool; reset never invents an
+unverified effective native value. Routing and model resets do not download or run
+models, change credentials, or alter readiness requirements.
+
+Reset workflow to defaults restores that tool's built-in policy, preserving the
+workflow name, repository assignments, repository design sources, other workflows
+and other tool catalogues. Frontend design and Design systems page resets affect
+the workflow defaults; only the individual repository source picker resets its
+source. Keep legacy choices outside the reset scope semantically unchanged.
+
+All resets share the existing staged review/save/discard transaction, including
+completed resets before interruption. Already at defaults is a no-op; browsing and
+no-op resets never materialize inherited repository overrides. This extends the
+existing workflow wizard/single-selection modes, not the public command surface.
+
 ## Repository design-system configuration
 
 Frontend design is a top-level workflow page, above PRs, previews & tests. It
