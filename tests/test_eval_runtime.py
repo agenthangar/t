@@ -142,6 +142,46 @@ def test_gateway_usage_pricing_auth(evaluation, monkeypatch, tmp_path):
     assert seen == [{'model': 'exact-alias'}]
 
 
+def test_gateway_records_http_and_transport_failures(evaluation):
+    m, _ = evaluation
+    p = load_script(ROOT / 'libexec/t_eval_proxy.py', 'eval_gateway_failures')
+    class Unavailable(BaseHTTPRequestHandler):
+        def log_message(self, *_): pass
+        def do_POST(self):
+            self.rfile.read(int(self.headers['Content-Length']))
+            self.send_error(503, 'fixture unavailable')
+    upstream = ThreadingHTTPServer(('127.0.0.1', 0), Unavailable)
+    threading.Thread(target=upstream.serve_forever, daemon=True).start()
+    config = {**m.defaults(), 'modes': ['local-only']}
+    journal = m.Journal(m.create_run(config))
+    local = (f'http://127.0.0.1:{upstream.server_port}', 'fixed-model', {'revision': 'fixed'})
+    try:
+        with p.Gateway(config, journal, local) as gateway:
+            for index in range(2):
+                lease = gateway.lease(str(index), 'local-only')
+                url = f'http://127.0.0.1:{gateway.server.server_port}/{lease["token"]}/local/v1/responses'
+                try:
+                    with urllib.request.urlopen(urllib.request.Request(url, data=b'{"model":"fixed-model"}'), timeout=3) as response:
+                        response.read()
+                except urllib.error.HTTPError as error:
+                    error.read()
+                except (urllib.error.URLError, http.client.HTTPException):
+                    pass
+                deadline = time.monotonic() + 3
+                while len(gateway.records) <= index and time.monotonic() < deadline:
+                    threading.Event().wait(.01)
+                event = gateway.records[index]
+                assert event['usage'] is None
+                if index == 0:
+                    assert event['http_status'] == 503 and event['transport_error'] is None
+                    upstream.shutdown(); upstream.server_close()
+                else:
+                    assert event['http_status'] is None
+                    assert event['transport_error'] == 'ConnectionRefusedError'
+    finally:
+        upstream.shutdown(); upstream.server_close()
+
+
 def test_task_selection_checksums_and_image_pin(evaluation, tmp_path, monkeypatch):
     m, _ = evaluation
     e = load_script(ROOT / 'libexec/t_eval_engine.py', 'eval_engine_test')

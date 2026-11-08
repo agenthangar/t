@@ -99,6 +99,10 @@ containers retain the publisher's environment settings.
 Host cloud credentials use OPENAI_API_KEY or the existing Codex login; expired
 credentials must be refreshed through the normal login flow. A failed endpoint
 or unsupported model is reported, never replaced automatically.
+Ordinary modes retain Codex's native retry behavior for transient connection
+failures; the injected-outage mode disables retries to exercise continuation
+promptly. Request records include HTTP status and transport-error type when
+available, alongside usage and timing.
 
 ## Measurements and durability
 

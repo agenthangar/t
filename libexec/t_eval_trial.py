@@ -48,6 +48,9 @@ def configure(job, workspace, logs):
         receipt.chmod(0o600)
         os.environ['T_LOCAL_RUNTIME_RECEIPT'] = str(receipt)
     base = job['capability']['frontier_base']
+    # Only the deliberate outage needs an immediate transport failure. Ordinary
+    # modes retain the native harness's retry behavior for transient failures.
+    retries = 'request_max_retries = 0\nstream_max_retries = 0\n' if job['mode'] == 'outage' else ''
     native = f'''model_provider = "evaluation"
 model = {json.dumps(config['frontier_model'])}
 approval_policy = "never"
@@ -58,9 +61,7 @@ base_url = {json.dumps(base)}
 wire_api = "responses"
 requires_openai_auth = false
 supports_websockets = false
-request_max_retries = 0
-stream_max_retries = 0
-[features]
+{retries}[features]
 multi_agent = false
 [projects.{json.dumps(str(workspace))}]
 trust_level = "trusted"

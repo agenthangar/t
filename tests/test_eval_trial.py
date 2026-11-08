@@ -31,7 +31,10 @@ def test_container_configuration_uses_production_workflow(evaluation, tmp_path, 
         assert document['workflows']['standard']['inference']['model'] == m.defaults()['local_model']
         command = t.native_command(job, tmp_path, logs, chosen)
         assert ('mcp_servers.t-local-worker.args=["mcp","--local-worker"]' in command) == (mode in ('automatic', 'required-local'))
-        assert 'OPENAI_API_KEY' not in (logs / 'runtime/.codex/config.toml').read_text()
+        native = (logs / 'runtime/.codex/config.toml').read_text()
+        assert 'OPENAI_API_KEY' not in native
+        assert ('request_max_retries = 0' in native) == (mode == 'outage')
+        assert ('stream_max_retries = 0' in native) == (mode == 'outage')
     job['config']['reasoning_effort'] = 'high'
     t.configure(job, tmp_path, logs)
     assert 'model_reasoning_effort = "high"' in (logs / 'runtime/.codex/config.toml').read_text()

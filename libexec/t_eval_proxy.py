@@ -255,6 +255,7 @@ class Gateway:
                     started = time.monotonic()
                     usage = None
                     metadata = {}
+                    http_status, transport_error = None, None
                     first_byte = None
                     if provider == 'frontier':
                         base, headers, _ = gateway.frontier
@@ -276,6 +277,7 @@ class Gateway:
                             connection.sock.settimeout(gateway.config['task_seconds'])
                         connection.request('POST', target, body=body, headers=headers)
                         response = connection.getresponse()
+                        http_status = response.status
                         self.send_response(response.status)
                         self.send_header('Content-Type', response.getheader('Content-Type', 'application/json'))
                         self.send_header('Connection', 'close')
@@ -302,12 +304,14 @@ class Gateway:
                                 usage = usage_record(json.loads(buffer))
                             except (ValueError, AttributeError, TypeError):
                                 pass
-                    except (OSError, http.client.HTTPException):
+                    except (OSError, http.client.HTTPException) as error:
+                        transport_error = type(error).__name__
                         self.close_connection = True
                     finally:
                         connection.close()
                         event = {'trial': record['trial'], 'provider': provider, 'seconds': time.monotonic() - started,
                                  'first_byte_seconds': first_byte, 'usage': usage,
+                                 'http_status': http_status, 'transport_error': transport_error,
                                  'response_metadata': metadata,
                                  'cost_usd': price(usage, gateway.config['pricing']) if provider == 'frontier' else 0}
                         if provider == 'frontier' and gateway.config['pricing'] and metadata.get('service_tier', 'default') != gateway.config['pricing']['service_tier']:
