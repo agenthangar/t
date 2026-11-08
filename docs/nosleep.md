@@ -3,6 +3,20 @@
 Installed alongside `t`; no dotfiles or shell plugin is required. Start it manually
 with `nosleep`. `sleep-manager` remains a separate dotfiles utility.
 
+For development, change into a `t` session worktree and run `nosleep` normally.
+The installed binary and shell adapter use that worktree's runtime, including
+subdirectories and `cd path && nosleep`. Each invocation loads uncommitted edits
+without restarting your shell. Leaving the worktree restores the
+installed source. Your normal machine settings are shared across these runs;
+no reinstall, command relinking, or `XDG_CONFIG_HOME` override is needed.
+From the worktree root, `./bin/nosleep` explicitly uses that worktree as well.
+
+```sh
+cd /path/to/t-worktree
+nosleep config                # use your normal saved settings with this code
+nosleep                       # run this worktree's monitor
+```
+
 ## Sleep and connection recovery
 
 `nosleep` requests sudo when starting its system sleep hold and when needed to
@@ -79,6 +93,34 @@ or `--display off` replaces it. Use `--lock on` /
 Timing defaults use `--grace`, `--every`, `--retries`, and
 `--backoff`. `nosleep --help` highlights options that change the built-in defaults.
 Configuration commands never change power settings or an already-running instance.
+
+### Battery protection
+
+In `nosleep config`, enable **Battery protection** and set **Exit below** to a
+whole percentage from 1 to 100. Protection defaults to off, with a saved cutoff
+of 20%. The JSON settings are `battery_protection` and `battery_below`:
+
+```json
+{"battery_protection": true, "battery_below": 20}
+```
+
+When enabled, `nosleep` checks the internal battery before taking a sleep hold
+and then approximately every 10 seconds during monitoring. Below the cutoff on
+battery power, it stops its owned helpers, restores dimmed brightness, releases
+its sleep hold, and exits successfully. Normal macOS sleep behavior resumes;
+it does not force shutdown or immediate sleep. An initial low reading exits
+without taking a hold or requesting sudo. A reading exactly at the cutoff
+continues. The cutoff applies with the lid open or closed, including docked
+mode, `--forever`, `--checks none`, and `--require none`.
+
+AC power does not trigger the cutoff. No internal battery and unavailable or
+malformed readings are shown separately; neither triggers an exit. Failed
+reads clear the previous observation. With protection off, battery probes are
+skipped. The live display shows the observation and saved cutoff. Config
+changes apply to the next run and use the existing review/save/cancel flow.
+
+### Monitoring settings
+
 The menu groups display and locking under **On close**, the automatic-check
 switch and individual agent/internet toggles under **Checks**, and their
 interval, grace threshold, retry limit, and backoff under **Check settings**.
@@ -173,6 +215,10 @@ and `=` values work, and the last value wins. The policy is independent of
 and `--no-forever` does not clear `--require none`. Timing and hotspot fallback
 are inactive whenever monitoring is disabled. A numeric policy is checked against
 the final selection when monitoring starts; `--checks all` can restore both checks.
+
+Unless enabled battery protection stops the run earlier, `--forever` and disabled
+checks continue until Ctrl-C. The battery cutoff does not use activity grace,
+internet retries, or hotspot recovery windows.
 
 `--every` sets the normal check interval (30 seconds). `--backoff` sets the first
 retry delay (1–300 seconds), which doubles up to five minutes; `--retries` accepts
