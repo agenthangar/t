@@ -257,6 +257,89 @@ def test_engine_resume_preserves_completed_attempts(evaluation, tmp_path, monkey
         with pytest.raises(ValueError): e.execute(j)
 
 
+@pytest.mark.parametrize('outcome', ['completed', 'cancelled', 'error'])
+def test_hybrid_reservation_recovery_and_cleanup(evaluation, tmp_path, monkeypatch, outcome):
+    """Hybrid runs retain exact-model ownership and clean up on every exit path."""
+    m, _ = evaluation
+    e = load_script(ROOT / 'libexec/t_eval_engine.py', 'eval_hybrid_lifecycle')
+    worker = load_script(ROOT / 'libexec/t_local_worker.py', 'eval_hybrid_worker')
+    monkeypatch.setattr(e, 'core', lambda: vars(m))
+    config = {**m.defaults(), 'profile': 'quick', 'modes': ['required-local']}
+    journal = m.Journal(m.create_run(config))
+    journal.finish_trial({'id': 'previous', 'task': 'a', 'mode': 'required-local',
+                          'repetition': 0, 'status': 'interrupted', 'resolved': None})
+    monkeypatch.setattr(e, 'prepare_runtime', lambda *a: ('1.0.0', 8))
+    monkeypatch.setattr(e, 'prepare_worker_sandbox', lambda *a: ['scoped-policy'])
+    monkeypatch.setattr(e, 'native_codex', lambda *a: '/fixture/codex')
+    monkeypatch.setattr(e, 'harbor_python', lambda *a: '/fixture/python')
+    monkeypatch.setattr(e, 'prepare_benchmark', lambda *a: (tmp_path, [tmp_path / n for n in ('a', 'b', 'c')]))
+    monkeypatch.setattr(e, 'pin_image', lambda *a: 'sha256:fixed')
+    chosen = {'model': config['local_model'], 'provider': config['local_provider']}
+    lifecycle, launched, closed = [], [], []
+
+    @contextmanager
+    def provider(selected):
+        assert selected == chosen
+        lifecycle.append('entered')
+        try:
+            yield ('http://fixture', 'exact-alias', {'revision': 'pinned-local-revision'})
+        finally:
+            lifecycle.append('released')
+
+    local = {'helper': lambda name: {'reservation': worker.reservation}, 'provider_runtime': provider}
+    monkeypatch.setattr(e, 'ready_local', lambda *a: (local, chosen))
+
+    class Gateway:
+        def __init__(self, selected, owner, runtime):
+            assert selected == config and owner is journal
+            assert runtime[1] == 'exact-alias'
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def lease(self, trial, mode):
+            assert mode == 'required-local'
+            return {'token': 'private-capability'}
+        def close_lease(self, token): closed.append(token)
+        def totals(self, trial):
+            return {'cost_usd': .3, 'usage': {'local': {'requests': 1, 'output_tokens': 4, 'request_seconds': 2}}}
+
+    monkeypatch.setattr(m, 'helper', lambda name: {'Gateway': Gateway})
+
+    def child(python, job, directory, owner):
+        assert job['worker_sandbox'] == ['scoped-policy']
+        with pytest.raises(ValueError, match='already running'):
+            with worker.reservation():
+                pytest.fail('second local owner was admitted')
+        launched.append(directory)
+        m.atomic(directory / 'job.json', job)
+        (directory / 'trace.log').write_text('url/private-capability/endpoint')
+        if outcome == 'error':
+            raise RuntimeError('candidate failed')
+        if outcome == 'cancelled':
+            m.atomic(owner.directory / 'cancel.json', {})
+        return {'status': 'completed', 'resolved': True, 'workflow_valid': True}
+
+    monkeypatch.setattr(e, 'child_job', child)
+    if outcome == 'error':
+        with pytest.raises(RuntimeError, match='candidate failed'):
+            e.execute(journal)
+    else:
+        e.execute(journal)
+        assert journal.state['status'] == ('cancelled' if outcome == 'cancelled' else 'failed')
+    assert len(launched) == (1 if outcome == 'cancelled' else 2)
+    assert lifecycle == ['entered', 'released']
+    with worker.reservation():
+        pass  # Neither a failed candidate nor cancellation leaks the local slot.
+    assert closed and all(token == 'private-capability' for token in closed)
+    assert journal.state['local_identity'] == {
+        **chosen, 'revision': 'pinned-local-revision', 'context_tokens': config['context_tokens']}
+    assert journal.state['trials'][0]['id'] == 'previous'
+    assert journal.state['trials'][0]['cost_usd'] == .3
+    assert journal.state['trials'][0]['status'] == 'interrupted'
+    for directory in launched:
+        assert not (directory / 'job.json').exists()
+        assert (directory / 'trace.log').read_text() == 'url/[redacted-capability]/endpoint'
+
+
 def test_preparation_blocks_missing_dependencies_and_pins_runtime(evaluation, tmp_path, monkeypatch):
     m, _ = evaluation
     e = load_script(ROOT / 'libexec/t_eval_engine.py', 'eval_preparation_test')
