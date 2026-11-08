@@ -70,7 +70,7 @@ class Gateway:
     def __init__(self, config, journal, local=None):
         self.config, self.journal, self.local = config, journal, local
         self.frontier = frontier_connection() if any(m != 'local-only' for m in config['modes']) else None
-        self.routes, self.records = {}, []
+        self.routes, self.records, self.connections = {}, [], {}
         events = journal.directory / 'events.jsonl'
         if events.exists():
             for line in events.read_text().splitlines():
@@ -86,7 +86,7 @@ class Gateway:
     def lease(self, trial_id, mode):
         token = secrets.token_urlsafe(32)
         with self.mutex:
-            self.routes[token] = {'trial': trial_id, 'mode': mode, 'offline': False}
+            self.routes[token] = {'trial': trial_id, 'mode': mode, 'offline': False, 'active': True}
         port = self.server.server_port
         # Dedicated Colima profile uses Lima's documented host loopback gateway.
         base = f'http://192.168.5.2:{port}/{token}'
@@ -98,7 +98,15 @@ class Gateway:
 
     def close_lease(self, token):
         with self.mutex:
-            self.routes.pop(token, None)
+            record = self.routes.pop(token, None)
+            if record:
+                record['active'] = False
+            sockets = [stream for owner, stream in self.connections.values() if owner is record]
+        for stream in sockets:
+            try:
+                stream.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
 
     def totals(self, trial):
         with self.mutex:
@@ -230,6 +238,10 @@ class Gateway:
 
             def forward(self, record, provider, path, body):
                 with gateway.local_lock if provider == 'local' else contextlib.nullcontext():
+                    with gateway.mutex:
+                        if not record['active']:
+                            self.close_connection = True
+                            return
                     started = time.monotonic()
                     usage = None
                     metadata = {}
@@ -242,10 +254,16 @@ class Gateway:
                         headers = {}
                     parsed = urlsplit(base)
                     connection_type = http.client.HTTPSConnection if parsed.scheme == 'https' else http.client.HTTPConnection
-                    connection = connection_type(parsed.hostname, parsed.port, timeout=gateway.config['task_seconds'])
+                    connection = connection_type(parsed.hostname, parsed.port, timeout=min(30, gateway.config['task_seconds']))
                     headers.update({'Content-Type': 'application/json', 'Accept': self.headers.get('Accept', 'text/event-stream')})
                     target = parsed.path.rstrip('/') + (path[3:] if provider == 'frontier' else path)
                     try:
+                        connection.connect()
+                        with gateway.mutex:
+                            if not record['active']:
+                                return
+                            gateway.connections[connection] = (record, connection.sock)
+                            connection.sock.settimeout(gateway.config['task_seconds'])
                         connection.request('POST', target, body=body, headers=headers)
                         response = connection.getresponse()
                         self.send_response(response.status)
@@ -285,6 +303,7 @@ class Gateway:
                         if provider == 'frontier' and gateway.config['pricing'] and metadata.get('service_tier', 'default') != gateway.config['pricing']['service_tier']:
                             event['cost_usd'] = None
                         with gateway.mutex:
+                            gateway.connections.pop(connection, None)
                             gateway.records.append(event)
                         gateway.journal.event('model_request_completed', **event)
         self.server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
@@ -293,6 +312,8 @@ class Gateway:
         return self
 
     def __exit__(self, *_):
+        for token in list(self.routes):
+            self.close_lease(token)
         self.server.shutdown()
         self.server.server_close()
         self.thread.join(timeout=5)

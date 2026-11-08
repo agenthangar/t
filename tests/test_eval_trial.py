@@ -134,7 +134,16 @@ def test_harbor_controls_and_fresh_grading(harbor_adapter, evaluation, tmp_path,
     assert asyncio.run(h.execute(job_file))['resolved'] is False
     assert phases == ['candidate', 'grade']
     (task / 'task.toml').write_text('changed digest')
-    with pytest.raises(RuntimeError, match='control failed'): asyncio.run(h.execute(job_file))
+    phases.clear()
+    with pytest.raises(RuntimeError, match='reference solution did not pass'): asyncio.run(h.execute(job_file))
+    assert phases == ['oracle']
+    async def invalid_control(value, name, agent, grade=True):
+        phases.append(name)
+        return SimpleNamespace(reward_valid=True, verifier_result=SimpleNamespace(rewards={'reward': 1}))
+    monkeypatch.setattr(h, 'trial', invalid_control)
+    phases.clear()
+    with pytest.raises(RuntimeError, match='unchanged repository passed'): asyncio.run(h.execute(job_file))
+    assert phases == ['oracle', 'nop']
 
 
 def test_harbor_trial_config_and_candidate_bundle(harbor_adapter, evaluation, tmp_path, monkeypatch):

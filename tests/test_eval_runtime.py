@@ -5,6 +5,7 @@ import http.client
 import json
 from pathlib import Path
 import threading
+import time
 from types import SimpleNamespace
 import urllib.error
 import urllib.request
@@ -12,6 +13,54 @@ import urllib.request
 import pytest
 from conftest import load_script
 from test_eval import evaluation, ROOT
+
+
+def test_gateway_revocation_stops_inflight_and_queued_inference(evaluation):
+    m, _ = evaluation
+    p = load_script(ROOT / 'libexec/t_eval_proxy.py', 'eval_proxy_cancel')
+    entered, release = threading.Event(), threading.Event()
+    calls = []
+    class SlowEndpoint(BaseHTTPRequestHandler):
+        def log_message(self, *_): pass
+        def do_POST(self):
+            self.rfile.read(int(self.headers['Content-Length']))
+            calls.append(True)
+            self.send_response(200)
+            self.send_header('Connection', 'close')
+            self.end_headers()
+            self.wfile.flush()
+            entered.set()
+            release.wait(10)
+    upstream = ThreadingHTTPServer(('127.0.0.1', 0), SlowEndpoint)
+    threading.Thread(target=upstream.serve_forever, daemon=True).start()
+    config = {**m.defaults(), 'modes': ['local-only']}
+    journal = m.Journal(m.create_run(config))
+    local = (f'http://127.0.0.1:{upstream.server_port}', 'fixed-model', {'revision': 'fixed'})
+    try:
+        with p.Gateway(config, journal, local) as gateway:
+            lease = gateway.lease('cancel-test', 'local-only')
+            url = f'http://127.0.0.1:{gateway.server.server_port}/{lease["token"]}/local/v1/responses'
+            def request():
+                try:
+                    with urllib.request.urlopen(urllib.request.Request(url, data=b'{"model":"fixed-model"}'), timeout=5) as response:
+                        response.read()
+                except (OSError, http.client.HTTPException):
+                    pass  # Revoked requests may receive EOF or an invalid-capability response.
+            first = threading.Thread(target=request); first.start()
+            assert entered.wait(3)
+            queued = threading.Thread(target=request); queued.start()
+            gateway.close_lease(lease['token'])
+            first.join(3); queued.join(3)
+            assert not first.is_alive() and not queued.is_alive()
+            deadline = time.monotonic() + 3
+            while gateway.connections and time.monotonic() < deadline:
+                threading.Event().wait(.01)
+            assert not gateway.connections
+            assert calls == [True]
+            assert gateway.totals('cancel-test')['usage']['local']['requests'] == 0
+    finally:
+        release.set()
+        upstream.shutdown(); upstream.server_close()
 
 
 def test_gateway_usage_pricing_auth(evaluation, monkeypatch, tmp_path):
@@ -311,9 +360,9 @@ def test_frontier_gateway_budget_outage_and_nested_tools(evaluation, monkeypatch
             with pytest.raises(urllib.error.HTTPError): send(gateway, lease, 'frontier/v1/responses', b'')
             with pytest.raises(urllib.error.HTTPError): send(gateway, lease, 'control/checkpoint', b'x'*4097)
             send(gateway, lease, 'control/outage', {})
-            with pytest.raises((http.client.HTTPException, urllib.error.URLError)):send(gateway, lease, 'frontier/v1/responses', payload)
+            with pytest.raises((http.client.HTTPException, urllib.error.URLError, ConnectionResetError)):send(gateway, lease, 'frontier/v1/responses', payload)
             second = gateway.lease('boundary', 'outage')
-            with pytest.raises((http.client.HTTPException, urllib.error.URLError)):
+            with pytest.raises((http.client.HTTPException, urllib.error.URLError, ConnectionResetError)):
                 send(gateway, second, 'frontier/v1/responses', {**payload,'input':[{'type':'function_call_output','output':'Process exited with code 0'}]})
             assert gateway.routes[second['token']]['offline']
     finally:

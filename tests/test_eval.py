@@ -134,6 +134,28 @@ def test_durable_trials_scores_and_recovery(evaluation):
     with pytest.raises(ValueError): m.load_run(run_id)
 
 
+def test_retry_progress_uses_latest_attempt_but_retains_spend(evaluation):
+    m, _ = evaluation
+    config = {**m.defaults(), 'profile': 'quick', 'modes': ['frontier-only'], 'reasoning_effort': 'none'}
+    assert m.validate(config)['reasoning_effort'] == 'none'
+    j = m.Journal(m.create_run(config))
+    original = {'id': 'first', 'task': 'a', 'mode': 'frontier-only', 'repetition': 0,
+                'status': 'failed', 'resolved': None, 'cost_usd': .1,
+                'usage': {'frontier': {'requests': 1, 'output_tokens': 40, 'request_seconds': 2}}}
+    j.finish_trial(original)
+    retry = {**original, 'id': 'retry'}
+    j.start_trial(retry)
+    assert m.summarize(m.load_run(j.state['id']))['finished'] == 0
+    j.finish_trial({**retry, 'status': 'completed', 'resolved': True, 'cost_usd': .2,
+                    'usage': {'frontier': {'requests': 1, 'output_tokens': 80, 'request_seconds': 2}}})
+    summary = m.summarize(m.load_run(j.state['id']))
+    assert summary['finished'] == 1
+    score = summary['modes']['frontier-only']
+    assert score['resolved'] == 1 and score['graded'] == 1
+    assert score['estimated_cost_usd'] == pytest.approx(.3)
+    assert score['observed_tokens_per_second']['frontier'] == 30
+
+
 def test_picker_direct_launch_and_cancel(evaluation, t_mod, monkeypatch):
     m, cli = evaluation
     m.save_config(m.defaults('pick-me'))

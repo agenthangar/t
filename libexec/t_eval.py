@@ -111,7 +111,7 @@ def validate(value):
             raise ValueError('invalid ' + key)
     if result['local_provider'] not in ('lmstudio', 'ollama'):
         raise ValueError('local provider must be lmstudio or ollama')
-    if result['reasoning_effort'] not in ('automatic', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'):
+    if result['reasoning_effort'] not in ('automatic', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'):
         raise ValueError('unsupported reasoning effort')
     modes = result['modes']
     if not isinstance(modes, list) or not modes or any(not isinstance(m, str) or m not in MODES for m in modes) or len(set(modes)) != len(modes):
@@ -309,12 +309,14 @@ class Journal:
 def summarize(run):
     config = run['manifest']['config']
     modes = {}
+    finished = 0
     for mode in config['modes']:
         trials = [t for t in run['trials'] if t['mode'] == mode]
         # Retries remain cost-bearing evidence, but each task/repetition has one score.
         latest = {}
         for trial in trials:
             latest[(trial['task'], trial['repetition'])] = trial
+        finished += sum(t['status'] in TERMINAL for t in latest.values())
         scored = [t for t in latest.values() if isinstance(t.get('resolved'), bool)]
         expected = PROFILES[config['profile']]['tasks'] * config['repetitions']
         resolved = sum(t['resolved'] for t in scored)
@@ -334,7 +336,7 @@ def summarize(run):
                        'estimated_cost_usd': sum(costs) if len(costs) == len(trials) and trials else (0 if mode == 'local-only' else None),
                        'observed_tokens_per_second': {p: v['output_tokens'] / v['request_seconds'] if v['requests'] and v['request_seconds'] > 0 else None for p, v in usage.items()}}
     return {'id': run['id'], 'status': run['status'], 'phase': run['phase'], 'profile': config['profile'],
-            'benchmark': config['benchmark'], 'total': run['total'], 'finished': len({(t['task'], t['mode'], t['repetition']) for t in run['trials'] if t['status'] in TERMINAL}),
+            'benchmark': config['benchmark'], 'total': run['total'], 'finished': finished,
             'modes': modes, 'diagnostic': run.get('diagnostic'), 'updated_at': run['updated_at']}
 
 

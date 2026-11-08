@@ -170,9 +170,14 @@ async def execute(job_file):
     with t_eval.lock(controls.with_suffix('.lock')):
         if not t_eval.read(controls / 'passed.json'):
             oracle = await trial(job, 'oracle', AgentConfig(name='oracle'))
+            if not reward(oracle):
+                raise RuntimeError('Benchmark control failed: reference solution did not pass; '
+                                   'inspect harbor/' + job['trial_id'] + '-oracle/verifier before retrying. '
+                                   'No model inference was started.')
             nop = await trial(job, 'nop', AgentConfig(import_path='t_eval_harbor:ReplayAgent'))
-            if not reward(oracle) or reward(nop):
-                raise RuntimeError('Benchmark control failed: expected oracle pass and no-op fail')
+            if reward(nop):
+                raise RuntimeError('Benchmark control failed: unchanged repository passed; '
+                                   'no model inference was started.')
             t_eval.atomic(controls / 'passed.json', {'oracle': True, 'nop': False, 'task_hash': key})
     await trial(job, 'candidate', AgentConfig(
         import_path='t_eval_harbor:WorkflowAgent', model_name=job['config']['frontier_model'],
