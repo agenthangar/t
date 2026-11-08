@@ -1,5 +1,91 @@
 # Command and terminal contract
 
+This is the repository's terminal design system, indexed by [DESIGN.md](../DESIGN.md).
+
+## Planning previews
+
+When a workflow or task calls for a planning preview, use a local interactive HTML
+prototype to demonstrate the proposed command flow before application changes.
+Follow this terminal contract: shared layout, focus, keyboard controls, spacing,
+and narrow-screen behavior. Show affected navigation, selection, review,
+cancellation, and relevant empty/error states. Label sample data and simulated
+actions. Keep real agent sessions, repository files, configuration, and services
+untouched by prototype interactions. Make the preview easy to open locally and
+report browser or verification limitations accurately.
+
+After design approval when required by the workflow or task, implement using the
+shared terminal components. A planning prototype does not verify the working CLI:
+prepare a separate worktree-scoped command preview with isolated sample settings
+at the selected delivery checkpoint. Never relink shared installed commands to a
+development worktree. Workflow configuration owns preview timing and approval;
+this document defines how to make the previews faithful and safe.
+
+## Workflow settings and resets
+
+Group the main workflow editor into Models, Behavior and Manage using shared
+RailUI sections. Use this workflow stays above the groups. Keep focus on the
+selected row when returning, including after a reset; headings are not selectable.
+
+Every settings page offers Reset to defaults, and individual selectors offer a
+resolved default or inheritance choice, including binary toggles. The multiple-model
+checklist offers an exclusive Use default preset alongside the exclusive one-model
+choice. Reset only settings owned by that page, including hidden fields. Parent
+pages include their nested settings: Local preview resets global and both type
+preferences; Tests includes runners. Type overrides resume live global inheritance.
+Model and permission defaults use the selected native tool; reset never invents an
+unverified effective native value. Routing and model resets do not download or run
+models, change credentials, or alter readiness requirements.
+
+Reset workflow to defaults restores that tool's built-in policy, preserving the
+workflow name, repository assignments, repository design sources, other workflows
+and other tool catalogues. Frontend design and Design systems page resets affect
+the workflow defaults; only the individual repository source picker resets its
+source. Keep legacy choices outside the reset scope semantically unchanged.
+
+All resets share the existing staged review/save/discard transaction, including
+completed resets before interruption. Already at defaults is a no-op; browsing and
+no-op resets never materialize inherited repository overrides. This extends the
+existing workflow wizard/single-selection modes, not the public command surface.
+
+## Repository design-system configuration
+
+Frontend design is a top-level workflow page, above PRs, previews & tests. It
+contains Design approach and Design systems. Design systems shows a Default
+section (Find design systems: Automatically / Off), then the registered repositories
+using that workflow, including inherited assignments. Each repository shows its
+resolved source: Auto · DESIGN.md, an explicit path, Off, Auto · Choose a source,
+or Auto · No system found. Do not display explanatory paragraphs in these pickers.
+
+The repository source picker uses separate Default, Choose a source, Manage and
+Navigation groups. Use workflow default restores live inheritance; explicit paths
+and Off override it. Each candidate appears once, with evidence and a selection
+mark. Choose file or folder, Create design system, and Scan again are actions.
+Retain missing explicit paths with a visible error; never silently replace them.
+Repository source settings survive assignment changes and are tool-scoped.
+
+Automatic discovery prefers safe root DESIGN.md, then one root design-system.md
+or design_system.md, then a sole discovered candidate. Multiple remaining
+candidates require a choice. No candidates means no system found; creation is
+always explicit. Discovery reads repository-owned docs, linked guidance, tokens,
+components and Storybook, excluding dependencies, generated directories and
+symlinks. Resolve relative paths in the matching active worktree. Lists never
+scan or prompt; managed agent instructions describe the same resolution rule.
+
+Every workflow choice has an effective default. Behavior defaults come from
+BEHAVIOR_DEFAULTS; type overrides inherit shared preview defaults. Label the
+resolved default and reset destination instead of Not set. Native model, effort
+and permission choices may inherit tool settings; never invent an unavailable
+native value. Reads do not materialize defaults or rewrite saved choices.
+Design approach and source use remain active when previews are disabled.
+
+Create design system is an explicit agent-assisted drafting action. Save or
+discard pending settings first. Review the task, then start the existing guarded
+agent launcher in a new isolated worktree. Draft an entry point, agent-instruction
+reference and evidence-backed design/preview guidance without overwriting existing
+content or duplicating workflow approval rules. Drafting does not publish changes
+or select a source. Review the actual diff in the agent session, then refresh
+discovery from the accepted worktree to select the resulting source.
+
 Development availability is scoped to the caller's t worktree. With a canonical
 Git installation, each `dev/t-*` or `cursor/*` worktree supplies its own executable
 and shell helpers automatically, including subdirectories and invocation-local
@@ -286,17 +372,17 @@ Optional frontend_enabled/cli_enabled values override legacy preview_target for
 each type independently. Without flags or a legacy target, both are enabled.
 Read-only operations do not migrate storage. Each submenu's Preview timing can
 Inherit global or override it independently. Show the resolved timing and source
-in detailed rows and printed lists: Inherit global · value or Override · value.
+in detailed rows and printed lists: Inherited · value or Override · value.
 The Inherit global choice is separated from explicit values and removes only that
-override. Inheriting an unset parent displays Inherit global · Not set. Changing a parent
+override. An absent parent resolves to the built-in default; display its effective value. Changing a parent
 updates inheriting children while preserving explicit overrides, even overrides
 equal to the parent. Resolved rules apply only to enabled types; with neither
 enabled, suppress preview guidance.
-Disabled frontend suppresses design, method and browser guidance;
+Disabled frontend suppresses preview method and browser guidance; design approach and design-system use remain active;
 disabled CLI suppresses its method and command-launch guidance. Enabling alone does not request a
 preview or change the separate PR-opening preference.
 Both submenus inherit Global timing and approval before PR; each field shows
-Inherit global or Override with its resolved value. Dim the inherited value after
+Inherited or Override with its resolved value. Dim the inherited value after
 Inherit global/default in both value rows and choices, including focused rows;
 clip plain text before applying color and preserve narrow layouts.
 Launch has one independent control per type: Frontend Open in browser and CLI
@@ -306,11 +392,11 @@ resolved choices and removes that legacy key, preserving the other type's choice
 Reading, browsing or canceling does not migrate stored settings.
 Launch choices never start a request-only preview before the user requests it.
 The nested Frontend submenu contains Implement before approval (Yes / No, with
-Not set), Design approach (Separate HTML prototype /
-In the app), Preview method (Fast reload
-/ Build), and Open in browser (Automatically / Only when I ask). The nested CLI
+Use default), Preview method (Fast reload / Build), and Open in browser
+(Automatically / Only when I ask). Design approach is on the top-level Frontend
+design page (Separate HTML prototype / In the app). The nested CLI
 submenu contains Preview method (Install locally / Run from the repo) and
-Run command (Not set / Automatically / Only when I ask), with Not set
+Run command (Use default / Automatically / Only when I ask), with Use default
 separated from explicit choices. Open in browser has the same choices.
 The optional cli_launch key accepts automatic/on_request and remains saved while
 CLI preview is disabled. Automatically launches the supported CLI preview command
@@ -319,10 +405,14 @@ timing still takes precedence. Only when I ask prepares the command without
 launching it, including with the Run from the repo method. The method determines
 the executable source. Interactive commands use a supported interactive terminal;
 if unavailable, report the limitation and exact command rather than claiming a
-launch. This preference does not run tests or alter PR choices. CLI previews have
-no preview-before-implementation approval setting. Approval before PR is
+launch. This preference does not run tests or alter PR choices. CLI planning previews
+have separate optional timing (Before implementation / Only when requested) and
+approval (Required / Not required). Both offer Use default with its effective value; neither changes working-command
+preview timing or launch. Required approval applies when a planning preview is due
+or requested, allowing prototype work before substantial implementation. Retired
+cli_implement_before_approval remains inert. Approval before PR is
 independent of frontend implementation approval and applies only to enabled
-preview types. Clearing a launch choice leaves that type unset.
+preview types. Clearing a launch choice restores its effective default.
 Menu, list, catalogue and save review reflect the choice and disabled state. Printed
 lists use the same indentation and hierarchy; summaries include nested choices.
 Returning from a child menu restores the parent focus and retains staged changes.
@@ -355,7 +445,7 @@ prototype. Test timing
 is labeled When to run tests and chooses local during work, local before preview,
 local before PR, or On PR CI;
 required repository checks always apply. Unset rows and picker choices say
-Not set. Task, repository and text instructions supply
+the displayed default. Task, repository and text instructions override
 the behavior. Menus show concise choices without routine explanatory preambles.
 Use inheritance wording only where values really follow a parent: preview
 defaults, main-session settings, native tool defaults, and workflow assignments.
@@ -448,7 +538,7 @@ arguments and report the unavailable instruction publication. No Cursor dev slot
 or unsupported standalone effort/permission controls are introduced.
 Permissions is a separate submenu available with either model mode. Show only
 the selected tool's supported presets. Codex and Claude have independent native
-presets and a Not set choice that removes the
+presets and a Default · Tool permissions choice that removes the
 workflow override. The policy's optional permissions object maps codex to
 ask/auto/full/read_only and claude to manual/acceptEdits/auto/bypassPermissions/plan;
 unknown tools or values are rejected. Missing permissions preserve native defaults.
@@ -1212,6 +1302,20 @@ configuration and hotspot setup modes. The standalone executable loads only its
 own runtime, without dotfiles, user startup files or session registration.
 The optional zsh adapter shares that runtime and preserves shell-local activity
 thresholds and application mappings. Loading either adapter never starts a hold.
+The adapter selects its source on each invocation, including the first call in
+`cd worktree && nosleep`, matching `t` without waiting for a prompt refresh.
+It reloads the runtime on each invocation so uncommitted edits are available.
+Standalone and shell entry points retain normal machine configuration across
+worktrees; manual previews do not override `XDG_CONFIG_HOME`.
+
+The Battery protection settings section stages an enable switch and **Exit below**
+integer percentage (1–100). Defaults are off and 20%. It is independent of activity
+and internet checks, with the same review/save/cancel transaction. Read-only
+defaults show the policy without probing power state. Runtime status distinguishes
+battery, AC, no battery and unknown readings. A valid below-cutoff reading on
+battery exits via normal cleanup even with checks disabled or the lid open;
+exact-cutoff, AC and unknown readings continue. Startup checks happen before a
+sleep hold is taken; subsequent checks run approximately every 10 seconds.
 
 `t config → Nosleep` opens the same `_RailUI` editor as `nosleep config`,
 returning to the hub afterward. Save or discard hub edits before opening the
@@ -1240,3 +1344,41 @@ An unidentified writer remains a blocker. Failed transfers retain receipts and u
 `session history`, `remote session history` and `history` remain hidden compatibility
 routes for the internal saved-conversation implementation, excluded from menus and
 completion. Public instructions use `session resume`.
+
+### Local inference activity
+
+In an owned tmux pane, local lead and worker launches add a compact
+`local MODEL · inferring` status segment only during observed model requests.
+Loading, work between requests, idle and failure are separate states. Pane ancestry
+and pane generation prevent activity from another session being shown. Missing
+ownership hides the indicator; records expire after twelve seconds and the bar
+refreshes at least every two seconds.
+No prompts or credentials are stored. Outside tmux inference is unchanged.
+
+The session name and worktree sit at the left; existing custom tmux content is
+retained. Codex's native model, effort and context footer remains unchanged.
+Long labels are bounded, and the full artifact remains in local-worker details.
+This adds no public command and does not select or install a model.
+
+Development preview: `python3 scripts/preview_local_status.py` from this
+worktree in a terminal. It uses an isolated tmux server, sample activity and
+temporary HOME/state; it never calls a model or edits real configuration.
+
+### Workflow model overview
+
+The existing local-model single-selection mode opens a compact RailUI overview
+with model identity, readiness, file size, memory fit, context and the next action.
+Use shared nonselectable context rows and the shared viewport; keep the focused
+action and footer visible at 80×24, 44×20 and 32×12. Benchmarks and Artifact &
+runtime are separate read-only views; sources/methodology remains accessible.
+Wrap detail text within the rail, including URLs and revisions. Back retains focus.
+
+Downloaded models offer Verify readiness with a review of file reuse and context.
+The explicit action reuses complete files, loads the exact artifact, checks its
+context and response text, releases owned resources and refreshes the overview.
+Use in workflow requires readiness and remains staged; verification is immediate.
+A failed check retains files and shows the runtime error; cancellation invalidates
+old verification evidence. Special memory-mapped artifacts may be checked when
+the publisher's resident estimate and minimum RAM fit; fit remains unknown until
+verified. Runtime guardrails are never bypassed. These extend existing wizard,
+single-selection, detail and install action modes; no new public command.

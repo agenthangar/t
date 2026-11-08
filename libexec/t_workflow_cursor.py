@@ -113,9 +113,11 @@ def prepare(cwd, argv=()):
         raise ValueError(f'Cursor workflow: refusing an unmanaged rule at {rule}')
     scoped = copy.deepcopy(selected)
     scoped.update(default='selected', workflows={'selected': policy}, repositories={})
-    rendered = w['render'](scoped, tool='cursor')
-    contents = FRONTMATTER + w['merge'](before[0][len(FRONTMATTER):] if before else '', rendered)
     common = Path(git(workspace, 'rev-parse', '--path-format=absolute', '--git-common-dir').stdout.strip()).resolve()
+    design_source = next((entry.get('design_system') for path, entry in selected['repositories'].items()
+                          if (Path(path) / '.git').resolve() == common), None)
+    rendered = w['render'](scoped, tool='cursor', design_source=design_source)
+    contents = FRONTMATTER + w['merge'](before[0][len(FRONTMATTER):] if before else '', rendered)
     exclude = Path(git(workspace, 'rev-parse', '--path-format=absolute', '--git-path', 'info/exclude').stdout.strip())
     if not exclude.is_absolute() or not exclude.is_relative_to(common):
         raise ValueError('Cursor workflow: unsafe Git exclude destination')

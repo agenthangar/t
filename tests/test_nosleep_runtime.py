@@ -212,7 +212,19 @@ def nosleep_loop(zsh, tmp_path):
             fi
             print -r -- 0.6200
         }
-        pmset() { print -r -- "pmset $EPOCHSECONDS $*" >> "$LOOP_LOG"; }
+        pmset() {
+            print -r -- "pmset $EPOCHSECONDS $*" >> "$LOOP_LOG"
+            if [[ $* == '-g batt' && -n ${FAKE_BATTERY:-} ]]; then
+                local charge=$FAKE_BATTERY power=${FAKE_POWER:-Battery Power}
+                if (( EPOCHSECONDS >= ${FAKE_BATTERY_DROP_AT:-99999} )); then
+                    charge=${FAKE_BATTERY_AFTER:-19} power=${FAKE_POWER_AFTER:-$power}
+                fi
+                [[ $charge == unknown ]] && return 1
+                print -r -- "Now drawing from '$power'"
+                [[ $charge == none ]] || print -r -- " -InternalBattery-0 (id=123) ${charge}%; discharging; 1:00 remaining present: true"
+            fi
+            return 0
+        }
         _nosleep_lid_shut() { (( EPOCHSECONDS >= ${FAKE_LID_AT:-99999} && EPOCHSECONDS < ${FAKE_LID_OPEN_AT:-99999} )); }
         _nosleep_lid_closed() { (( ! ${FAKE_DOCKED:-0} )) && _nosleep_lid_shut; }
         _nosleep_pmset_held() {
@@ -1669,3 +1681,90 @@ def test_async_wifi_cancellation_is_bounded(zsh, tmp_path):
     ''', WIFI_ROOT=str(root))
     assert time.monotonic() - started < 5
     assert 'cleaned' in result.stdout
+
+
+@pytest.mark.parametrize('sample,expected,rc', [
+    ("Now drawing from 'Battery Power'\n -InternalBattery-0 (id=123) 19%; discharging", 'battery|19', 0),
+    ("Now drawing from 'AC Power'\n -InternalBattery-0 (id=123) 0%; charging", 'ac|0', 0),
+    ("Now drawing from 'Battery Power'\n -InternalBattery-0 (id=123) 100%; discharging", 'battery|100', 0),
+    ("Now drawing from 'Battery Power'\n -InternalBattery-0 (id=123) 08%; discharging", 'battery|8', 0),
+    ("Now drawing from 'AC Power'", 'none|', 0),
+    ("Now drawing from 'AC Power'\n -UPS-0 (id=123) 1%; discharging", 'none|', 0),
+    ("Now drawing from 'Battery Power'\n -InternalBattery-0 (id=123) 101%; discharging", 'unknown|', 0),
+    ("Now drawing from 'Battery Power'\n -InternalBattery-0 (id=123) -1%; discharging", 'unknown|', 0),
+    ("Now drawing from 'Battery Power'\n -InternalBattery-0 (id=123) unavailable", 'unknown|', 0),
+    ('unrecognized output', 'unknown|', 0),
+    ("Now drawing from 'Battery Power'\n -InternalBattery-0 (id=123) 1%; discharging", 'unknown|', 1),
+])
+def test_nosleep_battery_read_validates_power_and_charge(zsh, sample, expected, rc):
+    result = zsh('pmset() { print -r -- "$BATTERY_SAMPLE"; return "$BATTERY_RC"; }; '
+                 'reply=(battery 1); _nosleep_battery_read; print -r -- "$reply[1]|$reply[2]"',
+                 BATTERY_SAMPLE=sample, BATTERY_RC=str(rc))
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == expected
+
+
+def battery_config(loop, **extra):
+    path = loop.home / '.config/nosleep/config.json'
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({'battery_protection': True, 'battery_below': 20, **extra}))
+
+
+@pytest.mark.parametrize('charge,cutoff', [(19, 20), (49, 50), (0, 1), (99, 100)])
+def test_nosleep_low_battery_does_not_start_power_hold(nosleep_loop, charge, cutoff):
+    battery_config(nosleep_loop, battery_below=cutoff)
+    result, log = nosleep_loop('--forever', FAKE_BATTERY=str(charge))
+    assert f'battery {charge}% is below {cutoff}%; sleep hold not started' in result.stdout
+    assert 'exit=0 at=1000' in result.stdout
+    assert log == ['pmset 1000 -g batt']
+
+
+@pytest.mark.parametrize('args,lid', [('--forever', '99999'), ('--checks none', '1000'),
+                                    ('--require none -d dim', '1000'), ('-e 300', '99999')])
+def test_nosleep_battery_cutoff_runs_independently_and_cleans_up(nosleep_loop, args, lid):
+    battery_config(nosleep_loop)
+    result, log = nosleep_loop(args, FAKE_BATTERY='20', FAKE_BATTERY_DROP_AT='1010', FAKE_LID_AT=lid,
+                               FAKE_STOP_AT='1020')
+    assert 'battery 19% is below 20%; releasing sleep hold' in result.stdout
+    assert 'exit=0 at=1010' in result.stdout
+    assert '20% · on battery' in result.stdout
+    assert 'Battery protection' in result.stdout
+    assert 'Below     20% on battery' in result.stdout
+    assert sum('disablesleep 0' in line for line in log) == 1
+    assert not any(line.startswith('hold 1010') for line in log)
+    if '-d dim' in args:
+        assert 'brightness 1010 0.6200' in log
+
+
+@pytest.mark.parametrize('charge,power,expected', [
+    ('20', 'Battery Power', '20% · on battery'),
+    ('19', 'AC Power', '19% · AC power'),
+    ('none', 'AC Power', 'No battery'),
+    ('unknown', 'Battery Power', 'Unknown · reading unavailable'),
+])
+def test_nosleep_battery_safe_or_unknown_readings_continue(nosleep_loop, charge, power, expected):
+    battery_config(nosleep_loop)
+    result, log = nosleep_loop('--forever', FAKE_BATTERY=charge, FAKE_POWER=power, FAKE_STOP_AT='1012')
+    assert expected in result.stdout
+    assert 'exit=130 at=1012' in result.stdout
+    assert 'releasing sleep hold' not in result.stdout
+    assert sum('disablesleep 0' in line for line in log) == 1
+
+
+def test_nosleep_battery_unplugging_triggers_and_failure_clears_old_reading(nosleep_loop):
+    battery_config(nosleep_loop)
+    result, _ = nosleep_loop('--forever', FAKE_BATTERY='19', FAKE_POWER='AC Power',
+                             FAKE_BATTERY_DROP_AT='1010', FAKE_POWER_AFTER='Battery Power')
+    assert 'exit=0 at=1010' in result.stdout
+    result, _ = nosleep_loop('--forever', FAKE_BATTERY='19', FAKE_POWER='AC Power',
+                             FAKE_BATTERY_DROP_AT='1010', FAKE_BATTERY_AFTER='unknown', FAKE_STOP_AT='1012')
+    assert 'Unknown · reading unavailable' in result.stdout
+    assert 'exit=130 at=1012' in result.stdout
+
+
+def test_nosleep_disabled_battery_protection_does_not_probe(nosleep_loop):
+    battery_config(nosleep_loop, battery_protection=False)
+    result, log = nosleep_loop('--forever', FAKE_BATTERY='1', FAKE_STOP_AT='1012')
+    assert not any('-g batt' in line for line in log)
+    assert 'Not checked (protection off)' in result.stdout
+    assert 'exit=130 at=1012' in result.stdout

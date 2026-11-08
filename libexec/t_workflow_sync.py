@@ -75,7 +75,9 @@ def changed_scopes(previous, document):
         old, new = w['tool_document'](previous, tool), w['tool_document'](document, tool)
         scopes = {None, *old['repositories'], *new['repositories']}
         changed.extend(scope_key(tool, scope) for scope in sorted(scopes, key=lambda item: item or '')
-                       if w['effective'](old, scope) != w['effective'](new, scope))
+                       if (w['effective'](old, scope) != w['effective'](new, scope) or
+                           old['repositories'].get(scope, {}).get('design_system') !=
+                           new['repositories'].get(scope, {}).get('design_system')))
     return changed
 
 
@@ -632,7 +634,8 @@ def receive(payload, repos, settings_writer=None):
             else:
                 if 'workflow' in entry:
                     entry = {'inline': copy.deepcopy(incoming['workflows'][entry['workflow']]),
-                             **({'excluded': True} if entry.get('excluded') else {})}
+                             **({'excluded': True} if entry.get('excluded') else {}),
+                             **({'design_system': copy.deepcopy(entry['design_system'])} if entry.get('design_system') else {})}
                 scoped['repositories'][paths[0]] = entry
         after = w['with_tool_document'](after, tool, scoped)
     settings = payload.get('settings', {})

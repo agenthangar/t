@@ -376,6 +376,14 @@
     "libexec/t_lifecycle.py:verify_ready:time.sleep": {
       "kind": "protocol",
       "reason": "Bounded native-writer readiness probe inside the lifecycle protocol worker; shell controller owns progress."
+    },
+    "libexec/t_local_status.py:tmux:subprocess.run": {
+      "kind": "protocol",
+      "reason": "Bounded ownership and pane metadata probes feed the quiet tmux statusline; no terminal output or picker."
+    },
+    "libexec/t_local_status.py:ancestry:subprocess.run": {
+      "kind": "protocol",
+      "reason": "Bounded ownership and pane metadata probes feed the quiet tmux statusline; no terminal output or picker."
     }
   },
   "shell": [

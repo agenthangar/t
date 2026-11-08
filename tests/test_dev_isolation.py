@@ -255,3 +255,58 @@ def test_nested_release_remains_standalone(selector, trees):
         cwd=b, env=env, text=True, capture_output=True, timeout=20)
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == f'plugin={release} canonical={release}'
+
+
+def test_nosleep_follows_cd_immediately_and_keeps_normal_config(trees):
+    main, a, b, home, env = trees
+    (home / 'bin/nosleep').symlink_to(main / 'bin/nosleep')
+    (a / 'nested').mkdir()
+    config = home / '.config/nosleep/config.json'
+    config.parent.mkdir(parents=True)
+    config.write_text('{"grace": 47}\n')
+    before = config.read_bytes()
+    # Identify the actual function body and helper root, not just T_HOME. The
+    # marker also checks that shell-local tuning survives switching runtimes.
+    for tree in (main, a, b):
+        runtime = tree / 'zsh/nosleep.zsh'
+        runtime.write_text(runtime.read_text() + '\n_nosleep_help_for() { '
+                           'print -r -- "runtime=$_NOSLEEP_ROOT override=$NOSLEEP_NET_MIN"; }\n')
+    script = f'''source {shlex.quote(str(main / 't.plugin.zsh'))} || exit
+NOSLEEP_NET_MIN=123
+cd {shlex.quote(str(a))} && nosleep --help || exit
+nosleep config --show || exit
+cd nested && nosleep --help || exit
+cd {shlex.quote(str(b))} && nosleep --help || exit
+cd {shlex.quote(str(home))} && nosleep --help || exit
+print -r -- "config=$XDG_CONFIG_HOME"
+'''
+    result = subprocess.run(['zsh', '-f', '-c', script], cwd=home, env=env,
+                            text=True, capture_output=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    assert [line for line in result.stdout.splitlines() if line.startswith('runtime=')] == [
+        f'runtime={tree} override=123' for tree in (a, a, b, main)]
+    assert '47s before retrying' in result.stdout
+    assert f'config={home / ".config"}' in result.stdout
+    assert config.read_bytes() == before
+    # The installed binary routes the runtime from nested directories without
+    # shell startup or a per-worktree config copy.
+    for cwd, expected in ((a / 'nested', a), (b, b), (home, main)):
+        result = subprocess.run([str(home / 'bin/nosleep'), '--help'], cwd=cwd, env=env,
+                                text=True, capture_output=True, timeout=15)
+        assert result.returncode == 0, result.stderr
+        assert f'runtime={expected} ' in result.stdout
+    assert config.read_bytes() == before
+
+
+def test_nosleep_shell_loads_uncommitted_edits_without_changing_directory(trees):
+    main, a, _, home, env = trees
+    runtime = a / 'zsh/nosleep.zsh'
+    script = f'''source {shlex.quote(str(main / 't.plugin.zsh'))} || exit
+cd {shlex.quote(str(a))} && nosleep --help >/dev/null || exit
+print -r -- '_nosleep_help_for() {{ print fresh-runtime; }}' >> {shlex.quote(str(runtime))}
+nosleep --help
+'''
+    result = subprocess.run(['zsh', '-f', '-c', script], cwd=home, env=env,
+                            text=True, capture_output=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == 'fresh-runtime'

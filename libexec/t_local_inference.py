@@ -13,6 +13,7 @@ import statistics
 import subprocess
 import sys
 import time
+import textwrap
 import urllib.parse
 import urllib.request
 import uuid
@@ -72,7 +73,10 @@ def instructions(value):
     identity = f"{p['provider']} / {p['model']}"
     base = (f"Local inference: {identity}; context {p['context_tokens']}; task budget {p['timeout_seconds']} seconds. "
             'Use the t-local-worker MCP start_task/task_status/cancel_task tools for local delegation. '
-            'Announce provider, model and reason before delegating and report the result or escalation. '
+            'Announce Local requested with provider, model and reason before delegating. '
+            'Say Local accepted only after start_task succeeds; a request is not proof of inference. '
+            'Label returned findings Local result with the verified model, and label your own validation Lead checked. '
+            'If busy or unavailable, say Local unavailable; lead continuing. '
             'The adapter snapshots the repository; review its patch and observed command evidence before applying. '
             'Do not claim the selected model ran without runtime evidence. ')
     if p['on_cloud_failure'] == 'local' and p['mode'] != 'local-only':
@@ -167,16 +171,25 @@ def request(url, data=None, timeout=15):
 def report(row, machine, context=32768):
     result = dict(row, provider='lmstudio')
     ram = machine.get('ram_bytes')
-    memory = int(row['bytes'] * 1.2 + 4 * 1024**3 * context / 32768)
+    memory = int(row.get('resident_bytes', row['bytes']) * 1.2 + 4 * 1024**3 * context / 32768)
     capacity = ram * .8 if ram and 'Apple' in machine.get('accelerator', '') else None
     fit = memory <= capacity if capacity else None
-    if row.get('special_runtime'):
-        fit = None
     installed = receipt(row['model'])
+    memory_fit = fit
+    if row.get('minimum_ram_bytes') and ram and ram < row['minimum_ram_bytes']:
+        memory_fit = False
+    verified = installed.get('verified_context', 0) >= context
+    if installed.get('verified_hardware') is not None or row.get('special_runtime'):
+        verified = verified and installed.get('verified_hardware') == {
+            k: machine.get(k) for k in ('ram_bytes', 'accelerator')}
+    fit = memory_fit
+    if row.get('special_runtime') and fit is True and not verified:
+        fit = None
     result.update(context_tokens=context, memory_bytes=memory, fit=fit, installed=bool(installed),
-                  ready=bool(installed.get('verified_context', 0) >= context and fit is True),
+                  ready=bool(verified and fit is True), verification_allowed=memory_fit is True,
                   revision=installed.get('revision'),
-                  reason='special runtime and memory mapping unverified' if row.get('special_runtime') else
+                  verification_error=installed.get('verification_error'),
+                  reason='Runtime verification required for memory-mapped weights' if row.get('special_runtime') and fit is None else
                          'estimated fit' if fit else 'memory estimate exceeds budget' if fit is False else 'Apple unified memory required')
     result['disk_fit'] = bool(installed) or machine['free_disk_bytes'] >= row['bytes'] + 2 * 1024**3
     measure = installed.get('measurement')
@@ -206,8 +219,6 @@ def runtime(name, context=32768, ttl=1800):
     info = receipt(name)
     if not info:
         raise ValueError('model is not completely downloaded; use t config models install')
-    if artifact(name).get('special_runtime'):
-        raise ValueError('Flash-Next runtime and memory mapping are unverified; artifact downloaded only')
     base = 'http://127.0.0.1:1234'
     owned_server = False
     alias = 't-local-' + re.sub('[^a-z0-9-]', '-', name.split('/')[-1].lower()) + '-' + uuid.uuid4().hex[:12]
@@ -246,9 +257,9 @@ def install(name, download_only=False, context=32768):
     destination = model_directory(name)
     machine = helper('t_local_models')['hardware']()
     suitability = report(row, machine, context)
-    if not suitability['disk_fit'] or (not download_only and suitability['fit'] is not True):
+    if not suitability['disk_fit'] or (not download_only and not suitability.get('verification_allowed', suitability['fit'] is True)):
         raise ValueError(suitability['reason'] if suitability['disk_fit'] else 'insufficient disk space')
-    if not download_only:
+    if not download_only and not receipt(name):
         lms()  # Report a missing runtime before starting a large download.
     existing = receipt(name)
     if not existing:
@@ -290,13 +301,29 @@ def install(name, download_only=False, context=32768):
         existing = {'model': name, 'revision': revision, 'files': files}
         (destination / '.t-artifact.json').write_text(json.dumps(existing, indent=2))
     if not download_only:
-        with runtime(name, context) as (base, alias, _):
-            answer = request(base + '/v1/responses', {'model': alias, 'input': 'Reply with OK.', 'max_output_tokens': 128}, timeout=300)
-            if not answer.get('output'):
-                raise ValueError('local runtime returned no output')
-        existing['verified_context'] = max(existing.get('verified_context', 0), context)
+        # Invalidate old evidence before attempting a new load, including cancellation.
+        for key in ('verified_context', 'verified_hardware', 'verification_error'):
+            existing.pop(key, None)
         (destination / '.t-artifact.json').write_text(json.dumps(existing, indent=2))
-    return dict(model=name, downloaded=True, ready=bool(existing.get('verified_context')), revision=existing['revision'])
+        try:
+            lms()
+            with runtime(name, context) as (base, alias, _):
+                answer = request(base + '/v1/responses', {'model': alias, 'input': 'Reply with OK.', 'max_output_tokens': 128}, timeout=300)
+                output = answer.get('output') if isinstance(answer, dict) else None
+                if not isinstance(output, list) or not any(isinstance(item, dict) and item.get('type') == 'message' and
+                           isinstance(item.get('content'), list) and
+                           any(isinstance(part, dict) and part.get('type') == 'output_text' and
+                               isinstance(part.get('text'), str) and part['text'].strip()
+                               for part in item['content']) for item in output):
+                    raise ValueError('local runtime returned no output text; readiness not verified')
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            existing['verification_error'] = re.sub(r'[\x00-\x1f\x7f]', ' ', str(exc))[-600:]
+            (destination / '.t-artifact.json').write_text(json.dumps(existing, indent=2))
+            raise
+        existing['verified_context'] = context
+        existing['verified_hardware'] = {k: machine.get(k) for k in ('ram_bytes', 'accelerator')}
+        (destination / '.t-artifact.json').write_text(json.dumps(existing, indent=2))
+    return dict(model=name, downloaded=True, ready=report(row, machine, context)['ready'], revision=existing['revision'])
 
 
 def measure(name, context=32768):
@@ -400,89 +427,176 @@ def detail_lines(row):
     return lines
 
 
+def model_status(row):
+    if row.get('ready'):
+        return 'Ready'
+    if row.get('verification_error'):
+        return 'Verification failed'
+    return 'Downloaded · not verified' if row['installed'] else 'Not downloaded'
+
+
+def model_page(ui, title, lines):
+    width = max(1, ui.cols() - 6) if hasattr(ui, 'cols') else 74
+    rail = getattr(ui, 'rail', '  │')
+    body = [rail + '   ' + part for line in lines
+            for part in (textwrap.wrap(line, width=width) or [''])]
+    result = ui.page(title, body, accept=('enter', 'q', 'esc', 'abort'), keys='enter/q back')
+    if result == 'abort':
+        raise KeyboardInterrupt
+
+
+def model_menu(ui, row, context):
+    """One compact overview; provenance is available without blocking actions."""
+    focus = 'use' if row.get('ready') else 'install'
+    while True:
+        disabled = {}
+        if not row.get('ready'):
+            disabled['use'] = disabled['measure'] = 'Verify readiness first.'
+        if not row.get('verification_allowed', row['fit'] is True):
+            disabled['install'] = row['reason']
+        if not row.get('disk_fit', True):
+            disabled['download'] = disabled['install'] = 'Insufficient disk space'
+        actions = [('use', 'Use in workflow')] if row.get('ready') else []
+        actions += [('install', 'Verify readiness' if row['installed'] else 'Install and verify')]
+        if not row['installed']:
+            actions.append(('download', 'Download only'))
+        if row.get('ready'):
+            actions.append(('measure', 'Measure speed'))
+        actions += [('benchmarks', 'Benchmarks ›'), ('artifact', 'Artifact & runtime ›'), ('back', 'Back')]
+        summary = [row['model'].split('/')[-1],
+                   f"{row['provider']} · {row.get('precision', 'runtime metadata')}",
+                   f"Files {row['bytes']/1e9:.1f} GB · {'on disk' if row['installed'] else 'to download'}",
+                   f"Context {context:,} tokens", model_status(row),
+                   f"Memory fit {'✓' if row['fit'] is True else '✕' if row['fit'] is False else '?'}"]
+        action = ui.pick('Model details', actions, context=summary,
+                         default=next((i for i, (key, _) in enumerate(actions) if key == focus), 0),
+                         sections={'benchmarks': 'Details'}, disabled=disabled,
+                         accents={'use': 'g', 'install': 'g'})
+        if action in (None, 'back'):
+            return None
+        focus = action
+        if action == 'use':
+            return {'model': row['model'], 'provider': row['provider']}
+        if action == 'benchmarks':
+            scores = row.get('benchmarks', {})
+            lines = ['Original model; not local scores.'] if scores else ['No published results in this catalog.']
+            choice = ui.pick('Publisher benchmarks', [(suite, suite) for suite in scores] +
+                             [('sources', 'Sources & methodology ›'), ('back', 'Back')], context=lines,
+                             values={suite: str(score['score']) for suite, score in scores.items()})
+            if choice == 'sources' or choice in scores:
+                lines = ['Original model results; local quantization not evaluated.'] if scores else []
+                for suite, score in scores.items():
+                    if choice != 'sources' and choice != suite:
+                        continue
+                    lines += [f"{suite}: {score['score']} · {score['version']}", score.get('harness', score['kind']), score['source'], '']
+                model_page(ui, 'Sources & methodology', lines or ['No published sources in this catalog.'])
+            continue
+        if action == 'artifact':
+            lines = detail_lines(row)
+            start = next(i for i, line in enumerate(lines) if line.startswith('Publisher benchmarks'))
+            lines = lines[:start]
+            if row.get('memory_note'):
+                lines += [row['memory_note'], 'The installed runtime must confirm support; its memory guardrails remain active.']
+            if row.get('verification_error'):
+                lines += ['Last verification failed:', row['verification_error'], 'Update the LM Studio runtime or choose another model, then retry.']
+            if row.get('measurement'):
+                lines += detail_lines(row)[-3:]
+            model_page(ui, 'Artifact & runtime', lines)
+            continue
+        if action != 'measure':
+            review = ([f"Reuse downloaded files · {row['bytes']/1e9:.1f} GB"] if row['installed'] else
+                      [f"Download up to {row['bytes']/1e9:.1f} GB",
+                       str(model_directory(row['model']) if row['provider'] == 'lmstudio' else Path.home()/'.ollama/models')])
+            if action == 'install':
+                review += [f'Load at {context:,} tokens and test a response.', 'Release the model after verification.']
+            if ui.pick('Verify readiness' if row['installed'] else 'Review download',
+                       [('yes', 'Run verification' if row['installed'] else 'Continue'), ('no', 'Cancel')], context=review) != 'yes':
+                continue
+        ui.restore()
+        error = None
+        try:
+            with helper('t_local_worker')['reservation']():
+                name = row['model']
+                result = (measure(name, context) if action == 'measure' else install(name, action == 'download', context)) if row['provider'] == 'lmstudio' else ollama_action(name, action, context=context)
+            ui.done('Complete', 'Speed measured.' if action == 'measure' else 'Ready · inference verified.' if result.get('ready') else 'Downloaded · not verified.')
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            error = str(exc)
+        finally:
+            ui.raw()
+        if error:
+            model_page(ui, 'Model action failed', [error, 'Files are retained. Update the runtime or choose another model, then retry.'])
+        row = next(r for r in catalogue(context=context)['models'] if r['model'] == row['model'])
+
+
 def select_model(ui, current=DEFAULT_MODEL, context=32768):
     suite = 'swe-bench-verified-bash-only'
     while True:
         view = catalogue(suite, context)
-        rows = [(r['model'], r['model'].split('/')[-1]) for r in view['models']]
+        rows = [('', 'Use default · ' + DEFAULT_MODEL.split('/')[-1])] + [(r['model'], r['model'].split('/')[-1]) for r in view['models']]
         values = {r['model']: f"Memory fit {'✓' if r['fit'] is True else '✕' if r['fit'] is False else '?'} · "
-                  f"{r['benchmark']['score'] if r['benchmark'] else '—'} · "
-                  f"{'Ready' if r.get('ready') else 'Downloaded' if r['installed'] else 'Not installed'}" for r in view['models']}
+                  f"{r['benchmark']['score'] if r['benchmark'] else '—'} · " + model_status(r) for r in view['models']}
         choice = ui.pick('Local model · ' + suite, rows + [('__suite', 'Change benchmark'), ('__back', 'Back')],
                          values=values, default=next((i for i,r in enumerate(rows) if r[0] == current),0),
                          accents={r['model']: 'y' for r in view['models'] if r['fit'] is not True})
         if choice in (None, '__back'):
             return None
+        if choice == '':
+            return {'provider': DEFAULT['provider'], 'model': DEFAULT_MODEL}
         if choice == '__suite':
             suite = ui.pick('Benchmark suite', [(v,v) for v in SUITES]) or suite
             continue
-        row = next(r for r in view['models'] if r['model'] == choice)
-        detail = ui.page('Model details', detail_lines(row), accept=('enter', 'q', 'esc', 'abort'), keys='enter actions · q back')
-        if detail == 'abort':
-            raise KeyboardInterrupt
-        if detail != 'enter':
-            continue
-        disabled = {}
-        if not row.get('ready'):
-            disabled['measure'] = 'Install and verify the model before measuring.'
-        if not row.get('disk_fit', True):
-            disabled['download'] = 'Insufficient disk space'
-        if row['fit'] is not True:
-            disabled['use'] = disabled['install'] = row['reason']
-        if not row.get('disk_fit', True):
-            disabled['install'] = 'Insufficient disk space'
-        if row['fit'] is True and not row.get('ready'):
-            disabled['use'] = 'Install and verify this artifact before using it.'
-        action = ui.pick('Model actions', [('use', 'Use in workflow'), ('install', 'Install and verify'),
-                         ('download', 'Download only'), ('measure', 'Measure speed'), ('back', 'Back')], disabled=disabled)
-        if action == 'use':
-            return {'model': row['model'], 'provider': row['provider']}
-        if action in ('install', 'download', 'measure'):
-            if action != 'measure' and ui.pick('Review download', [('yes', f"Download up to {row['bytes']/1e9:.1f} GB to {model_directory(choice) if row['provider'] == 'lmstudio' else Path.home()/'.ollama/models'}"), ('no', 'Back')]) != 'yes':
-                continue
-            ui.restore()
-            try:
-                with helper('t_local_worker')['reservation']():
-                    result = (measure(choice, context) if action == 'measure' else install(choice, action == 'download', context)) if row['provider'] == 'lmstudio' else ollama_action(choice, action, context=context)
-                ui.done('complete', json.dumps(result))
-            except (OSError, ValueError, subprocess.SubprocessError) as exc:
-                ui.done('unavailable', str(exc))
-            finally:
-                ui.raw()
+        current = choice
+        selection = model_menu(ui, next(r for r in view['models'] if r['model'] == choice), context)
+        if selection:
+            return selection
 
 
 def workflow_menu(ui, value=None):
-    current = policy(value)
-    while True:
-        choice = ui.pick('Inference & routing', [('mode', 'Routing'), ('model', 'Local model'),
-                         ('on_cloud_failure', 'On cloud connection failure'),
-                         ('context_tokens', 'Context'), ('timeout_seconds', 'Task budget'), ('back', 'Back')],
-                         values={**{k: str(v) for k,v in current.items()}, 'on_cloud_failure':
-                                 'Continue locally' if current['on_cloud_failure'] == 'local' else 'Pause and retry'})
-        if choice in (None, 'back'):
-            return current
-        if choice == 'model':
-            selection = select_model(ui, current['model'], current['context_tokens'])
-            if selection:
-                current.update(selection)
-        elif choice == 'mode':
-            selected = ui.pick('Routing', [(v, {'automatic':'Automatic hybrid · approve local worker tools', 'local-only':'Local only · no cloud fallback',
-                                             'manual':'Manual delegation', 'disabled':'Disabled'}[v]) for v in MODES])
-            if selected:
-                current['mode'] = selected
-                if selected == 'disabled':
-                    current['on_cloud_failure'] = 'pause'
-        elif choice == 'on_cloud_failure':
-            selected = ui.pick('On cloud connection failure', [('pause', 'Pause and retry'),
-                               ('local', 'Continue locally with selected model')],
-                               disabled={'local': 'Enable routing first.'} if current['mode'] == 'disabled' else {})
-            if selected:
-                current['on_cloud_failure'] = selected
-        else:
-            values = (8192, 16384, 32768, 65536) if choice == 'context_tokens' else (60, 300, 900, 1800)
-            selected = ui.pick(choice.replace('_', ' ').title(), [(str(v),str(v)) for v in values])
-            if selected:
-                current[choice] = int(selected)
+    current, focus = policy(value), 'mode'
+    try:
+        while True:
+            rows = [('mode', 'Routing'), ('model', 'Local model'),
+                    ('on_cloud_failure', 'On cloud connection failure'),
+                    ('context_tokens', 'Context'), ('timeout_seconds', 'Task budget'),
+                    ('reset', 'Reset to defaults'), ('back', 'Back')]
+            choice = ui.pick('Inference & routing', rows,
+                            default=next(i for i, row in enumerate(rows) if row[0] == focus),
+                            sections={'reset': 'Manage'},
+                            values={**{k: str(v) for k, v in current.items()}, 'on_cloud_failure':
+                                    'Continue locally' if current['on_cloud_failure'] == 'local' else 'Pause and retry',
+                                    'reset': 'Already at defaults' if current == DEFAULT else 'Routing settings'})
+            if choice in (None, 'back'):
+                return current
+            focus = choice
+            if choice == 'reset':
+                current = policy()
+            elif choice == 'model':
+                selection = select_model(ui, current['model'], current['context_tokens'])
+                if selection:
+                    current.update(selection)
+            elif choice == 'mode':
+                selected = ui.pick('Routing', [('', 'Use default · Manual delegation')] + [(v, {
+                    'automatic': 'Automatic hybrid · approve local worker tools', 'local-only': 'Local only · no cloud fallback',
+                    'manual': 'Manual delegation', 'disabled': 'Disabled'}[v]) for v in MODES])
+                if selected is not None:
+                    current['mode'] = selected or DEFAULT['mode']
+                    if current['mode'] == 'disabled':
+                        current['on_cloud_failure'] = 'pause'
+            elif choice == 'on_cloud_failure':
+                selected = ui.pick('On cloud connection failure', [('', 'Use default · Pause and retry'),
+                                   ('pause', 'Pause and retry'), ('local', 'Continue locally with selected model')],
+                                   disabled={'local': 'Enable routing first.'} if current['mode'] == 'disabled' else {})
+                if selected is not None:
+                    current['on_cloud_failure'] = selected or DEFAULT['on_cloud_failure']
+            else:
+                values = (8192, 16384, 32768, 65536) if choice == 'context_tokens' else (60, 300, 900, 1800)
+                selected = ui.pick(choice.replace('_', ' ').title(), [('', 'Use default · ' + str(DEFAULT[choice]))] +
+                                   [(str(v), str(v)) for v in values])
+                if selected is not None:
+                    current[choice] = int(selected) if selected else DEFAULT[choice]
+    except KeyboardInterrupt as exc:
+        exc.workflow_inference = current
+        raise
 
 
 def ollama_action(name, action, download_only=False, context=32768):
@@ -618,7 +732,7 @@ def lead(argv, cwd=None, chosen=None):
     if fit['fit'] is not True:
         raise ValueError(fit['reason'])
     w = helper('t_local_worker')
-    with w['reservation'](), provider_runtime(chosen) as (base, alias, info):
+    with w['reservation'](), helper('t_local_status')['Activity'](chosen['model']) as activity, provider_runtime(chosen) as (base, alias, info):
         home = w['state_root']() / ('lead-' + uuid.uuid4().hex)
         env = w['environment'](home)
         env.update(CODEX_OSS_BASE_URL=base + '/v1')
@@ -654,7 +768,9 @@ def lead(argv, cwd=None, chosen=None):
                   '-c', f'model_context_window={chosen["context_tokens"]}',
                   '-c', f'model_auto_compact_token_limit={int(chosen["context_tokens"]*.75)}']
         print(f"Local only · {chosen['model']} · {chosen['provider']} · revision {info['revision'][:12]}", file=sys.stderr)
-        return subprocess.call([argv[0], *forced, *filtered], env=env)
+        with activity.endpoint(base) as observed:
+            env['CODEX_OSS_BASE_URL'] = observed + '/v1'
+            return subprocess.call([argv[0], *forced, *filtered], env=env)
 
 
 if __name__ == '__main__':

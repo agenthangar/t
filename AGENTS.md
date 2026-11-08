@@ -14,6 +14,7 @@ are unreleased commits and required Linux CI passed for the exact target commit.
 Do not bypass that gate or automatically infer a minor/major bump from commit
 messages. See [the release policy](docs/releases.md) for operation and recovery.
 
+Before changing user-facing behavior, read [the repository design system](DESIGN.md).
 Before changing a public command, read [the command and terminal contract](ui/README.md)
 and [the command inventory](ui/command-contract.json). Classify every new command
 and conditional mode; compatibility aliases inherit the canonical entry. Use
