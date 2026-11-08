@@ -50,6 +50,7 @@ def test_gateway_revocation_stops_inflight_and_queued_inference(evaluation):
             assert entered.wait(3)
             queued = threading.Thread(target=request); queued.start()
             gateway.close_lease(lease['token'])
+            assert len(gateway.records) == 1  # Usage is settled before final trial totals.
             first.join(3); queued.join(3)
             assert not first.is_alive() and not queued.is_alive()
             deadline = time.monotonic() + 3

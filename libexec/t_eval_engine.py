@@ -352,6 +352,8 @@ def execute(journal, retry_interrupted=False):
             journal.start_trial({'id': trial_id, 'task': task, 'mode': mode, 'repetition': repetition})
             try:
                 outcome = child_job(python, job, directory, journal)
+                # Settle cancelled/in-flight requests before taking the usage snapshot.
+                gateway.close_lease(capability['token'])
                 outcome.update(id=trial_id, task=task, mode=mode, repetition=repetition,
                                elapsed_seconds=time.time()-started, **gateway.totals(trial_id))
                 journal.finish_trial(outcome)

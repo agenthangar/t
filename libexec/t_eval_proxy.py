@@ -81,12 +81,13 @@ class Gateway:
                 if event.get('kind') == 'model_request_completed':
                     self.records.append(event)
         self.mutex, self.local_lock = threading.RLock(), threading.Lock()
+        self.settled = threading.Condition(self.mutex)
         self.server = None
 
     def lease(self, trial_id, mode):
         token = secrets.token_urlsafe(32)
         with self.mutex:
-            self.routes[token] = {'trial': trial_id, 'mode': mode, 'offline': False, 'active': True}
+            self.routes[token] = {'trial': trial_id, 'mode': mode, 'offline': False, 'active': True, 'pending': 0}
         port = self.server.server_port
         # Dedicated Colima profile uses Lima's documented host loopback gateway.
         base = f'http://192.168.5.2:{port}/{token}'
@@ -107,6 +108,9 @@ class Gateway:
                 stream.shutdown(socket.SHUT_RDWR)
             except OSError:
                 pass
+        if record:
+            with self.settled:
+                self.settled.wait_for(lambda: record['pending'] == 0, timeout=35)
 
     def totals(self, trial):
         with self.mutex:
@@ -242,6 +246,7 @@ class Gateway:
                         if not record['active']:
                             self.close_connection = True
                             return
+                        record['pending'] += 1
                     started = time.monotonic()
                     usage = None
                     metadata = {}
@@ -305,7 +310,12 @@ class Gateway:
                         with gateway.mutex:
                             gateway.connections.pop(connection, None)
                             gateway.records.append(event)
-                        gateway.journal.event('model_request_completed', **event)
+                        try:
+                            gateway.journal.event('model_request_completed', **event)
+                        finally:
+                            with gateway.settled:
+                                record['pending'] -= 1
+                                gateway.settled.notify_all()
         self.server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
