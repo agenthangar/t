@@ -104,6 +104,14 @@ def test_gateway_usage_pricing_auth(evaluation, monkeypatch, tmp_path):
     try:
         with p.Gateway(config, journal, local) as gateway:
             lease = gateway.lease('trial', 'local-only')
+            frontier = gateway.lease('frontier-trial', 'frontier-only')
+            assert 'local' not in frontier
+            with pytest.raises(urllib.error.HTTPError) as blocked:
+                request(gateway, frontier, 'local/identity')
+            assert blocked.value.code == 403
+            with pytest.raises(urllib.error.HTTPError) as blocked:
+                request(gateway, frontier, 'local/v1/responses', {'model': 'exact-alias'})
+            assert blocked.value.code == 403
             assert json.loads(request(gateway, lease, 'local/identity'))['revision'] == 'fixed-revision'
             assert b'exact-alias' in request(gateway, lease, 'local/v1/models')
             assert b'50' in request(gateway, lease, 'local/v1/responses', {'model': 'exact-alias'})

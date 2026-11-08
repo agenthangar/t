@@ -92,7 +92,7 @@ class Gateway:
         # Dedicated Colima profile uses Lima's documented host loopback gateway.
         base = f'http://192.168.5.2:{port}/{token}'
         result = {'frontier_base': base + '/frontier/v1', 'port': port, 'token': token}
-        if self.local:
+        if self.local and mode != 'frontier-only':
             result['local'] = {**self.local[2], 'model': self.config['local_model'], 'provider': self.config['local_provider'],
                                'alias': self.local[1], 'base': base + '/local', 'context_tokens': self.config['context_tokens']}
         return result
@@ -164,7 +164,9 @@ class Gateway:
 
             def do_GET(self):
                 route = self.route()
-                if route and route[1:] == ('local', '/identity') and gateway.local:
+                if route and route[0]['mode'] == 'frontier-only' and route[1] == 'local':
+                    self.reply(403, {'error': 'frontier-only'})
+                elif route and route[1:] == ('local', '/identity') and gateway.local:
                     self.reply(200, {**gateway.local[2], 'model': gateway.config['local_model'], 'alias': gateway.local[1],
                                      'context_tokens': gateway.config['context_tokens']})
                 elif route and route[1] == 'local' and route[2] in ('/v1/models', '/api/tags') and gateway.local:
@@ -205,6 +207,9 @@ class Gateway:
                     return
                 if provider == 'frontier' and (record['mode'] == 'local-only' or not gateway.frontier):
                     self.reply(403, {'error': 'local-only'})
+                    return
+                if provider == 'local' and record['mode'] == 'frontier-only':
+                    self.reply(403, {'error': 'frontier-only'})
                     return
                 if provider == 'frontier' and record['offline']:
                     # A typed connection failure, not an HTTP/auth/quota failure.
