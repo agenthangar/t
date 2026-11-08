@@ -9,6 +9,7 @@ from conftest import load_script
 
 @pytest.fixture
 def local(tmp_path, monkeypatch):
+    monkeypatch.delenv('TMUX', raising=False)
     monkeypatch.setenv('HOME', str(tmp_path))
     for key in ('XDG_CONFIG_HOME','XDG_STATE_HOME','XDG_CACHE_HOME','CODEX_HOME'):
         monkeypatch.setenv(key, str(tmp_path / key))
@@ -30,6 +31,8 @@ def test_policy_and_instructions(local):
         with pytest.raises(ValueError):m.policy(value)
     assert 'no cloud fallback' in m.instructions({'mode':'local-only'})
     assert 'task delegation' in m.instructions({'mode':'automatic'})
+    for label in ('Local requested', 'Local accepted', 'Local result', 'Lead checked', 'Local unavailable'):
+        assert label in m.instructions({'mode':'automatic'})
 
 
 def test_receipts_fit_and_identity(local):
@@ -153,7 +156,8 @@ def test_local_lead_fails_closed(local,monkeypatch,tmp_path):
     worker=load_script(Path(__file__).parents[1]/'libexec/t_local_worker.py','inference_worker')
     workflow=m.helper('t_workflow')
     toml=m.helper('t_toml')
-    monkeypatch.setattr(m,'helper',lambda n: toml if n=='t_toml' else {'hardware':hardware} if n=='t_local_models' else workflow if n=='t_workflow' else {'reservation':nullcontext,'state_root':lambda:tmp_path,'environment':worker.environment})
+    status=m.helper('t_local_status')
+    monkeypatch.setattr(m,'helper',lambda n: status if n=='t_local_status' else toml if n=='t_toml' else {'hardware':hardware} if n=='t_local_models' else workflow if n=='t_workflow' else {'reservation':nullcontext,'state_root':lambda:tmp_path,'environment':worker.environment})
     @contextmanager
     def runtime(*a):yield 'http://127.0.0.1:1234','local-alias',{'revision':'a'*40}
     monkeypatch.setattr(m,'runtime',runtime)

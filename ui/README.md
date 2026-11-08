@@ -1323,6 +1323,25 @@ and Keychain identifiers remain compatible. Installation does not grant sudo or
 start monitoring. Runtime monitoring and hotspot joins require macOS; help and
 configuration remain usable elsewhere. Native macOS assertion tests are opt-in.
 
+### Local inference activity
+
+In an owned tmux pane, local lead and worker launches add a compact
+`local MODEL · inferring` status segment only during observed model requests.
+Loading, work between requests, idle and failure are separate states. Pane ancestry
+and pane generation prevent activity from another session being shown. Missing
+ownership hides the indicator; records expire after twelve seconds and the bar
+refreshes at least every two seconds.
+No prompts or credentials are stored. Outside tmux inference is unchanged.
+
+The session name and worktree sit at the left; existing custom tmux content is
+retained. Codex's native model, effort and context footer remains unchanged.
+Long labels are bounded, and the full artifact remains in local-worker details.
+This adds no public command and does not select or install a model.
+
+Development preview: `python3 scripts/preview_local_status.py` from this
+worktree in a terminal. It uses an isolated tmux server, sample activity and
+temporary HOME/state; it never calls a model or edits real configuration.
+
 ### Workflow model overview
 
 The existing local-model single-selection mode opens a compact RailUI overview
