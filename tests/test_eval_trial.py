@@ -141,6 +141,29 @@ def test_harbor_controls_and_fresh_grading(harbor_adapter, evaluation, tmp_path,
     monkeypatch.setattr(h, 'trial', repeat)
     assert asyncio.run(h.execute(job_file))['resolved'] is False
     assert phases == ['candidate', 'grade']
+    logs = Path(job['directory']) / 'harbor' / (job['trial_id'] + '-candidate') / 'agent'
+    (logs / 'model.patch').unlink()
+    phases.clear()
+    with pytest.raises(RuntimeError, match='Candidate patch was not captured'):
+        asyncio.run(h.execute(job_file))
+    assert phases == ['candidate']
+    (logs / 'model.patch').write_text('patch')
+    (logs / 'workflow.json').unlink()
+    phases.clear()
+    with pytest.raises(RuntimeError, match='Workflow evidence missing'):
+        asyncio.run(h.execute(job_file))
+    assert phases == ['candidate']
+    (logs / 'workflow.json').write_text('{"workflow_valid":true}')
+    async def failed_verifier(value, name, agent, grade=True):
+        phases.append(name)
+        return SimpleNamespace(reward_valid=name != 'grade',
+                               verifier_result=SimpleNamespace(rewards={'reward': 0}))
+    monkeypatch.setattr(h, 'trial', failed_verifier)
+    phases.clear()
+    with pytest.raises(RuntimeError, match='did not produce a valid reward'):
+        asyncio.run(h.execute(job_file))
+    assert phases == ['candidate', 'grade']
+    monkeypatch.setattr(h, 'trial', repeat)
     (task / 'task.toml').write_text('changed digest')
     phases.clear()
     with pytest.raises(RuntimeError, match='reference solution did not pass'): asyncio.run(h.execute(job_file))

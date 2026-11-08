@@ -207,11 +207,40 @@ def test_task_selection_checksums_and_image_pin(evaluation, tmp_path, monkeypatc
     with pytest.raises(ValueError, match='checksum mismatch'): e.verify_checksums(root)
     checksum.write_text('a  ../../outside\n')
     with pytest.raises(ValueError, match='unsafe'): e.verify_checksums(root)
-    monkeypatch.setattr(e, 'run', lambda *a, **kw: json.dumps([{'Architecture': 'amd64', 'RepoDigests': ['example/image@sha256:abc']}]))
+    calls = []
+    metadata = {'Architecture': 'amd64', 'RepoDigests': ['example/image@sha256:abc']}
+    def image_command(command, **kwargs):
+        calls.append(command)
+        if len(calls) == 1:
+            raise ValueError('image not cached')
+        return json.dumps([metadata])
+    monkeypatch.setattr(e, 'run', image_command)
     destination = tmp_path / 'pinned'
     task = next(tasks.iterdir())
+    published = task / 'tests/test.sh'
+    published.parent.mkdir()
+    published.write_text('unchanged publisher verifier')
     assert e.pin_image(task, destination) == 'example/image@sha256:abc'
+    assert calls[1] == ['docker', 'pull', '--platform', 'linux/amd64', 'example/image:fixed']
     assert e.pin_image(task, destination) == 'example/image@sha256:abc'
+    cached = destination / 'tests/test.sh'
+    for corruption in ('changed', 'missing', 'symlink'):
+        cached.unlink()
+        if corruption == 'changed':
+            cached.write_text('different verifier')
+        elif corruption == 'symlink':
+            cached.symlink_to(published)
+        with pytest.raises(ValueError, match='pinned publisher files'):
+            e.pin_image(task, destination)
+        cached.unlink(missing_ok=True)
+        cached.write_bytes(published.read_bytes())
+    metadata['Architecture'] = 'arm64'
+    with pytest.raises(ValueError, match='pinned amd64'):
+        e.pin_image(task, destination)
+    metadata.update(Architecture='amd64', RepoDigests=[])
+    with pytest.raises(ValueError, match='pinned amd64'):
+        e.pin_image(task, destination)
+    metadata['RepoDigests'] = ['example/image@sha256:abc']
     (destination / 'task.toml').write_text('changed')
     with pytest.raises(ValueError, match='digest changed'): e.pin_image(task, destination)
 
