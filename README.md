@@ -275,31 +275,25 @@ Terminal progress messages identify ownership checks, saved-candidate discovery,
 and metadata loading. Open/close session scans, session lists, history, and issue
 commands also report discovery stages. Redirected output and JSON remain quiet.
 
-`t open`, `t resume`, and `t kill` share the compact resume picker design:
-**Space/Tab marks ✓ and Enter acts on the selection**. A plain green checkmark
-stays readable on the darker cyan focused row, without a colored block.
-In `t open`, press **k** to kill only the focused session, independently of
+`t open`, `t resume`, and `t kill` share the Air picker design:
+**Tab marks ✓ and Enter acts on the selection**. A plain green checkmark
+stays readable in its own gutter beside the pointer on the dark cyan focused row.
+All searchable pickers and inline menus share cyan headings, muted hints and
+spacing that adapts to terminal width and height. macOS shows native key labels
+such as `⌃F`, `⌃S`, `↩ Return`, `⎋ Esc` and `⇥ Tab`; other systems show Ctrl-F,
+Ctrl-S, Enter, Esc and Tab. The shortcuts below work on both.
+In `t open`, press **Ctrl-K** to kill only the focused session, independently of
 marks. This confirms that session and retains close safety checks. For example,
-run `t open --attached`, focus a session, and press **k**.
+run `t open --attached`, focus a session, and press **Ctrl-K**.
 The picker stays open and removes the closed row without rediscovering sessions.
 Search, filters, and marks on other rows are preserved; failed or canceled closes
 leave the row available.
-The open picker reserves **k** as an action key rather than query text.
-**Ctrl-F** opens the Filters picker. Choose State or a column, select its value,
-then choose Apply filters. **Ctrl-A** turns filtering off to show the whole
-snapshot; **Ctrl-L** turns it back on with your saved choices.
+Type full phrases to search, including spaces and the letter k. Tab marks rows; Ctrl-K closes the focused session. Session searches match literal phrases, ignoring case.
+Ctrl-F toggles filters without leaving the list; Ctrl-X resets filters. Ctrl-T cycles state. Ctrl-G/O/R matches the highlighted row’s agent/host/repo; repeat the shortcut to clear that filter. Ctrl-D matches interface (CLI or desktop) in open and close. Ctrl-S toggles sorting; Ctrl-Y cycles sort choices. Open and resume default to last turn, newest first, and also offer repository, agent, host and session. Unknown turn timestamps sort last. Close offers repository, agent, host and session. Turning filters or sorting off preserves their choices. Sorting off restores snapshot order.
 
-The settings picker includes attachment state for open, live sessions for resume,
-and attached/pending work for close. Columns include agent, host and repository;
-open also offers progress, interface, model, session, context and task, while close
-includes interface. Each value picker includes All to clear that column.
-Reset filters to defaults stages the original state and clears column choices.
-Enter chooses a setting; Esc in a value picker keeps that value, and Esc in the
-Filters picker discards all staged changes. Apply filters enables the saved choices.
-
-The main header shows one highlighted filter summary, with explicit ON/OFF text
-when color is unavailable. Narrow headers abbreviate Ctrl as `^` and show the
-selected column count; open Filters to see complete values. Filtering keeps your
+The header highlights active filters and sorting, with explicit ON/OFF text.
+Mac shortcuts use ⌃ and ⌥; other systems show Ctrl and Alt.
+Filtering keeps your
 search and removes hidden marks. Choices use the current snapshot without
 expanding repository scope or fetching new sessions.
 
@@ -311,16 +305,15 @@ not known to have landed); “not marked” is not proof that work is finished.
 The separate `✓` in the left selection gutter means you marked that row to open.
 
 Resume never invents a historical interface. Resume and close use the same
-Filters picker and on/off keys as open.
+inline filter shortcuts and on/off keys as open.
 Resume sorts by the last actual user turn, newest first; unknown times come last.
-Alt-T restores that sort, Alt-R sorts by repository, Alt-G by agent, Alt-O by
-host/origin, and Alt-V by session (numeric slots sort naturally, e.g. 2 before 10).
+Ctrl-Y cycles last turn, repository, agent, host/origin and session.
+Numeric slots sort naturally, e.g. 2 before 10.
 Text sorts ascend, then use newest turn and session identity to break ties.
-Filter settings, reset and on/off preserve the selected sort; Alt-T restores last-turn sorting.
-For example, `t resume --live` followed by Alt-R groups live and saved sessions by
+Filters, reset and on/off preserve the selected sort; Ctrl-Y cycles back to last-turn sorting.
+For example, `t resume --live` followed by Ctrl-Y groups live and saved sessions by
 repository. Live labels remain visible alongside their last-turn time.
-The open picker keeps session and task text prominent, without a last-turn
-column, details preview, or new-session shortcut. Start fresh explicitly with
+The open picker shows a LAST TURN column alongside session and task text. Narrow terminals shorten timestamps in local time; full timestamps remain searchable. There is no details preview or new-session shortcut. Start fresh explicitly with
 `t open api --new`. Resume and close retain **Ctrl-/** for full details.
 Search still matches the full task and metadata when a compact row shortens them.
 
@@ -333,7 +326,7 @@ and `t open --attached` start with all rows; Ctrl-F restores their defaults.
 CLI opens use this terminal for the first selection and new tabs for the rest,
 falling back to new windows in Terminal when tabs cannot be created safely
 (including switching away during creation). Attach commands remain available
-if opening a terminal fails. Commands never target an existing tab. `--fg` opens one session. In `t kill`, mark sessions with Space/Tab and
+if opening a terminal fails. Commands never target an existing tab. `--fg` opens one session. In `t kill`, mark sessions with Tab and
 press Enter to confirm and close the whole selection without further prompts.
 Explicit targets still confirm live-agent interruption unless `-y` is supplied.
 Desktop ownership checks apply in both cases.
@@ -446,7 +439,7 @@ then Save changes. SSH targets and default-host references are preserved.
 First-run onboarding also generates unique short names for selected hosts.
 
 `t session move` (also `t move`) opens a multi-selection picker of current local
-Claude and Codex CLI conversations, then a destination host picker. Space/Tab
+Claude and Codex CLI conversations, then a destination host picker. Tab
 marks sessions; Enter moves the marks or the focused session. Use `-r`/`--remote`
 to include registered remote sources, `--all` to browse every repository, or name
 `api` to scope selection. The current checkout scopes the default view; outside
@@ -482,7 +475,7 @@ t remote open mini api --new    # start fresh on mini
 t remote resume mini api        # choose saved history discovered on mini
 t remote resume mini --all       # all repositories, regardless of remote login directory
 t remote kill api 9             # discover slot 9's remote host and confirm before stopping a live agent
-t resume t 11                          # mark conversations with Space/Tab, then Enter
+t resume t 11                          # mark conversations with Tab, then Enter
 t session resume --all                  # local and remote-only repositories; clone only after selection
 t session move -r                      # choose current sessions, then their destination
 t session move api 2 -r                # discover the source, then choose its destination
@@ -638,6 +631,8 @@ JSON, MCP, and remote scanner output stays free of progress animation.
 
 `ls` and `list` are interchangeable for `session`, `repo`, `cursor`, `hosts`,
 `issue`, and `workflow`. Root `t ls` and `t list` both list sessions.
+Session lists always print a read-only table, including in terminals with fzf.
+Use `t open` to select and open sessions. Pipe to `cat` for complete values.
 The old `t repos` family has been removed; use `t repo list`, `t repo locate`,
 `t repo cd`, and `t repo add`.
 

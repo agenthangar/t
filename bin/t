@@ -333,11 +333,13 @@ class Style:
         """tty=False forces plain text — for a label a picker measures and truncates
         by len(), where an escape sequence would count as width."""
         tty = sys.stdout.isatty() if tty is None else tty
+        tty = tty and "NO_COLOR" not in os.environ and os.environ.get("TERM") != "dumb"
         self.g = "\033[32m" if tty else ""
         self.c = "\033[36m" if tty else ""
         self.y = "\033[2m" if tty else ""
         self.b = "\033[1m" if tty else ""
         self.w = "\033[33m" if tty else ""
+        self.focus = "\033[48;5;23m\033[97m" if tty else ""
         self.rev = "\033[7m" if tty else ""
         self.r = "\033[0m" if tty else ""
 
@@ -399,7 +401,7 @@ _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 
 def _vis_len(s):
     """Columns a styled line takes on screen: its length with the SGR escapes out."""
-    return len(_ANSI_RE.sub("", s))
+    return _display_width(_ANSI_RE.sub("", s))
 
 
 def _term_rows(line, cols):
@@ -554,22 +556,21 @@ def cmd_ls(cfg, args):
         return 1
     st = Style()
     _progress("Checking local sessions and remote hosts" if args.remote else "Checking local sessions")
-    if args.remote:
-        rows = _scope_filter(_parse_rows(zsh_capture("_dev_rows_all --details"), host_prefixed=True), scope, wt_scope)
-        if not rows:
+    command = "_dev_rows_all --details" if args.remote else "_dev_session_rows --details"
+    rows = _scope_filter(_parse_rows(zsh_capture(command), host_prefixed=args.remote), scope, wt_scope)
+    if not rows:
+        if args.remote:
             where = f" in {os.path.basename(scope)} (t ls -r --all for every repo)," if scope else ""
             print(f"No dev sessions running{where} on this machine or any reachable host.")
-            return 0
-        _render_remote(rows, scope, st)
-    else:
-        rows = _scope_filter(_parse_rows(zsh_capture("_dev_session_rows --details")), scope, wt_scope)
-        if not rows:
+        else:
             where = f" in {os.path.basename(scope)}" if scope else ""
-            hints = ([f"t ls --all for every repo"] if scope else []) + \
-                    (["t ls -r for other machines"] if cfg.hosts else [])
+            hints = (["t ls --all for every repo"] if scope else []) + (["t ls -r for other machines"] if cfg.hosts else [])
             tail = f"  ({' · '.join(hints)})" if hints else ""
             print(f"No dev sessions running{where}.{tail}")
-            return 0
+        return 0
+    if args.remote:
+        _render_remote(rows, scope, st)
+    else:
         _render_local(rows, scope, st, bool(cfg.hosts))
     return 0
 
@@ -605,16 +606,42 @@ def _slot_line(r, st, name_w, avail, host_w=None, model_w=7):
             f"{host}{r['slot']:<{name_w}} {st.y}{summary}{st.r}")
 
 
-def _session_picker_columns(rows, prefixes, statuses, width, heading):
+def _session_picker_columns(rows, prefixes, statuses, width, heading, remote=False, last_turn=False):
     """Keep session identity and task text visible in the open picker."""
     clip = _session_display_helpers()["clip_columns"]
-    available = max(1, width - 12)
+    available = max(1, width - (6 if width <= 60 else 12))
+    if last_turn:
+        available = max(1, available - 4)
+        helpers = _session_display_helpers()
+        stamps = [helpers["format_last_turn"](row.get("last_turn_started_at")) for row in rows]
+        if width < 100:
+            stamps = [
+                '-' if stamp == '-' else (stamp[5:16] if width >= 44 else stamp[11:16]) for stamp in stamps]
+        turn_heading = 'LAST TURN' if width >= 44 else 'TURN'
+        turn_width = max(len(turn_heading), *map(_display_width, stamps))
+        prefix_heading = heading
+        if width < 140:
+            prefix_heading = 'STATE ' + ('HOST/SESSION' if remote and width >= 60 else 'SESSION')
+            prefixes = [('' if width < 40 else status.rstrip() + ' ') + (row['host'] + '/' if remote and width >= 60 else '') + row['slot']
+                        for row, status in zip(rows, statuses)]
+        prefix_width = min(max(len(prefix_heading), *map(_display_width, prefixes)),
+                           max(4, available - turn_width - 16 if width >= 140 else (available - turn_width - 4) // 2))
+        task_width = max(1, available - turn_width - prefix_width - 4)
+        def line(prefix, task, turn):
+            return (clip(prefix, prefix_width) + ' ' * max(0, prefix_width - _display_width(clip(prefix, prefix_width))) + '  ' +
+                    clip(task, task_width) + ' ' * max(0, task_width - _display_width(clip(task, task_width))) +
+                    '  ' + turn)
+        return (line(prefix_heading, 'WORKING ON' if task_width >= 10 else 'TASK', turn_heading),
+                [line(prefix, row.get('summary') or '-', stamp)
+                 for row, prefix, stamp in zip(rows, prefixes, stamps)])
     prefix_width = max(_display_width(heading), *map(_display_width, prefixes))
     if width < 100 or prefix_width + 18 > available:
-        prefixes = [f"{status.replace(' ', '')} {row['slot']}" for row, status in zip(rows, statuses)]
-        heading = 'SESSION'
+        prefixes = [f"{status} " +
+                    (f"{row['host']}/" if remote else "") + row['slot']
+                    for row, status in zip(rows, statuses)]
+        heading = 'STATE ' + ('HOST/SESSION' if remote else 'SESSION')
         prefix_width = max(len(heading), *map(_display_width, prefixes))
-        prefix_width = min(prefix_width, max(1, available - 10))
+        prefix_width = min(prefix_width, max(1, available - (5 if remote else 10)))
     heading = clip(heading, prefix_width)
     summary_width = max(1, available - prefix_width - 2)
     task_heading = 'WORKING ON' if summary_width >= 10 else 'TASK'
@@ -627,7 +654,7 @@ def _session_picker_columns(rows, prefixes, statuses, width, heading):
     return header, lines
 
 
-def _session_picker_rows(rows, remote=False, scoped=False, compact=False, header=False):
+def _session_picker_rows(rows, remote=False, scoped=False, compact=False, header=False, last_turn=False):
     """Resume-style rows: target fields, full details, then compact display."""
     if not rows:
         return []
@@ -659,6 +686,8 @@ def _session_picker_rows(rows, remote=False, scoped=False, compact=False, header
     for row, parts in zip(rows, cells):
         summary = row.get("summary") or ""
         details = "  ".join(parts) + "  " + summary
+        if last_turn:
+            details += "  Last turn: " + _session_display_helpers()["format_last_turn"](row.get("last_turn_started_at"))
         parts[-1] = _truncate(parts[-1], widths[-1])
         display = "  ".join(value + ' ' * (width - _display_width(value)) for value, width in zip(parts, widths))
         prefixes.append(display)
@@ -667,7 +696,7 @@ def _session_picker_rows(rows, remote=False, scoped=False, compact=False, header
         out.append("\t".join((row["host"], row["slot"], row["state"], details, display)))
     if compact:
         width = _columns()
-        heading, displays = _session_picker_columns(rows, prefixes, statuses, width, prefix_heading)
+        heading, displays = _session_picker_columns(rows, prefixes, statuses, width, prefix_heading, remote=remote, last_turn=last_turn)
         # fzf searches only presented fields. The open picker presents 5,4,
         # keeping full details searchable beyond the no-hscroll viewport.
         displays = [display + ' ' * max(0, width - _display_width(display)) for display in displays]
@@ -4750,7 +4779,7 @@ class _RailUI:
         self.st, self.out = Style(), sys.stdout
         self.fd = sys.stdin.fileno()
         self.old_attrs = termios.tcgetattr(self.fd)
-        self.rail = f"  {self.st.y}│{self.st.r}"
+        self.rail = "  "
         self.painted = [0]   # screen ROWS of the block currently on screen (0 = nothing to erase)
 
     def cols(self):
@@ -4762,14 +4791,26 @@ class _RailUI:
 
     def intro(self, title, note):
         st = self.st
-        self.out.write(f"\n  {st.b}{st.c}{title}{st.r}\n      {st.y}{note}{st.r}\n\n")
+        self.out.write(f"\n  {st.b}{st.c}{self.clip(title, self.cols() - 4)}{st.r}\n")
+        for line in _wrap_columns(note, max(4, self.cols() - 4)):
+            self.out.write(f"  {st.y}{line}{st.r}\n")
+        self.out.write("\n")
+
+    def clip(self, text, width):
+        return _session_display_helpers()["clip_columns"](str(text), max(1, width))
+
+    def labels(self, text):
+        helper = runpy.run_path(os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))),
+                                            "libexec", "t_picker_theme.py"))
+        return helper["key_labels"](text, compact=self.lines() <= 14 or self.cols() <= 40)
+
 
     def head(self, label, hint="", marker=None):
         st = self.st
-        mark = marker or f"{st.c}◆{st.r}"
-        lines = [f"  {mark}  {st.b}{_truncate(label, self.cols() - 5)}{st.r}"]
+        mark = marker or ""
+        lines = [f"  {mark}{st.b}{st.c}{self.clip(label, self.cols() - 4)}{st.r}"]
         if hint:
-            lines.append(f"      {st.y}{hint}{st.r}")
+            lines.extend(f"  {st.y}{line}{st.r}" for line in _wrap_columns(hint, self.cols() - 4))
         return lines
 
     def chrome(self, label, keys, primary=None, flash=""):
@@ -4777,43 +4818,45 @@ class _RailUI:
         st, width = self.st, self.cols()
         head = self.head(label) + [self.rail]
         hints, current = [], ""
-        for part in keys.split(" · "):
+        for part in self.labels(keys).split(" · "):
             candidate = f"{current} · {part}" if current else part
-            if len(candidate) > width - 6 and current:
-                hints.append(current)
+            if _display_width(candidate) > width - 4 and current:
+                hints.extend(_wrap_columns(current, width - 4))
                 current = part
             else:
                 current = candidate
         if current:
-            hints.append(current)
-        footer = [self.rail] + [f"      {st.y}{hint}{st.r}" for hint in hints]
-        if self.lines() < 12:
+            hints.extend(_wrap_columns(current, width - 4))
+        footer = [self.rail] + [f"  {st.y}{hint}{st.r}" for hint in hints]
+        if self.lines() <= 14:
             head = head[:1]
-            footer = [f"      {st.y}↑↓/jk · ↵ · q{st.r}"]
+            footer = [f"  {st.y}{hint}{st.r}" for hint in hints]
+        if self.lines() <= 10:
+            brief = self.labels("↑↓/jk · space ✓ · enter · q/esc · Ctrl-C")
+            footer = [f"  {st.y}{line}{st.r}" for line in _wrap_columns(brief, width - 4)]
         if primary:
             key, action, detail = primary
-            if key == "enter" and len(f" {key}  {action} ") > width - 6:
-                key = "↵"
-            text = _truncate(f" {key}  {action} ", width - 6)
-            if self.lines() < 12:
-                footer = [f"      {st.g}{st.b}{st.rev}{text}{st.r}"]
+            text = self.clip(self.labels(f"{key}  {action}"), width - 4)
+            if self.lines() <= 14:
+                footer += [f"  {st.g}{st.b}{text}{st.r}"]
             else:
-                footer += [f"      {st.g}{st.b}{st.rev}{text}{st.r}" +
-                           (f"  {st.g}{detail}{st.r}" if detail and len(text) + len(detail) + 8 <= width else "")]
+                footer += [f"  {st.g}{st.b}{text}{st.r}" +
+                           (f"  {st.g}{detail}{st.r}" if detail and _display_width(text + detail) + 8 <= width else "")]
         if flash:
-            footer.append(f"      {st.w}{_truncate(flash, width - 6)}{st.r}")
+            footer.append(f"      {st.w}{self.clip(flash, width - 6)}{st.r}")
         return head, footer
 
     def section(self, label):
         st = self.st
         title, separator, detail = label.partition(" · ")
         text = title.upper() + separator + detail
-        return f"{self.rail}   {st.b}{st.c}{_truncate(text, self.cols() - 6)}{st.r}"
+        return f"{self.rail}   {st.b}{st.c}{self.clip(text, self.cols() - 6)}{st.r}"
 
     def row(self, label, value=None, *, selected=False, mark=None, label_width=0, accent=""):
         """Style only after clipping plain text: ANSI codes never count as columns."""
         st, width = self.st, self.cols()
         pre = f"{st.c}▸{st.r}" if selected else " "
+        mark = "✓" if mark in ("◼", "✓") else " " if mark in ("◻", "☐") else mark
         box = f"{st.g if mark == '✓' else st.c}{mark}{st.r} " if mark else ""
         avail = max(4, width - 8 - (2 if mark else 0))
         color = getattr(st, accent, "")
@@ -4821,25 +4864,26 @@ class _RailUI:
             inherited = re.search(r"\bInherit (?:global|default) · ", text)
             if inherited:
                 end = inherited.end()
-                return f"{base}{text[:end]}{st.r}{st.rev if selected else ''}{st.y}{text[end:]}{st.r}"
+                return f"{base}{text[:end]}{st.r}{st.focus if selected else ''}{st.y}{text[end:]}{st.r}"
             return f"{base}{text}{st.r}"
         value = str(value) if value is not None else None
         stacked = value is not None and width < 60
         if value is not None and not stacked:
-            left_width = min(label_width or len(label), max(1, avail - 3 - max(12, avail // 3)))
-            left = _truncate(label, left_width).ljust(left_width)
-            right = _truncate(value, max(1, avail - left_width - 3))
+            left_width = min(label_width or _display_width(label), max(1, avail - 3 - max(12, avail // 3)))
+            left = self.clip(label, left_width)
+            left += " " * max(0, left_width - _display_width(left))
+            right = self.clip(value, max(1, avail - left_width - 3))
             plain = f"{left}   {right}"
             body = styled(left, color) + "   " + styled(right, st.c)
         else:
-            plain = _truncate(label, avail)
+            plain = self.clip(label, avail)
             body = styled(plain, color)
         if selected:
-            body = styled(plain.ljust(avail), st.b + st.rev + color)
+            body = styled(plain + ' ' * max(0, avail - _display_width(plain)), st.focus)
         lines = [f"{self.rail}  {pre} {box}{body}"]
         if stacked:
-            detail = _truncate(value, width - 10)
-            style = st.b + st.rev if selected else st.c
+            detail = self.clip(value, width - 10)
+            style = st.focus if selected else st.c
             lines.append(f"{self.rail}      " + styled(detail, style))
         return lines
 
@@ -4848,11 +4892,14 @@ class _RailUI:
         Used by simple pickers and editable setup/install lists alike."""
         st = self.st
         head, footer = self.chrome(label, keys, primary, flash)
-        height = max(2, self.lines() - sum(_term_rows(x, self.cols()) for x in head + footer) - 3)
+        heights = [_term_rows(line, self.cols()) for line, _ in display]
+        budget = max(2, self.lines() - sum(_term_rows(x, self.cols()) for x in head + footer) - 1)
         focused = [i for i, (_, key) in enumerate(display) if key == current and key is not None] or [0]
-        lo = max(0, min(focused[0] - height // 2, len(display) - height))
-        lo = max(lo, focused[-1] - height + 1)
-        hi = min(len(display), lo + height)
+        lo = max(0, focused[0] - budget // 2)
+        lo, hi = _page_window(heights, lo, budget)
+        while focused[-1] >= hi and lo < focused[0]:
+            lo += 1
+            lo, hi = _page_window(heights, lo, budget)
         lines = list(head)
         if lo:
             lines.append(f"{self.rail}   {st.y}↑ more above{st.r}")
@@ -4974,7 +5021,7 @@ class _RailUI:
         while True:
             display = [(f"{self.rail}   {part}", None) for text in context
                        for part in _wrap_columns(text, max(1, self.cols() - 6))]
-            label_width = max((len(text) for key, text in rows if key in values), default=0)
+            label_width = max((_display_width(text) for key, text in rows if key in values), default=0)
             for n, (key, text) in enumerate(rows):
                 if n == 1 and rows[0][0] == '' and key not in sections:
                     display.append((self.rail, None))
@@ -7645,7 +7692,9 @@ def _command_readonly(argv, *, terminal=None):
         return True
     if verb == "doctor":
         return "--repair" not in options
-    if verb in ("help", "ls", "read", "plan", "session-rows"):
+    if verb == "ls":
+        return True
+    if verb in ("help", "read", "plan", "session-rows"):
         return True
     if verb == "issue":
         return bool(tail and tail[0] in ("list", "status"))
@@ -7680,7 +7729,7 @@ def _t_auto_update(argv):
                       "--json" in operation[3:operation.index("--") if "--" in operation else len(operation)])
     # Share may write a receipt while emitting JSON; keep its machine protocol
     # free of update prompts independently of the read-only classifier.
-    if (not operation or runner_machine or operation[0] in ("share", "doctor") or operation[0] not in public or _command_readonly(argv)
+    if (not operation or runner_machine or operation[0] in ("share", "doctor", "ls") or operation[0] not in public or _command_readonly(argv)
             or not _t_update_interactive()):
         return None
     installation = _t_update_installation()
@@ -12326,8 +12375,8 @@ EXAMPLES
   %(prog)s --codex --new        Start Codex directly
 
 SELECTION
-  Space/Tab check; Enter open; k kill. Ctrl-F filter settings.
-  Ctrl-A filters off; Ctrl-L filters on (restore saved choices).
+  Tab check; Enter open; Ctrl-K kill. Ctrl-F toggles filters.
+  Ctrl-G/O/R matches row agent/host/repo; repeat to clear. Ctrl-S toggles sorting; Ctrl-Y cycles sort choices.
 
 """,
         help_details="""SESSION TARGETS
@@ -12336,22 +12385,24 @@ SELECTION
   <repo>:<id>, <repo>:p<pid>, or a session ID. A session in tmux attaches
   in place; a foreground Claude session moves into this terminal.
   Use `t open <repo> fg` to select that repo's foreground sessions.
-  Bare t open lists sessions across all local repos, even from a worktree.
+  Bare t open browses all repos on local and registered remote hosts,
+  even from a worktree. --local limits browsing to this machine.
   t open <repo> filters. Attached CLI rows are hidden;
-  Ctrl-F opens Filters: State, agent, progress, interface, model, host,
-  repo, session/slot, context and task. Choose a value, then Apply filters.
-  All clears one column; Reset filters to defaults stages unattached and clears
-  column choices. Esc in a value picker keeps it; Esc in Filters discards changes.
-  Ctrl-A turns filters off; Ctrl-L restores saved choices. Filters keep your search.
-  Narrow headers use ^ for Ctrl; Filters shows complete saved values.
+  Ctrl-F toggles filters in place; Ctrl-X resets them; Ctrl-T cycles state.
+  Ctrl-G/D/O/R matches the highlighted row's agent/interface/host/repo; repeat to clear.
+  Ctrl-P/B/V/E/W matches progress/model/session/context/task. No filter pop-ups.
+  Ctrl-S toggles sorting; Ctrl-Y cycles sort choices. Choices are last turn, repository, agent, host and session.
+  LAST TURN is newest first by default; unknown timestamps sort last.
+  Turning filters or sorting off preserves their choices. Search stays in place.
+  Headers use native Mac labels, or Ctrl and Alt elsewhere.
   Status: ● attached/loaded; ○ unattached/unloaded; ✓ loaded context.
   ↻ marks work continued after a merged PR, not current agent computation.
   Unattached and unmarked do not mean finished. The gutter ✓ marks selection.
   --attached starts with all rows.
   Explicit slots still open directly. Compact resume-style rows retain agent,
   UI, status, model, session and task details, including idle rows.
-  Column headers stay visible; narrow rows prioritize session and task.
-  Space/Tab marks ✓ independently of focus; Enter opens marked rows.
+  Column headers stay visible; narrow rows prioritize host/session and task.
+  Tab marks ✓ independently of focus; Enter opens marked rows.
   Press k to kill only the focused row, ignoring marks, with close safety checks.
   Killing removes that row in place; the picker, search, filters and other marks stay.
   Failed or canceled closes keep the row. No session inventory refresh is performed.
@@ -12378,7 +12429,8 @@ REMOTE SESSIONS
   slot still refuses a conflicting owner. Existing workspaces still require
   verified ownership before a new owner starts.
   --local (also --here) skips that lookup; combine with --fg to run here.
-  --remote attaches to a live remote slot; add --new to start one on the
+  Browsing includes local and registered remote hosts by default.
+  --remote also attaches to a live remote slot; add --new to start one on the
   default host (the alphabetically first REMOTE_HOSTS key).
   --host HOST chooses a host explicitly, for either opening or attaching.""")
     sp._positionals.title = "arguments"
@@ -12398,7 +12450,7 @@ REMOTE SESSIONS
 
     sp = sub.add_parser("ls", help="list dev sessions (attached + active context)",
         description='List live sessions across all repositories without prompting. Name a repository to scope the list. '
-            '--remote includes registered hosts; unavailable hosts warn '
+            'Registered hosts are included by default; --local limits the view; unavailable hosts warn '
             'while reachable sessions remain listed. LAST TURN shows turn initiation time. Pipe to cat for '
             'complete values on narrow terminals.',
         help_details="""DETAILS
@@ -12409,7 +12461,8 @@ REMOTE SESSIONS
   Bare `t session list` shows every repository, including when run inside a
   checkout or worktree, like bare `t session open`. Name a repo to scope the list:
   `t session list <repo>`. `-a` explicitly selects every repo (the default).
-  `-r` spans every $REMOTE_HOSTS machine in one table with a HOST column.
+  Registered hosts are included by default with a HOST column; --local limits
+  the view to this machine. -r retains the default.
 
   Unavailable hosts warn on stderr in amber on capable terminals (plain with
   NO_COLOR, TERM=dumb, or redirected stderr); local and reachable sessions remain
@@ -12423,14 +12476,18 @@ REMOTE SESSIONS
 
   Pipe to cat for complete values.
 
-  Read-only — attach with `t session open`, move with `t session move`.""")
+  Always prints a read-only table; use t open to select a session.""")
     sp.add_argument("repo", nargs="?", help="repository alias, basename or origin name to scope from any directory (default: all repositories)")
-    sp.add_argument("-r", "--remote", action="store_true", help="span every $REMOTE_HOSTS host")
+    location = sp.add_mutually_exclusive_group()
+    location.add_argument("-r", "--remote", dest="remote", action="store_true", default=True,
+                          help="include registered remote hosts (default)")
+    location.add_argument("-l", "--local", dest="remote", action="store_false",
+                          help="list this machine only")
     sp.add_argument("-a", "--all", action="store_true", help="every repository (the default)")
 
     sp = sub.add_parser("kill", help="tear down a session",
         description='Close sessions while preserving saved conversations and worktrees. With no target, select across '
-            'local repositories; Space/Tab marks rows and Enter confirms the selection. An explicit live '
+            'local repositories; Tab marks rows and Enter confirms the selection. An explicit live '
             'target requires confirmation unless --yes. Pending '
             'work and attached sessions are initially hidden; use picker filters to show them.',
         help_details="""DETAILS
@@ -12440,17 +12497,16 @@ REMOTE SESSIONS
   Bare `t kill` picks across all local sessions; `t kill <repo>` filters to that
   repo.
 
-  Space/Tab marks multiple rows and Enter confirms and closes the selection without
+  Tab marks multiple rows and Enter confirms and closes the selection without
   further prompts; ownership checks still apply.
 
   Initially shows only unattached sessions with clean, merged work; pending or
   uncertain work stays hidden.
 
-  Ctrl-F opens Filters for attached/pending state, agent, interface, host
-  and repository. Choose values, then Apply filters; Esc discards staged changes.
-  Reset filters to defaults stages unattached/clean and clears column choices.
-  Ctrl-A turns filtering off; Ctrl-L restores saved choices, keeping your search.
-
+  Ctrl-F toggles filters in place; Ctrl-X resets them; Ctrl-T cycles state.
+  Ctrl-G/D/O/R matches the highlighted row's agent/interface/host/repo; repeat to clear.
+  Ctrl-S toggles sorting; Ctrl-Y cycles sort choices. Choices are repository, agent, host and session.
+  Filter and sort choices are retained while off. Search stays in place.
   Column headers label the picker rows; Ctrl-/ opens the full session details.
 
   `-r` picks remote sessions with their host.
@@ -12514,7 +12570,7 @@ REMOTE SESSIONS
 
     sp = sub.add_parser("history", help="browse every conversation associated with a slot",
         description='Browse every conversation associated with a slot. Infer the current repository and slot, or '
-            'choose a slot interactively. Space/Tab marks conversations; Enter resumes the selection. '
+            'choose a slot interactively. Tab marks conversations; Enter resumes the selection. '
             'Ctrl-F/B changes page, Ctrl-R refreshes metadata, and Ctrl-/ shows details. Without a terminal, '
             'list only. History never automatically resumes a sole result.',
         help_details="""DETAILS
@@ -12545,7 +12601,7 @@ REMOTE SESSIONS
   Resume errors exit nonzero without reopening the picker; batches stop and
   report already-resumed conversations.
 
-  Space/Tab marks conversations; Enter resumes marks or focus. Ctrl-F/B change page, Ctrl-R refreshes
+  Tab marks conversations; Enter resumes marks or focus. Ctrl-F/B change page, Ctrl-R refreshes
   remote metadata, Ctrl-/ shows details, and Escape cancels.
 
   Without a terminal this command lists only.
@@ -12561,14 +12617,14 @@ REMOTE SESSIONS
 
     sp = sub.add_parser("resume", help="select and resume saved conversations",
         description='Resume saved conversations. A plain slot target opens conversation history. Infer the current repository; '
-            'outside one, browse local and remote repositories. Enter selects; Space/Tab marks several. Live selections '
+            'outside one, browse local and remote repositories. Enter selects; Tab marks several. Live selections '
             'attach to their owner. Repositories are cloned only after selection. Claude and Codex use guarded t transfers.',
 
         epilog="""EXAMPLES
   %(prog)s                   Browse the current repository
   %(prog)s api 2             Open conversation history for api slot 2
   %(prog)s --all --days all   Browse all saved history
-  In the repository resume picker, Alt-M hides/shows merged PR sessions.""",
+  In the repository resume picker, Ctrl-D hides/shows merged PR sessions.""",
         help_details=f"""DETAILS
 
   Choose saved work associated with a repository or slot. A live selection
@@ -12599,26 +12655,26 @@ REMOTE SESSIONS
   gh auth login --hostname github.com on that host, then retry.
 
   A plain slot target runs `t session history REPO SLOT`: select exact
-  conversations with Space/Tab, then Enter, even with only one result. Ctrl-F/B pages, Ctrl-R refreshes,
+  conversations with Tab, then Enter, even with only one result. Ctrl-F/B pages, Ctrl-R refreshes,
   and Ctrl-/ shows details. Without a terminal, history lists without launching.
   Explicit options use the resume picker below and retain their mode semantics.
   Without a slot, one inactive candidate is taken if no live rows are excluded.
   With explicit options, a slot without a terminal takes its newest saved chat.
 
 PICKER CONTROLS
-  The picker MULTI-SELECTS: Space/Tab marks rows with a ✓.
-  Ctrl-F opens Filters for live state, agent, host/origin and repository.
-  Choose values, then Apply filters; Esc discards staged changes. Reset filters
-  to defaults stages saved-only and clears columns. Ctrl-A turns filtering off;
-  Ctrl-L restores saved choices. Filtering keeps your search.
+  The picker MULTI-SELECTS: Tab marks rows with a ✓.
+  Ctrl-F toggles filters in place; Ctrl-X resets them; Ctrl-T cycles live state.
+  Ctrl-G/O/R matches the highlighted row's agent/host/repo; repeat to clear.
+  Filtering keeps your search. No filter pop-ups.
 
-  Leading PR badges show cached state. Alt-M hides/shows merged PR sessions;
+  Leading PR badges show cached state. Ctrl-D hides/shows merged PR sessions;
   unknown, no-PR and mixed-state histories stay visible. Merged is not completion.
 
-  Alt-T sorts by last turn (newest first, the default), Alt-R by repository, Alt-G
-  by agent, Alt-O by host/origin, and Alt-V by session.
+  Ctrl-Y cycles last turn (newest first, the default), repository, agent,
+  host/origin, and session. Arrow keys still move through rows.
 
-  Text sorts ascend, with newest turn breaking ties. Filter settings, reset and
+  Ctrl-S toggles sorting, retaining the chosen sort while off.
+  Text sorts ascend, with newest turn breaking ties. Filters, reset and
   on/off preserve sorting. Ctrl-/ shows full row details.
 
   Batch failures stop immediately with identity, reason, retry selection, ready
@@ -12728,7 +12784,7 @@ REQUIREMENTS AND DISCOVERY
   no current conversation is available to move.
 
   Selection also opens inside an agent; --pick forces it for explicit slots.
-  Space/Tab marks sessions; Enter accepts marks or the focused row.
+  Tab marks sessions; Enter accepts marks or the focused row.
   Batches run sequentially with detached destinations and stop at the first failure
   or cancellation. Completed, failed and unattempted counts are reported.
   All selected identities are rechecked after both selections before any move.
@@ -13773,10 +13829,10 @@ def _main(argv):
             return 0
         finally:
             history.store.close()
-    if argv and argv[0] == "__session-picker-rows" and set(argv[1:]) <= {"--remote", "--repo", "--compact", "--header"}:
+    if argv and argv[0] == "__session-picker-rows" and set(argv[1:]) <= {"--remote", "--repo", "--compact", "--header", "--last-turn"}:
         rows = _parse_rows(sys.stdin.read(), host_prefixed=True)
         for line in _session_picker_rows(rows, remote="--remote" in argv, scoped="--repo" in argv,
-                                        compact="--compact" in argv, header="--header" in argv):
+                                        compact="--compact" in argv, header="--header" in argv, last_turn="--last-turn" in argv):
             print(line)
         return 0
     if argv == ["__update-check"]:

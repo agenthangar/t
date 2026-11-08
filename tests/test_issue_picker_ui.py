@@ -3,6 +3,10 @@
 import os
 from pathlib import Path
 import subprocess
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "libexec"))
+from t_picker_theme import key_labels
 
 
 PICKER = Path(__file__).resolve().parents[1] / "ui" / "fzf.sh"
@@ -57,6 +61,7 @@ def picker(tmp_path, *, ids="42", actions=(), cancel=False, legacy=False, all_la
         XDG_DATA_HOME=str(home / ".local" / "share"),
         XDG_CACHE_HOME=str(home / ".cache"),
         TMPDIR=str(tmp_path),
+        T_HOME=str(PICKER.parent.parent), NO_COLOR="",
         T_PICKER_ALL_LABEL=all_label,
         PICKER_LOG=str(tmp_path / "fzf-args"),
         PICKER_IDS=ids,
@@ -70,7 +75,7 @@ def picker(tmp_path, *, ids="42", actions=(), cancel=False, legacy=False, all_la
     cmd = [
         "sh", "-c",
         '. "$1"; _t_fzf_filtered "$2" "$3" start "Open issues" "$4" ""',
-        "sh", str(PICKER), default, all_rows, "Space/Tab mark issues to start",
+        "sh", str(PICKER), default, all_rows, "Tab mark issues to start",
     ]
     return subprocess.run(cmd, env=env, capture_output=True, text=True, check=False)
 
@@ -83,15 +88,15 @@ def test_issue_picker_uses_shared_multiselect_and_preserves_full_rows(tmp_path):
     assert "--multi" in args
     assert "--id-nth=1,2,3" in args
     assert "--with-nth=-1" in args
-    assert "enter:accept,esc:abort,ctrl-c:abort,space:toggle+down,tab:toggle+down" in args
+    assert "enter:accept,esc:abort,ctrl-c:abort,space:put,tab:toggle+down" in args
     assert "ctrl-/:toggle-preview" in args
     assert 'ctrl-a:execute-silent(sh "$T_PICKER_TOGGLE" all)+reload-sync(cat "$T_PICKER_CURRENT")' in args
     assert 'ctrl-f:execute-silent(sh "$T_PICKER_TOGGLE" default)+reload-sync(cat "$T_PICKER_CURRENT")' in args
     assert 'transform-header(cat "$T_PICKER_CURRENT_HEADER")' in args
     assert "--preview-window=hidden:wrap:down:40%" in args
-    assert "Enter start · Esc · Space/Tab mark ✓ · Ctrl-/ details" in (tmp_path / "default-header").read_text()
-    assert "Open issues · Ctrl-A show all · Ctrl-F defaults · 1 hidden" in (tmp_path / "default-header").read_text()
-    assert "All issues · Ctrl-A show all · Ctrl-F defaults" in (tmp_path / "all-header").read_text()
+    assert key_labels("Enter start · Esc · Tab mark ✓ · Ctrl-/ details") in (tmp_path / "default-header").read_text()
+    assert key_labels("Open issues · Ctrl-A show all · Ctrl-F defaults · 1 hidden") in (tmp_path / "default-header").read_text()
+    assert key_labels("All issues · Ctrl-A show all · Ctrl-F defaults") in (tmp_path / "all-header").read_text()
     assert list(tmp_path.glob("t-picker.*")) == []
 
 
@@ -102,14 +107,14 @@ def test_issue_picker_ctrl_a_exposes_filtered_issues(tmp_path):
         "agenthangar/t\t42\topen\t#42 Fix login · no owner",
         "agenthangar/t\t43\tclosed\t#43 Improve docs · closed",
     ]
-    assert "All issues · Ctrl-A show all · Ctrl-F defaults" in (tmp_path / "current-header").read_text()
+    assert key_labels("All issues · Ctrl-A show all · Ctrl-F defaults") in (tmp_path / "current-header").read_text()
 
 
 def test_issue_picker_ctrl_f_restores_filter_and_clears_old_fzf_marks(tmp_path):
     result = picker(tmp_path, ids="42,43", actions=("all", "default"), legacy=True)
     assert result.returncode == 0, result.stderr
     assert result.stdout.splitlines() == ["agenthangar/t\t42\topen\t#42 Fix login · no owner"]
-    assert "Open issues · Ctrl-A show all" in (tmp_path / "current-header").read_text()
+    assert key_labels("Open issues · Ctrl-A show all") in (tmp_path / "current-header").read_text()
     args = (tmp_path / "fzf-args").read_text()
     assert 'ctrl-a:deselect-all+execute-silent(sh "$T_PICKER_TOGGLE" all)' in args
     assert 'ctrl-f:deselect-all+execute-silent(sh "$T_PICKER_TOGGLE" default)' in args
@@ -129,7 +134,7 @@ def test_named_picker_profiles_own_cardinality_controls_and_theme(tmp_path):
     stub.write_text("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$PICKER_ARGS\"\ncat\n")
     stub.chmod(0o755)
     env = {key: value for key, value in os.environ.items() if not key.startswith("COV_CORE_")}
-    env.update(PATH=f"{stubbin}{os.pathsep}{env.get('PATH', '')}", PICKER_ARGS=str(tmp_path / "args"))
+    env.update(T_HOME=str(PICKER.parent.parent), NO_COLOR="", PATH=f"{stubbin}{os.pathsep}{env.get('PATH', '')}", PICKER_ARGS=str(tmp_path / "args"))
     for profile, arguments, expected in (
         ("_t_fzf_single", "open 'Cursor chats'", "--no-multi"),
         ("_t_fzf_multi", "'open tabs' 'Remote sessions'", "--multi"),
@@ -142,7 +147,8 @@ def test_named_picker_profiles_own_cardinality_controls_and_theme(tmp_path):
         assert result.stdout == "one\ntwo\n"
         args = (tmp_path / "args").read_text()
         assert expected in args and "--margin=1,2" in args and "--pointer=▸" in args
-        assert " · Esc" in args and "--prompt=pick > " in args
+        import sys
+        assert (" · ⎋ Esc" if sys.platform == 'darwin' else " · Esc") in args and "--prompt=pick > " in args
         forbidden = subprocess.run(
             ["sh", "-c", f'. "$1"; {profile} {arguments} --bind=space:accept', "sh", str(PICKER)],
             env=env, capture_output=True, text=True,

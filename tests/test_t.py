@@ -978,7 +978,9 @@ def test_slot_line_agent_glyph_keeps_the_status_width(t_mod):
     assert t_mod._slot_line(dict(row, agent="gpt"), st, 7, 20) == "● ✓    › cli     ? -     ff-3    x"
 
 
-def test_slot_line_highlights_a_merged_pr_still_in_progress(t_mod):
+def test_slot_line_highlights_a_merged_pr_still_in_progress(t_mod, monkeypatch):
+    monkeypatch.delenv('NO_COLOR', raising=False)
+    monkeypatch.setenv('TERM', 'xterm-256color')
     st = t_mod.Style(tty=True)
     row = {"slot": "ff-20", "state": "detached", "context": "active",
            "summary": "search cleanup · #580 merged, still in progress"}
@@ -1027,7 +1029,9 @@ def test_every_agent_has_a_distinct_single_column_glyph(t_mod):
     assert t_mod._agent_parity_render()[0].split()[1:] == [w for a in t_mod.INSTALL_AGENTS for w in (glyphs[a], a)]
 
 
-def test_slot_line_colours_only_through_the_style(t_mod):
+def test_slot_line_colours_only_through_the_style(t_mod, monkeypatch):
+    monkeypatch.delenv('NO_COLOR', raising=False)
+    monkeypatch.setenv('TERM', 'xterm-256color')
     st = t_mod.Style(tty=True)
     row = {"host": "local", "slot": "ff-3", "state": "attached", "context": "active", "summary": "x"}
     line = t_mod._slot_line(row, st, 7, 20)
@@ -2132,6 +2136,17 @@ def test_ls_parser_accepts_optional_repo(t_mod):
     assert (a.repo, a.all) == (None, True)
 
 
+@pytest.mark.parametrize('args,remote', [([], True), (['-r'], True), (['--remote'], True),
+                                       (['-l'], False), (['--local'], False)])
+def test_ls_default_includes_remote_and_local_override(t_mod, args, remote):
+    assert t_mod.build_parser().parse_args(['ls', *args]).remote is remote
+
+
+def test_ls_local_and_remote_are_exclusive(t_mod):
+    with pytest.raises(SystemExit):
+        t_mod.build_parser().parse_args(['ls', '-l', '-r'])
+
+
 def test_repo_lists_short_names_and_paths(t_mod, capsys):
     cfg = type("Cfg", (), {"repos": {"t": "/code/t", "api": "/code/my-api"}})()
     assert t_mod.cmd_repo(cfg, t_mod.build_parser().parse_args(["repo", "list"])) == 0
@@ -2316,3 +2331,16 @@ def test_list_columns_align_interface_model_and_context(t_mod, capsys, remote):
     if not remote:
         assert '--app' not in lines[-1]
         assert 't open <repo> <slot>' in lines[-1]
+
+
+@pytest.mark.parametrize('flags,scan', [([], '_dev_rows_all --details'),
+                                       (['-r'], '_dev_rows_all --details'),
+                                       (['--local'], '_dev_session_rows --details')])
+def test_ls_discovery_defaults_and_local_override(t_mod, tmp_path, monkeypatch, capsys, flags, scan):
+    cfg = _config_with(t_mod, tmp_path, monkeypatch, {'api': str(tmp_path / 'api')})
+    calls = []
+    monkeypatch.setattr(t_mod, 'zsh_capture', lambda command: calls.append(command) or '')
+    monkeypatch.chdir(tmp_path)
+    assert t_mod.cmd_ls(cfg, t_mod.build_parser().parse_args(['ls', *flags])) == 0
+    assert calls == [scan]
+    assert 'No dev sessions running' in capsys.readouterr().out

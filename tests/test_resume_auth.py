@@ -108,7 +108,7 @@ def test_persistent_auth_header_survives_every_action(filters, tmp_path, width):
         assert 'Enter' in text
         assert all(filters.display_width(line) <= width for line in text.splitlines())
         if width <= 36:
-            assert len(text.splitlines()) <= 9
+            assert len(text.splitlines()) <= 10  # Separate FILTERS/SORT; short terminals use inline info.
     (tmp_path / 'auth-hosts').write_text('\n')
     filters.render(tmp_path, 'resume', 'current', width)
     assert 'auth failed' not in (tmp_path / 'current-header').read_text()

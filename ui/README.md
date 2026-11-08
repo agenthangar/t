@@ -130,11 +130,25 @@ target-only selectors remain literal.
 Repository creation names, paths and delegated payloads remain literal. Read this
 guide and the inventory before adding or changing a command; update both when its behavior changes.
 
-The visual baseline is the Homebrew v0.4.2 release (`40aaea8`): cyan section
+The Air design applies to every searchable picker and inline menu: airy cyan section
 headings and current values, green primary/add actions, amber warnings/removal,
 two-space outer margins, a pointer and a dark cyan focus row with light text, and a footer
 showing the next action and keys. Focus and marks must remain distinguishable
-without color. Align labels on wide terminals and stack them below 60 columns.
+without color. Headings are cyan, hints muted, and focused text light on dark cyan.
+Keep the green checkmark in its own gutter beside the pointer, with spaces between
+status icons inside rows. Give controls and results a blank separating row when
+height permits. Session pickers list HOTKEYS above FILTERS, with readable shortcuts
+and bright underlined labels for the current filter On/Off state, resume sort, and
+merged-session toggle when enabled. Session lists highlight selected column filters
+and the current sort key. Plain output retains explicit state text.
+Use FILTERS only for actual filter controls; other pickers use their
+action or resource title. Reduce spacing, borders and margins on short screens
+before losing controls or focus, including wide 120×12 terminals.
+
+Display native Mac labels (`⌃T`, `⌃S`, `↩ Return`, `⎋ Esc`, `⇥ Tab`) on macOS;
+other hosts use `Ctrl-T`, `Ctrl-S`, `Enter`, `Esc`, `Tab`. Compact headers use the short
+Mac symbols or `^T` on other systems. Only labels change: bindings remain the
+same control keys, Return, Escape and Tab. Align labels on wide terminals and stack them below 60 columns.
 Let label columns use available width before truncating; never cap wide-terminal
 labels at 24 characters. Clip text before applying color and count physical rows when repainting; at
 80×24, 44×20, and 32×12 interactive screens the focused row and primary action
@@ -165,11 +179,11 @@ the command name.
 
 | Type | Behavior and appearance |
 | --- | --- |
-| **List** | Print a scoped, aligned table immediately. Name its scope, label columns, and give a clear empty state. No picker, confirmation, or update prompt. `t session list` and `t issue list` are examples. |
+| **List** | Print a scoped, aligned table immediately. Name its scope, label columns, and give a clear empty state. No picker, confirmation, or update prompt. `t issue list` is an example. |
 | **Detail/status** | Print labeled facts without changing state or prompting. Preserve raw text, paths, and streams when the command explicitly exposes them. |
 | **Single selection** | Use a searchable fzf picker or an inline `_RailUI` menu with one visibly focused row. Enter chooses exactly one item; Esc/Ctrl-C cancels. An explicit target bypasses selection. A paginated single picker uses Ctrl-F for the next page, Ctrl-B for the previous page, and Ctrl-R to refresh; those keys belong to pagination rather than the filtered picker's settings control. |
-| **Multi-selection** | Searchable pickers use Space/Tab to mark rows and Enter to accept the marks, or the focused row if none are marked. Inline checklists use Space to toggle and Enter to submit only checked items. Show marks and the Enter action independently of color. |
-| **Filtered selection** | Show active filters and hidden count in the header. Session pickers use Ctrl-F for staged filter settings, Ctrl-A to turn filters off, and Ctrl-L to restore saved choices. State and column choices live in settings. Filtering retains the search and removes hidden marks. Issue pickers retain Ctrl-A show-all and Ctrl-F defaults. Ctrl-/ toggles full details when rows have previews. |
+| **Multi-selection** | Space types into search. Searchable pickers use Tab to mark rows and Enter to accept the marks, or the focused row if none are marked. Inline checklists use Space to toggle and Enter to submit only checked items. Show marks and the Enter action independently of color. |
+| **Filtered selection** | Show active filters and hidden count in the header. Open, resume and close pickers use Ctrl-F to toggle filters, Ctrl-X to reset, and direct shortcuts to match the highlighted row. No nested filter screens. Ctrl-S toggles sorting; Ctrl-Y cycles sort choices. Filtering retains the search and removes hidden marks. Issue pickers retain Ctrl-A show-all and Ctrl-F defaults. Ctrl-/ toggles full details when rows have previews. |
 | **Wizard/review** | Stage choices, then display the resulting changes before applying them. Config saves on Enter; install enters review and then runs on Enter; login runs the selected logins on its first Enter. Setup and repository creation keep their released `y` confirmation. Show the actual action in the footer. |
 | **Direct action/passthrough** | An explicit target acts without a needless picker. Retain ownership and worktree safety checks, confirmation before interrupting live work with an explicit target, and the delegated tool's input/output and exit status. |
 | **Machine output** | Preserve existing JSON, raw-value, and remote wire formats. Do not add presentation chrome, ANSI color, or prompts. The inventory identifies machine-facing modes; this does not imply universal JSON support. |
@@ -669,7 +683,7 @@ dev sessions   ● attached/loaded · ✓ active context · ↻ still in progres
 
   reattach: t open <repo> <slot>
 
-Enter open/Esc · Space/Tab ✓
+Enter open/Esc · Tab ✓
 Ctrl-F filters · Ctrl-A off · Ctrl-L on
 Filters ON: unattached · 2 hidden
   SESSION  WORKING ON
@@ -679,22 +693,23 @@ Filters ON: unattached · 2 hidden
 The rows above illustrate hierarchy and controls, not a fixed column schema.
 List commands print normally; picker headers and marks appear only for selection.
 
-The open picker hides attached CLI and loaded desktop sessions by default.
-Ctrl-F opens the shared single-picker Filters settings. Choose State for attached,
-unattached or all attachment states, or choose a column for searchable exact values.
-Open includes agent, progress, interface, model, host, repo, session, context and task;
-resume includes agent, host/origin and repo; close includes agent, interface, host
-and repo. Resume State includes saved-only/live; close State independently includes
-attached and pending work. An explicit All choice clears one column.
-Reset filters to defaults stages the original state and clears column choices.
-Apply filters commits staged choices and enables them; Esc discards settings changes.
-Esc in a nested value/state picker keeps its existing choice.
+The open picker browses local and registered remote hosts by default; `--local`
+limits discovery to this machine. `-r`/`--remote` retains inclusive browsing.
+Fresh sessions and explicit targets retain their existing location routing.
+Session lists (`t ls` / `t session list`) also include remote hosts by default;
+`-l`/`--local` lists only this machine. Repository scope and `--all` are independent
+of host scope. Session lists always print a read-only table, including in terminals.
 
-Ctrl-A turns filters off without changing saved choices; Ctrl-L restores those
-choices. Both are idempotent. Opening settings while off retains the saved values.
+Session picker and history searches accept full literal phrases, ignoring case. Spaces and letters stay in the query; Tab marks rows. Saved-history search covers all pages and cached metadata. Ctrl-S toggles sorting without requiring terminal Option/Meta configuration; Ctrl-Y cycles sort choices.
+
+The open picker hides attached CLI and loaded desktop sessions by default.
+Ctrl-F toggles filters without leaving the list; Ctrl-X resets filters. Ctrl-T cycles state and is highlighted whenever the enabled state filter narrows the view, including the default state. Ctrl-G/O/R matches the highlighted row’s agent/host/repo; repeat the shortcut to clear that filter. Ctrl-D matches interface (CLI or desktop) in open and close. Ctrl-S toggles sorting; Ctrl-Y cycles sort choices. Open and resume default to last turn, newest first, and also offer repository, agent, host and session. Unknown turn timestamps sort last. Close offers repository, agent, host and session. Turning filters or sorting off preserves their choices. Sorting off restores snapshot order.
+
+Open also supports Ctrl-P/B/V/E/W for the highlighted row’s progress/model/session/context/task.
+Ctrl-A (off) and Ctrl-L (on) remain compatibility shortcuts.
 The compatibility --attached flag starts with filtering off and defaults retained.
 There is no new-session shortcut or details preview in open; use `t open --new`.
-Press `k` to kill only the focused session, independently of multi-selection marks.
+Press `Ctrl-K` to kill only the focused session, independently of multi-selection marks.
 The shortcut authorizes that session like Enter in close, retaining ownership
 and ownership safety checks. Keep the picker open and remove only successfully
 closed rows from its cached snapshot, without inventory discovery. Preserve query,
@@ -730,15 +745,15 @@ Lists, discovery and canceled selections never create checkpoints.
 
 Resume never invents a historical UI. Resume uses actual user-turn timestamps,
 newest first by default, with unknown times last; live rows have no artificial priority.
-Alt-T selects last turn, Alt-R repository, Alt-G agent, Alt-O host/origin, and
-Alt-V session (natural numeric order). Text modes ascend with newest turn and
+Ctrl-Y cycles last turn, repository, agent, host/origin, and session
+(natural numeric order). Ctrl-S toggles the selected sort. Text modes ascend with newest turn and
 stable identity as tie-breakers. Sorts apply within the private filtered snapshot
-and preserve query and identities. Filter settings, reset and on/off preserve sorting.
-Compact headers use M for Alt and ^ for Ctrl. Resume disables fzf relevance sorting
+and preserve query and identities. Filters, reset and on/off preserve sorting.
+Compact headers use ⌃ for Control on macOS and ^ elsewhere. Resume disables fzf relevance sorting
 so searching preserves the chosen order. Saved transcript mtime/reopen time still
 controls --days eligibility.
 Resume rows begin with a cached PR badge: MERGED, OPEN, CLOSED, NONE (no PR
-recorded), UNKNOWN, or MIXED. Alt-M toggles hiding MERGED rows and advertises the
+recorded), UNKNOWN, or MIXED. Ctrl-D toggles hiding MERGED rows and advertises the
 next action in the header. It uses explicit snapshot metadata, never title text.
 Compact headers show `M-M -merged` to hide and `M-M +merged` to show them.
 For histories with multiple associated PRs, all must be explicitly merged before
@@ -746,7 +761,7 @@ the row is hidden; mixed or unknown states remain visible. Live rows without
 structured PR metadata stay UNKNOWN. A merged PR does not imply completed work.
 The toggle enables filtering, preserves query and sort, and removes hidden marks.
 Ctrl-A disables it with other filters; Ctrl-L restores it. Reset clears it.
-For example, run `t session resume --all`, then Alt-M to hide merged PR histories.
+For example, run `t session resume --all`, then Ctrl-D to hide merged PR histories.
 Every column value comes from raw metadata,
 not truncated display text. The progress value exactly follows the ↻ marker:
 work continued after a merged PR; its absence is not completion evidence.
@@ -757,7 +772,7 @@ Query and visible selection identity survive supported reloads; hidden marks
 are removed. Old fzf clears marks on filter actions. These remain filtered/multi
 modes, not new commands or discovery operations. Every shortcut and a focused
 row remain visible at 80×24, 44×20, and 32×12. Short terminals use a borderless
-full-height view, including nested value pickers. Narrow headers use ^ for Ctrl
+full-height view, including nested value pickers. Narrow headers use ⌃ on macOS and ^ elsewhere for Ctrl
 and show the selected column count; full values are available in Filters. One cyan
 summary highlights enabled constraints, with explicit ON/OFF text in monochrome.
 Clip plain text before adding ANSI color. Filter metadata comes from the same
@@ -788,9 +803,9 @@ include retry guidance without a traceback or success descriptor.
 | Surface | Implementation | Responsibility |
 | --- | --- | --- |
 | Inline menus and reviews | `Style` and `_RailUI` in `bin/t` | Layout, scrolling, focus, page, footer, cooked prompt, terminal restoration |
-| Searchable selection | `_t_fzf_single`, `_t_fzf_multi`, `_t_fzf_filtered`, and `_t_fzf_paginated` in `ui/fzf.sh` | Theme, marks, header controls, filtering or pagination, preview, cancellation |
+| Searchable selection | `_t_fzf_single`, `_t_fzf_multi`, `_t_fzf_filtered`, and `_t_fzf_paginated` in `ui/fzf.sh` | Air theme and platform key labels, marks, header controls, filtering or pagination, preview, cancellation |
 
-Source `ui/fzf.sh` and select the profile matching the command mode. Callers
+Set `T_HOME` to the package root, source `ui/fzf.sh`, and select the profile matching the command mode. Callers
 provide row data, action text, and previews; they must not replace required
 bindings, marks, or legends. The profiles preserve `FZF_DEFAULT_OPTS`, while
 scoping the cyan/green theme to `t` pickers. All terminal state changes must
@@ -864,7 +879,7 @@ automatic update prompts.
 `session move` and its `move` alias use the shared multi-selection picker of current
 local CLI owners; `-r`/`--remote` adds registered remote sources. `remote move` is
 a compatibility route with remote sources included. Selection always opens without
-an exact target, including inside an agent. Space/Tab marks sessions; Enter accepts
+an exact target, including inside an agent. Tab marks sessions; Enter accepts
 marks or the focused row. Include attached and detached owners and exclude
 desktop reservations, saved history and unknown IDs. Select sessions first, then
 select one destination; explicitly named destinations skip the second picker.
@@ -901,7 +916,7 @@ and the inferred-repository `t resume 2`) runs `t session history api 2`.
 It uses the shared paginated multi-picker over retained conversation identities,
 including all recorded slot associations. Even one result requires selection;
 cancellation returns 130 without launching. Empty history never creates a session.
-Without a terminal it lists history without launching. Space/Tab marks conversations on the current page; Enter accepts marks or focus.
+Without a terminal it lists history without launching. Tab marks conversations on the current page; Enter accepts marks or focus.
 Search, page changes, and refresh clear marks. Extra selections open in tabs before
 the first attaches. A resume failure exits nonzero without reopening the picker;
 batches stop and report any conversations already resumed.
@@ -1017,7 +1032,7 @@ uses an actual user prompt, excluding tool results and injected metadata.
 Assistant output, transcript mtime, and index activity never substitute for a
 turn start. The optional ninth rich-row field, `last_turn_started_at`, carries
 an ISO 8601 UTC timestamp or `-`; legacy rows and the seven-field ownership
-protocol remain valid. This remains a read-only list mode. History's DATE
+protocol remain valid. The table remains read-only. History's DATE
 continues to describe retained activity.
 
 `t session list` overrides the shared table's narrow layout: first clip WORKING ON
@@ -1025,7 +1040,7 @@ to the available space, then omit UI and MODEL if the other columns cannot fit.
 Compact rows show S (the same status marks without spaces), HOST for remote lists,
 SESSION (SLOT at the smallest width), TASK, and LAST TURN. Shorten timestamps to
 local `MM-DD HH:MM`, or `HH:MM` when necessary. Count Unicode display columns and
-mark clipped values with an ellipsis. Lists stay read-only and never open a picker.
+mark clipped values with an ellipsis. Without a usable terminal or fzf, lists stay read-only.
 Redirected output retains all columns and complete values: `t ls | cat` or
 `t ls -r | cat`. For example, at 32 columns a remote row can look like:
 
@@ -1033,6 +1048,12 @@ Redirected output retains all columns and complete values: `t ls | cat` or
   S   HOST SLOT   TASK LAST TURN
   ●✓↻ mini api-17 Fix… 09:41
 ```
+
+`t session list` (`t ls`, `t list`) always prints the scoped, read-only session table.
+It never opens a picker or offers an automatic update prompt, even with a usable
+terminal and fzf available. Remote hosts are included by default; `--local`
+restricts discovery. Empty results print the existing empty state. Use
+`t session open` for interactive selection.
 
 The filtered multi-selection mode of `t session open` prioritizes session identity
 and working-on text. It omits LAST TURN, previews, and the new-session shortcut.
@@ -1071,7 +1092,7 @@ association and branch/commit/evidence, all associated PRs and their states,
 incidental mentions labeled separately, and transcript availability. Show it by
 default at 70 or more columns and 22 or more rows, in a bottom preview occupying
 35% of the full-height picker; Ctrl-/ toggles it at every size. Use the shared
-paginated multi-picker: Space/Tab marks exact conversations, Enter accepts marks
+paginated multi-picker: Tab marks exact conversations, Enter accepts marks
 or the focused row, and Esc/Ctrl-C cancels. Marks clear on search, page change,
 or refresh. Slot and revision choices remain single-selection.
 Ctrl-F/Ctrl-B changes pages, and Ctrl-R explicitly refreshes metadata. Search runs
@@ -1127,13 +1148,14 @@ an equivalent compatibility entry point. Installation migrates standard legacy
 hook commands while preserving custom commands and options. This is an external
 SessionStart hook, not a new public `t` command or interactive mode.
 
-## Changes since the visual baseline
+## Changes since the v0.4.2 visual baseline
 
 Review these behavior changes when applying the v0.4.2 standard. Later changes
 should be added here with their disposition before becoming a precedent.
 
 | Change | Disposition |
 | --- | --- |
+| Shared Air design ([#219](https://github.com/agenthangar/t/issues/219)) | Apply cyan sections, muted hints, explicit focus, separate green check gutters and platform key labels across all fzf profiles and inline flows. |
 | Batch `open`, `kill`, and issue starts ([#68](https://github.com/agenthangar/t/pull/68), [#93](https://github.com/agenthangar/t/pull/93)) | Retain multi-selection and one-live-owner checks. |
 | Richer rows, interface/model columns, and detail previews ([#85](https://github.com/agenthangar/t/pull/85)) | Retain within the baseline spacing and focus design. |
 | Reversible filters and dedicated keys ([#94](https://github.com/agenthangar/t/pull/94), [#102](https://github.com/agenthangar/t/pull/102)) | Adopt the filter controls above. |
@@ -1143,7 +1165,7 @@ should be added here with their disposition before becoming a precedent.
 | Read-only issue table ([#108](https://github.com/agenthangar/t/pull/108)) | Apply the list contract. |
 | Open GitHub issues in the browser ([#118](https://github.com/agenthangar/t/issues/118)) | Explicit IDs or URLs act directly; omitted IDs use the shared filtered multi picker. |
 | Noun/verb help, added command groups, and speed submenu ([#101](https://github.com/agenthangar/t/pull/101)) | Retain and classify each mode in the inventory. |
-| Paginated history selection ([#113](https://github.com/agenthangar/t/pull/113)) | Treat as multi-selection with Space/Tab marks, Ctrl-F next, Ctrl-B previous, and Ctrl-R refresh; do not apply the filtered picker's Ctrl-F defaults binding. |
+| Paginated history selection ([#113](https://github.com/agenthangar/t/pull/113)) | Treat as multi-selection with Tab marks, Ctrl-F next, Ctrl-B previous, and Ctrl-R refresh; do not apply the filtered picker's Ctrl-F defaults binding. |
 | Conversation context sharing ([#112](https://github.com/agenthangar/t/pull/112), [#122](https://github.com/agenthangar/t/issues/122)) | Bare `t share` in a terminal is a source, recipient, context, and launch review wizard; after review it enters the new session. A known source and agent-only `--to` can launch without a terminal and leave the new session detached; `--json` returns the result without prompting or entering. An exact destination with `--file` still sends directly. `targets` and `inbox` are read-only lists; `read` is detail or raw attachment output. Cancellation leaves sessions and inboxes untouched. |
 
 ## Verification

@@ -20,8 +20,8 @@ and [the command inventory](ui/command-contract.json). Classify every new comman
 and conditional mode; compatibility aliases inherit the canonical entry. Use
 the shared `_RailUI` or `_t_fzf_single`/`_t_fzf_multi`/`_t_fzf_filtered`/`_t_fzf_paginated`
 profile for interactive behavior. Update the inventory, help, examples, and
-contract tests with the implementation. Lists and status are read-only and
-must never open a picker or an automatic update prompt. Run
+contract tests with the implementation. Lists and status are read-only and must never open a picker or an automatic
+update prompt. Run
 `python3 scripts/lint_cli.py` to check these rules.
 
 Keep public commands in noun/verb families, with nested resources before verbs
@@ -47,7 +47,7 @@ and selection. Keep `--repo` consistent across issue verbs. `t issue list` is a
 read-only display: scope to an explicit or current repo,
 or show all registered GitHub repositories outside a checkout; `-a`/`--all`
 widens the view from inside a checkout. Keep `--state all` independent of repo
-scope. List must never open a picker. JSON, remote scanners, and non-interactive
+scope. Issue list must never open a picker. JSON, remote scanners, and non-interactive
 commands must never prompt for a missing repository.
 
 Before implementing any new enhancement or fix in a public repository, verify
