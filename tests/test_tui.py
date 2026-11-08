@@ -7,7 +7,7 @@ import pytest
 def make_ui(t, keys, width=80, height=24):
     ui = t._RailUI.__new__(t._RailUI)
     ui.st, ui.out = t.Style(tty=True), io.StringIO()
-    ui.rail = f'  {ui.st.y}│{ui.st.r}'
+    ui.rail = '  '
     ui.painted = [0]
     ui.cols, ui.lines = lambda: width, lambda: height
     events = iter(keys)
@@ -39,7 +39,7 @@ def test_shared_row_bounds_long_labels_and_retains_values(t_mod, width, selected
     plain = '\n'.join(t_mod._ANSI_RE.sub('', line) for line in lines)
     assert 'Required' in plain
     assert ('▸' in plain) is selected
-    assert '◼' in plain
+    assert '✓' in plain
     assert len(lines) == (2 if width < 60 else 1)
     assert all(t_mod._vis_len(line) <= width for line in lines)
 
@@ -114,7 +114,7 @@ def test_login_multiselect_runs_directly(t_mod, monkeypatch, state, keys, expect
     assert t_mod.cmd_login(None, args) == status
     assert calls == expected
     assert any('Pick agents to log in' in line for frame in ui.frames for line in frame)
-    assert any('enter' in line and 'RUN LOGINS' in line for frame in ui.frames for line in frame)
+    assert any(ui.labels('enter') in line and 'RUN LOGINS' in line for frame in ui.frames for line in frame)
     assert not any('REVIEW' in line or 'review' in line or 'confirm' in line
                    for frame in ui.frames for line in frame)
     assert ui.restored
@@ -127,7 +127,7 @@ def test_install_review_defaults_to_enter(t_mod, monkeypatch, key, confirmed):
     items = [{'t': 'toggle', 'alias': 'codex', 'value': 'install', 'checked': True}]
     plan = lambda: [{'step': 'install', 'do': 'run', 'label': 'Install codex'}]
     assert t_mod._install_wizard(items, plan) is confirmed
-    assert any('enter' in line and 'RUN COMMANDS' in line for frame in ui.frames for line in frame)
+    assert any(ui.labels('enter') in line and 'RUN COMMANDS' in line for frame in ui.frames for line in frame)
     assert ui.restored
 
 
@@ -142,7 +142,7 @@ def test_config_review_saves_with_enter_or_y(t_mod, monkeypatch, tmp_path, save_
     assert ui.restored
     review = [line for frame in ui.frames if any('Review local settings' in line for line in frame)
               for line in frame]
-    assert any('enter' in line and 'SAVE CHANGES' in line for line in review)
+    assert any(ui.labels('enter') in line and 'SAVE CHANGES' in line for line in review)
     assert not any('no binding' in line for line in review)
 
 
@@ -178,8 +178,8 @@ def test_picker_back_snapshots_current_choices_without_accepting(t_mod, key, mul
     assert ui.pick('Setup', [('a', 'Alpha'), ('b', 'Beta')], multi=multi,
                    on_back=snapshots.append, back_label='back') is None
     assert snapshots == [expected]
-    assert any('q/esc back' in line for frame in ui.frames for line in frame)
-    assert any('ctrl-c cancel' in line for frame in ui.frames for line in frame)
+    assert any(ui.labels('q/esc back') in line for frame in ui.frames for line in frame)
+    assert any(ui.labels('ctrl-c cancel') in line for frame in ui.frames for line in frame)
 
 
 def test_picker_ctrl_c_cancels_without_back_callback(t_mod):
@@ -189,7 +189,37 @@ def test_picker_ctrl_c_cancels_without_back_callback(t_mod):
         ui.pick('Setup', [('a', 'Alpha')], multi=True, on_back=snapshots.append,
                 back_label='cancel')
     assert snapshots == []
-    assert any('q/esc cancel' in line for frame in ui.frames for line in frame)
+    assert any(ui.labels('q/esc cancel') in line for frame in ui.frames for line in frame)
+
+
+@pytest.mark.parametrize('width,height', [(80, 24), (44, 20), (32, 12), (120, 12)])
+@pytest.mark.parametrize('plain', [False, True])
+def test_air_unicode_check_gutter_and_physical_frame_budget(t_mod, monkeypatch, width, height, plain):
+    if plain:
+        monkeypatch.setenv('NO_COLOR', '')
+    else:
+        monkeypatch.delenv('NO_COLOR', raising=False)
+        monkeypatch.setenv('TERM', 'xterm-256color')
+    ui = make_ui(t_mod, ['enter'], width, height)
+    lines = ui.row('界面 café e\u0301 ' * 12, '日本語 ' * 30, selected=True, mark='✓')
+    assert all(t_mod._vis_len(line) <= width for line in lines)
+    clean = [t_mod._ANSI_RE.sub('', line) for line in lines]
+    assert '▸ ✓ ' in clean[0]
+    assert '\x1b[7m' not in ''.join(lines)
+    if plain:
+        assert '\x1b' not in ''.join(lines)
+    else:
+        assert '\x1b[32m✓\x1b[0m' in lines[0]
+        assert '\x1b[48;5;23m\x1b[97m' in lines[0]
+    display = [(ui.section('Long 界面 section'), None)]
+    for i in range(15):
+        display.extend((line, i) for line in ui.row('界面 ' * 15, '日本語 ' * 25,
+                                                    selected=i == 13, mark='✓'))
+    ui.frame('Settings 日本語', display, 13, '↑↓/jk move · space mark · enter select · q/esc back · ctrl-c cancel',
+             ('enter', 'Continue', 'fixture'))
+    assert any('▸' in line for line in ui.frames[-1])
+    assert any('Continue' in line for line in ui.frames[-1])
+    assert sum(t_mod._term_rows(line, width) for line in ui.frames[-1]) <= height
 
 
 @pytest.mark.parametrize('sections', [{}, {'frontend': 'Change types'}])
@@ -273,5 +303,5 @@ def test_primary_enter_hint_preserves_action_on_narrow_terminal(t_mod, width, ke
     ui = make_ui(t_mod, [], width, 8)
     _, footer = ui.chrome('Choose', 'enter select', primary=('enter', 'SELECT', ''))
     plain = '\n'.join(t_mod._ANSI_RE.sub('', line) for line in footer)
-    assert key in plain and 'SELECT' in plain
+    assert ui.labels('enter') in plain and 'SELECT' in plain
     assert all(t_mod._vis_len(line) <= width for line in footer)

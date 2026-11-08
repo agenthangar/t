@@ -15,6 +15,7 @@ import os
 import pathlib
 import pty
 import re
+from _picker_helpers import semantic_chrome
 import select
 import shlex
 import shutil
@@ -2289,13 +2290,13 @@ def test_zsh_resume_picker_shows_the_display_column_for_every_row(zsh, tmp_path)
     assert all(row.startswith(" 3  ") or row.startswith(" 4  ") for row in rows)
     assert {row[4:12] for row in rows} == {"✱ claude", "⬡ codex "}
     # The header exposes every available filter; agent names remain in the rows.
-    header = (tmp_path / "fzf.log.header").read_text().splitlines()
+    header = semantic_chrome((tmp_path / "fzf.log.header").read_text()).splitlines()
     controls = "\n".join(header)
-    for control in ("Ctrl-F filters", "Ctrl-A off", "Ctrl-L on", "0 hidden",
-                    "Filters OFF", "Sort: last turn", "Alt-T last turn", "Alt-R repo",
-                    "Alt-G agent", "Alt-O host", "Alt-V session"):
+    for control in ("Ctrl-F toggle", "Ctrl-X reset", "Ctrl-G agent", "0 hidden",
+                    "Filters OFF", "Sort: last turn", "Ctrl-S toggle", "Ctrl-Y next",
+                    "last turn", "repo", "agent", "host", "session"):
         assert control in controls
-    assert "Ctrl-D" not in controls  # Resume has no historical interface metadata.
+    assert "Ctrl-D merged" in controls  # Resume uses this key for its merged filter.
 
 
 def test_zsh_resume_pick_revives_the_row_with_its_own_agent(zsh, tmp_path):
@@ -2588,8 +2589,8 @@ def test_open_local_multi_picker(zsh, tmp_path, tabs):
     snippet = r'''
       DEV_REPOS[alias]=$DEV_REPOS[api]
       _dev_session_rows() {
-        printf 'sid1\t%s\tapi-2\tdetached\tactive\tFirst task\tcodex\n' "$HOME/code/api"
-        printf 'sid2\t%s\talias-4\tdetached\tactive\tSecond task\tclaude\n' "$HOME/code/api"
+        printf 'sid1\t%s\tapi-2\tdetached\tactive\tFirst task\tcodex\tmodel\t2026-11-07T16:00:00Z\n' "$HOME/code/api"
+        printf 'sid2\t%s\talias-4\tdetached\tactive\tSecond task\tclaude\tmodel\t2026-11-06T16:00:00Z\n' "$HOME/code/api"
         printf 'sid3\t%s\tweb-3\tdetached\tactive\tOther repo\tcodex\n' "$HOME/code/web"
       }
       _dev_open_tab() { print -r -- "TAB $*"; TAB_RESULT; }
@@ -2603,12 +2604,12 @@ def test_open_local_multi_picker(zsh, tmp_path, tabs):
     calls = zsh.log.read_text()
     assert "attach-session -t =dev-api-2:" in calls
     assert "new-session" not in calls and "dev-web-3" not in calls
-    args = log.read_text()
-    assert "--multi" in args and "space:toggle+down" in args
-    assert "Enter open/k kill/Esc · Space/Tab ✓" in args
-    for control in ("Ctrl-F filters", "Ctrl-A off", "Ctrl-L on"):
+    args = semantic_chrome(log.read_text())
+    assert "--multi" in args and "space:put" in args
+    assert "Enter open/Esc · Tab✓ · Ctrl-K kill" in args
+    for control in ("Ctrl-F toggle", "Ctrl-X reset", "Ctrl-G agent"):
         assert control in args
-    assert "Filters ON: unattached" in args
+    assert "Filters ON" in args and "unattached" in args
 
 
 def test_open_picker_cancel_does_not_create_session(zsh, tmp_path):

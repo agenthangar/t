@@ -1108,7 +1108,7 @@ def test_behavior_menu_narrow_screens(workflow, t_mod, monkeypatch, width, heigh
             continue  # Completed context messages are scrollback, not interactive frames.
         assert sum(t_mod._term_rows(line, width) for line in frame) <= height
         assert any('▸' in line for line in frame)
-        assert any('enter' in line.lower() for line in frame)
+        assert any(ui.labels('enter') in line for line in frame)
         assert all(t_mod._vis_len(line) <= width for line in frame)
 
 

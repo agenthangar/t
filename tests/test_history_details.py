@@ -11,6 +11,7 @@ import tempfile
 import time
 
 import pytest
+from _picker_helpers import semantic_chrome
 
 from test_history_data import history, store, app, conversation, codex_rows, transcript_file
 
@@ -215,7 +216,7 @@ finally:app.store.close()
             return subprocess.run(['tmux', '-S', socket, '-f', '/dev/null', *args], env=env, text=True,
                                   capture_output=True, timeout=10, check=True).stdout
         def screen():
-            return tmux('capture-pane', '-p', '-t', 'picker')
+            return semantic_chrome(tmux('capture-pane', '-p', '-t', 'picker'))
         def wait_for(predicate):
             deadline = time.monotonic() + 10
             while time.monotonic() < deadline:

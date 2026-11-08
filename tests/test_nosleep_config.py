@@ -425,7 +425,7 @@ def test_none_requirement_marks_check_timing_and_hotspot_inactive(isolated):
 def test_section_spacing_and_finish_remain_navigable(isolated, columns, lines):
     output = _pty_config(isolated, [(b'Local settings', b'k\r')], columns=columns, lines=lines)
     assert b'nothing written' in output
-    assert b'ON CLOSE' in output and b'\xe2\x94\x82' in output
+    assert b'ON CLOSE' in output and b'Local settings' in output
 
 
 def test_frame_inserts_nonselectable_breaks_between_sections():
