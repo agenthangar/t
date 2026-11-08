@@ -1,7 +1,8 @@
 # Shared session lifecycle
 
-Tracking: [#374](https://github.com/agenthangar/t/issues/374) and
-[#375](https://github.com/agenthangar/t/issues/375).
+Tracking: [#374](https://github.com/agenthangar/t/issues/374),
+[#375](https://github.com/agenthangar/t/issues/375), and
+[#382](https://github.com/agenthangar/t/issues/382).
 
 This is one coordinated change. SQLite access, ownership checks, launch
 verification, transfer recovery and public resume guidance ship together.
@@ -43,6 +44,18 @@ stop. Both paths now retain the immutable tmux ID from before ownership inspecti
 through the stop effect. A replacement using the same name is never a stop target.
 The regression covers recycling during inspection and immediately before stop,
 with an unchanged-owner control; both race cases failed before each correction.
+
+The additional saved-resume report exposed a mismatch between the picker and
+source reconciliation. Two repository names can have the same verified GitHub
+repository ID, agent and conversation ID. The picker already merged their
+records, while reconciliation required exactly one raw record. The shared
+`t_resume_source.merge_records` function now merges their associations and
+transcript sources in both paths after repository equivalence is verified.
+The latest durable association still determines the selected source. Equal-time
+associations that disagree on host, workspace, generation, branch or revision
+are refused explicitly. Source evidence is read again after acquiring the
+ownership claim, and unavailable or mismatched repository proof never authorizes
+a merge. No stored history or lock is deleted to make the operation succeed.
 
 Validation also reproduced a pre-existing recovery-menu failure on tmux 3.8:
 `display-menu` now returns before dismissal. Cleanup no longer treats that return
@@ -163,6 +176,25 @@ After the final immutable-owner correction, the affected engine, kill, ownership
 snapshot and public lifecycle suites passed **343 tests**, including all six
 recycled-name cases and all 30 public lifecycle E2E cases. Combined coverage
 remained **97.05%**; contract lint, shellcheck, syntax and compilation checks were
-rechecked successfully. No additional production changes followed that rerun.
+rechecked successfully. The #382 follow-up has its own validation below.
 The implemented CLI preview has a separate approval gate before push/PR; the
 planning-preview approval does not replace that gate.
+
+For #382, both public `t resume` reproductions (Codex and Claude) failed with the
+reported source-identity error before the correction and passed afterwards,
+preserving dirty work and exactly one resumed owner. These use real Git, history
+storage, native agent processes and tmux, with simulated GitHub rename proofs and
+picker input. All 88 source-reconciliation tests passed, including equivalent
+records, conflicting latest associations, missing/mismatched repository proof
+and evidence changing while waiting for the ownership claim.
+
+The follow-up full run collected **6,571 tests**: **6,568 passed**, **one skipped**,
+and two existing tmux resume-startup cases failed when tmux returned
+`respawn pane failed: fork failed: Device not configured`. These failures happened
+before source reconciliation. Both cases passed on an initial targeted rerun,
+and the complete **32-test tmux recovery suite passed** afterwards with coverage
+appended. No production code or assertions were changed to bypass those fork
+errors. Total coverage is **97.09%**. All 32 public lifecycle E2E cases (19 original
+and 13 transfer/saved-resume cases) passed in the full run. CLI/progress lint,
+Bash shellcheck, changed-shell syntax, compilation to `/tmp` and diff checks
+passed. Required Linux CI and deployment remain pending PR submission.

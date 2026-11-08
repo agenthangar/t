@@ -1,8 +1,9 @@
 """Public moves between two isolated hosts using real tmux, Git and rsync.
 
 The hosts share a disposable repository/worktree filesystem (as with a network
-mount), but have separate agent homes, registries and tmux servers. Only SSH and
-the agents are simulated. No production lifecycle functions are replaced.
+mount), but have separate agent homes, registries and tmux servers. SSH and the
+agents are simulated; saved-resume cases also simulate GitHub rename proofs and
+picker input. No production lifecycle functions are replaced.
 """
 import json
 import os
@@ -15,7 +16,7 @@ import uuid
 
 import pytest
 
-from test_session_lifecycle import lifecycle, _shell, _run, _until, ROOT, SID
+from test_session_lifecycle import lifecycle, _shell, _shell_tty, _run, _until, ROOT, SID
 
 
 @pytest.fixture
@@ -216,4 +217,58 @@ def test_public_pop_releases_tmux_owner_before_foreground_resume(two_hosts, agen
     launches = (base / 'agents.log').read_text().splitlines()
     assert len(launches) == 2 and all(SID in row for row in launches)
     assert str(workspace) in launches[-1]
+    assert not (base / 'second/agents.log').exists()
+
+
+@pytest.mark.parametrize('agent', ['codex', 'claude'])
+def test_public_saved_resume_accepts_equivalent_repository_records(two_hosts, agent):
+    base, first, second = two_hosts
+    workspace = saved_source(base, first, agent)
+    stopped = _shell(base, first, '_dev_kill_one dev-repo-1 1')
+    assert stopped.returncode == 0, stopped.stderr
+    origin = _run(['git', '-C', str(workspace), 'remote', 'set-url', 'origin',
+                   'https://github.com/org/repo.git'], env=first, cwd=base)
+    assert origin.returncode == 0, origin.stderr
+    # Simulate GitHub's rename proof and a user selecting the actual picker row.
+    # All history, source validation, checkpointing and launch code stays real.
+    gh = base / 'bin/gh'
+    gh.write_text('''#!/usr/bin/env python3
+import json, sys
+if sys.argv[1:3] == ['repo', 'view']:
+    print(json.dumps(dict(id='R_synthetic', nameWithOwner='org/repo')))
+else:
+    print(json.dumps(dict(data=dict(repository={}))))
+''')
+    gh.chmod(0o755)
+    fzf = base / 'bin/fzf'
+    fzf.write_text('''#!/usr/bin/env python3
+import sys
+rows = sys.stdin.read().splitlines()
+assert len(rows) == 1, rows
+print('\\nenter\\n' + rows[0])
+''')
+    fzf.chmod(0o755)
+    recorded = _shell(base, first, f'_dev_history_record {SID} {agent} {shlex.quote(str(workspace))} resume')
+    assert recorded.returncode == 0, recorded.stderr
+    seed = '''
+import runpy
+from pathlib import Path
+h = runpy.run_path(str(Path(__import__('os').environ['T_TEST_ROOT']) / 'libexec/t_history.py'))
+store = h['Store']()
+try:
+    row = next(row for row in store.records() if row['repo'] == 'org/repo')
+    store.merge({**row, 'repo': 'old-org/repo'})
+finally:
+    store.close()
+'''
+    seeded = _run(['python3', '-c', seed], env=dict(first, T_TEST_ROOT=str(ROOT)), cwd=base)
+    assert seeded.returncode == 0, seeded.stderr
+    (workspace / 'unfinished.txt').write_text('keep edits through repository rename\n')
+    resumed = _shell_tty(base, first, 't resume repo 1')
+    assert resumed.returncode == 0, resumed.stdout
+    launches = (base / 'agents.log').read_text().splitlines()
+    assert len(launches) == 2 and all(SID in row for row in launches)
+    owners = _run([str(base / 'bin/tmux'), 'list-sessions', '-F', '#{session_path}'], env=first, cwd=base)
+    assert owners.returncode == 0 and len(owners.stdout.strip().splitlines()) == 1
+    assert (Path(owners.stdout.strip()) / 'unfinished.txt').read_text() == 'keep edits through repository rename\n'
     assert not (base / 'second/agents.log').exists()

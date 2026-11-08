@@ -1145,19 +1145,7 @@ class HistoryCommand:
             row['display'] = history_display(row, alias)
             if not slot or any(a.get('slot') == slot for a in row['associations']):
                 rows.append(row)
-        merged = {}
-        for row in rows:
-            key = row['agent'], row['sid']
-            if key in merged:
-                previous = merged[key]
-                newer = row if row.get('updated', 0) >= previous.get('updated', 0) else previous
-                combined = {**previous, **newer}
-                for field in ('associations', 'sources', 'prs', 'mentions'):
-                    combined[field] = list({json.dumps(value, sort_keys=True): value for value in previous.get(field, []) + row.get(field, [])}.values())
-                merged[key] = combined
-            else:
-                merged[key] = row
-        return list(merged.values())
+        return _RESUME_SOURCE['merge_records'](rows)
 
     def branch_prs(self, rows, refresh=False):
         grouped = {}
