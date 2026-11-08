@@ -1240,7 +1240,7 @@ class HistoryCommand:
             snapshot, state = Path(directory) / 'records.json', Path(directory) / 'page.json'
             private_write(snapshot, rows)
             terminal = shutil.get_terminal_size((80, 24))
-            width = max(12, terminal.columns - 12)
+            width = max(12, terminal.columns - (16 if terminal.columns > 60 else 12))
             private_write(state, dict(page=page, query=query, limit=limit, width=width))
             helper = shlex.join([sys.executable, str(Path(self.root) / 'libexec/t_history.py'), 'picker', str(snapshot), str(state)])
             header = state.with_suffix('.header')

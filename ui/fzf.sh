@@ -464,7 +464,7 @@ SH
   if [ "${T_PICKER_HEADER_HEIGHT:-24}" -le 14 ]; then
     case ${T_PICKER_SESSION_FILTERS:-} in open|resume|kill|list) set -- --info=inline "$@" ;; esac
   fi
-  _t_fzf --height=100% --multi --no-hscroll --exact --no-extended --ignore-case --margin="$_t_picker_margin" --delimiter="$(printf '\t')" --with-nth=-1 \
+  _t_fzf --height=100% --multi --no-hscroll --exact --no-extended -i --margin="$_t_picker_margin" --delimiter="$(printf '\t')" --with-nth=-1 \
     --bind="enter:accept,esc:abort,ctrl-c:abort,space:put,tab:toggle+down,shift-tab:up${_t_picker_preview_bind}" \
     --bind="$_t_picker_bind" \
     --preview='printf "%s\n" {-1}' --preview-window='hidden:wrap:down:40%' \
