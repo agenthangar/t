@@ -8682,9 +8682,11 @@
           "read_only": false,
           "terminal": false,
           "tests": [
-            "tests/test_nosleep_runtime.py::test_zsh_nosleep_plain_snapshot_shows_sampling_then_idle"
+            "tests/test_nosleep_runtime.py::test_zsh_nosleep_plain_snapshot_shows_sampling_then_idle",
+            "tests/test_nosleep_runtime.py::test_nosleep_battery_cutoff_runs_independently_and_cleans_up",
+            "tests/test_dev_isolation.py::test_nosleep_follows_cd_immediately_and_keeps_normal_config"
           ],
-          "notes": "Observe configured-network availability independently of fallback and monitoring policy. Scans run asynchronously and never prompt; permission, Wi-Fi, association, absence and unknown states are distinct."
+          "notes": "Observe configured-network availability independently of fallback and monitoring policy. Scans run asynchronously and never prompt; permission, Wi-Fi, association, absence and unknown states are distinct. Optional battery protection exits below the saved cutoff on battery power, independently of lid, checks and forever. Failed/unknown readings never reuse stale charge. Shell entry selects the current worktree on every invocation while retaining machine configuration."
         },
         "help": {
           "argv": [
@@ -8713,9 +8715,10 @@
           "tests": [
             "tests/test_nosleep_config.py::test_tty_requirement_cycle_review_and_save",
             "tests/test_nosleep_config.py::test_new_hotspot_is_selected_and_password_saved_only_after_review",
-            "tests/test_nosleep_config.py::test_frame_inserts_nonselectable_breaks_between_sections"
+            "tests/test_nosleep_config.py::test_frame_inserts_nonselectable_breaks_between_sections",
+            "tests/test_nosleep_config.py::test_battery_menu_edit_review_save_and_discard"
           ],
-          "notes": "Shared editor reachable through t config → Nosleep. Blank rail lines separate sections. Select one nearby fallback or enter an SSID manually; explicit discovery setup requests Location access. Password changes stay pending until reviewed and use Keychain’s private prompt."
+          "notes": "Shared editor reachable through t config → Nosleep. Blank rail lines separate sections. Select one nearby fallback or enter an SSID manually; explicit discovery setup requests Location access. Password changes stay pending until reviewed and use Keychain’s private prompt. Battery protection stages an independent enable switch and integer cutoff from 1 to 100 percent; defaults are off and 20 percent."
         },
         "show": {
           "argv": [

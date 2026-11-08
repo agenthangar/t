@@ -1303,6 +1303,20 @@ configuration and hotspot setup modes. The standalone executable loads only its
 own runtime, without dotfiles, user startup files or session registration.
 The optional zsh adapter shares that runtime and preserves shell-local activity
 thresholds and application mappings. Loading either adapter never starts a hold.
+The adapter selects its source on each invocation, including the first call in
+`cd worktree && nosleep`, matching `t` without waiting for a prompt refresh.
+It reloads the runtime on each invocation so uncommitted edits are available.
+Standalone and shell entry points retain normal machine configuration across
+worktrees; manual previews do not override `XDG_CONFIG_HOME`.
+
+The Battery protection settings section stages an enable switch and **Exit below**
+integer percentage (1–100). Defaults are off and 20%. It is independent of activity
+and internet checks, with the same review/save/cancel transaction. Read-only
+defaults show the policy without probing power state. Runtime status distinguishes
+battery, AC, no battery and unknown readings. A valid below-cutoff reading on
+battery exits via normal cleanup even with checks disabled or the lid open;
+exact-cutoff, AC and unknown readings continue. Startup checks happen before a
+sleep hold is taken; subsequent checks run approximately every 10 seconds.
 
 `t config → Nosleep` opens the same `_RailUI` editor as `nosleep config`,
 returning to the hub afterward. Save or discard hub edits before opening the
