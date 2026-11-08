@@ -232,12 +232,24 @@ def test_preparation_blocks_missing_dependencies_and_pins_runtime(evaluation, tm
     def run(command, **kw):
         commands.append(command)
         if command[:3] == ['docker', 'context', 'ls']: return ''
-        if command[:2] == ['docker', 'info']: return json.dumps({'OSType': 'linux', 'MemTotal': 8*1024**3})
+        if command[:2] == ['docker', 'info']: return json.dumps({'OSType': 'linux', 'MemTotal': 8*1024**3, 'Architecture': 'aarch64'})
+        if command[:2] == ['colima', 'ssh']: return 'enabled\ninterpreter /mnt/lima-rosetta/rosetta\n'
         if command[0] == 'codex': return 'codex-cli 0.155.1'
         return ''
     monkeypatch.setattr(e, 'run', run)
     assert e.prepare_runtime(m.defaults(), j) == ('0.155.1', 8)
     assert any(c[:4] == ['colima', 'start', '--profile', 't-eval'] for c in commands)
+    assert any('--vz-rosetta' in c and '--binfmt=false' in c for c in commands)
+    assert e.os.environ['COLIMA_HOME'] == str(m.paths()['cache'] / 'colima')
+    assert j.state['runtime']['emulation'] == 'rosetta'
+    monkeypatch.setattr(e, 'run', lambda c, **kw: 'disabled\n' if c[:2] == ['colima', 'ssh'] else run(c, **kw))
+    with pytest.raises(ValueError, match='Rosetta is not active') as missing_rosetta:
+        e.prepare_runtime(m.defaults(), j)
+    assert 'COLIMA_HOME=' in str(missing_rosetta.value) and 'DOCKER_CONFIG=' in str(missing_rosetta.value)
+    assert 'colima stop --profile t-eval' in str(missing_rosetta.value)
+    monkeypatch.setattr(e, 'run', lambda c, **kw: json.dumps({'OSType':'linux', 'MemTotal':16*1024**3, 'Architecture':'x86_64'}) if c[:2] == ['docker', 'info'] else run(c, **kw))
+    assert e.prepare_runtime(m.defaults(), j) == ('0.155.1', 16)
+    assert j.state['runtime']['emulation'] == 'native'
     for plugin in ('compose', 'buildx'):
         def missing(command, **kw):
             if command == ['docker', plugin, 'version']: raise ValueError('unavailable')

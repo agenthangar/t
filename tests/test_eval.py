@@ -14,8 +14,10 @@ ROOT = Path(__file__).resolve().parents[1]
 def evaluation(tmp_path, monkeypatch):
     for name in ('HOME', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME', 'XDG_STATE_HOME', 'CODEX_HOME'):
         monkeypatch.setenv(name, str(tmp_path / name))
-    monkeypatch.delenv('DOCKER_CONTEXT', raising=False)
-    monkeypatch.delenv('DOCKER_CONFIG', raising=False)
+    # Track these even when absent in the parent: preparation assigns them directly.
+    monkeypatch.setenv('DOCKER_CONTEXT', 'eval-test-isolated')
+    monkeypatch.setenv('DOCKER_CONFIG', str(tmp_path / 'docker'))
+    monkeypatch.setenv('COLIMA_HOME', str(tmp_path / 'colima'))
     monkeypatch.delenv('DOCKER_DEFAULT_PLATFORM', raising=False)
     m = load_script(ROOT / 'libexec/t_eval.py', 'evaluation_test')
     cli = load_script(ROOT / 'libexec/t_eval_cli.py', 'evaluation_cli_test')

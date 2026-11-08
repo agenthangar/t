@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import re
 import runpy
+import shlex
 import shutil
 import signal
 import subprocess
@@ -133,6 +134,10 @@ def runtime_owned(config, journal):
     settings = {'cliPluginsExtraDirs': sorted(plugins)}
     core()['atomic'](docker_config / 'config.json', settings)
     os.environ['DOCKER_CONFIG'] = str(docker_config)
+    # Keep VM configuration and disks durable and separate from the user's Colima.
+    os.environ['COLIMA_HOME'] = str(core()['paths']()['cache'] / 'colima')
+    stop_vm = shlex.join(['env', 'COLIMA_HOME=' + os.environ['COLIMA_HOME'],
+                         'DOCKER_CONFIG=' + str(docker_config), 'colima', 'stop', '--profile', 't-eval'])
     for plugin in ('compose', 'buildx'):
         try:
             run(['docker', plugin, 'version'])
@@ -143,7 +148,7 @@ def runtime_owned(config, journal):
     contexts = run(['docker', 'context', 'ls', '--format', '{{.Name}}']).splitlines()
     if context not in contexts or subprocess.run(['docker', '--context', context, 'info'], capture_output=True).returncode:
         journal.event('preparation', action='start dedicated evaluation VM', memory_gib=memory)
-        run(['colima', 'start', '--profile', 't-eval', '--vm-type', 'vz', '--vz-rosetta',
+        run(['colima', 'start', '--profile', 't-eval', '--vm-type', 'vz', '--vz-rosetta', '--binfmt=false',
              '--runtime', 'docker', '--cpu', '8', '--memory', str(memory), '--disk', '100'], timeout=600)
     # Only this process and descendants use the dedicated engine; no global switch.
     os.environ['DOCKER_CONTEXT'] = context
@@ -151,13 +156,26 @@ def runtime_owned(config, journal):
     if info.get('OSType') != 'linux':
         raise ValueError('benchmark environments require Linux containers')
     if info.get('MemTotal', 0) < (memory - 1) * 1024**3:
-        raise ValueError(f'evaluation VM needs {memory} GiB; stop it and restart colima --profile t-eval with --memory {memory}')
+        raise ValueError(f'evaluation VM needs {memory} GiB; stop it with `{stop_vm}`, then resume this run to resize it')
+    memory = (info['MemTotal'] + 1024**3 - 1) // 1024**3
+    emulation = 'native'
+    if info.get('Architecture') in ('aarch64', 'arm64'):
+        try:
+            registration = run(['colima', 'ssh', '--profile', 't-eval', '--', 'cat', '/proc/sys/fs/binfmt_misc/rosetta'])
+            if not registration.startswith('enabled\n') or 'rosetta' not in registration:
+                raise ValueError('Rosetta registration missing')
+        except ValueError as error:
+            raise ValueError('Rosetta is not active in the evaluation VM. Install it with '
+                             f'softwareupdate --install-rosetta, then stop the dedicated VM with `{stop_vm}` '
+                             'and resume this run to restart it with Rosetta.') from error
+        emulation = 'rosetta'
     version = run(['codex', '--version'])
     match = re.search(r'\b(\d+\.\d+\.\d+(?:[-.][A-Za-z0-9.]+)?)\b', version)
     if not match:
         raise ValueError('cannot pin the installed Codex CLI version')
     journal.checkpoint(runtime={'harbor_version': HARBOR_VERSION, 'codex_version': match[1],
-                                'docker_context': context, 'vm_memory_gib': memory})
+                                'docker_context': context, 'colima_home': os.environ['COLIMA_HOME'],
+                                'vm_memory_gib': memory, 'emulation': emulation})
     return match[1], memory
 
 

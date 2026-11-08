@@ -72,7 +72,13 @@ The initial implementation supports macOS with Colima, Docker CLI and Compose,
 Buildx, Codex CLI, Python 3.12+, and a ready LM Studio or Ollama model. Install system
 dependencies with `brew install colima docker docker-compose docker-buildx`. Start prepares a
 dedicated `t-eval` Colima profile and a cached Harbor 0.25.0 virtual environment;
-it never switches the user's global Docker context. The official Codex Linux
+VM configuration and disks live under the eval cache, separate from other Colima
+profiles. It never switches the user's global Docker context. Apple Silicon needs
+Rosetta (`softwareupdate --install-rosetta`); setup verifies the active interpreter
+and blocks rather than silently using QEMU. The observed emulation mode and VM
+directory are recorded with the run. If the VM needs a restart or more memory,
+the diagnostic supplies a stop command scoped to this private profile; resuming
+starts it with the required settings. The official Codex Linux
 package is pinned to the installed CLI version, verified against registry integrity,
 and runs natively on the VM CPU while benchmark task containers stay x86. Missing dependencies produce
 a resumable blocked run. Benchmark downloads, images and packages need internet
