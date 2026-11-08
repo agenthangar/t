@@ -141,7 +141,7 @@ def test_batch_failure_stops_later_launches_and_keeps_ready_hints(zsh, failure_a
     assert ('Resume cancelled' if code == 130 else 'Resume stopped after an error') in result.stdout
     assert f'Selection: api slot 3 · codex {failure_at}' in result.stdout
     assert 'exact writer diagnostic' in result.stdout
-    assert 'Retry selection: t session history api 3' in result.stdout
+    assert 'Retry selection: t session resume api 3' in result.stdout
     assert 'ATTEMPT c' not in result.stdout and 'UNEXPECTED_TAB' not in result.stdout
     assert ('Ready — attach with: t session open api 98 --cli --local' in result.stdout) == (failure_at == 'b')
     assert 'attach-session' not in zsh.log.read_text()

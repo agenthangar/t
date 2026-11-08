@@ -722,7 +722,7 @@ class IssueCommand:
             if re.fullmatch(r'.+-[0-9]+', owner['slot']):
                 alias, slot = owner['slot'].rsplit('-', 1)
                 if owner['state'] == 'app':
-                    details.append('Retired integration: release this owner on its host, then use t session history.')
+                    details.append('Retired integration: release this owner on its host, then use t session resume.')
                     continue
                 words = ['t', 'session', 'open', alias, slot, '--cli', '--local']
                 if row.get('provider') == 'remote':
@@ -798,7 +798,7 @@ class IssueCommand:
 
     def attach_argv(self, row, *, new_terminal=False):
         if row.get('app'):
-            raise IssueError('this owner uses a retired integration; release it on its host, then use t session history')
+            raise IssueError('this owner uses a retired integration; release it on its host, then use t session resume')
         if row.get('resume'):
             argv = ['t', 'session', 'resume', row['alias'], row['slot'], '--days', 'all']
             if row.get('host') == 'local':
@@ -961,7 +961,7 @@ class IssueCommand:
                              f'; run t issue start {issue["url"]} there to recover it')
         retry = selected and selected.get('prepared') and selected.get('host') == 'local'
         if selected and selected['provider'] in ('local', 'remote') and not retry:
-            hint = ('t session history ' + shlex.join([selected['alias'], selected['slot']])
+            hint = ('t session resume ' + shlex.join([selected['alias'], selected['slot']])
                     if selected.get('alias') and selected.get('slot') else 'the session commands shown above')
             raise IssueError('this workspace has no single resumable session; inspect ' + hint +
                              '. Local work does not require an external-agent takeover.')

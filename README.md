@@ -159,7 +159,7 @@ automated compatibility tests.
 
 Both layouts work with CLI open/resume, navigation,
 and retained history. If both `t/12` and `t/t-12` exist, slot actions refuse to
-choose: inspect the two worktrees and use `t session history t 12` to select a
+choose: inspect the two worktrees and use `t resume t 12` to select a
 specific conversation. t never resolves this collision by moving either tree.
 
 Upgrade t's CLI and shell plugin together on each host before using labeled
@@ -177,10 +177,9 @@ worktrees and agent history should not be manually renamed to bridge hosts.
 worktree; `t open my-project` filters to that repo. Attached CLI sessions are hidden by default; `--attached` includes them. Idle sessions and
 inactive CLI sessions remain visible. An explicit slot still opens directly.
 
-`t history 5` browses every saved conversation associated with slot 5 in the
-current repository. `t history t 5` and `t session history t 5` name the repository
-explicitly. With no arguments, history infers your current slot or lets you choose
-one. It retains inactive and live conversations, archived records, and records
+`t resume 5` browses every saved conversation associated with slot 5 in the
+current repository. `t resume t 5` and `t session resume t 5` name the repository
+explicitly. The slot browser uses retained conversation history internally. It retains inactive and live conversations, archived records, and records
 whose worktrees or transcripts have been removed. It always asks you to select a
 conversation before resuming, including when only one exists.
 

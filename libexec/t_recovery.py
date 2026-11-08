@@ -234,6 +234,9 @@ def recovery_menu(socket, pane, viewer, title, lines, actions, cleanup=None, clo
     # Last action is Dismiss. An incidental Enter must not restart the agent.
     selected = len(items) + len(actions) - 1
     for label, key, command in actions:
+        if cleanup is not None:
+            dismissed = "run-shell -b " + shlex.quote(shlex.join(["rm", "-f", "--", str(cleanup)]))
+            command = command + "; " + dismissed if command else dismissed
         items.append((textwrap.shorten(label, width=width - 6, placeholder="…"), key, command))
     menu = ["tmux", "-S", socket, "display-menu", "-c", viewer, "-t", pane,
             "-T", title, "-x", "C", "-y", "C", "-b", "double",
@@ -244,9 +247,14 @@ def recovery_menu(socket, pane, viewer, title, lines, actions, cleanup=None, clo
         menu.extend(item)
     # tmux owns the input wait so an unanswered panel never stalls the monitor.
     command = shlex.join(menu)
-    if cleanup is not None:
+    # tmux 3.8 made display-menu nonblocking. Only older versions provide a
+    # close receipt here. Dismiss always clears a notice through its action;
+    # on newer versions Escape leaves an unresolved notice until explicit reopen.
+    version = re.match(r"tmux (\d+)\.(\d+)", tmux(socket, "-V").stdout)
+    waits_for_close = version and tuple(map(int, version.groups())) < (3, 8)
+    if waits_for_close and cleanup is not None:
         command += "; " + shlex.join(["rm", "-f", "--", str(cleanup)])
-    if closed is not None:
+    if waits_for_close and closed is not None:
         command += "; " + shlex.join(["touch", "--", str(closed)])
     return tmux(socket, "run-shell", "-b", command).returncode == 0
 
@@ -421,6 +429,7 @@ def reopen(socket, pane_id, viewer):
     pane = next((row for row in panes(socket) if row["pane"] == pane_id), None)
     if pane is None or viewer not in clients(socket, pane_id):
         return 1
+    notice_path(socket, pane_id).unlink(missing_ok=True)
     unreadable_view = clear_callback_view(socket, pane_id)
     error = pane_failure(socket, pane)
     if not error:

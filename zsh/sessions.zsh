@@ -1629,16 +1629,11 @@ _dev_kill_one() {
   # NOT `local path`: in zsh `path` is the array tied to $PATH, and a plain local
   # keeps the tie but starts EMPTY — so every command below (the kill itself) was
   # "command not found". Pinned by test_zshrc_never_declares_a_tied_special_….
-  local wt; wt=$(tmux display-message -p -t "=$session:" '#{session_path}' 2>/dev/null)
-  _dev_history_record "$(_dev_session_sid "$session")" "$agent" "$wt" close
-  local _kerr
-  if _kerr=$(tmux kill-session -t "=$session:" 2>&1); then echo "Killed $session"
-  else echo "t kill: tmux kill-session $session failed${_kerr:+: $_kerr}" >&2; return 1; fi
-  # A slot's dev server is detached from its tmux session and would outlive it,
-  # serving the old code on the slot's port. Only a per-session worktree is swept
-  # this way — a shared tree's processes belong to everyone.
-  [[ -n $DEV_WORKTREE_ROOT && -n $wt && $wt == $DEV_WORKTREE_ROOT/* ]] \
-    && _dev_stop_rooted "$wt"
+  local wt sid
+  wt=$(tmux display-message -p -t "=$session:" '#{session_path}') || return 1
+  sid=$(_dev_session_sid "$session")
+  _t_lifecycle_run close "$session" "$wt" "$sid" "$agent" || return $?
+  print -r -- "Killed $session"
   return 0
 }
 
@@ -2168,12 +2163,12 @@ _dev_with_launch_locks() {
 _dev_launch_preflight() {
   local session=$1 dir=${2:A} sid=$3 name owner_path rows rc host row_sid row_cwd row_name
   if [[ -z $sid ]] && _dev_legacy_workspace_reserved "$dir"; then
-    print -u2 -- 't: this workspace has a retired integration reservation; use t session history to resume its exact saved conversation safely'
+    print -u2 -- 't: this workspace has a retired integration reservation; use t session resume to resume its exact saved conversation safely'
     return 1
   fi
   local history_reservation="${dir:h}/.${dir:t}.history-reservation"
   if [[ -f $history_reservation && $(<$history_reservation) != ${T_HISTORY_TOKEN:-} ]]; then
-    print -u2 -- 't: history workspace launch is reserved; retry after preparation completes'; return 1
+    print -u2 -- 't: workspace launch is reserved; retry after preparation completes'; return 1
   fi
   while IFS='|' read -r name owner_path; do
     [[ -n $name ]] || continue
@@ -2249,11 +2244,14 @@ _dev_new_session() {
 }
 
 _dev_new_session_claimed() {
+  _t_lifecycle_run new "$@"
+}
+
+_dev_new_session_effect() {
   local session="$1" dir="$2" branch="${3:-$DEV_BRANCH}" skip_prepare="${4:-}" agent="${5:-claude}"
   if [[ -z $7 ]] && (( ${+functions[_dev_issue_preparing]} )) && _dev_issue_preparing "$dir"; then
     print -u2 't: issue launch is reserved; rerun t issue start <issue> to recover it'; return 1
   fi
-  _dev_launch_preflight "$session" "$dir" '' || return 1
   _dev_auto_trust "$dir"
   local logfile="$HOME/.tmux-logs/${session}.log"
   local sid; sid="$(uuidgen | tr 'A-Z' 'a-z')"
@@ -2291,41 +2289,41 @@ _dev_new_session_claimed() {
   fi
   _dev_start_session_command "$session" "${prep}$(_dev_agent_new_cmd "$agent" "$sid" "$6" "$dir")" || { tmux kill-session -t "=$session:"; return 1; }
   _dev_launch_startup_check "$session" "$logfile" || return 1
-  [[ $agent == claude ]] && _dev_history_record "$sid" "$agent" "$dir" launch
-  _dev_recovery_watch "$session"
 }
 
 # Resolve an exact owner. Fresh launches may need time to publish their identity;
 # never accept the prewritten tmux stamp alone or follow a recycled session name.
 _t_history_owner() {
   local label=$1 sid=$2 dir=${3:A} agent=$4 session="dev-$1" actual_sid actual_dir actual_agent immutable
-  local wait_ready=$5 current
+  local wait_ready=$5 current owner_pid
   local -F SECONDS=0
-  tmux has-session -t "=$session:" 2>/dev/null || { print -u2 't history: selected owner exited; reopen history'; return 1; }
+  tmux has-session -t "=$session:" 2>/dev/null || { print -u2 't resume: selected owner exited; rerun t resume'; return 1; }
   local identity
   identity=$(tmux display-message -p -t "=$session:" '#{session_id}|#{session_path}' 2>/dev/null) || return 1
   immutable=${identity%%|*}; actual_dir=${identity#*|}
-  [[ $immutable == \$<-> ]] || { print -u2 't history: could not verify selected owner identity'; return 1; }
+  [[ $immutable == \$<-> ]] || { print -u2 't resume: could not verify selected owner identity'; return 1; }
   while true; do
+    _DEV_PS_AT=0
+    [[ $wait_ready != wait ]] || owner_pid=$(_dev_session_claude_pid "$session")
     actual_agent=$(_dev_agent_of_session "$session")
     actual_sid=$(_dev_session_sid "$session")
     current=$(tmux display-message -p -t "=$session:" '#{session_id}|#{session_path}' 2>/dev/null) || {
-      print -u2 't history: selected owner exited; reopen history'; return 1
+      print -u2 't resume: selected owner exited; rerun t resume'; return 1
     }
     [[ $current == $identity && ${actual_dir:A} == $dir && $actual_agent == $agent &&
-       ( -z $actual_sid || $actual_sid == $sid ) ]] || {
-      print -u2 't history: selected owner changed; reopen history'; return 1
+       ( -z $sid || -z $actual_sid || $actual_sid == $sid ) ]] || {
+      print -u2 't resume: selected owner changed; rerun t resume'; return 1
     }
     if [[ $wait_ready == wait && $(tmux display-message -p -t "$immutable:" '#{pane_dead}' 2>/dev/null) != 0 ]]; then
-      print -u2 -- "t history: resumed conversation exited during startup; inspect $HOME/.tmux-logs/$session.log"
+      print -u2 -- "t resume: resumed conversation exited during startup; inspect $HOME/.tmux-logs/$session.log"
       return 1
     fi
-    [[ -n $actual_sid ]] && { print -r -- "$immutable"; return 0; }
+    [[ -n $actual_sid && ( $wait_ready != wait || -n $owner_pid ) ]] && { print -r -- "$immutable"; return 0; }
     [[ $wait_ready == wait ]] || {
-      print -u2 't history: selected owner changed; reopen history'; return 1
+      print -u2 't resume: selected owner changed; rerun t resume'; return 1
     }
     if (( SECONDS >= 15 )); then
-      print -u2 -- "t history: resumed conversation identity is not ready; inspect it with: t open ${label%-*} ${label##*-}"
+      print -u2 -- "t resume: resumed conversation identity is not ready; inspect it with: t open ${label%-*} ${label##*-}"
       return 1
     fi
     sleep 0.25

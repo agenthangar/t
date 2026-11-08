@@ -807,7 +807,7 @@ slot does not hide saved work: inactive selections receive a safely allocated
 workspace when their original workspace cannot be reused. Exact live IDs attach
 to their existing owner. Local paths and remote aliases need not match.
 A plain explicit slot (`t session resume api 2`, including `t resume api 2`
-and the inferred-repository `t resume 2`) runs `t session history api 2`.
+and the inferred-repository `t resume 2`) opens the internal saved-conversation picker.
 It uses the shared paginated multi-picker over retained conversation identities,
 including all recorded slot associations. Even one result requires selection;
 cancellation returns 130 without launching. Empty history never creates a session.
@@ -895,8 +895,7 @@ negotiate layout support before stopping the source; see the compatibility rules
 in the main README. These are path changes within existing command modes.
 
 The inventory's `display_schemas` are machine-readable definitions for the
-information shared by `t session list` (`t ls`) and `t session history`
-(`t history`). Each command binds its `display_schema`; history extends
+information shared by `t session list` (`t ls`) and the saved-conversation picker behind `t session resume`. Each command binds its `display_schema`; history extends
 `session_information` with recorded PR evidence and historical details. CLI lint
 checks these definitions and their safety policies. Behavior tests check actual
 renderer projections, table output, details, and JSON against the definitions.
@@ -1088,7 +1087,7 @@ terminal, streamed installers provide their own output, and background/protocol
 workers remain quiet. The inventory also protects shared shell scanner and
 resume progress seams. Add coverage when introducing another slow shell phase.
 
-For example, `t issue list`, `t history --refresh`, and `t system update --check`
+For example, `t issue list`, `t session resume`, and `t system update --check`
 show a delayed wheel during quiet discovery in a terminal; their redirected
 output stays clean. Spinners clear before results, errors, or selection.
 
@@ -1232,3 +1231,12 @@ join networks or write configuration. Existing flags, machine-local config paths
 and Keychain identifiers remain compatible. Installation does not grant sudo or
 start monitoring. Runtime monitoring and hotspot joins require macOS; help and
 configuration remain usable elsewhere. Native macOS assertion tests are opt-in.
+
+Session lifecycle actions share native ownership checks and verified launch readiness.
+Moves reserve their destination and validate both stores before stopping the source,
+then checkpoint work, verify copied bytes and wait for the exact destination owner.
+An unidentified writer remains a blocker. Failed transfers retain receipts and use
+`t resume REPO SLOT` for reconciliation; they never restart an ambiguous source.
+`session history`, `remote session history` and `history` remain hidden compatibility
+routes for the internal saved-conversation implementation, excluded from menus and
+completion. Public instructions use `session resume`.

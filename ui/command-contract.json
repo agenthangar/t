@@ -1281,7 +1281,9 @@
         }
       },
       "display_schema": "history_information",
-      "progress": "Terminal-only discovery stages on stderr; no progress in redirected output, JSON, or remote protocols."
+      "progress": "Terminal-only discovery stages on stderr; no progress in redirected output, JSON, or remote protocols.",
+      "visibility": "hidden-compatibility",
+      "notes": "Internal saved-conversation implementation; hidden compatibility route. Use session resume publicly."
     },
     "session cd": {
       "patterns": [
@@ -1351,7 +1353,7 @@
         "tests/test_move_local_receive.py::test_selected_remote_conversation_lands_locally",
         "tests/test_desktop_removal.py::test_move_without_live_owner_points_to_saved_resume",
         "tests/test_transfer_snapshots.py::test_snapshot_relands_divergent_slot_without_overwriting_branch",
-        "tests/test_transfer_snapshots.py::test_receive_preflight_failure_does_not_stop_owner"
+        "tests/test_lifecycle_transfer_e2e.py::test_public_move_retry_reconciles_disconnect_without_duplicate_owner"
       ],
       "modes": {
         "default": {
@@ -5768,7 +5770,8 @@
           ]
         }
       },
-      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+      "notes": "Internal saved-conversation implementation; hidden compatibility route. Use session resume publicly.",
+      "visibility": "hidden-compatibility"
     },
     "remote session cd": {
       "patterns": [

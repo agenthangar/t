@@ -12,6 +12,7 @@ from types import SimpleNamespace
 import uuid
 
 import pytest
+from native_agent_fixture import write_native_agent
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -302,7 +303,7 @@ def test_batch_starts_two_real_isolated_agents_before_attaching(mod, tmp_path, m
            'TERM': 'xterm-256color', 'SHELL_SESSIONS_DISABLE': '1'}
     (bindir / 'tmux').write_text('#!/bin/sh\nexec ' +
         shlex.join([tmux, '-S', socket, '-f', '/dev/null']) + ' "$@"\n')
-    (bindir / 'claude').write_text('#!' + sys.executable + '\n'
+    write_native_agent(bindir / 'claude', '#!' + sys.executable + '\n'
         'import json, pathlib, sys, time\n'
         'pathlib.Path("agent-started").write_text(json.dumps(sys.argv[1:]))\n'
         'time.sleep(30)\n')

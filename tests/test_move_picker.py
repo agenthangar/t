@@ -26,6 +26,9 @@ SETUP = r'''
   _dev_worktree_beam_push() { print -r -- "PUSH $*"; }
   _tbeam_sync_transcript() { print -r -- "SYNC $*"; }
   _tpush_claude_pid() { :; }
+  _dev_repo_of_dir() { [[ $1 == $HOME/code/* || $1 == $DEV_WORKTREE_ROOT/* ]] || return 1; printf 'api\t2\n'; }
+  _t_lifecycle_move() { print -r -- "MOVE ${(j:|:)@}"; }
+
 '''
 
 
@@ -78,13 +81,9 @@ def test_move_picker_uses_current_sessions(zsh, tmp_path, args, location, inside
     assert 'UNEXPECTED' not in result.stdout
     sid, agent = ('codex-id', 'codex') if label == 'api-2' else (
         ('claude-id', 'claude') if label == 'api-3' else ('fg-id', 'claude'))
-    assert f'STOP {sid}' in result.stdout
-    assert f'mini {agent} {sid}' in result.stdout
-    assert f'TB_SID={sid} TB_AGENT={agent}' in result.stdout
-    assert 'zsh -lic _tbeam_land' in result.stdout
-    if agent == 'codex':
-        assert 'INTEGRITY codex-id' in result.stdout
-        assert 'work trees/api/api-2 mini codex codex-id' in result.stdout
+    assert f'|{sid}|{agent}|api|2|' in result.stdout
+    assert 'MOVE |mini|' in result.stdout
+
 
 
 @pytest.mark.parametrize('scenario,rc', [('cancel', 130), ('error', 2), ('empty', 0), ('nonterminal', 1)])
@@ -146,7 +145,7 @@ def test_explicit_and_current_targets_bypass_picker(zsh, args):
       }
     ''' + f't session move {args} --host mini; print -r -- "rc=$?"')
     assert 'rc=0' in result.stdout, result.stdout + result.stderr
-    assert 'mini codex codex-id' in result.stdout
+    assert 'MOVE |mini|' in result.stdout and '|codex-id|codex|' in result.stdout
     assert 'UNEXPECTED' not in result.stdout + result.stderr
 
 
