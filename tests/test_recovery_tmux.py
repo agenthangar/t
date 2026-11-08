@@ -19,8 +19,20 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 
 from conftest import load_script, REPO_ROOT
+from native_agent_fixture import write_native_agent
 
 SID = "01234567-89ab-cdef-0123-456789abcdef"
+# Menu tests isolate dead-pane replacement; the public native lifecycle tests
+# exercise engine policy and writer verification without this adapter seam.
+REPLACE_EFFECTS = "source " + shlex.quote(str(REPO_ROOT / 'zsh/lifecycle.zsh')) + "\n" + '''
+_t_lifecycle_run() {
+  [[ $1 == replace ]] || return 91
+  shift
+  _t_lifecycle_effect replace-preflight "$@" || return $?
+  _t_lifecycle_effect replace "$@"
+}
+'''
+
 pytestmark = pytest.mark.skipif(not shutil.which("tmux") or not shutil.which("zsh"), reason="tmux and zsh required")
 
 
@@ -76,6 +88,10 @@ def test_public_open_new_reaches_ready_with_existing_server(terminal, compatible
     codex_home = home / "codex-home"
     codex_home.mkdir()
     env["CODEX_HOME"] = str(codex_home)
+    (codex_home / 'thread-writer-locks').mkdir()
+    rollout = codex_home / 'sessions/2026/11/07' / ('rollout-2026-11-07T00-00-00-' + SID + '.jsonl')
+    rollout.parent.mkdir(parents=True)
+    rollout.write_text(json.dumps(dict(type='session_meta', payload=dict(id=SID, cwd=str(work), cli_version='0.160.0'))) + '\n')
     env["T_AUTO_TRUST"] = "0"
     env["T_TEST_FOREGROUND"] = "1" if foreground else "0"
     config = codex_home / "config.toml"
@@ -90,8 +106,8 @@ def test_public_open_new_reaches_ready_with_existing_server(terminal, compatible
                "This session requires api_key_model_discovery to be disabled\n"
                "1. Run without daemon this time\n2. Restart with these settings\n3. Cancel")
     executable = bins / "codex"
-    executable.write_text(f'''#!{sys.executable}
-import json, os, pathlib, sys, time
+    write_native_agent(executable, f'''#!{sys.executable}
+import fcntl, json, os, pathlib, sys, time
 if '--help' in sys.argv:
     print('--no-daemon --model --enable --disable')
     sys.exit(0)
@@ -99,6 +115,9 @@ if '--version' in sys.argv:
     print('codex-cli 0.160.0')
     sys.exit(0)
 args = sys.argv[1:]
+if args and args[0] == 'resume':
+    writer = open(pathlib.Path(os.environ['CODEX_HOME']) / 'thread-writer-locks' / (args[1] + '.lock'), 'w')
+    fcntl.flock(writer.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
 if 'app-server' in args:
     if os.environ.get('T_TEST_SERVER') == '1':
         time.sleep(60)
@@ -188,6 +207,7 @@ def test_real_dead_pane_menu_resumes_exact_thread(terminal, choice):
 export PATH={shlex.quote(str(bins))}:$PATH
 source {shlex.quote(str(REPO_ROOT / 'zsh/agent.zsh'))}
 source {shlex.quote(str(REPO_ROOT / 'zsh/resume.zsh'))}
+{REPLACE_EFFECTS}
 _dev_agent_of_session() {{ print codex; }}
 _dev_session_sid() {{ print {SID}; }}
 _dev_session_claude_pid() {{
@@ -487,7 +507,8 @@ def test_real_unverified_notice_is_visible_and_dismissible(terminal, width):
         os.close(master)
 
 
-def test_real_verified_offer_follows_dismissed_unverified_notice(terminal, monkeypatch):
+@pytest.mark.parametrize("dismiss", [b"q", b"\x1b"])
+def test_real_verified_offer_follows_dismissed_unverified_notice(terminal, monkeypatch, dismiss):
     mod, tmux, command, env, home = terminal
     (home / ".zshrc").write_text(f'''
 _dev_agent_of_session() {{ print codex; }}
@@ -524,9 +545,17 @@ _t_restart_slot() {{ print -r -- "$*" > "$HOME/accepted"; }}
         known_owner[0] = True
         watcher.poll()
         assert not list(mod.cache(socket).glob("*.offer"))
-        os.write(master, b"q")
-        until(lambda: watcher.poll() and visible_title(b"CONNECTION FAILED"),
-              detail=lambda: repr(bytes(visible[-1000:])))
+        os.write(master, dismiss)
+        if dismiss == b"\x1b":
+            # Modern tmux returns before menu dismissal. Escape leaves ownership
+            # unresolved; explicit recovery rechecks the owner and clears it.
+            until(lambda: visible_title(b"unsent draft"))
+            assert mod.reopen(socket, pane["pane"], mod.clients(socket, pane["pane"])[0]) == 0
+            assert not mod.notice_path(socket, pane["pane"]).exists()
+            until(lambda: visible_title(b"CONNECTION FAILED"))
+        else:
+            until(lambda: watcher.poll() and visible_title(b"CONNECTION FAILED"),
+                  detail=lambda: repr(bytes(visible[-1000:])))
         os.write(master, b"q")
         until(lambda: not list(mod.cache(socket).glob("*.offer")))
         assert not (home / "accepted").exists()
@@ -602,6 +631,7 @@ time.sleep(60)
 export PATH={shlex.quote(str(bins))}:$PATH
 source {shlex.quote(str(REPO_ROOT / 'zsh/agent.zsh'))}
 source {shlex.quote(str(REPO_ROOT / 'zsh/resume.zsh'))}
+{REPLACE_EFFECTS}
 _dev_agent_of_session() {{ print codex; }}
 _dev_session_sid() {{ :; }}
 _dev_session_claude_pid() {{ cat "$HOME/agent-pid"; }}
@@ -657,6 +687,7 @@ time.sleep(60)
 export PATH={shlex.quote(str(bins))}:$PATH
 source {shlex.quote(str(REPO_ROOT / 'zsh/agent.zsh'))}
 source {shlex.quote(str(REPO_ROOT / 'zsh/resume.zsh'))}
+{REPLACE_EFFECTS}
 _dev_agent_of_session() {{ print codex; }}
 _dev_session_sid() {{ print {SID}; }}
 _dev_session_claude_pid() {{ cat "$HOME/agent-pid"; }}

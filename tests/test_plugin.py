@@ -1,6 +1,7 @@
 """Standalone shell loading and reload behavior in an isolated home."""
 
 import os
+import json
 from pathlib import Path
 import shutil
 import shlex
@@ -9,6 +10,8 @@ import subprocess
 import uuid
 
 import pytest
+
+from native_agent_fixture import write_native_agent
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -174,7 +177,29 @@ def test_repo_launch_and_reattach_on_isolated_tmux(tmp_path, launch, repo):
     session = f"dev-{repo}-4"
     target = "=" + session + ":"
     marker = tmp_path / "started"
-    launch_command = f"printf launched > {shlex.quote(str(marker))}; printf 'agent output\\n'; sleep 60"
+    bins = home / 'bin'
+    bins.mkdir(parents=True)
+    (bins / 't').symlink_to(ROOT / 'bin/t')
+    env['PATH'] = str(bins) + os.pathsep + env['PATH']
+    env['CODEX_HOME'] = str(home / '.codex')
+    sid = '12345678-1234-1234-1234-123456789abc'
+    locks = Path(env['CODEX_HOME']) / 'thread-writer-locks'
+    locks.mkdir(parents=True)
+    rollout = Path(env['CODEX_HOME']) / 'sessions/2026/11/07' / ('rollout-2026-11-07T00-00-00-' + sid + '.jsonl')
+    rollout.parent.mkdir(parents=True)
+    rollout.write_text(json.dumps(dict(type='session_meta', payload=dict(id=sid, cwd=str(home / 'code' / repo), cli_version='0.160.0'))) + '\n')
+    write_native_agent(bins / 'codex', f'''
+import fcntl, os, pathlib, sys, time
+if '--help' in sys.argv:
+    print('--no-daemon')
+    sys.exit(0)
+if 'resume' in sys.argv:
+    writer = open(pathlib.Path(os.environ['CODEX_HOME']) / 'thread-writer-locks' / (sys.argv[2] + '.lock'), 'w')
+    fcntl.flock(writer.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+pathlib.Path({str(marker)!r}).write_text('launched')
+print('agent output', flush=True)
+time.sleep(60)
+''')
     wrapper = f'''tmux() {{
       if [[ $1 == attach-session ]]; then
         shift
@@ -184,19 +209,17 @@ def test_repo_launch_and_reattach_on_isolated_tmux(tmp_path, launch, repo):
       command {shlex.join(command)} "$@"
     }}
     _dev_agent_check() {{ return 0; }}
-    _dev_agent_new_cmd() {{ print -r -- {shlex.quote(launch_command)}; }}
-    _dev_agent_resume_cmd() {{ print -r -- {shlex.quote(launch_command)}; }}
     _dev_repo_prepare() {{ :; }}
     _dev_recovery_watch() {{ :; }}
     '''
     launch_code = (f'_dev_slot_fresh() {{ [[ $2 == 4 ]]; }}; t open {repo} --new --codex' if launch == "new"
-                   else f'_dev_resume_session {session} "$HOME/code/{repo}" thread-1 codex')
+                   else f'_dev_resume_session {session} "$HOME/code/{repo}" {sid} codex')
     local = (f'DEV_REPOS[{repo}]="$HOME/code/{repo}"\n'
              f'DEV_WORKTREE[{repo}]=0\n')
     home.mkdir(parents=True, exist_ok=True)
     (home / ".zshenv").write_text("skip_global_compinit=1\n")
     (home / '.zshrc').write_text(
-        f'source {shlex.quote(str(ROOT / "t.plugin.zsh"))}\n'
+        f'export PATH={shlex.quote(env["PATH"])}\nsource {shlex.quote(str(ROOT / "t.plugin.zsh"))}\n'
         '_dev_repo_prepare() { :; }\n')
     try:
         if "." in repo:

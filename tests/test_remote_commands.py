@@ -292,23 +292,15 @@ _t_resume_host_check here beta api 2; print local=$?
     assert 't session move api 2 --from alpha --host beta' in text
 
 
-@pytest.mark.parametrize('failure', ['stop', 'push', 'sync', 'receipt', 'ssh'])
-def test_sender_failure_never_claims_destination_started(zsh, failure):
-    overrides = {
-        'stop': '_tbeam_kill_owner() { return 2; };',
-        'push': '_dev_worktree_beam_push() { return 1; };',
-        'sync': '_tbeam_sync_transcript() { return 1; };',
-        'receipt': 'ssh() { [[ $* == *_tbeam_land ]] && print invalid; return 0; };',
-        'ssh': 'ssh() { [[ $* == *_tbeam_land ]] && { print dev-api-2; return 23; }; return 0; };',
-    }[failure]
-    result = zsh(SETUP + '''
+@pytest.mark.parametrize('code', [1, 23, 130])
+def test_sender_propagates_engine_failure_without_claiming_readiness(zsh, code):
+    result = zsh(SETUP + r'''
 _dev_self_sid() { :; }
 _codex_thread_lookup() { printf 'codex-id\trollout\t%s\n' "$HOME/code/api"; }
-''' + overrides + 't session move --session codex-id --host mini --detach; print rc=$?')
+''' + f'_t_lifecycle_move() {{ return {code}; }}; '
+        't session move --session codex-id --host mini --detach; print rc=$?')
     text = output(result)
-    assert 'rc=1' in text and '✓ Running' not in text
-    if failure in ('stop', 'push', 'sync'):
-        assert 'zsh -lic _tbeam_land' not in text
+    assert f'rc={code}' in text and '✓ Running' not in text
 
 
 @pytest.mark.parametrize('change', ['none', 'cwd', 'agent', 'id'])
@@ -332,53 +324,13 @@ _dev_session_rows() { printf 'codex-id\t%s\tapi-2\tattached\tactive\tTask\tcodex
 
 def test_surviving_foreground_owner_blocks_landing(zsh):
     result = zsh(SETUP + r'''
-DEV_HANDOFF[codex]=t
-_dev_self_sid() { :; }
-_codex_thread_lookup() { printf 'codex-id\trollout\t%s\n' "$HOME/code/api"; }
-_tbeam_kill_owner() { return 1; }
-_dev_pid_for_sid() { print 123; }
-_t_wait_for_exit() { :; }
-kill() { return 0; }
-t session move --session codex-id --host mini --detach; print rc=$?
+_dev_session_rows() { printf 'saved-id\t/worktree\tapi-2\tattached\tactive\tTask\tclaude\n'; }
+_tbeam_kill_owner() { print -u2 'source still running'; return 1; }
+_t_lifecycle_effect peer-stop token /worktree saved-id claude; print rc=$?
 ''')
     text = output(result)
-    assert 'rc=1' in text and 'did not exit' in text
+    assert 'rc=1' in text and 'source still running' in text
     assert 'SYNC ' not in text and '_tbeam_land' not in text
-
-
-def test_resume_batch_host_conflict_prevents_every_action(zsh, tmp_path):
-    import re
-    from test_resume_multiselect import FZF_ALL
-    stub = tmp_path / 'stubbin/fzf'
-    stub.write_text(FZF_ALL)
-    stub.chmod(0o755)
-    for n in (3, 5):
-        wt = zsh.home / 'code/.worktrees/api' / str(n)
-        wt.mkdir(parents=True)
-        project = zsh.home / '.claude/projects' / re.sub(r'[^A-Za-z0-9]', '-', str(wt))
-        project.mkdir(parents=True)
-        (project / f'c{n}.jsonl').write_text(f'{{"type":"user","message":{{"content":"Task {n}"}}}}\n')
-    wt3 = zsh.home / 'code/.worktrees/api/3'
-    row = f'alpha\tc3\t{wt3}\tapi:fg\tattached\tactive\tLive work\tclaude'
-    result = zsh(HOSTS + f'''
-_dev_rows_all() {{ print -r -- {shlex.quote(row)}; }}
-_t_resume_on_host() {{ print WRONG_RESUME; }}
-_dev_remote_open() {{ print WRONG_ATTACH; }}
-_t_resume api --live --host beta; print rc=$?
-''', _tty=True, FZF_LOG=str(tmp_path / 'fzf.log'))
-    text = output(result)
-    assert 'rc=1' in text and 't session move api' in text, text
-    assert 'WRONG_' not in text and 'send-keys' not in zsh.log.read_text()
-
-
-def test_remote_resume_worker_refuses_other_host_owner(zsh):
-    result = zsh(HOSTS + '''
-_T_RESUME_OWNER_HOST=here _T_RESUME_DESTINATION_HOST=user@beta _t_resume_host_check alpha '' api 2; print remote=$?
-_T_RESUME_OWNER_HOST=here _t_resume_host_check here '' api 2; print local=$?
-''')
-    text = output(result)
-    assert 'remote=1' in text and 'local=0' in text
-    assert '--from alpha --host user@beta' in text
 
 
 @pytest.mark.parametrize('source', ['local', 'alpha'])
@@ -423,7 +375,7 @@ _codex_thread_lookup() { printf 'codex-id\trollout\t%s\n' "$HOME/code/api"; }
 _T_BEAM_HOST_IS_TARGET=1 t session move --session codex-id --host user@beta --detach; print rc=$?
 ''')
     text = output(result)
-    assert 'rc=0' in text and 'SSH user@beta ' in text and 'wrong-host' not in text
+    assert 'rc=0' in text and 'MOVE |user@beta|' in text and 'wrong-host' not in text
 
 
 @pytest.mark.parametrize('args', ['typo', 'typo 2', 'typo --new'])
@@ -637,19 +589,17 @@ def test_native_legacy_routes_reach_guarded_transfer(zsh, route):
 DEV_HANDOFF[codex]=native
 _dev_self_sid() { :; }
 _codex_thread_lookup() { printf 'codex-id\trollout\t%s\n' "$HOME/code/api"; }
-_dev_codex_rollout_integrity() { print -u2 WRONG_INTEGRITY; return 1; }
-_tbeam_kill_owner() { print -u2 WRONG_STOP; return 1; }
-_dev_worktree_beam_push() { print -u2 WRONG_CHECKPOINT; return 1; }
-_tbeam_sync_transcript() { print -u2 WRONG_SYNC; return 1; }
-_tbeam_pull_transcript() { print -u2 WRONG_SYNC; return 1; }
-ssh() { [[ $* == *_dev_codex_rollout_integrity* ]] && { print -u2 WRONG_INTEGRITY; return 1; }; printf 'codex-id\t%s\tapi-2\tattached\tactive\tTask\tcodex\n' "$HOME/code/api"; }
+_dev_repo_of_dir() { printf 'api\t2\n'; }
+_t_lifecycle_move() { print -u2 GUARDED_MOVE; return 1; }
+_t_lifecycle_run() { print -u2 "GUARDED_$1"; return 1; }
+ssh() { printf 'codex-id\t%s\tapi-2\tattached\tactive\tTask\tcodex\n' "$HOME/code/api"; }
 '''
     invocation = {'send': 't session move --session codex-id --host mini --detach',
                   'pull': '_dev_pull mini mini api 2',
                   'saved': '_t_resume_on_host mini codex-id "$HOME/code/api" codex detach'}[route]
     result = zsh(setup + invocation + '; print rc=$?')
     text = output(result)
-    assert 'rc=1' in text and 'WRONG_' in text
+    assert 'rc=1' in text and 'GUARDED_' in text
     assert 'native desktop app' not in text
 
 
@@ -948,3 +898,38 @@ words=(t remote kill api 9 --); CURRENT=6; _t
     assert 'kill\n' in text and 'repo or slot\n' in text and 'api\n' in text
     assert 'all\n' in text and '--yes\n' in text
     assert 'alpha\n' not in text and '--host\n' not in text and '--new\n' not in text
+
+
+def test_resume_batch_host_conflict_prevents_every_action(zsh, tmp_path):
+    import re
+    from test_resume_multiselect import FZF_ALL
+    stub = tmp_path / 'stubbin/fzf'
+    stub.write_text(FZF_ALL)
+    stub.chmod(0o755)
+    for n in (3, 5):
+        wt = zsh.home / 'code/.worktrees/api' / str(n)
+        wt.mkdir(parents=True)
+        project = zsh.home / '.claude/projects' / re.sub(r'[^A-Za-z0-9]', '-', str(wt))
+        project.mkdir(parents=True)
+        (project / f'c{n}.jsonl').write_text(f'{{"type":"user","message":{{"content":"Task {n}"}}}}\n')
+    wt3 = zsh.home / 'code/.worktrees/api/3'
+    row = f'alpha\tc3\t{wt3}\tapi:fg\tattached\tactive\tLive work\tclaude'
+    result = zsh(HOSTS + f'''
+_dev_rows_all() {{ print -r -- {shlex.quote(row)}; }}
+_t_resume_on_host() {{ print WRONG_RESUME; }}
+_dev_remote_open() {{ print WRONG_ATTACH; }}
+_t_resume api --live --host beta; print rc=$?
+''', _tty=True, FZF_LOG=str(tmp_path / 'fzf.log'))
+    text = output(result)
+    assert 'rc=1' in text and 't session move api' in text, text
+    assert 'WRONG_' not in text and 'send-keys' not in zsh.log.read_text()
+
+
+def test_remote_resume_worker_refuses_other_host_owner(zsh):
+    result = zsh(HOSTS + '''
+_T_RESUME_OWNER_HOST=here _T_RESUME_DESTINATION_HOST=user@beta _t_resume_host_check alpha '' api 2; print remote=$?
+_T_RESUME_OWNER_HOST=here _t_resume_host_check here '' api 2; print local=$?
+''')
+    text = output(result)
+    assert 'remote=1' in text and 'local=0' in text
+    assert '--from alpha --host user@beta' in text

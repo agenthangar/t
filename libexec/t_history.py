@@ -23,6 +23,10 @@ import uuid
 _spinner = runpy.run_path(str(Path(__file__).with_name("t_progress.py")))["spinner"]
 _resolve_repo = runpy.run_path(str(Path(__file__).with_name("t_repos.py")))["resolve_repo"]
 
+_codex_rows = runpy.run_path(str(Path(__file__).with_name("t_codex_store.py")))["rows"]
+
+_LIFECYCLE = runpy.run_path(str(Path(__file__).with_name("t_lifecycle.py")))
+
 VERSION = 1
 PARSER_VERSION = 6
 _DISPLAY = runpy.run_path(str(Path(__file__).with_name('t_session_details.py')))
@@ -971,7 +975,7 @@ class HistoryCommand:
 
     def scope(self, target):
         if len(target) > 2:
-            raise HistoryError('usage: t history [repo] [slot]')
+            raise HistoryError('usage: t resume [repo] [slot]')
         inferred_repo, inferred_slot = self.cfg.repo_of_dir(os.getcwd())
         repo = target[0] if target else inferred_repo
         slot = target[1] if len(target) == 2 else inferred_slot if not target else ''
@@ -1057,14 +1061,13 @@ class HistoryCommand:
                     self.ingest(value, alias, path)
         for database in sorted(codex.glob('state_*.sqlite'), reverse=True):
             try:
-                with closing(sqlite3.connect(database.resolve().as_uri() + '?mode=ro', uri=True, timeout=.2)) as db:
-                    db.row_factory = sqlite3.Row
-                    for row in db.execute('select * from threads'):
-                        row = dict(row)
-                        if '"subagent"' in str(row.get('source', '')):
-                            continue
-                        value = dict(agent='codex', sid=row.get('id', ''), title=clean(row.get('name') or row.get('title') or row.get('first_user_message')), summary=clean(row.get('name') or row.get('title') or row.get('first_user_message')), summary_source='index', model=clean(row.get('model')) or '-', model_source='index' if row.get('model') else 'unknown', updated=timestamp(row.get('updated_at')), archived=bool(row.get('archived')), associations=[dict(workspace=row.get('cwd', ''), branch=clean(row.get('git_branch')), commit=row.get('git_sha') or '', evidence='index', observed=timestamp(row.get('updated_at')))], sources=[dict(host='local', path=row.get('rollout_path') or '', available=Path(row.get('rollout_path') or '').is_file())])
-                        self.ingest(value, alias)
+                for row in _codex_rows(database, 'select * from threads', initialize_sidecars=False,
+                                       timeout=.2, row_factory=sqlite3.Row):
+                    row = dict(row)
+                    if '"subagent"' in str(row.get('source', '')):
+                        continue
+                    value = dict(agent='codex', sid=row.get('id', ''), title=clean(row.get('name') or row.get('title') or row.get('first_user_message')), summary=clean(row.get('name') or row.get('title') or row.get('first_user_message')), summary_source='index', model=clean(row.get('model')) or '-', model_source='index' if row.get('model') else 'unknown', updated=timestamp(row.get('updated_at')), archived=bool(row.get('archived')), associations=[dict(workspace=row.get('cwd', ''), branch=clean(row.get('git_branch')), commit=row.get('git_sha') or '', evidence='index', observed=timestamp(row.get('updated_at')))], sources=[dict(host='local', path=row.get('rollout_path') or '', available=Path(row.get('rollout_path') or '').is_file())])
+                    self.ingest(value, alias)
                 break
             except sqlite3.Error:
                 continue
@@ -1118,7 +1121,7 @@ class HistoryCommand:
                         row[field] = [{**value, 'host': host} for value in row.get(field, [])]
                     self.store.merge(row)
             except (HistoryError, ValueError, TypeError, AttributeError):
-                print(f't history: {host} unavailable; retained cached history', file=sys.stderr)
+                print(f't resume: {host} unavailable; retained cached history', file=sys.stderr)
 
     def owners(self, all_hosts=False):
         snippet = '_DEV_PS_AT=0; _DEV_PS_COMM=(); ' + ('_dev_rows_all --best-effort' if all_hosts else "_dev_session_rows --details | awk 'NF {print \"local\\t\" $0}'")
@@ -1151,19 +1154,7 @@ class HistoryCommand:
             row['display'] = history_display(row, alias)
             if not slot or any(a.get('slot') == slot for a in row['associations']):
                 rows.append(row)
-        merged = {}
-        for row in rows:
-            key = row['agent'], row['sid']
-            if key in merged:
-                previous = merged[key]
-                newer = row if row.get('updated', 0) >= previous.get('updated', 0) else previous
-                combined = {**previous, **newer}
-                for field in ('associations', 'sources', 'prs', 'mentions'):
-                    combined[field] = list({json.dumps(value, sort_keys=True): value for value in previous.get(field, []) + row.get(field, [])}.values())
-                merged[key] = combined
-            else:
-                merged[key] = row
-        return list(merged.values())
+        return _RESUME_SOURCE['merge_records'](rows)
 
     def branch_prs(self, rows, refresh=False):
         grouped = {}
@@ -1346,7 +1337,7 @@ class HistoryCommand:
 
     def attach_command(self, owner):
         if owner.get('state') == 'app':
-            raise HistoryError('conversation is owned by the desktop app on ' + owner['host'] + '; release it there, then retry t session history')
+            raise HistoryError('conversation is owned by the desktop app on ' + owner['host'] + '; release it there, then retry t session resume')
         if ':' in owner['slot']:
             raise HistoryError('conversation is already running in foreground ' + owner['slot'] + ' on ' + owner['host'] + '; return to that terminal or use t session push there for an explicit handoff')
         # Attach-only helper rechecks exact ID/path/agent and has no launch fallback.
@@ -1373,7 +1364,7 @@ class HistoryCommand:
                 return 130
             except (HistoryError, OSError, ValueError) as error:
                 print(f'Resume stopped after an error\nSelection: {row["agent"]} {row["sid"]}\nReason: {error}', file=sys.stderr)
-                print('Retry selection: t session history ' + shlex.quote(alias), file=sys.stderr)
+                print('Retry selection: t session resume ' + shlex.quote(alias), file=sys.stderr)
                 for owner in owners:
                     print('Already resumed; attach: ' + shlex.join(self.attach_command(owner)), file=sys.stderr)
                 print(f'Not attempted: {len(rows) - index - 1} selection(s)', file=sys.stderr)
@@ -1460,30 +1451,11 @@ class HistoryCommand:
 
     @contextmanager
     def launch_claims(self, destination, sid):
-        """Speak zsystem flock's POSIX protocol across restore and claimed launch."""
-        cache = Path(os.environ.get('XDG_CACHE_HOME') or Path.home() / '.cache') / 'claude-sessions'
-        held = []
         try:
-            for directory, identity in [('app-handoffs', os.path.realpath(destination)), ('launch-sids', sid)]:
-                path = cache / directory / (hashlib.sha256(identity.encode()).hexdigest() + '.lock')
-                path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-                stream = path.open('a')
-                os.chmod(path, 0o600)
-                held.append(stream)
-                deadline = time.monotonic() + 15
-                with _spinner("Waiting for conversation ownership"):
-                    while True:
-                        try:
-                            fcntl.lockf(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                            break
-                        except BlockingIOError:
-                            if time.monotonic() >= deadline:
-                                raise HistoryError('timed out waiting for conversation/workspace ownership claim')
-                            time.sleep(.05)
-            yield
-        finally:
-            for stream in reversed(held):
-                stream.close()
+            with _LIFECYCLE['launch_claims'](destination, sid):
+                yield
+        except _LIFECYCLE['LifecycleError'] as error:
+            raise HistoryError(str(error)) from error
 
     def reserve(self, path):
         marker = Path(path).parent / f'.{Path(path).name}.history-reservation'
@@ -1492,7 +1464,7 @@ class HistoryCommand:
                 os.chmod(marker, 0o600)
                 stream.write(self.reservation_token)
         except FileExistsError as error:
-            raise HistoryError('workspace is being prepared by another history action') from error
+            raise HistoryError('workspace is being prepared by another session operation') from error
         self.reservation = marker
 
     def codex_released(self, row, source, *, workspace=None):
@@ -1505,7 +1477,7 @@ class HistoryCommand:
                 ownership_cwd=workspace,
                 codex_home=str(Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex')),
                 rollout=str(source), archived=bool(row.get('archived')) and source.resolve().is_relative_to((Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex') / 'archived_sessions').resolve()),
-                retry='Retry: t session history, then select the conversation again.')
+                retry='Retry: t session resume, then select the conversation again.')
         except ValueError as error:
             raise HistoryError(str(error)) from error
 
@@ -1513,8 +1485,8 @@ class HistoryCommand:
         codex = Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex')
         for database in sorted(codex.glob('state_*.sqlite'), reverse=True):
             try:
-                with closing(sqlite3.connect(database.resolve().as_uri() + '?mode=ro', uri=True, timeout=.2)) as db:
-                    record = db.execute('select rollout_path from threads where id=?', (row['sid'],)).fetchone()
+                matches = _codex_rows(database, 'select rollout_path from threads where id=?', (row['sid'],), timeout=.2)
+                record = matches[0] if matches else None
                 if record and record[0] and Path(record[0]).is_file():
                     value = transcript(Path(record[0]), 'codex')
                     if self.verify_source(value, row):
@@ -1529,22 +1501,11 @@ class HistoryCommand:
 
     @contextmanager
     def native_writer_claim(self, sid):
-        folder = Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex') / 'thread-writer-locks'
-        if not folder.is_dir() or folder.is_symlink():
-            raise HistoryError('cannot safely extend a canonical Codex rollout without its native writer-lock directory')
-        path = folder / (sid + '.lock')
-        descriptor = os.open(path, os.O_RDWR | os.O_CREAT | getattr(os, 'O_NOFOLLOW', 0), 0o600)
         try:
-            try:
-                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError as error:
-                raise HistoryError('Codex claimed the selected writer before restore; no transcript changed') from error
-            inode, current = os.fstat(descriptor), path.lstat()
-            if (inode.st_dev, inode.st_ino) != (current.st_dev, current.st_ino):
-                raise HistoryError('Codex writer lock changed before restore')
-            yield
-        finally:
-            os.close(descriptor)
+            with _LIFECYCLE['native_writer_claim'](sid):
+                yield
+        except ValueError as error:
+            raise HistoryError(str(error)) from error
 
     def publish_transcript(self, target, data, row):
         if row['agent'] == 'codex' and target.exists() and target.read_bytes() != data:
@@ -1655,14 +1616,14 @@ class HistoryCommand:
             owners = self.owners(True)
             matches = [o for o in owners if o['sid'] == row['sid'] and o['agent'] == row['agent']]
             if matches:
-                raise HistoryError('conversation became live while selecting; rerun history to attach to its owner')
+                raise HistoryError('conversation became live while selecting; rerun t resume to attach to its owner')
             try:
                 destination, slot, created = self.destination(alias, row, revision, owners)
                 print(f'Preparing {row["agent"]} {row["sid"]} in {destination} at {revision}', file=sys.stderr)
                 with self.launch_claims(destination, row['sid']):
                     final_owners = self.owners(True)
                     if any(owner['sid'] == row['sid'] and owner['agent'] == row['agent'] for owner in final_owners) or self.destination_busy(alias, slot, (destination,), final_owners):
-                        raise HistoryError('conversation or workspace became live before restore; reopen history')
+                        raise HistoryError('conversation or workspace became live before restore; rerun t resume')
                     if not created and association.get('generation') != generation(destination):
                         raise HistoryError('workspace generation changed before restore')
                     actual = run(['git', '-C', destination, 'rev-parse', 'HEAD']).strip()
@@ -1794,7 +1755,7 @@ class HistoryCommand:
             except HistoryCancelled:
                 return 130
             except (HistoryError, OSError, ValueError) as error:
-                print(f't history: {error}', file=sys.stderr)
+                print(f't resume: {error}', file=sys.stderr)
                 return 1
         print('No retained conversations for this slot.')
         return 0

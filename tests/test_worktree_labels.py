@@ -2,6 +2,7 @@
 from pathlib import Path
 import re
 import shlex
+import subprocess
 
 import pytest
 
@@ -132,17 +133,24 @@ def test_transcript_projection_keeps_exact_recorded_workspace(tmp_path, monkeypa
 @pytest.mark.parametrize('leaf', ['4', 'api-4'])
 def test_public_move_refuses_old_peer_before_stopping_or_copying(tmp_path, leaf):
     cwd = tmp_path / 'home/work trees/api' / leaf
+    cwd.mkdir(parents=True)
+    for args in (['init', '-q', '-b', 'work'],
+                 ['-c', 'user.name=Test', '-c', 'user.email=test@example.invalid',
+                  '-c', 'commit.gpgsign=false', 'commit', '--allow-empty', '-qm', 'initial'],
+                 ['remote', 'add', 'origin', 'https://example.invalid/api.git']):
+        subprocess.run(['git', '-C', str(cwd), *args], check=True, capture_output=True)
     result = configured_shell(tmp_path, f'''
 DEV_HANDOFF[codex]=t  # Exercise guarded t transfer to an older peer.
 rsync() {{ print -u2 UNEXPECTED_COPY; return 99; }}
 ssh() {{ return 1; }}
 _dev_self_sid() {{ :; }}
-_codex_thread_lookup() {{ printf 'exact-id\\trollout\\t%s\\n' {shlex.quote(str(cwd))}; }}
+_codex_thread_lookup() {{ printf '12345678-1234-1234-1234-123456789abc\\trollout\\t%s\\n' {shlex.quote(str(cwd))}; }}
+_dev_session_rows() {{ printf '12345678-1234-1234-1234-123456789abc\\t%s\\tapi-4\\tdetached\\tactive\\tTask\\tcodex\\n' {shlex.quote(str(cwd))}; }}
 _dev_app_slot_reserved() {{ return 1; }}
 _dev_codex_rollout_integrity() {{ return 0; }}
 _tbeam_kill_owner() {{ print -u2 UNEXPECTED_STOP; return 99; }}
 _dev_worktree_beam_push() {{ print -u2 UNEXPECTED_PUSH; return 99; }}
-_t_beam -s exact-id test-host --detach
+_t_beam -s 12345678-1234-1234-1234-123456789abc test-host --detach
 ''')
     assert result.returncode != 0
     assert 'source was not stopped' in result.stderr

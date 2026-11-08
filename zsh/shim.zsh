@@ -132,6 +132,20 @@ _t_dispatch() {
   if [[ $shell_verb == resume ]] &&
      { [[ ${#shell_args} == 1 && ${shell_args[1]} == <-> ]] ||
        [[ ${#shell_args} == 2 && ${shell_args[1]} != -* && ${shell_args[2]} == <-> ]]; }; then
+    # An explicit retry reconciles a recorded move before browsing saved data.
+    local recovery_repo recovery_slot recovery recovery_rc=0
+    if (( $#shell_args == 2 )); then
+      recovery_repo=$(_dev_resolve_repo "$shell_args[1]") || recovery_repo=$shell_args[1]
+      recovery_slot=$shell_args[2]
+    else
+      recovery_repo=$(_t_infer_repo)
+      recovery_slot=$shell_args[1]
+    fi
+    if [[ -n $recovery_repo ]]; then
+      recovery=$(python3 "$T_HOME/libexec/t_lifecycle.py" pending "$recovery_repo" "$recovery_slot") || recovery_rc=$?
+      if (( recovery_rc == 0 )); then eval "$recovery"; return $?
+      elif (( recovery_rc != 3 )); then return $recovery_rc; fi
+    fi
     command t session history "${shell_args[@]}"
     return $?
   fi
@@ -596,7 +610,7 @@ _t_open_selected() {
     fields=("${(@ps:\t:)row}")
     host=$fields[1]; label=$fields[2]; state=$fields[3]
     if [[ $state == app ]]; then
-      print -u2 -- "t: $label on $host uses a retired integration; release its owner there, then use t session history"
+      print -u2 -- "t: $label on $host uses a retired integration; release its owner there, then use t session resume"
       rc=1
       continue
     fi
@@ -728,7 +742,7 @@ _t() {
   case $group in
     mcp) actions=(status install uninstall) ;;
     remote) actions=(open move resume kill) ;;
-    session) actions=(open list ls close restart push pop resume history cd move read view-plan paste search goal) ;;
+    session) actions=(open list ls close restart push pop resume cd move read view-plan paste search goal) ;;
     repo) actions=(list ls cd locate create clone add) ;;
     cursor) actions=(list ls resume send) ;;
     agentcore) actions=(invoke stop) ;;

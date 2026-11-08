@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import pty
 import runpy
+import select
 import shlex
 import shutil
 import sqlite3
@@ -118,7 +119,8 @@ int main(int argc, char **argv) {
     f = fopen(registry, "w");
     if (f) { fprintf(f, "%s\t%s\n", sid, cwd); fclose(f); }
   }
-  sleep(60);
+  const char *seconds = getenv("T_TEST_AGENT_SECONDS");
+  sleep(seconds ? atoi(seconds) : 60);
   return 0;
 }
 ''')
@@ -156,21 +158,27 @@ def _shell_tty(base, env, script):
                                    stdout=slave, stderr=slave, start_new_session=True)
         os.close(slave)
         slave = -1
-        try:
-            process.wait(timeout=25)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait(timeout=5)
-            pytest.fail("isolated remote command did not exit")
+        # Drain while the command runs: a progress rail can fill the PTY buffer
+        # and block the child if the parent waits for exit before reading.
         chunks = []
+        deadline = time.monotonic() + 25
         while True:
-            try:
-                chunk = os.read(master, 65536)
-            except OSError:
+            if select.select([master], [], [], 0.1)[0]:
+                try:
+                    chunk = os.read(master, 65536)
+                except OSError:
+                    break
+                if not chunk:
+                    break
+                chunks.append(chunk)
+            if time.monotonic() >= deadline:
+                process.kill()
+                process.wait(timeout=5)
+                pytest.fail("isolated remote command did not exit: " +
+                            b"".join(chunks).decode(errors="replace"))
+            if process.poll() is not None and not select.select([master], [], [], 0)[0]:
                 break
-            if not chunk:
-                break
-            chunks.append(chunk)
+        process.wait(timeout=5)
         return subprocess.CompletedProcess(argv, process.returncode,
                                            b"".join(chunks).decode(errors="replace"), "")
     finally:
@@ -245,6 +253,51 @@ def test_concurrent_alias_opens_keep_one_worktree_owner(lifecycle):
     assert len(rows) == 1 and rows[0].endswith(":" + str(worktree)), (results, rows)
     attached = _shell(base, env, "t session open alias 1 --cli")
     assert attached.returncode == 0, attached.stderr
+    assert log.read_text().splitlines() == launches
+
+
+@pytest.mark.parametrize("agent", ["codex", "claude"])
+def test_public_list_keeps_live_owner_and_worktree_unchanged(lifecycle, agent):
+    base, env = lifecycle
+    opened = _shell(base, env, "t session open repo 1 --" + agent)
+    assert opened.returncode == 0, opened.stderr or opened.stdout
+    log = base / "agents.log"
+    launches = _until(lambda: log.read_text().splitlines() if log.exists() else None)
+    worktree = base / "worktrees/repo/repo-1"
+    marker = worktree / "unfinished.txt"
+    marker.write_text("keep these edits\n")
+    before = _run(["git", "-C", str(worktree), "status", "--porcelain"], env=env, cwd=base)
+    listed = _shell(base, env, "t session list repo")
+    assert listed.returncode == 0, listed.stderr or listed.stdout
+    assert "repo-1" in listed.stdout
+    assert log.read_text().splitlines() == launches
+    assert marker.read_text() == "keep these edits\n"
+    after = _run(["git", "-C", str(worktree), "status", "--porcelain"], env=env, cwd=base)
+    assert before.returncode == after.returncode == 0
+    assert before.stdout == after.stdout
+    alive = _run([str(base / "bin/tmux"), "has-session", "-t", "=dev-repo-1:"], env=env, cwd=base)
+    assert alive.returncode == 0, alive.stderr
+
+
+@pytest.mark.parametrize("agent", ["codex", "claude"])
+def test_public_close_stops_owner_and_preserves_uncommitted_work(lifecycle, agent):
+    base, env = lifecycle
+    opened = _shell(base, env, "t session open repo 1 --" + agent)
+    assert opened.returncode == 0, opened.stderr or opened.stdout
+    log = base / "agents.log"
+    launches = _until(lambda: log.read_text().splitlines() if log.exists() else None)
+    worktree = base / "worktrees/repo/repo-1"
+    marker = worktree / "unfinished.txt"
+    marker.write_text("keep these edits\n")
+    head = _run(["git", "-C", str(worktree), "rev-parse", "HEAD"], env=env, cwd=base)
+    closed = _shell(base, env, "t session close repo 1 -y")
+    assert closed.returncode == 0, closed.stderr or closed.stdout
+    alive = _run([str(base / "bin/tmux"), "has-session", "-t", "=dev-repo-1:"], env=env, cwd=base)
+    assert alive.returncode != 0
+    assert marker.read_text() == "keep these edits\n"
+    assert (worktree / ".git").exists()
+    after = _run(["git", "-C", str(worktree), "rev-parse", "HEAD"], env=env, cwd=base)
+    assert head.returncode == after.returncode == 0 and head.stdout == after.stdout
     assert log.read_text().splitlines() == launches
 
 

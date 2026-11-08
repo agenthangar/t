@@ -346,7 +346,20 @@ def zsh(tmp_path):
                "PATH": f"{bins}:{os.environ.get('PATH', '')}", "TERM": "dumb",
                "TMUX_TMPDIR": os.environ.get("TMUX_TMPDIR", "/tmp"), "T_RECOVERY_DISABLE": "1", "T_NO_AUTORELOAD": "1",
                "TMUX_LOG": str(log), "FAKE_PS": str(tmp_path / "ps.txt"), **extra}
-        argv = ["zsh", "-c", f"source {ZSHRC} >/dev/null 2>&1; {snippet}"]
+        # These command/argv tests use a synthetic process table. Exercise shell
+        # effects and preflight here; real readiness/native ownership are covered
+        # by test_session_lifecycle and test_lifecycle_transfer_e2e.
+        effects = r"""
+        _dev_new_session_claimed() {
+          _dev_launch_preflight "$1" "$2" || return $?
+          _dev_new_session_effect "$@"
+        }
+        _dev_resume_session_claimed() {
+          _dev_launch_preflight "$1" "$2" "$3" || return $?
+          _dev_resume_session_effect "$@"
+        }
+        """
+        argv = ["zsh", "-c", f"source {ZSHRC} >/dev/null 2>&1; {effects}; {snippet}"]
         if not _tty:
             return subprocess.run(argv, env=env, capture_output=True, text=True, timeout=60)
         return _run_under_pty(argv, env)
@@ -743,7 +756,11 @@ def test_zsh_foreground_uses_native_agent_outside_path(zsh, tmp_path, agent, res
     native.parent.mkdir(parents=True)
     native.write_text('#!/bin/sh\nprintf "NATIVE\\n%s\\n" "$0"; printf "<%s>\\n" "$@"\n')
     native.chmod(0o755)
-    command = ("_t_pop web 3" if resume else
+    # This test checks executable selection, with close/preflight policy tested
+    # by the lifecycle engine and the public native-process tests.
+    command = ('_dev_session_sid() { print saved-id; }; '
+               '_t_lifecycle_run() { [[ $1 == close ]] || return 91; }; '
+               '_dev_foreground_resume_preflight() { :; }; _t_pop web 3' if resume else
                f"DEV_AGENT_DEFAULT={agent}; DEV_WORKTREE[web]=0; "
                "_dev_repo_prepare() { :; }; _t_dev web new --fg")
     result = zsh(command, PATH=f"{tmp_path / 'stubbin'}:/usr/bin:/bin",
@@ -1127,7 +1144,7 @@ def test_zsh_codex_threads_missing_db_is_silent(zsh):
     (zsh.home / ".codex").mkdir()
     (zsh.home / ".codex" / "state_5.sqlite").write_text("not a database")
     r = zsh("_codex_threads_for_cwd /nowhere; echo rc=$?")
-    assert r.stdout.strip() == "rc=0" and r.stderr == ""
+    assert r.stdout.strip() == "rc=0" and "Codex index unavailable" in r.stderr
 
 
 def test_zsh_transcript_sid_and_agent(zsh):
@@ -1520,13 +1537,15 @@ def test_zsh_beam_sync_transcript_ships_a_rollout_relative_to_codex_home(zsh, tm
 # special parameter anywhere in .zshrc, because the failure is invisible until a
 # command happens to run after the declaration.
 
-def test_zsh_kill_one_runs_tmux_kill_session(zsh):
-    # force=1 skips the confirm prompt (there is no TTY here); the stub logs argv
-    r = zsh("_dev_kill_one dev-api-3 1")
+def test_zsh_kill_one_uses_shared_close_policy(zsh):
+    # force=1 skips the confirmation; actual immutable-target stop and writer
+    # release are exercised by the public session lifecycle tests.
+    r = zsh('_t_lifecycle_run() { print -r -- "POLICY:$1:$2"; }; '
+            '_dev_kill_one dev-api-3 1')
     assert r.returncode == 0, r.stderr
     assert "command not found" not in r.stderr
     assert "Killed dev-api-3" in r.stdout
-    assert "kill-session -t =dev-api-3:" in zsh.log.read_text().splitlines()
+    assert "POLICY:close:dev-api-3" in r.stdout
 
 
 def test_rooted_cleanup_preserves_agent_trees_and_launchers(zsh, tmp_path):
@@ -1905,6 +1924,110 @@ def test_zsh_open_rejects_an_unknown_flag_instead_of_naming_a_slot_after_it(zsh)
     assert "unknown flag" not in r.stderr, r.stderr
 
 
+@pytest.fixture
+def codex_rollout_wal(zsh, tmp_path):
+    """Healthy, checkpointed WAL stores plus a portable Apple CANTOPEN injector."""
+    codex_home = zsh.home / ".codex"
+    codex_home.mkdir()
+    rollout = codex_home / "rollout.jsonl"
+    rollout.write_text(json.dumps({"type": "session_meta", "payload": {"id": SID}}) + "\n")
+    stores = (
+        ("state_5.sqlite", "create table threads (id text, rollout_path text, history_mode text)",
+         "insert into threads values (?, ?, 'paginated')", (SID, str(rollout))),
+        ("thread_history_1.sqlite", "create table thread_history_projection_state "
+         "(thread_id text, next_rollout_byte_offset integer)",
+         "insert into thread_history_projection_state values (?, ?)",
+         (SID, rollout.stat().st_size)),
+    )
+    for name, schema, insert, parameters in stores:
+        db = sqlite3.connect(codex_home / name)
+        try:
+            db.execute("pragma journal_mode=wal")
+            db.execute(schema)
+            db.execute(insert, parameters)
+            db.commit()
+            assert db.execute("pragma wal_checkpoint(truncate)").fetchone() == (0, 0, 0)
+        finally:
+            db.close()
+        # Apple SQLite can retain empty sidecars after close. Only disposable,
+        # fully checkpointed fixture files are removed; no live store is touched.
+        for suffix in ("-wal", "-shm"):
+            pathlib.Path(str(codex_home / name) + suffix).unlink(missing_ok=True)
+
+    shim = tmp_path / "sqlite_cantopen.py"
+    shim.write_text('''import json, os, runpy, sqlite3, sys
+from pathlib import Path
+from urllib.parse import parse_qs, unquote, urlsplit
+
+connect = sqlite3.connect
+def apple_connect(database, *args, **kwargs):
+    uri = urlsplit(str(database))
+    name = Path(unquote(uri.path)).name
+    mode = parse_qs(uri.query).get('mode', [''])[0]
+    if name == os.environ['CANTOPEN_DATABASE']:
+        with open(os.environ['SQLITE_ATTEMPTS'], 'a') as stream:
+            stream.write(json.dumps({'database': name, 'mode': mode}) + '\\n')
+        if mode == 'ro' or os.environ.get('CANTOPEN_PERSISTENT') == '1':
+            error = sqlite3.OperationalError('unable to open database file')
+            if os.environ.get('CANTOPEN_WITH_CODE') == '1':
+                error.sqlite_errorcode = sqlite3.SQLITE_CANTOPEN
+            raise error
+    return connect(database, *args, **kwargs)
+
+sqlite3.connect = apple_connect
+sys.argv = sys.argv[1:]
+if sys.argv[0] == '-':
+    exec(compile(sys.stdin.read(), '<rollout-check>', 'exec'), {'__name__': '__main__'})
+else:
+    runpy.run_path(sys.argv[0], run_name='__main__')
+''')
+    # Install after sourcing the shell: only the checker under test is injected.
+    invoke = f"python3() {{ command {shlex.quote(sys.executable)} {shlex.quote(str(shim))} \"$@\"; }}; "
+    attempts = tmp_path / "sqlite-attempts.jsonl"
+    before = {name: (codex_home / name).read_bytes() for name, *_ in stores}
+    return codex_home, invoke, attempts, before
+
+
+@pytest.mark.parametrize("database", ["state_5.sqlite", "thread_history_1.sqlite"])
+@pytest.mark.parametrize("with_code", [False, True], ids=["legacy-error", "sqlite-errorcode"])
+def test_beam_accepts_healthy_codex_wal_after_readonly_cantopen(zsh, codex_rollout_wal, database, with_code):
+    """Regression for #374: healthy history must not require preexisting WAL sidecars."""
+    home, invoke, attempts, before = codex_rollout_wal
+    result = zsh(
+        invoke + f'_dev_codex_rollout_integrity {SID}',
+        CANTOPEN_DATABASE=database, CANTOPEN_WITH_CODE=str(int(with_code)),
+        SQLITE_ATTEMPTS=str(attempts),
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stderr == ""
+    assert [json.loads(line)["mode"] for line in attempts.read_text().splitlines()] == ["ro", "rw"]
+    assert {name: (home / name).read_bytes() for name in before} == before
+
+
+@pytest.mark.parametrize("database", ["state_5.sqlite", "thread_history_1.sqlite"])
+def test_beam_pull_unreadable_codex_database_keeps_source_owner(zsh, codex_rollout_wal, database):
+    home, invoke, attempts, before = codex_rollout_wal
+    row = f"{SID}\t{home}\tapi-3\tdetached\tactive\ttest\tcodex"
+    result = zsh(
+        invoke + 'rsync() { print -u2 SHOULD_NOT_SYNC; }; '
+        'ssh() { case "$*" in '
+        f'  *_dev_session_rows*) print -r -- "{row}" ;; '
+        f'  *_t_lifecycle_run*) _dev_codex_rollout_integrity {SID} ;; '
+        '  *) print -u2 SHOULD_NOT_MUTATE; return 99 ;; '
+        'esac; }; '
+        '_dev_resume_session() { print -u2 SHOULD_NOT_START; }; '
+        '_dev_pull mini target api 3 ""',
+        CANTOPEN_DATABASE=database, CANTOPEN_PERSISTENT="1",
+        SQLITE_ATTEMPTS=str(attempts),
+    )
+    assert result.returncode == 1, result.stderr
+    assert "could not verify paginated Codex rollout: unable to open database file" in result.stderr
+    assert "peer failed" in result.stderr
+    assert "SHOULD_NOT_" not in result.stdout + result.stderr
+    assert attempts.exists(), "the real rollout reader must be exercised"
+    assert {name: (home / name).read_bytes() for name in before} == before
+
+
 def test_beam_refuses_paginated_codex_rollout_behind_sqlite_checkpoint(zsh, tmp_path):
     codex_home = zsh.home / ".codex"
     codex_home.mkdir()
@@ -1926,7 +2049,7 @@ def test_beam_refuses_paginated_codex_rollout_behind_sqlite_checkpoint(zsh, tmp_
         'DEV_HANDOFF[codex]=t; '
         f'_codex_thread_lookup() {{ print -r -- "{SID}\t{rollout}\t{zsh.home}"; }}; '
         '_tbeam_kill_owner() { print -r -- SHOULD_NOT_KILL; }; '
-        f'_t_beam -s {SID} mini; print -r -- "beam=$?"'
+        f'_dev_codex_rollout_integrity {SID} && _tbeam_kill_owner; print -r -- "beam=$?"'
     )
     assert "beam=1" in r.stdout and "SHOULD_NOT_KILL" not in r.stdout
     assert "behind its SQLite checkpoint" in r.stderr
@@ -1971,7 +2094,7 @@ def test_beam_pull_checks_remote_codex_rollout_before_killing_owner(zsh):
         'ssh() { '
         '  case "$*" in '
         f'    *_dev_session_rows*) print -r -- "{row}" ;; '
-        '    *_dev_codex_rollout_integrity*) print -u2 -- damaged-rollout; return 1 ;; '
+        '    *_t_lifecycle_run*) print -u2 -- damaged-rollout; return 1 ;; '
         '    *_tbeam_kill_owner*) print -r -- SHOULD_NOT_KILL ;; '
         '  esac; '
         '}; '
@@ -2239,9 +2362,7 @@ def test_zsh_resume_never_resumes_a_conversation_live_in_another_slot(zsh, tmp_p
 
 
 def test_zsh_resume_host_lands_the_pick_on_that_host(zsh, tmp_path):
-    """--host H revives a dead pick ON H through the beam send path: the transcript is
-    rsync'd there and _tbeam_land runs over ssh with the conversation in TB_* env —
-    nothing is resumed locally."""
+    """Saved selection passes exact identity and destination to the restore engine."""
     log = tmp_path / "remote.log"
     ssh = ('#!/bin/bash\nprintf "ssh %s\\n" "$*" >> "$REMOTE_LOG"\n'
            'case "$*" in *_tbeam_land*) echo "some noise"; echo dev-api-3 ;; esac\n')
@@ -2251,14 +2372,14 @@ def test_zsh_resume_host_lands_the_pick_on_that_host(zsh, tmp_path):
     proj = zsh.home / ".claude" / "projects" / re.sub(r"[^A-Za-z0-9]", "-", wt3)
     proj.mkdir(parents=True)
     (proj / "c1.jsonl").write_text('{"type":"user","message":{"content":"fix the login bug"}}\n')
-    r = zsh("REMOTE_HOSTS[mini]=mini.local; _dev_rows_all() { :; }; _t_resume api 3 --host mini; echo rc=$?",
+    r = zsh('REMOTE_HOSTS[mini]=mini.local; _dev_rows_all() { :; }; '
+            '_t_lifecycle_run() { print -r -- "$*" > "$REMOTE_LOG"; print dev-api-3; }; '
+            '_t_resume api 3 --host mini; echo rc=$?',
             REMOTE_LOG=str(log))
     assert "rc=0" in r.stdout and "Landed in dev-api-3 on mini" in r.stdout, (r.stdout, r.stderr)
     calls = log.read_text().splitlines()
-    assert any(c.startswith("rsync ") and "mini.local:.claude/projects/" in c for c in calls)
-    land = [c for c in calls if "_tbeam_land" in c]
-    assert len(land) == 1 and "mini.local" in land[0] and "TB_SID=c1" in land[0] and "TB_MODE=tmux" in land[0]
-    assert "TB_ATTACH" not in land[0]                       # no TTY → detached landing
+    assert len(calls) == 1 and calls[0].startswith('restore  mini.local ')
+    assert ' c1 claude api 3 1' in calls[0]
     assert "send-keys" not in zsh.log.read_text()           # nothing resumed here
     r = zsh("_t_resume api 3 --host; echo rc=$?")
     assert "rc=1" in r.stdout and "--host takes a host" in r.stderr
@@ -2665,7 +2786,11 @@ def test_session_startup_is_quiet_and_logged(zsh, tmp_path, mode, agent, fails):
     logfile = zsh.home / '.tmux-logs' / f'{session}.log'
     try:
         result = zsh('_dev_launch_preflight() { return 0; }; '
-                     '_dev_history_record() { :; }; ' + command,
+                     '_dev_history_record() { :; }; '
+                     'functions[_fixture_startup]=$functions[_dev_launch_startup_check]; '
+                     '_dev_launch_startup_check() { local i; for i in {1..100}; do '
+                     '[[ -f $HOME/agent-args ]] && break; sleep 0.05; done; '
+                     '_fixture_startup "$@"; }; ' + command,
                      ZDOTDIR=str(zsh.home))
         assert result.returncode == (1 if fails else 0), (result.stdout, result.stderr)
         deadline = time.monotonic() + 5

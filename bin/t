@@ -11393,13 +11393,13 @@ def cmd_agentcore(cfg, args):
 
 
 def cmd_history(cfg, args):
-    _progress("Loading conversation history", machine=getattr(args, "json", False))
+    _progress("Finding saved conversations", machine=getattr(args, "json", False))
     helper = runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_history.py"))
     history = helper["HistoryCommand"](cfg, globals())
     try:
         return history.execute(args)
     except (ValueError, OSError) as error:
-        print(f"t history: {error}", file=sys.stderr)
+        print(f"t resume: {error}", file=sys.stderr)
         return 1
     finally:
         history.store.close()
@@ -11726,7 +11726,7 @@ def _group_help(group):
         if isinstance(node, dict):
             rows = [f"  {name:<14} " + ("Remote command family" if isinstance(value, dict)
                     else "Run " + ' '.join([*path[1:], name]) + " on an SSH host")
-                    for name, value in node.items()]
+                    for name, value in node.items() if not (path[-1] == "session" and name == "history")]
             return _wrap_help(f"USAGE\n  t {group} <verb> [host] [arguments] [flags]\n\nCOMMANDS\n" +
                 '\n'.join(rows) + "\n\nHost identifies the source machine. Lists query all registered hosts when omitted.\n" +
                 f"Run t help {group} <verb> for details.\n")
@@ -11904,7 +11904,7 @@ Run `t help issue <verb>` for flags and arguments.
 """)
     width = max(map(len, COMMAND_GROUPS[group]))
     rows = [f"  {action:<{width}}  { _command_description(group, action)}"
-            for action in COMMAND_GROUPS[group]]
+            for action in COMMAND_GROUPS[group] if not (group == "session" and action == "history")]
     extra = ("\nA host is an SSH-accessible machine registered with a short alias.\n"
              "Targets can be SSH config names, addresses, or user@host.\n"
              "Run `t hosts list` to list registered machines.\n"
@@ -12568,7 +12568,7 @@ REMOTE SESSIONS
     sp.add_argument("repo", nargs="?", help="repository alias, basename or origin name; defaults to the repo your cwd is in")
     sp.add_argument("slot", nargs="?", help="slot number; a lone slot implies the cwd repo")
 
-    sp = sub.add_parser("history", help="browse every conversation associated with a slot",
+    sp = sub.add_parser("history", hidden=True, help="browse every conversation associated with a slot",
         description='Browse every conversation associated with a slot. Infer the current repository and slot, or '
             'choose a slot interactively. Tab marks conversations; Enter resumes the selection. '
             'Ctrl-F/B changes page, Ctrl-R refreshes metadata, and Ctrl-/ shows details. Without a terminal, '
@@ -12654,7 +12654,7 @@ REMOTE SESSIONS
   remain at the top of the picker. Available conversations still resume. Run
   gh auth login --hostname github.com on that host, then retry.
 
-  A plain slot target runs `t session history REPO SLOT`: select exact
+  A plain slot target browses saved conversations: select exact
   conversations with Tab, then Enter, even with only one result. Ctrl-F/B pages, Ctrl-R refreshes,
   and Ctrl-/ shows details. Without a terminal, history lists without launching.
   Explicit options use the resume picker below and retain their mode semantics.

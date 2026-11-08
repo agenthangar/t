@@ -1,5 +1,6 @@
 """Selected-source checkpoints use disposable repositories and mocked SSH."""
 import base64
+from contextlib import contextmanager
 import hashlib
 import importlib.util
 import json
@@ -40,6 +41,99 @@ def test_selected_prefers_lifecycle_over_newer_transcript(protocol):
     row = conversation(associations=[dict(evidence='resume', observed=1), dict(evidence='transcript', observed=20)])
     assert protocol.selected(row)['evidence'] == 'resume'
     assert protocol.selected(conversation()) is None
+
+
+@pytest.fixture
+def equivalent_source(app, source, store, monkeypatch):
+    path, row, request = source
+    proofs = {name: dict(id='verified-repository-id', canonical='org/repo')
+              for name in ('org/repo', 'old-org/repo')}
+    monkeypatch.setattr(app, 'repository_proof', proofs.get)
+    store.merge({**row, 'sources': [dict(host='local', path='/original.jsonl')]})
+    alias = {**row, 'repo': 'old-org/repo',
+             'sources': [dict(host='local', path='/renamed.jsonl')]}
+    return path, row, request, alias
+
+
+@pytest.mark.parametrize('route', ['local', 'export'])
+@pytest.mark.parametrize('stale_alias', [False, True])
+def test_equivalent_source_records_preserve_dirty_work_and_sources(
+        app, equivalent_source, history, protocol, store, monkeypatch, route, stale_alias):
+    path, row, request, alias = equivalent_source
+    association = dict(alias['associations'][0], available='cached')
+    if stale_alias:
+        association.update(observed=0, branch='older-branch', commit='b' * 40)
+    store.merge({**alias, 'associations': [association]})
+    rows = app.records('repo', '1')
+    assert len(rows) == 1 and len(store.records()) == 2
+    seen = []
+    def selected_source(saved):
+        seen.append({s['path'] for s in saved['sources']})
+        return Path('/unused-transcript')
+    monkeypatch.setattr(app, 'source', selected_source)
+    Path(path, 'tracked').write_text('carry dirty work through repository rename\n')
+    if route == 'local':
+        revision = protocol.reconcile(app, 'repo', rows[0])
+    else:
+        result = protocol.export(app, request)
+        revision = result['revision']
+        assert result['checkpoint'] and result['identity'] == request['identity']
+    assert seen and all(paths == {'/original.jsonl', '/renamed.jsonl'} for paths in seen)
+    assert revision != row['associations'][0]['commit']
+    assert history.run(['git', '-C', str(path), 'show', revision + ':tracked']) == 'carry dirty work through repository rename\n'
+    assert not history.run(['git', '-C', str(path), 'status', '--porcelain'])
+
+
+@pytest.mark.parametrize('route', ['local', 'export'])
+@pytest.mark.parametrize('field,value', [('workspace', '/another/workspace'),
+    ('generation', 'different-generation'), ('branch', 'different-branch'),
+    ('commit', 'b' * 40), ('host', 'another-host')])
+def test_equivalent_source_records_refuse_conflicting_latest_associations(
+        app, equivalent_source, history, protocol, store, monkeypatch, route, field, value):
+    path, row, request, alias = equivalent_source
+    store.merge({**alias, 'associations': [{**alias['associations'][0], field: value}]})
+    merged = app.records('repo', '1')[0]
+    before = history.run(['git', '-C', str(path), 'rev-parse', 'HEAD'])
+    Path(path, 'tracked').write_text('retain conflicting source work\n')
+    monkeypatch.setattr(app, 'source', lambda *a: pytest.fail('conflict must precede transcript access'))
+    with pytest.raises(history.HistoryError, match='source conversation associations conflict'):
+        if route == 'local':
+            protocol.reconcile(app, 'repo', merged)
+        else:
+            protocol.export(app, request)
+    assert history.run(['git', '-C', str(path), 'rev-parse', 'HEAD']) == before
+    assert Path(path, 'tracked').read_text() == 'retain conflicting source work\n'
+
+
+@pytest.mark.parametrize('proof', [None, dict(id='different-repository-id', canonical='old-org/repo')])
+def test_source_alias_requires_verified_repository_equivalence(
+        app, equivalent_source, history, protocol, store, monkeypatch, proof):
+    path, row, request, alias = equivalent_source
+    store.db.execute('delete from conversations')
+    store.db.commit()
+    store.merge(alias)
+    monkeypatch.setattr(app, 'repository_proof', lambda identity:
+                        dict(id='verified-repository-id', canonical='org/repo') if identity == 'org/repo' else proof)
+    with pytest.raises(history.HistoryError, match='source conversation identity is missing or ambiguous'):
+        protocol.export(app, request)
+
+
+@pytest.mark.parametrize('newer', [False, True])
+def test_source_alias_evidence_is_rechecked_after_waiting_for_claim(
+        app, equivalent_source, history, protocol, store, monkeypatch, newer):
+    path, row, request, alias = equivalent_source
+    store.merge(alias)
+    original = app.launch_claims
+    @contextmanager
+    def changed_claim(*args):
+        store.merge({**alias, 'associations': [{**alias['associations'][0],
+                     'generation': 'changed', 'observed': 2 if newer else 1}]})
+        with original(*args):
+            yield
+    monkeypatch.setattr(app, 'launch_claims', changed_claim)
+    monkeypatch.setattr(app, 'source', lambda *a: pytest.fail('changed evidence must precede transcript access'))
+    with pytest.raises(history.HistoryError, match='association changed' if newer else 'associations conflict'):
+        protocol.export(app, request)
 
 
 @pytest.mark.parametrize('origin', ['none', 'local'])
@@ -447,7 +541,9 @@ def test_reconcile_compares_unrecorded_exact_local_tip(app, source, history, pro
     # The exact local workspace advances after the shared recorded revision.
     Path(path, 'tracked').write_text('new local work')
     history.run(['git', '-C', str(path), 'commit', '-am', 'New local tip'])
-    remote['associations'].append(row['associations'][0])
+    # Select the newer remote association, but still inspect the older local
+    # workspace's actual tip instead of trusting its recorded revision.
+    remote['associations'].append({**row['associations'][0], 'observed': 0})
     with pytest.raises(history.HistoryError, match='diverged'):
         protocol.reconcile(app, 'repo', remote)
 

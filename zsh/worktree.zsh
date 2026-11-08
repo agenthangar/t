@@ -68,7 +68,7 @@ _dev_worktree_accept_cwd() {
   }
   resolved=$(_dev_worktree_path "$repo" "$slot") || return 1
   [[ $resolved == "$cwd" || ( ! -e $resolved && ! -L $resolved ) ]] || {
-    print -u2 -- 't: destination slot uses another folder layout; use t session history or an unused slot'; return 1
+    print -u2 -- 't: destination slot uses another folder layout; use t session resume or an unused slot'; return 1
   }
   _dev_worktree_enabled "$repo"
 }
@@ -174,7 +174,7 @@ _dev_worktree_create_impl() {
     local -a candidates; candidates=("${(@f)$(_dev_worktree_paths "$repo" "$slot")}")
     [[ $3 == $candidates[1] || $3 == $candidates[2] ]] || return 1
     [[ $wt == "$3" || ( ! -e $wt && ! -L $wt ) ]] || {
-      print -u2 -- 't: this slot already uses another worktree path; use t session history to select the exact conversation'; return 1
+      print -u2 -- 't: this slot already uses another worktree path; use t session resume to select the exact conversation'; return 1
     }
     wt=$3
   fi
@@ -358,10 +358,14 @@ _dev_worktree_beam_prepare() {
 _dev_worktree_beam_finish() {
   [[ -n ${TB_TRANSFER_REF:-} ]] || return 0
   _dev_worktree_transfer_ref_valid "$TB_TRANSFER_REF" || return 1
-  local tip
+  local tip remote
   tip=$(git -C "$1" rev-parse --verify "refs/t/transfers/${TB_TRANSFER_REF:t}^{commit}" 2>/dev/null) || return 1
+  remote=$(git -C "$1" ls-remote --refs origin "$TB_TRANSFER_REF") || return 1
+  [[ -n $remote ]] || return 0
+  [[ ${remote%%$'\t'*} == "$tip" ]] || return 1
   git -C "$1" push -q --force-with-lease="$TB_TRANSFER_REF:$tip" origin ":$TB_TRANSFER_REF" 2>/dev/null || {
     print -u2 -- "t session move: snapshot retained on origin at $TB_TRANSFER_REF"
+    return 1
   }
   return 0
 }

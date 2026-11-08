@@ -156,6 +156,7 @@ def test_shell_attach_rejects_exited_or_recycled_owner_without_opening(history, 
     log = tmp_path / 'calls'
     script = f'''
 source {ROOT}/zsh/sessions.zsh
+_dev_session_claude_pid() {{ print 123; }}
 _dev_session_sid() {{ print {'other' if changed == 'sid' else 'selected'}; }}
 _dev_agent_of_session() {{ print {'claude' if changed == 'agent' else 'codex'}; }}
 _t_open() {{ print OPEN >> {log}; }}
@@ -179,6 +180,7 @@ def test_shell_attach_success_uses_exact_target_and_switches_existing_client(his
     log = tmp_path / 'calls'
     script = f'''
 source {ROOT}/zsh/sessions.zsh
+_dev_session_claude_pid() {{ print 123; }}
 _dev_session_sid() {{ print selected; }}
 _dev_agent_of_session() {{ print codex; }}
 TMUX={'isolated' if inside else ''}
@@ -195,6 +197,7 @@ def test_history_owner_waits_for_identity_without_following_replacement(history,
     tick = tmp_path / 'tick'
     script = f'''
 source {ROOT}/zsh/sessions.zsh
+_dev_session_claude_pid() {{ print 123; }}
 _dev_session_sid() {{
   [[ {outcome} == dead-ready ]] && {{ print selected; return 0; }}
   [[ -f {tick} && {outcome} != timeout ]] && print {'other' if outcome == 'sid' else 'selected'}
@@ -249,9 +252,10 @@ def test_history_owner_waits_for_relocated_codex_index(history, tmp_path):
               f'c=sqlite3.connect({str(database)!r}); '
               'c.execute("update threads set cwd=?", ("/destination/repo-1",)); c.commit()')
     script = f'''
+T_HOME={ROOT}
 source {ROOT}/zsh/agent.zsh
 source {ROOT}/zsh/sessions.zsh
-_dev_session_claude_pid() {{ return 1; }}
+_dev_session_claude_pid() {{ print 123; }}
 _dev_agent_of_session() {{ print codex; }}
 _codex_pane_sid() {{ return 0; }}
 _codex_db() {{ print -r -- {shlex.quote(str(database))}; }}
@@ -561,6 +565,7 @@ def test_codex_history_launch_sets_destination_cd_and_private_backend(history, t
 source {ROOT}/zsh/agent.zsh
 source {ROOT}/zsh/sessions.zsh
 source {ROOT}/zsh/resume.zsh
+source {ROOT}/zsh/lifecycle.zsh
 _dev_issue_preparing() {{ return 1; }}
 _dev_launch_preflight() {{ return 0; }}
 _dev_auto_trust() {{ return 0; }}
@@ -569,7 +574,9 @@ _t_history_owner() {{ print -r -- "READY $*" >> {commands}; return {0 if ready e
 _dev_history_record() {{ print RECORDED >> {commands}; }}
 _dev_recovery_watch() {{ return 0; }}
 tmux() {{ [[ $1 == respawn-pane ]] && print -r -- "$*" > {commands}; return 0; }}
-_dev_resume_session_claimed dev-repo-2 '{tmp_path}/destination 2' selected codex history
+_dev_resume_session_effect dev-repo-2 '{tmp_path}/destination 2' selected codex history || exit $?
+_t_lifecycle_effect ready dev-repo-2 '{tmp_path}/destination 2' codex selected || exit $?
+_t_lifecycle_effect record resume dev-repo-2 '{tmp_path}/destination 2' codex selected
 '''
     env = {key: value for key, value in os.environ.items() if not key.startswith('COV_CORE_')}
     env.update(HOME=str(tmp_path), ZDOTDIR=str(tmp_path),
@@ -653,7 +660,50 @@ def test_remote_archive_release_check_uses_exact_identity_without_wrong_archive_
         with pytest.raises(history.HistoryError, match='writer lock is held') as error:
             app.codex_released(row, source)
         assert isinstance(error.value.__cause__, ValueError)
-        assert 'Retry: t session history' in str(error.value)
+        assert 'Retry: t session resume' in str(error.value)
+
+
+def test_resume_unindexed_writer_guidance_uses_public_resume(app, history, tmp_path):
+    """#375: preserve the unknown-writer guard without exposing internal history."""
+    import fcntl
+
+    sid = '01234567-89ab-cdef-0123-456789abcdef'
+    other = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+    workspace = Path(app.cfg.worktree_root) / 'repo/1'
+    rows = codex_rows(workspace, sid=sid)
+    rows[0]['payload']['cli_version'] = '0.160.0'
+    source = transcript_file(tmp_path / ('rollout-' + sid + '.jsonl'), rows)
+    row = saved_row(app, 'a' * 40, workspace, sid=sid)
+    locks = Path(os.environ['CODEX_HOME'], 'thread-writer-locks')
+    locks.mkdir()
+    calls = []
+
+    def inspect(argv, **kwargs):
+        calls.append(argv)
+        if argv == ['lsof', '-nP', '-t', str(locks / (other + '.lock'))]:
+            return SimpleNamespace(returncode=0, stdout='42\n', stderr='')
+        if argv == ['lsof', '-nP', '-p', '42', '-Fpn']:
+            # A shared backend has the lock open but no rollout for this thread.
+            return SimpleNamespace(returncode=0, stdout='p42\n', stderr='')
+        if argv == ['ps', '-p', '42', '-o', 'comm=']:
+            return SimpleNamespace(returncode=0, stderr='', stdout=(
+                '/Applications/ChatGPT.app/Contents/Resources/codex\n'))
+        raise AssertionError(f'unexpected action during ownership inspection: {argv}')
+
+    app.api['_run'] = inspect
+    original = source.read_bytes()
+    with (locks / (other + '.lock')).open('w') as writer:
+        fcntl.flock(writer, fcntl.LOCK_EX)
+        with pytest.raises(history.HistoryError, match='could not be matched to its worktree') as error:
+            app.codex_released(row, source)
+        message = str(error.value)
+        assert other in message and '42' in message
+        assert 'selected Codex conversation is still loaded' not in message
+        assert source.read_bytes() == original
+        assert (locks / (other + '.lock')).exists()
+        assert calls, 'the exact unknown lock holder must be inspected'
+        assert 't session history' not in message, message
+        assert 't resume' in message or 't session resume' in message
 
 
 def test_branch_pr_attribution_requires_matching_commit_on_reused_branch(app, history, store, monkeypatch):
@@ -833,7 +883,7 @@ def test_workspace_reservation_collision_is_preserved(app, history):
     root = Path(app.cfg.worktree_root) / 'repo'
     marker = root / '.1.history-reservation'
     marker.write_text('other')
-    with pytest.raises(history.HistoryError, match='another history action'):
+    with pytest.raises(history.HistoryError, match='another session operation'):
         app.reserve(root / '1')
     assert marker.read_text() == 'other'
 
@@ -1130,7 +1180,7 @@ def test_private_saved_resume_reports_ownership_refusal_and_cleans_up(
     app.api['_run'] = lambda *a, **k: pytest.fail('refused restore must not inspect processes')
     refusal = ValueError('another loaded Codex conversation could not be matched to its worktree. Finish its turn and close the owning app, then retry resume.')
     def refuse(*a, **k):
-        assert k['retry'] == 'Retry: t session history, then select the conversation again.'
+        assert k['retry'] == 'Retry: t session resume, then select the conversation again.'
         raise refusal
     def helpers(path):
         if str(path).endswith('t_codex_ownership.py'):
