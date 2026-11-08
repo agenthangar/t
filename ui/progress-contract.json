@@ -417,6 +417,10 @@
       "kind": "background",
       "reason": "Background evaluation preparation checkpoints the pinned official native Linux CLI download without terminal output."
     },
+    "libexec/t_eval_engine.py:prepare_worker_sandbox:urllib.request.urlopen": {
+      "kind": "background",
+      "reason": "Detached evaluation preparation records the sandbox policy download phase in its durable journal before bounded network access."
+    },
     "libexec/t_local_status.py:tmux:subprocess.run": {
       "kind": "protocol",
       "reason": "Bounded ownership and pane metadata probes feed the quiet tmux statusline; no terminal output or picker."

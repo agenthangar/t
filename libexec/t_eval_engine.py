@@ -23,6 +23,8 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 HARBOR_VERSION = '0.25.0'
+SECCOMP_URL = 'https://raw.githubusercontent.com/moby/profiles/4b8214fc4971e06172938a1f1554ccff6647ee80/seccomp/default.json'
+SECCOMP_SHA256 = '6416b47770785a41ac59073cdc77d9fe98517df2799dc83ef207e622de3053f6'
 
 
 def core():
@@ -193,6 +195,40 @@ def ready_local(config, vm_memory):
     return local, chosen
 
 
+def prepare_worker_sandbox(journal):
+    """Permit nested unprivileged sandboxes only in candidate containers."""
+    m = core()
+    cached = m['paths']()['cache'] / 'moby-seccomp.json'
+    with m['lock'](cached.with_suffix('.lock')):
+        source = m['read'](cached)
+        if source is None:
+            journal.event('preparation', action='cache pinned worker sandbox policy')
+            with urllib.request.urlopen(SECCOMP_URL, timeout=30) as response:
+                source = response.read().decode()
+        if hashlib.sha256(source.encode()).hexdigest() != SECCOMP_SHA256:
+            raise ValueError('worker sandbox policy checksum mismatch')
+        m['atomic'](cached, source)
+    profile = json.loads(source)
+    # These operations still require kernel capabilities in their target namespace.
+    # No SYS_ADMIN/NET_ADMIN capability is granted in the parent container.
+    profile['syscalls'].append({'names': ['clone', 'unshare', 'setns', 'mount', 'umount2',
+                                         'pivot_root', 'mount_setattr'], 'action': 'SCMP_ACT_ALLOW'})
+    destination = journal.directory / 'sandbox/seccomp.json'
+    m['atomic'](destination, profile)
+    options = ['seccomp=' + str(destination)]
+    security = json.loads(run(['docker', 'info', '--format', '{{json .SecurityOptions}}']))
+    if any('apparmor' in option for option in security):
+        # Ubuntu restricts even unconfined user namespaces unless a named profile
+        # explicitly permits them. Scope that permission to this dedicated profile.
+        apparmor = ('abi <abi/4.0>,\ninclude <tunables/global>\n'
+                    'profile t-eval-userns flags=(unconfined) {\n  userns,\n}\n')
+        run(['colima', 'ssh', '--profile', 't-eval', '--', 'sudo', 'apparmor_parser', '-r'], input=apparmor)
+        options.append('apparmor=t-eval-userns')
+    journal.checkpoint(worker_sandbox={'source': SECCOMP_URL, 'source_sha256': SECCOMP_SHA256,
+                                      'profile_sha256': m['digest'](profile), 'security_opt': options})
+    return options
+
+
 def native_codex(version, journal):
     """Pin official Linux binaries to the VM CPU, independently of task images."""
     architecture = run(['docker', 'info', '--format', '{{.Architecture}}'])
@@ -323,6 +359,7 @@ def execute(journal, retry_interrupted=False):
     if has_frontier and config['spend_limit_usd'] == 0:
         raise ValueError('zero cloud budget permits only local-only mode')
     codex_version, memory = prepare_runtime(config, journal)
+    worker_sandbox = prepare_worker_sandbox(journal) if set(config['modes']) & {'automatic', 'required-local'} else []
     native = native_codex(codex_version, journal)
     python = harbor_python(journal)
     benchmark, tasks = prepare_benchmark(journal)
@@ -367,6 +404,8 @@ def execute(journal, retry_interrupted=False):
             job = {'config': config, 'mode': mode, 'task': str(journal.directory / 'tasks' / task),
                    'benchmark_root': str(benchmark), 'directory': str(directory), 'codex_version': codex_version, 'native_codex': native,
                    'capability': capability, 'trial_id': trial_id}
+            if mode in ('automatic', 'required-local'):
+                job['worker_sandbox'] = worker_sandbox
             journal.start_trial({'id': trial_id, 'task': task, 'mode': mode, 'repetition': repetition})
             try:
                 outcome = child_job(python, job, directory, journal)

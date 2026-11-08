@@ -58,6 +58,23 @@ assert not connects('192.168.5.2',22), 'other host ports were not blocked'
     await checked(environment, 'python3 -c ' + shlex.quote(probe) + ' ' + str(port), timeout_sec=15)
 
 
+async def verify_worker_sandbox(environment, workspace, port):
+    probe = '''import errno,socket,tempfile
+with tempfile.TemporaryFile(dir='.') as f: f.write(b'workspace write works')
+try:
+ with tempfile.TemporaryFile(dir='/etc') as f: pass
+except OSError as e:
+ assert e.errno in (errno.EACCES,errno.EPERM,errno.EROFS), e
+else: raise AssertionError('worker can write outside its workspace')
+try:
+ with socket.create_connection(('192.168.5.2',PORT),timeout=2): pass
+except OSError: pass
+else: raise AssertionError('worker sandbox permits direct network access')
+'''.replace('PORT', str(int(port)))
+    await checked(environment, 'codex sandbox --permission-profile :workspace -C ' + shlex.quote(workspace) +
+                  ' -- python3 -c ' + shlex.quote(probe), cwd=workspace, timeout_sec=30)
+
+
 class WorkflowAgent(Codex):
     def __init__(self, *args, job_file, **kwargs):
         self.job = json.loads(Path(job_file).read_text())
@@ -87,6 +104,8 @@ class WorkflowAgent(Codex):
         logs = self.environment_logs_dir.as_posix()
         await checked(environment, 'mkdir -p ' + shlex.quote(logs), timeout_sec=30)
         await restrict_network(environment, job['capability']['port'])
+        if job['mode'] in ('automatic', 'required-local'):
+            await verify_worker_sandbox(environment, workspace, job['capability']['port'])
         payload = {k: job[k] for k in ('config', 'mode', 'capability')}
         payload.update(workspace=workspace, logs=logs, instruction=instruction)
         with tempfile.TemporaryDirectory(prefix='t-eval-payload-') as directory:
@@ -141,6 +160,8 @@ async def trial(job, name, agent, grade=True):
     service = {'platform': 'linux/amd64'}
     if name == 'candidate':
         service['cap_drop'] = ['NET_RAW']
+        if job.get('worker_sandbox'):
+            service['security_opt'] = job['worker_sandbox']
     platform.write_text(json.dumps({'services': {'main': service}}))
     config = TrialConfig(task=TaskConfig(path=Path(job['task'])), trial_name=job['trial_id'] + '-' + name,
                          trials_dir=Path(job['directory']) / 'harbor', agent=agent,

@@ -89,6 +89,13 @@ until cached; an inference-only offline run still requires those assets.
 The local model stays on the host. Containers receive run-scoped gateway leases,
 not cloud credentials. Agent-phase egress allows only the gateway's address and
 port. Setup and official verification use their published network policies.
+Hybrid candidate containers use a checksum-pinned [Docker seccomp policy](https://github.com/moby/profiles/blob/4b8214fc4971e06172938a1f1554ccff6647ee80/seccomp/default.json) with
+the namespace operations needed by Codex's nested worker sandbox, plus a dedicated
+AppArmor user-namespace profile where required. They receive no `SYS_ADMIN` or
+`NET_ADMIN` capability. Before inference, a real Codex sandbox probe verifies
+workspace writes, rejects writes outside the workspace, and checks that worker
+commands cannot connect directly to the model gateway. Reference and grading
+containers retain the publisher's environment settings.
 Host cloud credentials use OPENAI_API_KEY or the existing Codex login; expired
 credentials must be refreshed through the normal login flow. A failed endpoint
 or unsupported model is reported, never replaced automatically.

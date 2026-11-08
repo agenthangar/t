@@ -274,6 +274,41 @@ def test_preparation_blocks_missing_dependencies_and_pins_runtime(evaluation, tm
     with pytest.raises(ValueError, match='3.12'): e.harbor_python(j)
 
 
+def test_worker_sandbox_pins_policy_and_scopes_namespace_permissions(evaluation, monkeypatch):
+    import hashlib
+    import io
+    m, _ = evaluation
+    e = load_script(ROOT / 'libexec/t_eval_engine.py', 'eval_sandbox_policy')
+    monkeypatch.setattr(e, 'core', lambda: vars(m))
+    j = m.Journal(m.create_run(m.defaults()))
+    base = {'defaultAction': 'SCMP_ACT_ERRNO', 'syscalls': [
+        {'names': ['read', 'write'], 'action': 'SCMP_ACT_ALLOW'}]}
+    content = json.dumps(base).encode()
+    monkeypatch.setattr(e, 'SECCOMP_SHA256', hashlib.sha256(content).hexdigest())
+    monkeypatch.setattr(e.urllib.request, 'urlopen', lambda *a, **kw: io.BytesIO(content))
+    calls = []
+    def run(command, **kwargs):
+        calls.append((command, kwargs))
+        return '["name=apparmor", "name=seccomp,profile=builtin"]' if command[0] == 'docker' else ''
+    monkeypatch.setattr(e, 'run', run)
+    options = e.prepare_worker_sandbox(j)
+    profile = m.read(j.directory / 'sandbox/seccomp.json')
+    assert profile['defaultAction'] == 'SCMP_ACT_ERRNO'
+    assert profile['syscalls'][:-1] == base['syscalls']
+    assert set(profile['syscalls'][-1]['names']) == {'clone', 'unshare', 'setns', 'mount', 'umount2', 'pivot_root', 'mount_setattr'}
+    assert options[-1] == 'apparmor=t-eval-userns' and 'seccomp=unconfined' not in options
+    assert calls[-1][0][-3:] == ['sudo', 'apparmor_parser', '-r']
+    assert 'profile t-eval-userns' in calls[-1][1]['input'] and 'userns,' in calls[-1][1]['input']
+    assert j.state['worker_sandbox']['profile_sha256'] == m.digest(profile)
+    def offline(*a, **kw): raise AssertionError('cached policy must work offline')
+    monkeypatch.setattr(e.urllib.request, 'urlopen', offline)
+    monkeypatch.setattr(e, 'run', lambda *a, **kw: '[]')
+    assert e.prepare_worker_sandbox(j) == options[:1]
+    m.atomic(m.paths()['cache'] / 'moby-seccomp.json', 'altered')
+    with pytest.raises(ValueError, match='checksum mismatch'):
+        e.prepare_worker_sandbox(j)
+
+
 def test_cached_preparation_identity_and_fit(evaluation, tmp_path, monkeypatch):
     m, _ = evaluation
     e = load_script(ROOT / 'libexec/t_eval_engine.py', 'eval_cache_test')

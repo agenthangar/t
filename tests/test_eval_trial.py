@@ -84,6 +84,10 @@ def test_harbor_patch_boundary_and_network(harbor_adapter, tmp_path):
     assert not (tmp_path / 'bundle/.git').exists()
     asyncio.run(h.restrict_network(env, 1234))
     assert 'tcp dport 1234' in calls[0]['command'] and 'reject' in calls[0]['command']
+    asyncio.run(h.verify_worker_sandbox(env, '/app', 1234))
+    assert '--permission-profile :workspace' in calls[-1]['command']
+    assert 'worker can write outside its workspace' in calls[-1]['command']
+    assert 'socket.create_connection' in calls[-1]['command']
     patch = tmp_path / 'candidate.patch'; patch.write_text('fixture diff')
     agent = h.ReplayAgent(patch_file=str(patch))
     assert agent.name() == 't-patch-replay' and agent.version() == '1'
@@ -99,6 +103,7 @@ def test_harbor_patch_boundary_and_network(harbor_adapter, tmp_path):
         async def service_exec(self, **kwargs): return SimpleNamespace(return_code=1, stderr='blocked', stdout='')
     with pytest.raises(RuntimeError): asyncio.run(h.checked(Broken(), 'fixture'))
     with pytest.raises(RuntimeError): asyncio.run(h.restrict_network(Broken(), 1))
+    with pytest.raises(RuntimeError): asyncio.run(h.verify_worker_sandbox(Broken(), '/app', 1))
 
 
 def test_harbor_controls_and_fresh_grading(harbor_adapter, evaluation, tmp_path, monkeypatch):
@@ -149,7 +154,8 @@ def test_harbor_controls_and_fresh_grading(harbor_adapter, evaluation, tmp_path,
 def test_harbor_trial_config_and_candidate_bundle(harbor_adapter, evaluation, tmp_path, monkeypatch):
     h = harbor_adapter; m, _ = evaluation
     job = {'task': str(tmp_path), 'directory': str(tmp_path / 'attempt'), 'trial_id': 'c'*32,
-           'config': m.defaults(), 'native_codex':str(tmp_path/'native'), 'capability': {'port': 1234}, 'mode': 'frontier-only'}
+           'config': m.defaults(), 'native_codex':str(tmp_path/'native'), 'capability': {'port': 1234}, 'mode': 'automatic',
+           'worker_sandbox': ['seccomp=/fixture/policy.json', 'apparmor=t-eval-userns']}
     configs = []
     class Trial:
         @staticmethod
@@ -159,7 +165,10 @@ def test_harbor_trial_config_and_candidate_bundle(harbor_adapter, evaluation, tm
     monkeypatch.setattr(h, 'Trial', Trial)
     assert asyncio.run(h.trial(job, 'candidate', h.AgentConfig(), False)) == 'result'
     assert configs[0].trial_name == 'c'*32 + '-candidate' and configs[0].verifier.disable
-    assert json.loads(configs[0].environment.extra_docker_compose[0].read_text()) == {'services': {'main': {'platform': 'linux/amd64', 'cap_drop':['NET_RAW']}}}
+    assert json.loads(configs[0].environment.extra_docker_compose[0].read_text()) == {'services': {'main': {
+        'platform': 'linux/amd64', 'cap_drop':['NET_RAW'], 'security_opt': job['worker_sandbox']}}}
+    asyncio.run(h.trial(job, 'oracle', h.AgentConfig()))
+    assert json.loads(configs[-1].environment.extra_docker_compose[0].read_text()) == {'services': {'main': {'platform': 'linux/amd64'}}}
     payloads = []
     class Env:
         async def exec(self, **kwargs):
