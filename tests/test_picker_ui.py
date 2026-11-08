@@ -424,7 +424,8 @@ def test_open_simple_rows_and_focused_marks(picker, width, height, monochrome):
     start(profile='public-open', width=width, height=height, monochrome=monochrome)
     screen = wait('1/1 (0)')
     assert 'Filters ON' in screen
-    assert 'LAST TURN' not in screen and 'details' not in screen and 'Alt-N' not in screen
+    assert 'details' not in screen and 'Alt-N' not in screen
+    assert ('LAST TURN' if width >= 44 else 'TURN') in screen
     keys('C-a')
     wait('2/2 (0)')
     keys('Up', 'Tab', 'Up')
@@ -460,7 +461,11 @@ def test_inline_filters_keep_the_list_visible_and_repeat_clears(picker, width, h
     start, wait, keys, finish = picker
     start(profile=profile, width=width, height=height)
     screen = wait('2/2 (0)')
-    assert 'Filters ON' in screen and 'Sort: OFF' in screen and '▸' in screen
+    assert 'Filters ON' in screen and '▸' in screen
+    if profile == 'public-kill':
+        assert 'Sort: OFF' in screen
+    else:
+        assert 'Sort: turn' in screen or 'Sort: last turn' in screen
     for letter in ('F', 'G', 'O', 'R'):
         assert 'Ctrl-' + letter in screen
     keys('C-g')

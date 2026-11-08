@@ -4,6 +4,7 @@ import argparse
 import os
 from pathlib import Path
 import subprocess
+import shutil
 import sys
 import tempfile
 
@@ -22,7 +23,8 @@ def fixture():
         ('mini', 'f', 'tools-3', 'detached', 'idle', 'Investigate a very long task title with unicode café and 日本語 for clipping', 'codex', 'gpt-6.1-sol'),
     ]
     return ''.join('\t'.join((host, sid, '/demo/' + slot.rpartition('-')[0], slot,
-                             state, context, task, agent, model)) + '\n'
+                             state, context, task, agent, model,
+                             '-' if sid == 'f' else '2026-11-07T' + {'a':'22:42','b':'21:18','c':'19:05','d':'18:00','e':'17:00'}[sid] + ':00Z')) + '\n'
                    for host, sid, slot, state, context, task, agent, model in rows)
 
 
@@ -53,7 +55,7 @@ def main(argv=None):
     with tempfile.TemporaryDirectory(prefix='t-open-preview-') as temp:
         directory = Path(temp)
         env = dict(os.environ, HOME=temp, XDG_CONFIG_HOME=temp, XDG_CACHE_HOME=temp,
-                   T_HOME=str(ROOT),
+                   T_HOME=str(ROOT), COLUMNS=str(shutil.get_terminal_size().columns),
                    T_PICKER_SESSION_FILTERS='open', T_PICKER_SOURCE_ROWS=source)
         if args.profile in ('single', 'multi', 'issues', 'history'):
             rows = 'a\tFix login · 界面 navigation\nb\tImprove repository discovery\nc\tDocument remote hosts\n'
@@ -70,14 +72,14 @@ def main(argv=None):
                 script = """. "$T_HOME/ui/fzf.sh"; _t_fzf_paginated "$HOME/page" "$HOME/all" 'sh "$HOME/helper"' 'printf "Full synthetic conversation details\\n"' "" "history > " """
             return subprocess.run(['sh', '-c', script], env=env, check=False).returncode
         result = subprocess.run([sys.executable, str(ROOT / 'bin/t'), '__session-picker-rows',
-                                 '--remote', '--compact', '--header'], input=source,
+                                 '--remote', '--compact', '--header', '--last-turn'], input=source,
                                 env=env, text=True, capture_output=True, check=True)
         columns, _, formatted = result.stdout.partition('\n')
         if args.profile == 'resume':
-            columns = 'SESSION  WORKING ON'
+            columns = 'SESSION  LAST TURN (UTC)           WORKING ON'
             formatted = ''.join('\t'.join((repo, slot, sid, '/demo/' + repo, '2026-11-03',
                 task, '-', '-', host, agent, turn, 'demo/' + repo, state,
-                '[' + state + '] ' + repo + '-' + slot + '  ' + task)) + '\n'
+                repo + '-' + slot + '  ' + (turn if turn != '-' else 'unknown') + '  [' + state + '] ' + task)) + '\n'
                 for repo, slot, sid, task, host, agent, turn, state in (
                     ('api', '2', 'fixture-a', 'Fix login', 'local', 'codex', '2026-11-03T16:00:00Z', 'OPEN'),
                     ('web', '4', 'fixture-b', 'Polish dashboard', 'mini', 'claude', '2026-11-02T16:00:00Z', 'MERGED'),

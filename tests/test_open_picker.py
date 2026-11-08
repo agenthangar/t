@@ -75,11 +75,11 @@ def test_bare_open_inside_worktree_shows_every_detail_and_repo(zsh, tmp_path):
     display = [row.split('\t')[-1].rstrip() for row in rows]
     assert all('STATUS' not in row for row in display)
     heading = (tmp_path / 'picker.log.header').read_text().splitlines()[-1]
-    assert heading.split() == ['REPO', 'SLOT', 'AGENT', 'HOST', 'UI', 'STATUS', 'MODEL', 'WORKING', 'ON']
+    assert heading.split() == ['REPO', 'SLOT', 'AGENT', 'HOST', 'UI', 'STATUS', 'MODEL', 'WORKING', 'ON', 'LAST', 'TURN']
     assert '● ✓ ↻' in display[0] and '› cli' in display[0]
     assert '⬡ codex' in display[0] and 'gpt-test-astra' in display[0]
     assert 'First task · #12 merged, still in progress' in display[0]
-    assert '2026-10-23' not in display[0]
+    assert '2026-10-23' in display[0]
     assert '▣ desktop' in display[1] and 'No conversation recorded' in display[1]
     assert '(idle — no conversation)' in display[2]
     assert 'claude-test-model' in display[3] and 'Foreground task' in display[3]
@@ -175,7 +175,7 @@ def test_open_hotkeys_show_all_and_restore_defaults(zsh, tmp_path, args, actions
     assert 'Filters ' + attached.split(':')[0] in header
     if ': ' in attached:
         assert attached.split(': ', 1)[1] in header
-    assert header.splitlines()[-1].endswith('WORKING ON')
+    assert header.splitlines()[-1].endswith('LAST TURN')
 
 
 def test_open_attached_view_selects_only_attached_after_show_all(zsh, tmp_path):
@@ -212,7 +212,7 @@ def test_open_remote_picker_retains_model_and_selected_host(zsh, tmp_path):
     rows = (tmp_path / 'picker.log').read_text()
     assert 'mini' in rows and 'studio' in rows and 'claude-test-model' in rows
     assert 'Local included' in rows
-    assert 'Last turn' not in rows and '2026-10-23' not in rows
+    assert 'Last turn' in rows and '2026-10-23' in rows
     assert 'TAB t open web 4 --cli --host studio' in result.stdout
     assert 'REMOTE mini alias 2 --cli' in result.stdout
 
@@ -274,7 +274,7 @@ def test_open_help_describes_simple_picker(t_mod):
     assert 'Ctrl-X resets them' in help_text
     assert 'repeat to clear' in help_text
     assert '--new' in help_text
-    assert 'Alt-N' not in help_text and 'LAST TURN' not in help_text
+    assert 'Alt-N' not in help_text and 'LAST TURN' in help_text
     assert 'Ctrl-/' not in help_text
 
 
@@ -413,3 +413,18 @@ def test_open_kill_stale_local_row_never_closes_remote(zsh):
     assert 'CLOSE_RC=1' in result.stdout + result.stderr
     assert 'no longer here' in result.stdout + result.stderr
     assert 'UNEXPECTED' not in result.stdout
+
+
+@pytest.mark.parametrize('width', [200, 120, 80, 44, 32])
+def test_last_turn_column_stays_visible_and_searchable(t_mod, monkeypatch, width):
+    monkeypatch.setattr(t_mod, '_columns', lambda: width)
+    rows = t_mod._parse_rows('local\tsid\t/code/api\tapi-2\tdetached\tactive\tFix login\tcodex\tgpt-test\t2026-11-07T16:41:07Z\nlocal\tother\t/code/web\tweb-4\tdetached\tactive\tUnknown turn\tcodex\t-\t-\n', host_prefixed=True)
+    heading, *output = t_mod._session_picker_rows(rows, compact=True, header=True, last_turn=True)
+    assert ('LAST TURN' if width >= 44 else 'TURN') in heading
+    stamp = t_mod._session_display_helpers()['format_last_turn'](rows[0]['last_turn_started_at'])
+    assert stamp in output[0].split('\t')[3]
+    shown = stamp if width >= 100 else stamp[5:16] if width >= 44 else stamp[11:16]
+    assert output[0].split('\t')[4].rstrip().endswith(shown)
+    assert output[1].split('\t')[4].rstrip().endswith('-')
+    available = width - (6 if width <= 60 else 12)
+    assert all(t_mod._display_width(line.split('\t')[-1].rstrip()) <= available for line in [heading, *output])

@@ -42,7 +42,7 @@ def metadata(source, profile):
             repo = slot.partition(':')[0] if ':' in slot else slot.rpartition('-')[0] or slot
             result[(host, slot, state)] = dict(agent=fields[7] if len(fields) > 7 else 'claude',
                 interface='desktop' if state == 'app' else 'cli', host=host, repo=repo, session=slot)
-            if profile == 'list':
+            if profile in ('list', 'open'):
                 result[(host, slot, state)].update(session=slot, turn=fields[9] if len(fields) > 9 else '-')
             if profile == 'open':
                 result[(host, slot, state)].update(
@@ -174,7 +174,7 @@ def header(profile, mask, filters, hidden, columns, width, sort='turn', enabled=
     if not compact:
         lines += [style('Match highlighted row; repeat key to clear'), '']
     sorts = {name: ('turn' if compact and name == 'turn' else label)
-             for name, (_, label) in RESUME_SORTS.items() if (profile == 'resume' or name != 'turn') and (not compact or name in ('turn', 'repo', 'session'))}
+             for name, (_, label) in RESUME_SORTS.items() if (profile in ('resume', 'open') or name != 'turn') and (not compact or name in ('turn', 'repo', 'session'))}
     label = ('turn' if compact and sort == 'turn' else RESUME_SORTS[sort][1]) if sort_enabled else 'OFF'
     lines += keys(['Sort: ' + label, 'Ctrl-S toggle'], ['Sort: ' + label] if sort_enabled else [])
     lines += keys((['Ctrl-Y next'] if compact else ['Ctrl-Y next'] + list(sorts.values())),
@@ -302,9 +302,9 @@ def render(directory, profile, action, width, columns='', facet=None, identity=(
     mask_file = directory / 'show-all'
     mask = int(mask_file.read_text().strip() or 0) if mask_file.exists() else 0
     sort_file = directory / 'sort'
-    sort = sort_file.read_text().strip() if sort_file.exists() else ('turn' if profile in ('resume', 'list') else 'session')
+    sort = sort_file.read_text().strip() if sort_file.exists() else ('turn' if profile in ('resume', 'list', 'open') else 'session')
     sort_enabled_file = directory / 'sort-enabled'
-    sort_enabled = sort_enabled_file.read_text() == '1' if sort_enabled_file.exists() else profile in ('resume', 'list')
+    sort_enabled = sort_enabled_file.read_text() == '1' if sort_enabled_file.exists() else profile in ('resume', 'list', 'open')
     enabled_file = directory / 'filters-enabled'
     enabled = enabled_file.read_text() == '1' if enabled_file.exists() else True
     merged_file = directory / 'hide-merged'
@@ -315,7 +315,7 @@ def render(directory, profile, action, width, columns='', facet=None, identity=(
     elif action == 'toggle-sort':
         sort_enabled = not sort_enabled
     elif action == 'next-sort':
-        modes = [name for name in RESUME_SORTS if profile in ('resume', 'list') or name != 'turn']
+        modes = [name for name in RESUME_SORTS if profile in ('resume', 'list', 'open') or name != 'turn']
         sort = modes[(modes.index(sort) + 1) % len(modes)]
         sort_enabled = True
     elif action == 'state':

@@ -366,7 +366,7 @@ The picker stays open and removes the closed row without rediscovering sessions.
 Search, filters, and marks on other rows are preserved; failed or canceled closes
 leave the row available.
 Type full phrases to search, including spaces and the letter k. Tab marks rows; Ctrl-K closes the focused session. Session searches match literal phrases, ignoring case.
-Ctrl-F toggles filters without leaving the list; Ctrl-X resets filters. Ctrl-T cycles state. Ctrl-G/O/R matches the highlighted row’s agent/host/repo; repeat the shortcut to clear that filter. Ctrl-D matches interface (CLI or desktop) in open and close. Ctrl-S toggles sorting; Ctrl-Y cycles sort choices. Choices are repository, agent, host and session; resume also offers newest turn. Turning filters or sorting off preserves their choices. Sorting off restores snapshot order.
+Ctrl-F toggles filters without leaving the list; Ctrl-X resets filters. Ctrl-T cycles state. Ctrl-G/O/R matches the highlighted row’s agent/host/repo; repeat the shortcut to clear that filter. Ctrl-D matches interface (CLI or desktop) in open and close. Ctrl-S toggles sorting; Ctrl-Y cycles sort choices. Open and resume default to last turn, newest first, and also offer repository, agent, host and session. Unknown turn timestamps sort last. Close offers repository, agent, host and session. Turning filters or sorting off preserves their choices. Sorting off restores snapshot order.
 
 The header highlights active filters and sorting, with explicit ON/OFF text.
 Mac shortcuts use ⌃ and ⌥; other systems show Ctrl and Alt.
@@ -390,8 +390,7 @@ Text sorts ascend, then use newest turn and session identity to break ties.
 Filters, reset and on/off preserve the selected sort; Ctrl-Y cycles back to last-turn sorting.
 For example, `t resume --live` followed by Ctrl-Y groups live and saved sessions by
 repository. Live labels remain visible alongside their last-turn time.
-The open picker keeps session and task text prominent, without a last-turn
-column, details preview, or new-session shortcut. Start fresh explicitly with
+The open picker shows a LAST TURN column alongside session and task text. Narrow terminals shorten timestamps in local time; full timestamps remain searchable. There is no details preview or new-session shortcut. Start fresh explicitly with
 `t open api --new`. Resume and close retain **Ctrl-/** for full details.
 Search still matches the full task and metadata when a compact row shortens them.
 

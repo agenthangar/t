@@ -617,10 +617,34 @@ def _slot_line(r, st, name_w, avail, host_w=None, model_w=7):
             f"{host}{r['slot']:<{name_w}} {st.y}{summary}{st.r}")
 
 
-def _session_picker_columns(rows, prefixes, statuses, width, heading, remote=False):
+def _session_picker_columns(rows, prefixes, statuses, width, heading, remote=False, last_turn=False):
     """Keep session identity and task text visible in the open picker."""
     clip = _session_display_helpers()["clip_columns"]
     available = max(1, width - (6 if width <= 60 else 12))
+    if last_turn:
+        available = max(1, available - 4)
+        helpers = _session_display_helpers()
+        stamps = [helpers["format_last_turn"](row.get("last_turn_started_at")) for row in rows]
+        if width < 100:
+            stamps = [
+                '-' if stamp == '-' else (stamp[5:16] if width >= 44 else stamp[11:16]) for stamp in stamps]
+        turn_heading = 'LAST TURN' if width >= 44 else 'TURN'
+        turn_width = max(len(turn_heading), *map(_display_width, stamps))
+        prefix_heading = heading
+        if width < 140:
+            prefix_heading = 'STATE ' + ('HOST/SESSION' if remote and width >= 60 else 'SESSION')
+            prefixes = [('' if width < 40 else status.rstrip() + ' ') + (row['host'] + '/' if remote and width >= 60 else '') + row['slot']
+                        for row, status in zip(rows, statuses)]
+        prefix_width = min(max(len(prefix_heading), *map(_display_width, prefixes)),
+                           max(4, available - turn_width - 16 if width >= 140 else (available - turn_width - 4) // 2))
+        task_width = max(1, available - turn_width - prefix_width - 4)
+        def line(prefix, task, turn):
+            return (clip(prefix, prefix_width) + ' ' * max(0, prefix_width - _display_width(clip(prefix, prefix_width))) + '  ' +
+                    clip(task, task_width) + ' ' * max(0, task_width - _display_width(clip(task, task_width))) +
+                    '  ' + turn)
+        return (line(prefix_heading, 'WORKING ON' if task_width >= 10 else 'TASK', turn_heading),
+                [line(prefix, row.get('summary') or '-', stamp)
+                 for row, prefix, stamp in zip(rows, prefixes, stamps)])
     prefix_width = max(_display_width(heading), *map(_display_width, prefixes))
     if width < 100 or prefix_width + 18 > available:
         prefixes = [f"{status} " +
@@ -683,7 +707,7 @@ def _session_picker_rows(rows, remote=False, scoped=False, compact=False, header
         out.append("\t".join((row["host"], row["slot"], row["state"], details, display)))
     if compact:
         width = _columns()
-        heading, displays = _session_picker_columns(rows, prefixes, statuses, width, prefix_heading, remote=remote)
+        heading, displays = _session_picker_columns(rows, prefixes, statuses, width, prefix_heading, remote=remote, last_turn=last_turn)
         # fzf searches only presented fields. The open picker presents 5,4,
         # keeping full details searchable beyond the no-hscroll viewport.
         displays = [display + ' ' * max(0, width - _display_width(display)) for display in displays]
@@ -11918,7 +11942,8 @@ DESKTOP TO CLI
   Ctrl-F toggles filters in place; Ctrl-X resets them; Ctrl-T cycles state.
   Ctrl-G/D/O/R matches the highlighted row's agent/interface/host/repo; repeat to clear.
   Ctrl-P/B/V/E/W matches progress/model/session/context/task. No filter pop-ups.
-  Ctrl-S toggles sorting; Ctrl-Y cycles sort choices. Choices are repository, agent, host and session.
+  Ctrl-S toggles sorting; Ctrl-Y cycles sort choices. Choices are last turn, repository, agent, host and session.
+  LAST TURN is newest first by default; unknown timestamps sort last.
   Turning filters or sorting off preserves their choices. Search stays in place.
   Headers use native Mac labels, or Ctrl and Alt elsewhere.
   Status: ● attached/loaded; ○ unattached/unloaded; ✓ loaded context.

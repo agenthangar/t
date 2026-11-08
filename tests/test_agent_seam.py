@@ -2623,8 +2623,8 @@ def test_open_local_multi_picker(zsh, tmp_path, tabs):
     snippet = r'''
       DEV_REPOS[alias]=$DEV_REPOS[api]
       _dev_session_rows() {
-        printf 'sid1\t%s\tapi-2\tdetached\tactive\tFirst task\tcodex\n' "$HOME/code/api"
-        printf 'sid2\t%s\talias-4\tdetached\tactive\tSecond task\tclaude\n' "$HOME/code/api"
+        printf 'sid1\t%s\tapi-2\tdetached\tactive\tFirst task\tcodex\tmodel\t2026-11-07T16:00:00Z\n' "$HOME/code/api"
+        printf 'sid2\t%s\talias-4\tdetached\tactive\tSecond task\tclaude\tmodel\t2026-11-06T16:00:00Z\n' "$HOME/code/api"
         printf 'sid3\t%s\tweb-3\tdetached\tactive\tOther repo\tcodex\n' "$HOME/code/web"
       }
       _dev_open_tab() { print -r -- "TAB $*"; TAB_RESULT; }

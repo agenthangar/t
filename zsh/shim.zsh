@@ -532,7 +532,7 @@ _t_open_picker() {
   done
   (( $#candidates )) || return 2
   [[ -n $repo ]] && format_args+=(--repo)
-  rows=$(print -rl -- "${candidates[@]}" | COLUMNS=${COLUMNS:-80} python3 "$T_HOME/bin/t" __session-picker-rows --compact --header "${format_args[@]}") || return 1
+  rows=$(print -rl -- "${candidates[@]}" | COLUMNS=${COLUMNS:-80} python3 "$T_HOME/bin/t" __session-picker-rows --compact --header --last-turn "${format_args[@]}") || return 1
   [[ -n $rows ]] || return 1
   local columns=${rows%%$'\n'*}
   rows=${rows#*$'\n'}

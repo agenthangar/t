@@ -41,7 +41,7 @@ def test_metadata_keeps_facets_separate_from_task_text_and_identity(filters):
     assert records[('local', 'api-1', 'detached')] == {
         'agent': 'codex', 'interface': 'cli', 'host': 'local', 'repo': 'api',
         'model': 'unknown', 'session': 'api-1', 'context': 'active',
-        'task': 'claude desktop task', 'progress': 'not marked'}
+        'task': 'claude desktop task', 'progress': 'not marked', 'turn': '-'}
     assert records[('mini', 'web:abc', 'attached')]['repo'] == 'web'
     assert records[('local', 'solo', 'detached')]['agent'] == 'claude'
     assert filters.choose(ROWS, records, {'agent': 'codex', 'interface': 'cli'}) == ROWS[:1]
@@ -587,7 +587,7 @@ def test_sort_toggle_preserves_choice_and_restores_snapshot_order(filters, tmp_p
     def render(action):
         filters.render(root, 'open', action, 68)
         return (root / 'current').read_text().splitlines()
-    assert render('current') == rows
+    assert render('toggle-sort') == rows
     sorted_rows = render('sort-session')
     assert sorted_rows != rows
     assert render('toggle-sort') == rows
@@ -600,9 +600,24 @@ def test_sort_toggle_preserves_choice_and_restores_snapshot_order(filters, tmp_p
 
 def test_next_sort_cycles_available_modes_and_enables_sort(filters, tmp_path):
     root = snapshot(tmp_path)
-    for expected in ('repo', 'agent', 'host', 'session', 'repo'):
+    for expected in ('repo', 'agent', 'host', 'session', 'turn', 'repo'):
         filters.render(root, 'open', 'next-sort', 68)
         assert (root / 'sort').read_text() == expected
         assert (root / 'sort-enabled').read_text() == '1'
         filters.render(root, 'open', 'toggle-sort', 68)
         assert (root / 'sort-enabled').read_text() == '0'
+
+
+def test_open_last_turn_sort_uses_timestamp_not_display_text(filters, tmp_path):
+    root = snapshot(tmp_path)
+    stamps = ['2026-11-07T15:00:00Z', '-', '2026-11-07T10:00:00-08:00', 'invalid']
+    source = '\n'.join(line + '\tmodel\t' + stamp for line, stamp in zip(SOURCE.splitlines(), stamps))
+    (root / 'source').write_text(source)
+    (root / 'rows-0').write_text('\n'.join(ROWS))
+    filters.render(root, 'open', 'current', 100)
+    assert (root / 'current').read_text().splitlines() == [ROWS[2], ROWS[0], ROWS[1], ROWS[3]]
+    assert (root / 'sort').read_text() == 'turn'
+    filters.render(root, 'open', 'toggle-sort', 100)
+    assert (root / 'current').read_text().splitlines() == ROWS
+    filters.render(root, 'open', 'toggle-sort', 100)
+    assert (root / 'current').read_text().splitlines()[0] == ROWS[2]
