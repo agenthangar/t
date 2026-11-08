@@ -197,6 +197,28 @@ def test_config_editor_persists_after_review(evaluation, monkeypatch):
     assert m.paths()['config'].stat().st_mode & 0o077 == 0
 
 
+@pytest.mark.parametrize('model,effort', [('alternate-model', None), ('alternate-model', 'low'), ('gpt-6-astra', None)])
+def test_start_model_override_resets_stale_settings(evaluation, t_mod, capsys, model, effort):
+    m, cli = evaluation
+    original = m.defaults('priced')
+    original.update(reasoning_effort='high', pricing={
+        'model': original['frontier_model'], 'source': 'https://provider/pricing',
+        'as_of': '2026-11-06', 'service_tier': 'default', 'kind': 'api-estimate',
+        'input_per_million': 2, 'cached_input_per_million': .2, 'output_per_million': 10})
+    m.save_config(original)
+    command = ['eval', 'runs', 'start', 'priced', '--frontier-model', model, '--dry-run', '--json']
+    if effort:
+        command += ['--reasoning-effort', effort]
+    assert cli.command(None, t_mod.build_parser().parse_args(command), {}) == 0
+    config = json.loads(capsys.readouterr().out)['config']
+    changed = model != original['frontier_model']
+    assert config['frontier_model'] == model
+    assert config['pricing'] == (None if changed else original['pricing'])
+    assert config['reasoning_effort'] == (effort or ('automatic' if changed else 'high'))
+    assert m.configurations()['priced'] == original
+    assert m.list_runs() == []
+
+
 def test_ownership_launch_and_worker_recovery(evaluation, monkeypatch):
     m, _ = evaluation
     run_id = m.create_run(m.defaults())

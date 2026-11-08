@@ -274,6 +274,9 @@ def command(cfg, args, api):
             value = m['validate'](m['read'](filename)) if filename else select_config(getattr(args, 'name', None), m, machine)
             if value is None:
                 return 130
+            frontier = getattr(args, 'frontier_model', None)
+            if frontier and frontier != value['frontier_model']:
+                value.update(pricing=None, reasoning_effort='automatic')
             for key in ('frontier_model', 'local_model', 'reasoning_effort', 'local_provider'):
                 if getattr(args, key, None):
                     value[key] = getattr(args, key)

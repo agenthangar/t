@@ -25,7 +25,9 @@ they never select or start work. Machine output requires explicit targets.
 `ls` aliases `list`. Start also accepts `--config FILE` for a configuration JSON
 object, and `--frontier-model`, `--local-model`, `--local-provider` and
 `--reasoning-effort` overrides. Overrides affect that run's immutable manifest,
-not the saved configuration. Dry-run does not install, load models, or start work.
+not the saved configuration. Changing the frontier model clears its old pricing
+snapshot and resets effort to Automatic unless `--reasoning-effort` is supplied.
+Dry-run does not install, load models, or start work.
 
 ## Configurations
 
