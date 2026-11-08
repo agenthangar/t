@@ -170,15 +170,15 @@ The full acceptance run passed **6,544 tests**, with **one skipped** and
 **97.05% coverage**, in 20 minutes 36 seconds. It includes the same 19 public
 lifecycle baseline cases and all 11 new transfer/recovery/restart/pop E2E cases.
 CLI and progress contract lint, Bash shellcheck, changed zsh syntax, compilation
-to `/tmp`, and `git diff --check` passed. Required Linux CI remains to run after
-PR submission. Native macOS UI tests remain opt-in.
+to `/tmp`, and `git diff --check` passed. Required Linux CI validates the combined
+PR commit. Native macOS UI tests remain opt-in.
 After the final immutable-owner correction, the affected engine, kill, ownership,
 snapshot and public lifecycle suites passed **343 tests**, including all six
 recycled-name cases and all 30 public lifecycle E2E cases. Combined coverage
 remained **97.05%**; contract lint, shellcheck, syntax and compilation checks were
 rechecked successfully. The #382 follow-up has its own validation below.
-The implemented CLI preview has a separate approval gate before push/PR; the
-planning-preview approval does not replace that gate.
+The user approved the planning preview and subsequently authorized shipping
+the complete implementation.
 
 For #382, both public `t resume` reproductions (Codex and Claude) failed with the
 reported source-identity error before the correction and passed afterwards,
@@ -197,4 +197,4 @@ appended. No production code or assertions were changed to bypass those fork
 errors. Total coverage is **97.09%**. All 32 public lifecycle E2E cases (19 original
 and 13 transfer/saved-resume cases) passed in the full run. CLI/progress lint,
 Bash shellcheck, changed-shell syntax, compilation to `/tmp` and diff checks
-passed. Required Linux CI and deployment remain pending PR submission.
+passed. Required Linux CI and deployment are tracked in PR #388.
