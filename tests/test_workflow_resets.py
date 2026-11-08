@@ -183,7 +183,7 @@ def test_multiple_model_default_is_an_exclusive_choice(t_mod, keys, expected):
 def test_inference_resets_and_individual_default_choices(local):
     ui = ToolMenu(['reset', 'back'])
     assert local.workflow_menu(ui, dict(local.DEFAULT, mode='automatic', timeout_seconds=900)) == local.DEFAULT
-    ui = ToolMenu(['mode', '', 'on_cloud_failure', '', 'context_tokens', '', 'timeout_seconds', '', 'back'])
+    ui = ToolMenu(['mode', '', 'on_cloud_failure', 'on_cloud_failure', '', 'back', 'context_tokens', '', 'timeout_seconds', '', 'back'])
     assert local.workflow_menu(ui, dict(local.DEFAULT, mode='automatic', context_tokens=8192, timeout_seconds=900, on_cloud_failure='local')) == local.DEFAULT
     ui = ToolMenu(['mode', None, 'context_tokens', None, 'on_cloud_failure', None, 'back'])
     original = dict(local.DEFAULT, mode='automatic')

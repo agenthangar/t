@@ -1083,6 +1083,17 @@ only that page and its nested settings. **Reset workflow to defaults** restores
 the selected tool's built-in policy while keeping the workflow's name, repository
 assignments and per-repository design sources.
 
+In **Inference & routing → Cloud connection failure**, choose **Retry cloud for**
+(default **Up to 5 minutes**) and **Then → Pause** or **Continue locally**.
+Native retries can finish sooner; reconnecting resets the retry window. Local
+fallback shows the selected model and its readiness. Open **Readiness → Verify
+readiness** to verify downloaded files without downloading them again. A failed
+check keeps the files and displays its reason. Configuration changes remain staged;
+verification is an explicit machine action. Fresh native CLI sessions support the
+retry limit; unsupported launch modes report native retry behavior for Pause and
+reject automatic local fallback. Local continuation starts a separate session
+from a bounded checkpoint after stopping the cloud runtime.
+
 Inside a named workflow, open **Repositories → Assign repositories…** to assign
 one or several registered repositories. Space marks repositories; Enter stages
 the selected assignments. The page separates repositories using this workflow

@@ -11921,7 +11921,7 @@ SCOPE
   Ctrl+C offers Keep editing, Review and save, or Discard when changes are pending.
   Models, Behavior and Manage group the editor; resets stay pending until Save.
   Permissions selects Codex and Claude access for new and resumed CLI sessions.
-  Inference & routing: local models; opt-in Continue locally on cloud outage.
+  Inference & routing: cloud retry limit (default 5m), then pause or local.
   Frontend design configures prototypes and repository design systems.
   CLI planning previews have independent timing and approval settings.
   Workflow → Repositories assigns repos; each repo also exposes its design source.

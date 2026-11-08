@@ -23,7 +23,8 @@ _spinner = runpy.run_path(str(ROOT / 'libexec/t_progress.py'))['spinner']
 DEFAULT_MODEL = 'mlx-community/Qwen3.8-27B-8bit'
 MODES = ('disabled', 'manual', 'automatic', 'local-only')
 DEFAULT = {'mode': 'manual', 'provider': 'lmstudio', 'model': DEFAULT_MODEL,
-           'context_tokens': 32768, 'timeout_seconds': 300, 'on_cloud_failure': 'pause'}
+           'context_tokens': 32768, 'timeout_seconds': 300, 'on_cloud_failure': 'pause',
+           'cloud_retry_seconds': 300}
 SUITES = ('swe-bench-verified-bash-only', 'swe-bench-pro', 'deepswe', 'gpqa', 'terminal-bench', 'livebench-coding')
 
 
@@ -50,20 +51,24 @@ def policy(value=None):
         raise ValueError('context_tokens must be 4096–131072')
     if type(result['timeout_seconds']) is not int or not 10 <= result['timeout_seconds'] <= 1800:
         raise ValueError('timeout_seconds must be 10–1800')
+    if type(result['cloud_retry_seconds']) is not int or not 15 <= result['cloud_retry_seconds'] <= 300:
+        raise ValueError('cloud_retry_seconds must be 15–300')
     return result
 
 
 def effective(workspace):
     w = helper('t_workflow')
-    doc, _ = w['load']()
+    doc, saved = w['load']()
+    if not saved:
+        return None  # Recommended defaults do not opt an unconfigured install into supervision.
     sync = helper('t_workflow_sync')
     scoped = w['tool_document'](doc, 'codex')
     selected = sync['launch_policy'](w, scoped, workspace)
     if selected is None and ('local-only' in json.dumps(scoped)):
         raise ValueError('Cannot resolve local-only workflow scope; refusing cloud fallback')
     if selected and not selected['enabled']:
-        return dict(DEFAULT, mode='disabled')
-    return policy(selected['inference']) if selected and 'inference' in selected else None
+        return None
+    return policy(selected.get('inference')) if selected else None
 
 
 def instructions(value):
@@ -80,7 +85,8 @@ def instructions(value):
             'The adapter snapshots the repository; review its patch and observed command evidence before applying. '
             'Do not claim the selected model ran without runtime evidence. ')
     if p['on_cloud_failure'] == 'local' and p['mode'] != 'local-only':
-        base += ('Cloud connection failure policy: the native launch supervisor can stop its owned cloud runtime and '
+        base += (f"Cloud connection failure policy: retry for up to {p['cloud_retry_seconds']} seconds, "
+                 'or until native retries are exhausted. The native launch supervisor can stop its owned cloud runtime and '
                  'start a fresh local session from a bounded private checkpoint. Authentication and quota errors do not trigger this. '
                  'Once local, stay local until the user explicitly starts a cloud session. ')
     if p['mode'] == 'local-only':
@@ -551,19 +557,76 @@ def select_model(ui, current=DEFAULT_MODEL, context=32768):
             return selection
 
 
+def retry_label(seconds):
+    return f'Up to {seconds // 60} minute' + ('s' if seconds != 60 else '') if seconds % 60 == 0 else f'Up to {seconds} seconds'
+
+
+def cloud_failure_menu(ui, current):
+    """Edit the shared staged policy; readiness operations remain explicit."""
+    focus = 'cloud_retry_seconds'
+    while True:
+        rows = [('cloud_retry_seconds', 'Retry cloud for'), ('on_cloud_failure', 'Then')]
+        values = {'cloud_retry_seconds': retry_label(current['cloud_retry_seconds']),
+                  'on_cloud_failure': 'Continue locally' if current['on_cloud_failure'] == 'local' else 'Pause'}
+        for key in values:
+            if current[key] == DEFAULT[key]:
+                values[key] = 'Default · ' + values[key]
+        sections = {'cloud_retry_seconds': 'Cloud retries', 'reset': 'Manage'}
+        selected = None
+        discovery_failed = False
+        if current['on_cloud_failure'] == 'local':
+            rows += [('model', 'Local model ›'), ('readiness', 'Readiness ›')]
+            sections['model'] = 'Local fallback'
+            values['model'] = current['model'].split('/')[-1]
+            try:
+                selected = next((r for r in catalogue(context=current['context_tokens'])['models']
+                                 if r['model'] == current['model'] and r['provider'] == current['provider']), None)
+                values['readiness'] = model_status(selected) if selected else 'Model unavailable · Choose a model'
+            except (OSError, ValueError, subprocess.SubprocessError):
+                discovery_failed = True
+                values['readiness'] = 'Status unavailable · Try again'
+        rows += [('reset', 'Reset to defaults'), ('back', 'Back')]
+        values['reset'] = 'Already at defaults' if all(current[k] == DEFAULT[k] for k in ('cloud_retry_seconds', 'on_cloud_failure')) else 'Cloud recovery settings'
+        choice = ui.pick('Cloud connection failure', rows, values=values, sections=sections,
+                         default=next((i for i, r in enumerate(rows) if r[0] == focus), 0))
+        if choice in (None, 'back'):
+            return
+        focus = choice
+        if choice == 'reset':
+            for key in ('cloud_retry_seconds', 'on_cloud_failure'):
+                current[key] = DEFAULT[key]
+        elif choice == 'cloud_retry_seconds':
+            value = ui.pick('Retry cloud for', [('', 'Use default · Up to 5 minutes')] +
+                            [(str(v), retry_label(v)) for v in (15, 30, 60, 120, 300)])
+            if value is not None:
+                current[choice] = int(value) if value else DEFAULT[choice]
+        elif choice == 'on_cloud_failure':
+            value = ui.pick('Then', [('', 'Use default · Pause'), ('pause', 'Pause'), ('local', 'Continue locally')],
+                            disabled={'local': 'Enable local routing first.'} if current['mode'] == 'disabled' else {})
+            if value is not None:
+                current[choice] = value or DEFAULT[choice]
+        elif choice in ('model', 'readiness'):
+            if discovery_failed:
+                continue
+            result = model_menu(ui, selected, current['context_tokens']) if choice == 'readiness' and selected else select_model(ui, current['model'], current['context_tokens'])
+            if result:
+                current.update(result)
+
+
 def workflow_menu(ui, value=None):
     current, focus = policy(value), 'mode'
     try:
         while True:
             rows = [('mode', 'Routing'), ('model', 'Local model'),
-                    ('on_cloud_failure', 'On cloud connection failure'),
+                    ('on_cloud_failure', 'Cloud connection failure ›'),
                     ('context_tokens', 'Context'), ('timeout_seconds', 'Task budget'),
                     ('reset', 'Reset to defaults'), ('back', 'Back')]
             choice = ui.pick('Inference & routing', rows,
                             default=next(i for i, row in enumerate(rows) if row[0] == focus),
-                            sections={'reset': 'Manage'},
+                            sections={'on_cloud_failure': 'Connection recovery', 'context_tokens': 'Local inference', 'reset': 'Manage'},
+                            disabled={'on_cloud_failure': 'Local-only workflow · No cloud connection'} if current['mode'] == 'local-only' else {},
                             values={**{k: str(v) for k, v in current.items()}, 'on_cloud_failure':
-                                    'Continue locally' if current['on_cloud_failure'] == 'local' else 'Pause and retry',
+                                    retry_label(current['cloud_retry_seconds']) + ' → ' + ('Continue locally' if current['on_cloud_failure'] == 'local' else 'Pause'),
                                     'reset': 'Already at defaults' if current == DEFAULT else 'Routing settings'})
             if choice in (None, 'back'):
                 return current
@@ -583,11 +646,7 @@ def workflow_menu(ui, value=None):
                     if current['mode'] == 'disabled':
                         current['on_cloud_failure'] = 'pause'
             elif choice == 'on_cloud_failure':
-                selected = ui.pick('On cloud connection failure', [('', 'Use default · Pause and retry'),
-                                   ('pause', 'Pause and retry'), ('local', 'Continue locally with selected model')],
-                                   disabled={'local': 'Enable routing first.'} if current['mode'] == 'disabled' else {})
-                if selected is not None:
-                    current['on_cloud_failure'] = selected or DEFAULT['on_cloud_failure']
+                cloud_failure_menu(ui, current)
             else:
                 values = (8192, 16384, 32768, 65536) if choice == 'context_tokens' else (60, 300, 900, 1800)
                 selected = ui.pick(choice.replace('_', ' ').title(), [('', 'Use default · ' + str(DEFAULT[choice]))] +
@@ -716,8 +775,16 @@ def lead(argv, cwd=None, chosen=None):
     """Dedicated native CLI launch: no cloud auth, models or providers inherited."""
     chosen = policy(chosen) if chosen is not None else effective(cwd or os.getcwd())
     if not chosen or chosen['mode'] != 'local-only':
-        if chosen and chosen['mode'] != 'disabled' and chosen['on_cloud_failure'] == 'local':
-            return helper('t_offline')['supervise'](argv, chosen, cwd or os.getcwd())
+        if chosen:
+            offline = helper('t_offline')
+            try:
+                offline['launch_options'](argv, cwd or os.getcwd())
+            except ValueError:
+                if chosen['on_cloud_failure'] == 'local':
+                    raise
+                print('Cloud retry limit unavailable for this invocation; using native tool retries.', file=sys.stderr)
+            else:
+                return offline['supervise'](argv, chosen, cwd or os.getcwd())
         return subprocess.call(argv)
     if '--approve-for-me' in argv[1:]:
         raise ValueError('Local-only inference requires user approval review; automatic cloud review is unavailable')
@@ -778,8 +845,7 @@ if __name__ == '__main__':
         if sys.argv[1:2] == ['--launch-prefix']:
             try:
                 selected = effective(sys.argv[2])
-                required = selected and (selected['mode'] == 'local-only' or
-                                         (selected['mode'] != 'disabled' and selected['on_cloud_failure'] == 'local'))
+                required = selected is not None
             except (OSError, ValueError):
                 required = True  # Launch guard reports the invalid policy; never fall back.
             if required:

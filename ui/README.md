@@ -1296,15 +1296,34 @@ does not publish; normal review/save/discard applies to the complete transaction
 
 `t workflow` includes a Codex **Inference & routing** submenu with Disabled,
 Manual, Automatic hybrid and Local only modes, explicit local model, context and
-task budget. **On cloud connection failure** stages Pause and retry (default) or
-Continue locally with selected model. Only new native CLI launches opt into the
-owned runtime supervisor; the native client supplies progress and approvals.
-The transition displays the connection-failure reason, exact provider/model and
-private checkpoint path, then stays local. It never downloads weights or treats
-authentication, quota, HTTP application failures, auxiliary threads or cancellation
-as an outage. Unsupported resume/fork/exec/review or remote/profile/OSS/worktree
-overrides fail before launch and explain how to select Pause. These are conditional
-launch modes, not new public command families. These are staged workflow choices. The shared model picker keeps
+task budget. **Cloud connection failure** opens grouped Cloud retries and Local
+fallback settings: **Retry cloud for** defaults to **Up to 5 minutes**, with
+15 seconds, 30 seconds, 1 minute, 2 minutes and 5 minutes available. **Then**
+defaults to **Pause**; **Continue locally** reveals the selected local model and
+readiness with direct access to its existing verification actions. Reset on this
+page changes only retry duration and the after-retries action; it preserves the
+model, context and task budget. All settings use the shared review/save/discard
+transaction, including completed changes before interruption. Readiness checks,
+installation and verification remain explicit immediate machine actions.
+
+The owned runtime supervisor observes native transport retries without replaying
+whole turns or replacing native backoff. The configured limit starts at the first
+typed connection failure; native exhaustion can end retries sooner. Recovery
+resets the clock. Pause interrupts only the owned cloud turn and retains the
+native client; successful interrupt acknowledgement confirms the paused state.
+A rejected or unacknowledged interrupt stops the owned runtime instead of claiming
+that it paused. Local fallback stops all owned cloud processes before starting a
+fresh local session from the bounded private checkpoint, displaying provider/model
+and checkpoint path. It stays local until the user starts a cloud session.
+Unavailable readiness or incomplete checkpoints pause the cloud turn visibly.
+It never downloads weights or treats authentication, quota, HTTP application
+failures, auxiliary threads or cancellation as an outage. Only fresh native CLI
+launches without remote/profile/OSS/worktree overrides support supervision.
+Unsupported resume/fork/exec/review or overridden launches reject local fallback;
+Pause launches use native retry behavior and explicitly report that the configured
+retry limit is unavailable. Local-only workflows disable this cloud settings row.
+These are conditional launch modes, not new public command families.
+The shared model picker keeps
 Memory fit ✓/✕/? visible on narrow screens. Unknown/non-fitting models are dimmed
 and inspectable; disabled Use/Install actions explain why and never execute.
 Benchmark suite selection is explicit; missing scores and speed are not invented.
