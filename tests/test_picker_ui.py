@@ -516,7 +516,7 @@ def test_inline_filter_toggle_preserves_query_and_removes_hidden_marks(picker):
 def test_resume_sort_controls_keep_focused_row_and_change_order(picker, width, height, auth_warning):
     start, wait, keys, finish = picker
     start(profile='resume-rich', mode='resume', width=width, height=height, auth_warning=auth_warning)
-    screen = wait('2/2 (0)')
+    screen = wait('2/2 (0)', focused='Newest web')
     assert ('Sort: turn' if width <= 48 else 'Sort: last turn') in screen and 'Newest web' in screen
     if auth_warning:
         assert 'GitHub auth failed:' in screen
