@@ -197,6 +197,47 @@ def test_config_editor_persists_after_review(evaluation, monkeypatch):
     assert m.paths()['config'].stat().st_mode & 0o077 == 0
 
 
+def test_missing_targets_use_pickers_without_accidental_actions(evaluation, t_mod, monkeypatch, capsys):
+    m, cli = evaluation
+    config = m.save_config(m.defaults('chosen'))
+    first, second = m.create_run(config), m.create_run(config)
+    for run_id in (first, second):
+        m.Journal(run_id).checkpoint(status='blocked', diagnostic='runtime unavailable')
+    parser = t_mod.build_parser()
+    monkeypatch.setattr(cli, 'tty', lambda: True)
+    selections, shown, launched = [], [], []
+    def choose(rows, title, *args, **kwargs):
+        shown.append((title, [r['key'] for r in rows]))
+        value = selections.pop(0)
+        assert value is None or value in shown[-1][1]
+        return value
+    monkeypatch.setattr(cli, 'choose', choose)
+    monkeypatch.setattr(m, 'launch', lambda *args: launched.append(args))
+    edited = []
+    monkeypatch.setattr(cli, 'edit_config', lambda cfg, api, module, value=None: edited.append(value))
+    for words, picks in ((['config', 'show'], ['chosen']), (['config', 'edit'], ['chosen']),
+                         (['runs', 'show'], [first]), (['runs', 'compare'], [first, second]),
+                         (['runs', 'resume'], [first])):
+        selections[:] = picks
+        assert cli.command(None, parser.parse_args(['eval', *words]), {}) == 0
+        assert not selections
+    assert edited == [config] and launched == [(first, False)]
+    assert 'runtime unavailable' in capsys.readouterr().out
+    assert shown[-2][1] == [second]  # Comparison cannot select its first run twice.
+    for words in (['config', 'show'], ['config', 'edit'], ['runs', 'show'], ['runs', 'compare'], ['runs', 'resume']):
+        selections[:] = [None]
+        assert cli.command(None, parser.parse_args(['eval', *words]), {}) == 130
+    assert len(launched) == 1 and len(edited) == 1
+    m.Journal(first).checkpoint(status='running')
+    selections[:] = [first, 'keep']
+    assert cli.command(None, parser.parse_args(['eval', 'runs', 'cancel']), {}) == 130
+    assert not (m.run_directory(first) / 'cancel.json').exists()
+    selections[:] = [first, 'cancel']
+    assert cli.command(None, parser.parse_args(['eval', 'runs', 'cancel']), {}) == 0
+    assert (m.run_directory(first) / 'cancel.json').exists()
+    assert m.configurations()['chosen'] == config
+
+
 @pytest.mark.parametrize('model,effort', [('alternate-model', None), ('alternate-model', 'low'), ('gpt-6-astra', None)])
 def test_start_model_override_resets_stale_settings(evaluation, t_mod, capsys, model, effort):
     m, cli = evaluation
