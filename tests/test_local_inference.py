@@ -184,7 +184,7 @@ def test_disabled_picker_and_model_details(local,t_mod,monkeypatch,width,height)
     row['benchmark']=None
     monkeypatch.setattr(m,'catalogue',lambda *a,**k:{'models':[row]})
     class UI:
-        def __init__(self):self.choices=iter([m.DEFAULT_MODEL,'back','__suite','gpqa','__back'])
+        def __init__(self):self.choices=iter([m.DEFAULT_MODEL,'back',('gpqa',m.DEFAULT_MODEL),'__back'])
         def pick(self,*a,**kw):return next(self.choices)
         def page(self,*a,**kw):return 'enter'
     assert m.select_model(UI()) is None
@@ -352,13 +352,13 @@ def test_picker_install_measure_and_unavailable(local,monkeypatch):
         def restore(self):pass
         def raw(self):pass
     for action in ('install','download','measure'):
-        choices=[m.DEFAULT_MODEL,action]+(['yes'] if action!='measure' else [])+['back','__back']
+        choices=[('tools',m.DEFAULT_MODEL),action]+(['yes'] if action!='measure' else [])+['back','__back']
         assert m.select_model(UI(choices)) is None
     assert len(calls)==3
-    assert m.select_model(UI([m.DEFAULT_MODEL,'use']))=={'model':m.DEFAULT_MODEL,'provider':'lmstudio'}
-    assert m.select_model(UI([m.DEFAULT_MODEL,'install','no','back','__back'])) is None
+    assert m.select_model(UI([m.DEFAULT_MODEL]))=={'model':m.DEFAULT_MODEL,'provider':'lmstudio'}
+    assert m.select_model(UI([('tools',m.DEFAULT_MODEL),'install','no','back','__back'])) is None
     monkeypatch.setattr(m,'measure',lambda *a:(_ for _ in ()).throw(ValueError('unavailable')))
-    assert m.select_model(UI([m.DEFAULT_MODEL,'measure','back','__back'])) is None
+    assert m.select_model(UI([('tools',m.DEFAULT_MODEL),'measure','back','__back'])) is None
     row.update(fit=None,ready=False,disk_fit=False)
     assert m.select_model(UI([m.DEFAULT_MODEL,'back','__back'])) is None
 

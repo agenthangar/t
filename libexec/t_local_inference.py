@@ -469,12 +469,12 @@ def model_menu(ui, row, context):
         if row.get('ready'):
             actions.append(('measure', 'Measure speed'))
         actions += [('benchmarks', 'Benchmarks ›'), ('artifact', 'Artifact & runtime ›'), ('back', 'Back')]
-        summary = [row['model'].split('/')[-1],
-                   f"{row['provider']} · {row.get('precision', 'runtime metadata')}",
-                   f"Files {row['bytes']/1e9:.1f} GB · {'on disk' if row['installed'] else 'to download'}",
-                   f"Context {context:,} tokens", model_status(row),
-                   f"Memory fit {'✓' if row['fit'] is True else '✕' if row['fit'] is False else '?'}"]
-        action = ui.pick('Model details', actions, context=summary,
+        summary = [('Model', model_name(row)),
+                   ('Runtime', f"{row['provider']} · {row.get('precision', 'runtime metadata')}"),
+                   ('Files', f"{row['bytes']/1e9:.1f} GB · {'On disk' if row['installed'] else 'To download'}"),
+                   ('Context', f'{context:,} tokens'), ('Status', model_status(row)),
+                   ('Memory fit', '✓' if row['fit'] is True else '✕' if row['fit'] is False else '?')]
+        action = ui.pick('Model tools', actions, context=summary,
                          default=next((i for i, (key, _) in enumerate(actions) if key == focus), 0),
                          sections={'benchmarks': 'Details'}, disabled=disabled,
                          accents={'use': 'g', 'install': 'g'})
@@ -534,27 +534,145 @@ def model_menu(ui, row, context):
         row = next(r for r in catalogue(context=context)['models'] if r['model'] == row['model'])
 
 
-def select_model(ui, current=DEFAULT_MODEL, context=32768):
-    suite = 'swe-bench-verified-bash-only'
+BENCHMARK_LABELS = {'swe-bench-pro': 'SWE Pro', 'deepswe': 'DeepSWE',
+                    'terminal-bench': 'Terminal', 'gpqa': 'GPQA',
+                    'swe-bench-verified-bash-only': 'SWE Verified', 'livebench-coding': 'LiveBench'}
+
+
+def model_name(row):
+    name = row.get('base_model', row['model']).split('/')[-1]
+    return re.sub(r'(?i)(?:-MLX)?-\d+bit$', '', name).replace('-', ' ')
+
+
+def selection(row):
+    return {'provider': row['provider'], 'model': row['model']}
+
+
+def preparation_block(row):
+    if not row.get('verification_allowed', row.get('fit') is True):
+        return row.get('reason', 'Memory or runtime compatibility is unknown.')
+    if not row['installed'] and not row.get('disk_fit', True):
+        return 'Insufficient disk space for the download.'
+    return None
+
+
+def prepare_model(ui, row, context):
+    """One explicit preparation; never change selection on failure or cancellation."""
+    error = row.get('verification_error', '')
     while True:
-        view = catalogue(suite, context)
-        rows = [('', 'Use default · ' + DEFAULT_MODEL.split('/')[-1])] + [(r['model'], r['model'].split('/')[-1]) for r in view['models']]
-        values = {r['model']: f"Memory fit {'✓' if r['fit'] is True else '✕' if r['fit'] is False else '?'} · "
-                  f"{r['benchmark']['score'] if r['benchmark'] else '—'} · " + model_status(r) for r in view['models']}
-        choice = ui.pick('Local model · ' + suite, rows + [('__suite', 'Change benchmark'), ('__back', 'Back')],
-                         values=values, default=next((i for i,r in enumerate(rows) if r[0] == current),0),
-                         accents={r['model']: 'y' for r in view['models'] if r['fit'] is not True})
+        blocked = preparation_block(row)
+        if blocked:
+            ui.pick('Model unavailable', [('back', 'Choose another model')],
+                    context=[('Model', model_name(row)), ('Reason', blocked),
+                             ('Files', 'Retained on disk' if row['installed'] else 'Not downloaded')])
+            return None
+        summary = [('Model', model_name(row)), ('Provider', row['provider']),
+                   ('Files', f"{row['bytes']/1e9:.1f} GB · " + ('On disk · Reuse files' if row['installed'] else 'To download')),
+                   ('Context', f'{context:,} tokens')]
+        if not row['installed']:
+            summary.append(('Location', str(model_directory(row['model']) if row['provider'] == 'lmstudio' else Path.home()/'.ollama/models')))
+        if error:
+            summary.append(('Last check', error))
+        action = 'Verify & use' if row['installed'] else 'Download, verify & use'
+        if ui.pick('Prepare local model', [('prepare', action), ('back', 'Cancel · Keep current model')],
+                   context=summary, accents={'prepare': 'g'}) != 'prepare':
+            return None
+        ui.restore()
+        try:
+            with helper('t_local_worker')['reservation']():
+                if row['provider'] == 'lmstudio':
+                    install(row['model'], False, context)
+                else:
+                    ollama_action(row['model'], 'install', context=context)
+            error = ''
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            error = str(exc)
+        finally:
+            ui.raw()
+        try:
+            refreshed = next((r for r in catalogue(context=context)['models']
+                              if selection(r) == selection(row)), None)
+            if refreshed:
+                row = refreshed
+            else:
+                error = error or 'Model no longer appears in the catalogue.'
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            error = error or str(exc)
+        if not error and row.get('ready'):
+            return selection(row)
+        error = error or 'Readiness was not confirmed. Files retained; current model unchanged.'
+
+
+def benchmark_source(ui, row, suite):
+    score = row.get('benchmarks', {}).get(suite)
+    if score is None:
+        lines = ['No published result recorded for this model.']
+    else:
+        lines = [f"{model_name(row)} · {BENCHMARK_LABELS.get(suite, suite)}: {score['score']}",
+                 'Publisher original-model result; not this local quantization.',
+                 score.get('version', ''), score.get('harness', score.get('kind', '')), score.get('source', '')]
+    model_page(ui, 'Benchmark source', lines)
+
+
+def select_model(ui, current=DEFAULT_MODEL, context=32768, provider=None):
+    focus = None
+    while True:
+        try:
+            view = catalogue(context=context)
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            if ui.pick('Local models unavailable', [('retry', 'Scan again'), ('back', 'Back')], context=[str(exc)]) != 'retry':
+                return None
+            continue
+        models = sorted(view['models'], key=lambda r: (bool(preparation_block(r)), not r.get('ready'), not r['installed']))
+        # Model identifiers can collide across providers; retain exact identity.
+        candidates = {(r['provider']+'::'+r['model'] if sum(v['model'] == r['model'] for v in models) > 1 else r['model']): r for r in models}
+        configured = next((key for key, r in candidates.items() if r['model'] == current and (provider is None or r['provider'] == provider)), None)
+        if focus not in candidates:
+            focus = configured
+        suites = [suite for suite in BENCHMARK_LABELS if any(suite in r.get('benchmarks', {}) for r in models)]
+        columns = [f'{i+1}:{BENCHMARK_LABELS[suite]}' for i, suite in enumerate(suites)] + ['Readiness']
+        cells = {key: [str(r.get('benchmarks', {}).get(suite, {}).get('score', '—')) for suite in suites] +
+                 [model_status(r) if not preparation_block(r) else 'Unavailable'] for key, r in candidates.items()}
+        notes = {key: r['provider']+' · '+r.get('precision', 'runtime precision')+(' · ✓ Configured' if key == configured else '') for key, r in candidates.items()}
+        def details(key):
+            r = candidates[key]
+            action = 'View compatibility' if preparation_block(r) else 'Use this model' if r.get('ready') else 'Verify & use' if r['installed'] else 'Download, verify & use'
+            return [f"Files {r['bytes']/1e9:.1f} GB · "+('On disk' if r['installed'] else 'Download required'),
+                    f"Context {context:,} tokens · Enter → {action}"]
+        rows = [('', 'Use default model')] + [(key, model_name(r)) for key, r in candidates.items()] + [('__refresh', 'Scan again'), ('__back', 'Back')]
+        intro = ['Publisher scores · Original models, not local quantizations.']
+        if not models:
+            intro += ['No local models found.']
+        elif configured is None:
+            intro += ['Configured model unavailable · Choose a replacement.']
+        choice = ui.pick('Choose a local model', rows, context=intro,
+                         values={'': DEFAULT_MODEL.split('/')[-1]},
+                         columns=columns, cells=cells, notes=notes, details=details,
+                         sections={next(iter(candidates), '__refresh'): 'Compare models', '__refresh': 'Manage'},
+                         default=next((i for i, r in enumerate(rows) if r[0] == focus), 0),
+                         focused_shortcuts={**{str(i+1): suite for i, suite in enumerate(suites)}, 'm': 'tools'})
         if choice in (None, '__back'):
             return None
         if choice == '':
             return {'provider': DEFAULT['provider'], 'model': DEFAULT_MODEL}
-        if choice == '__suite':
-            suite = ui.pick('Benchmark suite', [(v,v) for v in SUITES]) or suite
+        if choice == '__refresh':
             continue
-        current = choice
-        selection = model_menu(ui, next(r for r in view['models'] if r['model'] == choice), context)
-        if selection:
-            return selection
+        if isinstance(choice, tuple):
+            action, focus = choice
+            if action == 'tools':
+                result = model_menu(ui, candidates[focus], context)
+                if result:
+                    return result
+            else:
+                benchmark_source(ui, candidates[focus], action)
+            continue
+        focus = choice
+        row = candidates[choice]
+        if row.get('ready') and not preparation_block(row):
+            return selection(row)
+        result = prepare_model(ui, row, context)
+        if result:
+            return result
 
 
 def retry_label(seconds):
@@ -608,7 +726,7 @@ def cloud_failure_menu(ui, current):
         elif choice in ('model', 'readiness'):
             if discovery_failed:
                 continue
-            result = model_menu(ui, selected, current['context_tokens']) if choice == 'readiness' and selected else select_model(ui, current['model'], current['context_tokens'])
+            result = model_menu(ui, selected, current['context_tokens']) if choice == 'readiness' and selected else select_model(ui, current['model'], current['context_tokens'], current['provider'])
             if result:
                 current.update(result)
 
@@ -634,7 +752,7 @@ def workflow_menu(ui, value=None):
             if choice == 'reset':
                 current = policy()
             elif choice == 'model':
-                selection = select_model(ui, current['model'], current['context_tokens'])
+                selection = select_model(ui, current['model'], current['context_tokens'], current['provider'])
                 if selection:
                     current.update(selection)
             elif choice == 'mode':
@@ -654,7 +772,8 @@ def workflow_menu(ui, value=None):
                 if selected is not None:
                     current[choice] = int(selected) if selected else DEFAULT[choice]
     except KeyboardInterrupt as exc:
-        exc.workflow_inference = current
+        if current != policy(value):
+            exc.workflow_inference = current
         raise
 
 

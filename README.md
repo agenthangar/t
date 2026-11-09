@@ -1083,6 +1083,15 @@ only that page and its nested settings. **Reset workflow to defaults** restores
 the selected tool's built-in policy while keeping the workflow's name, repository
 assignments and per-repository design sources.
 
+Choose **Inference & routing → Local model** to compare available benchmark scores
+and readiness in one screen. Enter selects a ready model directly. Downloaded
+models offer **Verify & use**; missing models offer **Download, verify & use** with
+an explicit review. Preparation failure or cancellation keeps the current model.
+The benchmark header keys show provenance for the focused model; **m** opens
+optional verification, measurement and artifact tools. Scores are publisher
+original-model results, not measurements of the local quantization. Unreported
+scores appear as **—**. Model choices stay pending until Save.
+
 In **Inference & routing → Cloud connection failure**, choose **Retry cloud for**
 (default **Up to 5 minutes**) and **Then → Pause** or **Continue locally**.
 Native retries can finish sooner; reconnecting resets the retry window. Local

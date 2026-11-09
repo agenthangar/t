@@ -5054,13 +5054,15 @@ class _RailUI:
 
     def pick(self, label, rows, multi=False, default=0, marked=None,
              values=None, sections=None, accents=None, primary=None, shortcuts=None,
-             on_back=None, back_label=None, empty_choice=None, disabled=None, exclusive_choices=(), context=()):
+             on_back=None, back_label=None, empty_choice=None, disabled=None, exclusive_choices=(), context=(),
+             columns=(), cells=None, notes=None, details=None, focused_shortcuts=None):
         """Single/multiple selection on the shared row/frame template.
         Sections and unset-choice spacing are not selectable. An optional
         empty_choice makes that checklist row an exclusive reset selection.
         Optional shortcuts return an action key."""
         values, sections, accents = values or {}, sections or {}, accents or {}
         disabled = disabled or {}
+        cells, notes = cells or {}, notes or {}
         cur = max(0, min(default or 0, len(rows) - 1))
         marks = set(marked or ())
         empty_index = next((i for i, (key, _) in enumerate(rows) if key == empty_choice), None) if multi and empty_choice is not None else None
@@ -5072,11 +5074,24 @@ class _RailUI:
                 marks.add(empty_index)
         keys = "↑↓/jk move" + (" · space mark" if multi else "") + " · enter select"
         keys += (f" · q/esc {back_label} · ctrl-c cancel" if back_label else " · q back")
+        if focused_shortcuts:
+            keys += ' · ' + '/'.join(focused_shortcuts) + ' sources/tools'
         flash = ""
         while True:
-            display = [(f"{self.rail}   {part}", None) for text in context
-                       for part in _wrap_columns(text, max(1, self.cols() - 6))]
+            display = []
+            context_width = max((len(text[0]) for text in context if isinstance(text, tuple)), default=0)
+            for text in context:
+                lines = (self.row(*text, label_width=context_width) if isinstance(text, tuple) else
+                         [f"{self.rail}    {part}" for part in _wrap_columns(text, max(1, self.cols() - 7))])
+                display.extend((line, None) for line in lines)
+            if context:
+                display.append((self.rail, None))
             label_width = max((len(text) for key, text in rows if key in values), default=0)
+            widths = [max(len(title), max((len(str(cell[i])) for cell in cells.values()), default=0))
+                      for i, title in enumerate(columns)]
+            model_width = self.cols() - 8 - sum(widths) - 2 * len(widths)
+            table = bool(columns and model_width >= 18)
+            first_cell = True
             for n, (key, text) in enumerate(rows):
                 if n == 1 and rows[0][0] == '' and key not in sections:
                     display.append((self.rail, None))
@@ -5085,11 +5100,42 @@ class _RailUI:
                         display.append((self.rail, None))
                     display.append((self.section(sections[key]), None))
                 mark = ("◼" if n in marks else "◻") if multi else None
-                display += [(line, n) for line in self.row(text, values.get(key), selected=n == cur,
-                            mark=mark, label_width=label_width, accent="y" if key in disabled else accents.get(key, ""))]
+                if key in cells:
+                    if table and first_cell:
+                        heading = 'Model'.ljust(model_width) + '  ' + '  '.join(t.rjust(w) for t, w in zip(columns, widths))
+                        display.extend((line, None) for line in self.row(heading))
+                    first_cell = False
+                    if table:
+                        body = _truncate(text, model_width).ljust(model_width) + '  ' + '  '.join(str(v).rjust(w) for v, w in zip(cells[key], widths))
+                        lines = self.row(body, selected=n == cur)
+                    else:
+                        lines = self.row(text, cells[key][-1], selected=n == cur)
+                        scores = [f'{title} {value}' for title, value in zip(columns[:-1], cells[key][:-1]) if value != '—'] or ['Benchmarks · Unreported']
+                        packed, part = [], ''
+                        for score in scores:
+                            if part and _display_width(part+' · '+score) > self.cols()-7:
+                                packed.append(part); part = ''
+                            part += (' · ' if part else '') + score
+                        packed.append(part)
+                        lines += [f'{self.rail}    {self.st.c}{part}{self.st.r}' for text in packed
+                                  for part in _wrap_columns(text, max(1, self.cols() - 7))]
+                    if notes.get(key):
+                        lines += [f'{self.rail}    {self.st.y}{part}{self.st.r}' for part in _wrap_columns(notes[key], max(1, self.cols() - 7))]
+                    # Only the label anchors the viewport; a short terminal must never lose its cursor.
+                    display.extend((line, n if i == 0 else None) for i, line in enumerate(lines))
+                    if n == cur and details:
+                        display.append((self.rail, None))
+                        for detail in details(key):
+                            display.extend((f'{self.rail}    {part}', None) for part in _wrap_columns(detail, max(1, self.cols() - 7)))
+                        display.append((self.rail, None))
+                else:
+                    display += [(line, n) for line in self.row(text, values.get(key), selected=n == cur,
+                                mark=mark, label_width=label_width, accent="y" if key in disabled else accents.get(key, ""))]
             self.frame(label, display, cur, keys, primary, flash)
             flash = ""
             k = self.read_key()
+            if k in (focused_shortcuts or {}) and rows[cur][0] in cells:
+                return focused_shortcuts[k], rows[cur][0]
             if k in (shortcuts or {}):
                 return shortcuts[k]
             if k in ("up", "k"):

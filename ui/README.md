@@ -1323,15 +1323,35 @@ Unsupported resume/fork/exec/review or overridden launches reject local fallback
 Pause launches use native retry behavior and explicitly report that the configured
 retry limit is unavailable. Local-only workflows disable this cloud settings row.
 These are conditional launch modes, not new public command families.
-The shared model picker keeps
-Memory fit ✓/✕/? visible on narrow screens. Unknown/non-fitting models are dimmed
-and inspectable; disabled Use/Install actions explain why and never execute.
-Benchmark suite selection is explicit; missing scores and speed are not invented.
-Show benchmark sources/harnesses and measured speed only in model details.
-Installation and measurement are explicit immediate actions with model selection;
-model download review precedes installation. `t config models show` is read-only;
-`install` and `measure` are direct explicit-artifact actions. `--download-only`
-does not claim inference readiness. No list/show mode starts a runtime or picker.
+The model chooser uses the shared RailUI comparison profile. Show available
+publisher benchmark columns together; do not default to an empty benchmark suite
+or add a redundant benchmark-summary action. Label source keys in the column
+headers, and show missing scores as —. Number keys open source/version/harness
+for the focused model; m opens optional model tools. Scores remain original-model
+publisher results, never local quantization or speed measurements.
+
+Model labels, metadata and actions align at the shared row text column. Wide
+terminals align numeric comparison columns; narrow terminals stack labeled scores
+and readiness under the model. Keep the cursor and navigation inside the existing
+windowed frame. Distinguish the configured model from keyboard focus and disambiguate
+provider/model identities. Context includes file state, verification context and
+the next Enter action. Missing configured models, empty discovery and discovery
+errors have explicit refresh/back states. Browsing never downloads or loads models.
+
+Enter on a ready model stages its exact provider/model and returns to the workflow.
+Otherwise show one preparation screen: Verify & use for downloaded files, or
+Download, verify & use with size and location before downloading. Reuse existing
+reservation, context/hardware validation and runtime guardrails. Stage only after
+a refreshed exact-identity catalogue row confirms readiness. Failure, busy runtime,
+missing refreshed identity and cancellation preserve the workflow selection and
+retain downloaded files. Retries require another explicit choice. Compatibility
+or disk-space blocks show their reason and return to choosing another model.
+Use default and resets remain configuration-only and do not run/download a model.
+
+`t config models show` remains read-only; install and measure are explicit-artifact
+actions. `--download-only` does not claim inference readiness. No list/show mode
+starts a runtime or picker. Workflow configuration keeps its existing staged
+review/save/discard transaction; preparation is an explicit immediate machine action.
 
 ## Standalone companion: nosleep
 
