@@ -42,11 +42,13 @@ def status_lines(view):
         lines.append(clean(view['error']))
     for name, base in view.get('endpoints', {}).items():
         lines.append(name + '  ' + base)
+    benchmarks = helper('t_model_display')['benchmark_summaries']()
     for row in view.get('models', []):
         memory = row.get('memory_bytes')
         lines.append(clean(row['model']) + ' · ' + row['provider'] + ' · ' +
                      (f'{memory / 1024**3:.1f} GiB' + (' estimated' if row.get('estimated') else '') if memory is not None else 'memory unknown') +
-                     ' · ' + ('Loaded by t' if row.get('owned') else 'Loaded in provider app'))
+                     ' · ' + ('Loaded by t' if row.get('owned') else 'Loaded in provider app') +
+                     ' · ' + benchmarks.get(row['model'], 'Benchmark unavailable'))
     if not view.get('models'):
         lines.append('No loaded models reported.')
     return lines
@@ -296,7 +298,7 @@ def monitor_cli(ui):
 DASHBOARD = '''<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width">
 <title>t · Local model usage</title><style>body{background:#171d24;color:#e7edf4;font:15px/1.6 system-ui;max-width:1000px;margin:40px auto;padding:20px}h1{font-size:24px}h2{font-size:16px;color:#83cbd2}section{border:1px solid #3c4b5c;padding:20px;margin:16px 0;border-radius:8px}p{white-space:pre-wrap}small{color:#a5b1bf}</style>
 <h1>Local model usage</h1><small>Read-only · refreshes every second · no prompts or responses retained</small><section><h2 id="state">Connecting…</h2><p id="models"></p></section><section><h2>Requests</h2><div id="requests"></div></section>
-<script>const token=location.hash.slice(1);history.replaceState(null,'',location.pathname);async function tick(){try{const r=await fetch('/status',{headers:{Authorization:'Bearer '+token}});if(!r.ok)throw Error();const v=await r.json();document.querySelector('#state').textContent='Manager: '+v.manager;document.querySelector('#models').textContent=v.models.map(m=>m.model+' · '+m.provider+' · '+(m.memory_bytes==null?'memory unknown':(m.memory_bytes/1073741824).toFixed(1)+' GiB'+(m.estimated?' estimated':''))+' · '+(m.owned?'Loaded by t':'Loaded in provider app')).join('\\n')||'No loaded models reported.';const root=document.querySelector('#requests');root.replaceChildren();for(const x of v.requests){const p=document.createElement('p');p.textContent=(x.owner_label||'Local client')+' · '+x.model+' · '+x.kind+' · '+x.state+' · queued '+x.queue_seconds+'s · executing '+x.execution_seconds+'s';root.append(p)}}catch(e){document.querySelector('#state').textContent='Monitor disconnected'}setTimeout(tick,1000)}tick();</script>'''
+<script>const token=location.hash.slice(1);history.replaceState(null,'',location.pathname);async function tick(){try{const r=await fetch('/status',{headers:{Authorization:'Bearer '+token}});if(!r.ok)throw Error();const v=await r.json();document.querySelector('#state').textContent='Manager: '+v.manager;document.querySelector('#models').textContent=v.models.map(m=>m.model+' · '+m.provider+' · '+(m.memory_bytes==null?'memory unknown':(m.memory_bytes/1073741824).toFixed(1)+' GiB'+(m.estimated?' estimated':''))+' · '+(m.owned?'Loaded by t':'Loaded in provider app')+' · '+m.benchmark_summary).join('\\n')||'No loaded models reported.';const root=document.querySelector('#requests');root.replaceChildren();for(const x of v.requests){const p=document.createElement('p');p.textContent=(x.owner_label||'Local client')+' · '+x.model+' · '+x.kind+' · '+x.state+' · queued '+x.queue_seconds+'s · executing '+x.execution_seconds+'s';root.append(p)}}catch(e){document.querySelector('#state').textContent='Monitor disconnected'}setTimeout(tick,1000)}tick();</script>'''
 
 
 class MonitorHandler(BaseHTTPRequestHandler):
@@ -311,7 +313,10 @@ class MonitorHandler(BaseHTTPRequestHandler):
         if self.path == '/':
             body, content = DASHBOARD.encode(), 'text/html; charset=utf-8'
         elif self.path == '/status' and hmac.compare_digest(self.headers.get('Authorization', ''), 'Bearer ' + self.server.token):
-            body, content = json.dumps(manager()['status']()).encode(), 'application/json'
+            view = manager()['status']()
+            benchmarks = helper('t_model_display')['benchmark_summaries']()
+            view = dict(view, models=[dict(row, benchmark_summary=benchmarks.get(row['model'], 'Benchmark unavailable')) for row in view.get('models', [])])
+            body, content = json.dumps(view).encode(), 'application/json'
         else:
             self.send_error(403)
             return

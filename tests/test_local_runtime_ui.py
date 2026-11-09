@@ -174,7 +174,8 @@ def test_hub_all_branches_and_command_errors(ui_module,monkeypatch,capsys):
     monkeypatch.setattr(m,'provider_menu',lambda ui,provider:calls.append(provider))
     monkeypatch.setattr(m,'monitor_cli',lambda ui:calls.append('cli'))
     monkeypatch.setattr(m,'monitor_gui',lambda:calls.append('gui'))
-    monkeypatch.setattr(m,'helper',lambda name:{'select_model':lambda *a,**k:{'model':'model','provider':'ollama'}} if name=='t_local_inference' else {'save_settings':lambda value:calls.append(value),'settings':lambda:{'enabled':True}} if name=='t_local_worker' else {'run':lambda *a:calls.append('worker')})
+    original_helper=m.helper
+    monkeypatch.setattr(m,'helper',lambda name:original_helper(name) if name=='t_model_display' else {'select_model':lambda *a,**k:{'model':'model','provider':'ollama'}} if name=='t_local_inference' else {'save_settings':lambda value:calls.append(value),'settings':lambda:{'enabled':True}} if name=='t_local_worker' else {'run':lambda *a:calls.append('worker')})
     m.hub(UI('requests','models','save','machine','provider','ollama','worker','monitor','cli','monitor','gui','monitor','lmstudio','back'),{})
     assert 'worker' in calls and 'gui' in calls and {'enabled':True,'model':'model','provider':'ollama'} in calls
     monkeypatch.setattr(m.sys.stdin,'isatty',lambda:False)

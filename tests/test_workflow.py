@@ -1256,6 +1256,6 @@ def test_workflow_print_precedence_and_reasoning(workflow, t_mod, monkeypatch, c
     assert 'Design approval' not in text and 'Preview timing: Automatically when ready' in text
     assert 'Implement before approval: No' in text
     assert 'Agent selects by task' in text and 'One level below' not in text
-    assert 'Implementation' in text and 'Main session: gpt-6.1-sol · Medium' in text
+    assert 'Implementation' in text and 'Lead model: gpt-6.1-sol · Medium' in text
     assert 'starts Medium' not in text
     assert 'one-level-lower' not in text and 'Test runners:' in text and 'Propagation:' in text

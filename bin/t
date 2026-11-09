@@ -2049,12 +2049,16 @@ def _config_catalog(agent, raw):
                 fast = isinstance(legacy, list) and "fast" in legacy
                 ultrafast = isinstance(legacy, list) and "ultrafast" in legacy
         catalog.append({"id": ident, "resolved": resolved, "label": label, "efforts": efforts,
-                        "fast": fast, "ultrafast": ultrafast})
+                        "fast": fast, "ultrafast": ultrafast, "description": str(model.get("description") or "")[:160]})
     return catalog
 
 
 def _config_find_model(catalog, model):
     return next((m for m in catalog if model in (m["id"], m["resolved"])), None)
+
+
+def _model_display():
+    return runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_model_display.py"))
 
 
 def _config_model_rows(current, catalog):
@@ -2091,7 +2095,7 @@ def _config_set_model(cfg, agent, model, catalog):
     return reset
 
 
-def _config_model_menu(ui, cfg, agent, catalogs, setting="model", default_label=None, fallback_model="", quiet=False, model_validator=None):
+def _config_model_menu(ui, cfg, agent, catalogs, setting="model", default_label=None, fallback_model="", quiet=False, model_validator=None, role=""):
     while True:
         if agent not in catalogs:
             if not quiet:
@@ -2136,11 +2140,15 @@ def _config_model_menu(ui, cfg, agent, catalogs, setting="model", default_label=
         if default_label:
             rows = [(key, default_label if key == "" else label) for key, label in rows]
         title = f"{agent.title()} {setting if setting != 'fast' else ('Speed' if agent == 'codex' else 'Fast mode')}"
+        if role:
+            title = role + (" model" if setting == "model" else " reasoning effort")
         if setting != "model":
             title += f" · {model or 'tool default'}"
         picked = ui.pick(title, rows,
                          default=next(i for i, row in enumerate(rows) if row[0] == current),
-                         accents={key: "c" for key, _ in rows if key and not key.startswith("__")})
+                         accents={} if setting == "model" else {key: "c" for key, _ in rows if key and not key.startswith("__")},
+                         sections={"__custom__": "Manage"} if setting == "model" else None,
+                         model_table=_model_display()["native_models"](rows, catalog, agent, current) if setting == "model" else None)
         if picked == "__refresh__":
             del catalogs[agent]
             continue
@@ -2452,7 +2460,9 @@ def _workflow_model(ui, cfg, helper, stage, current):
         rows = list(choices.items()) + [("__custom__", "Enter a custom model ID…"),
                                         ("__refresh__", "Refresh model list")]
         picked = ui.pick(_workflow_stage_title(stage) + " model", rows,
-                         default=next(i for i, row in enumerate(rows) if row[0] == current))
+                         default=next(i for i, row in enumerate(rows) if row[0] == current),
+                         sections={"__custom__": "Manage"},
+                         model_table=_model_display()["native_models"](rows, catalog, tool, current))
         if picked == "__refresh__":
             getattr(cfg, "_workflow_catalogs", {}).pop(tool, None)
             if hasattr(cfg, "_workflow_catalog"):
@@ -2640,7 +2650,7 @@ def _workflow_session_setting(ui, cfg, policy, agent, field):
         cfg._workflow_session_catalogs = {}
     _config_model_menu(ui, staged, agent, cfg._workflow_session_catalogs, field,
                        default_label=_workflow_session_default_label(cfg, policy, agent, field),
-                       fallback_model=getattr(cfg, "models", {}).get(agent, ""), quiet=True,
+                       fallback_model=getattr(cfg, "models", {}).get(agent, ""), quiet=True, role="Lead",
                        model_validator=(lambda value: re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/@+\[\](),=-]*", value)) if agent == "cursor" else None)
     selected = {key: value for key, value in (("model", staged.models.get(agent)),
                                              ("effort", staged.efforts.get(agent))) if value}
@@ -2675,9 +2685,9 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
             rows += [(stage, _workflow_stage_title(stage))
                      for stage in ("planning", "implementation", "review") if stage in stages]
             if "implementation" not in stages and not local_only:
-                rows += [("main_model", "Model")]
+                rows += [("main_model", "Lead model")]
                 if agent != "cursor":
-                    rows.append(("main_effort", "Reasoning effort"))
+                    rows.append(("main_effort", "Lead reasoning effort"))
             if agent == "codex":
                 rows.append(("inference", "Inference & routing ›"))
             rows.append(("frontend_design", "Frontend design ›"))
@@ -2724,7 +2734,7 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
                 changed = reset
             elif choice == "stages_enabled":
                 backed = []
-                picked = ui.pick("Use multiple models", [("", "Use one model for all work"), ("planning", "Planning"),
+                picked = ui.pick("Use multiple models", [("", "Use lead model for all stages"), ("planning", "Planning"),
                                  ("implementation", "Implementation"), ("review", "Review"),
                                  ('__default__', 'Use default · ' + (', '.join(_workflow_stage_title(key) for key in helper['model_stages'](helper['DEFAULT'])) or 'One model'))],
                                  multi=True, marked={i + 1 for i, stage in enumerate(("planning", "implementation", "review")) if stage in stages} or {0},
@@ -3478,6 +3488,8 @@ def _workflow_changed_review(helper, document, before, activate=False):
         return str(value)
 
     def path_label(path):
+        if len(path) == 3 and path[0] == 'session_defaults':
+            return path[1].title() + ' · Lead ' + ('model' if path[-1] == 'model' else 'reasoning effort')
         if path[0] == 'behaviors' and len(path) == 2:
             return helper['BEHAVIORS'].get(path[1], {}).get('label', path[1])
         return ' · '.join(part.replace('_', ' ').capitalize() for part in path)
@@ -4264,7 +4276,7 @@ def _workflow_model_rows(helper, policy):
         rows.append((_workflow_stage_title(stage), settings["model"] or "Agent default",
                      "Model default" if helper.get("TOOL") == "cursor" else
                      _workflow_effort(settings["effort"], "implementation" if inherited else stage) if settings["effort"] else "Session default",
-                     "Main model" if inherited else "Main session" if stage == "implementation" and not helper["implementation_worker"](policy) else "Worker"))
+                     "Lead model" if inherited else "Lead session" if stage == "implementation" and not helper["implementation_worker"](policy) else "Worker"))
     return rows
 
 
@@ -4319,11 +4331,12 @@ def _workflow_print(helper, result, catalogue=False):
             print("Model settings: " + ", ".join(_workflow_stage_title(stage) for stage in stages))
             if helper["implementation_worker"](policy):
                 settings = helper["main_session_settings"]({**policy, "enabled": True})
-                print("Main session: " + (settings.get("model") or "Agent default") +
+                print("Lead model: " + (settings.get("model") or "Agent default") +
                       ("" if helper.get("TOOL") == "cursor" else " · " +
                        (_workflow_effort(settings["effort"]) if settings.get("effort") else "Session default")))
-            print("\n".join(_table_lines(("STEP", "MODEL", "REASONING", "SOURCE"),
-                                        _workflow_model_rows(helper, policy))))
+            print("\n".join(_table_lines(("STEP", "MODEL", "REASONING", "SOURCE", "SCORE"),
+                                        [(*row, "—") for row in _workflow_model_rows(helper, policy)])))
+            print("Benchmark: — no sourced result for native models")
         else:
             print("Models: one model per session (saved stage choices retained)")
             defaults = policy.get("session_defaults", {})
@@ -5009,7 +5022,7 @@ class _RailUI:
 
     def pick(self, label, rows, multi=False, default=0, marked=None,
              values=None, sections=None, accents=None, primary=None, shortcuts=None,
-             on_back=None, back_label=None, empty_choice=None, disabled=None, exclusive_choices=(), context=()):
+             on_back=None, back_label=None, empty_choice=None, disabled=None, exclusive_choices=(), context=(), model_table=None, benchmark_suite=""):
         """Single/multiple selection on the shared row/frame template.
         Sections and unset-choice spacing are not selectable. An optional
         empty_choice makes that checklist row an exclusive reset selection.
@@ -5031,6 +5044,8 @@ class _RailUI:
         while True:
             display = [(f"{self.rail}   {part}", None) for text in context
                        for part in _wrap_columns(text, max(1, self.cols() - 6))]
+            table_header, table_rows = _model_display()["table"](model_table, self.cols()-8) if model_table else ("", {})
+            table_keys = [key for key, _ in rows if key in table_rows]
             label_width = max((_display_width(text) for key, text in rows if key in values), default=0)
             for n, (key, text) in enumerate(rows):
                 if n == 1 and rows[0][0] == '' and key not in sections:
@@ -5039,9 +5054,17 @@ class _RailUI:
                     if display:
                         display.append((self.rail, None))
                     display.append((self.section(sections[key]), None))
+                if table_keys and key == table_keys[0]:
+                    display.append((f"{self.rail}    {self.st.y}{table_header}{self.st.r}", None))
                 mark = ("◼" if n in marks else "◻") if multi else None
-                display += [(line, n) for line in self.row(text, values.get(key), selected=n == cur,
+                display += [(line, n) for line in self.row(table_rows.get(key, text), None if key in table_rows else values.get(key), selected=n == cur,
                             mark=mark, label_width=label_width, accent="y" if key in disabled else accents.get(key, ""))]
+                if table_keys and key == table_keys[-1]:
+                    display.append((self.rail, None))
+                    display.extend((f"{self.rail}    {self.st.y}{part}{self.st.r}", None)
+                                   for line in _model_display()["legend"](model_table, benchmark_suite)
+                                   for part in _wrap_columns(line, self.cols()-8))
+                    display.append((self.rail, None))
             self.frame(label, display, cur, keys, primary, flash)
             flash = ""
             k = self.read_key()
@@ -11867,7 +11890,8 @@ COMMANDS
 SCOPE
   User-wide catalog for this machine; no repository inference or picker.
   Select local models in t workflow → Inference & routing.
-  Use --suite to compare one evaluation; unknown scores remain blank.
+  Use --suite to select an evaluation; unavailable scores show —.
+  Lists align model, size, provider, memory fit, readiness and benchmark score.
 
 LEARN MORE
   t help config models <verb>
@@ -11979,8 +12003,7 @@ SCOPE
   Use --tool codex, claude or cursor; default: repository or account tool.
   Omit --repo for that tool's global workflow. --repo selects a registered repository
   alias, basename or origin name explicitly.
-  Start with Codex, Claude or Cursor in the editor, then choose its workflow.
-  Each tool has separate workflows, defaults and repository assignments.
+  Choose a tool, then its workflow; each has separate defaults and assignments.
   Browsing never changes the tool that launches sessions.
   Explicit verbs never infer the checkout. Bare t workflow opens the editor.
   Named opens use the account tool unless --tool selects another catalogue.
@@ -11991,7 +12014,10 @@ SCOPE
   Ctrl+C offers Keep editing, Review and save, or Discard when changes are pending.
   Models, Behavior and Manage group the editor; resets stay pending until Save.
   Permissions selects Codex and Claude access for new and resumed CLI sessions.
+  Lead model and Lead reasoning effort configure the main conversation.
   Inference & routing: local models; opt-in Continue locally on cloud outage.
+  Time limits: default task 15 min, maximum task 30 min, inactivity 5 min,
+  queue wait 5 min. Reset time limits affects only these four values.
   Frontend design configures prototypes and repository design systems.
   CLI planning previews have independent timing and approval settings.
   Repository assignments select design sources or start guidance drafting.
@@ -11999,7 +12025,6 @@ SCOPE
   Task/repo rules prevail; Markdown overrides preferences, then stage guidance.
   Edits publish native instructions, then reconcile supported loaded sessions.
   List reports propagation without connecting; saves and starts apply preferences.
-  Instruction reload and current-turn settings cannot be verified or forced.
 
 LEARN MORE
   t help workflow <verb>
@@ -13136,9 +13161,9 @@ EXAMPLES
   Workflows opens the editor for models, PRs, previews, tests, and text.
   Workflow Permissions sets Codex and Claude access for new/resumed CLI sessions.
   Clear text instructions removes Markdown in the pending review and save changes.
-  Use multiple models offers stage checkboxes and Use one model for all work.
+  Use multiple models offers stage checkboxes and Use lead model for all stages.
   Unchecked Implementation uses session defaults;
-  unchecked helpers use the main model.
+  unchecked helpers use the lead model.
   Run t workflow directly to edit, review and save workflow changes.
   Ctrl+C offers Keep editing, Review and save, or Discard for pending changes;
   without changes it exits immediately. Saving still requires the final review.

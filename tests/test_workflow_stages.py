@@ -289,7 +289,7 @@ def test_task_selected_implementation_uses_worker_with_fixed_main_session(workfl
     assert 'never pretend the main session\'s effort changed' in text
     assert 'Plan in the main conversation with gpt-6.1-sol; reasoning effort: medium.' in text
     assert 'Review in the main conversation with gpt-6.1-sol; reasoning effort: medium.' in text
-    assert 'Main session: gpt-6.1-sol · Medium' in workflow.summary_lines(policy)
+    assert 'Lead model: gpt-6.1-sol · Medium' in workflow.summary_lines(policy)
     assert workflow.main_session_settings(policy) == {'model': 'gpt-6.1-sol', 'effort': 'medium'}
     assert policy == before
 

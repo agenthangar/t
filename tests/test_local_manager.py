@@ -549,3 +549,35 @@ def test_recovery_tolerates_exited_verified_daemon(manager,monkeypatch):
     monkeypatch.setattr(manager.os,'killpg',lambda *a:(_ for _ in ()).throw(ProcessLookupError()))
     engine.recover();assert not engine.recovery_pending and not engine.blocked
     engine.close()
+
+
+def test_only_generation_updates_activity_not_polling(manager):
+    engine=manager.Engine(Providers);lease=register(engine)
+    tracker=manager.ResponseTracker(engine,{'client':lease['id']},{'provider':'lmstudio','alias':'a'},False,True)
+    for value in ({'type':'response.created'}, {'type':'response.output_text.delta','delta':''},
+                  {'choices':None}, {'choices':[None,{'delta':None}]}, {'usage':{'output_tokens':2}}):
+        tracker.accept(value)
+    client=engine.clients[lease['id']]
+    assert engine.client_status(client)['generation_events']==0
+    for value in ({'type':'response.reasoning_text.delta','delta':'private'},
+                  {'choices':[{'delta':{'tool_calls':[{'id':'tool'}]}}]},
+                  {'message':{'thinking':'private'}}):
+        tracker.accept(value)
+    assert engine.client_status(client)['generation_events']==3
+    assert 'private' not in json.dumps(engine.snapshot())
+
+
+def test_idle_old_manager_upgrades_without_interrupting_clients(manager,monkeypatch):
+    calls=[]
+    def rpc(action,**kw):
+        calls.append(action)
+        if calls==['status']:return {'protocol':1,'clients':[]}
+        if action=='shutdown':return {'stopping':True}
+        if len(calls)==3:raise FileNotFoundError()
+        return {'protocol':manager.VERSION}
+    monkeypatch.setattr(manager,'rpc',rpc)
+    monkeypatch.setattr(manager.subprocess,'Popen',lambda *a,**kw:None)
+    assert manager.ensure()['protocol']==manager.VERSION
+    assert calls==['status','shutdown','status','status']
+    monkeypatch.setattr(manager,'rpc',lambda *a,**kw:{'protocol':1,'clients':[{'id':'active'}]})
+    with pytest.raises(ValueError,match='sessions finish'):manager.ensure()

@@ -24,7 +24,14 @@ _spinner = runpy.run_path(str(ROOT / 'libexec/t_progress.py'))['spinner']
 DEFAULT_MODEL = 'mlx-community/Qwen3.8-27B-8bit'
 MODES = ('disabled', 'manual', 'automatic', 'local-only')
 DEFAULT = {'mode': 'manual', 'provider': 'lmstudio', 'model': DEFAULT_MODEL,
-           'context_tokens': 32768, 'timeout_seconds': 300, 'queue_timeout_seconds': 300, 'on_cloud_failure': 'pause'}
+           'context_tokens': 32768, 'timeout_seconds': 900, 'max_timeout_seconds': 1800, 'inactivity_timeout_seconds': 300, 'queue_timeout_seconds': 300, 'on_cloud_failure': 'pause'}
+TIME_LIMITS = {'timeout_seconds': 'Default task limit', 'max_timeout_seconds': 'Maximum task limit',
+               'inactivity_timeout_seconds': 'Inactivity timeout', 'queue_timeout_seconds': 'Queue wait'}
+
+def duration(seconds):
+    return f'{seconds // 60} min' if seconds % 60 == 0 else f'{seconds} sec'
+
+
 SUITES = ('swe-bench-verified-bash-only', 'swe-bench-pro', 'deepswe', 'gpqa', 'terminal-bench', 'livebench-coding')
 
 
@@ -49,10 +56,11 @@ def policy(value=None):
         raise ValueError('select an explicit local model artifact')
     if type(result['context_tokens']) is not int or not 4096 <= result['context_tokens'] <= 131072:
         raise ValueError('context_tokens must be 4096–131072')
-    if type(result['timeout_seconds']) is not int or not 10 <= result['timeout_seconds'] <= 1800:
-        raise ValueError('timeout_seconds must be 10–1800')
-    if type(result['queue_timeout_seconds']) is not int or not 10 <= result['queue_timeout_seconds'] <= 1800:
-        raise ValueError('queue_timeout_seconds must be 10–1800')
+    for key in TIME_LIMITS:
+        if type(result[key]) is not int or not 10 <= result[key] <= 1800:
+            raise ValueError(key + ' must be 10–1800')
+    if result['timeout_seconds'] > result['max_timeout_seconds']:
+        raise ValueError('Maximum task limit must be at least the default task limit')
     return result
 
 
@@ -74,7 +82,7 @@ def instructions(value):
     if p['mode'] == 'disabled':
         return 'Local delegation is disabled in this workflow.'
     identity = f"{p['provider']} / {p['model']}"
-    base = (f"Local inference: {identity}; context {p['context_tokens']}; task budget {p['timeout_seconds']} seconds; separate queue wait {p['queue_timeout_seconds']} seconds. "
+    base = (f"Local inference: {identity}; context {p['context_tokens']}; task budget {p['timeout_seconds']} seconds; maximum explicit task {p['max_timeout_seconds']} seconds; inactivity {p['inactivity_timeout_seconds']} seconds; separate queue wait {p['queue_timeout_seconds']} seconds. Omitted limits inherit this workflow; activity resets inactivity, never the task deadline. "
             'Use the t-local-worker MCP start_task/task_status/cancel_task tools for local delegation. '
             'Announce Local requested with provider, model and reason before delegating. '
             'Say Local accepted only after start_task succeeds; a request is not proof of inference. '
@@ -408,7 +416,7 @@ def ollama_revision(name):
     return None
 
 
-def catalogue(suite='swe-bench-verified-bash-only', context=32768):
+def catalogue(suite='swe-bench-pro', context=32768):
     policy({'context_tokens': context})
     if suite not in SUITES:
         raise ValueError('unknown benchmark suite')
@@ -519,7 +527,9 @@ def model_menu(ui, row, context, use_label='Use in workflow'):
                    row['provider'] + ' · ' + ('Ready' if row.get('ready') else 'Downloaded' if row['installed'] else 'Not downloaded'),
                    'Activity    ' + ('Generating' if any(x.get('active') for x in instances) else 'Loaded · idle' if instances else 'Not loaded'),
                    f"Memory      {row.get('memory_bytes', 0)/1024**3:.1f} GiB estimated",
-                   f"Context     {context:,} tokens"]
+                   f"Context     {context:,} tokens",
+                   next((suite + ' ' + str(score['score']) + ' · ' + score['version'] + ' · base model'
+                         for suite, score in row.get('benchmarks', {}).items()), 'Benchmark unavailable')]
         action = ui.pick('Model details', actions, context=summary,
                          default=next((i for i, (key, _) in enumerate(actions) if key == focus), 0),
                          sections={'benchmarks': 'Details'}, disabled=disabled,
@@ -594,15 +604,17 @@ def model_menu(ui, row, context, use_label='Use in workflow'):
 
 
 def select_model(ui, current=DEFAULT_MODEL, context=32768, use_label='Use in workflow'):
-    suite = 'swe-bench-verified-bash-only'
+    suite = 'swe-bench-pro'
     while True:
         view = catalogue(suite, context)
         rows = [('', 'Use default · ' + DEFAULT_MODEL.split('/')[-1])] + [(r['model'], r['model'].split('/')[-1]) for r in view['models']]
         values = {r['model']: f"Memory fit {'✓' if r['fit'] is True else '✕' if r['fit'] is False else '?'} · "
                   f"{r['benchmark']['score'] if r['benchmark'] else '—'} · " + model_status(r) for r in view['models']}
-        choice = ui.pick('Local model · ' + suite, rows + [('__suite', 'Change benchmark'), ('__back', 'Back')],
+        choice = ui.pick('Local model', rows + [('__suite', 'Change benchmark'), ('__back', 'Back')],
                          values=values, default=next((i for i,r in enumerate(rows) if r[0] == current),0),
-                         accents={r['model']: 'y' for r in view['models'] if r['fit'] is not True})
+                         sections={'__suite': 'Manage'},
+                         accents={r['model']: 'y' for r in view['models'] if r['fit'] is not True},
+                         model_table=helper('t_model_display')['local_models'](view['models'], suite, current), benchmark_suite=suite)
         if choice in (None, '__back'):
             return None
         if choice == '':
@@ -622,13 +634,14 @@ def workflow_menu(ui, value=None):
         while True:
             rows = [('mode', 'Routing'), ('model', 'Local model'),
                     ('on_cloud_failure', 'On cloud connection failure'),
-                    ('context_tokens', 'Context'), ('timeout_seconds', 'Task budget'),
-                    ('queue_timeout_seconds', 'Queue wait'),
+                    ('context_tokens', 'Context'), *TIME_LIMITS.items(),
+                    ('reset_time', 'Reset time limits to defaults'),
                     ('reset', 'Reset to defaults'), ('back', 'Back')]
             choice = ui.pick('Inference & routing', rows,
                             default=next(i for i, row in enumerate(rows) if row[0] == focus),
-                            sections={'reset': 'Manage'},
-                            values={**{k: str(v) for k, v in current.items()}, 'on_cloud_failure':
+                            sections={'timeout_seconds': 'Time limits', 'reset_time': 'Manage'},
+                            values={**{k: duration(v) if k in TIME_LIMITS else str(v) for k, v in current.items()},
+                                    'reset_time': '15 / 30 / 5 / 5 min', 'on_cloud_failure':
                                     {'local': 'Continue locally', 'ask': 'Ask which local model', 'pause': 'Pause and retry'}[current['on_cloud_failure']],
                                     'reset': 'Already at defaults' if current == DEFAULT else 'Routing settings'})
             if choice in (None, 'back'):
@@ -636,6 +649,8 @@ def workflow_menu(ui, value=None):
             focus = choice
             if choice == 'reset':
                 current = policy()
+            elif choice == 'reset_time':
+                current.update({key: DEFAULT[key] for key in TIME_LIMITS})
             elif choice == 'model':
                 selection = select_model(ui, current['model'], current['context_tokens'])
                 if selection:
@@ -657,9 +672,16 @@ def workflow_menu(ui, value=None):
                     current['on_cloud_failure'] = selected or DEFAULT['on_cloud_failure']
             else:
                 values = (8192, 16384, 32768, 65536) if choice == 'context_tokens' else (60, 300, 900, 1800)
-                selected = ui.pick(choice.replace('_', ' ').title(), [('', 'Use default · ' + str(DEFAULT[choice]))] +
-                                   [(str(v), str(v)) for v in values])
-                if selected is not None:
+                format_value = duration if choice in TIME_LIMITS else str
+                disabled = {str(v): 'Maximum task limit must be at least the default task limit.' for v in values
+                            if (choice == 'timeout_seconds' and v > current['max_timeout_seconds']) or
+                               (choice == 'max_timeout_seconds' and v < current['timeout_seconds'])}
+                if (choice == 'timeout_seconds' and DEFAULT[choice] > current['max_timeout_seconds']) or (choice == 'max_timeout_seconds' and DEFAULT[choice] < current['timeout_seconds']):
+                    disabled[''] = 'Adjust the other task limit first.'
+                selected = ui.pick(TIME_LIMITS.get(choice, choice.replace('_', ' ').title()),
+                                   [('', 'Use default · ' + format_value(DEFAULT[choice]))] +
+                                   [(str(v), format_value(v)) for v in values], disabled=disabled)
+                if selected is not None and selected not in disabled:
                     current[choice] = int(selected) if selected else DEFAULT[choice]
     except KeyboardInterrupt as exc:
         exc.workflow_inference = current
@@ -710,7 +732,7 @@ def command(args):
     policy({'context_tokens': context})
     provider = getattr(args, 'provider', None)
     name = getattr(args, 'model_name', None)
-    suite = getattr(args, 'suite', None) or ('livebench-coding' if getattr(args, 'benchmark', None) else 'swe-bench-verified-bash-only')
+    suite = getattr(args, 'suite', None) or ('livebench-coding' if getattr(args, 'benchmark', None) else 'swe-bench-pro')
     if action in ('list', 'refresh'):
         if action == 'refresh':
             helper('t_local_models')['refresh']()
@@ -729,11 +751,9 @@ def command(args):
             print(json.dumps(view, indent=2))
         else:
             print(f"Local models · {view['hardware']['accelerator']} · Context {view['context_tokens']}\nBenchmark: {suite}")
-            print('MODEL · SCORE · MEMORY FIT · INSTALLED')
-            for row in view['models']:
-                print(f"{row['model']} · {row['benchmark']['score'] if row['benchmark'] else '—'} · "
-                      f"{'✓' if row['fit'] is True else '✕' if row['fit'] is False else '?'} · {'yes' if row['installed'] else 'no'}")
-            print('Publisher scores use different harnesses; inspect model details. Local quantization is not evaluated.')
+            display = helper('t_model_display')
+            print('\n'.join(display['lines'](display['local_models'](view['models'], suite), suite,
+                                           shutil.get_terminal_size((100, 24)).columns if sys.stdout.isatty() else 10000)))
         return 0
     provider = provider or ('lmstudio' if any(r['model'] == name for r in artifacts()) else 'ollama')
     row = next((r for r in catalogue(context=context)['models'] if r['model'] == name and r['provider'] == provider), None)
