@@ -144,6 +144,21 @@ labeled. It does not allocate test terminals, restart tmux, execute shell startu
 fetch Git refs, or enable GitHub CLI telemetry. A normal snapshot cannot rule out
 an earlier transient failure. `--repair` fixes shell wiring, not kernel resources.
 
+Doctor also shows the latest five **Recent session attempts**, including recorded
+failures before an agent or pane log existed. Use `t doctor --recent 20` (or
+`t system diagnose --recent 20`) for more. Each receipt shows the operation,
+timestamp, agent, workspace, conversation identity, last stage, operation exit
+code and retained error when available. Completed launches do not prove the
+agent's later exit status; incomplete and log-only sessions stay explicitly unknown.
+The report includes up to eight diagnostic lines from the last 16 KiB of the
+associated log, with terminal controls and common credentials removed. Older
+attempts use saved excerpts so a later launch's errors are not attributed to them.
+The latest legacy session log can still be shown, labeled as shared evidence
+that may include earlier attempts.
+Missing, rotated, unsafe or older unbounded evidence is labeled. Errors that
+predate lifecycle recording cannot be recovered retrospectively. Doctor never
+creates diagnostic state or reads agent conversation transcripts.
+
 ```sh
 t agent install            # choose and install agent CLIs; review their vendor commands
 t repo add ~/config/my-project  # register a checkout you already have

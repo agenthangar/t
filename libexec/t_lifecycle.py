@@ -9,12 +9,14 @@ import base64
 import fcntl
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
 import runpy
 import shlex
 import sqlite3
+import stat
 import subprocess
 import sys
 import tempfile
@@ -187,6 +189,230 @@ def verify_ready(agent, sid, *, timeout=15):
         time.sleep(.1)
 
 
+# Diagnostic readers never create state, open agent transcripts, or run commands.
+DIAGNOSTIC_BYTES = 16 * 1024
+DIAGNOSTIC_LINES = 8
+
+
+def diagnostic_text(value, limit=4096):
+    text = str(value)
+    text = re.sub(r'\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)', '', text)
+    text = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', text)
+    text = ''.join(c for c in text if c in '\n\t' or (c.isprintable() and c not in '\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069'))
+    text = re.sub(r'(?i)(Bearer\s+)\S+', r'\1[redacted]', text)
+    text = re.sub(r'''(?i)((?:api[_-]?key|access[_-]?token|token|password|secret)["']?\s*[=:]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)''', r'\1[redacted]', text)
+    text = re.sub(r'\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9_]{12,}|github_pat_[A-Za-z0-9_]+)\b', '[redacted]', text)
+    return text[:limit] + (' … [truncated]' if len(text) > limit else '')
+
+
+def diagnostic_read(path, limit, *, tail=False, offset=0, identity=None):
+    """Read a bounded regular file; never follow a symlink or block on a FIFO."""
+    path = Path(path)
+    if any(parent.is_symlink() for parent in (path, *path.parents)):
+        raise OSError('symlink')
+    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, 'O_NOFOLLOW', 0))
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode):
+            raise OSError('not a regular file')
+        if identity and (info.st_dev, info.st_ino) != tuple(identity):
+            raise OSError('log rotated')
+        if info.st_size < offset:
+            raise OSError('log truncated')
+        if not tail and info.st_size > limit:
+            raise OSError('record too large')
+        start = max(offset, info.st_size - limit) if tail else offset
+        os.lseek(fd, start, os.SEEK_SET)
+        raw = os.read(fd, min(limit, max(0, info.st_size - start)))
+        # The first line of a bounded tail may be a fragment, not a diagnostic.
+        if tail and start > offset:
+            raw = raw.partition(b'\n')[2]
+        return raw.decode('utf-8', errors='replace'), info
+    finally:
+        os.close(fd)
+
+
+def diagnostic_error(value, limit=4096):
+    text = diagnostic_text(value, DIAGNOSTIC_BYTES)
+    return '[earlier error truncated]\n' + text[-(limit - 32):] if len(text) > limit else text
+
+
+def diagnostic_context(verb, arguments):
+    if not isinstance(arguments, list) or not all(isinstance(a, str) for a in arguments):
+        return {}
+    if verb in ('new', 'resume', 'replace', 'close') and len(arguments) >= 2:
+        session, workspace = arguments[:2]
+        agent = arguments[4] if verb == 'new' and len(arguments) > 4 else (
+            arguments[3] if verb != 'new' and len(arguments) > 3 else 'claude')
+        sid = arguments[2] if verb != 'new' and len(arguments) > 2 else ''
+    elif verb in ('move', 'restore') and len(arguments) == 8:
+        workspace, sid, agent = arguments[2:5]
+        session = 'dev-' + arguments[5] + '-' + arguments[6]
+    else:
+        return {}
+    if not re.fullmatch(r'dev-[\w.-]+', session):
+        return {}
+    context = dict(session=session, workspace=workspace, agent=agent, sid=sid)
+    if verb in ('move', 'restore') and arguments[1]:
+        context['log_host'] = arguments[1]
+    return context
+
+
+def diagnostic_log_path(context, home=None):
+    return Path(home or Path.home()) / '.tmux-logs' / (context['session'] + '.log')
+
+
+def diagnostic_log_start(context):
+    if not context or context.get('log_host'):
+        return None
+    try:
+        _, info = diagnostic_read(diagnostic_log_path(context), 0, tail=True)
+        return dict(offset=info.st_size, identity=[info.st_dev, info.st_ino])
+    except FileNotFoundError:
+        return dict(offset=0)
+    except OSError:
+        return None
+
+
+def diagnostic_log(value, home=None, *, allow_shared=False):
+    context = diagnostic_context(value.get('verb'), value.get('arguments'))
+    if not context:
+        return dict(lines=[], note='no session log identity')
+    if context.get('log_host'):
+        return dict(lines=[], note='remote destination; run t doctor on ' + context['log_host'] + ' for its session log')
+    cursor = value.get('log_start')
+    shared = False
+    if not isinstance(cursor, dict) or not isinstance(cursor.get('offset'), int) or cursor['offset'] < 0:
+        if not allow_shared:
+            return dict(lines=[], note='no log boundary recorded for this attempt')
+        cursor, shared = {'offset': 0}, True
+    try:
+        raw, info = diagnostic_read(diagnostic_log_path(context, home), DIAGNOSTIC_BYTES,
+                                    tail=True, offset=cursor['offset'], identity=cursor.get('identity'))
+    except FileNotFoundError:
+        return dict(lines=[], note='missing; the failure may precede agent startup')
+    except (OSError, TypeError, ValueError, OverflowError):
+        return dict(lines=[], note='unavailable, unsafe or rotated/truncated')
+    lines = []
+    # Keep technical error lines, not the surrounding conversation or command argv.
+    pattern = r'^(?:[■!⚠]\s*)?(?:t:|error\b|fatal\b|failed\b|panic\b|Traceback \(most recent call last\):|[\w.]+(?:Error|Exception):|(?:respawn pane|create window) failed:|zsh:|ssh:|tmux:)'
+    for line in diagnostic_text(raw, DIAGNOSTIC_BYTES).splitlines():
+        line = line.strip()
+        if re.match(pattern, line, re.I):
+            lines.append(line[:300])
+    note = 'last 16 KiB; diagnostic lines only'
+    if shared:
+        note += '; shared log without an attempt boundary, may include earlier attempts'
+    if not shared and not cursor.get('identity'):
+        note += '; file identity not yet recorded'
+    return dict(lines=lines[-DIAGNOSTIC_LINES:], note=note, updated=info.st_mtime,
+                identity=[info.st_dev, info.st_ino])
+
+
+def diagnostic_candidates(directory, suffix, notes):
+    candidates = []
+    directory = Path(directory)
+    if any(parent.is_symlink() for parent in (directory, *directory.parents)):
+        notes.append('Skipped unsafe diagnostic directory.')
+        return []
+    try:
+        with os.scandir(directory) as entries:
+            for count, entry in enumerate(entries):
+                if count >= 2000:
+                    notes.append('Directory scan limited to 2000 entries; older evidence may be omitted.')
+                    break
+                if entry.name.endswith(suffix) and entry.is_file(follow_symlinks=False):
+                    candidates.append((entry.stat(follow_symlinks=False).st_mtime, Path(entry.path)))
+    except FileNotFoundError:
+        return []
+    except OSError:
+        notes.append('A diagnostic directory is unreadable.')
+    if len(candidates) > 100:
+        notes.append('Only the 100 newest files in a diagnostic directory were examined.')
+    return sorted(candidates, key=lambda pair: (pair[0], pair[1].name), reverse=True)[:100]
+
+
+def recent_diagnostics(*, home=None, state=None, limit=5):
+    home = Path(home or Path.home())
+    folder = Path(state) if state else Path(os.environ.get('XDG_STATE_HOME') or home / '.local/state') / 't/lifecycle'
+    notes, records, known = [], [], set()
+    skipped = 0
+    for mtime, path in diagnostic_candidates(folder / 'operations', '.json', notes):
+        try:
+            raw, _ = diagnostic_read(path, 128 * 1024)
+            value = json.loads(raw)
+            if not isinstance(value, dict) or value.get('version') != PROTOCOL:
+                raise ValueError('invalid record')
+            context = diagnostic_context(value.get('verb'), value.get('arguments'))
+            if not context:
+                continue
+            timestamp = value.get('started', value.get('updated', mtime))
+            if not isinstance(timestamp, (int, float)) or not math.isfinite(timestamp):
+                raise ValueError('invalid time')
+            value.update(context, timestamp=timestamp, record=str(path))
+            value.setdefault('phase', 'unknown')
+            records.append(value)
+            if not context.get('log_host'):
+                known.add(context['session'])
+        except (OSError, ValueError, TypeError, RecursionError, OverflowError):
+            skipped += 1
+    # Old versions may have logs but no lifecycle receipt. Never invent outcomes.
+    for mtime, path in diagnostic_candidates(home / '.tmux-logs', '.log', notes):
+        if path.stem in known or not re.fullmatch(r'dev-[\w.-]+', path.stem):
+            continue
+        records.append(dict(session=path.stem, timestamp=mtime, phase='log-only', verb='unknown',
+                            arguments=[path.stem, ''], record='', agent='unknown'))
+    records.sort(key=lambda value: value['timestamp'], reverse=True)
+    seen = set()
+    for value in records[:limit]:
+        session = value['session']
+        identity = (session, value.get('log_host', ''))
+        if identity not in seen and value['phase'] != 'log-only':
+            current = diagnostic_log(value, home, allow_shared=True)
+            saved = value.get('log_evidence')
+            if not current['lines'] and isinstance(saved, dict) and isinstance(saved.get('lines'), list) and saved['lines']:
+                current = dict(lines=saved['lines'], note=current['note'] + '; saved excerpt from this attempt')
+            value['log_evidence'] = current
+        elif value['phase'] == 'log-only':
+            value['log_evidence'] = diagnostic_log(dict(verb='new', arguments=[session, ''], log_start={'offset': 0}), home)
+            value['log_evidence']['note'] += '; no attempt boundary or outcome recorded'
+        else:
+            evidence = value.get('log_evidence')
+            value['log_evidence'] = evidence if isinstance(evidence, dict) else dict(lines=[], note='older attempt; no saved log excerpt')
+        seen.add(identity)
+    if skipped:
+        notes.append(f'{skipped} malformed, oversized or unreadable receipt(s) skipped.')
+    return dict(records=records[:limit], notes=notes)
+
+
+def recent_diagnostic_lines(report):
+    lines = ['Latest recorded attempts; a completed launch does not establish its later exit status.']
+    if not report['records']:
+        lines.append('No recent lifecycle receipts or session logs found; older failures may not have been recorded.')
+    for value in report['records']:
+        phase = value.get('phase', 'unknown')
+        outcome = ('FAILED' if phase == 'failed' else 'operation completed' if phase == 'complete'
+                   else 'outcome unknown (log only)' if phase == 'log-only' else 'incomplete / outcome unknown')
+        try:
+            stamp = time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime(value['timestamp']))
+        except (ValueError, OverflowError, OSError):
+            stamp = 'timestamp unavailable'
+        lines.append(f"{stamp} · {value['session']} · {value.get('verb', 'unknown')} · {outcome}")
+        lines.append('  agent %s · stage %s · operation exit %s' % (value.get('agent', 'unknown'),
+                     value.get('pending') or phase, value.get('error_code', 'not recorded')))
+        for key, label in (('log_host', 'destination host'), ('workspace', 'workspace'), ('sid', 'conversation'), ('record', 'receipt'), ('error', 'error')):
+            if value.get(key):
+                rendered = diagnostic_error(value[key], 800) if key == 'error' else diagnostic_text(value[key], 800)
+                lines.append('  %s: %s' % (label, rendered))
+        evidence = value.get('log_evidence', {})
+        lines.append('  log: %s' % diagnostic_text(evidence.get('note', 'unavailable'), 300))
+        excerpts = evidence.get('lines', [])
+        if isinstance(excerpts, list):
+            lines.extend('    ' + diagnostic_text(line, 300) for line in excerpts[-DIAGNOSTIC_LINES:])
+    lines.extend(report['notes'])
+    return [diagnostic_text(line, 1200) for line in lines]
+
+
 class Operation:
     def __init__(self, verb, arguments, *, token=None, directory=None):
         self.token = token or uuid.uuid4().hex
@@ -194,7 +420,8 @@ class Operation:
             raise LifecycleError('invalid lifecycle operation ID')
         self.path = (Path(directory) if directory else state_home()) / 'operations' / (self.token + '.json')
         self.value = dict(version=PROTOCOL, id=self.token, verb=verb, arguments=arguments,
-                          phase='created', receipts={}, updated=time.time())
+                          phase='created', receipts={}, updated=time.time(), started=time.time(),
+                          log_start=diagnostic_log_start(diagnostic_context(verb, arguments)))
         if self.path.is_symlink():
             raise LifecycleError('unsafe lifecycle record path')
         if self.path.exists():
@@ -205,6 +432,12 @@ class Operation:
 
     def save(self, phase, **values):
         self.value.update(phase=phase, updated=time.time(), **values)
+        if phase in ('failed', 'complete'):
+            self.value['log_evidence'] = diagnostic_log(self.value)
+            cursor = self.value.get('log_start')
+            identity = self.value['log_evidence'].get('identity')
+            if isinstance(cursor, dict) and not cursor.get('identity') and identity:
+                cursor['identity'] = identity
         write_private(self.path, self.value)
 
     def step(self, name, function, *, repeat=False):
@@ -226,7 +459,11 @@ class ShellAdapter:
             raise LifecycleError('lifecycle adapter disconnected; reconcile with t resume')
         result = json.loads(line)
         if result['code']:
-            raise LifecycleError(f'{action} failed; work and recovery details retained', result['code'])
+            detail = diagnostic_text(result.get('stderr', '')).strip()
+            message = f'{action} failed; work and recovery details retained'
+            if detail:
+                message += ': ' + detail
+            raise LifecycleError(message, result['code'])
         return result['output'].rstrip('\n')
 
     def output(self, value):
@@ -567,10 +804,10 @@ def execute(verb, arguments, adapter, *, token=None, directory=None):
                 result = session
             else:
                 raise LifecycleError('unsupported lifecycle operation')
-            operation.save('complete', result=result, pending=None, error=None)
+            operation.save('complete', result=result, pending=None, error=None, error_code=0)
             return result
         except (ValueError, OSError, sqlite3.Error) as error:
-            operation.save('failed', error=str(error))
+            operation.save('failed', error=diagnostic_error(error), error_code=getattr(error, 'code', 1))
             if verb in ('move', 'restore'):
                 adapter.output('Transfer paused with work retained. Retry: t resume ' + arguments[5] + ' ' + arguments[6])
             raise
@@ -628,7 +865,15 @@ def main(argv):
             print(shlex.join(['print', '-r', '--', frame['output']]))
         return 0
     if argv and argv[0] == 'reply':
-        print(json.dumps(dict(code=int(argv[1]), output=Path(argv[2]).read_text(errors='replace'))))
+        value = dict(code=int(argv[1]), output=Path(argv[2]).read_text(errors='replace'))
+        if len(argv) > 3 and value['code']:
+            # This file belongs to the shell adapter's private temporary directory.
+            with Path(argv[3]).open('rb') as stream:
+                stream.seek(0, os.SEEK_END)
+                stream.seek(max(0, stream.tell() - DIAGNOSTIC_BYTES))
+                detail = diagnostic_text(stream.read(DIAGNOSTIC_BYTES).decode('utf-8', errors='replace'), DIAGNOSTIC_BYTES)
+                value['stderr'] = ('[earlier stderr truncated]\n' + detail[-4000:]) if len(detail) > 4096 else detail
+        print(json.dumps(value))
         return 0
     if argv and argv[0] == 'bridge':
         adapter = ShellAdapter()
