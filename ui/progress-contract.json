@@ -1,6 +1,18 @@
 {
   "description": "Quiet blocking operations use _spinner; reviewed terminal, protocol, and background exceptions remain explicit. New blocking sites fail CI until classified. Shell progress is enforced at shared scanner and resume seams.",
   "exceptions": {
+    "libexec/t_offline.py:terminal_snapshot:subprocess.run": {
+      "kind": "protocol",
+      "reason": "Two bounded read-only tmux queries capture the exact owning pane while the native frontend is suspended. They must not repaint a spinner over the screen being preserved."
+    },
+    "libexec/t_offline.py:cloud_reachable:urllib.request.urlopen": {
+      "kind": "background",
+      "reason": "A bounded credential-free HTTPS probe runs in the recovery monitor thread while the native local UI owns the terminal; it must not repaint over the active conversation."
+    },
+    "libexec/t_offline.py:recover:subprocess.call": {
+      "kind": "passthrough",
+      "reason": "Nonterminal Ask mode preserves the native cloud CLI input, output and retry behavior without an interactive picker or spinner."
+    },
     "bin/t:_workflow_hub_repository:subprocess.run": {
       "kind": "protocol",
       "reason": "A local Git common-directory probe, bounded to half a second, resolves the initial repository scope before the workflow picker without prompting or repainting the terminal."

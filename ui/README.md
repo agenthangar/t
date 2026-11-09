@@ -1322,8 +1322,8 @@ does not publish; normal review/save/discard applies to the complete transaction
 
 `t workflow` includes a Codex **Inference & routing** submenu with Disabled,
 Manual, Automatic hybrid and Local only modes, explicit local model, context and
-task budget. **On cloud connection failure** stages Pause and retry (default) or
-Continue locally with selected model. Only new native CLI launches opt into the
+task budget. **On cloud connection failure** stages Pause and retry (default), Ask which local
+model, or Continue locally with selected model. Only new native CLI launches opt into the
 owned runtime supervisor; the native client supplies progress and approvals.
 The transition displays the connection-failure reason, exact provider/model and
 private checkpoint path, then stays local. It never downloads weights or treats
@@ -1428,3 +1428,26 @@ old verification evidence. Special memory-mapped artifacts may be checked when
 the publisher's resident estimate and minimum RAM fit; fit remains unknown until
 verified. Runtime guardrails are never bypassed. These extend existing wizard,
 single-selection, detail and install action modes; no new public command.
+
+### Prompted connection recovery
+
+The existing native Codex inference launch has an `on_cloud_failure=ask`
+conditional mode: RailUI single selection for local recovery, passthrough for
+native work, and single selection/review for explicit cloud return. Selecting a
+ready local model is the continuation action and dismisses the picker directly;
+never insert a model-details or confirmation screen. Show provider, readiness
+and Memory fit ✓/✕/?; disabled choices explain why they cannot run. Pause/Esc
+retains the cloud runtime and suppresses repeat offers for the current turn.
+A failed local start keeps recovery choices visible with the error and retained
+checkpoint. Choices are session-scoped and never save workflow changes.
+
+Cloud reachability must be stable before the return offer, which appears only at
+a safe turn boundary. Never interrupt a tool or pending approval. Stay local/Esc
+dismisses that offer; cloud return uses a review and updated bounded checkpoint.
+Capture and restore only the verified owning tmux pane without nesting alternate
+screen buffers. Outside tmux, report that prompted recovery is unavailable and
+retain the native cloud session. Preserve exactly one writer through every exit.
+Nonterminal Ask launches preserve native cloud behavior without a picker.
+
+Development preview: `python3 scripts/preview_connection_recovery.py` uses the
+shared RailUI with labeled sample data, no services, and no real configuration.

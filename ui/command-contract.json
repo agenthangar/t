@@ -8477,7 +8477,9 @@
       "executable": "libexec/t_local_inference.py --lead",
       "patterns": [
         "passthrough",
-        "action"
+        "action",
+        "single",
+        "review"
       ],
       "input": "Native Codex argv selected by the existing guarded t launcher; effective saved workflow policy",
       "interactive": true,
@@ -8504,13 +8506,25 @@
             "passthrough"
           ],
           "behavior": "Owned native cloud runtime with structured outage detection; stop owned processes, display reason/provider/model/checkpoint, launch fresh local-only continuation and remain local"
+        },
+        "ask_local_model": {
+          "condition": "enabled cloud routing and on_cloud_failure=ask",
+          "patterns": [
+            "single",
+            "review",
+            "passthrough"
+          ],
+          "behavior": "Shared RailUI ready-model selection immediately starts local handoff without a second screen; unavailable models disabled; failures retain recovery choices. Stable cloud reachability offers explicit reviewed return at a safe turn boundary. One writer, session-only choices, updated bounded checkpoints; nonterminals preserve native cloud behavior."
         }
       },
       "tests": [
         "tests/test_offline.py::test_owned_supervisor",
         "tests/test_offline.py::test_owned_detached_descendant_stops",
         "tests/test_local_inference.py::test_local_lead_fails_closed",
-        "tests/test_local_inference.py::test_outage_policy_and_routing"
+        "tests/test_local_inference.py::test_outage_policy_and_routing",
+        "tests/test_offline_recovery.py::test_ready_model_is_immediate_action",
+        "tests/test_offline_recovery.py::test_recovery_round_trip_and_failure_retry",
+        "tests/test_offline_recovery.py::test_recovery_picker_uses_shared_viewport"
       ]
     }
   },
