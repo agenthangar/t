@@ -892,7 +892,7 @@ def recover(argv, chosen, cwd):
             offered = False
             def local_monitor(cp, frontend, terminal):
                 nonlocal offered
-                if offered or not probe.ready.is_set() or cp.active or not cp.thread:
+                if offered or not probe.ready.is_set() or cp.active or not cp.thread or not cp.users:
                     return None
                 offered = True
                 try:

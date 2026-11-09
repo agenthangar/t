@@ -282,3 +282,38 @@ def test_startup_preview_retries_without_starting_any_services(monkeypatch, caps
     assert preview.main() == 0
     assert len(calls) == 2 and all(call['startup'] for call in calls)
     assert 'No agent was launched' in capsys.readouterr().out
+
+
+def test_empty_local_start_does_not_consume_cloud_return_offer(offline, tmp_path, monkeypatch):
+    m = offline
+    monkeypatch.setattr(m.os, 'isatty', lambda fd: True)
+    monkeypatch.setattr(m, 'recovery_ui', lambda *a: nullcontext(UI(['0'])))
+    ready = threading.Event(); ready.set()
+    monkeypatch.setattr(m, 'RecoveryProbe', lambda: nullcontext(SimpleNamespace(ready=ready)))
+    offers, stages = [], []
+    monkeypatch.setattr(m, 'choose_cloud', lambda *a: offers.append(1) or {'model': None})
+    def supervise(argv, chosen, cwd, **kw):
+        cp = kw['checkpoint']; stages.append(argv)
+        if len(stages) == 1:
+            cp.client({'id': 1, 'method': 'account/read'})
+            cp.server({'id': 1, 'error': ROUTING})
+            return {'action': None, 'exit_code': 1, 'checkpoint': cp}
+        cp.client({'id': 1, 'method': 'thread/start', 'params': {}})
+        cp.server({'id': 1, 'result': {'thread': {'id': 'main'}}})
+        if len(stages) == 3:
+            assert cp.users == ['Task typed locally']
+            return {'action': None, 'exit_code': 0, 'checkpoint': cp}
+        assert kw['monitor'](cp, None, None) is None
+        assert not offers and not cp.notice
+        cp.client({'method': 'turn/start', 'params': {'threadId': 'main', 'input': [
+            {'type': 'text', 'text': 'Task typed locally'}]}})
+        cp.active = False
+        action = kw['monitor'](cp, None, None)
+        assert action == {'model': None}
+        return {'action': action, 'exit_code': None, 'checkpoint': cp}
+    monkeypatch.setattr(m, 'supervise', supervise)
+    monkeypatch.setattr(m, 'inference', lambda: {'helper': lambda n: {'state_root': lambda: tmp_path},
+        'catalogue': lambda **kw: {'models': models()},
+        'lead': lambda argv, **kw: kw['runner'](['codex', '--model', 'local'], {})})
+    assert m.recover(['codex'], policy(), tmp_path) == 0
+    assert len(stages) == 3 and offers == [1]
