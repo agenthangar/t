@@ -148,7 +148,7 @@ def test_picker_rows_budget_unicode_metadata_before_summary(history, width):
     assert history.display_width(rendered) <= width
     assert 'Fix' in rendered and '\x1b' not in rendered
     if width >= 60:
-        assert 'gpt-6.1-sol' in rendered and '2026-11-08' in rendered
+        assert 'gpt-6.1-sol' in rendered and '11-08' in rendered
         assert '#121[MERGED]' in history.details(row) and '#122[OPEN]' in history.details(row)
     if 32 <= width < 60:
         assert '11-08' in rendered
@@ -189,7 +189,7 @@ def test_lifecycle_uses_one_incremental_scan_for_identity_and_metadata(app, hist
     assert not any(r['sid'] == 'wrong-id' for r in app.store.records())
 
 
-@pytest.mark.parametrize('columns,lines', [(80, 24), (44, 20), (32, 12)])
+@pytest.mark.parametrize('columns,lines', [(80, 24), (80, 30), (44, 20), (32, 12)])
 @pytest.mark.fzf_compat
 def test_real_details_picker_retains_focus_and_scrollable_metadata_at_each_size(history, tmp_path, columns, lines):
     if not shutil.which('tmux') or not shutil.which('fzf'):
@@ -232,8 +232,9 @@ finally:app.store.close()
                  shlex.join([sys.executable, str(harness), str(ROOT), str(snapshot), str(result)]))
             tmux('set-option', '-t', 'picker', 'remain-on-exit', 'on')
             first = wait_for(lambda text: 'Fix sign' in text and 'Enter resume' in text and 'Ctrl-/' in text)
-            assert any('▸' in line and 'Fix sign' in line for line in first.splitlines())
-            if columns >= 70:
+            (tmp_path / 'initial-frame.txt').write_text(first)
+            assert any('▸' in line and 'Fix sign' in line for line in first.splitlines()), first
+            if columns >= 70 and lines >= 28:
                 first = wait_for(lambda text: 'Model:' in text and 'Last turn:' in text)
                 assert 'gpt-6.1-sol' in first
                 tmux('send-keys', '-t', 'picker', 'S-Down')

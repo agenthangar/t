@@ -483,3 +483,31 @@ def test_history_accepts_exact_row_after_sort_and_retains_refresh_choice(history
     selected, key, query = app.pick(data, 'repo', multi=True)
     assert selected == [data[0]] and key == 'enter' and query == 'Conversation'
     assert app.picker_sort == ('agent', True)
+
+
+@pytest.mark.parametrize('width,height', [(72, 24), (100, 32), (32, 20), (24, 12), (112, 12)])
+def test_history_sort_block_matches_open_and_preserves_section_spacing(history, monkeypatch, width, height):
+    import sys
+    monkeypatch.syspath_prepend(str(ROOT / 'libexec'))
+    import t_picker_filters as filters
+    monkeypatch.setenv('T_PICKER_HEADER_HEIGHT', str(height))
+    monkeypatch.setenv('T_PICKER_HEADER_WIDTH', str(width))
+    monkeypatch.setenv('NO_COLOR', '1')
+    opened = filters.header('open', 0, {}, 0, 'COLUMNS', width).splitlines()
+    saved = history.picker_header(rows(3), '', 50, 1, width).splitlines()
+    def sort_block(lines):
+        start = next(i for i, line in enumerate(lines) if line.startswith('Sort:'))
+        return lines[start:-1]  # Exclude column heading, retain the separating blank row.
+    assert sort_block(saved) == sort_block(opened)
+    start = next(i for i, line in enumerate(saved) if line.startswith('Sort:'))
+    if width > 40 and height > 14:
+        assert saved[start - 1] == '' and saved[-2] == ''
+        assert '  ' in saved[-1]  # Same two-space column gutters as open.
+    else:
+        assert '' not in saved
+    chrome = history._THEME['chrome']('Enter resume/Esc\n\n' + '\n'.join(saved), 'HISTORY', height <= 14)
+    assert 'HISTORY' not in chrome
+    if height > 14:
+        assert chrome.startswith('HOTKEYS\n')
+        assert '\n\n' in chrome
+    assert all(history.display_width(line) <= width for line in chrome.splitlines())

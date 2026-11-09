@@ -7,8 +7,8 @@ import subprocess
 import sys
 
 from t_session_details import clip_columns, display_width, enrich, format_last_turn
-from t_picker_theme import key_labels, paint
-from t_session_sort import RESUME_SORTS, natural, turn_epoch, sort_label
+from t_picker_theme import key_labels, paint, control_rows, sort_rows
+from t_session_sort import RESUME_SORTS, natural, turn_epoch
 
 FACETS = {'agent': ('Ctrl-G', 'agent'), 'interface': ('Ctrl-D', 'interface'),
           'host': ('Ctrl-O', 'host'), 'repo': ('Ctrl-R', 'repo')}
@@ -129,9 +129,7 @@ def header(profile, mask, filters, hidden, columns, width, sort='turn', enabled=
     key = lambda text: key_labels(text, compact=compact)
     style = lambda text, role='hint': paint(text, role) if color else text
     def keys(parts, selected=()):
-        active = {key(part) for part in selected}
-        return [' · '.join(style(part, 'active' if part in active else 'action') for part in line.split(' · '))
-                for line in pack([key(part) for part in parts], width)]
+        return control_rows(parts, width, selected, compact, color)
     lines = [] if compact else [style('HOTKEYS', 'heading')]
     lines += keys(['Enter/Esc' if compact else f'Enter {profile}/Esc', 'Tab✓', 'Ctrl-K kill' if profile == 'open' else 'Ctrl-/'])
     if not compact:
@@ -159,12 +157,7 @@ def header(profile, mask, filters, hidden, columns, width, sort='turn', enabled=
                  + style(suffix, 'heading' if enabled else 'hint'))
     if not compact:
         lines += [style('Match highlighted row; repeat key to clear'), '']
-    sorts = {name: ('turn' if compact and name == 'turn' else label)
-             for name, (_, label) in RESUME_SORTS.items() if (profile in ('resume', 'open') or name != 'turn') and (not compact or name in ('turn', 'repo', 'session'))}
-    label = sort_label(sort, compact) if sort_enabled else 'OFF'
-    lines += keys(['Sort: ' + label, 'Ctrl-S toggle'], ['Sort: ' + label] if sort_enabled else [])
-    lines += keys((['Ctrl-Y next'] if compact else ['Ctrl-Y next'] + list(sorts.values())),
-                  [sorts[sort]] if sort_enabled and sort in sorts and not compact else [])
+    lines += sort_rows(sort, width, sort_enabled, compact, color, profile in ('resume', 'open'))
     if not compact:
         lines += ['']
     if columns:

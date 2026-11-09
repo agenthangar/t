@@ -541,7 +541,7 @@ def check_display_contracts(contract, *, root=ROOT):
     if not required <= set(preview.get("required_fields", [])) or preview.get("full_values") is not True:
         errors.append("history_information preview must retain full identity, session information, and historical evidence")
     if (preview.get("default") != "when_terminal_fits" or preview.get("toggle") != "ctrl-/"
-            or preview.get("minimum_columns") != 70 or preview.get("minimum_lines") != 22
+            or preview.get("minimum_columns") != 70 or preview.get("minimum_lines") != 28
             or preview.get("placement") != "bottom" or preview.get("height_percent") != 35):
         errors.append("history_information preview must use responsive defaults and Ctrl-/ details")
     selection = history.get("selection", {})

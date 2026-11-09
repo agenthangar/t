@@ -10037,7 +10037,7 @@
         "toggle": "ctrl-/",
         "identity": "exact_conversation",
         "minimum_columns": 70,
-        "minimum_lines": 22,
+        "minimum_lines": 28,
         "placement": "bottom",
         "height_percent": 35
       },

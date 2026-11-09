@@ -38,7 +38,7 @@ wrap_columns = _DISPLAY['wrap_columns']
 recorded_model = _DISPLAY['recorded_model']
 _SORT = runpy.run_path(str(Path(__file__).with_name('t_session_sort.py')))
 SORT_MODES = tuple(_SORT['RESUME_SORTS'])
-_key_labels = runpy.run_path(str(Path(__file__).with_name('t_picker_theme.py')))['key_labels']
+_THEME = runpy.run_path(str(Path(__file__).with_name('t_picker_theme.py')))
 
 AGENT_GLYPHS = {'codex': '⬡', 'claude': '✱', 'slot': '·', 'revision': '·'}
 
@@ -570,7 +570,7 @@ def picker_columns(width, last_turn=True):
             return [('ST', 3), ('UI', 2), ('MODEL', 24 if width >= 100 else 13), ('HOST', 10 if width >= 100 else 5), ('SESSION', 12 if width >= 100 else 7)]
         return [('ST', 2), ('U', 1), ('MODEL', 9), ('#', 2)] if width >= 32 else [('S', 1), ('A', 1), ('#', 2)]
     if width >= 60:
-        return [('ST', 3), ('UI', 2), ('MODEL', 24 if width >= 100 else 13), ('HOST', 10 if width >= 100 else 5), ('SESSION', 12 if width >= 100 else 7), ('LAST TURN', 16)]
+        return [('ST', 3), ('UI', 2), ('MODEL', 24 if width >= 100 else 13), ('HOST', 10 if width >= 100 else 5), ('SESSION', 12 if width >= 100 else 7), ('LAST TURN', 16 if width >= 100 else 11)]
     if width >= 32:
         return [('ST', 2), ('#', 3), ('LAST TURN', 11)]
     return [('S', 1), ('#', 2), ('TURN', 5)]
@@ -597,7 +597,7 @@ def format_row(row, width=80):
         status += '↻'
     ui = {'cli': '›', 'desktop': '▣', 'foreground': '›', 'unknown': '?'}[display['interface']]
     turn = _DISPLAY['format_last_turn'](row.get('last_turn'))
-    turn = turn[:16] if width >= 60 else turn[5:16] if width >= 32 else turn[5:10]
+    turn = turn[:16] if width >= 100 else turn[5:16] if width >= 32 else turn[5:10]
     turn = turn or '-'
     values = [status, ui, glyph + ' ' + display['model'], display['host'], display['slot'], turn]
     show_turn = row['agent'] in ('codex', 'claude')
@@ -608,8 +608,9 @@ def format_row(row, width=80):
                   [status, ui, glyph + ' ' + display['model'], slot] if width >= 32 else [status[:1], glyph, slot])
     if width >= 60 or (not show_turn and width >= 32):
         values[2] = glyph + ' ' + compact_model(display['model'], columns[2][1] - 2)
-    prefix = ' '.join(clip_columns(value, cap) + ' ' * (cap - display_width(clip_columns(value, cap))) for value, (_, cap) in zip(values, columns))
-    remaining = max(1, width - display_width(prefix) - 1)
+    gap = '  ' if width >= 60 else ' '
+    prefix = gap.join(clip_columns(value, cap) + ' ' * (cap - display_width(clip_columns(value, cap))) for value, (_, cap) in zip(values, columns))
+    remaining = max(1, width - display_width(prefix) - len(gap))
     prs = pr_summary(row.get('prs', []), compact=True)
     title = display['summary']
     if prs and remaining >= 24:
@@ -622,22 +623,25 @@ def format_row(row, width=80):
         summary = clip_columns(title, max(1, remaining - len(hint))) + hint if remaining >= 17 else clip_columns(title, remaining)
     else:
         summary = clip_columns(title, remaining)
-    return prefix + ' ' + summary
+    return prefix + gap + summary
 
 
-def picker_header(rows, query, limit, page, width=80, sort='turn', sort_enabled=True):
+def picker_header(rows, query, limit, page, width=80, sort='turn', sort_enabled=True, height=None):
     _, total = page_rows(rows, query, limit, page, sort, sort_enabled)
     pages = max(1, (total + limit - 1) // limit)
     page_label = f'Page {page} · {total} conversations · {limit} per page' if width >= 60 else f'Page {page}/{pages} · {total} conversations'
     columns = picker_columns(width, sort != 'updated')
-    heading = ' '.join(clip_columns(label, cap).ljust(cap) for label, cap in columns) + ' WORKING ON'
-    lines = [clip_columns(page_label, width), clip_columns(heading, width)]
-    if width >= 60:
-        lines.insert(1, 'PR: O open · M merged · C closed · ? unknown')
+    gap = '  ' if width >= 60 else ' '
+    heading = gap.join(clip_columns(label, cap).ljust(cap) for label, cap in columns) + gap + 'WORKING ON'
+    compact = width <= 40 or int(height or os.environ.get('T_PICKER_HEADER_HEIGHT') or '24') <= 14
+    lines = [clip_columns(page_label, width)]
     if sort != 'updated':
-        label = _SORT['sort_label'](sort, width < 40) if sort_enabled else 'OFF'
-        controls = 'Sort: ' + label + ('\n' if width < 40 else ' · ') + 'Ctrl-S toggle · Ctrl-Y next'
-        lines[1:1] = [part for line in controls.splitlines() for part in wrap_columns(_key_labels(line, compact=width < 40), width)]
+        if not compact:
+            lines.append('')
+        lines += _THEME['sort_rows'](sort, width, sort_enabled, compact)
+    if not compact:
+        lines.append('')
+    lines.append(clip_columns(heading, width))
     return '\n'.join(lines) + '\n'
 
 
@@ -1270,7 +1274,7 @@ class HistoryCommand:
             private_write(state, dict(page=page, query=query, limit=limit, width=width, sort=sort, sort_enabled=sort_enabled))
             helper = shlex.join([sys.executable, str(Path(self.root) / 'libexec/t_history.py'), 'picker', str(snapshot), str(state)])
             header = state.with_suffix('.header')
-            header.write_text(picker_header(rows, query, limit, page, width, sort, sort_enabled))
+            header.write_text(picker_header(rows, query, limit, page, width, sort, sort_enabled, height=terminal.lines))
             rows_file = state.with_suffix('.rows')
             rows_file.write_text(picker_rows(rows, query, limit, page, width, sort, sort_enabled))
             snippet = '. "$1"; shift; _t_fzf_paginated "$@"'

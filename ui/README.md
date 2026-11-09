@@ -1166,8 +1166,13 @@ The preview includes the complete working-on text, status/context, UI, agent and
 model, host/session, date, repository and full conversation ID, every workspace
 association and branch/commit/evidence, all associated PRs and their states,
 incidental mentions labeled separately, and transcript availability. Show it by
-default at 70 or more columns and 22 or more rows, in a bottom preview occupying
-35% of the full-height picker; Ctrl-/ toggles it at every size. Use the shared
+default at 70 or more columns and 28 or more rows, in a bottom preview occupying
+35% of the full-height picker; Ctrl-/ toggles it at every size. Smaller terminals
+start with details hidden and use a four-row pane when toggled (three rows at
+14 or fewer terminal rows), preserving the focused result. Match `t open` with
+the shared two-line sort block, blank rows between header sections, and
+two-space table gutters at 60 or more content columns. Compact layouts reclaim
+section gaps before hiding controls or results. Use the shared
 paginated multi-picker: Tab marks exact conversations, Enter accepts marks
 or the focused row, and Esc/Ctrl-C cancels. Marks clear on search, page change,
 or refresh. Slot and revision choices remain single-selection.
