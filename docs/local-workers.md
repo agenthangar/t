@@ -204,7 +204,7 @@ installation alone does not register MCP or change a workflow.
 
 ## Measuring speed
 
-`measure` acquires the same exclusive local slot as workers, loads only the
+`measure` takes an exclusive sequence in the shared request queue, uses the
 selected artifact, runs one discarded warmup and three fixed short coding prompts,
 and saves median/min/max, runtime, artifact revision, hardware and configured
 context capacity. It does not score coding quality or run SWE-bench. The context
@@ -215,8 +215,8 @@ uses output token counts divided by total request time, **including prefill**;
 it labels that metric explicitly instead of presenting it as pure decode speed.
 Missing token usage fails measurement without fabricating a speed. Details mark
 measurements stale when artifact, context or hardware identity differs.
-Only an owned model alias is unloaded; a preexisting LM Studio server is retained.
-An owned loopback server is stopped on completion or failure.
+The shared manager may retain the model for reuse until its idle timeout. Only
+verified t-owned instances can be unloaded; existing provider servers are retained.
 
 ## Opt-in acceptance test
 
@@ -265,14 +265,14 @@ run in its workspace-write sandbox. Neither grants approval bypass or tool netwo
 access. The worker receives the assignment and snapshot, not the lead transcript.
 The lead should provide concrete acceptance checks and keep architecture decisions
 and ambiguous changes itself. Task execution defaults to five minutes, adjustable
-from 10 seconds to 30 minutes; snapshot and server preparation happen before that
-execution budget. Failed or timed-out tasks return to the lead without automatic
+from 10 seconds to 30 minutes. The snapshot is captured before acceptance.
+Queue wait has a separate budget; model loading counts toward execution time. Failed or timed-out tasks return to the lead without automatic
 cloud fallback or retries. Terminal statuses are `completed`, `failed`, `cancelled`,
 `timed_out`, and `output_limit`. Completion means the worker process exited
 successfully, not that the proposed fix is correct.
 
-There is one worker or setup operation per user at a time, enforced with a file
-lock across MCP connections. Tasks belong to the connection that started them.
+Multiple workers can be accepted across MCP connections; their model requests
+take fair turns through the shared manager. Tasks belong to the connection that started them.
 Closing the MCP connection cancels its work and reaps its child processes. Poll
 for progress; the adapter does not promise push notifications or automatic turns
 in the lead client.
