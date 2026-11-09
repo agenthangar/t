@@ -10096,6 +10096,12 @@ def cmd_doctor(cfg, args):
                 print("    %-*s  %-12s %-25s hist %d"
                       % (w, p["session"], p["cmd"], " ".join(flags) or "-", p["hist"]))
 
+    section("Recent session attempts")
+    diagnostic = runpy.run_path(str(Path(__file__).resolve().parent.parent / 'libexec/t_lifecycle.py'))
+    recent = diagnostic['recent_diagnostics'](home=HOME, limit=getattr(args, 'recent', 5))
+    for line in diagnostic['recent_diagnostic_lines'](recent):
+        print("  " + line)
+
     section("Findings")
     for line in _doctor_findings(facts):
         print("  " + line)
@@ -13516,7 +13522,7 @@ PERIODIC CHECKS
     sp.add_argument("-q", "--quiet", action="store_true", help="print only what changed")
 
     sp = sub.add_parser("doctor", help="diagnose this machine's t, tmux, and agent setup",
-        description='Diagnose local t links, canonical main, tmux, launch resources, and tool versions. Print '
+        description='Diagnose local t links, tmux, launch resources, tool versions, and recent session attempts. Print '
             'findings and suggested fixes without changing settings by default. --repair restores zsh startup '
             'and its command link while preserving settings, trust, and permissions. Use t hosts run HOST t '
             'system diagnose for another machine.',
@@ -13536,11 +13542,21 @@ PERIODIC CHECKS
   A healthy snapshot cannot rule out an earlier transient fork/open failure.
   Run immediately after the failure and keep its exact error alongside the report.
 
+  Recent session attempts shows the latest five lifecycle receipts or log-only
+  sessions; --recent N selects 1–20. It includes stages, recorded operation exit
+  codes, failure errors, and up to eight diagnostic log lines from a bounded tail.
+  Successful launch receipts do not prove a session is still running or exited
+  successfully. Incomplete, older, missing and rotated evidence is labeled.
+  New shell failures are retained even when no agent log could be created.
+  Common credentials and terminal controls are removed from diagnostic excerpts.
+
   Ends with findings + suggested fixes.
 
   Run it on another machine with `t hosts run <host> t system diagnose`.""")
     sp.add_argument("--repair", action="store_true",
                     help="repair zsh startup and its missing command link; preserve settings, trust and permissions")
+    sp.add_argument("--recent", type=int, choices=range(1, 21), default=5, metavar="N",
+                    help="show the latest N session attempts, including failures (1–20; default: 5)")
 
     # Machine-readable / internal: callable, with explicit help, but not advertised.
     sub.add_parser("session-rows", hidden=True, help="machine-readable per-host scan (remote contract)",

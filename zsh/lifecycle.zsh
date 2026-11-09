@@ -21,8 +21,17 @@ _t_lifecycle_run_impl() {
         continue
       fi
       worker_rc=0
-      eval "$command_text" >"$scratch/output" || worker_rc=$?
-      python3 "$T_HOME/libexec/t_lifecycle.py" reply "$worker_rc" "$scratch/output" >&$tx || break
+      : >"$scratch/error"
+      if [[ $command_text == '_t_lifecycle_effect attach '* ]]; then
+        # Interactive terminal ownership must not be redirected into diagnostics.
+        eval "$command_text" >"$scratch/output" || worker_rc=$?
+      else
+        eval "$command_text" >"$scratch/output" 2>"$scratch/error" || worker_rc=$?
+      fi
+      # Keep the original error visible and retain a bounded copy in the receipt,
+      # including failures before a pane (and therefore its log) can be created.
+      cat "$scratch/error" >&2
+      python3 "$T_HOME/libexec/t_lifecycle.py" reply "$worker_rc" "$scratch/output" "$scratch/error" >&$tx || break
     done
     wait "$worker_pid" 2>/dev/null || true
   } always {

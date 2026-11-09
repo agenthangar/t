@@ -1199,6 +1199,21 @@ No diagnostic allocates test PTYs, retries an agent launch, or restarts tmux.
 Fresh/resumed launches stop their verified placeholder and wait for both process
 exit and a dead pane before respawning without force, retaining first-output logs.
 
+The same detail mode reports five recent lifecycle attempts by default;
+`--recent N` accepts 1–20. Include recorded failures before pane creation, stages,
+operation exit codes, timestamps and bounded diagnostic log excerpts. A completed
+launch does not imply the agent later exited successfully. Incomplete receipts
+and log-only sessions have unknown outcomes. Use per-attempt log boundaries and
+saved excerpts for older attempts; label missing/rotated/unbounded evidence.
+The newest legacy session may show a shared log tail, explicitly uncorrelated
+with that attempt when no boundary was recorded.
+Read at most the newest 100 candidate files per directory from a capped scan,
+128 KiB per receipt, and 16 KiB/eight diagnostic lines per displayed log. Report
+scan limits and unreadable/malformed records. Strip terminal controls and common
+credentials. Do not read transcripts or create state during diagnosis. Shell
+effects preserve bounded failure stderr in private lifecycle receipts; interactive
+attachment retains its terminal. This extends the existing read-only detail mode.
+
 ## Progress enforcement
 
 Run `python3 scripts/lint_progress.py` alongside CLI lint. CI requires every
