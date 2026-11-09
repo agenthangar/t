@@ -27,7 +27,8 @@ QUERIES = frozenset({
     'session list', 'repo list', 'repo locate', 'issue list', 'issue status',
     'cursor list', 'hosts list', 'hosts show', 'workflow list',
     'workflow instructions show', 'config show', 'config models list',
-    'config models show', 'agent status', 'runners list', 'runners runs list',
+    'config models show', 'config models runtime status', 'config models requests list',
+    'config models requests show', 'agent status', 'runners list', 'runners runs list',
     'runners runs status', 'profile show', 'policy show', 'policy check', 'mcp status',
 })
 ORCHESTRATED = frozenset({'session open', 'session resume', 'session move', 'session close'})

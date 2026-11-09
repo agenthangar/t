@@ -63,6 +63,13 @@ def test_setup_and_disable(setup, t_mod, monkeypatch, capsys):
                                                                    'args': ['mcp', '--local-worker']}})
         return SimpleNamespace(returncode=0, stdout='--ignore-user-config', stderr='')
     monkeypatch.setattr(setup.subprocess, 'run', run)
+    original = setup.runpy.run_path
+    def local(path, *a, **kw):
+        result = original(path, *a, **kw)
+        if str(path).endswith('t_local_inference.py'):
+            result['ollama_action'] = lambda model, action: {'ready': True}
+        return result
+    monkeypatch.setattr(setup.runpy, 'run_path', local)
     assert setup.run(SimpleNamespace(show=False, local_model='gpt-oss:20b', yes=True), vars(t_mod)) == 0
     assert w['settings']()['enabled']
     assert any(command[1:3] == ['pull', 'gpt-oss:20b'] for command in calls)
@@ -181,10 +188,10 @@ def test_mlx_setup_registration(setup,monkeypatch):
     monkeypatch.setattr(setup,'worker',lambda:w)
     monkeypatch.setattr(setup,'check_codex',lambda *a:None)
     monkeypatch.setattr(setup,'check_registration',lambda *a:None)
-    monkeypatch.setattr(setup.runpy,'run_path',lambda *a:{'lms':lambda:'/fake/lms','install':lambda name:calls.append(name)})
+    monkeypatch.setattr(setup.runpy,'run_path',lambda *a:{'lms':lambda:'/fake/lms','install':lambda name,**kw:calls.append((name,kw))})
     monkeypatch.setattr(setup.subprocess,'run',lambda *a,**k:None)
     setup.setup_mlx('mlx-community/Qwen3.8-27B-8bit')
-    assert calls==['mlx-community/Qwen3.8-27B-8bit']
+    assert calls==[('mlx-community/Qwen3.8-27B-8bit',{'download_only':True}),('mlx-community/Qwen3.8-27B-8bit',{})]
     assert w['settings']()['provider']=='lmstudio'
     w['executable']=lambda n:None
     with pytest.raises(ValueError,match='Install Codex'):setup.setup_mlx('test')

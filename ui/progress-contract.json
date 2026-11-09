@@ -285,14 +285,6 @@
       "kind": "phase",
       "reason": "Bounded public metadata requests run inside the refresh spinner, including its parallel fetch workers."
     },
-    "libexec/t_local_inference.py:install:subprocess.run": {
-      "kind": "passthrough",
-      "reason": "curl streams download progress on stderr; installation is explicitly requested."
-    },
-    "libexec/t_local_inference.py:ollama_action:subprocess.run": {
-      "kind": "passthrough",
-      "reason": "Ollama pull owns and streams download progress for the explicitly selected artifact."
-    },
     "libexec/t_local_inference.py:lead:subprocess.call": {
       "kind": "passthrough",
       "reason": "The native Codex CLI owns the terminal for the entire session."
@@ -384,6 +376,66 @@
     "libexec/t_local_status.py:ancestry:subprocess.run": {
       "kind": "protocol",
       "reason": "Bounded ownership and pane metadata probes feed the quiet tmux statusline; no terminal output or picker."
+    },
+    "libexec/t_local_apps.py:open_desktop:subprocess.Popen": {
+      "kind": "background",
+      "reason": "Starts the explicitly selected desktop app asynchronously; the RailUI reports the result."
+    },
+    "libexec/t_local_apps.py:open_desktop:subprocess.run": {
+      "kind": "phase",
+      "reason": "The explicit Open desktop app action waits at most 15 seconds for LaunchServices and reports launch failure in the same menu."
+    },
+    "libexec/t_local_inference.py:lead:subprocess.Popen": {
+      "kind": "passthrough",
+      "reason": "The native local agent owns the terminal and displays its streaming output."
+    },
+    "libexec/t_local_inference.py:lead:time.sleep": {
+      "kind": "passthrough",
+      "reason": "Polls the native interactive agent while it owns terminal output; stops it if its manager lease fails."
+    },
+    "libexec/t_local_manager.py:process_identity:subprocess.check_output": {
+      "kind": "protocol",
+      "reason": "Bounded two-second process ownership probe runs in the private coordinator protocol without terminal output."
+    },
+    "libexec/t_local_manager.py:ensure:subprocess.Popen": {
+      "kind": "background",
+      "reason": "Starts the per-user coordinator detached; queued action UI reports startup."
+    },
+    "libexec/t_local_manager.py:ensure:time.sleep": {
+      "kind": "protocol",
+      "reason": "Bounded eight-second startup handshake runs beneath MCP and native-launch protocols."
+    },
+    "libexec/t_local_runtime.py:available_memory:subprocess.check_output": {
+      "kind": "background",
+      "reason": "Bounded memory probe runs inside the coordinator; request status reports memory admission."
+    },
+    "libexec/t_local_runtime.py:gpu_available:subprocess.check_output": {
+      "kind": "background",
+      "reason": "Bounded GPU memory probe runs inside the coordinator; request status reports memory admission."
+    },
+    "libexec/t_local_runtime.py:Providers.endpoint:subprocess.Popen": {
+      "kind": "background",
+      "reason": "Starts a private provider in the background; clients see Loading through the manager."
+    },
+    "libexec/t_local_runtime.py:Providers.endpoint:time.sleep": {
+      "kind": "background",
+      "reason": "Bounded private-provider startup probe runs in the manager while clients display Loading."
+    },
+    "libexec/t_local_runtime_ui.py:copy_command:subprocess.run": {
+      "kind": "phase",
+      "reason": "Explicit Copy command action invokes the local clipboard tool with a five-second timeout."
+    },
+    "libexec/t_local_runtime_ui.py:monitor_cli:select.select": {
+      "kind": "passthrough",
+      "reason": "The terminal monitor renders live state every second while waiting for navigation keys."
+    },
+    "libexec/t_local_inference.py:download_command:subprocess.run": {
+      "kind": "passthrough",
+      "reason": "Direct downloads stream curl or Ollama progress to the terminal."
+    },
+    "libexec/t_local_inference.py:download_command:subprocess.Popen": {
+      "kind": "background",
+      "reason": "Interactive downloads run beneath the cancellable Model test progress page; output is suppressed to preserve its rendering."
     }
   },
   "shell": [

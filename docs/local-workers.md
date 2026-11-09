@@ -26,7 +26,8 @@ tools and instructions; saving cannot hot-switch their underlying provider.
 Local-only is currently a **fresh native CLI launch** capability. The launcher
 isolates Codex HOME/configuration and credentials, pins the OSS provider/model,
 and disables cloud model stages, recursive subagents and inherited MCP servers.
-It reserves one local inference slot for the lead, so work stays in that lead.
+Each model request takes a turn in the shared per-user machine queue; time between
+requests does not reserve the GPU.
 Cloud/local resume is rejected; start a new session. Desktop launch/provider
 switching is not supported by this launcher. A local-only workflow is an inference
 policy, not an offline-tools or filesystem security boundary.
@@ -54,7 +55,7 @@ Before switching, t checks that the selected artifact is installed and ready and
 that a usable task checkpoint exists. It stops its owned cloud runtime before
 starting a **new local-only conversation** in the same working tree. The transition
 shows the reason, provider, exact model and checkpoint path; local launch also
-prints the verified artifact revision. It stays local when connectivity returns.
+shows the selected model; runtime status records its verified revision after loading. It stays local when connectivity returns.
 There is no automatic cloud switch-back or download during recovery. If readiness
 or checkpoint validation fails, the cloud UI stays available with an explanation.
 If local startup fails, the checkpoint remains and the launch reports failure.
@@ -107,11 +108,12 @@ verified are separate states. The workflow model overview shows status, file siz
 memory fit and context beside its next action. Benchmarks and Artifact & runtime
 open separate detail views; sources and methodology remain available.
 
-For an existing download, choose **Verify readiness**, or rerun
+For an existing download, choose **Test model**, or rerun
 `t config models install MODEL --context 32768 --yes`. This reuses complete files,
-loads the exact artifact at the requested context, tests response text, then releases
-the owned model. A failed or cancelled re-verification clears previous readiness;
-errors retain the downloaded files. New verification evidence records the machine
+loads the exact artifact at the requested context and tests response text. The
+manager can cache its owned model for reuse. A failed or cancelled retry preserves
+prior verification for unchanged files, hardware and context; errors retain the
+downloaded files. New verification evidence records the machine
 and context. Browsing does not verify, load or install anything.
 
 Flash-Next can be explicitly verified on supported hardware with a compatible
@@ -252,8 +254,10 @@ currently rejected; snapshots are limited to 256 MiB. The source should be stabl
 while the snapshot is being copied. A resulting patch is relative to that snapshot,
 so the lead must check it against any subsequent edits before applying it.
 
-Ollama runs only during setup or a task on an ephemeral loopback port, with
-`OLLAMA_NO_CLOUD=1`. Existing Ollama servers are not reconfigured or stopped.
+In command-line mode, the shared manager starts a private Ollama server on an
+ephemeral loopback port with `OLLAMA_NO_CLOUD=1`. Cached models may remain loaded
+after a task. Existing Ollama servers are not reconfigured or stopped. Desktop
+mode uses the explicitly configured loopback server.
 Downloads use `~/.ollama/models`; setup can reuse models in that user directory.
 Worker HOME, CODEX_HOME, and XDG directories are isolated. Authentication,
 proxy variables, lead session identity, user configuration and execution rules
@@ -281,3 +285,61 @@ A local worker is worthwhile only for tasks where delegation improves those resu
 References: [Codex non-interactive mode](https://learn.chatgpt.com/docs/non-interactive-mode),
 [Codex app-server](https://learn.chatgpt.com/docs/app-server),
 [Ollama configuration](https://docs.ollama.com/faq).
+
+
+## Shared model usage
+
+Open `t config` → **Local worker & models** for the machine overview. **Requests**
+shows queue state, waiting time and execution time separately. **Monitor usage**
+offers a live terminal view or a read-only local browser view. Both use the same
+manager snapshot; opening them does not start the manager or load a model.
+
+```sh
+t config models runtime status --json
+t config models runtime edit
+t config models runtime monitor --view cli
+t config models runtime monitor --view gui
+t config models requests list
+t config models requests show REQUEST_ID --json
+t config models requests cancel REQUEST_ID
+```
+
+Cancellation removes a queued request immediately. Cancelling active generation
+requires terminal review. An exclusively owned instance can be stopped and
+unloaded; borrowed instances and instances holding another conversation drain
+the response before another generation starts. Unknown cancellation blocks
+further generation until the affected instance is confirmed absent in its provider. Older workers
+holding the legacy lock are allowed to finish before managed requests run.
+
+**Configure provider & model** offers LM Studio or Ollama desktop-server and
+command-line modes, provider CLI guides, and an explicit **Open desktop app**
+action. The app may connect to a different server than t's private runtime;
+use t's monitor for the actual endpoint and t session activity. CLI examples are
+shown and copied, never executed by the help screen. Direct provider chat runs
+outside t's request queue. Missing apps and failed launches include recovery help.
+
+**Models** → **Test model** reuses downloaded files, queues a short response and
+marks readiness only after successful inference. Temporary memory contention does
+not erase earlier verification. Loaded, idle, downloaded and verified are separate
+states. Full identifiers and benchmark methodology remain in the detail pages.
+
+The default memory budget is 80% of physical RAM, with additional available-memory
+and GPU-headroom checks. Multiple compatible models can stay cached. Only idle,
+verified t-owned instances can be unloaded; models loaded in another app remain
+visible and protected. Unknown external memory use prevents a new load. Stateful
+LM Studio response histories pin their instance until the client closes. Ollama
+uses stateless conversation input. Cached idle models expire after five minutes
+by default. Model measurements keep a short exclusive sequence in the scheduler.
+
+The manager starts on demand and uses a private per-user directory and Unix control
+socket. It is shared across worktrees and isolated worker HOME directories, without
+launchd or systemd. Status retains bounded metadata, not prompts, response content
+or credentials. The browser monitor is loopback-only and uses an ephemeral access
+token. Closing its terminal stops that monitor. Queued tasks have their repository
+snapshot captured before `start_task` accepts them. No interrupted inference is
+replayed after a crash; unconfirmed provider ownership stops automatic recovery.
+
+Queue wait defaults to 300 seconds and is configured separately from task execution
+in **Workflows** → Codex → workflow → **Inference & routing**. Queue time does not
+consume the worker's execution budget. An accepted task is not proof of inference:
+use the task's identity evidence and request state to determine what actually ran.

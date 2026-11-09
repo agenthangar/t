@@ -1,5 +1,6 @@
 """Local inference policy, pinned MLX artifacts and owned LM Studio model leases."""
 from contextlib import contextmanager
+import fcntl
 import hashlib
 import platform
 import json
@@ -23,7 +24,7 @@ _spinner = runpy.run_path(str(ROOT / 'libexec/t_progress.py'))['spinner']
 DEFAULT_MODEL = 'mlx-community/Qwen3.8-27B-8bit'
 MODES = ('disabled', 'manual', 'automatic', 'local-only')
 DEFAULT = {'mode': 'manual', 'provider': 'lmstudio', 'model': DEFAULT_MODEL,
-           'context_tokens': 32768, 'timeout_seconds': 300, 'on_cloud_failure': 'pause'}
+           'context_tokens': 32768, 'timeout_seconds': 300, 'queue_timeout_seconds': 300, 'on_cloud_failure': 'pause'}
 SUITES = ('swe-bench-verified-bash-only', 'swe-bench-pro', 'deepswe', 'gpqa', 'terminal-bench', 'livebench-coding')
 
 
@@ -50,6 +51,8 @@ def policy(value=None):
         raise ValueError('context_tokens must be 4096–131072')
     if type(result['timeout_seconds']) is not int or not 10 <= result['timeout_seconds'] <= 1800:
         raise ValueError('timeout_seconds must be 10–1800')
+    if type(result['queue_timeout_seconds']) is not int or not 10 <= result['queue_timeout_seconds'] <= 1800:
+        raise ValueError('queue_timeout_seconds must be 10–1800')
     return result
 
 
@@ -71,7 +74,7 @@ def instructions(value):
     if p['mode'] == 'disabled':
         return 'Local delegation is disabled in this workflow.'
     identity = f"{p['provider']} / {p['model']}"
-    base = (f"Local inference: {identity}; context {p['context_tokens']}; task budget {p['timeout_seconds']} seconds. "
+    base = (f"Local inference: {identity}; context {p['context_tokens']}; task budget {p['timeout_seconds']} seconds; separate queue wait {p['queue_timeout_seconds']} seconds. "
             'Use the t-local-worker MCP start_task/task_status/cancel_task tools for local delegation. '
             'Announce Local requested with provider, model and reason before delegating. '
             'Say Local accepted only after start_task succeeds; a request is not proof of inference. '
@@ -251,7 +254,41 @@ def runtime(name, context=32768, ttl=1800):
                 run_lms('server', 'stop')
 
 
-def install(name, download_only=False, context=32768):
+def download_command(command, cancel=None, **kwargs):
+    if cancel is None:
+        return subprocess.run(command, check=True, **kwargs)
+    if cancel.is_set():
+        raise ValueError('Model action cancelled')
+    process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **kwargs)
+    try:
+        while process.poll() is None:
+            if cancel.wait(.1):
+                raise ValueError('Model action cancelled; partial files can be resumed')
+        if process.returncode:
+            raise ValueError('Model download failed; retry to resume partial files')
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+
+
+def install(name, download_only=False, context=32768, cancel=None):
+    artifact(name)
+    directory = model_directory(name)
+    directory.mkdir(parents=True, exist_ok=True)
+    with (directory / '.t-install.lock').open('a') as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise ValueError('Another install or test of this artifact is in progress') from None
+        return install_locked(name, download_only, context, cancel)
+
+
+def install_locked(name, download_only=False, context=32768, cancel=None):
     policy({'context_tokens': context})
     row = artifact(name)
     destination = model_directory(name)
@@ -280,11 +317,12 @@ def install(name, download_only=False, context=32768):
         for i, item in enumerate(files):
             path = destination / item['name']
             path.parent.mkdir(parents=True, exist_ok=True)
-            print(f"{name}: file {i+1}/{len(files)} · {item['name']}", flush=True, file=sys.stderr)
+            if cancel is None:
+                print(f"{name}: file {i+1}/{len(files)} · {item['name']}", flush=True, file=sys.stderr)
             if not path.exists() or path.stat().st_size != item['size']:
                 partial = path.with_name(path.name + '.partial')
                 url = f'https://huggingface.co/{name}/resolve/{revision}/' + urllib.parse.quote(item['name'], safe='/')
-                subprocess.run(['curl', '-fL', '--retry', '3', '--connect-timeout', '30', '--continue-at', '-', '--progress-bar', '-o', str(partial), url], check=True)
+                download_command(['curl', '-fL', '--retry', '3', '--connect-timeout', '30', '--continue-at', '-', '--progress-bar', '-o', str(partial), url], cancel)
                 if partial.stat().st_size != item['size']:
                     raise ValueError('incomplete artifact file: ' + item['name'])
                 partial.replace(path)
@@ -293,6 +331,8 @@ def install(name, download_only=False, context=32768):
                 with path.open('rb') as stream:
                     hasher = hashlib.sha256() if item['sha256'] else hashlib.sha1(f"blob {item['size']}\0".encode(), usedforsecurity=False)
                     for chunk in iter(lambda: stream.read(8 * 1024 * 1024), b''):
+                        if cancel is not None and cancel.is_set():
+                            raise ValueError('Model action cancelled')
                         hasher.update(chunk)
                     digest = hasher.hexdigest()
                 if digest != expected:
@@ -301,14 +341,13 @@ def install(name, download_only=False, context=32768):
         existing = {'model': name, 'revision': revision, 'files': files}
         (destination / '.t-artifact.json').write_text(json.dumps(existing, indent=2))
     if not download_only:
-        # Invalidate old evidence before attempting a new load, including cancellation.
-        for key in ('verified_context', 'verified_hardware', 'verification_error'):
-            existing.pop(key, None)
+        # Contention and runtime outages do not erase prior valid inference evidence.
+        existing.pop('verification_error', None)
         (destination / '.t-artifact.json').write_text(json.dumps(existing, indent=2))
         try:
             lms()
-            with runtime(name, context) as (base, alias, _):
-                answer = request(base + '/v1/responses', {'model': alias, 'input': 'Reply with OK.', 'max_output_tokens': 128}, timeout=300)
+            with managed_runtime(name, 'lmstudio', context, 'verification', cancel=cancel) as (base, alias, _):
+                answer = request(base + '/v1/responses', {'model': alias, 'input': 'Reply with OK.', 'max_output_tokens': 128}, timeout=2100)
                 output = answer.get('output') if isinstance(answer, dict) else None
                 if not isinstance(output, list) or not any(isinstance(item, dict) and item.get('type') == 'message' and
                            isinstance(item.get('content'), list) and
@@ -326,18 +365,18 @@ def install(name, download_only=False, context=32768):
     return dict(model=name, downloaded=True, ready=report(row, machine, context)['ready'], revision=existing['revision'])
 
 
-def measure(name, context=32768):
+def measure(name, context=32768, cancel=None):
     policy({'context_tokens': context})
     suitability = report(artifact(name), helper('t_local_models')['hardware'](), context)
     if suitability['fit'] is not True:
         raise ValueError(suitability['reason'])
     readings = []
-    with runtime(name, context) as (base, alias, info):
+    with managed_runtime(name, 'lmstudio', context, 'measurement', cancel=cancel) as (base, alias, info):
         for iteration in range(4):
             start = time.monotonic()
             result = request(base + '/v1/chat/completions', {'model': alias, 'messages': [{'role': 'user', 'content':
                 f'Case {iteration}: Write a Python binary search function with docstring and examples. Return code only.'}],
-                'max_tokens': 256, 'temperature': 0}, timeout=300)
+                'max_tokens': 256, 'temperature': 0}, timeout=2100)
             elapsed = time.monotonic() - start
             tokens = result.get('usage', {}).get('completion_tokens')
             if not isinstance(tokens, int) or tokens <= 0:
@@ -386,7 +425,13 @@ def catalogue(suite='swe-bench-verified-bash-only', context=32768):
             capacity = min(ram*.8, vram*.9) if ram and vram else None
             row['fit'] = row['memory_bytes'] <= capacity if capacity else None
             row['reason'] = 'estimated fit' if row['fit'] else 'memory estimate exceeds budget' if row['fit'] is False else 'accelerator capacity unknown'
-        row['ready'] = row['installed'] and row['fit']
+        try:
+            evidence = json.loads(measurement_path(row['model']).with_suffix('.ready.json').read_text())
+            row['ready'] = bool(row['installed'] and evidence.get('revision') == ollama_revision(row['model']) and
+                evidence.get('context_tokens', 0) >= context and
+                all(evidence.get('hardware', {}).get(k) == machine.get(k) for k in ('ram_bytes', 'accelerator')))
+        except (OSError, ValueError, TypeError):
+            row['ready'] = False
         row['disk_fit'] = row.get('download_bytes', row['bytes']) <= machine['free_disk_bytes']
         row['benchmarks'] = ({'livebench-coding': {'score': row['score'], 'source': legacy['benchmark']['source'],
                               'version': legacy['benchmark']['release'], 'kind': 'base-model benchmark; local artifact not evaluated'}}
@@ -445,7 +490,7 @@ def model_page(ui, title, lines):
         raise KeyboardInterrupt
 
 
-def model_menu(ui, row, context):
+def model_menu(ui, row, context, use_label='Use in workflow'):
     """One compact overview; provenance is available without blocking actions."""
     focus = 'use' if row.get('ready') else 'install'
     while True:
@@ -456,18 +501,25 @@ def model_menu(ui, row, context):
             disabled['install'] = row['reason']
         if not row.get('disk_fit', True):
             disabled['download'] = disabled['install'] = 'Insufficient disk space'
-        actions = [('use', 'Use in workflow')] if row.get('ready') else []
-        actions += [('install', 'Verify readiness' if row['installed'] else 'Install and verify')]
+        actions = [('use', use_label)] if row.get('ready') else []
+        actions += [('install', 'Test model' if row['installed'] else 'Install and test')]
         if not row['installed']:
             actions.append(('download', 'Download only'))
         if row.get('ready'):
             actions.append(('measure', 'Measure speed'))
-        actions += [('benchmarks', 'Benchmarks ›'), ('artifact', 'Artifact & runtime ›'), ('back', 'Back')]
+        actions += [('unload', 'Unload model'), ('guide', 'CLI guide'), ('app', 'Open desktop app'),
+                    ('benchmarks', 'Benchmarks ›'), ('artifact', 'Artifact & runtime ›'), ('back', 'Back')]
+        view = helper('t_local_manager')['status']()
+        instances = [x for x in view.get('models', []) if x['model'] == row['model'] and x.get('owned')]
+        if not instances:
+            disabled['unload'] = 'This model has no instance loaded by t.'
+        elif any(x.get('active') or x.get('pinned') for x in instances):
+            disabled['unload'] = 'Finish the active response and conversation before unloading.'
         summary = [row['model'].split('/')[-1],
-                   f"{row['provider']} · {row.get('precision', 'runtime metadata')}",
-                   f"Files {row['bytes']/1e9:.1f} GB · {'on disk' if row['installed'] else 'to download'}",
-                   f"Context {context:,} tokens", model_status(row),
-                   f"Memory fit {'✓' if row['fit'] is True else '✕' if row['fit'] is False else '?'}"]
+                   row['provider'] + ' · ' + ('Ready' if row.get('ready') else 'Downloaded' if row['installed'] else 'Not downloaded'),
+                   'Activity    ' + ('Generating' if any(x.get('active') for x in instances) else 'Loaded · idle' if instances else 'Not loaded'),
+                   f"Memory      {row.get('memory_bytes', 0)/1024**3:.1f} GiB estimated",
+                   f"Context     {context:,} tokens"]
         action = ui.pick('Model details', actions, context=summary,
                          default=next((i for i, (key, _) in enumerate(actions) if key == focus), 0),
                          sections={'benchmarks': 'Details'}, disabled=disabled,
@@ -475,6 +527,23 @@ def model_menu(ui, row, context):
         if action in (None, 'back'):
             return None
         focus = action
+        if action == 'guide':
+            helper('t_local_runtime_ui')['provider_menu'](ui, row['provider'])
+            continue
+        if action == 'app':
+            try:
+                helper('t_local_apps')['open_desktop'](row['provider'])
+                model_page(ui, 'Desktop app opened', ['Use t’s monitor for the exact runtime serving your sessions.'])
+            except ValueError as exc:
+                model_page(ui, 'Could not open desktop app', [str(exc)])
+            continue
+        if action == 'unload':
+            try:
+                for instance in instances:
+                    helper('t_local_manager')['rpc']('release', alias=instance['alias'])
+            except (OSError, ValueError) as exc:
+                model_page(ui, 'Unload unavailable', [str(exc)])
+            continue
         if action == 'use':
             return {'model': row['model'], 'provider': row['provider']}
         if action == 'benchmarks':
@@ -508,27 +577,23 @@ def model_menu(ui, row, context):
                       [f"Download up to {row['bytes']/1e9:.1f} GB",
                        str(model_directory(row['model']) if row['provider'] == 'lmstudio' else Path.home()/'.ollama/models')])
             if action == 'install':
-                review += [f'Load at {context:,} tokens and test a response.', 'Release the model after verification.']
-            if ui.pick('Verify readiness' if row['installed'] else 'Review download',
-                       [('yes', 'Run verification' if row['installed'] else 'Continue'), ('no', 'Cancel')], context=review) != 'yes':
+                review = [row['model'].split('/')[-1], row['provider'], '',
+                          'Check       Load model and generate a short reply',
+                          'Wait        Up to 5 minutes for a turn', f'Context     {context:,} tokens',
+                          '', 'May unload idle models loaded by t.']
+            if ui.pick('Test model' if row['installed'] else 'Review download',
+                       [('yes', 'Start test' if row['installed'] else 'Continue'), ('no', 'Cancel')], context=review) != 'yes':
                 continue
-        ui.restore()
-        error = None
-        try:
-            with helper('t_local_worker')['reservation']():
-                name = row['model']
-                result = (measure(name, context) if action == 'measure' else install(name, action == 'download', context)) if row['provider'] == 'lmstudio' else ollama_action(name, action, context=context)
-            ui.done('Complete', 'Speed measured.' if action == 'measure' else 'Ready · inference verified.' if result.get('ready') else 'Downloaded · not verified.')
-        except (OSError, ValueError, subprocess.SubprocessError) as exc:
-            error = str(exc)
-        finally:
-            ui.raw()
-        if error:
-            model_page(ui, 'Model action failed', [error, 'Files are retained. Update the runtime or choose another model, then retry.'])
+        name = row['model']
+        def operation(cancel):
+            return ((measure(name, context, cancel=cancel) if action == 'measure' else
+                     install(name, action == 'download', context, cancel=cancel)) if row['provider'] == 'lmstudio' else
+                    ollama_action(name, action, action == 'download', context, cancel=cancel))
+        helper('t_local_runtime_ui')['run_model_action'](ui, operation, name)
         row = next(r for r in catalogue(context=context)['models'] if r['model'] == row['model'])
 
 
-def select_model(ui, current=DEFAULT_MODEL, context=32768):
+def select_model(ui, current=DEFAULT_MODEL, context=32768, use_label='Use in workflow'):
     suite = 'swe-bench-verified-bash-only'
     while True:
         view = catalogue(suite, context)
@@ -546,7 +611,7 @@ def select_model(ui, current=DEFAULT_MODEL, context=32768):
             suite = ui.pick('Benchmark suite', [(v,v) for v in SUITES]) or suite
             continue
         current = choice
-        selection = model_menu(ui, next(r for r in view['models'] if r['model'] == choice), context)
+        selection = model_menu(ui, next(r for r in view['models'] if r['model'] == choice), context, use_label)
         if selection:
             return selection
 
@@ -558,6 +623,7 @@ def workflow_menu(ui, value=None):
             rows = [('mode', 'Routing'), ('model', 'Local model'),
                     ('on_cloud_failure', 'On cloud connection failure'),
                     ('context_tokens', 'Context'), ('timeout_seconds', 'Task budget'),
+                    ('queue_timeout_seconds', 'Queue wait'),
                     ('reset', 'Reset to defaults'), ('back', 'Back')]
             choice = ui.pick('Inference & routing', rows,
                             default=next(i for i, row in enumerate(rows) if row[0] == focus),
@@ -599,19 +665,30 @@ def workflow_menu(ui, value=None):
         raise
 
 
-def ollama_action(name, action, download_only=False, context=32768):
+def ollama_action(name, action, download_only=False, context=32768, cancel=None):
     w = helper('t_local_worker')
-    with w['ollama_server'](context) as (base, env):
-        if action in ('install', 'download'):
-            subprocess.run([w['executable']('ollama'), 'pull', name], env=env, check=True)
-        info = w['check_model'](base, name)
+    if action in ('install', 'download') and not ollama_revision(name):
+        with w['reservation'](), w['ollama_server'](context) as (_, env):
+            download_command([w['executable']('ollama'), 'pull', name], cancel, env=env)
+    if download_only or action == 'download':
+        return {'model': name, 'provider': 'ollama', 'downloaded': True, 'ready': False}
+    with managed_runtime(name, 'ollama', context, 'measurement' if action == 'measure' else 'verification', cancel=cancel) as (base, _, info):
         if action != 'measure':
+            value = request(base + '/api/generate', {'model': name, 'stream': False,
+                            'prompt': 'Reply with OK.', 'options': {'num_ctx': context, 'num_predict': 128}}, timeout=2100)
+            if not isinstance(value.get('response'), str) or not value['response'].strip():
+                raise ValueError('Runtime returned no output text; readiness not verified')
+            evidence = {'revision': ollama_revision(name), 'context_tokens': context,
+                        'hardware': helper('t_local_models')['hardware']()}
+            path = measurement_path(name).with_suffix('.ready.json')
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(evidence))
             return {'model': name, 'provider': 'ollama', 'downloaded': True, 'ready': True}
         readings = []
         for iteration in range(4):
             value = request(base + '/api/generate', {'model': name, 'stream': False,
                 'prompt': f'Case {iteration}: Write a Python binary search function with docstring and examples.',
-                'options': {'num_ctx': context, 'num_predict': 256, 'temperature': 0}}, timeout=300)
+                'options': {'num_ctx': context, 'num_predict': 256, 'temperature': 0}}, timeout=2100)
             tokens, duration = value.get('eval_count', 0), value.get('eval_duration', 0)
             if not tokens or not duration:
                 raise ValueError('runtime returned no measured decode timing')
@@ -619,7 +696,7 @@ def ollama_action(name, action, download_only=False, context=32768):
                 readings.append(tokens / (duration / 1e9))
         measurement = {'metric': 'decode tokens / second', 'median': statistics.median(readings),
             'min': min(readings), 'max': max(readings), 'measured_at': time.time(), 'context_tokens': context,
-            'model': name, 'revision': ollama_revision(name), 'metadata': info, 'hardware': helper('t_local_models')['hardware'](), 'workload_version': 1}
+            'model': name, 'revision': ollama_revision(name), 'hardware': helper('t_local_models')['hardware'](), 'workload_version': 1}
         path = measurement_path(name)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(measurement, indent=2))
@@ -675,8 +752,7 @@ def command(args):
                     return 130
             finally:
                 dialog.close()
-        with helper('t_local_worker')['reservation']():
-            result = (measure(name, context) if action == 'measure' else install(name, getattr(args, 'download_only', False), context)) if provider == 'lmstudio' else ollama_action(name, action, getattr(args, 'download_only', False), context)
+        result = (measure(name, context) if action == 'measure' else install(name, getattr(args, 'download_only', False), context)) if provider == 'lmstudio' else ollama_action(name, action, getattr(args, 'download_only', False), context)
     if action == 'show' and not getattr(args, 'json', False):
         print('\n'.join(detail_lines(result)))
     else:
@@ -685,19 +761,21 @@ def command(args):
 
 
 @contextmanager
+def managed_runtime(model, provider, context=32768, kind='session', activity=None, chosen=None, cancel=None):
+    if cancel is not None and cancel.is_set():
+        raise ValueError('Model action cancelled')
+    selected = policy(chosen or {'model': model, 'provider': provider, 'context_tokens': context})
+    with helper('t_local_manager')['Client'](selected, kind, activity, cancel) as client:
+        info = dict(receipt(model)) if provider == 'lmstudio' else {}
+        yield client.base, model, info
+        if client.error:
+            raise ValueError(client.error)
+
+
+@contextmanager
 def provider_runtime(chosen):
-    if chosen['provider'] == 'lmstudio':
-        with runtime(chosen['model'], chosen['context_tokens'], None) as value:
-            yield value
-    else:
-        w = helper('t_local_worker')
-        with w['ollama_server'](chosen['context_tokens']) as (base, _):
-            w['check_model'](base, chosen['model'])
-            tags = request(base + '/api/tags')['models']
-            info = next((r for r in tags if r['name'] == chosen['model']), None)
-            if not info or not info.get('digest'):
-                raise ValueError('Ollama did not confirm the exact local model digest')
-            yield base, chosen['model'], {'revision': info['digest']}
+    with managed_runtime(chosen['model'], chosen['provider'], chosen['context_tokens'], chosen=chosen) as value:
+        yield value
 
 
 def trusted_workspace(cwd):
@@ -732,7 +810,8 @@ def lead(argv, cwd=None, chosen=None):
     if fit['fit'] is not True:
         raise ValueError(fit['reason'])
     w = helper('t_local_worker')
-    with w['reservation'](), helper('t_local_status')['Activity'](chosen['model']) as activity, provider_runtime(chosen) as (base, alias, info):
+    with helper('t_local_status')['Activity'](chosen['model']) as activity, helper('t_local_manager')['Client'](chosen, 'session', activity) as client:
+        base, alias = client.base, chosen['model']
         home = w['state_root']() / ('lead-' + uuid.uuid4().hex)
         env = w['environment'](home)
         env.update(CODEX_OSS_BASE_URL=base + '/v1')
@@ -741,7 +820,7 @@ def lead(argv, cwd=None, chosen=None):
             (codex_home/'config.toml').write_text('[projects.'+json.dumps(str(Path(cwd or os.getcwd()).resolve()))+']\ntrust_level = "trusted"\n')
         workflow = helper('t_workflow')
         document, _ = workflow['load']()
-        (codex_home / 'AGENTS.md').write_text(workflow['render'](document) + '\n' + instructions(chosen) + '\nDo work in this lead; the single local inference slot is reserved for this session.\n')
+        (codex_home / 'AGENTS.md').write_text(workflow['render'](document) + '\n' + instructions(chosen) + '\nLocal requests take fair turns with other sessions; do not bypass the managed endpoint.\n')
         # Keep native sandbox/approval switches; strip incompatible cloud model/effort/speed defaults.
         filtered = []
         args = iter(argv[1:])
@@ -767,10 +846,24 @@ def lead(argv, cwd=None, chosen=None):
                   '-c', 'features.fast_mode=false', '-c', 'approvals_reviewer="user"', '-c', 'mcp_servers={}', '-c', 'web_search="disabled"',
                   '-c', f'model_context_window={chosen["context_tokens"]}',
                   '-c', f'model_auto_compact_token_limit={int(chosen["context_tokens"]*.75)}']
-        print(f"Local only · {chosen['model']} · {chosen['provider']} · revision {info['revision'][:12]}", file=sys.stderr)
-        with activity.endpoint(base) as observed:
-            env['CODEX_OSS_BASE_URL'] = observed + '/v1'
-            return subprocess.call([argv[0], *forced, *filtered], env=env)
+        print(f"Local only · {chosen['model']} · {chosen['provider']} · shared request queue", file=sys.stderr)
+        env.update(CODEX_OSS_BASE_URL=base + '/v1', OLLAMA_HOST=base)
+        proc = subprocess.Popen([argv[0], *forced, *filtered], env=env)
+        try:
+            while proc.poll() is None:
+                if client.error:
+                    proc.terminate()
+                    raise ValueError(client.error)
+                time.sleep(.2)
+            return proc.returncode
+        finally:
+            if proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait()
 
 
 if __name__ == '__main__':

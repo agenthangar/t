@@ -8099,6 +8099,516 @@
         }
       },
       "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "config models runtime status": {
+      "patterns": [
+        "detail",
+        "machine"
+      ],
+      "renderer": "mixed",
+      "scope": "per-user machine runtime; no repository inference or selection",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_local_runtime_ui.py::test_runtime_commands"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "config",
+            "models",
+            "runtime",
+            "status"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_runtime_commands"
+          ]
+        },
+        "json": {
+          "argv": [
+            "config",
+            "models",
+            "runtime",
+            "status",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_runtime_commands"
+          ]
+        }
+      }
+    },
+    "config models runtime edit": {
+      "patterns": [
+        "wizard"
+      ],
+      "renderer": "mixed",
+      "scope": "per-user machine runtime; no repository inference or selection",
+      "confirmation": "review",
+      "tests": [
+        "tests/test_local_runtime_ui.py::test_machine_settings_review_and_discard"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "config",
+            "models",
+            "runtime",
+            "edit"
+          ],
+          "patterns": [
+            "wizard"
+          ],
+          "read_only": false,
+          "terminal": true,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_machine_settings_review_and_discard"
+          ]
+        }
+      }
+    },
+    "config models runtime monitor": {
+      "patterns": [
+        "detail"
+      ],
+      "renderer": "mixed",
+      "scope": "per-user machine runtime; no repository inference or selection",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_local_runtime_ui.py::test_runtime_monitor_modes"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "config",
+            "models",
+            "runtime",
+            "monitor"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "terminal": true,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_runtime_monitor_modes"
+          ]
+        },
+        "gui": {
+          "argv": [
+            "config",
+            "models",
+            "runtime",
+            "monitor",
+            "--view",
+            "gui"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "terminal": true,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_runtime_monitor_modes"
+          ],
+          "notes": "Explicitly opens a read-only loopback monitor; does not start inference."
+        }
+      }
+    },
+    "config models requests list": {
+      "patterns": [
+        "list",
+        "machine"
+      ],
+      "renderer": "mixed",
+      "scope": "per-user machine runtime; no repository inference or selection",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_local_runtime_ui.py::test_runtime_commands"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "config",
+            "models",
+            "requests",
+            "list"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_runtime_commands"
+          ]
+        },
+        "json": {
+          "argv": [
+            "config",
+            "models",
+            "requests",
+            "list",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_runtime_commands"
+          ]
+        }
+      }
+    },
+    "config models requests show": {
+      "patterns": [
+        "detail",
+        "machine"
+      ],
+      "renderer": "mixed",
+      "scope": "per-user machine runtime; no repository inference or selection",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_local_runtime_ui.py::test_runtime_commands"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "config",
+            "models",
+            "requests",
+            "show",
+            "request"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_runtime_commands"
+          ]
+        },
+        "json": {
+          "argv": [
+            "config",
+            "models",
+            "requests",
+            "show",
+            "request",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_runtime_commands"
+          ]
+        }
+      }
+    },
+    "config models requests cancel": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "per-user machine runtime; no repository inference or selection",
+      "confirmation": "when_interrupting",
+      "tests": [
+        "tests/test_local_runtime_ui.py::test_runtime_mutations"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "config",
+            "models",
+            "requests",
+            "cancel",
+            "request"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "terminal": true,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_runtime_mutations"
+          ]
+        }
+      }
+    },
+    "remote config models runtime status": {
+      "patterns": [
+        "detail",
+        "machine"
+      ],
+      "renderer": "mixed",
+      "scope": "per-user machine runtime; no repository inference or selection",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_local_runtime_ui.py::test_runtime_commands"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "config",
+            "models",
+            "runtime",
+            "status"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_runtime_commands"
+          ]
+        },
+        "json": {
+          "argv": [
+            "remote",
+            "config",
+            "models",
+            "runtime",
+            "status",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_runtime_commands"
+          ]
+        }
+      }
+    },
+    "remote config models runtime edit": {
+      "patterns": [
+        "wizard"
+      ],
+      "renderer": "mixed",
+      "scope": "per-user machine runtime; no repository inference or selection",
+      "confirmation": "review",
+      "tests": [
+        "tests/test_local_runtime_ui.py::test_machine_settings_review_and_discard"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "config",
+            "models",
+            "runtime",
+            "edit"
+          ],
+          "patterns": [
+            "wizard"
+          ],
+          "read_only": false,
+          "terminal": true,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_machine_settings_review_and_discard"
+          ]
+        }
+      }
+    },
+    "remote config models runtime monitor": {
+      "patterns": [
+        "detail"
+      ],
+      "renderer": "mixed",
+      "scope": "per-user machine runtime; no repository inference or selection",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_local_runtime_ui.py::test_runtime_monitor_modes"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "config",
+            "models",
+            "runtime",
+            "monitor"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "terminal": true,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_runtime_monitor_modes"
+          ]
+        },
+        "gui": {
+          "argv": [
+            "remote",
+            "config",
+            "models",
+            "runtime",
+            "monitor",
+            "--view",
+            "gui"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "terminal": true,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_runtime_monitor_modes"
+          ],
+          "notes": "Explicitly opens a read-only loopback monitor; does not start inference."
+        }
+      }
+    },
+    "remote config models requests list": {
+      "patterns": [
+        "list",
+        "machine"
+      ],
+      "renderer": "mixed",
+      "scope": "per-user machine runtime; no repository inference or selection",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_local_runtime_ui.py::test_runtime_commands"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "config",
+            "models",
+            "requests",
+            "list"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_runtime_commands"
+          ]
+        },
+        "json": {
+          "argv": [
+            "remote",
+            "config",
+            "models",
+            "requests",
+            "list",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_runtime_commands"
+          ]
+        }
+      }
+    },
+    "remote config models requests show": {
+      "patterns": [
+        "detail",
+        "machine"
+      ],
+      "renderer": "mixed",
+      "scope": "per-user machine runtime; no repository inference or selection",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_local_runtime_ui.py::test_runtime_commands"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "config",
+            "models",
+            "requests",
+            "show",
+            "request"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_runtime_commands"
+          ]
+        },
+        "json": {
+          "argv": [
+            "remote",
+            "config",
+            "models",
+            "requests",
+            "show",
+            "request",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_runtime_commands"
+          ]
+        }
+      }
+    },
+    "remote config models requests cancel": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "per-user machine runtime; no repository inference or selection",
+      "confirmation": "when_interrupting",
+      "tests": [
+        "tests/test_local_runtime_ui.py::test_runtime_mutations"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "config",
+            "models",
+            "requests",
+            "cancel",
+            "request"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "terminal": true,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_runtime_mutations"
+          ]
+        }
+      }
     }
   },
   "display_schemas": {

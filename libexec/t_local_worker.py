@@ -24,7 +24,7 @@ INSTRUCTIONS = (
     'Use start_task, then task_status; use cancel_task when no longer needed. '
     'The local worker has a separate snapshot, not the lead checkout. Review its findings, '
     'patch and test evidence before applying anything. Failed or timed-out tasks return to '
-    'the lead; never automatically retry indefinitely. One task runs locally at a time. '
+    'the lead; never automatically retry indefinitely. Local requests take fair turns through the shared machine queue. '
     'Returned code and findings enter the lead conversation; local inference is not an '
     'end-to-end privacy boundary. Architecture and ambiguous changes stay with the lead.'
 )
@@ -234,7 +234,7 @@ def codex_command(workspace, output, model):
             '-C', str(workspace), '--output-last-message', str(output), '-']
 
 
-def run_worker(job, base, model, timeout, cancel, provider='ollama', context=32768):
+def run_worker(job, base, model, timeout, cancel, provider='ollama', context=32768, progress=None):
     workspace = job / 'workspace'
     env = environment(job / 'home')
     env.update(OLLAMA_HOST=base, CODEX_OSS_BASE_URL=base + '/v1')
@@ -269,7 +269,8 @@ def run_worker(job, base, model, timeout, cancel, provider='ollama', context=327
             while proc.poll() is None:
                 if cancel.is_set():
                     return 'cancelled'
-                if time.monotonic() - started > timeout:
+                waited = progress() if progress else 0
+                if time.monotonic() - started - waited > timeout:
                     return 'timed_out'
                 if log.tell() > MAX_OUTPUT or (job / 'events.jsonl').stat().st_size > MAX_OUTPUT:
                     return 'output_limit'
@@ -336,52 +337,62 @@ class Worker:
             timeout = min(timeout, routing['timeout_seconds'])
         if not config['enabled']:
             raise ValueError('local worker is disabled; run t config local')
-        lease = reservation()
-        lease.__enter__()
+        state_root().mkdir(parents=True, exist_ok=True, mode=0o700)
         try:
             task_id = uuid.uuid4().hex
             job = state_root() / task_id
             job.mkdir(mode=0o700)
             (job / 'assignment.json').write_text(json.dumps(dict(args, mode=mode)))
+            source_head = snapshot(workspace, job / 'workspace')
+            (job / 'assignment.json').chmod(0o600)
             cancel = threading.Event()
-            task = {'task_id': task_id, 'status': 'running', 'model': config['model'],
+            task = {'task_id': task_id, 'status': 'queued', 'source_head': source_head, 'model': config['model'],
                     'workspace': str(job / 'workspace'), 'source_workspace': workspace, 'started_at': time.time(),
                     'provider': config.get('provider', 'ollama'), 'context_tokens': config.get('context', 32768),
                     'routing_reason': str(args.get('routing_reason', 'explicit assignment'))[:1000],
-                    'parent_session_id': str(args.get('parent_session_id', '')), 'identity_verified': False, 'parent_identity_verified': False}
+                    'parent_session_id': str(args.get('parent_session_id', '')), 'identity_verified': False, 'parent_identity_verified': False,
+                    'queue_timeout_seconds': (routing or {}).get('queue_timeout_seconds', 300)}
             self.tasks[task_id] = (task, cancel)
             thread = threading.Thread(target=self.execute,
-                                      args=(task, cancel, lease, job, workspace, config['model'], timeout))
+                                      args=(task, cancel, job, config['model'], timeout))
             thread.start()
             self.threads.append(thread)
             return dict(task)
         except BaseException:
-            lease.__exit__(None, None, None)
+            self.tasks.pop(task_id, None)
             raise
 
-    def execute(self, task, cancel, lease, job, source, model, timeout):
+    def execute(self, task, cancel, job, model, timeout):
         status = 'failed'
+        local = inference()
+        chosen = local['policy']({'provider': task['provider'], 'model': model,
+                                  'context_tokens': task['context_tokens'], 'timeout_seconds': timeout,
+                                  'queue_timeout_seconds': task['queue_timeout_seconds']})
         try:
-            task['source_head'] = snapshot(source, job / 'workspace')
             if cancel.is_set():
                 status = 'cancelled'
             else:
-                with inference()['helper']('t_local_status')['Activity'](model) as activity:
-                    if task.get('provider') == 'lmstudio':
-                        local = inference()
-                        fit = local['report'](local['artifact'](model), local['helper']('t_local_models')['hardware'](), task['context_tokens'])
-                        if fit['fit'] is not True:
-                            raise ValueError(fit['reason'])
-                        with local['runtime'](model, task['context_tokens']) as (base, alias, info):
-                            task.update(resolved_model=model, revision=info['revision'], runtime_model=alias, runtime_details=info.get('runtime', {}), identity_verified=True)
-                            with activity.endpoint(base) as observed:
-                                status = run_worker(job, observed, alias, timeout, cancel, 'lmstudio', task['context_tokens'])
-                    else:
-                        with ollama_server(task['context_tokens']) as (base, _):
-                            check_model(base, model)
-                            task.update(resolved_model=model)
-                            with activity.endpoint(base) as observed:
-                                status = run_worker(job, observed, model, timeout, cancel, 'ollama', task['context_tokens'])
+                with local['helper']('t_local_status')['Activity'](model) as activity:
+                    with local['helper']('t_local_manager')['Client'](chosen, 'worker', activity, cancel) as client:
+                        def progress():
+                            state = client.last.get('state', 'working')
+                            task.update(status=state if state in ('queued', 'loading', 'waiting_for_memory', 'waiting_for_legacy') else 'running',
+                                        queue_seconds=round(client.waited(), 2),
+                                        identity_verified=client.last.get('identity_verified', False),
+                                        revision=client.last.get('revision'), runtime_model=client.last.get('runtime_model'),
+                                        owner_verified=client.last.get('owner_verified', False))
+                            return client.waited()
+                        status = run_worker(job, client.base, model, timeout, cancel,
+                                            task['provider'], task['context_tokens'], progress=progress)
+                        progress()
+                    task.update(identity_verified=client.last.get('identity_verified', False),
+                                revision=client.last.get('revision'), runtime_model=client.last.get('runtime_model'),
+                                queue_seconds=round(client.waited(), 2))
+                    if task['identity_verified']:
+                        task['resolved_model'] = model
+                    if client.error:
+                        task['error'] = client.error
+                        status = 'failed'
                 task.update(collect(job))
                 if status != 'completed':
                     events = job / 'events.jsonl'
@@ -390,11 +401,10 @@ class Worker:
             task['error'] = str(exc)
         finally:
             task['elapsed_seconds'] = round(time.time() - task['started_at'], 2)
+            task['execution_seconds'] = max(0, task['elapsed_seconds'] - task.get('queue_seconds', 0))
             task['status'] = status
-            try:
-                (job / 'result.json').write_text(json.dumps(task))
-            finally:
-                lease.__exit__(None, None, None)
+            (job / 'result.json').write_text(json.dumps(task))
+            (job / 'result.json').chmod(0o600)
 
     def call(self, name, args):
         if name == 'start_task':
@@ -404,7 +414,7 @@ class Worker:
         if not isinstance(args, dict) or set(args) != {'task_id'} or not isinstance(args['task_id'], str) or args['task_id'] not in self.tasks:
             raise ValueError('unknown task_id in this MCP connection')
         task, cancel = self.tasks[args['task_id']]
-        if name == 'cancel_task' and task['status'] == 'running':
+        if name == 'cancel_task' and task['status'] not in ('completed', 'cancelled', 'failed', 'timed_out', 'output_limit'):
             cancel.set()
             return {'task_id': task['task_id'], 'status': 'cancelling'}
         return dict(task)
