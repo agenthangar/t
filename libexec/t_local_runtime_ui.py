@@ -334,8 +334,8 @@ def monitor_gui():
         url = f'http://127.0.0.1:{server.server_port}/#{server.token}'
         print('Local usage monitor · Ctrl-C closes this read-only view.')
         print('Local usage monitor: ' + url, flush=True)
-        webbrowser.open(url)
         try:
+            webbrowser.open(url)
             while thread.is_alive():
                 thread.join(timeout=1)
         finally:

@@ -570,3 +570,59 @@ def test_download_cancel_and_artifact_lock(local,monkeypatch):
     with (directory/'.t-install.lock').open('a') as lock:
         m.fcntl.flock(lock,m.fcntl.LOCK_EX|m.fcntl.LOCK_NB)
         with pytest.raises(ValueError,match='in progress'):m.install(m.DEFAULT_MODEL)
+
+
+def test_model_actions_use_exact_instance_and_report_launch_failures(local,monkeypatch):
+    m=local;row=m.report(m.artifact(m.DEFAULT_MODEL),hardware());row.update(ready=True,installed=True)
+    calls=[];failure=[False]
+    def rpc(action,**kw):
+        if failure[0]:raise ValueError('still active')
+        calls.append((action,kw))
+    def open_app(provider):
+        if failure[0]:raise ValueError('missing app')
+        calls.append(('app',provider))
+    monkeypatch.setattr(m,'helper',lambda n:{'status':lambda:{'models':[{'model':row['model'],'alias':'exact-instance','owned':True}]},'rpc':rpc} if n=='t_local_manager' else {'open_desktop':open_app} if n=='t_local_apps' else {'provider_menu':lambda ui,provider:calls.append(('guide',provider))})
+    class UI:
+        def __init__(self,choices):self.choices=iter(choices);self.pages=[]
+        def pick(self,*a,**kw):return next(self.choices)
+        def page(self,title,body,**kw):self.pages.append(title);return 'q'
+    ui=UI(['guide','app','unload','back']);m.model_menu(ui,row,32768)
+    assert ('release',{'alias':'exact-instance'}) in calls and 'Desktop app opened' in ui.pages
+    failure[0]=True;ui=UI(['app','unload','back']);m.model_menu(ui,row,32768)
+    assert ui.pages==['Could not open desktop app','Unload unavailable']
+
+
+def test_ollama_readiness_requires_matching_proof(local,monkeypatch):
+    m=local;name='qwen:8b';revision='sha256:fixture'
+    monkeypatch.setattr(m,'ollama_revision',lambda name:revision)
+    legacy={'hardware':hardware,'report':lambda:{'models':[{'model':name,'bytes':4,'fit':True,'score':None,'reason':'fit'}], 'benchmark':{}},'missing_bytes':lambda *a:0}
+    monkeypatch.setattr(m,'helper',lambda name:legacy)
+    path=m.measurement_path(name).with_suffix('.ready.json');path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({'revision':revision,'context_tokens':32768,'hardware':hardware()}))
+    assert m.catalogue()['models'][-1]['ready']
+    assert not m.catalogue(context=65536)['models'][-1]['ready']
+    revision='changed';assert not m.catalogue()['models'][-1]['ready']
+
+
+def test_managed_runtime_lost_lease_never_claims_success(local,monkeypatch):
+    class Failed(ManagedClientFixture):
+        def __init__(self,*a,**kw):super().__init__(*a,**kw);self.error='manager connection lost'
+    monkeypatch.setattr(local,'helper',lambda name:{'Client':Failed})
+    with pytest.raises(ValueError,match='connection lost'):
+        with local.managed_runtime(local.DEFAULT_MODEL,'lmstudio'):pass
+
+
+def test_download_cancellation_kills_unresponsive_process(local,monkeypatch):
+    import threading
+    calls=[];cancel=threading.Event();monkeypatch.setattr(cancel,'wait',lambda t:True)
+    class Process:
+        returncode=None
+        def poll(self):return self.returncode
+        def terminate(self):calls.append('terminate')
+        def kill(self):calls.append('kill');self.returncode=-9
+        def wait(self,**kw):
+            if kw:raise local.subprocess.TimeoutExpired('curl',5)
+            calls.append('wait')
+    monkeypatch.setattr(local.subprocess,'Popen',lambda *a,**kw:Process())
+    with pytest.raises(ValueError,match='cancelled'):local.download_command(['curl'],cancel)
+    assert calls==['terminate','kill','wait']

@@ -225,3 +225,29 @@ def test_ctrl_c_cancels_background_model_action(ui_module,monkeypatch):
         raise ValueError('cancelled')
     with pytest.raises(KeyboardInterrupt):m.run_model_action(Interrupt(),operation,'model')
     assert cancelled.is_set()
+
+
+@pytest.mark.parametrize('browser_error',[False,True])
+def test_gui_monitor_always_closes_its_server(ui_module,monkeypatch,browser_error):
+    m=ui_module;calls=[]
+    class Server:
+        server_port=12345
+        def __enter__(self):return self
+        def __exit__(self,*a):calls.append('closed')
+        def serve_forever(self):pass
+        def shutdown(self):calls.append('shutdown')
+    class Thread:
+        def __init__(self,**kw):self.turn=0
+        def start(self):calls.append('start')
+        def is_alive(self):self.turn+=1;return self.turn==1
+        def join(self,**kw):calls.append('join')
+    def browser(url):
+        assert url.startswith('http://127.0.0.1:12345/#')
+        if browser_error:raise OSError('browser unavailable')
+    monkeypatch.setattr(m,'ThreadingHTTPServer',lambda *a:Server())
+    monkeypatch.setattr(m.threading,'Thread',Thread)
+    monkeypatch.setattr(m.webbrowser,'open',browser)
+    if browser_error:
+        with pytest.raises(OSError):m.monitor_gui()
+    else:m.monitor_gui()
+    assert calls[-3:]==['shutdown','join','closed']

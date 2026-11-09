@@ -394,6 +394,10 @@ class Engine:
             raise ValueError('Unknown runtime control action')
 
     def cancel(self, job):
+        with self.condition:
+            self.cancel_locked(job)
+
+    def cancel_locked(self, job):
         if job['state'] in TERMINAL:
             return
         job['cancel'].set()
@@ -574,7 +578,12 @@ class Engine:
             instance['last_used'] = time.time()
 
     def maintain(self):
+        probe_index = 0
         while not self.stopping.wait(1):
+            clients = list(self.clients.values())
+            probe = clients[probe_index % len(clients)] if clients else None
+            identity = process_identity(probe['pid']) if probe else None
+            probe_index += 1
             with self.condition:
                 now = time.time()
                 for job in list(self.jobs.values()):
@@ -583,7 +592,7 @@ class Engine:
                     if job is self.active and job.get('started') and now - job['started'] > job['chosen']['timeout_seconds']:
                         self.cancel(job)
                 for client in list(self.clients.values()):
-                    if now - client['heartbeat'] > 15 or process_identity(client['pid']) != client['identity']:
+                    if now - client['heartbeat'] > 15 or (client is probe and identity != client['identity']):
                         self.control({'action': 'close', 'client': client['id'], 'token': client['token']})
                 # Reserve maintenance without holding the control lock over provider I/O.
                 # Heartbeats and cancellation remain responsive during slow unloads.

@@ -191,3 +191,26 @@ def test_lm_headless_refuses_gui_fallback_and_auth_error(runtime,provider,monkey
     with pytest.raises(ValueError,match='llmster'):p.endpoint('lmstudio',True)
     monkeypatch.setattr(runtime,'request',lambda *a,**kw:(_ for _ in ()).throw(urllib.error.HTTPError('url',401,'auth',{},None)))
     with pytest.raises(ValueError,match='authentication'):p.endpoint('lmstudio',True)
+
+
+def test_provider_metadata_transport_is_bounded_and_never_proxied(runtime,monkeypatch):
+    m=runtime;calls=[]
+    class Reply:
+        data=b'{"models":[]}'
+        def __enter__(self):return self
+        def __exit__(self,*args):pass
+        def read(self,limit):calls.append(limit);return self.data
+    reply=Reply()
+    class Opener:
+        def open(self,request,**kw):
+            assert request.full_url=='http://127.0.0.1:1234/api/show'
+            assert json.loads(request.data)=={'model':'exact'}
+            return reply
+    def opener(handler):
+        assert handler.proxies=={}
+        return Opener()
+    monkeypatch.setattr(m.urllib.request,'build_opener',opener)
+    assert m.request('http://127.0.0.1:1234','/api/show',{'model':'exact'})=={'models':[]}
+    assert calls==[16*1024**2+1]
+    reply.data=b'x'*(16*1024**2+1)
+    with pytest.raises(ValueError,match='exceeds'):m.request('http://127.0.0.1:1234','/api/show',{'model':'exact'})

@@ -433,3 +433,119 @@ def test_cancel_owned_generation_unloads_and_invalidates_reused_alias(manager,mo
     assert engine.providers.unloaded==1 and not engine.responses and 'pinned_alias' not in client
     with pytest.raises(ValueError,match='history'):engine.submit(client,'/v1/responses',{'previous_response_id':'old'},handler())
     engine.close()
+
+
+@pytest.mark.parametrize('state',['running','waiting_for_memory','waiting_for_legacy'])
+def test_client_heartbeat_reports_activity_and_fails_closed(manager,monkeypatch,state):
+    updates=[];client=manager.Client(chosen(),activity=SimpleNamespace(update=updates.append))
+    class Once:
+        count=0
+        def wait(self,t):self.count+=1;return self.count>1
+        def set(self):pass
+    client.closed=Once()
+    monkeypatch.setattr(client,'call',lambda action:{'state':state,'wait_seconds':3})
+    client.heartbeat();assert updates==[{'running':'inferring','waiting_for_memory':'waiting','waiting_for_legacy':'queued'}[state]]
+    assert client.waited()==3
+    client.closed=Once();client.cancel_event.set();calls=[]
+    monkeypatch.setattr(client,'call',lambda action:calls.append(action))
+    client.heartbeat();assert calls==['close']
+    client.closed=Once();client.cancel_event.clear()
+    monkeypatch.setattr(client,'call',lambda action:(_ for _ in ()).throw(OSError('lost manager')))
+    client.heartbeat();assert client.error=='lost manager' and client.cancel_event.is_set()
+    client.thread=SimpleNamespace(join=lambda **kw:None);client.__exit__()
+
+
+@pytest.mark.parametrize('provider,path,interruptible', [('ollama','/api/generate',True),('ollama','/v1/responses',False),('lmstudio','/v1/responses',True)])
+def test_forward_cancel_and_provider_error(manager,monkeypatch,provider,path,interruptible):
+    engine=manager.Engine(Providers);lease=register(engine);client=engine.clients[lease['id']]
+    job=engine.submit(client,path,{'store':True},handler());job['interruptible']=interruptible
+    instance=engine.providers.get(dict(chosen(),provider=provider));sent=[]
+    class Response:
+        status=200;count=0
+        def getheader(self,*a):return 'application/json'
+        def read1(self,size):
+            self.count+=1
+            if self.count==1:job['cancel'].set();return b'private response'
+            return b''
+    response=Response()
+    class Connection:
+        sock=None
+        def request(self,*args):sent.append(args)
+        def getresponse(self):return response
+        def close(self):pass
+    monkeypatch.setattr(manager.http.client,'HTTPConnection',lambda *a,**kw:Connection())
+    engine.forward(job,instance)
+    assert job['handler'].wfile.getvalue()==b''
+    assert bool(job.get('backend_stopped')) is not interruptible
+    payload=json.loads(sent[0][2]);assert payload['model']==instance['alias']
+    if path.startswith('/api/'):assert payload['options']['num_ctx']==32768 and 'store' not in payload
+    elif provider=='ollama':assert payload['store'] is False
+    job['cancel'].clear();response.status=500
+    with pytest.raises(ValueError,match='HTTP 500'):engine.forward(job,instance)
+    job['cancel'].set();before=len(sent);engine.forward(job,instance);assert len(sent)==before
+    engine.active=job
+    job['connection']=SimpleNamespace(sock=SimpleNamespace(shutdown=lambda *a:(_ for _ in ()).throw(OSError())))
+    engine.cancel(job);assert job['state']=='cancelling'
+    engine.active=None;engine.close()
+
+
+def test_legacy_lock_waits_and_measurement_sequence_is_exclusive(manager,monkeypatch):
+    engine=manager.Engine(Providers)
+    directory=Path(os.environ['XDG_STATE_HOME'])/'t/local-worker';directory.mkdir(parents=True)
+    lease=register(engine,kind='measurement');client=engine.clients[lease['id']]
+    monkeypatch.setattr(engine,'forward',lambda *a:None)
+    with (directory/'worker.lock').open('a') as lock:
+        manager.fcntl.flock(lock,manager.fcntl.LOCK_EX|manager.fcntl.LOCK_NB)
+        assert not engine.legacy_lock();engine.thread.start()
+        job=engine.submit(client,'/v1/responses',{},handler())
+        deadline=time.monotonic()+2
+        while job['state']=='queued' and time.monotonic()<deadline:time.sleep(.01)
+        assert job['state']=='waiting_for_legacy'
+    assert job['done'].wait(3) and engine.measurement_owner==client['id']
+    engine.control(dict(action='close',client=lease['id'],token=lease['token']))
+    assert engine.measurement_owner is None;engine.close()
+
+
+def test_verified_private_daemon_recovery_and_unverified_client(manager,monkeypatch):
+    engine=manager.Engine(Providers);item=engine.providers.get(chosen());calls=[]
+    manager.write_json(manager.root()/'leases.json',{'instances':[item],'ollama_process':{'pid':99,'identity':'owned-process','base':item['base']}})
+    monkeypatch.setattr(manager.os,'killpg',lambda *args:calls.append(args))
+    engine.recover();assert calls==[(99,manager.signal.SIGKILL)]
+    monkeypatch.setattr(manager,'process_identity',lambda pid:None)
+    with pytest.raises(ValueError,match='identity'):register(engine)
+    engine.close()
+
+
+def test_maintenance_reaps_dead_clients_and_old_metadata(manager,monkeypatch):
+    engine=manager.Engine(Providers);lease=register(engine);client=engine.clients[lease['id']]
+    job=engine.submit(client,'/v1/responses',{},handler());engine.finish(job,'completed');job['finished']=0
+    client['heartbeat']=0;engine.legacy_lock()
+    engine.blocked='previously uncertain';engine.blocked_instance={'alias':'gone'}
+    monkeypatch.setattr(engine.providers,'present',lambda item:False)
+    engine.maintenance.start();deadline=time.monotonic()+3
+    while engine.clients and time.monotonic()<deadline:time.sleep(.02)
+    assert not engine.clients and not engine.jobs and not engine.blocked and engine.legacy is None
+    engine.close()
+
+
+def test_manager_startup_timeout_never_returns_direct_endpoint(manager,monkeypatch):
+    monkeypatch.setattr(manager,'rpc',lambda *a,**kw:(_ for _ in ()).throw(FileNotFoundError()))
+    monkeypatch.setattr(manager.subprocess,'Popen',lambda *a,**kw:None)
+    ticks=iter([0,9]);monkeypatch.setattr(manager.time,'monotonic',lambda:next(ticks))
+    with pytest.raises(ValueError,match='did not start'):manager.ensure()
+
+
+def test_manager_refuses_unsafe_socket_and_duplicate_daemon(manager):
+    path=manager.root()/'control.sock';path.write_text('not a socket')
+    with pytest.raises(ValueError,match='Unsafe'):manager.serve()
+    with (manager.root()/'manager.lock').open('a') as lock:
+        manager.fcntl.flock(lock,manager.fcntl.LOCK_EX|manager.fcntl.LOCK_NB)
+        assert manager.serve() is None
+
+
+def test_recovery_tolerates_exited_verified_daemon(manager,monkeypatch):
+    engine=manager.Engine(Providers);item=engine.providers.get(chosen())
+    manager.write_json(manager.root()/'leases.json',{'instances':[item],'ollama_process':{'pid':99,'identity':'owned-process','base':item['base']}})
+    monkeypatch.setattr(manager.os,'killpg',lambda *a:(_ for _ in ()).throw(ProcessLookupError()))
+    engine.recover();assert not engine.recovery_pending and not engine.blocked
+    engine.close()
