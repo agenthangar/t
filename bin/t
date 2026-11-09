@@ -3895,7 +3895,9 @@ def _config_wizard(cfg, workflows_only=False, workflow_target=None):
                     if pending:
                         ui.done("pending", "Save or discard pending settings before local worker setup.")
                         continue
-                    return "local"
+                    runtime_ui = runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_local_runtime_ui.py"))
+                    runtime_ui["hub"](ui, globals())
+                    continue
                 if choice == "edit":
                     if pending:
                         ui.done("pending", "Save or cancel your menu changes before opening the editor.")
@@ -4600,6 +4602,14 @@ def _local_setup(args):
 
 
 def cmd_config(cfg, args):
+    if getattr(args, "models_action", None) in ("runtime", "requests"):
+        try:
+            return runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_local_runtime_ui.py"))["command"](args, globals())
+        except KeyboardInterrupt:
+            return 130
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            print('t config models: ' + str(exc), file=sys.stderr)
+            return 1
     if getattr(args, "models_action", None):
         try:
             return runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_local_inference.py"))["command"](args)
@@ -7633,7 +7643,9 @@ def _command_readonly(argv, *, terminal=None):
     if _REMOTE['nested'](argv):
         try:
             path, tail, host = _REMOTE['split'](argv[1:], COMMAND_GROUPS)
-            return _REMOTE['policy'](path, tail) == 'query'
+            # A live monitor is read-only but cannot fan out across remote hosts.
+            return (path == ('config', 'models', 'runtime', 'monitor') or
+                    _REMOTE['policy'](path, tail) == 'query')
         except ValueError:
             return True
     words = _canonical_argv(argv)
@@ -7652,7 +7664,8 @@ def _command_readonly(argv, *, terminal=None):
             return not terminal
         return True  # Incomplete resource paths and help remain read-only.
     if words[:2] == ["config", "models"]:
-        return len(words) == 2 or words[2] in ("list", "show")
+        return (len(words) == 2 or words[2] in ("list", "show") or
+                (len(words) >= 4 and words[2] in ("runtime", "requests") and words[3] in ("status", "list", "show", "monitor")))
     if words[:2] == ["config", "workflow"]:
         return (len(words) == 2 or words[2] == "list" or words[2:4] == ["instructions", "show"] or
                 words[2:] in (["runners"], ["runs"]) or words[2:4] == ["runners", "list"] or
@@ -11550,7 +11563,9 @@ COMMAND_GROUPS = {
     "config": {"open": ("config",), "show": ("config", "--show"),
                "edit": ("config", "--edit"), "setup": ("setup",),
                "onboard": ("config", "--onboard"), "local": ("config", "--local"),
-               "models": {verb: ("config", "models", verb) for verb in ("list", "refresh", "show", "install", "measure")}},
+               "models": {**{verb: ("config", "models", verb) for verb in ("list", "refresh", "show", "install", "measure")},
+                          "runtime": {verb: ("config", "models", "runtime", verb) for verb in ("status", "edit", "monitor")},
+                          "requests": {verb: ("config", "models", "requests", verb) for verb in ("list", "show", "cancel")}}},
     "workflow": {"list": ("config", "workflow", "list"),
                  "edit": ("config", "workflow", "edit"),
                  **{verb: ("config", "workflow", verb) for verb in ("open", "delete", "add", "use", "exclude", "inherit")},
@@ -11829,6 +11844,13 @@ def _group_help(group):
             return _wrap_help(f"USAGE\n  t {group} <verb> [host] [arguments] [flags]\n\nCOMMANDS\n" +
                 '\n'.join(rows) + "\n\nHost identifies the source machine. Lists query all registered hosts when omitted.\n" +
                 f"Run t help {group} <verb> for details.\n")
+    if group in ("config models runtime", "config models requests"):
+        verbs = ("status", "edit", "monitor") if group.endswith("runtime") else ("list", "show", "cancel")
+        return _wrap_help("USAGE\n  t " + group + " <verb> [flags]\n\nCOMMANDS\n" +
+                          "\n".join("  " + verb for verb in verbs) +
+                          "\n\nSCOPE\n  User-wide machine scope; no repository argument, inference or selection.\n" +
+                          "  Status and lists never start a runtime. Monitor uses --view cli|gui.\n" +
+                          "  Run t help " + group + " <verb> for details.\n")
     if group == "config models":
         return _wrap_help("""USAGE
   t config models <verb> [MODEL] [--provider PROVIDER] [--json]
@@ -11839,6 +11861,8 @@ COMMANDS
   show     Inspect exact artifact, benchmark sources and measurements
   install  Download and verify an explicit model
   measure  Measure installed inference on this machine
+  runtime  Inspect, configure or monitor the shared local runtime
+  requests List, inspect or cancel local inference requests
 
 SCOPE
   User-wide catalog for this machine; no repository inference or picker.
@@ -13160,6 +13184,20 @@ EXAMPLES
         if verb == "install":
             leaf.add_argument("--download-only", action="store_true", help="download weights without claiming inference readiness")
             leaf.add_argument("-y", "--yes", action="store_true", help="install the explicit model without confirmation")
+    for resource, verbs in (("runtime", ("status", "edit", "monitor")), ("requests", ("list", "show", "cancel"))):
+        resource_parser = models_sub.add_parser(resource, help="shared local inference " + resource,
+            description="User-wide machine scope. No repository inference or selection.")
+        resource_sub = resource_parser.add_subparsers(dest="runtime_action", required=True)
+        for verb in verbs:
+            leaf = resource_sub.add_parser(verb, help=verb + " local " + resource,
+                description="User-wide local inference; no repository argument or picker.",
+                epilog="EXAMPLES\n  t config models " + resource + " " + verb + (" REQUEST_ID" if resource == "requests" and verb != "list" else ""))
+            if verb in ("status", "list", "show"):
+                leaf.add_argument("--json", action="store_true", help="print structured read-only status")
+            if resource == "requests" and verb in ("show", "cancel"):
+                leaf.add_argument("request_id", metavar="REQUEST_ID", help="exact ID from requests list")
+            if verb == "monitor":
+                leaf.add_argument("--view", choices=("cli", "gui"), default="cli", help="live terminal or local browser usage view")
     workflow = config_sub.add_parser("workflow", hidden=True, help="manage named agent workflows and behavior preferences")
     workflow_sub = workflow.add_subparsers(dest="workflow_action")
     for verb in ("list", "edit", "open", "delete", "add", "use", "exclude", "inherit"):

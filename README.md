@@ -572,10 +572,16 @@ model, and connect the worker to Codex through MCP. The lead keeps its conversat
 workers use isolated repository snapshots and return findings, patches, and test
 evidence. `t config local --show` is read-only. See [local workers](docs/local-workers.md)
 for setup, cancellation, limits, and automated setup examples. In **Workflow →
-Inference & routing → Local model**, downloaded artifacts offer **Verify readiness**
+Inference & routing → Local model**, downloaded artifacts offer **Test model**
 without downloading them again. Benchmarks and artifact/runtime details have
 separate views. `t config models install MODEL --yes` also reuses completed files
 and verifies inference; downloaded weights alone do not mean Ready.
+
+Shared local inference: `t config` → **Local worker & models** shows model usage,
+requests, provider setup, CLI help and desktop-app launch actions. Use
+`t config models runtime monitor --view cli` or `--view gui` to monitor the same
+runtime. See [shared model usage](docs/local-workers.md#shared-model-usage) for
+queueing, memory caching, cancellation and read-only status commands.
 
 | Command | Purpose |
 | --- | --- |

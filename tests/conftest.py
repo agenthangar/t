@@ -67,3 +67,52 @@ def isolate_automatic_trust(monkeypatch):
     """
     for name in ('T_AUTO_TRUST', 'CODEX_HOME', 'CLAUDE_CONFIG_DIR'):
         monkeypatch.delenv(name, raising=False)
+
+
+@pytest.fixture(scope='session')
+def runtime_namespaces():
+    """Clean after per-test monkeypatches of socket/filesystem functions are undone."""
+    import json
+    import shutil
+    import socket
+    import time
+    directories = []
+    yield directories
+    for directory in directories:
+        root = pathlib.Path(directory) / 'state'
+        path = root / 'control.sock'
+        if path.exists():
+            try:
+                with socket.socket(socket.AF_UNIX) as conn:
+                    conn.settimeout(3)
+                    conn.connect(str(path))
+                    conn.sendall(json.dumps({'action': 'shutdown'}).encode() + b'\n')
+                    conn.recv(4096)
+                deadline = time.monotonic() + 5
+                while path.exists() and time.monotonic() < deadline:
+                    time.sleep(.05)
+            except OSError:
+                pass
+        shutil.rmtree(directory, ignore_errors=True)
+
+
+@pytest.fixture(autouse=True)
+def isolate_local_runtime_manager(monkeypatch, runtime_namespaces):
+    """Short, private Unix-socket namespace; never contact the user's coordinator."""
+    import tempfile
+    directory = tempfile.mkdtemp(prefix='t-test-runtime-', dir='/tmp')
+    runtime_namespaces.append(directory)
+    monkeypatch.setenv('T_LOCAL_RUNTIME_ROOT', str(pathlib.Path(directory) / 'state'))
+
+
+class ManagedClientFixture:
+    """Synthetic manager boundary for worker/launch unit tests; HTTP is tested separately."""
+    def __init__(self, chosen, *args, **kwargs):
+        self.chosen = chosen
+        self.base = 'http://127.0.0.1:1234/client-token'
+        self.error = None
+        self.last = dict(state='running', identity_verified=True, revision='a'*40,
+                         runtime_model=chosen['model'], owner_verified=True)
+    def __enter__(self): return self
+    def __exit__(self, *args): pass
+    def waited(self): return 0

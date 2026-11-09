@@ -100,7 +100,8 @@ def setup(api, model, steps):
         # Codex writes its own config; never parse/rewrite unrelated auth or MCP entries.
         register(binary, command)
         check_registration(binary, command)
-        w['save_settings']({'enabled': True, 'model': model})
+    runpy.run_path(str(ROOT / 'libexec/t_local_inference.py'))['ollama_action'](model, 'verify')
+    w['save_settings']({'enabled': True, 'model': model, 'provider': 'ollama'})
     print('Local worker enabled. Refresh MCP tools or reopen Codex to load start_task, task_status and cancel_task.')
     print('Ollama starts only during local work. Cloud inference is disabled; findings return to the lead.')
 
@@ -116,10 +117,11 @@ def setup_mlx(model):
     command = str(ROOT / 'bin/t')
     check_registration(binary, command)
     with w['reservation']():
-        local['install'](model)
-        register(binary, command)
-        check_registration(binary, command)
-        w['save_settings']({'enabled': True, 'model': model, 'provider': 'lmstudio'})
+        local['install'](model, download_only=True)
+    local['install'](model)
+    register(binary, command)
+    check_registration(binary, command)
+    w['save_settings']({'enabled': True, 'model': model, 'provider': 'lmstudio'})
     print('MLX local worker enabled. Refresh MCP tools or reopen Codex; select routing in t workflow.')
 
 
@@ -127,8 +129,7 @@ def disable():
     w = worker()
     config = w['settings']()
     # Keep registration and model files, so existing connections fail closed and setup is reversible.
-    with w['reservation']():
-        w['save_settings'](dict(config, enabled=False))
+    w['save_settings'](dict(config, enabled=False))
     print('Local worker disabled. Downloaded models and MCP registration were kept.')
 
 
@@ -178,7 +179,7 @@ def run(args, api):
             steps = [] if is_mlx else installation_plan(api, model)
             lines = [label for label, _ in steps] + [
                 f'Download {model} into {Path.home() / ".ollama/models"}. Large downloads may take time.',
-                'Run a private loopback Ollama process with cloud disabled; stop it after setup.',
+                'Test local inference through the shared queue; keep idle models available for reuse.',
                 f'Register Codex MCP server {SERVER} → {ROOT / "bin/t"} mcp --local-worker.',
                 'Enable bounded local delegation. Worker uses separate snapshots; lead reviews results.',
                 'No cloud sign-in is needed for the worker. Existing Codex model defaults stay unchanged.']

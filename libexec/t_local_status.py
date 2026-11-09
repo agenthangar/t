@@ -66,7 +66,7 @@ def render(side, folder, socket, pane):
             return safe(title, 24) + ' ' + safe(cwd.parent.name + '/' + cwd.name, 24) + ' '
         data = json.loads(record_path(folder, socket, pane).read_text())
         if (data['pane_pid'] != int(info[1]) or not 0 <= time.time() - data['updated'] <= TTL
-                or data['state'] not in ('loading', 'inferring', 'working', 'idle', 'failed')):
+                or data['state'] not in ('loading', 'inferring', 'working', 'idle', 'failed', 'queued', 'waiting', 'cancelling')):
             return ''
         label = re.sub(r'(?i)-(?:mlx-)?\d+bit$', '', data['model'].split('/')[-1])
         return 'local ' + safe(label, 35) + ' · ' + data['state'] + ' '

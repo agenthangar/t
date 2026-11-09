@@ -13,6 +13,25 @@ actions. Keep real agent sessions, repository files, configuration, and services
 untouched by prototype interactions. Make the preview easy to open locally and
 report browser or verification limitations accurately.
 
+Start with orientation: explain in plain language what the preview demonstrates,
+which user task it helps with, and what feedback is being requested. Begin at the
+real command or existing navigation entry point and let the user follow the path
+into the proposed screen. Show the command and navigation path, including where
+Back returns. Clearly label proposed entry points that do not exist yet.
+
+Do not drop the user into an unexplained internal screen. Provide a short guided
+example using a recognizable user task before offering scenario switches or
+advanced controls. Explain sample state and unfamiliar terms where they appear;
+keep prototype controls visually separate from the proposed product interface.
+The preview must make sense without the planning conversation: the user should
+be able to tell what they are looking at, how they got there, and what to try next.
+
+Show the complete parent menu in its real order and grouping. Do not replace
+`t config` or another entry point with a shortened excerpt, omit sibling actions,
+or add inert "existing setup" placeholders. Parent and sibling navigation must
+work with isolated sample state, including selection, editing, review, save,
+discard, and returning to the same focus. Simulate external effects explicitly.
+
 After design approval when required by the workflow or task, implement using the
 shared terminal components. A planning prototype does not verify the working CLI:
 prepare a separate worktree-scoped command preview with isolated sample settings
