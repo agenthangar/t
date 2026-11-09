@@ -22,9 +22,15 @@ def main():
                dict(model='sample/local-70b', provider='ollama', fit=False, ready=False,
                     reason='Sample model not installed; exceeds sample memory budget.')]
     try:
-        with recovery['recovery_ui']() as ui:
-            selected = recovery['choose_local'](ui, {'catalogue': lambda **kw: {'models': samples}},
-                                                chosen, 'SAMPLE DATA · Simulated cloud connection loss')
+        startup = '--startup' in sys.argv[1:]
+        while True:
+            with recovery['recovery_ui']() as ui:
+                selected = recovery['choose_local'](ui, {'catalogue': lambda **kw: {'models': samples}},
+                    chosen, 'SAMPLE DATA · Simulated cloud startup failure' if startup else
+                    'SAMPLE DATA · Simulated cloud connection loss', startup=startup)
+            if selected != 'retry':
+                break
+            print('Sample cloud retry failed. No agent was launched.')
         if selected is None:
             print('Sample task paused. No model started.')
             return 0
