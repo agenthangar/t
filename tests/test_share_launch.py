@@ -444,7 +444,7 @@ def test_guarded_shell_launcher_starts_fake_agent_with_private_initial_prompt(
     tmux.write_text(body.replace(
         'case "$1" in',
         'if [[ "$1" == send-keys || "$1" == respawn-pane ]]; then\n'
-        '  launch="$4"; [[ "$1" == respawn-pane ]] && launch="$9"\n'
+        '  launch="$4"; [[ "$1" == respawn-pane ]] && launch="$8"\n'
         '  (cd "$FAKE_SESSION_CWD" && env CLAUDECODE=old CODEX_THREAD_ID=old T_ISSUE_TOKEN=old CLAUDE_RESUME_ID=old zsh -f -c "$launch")\n'
         'fi\n'
         'case "$1" in',

@@ -2231,12 +2231,54 @@ _dev_foreground_new() {
   _dev_launch_preflight "dev-foreground-new" "$dir" ''
 }
 
+# Stop only our newly created placeholder and wait for its PTY to be released.
+# A force-respawn closes the master and immediately allocates another PTY while
+# the old child is still exiting. On macOS that can fail with ENXIO even below
+# the PTY limit. Keep the dead pane until normal respawn is safe.
+_dev_stop_session_placeholder() {
+  local session=$1 identity pane pid command_line dead old_remain current attempt
+  identity=$(tmux display-message -p -t "=$session:" '#{pane_id}|#{pane_pid}|#{pane_start_command}|#{pane_dead}') || return 1
+  IFS='|' read -r pane pid command_line dead <<< "$identity"
+  [[ $pane == \%<-> && $pid == <-> && $pid -gt 1 && $command_line == 'sleep 86400' && $dead == 0 ]] || {
+    print -u2 't: launch placeholder changed; no replacement started'; return 1
+  }
+  old_remain=$(tmux show-options -A -p -v -t "$pane" remain-on-exit) || return 1
+  tmux set-option -p -t "$pane" remain-on-exit on || return 1
+  current=$(tmux display-message -p -t "$pane" '#{pane_id}|#{pane_pid}|#{pane_start_command}|#{pane_dead}') || return 1
+  [[ $current == "$identity" ]] || { print -u2 't: launch placeholder changed; no replacement started'; return 1; }
+  kill -TERM "$pid" 2>/dev/null || {
+    print -u2 't: could not stop launch placeholder; run t doctor on this host'; return 1
+  }
+  for attempt in {1..100}; do
+    if [[ $(tmux display-message -p -t "$pane" '#{pane_dead}') == 1 ]] &&
+       { ! kill -0 "$pid" 2>/dev/null || _t_pid_is_zombie "$pid"; }; then
+      # Return the immutable pane and its original policy to the launcher.
+      print -r -- "$pane|$old_remain"
+      return 0
+    fi
+    sleep 0.05
+  done
+  print -u2 't: launch placeholder did not exit; no replacement started. Run t doctor on this host.'
+  return 1
+}
+
 # Called only after a new pane has been claimed and configured. respawn retains
-# pipe-pane logging, so even the first agent output is captured. Disable macOS
-# shell-session save/restore only in this child, leaving the caller untouched.
+# logging, so even the first agent output is captured. Never force-replace a
+# running process, and never retry a failed fork on a potentially broken pane.
 _dev_start_session_command() {
-  tmux respawn-pane -k -t "=$1:" env SHELL_SESSIONS_DISABLE=1 \
-    zsh -lic "setopt no_monitor no_notify; $2"
+  local stopped pane old_remain
+  stopped=$(_dev_stop_session_placeholder "$1") || return 1
+  IFS='|' read -r pane old_remain <<< "$stopped"
+  # A normal pane exit closes its pipe, and pipe-pane refuses dead panes.
+  # Queue respawn and logging in ONE tmux command sequence: both synchronous
+  # commands complete before tmux returns to reading the new PTY's output.
+  tmux respawn-pane -t "$pane" env SHELL_SESSIONS_DISABLE=1 \
+    zsh -lic "setopt no_monitor no_notify; $2" \; \
+    pipe-pane -t "$pane" -o "cat >> ${(q)3}" \; \
+    set-option -p -t "$pane" remain-on-exit "$old_remain" || {
+    print -u2 't: tmux could not launch the agent; keep the error above and run t doctor on this host'
+    return 1
+  }
 }
 
 _dev_new_session() {
@@ -2263,9 +2305,11 @@ _dev_new_session_effect() {
   # client is active, so it fits the phone on attach. (latest is tmux's default,
   # but we set it explicitly so it holds on machines with a different default.)
   # The trailing colon keeps dots in repo names out of tmux window/pane parsing.
-  tmux new-session -d -s "$session" -c "$dir" sleep 86400 || return 1
+  tmux new-session -d -s "$session" -c "$dir" sleep 86400 || {
+    print -u2 't: tmux could not create the session; keep the error above and run t doctor on this host'
+    return 1
+  }
   tmux set-option -t "=$session:" window-size latest 2>/dev/null || { tmux kill-session -t "=$session:"; return 1; }
-  tmux pipe-pane -t "=$session:" -o "cat >> $logfile" || { tmux kill-session -t "=$session:"; return 1; }
   # Which agent occupies the slot, for every later reader (_dev_agent_of_session). Only
   # claude takes a pre-assigned id; a codex slot is stamped by its SessionStart hook once
   # codex has minted one (there is no `codex --session-id`).
@@ -2287,7 +2331,9 @@ _dev_new_session_effect() {
     local clear_identity='unset CLAUDECODE CLAUDE_CODE_SESSION_ID CLAUDE_RESUME_ID CODEX_THREAD_ID CODEX_SESSION_ID CURSOR_SESSION_ID CURSOR_AGENT T_ISSUE_TOKEN; '
     prep="${clear_identity}${prep}"
   fi
-  _dev_start_session_command "$session" "${prep}$(_dev_agent_new_cmd "$agent" "$sid" "$6" "$dir")" || { tmux kill-session -t "=$session:"; return 1; }
+  # A failed barrier may mean the pane changed. Retain it for inspection rather
+  # than killing whatever now occupies the session name.
+  _dev_start_session_command "$session" "${prep}$(_dev_agent_new_cmd "$agent" "$sid" "$6" "$dir")" "$logfile" || return 1
   _dev_launch_startup_check "$session" "$logfile" || return 1
 }
 

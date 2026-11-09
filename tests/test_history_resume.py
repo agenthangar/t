@@ -570,6 +570,7 @@ _dev_issue_preparing() {{ return 1; }}
 _dev_launch_preflight() {{ return 0; }}
 _dev_auto_trust() {{ return 0; }}
 _dev_launch_startup_check() {{ return 0; }}
+_dev_stop_session_placeholder() {{ print -r -- "%1|off"; }}
 _t_history_owner() {{ print -r -- "READY $*" >> {commands}; return {0 if ready else 1}; }}
 _dev_history_record() {{ print RECORDED >> {commands}; }}
 _dev_recovery_watch() {{ return 0; }}

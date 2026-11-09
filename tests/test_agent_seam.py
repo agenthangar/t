@@ -350,6 +350,10 @@ def zsh(tmp_path):
         # effects and preflight here; real readiness/native ownership are covered
         # by test_session_lifecycle and test_lifecycle_transfer_e2e.
         effects = r"""
+        # Placeholder shutdown is verified by isolated-tmux and dedicated guard tests.
+        if [[ ${REAL_TMUX_PLACEHOLDER:-} != 1 ]]; then
+          _dev_stop_session_placeholder() { print -r -- "=$1:|off"; }
+        fi
         _dev_new_session_claimed() {
           _dev_launch_preflight "$1" "$2" || return $?
           _dev_new_session_effect "$@"
@@ -509,13 +513,13 @@ def test_zsh_new_session_stamps_the_agent_and_launch_line(zsh):
     log = zsh.log.read_text().splitlines()
     assert "set-environment -t =dev-api-3 DEV_AGENT codex" in log
     assert not any("CLAUDE_RESUME_ID" in ln for ln in log)          # codex mints its own id
-    assert "respawn-pane -k -t =dev-api-3: env SHELL_SESSIONS_DISABLE=1 zsh -lic setopt no_monitor no_notify; codex --no-daemon" in log
+    assert any(line.startswith("respawn-pane -t =dev-api-3: env SHELL_SESSIONS_DISABLE=1 zsh -lic setopt no_monitor no_notify; codex --no-daemon") for line in log)
     zsh.log.write_text("")
     r = zsh("_dev_new_session dev-api-4 $HOME/code/api dev/x 1 claude")
     log = zsh.log.read_text().splitlines()
     assert "set-environment -t =dev-api-4 DEV_AGENT claude" in log
     assert "set-environment -t =dev-api-4 CLAUDE_RESUME_ID 0f0e0d0c-0b0a-0908-0706-050403020100" in log
-    assert "respawn-pane -k -t =dev-api-4: env SHELL_SESSIONS_DISABLE=1 zsh -lic setopt no_monitor no_notify; claude --session-id 0f0e0d0c-0b0a-0908-0706-050403020100" in log
+    assert any(line.startswith("respawn-pane -t =dev-api-4: env SHELL_SESSIONS_DISABLE=1 zsh -lic setopt no_monitor no_notify; claude --session-id 0f0e0d0c-0b0a-0908-0706-050403020100") for line in log)
     zsh.log.write_text("")
     # the default (4 args, every pre-seam caller) is claude
     zsh("_dev_new_session dev-api-5 $HOME/code/api dev/x 1")
@@ -527,10 +531,10 @@ def test_zsh_resume_session_uses_the_agent_resume_line(zsh):
     log = zsh.log.read_text().splitlines()
     assert "set-environment -t =dev-api-7 CLAUDE_RESUME_ID thr_9" in log
     assert "set-environment -t =dev-api-7 DEV_AGENT codex" in log
-    assert "respawn-pane -k -t =dev-api-7: env SHELL_SESSIONS_DISABLE=1 zsh -lic setopt no_monitor no_notify; codex resume thr_9 --no-daemon" in log
+    assert any(line.startswith("respawn-pane -t =dev-api-7: env SHELL_SESSIONS_DISABLE=1 zsh -lic setopt no_monitor no_notify; codex resume thr_9 --no-daemon") for line in log)
     zsh.log.write_text("")
     zsh("_dev_resume_session dev-api-8 $HOME/code/api sid-1")
-    assert "respawn-pane -k -t =dev-api-8: env SHELL_SESSIONS_DISABLE=1 zsh -lic setopt no_monitor no_notify; claude -r sid-1" in zsh.log.read_text()
+    assert "respawn-pane -t =dev-api-8: env SHELL_SESSIONS_DISABLE=1 zsh -lic setopt no_monitor no_notify; claude -r sid-1" in zsh.log.read_text()
 
 
 @pytest.mark.parametrize("launch", ["new", "resume"])
@@ -542,6 +546,7 @@ def test_failed_tmux_creation_never_sends_keys_into_an_existing_slot(zsh, tmp_pa
                else "_dev_resume_session dev-api-3 $HOME/code/api saved-id codex")
     result = zsh(command)
     assert result.returncode == 1, result.stderr
+    assert "run t doctor on this host" in result.stderr
     calls = zsh.log.read_text()
     assert "new-session -d -s dev-api-3" in calls
     assert "send-keys" not in calls and "respawn-pane" not in calls
@@ -729,9 +734,9 @@ def test_zsh_model_defaults_reach_new_tmux_sessions_and_not_resumes(zsh):
             "_dev_resume_session dev-api-5 $HOME/code/api thread-id codex")
     assert r.returncode == 0, r.stderr
     lines = zsh.log.read_text().splitlines()
-    assert "respawn-pane -k -t =dev-api-3: env SHELL_SESSIONS_DISABLE=1 zsh -lic setopt no_monitor no_notify; codex --model local/model -c model_reasoning_effort=ultra --no-daemon" in lines
-    assert any("claude --session-id " in line and line.endswith(" --model sonnet --effort max") for line in lines)
-    assert "respawn-pane -k -t =dev-api-5: env SHELL_SESSIONS_DISABLE=1 zsh -lic setopt no_monitor no_notify; codex resume thread-id --no-daemon" in lines
+    assert any(line.startswith("respawn-pane -t =dev-api-3: env SHELL_SESSIONS_DISABLE=1 zsh -lic setopt no_monitor no_notify; codex --model local/model -c model_reasoning_effort=ultra --no-daemon") for line in lines)
+    assert any("claude --session-id " in line and line.split(" ; pipe-pane", 1)[0].endswith(" --model sonnet --effort max") for line in lines)
+    assert any(line.startswith("respawn-pane -t =dev-api-5: env SHELL_SESSIONS_DISABLE=1 zsh -lic setopt no_monitor no_notify; codex resume thread-id --no-daemon") for line in lines)
 
 
 @pytest.mark.parametrize("agent", ["claude", "codex"])
@@ -1448,14 +1453,14 @@ def test_zsh_agent_wrap_spawns_the_recorded_agent(zsh, tmp_path):
     stub.chmod(0o755)
     r = zsh("codex; echo rc=$?")
     log = zsh.log.read_text().splitlines()
-    assert "respawn-pane -k -t =dev-api-3: env SHELL_SESSIONS_DISABLE=1 zsh -lic setopt no_monitor no_notify; codex resume thr_7 --no-daemon" in log
+    assert any(line.startswith("respawn-pane -t =dev-api-3: env SHELL_SESSIONS_DISABLE=1 zsh -lic setopt no_monitor no_notify; codex resume thr_7 --no-daemon") for line in log)
     assert "set-environment -t =dev-api-3 DEV_AGENT codex" in log
     # a payload WITHOUT the agent field (an older t push) resumes as claude
     stub.write_text('#!/bin/bash\nprintf "SPAWN\\tdev-api-4\\t%s\\t%s\\n" "$HOME/code/.worktrees/api/4" "sid-9" > "$CLAUDE_TPUSH_ATTACH"\n')
     zsh.log.write_text("")
     zsh("codex")
     log = zsh.log.read_text().splitlines()
-    assert "respawn-pane -k -t =dev-api-4: env SHELL_SESSIONS_DISABLE=1 zsh -lic setopt no_monitor no_notify; claude -r sid-9" in log
+    assert any(line.startswith("respawn-pane -t =dev-api-4: env SHELL_SESSIONS_DISABLE=1 zsh -lic setopt no_monitor no_notify; claude -r sid-9") for line in log)
 
 
 def test_zsh_repo_slots_sees_codex_only_slots(zsh):
@@ -2323,7 +2328,7 @@ def test_zsh_resume_pick_revives_the_row_with_its_own_agent(zsh, tmp_path):
     r = zsh("_t_resume api 3; echo rc=$?", _tty=True, FZF_LOG=str(log), FZF_PICK="login bug")
     assert "rc=0" in r.stdout, r.stdout
     tlog = zsh.log.read_text().splitlines()
-    assert "respawn-pane -k -t =dev-api-3: env SHELL_SESSIONS_DISABLE=1 zsh -lic setopt no_monitor no_notify; claude -r c1" in tlog
+    assert any(line.startswith("respawn-pane -t =dev-api-3: env SHELL_SESSIONS_DISABLE=1 zsh -lic setopt no_monitor no_notify; claude -r c1 ; pipe-pane") for line in tlog)
     assert "set-environment -t =dev-api-3 DEV_AGENT claude" in tlog
 
 
@@ -2405,7 +2410,7 @@ def test_fast_mode_reaches_new_tmux_and_foreground_launches(zsh, agent, fast, ar
     assert r.stdout.count('ARG\n' + args) == 2, r.stdout
     assert f'DEV_FAST[{agent}]={fast}' in r.stdout
     resume = f'{agent} resume saved-id --no-daemon' if agent == 'codex' else 'claude -r saved-id'
-    assert f'respawn-pane -k -t =dev-web-9: env SHELL_SESSIONS_DISABLE=1 zsh -lic setopt no_monitor no_notify; {resume}' in zsh.log.read_text()
+    assert f'respawn-pane -t =dev-web-9: env SHELL_SESSIONS_DISABLE=1 zsh -lic setopt no_monitor no_notify; {resume}' in zsh.log.read_text()
 
 
 @pytest.mark.parametrize('live', [False, True])
@@ -2708,7 +2713,7 @@ def test_open_new_codex_keeps_defaults_and_uses_private_backend(zsh, settings, a
     calls = zsh.log.read_text().splitlines()
     launches = [c for c in calls if c.startswith('respawn-pane ')]
     assert len(launches) == 1
-    assert launches[0].endswith('; ' + args + ' --no-daemon')
+    assert launches[0].split(' ; pipe-pane', 1)[0].endswith('; ' + args + ' --no-daemon')
     assert not any('app-server' in c or 'restart' in c for c in calls)
 
 
@@ -2791,7 +2796,7 @@ def test_session_startup_is_quiet_and_logged(zsh, tmp_path, mode, agent, fails):
                      '_dev_launch_startup_check() { local i; for i in {1..100}; do '
                      '[[ -f $HOME/agent-args ]] && break; sleep 0.05; done; '
                      '_fixture_startup "$@"; }; ' + command,
-                     ZDOTDIR=str(zsh.home))
+                     ZDOTDIR=str(zsh.home), REAL_TMUX_PLACEHOLDER="1")
         assert result.returncode == (1 if fails else 0), (result.stdout, result.stderr)
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
@@ -2819,3 +2824,14 @@ def test_session_startup_is_quiet_and_logged(zsh, tmp_path, mode, agent, fails):
             assert 'AGENT DONE' in logfile.read_text()
     finally:
         run('kill-server')
+
+
+@pytest.mark.parametrize('mode', ['new', 'resume'])
+def test_failed_placeholder_barrier_preserves_changed_session(zsh, mode):
+    command = ('_dev_new_session dev-api-3 $HOME/code/api dev/x 1 codex' if mode == 'new'
+               else '_dev_resume_session dev-api-3 $HOME/code/api saved-id codex')
+    result = zsh('_dev_stop_session_placeholder() { return 1; }; ' + command)
+    assert result.returncode == 1
+    calls = zsh.log.read_text()
+    assert 'new-session' in calls
+    assert 'respawn-pane' not in calls and 'kill-session' not in calls

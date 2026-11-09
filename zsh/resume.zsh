@@ -1691,9 +1691,11 @@ _dev_resume_session_effect() {
   mkdir -p "$HOME/.tmux-logs"
   # No fixed geometry / window-size latest: fit the active client so attaching from
   # a phone doesn't pan a too-wide window (see _dev_new_session for the full why).
-  tmux new-session -d -s "$session" -c "$dir" sleep 86400 || return 1
+  tmux new-session -d -s "$session" -c "$dir" sleep 86400 || {
+    print -u2 't: tmux could not create the session; keep the error above and run t doctor on this host'
+    return 1
+  }
   tmux set-option -t "=$session:" window-size latest 2>/dev/null || { tmux kill-session -t "=$session:"; return 1; }
-  tmux pipe-pane -t "=$session:" -o "cat >> $logfile" || { tmux kill-session -t "=$session:"; return 1; }
   # Record the resumed id on the session so `tpop` can pull the exact same
   # conversation back to the foreground (it also falls back to the dir's newest
   # transcript, but this is the precise signal when we know it).
@@ -1704,7 +1706,9 @@ _dev_resume_session_effect() {
   if [[ $5 == history && $agent == codex ]]; then
     resume_command=$(_dev_agent_resume_cmd "$agent" "$sid" --cd "$dir")
   fi
-  _dev_start_session_command "$session" "$resume_command" || { tmux kill-session -t "=$session:"; return 1; }
+  # Preserve a changed or failed pane for inspection; do not kill by a mutable
+  # session name after the placeholder guard refused it.
+  _dev_start_session_command "$session" "$resume_command" "$logfile" || return 1
   _dev_launch_startup_check "$session" "$logfile" || return 1
 }
 
