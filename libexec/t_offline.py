@@ -711,14 +711,18 @@ def cloud_argv(original, handoff, model=None, changed=False):
             break
         if arg in value_flags:
             value = next(args)
-            if changed and (arg in ('-m', '--model') or (arg in ('-c', '--config') and
-                    value.split('=', 1)[0] in ('model', 'model_reasoning_effort', 'service_tier', 'features.fast_mode'))):
+            config_key = value.split('=', 1)[0] if arg in ('-c', '--config') else None
+            if model and (arg in ('-m', '--model') or config_key == 'model'):
+                continue
+            if changed and config_key in ('model_reasoning_effort', 'service_tier', 'features.fast_mode'):
                 continue
             argv.extend([arg, value])
         else:
             argv.append(arg)
+    if model:
+        argv += ['--model', model]
     if changed:
-        argv += ['--model', model, '-c', 'model_reasoning_effort=null', '-c', 'service_tier=null']
+        argv += ['-c', 'model_reasoning_effort=null', '-c', 'service_tier=null']
     return [*argv, '--', handoff]
 
 

@@ -130,6 +130,9 @@ def test_cloud_launch_preserves_permissions_and_replaces_payload(offline):
     argv=['codex','--no-daemon','-C','/repo','-m','original','-a','on-request','--add-dir','/extra','-c','model_reasoning_effort="high"','--','old task']
     same=offline.cloud_argv(argv,'new checkpoint')
     assert same[:-1]==argv[:-1] and same[-1]=='new checkpoint'
+    previous=offline.cloud_argv(argv,'new checkpoint','native-model-selection')
+    assert 'original' not in previous and 'native-model-selection' in previous
+    assert 'model_reasoning_effort="high"' in previous
     changed=offline.cloud_argv(argv,'new checkpoint','other',True)
     assert 'original' not in changed and 'model_reasoning_effort="high"' not in changed
     assert '-a' in changed and '/extra' in changed and 'other' in changed
