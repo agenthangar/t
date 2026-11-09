@@ -62,6 +62,16 @@ picker dismisses into the native local session. Esc/Cancel or **Pause and retry
 cloud** leaves the cloud runtime available and suppresses another prompt for that
 turn. Noninteractive launches keep native cloud retries and never prompt.
 
+Ask mode also handles a fresh launch that fails before the first conversation
+starts. A correlated `account/read` or `thread/start` transport failure, or the
+native `workspace routing discovery failed` bootstrap error, offers **Retry cloud**,
+**Cancel startup**, and ready local models after the owned runtime has stopped.
+Choosing a model starts locally immediately, preserving a supplied text prompt;
+without one, the local conversation opens ready for input. Images and oversized
+startup prompts disable local selection rather than dropping context. Routing
+discovery failure alone does not prove an internet outage and never triggers an
+automatic switch under Continue locally policy. Pause remains native passthrough.
+
 Before switching, t validates the checkpoint and stops its owned cloud runtime.
 The selected provider and model are printed as the
 **new local-only conversation** starts in the same worktree. Runtime status records
@@ -87,6 +97,8 @@ To try the shared picker without any network/model launches or config changes:
 
 ```sh
 python3 scripts/preview_connection_recovery.py
+# Simulate failure before the first conversation:
+python3 scripts/preview_connection_recovery.py --startup
 ```
 
 This worktree-scoped preview uses labeled sample data. It is separate from a

@@ -1468,5 +1468,14 @@ screen buffers. Outside tmux, report that prompted recovery is unavailable and
 retain the native cloud session. Preserve exactly one writer through every exit.
 Nonterminal Ask launches preserve native cloud behavior without a picker.
 
+In Ask mode, correlated fresh-start `account/read`/`thread/start` transport errors
+and the native routing-discovery bootstrap failure use the same ready-model
+selection after verified runtime shutdown. Show Retry cloud and Cancel startup
+instead of offering to pause a conversation that does not exist. Selection starts
+locally immediately with the original text prompt or an empty conversation.
+Incomplete startup input disables local selection. Preserve Pause passthrough;
+routing-discovery failure alone never authorizes automatic local fallback.
+
 Development preview: `python3 scripts/preview_connection_recovery.py` uses the
 shared RailUI with labeled sample data, no services, and no real configuration.
+Add `--startup` to simulate a bootstrap failure and cloud retry.

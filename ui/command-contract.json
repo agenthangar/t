@@ -9024,7 +9024,7 @@
             "review",
             "passthrough"
           ],
-          "behavior": "Shared RailUI ready-model selection immediately starts local handoff without a second screen; unavailable models disabled; failures retain recovery choices. Stable cloud reachability offers explicit reviewed return at a safe turn boundary. One writer, session-only choices, updated bounded checkpoints; nonterminals preserve native cloud behavior."
+          "behavior": "Shared RailUI ready-model selection immediately starts local handoff without a second screen; unavailable models disabled; failures retain recovery choices. Stable cloud reachability offers explicit reviewed return at a safe turn boundary. One writer, session-only choices, updated bounded checkpoints; nonterminals preserve native cloud behavior. Correlated pre-thread transport/routing-discovery failures offer Retry cloud, Cancel startup or immediate local selection after runtime shutdown, preserving a supplied text prompt or starting an empty conversation."
         }
       },
       "tests": [
@@ -9034,7 +9034,10 @@
         "tests/test_local_inference.py::test_outage_policy_and_routing",
         "tests/test_offline_recovery.py::test_ready_model_is_immediate_action",
         "tests/test_offline_recovery.py::test_recovery_round_trip_and_failure_retry",
-        "tests/test_offline_recovery.py::test_recovery_picker_uses_shared_viewport"
+        "tests/test_offline_recovery.py::test_recovery_picker_uses_shared_viewport",
+        "tests/test_offline_startup.py::test_bootstrap_error_survives_immediate_frontend_exit",
+        "tests/test_offline_startup.py::test_startup_recovery_retries_or_launches_local_without_extra_screen",
+        "tests/test_offline_startup.py::test_startup_picker_keeps_retry_and_cancel_accessible"
       ]
     }
   },
