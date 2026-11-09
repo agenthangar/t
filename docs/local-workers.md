@@ -51,8 +51,10 @@ Useful progress resets that window. It ignores auxiliary title/subagent threads,
 authentication/quota failures, HTTP application errors and user interruption.
 The default Pause setting preserves Codex's normal retries and error handling.
 
-With **Ask which local model**, a sustained transport failure opens the shared
-terminal picker. Installed, ready models show their provider and memory fit;
+With **Ask which local model**, a sustained transport failure in a t-managed
+tmux terminal opens the shared picker. The exact owning pane is captured and
+restored so dismissing recovery preserves the native conversation and input.
+Outside tmux, the native cloud session remains available with an explanation. Installed, ready models show their provider and memory fit;
 unavailable choices explain why they cannot run. Selecting a ready model starts
 the handoff immediately: there is no model-details or confirmation screen. The
 picker dismisses into the native local session. Esc/Cancel or **Pause and retry

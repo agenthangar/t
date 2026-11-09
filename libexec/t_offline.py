@@ -445,7 +445,6 @@ def supervise(argv, chosen, cwd, *, monitor=None, checkpoint=None, env=None, ser
             boundary = native.index('--') if '--' in native else len(native)
             native = [v for v in native[:boundary] if v != '--no-daemon'] + native[boundary:]
             frontend = subprocess.Popen([argv[0], '--remote', 'unix://'+endpoint, *native], cwd=cwd, env=runtime_env)
-            frontend._t_alt_screen = '--no-alt-screen' not in native
             deadline = time.monotonic()+30
             while frontend.poll() is None and connection is None:
                 if time.monotonic() > deadline or backend.poll() is not None:
@@ -575,20 +574,40 @@ def ui_helpers():
     return runpy.run_path(str(ROOT/'bin/t'))
 
 
+def terminal_snapshot():
+    """Capture only this terminal's tmux pane; never switch or clear native buffers."""
+    pane = os.environ.get('TMUX_PANE')
+    if not pane or not os.environ.get('TMUX'):
+        raise ValueError('Prompted recovery requires a t-managed tmux terminal; keep cloud retries paused.')
+    result = subprocess.run(['tmux', 'display-message', '-p', '-t', pane,
+                             '#{pane_tty}\t#{cursor_x}\t#{cursor_y}\t#{cursor_flag}'],
+                            capture_output=True, text=True, check=True, timeout=2)
+    tty, x, y, visible = result.stdout.strip().split('\t')
+    if tty != os.ttyname(0):
+        raise ValueError('The recovery pane does not own this terminal.')
+    capture = subprocess.run(['tmux', 'capture-pane', '-p', '-e', '-t', pane],
+                             capture_output=True, text=True, check=True, timeout=2)
+    return capture.stdout.splitlines(), int(x), int(y), visible == '1'
+
+
 @contextmanager
 def recovery_ui(frontend=None, terminal=None):
-    """Give the picker sole terminal ownership, then restore the native client."""
+    """Give RailUI sole terminal ownership and restore the native screen exactly."""
     if not (os.isatty(0) and os.isatty(1)):
         raise ValueError('Recovery choices require an interactive terminal; keep the task paused.')
     attributes = termios.tcgetattr(0)
-    ui = None
+    ui = snapshot = None
+    painted = False
     try:
         if frontend is not None:
             frontend.send_signal(signal.SIGSTOP)
-            # Wait for actual suspension before touching the terminal.
             os.waitpid(frontend.pid, os.WUNTRACED)
+            snapshot = terminal_snapshot()
         termios.tcsetattr(0, termios.TCSADRAIN, terminal or attributes)
-        print('\033[?1049l\033[?1049h\033[2J\033[H', end='', flush=True)
+        # Alternate buffers cannot be nested (including in tmux). Keep a running
+        # client's current buffer, then repaint its captured cells before resume.
+        print(('' if snapshot else '\033[?1049h')+'\033[0m\033[2J\033[H', end='', flush=True)
+        painted = True
         ui = ui_helpers()['_RailUI']()
         ui.raw()
         yield ui
@@ -596,10 +615,15 @@ def recovery_ui(frontend=None, terminal=None):
         if ui is not None:
             ui.restore()
         termios.tcsetattr(0, termios.TCSADRAIN, attributes)
-        print('\033[?1049l\033[?25h', end='', flush=True)
+        if snapshot and painted:
+            lines, x, y, visible = snapshot
+            print('\033[0m\033[2J', end='')
+            for row, line in enumerate(lines, 1):
+                print(f'\033[{row};1H'+line+'\033[0m', end='')
+            print(f'\033[{y+1};{x+1}H'+('\033[?25h' if visible else '\033[?25l'), end='', flush=True)
+        elif painted:
+            print('\033[?1049l\033[?25h', end='', flush=True)
         if frontend is not None and frontend.poll() is None:
-            if getattr(frontend, '_t_alt_screen', True):
-                print('\033[?1049h\033[2J\033[H', end='', flush=True)
             frontend.send_signal(signal.SIGCONT)
             frontend.send_signal(signal.SIGWINCH)
 
@@ -778,7 +802,7 @@ def recover(argv, chosen, cwd):
                 if choice:
                     cp.prompt()  # Revalidate after interactive time before stopping the source.
                     return choice
-            except (KeyboardInterrupt, ValueError) as exc:
+            except (KeyboardInterrupt, OSError, ValueError, subprocess.SubprocessError) as exc:
                 cp.notice = 'Local continuation unavailable: '+(str(exc) or 'Recovery cancelled.')
                 private_write(directory/'status.json', {'state': 'paused', 'reason': cp.notice})
             cp.declined = True
@@ -812,7 +836,7 @@ def recover(argv, chosen, cwd):
                     if choice is not None:
                         cp.prompt('cloud')
                         return choice
-                except (KeyboardInterrupt, ValueError) as exc:
+                except (KeyboardInterrupt, OSError, ValueError, subprocess.SubprocessError) as exc:
                     cp.notice = 'Cloud return unavailable: '+(str(exc) or 'Recovery cancelled.')
                     private_write(directory/'status.json', {'state': 'local', 'reason': cp.notice})
                 return None

@@ -148,12 +148,21 @@ def test_terminal_restoration_and_cancellation(offline,monkeypatch):
     monkeypatch.setattr(offline.os,'waitpid',lambda *a:calls.append('stopped'))
     monkeypatch.setattr(offline.termios,'tcgetattr',lambda fd:['native'])
     monkeypatch.setattr(offline.termios,'tcsetattr',lambda fd,when,attrs:calls.append(attrs))
+    monkeypatch.setattr(offline,'terminal_snapshot',lambda:(['native content'],0,0,True))
     ui=SimpleNamespace(raw=lambda:calls.append('raw'),restore=lambda:calls.append('restore'))
     monkeypatch.setattr(offline,'ui_helpers',lambda:{'_RailUI':lambda:ui})
     frontend=SimpleNamespace(pid=10,poll=lambda:None,send_signal=lambda sig:calls.append(sig))
     with pytest.raises(KeyboardInterrupt):
         with offline.recovery_ui(frontend,['cooked']):raise KeyboardInterrupt
     assert calls==[offline.signal.SIGSTOP,'stopped',['cooked'],'raw','restore',['native'],offline.signal.SIGCONT,offline.signal.SIGWINCH]
+    calls.clear()
+    with offline.recovery_ui():pass
+    assert calls==[['native'],'raw','restore',['native']]
+    calls.clear()
+    monkeypatch.setattr(offline,'terminal_snapshot',lambda:(_ for _ in ()).throw(ValueError('Not the owning pane')))
+    with pytest.raises(ValueError,match='owning'):
+        with offline.recovery_ui(frontend):pass
+    assert calls==[offline.signal.SIGSTOP,'stopped',['native'],offline.signal.SIGCONT,offline.signal.SIGWINCH]
     monkeypatch.setattr(offline.os,'isatty',lambda fd:False)
     with pytest.raises(ValueError,match='terminal'):
         with offline.recovery_ui():pass
@@ -299,3 +308,123 @@ def test_stay_local_does_not_repeat_recovery_offer(offline,tmp_path,monkeypatch)
     monkeypatch.setattr(m,'supervise',stage)
     assert m.recover(['codex'],policy(),tmp_path)==0
     assert len(stages)==2
+
+
+def test_picker_restores_native_alternate_screen(tmp_path):
+    """A real headless terminal proves dismissal preserves the native screen buffer."""
+    import os
+    import shlex
+    import shutil
+    import subprocess
+    import sys
+    import time
+    import uuid
+    if not shutil.which('tmux'):
+        pytest.skip('tmux required for terminal restoration')
+    env={k:v for k,v in os.environ.items() if k in ('PATH','LANG')}
+    env.update(HOME=str(tmp_path),TERM='xterm-256color',XDG_CONFIG_HOME=str(tmp_path),XDG_STATE_HOME=str(tmp_path))
+    command=['tmux','-L','t-outage-test-'+uuid.uuid4().hex,'-f',os.devnull]
+    def tmux(*args):return subprocess.run([*command,*args],env=env,capture_output=True,text=True,timeout=5)
+    script=tmp_path/'preview.py'
+    script.write_text('import runpy,subprocess,sys,time,termios\nfrom pathlib import Path\n'+
+        'm=runpy.run_path('+repr(str(ROOT/'libexec/t_offline.py'))+')\n'+
+        'root=Path('+repr(str(tmp_path))+')\nattrs=termios.tcgetattr(0)\n'+
+        'p=subprocess.Popen([sys.executable,"-c",'+repr('import sys,time\nfrom pathlib import Path\n'
+        'sys.stdout.write("\\033[?1049h\\033[2J\\033[HNATIVE SESSION CONTENT\\n");sys.stdout.flush()\n'
+        f'Path({str(tmp_path/"ready")!r}).touch()\ntime.sleep(30)')+'])\n'+
+        'try:\n'
+        ' while not (root/"ready").exists():time.sleep(.01)\n'
+        ' with m["recovery_ui"](p,attrs) as ui:\n'
+        '  ui.pick("Recovery choice",[("local","Continue locally")])\n'
+        ' (root/"done").touch()\n time.sleep(30)\n'
+        'finally:\n p.terminate();p.wait()\n')
+    def wait_for(check):
+        deadline=time.monotonic()+8
+        while time.monotonic()<deadline:
+            if check():return
+            time.sleep(.03)
+        pytest.fail('Isolated terminal timed out: '+tmux('capture-pane','-pt','preview').stdout)
+    try:
+        result=tmux('new-session','-d','-s','preview','-x','80','-y','24',shlex.join([sys.executable,str(script)]))
+        assert result.returncode==0,result.stderr
+        wait_for(lambda:'Recovery choice' in tmux('capture-pane','-pt','preview').stdout)
+        assert tmux('send-keys','-t','preview','Enter').returncode==0
+        wait_for(lambda:(tmp_path/'done').exists())
+        output=tmux('capture-pane','-pt','preview').stdout
+        assert 'NATIVE SESSION CONTENT' in output and 'Recovery choice' not in output
+    finally:
+        tmux('kill-server')
+
+
+def test_snapshot_checks_owning_pane_and_retains_style(offline,monkeypatch):
+    m=offline
+    monkeypatch.delenv('TMUX',raising=False);monkeypatch.delenv('TMUX_PANE',raising=False)
+    with pytest.raises(ValueError,match='tmux'):m.terminal_snapshot()
+    monkeypatch.setenv('TMUX','isolated-test');monkeypatch.setenv('TMUX_PANE','%1')
+    calls=[]
+    def run(argv,**kw):
+        calls.append(argv);assert kw['timeout']==2 and kw['check']
+        return SimpleNamespace(stdout='/dev/own\t3\t4\t0\n' if 'display-message' in argv else '\033[32mNative text\033[0m\n\n')
+    monkeypatch.setattr(m.subprocess,'run',run)
+    monkeypatch.setattr(m.os,'ttyname',lambda fd:'/dev/other')
+    with pytest.raises(ValueError,match='own'):m.terminal_snapshot()
+    assert len(calls)==1
+    monkeypatch.setattr(m.os,'ttyname',lambda fd:'/dev/own')
+    assert m.terminal_snapshot()==(['\033[32mNative text\033[0m',''],3,4,False)
+    assert m.inference()['DEFAULT']['on_cloud_failure']=='pause'
+    assert '_RailUI' in m.ui_helpers()
+
+
+def test_monitor_warning_retains_cloud_ui(offline,tmp_path,monkeypatch,fake_codex):
+    m=offline
+    monkeypatch.setenv('FIXTURE_ROOT',str(tmp_path));monkeypatch.setenv('FIXTURE_MODE','outage')
+    monkeypatch.setenv('SOCKET_HELPER',str(ROOT/'libexec/t_codex_socket.py'))
+    monkeypatch.setattr(m,'inference',lambda:{'helper':lambda n:{'state_root':lambda:tmp_path/'state'}})
+    def monitor(cp,*args):
+        if cp.due():cp.notice='Checkpoint cannot be transferred';cp.declined=True
+    result=m.supervise([str(fake_codex),'--','task'],dict(policy(),on_cloud_failure='pause'),tmp_path,monitor=monitor)
+    assert result['action'] is None and result['exit_code']==0
+    assert 'cannot be transferred' in json.loads((tmp_path/'warning.json').read_text())['params']['message']
+
+
+def test_invalid_cloud_checkpoint_never_offers_a_model(offline,tmp_path,monkeypatch):
+    m=offline
+    monkeypatch.setattr(m.os,'isatty',lambda fd:True)
+    monkeypatch.setattr(m,'inference',lambda:{'helper':lambda n:{'state_root':lambda:tmp_path}})
+    def stage(*args,**kw):
+        cp=kw['checkpoint'];cp.thread='main';cp.users=['Task'];cp.failed=True;cp.invalid='Non-text request'
+        assert kw['monitor'](cp,None,None) is None
+        assert cp.declined and 'Non-text request' in cp.notice
+        return {'action':None,'exit_code':0,'checkpoint':cp}
+    monkeypatch.setattr(m,'supervise',stage)
+    assert m.recover(['codex'],policy(),tmp_path)==0
+
+
+@pytest.mark.parametrize('invalid',[False,True])
+def test_failed_local_checkpoint_is_retained_on_pause(offline,tmp_path,monkeypatch,invalid):
+    m=offline;choices=[];stages=[]
+    monkeypatch.setattr(m.os,'isatty',lambda fd:True)
+    monkeypatch.setattr(m,'recovery_ui',lambda *a:nullcontext(UI([])))
+    def choose(*a,**kw):
+        choices.append(kw)
+        return policy() if len(choices)==1 else None
+    monkeypatch.setattr(m,'choose_local',choose)
+    class Probe:
+        def __enter__(self):return SimpleNamespace(ready=threading.Event())
+        def __exit__(self,*a):pass
+    monkeypatch.setattr(m,'RecoveryProbe',Probe)
+    def stage(*args,**kw):
+        cp=kw['checkpoint'];cp.thread='main';cp.users=['Task'];cp.failed=True;stages.append(cp)
+        if len(stages)==1:action=kw['monitor'](cp,None,None)
+        else:
+            cp.invalid='Non-text input cannot be transferred' if invalid else ''
+            cp.evidence.append({'kind':'agentMessage','text':'Local changes are retained'})
+            action=None
+        return {'action':action,'exit_code':1,'checkpoint':cp}
+    def lead(argv,**kw):return kw['runner'](['codex','--local-provider','lmstudio'],env={})
+    monkeypatch.setattr(m,'inference',lambda:{'helper':lambda n:{'state_root':lambda:tmp_path},'lead':lead})
+    monkeypatch.setattr(m,'supervise',stage)
+    assert m.recover(['codex'],policy(),tmp_path)==1
+    assert len(stages)==2 and choices[-1]['failed']
+    assert bool(choices[-1]['blocked'])==invalid
+    assert list(tmp_path.glob('outage-*/1/status.json'))

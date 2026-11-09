@@ -1444,7 +1444,9 @@ checkpoint. Choices are session-scoped and never save workflow changes.
 Cloud reachability must be stable before the return offer, which appears only at
 a safe turn boundary. Never interrupt a tool or pending approval. Stay local/Esc
 dismisses that offer; cloud return uses a review and updated bounded checkpoint.
-Restore the native terminal and preserve exactly one writer through every exit.
+Capture and restore only the verified owning tmux pane without nesting alternate
+screen buffers. Outside tmux, report that prompted recovery is unavailable and
+retain the native cloud session. Preserve exactly one writer through every exit.
 Nonterminal Ask launches preserve native cloud behavior without a picker.
 
 Development preview: `python3 scripts/preview_connection_recovery.py` uses the
