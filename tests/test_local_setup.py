@@ -113,7 +113,7 @@ def test_interactive_review(setup, t_mod, monkeypatch):
     def helpers(path, *a, **kw):
         result = original(path, *a, **kw)
         if str(path).endswith('t_local_inference.py'):
-            result['select_model'] = lambda ui: {'model': 'gpt-oss:20b', 'provider': 'ollama'}
+            result['select_model'] = lambda ui, current, **kw: {'model': 'gpt-oss:20b', 'provider': 'ollama'}
         return result
     monkeypatch.setattr(setup.runpy, 'run_path', helpers)
     called = []
@@ -180,6 +180,35 @@ def test_local_help(t_mod, capsys):
     assert 't help config local' in output
     assert t_mod.main(['help', 'config', 'local']) == 0
     assert 'docs/local-workers.md' in capsys.readouterr().out
+
+
+@pytest.mark.parametrize('enabled,provider', [(True, 'lmstudio'), (False, 'ollama')])
+def test_current_worker_stays_in_menu_and_picker_uses_its_identity(setup, t_mod, monkeypatch, enabled, provider):
+    from test_tui import make_ui
+    model = 'mlx-community/Qwen3.8-27B-8bit' if provider == 'lmstudio' else 'gpt-oss:20b'
+    setup.worker()['save_settings']({'enabled': enabled, 'model': model, 'provider': provider})
+    before = setup.worker()['config_path']().read_bytes()
+    monkeypatch.setattr(setup.sys.stdin, 'isatty', lambda: True)
+    monkeypatch.setattr(setup.sys.stdout, 'isatty', lambda: True)
+    ui = make_ui(t_mod, ['enter'], 100, 30)
+    ui.done = lambda *a: pytest.fail('worker identity must remain inside the menu')
+    original = setup.runpy.run_path
+    selected = []
+    def helpers(path, *a, **kw):
+        result = original(path, *a, **kw)
+        if str(path).endswith('t_local_inference.py'):
+            result['select_model'] = lambda rail, current, **opts: selected.append((current, opts['provider']))
+        return result
+    monkeypatch.setattr(setup.runpy, 'run_path', helpers)
+    monkeypatch.setattr(setup, 'setup', lambda *a: pytest.fail('browsing changed worker'))
+    monkeypatch.setattr(setup, 'setup_mlx', lambda *a: pytest.fail('browsing changed worker'))
+    assert setup.run(args(), dict(vars(t_mod), _RailUI=lambda: ui)) == 130
+    screen = '\n'.join(t_mod._ANSI_RE.sub('', line) for line in ui.frames[0])
+    assert model in screen and ('LM Studio' if provider == 'lmstudio' else 'Ollama') in screen
+    assert ('Enabled' if enabled else 'Disabled') in screen
+    assert 'CONTINUE' not in screen and 'setup\n' not in screen
+    assert selected == [(model, provider)] and ui.restored
+    assert setup.worker()['config_path']().read_bytes() == before
 
 
 def test_mlx_setup_registration(setup,monkeypatch):

@@ -24,7 +24,7 @@ _spinner = runpy.run_path(str(ROOT / 'libexec/t_progress.py'))['spinner']
 DEFAULT_MODEL = 'mlx-community/Qwen3.8-27B-8bit'
 MODES = ('disabled', 'manual', 'automatic', 'local-only')
 DEFAULT = {'mode': 'manual', 'provider': 'lmstudio', 'model': DEFAULT_MODEL,
-           'context_tokens': 32768, 'timeout_seconds': 300, 'queue_timeout_seconds': 300, 'on_cloud_failure': 'pause'}
+           'context_tokens': 32768, 'timeout_seconds': 300, 'queue_timeout_seconds': 300, 'on_cloud_failure': 'pause', 'cloud_retry_seconds': 300}
 SUITES = ('swe-bench-verified-bash-only', 'swe-bench-pro', 'deepswe', 'gpqa', 'terminal-bench', 'livebench-coding')
 
 
@@ -53,20 +53,24 @@ def policy(value=None):
         raise ValueError('timeout_seconds must be 10–1800')
     if type(result['queue_timeout_seconds']) is not int or not 10 <= result['queue_timeout_seconds'] <= 1800:
         raise ValueError('queue_timeout_seconds must be 10–1800')
+    if type(result['cloud_retry_seconds']) is not int or not 15 <= result['cloud_retry_seconds'] <= 300:
+        raise ValueError('cloud_retry_seconds must be 15–300')
     return result
 
 
 def effective(workspace):
     w = helper('t_workflow')
-    doc, _ = w['load']()
+    doc, saved = w['load']()
+    if not saved:
+        return None  # Recommended defaults do not opt an unconfigured install into supervision.
     sync = helper('t_workflow_sync')
     scoped = w['tool_document'](doc, 'codex')
     selected = sync['launch_policy'](w, scoped, workspace)
     if selected is None and ('local-only' in json.dumps(scoped)):
         raise ValueError('Cannot resolve local-only workflow scope; refusing cloud fallback')
     if selected and not selected['enabled']:
-        return dict(DEFAULT, mode='disabled')
-    return policy(selected['inference']) if selected and 'inference' in selected else None
+        return None
+    return policy(selected.get('inference')) if selected else None
 
 
 def instructions(value):
@@ -83,7 +87,8 @@ def instructions(value):
             'The adapter snapshots the repository; review its patch and observed command evidence before applying. '
             'Do not claim the selected model ran without runtime evidence. ')
     if p['on_cloud_failure'] in ('local', 'ask') and p['mode'] != 'local-only':
-        base += ('Cloud connection failure policy: the native launch supervisor can stop its owned cloud runtime and '
+        base += (f"Cloud connection failure policy: retry for up to {p['cloud_retry_seconds']} seconds, "
+                 'or until native retries are exhausted. The native launch supervisor can stop its owned cloud runtime and '
                  'start a fresh local session from a bounded private checkpoint. Authentication and quota errors do not trigger this. '
                  'Provider changes require explicit user choice or the saved automatic fallback policy. ')
     if p['mode'] == 'local-only':
@@ -515,12 +520,12 @@ def model_menu(ui, row, context, use_label='Use in workflow'):
             disabled['unload'] = 'This model has no instance loaded by t.'
         elif any(x.get('active') or x.get('pinned') for x in instances):
             disabled['unload'] = 'Finish the active response and conversation before unloading.'
-        summary = [row['model'].split('/')[-1],
-                   row['provider'] + ' · ' + ('Ready' if row.get('ready') else 'Downloaded' if row['installed'] else 'Not downloaded'),
-                   'Activity    ' + ('Generating' if any(x.get('active') for x in instances) else 'Loaded · idle' if instances else 'Not loaded'),
-                   f"Memory      {row.get('memory_bytes', 0)/1024**3:.1f} GiB estimated",
-                   f"Context     {context:,} tokens"]
-        action = ui.pick('Model details', actions, context=summary,
+        summary = [('Model', model_name(row)),
+                   ('Runtime', f"{row['provider']} · {row.get('precision', 'runtime metadata')}"),
+                   ('Files', f"{row['bytes']/1e9:.1f} GB · {'On disk' if row['installed'] else 'To download'}"),
+                   ('Context', f'{context:,} tokens'), ('Status', model_status(row)),
+                   ('Memory fit', '✓' if row['fit'] is True else '✕' if row['fit'] is False else '?')]
+        action = ui.pick('Model tools', actions, context=summary,
                          default=next((i for i, (key, _) in enumerate(actions) if key == focus), 0),
                          sections={'benchmarks': 'Details'}, disabled=disabled,
                          accents={'use': 'g', 'install': 'g'})
@@ -593,27 +598,201 @@ def model_menu(ui, row, context, use_label='Use in workflow'):
         row = next(r for r in catalogue(context=context)['models'] if r['model'] == row['model'])
 
 
-def select_model(ui, current=DEFAULT_MODEL, context=32768, use_label='Use in workflow'):
-    suite = 'swe-bench-verified-bash-only'
+BENCHMARK_LABELS = {'swe-bench-pro': 'SWE Pro', 'deepswe': 'DeepSWE',
+                    'terminal-bench': 'Terminal', 'gpqa': 'GPQA',
+                    'swe-bench-verified-bash-only': 'SWE Verified', 'livebench-coding': 'LiveBench'}
+
+
+def model_name(row):
+    name = row.get('base_model', row['model']).split('/')[-1]
+    return re.sub(r'(?i)(?:-MLX)?-\d+bit$', '', name).replace('-', ' ')
+
+
+def selection(row):
+    return {'provider': row['provider'], 'model': row['model']}
+
+
+def preparation_block(row):
+    if not row.get('verification_allowed', row.get('fit') is True):
+        return row.get('reason', 'Memory or runtime compatibility is unknown.')
+    if not row['installed'] and not row.get('disk_fit', True):
+        return 'Insufficient disk space for the download.'
+    return None
+
+
+def prepare_model(ui, row, context):
+    """One explicit preparation; never change selection on failure or cancellation."""
+    error = row.get('verification_error', '')
     while True:
-        view = catalogue(suite, context)
-        rows = [('', 'Use default · ' + DEFAULT_MODEL.split('/')[-1])] + [(r['model'], r['model'].split('/')[-1]) for r in view['models']]
-        values = {r['model']: f"Memory fit {'✓' if r['fit'] is True else '✕' if r['fit'] is False else '?'} · "
-                  f"{r['benchmark']['score'] if r['benchmark'] else '—'} · " + model_status(r) for r in view['models']}
-        choice = ui.pick('Local model · ' + suite, rows + [('__suite', 'Change benchmark'), ('__back', 'Back')],
-                         values=values, default=next((i for i,r in enumerate(rows) if r[0] == current),0),
-                         accents={r['model']: 'y' for r in view['models'] if r['fit'] is not True})
+        blocked = preparation_block(row)
+        if blocked:
+            ui.pick('Model unavailable', [('back', 'Choose another model')],
+                    context=[('Model', model_name(row)), ('Reason', blocked),
+                             ('Files', 'Retained on disk' if row['installed'] else 'Not downloaded')])
+            return None
+        summary = [('Model', model_name(row)), ('Provider', row['provider']),
+                   ('Files', f"{row['bytes']/1e9:.1f} GB · " + ('On disk · Reuse files' if row['installed'] else 'To download')),
+                   ('Context', f'{context:,} tokens')]
+        if not row['installed']:
+            summary.append(('Location', str(model_directory(row['model']) if row['provider'] == 'lmstudio' else Path.home()/'.ollama/models')))
+        if error:
+            summary.append(('Last check', error))
+        action = 'Verify & use' if row['installed'] else 'Download, verify & use'
+        if ui.pick('Prepare local model', [('prepare', action), ('back', 'Cancel · Keep current model')],
+                   context=summary, accents={'prepare': 'g'}) != 'prepare':
+            return None
+        ui.restore()
+        try:
+            with helper('t_local_worker')['reservation']():
+                if row['provider'] == 'lmstudio':
+                    install(row['model'], False, context)
+                else:
+                    ollama_action(row['model'], 'install', context=context)
+            error = ''
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            error = str(exc)
+        finally:
+            ui.raw()
+        try:
+            refreshed = next((r for r in catalogue(context=context)['models']
+                              if selection(r) == selection(row)), None)
+            if refreshed:
+                row = refreshed
+            else:
+                error = error or 'Model no longer appears in the catalogue.'
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            error = error or str(exc)
+        if not error and row.get('ready'):
+            return selection(row)
+        error = error or 'Readiness was not confirmed. Files retained; current model unchanged.'
+
+
+def benchmark_source(ui, row, suite):
+    score = row.get('benchmarks', {}).get(suite)
+    if score is None:
+        lines = ['No published result recorded for this model.']
+    else:
+        lines = [f"{model_name(row)} · {BENCHMARK_LABELS.get(suite, suite)}: {score['score']}",
+                 'Publisher original-model result; not this local quantization.',
+                 score.get('version', ''), score.get('harness', score.get('kind', '')), score.get('source', '')]
+    model_page(ui, 'Benchmark source', lines)
+
+
+def select_model(ui, current=DEFAULT_MODEL, context=32768, provider=None, *, use_label='Use in workflow'):
+    focus = None
+    while True:
+        try:
+            view = catalogue(context=context)
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            if ui.pick('Local models unavailable', [('retry', 'Scan again'), ('back', 'Back')], context=[str(exc)]) != 'retry':
+                return None
+            continue
+        models = sorted(view['models'], key=lambda r: (bool(preparation_block(r)), not r.get('ready'), not r['installed']))
+        # Model identifiers can collide across providers; retain exact identity.
+        candidates = {(r['provider']+'::'+r['model'] if sum(v['model'] == r['model'] for v in models) > 1 else r['model']): r for r in models}
+        configured = next((key for key, r in candidates.items() if r['model'] == current and (provider is None or r['provider'] == provider)), None)
+        if focus not in candidates:
+            focus = configured
+        suites = [suite for suite in BENCHMARK_LABELS if any(suite in r.get('benchmarks', {}) for r in models)]
+        columns = [f'{i+1}:{BENCHMARK_LABELS[suite]}' for i, suite in enumerate(suites)] + ['Readiness']
+        cells = {key: [str(r.get('benchmarks', {}).get(suite, {}).get('score', '—')) for suite in suites] +
+                 [model_status(r) if not preparation_block(r) else 'Unavailable'] for key, r in candidates.items()}
+        notes = {key: r['provider']+' · '+r.get('precision', 'runtime precision')+(' · ✓ Configured' if key == configured else '') for key, r in candidates.items()}
+        def details(key):
+            r = candidates[key]
+            action = 'View compatibility' if preparation_block(r) else 'Use this model' if r.get('ready') else 'Verify & use' if r['installed'] else 'Download, verify & use'
+            return [f"Files {r['bytes']/1e9:.1f} GB · "+('On disk' if r['installed'] else 'Download required'),
+                    f"Context {context:,} tokens · Enter → {action}"]
+        rows = [('', 'Use default model')] + [(key, model_name(r)) for key, r in candidates.items()] + [('__refresh', 'Scan again'), ('__back', 'Back')]
+        intro = ['Publisher scores · Original models, not local quantizations.']
+        if not models:
+            intro += ['No local models found.']
+        elif configured is None:
+            intro += ['Configured model unavailable · Choose a replacement.']
+        choice = ui.pick('Choose a local model', rows, context=intro,
+                         values={'': DEFAULT_MODEL.split('/')[-1]},
+                         columns=columns, cells=cells, notes=notes, details=details,
+                         sections={next(iter(candidates), '__refresh'): 'Compare models', '__refresh': 'Manage'},
+                         default=next((i for i, r in enumerate(rows) if r[0] == focus), 0),
+                         focused_shortcuts={**{str(i+1): suite for i, suite in enumerate(suites)}, 'm': 'tools'})
         if choice in (None, '__back'):
             return None
         if choice == '':
             return {'provider': DEFAULT['provider'], 'model': DEFAULT_MODEL}
-        if choice == '__suite':
-            suite = ui.pick('Benchmark suite', [(v,v) for v in SUITES]) or suite
+        if choice == '__refresh':
             continue
-        current = choice
-        selection = model_menu(ui, next(r for r in view['models'] if r['model'] == choice), context, use_label)
-        if selection:
-            return selection
+        if isinstance(choice, tuple):
+            action, focus = choice
+            if action == 'tools':
+                result = model_menu(ui, candidates[focus], context)
+                if result:
+                    return result
+            else:
+                benchmark_source(ui, candidates[focus], action)
+            continue
+        focus = choice
+        row = candidates[choice]
+        if row.get('ready') and not preparation_block(row):
+            return selection(row)
+        result = prepare_model(ui, row, context)
+        if result:
+            return result
+
+
+def retry_label(seconds):
+    return f'Up to {seconds // 60} minute' + ('s' if seconds != 60 else '') if seconds % 60 == 0 else f'Up to {seconds} seconds'
+
+
+def cloud_failure_menu(ui, current):
+    """Edit the shared staged policy; readiness operations remain explicit."""
+    focus = 'cloud_retry_seconds'
+    while True:
+        rows = [('cloud_retry_seconds', 'Retry cloud for'), ('on_cloud_failure', 'Then')]
+        values = {'cloud_retry_seconds': retry_label(current['cloud_retry_seconds']),
+                  'on_cloud_failure': {'local': 'Continue locally', 'ask': 'Ask which local model', 'pause': 'Pause'}[current['on_cloud_failure']]}
+        for key in values:
+            if current[key] == DEFAULT[key]:
+                values[key] = 'Default · ' + values[key]
+        sections = {'cloud_retry_seconds': 'Cloud retries', 'reset': 'Manage'}
+        selected = None
+        discovery_failed = False
+        if current['on_cloud_failure'] == 'local':
+            rows += [('model', 'Local model ›'), ('readiness', 'Readiness ›')]
+            sections['model'] = 'Local fallback'
+            values['model'] = current['model'].split('/')[-1]
+            try:
+                selected = next((r for r in catalogue(context=current['context_tokens'])['models']
+                                 if r['model'] == current['model'] and r['provider'] == current['provider']), None)
+                values['readiness'] = model_status(selected) if selected else 'Model unavailable · Choose a model'
+            except (OSError, ValueError, subprocess.SubprocessError):
+                discovery_failed = True
+                values['readiness'] = 'Status unavailable · Try again'
+        rows += [('reset', 'Reset to defaults'), ('back', 'Back')]
+        values['reset'] = 'Already at defaults' if all(current[k] == DEFAULT[k] for k in ('cloud_retry_seconds', 'on_cloud_failure')) else 'Cloud recovery settings'
+        choice = ui.pick('Cloud connection failure', rows, values=values, sections=sections,
+                         default=next((i for i, r in enumerate(rows) if r[0] == focus), 0))
+        if choice in (None, 'back'):
+            return
+        focus = choice
+        if choice == 'reset':
+            for key in ('cloud_retry_seconds', 'on_cloud_failure'):
+                current[key] = DEFAULT[key]
+        elif choice == 'cloud_retry_seconds':
+            value = ui.pick('Retry cloud for', [('', 'Use default · Up to 5 minutes')] +
+                            [(str(v), retry_label(v)) for v in (15, 30, 60, 120, 300)])
+            if value is not None:
+                current[choice] = int(value) if value else DEFAULT[choice]
+        elif choice == 'on_cloud_failure':
+            value = ui.pick('Then', [('', 'Use default · Pause'), ('pause', 'Pause'), ('ask', 'Ask which local model'), ('local', 'Continue locally')],
+                            disabled={'local': 'Enable local routing first.', 'ask': 'Enable local routing first.'} if current['mode'] == 'disabled' else {})
+            if value is not None:
+                current[choice] = value or DEFAULT[choice]
+        elif choice in ('model', 'readiness'):
+            if discovery_failed:
+                continue
+            result = model_menu(ui, selected, current['context_tokens']) if choice == 'readiness' and selected else select_model(ui, current['model'], current['context_tokens'], current['provider'])
+            if result:
+                current.update(result)
 
 
 def workflow_menu(ui, value=None):
@@ -621,15 +800,16 @@ def workflow_menu(ui, value=None):
     try:
         while True:
             rows = [('mode', 'Routing'), ('model', 'Local model'),
-                    ('on_cloud_failure', 'On cloud connection failure'),
+                    ('on_cloud_failure', 'Cloud connection failure ›'),
                     ('context_tokens', 'Context'), ('timeout_seconds', 'Task budget'),
                     ('queue_timeout_seconds', 'Queue wait'),
                     ('reset', 'Reset to defaults'), ('back', 'Back')]
             choice = ui.pick('Inference & routing', rows,
                             default=next(i for i, row in enumerate(rows) if row[0] == focus),
-                            sections={'reset': 'Manage'},
+                            sections={'on_cloud_failure': 'Connection recovery', 'context_tokens': 'Local inference', 'reset': 'Manage'},
+                            disabled={'on_cloud_failure': 'Local-only workflow · No cloud connection'} if current['mode'] == 'local-only' else {},
                             values={**{k: str(v) for k, v in current.items()}, 'on_cloud_failure':
-                                    {'local': 'Continue locally', 'ask': 'Ask which local model', 'pause': 'Pause and retry'}[current['on_cloud_failure']],
+                                    retry_label(current['cloud_retry_seconds']) + ' → ' + {'local': 'Continue locally', 'ask': 'Ask which local model', 'pause': 'Pause'}[current['on_cloud_failure']],
                                     'reset': 'Already at defaults' if current == DEFAULT else 'Routing settings'})
             if choice in (None, 'back'):
                 return current
@@ -637,7 +817,7 @@ def workflow_menu(ui, value=None):
             if choice == 'reset':
                 current = policy()
             elif choice == 'model':
-                selection = select_model(ui, current['model'], current['context_tokens'])
+                selection = select_model(ui, current['model'], current['context_tokens'], current['provider'])
                 if selection:
                     current.update(selection)
             elif choice == 'mode':
@@ -649,12 +829,7 @@ def workflow_menu(ui, value=None):
                     if current['mode'] == 'disabled':
                         current['on_cloud_failure'] = 'pause'
             elif choice == 'on_cloud_failure':
-                selected = ui.pick('On cloud connection failure', [('', 'Use default · Pause and retry'),
-                                   ('pause', 'Pause and retry'), ('ask', 'Ask which local model'),
-                                   ('local', 'Continue locally with selected model')],
-                                   disabled={'local': 'Enable routing first.', 'ask': 'Enable routing first.'} if current['mode'] == 'disabled' else {})
-                if selected is not None:
-                    current['on_cloud_failure'] = selected or DEFAULT['on_cloud_failure']
+                cloud_failure_menu(ui, current)
             else:
                 values = (8192, 16384, 32768, 65536) if choice == 'context_tokens' else (60, 300, 900, 1800)
                 selected = ui.pick(choice.replace('_', ' ').title(), [('', 'Use default · ' + str(DEFAULT[choice]))] +
@@ -662,7 +837,8 @@ def workflow_menu(ui, value=None):
                 if selected is not None:
                     current[choice] = int(selected) if selected else DEFAULT[choice]
     except KeyboardInterrupt as exc:
-        exc.workflow_inference = current
+        if current != policy(value):
+            exc.workflow_inference = current
         raise
 
 
@@ -795,8 +971,16 @@ def lead(argv, cwd=None, chosen=None, runner=None):
     """Dedicated native CLI launch: no cloud auth, models or providers inherited."""
     chosen = policy(chosen) if chosen is not None else effective(cwd or os.getcwd())
     if not chosen or chosen['mode'] != 'local-only':
-        if chosen and chosen['mode'] != 'disabled' and chosen['on_cloud_failure'] in ('local', 'ask'):
-            return helper('t_offline')['supervise'](argv, chosen, cwd or os.getcwd())
+        if chosen:
+            offline = helper('t_offline')
+            try:
+                offline['launch_options'](argv, cwd or os.getcwd())
+            except ValueError:
+                if chosen['on_cloud_failure'] in ('local', 'ask'):
+                    raise
+                print('Cloud retry limit unavailable for this invocation; using native tool retries.', file=sys.stderr)
+            else:
+                return offline['supervise'](argv, chosen, cwd or os.getcwd())
         return subprocess.call(argv)
     if '--approve-for-me' in argv[1:]:
         raise ValueError('Local-only inference requires user approval review; automatic cloud review is unavailable')
@@ -878,8 +1062,7 @@ if __name__ == '__main__':
         if sys.argv[1:2] == ['--launch-prefix']:
             try:
                 selected = effective(sys.argv[2])
-                required = selected and (selected['mode'] == 'local-only' or
-                                         (selected['mode'] != 'disabled' and selected['on_cloud_failure'] in ('local', 'ask')))
+                required = selected is not None
             except (OSError, ValueError):
                 required = True  # Launch guard reports the invalid policy; never fall back.
             if required:

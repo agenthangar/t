@@ -29,7 +29,7 @@ import uuid
 ROOT = Path(__file__).resolve().parents[1]
 FRAME_LIMIT = 64 * 1024 * 1024
 USER_LIMIT = 32000
-RETRY_WINDOW = 30
+RETRY_WINDOW = 300
 
 
 class RuntimeStopError(ValueError):
@@ -67,13 +67,15 @@ def private_write(path, value):
 
 
 class Checkpoint:
-    def __init__(self, directory, cwd, seed=None, handoff=None):
+    def __init__(self, directory, cwd, seed=None, handoff=None, retry_seconds=None):
         self.directory, self.cwd = directory, str(Path(cwd).resolve())
+        self.retry_seconds = RETRY_WINDOW if retry_seconds is None else retry_seconds
         self.thread = self.turn = None
         self.users, self.evidence, self.pending = [], deque(maxlen=8), {}
         self.invalid, self.network_since, self.failed = '', None, False
         self.model = None
         self.interrupted = False
+        self.generation = 0
         self.lock = threading.RLock()
         self.active = False
         self.seed = seed
@@ -121,6 +123,7 @@ class Checkpoint:
                     and params.get('threadSource') in (None, 'user')):
                 self.pending[message.get('id')] = method
             if method in ('turn/start', 'turn/steer') and params.get('threadId') == self.thread:
+                self.generation += 1
                 self.network_since, self.failed = None, False
                 self.interrupted = False
                 self.active = True
@@ -133,6 +136,7 @@ class Checkpoint:
                 self.handoff = None
                 self.save()
             if method == 'turn/interrupt' and params.get('threadId') == self.thread:
+                self.generation += 1
                 self.network_since, self.failed = None, False
                 self.interrupted = True
 
@@ -167,6 +171,8 @@ class Checkpoint:
                 self.turn = params.get('turn', {}).get('id')
                 self.active = True
                 self.network_since, self.failed = None, False
+            if not self.turn:
+                return
             if params.get('turnId', self.turn) != self.turn:
                 return
             if method == 'turn/completed' and params.get('turn', {}).get('id') == self.turn:
@@ -191,7 +197,18 @@ class Checkpoint:
 
     def due(self):
         with self.lock:
-            return not self.declined and (self.failed or (self.network_since is not None and time.monotonic()-self.network_since >= RETRY_WINDOW))
+            return not self.declined and (self.failed or (self.network_since is not None and time.monotonic()-self.network_since >= self.retry_seconds))
+
+    def outage(self):
+        with self.lock:
+            return self.thread, self.turn, self.network_since, self.failed, self.generation
+
+    def pause(self, send):
+        """Interrupt only the owned turn; keep the native client available."""
+        with self.lock:
+            if not self.failed:
+                send({'method': 'turn/interrupt', 'params': {'threadId': self.thread, 'turnId': self.turn}})
+            self.network_since, self.failed, self.interrupted = None, False, True
 
     def prompt(self, target='local'):
         with self.lock:
@@ -286,7 +303,7 @@ def launch_options(argv, cwd):
     args = iter(argv[1:])
     for arg in args:
         if arg in ('exec', 'e', 'review', 'resume', 'fork', '--remote', '--remote-auth-token-env', '--profile', '-p', '--oss', '--local-provider', '--worktree') or arg.startswith(('--remote=', '--profile=', '--local-provider=')):
-            raise ValueError('Automatic local continuation supports fresh native CLI sessions without remote/profile/OSS/worktree overrides; select Pause and retry for this invocation.')
+            raise ValueError('Automatic local continuation supports fresh native CLI sessions without remote/profile/OSS/worktree overrides; select Then → Pause to use native retries for this invocation.')
         if arg == '--':
             break
         if arg in ('-c', '--config', '--enable', '--disable', '-m', '--model', '-s', '--sandbox', '-a', '--ask-for-approval', '--add-dir', '-C', '--cd'):
@@ -424,9 +441,12 @@ def supervise(argv, chosen, cwd, *, monitor=None, checkpoint=None, env=None, ser
     root = checkpoint.directory if checkpoint else local['helper']('t_local_worker')['state_root']() / ('outage-'+uuid.uuid4().hex)
     root.mkdir(parents=True, mode=0o700, exist_ok=True)
     checkpoint = checkpoint or Checkpoint(root, cwd)
+    checkpoint.retry_seconds = chosen.get('cloud_retry_seconds', RETRY_WINDOW)
     checkpoint.save()
     backend = frontend = connection = None
     failures, handoff = [], None
+    writes = threading.Lock()
+    owned_requests = {}
     threads = []
     input_gate = threading.Lock()
     stopping = threading.Event()
@@ -458,6 +478,25 @@ def supervise(argv, chosen, cwd, *, monitor=None, checkpoint=None, env=None, ser
             connection.settimeout(10)
             channel = WebSocket(connection); channel.handshake(); connection.settimeout(None)
 
+            def send_backend(message, reason=None):
+                with writes:
+                    if reason is not None:
+                        message = dict(message, id='t-outage-'+uuid.uuid4().hex)
+                        owned_requests[message['id']] = (reason, time.monotonic())
+                    backend.stdin.write(json.dumps(message).encode()+b'\n'); backend.stdin.flush()
+
+            def paused(reason):
+                private_write(root/'status.json', {'state': 'paused', 'reason': reason})
+                channel.send(json.dumps({'method': 'warning', 'params': {'threadId': checkpoint.thread,
+                    'message': reason+' Cloud turn paused; retry manually when ready. Checkpoint: '+str(root)}}).encode())
+
+            def pause_turn(reason):
+                finished = checkpoint.failed
+                private_write(root/'status.json', {'state': 'pausing', 'reason': reason})
+                checkpoint.pause(lambda message: send_backend(message, reason))
+                if finished:
+                    paused(reason)
+
             def upstream():
                 try:
                     while True:
@@ -467,7 +506,7 @@ def supervise(argv, chosen, cwd, *, monitor=None, checkpoint=None, env=None, ser
                             if stopping.is_set():
                                 return
                             checkpoint.client(message)
-                            backend.stdin.write(raw+b'\n'); backend.stdin.flush()
+                            send_backend(message)
                 except Exception as exc:
                     failures.append(str(exc))
 
@@ -479,7 +518,15 @@ def supervise(argv, chosen, cwd, *, monitor=None, checkpoint=None, env=None, ser
                             raise EOFError('owned runtime disconnected')
                         if len(raw) > FRAME_LIMIT:
                             raise ValueError('runtime message exceeds limit')
-                        checkpoint.server(json.loads(raw))
+                        message = json.loads(raw)
+                        with writes:
+                            owned = owned_requests.pop(message.get('id'), None)
+                        if owned:
+                            if 'error' in message:
+                                raise ValueError('Could not pause the owned cloud turn: '+str(message['error']))
+                            paused(owned[0])
+                            continue
+                        checkpoint.server(message)
                         channel.send(raw.rstrip(b'\n'))
                 except Exception as exc:
                     failures.append(str(exc))
@@ -488,6 +535,9 @@ def supervise(argv, chosen, cwd, *, monitor=None, checkpoint=None, env=None, ser
             for thread in threads:
                 thread.start()
             while frontend.poll() is None:
+                with writes:
+                    if any(time.monotonic()-started > 10 for _, started in owned_requests.values()):
+                        failures.append('Timed out pausing the owned cloud turn')
                 if failures or backend.poll() is not None:
                     try:
                         frontend.wait(timeout=.3)
@@ -506,21 +556,25 @@ def supervise(argv, chosen, cwd, *, monitor=None, checkpoint=None, env=None, ser
                     if handoff is not None:
                         break
                 elif checkpoint.due():
+                    outage = checkpoint.outage()
+                    if chosen['on_cloud_failure'] == 'pause':
+                        with checkpoint.lock:
+                            if checkpoint.due():
+                                pause_turn('Cloud retry limit reached or native retries exhausted.')
+                        continue
                     try:
                         handoff = checkpoint.prompt()
                         row = next((r for r in local['catalogue'](context=chosen['context_tokens'])['models']
                                     if r['model'] == chosen['model'] and r['provider'] == chosen['provider']), None)
                         if not row or not row.get('ready'):
                             raise ValueError('Selected local model is not installed and ready; no download was attempted.')
-                    except ValueError as exc:
+                    except (OSError, ValueError, subprocess.SubprocessError) as exc:
                         handoff = None
                         with checkpoint.lock:
-                            checkpoint.failed, checkpoint.network_since = False, None
-                        channel.send(json.dumps({'method':'warning','params':{'threadId':checkpoint.thread,
-                            'message':'Local continuation unavailable: '+str(exc)+' Saved checkpoint: '+str(root)}}).encode())
-                        private_write(root/'status.json', {'state':'paused','reason':str(exc)})
+                            if checkpoint.due() and checkpoint.outage() == outage:
+                                pause_turn('Local continuation unavailable: '+str(exc))
                     else:
-                        if checkpoint.due() and frontend.poll() is None:
+                        if checkpoint.due() and checkpoint.outage() == outage and frontend.poll() is None:
                             break
                         handoff = None
                 time.sleep(.05)
@@ -554,6 +608,11 @@ def supervise(argv, chosen, cwd, *, monitor=None, checkpoint=None, env=None, ser
         return {'action': handoff, 'exit_code': result, 'checkpoint': checkpoint}
     if handoff is None:
         return result if result is not None else 1
+    if checkpoint.generation != outage[-1] or checkpoint.interrupted or (checkpoint.thread, checkpoint.turn) != outage[:2]:
+        private_write(root/'status.json', {'state': 'cancelled', 'reason': 'Cloud turn changed during shutdown.'})
+        print('Local continuation cancelled: the cloud turn changed during shutdown. Checkpoint: '+str(root), file=sys.stderr)
+        return 130
+    handoff = checkpoint.prompt()  # Include completion evidence received while stopping the cloud runtime.
     print('\nCloud connection unavailable → Local only · '+chosen['provider']+' · '+chosen['model']+'\n'
           'Checkpoint: '+str(root)+'\nCloud runtime stopped. Local mode stays selected for this session; approvals require local user review.', flush=True)
     status = {'state':'starting_local','provider':chosen['provider'],'model':chosen['model'],

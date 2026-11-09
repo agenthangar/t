@@ -59,11 +59,12 @@ def test_receipts_fit_and_identity(local):
 
 def test_effective_and_catalogue(local,monkeypatch):
     m=local
-    monkeypatch.setattr(m,'helper',lambda name: {'load':lambda: ({},None),'tool_document':lambda d,t:d} if name=='t_workflow' else {'launch_policy':lambda *a: {'enabled':True,'inference':{'mode':'automatic'}}})
+    monkeypatch.setattr(m,'helper',lambda name: {'load':lambda: ({},True),'tool_document':lambda d,t:d} if name=='t_workflow' else {'launch_policy':lambda *a: {'enabled':True,'inference':{'mode':'automatic'}}})
     assert m.effective('/repo')['mode']=='automatic'
-    for chosen,expect in ((None,None),({'enabled':True},None),({'enabled':False},'disabled')):
-        monkeypatch.setattr(m,'helper',lambda name: {'load':lambda: ({},None),'tool_document':lambda d,t:d} if name=='t_workflow' else {'launch_policy':lambda *a:chosen})
+    for chosen,expect in ((None,None),({'enabled':True},'manual'),({'enabled':False},None)):
+        monkeypatch.setattr(m,'helper',lambda name: {'load':lambda: ({},True),'tool_document':lambda d,t:d} if name=='t_workflow' else {'launch_policy':lambda *a:chosen})
         result=m.effective('/repo');assert (result['mode'] if result else None)==expect
+        if result: assert result['cloud_retry_seconds'] == 300
     legacy={'hardware':hardware,'report':lambda:{'models':[{'model':'qwen:8b','bytes':4,'fit':True,'score':50}], 'benchmark':{'source':'fixture','release':'2026-01-01'}},'missing_bytes':lambda *a:0}
     monkeypatch.setattr(m,'helper',lambda name:legacy)
     assert len(m.catalogue()['models'])==5
@@ -196,7 +197,7 @@ def test_disabled_picker_and_model_details(local,t_mod,monkeypatch,width,height)
     row['benchmark']=None
     monkeypatch.setattr(m,'catalogue',lambda *a,**k:{'models':[row]})
     class UI:
-        def __init__(self):self.choices=iter([m.DEFAULT_MODEL,'back','__suite','gpqa','__back'])
+        def __init__(self):self.choices=iter([m.DEFAULT_MODEL,'back',('gpqa',m.DEFAULT_MODEL),'__back'])
         def pick(self,*a,**kw):return next(self.choices)
         def page(self,*a,**kw):return 'enter'
     assert m.select_model(UI()) is None
@@ -367,13 +368,13 @@ def test_picker_install_measure_and_unavailable(local,monkeypatch):
         def restore(self):pass
         def raw(self):pass
     for action in ('install','download','measure'):
-        choices=[m.DEFAULT_MODEL,action]+(['yes'] if action!='measure' else [])+['back','__back']
+        choices=[('tools',m.DEFAULT_MODEL),action]+(['yes'] if action!='measure' else [])+['back','__back']
         assert m.select_model(UI(choices)) is None
     assert len(calls)==3
-    assert m.select_model(UI([m.DEFAULT_MODEL,'use']))=={'model':m.DEFAULT_MODEL,'provider':'lmstudio'}
-    assert m.select_model(UI([m.DEFAULT_MODEL,'install','no','back','__back'])) is None
-    monkeypatch.setattr(m,'measure',lambda *a,**k:(_ for _ in ()).throw(ValueError('unavailable')))
-    assert m.select_model(UI([m.DEFAULT_MODEL,'measure','back','__back'])) is None
+    assert m.select_model(UI([m.DEFAULT_MODEL]))=={'model':m.DEFAULT_MODEL,'provider':'lmstudio'}
+    assert m.select_model(UI([('tools',m.DEFAULT_MODEL),'install','no','back','__back'])) is None
+    monkeypatch.setattr(m,'measure',lambda *a,**kw:(_ for _ in ()).throw(ValueError('unavailable')))
+    assert m.select_model(UI([('tools',m.DEFAULT_MODEL),'measure','back','__back'])) is None
     row.update(fit=None,ready=False,disk_fit=False)
     assert m.select_model(UI([m.DEFAULT_MODEL,'back','__back'])) is None
 
@@ -403,17 +404,18 @@ def test_outage_policy_and_routing(local,monkeypatch):
         with pytest.raises(ValueError):m.policy(value)
     assert 'connection' in m.instructions({'mode':'automatic','on_cloud_failure':'local'})
     calls=[]
-    monkeypatch.setattr(m,'helper',lambda n:{'supervise':lambda *a:calls.append(a) or 7})
+    monkeypatch.setattr(m,'helper',lambda n:{'supervise':lambda *a:calls.append(a) or 7, 'launch_options':lambda *a:None})
     assert m.lead(['codex'],cwd='/repo',chosen={'mode':'automatic','on_cloud_failure':'local'})==7
     assert calls[0][2]=='/repo'
     assert m.lead(['codex'],cwd='/repo',chosen={'mode':'automatic','on_cloud_failure':'ask'})==7
     assert m.policy({'on_cloud_failure':'ask'})['on_cloud_failure']=='ask'
+    monkeypatch.setattr(m, 'catalogue', lambda **kw: {'models': []})
     class UI:
         def __init__(self,choices):self.choices=iter(choices)
         def pick(self,*a,**kw):return next(self.choices)
-    assert m.workflow_menu(UI(['on_cloud_failure','ask','back']))['on_cloud_failure']=='ask'
-    assert m.workflow_menu(UI(['on_cloud_failure','local','back']))['on_cloud_failure']=='local'
-    assert m.workflow_menu(UI(['on_cloud_failure','local','mode','disabled','back']))['on_cloud_failure']=='pause'
+    assert m.workflow_menu(UI(['on_cloud_failure','on_cloud_failure','local','back','back']))['on_cloud_failure']=='local'
+    assert m.workflow_menu(UI(['on_cloud_failure','on_cloud_failure','local','back','mode','disabled','back']))['on_cloud_failure']=='pause'
+    assert m.workflow_menu(UI(['on_cloud_failure','on_cloud_failure','ask','back','back']))['on_cloud_failure']=='ask'
 
 
 def test_exact_workspace_trust_only(local,tmp_path):
@@ -432,9 +434,9 @@ def test_exact_workspace_trust_only(local,tmp_path):
 @pytest.mark.parametrize('width,height',[(80,24),(44,20),(32,12)])
 def test_outage_picker_narrow(local,t_mod,width,height):
     from test_tui import make_ui
-    ui=make_ui(t_mod,['j','j','enter','j','j','j','enter','q'],width,height)
+    ui=make_ui(t_mod,['j','j','enter','j','enter','j','j','j','enter','q','q'],width,height)
     assert local.workflow_menu(ui)['on_cloud_failure']=='local'
-    assert any('Pause and retry' in ''.join(frame) for frame in ui.frames)
+    assert any('Pause' in ''.join(frame) for frame in ui.frames)
 
 
 def test_special_runtime_verification_evidence(local, monkeypatch):
@@ -674,3 +676,80 @@ def test_native_lead_stops_when_manager_lease_is_lost(local, monkeypatch, tmp_pa
     # A recovery callback cannot report a successful handoff after losing its lease.
     with pytest.raises(ValueError, match='manager connection lost'):
         m.lead(['codex', '--', 'task'], chosen=chosen, runner=lambda *args, **kwargs: 0)
+
+
+def test_cloud_retry_limits(local):
+    assert local.policy()['cloud_retry_seconds'] == 300
+    for value in (True, None, '300', 14, 301, 30.5):
+        with pytest.raises(ValueError, match='cloud_retry_seconds'):
+            local.policy({'cloud_retry_seconds': value})
+    for seconds in (15, 30, 60, 120, 300):
+        assert local.policy({'cloud_retry_seconds': seconds})['cloud_retry_seconds'] == seconds
+    assert local.retry_label(60) == 'Up to 1 minute'
+    assert local.retry_label(300) == 'Up to 5 minutes'
+    assert local.retry_label(15) == 'Up to 15 seconds'
+
+
+def test_cloud_recovery_staging_and_readiness(local, monkeypatch):
+    views = []
+    class UI:
+        def __init__(self, choices): self.choices = iter(choices)
+        def pick(self, title, rows, **kwargs):
+            views.append((title, rows, kwargs))
+            choice = next(self.choices)
+            if choice == 'interrupt': raise KeyboardInterrupt
+            return choice
+    row = {'model': local.DEFAULT_MODEL, 'provider': 'lmstudio', 'ready': False, 'installed': True}
+    monkeypatch.setattr(local, 'catalogue', lambda **kw: {'models': [row]})
+    calls = []
+    monkeypatch.setattr(local, 'model_menu', lambda *args: calls.append(args) or {'provider': 'lmstudio', 'model': 'chosen-model'})
+    monkeypatch.setattr(local, 'select_model', lambda *args: {'provider': 'lmstudio', 'model': local.DEFAULT_MODEL})
+    current = local.policy({'on_cloud_failure':'local', 'cloud_retry_seconds':30})
+    local.cloud_failure_menu(UI(['readiness','model','cloud_retry_seconds','60','back']), current)
+    assert current['cloud_retry_seconds'] == 60 and calls[0][1] is row
+    assert any(v[2]['values'].get('readiness') == 'Downloaded · not verified' for v in views)
+    local.cloud_failure_menu(UI(['cloud_retry_seconds',None,'on_cloud_failure',None,'back']), current)
+    assert current['cloud_retry_seconds'] == 60 and current['on_cloud_failure'] == 'local'
+    local.cloud_failure_menu(UI(['cloud_retry_seconds','','reset','back']), current)
+    assert current == local.DEFAULT
+    assert not Path(local.os.environ['XDG_CONFIG_HOME']).exists()
+    with pytest.raises(KeyboardInterrupt) as exc:
+        local.workflow_menu(UI(['on_cloud_failure','cloud_retry_seconds','120','interrupt']))
+    assert exc.value.workflow_inference['cloud_retry_seconds'] == 120
+    monkeypatch.setattr(local, 'catalogue', lambda **kw: {'models': []})
+    local.cloud_failure_menu(UI(['readiness','back']), local.policy({'on_cloud_failure':'local'}))
+    assert any(v[2]['values'].get('readiness', '').startswith('Model unavailable') for v in views)
+    monkeypatch.setattr(local, 'catalogue', lambda **kw: (_ for _ in ()).throw(OSError('offline')))
+    local.cloud_failure_menu(UI(['readiness','model','back']), local.policy({'on_cloud_failure':'local'}))
+    assert views[-1][2]['values']['readiness'] == 'Status unavailable · Try again'
+
+
+def test_pause_launch_compatibility(local, monkeypatch, capsys):
+    def reject(*args): raise ValueError('unsupported launch')
+    monkeypatch.setattr(local, 'helper', lambda name: {'launch_options': reject})
+    calls=[]
+    monkeypatch.setattr(local.subprocess, 'call', lambda args: calls.append(args) or 0)
+    assert local.lead(['codex','resume','saved'], chosen={'on_cloud_failure':'pause'}) == 0
+    assert calls == [['codex','resume','saved']]
+    assert 'using native tool retries' in capsys.readouterr().err
+    with pytest.raises(ValueError, match='unsupported launch'):
+        local.lead(['codex','resume','saved'], chosen={'on_cloud_failure':'local'})
+    monkeypatch.setattr(local, 'helper', lambda name: {'launch_options':lambda *args:None, 'supervise':lambda *args:9})
+    assert local.lead(['codex'], chosen={'on_cloud_failure':'pause'}) == 9
+
+
+def test_default_retry_launch_prefix_and_disabled_workflow(local, tmp_path):
+    w = local.helper('t_workflow')
+    doc = w['defaults']()
+    path = w['config_path']()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    env = {k:v for k,v in local.os.environ.items() if not k.startswith('COV_CORE_')}
+    result = local.subprocess.run([local.sys.executable, str(local.ROOT/'libexec/t_local_inference.py'),
+                                   '--launch-prefix', str(tmp_path)], env=env, text=True, capture_output=True, check=True)
+    assert not result.stdout
+    for enabled in (True, False):
+        doc['workflows'][doc['default']]['enabled'] = enabled
+        path.write_text(w['encode'](doc))
+        result = local.subprocess.run([local.sys.executable, str(local.ROOT/'libexec/t_local_inference.py'),
+                                       '--launch-prefix', str(tmp_path)], env=env, text=True, capture_output=True, check=True)
+        assert ('--lead' in result.stdout) is enabled

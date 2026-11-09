@@ -45,6 +45,25 @@ Group the main workflow editor into Models, Behavior and Manage using shared
 RailUI sections. Use this workflow stays above the groups. Keep focus on the
 selected row when returning, including after a reset; headings are not selectable.
 
+Named workflow editors include Repositories directly below Use this workflow.
+Group registered repositories into Using this workflow and Other repositories,
+including inherited global assignments without materializing them. Distinguish
+explicit assignments, inheritance, custom inline settings, exclusions and disabled
+definitions. Assign repositories uses the shared multi-picker with no initial
+marks; Space marks and Enter stages the entire selection. Back cancels those marks.
+Already using this workflow is omitted from the batch picker; no registered or
+available repositories is an explicit disabled-action state, never an empty picker.
+Individual repository actions offer this workflow, global inheritance, another
+workflow, disable, and the existing design-source picker.
+
+Assignments remain tool-scoped in the existing transaction. Use the shared action
+semantics: explicit assignment replaces custom overrides and clears exclusion,
+while retaining the design source. Build batches before replacing staged state.
+Refresh membership and preserve focus on return; all assignment changes appear in
+the final before/after review. Browsing never scans repositories or writes settings.
+An explicit Design system choice opens the existing read-only discovery picker.
+These extend the existing workflow wizard/single/multiple-selection modes.
+
 Every settings page offers Reset to defaults, and individual selectors offer a
 resolved default or inheritance choice, including binary toggles. The multiple-model
 checklist offers an exclusive Use default preset alongside the exclusive one-model
@@ -353,23 +372,39 @@ non-excluded named assignments; exclude inline copies and implicit global inheri
 from explicit repository counts. An enabled definition is not proof of assignment.
 The catalogue uses APPLIES TO instead of ambiguous STATUS on/off and ASSIGNED columns.
 Each workflow exposes an overall Workflow switch and an independent
-Use multiple models checkbox picker with a leading Use one model for all work
+Use multiple models checkbox picker with a leading Use lead model for all stages
 choice, then Planning, Implementation and Review. Use the shared empty_choice
 multi profile: the one-model row is an exclusive reset, separated by a blank
 rail row. It clears all stages; selecting any stage clears it, and clearing the
 last stage restores it. Translate the empty-key selection into no active stages.
-Space marks choices; Enter and q/Esc Back retain the selection as pending edits. Unchecked Planning/Review use the main model; Agent review before PR controls
+Space marks choices; Enter and q/Esc Back retain the selection as pending edits. Unchecked Planning/Review use the lead model; Agent review before PR controls
 whether the pre-PR review step runs. Unchecked Implementation uses
 per-tool session defaults, with default model/effort controls still available
 beside selected helpers. Selecting no stages enters single-model mode.
-Model catalogues come from the selected tool. The workflow row is Model;
+Model catalogues come from the selected tool. The workflow row is Lead model;
 its reset choice says Inherit default and shows the top-level tool model.
-Reasoning effort shows an explicit level or Inherit default with the known
+Lead reasoning effort shows an explicit level or Inherit default with the known
 top-level effort. Unset effort inherits top-level effort only when the model is
 also inherited; an explicit workflow model leaves effort to the native tool.
 Unknown native values say Tool setting; model catalogue metadata alone is not
 proof of the effective native configuration. Permissions shows the preset
 without repeating the selected tool name and opens its choices directly.
+
+Use Lead model consistently for the workflow's main conversation model: its
+selector title, review/save changes, read-only workflow summaries and inherited
+stage source labels. Use Lead session when describing the conversation or
+execution owner, and Lead reasoning effort for its effort control. The lead
+coordinates work and owns the result; it can also do implementation itself.
+Planning, Implementation and Review remain stage names; explicitly delegated
+models remain workers. Use lead model for all stages describes the stage reset
+without implying that separately configured local delegation is disabled.
+
+Lead is a role, not a provider or execution location. Retain Local model in
+Inference & routing and Cloud/Local where describing execution; Local only uses
+the selected local model as the lead. General tool model settings and model
+catalogues retain their unqualified Model labels unless selecting a workflow
+lead. This wording change does not rename JSON keys, commands or runtime APIs,
+change launch precedence, or switch any active session's model.
 Cursor uses model IDs with any supported parameters; do not expose a separate
 reasoning-effort flag or unsupported permission presets. Unavailable model
 catalogues retain inheritance and custom model entry without invented choices.
@@ -1261,6 +1296,10 @@ without pickers, OS service registration, remediation or update prompts.
 `t config local` and the settings hub's **Local worker & models** entry use the
 shared Rail UI to review prerequisite installation, model downloads, and Codex MCP
 registration. Pending hub edits must be saved or discarded before opening setup.
+Clear the hub's painted frame before handing off to setup. Keep the current
+delegation state, provider and exact configured model inside the local-worker
+menu, not in a completed-step notice. Model selection starts on that worker's
+provider/model identity. Browsing and cancelling never change worker settings.
 `t config local --model NAME --yes` applies explicit setup without prompting;
 `--disable --yes` disables delegation while retaining models and registration.
 `t config local --show` is a read-only detail mode: no server startup, download,
@@ -1341,23 +1380,65 @@ does not publish; normal review/save/discard applies to the complete transaction
 
 `t workflow` includes a Codex **Inference & routing** submenu with Disabled,
 Manual, Automatic hybrid and Local only modes, explicit local model, context and
-task budget. **On cloud connection failure** stages Pause and retry (default), Ask which local
-model, or Continue locally with selected model. Only new native CLI launches opt into the
-owned runtime supervisor; the native client supplies progress and approvals.
-The transition displays the connection-failure reason, exact provider/model and
-private checkpoint path, then stays local. It never downloads weights or treats
-authentication, quota, HTTP application failures, auxiliary threads or cancellation
-as an outage. Unsupported resume/fork/exec/review or remote/profile/OSS/worktree
-overrides fail before launch and explain how to select Pause. These are conditional
-launch modes, not new public command families. These are staged workflow choices. The shared model picker keeps
-Memory fit ✓/✕/? visible on narrow screens. Unknown/non-fitting models are dimmed
-and inspectable; disabled Use/Install actions explain why and never execute.
-Benchmark suite selection is explicit; missing scores and speed are not invented.
-Show benchmark sources/harnesses and measured speed only in model details.
-Installation and measurement are explicit immediate actions with model selection;
-model download review precedes installation. `t config models show` is read-only;
-`install` and `measure` are direct explicit-artifact actions. `--download-only`
-does not claim inference readiness. No list/show mode starts a runtime or picker.
+task budget. **Cloud connection failure** opens grouped Cloud retries and Local
+fallback settings: **Retry cloud for** defaults to **Up to 5 minutes**, with
+15 seconds, 30 seconds, 1 minute, 2 minutes and 5 minutes available. **Then**
+defaults to **Pause**; **Continue locally** reveals the selected local model and
+readiness with direct access to its existing verification actions. Reset on this
+page changes only retry duration and the after-retries action; it preserves the
+model, context and task budget. All settings use the shared review/save/discard
+transaction, including completed changes before interruption. Readiness checks,
+installation and verification remain explicit immediate machine actions.
+
+The owned runtime supervisor observes native transport retries without replaying
+whole turns or replacing native backoff. The configured limit starts at the first
+typed connection failure; native exhaustion can end retries sooner. Recovery
+resets the clock. Pause interrupts only the owned cloud turn and retains the
+native client; successful interrupt acknowledgement confirms the paused state.
+A rejected or unacknowledged interrupt stops the owned runtime instead of claiming
+that it paused. Local fallback stops all owned cloud processes before starting a
+fresh local session from the bounded private checkpoint, displaying provider/model
+and checkpoint path. It stays local until the user starts a cloud session.
+Unavailable readiness or incomplete checkpoints pause the cloud turn visibly.
+It never downloads weights or treats authentication, quota, HTTP application
+failures, auxiliary threads or cancellation as an outage. Only fresh native CLI
+launches without remote/profile/OSS/worktree overrides support supervision.
+Unsupported resume/fork/exec/review or overridden launches reject local fallback;
+Pause launches use native retry behavior and explicitly report that the configured
+retry limit is unavailable. Local-only workflows disable this cloud settings row.
+These are conditional launch modes, not new public command families.
+The model chooser uses the shared RailUI comparison profile. Show available
+publisher benchmark columns together; do not default to an empty benchmark suite
+or add a redundant benchmark-summary action. Label source keys in the column
+headers, and show missing scores as —. Number keys open source/version/harness
+for the focused model; m opens optional model tools. Scores remain original-model
+publisher results, never local quantization or speed measurements.
+
+Model labels, metadata and actions align at the shared row text column. Wide
+terminals align numeric comparison columns; narrow terminals stack labeled scores
+and readiness under the model. Keep the cursor and navigation inside the existing
+windowed frame. Distinguish the configured model from keyboard focus and disambiguate
+provider/model identities. Context includes file state, verification context and
+the next Enter action. Missing configured models, empty discovery and discovery
+errors have explicit refresh/back states. Browsing never downloads or loads models.
+
+Enter on a ready model stages its exact provider/model and returns to the workflow.
+Otherwise show one preparation screen: Verify & use for downloaded files, or
+Download, verify & use with size and location before downloading. Reuse existing
+reservation, context/hardware validation and runtime guardrails. Stage only after
+a refreshed exact-identity catalogue row confirms readiness. Failure, busy runtime,
+missing refreshed identity and cancellation preserve the workflow selection and
+retain downloaded files. Retries require another explicit choice. Compatibility
+or disk-space blocks show their reason and return to choosing another model.
+Use default and resets remain configuration-only and do not run/download a model.
+
+`t config models show` remains read-only; install and measure are explicit-artifact
+actions. `--download-only` does not claim inference readiness. No list/show mode
+starts a runtime or picker. Workflow configuration keeps its existing staged
+review/save/discard transaction; preparation is an explicit immediate machine action.
+
+Retain **Ask which local model** alongside Pause and Continue locally. Preserve
+queue wait, owned model unloading and cloud-return recovery from main.
 
 ## Standalone companion: nosleep
 
@@ -1429,13 +1510,58 @@ Development preview: `python3 scripts/preview_local_status.py` from this
 worktree in a terminal. It uses an isolated tmux server, sample activity and
 temporary HOME/state; it never calls a model or edits real configuration.
 
+### Model comparison summaries
+
+Any page showing a list of models includes succinct, high-level detail and
+benchmarks for each model. This applies to native/cloud agent selectors, workflow
+stage selectors, local catalogues, setup and usage/monitoring lists. Preserve
+existing fields, actions and navigation. Use the shared RailUI/table patterns.
+
+Keep each entry compact: model identity, a short evidence-backed description or
+capability summary, relevant availability, and a named benchmark with its score.
+Use a compact table like `t ls`: one physical row per model and the same column
+positions for every row. Include model identity, size, provider, memory fit,
+readiness and benchmark score where available. Put capability/precision in the
+model cell or a consistent column; do not add indented metadata lines per model.
+Use a nonselectable column header and one shared legend: selected marker, memory
+fit, verification state and benchmark provenance. Align headers, model labels,
+legend and actions to the same text origin after the focus gutter. Reserve
+cyan for headings, focus and meaningful values rather than coloring all metadata.
+Show an unavailable score as an em dash with one shared explanation; avoid
+repeating a full Benchmark unavailable paragraph under every model. Inheritance
+is one compact control with the resolved default when known, not a duplicate
+model card. Separate model choices from management actions with shared sections.
+Keep sample-data labels and prototype explanations outside the simulated terminal.
+For local models retain precision, memory fit and readiness; include size/context
+when available. Show measured speed only when observed, with units. Use explicit
+Benchmark unavailable and Speed not measured states rather than zero or invented
+scores, descriptions or performance claims. An unavailable catalogue must retain
+saved/custom model choices and explain which metadata is missing.
+
+Keep suite/version and evaluation provenance visible in the list, using a shared
+heading or legend when identical across rows. Label publisher/base-model results
+separately from evaluations of the exact local artifact. Different suites,
+harnesses, quantizations and hardware are not a common ranking; mark differences
+and do not silently sort them as comparable. Details expose sources, dates,
+methodology and measurement conditions without making users open each model to
+see its basic comparison. Opening a list never triggers inference or measurement.
+
+At narrow widths, keep rows on one line as `t ls` does: shorten model text and
+column labels, then omit lower-priority size/provider columns consistently.
+Keep benchmark context, memory fit and availability legible at narrow widths;
+full values remain available on selection. Never vary columns between model rows;
+use the shared viewport to retain focused selection and navigation. Planning
+previews cover cloud and local lists, missing scores, unavailable metadata,
+different evaluation methods and narrow terminal sizes with labeled sample data.
+
 ### Workflow model overview
 
 The existing local-model single-selection mode opens a compact RailUI overview
 with model identity, readiness, file size, memory fit, context and the next action.
 Use shared nonselectable context rows and the shared viewport; keep the focused
-action and footer visible at 80×24, 44×20 and 32×12. Benchmarks and Artifact &
-runtime are separate read-only views; sources/methodology remains accessible.
+action and footer visible at 80×24, 44×20 and 32×12. Include the same concise
+benchmark summary shown in model lists. Benchmarks and Artifact & runtime provide
+separate read-only detail views; sources/methodology remains accessible.
 Wrap detail text within the rail, including URLs and revisions. Back retains focus.
 
 Downloaded models offer Verify readiness with a review of file reuse and context.
