@@ -1165,8 +1165,11 @@ def test_config_mcp_uninstall_review(t_mod, monkeypatch, pending, answer, expect
 def test_config_mcp_narrow_navigation(t_mod, monkeypatch, width, height):
     from test_tui import make_ui
     ui = make_ui(t_mod, ['j'] * 5 + ['k'] * 5 + ['q'], width, height)
-    monkeypatch.setattr(t_mod.runpy, 'run_path', lambda _: {'status': lambda home: {
-        'codex': 'Registered; enabled state unknown', 'claude': 'Registered (user scope)'}})
+    real_run_path = t_mod.runpy.run_path
+    monkeypatch.setattr(t_mod.runpy, 'run_path', lambda path:
+        {'status': lambda home: {'codex': 'Registered; enabled state unknown',
+                                 'claude': 'Registered (user scope)'}}
+        if str(path).endswith('t_mcp_setup.py') else real_run_path(path))
     t_mod._config_mcp(ui, 0)
     for frame in ui.frames:
         assert sum(t_mod._term_rows(line, width) for line in frame) <= height

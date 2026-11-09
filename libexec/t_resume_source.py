@@ -15,9 +15,49 @@ LIFECYCLE = ('launch', 'resume', 'close', 'handoff', 'checkpoint')
 MAX_BUNDLE = 64 * 1024 * 1024
 
 
-def selected(row):
+def merge_records(rows):
+    """Merge conversation evidence after callers normalize verified repo aliases."""
+    merged = {}
+    for row in rows:
+        key = row['repo'], row['agent'], row['sid']
+        if key in merged:
+            previous = merged[key]
+            newer = row if row.get('updated', 0) >= previous.get('updated', 0) else previous
+            combined = {**previous, **newer}
+            for field in ('associations', 'sources', 'prs', 'mentions'):
+                combined[field] = list({json.dumps(value, sort_keys=True): value
+                    for value in previous.get(field, []) + row.get(field, [])}.values())
+            merged[key] = combined
+        else:
+            merged[key] = row
+    return list(merged.values())
+
+
+def selected(row, *, error=ValueError):
     durable = [a for a in row.get('associations', []) if a.get('evidence') in LIFECYCLE]
-    return max(durable, key=lambda a: a.get('observed', 0), default=None)
+    if not durable:
+        return None
+    latest = max(a.get('observed', 0) for a in durable)
+    current = [a for a in durable if a.get('observed', 0) == latest]
+    identities = {json.dumps({key: a.get(key) for key in
+        ('host', 'workspace', 'generation', 'branch', 'commit')}, sort_keys=True) for a in current}
+    if len(identities) != 1:
+        raise error('source conversation associations conflict; resolve the retained source evidence, then rerun t resume')
+    return current[0]
+
+
+def source_record(history, row, expected):
+    matches = merge_records({**record, 'repo': row['repo']} for record in history.store.records()
+        if record['sid'] == row['sid'] and record['agent'] == row['agent']
+        and history.same_repository(record['repo'], row['repo']))
+    if len(matches) != 1:
+        raise history.error('source conversation identity is missing or ambiguous')
+    saved = matches[0]
+    association = selected(saved, error=history.error)
+    if not association or association.get('host') != 'local' or any(association.get(k) != expected.get(k)
+            for k in ('workspace', 'generation', 'branch', 'commit', 'observed')):
+        raise history.error('source conversation association changed; rerun t resume')
+    return saved, association
 
 
 def private_path(name):
@@ -116,15 +156,11 @@ def prepared_source(history, request, *, historical_fallback=False):
     row = request.get('identity', {})
     history.validate(row)
     expected = request.get('association', {})
-    matches = [r for r in history.store.records() if r['sid'] == row['sid'] and r['agent'] == row['agent'] and history.same_repository(r['repo'], row['repo'])]
-    if len(matches) != 1:
-        raise error('source conversation identity is missing or ambiguous')
-    saved = matches[0]
-    association = selected(saved)
-    if not association or association.get('host') != 'local' or any(association.get(k) != expected.get(k) for k in ('workspace', 'generation', 'branch', 'commit', 'observed')):
-        raise error('source conversation association changed; select history again')
+    saved, association = source_record(history, row, expected)
     workspace = association['workspace']
     with history.launch_claims(workspace, row['sid']):
+        # Waiting for a claim must not make a stale or conflicting selection safe.
+        saved, association = source_record(history, row, expected)
         if not association.get('generation') or association['generation'] != history.generation(workspace):
             if historical_fallback:
                 yield None
@@ -186,7 +222,7 @@ def export(history, request):
 
 def reconcile(history, alias, row):
     _spinner = history.spinner
-    association = selected(row)
+    association = selected(row, error=history.error)
     if not association:
         return ''
     if association.get('host') == 'local':

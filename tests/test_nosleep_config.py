@@ -45,7 +45,8 @@ def test_defaults_and_values_do_not_write(isolated):
     assert result.returncode == 0
     assert result.stdout.splitlines() == ["dim=0", "display_on=0", "lock=1", "forever=0", "agent=1", "internet=1", "requirement=all", "grace=900",
                                           "every=30", "retries=3", "backoff=30", "hotspot=0",
-                                          "hotspot_ssid=", "hotspot_after=300", "hotspot_timeout=30"]
+                                          "hotspot_ssid=", "hotspot_after=300", "hotspot_timeout=30",
+                                          "battery_protection=0", "battery_below=20"]
     shown = run_config(isolated, "--show")
     assert shown.returncode == 0
     assert "Lock" in shown.stdout and "Display" in shown.stdout
@@ -338,7 +339,7 @@ def test_menu_enables_preconfigured_hotspot_and_marks_inactive(isolated):
     _, path = isolated
     path.parent.mkdir(parents=True)
     path.write_text(json.dumps({"hotspot_ssid": "Test Phone", "internet": False}))
-    _pty_config(isolated, [(b"Local settings", b"jjjjjjjjjj\r"),
+    _pty_config(isolated, [(b"Local settings", b"j" * list(config.LABELS).index("hotspot") + b"\r"),
                            (b"on (inactive)", b"s"), (b"Review changes", b"y")], lines=40)
     assert json.loads(path.read_text())["hotspot"] is True
     assert "Hotspot   on (inactive)" in run_config(isolated, "--show").stdout
@@ -424,7 +425,7 @@ def test_none_requirement_marks_check_timing_and_hotspot_inactive(isolated):
 def test_section_spacing_and_finish_remain_navigable(isolated, columns, lines):
     output = _pty_config(isolated, [(b'Local settings', b'k\r')], columns=columns, lines=lines)
     assert b'nothing written' in output
-    assert b'ON CLOSE' in output and b'\xe2\x94\x82' in output
+    assert b'ON CLOSE' in output and b'Local settings' in output
 
 
 def test_frame_inserts_nonselectable_breaks_between_sections():
@@ -558,3 +559,54 @@ def test_config_hotspot_actions_are_reachable_and_staged(monkeypatch, action):
     values = config.DEFAULTS | {'hotspot_ssid': 'Saved'}
     assert config.menu(values) is None
     assert values['hotspot_ssid'] == 'Saved'
+
+
+@pytest.mark.parametrize('bad', [
+    {'battery_protection': 1}, {'battery_protection': 'on'},
+    {'battery_below': True}, {'battery_below': '20'}, {'battery_below': 20.5},
+    {'battery_below': 0}, {'battery_below': -1}, {'battery_below': 101},
+])
+def test_battery_config_rejects_invalid_types_and_bounds(isolated, bad):
+    test_invalid_config_blocks_all_modes(isolated, bad)
+
+
+def test_battery_config_defaults_bounds_and_independence(isolated):
+    assert config.validate({})['battery_protection'] is False
+    assert config.validate({})['battery_below'] == 20
+    for cutoff in (1, 20, 100):
+        assert config.validate({'battery_below': cutoff})['battery_below'] == cutoff
+    shown = run_config(isolated, '--show').stdout
+    assert 'Battery protection\n  Enabled   off\n  Below     20% (inactive)' in shown
+    values = config.validate({'battery_protection': True, 'battery_below': 25,
+                              'forever': True, 'requirement': 'none'})
+    assert config._choice('battery_protection', values) == 'on'
+    assert config._choice('battery_below', values) == '25% on battery'
+    assert 'Below     25% on battery' in '\n'.join(config.describe(values))
+
+
+@pytest.mark.parametrize('columns,lines', [(80, 24), (44, 20), (32, 12)])
+def test_battery_menu_edit_review_save_and_discard(isolated, columns, lines):
+    _, path = isolated
+    steps = b'j' * list(config.LABELS).index('battery_protection')
+    output = _pty_config(isolated, [
+        (b'Local settings', steps + b'\rj\r'),
+        (b'New value', b'25\n'),
+        (b'25% on battery', b's'),
+        (b'Review changes', b'y'),
+    ], columns=columns, lines=lines)
+    saved = json.loads(path.read_text())
+    assert saved['battery_protection'] is True and saved['battery_below'] == 25
+    assert b'BATTERY PROTECTION' in output and b'Exit below' in output
+    before = path.read_bytes()
+    _pty_config(isolated, [(b'Local settings', steps + b'\rq'),
+                           (b'Unsaved changes', b'd')], columns=columns, lines=lines)
+    assert path.read_bytes() == before
+
+
+def test_battery_menu_invalid_cutoff_keeps_current_value(isolated):
+    _, path = isolated
+    steps = b'j' * list(config.LABELS).index('battery_below')
+    _pty_config(isolated, [(b'Local settings', steps + b'\r'),
+                           (b'New value', b'101\n'),
+                           (b'battery_below must be an integer 1..100', b'q')], lines=40)
+    assert not path.exists()

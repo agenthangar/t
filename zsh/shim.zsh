@@ -132,6 +132,20 @@ _t_dispatch() {
   if [[ $shell_verb == resume ]] &&
      { [[ ${#shell_args} == 1 && ${shell_args[1]} == <-> ]] ||
        [[ ${#shell_args} == 2 && ${shell_args[1]} != -* && ${shell_args[2]} == <-> ]]; }; then
+    # An explicit retry reconciles a recorded move before browsing saved data.
+    local recovery_repo recovery_slot recovery recovery_rc=0
+    if (( $#shell_args == 2 )); then
+      recovery_repo=$(_dev_resolve_repo "$shell_args[1]") || recovery_repo=$shell_args[1]
+      recovery_slot=$shell_args[2]
+    else
+      recovery_repo=$(_t_infer_repo)
+      recovery_slot=$shell_args[1]
+    fi
+    if [[ -n $recovery_repo ]]; then
+      recovery=$(python3 "$T_HOME/libexec/t_lifecycle.py" pending "$recovery_repo" "$recovery_slot") || recovery_rc=$?
+      if (( recovery_rc == 0 )); then eval "$recovery"; return $?
+      elif (( recovery_rc != 3 )); then return $recovery_rc; fi
+    fi
     command t session history "${shell_args[@]}"
     return $?
   fi
@@ -362,10 +376,11 @@ _t_open() {
   [[ -n $want_host || ( -n $has_host && -z $host ) || $host == -* ]] && { echo "t open: --host requires a value" >&2; return 2; }
 
   # A slot-less interactive open browses the same complete rows as `t ls`.
-  # Bare means every local repo, even from a worktree; a named repo filters.
+  # Bare means every repo across local/remote hosts; a named repo filters.
   # Explicit slots, fresh sessions, agent flags and foreground requests retain
   # their direct paths. Resolve the picker before starting a fresh session.
-  local picker_ok=1 picker_repo= picker_rc
+  local picker_ok=1 picker_repo= picker_rc picker_remote=1
+  [[ -n $local_only ]] && picker_remote=
   if [[ -z $host && -z $isnew && -t 0 && -t 1 ]] && command -v fzf >/dev/null 2>&1; then
     for arg in "${rest[@]}"; do
       case $arg in
@@ -389,7 +404,7 @@ _t_open() {
         print -u2 -- 't open: --local/--here and -r/--remote are mutually exclusive'
         return 2
       fi
-      _t_open_picker "$picker_repo" "$remote" "$app" "$cli" "$include_attached"; picker_rc=$?
+      _t_open_picker "$picker_repo" "$picker_remote" "$app" "$cli" "$include_attached"; picker_rc=$?
       (( picker_rc == 2 )) || return $picker_rc
       # No existing rows: use the ordinary fresh-session/default-host path.
     fi
@@ -480,7 +495,6 @@ _t_open_picker() {
   for row in "${(@f)rows}"; do
     fields=("${(@ps:\t:)row}")
     (( $#fields >= 7 )) || continue
-    [[ -n $remote && $fields[1] == local ]] && continue
     if [[ -n $scope ]]; then
       cwd_rel=$(_dev_homerel "$fields[3]")
       [[ $cwd_rel == $scope_rel || $cwd_rel == $scope_rel/* ||
@@ -490,7 +504,7 @@ _t_open_picker() {
   done
   (( $#candidates )) || return 2
   [[ -n $repo ]] && format_args+=(--repo)
-  rows=$(print -rl -- "${candidates[@]}" | COLUMNS=${COLUMNS:-80} python3 "$T_HOME/bin/t" __session-picker-rows --compact --header "${format_args[@]}") || return 1
+  rows=$(print -rl -- "${candidates[@]}" | COLUMNS=${COLUMNS:-80} python3 "$T_HOME/bin/t" __session-picker-rows --compact --header --last-turn "${format_args[@]}") || return 1
   [[ -n $rows ]] || return 1
   local columns=${rows%%$'\n'*}
   rows=${rows#*$'\n'}
@@ -541,6 +555,51 @@ _t_open_picker() {
   _t_open_selected "$selected" "$app" "$cli"
 }
 
+# The Python list handler already resolved scope and discovered this snapshot.
+_t_list_snapshot() {
+  local snapshot=$1 source rows columns selected current row candidate remote=
+  local -a identity original latest
+  local -A expected owners
+  shift
+  source=$(<"$snapshot")
+  rows=$(COLUMNS=${COLUMNS:-80} python3 "$T_HOME/bin/t" __session-picker-rows --compact --header --last-turn "$@" < "$snapshot") || return $?
+  columns=${rows%%$'\n'*}
+  rows=${rows#*$'\n'}
+  selected=$(T_PICKER_SOURCE_ROWS="$source" T_PICKER_COLUMNS="$columns" T_PICKER_SESSION_FILTERS=list \
+    _t_fzf_filtered "$rows" "$rows" open all "" "" --prompt="sessions > " --with-nth=5,4 \
+      --preview='printf "%s\n" {4}') || return $?
+  [[ -n $selected ]] || return 130
+  # Selection may be old after browsing. Recheck ownership once on Enter before
+  # handing the exact target to open; missing/changed rows must not become fresh.
+  for row in "${(@f)source}"; do
+    original=("${(@ps:\t:)row}")
+    expected[$original[1]/$original[4]/$original[5]]="${(j:\t:)original[1,5]}"
+  done
+  for row in "${(@f)selected}"; do
+    identity=("${(@ps:\t:)row}")
+    [[ $identity[1] == local ]] || remote=1
+  done
+  if [[ -n $remote ]]; then
+    current=$(_dev_rows_all --best-effort --details) || return $?
+  else
+    current=$(_dev_session_rows --details) || return $?
+    current=$(print -r -- "$current" | awk 'NF {print "local\t" $0}')
+  fi
+  for row in "${(@f)current}"; do
+    latest=("${(@ps:\t:)row}")
+    owners[$latest[1]/$latest[4]/$latest[5]]="${(j:\t:)latest[1,5]}"
+  done
+  for row in "${(@f)selected}"; do
+    identity=("${(@ps:\t:)row}")
+    candidate=$identity[1]/$identity[2]/$identity[3]
+    if [[ -z ${expected[$candidate]:-} || ${owners[$candidate]:-} != ${expected[$candidate]} ]]; then
+      print -u2 -- "t list: $identity[2] on $identity[1] changed while browsing; run t ls again."
+      return 1
+    fi
+  done
+  _t_open_selected "$selected" "" ""
+}
+
 # Desktop selections open immediately; the first CLI selection uses this terminal
 # and the remaining CLI selections get tabs. Preserve the selected host/interface,
 # so a configured default never converts an existing owner as a side effect.
@@ -551,7 +610,7 @@ _t_open_selected() {
     fields=("${(@ps:\t:)row}")
     host=$fields[1]; label=$fields[2]; state=$fields[3]
     if [[ $state == app ]]; then
-      print -u2 -- "t: $label on $host uses a retired integration; release its owner there, then use t session history"
+      print -u2 -- "t: $label on $host uses a retired integration; release its owner there, then use t session resume"
       rc=1
       continue
     fi
@@ -683,7 +742,7 @@ _t() {
   case $group in
     mcp) actions=(status install uninstall) ;;
     remote) actions=(open move resume kill) ;;
-    session) actions=(open list ls close restart push pop resume history cd move read view-plan paste search goal) ;;
+    session) actions=(open list ls close restart push pop resume cd move read view-plan paste search goal) ;;
     repo) actions=(list ls cd locate create clone add) ;;
     cursor) actions=(list ls resume send) ;;
     agentcore) actions=(invoke stop) ;;
@@ -903,7 +962,7 @@ _t() {
       _values 'flag' --json -h --help ;;
     session/list)
       if (( CURRENT == first )) && [[ ${words[CURRENT]} != -* ]]; then _values 'repo' "${(@f)$(_dev_repo_selectors)}"
-      else _values 'flag' -r --remote -a --all -h --help; fi ;;
+      else _values 'flag' -r --remote -l --local -a --all -h --help; fi ;;
     session/push)
       _values 'flag' -p --pick -a --all -h --help ;;
     session/search)

@@ -40,7 +40,7 @@ def test_resume_quick_help_and_structured_details(t_mod, monkeypatch, capsys, wo
     detail = capsys.readouterr().out
     for heading in ('PICKER CONTROLS', 'LIVE OWNERS', 'REMOTE HISTORY', 'REQUIREMENTS AND DISCOVERY'):
         assert heading in detail
-    for retained in ('Alt-T', 'Alt-V', 'Ctrl-/', 'only a selected remote transcript', 'never resumed a second time',
+    for retained in ('Ctrl-S', 'Ctrl-Y', 'Ctrl-/', 'only a selected remote transcript', 'never resumed a second time',
                      'registered only after selection'):
         assert retained in ' '.join(detail.split())
     assert len(detail) > len(quick)

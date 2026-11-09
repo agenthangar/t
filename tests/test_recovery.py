@@ -249,8 +249,8 @@ def test_offer_never_types_into_agent_and_targets_viewer(recovery, target, monke
     monkeypatch.setattr(recovery, "tmux", lambda *a: events.append(a) or result())
     assert recovery.offer(target, ERROR)
     assert events[0][1:3] == ("display-message", "-p")
-    assert events[1][1:3] == ("run-shell", "-b")
-    menu = shlex.split(events[1][3])
+    menu_event = next(event for event in events if event[1:3] == ("run-shell", "-b"))
+    menu = shlex.split(menu_event[3])
     assert menu[3:8] == ["display-menu", "-c", "/dev/pts/4", "-t", "%4"]
     assert "t: CONNECTION FAILED" in menu
     assert "Save draft and restart" in menu
@@ -895,3 +895,27 @@ def test_startup_detection_owner_and_callback(recovery, target, monkeypatch, sta
     assert recovery.respond(target['socket'], token, True) == 0
     monkeypatch.setattr(recovery, 'process', lambda p: {'start': target['start'], 'args': 'codex resume ' + SID})
     assert recovery.owner(target['socket'], pane, startup=True) == {}
+
+
+@pytest.mark.parametrize('version,waits', [('tmux 3.3a', True), ('tmux 3.7c', True),
+                                           ('tmux 3.8', False), ('unknown', False)])
+def test_menu_close_receipts_follow_tmux_wait_contract(recovery, target, monkeypatch, tmp_path, version, waits):
+    calls = []
+    def invoke(socket, *args):
+        calls.append(args)
+        return result(version if args == ('-V',) else '80' if args[0] == 'display-message' else '')
+    monkeypatch.setattr(recovery, 'tmux', invoke)
+    notice = tmp_path / 'notice with spaces'
+    closed = tmp_path / 'closed with spaces'
+    assert recovery.recovery_menu(target['socket'], target['pane'], 'viewer', 'Notice',
+                                  ['Check ownership'], [('Dismiss', 'q', '')],
+                                  cleanup=notice, closed=closed)
+    command = next(args[2] for args in calls if args[:2] == ('run-shell', '-b'))
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=';')
+    lexer.whitespace_split = True
+    argv = list(lexer)
+    dismiss = shlex.split(argv[argv.index('Dismiss') + 2])
+    assert dismiss[:2] == ['run-shell', '-b']
+    assert shlex.split(dismiss[2]) == ['rm', '-f', '--', str(notice)]
+    assert (';' in argv) == waits
+    assert (str(closed) in argv) == waits

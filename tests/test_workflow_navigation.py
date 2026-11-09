@@ -153,10 +153,10 @@ def test_inherited_value_is_dim_after_clipping(t_mod, width, selected, as_value)
     assert ui.st.y + 'Automatically' in rendered
     assert all(t_mod._vis_len(line) <= width for line in lines)
     if selected:
-        assert ui.st.rev + ui.st.y + 'Automatically' in rendered
+        assert ui.st.focus + ui.st.y + 'Automatically' in rendered
     plain = t_mod._ANSI_RE.sub('', rendered)
     ui.st = t_mod.Style(tty=False)
-    ui.rail = '  │'
+    ui.rail = '  '
     assert '\n'.join(ui.row('Preview timing' if as_value else inherited, inherited if as_value else None, selected=selected)) == plain
 
 

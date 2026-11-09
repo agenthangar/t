@@ -119,34 +119,6 @@ def test_failed_preflight_preserves_uncommitted_source(repos):
     assert (wts[0]/'untracked').read_text() == 'carry me too\n'
 
 
-def test_receive_preflight_failure_does_not_stop_owner(zsh):
-    result = zsh(RECEIVE + r'''
-      DEV_WORKTREE_ROOT="$HOME"
-      _dev_worktree_accept_cwd() { return 0; }
-      _dev_worktree_beam_prepare() { print -u2 'push access denied'; return 1; }
-      t session move api 2 --host local --detach
-    ''')
-    assert result.returncode == 1
-    assert 'source was not stopped' in output(result)
-    assert not (zsh.home/'stop').exists()
-    assert 'START ' not in output(result)
-
-
-def test_send_preflight_failure_does_not_stop_owner(zsh):
-    from test_move_picker import SETUP
-    result = zsh(SETUP + r'''
-      _dev_self_sid() { :; }
-      _codex_thread_lookup() { printf 'codex-id\trollout\t%s\n' "$HOME/code/api"; }
-      _dev_codex_rollout_integrity() { return 0; }
-      _dev_worktree_beam_prepare() { print -u2 'preflight denied'; return 1; }
-      _tbeam_kill_owner() { print -u2 UNSAFE_STOP; }
-      t session move --session codex-id --host mini --detach
-    ''')
-    assert result.returncode == 1
-    assert 'preflight denied' in output(result)
-    assert 'UNSAFE_STOP' not in output(result)
-
-
 def test_existing_snapshot_cannot_be_overwritten(repos):
     origin, source, destination, wts, other, run = repos
     ref = publish(repos)
@@ -182,53 +154,3 @@ def test_snapshot_materializes_or_fast_forwards_exact_revision(repos, reuse):
     assert result.returncode == 0, result.stderr
     assert result.stdout.splitlines()[-1] == str(wts[1])
     assert git(wts[1], 'rev-parse', 'HEAD') == git(wts[0], 'rev-parse', 'HEAD')
-
-
-def test_receive_carries_prepared_ref_through_publish_and_landing(zsh):
-    ref = 'refs/heads/t-transfer/' + 'a' * 32
-    result = zsh(RECEIVE + r'''
-      DEV_WORKTREE_ROOT="$HOME"
-      _dev_worktree_accept_cwd() { return 0; }
-      _dev_worktree_beam_prepare() { print -r -- "$EXPECTED_REF"; }
-      functions[_snapshot_ssh]=$functions[ssh]
-      ssh() { print -r -- "$*" >> "$HOME/ssh.log"; _snapshot_ssh "$@"; }
-      _dev_beam_land_cwd() {
-        [[ $TB_TRANSFER_REF == $EXPECTED_REF ]] || return 71
-        print -r -- "$1"
-      }
-      _dev_worktree_beam_sync() { [[ $TB_TRANSFER_REF == $EXPECTED_REF ]]; }
-      _dev_worktree_beam_finish() { [[ $TB_TRANSFER_REF == $EXPECTED_REF ]]; }
-      t session move api 2 --host local --detach
-    ''', EXPECTED_REF=ref)
-    assert result.returncode == 0, output(result)
-    commands = (zsh.home/'ssh.log').read_text().splitlines()
-    assert next(i for i,c in enumerate(commands) if '_dev_worktree_beam_prepare' in c) < next(i for i,c in enumerate(commands) if '_tbeam_kill_owner' in c)
-    assert any('TB_TRANSFER_REF='+ref in c and '_dev_worktree_beam_push' in c for c in commands)
-    assert 'START remote-id' in output(result)
-
-
-@pytest.mark.parametrize('supported', [True, False])
-def test_send_requires_snapshot_peer_and_transmits_exact_ref(zsh, supported):
-    from test_move_picker import SETUP
-    ref = 'refs/heads/t-transfer/' + 'b' * 32
-    result = zsh(SETUP + r'''
-      _dev_self_sid() { :; }
-      _codex_thread_lookup() { printf 'codex-id\trollout\t%s\n' "$HOME/code/api"; }
-      _dev_codex_rollout_integrity() { return 0; }
-      _dev_worktree_beam_prepare() { print -r -- "$EXPECTED_REF"; }
-      _dev_worktree_beam_push() { [[ $TB_TRANSFER_REF == $EXPECTED_REF ]]; }
-      ssh() {
-        print -r -- "$*" >> "$HOME/ssh.log"
-        if [[ $* == *_dev_worktree_transfer_ref_valid* ]]; then [[ $SUPPORTED == yes ]]; return; fi
-        [[ $* != *_tbeam_land* ]] || print dev-api-2
-        return 0
-      }
-      t session move --session codex-id --host mini --detach
-    ''', EXPECTED_REF=ref, SUPPORTED='yes' if supported else 'no')
-    assert result.returncode == (0 if supported else 1), output(result)
-    commands = (zsh.home/'ssh.log').read_text()
-    if supported:
-        assert 'TB_TRANSFER_REF='+ref in commands
-        assert 'STOP codex-id' in output(result)
-    else:
-        assert 'STOP ' not in output(result) and '_tbeam_land' not in commands

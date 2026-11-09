@@ -4,7 +4,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        ca-certificates curl fzf gh git openssh-client procps python3 rsync \
+        ca-certificates curl fzf gcc libc6-dev gh git openssh-client procps python3 rsync \
         tmux uuid-runtime zsh \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --create-home --shell /usr/bin/zsh tester
@@ -12,10 +12,10 @@ RUN apt-get update \
 COPY --chown=tester:tester source/ /opt/t-source/
 COPY --chown=tester:tester playground/ /opt/playground/
 
-RUN chmod +x /opt/playground/entrypoint.sh \
+RUN cc -Wall -Wextra -Werror /opt/playground/fake-claude.c -o /opt/playground/fake-claude \
+    && chmod +x /opt/playground/entrypoint.sh \
         /opt/playground/playground-install \
         /opt/playground/playground-demo-agent \
-        /opt/playground/fake-claude \
     && ln -s /opt/playground/playground-install /usr/local/bin/playground-install \
     && ln -s /opt/playground/playground-demo-agent /usr/local/bin/playground-demo-agent
 

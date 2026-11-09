@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import runpy
 import sqlite3
 import sys
 import tempfile
@@ -70,11 +71,11 @@ def rollout_metadata(path):
 def index_rows(db):
     """Failure is retryable; never persist an unavailable database as empty."""
     try:
-        with sqlite3.connect(Path(db).as_uri() + '?mode=ro', uri=True, timeout=0.5) as connection:
-            rows = connection.execute(
-                "select cwd, rollout_path from threads where archived=0 "
-                "and instr(source, '\"subagent\"')=0 order by updated_at desc").fetchall()
-            return [list(row) for row in rows if all(isinstance(value, str) for value in row)]
+        read = runpy.run_path(str(Path(__file__).with_name('t_codex_store.py')))['rows']
+        rows = read(db, "select cwd, rollout_path from threads where archived=0 "
+                    "and instr(source, '\"subagent\"')=0 order by updated_at desc",
+                    initialize_sidecars=False)
+        return [list(row) for row in rows if all(isinstance(value, str) for value in row)]
     except sqlite3.Error:
         return None
 

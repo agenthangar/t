@@ -357,6 +357,26 @@
       "kind": "passthrough",
       "reason": "The validated peer command owns its normal progress and terminal; its output is preserved for the controller."
     },
+    "libexec/t_lifecycle.py:claim:time.sleep": {
+      "kind": "protocol",
+      "reason": "Private lifecycle protocol worker; stdout contains framed requests and stderr reports failures. The calling shell owns progress and terminal interaction."
+    },
+    "libexec/t_lifecycle.py:run:subprocess.run": {
+      "kind": "protocol",
+      "reason": "Private lifecycle protocol worker; stdout contains framed requests and stderr reports failures. The calling shell owns progress and terminal interaction."
+    },
+    "libexec/t_lifecycle.py:wait_released:time.sleep": {
+      "kind": "protocol",
+      "reason": "Private lifecycle protocol worker; stdout contains framed requests and stderr reports failures. The calling shell owns progress and terminal interaction."
+    },
+    "libexec/t_lifecycle.py:main:subprocess.Popen": {
+      "kind": "protocol",
+      "reason": "Private lifecycle protocol worker; stdout contains framed requests and stderr reports failures. The calling shell owns progress and terminal interaction."
+    },
+    "libexec/t_lifecycle.py:verify_ready:time.sleep": {
+      "kind": "protocol",
+      "reason": "Bounded native-writer readiness probe inside the lifecycle protocol worker; shell controller owns progress."
+    },
     "libexec/t_local_status.py:tmux:subprocess.run": {
       "kind": "protocol",
       "reason": "Bounded ownership and pane metadata probes feed the quiet tmux statusline; no terminal output or picker."
@@ -382,15 +402,21 @@
       "required": [
         "_t_with_progress \"Finding saved conversations\" _codex_candidate_snapshot",
         "_t_with_progress \"Loading conversation metadata\" _transcript_meta_batch",
-        "_t_with_progress \"Finding saved conversations across hosts\" _t_resume_history_candidates",
-        "_t_wait_for_exit \"$cpid\"",
-        "_t_wait_for_exit \"$fgpid\""
+        "_t_with_progress \"Finding saved conversations across hosts\" _t_resume_history_candidates"
       ]
     },
     {
       "file": "zsh/worktree.zsh",
       "required": [
         "_t_with_progress 'Preparing session worktree' _dev_worktree_create_impl"
+      ]
+    },
+    {
+      "file": "zsh/lifecycle.zsh",
+      "required": [
+        "_t_with_progress \"Verifying conversation lifecycle\" _t_lifecycle_run_impl",
+        "_t_wait_for_exit \"$pid\"",
+        "_t_wait_for_exit \"$fgpid\""
       ]
     }
   ]

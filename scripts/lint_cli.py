@@ -155,6 +155,10 @@ def check_group_help(group_help, command_groups):
             path = (*prefix, group)
             menu = group_help(" ".join(path))
             for verb in verbs:
+                if path in (("session",), ("remote", "session")) and verb == "history":
+                    if re.search(r"(?m)^  history\s+\S", menu):
+                        errors.append("internal history compatibility route must not be advertised")
+                    continue
                 if (not re.search(rf"(?m)^  {re.escape(verb)}\s+\S", menu)
                         and f"t {' '.join(path)} {verb}" not in " ".join(menu.split())):
                     errors.append(f"{' '.join(path)} {verb} is missing from command-group help")
@@ -869,7 +873,7 @@ def check_help_style(module, parser, contract):
                     if path not in (("help", "agents"), ("help", "aliases")):
                         errors.extend(check_help_page(" ".join(path), body, target, policy,
                                                       width=width, detailed=detailed))
-                    if not detailed and width == 80 and len(path) > 1 and path[-1] not in ("ls", "delete", "rm"):
+                    if not detailed and width == 80 and len(path) > 1 and path[-1] not in ("ls", "delete", "rm") and path not in (("session", "history"), ("remote", "session", "history")):
                         parent_body = surfaces[path[:-1]][0]
                         if not re.search(r"(?m)^ {2,}" + ("(?:list|ls)" if path[-1] == "list" else re.escape(path[-1])) + r"(?:\s|$)", parent_body) and (
                                 "t " + " ".join(path) not in " ".join(parent_body.split())):

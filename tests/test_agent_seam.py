@@ -15,6 +15,7 @@ import os
 import pathlib
 import pty
 import re
+from _picker_helpers import semantic_chrome
 import select
 import shlex
 import shutil
@@ -345,7 +346,24 @@ def zsh(tmp_path):
                "PATH": f"{bins}:{os.environ.get('PATH', '')}", "TERM": "dumb",
                "TMUX_TMPDIR": os.environ.get("TMUX_TMPDIR", "/tmp"), "T_RECOVERY_DISABLE": "1", "T_NO_AUTORELOAD": "1",
                "TMUX_LOG": str(log), "FAKE_PS": str(tmp_path / "ps.txt"), **extra}
-        argv = ["zsh", "-c", f"source {ZSHRC} >/dev/null 2>&1; {snippet}"]
+        # These command/argv tests use a synthetic process table. Exercise shell
+        # effects and preflight here; real readiness/native ownership are covered
+        # by test_session_lifecycle and test_lifecycle_transfer_e2e.
+        effects = r"""
+        # Placeholder shutdown is verified by isolated-tmux and dedicated guard tests.
+        if [[ ${REAL_TMUX_PLACEHOLDER:-} != 1 ]]; then
+          _dev_stop_session_placeholder() { print -r -- "=$1:|off"; }
+        fi
+        _dev_new_session_claimed() {
+          _dev_launch_preflight "$1" "$2" || return $?
+          _dev_new_session_effect "$@"
+        }
+        _dev_resume_session_claimed() {
+          _dev_launch_preflight "$1" "$2" "$3" || return $?
+          _dev_resume_session_effect "$@"
+        }
+        """
+        argv = ["zsh", "-c", f"source {ZSHRC} >/dev/null 2>&1; {effects}; {snippet}"]
         if not _tty:
             return subprocess.run(argv, env=env, capture_output=True, text=True, timeout=60)
         return _run_under_pty(argv, env)
@@ -495,13 +513,13 @@ def test_zsh_new_session_stamps_the_agent_and_launch_line(zsh):
     log = zsh.log.read_text().splitlines()
     assert "set-environment -t =dev-api-3 DEV_AGENT codex" in log
     assert not any("CLAUDE_RESUME_ID" in ln for ln in log)          # codex mints its own id
-    assert "respawn-pane -k -t =dev-api-3: env SHELL_SESSIONS_DISABLE=1 zsh -lic setopt no_monitor no_notify; codex --no-daemon" in log
+    assert any(line.startswith("respawn-pane -t =dev-api-3: env SHELL_SESSIONS_DISABLE=1 zsh -lic setopt no_monitor no_notify; codex --no-daemon") for line in log)
     zsh.log.write_text("")
     r = zsh("_dev_new_session dev-api-4 $HOME/code/api dev/x 1 claude")
     log = zsh.log.read_text().splitlines()
     assert "set-environment -t =dev-api-4 DEV_AGENT claude" in log
     assert "set-environment -t =dev-api-4 CLAUDE_RESUME_ID 0f0e0d0c-0b0a-0908-0706-050403020100" in log
-    assert "respawn-pane -k -t =dev-api-4: env SHELL_SESSIONS_DISABLE=1 zsh -lic setopt no_monitor no_notify; claude --session-id 0f0e0d0c-0b0a-0908-0706-050403020100" in log
+    assert any(line.startswith("respawn-pane -t =dev-api-4: env SHELL_SESSIONS_DISABLE=1 zsh -lic setopt no_monitor no_notify; claude --session-id 0f0e0d0c-0b0a-0908-0706-050403020100") for line in log)
     zsh.log.write_text("")
     # the default (4 args, every pre-seam caller) is claude
     zsh("_dev_new_session dev-api-5 $HOME/code/api dev/x 1")
@@ -513,10 +531,10 @@ def test_zsh_resume_session_uses_the_agent_resume_line(zsh):
     log = zsh.log.read_text().splitlines()
     assert "set-environment -t =dev-api-7 CLAUDE_RESUME_ID thr_9" in log
     assert "set-environment -t =dev-api-7 DEV_AGENT codex" in log
-    assert "respawn-pane -k -t =dev-api-7: env SHELL_SESSIONS_DISABLE=1 zsh -lic setopt no_monitor no_notify; codex resume thr_9 --no-daemon" in log
+    assert any(line.startswith("respawn-pane -t =dev-api-7: env SHELL_SESSIONS_DISABLE=1 zsh -lic setopt no_monitor no_notify; codex resume thr_9 --no-daemon") for line in log)
     zsh.log.write_text("")
     zsh("_dev_resume_session dev-api-8 $HOME/code/api sid-1")
-    assert "respawn-pane -k -t =dev-api-8: env SHELL_SESSIONS_DISABLE=1 zsh -lic setopt no_monitor no_notify; claude -r sid-1" in zsh.log.read_text()
+    assert "respawn-pane -t =dev-api-8: env SHELL_SESSIONS_DISABLE=1 zsh -lic setopt no_monitor no_notify; claude -r sid-1" in zsh.log.read_text()
 
 
 @pytest.mark.parametrize("launch", ["new", "resume"])
@@ -528,6 +546,7 @@ def test_failed_tmux_creation_never_sends_keys_into_an_existing_slot(zsh, tmp_pa
                else "_dev_resume_session dev-api-3 $HOME/code/api saved-id codex")
     result = zsh(command)
     assert result.returncode == 1, result.stderr
+    assert "run t doctor on this host" in result.stderr
     calls = zsh.log.read_text()
     assert "new-session -d -s dev-api-3" in calls
     assert "send-keys" not in calls and "respawn-pane" not in calls
@@ -715,9 +734,9 @@ def test_zsh_model_defaults_reach_new_tmux_sessions_and_not_resumes(zsh):
             "_dev_resume_session dev-api-5 $HOME/code/api thread-id codex")
     assert r.returncode == 0, r.stderr
     lines = zsh.log.read_text().splitlines()
-    assert "respawn-pane -k -t =dev-api-3: env SHELL_SESSIONS_DISABLE=1 zsh -lic setopt no_monitor no_notify; codex --model local/model -c model_reasoning_effort=ultra --no-daemon" in lines
-    assert any("claude --session-id " in line and line.endswith(" --model sonnet --effort max") for line in lines)
-    assert "respawn-pane -k -t =dev-api-5: env SHELL_SESSIONS_DISABLE=1 zsh -lic setopt no_monitor no_notify; codex resume thread-id --no-daemon" in lines
+    assert any(line.startswith("respawn-pane -t =dev-api-3: env SHELL_SESSIONS_DISABLE=1 zsh -lic setopt no_monitor no_notify; codex --model local/model -c model_reasoning_effort=ultra --no-daemon") for line in lines)
+    assert any("claude --session-id " in line and line.split(" ; pipe-pane", 1)[0].endswith(" --model sonnet --effort max") for line in lines)
+    assert any(line.startswith("respawn-pane -t =dev-api-5: env SHELL_SESSIONS_DISABLE=1 zsh -lic setopt no_monitor no_notify; codex resume thread-id --no-daemon") for line in lines)
 
 
 @pytest.mark.parametrize("agent", ["claude", "codex"])
@@ -742,7 +761,11 @@ def test_zsh_foreground_uses_native_agent_outside_path(zsh, tmp_path, agent, res
     native.parent.mkdir(parents=True)
     native.write_text('#!/bin/sh\nprintf "NATIVE\\n%s\\n" "$0"; printf "<%s>\\n" "$@"\n')
     native.chmod(0o755)
-    command = ("_t_pop web 3" if resume else
+    # This test checks executable selection, with close/preflight policy tested
+    # by the lifecycle engine and the public native-process tests.
+    command = ('_dev_session_sid() { print saved-id; }; '
+               '_t_lifecycle_run() { [[ $1 == close ]] || return 91; }; '
+               '_dev_foreground_resume_preflight() { :; }; _t_pop web 3' if resume else
                f"DEV_AGENT_DEFAULT={agent}; DEV_WORKTREE[web]=0; "
                "_dev_repo_prepare() { :; }; _t_dev web new --fg")
     result = zsh(command, PATH=f"{tmp_path / 'stubbin'}:/usr/bin:/bin",
@@ -1126,7 +1149,7 @@ def test_zsh_codex_threads_missing_db_is_silent(zsh):
     (zsh.home / ".codex").mkdir()
     (zsh.home / ".codex" / "state_5.sqlite").write_text("not a database")
     r = zsh("_codex_threads_for_cwd /nowhere; echo rc=$?")
-    assert r.stdout.strip() == "rc=0" and r.stderr == ""
+    assert r.stdout.strip() == "rc=0" and "Codex index unavailable" in r.stderr
 
 
 def test_zsh_transcript_sid_and_agent(zsh):
@@ -1430,14 +1453,14 @@ def test_zsh_agent_wrap_spawns_the_recorded_agent(zsh, tmp_path):
     stub.chmod(0o755)
     r = zsh("codex; echo rc=$?")
     log = zsh.log.read_text().splitlines()
-    assert "respawn-pane -k -t =dev-api-3: env SHELL_SESSIONS_DISABLE=1 zsh -lic setopt no_monitor no_notify; codex resume thr_7 --no-daemon" in log
+    assert any(line.startswith("respawn-pane -t =dev-api-3: env SHELL_SESSIONS_DISABLE=1 zsh -lic setopt no_monitor no_notify; codex resume thr_7 --no-daemon") for line in log)
     assert "set-environment -t =dev-api-3 DEV_AGENT codex" in log
     # a payload WITHOUT the agent field (an older t push) resumes as claude
     stub.write_text('#!/bin/bash\nprintf "SPAWN\\tdev-api-4\\t%s\\t%s\\n" "$HOME/code/.worktrees/api/4" "sid-9" > "$CLAUDE_TPUSH_ATTACH"\n')
     zsh.log.write_text("")
     zsh("codex")
     log = zsh.log.read_text().splitlines()
-    assert "respawn-pane -k -t =dev-api-4: env SHELL_SESSIONS_DISABLE=1 zsh -lic setopt no_monitor no_notify; claude -r sid-9" in log
+    assert any(line.startswith("respawn-pane -t =dev-api-4: env SHELL_SESSIONS_DISABLE=1 zsh -lic setopt no_monitor no_notify; claude -r sid-9") for line in log)
 
 
 def test_zsh_repo_slots_sees_codex_only_slots(zsh):
@@ -1519,13 +1542,15 @@ def test_zsh_beam_sync_transcript_ships_a_rollout_relative_to_codex_home(zsh, tm
 # special parameter anywhere in .zshrc, because the failure is invisible until a
 # command happens to run after the declaration.
 
-def test_zsh_kill_one_runs_tmux_kill_session(zsh):
-    # force=1 skips the confirm prompt (there is no TTY here); the stub logs argv
-    r = zsh("_dev_kill_one dev-api-3 1")
+def test_zsh_kill_one_uses_shared_close_policy(zsh):
+    # force=1 skips the confirmation; actual immutable-target stop and writer
+    # release are exercised by the public session lifecycle tests.
+    r = zsh('_t_lifecycle_run() { print -r -- "POLICY:$1:$2"; }; '
+            '_dev_kill_one dev-api-3 1')
     assert r.returncode == 0, r.stderr
     assert "command not found" not in r.stderr
     assert "Killed dev-api-3" in r.stdout
-    assert "kill-session -t =dev-api-3:" in zsh.log.read_text().splitlines()
+    assert "POLICY:close:dev-api-3" in r.stdout
 
 
 def test_rooted_cleanup_preserves_agent_trees_and_launchers(zsh, tmp_path):
@@ -1904,6 +1929,110 @@ def test_zsh_open_rejects_an_unknown_flag_instead_of_naming_a_slot_after_it(zsh)
     assert "unknown flag" not in r.stderr, r.stderr
 
 
+@pytest.fixture
+def codex_rollout_wal(zsh, tmp_path):
+    """Healthy, checkpointed WAL stores plus a portable Apple CANTOPEN injector."""
+    codex_home = zsh.home / ".codex"
+    codex_home.mkdir()
+    rollout = codex_home / "rollout.jsonl"
+    rollout.write_text(json.dumps({"type": "session_meta", "payload": {"id": SID}}) + "\n")
+    stores = (
+        ("state_5.sqlite", "create table threads (id text, rollout_path text, history_mode text)",
+         "insert into threads values (?, ?, 'paginated')", (SID, str(rollout))),
+        ("thread_history_1.sqlite", "create table thread_history_projection_state "
+         "(thread_id text, next_rollout_byte_offset integer)",
+         "insert into thread_history_projection_state values (?, ?)",
+         (SID, rollout.stat().st_size)),
+    )
+    for name, schema, insert, parameters in stores:
+        db = sqlite3.connect(codex_home / name)
+        try:
+            db.execute("pragma journal_mode=wal")
+            db.execute(schema)
+            db.execute(insert, parameters)
+            db.commit()
+            assert db.execute("pragma wal_checkpoint(truncate)").fetchone() == (0, 0, 0)
+        finally:
+            db.close()
+        # Apple SQLite can retain empty sidecars after close. Only disposable,
+        # fully checkpointed fixture files are removed; no live store is touched.
+        for suffix in ("-wal", "-shm"):
+            pathlib.Path(str(codex_home / name) + suffix).unlink(missing_ok=True)
+
+    shim = tmp_path / "sqlite_cantopen.py"
+    shim.write_text('''import json, os, runpy, sqlite3, sys
+from pathlib import Path
+from urllib.parse import parse_qs, unquote, urlsplit
+
+connect = sqlite3.connect
+def apple_connect(database, *args, **kwargs):
+    uri = urlsplit(str(database))
+    name = Path(unquote(uri.path)).name
+    mode = parse_qs(uri.query).get('mode', [''])[0]
+    if name == os.environ['CANTOPEN_DATABASE']:
+        with open(os.environ['SQLITE_ATTEMPTS'], 'a') as stream:
+            stream.write(json.dumps({'database': name, 'mode': mode}) + '\\n')
+        if mode == 'ro' or os.environ.get('CANTOPEN_PERSISTENT') == '1':
+            error = sqlite3.OperationalError('unable to open database file')
+            if os.environ.get('CANTOPEN_WITH_CODE') == '1':
+                error.sqlite_errorcode = sqlite3.SQLITE_CANTOPEN
+            raise error
+    return connect(database, *args, **kwargs)
+
+sqlite3.connect = apple_connect
+sys.argv = sys.argv[1:]
+if sys.argv[0] == '-':
+    exec(compile(sys.stdin.read(), '<rollout-check>', 'exec'), {'__name__': '__main__'})
+else:
+    runpy.run_path(sys.argv[0], run_name='__main__')
+''')
+    # Install after sourcing the shell: only the checker under test is injected.
+    invoke = f"python3() {{ command {shlex.quote(sys.executable)} {shlex.quote(str(shim))} \"$@\"; }}; "
+    attempts = tmp_path / "sqlite-attempts.jsonl"
+    before = {name: (codex_home / name).read_bytes() for name, *_ in stores}
+    return codex_home, invoke, attempts, before
+
+
+@pytest.mark.parametrize("database", ["state_5.sqlite", "thread_history_1.sqlite"])
+@pytest.mark.parametrize("with_code", [False, True], ids=["legacy-error", "sqlite-errorcode"])
+def test_beam_accepts_healthy_codex_wal_after_readonly_cantopen(zsh, codex_rollout_wal, database, with_code):
+    """Regression for #374: healthy history must not require preexisting WAL sidecars."""
+    home, invoke, attempts, before = codex_rollout_wal
+    result = zsh(
+        invoke + f'_dev_codex_rollout_integrity {SID}',
+        CANTOPEN_DATABASE=database, CANTOPEN_WITH_CODE=str(int(with_code)),
+        SQLITE_ATTEMPTS=str(attempts),
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stderr == ""
+    assert [json.loads(line)["mode"] for line in attempts.read_text().splitlines()] == ["ro", "rw"]
+    assert {name: (home / name).read_bytes() for name in before} == before
+
+
+@pytest.mark.parametrize("database", ["state_5.sqlite", "thread_history_1.sqlite"])
+def test_beam_pull_unreadable_codex_database_keeps_source_owner(zsh, codex_rollout_wal, database):
+    home, invoke, attempts, before = codex_rollout_wal
+    row = f"{SID}\t{home}\tapi-3\tdetached\tactive\ttest\tcodex"
+    result = zsh(
+        invoke + 'rsync() { print -u2 SHOULD_NOT_SYNC; }; '
+        'ssh() { case "$*" in '
+        f'  *_dev_session_rows*) print -r -- "{row}" ;; '
+        f'  *_t_lifecycle_run*) _dev_codex_rollout_integrity {SID} ;; '
+        '  *) print -u2 SHOULD_NOT_MUTATE; return 99 ;; '
+        'esac; }; '
+        '_dev_resume_session() { print -u2 SHOULD_NOT_START; }; '
+        '_dev_pull mini target api 3 ""',
+        CANTOPEN_DATABASE=database, CANTOPEN_PERSISTENT="1",
+        SQLITE_ATTEMPTS=str(attempts),
+    )
+    assert result.returncode == 1, result.stderr
+    assert "could not verify paginated Codex rollout: unable to open database file" in result.stderr
+    assert "peer failed" in result.stderr
+    assert "SHOULD_NOT_" not in result.stdout + result.stderr
+    assert attempts.exists(), "the real rollout reader must be exercised"
+    assert {name: (home / name).read_bytes() for name in before} == before
+
+
 def test_beam_refuses_paginated_codex_rollout_behind_sqlite_checkpoint(zsh, tmp_path):
     codex_home = zsh.home / ".codex"
     codex_home.mkdir()
@@ -1925,7 +2054,7 @@ def test_beam_refuses_paginated_codex_rollout_behind_sqlite_checkpoint(zsh, tmp_
         'DEV_HANDOFF[codex]=t; '
         f'_codex_thread_lookup() {{ print -r -- "{SID}\t{rollout}\t{zsh.home}"; }}; '
         '_tbeam_kill_owner() { print -r -- SHOULD_NOT_KILL; }; '
-        f'_t_beam -s {SID} mini; print -r -- "beam=$?"'
+        f'_dev_codex_rollout_integrity {SID} && _tbeam_kill_owner; print -r -- "beam=$?"'
     )
     assert "beam=1" in r.stdout and "SHOULD_NOT_KILL" not in r.stdout
     assert "behind its SQLite checkpoint" in r.stderr
@@ -1970,7 +2099,7 @@ def test_beam_pull_checks_remote_codex_rollout_before_killing_owner(zsh):
         'ssh() { '
         '  case "$*" in '
         f'    *_dev_session_rows*) print -r -- "{row}" ;; '
-        '    *_dev_codex_rollout_integrity*) print -u2 -- damaged-rollout; return 1 ;; '
+        '    *_t_lifecycle_run*) print -u2 -- damaged-rollout; return 1 ;; '
         '    *_tbeam_kill_owner*) print -r -- SHOULD_NOT_KILL ;; '
         '  esac; '
         '}; '
@@ -2166,13 +2295,13 @@ def test_zsh_resume_picker_shows_the_display_column_for_every_row(zsh, tmp_path)
     assert all(row.startswith(" 3  ") or row.startswith(" 4  ") for row in rows)
     assert {row[4:12] for row in rows} == {"✱ claude", "⬡ codex "}
     # The header exposes every available filter; agent names remain in the rows.
-    header = (tmp_path / "fzf.log.header").read_text().splitlines()
+    header = semantic_chrome((tmp_path / "fzf.log.header").read_text()).splitlines()
     controls = "\n".join(header)
-    for control in ("Ctrl-F filters", "Ctrl-A off", "Ctrl-L on", "0 hidden",
-                    "Filters OFF", "Sort: last turn", "Alt-T last turn", "Alt-R repo",
-                    "Alt-G agent", "Alt-O host", "Alt-V session"):
+    for control in ("Ctrl-F toggle", "Ctrl-X reset", "Ctrl-G agent", "0 hidden",
+                    "Filters OFF", "Sort: last turn", "Ctrl-S toggle", "Ctrl-Y next",
+                    "last turn", "repo", "agent", "host", "session"):
         assert control in controls
-    assert "Ctrl-D" not in controls  # Resume has no historical interface metadata.
+    assert "Ctrl-D merged" in controls  # Resume uses this key for its merged filter.
 
 
 def test_zsh_resume_pick_revives_the_row_with_its_own_agent(zsh, tmp_path):
@@ -2199,7 +2328,7 @@ def test_zsh_resume_pick_revives_the_row_with_its_own_agent(zsh, tmp_path):
     r = zsh("_t_resume api 3; echo rc=$?", _tty=True, FZF_LOG=str(log), FZF_PICK="login bug")
     assert "rc=0" in r.stdout, r.stdout
     tlog = zsh.log.read_text().splitlines()
-    assert "respawn-pane -k -t =dev-api-3: env SHELL_SESSIONS_DISABLE=1 zsh -lic setopt no_monitor no_notify; claude -r c1" in tlog
+    assert any(line.startswith("respawn-pane -t =dev-api-3: env SHELL_SESSIONS_DISABLE=1 zsh -lic setopt no_monitor no_notify; claude -r c1 ; pipe-pane") for line in tlog)
     assert "set-environment -t =dev-api-3 DEV_AGENT claude" in tlog
 
 
@@ -2238,9 +2367,7 @@ def test_zsh_resume_never_resumes_a_conversation_live_in_another_slot(zsh, tmp_p
 
 
 def test_zsh_resume_host_lands_the_pick_on_that_host(zsh, tmp_path):
-    """--host H revives a dead pick ON H through the beam send path: the transcript is
-    rsync'd there and _tbeam_land runs over ssh with the conversation in TB_* env —
-    nothing is resumed locally."""
+    """Saved selection passes exact identity and destination to the restore engine."""
     log = tmp_path / "remote.log"
     ssh = ('#!/bin/bash\nprintf "ssh %s\\n" "$*" >> "$REMOTE_LOG"\n'
            'case "$*" in *_tbeam_land*) echo "some noise"; echo dev-api-3 ;; esac\n')
@@ -2250,14 +2377,14 @@ def test_zsh_resume_host_lands_the_pick_on_that_host(zsh, tmp_path):
     proj = zsh.home / ".claude" / "projects" / re.sub(r"[^A-Za-z0-9]", "-", wt3)
     proj.mkdir(parents=True)
     (proj / "c1.jsonl").write_text('{"type":"user","message":{"content":"fix the login bug"}}\n')
-    r = zsh("REMOTE_HOSTS[mini]=mini.local; _dev_rows_all() { :; }; _t_resume api 3 --host mini; echo rc=$?",
+    r = zsh('REMOTE_HOSTS[mini]=mini.local; _dev_rows_all() { :; }; '
+            '_t_lifecycle_run() { print -r -- "$*" > "$REMOTE_LOG"; print dev-api-3; }; '
+            '_t_resume api 3 --host mini; echo rc=$?',
             REMOTE_LOG=str(log))
     assert "rc=0" in r.stdout and "Landed in dev-api-3 on mini" in r.stdout, (r.stdout, r.stderr)
     calls = log.read_text().splitlines()
-    assert any(c.startswith("rsync ") and "mini.local:.claude/projects/" in c for c in calls)
-    land = [c for c in calls if "_tbeam_land" in c]
-    assert len(land) == 1 and "mini.local" in land[0] and "TB_SID=c1" in land[0] and "TB_MODE=tmux" in land[0]
-    assert "TB_ATTACH" not in land[0]                       # no TTY → detached landing
+    assert len(calls) == 1 and calls[0].startswith('restore  mini.local ')
+    assert ' c1 claude api 3 1' in calls[0]
     assert "send-keys" not in zsh.log.read_text()           # nothing resumed here
     r = zsh("_t_resume api 3 --host; echo rc=$?")
     assert "rc=1" in r.stdout and "--host takes a host" in r.stderr
@@ -2283,7 +2410,7 @@ def test_fast_mode_reaches_new_tmux_and_foreground_launches(zsh, agent, fast, ar
     assert r.stdout.count('ARG\n' + args) == 2, r.stdout
     assert f'DEV_FAST[{agent}]={fast}' in r.stdout
     resume = f'{agent} resume saved-id --no-daemon' if agent == 'codex' else 'claude -r saved-id'
-    assert f'respawn-pane -k -t =dev-web-9: env SHELL_SESSIONS_DISABLE=1 zsh -lic setopt no_monitor no_notify; {resume}' in zsh.log.read_text()
+    assert f'respawn-pane -t =dev-web-9: env SHELL_SESSIONS_DISABLE=1 zsh -lic setopt no_monitor no_notify; {resume}' in zsh.log.read_text()
 
 
 @pytest.mark.parametrize('live', [False, True])
@@ -2467,8 +2594,8 @@ def test_open_local_multi_picker(zsh, tmp_path, tabs):
     snippet = r'''
       DEV_REPOS[alias]=$DEV_REPOS[api]
       _dev_session_rows() {
-        printf 'sid1\t%s\tapi-2\tdetached\tactive\tFirst task\tcodex\n' "$HOME/code/api"
-        printf 'sid2\t%s\talias-4\tdetached\tactive\tSecond task\tclaude\n' "$HOME/code/api"
+        printf 'sid1\t%s\tapi-2\tdetached\tactive\tFirst task\tcodex\tmodel\t2026-11-07T16:00:00Z\n' "$HOME/code/api"
+        printf 'sid2\t%s\talias-4\tdetached\tactive\tSecond task\tclaude\tmodel\t2026-11-06T16:00:00Z\n' "$HOME/code/api"
         printf 'sid3\t%s\tweb-3\tdetached\tactive\tOther repo\tcodex\n' "$HOME/code/web"
       }
       _dev_open_tab() { print -r -- "TAB $*"; TAB_RESULT; }
@@ -2482,12 +2609,12 @@ def test_open_local_multi_picker(zsh, tmp_path, tabs):
     calls = zsh.log.read_text()
     assert "attach-session -t =dev-api-2:" in calls
     assert "new-session" not in calls and "dev-web-3" not in calls
-    args = log.read_text()
-    assert "--multi" in args and "space:toggle+down" in args
-    assert "Enter open/k kill/Esc · Space/Tab ✓" in args
-    for control in ("Ctrl-F filters", "Ctrl-A off", "Ctrl-L on"):
+    args = semantic_chrome(log.read_text())
+    assert "--multi" in args and "space:put" in args
+    assert "Enter open/Esc · Tab✓ · Ctrl-K kill" in args
+    for control in ("Ctrl-F toggle", "Ctrl-X reset", "Ctrl-G agent"):
         assert control in args
-    assert "Filters ON: unattached" in args
+    assert "Filters ON" in args and "unattached" in args
 
 
 def test_open_picker_cancel_does_not_create_session(zsh, tmp_path):
@@ -2586,7 +2713,7 @@ def test_open_new_codex_keeps_defaults_and_uses_private_backend(zsh, settings, a
     calls = zsh.log.read_text().splitlines()
     launches = [c for c in calls if c.startswith('respawn-pane ')]
     assert len(launches) == 1
-    assert launches[0].endswith('; ' + args + ' --no-daemon')
+    assert launches[0].split(' ; pipe-pane', 1)[0].endswith('; ' + args + ' --no-daemon')
     assert not any('app-server' in c or 'restart' in c for c in calls)
 
 
@@ -2664,8 +2791,12 @@ def test_session_startup_is_quiet_and_logged(zsh, tmp_path, mode, agent, fails):
     logfile = zsh.home / '.tmux-logs' / f'{session}.log'
     try:
         result = zsh('_dev_launch_preflight() { return 0; }; '
-                     '_dev_history_record() { :; }; ' + command,
-                     ZDOTDIR=str(zsh.home))
+                     '_dev_history_record() { :; }; '
+                     'functions[_fixture_startup]=$functions[_dev_launch_startup_check]; '
+                     '_dev_launch_startup_check() { local i; for i in {1..100}; do '
+                     '[[ -f $HOME/agent-args ]] && break; sleep 0.05; done; '
+                     '_fixture_startup "$@"; }; ' + command,
+                     ZDOTDIR=str(zsh.home), REAL_TMUX_PLACEHOLDER="1")
         assert result.returncode == (1 if fails else 0), (result.stdout, result.stderr)
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
@@ -2693,3 +2824,14 @@ def test_session_startup_is_quiet_and_logged(zsh, tmp_path, mode, agent, fails):
             assert 'AGENT DONE' in logfile.read_text()
     finally:
         run('kill-server')
+
+
+@pytest.mark.parametrize('mode', ['new', 'resume'])
+def test_failed_placeholder_barrier_preserves_changed_session(zsh, mode):
+    command = ('_dev_new_session dev-api-3 $HOME/code/api dev/x 1 codex' if mode == 'new'
+               else '_dev_resume_session dev-api-3 $HOME/code/api saved-id codex')
+    result = zsh('_dev_stop_session_placeholder() { return 1; }; ' + command)
+    assert result.returncode == 1
+    calls = zsh.log.read_text()
+    assert 'new-session' in calls
+    assert 'respawn-pane' not in calls and 'kill-session' not in calls
