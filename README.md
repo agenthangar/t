@@ -122,7 +122,7 @@ Links-only updates do not edit shell startup files.
 For an older or incomplete installation, run:
 
 ```sh
-t doctor                    # read-only diagnostics; no config menu, Git fetch, or gh telemetry
+t doctor                    # read-only setup and launch-resource diagnostics
 t doctor --repair           # repair zsh startup and a missing ~/bin/t link
 # Then run the exact source command printed by repair, or open a new terminal.
 ```
@@ -135,6 +135,14 @@ manual review. It does not install agents, log in, change trust/permissions, or 
 tmux. Other diagnostic findings retain their suggested explicit actions. Startup
 inspection reads the rc file without executing user shell code; after loading it,
 `whence -w t` should report `t: function`.
+
+For fork/open failures on another host, run `t doctor` there immediately after
+the failure, or `t hosts run HOST t system diagnose`. Keep the exact launch error
+with the report. The **Launch resources** section shows PTY usage/limits, process
+limits, and recent macOS kernel PTY failure counts; unavailable evidence is
+labeled. It does not allocate test terminals, restart tmux, execute shell startup,
+fetch Git refs, or enable GitHub CLI telemetry. A normal snapshot cannot rule out
+an earlier transient failure. `--repair` fixes shell wiring, not kernel resources.
 
 ```sh
 t agent install            # choose and install agent CLIs; review their vendor commands

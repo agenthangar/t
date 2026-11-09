@@ -9649,6 +9649,80 @@ def cmd_trust(cfg, args):
     return 0
 
 
+def _doctor_launch_facts(run, system):
+    """Bounded, observational launch evidence; never allocate a PTY or fork a probe."""
+    import resource
+
+    facts = {"system": system}
+    for name, key in (("process_limit", resource.RLIMIT_NPROC),
+                      ("file_limit", resource.RLIMIT_NOFILE)):
+        try:
+            soft, hard = resource.getrlimit(key)
+            facts[name] = "/".join("unlimited" if n == resource.RLIM_INFINITY else str(n)
+                                   for n in (soft, hard))
+        except (OSError, ValueError):
+            facts[name] = "unavailable"
+    processes = run(["ps", "-A", "-o", "uid="], timeout=3)
+    if processes is not None:
+        uids = processes.split()
+        if all(uid.isdigit() for uid in uids):
+            facts["user_processes"] = sum(int(uid) == os.getuid() for uid in uids)
+    if system == "Darwin":
+        maximum = run(["sysctl", "-n", "kern.tty.ptmx_max"], timeout=3)
+        if maximum and maximum.isdigit():
+            facts["pty_max"] = int(maximum)
+        try:
+            facts["pty_count"] = sum(bool(re.fullmatch(r"ttys\d+", name))
+                                     for name in os.listdir("/dev"))
+        except OSError:
+            pass
+        events = run(["/usr/bin/log", "show", "--last", "15m", "--style", "compact",
+                      "--predicate", 'process == "kernel" AND eventMessage CONTAINS "ptmx_get_ioctl"'],
+                     timeout=5)
+        facts["kernel_readable"] = events is not None
+        if events is not None:
+            facts["pty_limit_events"] = events.count("failed due to ptmx_max limit")
+            facts["pty_race_events"] = sum("ptmx_get_ioctl failed because minor number" in line
+                                            and "was out of range" in line for line in events.splitlines())
+    elif system == "Linux":
+        for key, leaf in (("pty_count", "nr"), ("pty_max", "max")):
+            try:
+                facts[key] = int(Path("/proc/sys/kernel/pty", leaf).read_text().strip())
+            except (OSError, ValueError):
+                pass
+    return facts
+
+
+def _doctor_launch_lines(facts):
+    """Render aggregate evidence without exposing process argv or raw kernel logs."""
+    lines = ["processes owned by this user: %s" % facts.get("user_processes", "unavailable"),
+             "doctor process limits (soft/hard): processes %s · open files %s"
+             % (facts.get("process_limit", "unavailable"), facts.get("file_limit", "unavailable")),
+             "tmux server limits may differ from this diagnostic process",
+             "PTY %s: %s · configured maximum: %s" % (
+                 "device nodes (snapshot)" if facts.get("system") == "Darwin" else "allocation (snapshot)",
+                 facts.get("pty_count", "unavailable"), facts.get("pty_max", "unavailable"))]
+    count, maximum = facts.get("pty_count"), facts.get("pty_max")
+    if count is not None and maximum and count >= maximum * 0.9:
+        lines.append("⚠ PTY usage is near the configured maximum; close only known unused terminals/sessions")
+    if facts.get("system") == "Darwin":
+        if not facts.get("kernel_readable"):
+            lines.append("recent kernel PTY evidence: unavailable (permission, timeout, or command failure)")
+        elif facts.get("pty_limit_events") or facts.get("pty_race_events"):
+            lines.append("kernel PTY events (last 15m): limit reached %d · allocation out of range %d"
+                         % (facts["pty_limit_events"], facts["pty_race_events"]))
+            if facts.get("pty_race_events"):
+                lines.append("⚠ macOS reported a PTY allocation race; this can occur below the configured limit")
+            if facts.get("pty_limit_events"):
+                lines.append("⚠ macOS reported PTY exhaustion; close only known unused terminals/sessions")
+        else:
+            lines.append("recent kernel PTY evidence: no matching failures in the last 15m")
+    lines.extend(["A normal snapshot does not rule out an earlier transient launch failure.",
+                  "After a failure, keep its exact error and run t doctor on the affected host.",
+                  "Do not kill the shared tmux server: that stops unrelated sessions."])
+    return lines
+
+
 def _doctor_findings(facts):
     """Pure diagnosis over the gathered facts → list of finding lines.
 
@@ -9660,6 +9734,8 @@ def _doctor_findings(facts):
     effective renderer per _effective_tui).
     """
     out = []
+    if any(line.startswith("⚠") for line in _doctor_launch_lines(facts.get("launch_resources", {}))):
+        out.append("⚠ PTY pressure or kernel allocation failures observed — see Launch resources")
     if facts.get("shell_setup") not in (None, "configured"):
         out.append("⚠ zsh startup %s — run t doctor --repair, then source the reported rc file"
                    % facts["shell_setup"])
@@ -9767,6 +9843,7 @@ def cmd_doctor(cfg, args):
 
     repair_rc = _repair_shell_setup() if getattr(args, "repair", False) else 0
     st = Style()
+    probe_errors = {}
 
     @_spinner('Waiting for command')
     def run(cmd, timeout=8):
@@ -9776,10 +9853,13 @@ def cmd_doctor(cfg, args):
         env = ({**os.environ, "GH_TELEMETRY": "disabled", "GH_NO_UPDATE_NOTIFIER": "1"}
                if cmd[0] == "gh" else None)
         try:
-            r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                stdin=subprocess.DEVNULL, text=True, timeout=timeout, env=env)
-        except (OSError, subprocess.TimeoutExpired):
+        except (OSError, subprocess.TimeoutExpired) as error:
+            probe_errors[tuple(cmd)] = str(error)
             return None
+        if r.returncode:
+            probe_errors[tuple(cmd)] = r.stderr or "command failed (exit %d)" % r.returncode
         return r.stdout.strip() if r.returncode == 0 else None
 
     def ver(out):
@@ -9827,6 +9907,11 @@ def cmd_doctor(cfg, args):
         ("fzf", ["fzf", "--version"])]]
     print("  " + " · ".join(vers))
 
+    section("Launch resources")
+    launch_resources = _doctor_launch_facts(run, un.system)
+    for line in _doctor_launch_lines(launch_resources):
+        print("  " + line)
+
     # the agent CLIs: installed? logged in? (codex: is its hook wired?) — t install fixes
     section("Agents")
     facts_agents = _install_probe()
@@ -9873,6 +9958,7 @@ def cmd_doctor(cfg, args):
     # t: show active and canonical sources independently.
     section("t installation")
     facts = {"in_tmux": bool(os.environ.get("TMUX")),
+             "launch_resources": launch_resources,
              "term_program": os.environ.get("TERM_PROGRAM"), "tui": tui,
              "agents": facts_agents, "codex_hook": codex_hook, "codex_used": codex_used,
              "codex_hook_trusted": codex_trusted, "perm_sync": perm_sync,
@@ -9976,8 +10062,15 @@ def cmd_doctor(cfg, args):
                                    else "real file (not repo-managed)" if facts["conf_exists"]
                                    else "absent"))
     if not tmux_running:
-        print("  server         not running")
+        print("  server         unavailable (not running or connection failed)")
+        error = probe_errors.get(("tmux", "list-sessions", "-F", "#{session_name}"), "unknown")
+        # Preserve the connection failure without letting terminal controls in
+        # an external error stream repaint the report.
+        error = " ".join("".join(c for c in error if c.isprintable() or c.isspace()).split())[:400]
+        print("  connection     %s" % error)
     else:
+        server = run(["tmux", "display-message", "-p", "#{version} · pid #{pid} · socket #{socket_path}"])
+        print("  server build   %s" % (server or "unavailable"))
         mouse = run(["tmux", "show", "-g", "-v", "mouse"])
         focus = run(["tmux", "show", "-g", "-v", "focus-events"])
         hist = run(["tmux", "show", "-g", "-v", "history-limit"])
@@ -13423,7 +13516,7 @@ PERIODIC CHECKS
     sp.add_argument("-q", "--quiet", action="store_true", help="print only what changed")
 
     sp = sub.add_parser("doctor", help="diagnose this machine's t, tmux, and agent setup",
-        description='Diagnose local t links, canonical main, tmux settings, mouse capture, and tool versions. Print '
+        description='Diagnose local t links, canonical main, tmux, launch resources, and tool versions. Print '
             'findings and suggested fixes without changing settings by default. --repair restores zsh startup '
             'and its command link while preserving settings, trust, and permissions. Use t hosts run HOST t '
             'system diagnose for another machine.',
@@ -13436,6 +13529,12 @@ PERIODIC CHECKS
   fullscreen TUI — the usual answer to 'the scroll wheel does not scroll the
   output'), and tool versions (with GitHub CLI telemetry and update checks
   disabled).
+
+  Launch resources includes PTY usage and limits, user process count, this
+  diagnostic process's limits, and recent macOS kernel PTY failure counts.
+  Unavailable evidence is labeled; no PTY is allocated and no session is restarted.
+  A healthy snapshot cannot rule out an earlier transient fork/open failure.
+  Run immediately after the failure and keep its exact error alongside the report.
 
   Ends with findings + suggested fixes.
 

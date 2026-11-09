@@ -206,6 +206,10 @@ time.sleep(60)
         command {shlex.join(command)} has-session "$@"
         return
       fi
+      if [[ $1 == respawn-pane ]]; then
+        [[ $2 == -t && $3 == %<-> ]] || return 91
+        [[ $(command {shlex.join(command)} display-message -p -t "$3" '#{{pane_dead}}') == 1 ]] || return 92
+      fi
       command {shlex.join(command)} "$@"
     }}
     _dev_agent_check() {{ return 0; }}
@@ -240,6 +244,11 @@ time.sleep(60)
         while not marker.exists() and time.monotonic() < deadline:
             time.sleep(0.03)
         assert marker.exists(), result.stderr
+        pane_log = home / '.tmux-logs' / (session + '.log')
+        deadline = time.monotonic() + 5
+        while (not pane_log.exists() or 'agent output' not in pane_log.read_text()) and time.monotonic() < deadline:
+            time.sleep(0.03)
+        assert 'agent output' in pane_log.read_text()
         assert tmux("show-environment", "-t", "=" + session, "DEV_AGENT").stdout.strip() == "DEV_AGENT=codex"
         assert tmux("display-message", "-p", "-t", target, "#{pane_pipe}").stdout.strip() == "1"
         assert tmux("show-options", "-w", "-v", "-t", target, "window-size").stdout.strip() == "latest"

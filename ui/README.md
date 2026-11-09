@@ -1190,6 +1190,15 @@ Missing shell setup is a preselected row in `t agent install`, including when no
 agent changes are needed. It appears in the review and `-y` plan; deselection,
 status, dry-run, cancellation, and noninteractive plans do not modify it.
 
+The same read-only detail mode includes launch resources: PTY counts/limits,
+aggregate user process count, limits of the diagnostic process (not assumed to
+be the tmux server's), and bounded recent macOS kernel PTY failure counts.
+Show unavailable evidence explicitly; never print raw process arguments or kernel
+logs. Explain that a normal snapshot cannot rule out a transient earlier error.
+No diagnostic allocates test PTYs, retries an agent launch, or restarts tmux.
+Fresh/resumed launches stop their verified placeholder and wait for both process
+exit and a dead pane before respawning without force, retaining first-output logs.
+
 ## Progress enforcement
 
 Run `python3 scripts/lint_progress.py` alongside CLI lint. CI requires every
