@@ -7643,7 +7643,9 @@ def _command_readonly(argv, *, terminal=None):
     if _REMOTE['nested'](argv):
         try:
             path, tail, host = _REMOTE['split'](argv[1:], COMMAND_GROUPS)
-            return _REMOTE['policy'](path, tail) == 'query'
+            # A live monitor is read-only but cannot fan out across remote hosts.
+            return (path == ('config', 'models', 'runtime', 'monitor') or
+                    _REMOTE['policy'](path, tail) == 'query')
         except ValueError:
             return True
     words = _canonical_argv(argv)

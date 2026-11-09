@@ -635,3 +635,42 @@ def test_download_cancellation_kills_unresponsive_process(local,monkeypatch):
     monkeypatch.setattr(local.subprocess,'Popen',lambda *a,**kw:Process())
     with pytest.raises(ValueError,match='cancelled'):local.download_command(['curl'],cancel)
     assert calls==['terminate','kill','wait']
+
+
+@pytest.mark.parametrize('unresponsive', [False, True])
+def test_native_lead_stops_when_manager_lease_is_lost(local, monkeypatch, tmp_path, unresponsive):
+    m = local
+    calls = []
+    worker = m.helper('t_local_worker')
+    modules = {name: m.helper(name) for name in ('t_local_status', 't_workflow', 't_toml')}
+    class LostLease(ManagedClientFixture):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.error = 'Shared manager connection lost'
+    modules.update(t_local_models={'hardware': hardware}, t_local_manager={'Client': LostLease},
+                   t_local_worker={'state_root': lambda: tmp_path, 'environment': worker['environment']})
+    monkeypatch.setattr(m, 'helper', lambda name: modules[name])
+    class Process:
+        returncode = None
+        def poll(self): return self.returncode
+        def terminate(self):
+            calls.append('terminate')
+            if not unresponsive: self.returncode = -15
+        def wait(self, **kwargs):
+            if kwargs:
+                assert kwargs['timeout'] == 5
+                raise m.subprocess.TimeoutExpired('codex', 5)
+            calls.append('reaped')
+        def kill(self):
+            calls.append('kill')
+            self.returncode = -9
+    monkeypatch.setattr(m.subprocess, 'Popen', lambda *args, **kwargs: Process())
+    chosen = m.policy({'mode': 'local-only'})
+    with pytest.raises(ValueError, match='manager connection lost'):
+        m.lead(['codex', '--', 'task'], chosen=chosen)
+    assert 'terminate' in calls
+    assert ('kill' in calls) == unresponsive
+    assert ('reaped' in calls) == unresponsive
+    # A recovery callback cannot report a successful handoff after losing its lease.
+    with pytest.raises(ValueError, match='manager connection lost'):
+        m.lead(['codex', '--', 'task'], chosen=chosen, runner=lambda *args, **kwargs: 0)
