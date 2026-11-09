@@ -860,7 +860,9 @@ def recover(argv, chosen, cwd):
                 # runtime has stopped; let the user retry or start fresh locally.
                 blocked = ''
                 try:
-                    initial = startup_prompt(current_argv)
+                    # A returning conversation already has a validated bounded
+                    # checkpoint; its serialized handoff includes extra framing.
+                    initial = checkpoint.handoff if checkpoint.seed is not None else startup_prompt(current_argv)
                 except ValueError as exc:
                     initial, blocked = None, str(exc)
                 private_write(directory/'status.json', {'state': 'startup_failed', 'reason': 'Cloud startup unavailable'})

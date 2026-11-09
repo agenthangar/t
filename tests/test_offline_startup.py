@@ -196,7 +196,8 @@ def test_saved_pause_policy_keeps_native_launch(offline, monkeypatch):
     assert calls == [['codex']]
 
 
-def test_failed_cloud_return_keeps_original_task_and_local_progress(offline, tmp_path, monkeypatch):
+@pytest.mark.parametrize('task', ['Original task', 'x'*32000])
+def test_failed_cloud_return_keeps_original_task_and_local_progress(offline, tmp_path, monkeypatch, task):
     m = offline
     monkeypatch.setattr(m.os, 'isatty', lambda fd: True)
     monkeypatch.setattr(m, 'recovery_ui', lambda *a: nullcontext(UI(['0'])))
@@ -213,14 +214,15 @@ def test_failed_cloud_return_keeps_original_task_and_local_progress(offline, tmp
         cp.client({'id': 1, 'method': 'thread/start', 'params': {}})
         cp.server({'id': 1, 'result': {'thread': {'id': 'main'}, 'model': 'cloud'}})
         cp.client({'method': 'turn/start', 'params': {'threadId': 'main', 'input': [
-            {'type': 'text', 'text': cp.handoff or 'Original task'}]}})
+            {'type': 'text', 'text': cp.handoff or task}]}})
         cp.active = False
         if len(stages) == 1:
             cp.failed = True
         elif len(stages) == 2:
             cp.evidence.append({'kind': 'agentMessage', 'text': 'Local progress'})
         else:
-            assert cp.users == ['Original task']
+            assert argv[-1].startswith('Continue this task')
+            assert cp.users == [task]
             assert cp.evidence[-1]['text'] == 'Local progress'
             return {'action': None, 'exit_code': 0, 'checkpoint': cp}
         return {'action': kw['monitor'](cp, None, None), 'exit_code': None, 'checkpoint': cp}
@@ -229,7 +231,7 @@ def test_failed_cloud_return_keeps_original_task_and_local_progress(offline, tmp
     monkeypatch.setattr(m, 'supervise', supervise)
     monkeypatch.setattr(m, 'inference', lambda: {'helper': lambda n: {'state_root': lambda: tmp_path},
                                               'catalogue': lambda **kw: {'models': models()}, 'lead': lead})
-    assert m.recover(['codex', '--', 'Original task'], policy(), tmp_path) == 0
+    assert m.recover(['codex', '--', task], policy(), tmp_path) == 0
     assert len(stages) == 4
 
 
