@@ -252,3 +252,50 @@ def test_invalid_checkpoint_disables_local_selection(offline):
     assert offline.choose_local(ui,{'catalogue':lambda **kw:{'models':models()}},policy(),
                                 failed=True,blocked='Non-text request needs manual continuation') is None
     assert len(ui.calls[0][1]['disabled'])==3
+
+
+@pytest.mark.parametrize('cancelled',[False,True])
+def test_declining_outage_keeps_cloud_and_suppresses_repeat(offline,tmp_path,monkeypatch,cancelled):
+    m=offline;offers=[]
+    monkeypatch.setattr(m.os,'isatty',lambda fd:True)
+    monkeypatch.setattr(m,'inference',lambda:{'helper':lambda n:{'state_root':lambda:tmp_path}})
+    monkeypatch.setattr(m,'recovery_ui',lambda *a:nullcontext(UI([])))
+    def choose(*a):
+        offers.append(1)
+        if cancelled:raise KeyboardInterrupt
+        return None
+    monkeypatch.setattr(m,'choose_local',choose)
+    def stage(*args,**kw):
+        cp=kw['checkpoint'];cp.thread='main';cp.users=['Task'];cp.failed=True
+        assert kw['monitor'](cp,None,None) is None
+        assert cp.declined and kw['monitor'](cp,None,None) is None
+        assert len(offers)==1
+        return {'action':None,'exit_code':0,'checkpoint':cp}
+    monkeypatch.setattr(m,'supervise',stage)
+    assert m.recover(['codex'],policy(),tmp_path)==0
+
+
+def test_stay_local_does_not_repeat_recovery_offer(offline,tmp_path,monkeypatch):
+    m=offline;stages=[];offers=[]
+    monkeypatch.setattr(m.os,'isatty',lambda fd:True)
+    monkeypatch.setattr(m,'recovery_ui',lambda *a:nullcontext(UI([])))
+    monkeypatch.setattr(m,'choose_local',lambda *a:policy())
+    monkeypatch.setattr(m,'choose_cloud',lambda *a:offers.append(1))
+    class Probe:
+        def __enter__(self):
+            ready=threading.Event();ready.set();return SimpleNamespace(ready=ready)
+        def __exit__(self,*a):pass
+    monkeypatch.setattr(m,'RecoveryProbe',Probe)
+    def stage(*args,**kw):
+        cp=kw['checkpoint'];cp.thread='main';cp.users=['Task'];cp.failed=True;stages.append(cp)
+        action=kw['monitor'](cp,None,None)
+        if len(stages)==2:
+            assert action is None
+            assert kw['monitor'](cp,None,None) is None
+            assert len(offers)==1
+        return {'action':action,'exit_code':0,'checkpoint':cp}
+    def lead(argv,**kw):return kw['runner'](['codex','--local-provider','lmstudio'],env={})
+    monkeypatch.setattr(m,'inference',lambda:{'helper':lambda n:{'state_root':lambda:tmp_path},'lead':lead})
+    monkeypatch.setattr(m,'supervise',stage)
+    assert m.recover(['codex'],policy(),tmp_path)==0
+    assert len(stages)==2
