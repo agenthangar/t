@@ -333,7 +333,7 @@ def test_mlx_routing_identity_context_and_local_only_gate(worker,repo,monkeypatc
     result=manager.call('task_status',{'task_id':task['task_id']})
     assert result['status']=='completed' and result['identity_verified']
     assert result['context_tokens']==8192 and result['revision']=='a'*40
-    assert observed[0][0]==60 and observed[0][-2:]==('lmstudio',8192)
+    assert observed[0][0]==300 and observed[0][-2:]==('lmstudio',8192)
     manager.close()
     for mode in ('disabled','local-only'):
         routing['mode']=mode
@@ -348,3 +348,46 @@ def test_mlx_routing_identity_context_and_local_only_gate(worker,repo,monkeypatc
     for thread in manager.threads:thread.join(2)
     assert manager.call('task_status',{'task_id':failed['task_id']})['error']=='does not fit'
     manager.close()
+
+
+@pytest.mark.parametrize('activity,expected', [('silent','inactivity_timed_out'), ('heartbeat','inactivity_timed_out'),
+                                              ('generation','timed_out'), ('tool','timed_out'), ('queue','completed')])
+def test_inactivity_is_observed_work_and_never_extends_task(worker, tmp_path, monkeypatch, activity, expected):
+    job=tmp_path/'job';job.mkdir();(job/'workspace').mkdir()
+    (job/'assignment.json').write_text(json.dumps(dict(mode='investigate', assignment='inspect', inactivity_timeout_seconds=4)))
+    clock=[0]
+    class Process:
+        returncode=0
+        def poll(self):
+            clock[0]+=1
+            if activity=='tool':
+                with (job/'events.jsonl').open('a') as out:
+                    out.write('not json\n'+json.dumps({'item':{'type':'command_execution','status':'in_progress'}})+'\n')
+            return 0 if clock[0]>=8 else None
+    monkeypatch.setattr(worker.time,'monotonic',lambda:clock[0])
+    monkeypatch.setattr(worker.subprocess,'Popen',lambda *a,**k:Process())
+    monkeypatch.setattr(worker,'stop',lambda proc:None)
+    monkeypatch.setattr(worker,'executable',lambda name:'/bin/true')
+    def progress():
+        if activity=='generation':progress.generation_events=clock[0]
+        return min(clock[0],5) if activity=='queue' else 0
+    cancel=SimpleNamespace(is_set=lambda:False,wait=lambda delay:None)
+    assert worker.run_worker(job,'http://127.0.0.1:9','model',5,cancel,progress=progress)==expected
+    manager = worker.Worker()
+    manager.tasks['finished'] = ({'status': expected}, threading.Event())
+    assert manager.call('cancel_task', {'task_id': 'finished'})['status'] == expected
+
+
+@pytest.mark.parametrize('requested,expected', [(None,900),(60,60),(1800,1200)])
+def test_task_limits_inherit_default_and_cap_explicit(worker, repo, monkeypatch, requested, expected):
+    worker.save_settings({'enabled':True,'model':'test'})
+    original=worker.inference
+    def inference():
+        module=original();module['effective']=lambda path:dict(module['policy'](),max_timeout_seconds=1200)
+        return module
+    monkeypatch.setattr(worker,'inference',inference)
+    monkeypatch.setattr(worker.threading.Thread,'start',lambda self:None)
+    args={'workspace':str(repo),'assignment':'inspect'}
+    if requested is not None:args['timeout_seconds']=requested
+    task=worker.Worker().start(args)
+    assert task['timeout_seconds']==expected and task['inactivity_timeout_seconds']==300

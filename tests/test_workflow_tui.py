@@ -108,7 +108,7 @@ def test_workflow_stage_picker_one_model_reset_uses_real_checkboxes(workflow, t_
     assert workflow.model_stages(actual) == expected
     for stage in ('planning', 'implementation', 'review'):
         assert actual[stage] == policy[stage]
-    assert any('Use one model' in line for frame in ui.frames for line in frame)
+    assert any('Use lead model' in line for frame in ui.frames for line in frame)
     assert not workflow.config_path().exists()
 
 

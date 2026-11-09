@@ -91,7 +91,7 @@ class Dialog:
         else:
             print(text)
 
-    def choose(self, label, rows, *, multi=False, marked=(), default=0, back=False, context=""):
+    def choose(self, label, rows, *, multi=False, marked=(), default=0, back=False, context="", model_table=None, benchmark_suite=""):
         if not rows:
             return [] if multi else None
         if self.ui is not None:
@@ -100,7 +100,7 @@ class Dialog:
                                   default=default, on_back=selection.append,
                                   back_label="back" if back else "cancel",
                                   sections={rows[0][0]: context} if context else None,
-                                  primary=("enter", "CONTINUE", ""))
+                                  primary=("enter", "CONTINUE", ""), model_table=model_table, benchmark_suite=benchmark_suite)
             if result is None:
                 if back:
                     raise Back(selection[0] if selection else None)

@@ -25,7 +25,7 @@ import urllib.parse
 import uuid
 
 LIB = Path(__file__).resolve().parent
-VERSION = 1
+VERSION = 2
 LIMIT = 16 * 1024**2
 TERMINAL = {'completed', 'cancelled', 'failed', 'timed_out'}
 DEFAULTS = {'memory_percent': 80, 'idle_seconds': 300,
@@ -141,8 +141,22 @@ def ensure():
     try:
         view = rpc('status')
         if view.get('protocol') != VERSION:
-            raise ValueError('Existing local manager uses a different protocol; let its sessions finish before restarting')
-        return view
+            if view.get('protocol') != 1 or view.get('clients') != []:
+                raise ValueError('Existing local manager uses a different protocol; let its sessions finish before restarting')
+            # The old manager rechecks attached clients under its lock. Never
+            # replace a runtime serving a live session, even if admission races.
+            rpc('shutdown')
+            deadline = time.monotonic() + 8
+            while time.monotonic() < deadline:
+                try:
+                    rpc('status')
+                except (ConnectionError, FileNotFoundError, socket.timeout):
+                    break
+                time.sleep(.1)
+            else:
+                raise ValueError('Older local manager is still shutting down; retry when it finishes')
+        else:
+            return view
     except (ConnectionError, FileNotFoundError, socket.timeout):
         pass
     env = {k: v for k, v in os.environ.items() if not k.startswith(('COV_CORE_', 'OPENAI_', 'ANTHROPIC_'))}
@@ -303,6 +317,7 @@ class Engine:
             end = max(end, stop)
         return dict(id=client['id'], model=client['chosen']['model'], provider=client['chosen']['provider'],
                     state=current['state'] if current else 'working', wait_seconds=wait,
+                    generation_events=client.get('generation_events', 0),
                     request_id=current['id'] if current else None, identity_verified=client.get('identity_verified', False),
                     revision=client.get('revision'), runtime_model=client.get('runtime_model'),
                     owner_verified=client['owner_verified'], owner_label=client['owner_label'], failed=any(j['state'] in ('failed', 'timed_out') for j in jobs))
@@ -660,6 +675,15 @@ class ResponseTracker:
         response = value.get('response', value)
         if not isinstance(response, dict):
             return
+        delta = value.get('delta')
+        choices = value.get('choices') if isinstance(value.get('choices'), list) else []
+        message = value.get('message', {})
+        if ((str(value.get('type', '')).endswith('.delta') and delta) or
+                any(isinstance(x, dict) and any(x.get('delta', {}).get(k) for k in ('content', 'reasoning', 'reasoning_content', 'tool_calls')) for x in choices if isinstance(x, dict) and isinstance(x.get('delta'), dict)) or
+                (isinstance(message, dict) and any(message.get(k) for k in ('content', 'thinking', 'tool_calls')))):
+            client = self.engine.clients.get(self.job['client'])
+            if client is not None:
+                client['generation_events'] = client.get('generation_events', 0) + 1
         ident = response.get('id')
         if self.store and self.instance['provider'] == 'lmstudio' and isinstance(ident, str) and len(ident) <= 256:
             if len(self.engine.responses) >= 8192:

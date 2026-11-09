@@ -264,8 +264,13 @@ def choose(dialog):
         view = report(data)
         dialog.notice(f"LiveBench v1 Coding {view['benchmark']['release']} · {'stale' if view['stale'] else 'cached'} metadata. "
                       f"Best evaluated fit: {view['recommended'] or 'none'}. Estimates at 32K context; unranked means no matching eval.")
+        display = runpy.run_path(str(ROOT / 'libexec/t_model_display.py'))
+        comparison = display['local_models']([dict(r, bytes=r.get('download_bytes'),
+            benchmark=dict(view['benchmark'], score=r['score']) if r.get('score') is not None else None)
+            for r in view['models']], 'livebench-coding')
         choice = dialog.choose('Local model (download on apply)', [(r['model'], label(r)) for r in view['models']] +
-                               [('refresh', 'Refresh availability and evaluations'), ('custom', 'Enter another Ollama model name')])
+                               [('refresh', 'Refresh availability and evaluations'), ('custom', 'Enter another Ollama model name')],
+                               model_table=comparison, benchmark_suite='LiveBench Coding '+view['benchmark']['release'])
         if choice != 'refresh':
             row = next((r for r in view['models'] if r['model'] == choice), None)
             if row:
