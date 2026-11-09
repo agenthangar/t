@@ -1187,7 +1187,7 @@ def summary_lines(policy, tool='codex'):
             lines.append('Review stage: skipped before PR; saved model settings retained')
     if implementation_worker(policy):
         settings = main_session_settings({**policy, 'enabled': True}, tool)
-        lines.append('Main session: ' + (settings.get('model') or 'Agent default') + ' · ' +
+        lines.append('Lead model: ' + (settings.get('model') or 'Agent default') + ' · ' +
                      (settings['effort'].capitalize() if settings.get('effort') else 'Model default'))
     if 'implementation' not in summary['model_stages'] and policy.get('inference', {}).get('mode') != 'local-only':
         for agent, settings in summary['session_defaults'].items():

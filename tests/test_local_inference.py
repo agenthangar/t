@@ -132,7 +132,8 @@ def test_install_verify_and_measure(local,monkeypatch):
 def test_commands(local,t_mod,monkeypatch,capsys):
     m=local;row=dict(m.artifact(m.DEFAULT_MODEL),provider='lmstudio',benchmark=None,fit=True,installed=False,reason='estimated fit')
     monkeypatch.setattr(m,'catalogue',lambda *a,**k:{'models':[row], 'hardware':hardware(), 'context_tokens':32768})
-    monkeypatch.setattr(m,'helper',lambda n:{'reservation':nullcontext,'refresh':lambda:None})
+    original_helper=m.helper
+    monkeypatch.setattr(m,'helper',lambda n:original_helper(n) if n=='t_model_display' else {'reservation':nullcontext,'refresh':lambda:None})
     monkeypatch.setattr(m,'install',lambda *a:{'downloaded':True})
     monkeypatch.setattr(m,'measure',lambda *a:{'median':10})
     for action in ('list','refresh','show','install','measure'):
@@ -355,7 +356,8 @@ def test_picker_install_measure_and_unavailable(local,monkeypatch):
     def run_action(ui, operation, model):
         try: operation(None)
         except ValueError: pass
-    monkeypatch.setattr(m,'helper',lambda n:{'status':lambda:{'models':[]}} if n=='t_local_manager' else {'run_model_action':run_action})
+    original_helper=m.helper
+    monkeypatch.setattr(m,'helper',lambda n:original_helper(n) if n=='t_model_display' else {'status':lambda:{'models':[]}} if n=='t_local_manager' else {'run_model_action':run_action})
     calls=[]
     monkeypatch.setattr(m,'install',lambda *a,**k:calls.append(a) or {})
     monkeypatch.setattr(m,'measure',lambda *a,**k:calls.append(a) or {})
@@ -674,3 +676,29 @@ def test_native_lead_stops_when_manager_lease_is_lost(local, monkeypatch, tmp_pa
     # A recovery callback cannot report a successful handoff after losing its lease.
     with pytest.raises(ValueError, match='manager connection lost'):
         m.lead(['codex', '--', 'task'], chosen=chosen, runner=lambda *args, **kwargs: 0)
+
+
+def test_time_limits_defaults_validation_and_scoped_reset(local):
+    m=local
+    assert [m.DEFAULT[k] for k in m.TIME_LIMITS] == [900,1800,300,300]
+    for key in m.TIME_LIMITS:
+        for value in (True,0,1801,'300'):
+            with pytest.raises(ValueError):m.policy({key:value})
+    with pytest.raises(ValueError,match='Maximum'):m.policy({'timeout_seconds':900,'max_timeout_seconds':300})
+    class UI:
+        def __init__(self,choices):self.choices=iter(choices);self.views=[]
+        def pick(self,title,rows,**kwargs):self.views.append((title,rows,kwargs));return next(self.choices)
+    chosen=m.policy({'mode':'automatic','context_tokens':8192,'timeout_seconds':300})
+    ui=UI(['reset_time','back'])
+    result=m.workflow_menu(ui,chosen)
+    assert result['mode']=='automatic' and result['context_tokens']==8192 and result['timeout_seconds']==900
+    assert dict(ui.views[0][1])['timeout_seconds']=='Default task limit'
+    assert ui.views[0][2]['sections']['timeout_seconds']=='Time limits'
+    ui=UI(['max_timeout_seconds','300','inactivity_timeout_seconds','60','queue_timeout_seconds','','back'])
+    result=m.workflow_menu(ui)
+    assert result['max_timeout_seconds']==1800 and result['inactivity_timeout_seconds']==60
+    assert result['queue_timeout_seconds']==300 and '300' in ui.views[1][2]['disabled']
+    ui=UI(['timeout_seconds','','back'])
+    result=m.workflow_menu(ui,{'timeout_seconds':60,'max_timeout_seconds':300})
+    assert result['timeout_seconds']==60 and '' in ui.views[1][2]['disabled']
+    assert m.duration(10)=='10 sec'

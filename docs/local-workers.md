@@ -264,11 +264,17 @@ Investigation is the default and runs in Codex's read-only sandbox. Patch tasks
 run in its workspace-write sandbox. Neither grants approval bypass or tool network
 access. The worker receives the assignment and snapshot, not the lead transcript.
 The lead should provide concrete acceptance checks and keep architecture decisions
-and ambiguous changes itself. Task execution defaults to five minutes, adjustable
-from 10 seconds to 30 minutes. The snapshot is captured before acceptance.
-Queue wait has a separate budget; model loading counts toward execution time. Failed or timed-out tasks return to the lead without automatic
+and ambiguous changes itself. Task execution defaults to 15 minutes. An omitted MCP limit inherits the selected
+workflow default; explicit requests are capped at its maximum (30 minutes by default).
+The separate inactivity limit defaults to five minutes without observed generation
+or tool activity. Status polling does not count. Activity never extends the total
+execution limit. All four limits (default task, maximum task, inactivity, queue wait)
+are configured in `t workflow` → Inference & routing, also accessible through
+`t config` → Workflows. Reset time limits resets only these four values. Saved
+explicit limits are retained when defaults change. Limits accept 10–1800 seconds. The snapshot is captured before acceptance.
+Queue wait has a separate budget, including admission/model loading; it does not consume execution or inactivity time. Failed or timed-out tasks return to the lead without automatic
 cloud fallback or retries. Terminal statuses are `completed`, `failed`, `cancelled`,
-`timed_out`, and `output_limit`. Completion means the worker process exited
+`timed_out`, `inactivity_timed_out`, and `output_limit`. Completion means the worker process exited
 successfully, not that the proposed fix is correct.
 
 Multiple workers can be accepted across MCP connections; their model requests
@@ -376,3 +382,11 @@ Queue wait defaults to 300 seconds and is configured separately from task execut
 in **Workflows** → Codex → workflow → **Inference & routing**. Queue time does not
 consume the worker's execution budget. An accepted task is not proof of inference:
 use the task's identity evidence and request state to determine what actually ran.
+
+Model lists use aligned Model, GB, Provider, Fit, Ready and Score columns, with
+shared legends for memory fit and verification. Narrow terminals preserve model,
+fit, readiness and score. Scores identify their suite/version and publisher/base
+provenance; they are not evaluations of the local quantization or this worker.
+Native/cloud selectors show reported capabilities and unavailable benchmark data
+explicitly. The main conversation setting is called Lead model, with Lead
+reasoning effort; local runtime selection remains Local model.
