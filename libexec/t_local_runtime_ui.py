@@ -245,17 +245,22 @@ def run_model_action(ui, operation, model):
             result['error'] = str(exc)
     thread = threading.Thread(target=run, daemon=True)
     thread.start()
-    while thread.is_alive():
-        view = manager()['status']()
-        rows = [x for x in view.get('requests', []) if getattr(cancel, 'client_id', None) and x.get('client') == cancel.client_id and x['created'] >= started]
-        lines = [model.split('/')[-1], label(rows[-1]['state']) if rows else 'Preparing model action…']
-        choice = ui.pick('Model test', [('refresh', 'Refresh progress'), ('cancel', 'Cancel this test')], context=lines)
-        if choice in (None, 'cancel'):
-            cancel.set()
-            thread.join(timeout=35)
-            if thread.is_alive():
-                page(ui, 'Cancellation pending', ['The provider must confirm it stopped before another request runs.'])
-                return None
+    try:
+        while thread.is_alive():
+            view = manager()['status']()
+            rows = [x for x in view.get('requests', []) if getattr(cancel, 'client_id', None) and x.get('client') == cancel.client_id and x['created'] >= started]
+            lines = [model.split('/')[-1], label(rows[-1]['state']) if rows else 'Preparing model action…']
+            choice = ui.pick('Model test', [('refresh', 'Refresh progress'), ('cancel', 'Cancel this test')], context=lines)
+            if choice in (None, 'cancel'):
+                cancel.set()
+                thread.join(timeout=35)
+                if thread.is_alive():
+                    page(ui, 'Cancellation pending', ['The provider must confirm it stopped before another request runs.'])
+                    return None
+    except BaseException:
+        cancel.set()
+        thread.join(timeout=35)
+        raise
     if result.get('error'):
         page(ui, 'Model action failed', [result['error'], 'Downloaded files and previous verification evidence are retained.'])
         return None

@@ -212,3 +212,16 @@ def test_machine_reset_stays_staged(ui_module,monkeypatch):
     assert saved[-1]['memory_percent']==80 and saved[-1]['providers']['ollama']['mode']=='desktop'
     m.machine_menu(UI('reset','save','save','back'),'ollama')
     assert saved[-1]['providers']['ollama']['mode']=='headless' and saved[-1]['memory_percent']==60
+
+
+def test_ctrl_c_cancels_background_model_action(ui_module,monkeypatch):
+    import threading
+    m=ui_module;cancelled=threading.Event()
+    monkeypatch.setattr(m,'manager',lambda:{'status':lambda:view()})
+    class Interrupt(UI):
+        def pick(self,*a,**kw):raise KeyboardInterrupt
+    def operation(cancel):
+        if cancel.wait(2):cancelled.set()
+        raise ValueError('cancelled')
+    with pytest.raises(KeyboardInterrupt):m.run_model_action(Interrupt(),operation,'model')
+    assert cancelled.is_set()
