@@ -174,6 +174,12 @@ def test_local_lead_fails_closed(local,monkeypatch,tmp_path):
     assert argv[argv.index('--model')+1]==m.DEFAULT_MODEL
     assert 'OPENAI_API_KEY' not in kwargs['env']
     assert 'mcp_servers={}' in argv and 'features.multi_agent=false' in argv
+    def runner(argv, env):
+        assert 'OPENAI_API_KEY' not in env and '--oss' in argv
+        assert env['CODEX_OSS_BASE_URL'] == 'http://127.0.0.1:1234/client-token/v1'
+        assert env['OLLAMA_HOST'] == 'http://127.0.0.1:1234/client-token'
+        return {'action': 'cloud'}
+    assert m.lead(['codex', '--', 'task'], runner=runner) == {'action': 'cloud'}
     monkeypatch.setattr(m,'effective',lambda cwd: (_ for _ in ()).throw(ValueError('bad policy')))
     count=len(calls)
     with pytest.raises(ValueError):m.lead(['codex'])
@@ -400,9 +406,12 @@ def test_outage_policy_and_routing(local,monkeypatch):
     monkeypatch.setattr(m,'helper',lambda n:{'supervise':lambda *a:calls.append(a) or 7})
     assert m.lead(['codex'],cwd='/repo',chosen={'mode':'automatic','on_cloud_failure':'local'})==7
     assert calls[0][2]=='/repo'
+    assert m.lead(['codex'],cwd='/repo',chosen={'mode':'automatic','on_cloud_failure':'ask'})==7
+    assert m.policy({'on_cloud_failure':'ask'})['on_cloud_failure']=='ask'
     class UI:
         def __init__(self,choices):self.choices=iter(choices)
         def pick(self,*a,**kw):return next(self.choices)
+    assert m.workflow_menu(UI(['on_cloud_failure','ask','back']))['on_cloud_failure']=='ask'
     assert m.workflow_menu(UI(['on_cloud_failure','local','back']))['on_cloud_failure']=='local'
     assert m.workflow_menu(UI(['on_cloud_failure','local','mode','disabled','back']))['on_cloud_failure']=='pause'
 
@@ -423,7 +432,7 @@ def test_exact_workspace_trust_only(local,tmp_path):
 @pytest.mark.parametrize('width,height',[(80,24),(44,20),(32,12)])
 def test_outage_picker_narrow(local,t_mod,width,height):
     from test_tui import make_ui
-    ui=make_ui(t_mod,['j','j','enter','j','j','enter','q'],width,height)
+    ui=make_ui(t_mod,['j','j','enter','j','j','j','enter','q'],width,height)
     assert local.workflow_menu(ui)['on_cloud_failure']=='local'
     assert any('Pause and retry' in ''.join(frame) for frame in ui.frames)
 

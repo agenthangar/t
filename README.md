@@ -32,6 +32,12 @@ Supported workflows vary by agent; see the [support matrix](#agents).
   `t session move my-project 1 --host cloud` moves the session to a configured
   SSH host; `t session move my-project 1 --from cloud` brings it back. Use your
   own workstation or cloud VM with t and your agent installed.
+- **Continue through a connection loss.** For fresh Codex CLI sessions, choose
+  `t workflow` → Codex → your workflow → **Inference & routing** →
+  **On cloud connection failure** → **Ask which local model**. Selecting a ready
+  local model immediately continues the task locally; when connectivity returns,
+  choose whether to return to cloud. See [local recovery](docs/local-workers.md#when-the-internet-is-unavailable)
+  for checkpoint limits and setup.
 - **Take it on the go.** Connect to that host from your phone's SSH terminal.
   `t session list` shows the sessions, `t session read my-project 1 --dump`
   lets you scroll their output, and `t session open my-project 1` reconnects

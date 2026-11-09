@@ -35,8 +35,9 @@ policy, not an offline-tools or filesystem security boundary.
 ## When the internet is unavailable
 
 Open `t workflow` → Codex → your workflow → **Inference & routing** →
-**On cloud connection failure**. Choose **Pause and retry** (the default) or
-**Continue locally with selected model**, then review and save. This extends the
+**On cloud connection failure**. Choose **Pause and retry** (the default),
+**Ask which local model**, or **Continue locally with selected model**, then review
+and save. This extends the
 existing workflow command; it adds no new public command or required flag.
 Install and verify the model beforehand with `t config models install MODEL`.
 For planned offline work, choose **Local only** and the explicit model directly.
@@ -51,14 +52,46 @@ Useful progress resets that window. It ignores auxiliary title/subagent threads,
 authentication/quota failures, HTTP application errors and user interruption.
 The default Pause setting preserves Codex's normal retries and error handling.
 
-Before switching, t checks that the selected artifact is installed and ready and
-that a usable task checkpoint exists. It stops its owned cloud runtime before
-starting a **new local-only conversation** in the same working tree. The transition
-shows the reason, provider, exact model and checkpoint path; local launch also
-shows the selected model; runtime status records its verified revision after loading. It stays local when connectivity returns.
-There is no automatic cloud switch-back or download during recovery. If readiness
-or checkpoint validation fails, the cloud UI stays available with an explanation.
-If local startup fails, the checkpoint remains and the launch reports failure.
+With **Ask which local model**, a sustained transport failure in a t-managed
+tmux terminal opens the shared picker. The exact owning pane is captured and
+restored so dismissing recovery preserves the native conversation and input.
+Outside tmux, the native cloud session remains available with an explanation. Installed, ready models show their provider and memory fit;
+unavailable choices explain why they cannot run. Selecting a ready model starts
+the handoff immediately: there is no model-details or confirmation screen. The
+picker dismisses into the native local session. Esc/Cancel or **Pause and retry
+cloud** leaves the cloud runtime available and suppresses another prompt for that
+turn. Noninteractive launches keep native cloud retries and never prompt.
+
+Before switching, t validates the checkpoint and stops its owned cloud runtime.
+The selected provider and model are printed as the
+**new local-only conversation** starts in the same worktree. Runtime status records
+the verified artifact revision after loading through the shared request queue. Readiness is checked
+again at startup; if startup fails, recovery choices remain available with the
+error. No weights are downloaded. Choices affect this session, not the saved
+workflow. Only one runtime can write to the worktree during either handoff.
+
+In Ask mode, a credential-free HTTPS check against the OpenAI API runs while
+local work continues. Three consecutive successful reachability checks, five
+seconds apart, trigger one recovery offer at the next safe turn boundary. This
+checks connectivity, not authentication, quota, or inference availability. The
+picker never interrupts a running tool or pending approval. Choose **Return to
+previous cloud model**, **Choose another cloud model** from the native catalogue,
+or **Stay local**. Cloud return requires confirmation and transfers an updated
+bounded checkpoint including local progress. Stay local dismisses the prompt
+for this recovery event; it never switches automatically. Custom cloud endpoints
+are not independently health-checked. Local-only launches made directly, and the
+existing automatic **Continue locally with selected model** policy, stay local
+without this recovery offer.
+
+To try the shared picker without any network/model launches or config changes:
+
+```sh
+python3 scripts/preview_connection_recovery.py
+```
+
+This worktree-scoped preview uses labeled sample data. It is separate from a
+real native CLI launch with the saved Ask policy.
+
 
 The private checkpoint contains the user requests (up to 32,000 characters) and
 eight bounded recent messages, command results, plans or changed-file lists.

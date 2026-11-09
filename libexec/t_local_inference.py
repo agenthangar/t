@@ -40,8 +40,8 @@ def policy(value=None):
     result = dict(DEFAULT, **value)
     if result['mode'] not in MODES or result['provider'] not in ('ollama', 'lmstudio'):
         raise ValueError('unsupported inference mode or provider')
-    if result['on_cloud_failure'] not in ('pause', 'local'):
-        raise ValueError('on_cloud_failure must be pause or local')
+    if result['on_cloud_failure'] not in ('pause', 'local', 'ask'):
+        raise ValueError('on_cloud_failure must be pause, local or ask')
     if result['mode'] == 'disabled' and result['on_cloud_failure'] != 'pause':
         raise ValueError('disabled routing cannot continue locally on a cloud failure')
     name = result['model']
@@ -82,10 +82,10 @@ def instructions(value):
             'If busy or unavailable, say Local unavailable; lead continuing. '
             'The adapter snapshots the repository; review its patch and observed command evidence before applying. '
             'Do not claim the selected model ran without runtime evidence. ')
-    if p['on_cloud_failure'] == 'local' and p['mode'] != 'local-only':
+    if p['on_cloud_failure'] in ('local', 'ask') and p['mode'] != 'local-only':
         base += ('Cloud connection failure policy: the native launch supervisor can stop its owned cloud runtime and '
                  'start a fresh local session from a bounded private checkpoint. Authentication and quota errors do not trigger this. '
-                 'Once local, stay local until the user explicitly starts a cloud session. ')
+                 'Provider changes require explicit user choice or the saved automatic fallback policy. ')
     if p['mode'] == 'local-only':
         return base + ('LOCAL ONLY: lead and every worker must use this exact local model. Never call cloud models or cloud subagents. '
                        'If local inference is unavailable, stop and report it; no cloud fallback. Ignore retained cloud model-stage preferences. '
@@ -629,7 +629,7 @@ def workflow_menu(ui, value=None):
                             default=next(i for i, row in enumerate(rows) if row[0] == focus),
                             sections={'reset': 'Manage'},
                             values={**{k: str(v) for k, v in current.items()}, 'on_cloud_failure':
-                                    'Continue locally' if current['on_cloud_failure'] == 'local' else 'Pause and retry',
+                                    {'local': 'Continue locally', 'ask': 'Ask which local model', 'pause': 'Pause and retry'}[current['on_cloud_failure']],
                                     'reset': 'Already at defaults' if current == DEFAULT else 'Routing settings'})
             if choice in (None, 'back'):
                 return current
@@ -650,8 +650,9 @@ def workflow_menu(ui, value=None):
                         current['on_cloud_failure'] = 'pause'
             elif choice == 'on_cloud_failure':
                 selected = ui.pick('On cloud connection failure', [('', 'Use default · Pause and retry'),
-                                   ('pause', 'Pause and retry'), ('local', 'Continue locally with selected model')],
-                                   disabled={'local': 'Enable routing first.'} if current['mode'] == 'disabled' else {})
+                                   ('pause', 'Pause and retry'), ('ask', 'Ask which local model'),
+                                   ('local', 'Continue locally with selected model')],
+                                   disabled={'local': 'Enable routing first.', 'ask': 'Enable routing first.'} if current['mode'] == 'disabled' else {})
                 if selected is not None:
                     current['on_cloud_failure'] = selected or DEFAULT['on_cloud_failure']
             else:
@@ -790,11 +791,11 @@ def trusted_workspace(cwd):
         return False
 
 
-def lead(argv, cwd=None, chosen=None):
+def lead(argv, cwd=None, chosen=None, runner=None):
     """Dedicated native CLI launch: no cloud auth, models or providers inherited."""
     chosen = policy(chosen) if chosen is not None else effective(cwd or os.getcwd())
     if not chosen or chosen['mode'] != 'local-only':
-        if chosen and chosen['mode'] != 'disabled' and chosen['on_cloud_failure'] == 'local':
+        if chosen and chosen['mode'] != 'disabled' and chosen['on_cloud_failure'] in ('local', 'ask'):
             return helper('t_offline')['supervise'](argv, chosen, cwd or os.getcwd())
         return subprocess.call(argv)
     if '--approve-for-me' in argv[1:]:
@@ -848,6 +849,11 @@ def lead(argv, cwd=None, chosen=None):
                   '-c', f'model_auto_compact_token_limit={int(chosen["context_tokens"]*.75)}']
         print(f"Local only · {chosen['model']} · {chosen['provider']} · shared request queue", file=sys.stderr)
         env.update(CODEX_OSS_BASE_URL=base + '/v1', OLLAMA_HOST=base)
+        if runner is not None:
+            result = runner([argv[0], *forced, *filtered], env=env)
+            if client.error:
+                raise ValueError(client.error)
+            return result
         proc = subprocess.Popen([argv[0], *forced, *filtered], env=env)
         try:
             while proc.poll() is None:
@@ -866,13 +872,14 @@ def lead(argv, cwd=None, chosen=None):
                     proc.wait()
 
 
+
 if __name__ == '__main__':
     try:
         if sys.argv[1:2] == ['--launch-prefix']:
             try:
                 selected = effective(sys.argv[2])
                 required = selected and (selected['mode'] == 'local-only' or
-                                         (selected['mode'] != 'disabled' and selected['on_cloud_failure'] == 'local'))
+                                         (selected['mode'] != 'disabled' and selected['on_cloud_failure'] in ('local', 'ask')))
             except (OSError, ValueError):
                 required = True  # Launch guard reports the invalid policy; never fall back.
             if required:
