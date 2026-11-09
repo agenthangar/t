@@ -763,6 +763,12 @@ Session lists (`t ls` / `t session list`) also include remote hosts by default;
 `-l`/`--local` lists only this machine. Repository scope and `--all` are independent
 of host scope. Session lists always print a read-only table, including in terminals.
 
+Session-picker filtering and sorting are hotkey interactions. Improvements to
+these controls extend the existing picker and preserve its filter and sort
+choices. Do not introduce CLI flags for these interactions unless the user
+explicitly requests flags or noninteractive control. Inspect the existing
+bindings before proposing changes; history keeps its distinct pagination keys.
+
 Session picker and history searches accept full literal phrases, ignoring case. Spaces and letters stay in the query; Tab marks rows. Saved-history search covers all pages and cached metadata. Ctrl-S toggles sorting without requiring terminal Option/Meta configuration; Ctrl-Y cycles sort choices.
 
 The open picker hides attached CLI and loaded desktop sessions by default.
