@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def example(**changes):
     record = conversation(sid='synthetic-selected', title='Fix sign-in redirect after session expires',
                           summary='Fix sign-in redirect after session expires', summary_source='transcript',
-                          model='gpt-6.1-sol', model_source='transcript', interface='cli',
+                          last_turn='2026-11-08T10:00:00Z', model='gpt-6.1-sol', model_source='transcript', interface='cli',
                           associations=[dict(workspace='/sandbox/api/5', slot='5', host='local',
                                              branch='dev/api-5', commit='a' * 40, evidence='resume', observed=1)],
                           prs=[dict(repo='org/repo', number=121, url='https://github.com/org/repo/pull/121', state='MERGED'),
@@ -148,10 +148,11 @@ def test_picker_rows_budget_unicode_metadata_before_summary(history, width):
     assert history.display_width(rendered) <= width
     assert 'Fix' in rendered and '\x1b' not in rendered
     if width >= 60:
-        assert 'gpt-6.1-sol' in rendered and '#121M' in rendered and '#122O' in rendered
-    if width >= 32:
-        assert '6.1-sol' in rendered
-    assert row['sid'] not in rendered and '2026' not in rendered
+        assert 'gpt-6.1-sol' in rendered and '2026-11-08' in rendered
+        assert '#121[MERGED]' in history.details(row) and '#122[OPEN]' in history.details(row)
+    if 32 <= width < 60:
+        assert '11-08' in rendered
+    assert row['sid'] not in rendered
 
 
 def test_model_shortening_preserves_family_and_full_exact_values_in_details(history):
@@ -195,7 +196,7 @@ def test_real_details_picker_retains_focus_and_scrollable_metadata_at_each_size(
         pytest.skip('real terminal geometry requires tmux and fzf')
     env = {k: v for k, v in os.environ.items() if not k.startswith('COV_CORE_') and k not in ('TMUX', 'TMUX_PANE')}
     env.update(TERM='xterm-256color', FZF_DEFAULT_OPTS='', FZF_DEFAULT_OPTS_FILE='/dev/null')
-    rows = [example(sid='selected', updated=20), example(sid='second', updated=10, agent='claude', model='claude-opus-4-6', archived=True,
+    rows = [example(sid='selected', updated=20), example(sid='second', updated=10, last_turn='2026-11-07T10:00:00Z', agent='claude', model='claude-opus-4-6', archived=True,
                               summary='Review settings keyboard focus')]
     snapshot = tmp_path / 'records.json'; snapshot.write_text(json.dumps(rows))
     result = tmp_path / 'result.json'
@@ -233,8 +234,10 @@ finally:app.store.close()
             first = wait_for(lambda text: 'Fix sign' in text and 'Enter resume' in text and 'Ctrl-/' in text)
             assert any('▸' in line and 'Fix sign' in line for line in first.splitlines())
             if columns >= 70:
-                first = wait_for(lambda text: 'Model:' in text and '#121M' in text)
-                assert 'gpt-6.1-sol' in first and '#122O' in first
+                first = wait_for(lambda text: 'Model:' in text and 'Last turn:' in text)
+                assert 'gpt-6.1-sol' in first
+                tmux('send-keys', '-t', 'picker', 'S-Down')
+                first = wait_for(lambda text: '#121[MERGED]' in text and '#122[OPEN]' in text)
             else:
                 tmux('send-keys', '-t', 'picker', 'C-_')
                 opened = wait_for(lambda text: 'Details' in text and ('Model:' in text or 'Working on:' in text))

@@ -518,7 +518,7 @@ def check_display_contracts(contract, *, root=ROOT):
             errors.append(f"session_information unknown policy must prohibit {key}")
     if history.get("extends") != "session_information" or history.get("fields", {}).get("prs", {}).get("type") != "array":
         errors.append("history_information must extend session_information and define structured PRs")
-    historical = {"updated", "associations", "sid", "model_source", "summary_source", "mentions", "sources"}
+    historical = {"last_turn", "updated", "associations", "sid", "model_source", "summary_source", "mentions", "sources"}
     if not historical <= set(history.get("historical_fields", {})):
         errors.append("history_information must define historical detail identity, metadata provenance, and evidence")
     if any(not isinstance(spec, dict) or spec.get("type") not in {"string", "number", "array"}
@@ -526,9 +526,9 @@ def check_display_contracts(contract, *, root=ROOT):
         errors.append("history_information historical metadata needs typed meanings")
     layouts = history.get("layouts", {})
     printed = layouts.get("table", {}).get("columns", [])
-    if printed[:len(DISPLAY_COLUMNS)] != list(DISPLAY_COLUMNS) or not {"DATE", "BRANCH", "PRS", "ID"} <= set(printed):
+    if printed[:len(DISPLAY_COLUMNS)] != list(DISPLAY_COLUMNS) or not {"LAST TURN", "DATE", "BRANCH", "PRS", "ID"} <= set(printed):
         errors.append("history_information table must preserve session list column order and retained DATE/BRANCH/PRS/ID details")
-    if layouts.get("table", {}).get("extensions") != {"DATE": "updated", "BRANCH": "associations[].branch", "PRS": "prs", "ID": "sid"}:
+    if layouts.get("table", {}).get("extensions") != {"LAST TURN": "last_turn", "DATE": "updated", "BRANCH": "associations[].branch", "PRS": "prs", "ID": "sid"}:
         errors.append("history_information table extensions must bind retained historical metadata")
     picker = layouts.get("picker", {})
     for key, value in (("profile", "_t_fzf_paginated"), ("physical_row", "single_line"),
@@ -547,7 +547,7 @@ def check_display_contracts(contract, *, root=ROOT):
     selection = history.get("selection", {})
     for key, value in (("count", "multiple"), ("identity_fields", ["repo", "agent", "sid"]),
                        ("accept", "enter"), ("cancel", ["esc", "ctrl-c"]), ("page_size", 50),
-                       ("keys", {"next": "ctrl-f", "previous": "ctrl-b", "refresh": "ctrl-r"}),
+                       ("keys", {"next": "ctrl-f", "previous": "ctrl-b", "refresh": "ctrl-r", "toggle_sort": "ctrl-s", "next_sort": "ctrl-y"}),
                        ("auto_accept_single_result", False), ("search", "global_before_pagination"),
                        ("validate_returned_query_page_and_snapshot", True), ("network", "explicit_refresh_only"),
                        ("non_tty", "read_only_table"), ("json", "read_only_machine_output")):
@@ -563,7 +563,7 @@ def check_display_contracts(contract, *, root=ROOT):
     record_types = {"repo": "string", "agent": "string", "sid": "string", "title": "string", "updated": "number",
                     "associations": "array", "sources": "array", "prs": "array", "mentions": "array", "owners": "array",
                     "model": "string", "model_source": "string", "summary": "string", "summary_source": "string",
-                    "interface": "string", "display": "object"}
+                    "interface": "string", "display": "object", "last_turn": "string"}
     if (machine.get("envelope_types") != wire_types or machine.get("conversation_types") != record_types
             or machine.get("display_schema") != "history_information"):
         errors.append("history_information JSON must type its original fields and additive display metadata")

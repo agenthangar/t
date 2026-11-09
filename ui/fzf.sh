@@ -182,6 +182,12 @@ SH
   # shellcheck disable=SC2016
   _t_paged_header_command='sh "$T_PICKER_PAGED_RENDER"'
   _t_paged_bind="change:deselect-all+execute-silent($_t_paged_helper show {q})+reload-sync($_t_paged_rows_command)+transform-header($_t_paged_header_command),ctrl-f:deselect-all+execute-silent($_t_paged_helper next {q})+reload-sync($_t_paged_rows_command)+transform-header($_t_paged_header_command),ctrl-b:deselect-all+execute-silent($_t_paged_helper previous {q})+reload-sync($_t_paged_rows_command)+transform-header($_t_paged_header_command)"
+  if [ "${T_PICKER_HISTORY_SORT:-}" = 1 ]; then
+    for _t_paged_spec in ctrl-s:toggle-sort ctrl-y:next-sort; do
+      _t_paged_key=${_t_paged_spec%:*} _t_paged_action=${_t_paged_spec#*:}
+      _t_paged_bind="${_t_paged_bind},${_t_paged_key}:deselect-all+execute-silent($_t_paged_helper $_t_paged_action {q})+reload-sync($_t_paged_rows_command)+transform-header($_t_paged_header_command)"
+    done
+  fi
   _t_fzf --height=100% --margin="$_t_paged_margin" --info="$_t_paged_info" --disabled --sync "$_t_paged_cardinality" --delimiter="$(printf '\t')" --with-nth=2 --no-hscroll \
     --print-query --expect=enter,ctrl-r --query="$_t_paged_query" --prompt="$_t_paged_prompt" \
     --header="$(sh "$T_PICKER_PAGED_RENDER")" \

@@ -1006,6 +1006,14 @@ Repositories without a GitHub origin retain their exact local registration
 identity through selection and launch; an unregistered or changed path is refused.
 Paginated history has no default 30-day
 cutoff; Ctrl-F/B pages, Ctrl-R refreshes, and Ctrl-/ shows details.
+Slot history uses the same five sort choices as open/resume: last turn, repository,
+agent, host, and session. Ctrl-S toggles sorting; Ctrl-Y cycles choices.
+The highlighted `Sort: last turn ↓` label means newest actual user turn first,
+unknown times last. Text modes show ↑ and use natural ascending order.
+History sorts the complete search result before pagination; changing sort clears
+marks and returns to page 1. Search, paging, and refresh retain the sort choice.
+Sorting off restores snapshot order. Row timestamps use local time; full dates
+and timezone remain available in details. No new command or launch mode is added.
 Explicit resume options (`--cli`, `--fg`, `--host`, `--days`, `--live`,
 `--remote`) retain the filtered resume picker and their existing semantics,
 including the recency limit and nonterminal saved selection. Internal resume

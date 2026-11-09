@@ -39,7 +39,7 @@ def chrome(text, title='', compact=False):
     for line in lines:
         if compact and not line:
             continue
-        role = 'action' if re.match(r'(Enter|↩)', line) else 'heading' if line.startswith(('View:', 'FILTERS')) else 'hint'
+        role = 'action' if re.match(r'(Enter|↩)', line) else 'heading' if line.startswith(('View:', 'FILTERS')) else 'active' if line.startswith('Sort: ') and not line.startswith('Sort: OFF') else 'hint'
         result.extend(paint(part, role) for part in wrap_columns(key_labels(line, compact=compact), width))
     # The final blank header row separates chrome from results. Short screens
     # give this space back before losing any control or focused result.
