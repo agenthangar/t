@@ -352,6 +352,8 @@ def test_cold_lifecycle_row_survives_restoration_and_restart(cache):
 
 def test_service_upgrade_releases_socket_and_flushes(cache, monkeypatch):
     signals = {}
+    revision = cache._revision()
+    monkeypatch.setattr(cache, '_revision', lambda: revision)
     monkeypatch.setattr(cache.signal, 'signal', lambda number, handler: signals.setdefault(number, handler))
     # Avoid altering the test runner's process-wide umask.
     monkeypatch.setattr(cache.os, 'umask', lambda value: None)

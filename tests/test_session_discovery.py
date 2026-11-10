@@ -232,3 +232,19 @@ def test_cli_adapters_use_cache_and_targeted_events(adapter, t_mod, monkeypatch,
     assert events[-1][0] == (['user@mini'],)
     assert t_mod._main(['__cache-record', 'launch', 'new', 'codex', '/work', 'api-2']) == 0
     assert events[-1][1]['row'].startswith('new\t/work\tapi-2')
+
+
+def test_local_snapshot_includes_unindexed_live_sessions_and_repo_scopes(adapter, collector, monkeypatch):
+    cfg = SimpleNamespace(repos={'api': '/work/api'}, hosts={}, worktree_root='/trees')
+    collector['Config'] = lambda: cfg
+    collector['_mcp_context'] = lambda *a: dict(recs=[], live={'new': {'cwd': '/trees/api/1'}}, now=100, cache_root=None)
+    collector['_session_row'] = lambda cfg, rec, *a: dict(sid=rec['sid'], cwd=rec['cwd'], slot='api-1')
+    collector['_dev_url'] = lambda *a: 'http://localhost:5201'
+    history_type = adapter.runpy.run_path(str(adapter.ROOT / 'libexec/t_history.py'))['HistoryCommand']
+    monkeypatch.setattr(history_type, 'local_catalog', lambda self: {'repositories': [
+        {'repo': 'org/api', 'alias': 'api', 'path': '/work/api'}], 'conversations': []})
+    monkeypatch.setattr(adapter.subprocess, 'run', lambda *a, **kw: SimpleNamespace(returncode=0, stdout='', stderr=''))
+    value = adapter.collect({'target': 'local'}, collector)
+    assert value['scopes']['api'] == value['scopes']['org/api'] == ['/work/api', '/trees/api']
+    row = value['mcp']['recs'][0]['_cached_row']
+    assert row['title'] == '(no transcript yet)' and row['url'].endswith(':5201')

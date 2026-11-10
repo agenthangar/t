@@ -12824,9 +12824,9 @@ REMOTE SESSIONS
 
     sp = sub.add_parser("resume", help="select and resume saved conversations",
         description='Browse cached saved conversations; a plain slot target opens its history. '
-            'Infer the current repository, or browse across hosts outside a checkout. Enter selects; Tab marks several. '
+            'Infer the current repository, or browse local and remote repositories outside a checkout. '
             'Discovery expires hourly and refreshes in the background; run again for updated results. '
-            'Ownership is checked live before attaching or resuming.',
+            'Repositories are cloned only after selection. Ownership is checked live before attaching or resuming.',
 
         epilog="""EXAMPLES
   %(prog)s                   Browse the current repository
