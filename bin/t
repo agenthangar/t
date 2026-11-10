@@ -12656,11 +12656,10 @@ REMOTE SESSIONS
     location.add_argument("--host", help="open or attach on this host")
 
     sp = sub.add_parser("ls", help="list dev sessions (attached + active context)",
-        description='List live sessions across all repositories without prompting. Name a repository to scope the list. '
-            'Registered hosts are included by default; --local limits the view; unavailable hosts warn '
-            'while reachable sessions remain listed. LAST TURN shows turn initiation time. Pipe to cat for '
-            'complete values on narrow terminals. Discovery uses a persisted RAM cache with hourly expiry. '
-            'Cold or expired entries refresh in the background; run again for updated results.',
+        description='List cached live sessions across repositories and registered hosts without prompting. '
+            'Name a repository to scope; --local limits hosts. Discovery uses a persisted RAM cache with hourly expiry. '
+            'Cold or expired entries refresh in the background; run again for updated results. '
+            'LAST TURN shows turn initiation time.',
         help_details="""DETAILS
 
   List dev sessions: whether each is attached, and whether it has an active
@@ -12824,11 +12823,10 @@ REMOTE SESSIONS
     sp.add_argument("--json", action="store_true", help="print paginated metadata without launching")
 
     sp = sub.add_parser("resume", help="select and resume saved conversations",
-        description='Resume saved conversations. A plain slot target opens conversation history. Infer the current repository; '
-            'outside one, browse local and remote repositories. Enter selects; Tab marks several. Live selections '
-            'attach to their owner. Repositories are cloned only after selection. Claude and Codex use guarded t transfers. '
-            'Discovery uses a persisted RAM cache with hourly expiry. Refreshes run in the background; '
-            'run again for updated results. Ownership is checked live before resuming.',
+        description='Browse cached saved conversations; a plain slot target opens its history. '
+            'Infer the current repository, or browse across hosts outside a checkout. Enter selects; Tab marks several. '
+            'Discovery expires hourly and refreshes in the background; run again for updated results. '
+            'Ownership is checked live before attaching or resuming.',
 
         epilog="""EXAMPLES
   %(prog)s                   Browse the current repository
