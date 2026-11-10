@@ -2,7 +2,13 @@
 
 Evaluate coding workflows with `t eval config`, then `t eval runs start`.
 The configuration picker launches the selected run directly; `t eval runs list`
-shows progress and per-workflow benchmark results. See [workflow evaluations](docs/evaluations.md).
+opens the run picker in a terminal, with progress and per-workflow benchmark results.
+Redirected and JSON lists stay static. See [workflow evaluations](docs/evaluations.md).
+
+`t ls` shows observed local/cloud token percentages and participating models
+(★ marks the lead). Use `t system usage show` for the searchable workflow,
+session and eval usage view, or `t system usage list --json` to export records.
+Unknown usage and cost remain unavailable; workflow attribution is recorded at launch.
 
 ![t — coding-agent sessions, under control](docs/media/hero.svg)
 

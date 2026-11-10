@@ -317,7 +317,7 @@ def test_hybrid_reservation_recovery_and_cleanup(evaluation, tmp_path, monkeypat
         finally:
             lifecycle.append('released')
 
-    local = {'helper': lambda name: {'reservation': worker.reservation}, 'provider_runtime': provider}
+    local = {'helper': lambda name: {'reservation': worker.reservation}, 'reserved_provider_runtime': provider}
     monkeypatch.setattr(e, 'ready_local', lambda *a: (local, chosen))
 
     class Gateway:

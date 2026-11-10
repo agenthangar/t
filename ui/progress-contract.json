@@ -449,14 +449,6 @@
       "kind": "background",
       "reason": "Interactive downloads run beneath the cancellable Model test progress page; output is suppressed to preserve its rendering."
     },
-    "libexec/t_local_inference.py:install:subprocess.run": {
-      "kind": "passthrough",
-      "reason": "curl streams download progress on stderr; installation is explicitly requested."
-    },
-    "libexec/t_local_inference.py:ollama_action:subprocess.run": {
-      "kind": "passthrough",
-      "reason": "Ollama pull owns and streams download progress for the explicitly selected artifact."
-    },
     "libexec/t_eval.py:create_run:subprocess.run": {
       "kind": "protocol",
       "reason": "Bounded local Git metadata lookup records the source revision in the immutable run manifest, without terminal output."

@@ -468,6 +468,13 @@ def _parse_rows(text, host_prefixed=False):
             row["model"] = extra[1]
         if len(extra) > 2:
             row["last_turn_started_at"] = extra[2]
+        if len(extra) > 3:
+            try:
+                value = json.loads(extra[3])
+                if isinstance(value, dict):
+                    row['usage'] = value
+            except ValueError:
+                pass
         rows.append(row)
     return rows
 
@@ -519,7 +526,7 @@ def _header(st, scope):
         # Make the scoped repo prominent (bold cyan) — the rest of the note stays dim.
         repo = os.path.basename(scope)
         note = f"   {st.y}(repo: {st.r}{st.b}{st.c}{repo}{st.r}{st.y} — --all for all){st.r}"
-    return f"dev sessions   {st.g}●{st.r} attached/loaded · {st.c}✓{st.r} active context · {st.w}↻{st.r} still in progress · ▣ desktop · {_agent_legend()}{note}"
+    return f"dev sessions   {st.g}●{st.r} attached/loaded · ○ detached/unloaded · {st.c}✓{st.r} active context · {st.w}↻{st.r} merged, still in progress · ▣ desktop · ★ lead model · LOC/CLD TOKEN% observed local/cloud · {_agent_legend()}{note}"
 
 
 def _ls_scope(cfg, repo, all_repos, cwd):
@@ -706,56 +713,81 @@ def _session_picker_rows(rows, remote=False, scoped=False, compact=False, header
 
 
 def _session_table_lines(rows, remote=False):
-    headings = ["STATUS", "UI", "MODEL"] + (["HOST"] if remote else []) + ["SESSION", "WORKING ON", "LAST TURN"]
+    """Approved usage overview; model continuations never repeat session marks."""
     helpers = _session_display_helpers()
+    width = _columns() if sys.stdout.isatty() else 100000
+    clip, wrap = helpers['clip_columns'], helpers['wrap_columns']
+    headings = ['STATUS', 'SESSION', 'WORKING ON'] + (['HOST'] if remote else []) + ['LOC/CLD TOKEN%', 'TOOL', 'MODELS', 'LAST TURN']
     cells = []
     for row in rows:
-        values = helpers["session_cells"](row, _agent_glyph(row.get("agent", "claude")), remote)
-        values.append(helpers["format_last_turn"](row.get("last_turn_started_at")))
-        cells.append(values)
-    if not sys.stdout.isatty() or not cells:
-        return _table_lines(headings, cells)
-
-    width = _columns()
-    clip = helpers["clip_columns"]
-    # A long task should consume spare space, not turn every session into a card.
-    widths = [max(_display_width(label), *(_display_width(row[i]) for row in cells))
-              for i, label in enumerate(headings)]
-    task_width = width - sum(widths[:-2]) - widths[-1] - 2 * len(widths)
-    if task_width >= len("WORKING ON"):
-        widths[-2] = min(widths[-2], task_width)
-        gap = "  "
-    else:
-        # Keep the actionable identity, ownership marks and task on one line.
-        # Remote hosts remain separate so equal slot names can be distinguished.
-        headings = ["S"] + (["HOST"] if remote else []) + ["SESSION", "TASK", "LAST TURN"]
-        cells = [[row[0].replace(" ", "")] + ([row[3]] if remote else []) +
-                 [row[-3], row[-2], row[-1][5:16] if row[-1] != "-" else "-"]
-                 for row in cells]
-        widths = [max(_display_width(label), *(_display_width(row[i]) for row in cells))
-                  for i, label in enumerate(headings)]
-        widths[-3] = min(widths[-3], 12)
+        marks = helpers['session_cells'](row, '', remote)[0]
+        if row.get('state') == 'app':
+            marks += ' ▣'
+        usage = row.get('usage') or {}
+        share = usage.get('local_cloud_percent')
+        share = '/'.join(map(str, share)) if isinstance(share, list) and len(share) == 2 and all(type(v) is int and 0 <= v <= 100 for v in share) else '—'
+        safe = lambda value: ''.join(c if c.isprintable() else ' ' for c in str(value))
+        lead = safe(usage.get('lead_model') or row.get('model') or '')
+        models = list(dict.fromkeys([safe(v['model']) for v in usage.get('models', []) if isinstance(v, dict) and v.get('model')]))
+        if lead and lead != '-':
+            models = ['★ ' + lead] + [m for m in models if m != lead]
+        values = [marks, row['slot'], row.get('summary') or '-']
         if remote:
-            widths[1] = min(widths[1], 8)
-        widths[-2] = 4
-        gap = " "
-        available = width - 2 - (len(widths) - 1)
-        for i, minimum in [(-3, 6), *([(1, 4)] if remote else [])]:
-            widths[i] -= min(max(0, sum(widths) - available), max(0, widths[i] - minimum))
-        if widths[-3] < len("SESSION"):
-            headings[-3] = "SLOT"
-        if sum(widths) > available:
-            cells = [row[:-1] + [row[-1][-5:]] for row in cells]
-            widths[-1] = len("LAST TURN")
-        widths[-2] += max(0, available - sum(widths))
-
-    lines = []
-    for row in [headings, *cells]:
-        fitted = [clip(cell, size) for cell, size in zip(row, widths)]
-        line = "  " + gap.join(cell + " " * (size - _display_width(cell))
-                                 for cell, size in zip(fitted, widths)).rstrip()
-        lines.append(clip(line, width))
-    return lines
+            values.append(row.get('host', 'local'))
+        cells.append(values + [share, _agent_glyph(row.get('agent', 'claude')), ', '.join(models) or '—',
+                               helpers['format_last_turn'](row.get('last_turn_started_at'))])
+    if not cells or width == 100000:
+        return _table_lines(headings, cells)
+    widths = [max(_display_width(label), *(_display_width(r[i]) for r in cells)) for i, label in enumerate(headings)]
+    widths[1] = min(widths[1], 16)
+    widths[2] = min(widths[2], 32)
+    widths[-2] = min(widths[-2], 44)
+    if 2 + sum(widths) + 2 * (len(widths) - 1) > width:
+        for row in cells:
+            row[-1] = row[-1][11:16] if row[-1] != '-' else '-'
+        widths[-1] = len('LAST TURN')
+    excess = 2 + sum(widths) + 2 * (len(widths) - 1) - width
+    widths[2] -= min(max(0, excess), max(0, widths[2] - 12))
+    # Remove optional fields consistently, leaving the first three intact.
+    while len(headings) > 3 and 2 + sum(widths) + 2 * (len(widths)-1) > width:
+        if widths[-2] > 16 and headings[-2] == 'MODELS':
+            widths[-2] = 16
+            continue
+        index = len(headings)-1
+        if remote and headings[index] == 'HOST':
+            for row in cells:
+                row[1] = row[1] + '@' + row[index]
+            widths[1] = max(widths[1], max(_display_width(r[1]) for r in cells))
+        headings.pop(index); widths.pop(index)
+        for row in cells:
+            row.pop(index)
+    gap = '  '
+    if len(headings) == 3:
+        widths[0] = max(len('STATUS'), max(_display_width(r[0]) for r in cells))
+        widths[1] = min(widths[1], max(3, width - widths[0] - 16), 12)
+        widths[2] = max(1, width - 2 - widths[0] - widths[1] - 4)
+    else:
+        widths[2] += max(0, width - 2 - sum(widths) - 2*(len(widths)-1))
+    def line(values):
+        fitted = [clip(value, size) for value, size in zip(values, widths)]
+        return '  ' + gap.join(value + ' ' * (size - _display_width(value)) for value, size in zip(fitted, widths)).rstrip()
+    output = [line(headings)]
+    for row in cells:
+        continuation = []
+        if 'MODELS' in headings:
+            size = widths[headings.index('MODELS')]
+            for model in row[headings.index('MODELS')].split(', '):
+                if continuation and _display_width(continuation[-1] + ', ' + model) <= size:
+                    continuation[-1] += ', ' + model
+                else:
+                    continuation.extend(wrap(model, size))
+        if continuation:
+            row = list(row); row[headings.index('MODELS')] = continuation[0]
+        output.append(line(row))
+        for part in continuation[1:]:
+            extra = [''] * len(headings); extra[headings.index('MODELS')] = part
+            output.append(line(extra))
+    return output
 
 
 def _render_local(rows, scope, st, has_remote=False):
@@ -7698,6 +7730,8 @@ def _command_readonly(argv, *, terminal=None):
             terminal = sys.stdin.isatty() and sys.stdout.isatty()
         return not terminal
     verb, tail = words[0], words[1:]
+    if words[:2] == ["system", "usage"]:
+        return True
     if verb == "eval":
         if not tail or tail == ["config"]:
             return not (terminal if terminal is not None else sys.stdin.isatty() and sys.stdout.isatty())
@@ -11641,7 +11675,8 @@ COMMAND_GROUPS = {
     "agent": {"login": ("login",), "install": ("install",), "status": ("install", "--status"),
               "trust": ("trust",)},
     "system": {"integrate": ("integrate",), "update": ("update",),
-               "diagnose": ("doctor",), "advisories": ("__advisories",)},
+               "diagnose": ("doctor",), "advisories": ("__advisories",),
+               "usage": {v: ("system", "usage", v) for v in ("list", "show")}},
 }
 
 _REMOTE = runpy.run_path(str(Path(__file__).resolve().parent.parent / 'libexec/t_remote.py'))
@@ -11896,19 +11931,21 @@ def _wrap_help(body):
 
 
 def _group_help(group):
+    if group == 'system usage':
+        return _wrap_help("USAGE\n  t system usage <verb> [ID] [--json]\n\nCOMMANDS\n  list  Print recorded usage without selection\n  show  Inspect usage; omit ID for fzf\n\nSCOPE\n  This machine's sessions, recorded workflow revisions and evaluations.\n  No repository argument or inference. JSON never prompts.\n  Run t help system usage <verb> for details.\n")
     if group == "eval" or group.startswith("eval "):
         node = COMMAND_GROUPS
         for word in group.split():
             node = node[word]
         descriptions = {"config": "Create and edit saved configurations", "benchmarks": "List benchmark profiles",
-            "runs": "Start and inspect durable evaluation runs", "list": "Print saved entries without a picker",
+            "runs": "Start and inspect durable evaluation runs", "list": "List entries; run lists use fzf in a terminal",
             "show": "Show details [NAME or ID]", "edit": "Edit a saved configuration [NAME]",
             "start": "Run a configuration [CONFIG_NAME]", "compare": "Compare results [ID] [ID]",
             "resume": "Resume unfinished work [ID]", "cancel": "Cancel active work [ID]"}
         rows = [f"  {word:<12} {descriptions[word]}" for word in node]
         return _wrap_help(f"USAGE\n  t {group} <verb> [arguments] [flags]\n\nCOMMANDS\n" +
             "\n".join(rows) + "\n\nUser-wide configurations and runs; no repository argument or inference.\n"
-            "Omitted names and IDs use fzf in a terminal. Lists never select.\n"
+            "Omitted names and IDs use fzf in a terminal. Run list and targetless show share a picker; JSON never selects.\n"
             "t eval config creates, edits and deletes named configurations.\n"
             "t eval runs start opens the config picker; Enter starts immediately.\n"
             "Use --dry-run to inspect preparation, and --json for machine output.\n"
@@ -12190,7 +12227,7 @@ def _command_description(group, action):
         "agent": {"login": "Log in logged-out or expiring agents", "install": "Install and log in agent CLIs", "status": "Show agent state",
                   "trust": "Trust a folder in installed agents"},
         "system": {"integrate": "Link t and its hooks", "update": "Update t",
-                   "diagnose": "Diagnose the local setup", "advisories": "Manage periodic advisory checks"},
+                   "diagnose": "Diagnose the local setup", "advisories": "Manage periodic advisory checks", "usage": "Inspect workflow, session and evaluation usage"},
     }
     if group == 'remote' and action not in descriptions['remote']:
         return "Run " + action + " commands on an SSH host"
@@ -12324,6 +12361,16 @@ def build_parser():
                    help="show version, active source, and current worktree")
     sub = p.add_subparsers(dest="verb", metavar="<verb>")
     p._group_parsers = {}
+    system = sub.add_parser('system', help='inspect system usage')
+    system_sub = system.add_subparsers(dest='system_resource', required=True)
+    usage = system_sub.add_parser('usage', help='inspect recorded workflow, session and evaluation usage')
+    usage_sub = usage.add_subparsers(dest='usage_action', required=True)
+    for action in ('list', 'show'):
+        leaf = usage_sub.add_parser(action, help=action + ' recorded usage',
+            description='Usage recorded on this machine. Show without ID selects with fzf; list and JSON never prompt. Unknown measurements stay unavailable.')
+        if action == 'show':
+            leaf.add_argument('usage_id', nargs='?', metavar='ID', help='omit for a searchable usage picker')
+        leaf.add_argument('--json', action='store_true', help='machine output; show requires ID')
     evaluation = sub.add_parser("eval", help="evaluate coding workflows with named configurations")
     evaluation_sub = evaluation.add_subparsers(dest="eval_resource")
     for resource, verbs in (("config", ("list", "show", "edit")), ("benchmarks", ("list",)),
@@ -12332,7 +12379,7 @@ def build_parser():
         actions = group.add_subparsers(dest="eval_action")
         for action in verbs:
             leaf = actions.add_parser(action, help=action + " evaluation " + resource,
-                description="User-wide evaluation state; no repository inference. Omit a target in a terminal to select with fzf. Lists never prompt.")
+                description="User-wide evaluation state; no repository inference. Omit a target in a terminal to select with fzf. Run list and targetless show share a picker; redirected and JSON lists never prompt.")
             if resource == "config" and action != "list":
                 leaf.add_argument("name", nargs="?", metavar="NAME")
             if resource == "runs" and action == "start":
@@ -13795,6 +13842,7 @@ PERIODIC CHECKS
 IMPLEMENTED = {
     "remote": cmd_remote,
     "__advisories": cmd_advisories,
+    "system": lambda cfg, args: runpy.run_path(str(Path(_t_source_root()) / "libexec/t_usage.py"))["command"](args, _spinner),
     "issue": cmd_issue,
     "history": cmd_history,
     "share": cmd_share,

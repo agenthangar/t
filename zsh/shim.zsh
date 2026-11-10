@@ -777,7 +777,7 @@ _t() {
     profile) actions=(init edit show apply) ;;
     policy) actions=(check show apply) ;;
     agent) actions=(login install status trust) ;;
-    system) actions=(integrate update diagnose advisories) ;;
+    system) actions=(integrate update diagnose advisories usage) ;;
   esac
   [[ $group == hosts && ( $action == delete || $action == rm ) ]] && action=remove
   if (( ${#actions} )) && (( CURRENT == first - 1 )); then
@@ -1031,6 +1031,10 @@ _t() {
       else _files -/; fi ;;
     policy/check|policy/apply)
       _values 'flag' --defaults -h --help ;;
+    system/usage)
+      if (( CURRENT == first )); then _values 'usage action' list ls show
+      elif [[ ${words[CURRENT]} == -* ]]; then _values 'flag' --json -h --help
+      else _message 'usage ID (omit for fzf)'; fi ;;
     system/advisories)
       if [[ ${words[CURRENT-1]} == --interval-hours ]]; then _message 'refresh interval in hours (1–720)'
       elif (( CURRENT == first )); then _values 'action' enable disable status

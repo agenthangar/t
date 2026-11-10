@@ -414,7 +414,7 @@ def execute(journal, retry_interrupted=False):
         if any(mode != 'frontier-only' for mode in config['modes']):
             local, chosen = ready_local(config, memory)
             stack.enter_context(local['helper']('t_local_worker')['reservation']())
-            local_runtime = stack.enter_context(local['provider_runtime'](chosen))
+            local_runtime = stack.enter_context(local['reserved_provider_runtime'](chosen))
             journal.checkpoint(local_identity={'model': config['local_model'], 'provider': config['local_provider'],
                                                'revision': local_runtime[2]['revision'], 'context_tokens': config['context_tokens']})
         proxy = m['helper']('t_eval_proxy')

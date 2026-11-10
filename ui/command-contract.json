@@ -861,7 +861,7 @@
         "overrides": "session_information.table",
         "wide": "aligned_columns",
         "narrow": "compact_columns",
-        "physical_row": "single_line",
+        "physical_row": "model_continuations",
         "priority": [
           "status",
           "host_when_remote",
@@ -878,7 +878,8 @@
           "tests/test_command_behavior.py::test_session_table_keeps_status_and_identity_in_small_view",
           "tests/test_command_behavior.py::test_session_table_clips_only_task_when_other_columns_fit"
         ]
-      }
+      },
+      "notes": "STATUS, SESSION, WORKING ON first; observed local/cloud token percentage pair, icon-only tool, wrapping model list with star lead and last turn last. UI is retained as metadata, omitted from overview. Narrow terminals omit optional columns."
     },
     "session close": {
       "patterns": [
@@ -8945,7 +8946,8 @@
     "eval runs list": {
       "patterns": [
         "list",
-        "machine"
+        "machine",
+        "single"
       ],
       "renderer": "plain",
       "scope": "user-wide saved evaluation configurations and durable runs",
@@ -8983,8 +8985,24 @@
           "tests": [
             "tests/test_eval.py::test_command_contract"
           ]
+        },
+        "interactive_picker": {
+          "argv": [
+            "eval",
+            "runs",
+            "list"
+          ],
+          "patterns": [
+            "single"
+          ],
+          "read_only": true,
+          "terminal": true,
+          "tests": [
+            "tests/test_usage.py::test_eval_list_show_same_picker"
+          ]
         }
-      }
+      },
+      "notes": "Explicitly approved exception: interactive list and targetless show share the run picker; JSON and redirected list remain static."
     },
     "eval runs show": {
       "patterns": [
@@ -9436,6 +9454,172 @@
         }
       },
       "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "system usage list": {
+      "patterns": [
+        "list",
+        "machine"
+      ],
+      "renderer": "mixed",
+      "scope": "this machine; saved sessions, launch-time workflows and evals; no repository inference",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_usage.py::test_usage_command_contract"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "system",
+            "usage",
+            "list"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_usage.py::test_usage_command_contract"
+          ]
+        },
+        "json": {
+          "argv": [
+            "system",
+            "usage",
+            "list",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_usage.py::test_usage_command_contract"
+          ]
+        }
+      }
+    },
+    "system usage show": {
+      "patterns": [
+        "detail",
+        "machine",
+        "single"
+      ],
+      "renderer": "mixed",
+      "scope": "this machine; saved sessions, launch-time workflows and evals; no repository inference",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_usage.py::test_usage_command_contract"
+      ],
+      "modes": {
+        "detail": {
+          "argv": [
+            "system",
+            "usage",
+            "show",
+            "session:codex:example"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_usage.py::test_usage_command_contract"
+          ]
+        },
+        "json": {
+          "argv": [
+            "system",
+            "usage",
+            "show",
+            "session:codex:example",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_usage.py::test_usage_command_contract"
+          ]
+        },
+        "default": {
+          "argv": [
+            "system",
+            "usage",
+            "show"
+          ],
+          "patterns": [
+            "single"
+          ],
+          "read_only": true,
+          "terminal": true,
+          "tests": [
+            "tests/test_usage.py::test_usage_command_contract"
+          ]
+        }
+      }
+    },
+    "remote system usage list": {
+      "patterns": [
+        "list"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host; no repository inference",
+      "confirmation": "none",
+      "remote_policy": "query",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "system",
+            "usage",
+            "list"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      }
+    },
+    "remote system usage show": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host; no repository inference",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "system",
+            "usage",
+            "show"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      }
     }
   },
   "display_schemas": {

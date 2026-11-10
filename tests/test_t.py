@@ -1003,7 +1003,7 @@ def test_header_lists_every_agent_always(t_mod):
     legend = t_mod._agent_legend()
     assert legend == "✱ claude · ⬡ codex · ◆ cursor"
     assert t_mod._header(st, "").endswith(" · " + legend)          # nothing on screen: still the full legend
-    assert "↻ still in progress" in t_mod._header(st, "")
+    assert "↻ merged, still in progress" in t_mod._header(st, "")
     h = t_mod._header(st, "/code/ff")
     assert " · " + legend in h and "(repo: ff" in h
 
@@ -2325,7 +2325,7 @@ def test_list_columns_align_interface_model_and_context(t_mod, capsys, remote):
     lines = capsys.readouterr().out.splitlines()
     header = next(x for x in lines if 'STATUS' in x)
     body = next(x for x in lines if 'web-3' in x)
-    for heading, content in [('UI','▣ desktop'),('MODEL','⬡ model-test'),('SESSION','web-3'),('WORKING ON','Investigate')]:
+    for heading, content in [('TOOL','⬡'),('MODELS','★ model-test'),('SESSION','web-3'),('WORKING ON','Investigate')]:
         assert header.index(heading) == body.index(content)
     assert 'Codex desktop workspace' not in body
     if not remote:

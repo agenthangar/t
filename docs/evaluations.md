@@ -140,3 +140,7 @@ Development preview: `python3 scripts/preview_eval.py` opens the actual config
 picker with temporary sample configurations and dry-run launch. Add `runs`,
 `config` or `benchmarks` to inspect those views. No model calls or real settings
 changes occur in this preview.
+
+Interactive `t eval runs list` and targetless `t eval runs show` use the same fzf run picker. Rows include phase, progress and benchmark resolved/graded counts. Enter shows full results. Redirected list and JSON remain static.
+
+Use `t system usage show` for the combined workflow/session/eval usage picker; `t system usage list --json` exports recorded usage. `t ls` shows observed local/cloud token percentages and participating models.

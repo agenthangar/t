@@ -30,7 +30,7 @@ def tty():
     return sys.stdin.isatty() and sys.stdout.isatty()
 
 
-def choose(rows, title, action='select', multi=False):
+def choose(rows, title, action='select', multi=False, prompt='eval'):
     """Opaque numeric row identities; shell previews never interpolate user text."""
     if not rows:
         print('  No eligible ' + title.lower() + '.')
@@ -47,7 +47,7 @@ def choose(rows, title, action='select', multi=False):
             lines.append('\t'.join((str(index), clean(row['label']), str(preview))))
         command = ['sh', '-c', '. "$1"; shift; ' + ('_t_fzf_multi' if multi else '_t_fzf_single') + ' "$@"',
                    't-eval-picker', str(ROOT / 'ui/fzf.sh'), action, title,
-                   '--prompt=eval> ', '--delimiter=\t', '--with-nth=2', '--no-hscroll',
+                   '--prompt=' + prompt + '> ', '--delimiter=\t', '--with-nth=2', '--no-hscroll',
                    '--preview=cat -- {-1}', '--preview-window=down:40%:wrap']
         env = {k: v for k, v in os.environ.items() if k not in ('FZF_DEFAULT_OPTS', 'FZF_DEFAULT_COMMAND')}
         result = subprocess.run(command, input='\n'.join(lines), text=True, stdout=subprocess.PIPE, env=env)
@@ -108,6 +108,12 @@ def select_config(name, m, machine=False, action='run'):
     return saved[selected] if selected else None
 
 
+def run_label(run, m):
+    summary = m['summarize'](run)
+    scores = ', '.join(f"{v['label']} {v['resolved']}/{v['expected']} ({v['graded']} graded)" for v in summary['modes'].values())
+    return f"{run['id']} · {run['status']} · {summary['finished']}/{summary['total']} · {run['phase']} · {scores}"
+
+
 def select_run(name, m, machine=False, eligible=lambda _: True, exclude=()):
     if name:
         result = m['load_run'](name)
@@ -117,7 +123,7 @@ def select_run(name, m, machine=False, eligible=lambda _: True, exclude=()):
     if machine:
         raise ValueError('specify run ID with --json')
     available = [r for r in m['list_runs']() if eligible(r) and r['id'] not in exclude]
-    chosen = choose([{'key': r['id'], 'label': r['id'] + ' · ' + r['manifest']['config']['name'] + ' · ' + r['status'],
+    chosen = choose([{'key': r['id'], 'label': run_label(r, m),
                       'preview': '\n'.join(run_lines(r, m))} for r in available], 'Runs')
     return next((r for r in available if r['id'] == chosen), None)
 
@@ -263,6 +269,8 @@ def command(cfg, args, api):
         if resource != 'runs' or not action:
             print('Usage: t eval runs {start,list,show,compare,resume,cancel}')
             return 0
+        if action == 'list' and not machine and tty():
+            action = 'show'
         if action == 'list':
             runs = m['list_runs']()
             output([m['summarize'](r) for r in runs], [line for r in runs for line in run_lines(r, m) + ['']] or ['No evaluation runs. Use t eval runs start.'])

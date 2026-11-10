@@ -18,6 +18,7 @@ import textwrap
 import urllib.parse
 import urllib.request
 import uuid
+from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
 _spinner = runpy.run_path(str(ROOT / 'libexec/t_progress.py'))['spinner']
@@ -813,6 +814,27 @@ def managed_runtime(model, provider, context=32768, kind='session', activity=Non
 
 
 @contextmanager
+def reserved_provider_runtime(chosen):
+    """Eval-only provider while the caller owns the machine reservation.
+
+    Entering the queued manager under its legacy lock would wait on ourselves.
+    The caller must retain reservation() for this context's entire lifetime.
+    """
+    if chosen['provider'] == 'lmstudio':
+        with runtime(chosen['model'], chosen['context_tokens'], None) as value:
+            yield value
+    else:
+        worker = helper('t_local_worker')
+        with worker['ollama_server'](chosen['context_tokens']) as (base, _):
+            worker['check_model'](base, chosen['model'])
+            tags = request(base + '/api/tags')['models']
+            info = next((r for r in tags if r['name'] == chosen['model']), None)
+            if not info or not info.get('digest'):
+                raise ValueError('Ollama did not confirm the exact local model digest')
+            yield base, chosen['model'], {'revision': info['digest']}
+
+
+@contextmanager
 def provider_runtime(chosen):
     leased = leased_runtime(chosen)
     if leased:
@@ -832,6 +854,17 @@ def trusted_workspace(cwd):
                    for path, value in projects.items())
     except (OSError, ValueError, TypeError, AttributeError):
         return False
+
+
+@contextmanager
+def lead_client(chosen, activity, leased=None):
+    if leased:
+        # The verified eval gateway owns the reservation and exact artifact.
+        # Never start a second manager inside the isolated candidate container.
+        yield SimpleNamespace(base=leased['base'], alias=leased['alias'], error=None)
+    else:
+        with helper('t_local_manager')['Client'](chosen, 'session', activity) as client:
+            yield client
 
 
 def lead(argv, cwd=None, chosen=None, runner=None):
@@ -857,10 +890,14 @@ def lead(argv, cwd=None, chosen=None, runner=None):
     if fit['fit'] is not True:
         raise ValueError(fit['reason'])
     w = helper('t_local_worker')
-    with helper('t_local_status')['Activity'](chosen['model']) as activity, helper('t_local_manager')['Client'](chosen, 'session', activity) as client:
-        base, alias = client.base, chosen['model']
+    with helper('t_local_status')['Activity'](chosen['model']) as activity, lead_client(chosen, activity, leased) as client:
+        base, alias = client.base, leased['alias'] if leased else chosen['model']
         home = w['state_root']() / ('lead-' + uuid.uuid4().hex)
         env = w['environment'](home)
+        try:
+            helper('t_usage')['local_launch'](home, cwd or os.getcwd())
+        except (OSError, ValueError):
+            pass  # Telemetry must not block an otherwise valid local-only launch.
         env.update(CODEX_OSS_BASE_URL=base + '/v1')
         codex_home = Path(env['CODEX_HOME'])
         if trusted_workspace(cwd or os.getcwd()):
