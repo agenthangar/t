@@ -517,3 +517,41 @@ def test_workflow_menu_exposes_watching_and_stage_speed(modules, monkeypatch):
     assert saved['behaviors']['job_watching'] == 'on_request'
     assert saved['review']['speed'] == 'fast'
     assert saved['session_defaults']['codex']['speed'] == 'fast'
+
+
+@pytest.mark.parametrize('watching', ['automatic', 'on_request'])
+def test_runner_start_links_watch_activity_to_terminal_receipt(modules, monkeypatch, tmp_path, capsys, watching):
+    w, _, watch, _ = modules
+    api = load_script(ROOT / 'bin/t', 'runner_activity_update')
+    root = str(tmp_path)
+    cfg = SimpleNamespace(repos={'repo': root}, hosts={}, agent_default='codex')
+    document = w.defaults()
+    document['workflows']['standard'].setdefault('behaviors', {})['job_watching'] = watching
+    monkeypatch.setattr(w, 'load', lambda: (document, None))
+    monkeypatch.setattr(api, '_workflow', lambda: vars(w))
+    monkeypatch.setattr(api, '_t_git', lambda *args: root)
+    monkeypatch.setattr(api, '_t_canonical_root', lambda *args: root)
+    target = {'type': 'local', 'provider': 'local'}
+    result = {'id': 'local-job', 'status': 'succeeded', 'exit_code': 0, 'targets': {'local': target}}
+    def start(checkout, config, command, **kwargs):
+        assert checkout == root and command == ['true'] and kwargs['targets'] == ['local']
+        kwargs['progress'](dict(result, status='running'))
+        kwargs['progress'](result)
+        return result
+    monkeypatch.setattr(api, '_runners', lambda: {'select_targets': lambda *args: {'local': target}, 'start': start})
+    activities = []
+    def activity(*args):
+        item = watch.Activity(*args, identity={'session_id': 'verified', 'host': socket.gethostname()})
+        activities.append(item)
+        return item
+    monkeypatch.setattr(api, '_watchers', lambda: {'Activity': activity})
+    args = api.build_parser().parse_args(['runners', 'runs', 'start', '--json', '--', 'true'])
+    assert api._cmd_workflow_runs(cfg, args) == 0
+    assert json.loads(capsys.readouterr().out) == result
+    if watching == 'automatic':
+        assert len(activities) == 1
+        record = watch.records('verified')[0]
+        assert record['run_id'] == result['id'] and record['kind'] == 'local tests'
+        assert not record['active'] and record['state'] == 'result ready'
+    else:
+        assert not activities and not watch.records('verified')
