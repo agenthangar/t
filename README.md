@@ -1711,3 +1711,6 @@ retains existing nosleep settings and hotspot credentials.
 Use **t config → Nosleep** for the same settings editor, nearby-network selection,
 macOS discovery permission setup, and hotspot passwords. Its live dashboard shows
 the selected network's availability even when fallback is disabled.
+
+Session discovery is served from a shared in-memory cache with hourly expiry
+and asynchronous disk persistence. See [session cache behavior and storage](docs/session-cache.md).

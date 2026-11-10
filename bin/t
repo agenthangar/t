@@ -548,6 +548,10 @@ def _ls_scope(cfg, repo, all_repos, cwd):
     return scope, wt_scope
 
 
+def _session_discovery():
+    return runpy.run_path(os.path.join(_t_source_root(), 'libexec', 't_session_discovery.py'))
+
+
 def cmd_ls(cfg, args):
     try:
         scope, wt_scope = _ls_scope(cfg, args.repo, args.all, os.getcwd())
@@ -557,7 +561,16 @@ def cmd_ls(cfg, args):
     st = Style()
     _progress("Checking local sessions and remote hosts" if args.remote else "Checking local sessions")
     command = "_dev_rows_all --details" if args.remote else "_dev_session_rows --details"
-    rows = _scope_filter(_parse_rows(zsh_capture(command), host_prefixed=args.remote), scope, wt_scope)
+    if os.environ.get('T_DISCOVERY_COLLECTOR') == '1':
+        text = zsh_capture(command)
+    else:
+        cache = _session_discovery()
+        view = cache['discover'](cfg, local=not args.remote, fields=['rows'])
+        cache['announce'](view)
+        if not any(h.get('value') is not None for h in view.get('hosts', [])):
+            return 1 if view.get('unavailable') else 0
+        text = cache['rows'](view, prefixed=args.remote)
+    rows = _scope_filter(_parse_rows(text, host_prefixed=args.remote), scope, wt_scope)
     if not rows:
         if args.remote:
             where = f" in {os.path.basename(scope)} (t ls -r --all for every repo)," if scope else ""
@@ -10491,21 +10504,11 @@ def _index_key(path):
 
 
 def _index_save(cpath, st):
-    """tmp + os.replace, pid-suffixed: every Claude session spawns its own `t mcp`, so
-    two processes can refresh the same transcript at once — a shared tmp name would
-    let one replace the other's half-written file. Never raises: an unwritable cache
-    just means the next process re-reads."""
-    tmp = "%s.%d.tmp" % (cpath, os.getpid())
-    try:
-        os.makedirs(os.path.dirname(cpath), exist_ok=True)
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(st, fh, ensure_ascii=False)
-        os.replace(tmp, cpath)
-    except OSError:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
+    _session_discovery()['request']('artifact', {'key': str(cpath), 'value': st})
+
+
+def _index_load(cpath):
+    return _session_discovery()['request']('artifact', {'key': str(cpath)}).get('value')
 
 
 def _index_update(path, cache_dir):
@@ -10522,12 +10525,7 @@ def _index_update(path, cache_dir):
     except OSError:
         return None
     cpath = os.path.join(cache_dir, _index_key(path))
-    st = None
-    try:
-        with open(cpath, encoding="utf-8") as fh:
-            st = json.load(fh)
-    except (OSError, ValueError):
-        st = None
+    st = _index_load(cpath)
     if (not isinstance(st, dict) or st.get("v") != _INDEX_V or st.get("ino") != info.st_ino
             or not isinstance(st.get("off"), int) or st["off"] > info.st_size):
         st = _index_empty(info.st_ino)
@@ -10724,6 +10722,10 @@ def _session_row(cfg, rec, live_by_sid, now, cache_root=None, this_sid=None,
     an isdir on the worktree, a stat on the opened stamp, and reads of the two
     sidecar files (PR-state cache, .origin). `origin` is null for this host — it is a
     "last ran ELSEWHERE" signal, like t resume's column."""
+    if rec.get('_cached_row') is not None:
+        row = dict(rec['_cached_row'])
+        row['this_session'] = bool(this_sid and rec.get('sid') == this_sid)
+        return row
     sid = rec.get("sid") or ""
     cwd = rec.get("cwd") or ""
     live = live_by_sid.get(sid) if sid else None
@@ -11112,11 +11114,11 @@ _MCP_TOOLS = [
          "required": ["query"]}},
     {"name": "list_sessions",
      "description": (
-         "The live agent sessions right now: tmux dev slots (<repo>-<n>) and foreground "
+         "Cached live agent sessions (hourly expiry): tmux dev slots (<repo>-<n>) and foreground "
          "claudes, with title, branch, PR + state, dev-server URL, and "
          "the last prompts. Use it for 'what is running', 'what is slot 17 doing', or to "
-         "map a slot to its worktree/branch. all_hosts also asks the other machines "
-         "(slow: several seconds)."),
+         "map a slot to its worktree/branch. all_hosts includes cached remote hosts. "
+         "Cold or expired data refreshes in the background; inspect freshness and retry for updated results."),
      "inputSchema": {"type": "object", "properties": {
          "repo": {"type": "string", "description": "Registered alias or repository directory name to restrict to"},
          "all_hosts": {"type": "boolean", "default": False}}}},
@@ -11138,6 +11140,16 @@ def _mcp_context(cfg, state):
     """Everything a tool call reads, gathered once per call (glue): the index (re-stat
     at most every _INDEX_REFRESH_S — a back-to-back pair of calls must not walk 600
     files twice) and liveness."""
+    if os.environ.get('T_DISCOVERY_COLLECTOR') != '1':
+        cache = _session_discovery()
+        view = cache['discover'](cfg, local=True, fields=['mcp'])
+        ctx = next(((h.get('value') or {}).get('mcp') for h in view.get('hosts', [])
+                    if (h.get('value') or {}).get('mcp')), None)
+        ctx = ctx or dict(recs=[], live={}, idle=[], live_rows=[], cache_root=None)
+        ctx.update(now=time.time(), this_sid=(os.environ.get('CLAUDE_CODE_SESSION_ID') or
+                   os.environ.get('CODEX_THREAD_ID') or os.environ.get('CODEX_SESSION_ID')),
+                   freshness=cache['freshness'](view))
+        return ctx
     now = time.time()
     if state.get("recs") is None or now - state.get("at", 0) > _INDEX_REFRESH_S:
         state["recs"] = _index_dedupe(_mcp_records())
@@ -11185,7 +11197,7 @@ def _tool_list(cfg, ctx, args):
                      "url": None,
                      "this_session": False})
     for row in rows:
-        if row.get("slot") and row.get("cwd"):
+        if "freshness" not in ctx and row.get("slot") and row.get("cwd"):
             row["url"] = _dev_url(row["slot"], row["cwd"])
     if want:
         rows = [r for r in rows if cfg.repos.get(r.get("repo")) == want]
@@ -11193,8 +11205,14 @@ def _tool_list(cfg, ctx, args):
     out = {"count": len(rows), "sessions": rows}
     if args.get("all_hosts"):
         remote = []
-        for r in _parse_rows(zsh_capture("_dev_rows_all", stdin=subprocess.DEVNULL),
-                             host_prefixed=True):
+        if os.environ.get('T_DISCOVERY_COLLECTOR') == '1':
+            remote_text = zsh_capture("_dev_rows_all", stdin=subprocess.DEVNULL)
+        else:
+            cache = _session_discovery()
+            view = cache['discover'](cfg)
+            remote_text = cache['rows'](view)
+            out['freshness'] = cache['freshness'](view)
+        for r in _parse_rows(remote_text, host_prefixed=True):
             if r["host"] == "local":
                 continue
             alias, _ = cfg.repo_of_dir(r["cwd"]) if r["cwd"] else (None, None)
@@ -11252,7 +11270,11 @@ def _mcp_tools():
 def _mcp_call(cfg, state, name, args):
     if name not in _MCP_HANDLERS:
         return _mcp_controls()["call"](cfg, name, args, globals())
-    return _MCP_HANDLERS[name](cfg, _mcp_context(cfg, state), args or {})
+    ctx = _mcp_context(cfg, state)
+    result = _MCP_HANDLERS[name](cfg, ctx, args or {})
+    if isinstance(result, dict) and 'freshness' in ctx:
+        result.setdefault('freshness', ctx['freshness'])
+    return result
 
 
 # ── framing (mirrors hive's mcp_servers/protocol.py) ──
@@ -11551,7 +11573,18 @@ def cmd_agentcore(cfg, args):
 def cmd_history(cfg, args):
     _progress("Finding saved conversations", machine=getattr(args, "json", False))
     helper = runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_history.py"))
-    history = helper["HistoryCommand"](cfg, globals())
+    snapshot = None
+    view = None
+    if os.environ.get('T_DISCOVERY_COLLECTOR') != '1':
+        cache = _session_discovery()
+        if getattr(args, 'refresh', False):
+            cache['event'](['local', *cfg.hosts.values()])
+        view = cache['discover'](cfg, fields=['catalog'])
+        if not getattr(args, 'json', False):
+            cache['announce'](view)
+        snapshot = cache['SnapshotStore'](view)
+    history = helper["HistoryCommand"](cfg, globals(), store=snapshot)
+    history.discovery_view = view
     try:
         return history.execute(args)
     except (ValueError, OSError) as error:
@@ -12537,7 +12570,9 @@ EXAMPLES
 
     sp = sub.add_parser("open", help="open or reattach a session",
         usage="%(prog)s [repo] [slot] [flags]",
-        description="Open sessions. Bare: browse all repos; attached sessions are hidden.",
+        description="Open sessions. Bare: browse all repos; attached sessions are hidden. "
+            "Discovery uses a persisted RAM cache with hourly expiry. Refreshes run in the background; "
+            "run again for updated results. Ownership is checked live before opening.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""EXAMPLES
   %(prog)s                     Browse sessions across repos
@@ -12624,7 +12659,8 @@ REMOTE SESSIONS
         description='List live sessions across all repositories without prompting. Name a repository to scope the list. '
             'Registered hosts are included by default; --local limits the view; unavailable hosts warn '
             'while reachable sessions remain listed. LAST TURN shows turn initiation time. Pipe to cat for '
-            'complete values on narrow terminals.',
+            'complete values on narrow terminals. Discovery uses a persisted RAM cache with hourly expiry. '
+            'Cold or expired entries refresh in the background; run again for updated results.',
         help_details="""DETAILS
 
   List dev sessions: whether each is attached, and whether it has an active
@@ -12790,7 +12826,9 @@ REMOTE SESSIONS
     sp = sub.add_parser("resume", help="select and resume saved conversations",
         description='Resume saved conversations. A plain slot target opens conversation history. Infer the current repository; '
             'outside one, browse local and remote repositories. Enter selects; Tab marks several. Live selections '
-            'attach to their owner. Repositories are cloned only after selection. Claude and Codex use guarded t transfers.',
+            'attach to their owner. Repositories are cloned only after selection. Claude and Codex use guarded t transfers. '
+            'Discovery uses a persisted RAM cache with hourly expiry. Refreshes run in the background; '
+            'run again for updated results. Ownership is checked live before resuming.',
 
         epilog="""EXAMPLES
   %(prog)s                   Browse the current repository
@@ -13939,6 +13977,48 @@ def _main(argv):
         finally:
             history.store.close()
         return 0
+    if argv and argv[0] in ('__cache-collect', '__cache-collect-local'):
+        os.environ['T_DISCOVERY_COLLECTOR'] = '1'
+        spec = json.load(sys.stdin) if argv[0] == '__cache-collect' else {'target': 'local', 'export': True}
+        print(json.dumps(_session_discovery()['collect'](spec, globals())))
+        return 0
+    if len(argv) == 6 and argv[0] == '__cache-record':
+        event, sid, agent, cwd, label = argv[1:]
+        row = '\t'.join([sid or '-', cwd, label, 'detached', 'none', '-', agent])
+        _session_discovery()['event'](['local'], event=event, row=row)
+        return 0
+    if argv and argv[0] == '__cache-event':
+        cfg = Config()
+        targets = [cfg.hosts.get(host, host) for host in argv[1:]] or ['local']
+        _session_discovery()['event'](targets)
+        return 0
+    if argv and argv[0] == '__cache-rows':
+        cache = _session_discovery()
+        selected_host = argv[argv.index('--host') + 1] if '--host' in argv else None
+        repo = argv[argv.index('--repo') + 1] if '--repo' in argv else None
+        view = cache['discover'](Config(), local='--local' in argv, host=selected_host, fields=['rows', 'scopes', 'catalog'] if repo else ['rows'])
+        cache['announce'](view)
+        text = cache['rows'](view, prefixed='--unprefixed' not in argv, repo=repo, cli_only='--cli-only' in argv)
+        if '--basic' in argv:
+            text = ''.join('\t'.join(row.split('\t')[:8]) + '\n' for row in text.splitlines())
+        sys.stdout.write(text)
+        return 1 if view.get('unavailable') else 0
+    if argv and argv[0] == '__resume-candidates' and os.environ.get('T_DISCOVERY_COLLECTOR') != '1':
+        aliases, slot = argv[1:], None
+        if aliases[:1] == ['--diagnostics-file']:
+            aliases = aliases[2:]
+        if '--slot' in aliases:
+            at = aliases.index('--slot')
+            if at != len(aliases) - 2 or not aliases[-1].isdigit():
+                print('t resume: invalid saved conversation slot', file=sys.stderr)
+                return 2
+            slot, aliases = aliases[-1], aliases[:at]
+        cache = _session_discovery()
+        view = cache['discover'](Config())
+        cache['announce'](view)
+        for row in cache['candidates'](view, aliases, slot):
+            print(row)
+        return 1 if view.get('unavailable') else 0
     if argv and argv[0] in ('__resume-candidates', '__resume-saved'):
         helper = runpy.run_path(os.path.join(_t_source_root(), 'libexec', 't_history.py'))
         history = helper['HistoryCommand'](Config(), globals())

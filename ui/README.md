@@ -865,12 +865,14 @@ with `done` and editable prompts with `cooked_input`.
 
 ## Session information and history
 
-Saved candidate discovery uses a disposable source-validated cache and one snapshot
-per resume invocation. File identity, size, nanosecond timestamps, and SQLite WAL
-changes invalidate cached metadata. Live ownership is never taken from this cache.
-Terminal commands may print plain stage progress to stderr before slow discovery;
-redirected output, JSON, and remote scanner protocols remain free of progress.
-This adds no command, picker, prompt, or conditional selection mode.
+Session discovery uses one RAM-serving cache service for CLI and MCP. Local and
+remote snapshots and host status expire hourly. Missing/expired entries refresh
+asynchronously; cached rows remain visible with their age, and an open picker
+stays stable until the next invocation. Cold discovery reports refreshing,
+never a false empty result. Failed hosts retry on use after one hour. Session
+lifecycle events invalidate affected hosts; live ownership checks always bypass
+the cache. SQLite is asynchronous persistence for startup recovery only.
+See [session cache storage and lifecycle](../docs/session-cache.md).
 
 Quiet blocking work (provider calls, repository/setup probes, updates, AgentCore,
 sharing, and session/history discovery) uses a delayed

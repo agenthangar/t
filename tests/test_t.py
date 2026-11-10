@@ -1486,7 +1486,7 @@ def test_index_update_cold_then_incremental(t_mod, tmp_path):
     tx = _tx_file(tmp_path / "p" / "s.jsonl", _user("one"), _user("two"))
     rec = t_mod._index_update(tx, str(cache))
     assert rec["n_prompts"] == 2 and rec["off"] == os.path.getsize(tx) and rec["path"] == tx
-    assert sorted(os.listdir(cache)) == [t_mod._index_key(tx)]        # tmp cleaned up
+    assert not cache.exists()  # Storage is owned by the cache service.
     with open(tx, "ab") as fh:
         fh.write(_jl(_user("three")))
         fh.write(b'{"type":"user","message":{"content":"half writ')       # no newline yet
@@ -1512,15 +1512,15 @@ def test_index_update_resets_on_inode_corruption_or_schema(t_mod, tmp_path, monk
     os.replace(tmp_path / "p" / "s.new", tx)
     assert t_mod._index_update(tx, str(cache))["n_prompts"] == 1
     # corrupt cache → rescan
-    cpath.write_text("{not json")
+    t_mod._index_save(cpath, "not a record")
     assert t_mod._index_update(tx, str(cache))["n_prompts"] == 1
     # older schema → rescan
-    st = json.loads(cpath.read_text()); st["v"] = 0; st["n_prompts"] = 99
-    cpath.write_text(json.dumps(st))
+    st = t_mod._index_load(cpath); st["v"] = 0; st["n_prompts"] = 99
+    t_mod._index_save(cpath, st)
     assert t_mod._index_update(tx, str(cache))["n_prompts"] == 1
     # cache claims more bytes than exist (truncation) → rescan
-    st = json.loads(cpath.read_text()); st["off"] = 10 ** 9; st["n_prompts"] = 99
-    cpath.write_text(json.dumps(st))
+    st = t_mod._index_load(cpath); st["off"] = 10 ** 9; st["n_prompts"] = 99
+    t_mod._index_save(cpath, st)
     assert t_mod._index_update(tx, str(cache))["n_prompts"] == 1
     # unreadable transcript → None
     assert t_mod._index_update(str(tmp_path / "nope.jsonl"), str(cache)) is None

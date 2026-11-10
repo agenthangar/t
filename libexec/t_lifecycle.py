@@ -822,6 +822,23 @@ def execute(verb, arguments, adapter, *, token=None, directory=None):
             if verb in ('move', 'restore'):
                 adapter.output('Transfer paused with work retained. Retry: t resume ' + arguments[5] + ' ' + arguments[6])
             raise
+        finally:
+            receipts = operation.value.get('receipts', {})
+            pending = operation.value.get('pending')
+            if any(k in receipts or pending == k for k in ('launch', 'stop', 'ready', 'record')):
+                _discovery_changed(arguments[:2] if verb in ('move', 'restore') else ['local'])
+
+
+def _discovery_changed(targets):
+    if os.environ.get('T_DISCOVERY_COLLECTOR') == '1':
+        return
+    try:
+        subprocess.run([sys.executable, str(ROOT / 'bin/t'), '__cache-event',
+                        *[target or 'local' for target in targets]],
+                       stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL, timeout=3)
+    except (OSError, subprocess.TimeoutExpired):
+        pass  # Discovery cannot roll back a completed lifecycle operation.
 
 
 def main(argv):

@@ -448,6 +448,30 @@
     "libexec/t_local_inference.py:download_command:subprocess.Popen": {
       "kind": "background",
       "reason": "Interactive downloads run beneath the cancellable Model test progress page; output is suppressed to preserve its rendering."
+    },
+    "libexec/t_session_cache.py:request:subprocess.Popen": {
+      "kind": "protocol",
+      "reason": "Private socket service startup is bounded to one second; callers preserve JSON or row protocols and report cache freshness after the response."
+    },
+    "libexec/t_session_cache.py:request:time.sleep": {
+      "kind": "protocol",
+      "reason": "Private socket service startup is bounded to one second; callers preserve JSON or row protocols and report cache freshness after the response."
+    },
+    "libexec/t_session_cache.py:_collect:subprocess.run": {
+      "kind": "background",
+      "reason": "Detached discovery service workers have no terminal. Cached callers return immediately with freshness while bounded scans and startup arbitration run in the background."
+    },
+    "libexec/t_session_cache.py:_serve:time.sleep": {
+      "kind": "background",
+      "reason": "Detached discovery service workers have no terminal. Cached callers return immediately with freshness while bounded scans and startup arbitration run in the background."
+    },
+    "libexec/t_session_discovery.py:collect:subprocess.run": {
+      "kind": "background",
+      "reason": "Detached discovery service workers have no terminal. Cached callers return immediately with freshness while bounded scans and startup arbitration run in the background."
+    },
+    "libexec/t_lifecycle.py:_discovery_changed:subprocess.run": {
+      "kind": "protocol",
+      "reason": "A bounded private cache invalidation runs after lifecycle effects; it must preserve action protocol output and cannot roll back a completed operation."
     }
   },
   "shell": [

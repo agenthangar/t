@@ -116,3 +116,35 @@ class ManagedClientFixture:
     def __enter__(self): return self
     def __exit__(self, *args): pass
     def waited(self): return 0
+
+
+@pytest.fixture(autouse=True)
+def isolate_discovery_collectors(monkeypatch):
+    """Legacy scanner tests exercise uncached collectors, never the user's daemon.
+
+    Cache integration tests explicitly clear this and provide temporary HOME/XDG.
+    """
+    monkeypatch.setenv('T_DISCOVERY_COLLECTOR', '1')
+
+
+@pytest.fixture(autouse=True)
+def isolate_discovery_artifacts(monkeypatch):
+    import copy
+    import runpy
+    artifacts = {}
+    original = runpy.run_path
+    def run(path, *args, **kwargs):
+        result = original(path, *args, **kwargs)
+        if str(path).endswith('/t_session_cache.py'):
+            actual = result['request']
+            def request(operation, payload=None):
+                if operation != 'artifact':
+                    return actual(operation, payload)
+                key = str(payload['key'])
+                if 'value' in payload:
+                    artifacts[key] = copy.deepcopy(payload['value'])
+                return {'value': copy.deepcopy(artifacts.get(key))}
+            result['request'] = request
+        return result
+    monkeypatch.setattr(runpy, 'run_path', run)
+    return artifacts

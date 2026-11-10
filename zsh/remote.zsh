@@ -271,6 +271,7 @@ _dev_remote_attach() {
     echo "  From a terminal: t session open $prepo $pslot   (it attaches on $host; \`t session move $prepo $pslot --from $host\` pulls it here)" >&2
     return 1
   fi
+  _t_discovery_event "$host"
   echo "→ Attaching $host:dev-${prepo}-${pslot} (stays on $host; Ctrl-b d to detach)"
   # Let the remote login shell expand $$ so this delegated command is marked as
   # already checked there. Later commands in that shell can still check updates.
@@ -1052,6 +1053,13 @@ _t_remote_host_pick() {
 # selected-source rechecks and actual transfer ownership checks stay strict.
 _t_remote_move_rows() {
   local source=$1 repo=$2 rows
+  if [[ ${3:-} == browse && ${T_DISCOVERY_COLLECTOR:-} != 1 ]]; then
+    local -a cache_args
+    [[ -n $source ]] && cache_args+=(--host "$source")
+    [[ -n $repo ]] && cache_args+=(--repo "$repo")
+    _t_discovery_rows "${cache_args[@]}"
+    return $?
+  fi
   if [[ $source == local ]]; then
     rows=$(_dev_session_rows --details) || return 1
   elif [[ -n $source ]]; then
@@ -1100,6 +1108,13 @@ _t_remote_open_rows() {
 }
 
 _t_remote_open_inventory() {
+  if [[ ${T_DISCOVERY_COLLECTOR:-} != 1 ]]; then
+    local -a cache_args
+    [[ -n $2 ]] && cache_args+=(--repo "$2")
+    _t_discovery_rows --host "$1" --cli-only "${cache_args[@]}"
+    return $?
+  fi
+
   local host=$1 repo=$2 rows rc
   # Ship only this read-only worker so existing hosts need no coordinated update.
   local worker="$(functions _t_remote_open_rows); T_NO_UPDATE_CHECK=1 _t_remote_open_rows ${(q)repo}"
@@ -1359,7 +1374,7 @@ _t_remote() {
       (( _repo_selector_rc == 2 )) && return 2
       (( _repo_selector_rc == 0 )) && repo=$_repo_selector
     fi
-    rows=$(_t_remote_move_rows "$source" "$repo"); local source_rc=$?
+    rows=$(_t_remote_move_rows "$source" "$repo" browse); local source_rc=$?
     (( source_rc == 2 )) && return 2
     (( source_rc == 0 )) || { print -u2 't session move: ownership scan failed; no conversation was moved'; return 1; }
     if [[ -z $source || $source == local ]]; then
@@ -1383,7 +1398,7 @@ _t_remote() {
           # Different checkout names/layouts are valid across hosts. Ask the
           # source registry to prove scope; never trust a matching slot label.
           if [[ -z ${scoped_source_rows[$fields[1]]+present} ]]; then
-            scoped_rows=$(_t_remote_move_rows "$fields[1]" "$repo"); scoped_rc=$?
+            scoped_rows=$(_t_remote_move_rows "$fields[1]" "$repo" browse); scoped_rc=$?
             (( scoped_rc == 0 )) || {
               print -u2 't session move: repository scope could not be verified; no conversation was moved'
               return $scoped_rc
