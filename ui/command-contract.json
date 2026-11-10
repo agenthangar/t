@@ -9360,7 +9360,8 @@
     "workflow exclude": "_cmd_workflow workflow_repo",
     "workflow inherit": "_cmd_workflow workflow_repo",
     "workflow instructions show": "_cmd_workflow workflow_repo",
-    "workflow instructions edit": "_cmd_workflow workflow_repo"
+    "workflow instructions edit": "_cmd_workflow workflow_repo",
+    "workflow context": "_cmd_workflow resolves explicit workflow_repo or current common Git directory"
   },
   "command_aliases": {
     "list_verbs": {
