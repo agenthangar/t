@@ -95,7 +95,8 @@ def test_links_only_is_idempotent_and_does_not_seed_local_config(box, codex_hook
         assert "Registered the SessionStart hook" not in second.stdout
         assert hooks.read_bytes() == before
     else:
-        assert second.stdout == ""
+        assert "Instruction migration deferred" in second.stdout
+        assert not (home / ".codex/AGENTS.md").exists()
         assert not hooks.exists()
     assert not (home / ".config/t/local.zsh").exists()
     assert not (home / ".claude/settings.json").exists()
@@ -225,8 +226,11 @@ def test_explicit_policy_runs_after_fresh_settings_seed(box):
     binary.write_text("""#!/usr/bin/env python3
 import os
 from pathlib import Path
-settings = Path(os.environ['HOME']) / '.claude/settings.json'
-Path(os.environ['T_POLICY_PROBE']).write_text('present' if settings.is_file() else 'missing')
+class Config:
+    repos = {}
+if __name__ == '__main__':
+    settings = Path(os.environ['HOME']) / '.claude/settings.json'
+    Path(os.environ['T_POLICY_PROBE']).write_text('present' if settings.is_file() else 'missing')
 """)
     binary.chmod(0o755)
     result = run_install(checkout, home, T_PERMISSIONS_DIR=str(policy),
@@ -286,33 +290,29 @@ def test_install_migrates_standard_hook_names_preserving_options_and_trust(box, 
     assert config.read_bytes() == trust
 
 
-def test_install_seeds_editable_defaults_and_refreshes_configured_workflow(box):
+def test_unattended_install_defers_instructions_and_preserves_configured_workflow(box):
     checkout, home = box
     native = home / '.codex/AGENTS.md'
-    assert run_install(checkout, home).returncode == 0
-    assert '<!-- t agent-workflow: begin -->' in native.read_text()
-    assert (home / '.config/t/workflow.json').exists()
+    initial = run_install(checkout, home)
+    assert initial.returncode == 0, initial.stderr
+    assert 'Instruction migration deferred' in initial.stdout
+    assert not native.exists()
+    saved = home / '.config/t/workflow.json'
+    assert not saved.exists()
     policy = {'enabled': True, 'planning': {'model': 'chosen-planner', 'effort': 'high'},
               'implementation': {'model': 'chosen-coder', 'effort': 'medium'},
               'review': {'model': 'chosen-reviewer', 'effort': 'one-level-lower'},
               'instructions': 'Keep release notes concise.'}
-    saved = home / '.config/t/workflow.json'
+    saved.parent.mkdir(parents=True, exist_ok=True)
     saved.write_text(json.dumps({'version': 1, 'global': policy, 'repositories': {}}))
-    original = native.read_text()
+    native.write_text('My existing instructions.\n')
+    original_config, original_native = saved.read_bytes(), native.read_bytes()
     result = run_install(checkout, home)
     assert result.returncode == 0, result.stderr
-    assert native.read_text().split('<!-- t agent-workflow: begin -->')[0] == original.split('<!-- t agent-workflow: begin -->')[0]
-    assert 'chosen-planner' in native.read_text()
-    assert 'chosen-coder' in native.read_text()
-    claude = (home / '.claude/CLAUDE.md').read_text()
-    assert 'Keep release notes concise.' in native.read_text() and 'Keep release notes concise.' in claude
-    assert all(model not in claude for model in ('chosen-planner', 'chosen-coder', 'chosen-reviewer'))
-    stored = json.loads(saved.read_text())
-    claude_policy = stored['tools']['claude']['workflows']['standard']
-    assert claude_policy['stages_enabled'] is False
-    assert all(not claude_policy[stage]['model'] for stage in ('planning', 'implementation', 'review'))
-    assert '<!-- t public-issues: begin -->' not in native.read_text()
-    assert native.read_text().count('<!-- t agent-workflow: begin -->') == 1
+    assert 'Instruction migration deferred' in result.stdout
+    assert saved.read_bytes() == original_config
+    assert native.read_bytes() == original_native
+    assert not (home / '.claude/CLAUDE.md').exists()
     assert not (checkout / 'AGENTS.md').exists()
 
 
