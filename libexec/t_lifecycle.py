@@ -143,23 +143,25 @@ def selected_rollout(sid):
     return matches[0]
 
 
-def native_preflight(agent, sid, workspace, rollout=None, *, retry='Retry: t session resume.'):
+def native_preflight(agent, sid, workspace, rollout=None, *, retry='Retry: t session resume.',
+                     new_workspace=None):
     if agent != 'codex':
         return
     if not sid:
         home = str(Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex'))
-        # A new conversation does not reclaim any existing thread writer. Keep
-        # checking every known workspace owner, but do not turn a sibling with
-        # unpublished metadata into a host-wide launch veto. The shell preflight
-        # still checks tmux/foreground owners and reservations under launch locks.
-        # Retain unresolved identities in the operation receipt; saved resumes
-        # and transfers below keep the strict selected/sibling writer policy.
-        unknown = set()
+        # Only the allocator can attest that this invocation created a fresh
+        # worktree. An absent SID is insufficient: open can reuse parked work.
+        unknown = None
+        if new_workspace:
+            info = os.lstat(workspace)
+            if not stat.S_ISDIR(info.st_mode) or new_workspace != f'{info.st_dev}:{info.st_ino}':
+                raise LifecycleError('new workspace identity changed; retry t open --new')
+            unknown = set()
         other = OWNERSHIP['_other_cwd_owner'](OWNERSHIP['_lock_dir'](home), '', workspace, home,
                                              unknown=unknown, run=run)
         if other:
             raise LifecycleError('another Codex conversation owns this workspace: ' + other)
-        return {'unresolved_writers': sorted(unknown)}
+        return {'unresolved_writers': sorted(unknown or ())}
     path = Path(rollout) if rollout else selected_rollout(sid)
     home = str(Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex'))
     creation_cwd = OWNERSHIP['_rollout_cwd'](str(path), sid)
@@ -797,7 +799,8 @@ def execute(verb, arguments, adapter, *, token=None, directory=None):
                 sid = arguments[2] if verb in ('resume', 'replace') else ''
                 if 'launch' not in operation.value['receipts'] and operation.value.get('pending') != 'launch':
                     operation.step('inspect', lambda: adapter.call('replace-preflight', *arguments) if verb == 'replace' else adapter.call('preflight', session, workspace, sid), repeat=True)
-                    operation.step('ownership', lambda: native_preflight(agent, sid, workspace), repeat=True)
+                    native_options = {'new_workspace': arguments[8]} if verb == 'new' and len(arguments) > 8 else {}
+                    operation.step('ownership', lambda: native_preflight(agent, sid, workspace, **native_options), repeat=True)
                     operation.step('launch', lambda: adapter.call(verb, *arguments))
                 result = operation.step('ready', lambda: adapter.call('ready', session, workspace, agent, sid), repeat=True)
                 operation.step('writer-ready', lambda: verify_ready(agent, sid), repeat=True)

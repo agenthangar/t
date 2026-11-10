@@ -167,6 +167,7 @@ _dev_worktree_create() {
 
 _dev_worktree_create_impl() {
   local repo="$1" slot="$2"
+  local report_new=${4:-} was_present=
   local repodir="${DEV_REPOS[$repo]}"
   local wt br; wt="$(_dev_worktree_path "$repo" "$slot")" || return 1
   # An exact resume/transfer may rebuild either supported layout, never rename it.
@@ -178,6 +179,7 @@ _dev_worktree_create_impl() {
     }
     wt=$3
   fi
+  [[ -e $wt || -L $wt ]] && was_present=1
   br="$(_dev_worktree_branch "$repo" "$slot")"
   if [[ -e "$wt/.git" ]]; then          # already materialized → reuse (idempotent)
     _dev_issue_preparing "$wt" && { print -u2 't: issue launch is reserved; rerun t issue start <issue> to recover it'; return 1; }
@@ -232,10 +234,15 @@ _dev_worktree_create_impl() {
     resume) git -C "$repodir" worktree add -q "$wt" "$br" 2>/dev/null ;;               # resume lingering local slot branch
     track)  git -C "$repodir" worktree add -q -b "$br" "$wt" "origin/$br" 2>/dev/null ;; # branch exists only on origin → create local tracking + check out
     *)      git -C "$repodir" worktree add -q -b "$br" "$wt" "refs/remotes/$origin_base" 2>/dev/null ;;
-  esac
+  esac || return 1
   [[ -e "$wt/.git" ]] || return 1
   _dev_auto_trust "$wt"
   print -r -- "$wt"
+  # Private launch provenance: only an absent path successfully created from
+  # the default branch gets an identity. Reuse/restore/debris stay conservative.
+  if [[ $report_new == new-launch && -z $was_present && $how == fresh ]]; then
+    python3 -c 'import os,stat,sys; s=os.lstat(sys.argv[1]); assert stat.S_ISDIR(s.st_mode); print(f"{s.st_dev}:{s.st_ino}")' "$wt"
+  fi
 }
 
 # _dev_worktree_freshen <repo> <slot> <wt> <br> — the existing-worktree half of the rule

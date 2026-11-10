@@ -223,26 +223,37 @@ sys.stdin.read()
 
 
 @pytest.mark.parametrize('conflict', [False, True])
-def test_public_new_scopes_unindexed_writers(lifecycle, conflict):
+@pytest.mark.parametrize('reused', [False, True])
+def test_public_new_scopes_unindexed_writers(lifecycle, conflict, reused):
     base, env = lifecycle
     worktree = base / 'worktrees' / 'repo' / 'repo-1'
     env['T_TEST_FRESH_SID'] = SID
+    if reused:
+        result = _run(['git', '-C', str(base / 'repo'), 'worktree', 'add', '-b',
+                       'dev/repo-1', str(worktree), 'origin/main'], env=env, cwd=base)
+        assert result.returncode == 0, result.stderr
+        (worktree / 'keep.txt').write_text('uncommitted work')
     if conflict:
         with sqlite3.connect(base / 'codex' / 'state_5.sqlite') as db:
             db.execute('create table threads (id text, cwd text)')
             db.execute('insert into threads values (?, ?)', (UNINDEXED[1], str(worktree)))
     with _unindexed_writers(base, env) as paths:
         inodes = [path.stat().st_ino for path in paths]
-        result = _shell(base, env, 't open repo --new --codex --cli')
+        target = '1' if reused else '--new'
+        result = _shell(base, env, f't open repo {target} --codex --cli')
         assert [path.stat().st_ino for path in paths] == inodes
         operations = list((base / 'state' / 't' / 'lifecycle' / 'operations').glob('*.json'))
         assert len(operations) == 1
         receipt = json.loads(operations[0].read_text())
-        if conflict:
+        if conflict or reused:
             assert result.returncode != 0
-            assert 'another Codex conversation owns this workspace' in result.stderr
+            message = ('another Codex conversation owns this workspace' if conflict else
+                       'could not be matched to its worktree')
+            assert message in result.stderr
             assert not (base / 'agents.log').exists()
             assert receipt['pending'] == 'ownership'
+            if reused:
+                assert (worktree / 'keep.txt').read_text() == 'uncommitted work'
         else:
             assert result.returncode == 0, result.stderr or result.stdout
             launches = _until(lambda: (base / 'agents.log').read_text().splitlines())

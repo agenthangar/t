@@ -45,12 +45,15 @@ class Adapter:
 
 
 @pytest.mark.parametrize('metadata', ['missing', 'elsewhere', 'same', 'corrupt'])
-def test_new_native_preflight_scopes_writers_and_preserves_store_errors(engine, tmp_path, metadata):
+@pytest.mark.parametrize('fresh', [False, True])
+def test_new_native_preflight_scopes_writers_and_preserves_store_errors(engine, tmp_path, metadata, fresh):
     home = Path(os.environ['CODEX_HOME'])
     locks = home / 'thread-writer-locks'
     locks.mkdir()
     workspace = tmp_path / 'workspace'
     workspace.mkdir()
+    info = workspace.stat()
+    provenance = f'{info.st_dev}:{info.st_ino}' if fresh else None
     if metadata == 'corrupt':
         (home / 'state_5.sqlite').write_text('not a database')
     elif metadata != 'missing':
@@ -62,15 +65,32 @@ def test_new_native_preflight_scopes_writers_and_preserves_store_errors(engine, 
     with lock.open('w') as handle:
         fcntl.flock(handle, fcntl.LOCK_EX)
         inode = lock.stat().st_ino
-        if metadata in ('same', 'corrupt'):
-            message = 'owns this workspace' if metadata == 'same' else 'ownership index'
+        if metadata in ('same', 'corrupt') or (metadata == 'missing' and not fresh):
+            message = {'same': 'owns this workspace', 'corrupt': 'ownership index',
+                       'missing': 'could not be matched to its worktree'}[metadata]
             with pytest.raises(ValueError, match=message):
-                engine.native_preflight('codex', '', str(workspace))
+                engine.native_preflight('codex', '', str(workspace), new_workspace=provenance)
         else:
-            evidence = engine.native_preflight('codex', '', str(workspace))
+            evidence = engine.native_preflight('codex', '', str(workspace), new_workspace=provenance)
             assert evidence == {'unresolved_writers': [SID] if metadata == 'missing' else []}
         assert lock.stat().st_ino == inode
         assert engine.OWNERSHIP['_lock_held'](str(lock))
+
+
+@pytest.mark.parametrize('replacement', ['directory', 'symlink'])
+def test_new_workspace_provenance_rejects_replaced_directory(engine, tmp_path, replacement):
+    workspace = tmp_path / 'worktree'
+    workspace.mkdir()
+    info = workspace.stat()
+    provenance = f'{info.st_dev}:{info.st_ino}'
+    old = tmp_path / 'old'
+    workspace.rename(old)
+    if replacement == 'directory':
+        workspace.mkdir()
+    else:
+        workspace.symlink_to(old, target_is_directory=True)
+    with pytest.raises(ValueError, match='new workspace identity changed'):
+        engine.native_preflight('codex', '', str(workspace), new_workspace=provenance)
 
 
 @pytest.mark.parametrize('failed', ['preflight', 'resume', 'ready', 'record', None])

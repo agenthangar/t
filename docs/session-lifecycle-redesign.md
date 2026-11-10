@@ -27,11 +27,13 @@ failures, rather than becoming empty history.
 The resume incident involved a different held writer whose thread had no index
 row, saved rollout or open rollout file identifying its workspace. A shared
 backend's process cwd cannot establish the workspace of an individual thread.
-Saved-resume and transfer ownership guards therefore remain conservative. Fresh
-conversation launches record unresolved sibling IDs in their operation receipt
-without treating them as a conflict in every workspace; known same-workspace
-writers and the shell's locked owner/reservation checks remain enforced.
-Diagnostics identify the unresolved conversation and holder when evidence permits, explain release, and
+Reused-workspace, saved-resume and transfer guards remain conservative. The
+worktree allocator can attest a newly created path with its device/inode identity;
+launch verifies that identity before collecting unresolved sibling IDs in its
+receipt instead of treating them as a conflict everywhere. Reused, restored or
+debris paths never receive this exception. Known same-workspace writers and the
+shell's locked owner/reservation checks remain enforced. Diagnostics identify
+the unresolved conversation and holder when evidence permits, explain release, and
 use public `t resume` recovery. The selected lock, sibling locks, transcripts and
 shared backends are never removed or killed to bypass an unknown writer.
 
