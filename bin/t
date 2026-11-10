@@ -475,7 +475,9 @@ def _parse_rows(text, host_prefixed=False):
             except ValueError:
                 row['watchers'] = []
         elif host == 'local':
-            row['watchers'] = _watchers()['records'](sid)
+            watches = _watchers()['records'](sid)
+            if watches:
+                row['watchers'] = watches
         rows.append(row)
     return rows
 
