@@ -5,6 +5,7 @@ from pathlib import Path, PurePosixPath
 import re
 import runpy
 import subprocess
+import tempfile
 
 _spinner = runpy.run_path(str(Path(__file__).with_name('t_progress.py')))['spinner']
 EXCLUDED = {'.git', 'node_modules', 'vendor', 'dist', 'build', 'target', 'generated', '.next', '.venv',
@@ -44,9 +45,11 @@ def source_path(root, relative):
 
 @_spinner('Finding repository design systems')
 def git(root, *args):
+    env = {key: value for key, value in os.environ.items() if not key.startswith('COV_CORE_')}
+    env.update(GIT_TERMINAL_PROMPT='0', GCM_INTERACTIVE='Never')
+    env.setdefault('GIT_SSH_COMMAND', 'ssh -o BatchMode=yes -o ConnectTimeout=5')
     result = subprocess.run(['git', '-c', 'core.fsmonitor=false', '-C', str(root), *args], capture_output=True,
-                            timeout=10, env={key: value for key, value in os.environ.items()
-                                            if not key.startswith('COV_CORE_')})
+                            input=b'', timeout=10, env=env)
     if result.returncode:
         raise ValueError('Cannot inspect repository: ' + result.stderr.decode(errors='replace').strip())
     return result.stdout
@@ -70,6 +73,10 @@ def discover(root):
     root = Path(root).resolve()
     raw = git(root, 'ls-files', '-z', '--cached', '--others', '--exclude-standard')
     files = sorted(set(raw.decode('utf-8', errors='replace').rstrip('\0').split('\0')))
+    return _discover_files(root, files)
+
+
+def _discover_files(root, files):
     warnings = []
     if len(files) > MAX_FILES:
         warnings.append(f'Discovery limited to {MAX_FILES} files; enter a source path if needed.')
@@ -140,6 +147,72 @@ def discover(root):
                            for path, evidence in sorted(candidates.items(),
                                key=lambda item: (-('Design-system entry point' in item[1]), -len(item[1]), item[0]))],
             'warnings': warnings}
+
+
+def discover_revision(root, revision):
+    """Inspect a bounded snapshot without checking out files or running filters."""
+    entries = git(root, 'ls-tree', '-rlz', revision).decode('utf-8', errors='replace').rstrip('\0').split('\0')
+    files, warnings, reads = [], [], 0
+    with tempfile.TemporaryDirectory(prefix='t-design-scan-') as directory:
+        snapshot = Path(directory)
+        for entry in entries[:MAX_FILES]:
+            if not entry:
+                continue
+            metadata, relative = entry.split('\t', 1)
+            mode, kind, oid, size = metadata.split()
+            if kind != 'blob' or mode not in ('100644', '100755'):
+                continue
+            try:
+                validate_source({'path': relative})
+            except ValueError:
+                continue
+            target = snapshot / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            body = b''
+            if target.suffix.lower() in ('.md', '.mdx') and reads < MAX_READS:
+                reads += 1
+                if int(size) <= MAX_BYTES:
+                    body = git(root, 'cat-file', 'blob', oid)
+                else:
+                    warnings.append(f'Document too large to inspect: {relative}.')
+            target.write_bytes(body)
+            files.append(relative)
+        result = _discover_files(snapshot, sorted(files))
+    if len(entries) > MAX_FILES:
+        warnings.append(f'Discovery limited to {MAX_FILES} files; enter a source path if needed.')
+    result['warnings'].extend(warnings)
+    return result
+
+
+@_spinner('Refreshing repository design systems')
+def refresh(canonical):
+    """Explicit rescan includes canonical and latest origin HEAD; never moves a checkout."""
+    root = workspace(canonical)
+    result = discover(root)
+    known = {item['path'] for item in result['candidates']}
+
+    def include(found, location):
+        for item in found['candidates']:
+            if item['path'] not in known:
+                result['candidates'].append(dict(item, location=location))
+                known.add(item['path'])
+        result['warnings'].extend(found['warnings'])
+
+    try:
+        if root.resolve() != Path(canonical).resolve():
+            include(discover(canonical), 'Registered checkout')
+        if 'origin' in git(canonical, 'remote').decode().splitlines():
+            # Fetch objects by the advertised commit without updating refs or FETCH_HEAD.
+            advertised = git(canonical, 'ls-remote', '--symref', 'origin', 'HEAD').decode().splitlines()
+            revision = next((line.split()[0] for line in advertised
+                             if re.fullmatch(r'[0-9a-f]{40,64}\s+HEAD', line)), None)
+            if revision is None:
+                raise ValueError('origin has no default-branch HEAD')
+            git(canonical, 'fetch', '--no-tags', '--no-recurse-submodules', '--no-write-fetch-head', 'origin', revision)
+            include(discover_revision(canonical, revision), 'Default branch · origin/HEAD')
+    except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+        result['warnings'].append('Default-branch scan unavailable: ' + str(exc))
+    return result
 
 
 def automatic_source(result):

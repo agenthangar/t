@@ -2694,7 +2694,7 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
             rows.append(("behaviors", "PRs, previews & tests ›"))
             if helper["PERMISSIONS"]:
                 rows.append(("permissions", "Permissions ›"))
-            rows += [("instructions", "Text instructions")]
+            rows += [("instructions", "Text instructions ›")]
             if policy.get("instructions"):
                 rows.append(("clear_instructions", "Clear text instructions"))
             rows += [("edit", "Advanced JSON editor"), ("reset", "Reset workflow to defaults")]
@@ -2715,7 +2715,7 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
             count = sum(key in _WORKFLOW_TOPICS and key not in ("frontend_design", "design_system") for key in selected)
             values["behaviors"] = f"{count} overrides" if count else "Defaults"
             values["frontend_design"] = _workflow_field_value(helper, selected, "frontend_design")
-            values["instructions"] = (f"text · {len(policy['instructions'].splitlines())} lines · Enter to edit"
+            values["instructions"] = (f"text · {len(policy['instructions'].splitlines())} lines · Edit or clear"
                                       if policy.get("instructions") else "Default · No additional instructions")
             values["permissions"] = _workflow_permission_summary(helper, policy)
             reset = helper['reset_policy'](policy, tool=agent)
@@ -2730,6 +2730,16 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
                 return
             focus = choice
             changed = copy.deepcopy(policy)
+            if choice == 'instructions':
+                action = ui.pick('Text instructions', [('edit', 'Edit text instructions'),
+                    ('clear', 'Clear text instructions'), ('back', 'Back')],
+                    values={'clear': 'Remove all text' if policy.get('instructions') else 'Already empty'},
+                    accents={'clear': 'w'}, sections={'clear': 'Manage', 'back': 'Navigation'})
+                if action in (None, 'back'):
+                    continue
+                if action == 'clear' and not policy.get('instructions'):
+                    continue
+                choice = 'clear_instructions' if action == 'clear' else 'instructions'
             if choice == 'reset':
                 changed = reset
             elif choice == "stages_enabled":
@@ -3147,7 +3157,7 @@ def _workflow_design_draft(ui, cfg, helper, repo, root):
             return
         result = launcher['launch'](cfg, source, agent, helper['design_system']()['draft_prompt'](), plan=plan)
         ui.done('Draft session started', result['open_command'])
-        ui.done('Next', 'Review the draft in that session. After accepting it, refresh discovery in its worktree and select DESIGN.md.')
+        ui.done('Next', 'Review the draft in that session. After merging it, return here, choose Scan again and select DESIGN.md.')
     except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
         ui.done('Draft unavailable', str(exc))
 
@@ -3191,7 +3201,7 @@ def _workflow_design_system_menu(ui, cfg, helper, repo, repository, policy=None)
                 current_exists = True
             except ValueError:
                 pass
-            if not current_exists or path not in {item['path'] for item in candidates}:
+            if path not in {item['path'] for item in candidates}:
                 rows.append(('current', path))
                 values['current'] = '✓ Selected' if current_exists else 'Selected · missing or unsafe'
                 sections['current'] = 'Choose a source'
@@ -3202,7 +3212,7 @@ def _workflow_design_system_menu(ui, cfg, helper, repo, repository, policy=None)
                 sections[key] = 'Choose a source'
                 sections.pop('manual', None)
             rows.append((key, candidate['path']))
-            values[key] = ('✓ ' if candidate['path'] == path else '') + _workflow_design_evidence(candidate)
+            values[key] = ('✓ ' if candidate['path'] == path else '') + candidate.get('location', _workflow_design_evidence(candidate))
         rows += [('manual', 'Choose file or folder…'), ('draft', 'Create design system…'),
                  ('refresh', 'Scan again'), ('off', 'Off'), ('reset', 'Reset to defaults'), ('back', 'Back')]
         values['reset'] = 'Use workflow default' if selected else 'Already at defaults'
@@ -3213,7 +3223,13 @@ def _workflow_design_system_menu(ui, cfg, helper, repo, repository, policy=None)
             return
         focus_key = choice
         if choice == 'refresh':
-            results = None
+            root = design['workspace'](repository)
+            try:
+                results = design['refresh'](repository)
+            except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+                results = {'candidates': [], 'warnings': [str(exc)]}
+            for warning in results['warnings']:
+                ui.done('Discovery', warning)
             continue
         if choice == 'draft':
             _workflow_design_draft(ui, cfg, helper, repo, root)
@@ -3227,7 +3243,12 @@ def _workflow_design_system_menu(ui, cfg, helper, repo, repository, policy=None)
         if chosen is None:
             continue
         try:
-            design['source_path'](root, chosen)
+            candidate = next((item for item in candidates if item['path'] == chosen), {})
+            if choice != 'manual' and candidate.get('location'):
+                ui.done('Source found', chosen + ' · ' + candidate['location'] +
+                        '. Update this worktree to use the merged guidance here.')
+            else:
+                design['source_path'](root, chosen)
             cfg._workflow_document = helper['select_design_system'](cfg._workflow_document, repository, chosen)
             return
         except ValueError as exc:
@@ -13160,7 +13181,7 @@ EXAMPLES
 
   Workflows opens the editor for models, PRs, previews, tests, and text.
   Workflow Permissions sets Codex and Claude access for new/resumed CLI sessions.
-  Clear text instructions removes Markdown in the pending review and save changes.
+  Text instructions offers Edit or Clear; clearing stays pending until review/save.
   Use multiple models offers stage checkboxes and Use lead model for all stages.
   Unchecked Implementation uses session defaults;
   unchecked helpers use the lead model.

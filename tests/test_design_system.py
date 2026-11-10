@@ -37,6 +37,113 @@ def put(root, path, text=''):
     return target
 
 
+def commit(root, message):
+    subprocess.run(['git', '-C', str(root), 'add', '.'], check=True)
+    subprocess.run(['git', '-C', str(root), '-c', 'user.name=Test', '-c', 'user.email=test@example.com',
+                    'commit', '-qm', message], check=True)
+
+
+def test_refresh_finds_merged_design_without_moving_stale_checkouts(design, repo, tmp_path, monkeypatch):
+    put(repo, 'README.md', '# Application')
+    commit(repo, 'initial')
+    remote, registered, linked = (tmp_path / name for name in ('remote.git', 'registered', 'session'))
+    subprocess.run(['git', 'clone', '-q', '--bare', str(repo), str(remote)], check=True)
+    subprocess.run(['git', 'clone', '-q', str(remote), str(registered)], check=True)
+    subprocess.run(['git', '-C', str(registered), 'worktree', 'add', '-qb', 'session', str(linked)], check=True)
+    put(linked, 'README.md', 'Uncommitted session work')
+    before = design.git(registered, 'show-ref')
+    put(repo, 'DESIGN.md', '# Design system\n[Design guidance](ui/README.md)')
+    put(repo, 'ui/README.md', '# Terminal guidance')
+    commit(repo, 'merged design guidance')
+    subprocess.run(['git', '-C', str(repo), 'push', '-q', str(remote), 'HEAD'], check=True)
+    monkeypatch.chdir(linked)
+    assert design.discover(design.workspace(registered))['candidates'] == []
+    result = design.refresh(registered)
+    assert design.automatic_source(result) == 'DESIGN.md'
+    assert {item['path'] for item in result['candidates']} == {'DESIGN.md', 'ui/README.md'}
+    assert all(item['location'] == 'Default branch · origin/HEAD' for item in result['candidates'])
+    assert result['warnings'] == []
+    assert design.git(registered, 'show-ref') == before
+    assert not (registered / '.git/FETCH_HEAD').exists()
+    assert not (linked / 'DESIGN.md').exists() and not (registered / 'DESIGN.md').exists()
+    assert (linked / 'README.md').read_text() == 'Uncommitted session work'
+
+
+def test_refresh_includes_canonical_but_keeps_active_source_first(design, repo, tmp_path, monkeypatch):
+    put(repo, 'DESIGN.md', '# Design system')
+    commit(repo, 'initial')
+    linked = tmp_path / 'linked'
+    subprocess.run(['git', '-C', str(repo), 'worktree', 'add', '-qb', 'session', str(linked)], check=True)
+    put(repo, 'design-system.md', '# More guidance')
+    monkeypatch.chdir(linked)
+    result = design.refresh(repo)
+    assert len(result['candidates']) == 2
+    assert 'location' not in result['candidates'][0]
+    assert result['candidates'][1]['location'] == 'Registered checkout'
+
+
+@pytest.mark.parametrize('failure', ['offline', 'no-head', 'timeout'])
+def test_refresh_remote_failure_keeps_local_evidence(design, repo, monkeypatch, failure):
+    put(repo, 'DESIGN.md', '# Design system')
+    original = design.git
+    def git(root, *args):
+        if args == ('remote',):
+            return b'origin\n'
+        if args[0] == 'ls-remote':
+            if failure == 'offline':
+                raise ValueError('offline')
+            if failure == 'timeout':
+                raise subprocess.TimeoutExpired('git', 10)
+            return b''
+        return original(root, *args)
+    monkeypatch.setattr(design, 'git', git)
+    result = design.refresh(repo)
+    assert design.automatic_source(result) == 'DESIGN.md'
+    assert 'Default-branch scan unavailable' in result['warnings'][0]
+
+
+def test_revision_scan_excludes_symlinks_dependencies_and_bounds_reads(design, repo, monkeypatch):
+    put(repo, 'DESIGN.md', '# Design system')
+    put(repo, 'large.md', 'x' * 100)
+    put(repo, 'node_modules/DESIGN.md', '# Design system')
+    put(repo, 'ui/tokens.json', '{}')
+    put(repo, 'ui/components/Button.ts', '')
+    (repo / 'design-system.md').symlink_to('DESIGN.md')
+    commit(repo, 'fixture')
+    monkeypatch.setattr(design, 'MAX_BYTES', 50)
+    result = design.discover_revision(repo, 'HEAD')
+    assert {item['path'] for item in result['candidates']} == {'DESIGN.md', 'ui'}
+    assert any('too large' in warning for warning in result['warnings'])
+    monkeypatch.setattr(design, 'MAX_FILES', 1)
+    assert any('limited to 1 files' in warning for warning in design.discover_revision(repo, 'HEAD')['warnings'])
+
+
+def test_refresh_menu_selects_merged_source_without_duplicate_rows(workflow, t_mod, monkeypatch, repo):
+    cfg = ui_config(workflow, t_mod, monkeypatch, repo)
+    cfg._workflow_document = workflow.select_design_system(cfg._workflow_document, str(repo), 'DESIGN.md')
+    helper = vars(workflow).copy()
+    design = workflow.design_system()
+    refreshed = {'candidates': [{'path': 'DESIGN.md', 'evidence': ['Design-system entry point'],
+                                'location': 'Default branch · origin/HEAD'}], 'warnings': []}
+    helper['design_system'] = lambda: dict(design, refresh=lambda root: refreshed)
+    ui = ToolMenu(['refresh', 'candidate:0'])
+    t_mod._workflow_design_system_menu(ui, cfg, helper, 'web', str(repo))
+    assert [label for _, label in ui.views[-1][1]].count('DESIGN.md') == 1
+    assert 'origin/HEAD' in ui.views[-1][2]['values']['candidate:0']
+    assert cfg._workflow_document['repositories'][str(repo)]['design_system'] == {'path': 'DESIGN.md'}
+    assert not workflow.config_path().exists()
+
+
+def test_refresh_menu_reports_failure_and_can_cancel(workflow, t_mod, monkeypatch, repo):
+    cfg = ui_config(workflow, t_mod, monkeypatch, repo)
+    helper = vars(workflow).copy()
+    design = workflow.design_system()
+    helper['design_system'] = lambda: dict(design, refresh=lambda root: (_ for _ in ()).throw(ValueError('offline')))
+    ui = ToolMenu(['refresh', 'back'])
+    t_mod._workflow_design_system_menu(ui, cfg, helper, 'web', str(repo))
+    assert not cfg._workflow_document['repositories']
+
+
 def test_discovery_evidence_and_exclusions(design, repo):
     put(repo, 'DESIGN.md', '# Design system\n[Terminal contract](ui/README.md)')
     put(repo, 'AGENTS.md', '[Design](DESIGN.md)\n[Design](https://example.com)\n[Design](../outside.md)')

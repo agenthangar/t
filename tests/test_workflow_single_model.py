@@ -110,7 +110,8 @@ def test_permission_list_and_save_review_show_tool_labels(workflow, t_mod, monke
 
 
 @pytest.mark.parametrize('scope', ['named', 'repository'])
-def test_clear_text_instructions_is_staged_and_preserves_policy(workflow, t_mod, scope):
+@pytest.mark.parametrize('submenu', [False, True])
+def test_clear_text_instructions_is_staged_and_preserves_policy(workflow, t_mod, scope, submenu):
     document = workflow.defaults()
     policy = workflow.select_stages(document['workflows']['standard'], ['review'])
     policy.update(instructions='Custom instructions to remove.', behaviors={'pr_merge': 'on_request'},
@@ -119,7 +120,7 @@ def test_clear_text_instructions_is_staged_and_preserves_policy(workflow, t_mod,
     cfg = SimpleNamespace(repos={'api': '/repo'}, _workflow_document=document)
     initial = copy.deepcopy(document)
     target = {'name': 'standard'} if scope == 'named' else {'repository': '/repo'}
-    ui = InspectMenu(['clear_instructions', 'back'])
+    ui = InspectMenu((['instructions', 'clear'] if submenu else ['clear_instructions']) + ['back'])
     t_mod._workflow_policy_menu(ui, cfg, vars(workflow), **target)
     actual = (cfg._workflow_document['workflows']['standard'] if scope == 'named' else
               workflow.effective(cfg._workflow_document, '/repo'))
@@ -136,6 +137,20 @@ def test_clear_text_instructions_is_staged_and_preserves_policy(workflow, t_mod,
     assert not workflow.config_path().exists()
 
 
+@pytest.mark.parametrize('action', ['back', None, 'clear'])
+def test_text_instruction_menu_empty_or_cancel_is_noop(workflow, t_mod, action):
+    document = workflow.defaults()
+    document['workflows']['standard']['instructions'] = ''
+    cfg = SimpleNamespace(repos={'api': '/repo'}, _workflow_document=document)
+    initial = copy.deepcopy(document)
+    ui = InspectMenu(['instructions', action, 'back'])
+    t_mod._workflow_policy_menu(ui, cfg, vars(workflow), repository='/repo')
+    assert cfg._workflow_document == initial
+    assert ui.views[1][2]['values']['clear'] == 'Already empty'
+    assert ui.views[-1][1][ui.views[-1][2]['default']][0] == 'instructions'
+    assert not workflow.config_path().exists()
+
+
 @pytest.mark.parametrize('scope', ['named', 'repository'])
 @pytest.mark.parametrize('cancelled', [False, True])
 def test_text_editor_cancel_or_unchanged_keeps_instructions(workflow, t_mod, monkeypatch, scope, cancelled):
@@ -144,7 +159,7 @@ def test_text_editor_cancel_or_unchanged_keeps_instructions(workflow, t_mod, mon
     initial = copy.deepcopy(document)
     monkeypatch.setattr(workflow, 'edit_instructions', lambda *args: (130 if cancelled else 0, document))
     target = {'name': 'standard'} if scope == 'named' else {'repository': '/repo'}
-    t_mod._workflow_policy_menu(Menu(['instructions', 'back']), cfg, vars(workflow), **target)
+    t_mod._workflow_policy_menu(Menu(['instructions', 'edit', 'back']), cfg, vars(workflow), **target)
     assert cfg._workflow_document == initial
     assert not workflow.config_path().exists()
 
