@@ -1432,8 +1432,14 @@ configuration remain usable elsewhere. Native macOS assertion tests are opt-in.
 Session lifecycle actions share native ownership checks and verified launch readiness.
 Moves reserve their destination and validate both stores before stopping the source,
 then checkpoint work, verify copied bytes and wait for the exact destination owner.
-An unidentified writer remains a blocker. Failed transfers retain receipts and use
-`t resume REPO SLOT` for reconciliation; they never restart an ambiguous source.
+Reused workspaces, saved resumes and transfers retain unidentified-writer refusals.
+When allocation proves a newly created worktree and its device/inode still match,
+unresolved sibling locks are recorded in the operation receipt rather than
+blocking every workspace. Known same-workspace
+writers, tmux/foreground owners, reservations and unsafe ownership stores still
+block a new launch. No existing writer is stopped or released by this check.
+Failed transfers retain receipts and use `t resume REPO SLOT` for reconciliation;
+they never restart an ambiguous source.
 `session history`, `remote session history` and `history` remain hidden compatibility
 routes for the internal saved-conversation implementation, excluded from menus and
 completion. Public instructions use `session resume`.

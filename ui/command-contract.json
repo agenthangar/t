@@ -694,7 +694,8 @@
         "tests/test_native_agent_shell.py::test_native_agent_generated_commands_execute_with_quoted_arguments",
         "tests/test_agent_seam.py::test_zsh_foreground_uses_native_agent_outside_path",
         "tests/test_agent_seam.py::test_session_startup_is_quiet_and_logged",
-        "tests/test_host_resilience.py::test_remote_session_pickers_keep_reachable_rows_with_offline_peer"
+        "tests/test_host_resilience.py::test_remote_session_pickers_keep_reachable_rows_with_offline_peer",
+        "tests/test_session_lifecycle.py::test_public_new_scopes_unindexed_writers"
       ],
       "modes": {
         "default": {
@@ -762,7 +763,7 @@
       },
       "native_agents": "Terminal session launch/resume uses the native ~/.local/bin fallback, preserving PATH and shell wrappers; no global PATH changes.",
       "progress": "Terminal-only discovery stages on stderr; no progress in redirected output, JSON, or remote protocols.",
-      "notes": "Terminal launches run without echoing internal shell commands or exit instructions; agent output and diagnostics remain visible."
+      "notes": "Terminal launches run without echoing internal shell commands or exit instructions; agent output and diagnostics remain visible. Newly allocated worktrees with a verified device/inode identity record unresolved Codex sibling writers in the lifecycle receipt without a host-wide launch refusal. Reused, restored and debris workspaces retain unidentified-writer refusals. Known same-workspace writers, tmux/foreground owners, reservations and unsafe ownership stores still block. Saved resume and transfer checks remain strict."
     },
     "session list": {
       "patterns": [

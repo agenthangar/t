@@ -2836,16 +2836,19 @@ _t_dev() {
     # a slot whose tmux died but whose worktree lingers is reused in place (work
     # preserved). On failure (or a per-repo opt-out) fall back to the shared tree +
     # the in-pane branch dance.
-    local skip_prepare=
+    local skip_prepare= new_workspace=
     if _dev_worktree_enabled "$repo"; then
-      local _wt; _wt="$(_dev_worktree_create "$repo" "$slot")"
+      local -a created_worktree
+      created_worktree=("${(@f)$(_dev_worktree_create "$repo" "$slot" '' new-launch)}")
+      local _wt=${created_worktree[1]}
+      new_workspace=${created_worktree[2]}
       if [[ -n $_wt ]]; then dir="$_wt"; skip_prepare=1
       else _dev_worktree_refuse "$repo" "$slot"; return 1; fi
     fi
     _dev_agent_check "$agent" || return 1
     local agent_note=; [[ $agent != claude ]] && agent_note=" · $agent"
     echo "Starting $session in $dir$agent_note (logging to $logfile)"
-    _dev_new_session "$session" "$dir" "$branch" "$skip_prepare" "$agent" || return 1
+    _dev_new_session "$session" "$dir" "$branch" "$skip_prepare" "$agent" '' '' '' "$new_workspace" || return 1
     _t_session_attach "$session" "$agent" || {
       print -u2 -- "t open: $session did not remain available; inspect $logfile"
       return 1
