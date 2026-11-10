@@ -62,6 +62,9 @@ def changes(w, document, roots):
                 candidates[path] = (tool, False)
     updates = []
     for path, (tool, global_file) in sorted(candidates.items()):
+        if not global_file and path.is_symlink():
+            print('Preserving linked repository instructions: ' + str(path))
+            continue  # Never replace a link or mutate its external destination.
         safe(path)
         before = w['snapshot'](path)
         text = before[0] if before else ''

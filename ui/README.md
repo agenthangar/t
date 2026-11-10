@@ -1572,7 +1572,8 @@ Installation shows the affected global and repository instruction paths and back
 location, then asks **Back up and rebuild these global and repository instructions?
 [y/N]**. Declining, EOF or unattended installation preserves existing instructions.
 Only t-owned marked blocks are rebuilt; custom Markdown and hand-written content
-remain. Original contents, permissions and hashes are backed up under the user's
+remain. Linked repository instruction files are preserved and reported. Global
+instruction symlinks block migration. Original contents, permissions and hashes are backed up under the user's
 state directory. Unchanged files are not backed up or prompted for again.
 
 New Codex presets use Sol / medium for main work and Astra / medium for bounded

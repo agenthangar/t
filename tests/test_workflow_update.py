@@ -237,6 +237,20 @@ def test_migration_rechecks_after_confirmation(modules, tmp_path):
     assert not w.config_path().exists()
 
 
+def test_migration_preserves_repository_links(modules, tmp_path, capsys):
+    w, migration, _, _ = modules
+    repo = tmp_path / 'linked-repo'
+    repo.mkdir()
+    target = tmp_path / 'shared-rules'
+    target.write_text('Shared hand-written rules\n')
+    linked = repo / 'CLAUDE.md'
+    linked.symlink_to(target)
+    migration.install(vars(w), roots=[repo], confirm=lambda: True)
+    assert linked.is_symlink() and target.read_text() == 'Shared hand-written rules\n'
+    assert 'Preserving linked repository instructions' in capsys.readouterr().out
+    assert 't workflow context' in w.native_paths()[0].read_text()
+
+
 def test_native_context_caps_without_losing_custom_text(modules, tmp_path, monkeypatch):
     w = modules[0]
     hook = load_script(ROOT / 'libexec/t_workflow_context.py', 'hook_update')
