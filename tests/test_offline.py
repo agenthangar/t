@@ -226,7 +226,7 @@ def test_owned_supervisor(offline,tmp_path,monkeypatch,fake_codex,mode):
         calls.append(argv)
         if mode=='local_failure':raise ValueError('fixture local failure')
         return 0
-    local={'helper':lambda n:{'state_root':lambda:tmp_path/'state'},'catalogue':lambda **kw:{'models':[{'model':'local-fixture','provider':'lmstudio','ready':mode!='missing'}]},'lead':lead}
+    local={'leased_runtime':lambda chosen:None,'helper':lambda n:{'state_root':lambda:tmp_path/'state'},'catalogue':lambda **kw:{'models':[{'model':'local-fixture','provider':'lmstudio','ready':mode!='missing'}]},'lead':lead}
     monkeypatch.setattr(m,'inference',lambda:local)
     chosen={'context_tokens':32768,'model':'local-fixture','provider':'lmstudio','mode':'automatic','on_cloud_failure':'local'}
     if mode in ('transport','local_failure'):

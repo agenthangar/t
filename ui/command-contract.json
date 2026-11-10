@@ -861,7 +861,7 @@
         "overrides": "session_information.table",
         "wide": "aligned_columns",
         "narrow": "compact_columns",
-        "physical_row": "single_line",
+        "physical_row": "model_continuations",
         "priority": [
           "status",
           "host_when_remote",
@@ -879,7 +879,7 @@
           "tests/test_command_behavior.py::test_session_table_clips_only_task_when_other_columns_fit"
         ]
       },
-      "notes": "Discovery reads one RAM cache API; hourly expiry refreshes asynchronously, retaining stale rows and showing freshness. SQLite is restart persistence only. Lifecycle actions verify ownership live and invalidate affected hosts."
+      "notes": "STATUS, SESSION, WORKING ON first; observed local/cloud token percentage pair, icon-only tool, wrapping model list with star lead and last turn last. UI is retained as metadata, omitted from overview. Narrow terminals omit optional columns. Discovery reads one RAM cache API; hourly expiry refreshes asynchronously, retaining stale rows and showing freshness. SQLite is restart persistence only. Lifecycle actions verify ownership live and invalidate affected hosts."
     },
     "session close": {
       "patterns": [
@@ -8639,6 +8639,984 @@
           "terminal": true,
           "tests": [
             "tests/test_local_runtime_ui.py::test_runtime_mutations"
+          ]
+        }
+      }
+    },
+    "eval": {
+      "patterns": [
+        "detail",
+        "single"
+      ],
+      "renderer": "mixed",
+      "scope": "user-wide saved evaluation configurations and durable runs",
+      "confirmation": "enter",
+      "tests": [
+        "tests/test_eval.py::test_command_contract"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "eval"
+          ],
+          "patterns": [
+            "single"
+          ],
+          "read_only": false,
+          "terminal": true,
+          "tests": [
+            "tests/test_eval.py::test_command_contract"
+          ]
+        },
+        "nonterminal_help": {
+          "argv": [
+            "eval"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_eval.py::test_command_contract"
+          ]
+        }
+      }
+    },
+    "eval config": {
+      "patterns": [
+        "review",
+        "single",
+        "wizard"
+      ],
+      "renderer": "mixed",
+      "scope": "user-wide saved evaluation configurations and durable runs",
+      "confirmation": "review",
+      "tests": [
+        "tests/test_eval.py::test_command_contract"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "eval",
+            "config"
+          ],
+          "patterns": [
+            "single",
+            "wizard",
+            "review"
+          ],
+          "read_only": false,
+          "terminal": true,
+          "tests": [
+            "tests/test_eval.py::test_command_contract"
+          ]
+        }
+      }
+    },
+    "eval config list": {
+      "patterns": [
+        "list",
+        "machine"
+      ],
+      "renderer": "plain",
+      "scope": "user-wide saved evaluation configurations and durable runs",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_eval.py::test_command_contract"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "eval",
+            "config",
+            "list"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_eval.py::test_command_contract"
+          ]
+        },
+        "json": {
+          "argv": [
+            "eval",
+            "config",
+            "list",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_eval.py::test_command_contract"
+          ]
+        }
+      }
+    },
+    "eval config show": {
+      "patterns": [
+        "machine",
+        "single"
+      ],
+      "renderer": "mixed",
+      "scope": "user-wide saved evaluation configurations and durable runs",
+      "confirmation": "enter",
+      "tests": [
+        "tests/test_eval.py::test_command_contract"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "eval",
+            "config",
+            "show"
+          ],
+          "patterns": [
+            "single"
+          ],
+          "read_only": true,
+          "terminal": true,
+          "tests": [
+            "tests/test_eval.py::test_command_contract"
+          ]
+        },
+        "json": {
+          "argv": [
+            "eval",
+            "config",
+            "show",
+            "example",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_eval.py::test_command_contract"
+          ]
+        }
+      }
+    },
+    "eval config edit": {
+      "patterns": [
+        "review",
+        "single",
+        "wizard"
+      ],
+      "renderer": "mixed",
+      "scope": "user-wide saved evaluation configurations and durable runs",
+      "confirmation": "review",
+      "tests": [
+        "tests/test_eval.py::test_command_contract"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "eval",
+            "config",
+            "edit"
+          ],
+          "patterns": [
+            "single",
+            "wizard",
+            "review"
+          ],
+          "read_only": false,
+          "terminal": true,
+          "tests": [
+            "tests/test_eval.py::test_command_contract"
+          ]
+        }
+      }
+    },
+    "eval benchmarks list": {
+      "patterns": [
+        "list",
+        "machine"
+      ],
+      "renderer": "plain",
+      "scope": "user-wide saved evaluation configurations and durable runs",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_eval.py::test_command_contract"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "eval",
+            "benchmarks",
+            "list"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_eval.py::test_command_contract"
+          ]
+        },
+        "json": {
+          "argv": [
+            "eval",
+            "benchmarks",
+            "list",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_eval.py::test_command_contract"
+          ]
+        }
+      }
+    },
+    "eval runs start": {
+      "patterns": [
+        "action",
+        "detail",
+        "machine",
+        "single"
+      ],
+      "renderer": "mixed",
+      "scope": "user-wide saved evaluation configurations and durable runs",
+      "confirmation": "enter",
+      "tests": [
+        "tests/test_eval.py::test_command_contract"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "eval",
+            "runs",
+            "start"
+          ],
+          "patterns": [
+            "single",
+            "action"
+          ],
+          "read_only": false,
+          "terminal": true,
+          "tests": [
+            "tests/test_eval.py::test_command_contract"
+          ]
+        },
+        "json": {
+          "argv": [
+            "eval",
+            "runs",
+            "start",
+            "example",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_eval.py::test_command_contract"
+          ]
+        },
+        "dry_run": {
+          "argv": [
+            "eval",
+            "runs",
+            "start",
+            "example",
+            "--dry-run"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_eval.py::test_command_contract"
+          ]
+        }
+      }
+    },
+    "eval runs list": {
+      "patterns": [
+        "list",
+        "machine",
+        "single"
+      ],
+      "renderer": "plain",
+      "scope": "user-wide saved evaluation configurations and durable runs",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_eval.py::test_command_contract"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "eval",
+            "runs",
+            "list"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_eval.py::test_command_contract"
+          ]
+        },
+        "json": {
+          "argv": [
+            "eval",
+            "runs",
+            "list",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_eval.py::test_command_contract"
+          ]
+        },
+        "interactive_picker": {
+          "argv": [
+            "eval",
+            "runs",
+            "list"
+          ],
+          "patterns": [
+            "single"
+          ],
+          "read_only": true,
+          "terminal": true,
+          "tests": [
+            "tests/test_usage.py::test_eval_list_show_same_picker"
+          ]
+        }
+      },
+      "notes": "Explicitly approved exception: interactive list and targetless show share the run picker; JSON and redirected list remain static."
+    },
+    "eval runs show": {
+      "patterns": [
+        "machine",
+        "single"
+      ],
+      "renderer": "mixed",
+      "scope": "user-wide saved evaluation configurations and durable runs",
+      "confirmation": "enter",
+      "tests": [
+        "tests/test_eval.py::test_command_contract"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "eval",
+            "runs",
+            "show"
+          ],
+          "patterns": [
+            "single"
+          ],
+          "read_only": true,
+          "terminal": true,
+          "tests": [
+            "tests/test_eval.py::test_command_contract"
+          ]
+        },
+        "json": {
+          "argv": [
+            "eval",
+            "runs",
+            "show",
+            "eval-20261106-012345abcdef",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_eval.py::test_command_contract"
+          ]
+        }
+      }
+    },
+    "eval runs compare": {
+      "patterns": [
+        "machine",
+        "single"
+      ],
+      "renderer": "mixed",
+      "scope": "user-wide saved evaluation configurations and durable runs",
+      "confirmation": "enter",
+      "tests": [
+        "tests/test_eval.py::test_command_contract"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "eval",
+            "runs",
+            "compare"
+          ],
+          "patterns": [
+            "single"
+          ],
+          "read_only": true,
+          "terminal": true,
+          "tests": [
+            "tests/test_eval.py::test_command_contract"
+          ]
+        },
+        "json": {
+          "argv": [
+            "eval",
+            "runs",
+            "compare",
+            "eval-20261106-012345abcdef",
+            "eval-20261106-012345abcdef",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_eval.py::test_command_contract"
+          ]
+        }
+      }
+    },
+    "eval runs resume": {
+      "patterns": [
+        "action",
+        "single"
+      ],
+      "renderer": "mixed",
+      "scope": "user-wide saved evaluation configurations and durable runs",
+      "confirmation": "enter",
+      "tests": [
+        "tests/test_eval.py::test_command_contract"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "eval",
+            "runs",
+            "resume"
+          ],
+          "patterns": [
+            "single",
+            "action"
+          ],
+          "read_only": false,
+          "terminal": true,
+          "tests": [
+            "tests/test_eval.py::test_command_contract"
+          ]
+        }
+      }
+    },
+    "eval runs cancel": {
+      "patterns": [
+        "action",
+        "single"
+      ],
+      "renderer": "mixed",
+      "scope": "user-wide saved evaluation configurations and durable runs",
+      "confirmation": "when_interrupting",
+      "tests": [
+        "tests/test_eval.py::test_command_contract"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "eval",
+            "runs",
+            "cancel"
+          ],
+          "patterns": [
+            "single",
+            "action"
+          ],
+          "read_only": false,
+          "terminal": true,
+          "tests": [
+            "tests/test_eval.py::test_command_contract"
+          ]
+        }
+      }
+    },
+    "remote eval config list": {
+      "patterns": [
+        "list"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "none",
+      "remote_policy": "query",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "eval",
+            "config",
+            "list"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote eval config show": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "eval",
+            "config",
+            "show"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote eval config edit": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "eval",
+            "config",
+            "edit"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote eval benchmarks list": {
+      "patterns": [
+        "list"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "none",
+      "remote_policy": "query",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "eval",
+            "benchmarks",
+            "list"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote eval runs start": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "eval",
+            "runs",
+            "start"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote eval runs list": {
+      "patterns": [
+        "list"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "none",
+      "remote_policy": "query",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "eval",
+            "runs",
+            "list"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote eval runs show": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "eval",
+            "runs",
+            "show"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote eval runs compare": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "eval",
+            "runs",
+            "compare"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote eval runs resume": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "eval",
+            "runs",
+            "resume"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote eval runs cancel": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "eval",
+            "runs",
+            "cancel"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "system usage list": {
+      "patterns": [
+        "list",
+        "machine"
+      ],
+      "renderer": "mixed",
+      "scope": "this machine; saved sessions, launch-time workflows and evals; no repository inference",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_usage.py::test_usage_command_contract"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "system",
+            "usage",
+            "list"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_usage.py::test_usage_command_contract"
+          ]
+        },
+        "json": {
+          "argv": [
+            "system",
+            "usage",
+            "list",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_usage.py::test_usage_command_contract"
+          ]
+        }
+      }
+    },
+    "system usage show": {
+      "patterns": [
+        "detail",
+        "machine",
+        "single"
+      ],
+      "renderer": "mixed",
+      "scope": "this machine; saved sessions, launch-time workflows and evals; no repository inference",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_usage.py::test_usage_command_contract"
+      ],
+      "modes": {
+        "detail": {
+          "argv": [
+            "system",
+            "usage",
+            "show",
+            "session:codex:example"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_usage.py::test_usage_command_contract"
+          ]
+        },
+        "json": {
+          "argv": [
+            "system",
+            "usage",
+            "show",
+            "session:codex:example",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_usage.py::test_usage_command_contract"
+          ]
+        },
+        "default": {
+          "argv": [
+            "system",
+            "usage",
+            "show"
+          ],
+          "patterns": [
+            "single"
+          ],
+          "read_only": true,
+          "terminal": true,
+          "tests": [
+            "tests/test_usage.py::test_usage_command_contract"
+          ]
+        }
+      }
+    },
+    "remote system usage list": {
+      "patterns": [
+        "list"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host; no repository inference",
+      "confirmation": "none",
+      "remote_policy": "query",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "system",
+            "usage",
+            "list"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      }
+    },
+    "remote system usage show": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host; no repository inference",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "system",
+            "usage",
+            "show"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
           ]
         }
       }

@@ -188,7 +188,7 @@ an exclusive reset: selecting it clears all other marks, selecting a real option
 clears it, and unchecking the last real option restores it.
 The 60-column breakpoint applies to `_RailUI` inline menus. Most printed tables
 switch to labeled, wrapped cells when their actual columns no longer fit.
-Session lists instead keep one physical row per session, as described below.
+Session overviews may wrap the model list onto continuation lines; identity and status appear only on the first line.
 
 Terminal titles use short public command labels while a command runs and clear
 on return, including failures and cancellation. Remote open/resume adds the host
@@ -200,6 +200,14 @@ profiles may still append foreground arguments independently of OSC titles; remo
 foreground workers use single-quoted outer commands to avoid escaped-space titles.
 
 ## Command types
+
+`t eval` is the evaluation hub. `t eval config` manages persistent named
+configurations using the shared rail editor and review/save. `t eval runs start`
+uses the shared fzf configuration picker; Enter starts immediately. Missing detail
+or action targets use fzf. Interactive `t eval runs list` and targetless `show` share the same read-only run picker; redirected and JSON list output remains static. This is an explicitly approved exception to the usual list-without-selection rule. Run rows include
+progress/phase, selected models and separate per-mode benchmark results, observed
+tok/s and estimated cloud cost; unavailable measurements remain labeled unavailable.
+JSON never prompts. See [evaluation commands](../docs/evaluations.md).
 
 The types compose: `t session open` can be a direct action with an explicit
 slot, or a filtered multi-selection without one. Choose by behavior rather than
@@ -723,9 +731,9 @@ provider termination cannot be confirmed. See [test runners](../docs/test-runner
 ```text
 dev sessions   ● attached/loaded · ✓ active context · ↻ still in progress
 
-  STATUS  UI         MODEL    SESSION  WORKING ON
-  ○       › cli      ⬡ codex  api-2    Fix login
-  ○       ▣ desktop  ✱ opus   web-1    Review UI
+  STATUS  SESSION  WORKING ON  LOC/CLD TOKEN%  TOOL  MODELS
+  ○       api-2    Fix login   69/31           ⬡     ★ cloud, local
+  ○ ▣     web-1    Review UI   —               ✱     ★ opus
 
   reattach: t open <repo> <slot>
 
@@ -1071,7 +1079,7 @@ hosts without changing repository scope; unavailable-host warnings preserve
 reachable results. For example, run `t ls -r` for all repositories across hosts,
 or `t ls api -r` for only api.
 
-`t session list` additionally places LAST TURN in the final column, after WORKING ON.
+`t session list` places LAST TURN in the final column, after MODELS when space permits.
 It shows the latest turn initiation as `YYYY-MM-DD HH:MM:SS TZ` in the viewer's
 local timezone, including remote rows; unavailable evidence displays `-`.
 Codex uses `task_started` (older transcripts may use `user_message`); Claude
@@ -1082,18 +1090,16 @@ an ISO 8601 UTC timestamp or `-`; legacy rows and the seven-field ownership
 protocol remain valid. The table remains read-only. History's DATE
 continues to describe retained activity.
 
-`t session list` overrides the shared table's narrow layout: first clip WORKING ON
-to the available space, then omit UI and MODEL if the other columns cannot fit.
-Compact rows show S (the same status marks without spaces), HOST for remote lists,
-SESSION (SLOT at the smallest width), TASK, and LAST TURN. Shorten timestamps to
-local `MM-DD HH:MM`, or `HH:MM` when necessary. Count Unicode display columns and
-mark clipped values with an ellipsis. Without a usable terminal or fzf, lists stay read-only.
-Redirected output retains all columns and complete values: `t ls | cat` or
-`t ls -r | cat`. For example, at 32 columns a remote row can look like:
+`t session list` keeps STATUS, SESSION and WORKING ON in that order. It reduces
+task width, wraps model names, then omits optional columns when necessary. Remote
+rows keep a separate HOST column when possible; otherwise the session is suffixed
+with @host. Timestamps use `HH:MM` when the full timestamp cannot fit. Count Unicode
+display columns and mark clipped values with an ellipsis. Redirected output retains
+all columns and complete values: `t ls | cat` or `t ls -r | cat`.
 
 ```text
-  S   HOST SLOT   TASK LAST TURN
-  ●✓↻ mini api-17 Fix… 09:41
+  STATUS  SESSION  WORKING ON
+  ● ✓ ↻   api-17   Fix login…
 ```
 
 `t session list` (`t ls`, `t list`) always prints the scoped, read-only session table.
@@ -1560,3 +1566,24 @@ routing-discovery failure alone never authorizes automatic local fallback.
 Development preview: `python3 scripts/preview_connection_recovery.py` uses the
 shared RailUI with labeled sample data, no services, and no real configuration.
 Add `--startup` to simulate a bootstrap failure and cloud retry.
+
+### Usage overview
+
+`t ls` preserves STATUS, SESSION and WORKING ON first. Optional columns follow:
+LOC/CLD TOKEN% (observed input + output token percentage pair), TOOL (icon only),
+MODELS (a list with ★ on the lead), LAST TURN. Model lists may wrap; continuation
+lines never repeat status or session identity. Narrow screens omit optional columns.
+The legend retains attachment, active context, merged/still-in-progress, desktop
+and all tool icons. UI remains metadata; estimated costs live in usage details.
+
+`t system usage list [--json]` prints recorded usage on this machine without
+selection. `t system usage show [ID] [--json]` opens the shared fzf picker when
+ID is omitted in a terminal; Enter prints full details. JSON requires a show ID.
+Workflow rows aggregate their attributed session requests and are not extra usage
+that can be added to session totals. Launch snapshots freeze workflow revisions;
+unrecorded history stays unattributed. Copies of a session are deduplicated.
+Unknown provider, missing usage, missing timing and missing prices stay unavailable.
+Percentages describe observed tokens, not task counts or completeness. Throughput
+uses matched request time including prefill, never entire task duration. Costs
+are dated API estimates; savings need a compatible frontier-only baseline.
+Reports read existing local evidence only: no model start, downloads or network.

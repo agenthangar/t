@@ -328,6 +328,21 @@ def collect(job):
             'events_path': str(events), 'validated_by_lead': False}
 
 
+def usage_status(job, task):
+    """Small prompt-free live receipt, independent of the larger terminal result."""
+    now = time.time()
+    if now - task.get('_usage_updated', 0) < 2:
+        return
+    task['_usage_updated'] = now
+    keys = ('task_id', 'status', 'model', 'provider', 'resolved_model', 'revision', 'runtime_model',
+            'identity_verified', 'parent_session_id', 'parent_identity_verified', 'started_at', 'generation_events', 'workflow_snapshot')
+    record = {k: task.get(k) for k in keys}
+    record['updated_at'] = now
+    temporary = job / 'usage.tmp'
+    temporary.write_text(json.dumps(record)); temporary.chmod(0o600)
+    temporary.replace(job / 'usage.json')
+
+
 class Worker:
     def __init__(self):
         self.tasks = {}
@@ -377,6 +392,16 @@ class Worker:
                     'parent_session_id': str(args.get('parent_session_id', '')), 'identity_verified': False, 'parent_identity_verified': False,
                     'timeout_seconds': timeout, 'inactivity_timeout_seconds': limits['inactivity_timeout_seconds'],
                     'queue_timeout_seconds': limits['queue_timeout_seconds']}
+            # Codex supplies this launch identity to its MCP child. A caller's
+            # parent_session_id alone never establishes attribution.
+            native_parent = os.environ.get('CODEX_THREAD_ID', '')
+            if re.fullmatch(r'[0-9a-fA-F-]{36}', native_parent) and task['parent_session_id'] in ('', native_parent):
+                task.update(parent_session_id=native_parent, parent_identity_verified=True)
+            try:
+                task['workflow_snapshot'] = runpy.run_path(str(Path(__file__).with_name('t_usage.py')))['launch_context']('codex', workspace)
+            except (OSError, ValueError):
+                pass  # Missing attribution must never block delegated work.
+            usage_status(job, task)
             self.tasks[task_id] = (task, cancel)
             thread = threading.Thread(target=self.execute,
                                       args=(task, cancel, job, config['model'], timeout))
@@ -399,27 +424,37 @@ class Worker:
                 status = 'cancelled'
             else:
                 with local['helper']('t_local_status')['Activity'](model) as activity:
-                    with local['helper']('t_local_manager')['Client'](chosen, 'worker', activity, cancel) as client:
-                        def progress():
-                            state = client.last.get('state', 'working')
-                            task.update(status=state if state in ('queued', 'loading', 'waiting_for_memory', 'waiting_for_legacy') else 'running',
-                                        queue_seconds=round(client.waited(), 2),
-                                        identity_verified=client.last.get('identity_verified', False),
-                                        revision=client.last.get('revision'), runtime_model=client.last.get('runtime_model'),
-                                        owner_verified=client.last.get('owner_verified', False))
-                            progress.generation_events = client.last.get('generation_events', 0)
-                            return client.waited()
-                        status = run_worker(job, client.base, model, timeout, cancel,
-                                            task['provider'], task['context_tokens'], progress=progress)
-                        progress()
-                    task.update(identity_verified=client.last.get('identity_verified', False),
-                                revision=client.last.get('revision'), runtime_model=client.last.get('runtime_model'),
-                                queue_seconds=round(client.waited(), 2))
-                    if task['identity_verified']:
-                        task['resolved_model'] = model
-                    if client.error:
-                        task['error'] = client.error
-                        status = 'failed'
+                    leased = local['leased_runtime'](chosen)
+                    if leased:
+                        task.update(resolved_model=model, revision=leased['revision'], runtime_model=leased['alias'], identity_verified=True)
+                        with activity.endpoint(leased['base']) as observed:
+                            status = run_worker(job, observed, leased['alias'], timeout, cancel, task['provider'], task['context_tokens'])
+                    else:
+                        with local['helper']('t_local_manager')['Client'](chosen, 'worker', activity, cancel) as client:
+                            def progress():
+                                state = client.last.get('state', 'working')
+                                task.update(status=state if state in ('queued', 'loading', 'waiting_for_memory', 'waiting_for_legacy') else 'running',
+                                            queue_seconds=round(client.waited(), 2),
+                                            identity_verified=client.last.get('identity_verified', False),
+                                            revision=client.last.get('revision'), runtime_model=client.last.get('runtime_model'),
+                                            owner_verified=client.last.get('owner_verified', False))
+                                progress.generation_events = client.last.get('generation_events', 0)
+                                task['generation_events'] = progress.generation_events
+                                if task['identity_verified']:
+                                    task['resolved_model'] = model
+                                usage_status(job, task)
+                                return client.waited()
+                            status = run_worker(job, client.base, model, timeout, cancel,
+                                                task['provider'], task['context_tokens'], progress=progress)
+                            progress()
+                        task.update(identity_verified=client.last.get('identity_verified', False),
+                                    revision=client.last.get('revision'), runtime_model=client.last.get('runtime_model'),
+                                    queue_seconds=round(client.waited(), 2))
+                        if task['identity_verified']:
+                            task['resolved_model'] = model
+                        if client.error:
+                            task['error'] = client.error
+                            status = 'failed'
                 task.update(collect(job))
                 if status != 'completed':
                     events = job / 'events.jsonl'
