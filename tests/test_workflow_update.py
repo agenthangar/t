@@ -142,7 +142,7 @@ def test_watch_github_checks_head_and_failures(modules, monkeypatch):
     watch = modules[2]
     sha = 'a' * 40
     response = {'headRefOid': sha, 'statusCheckRollup': [{'status': 'COMPLETED', 'conclusion': 'SUCCESS'}]}
-    monkeypatch.setattr(watch.subprocess, 'run', lambda *a, **k: SimpleNamespace(returncode=0, stdout=json.dumps(response)))
+    monkeypatch.setattr(watch.subprocess, 'run', lambda argv, **k: SimpleNamespace(returncode=0, stdout=json.dumps(response if argv[1] == 'pr' else {'total_count': 0, 'workflow_runs': []})))
     assert watch.github('owner/repo', 1, sha)['status'] == 'succeeded'
     response['statusCheckRollup'][0]['conclusion'] = 'FAILURE'
     assert watch.github('owner/repo', 1, sha)['status'] == 'failed'
@@ -314,7 +314,7 @@ def test_watch_timeout_rate_limit_and_local_receipt(modules, monkeypatch):
     responses = iter([SimpleNamespace(returncode=1, stderr='rate limit exceeded'),
                       SimpleNamespace(returncode=0, stdout=json.dumps({'headRefOid': sha,
                           'statusCheckRollup': [{'status': 'COMPLETED', 'conclusion': 'SUCCESS'}]}))])
-    monkeypatch.setattr(watch.subprocess, 'run', lambda *a, **k: next(responses))
+    monkeypatch.setattr(watch.subprocess, 'run', lambda argv, **k: next(responses) if argv[1] == 'pr' else SimpleNamespace(returncode=0, stdout='{"total_count": 0, "workflow_runs": []}'))
     pauses, changes = [], []
     monkeypatch.setattr(watch.time, 'sleep', pauses.append)
     assert watch.github('o/r', 1, sha, progress=changes.append)['status'] == 'succeeded'
@@ -555,3 +555,53 @@ def test_runner_start_links_watch_activity_to_terminal_receipt(modules, monkeypa
         assert not record['active'] and record['state'] == 'result ready'
     else:
         assert not activities and not watch.records('verified')
+
+
+@pytest.mark.parametrize('conclusion,expected', [('success', 'succeeded'), ('failure', 'failed')])
+def test_github_watch_waits_for_dependent_jobs_and_latest_workflow(modules, monkeypatch, conclusion, expected):
+    watch = modules[2]
+    sha = 'a' * 40
+    count = 0
+    changes = []
+    def run(argv, **kwargs):
+        nonlocal count
+        if argv[1] == 'pr':
+            payload = {'headRefOid': sha, 'statusCheckRollup': [{'status': 'COMPLETED', 'conclusion': 'SUCCESS'}]}
+        else:
+            assert 'head_sha=' + sha in argv[-1]
+            count += 1
+            current = {'id': 2, 'workflow_id': 10, 'head_sha': sha, 'event': 'pull_request',
+                       'status': 'in_progress' if count == 1 else 'completed', 'conclusion': conclusion}
+            payload = {'total_count': 3, 'workflow_runs': [
+                dict(current, id=1, status='completed', conclusion='failure'), current,
+                dict(current, id=3, head_sha='b' * 40, status='in_progress')]}
+        return SimpleNamespace(returncode=0, stdout=json.dumps(payload))
+    monkeypatch.setattr(watch.subprocess, 'run', run)
+    monkeypatch.setattr(watch.time, 'sleep', lambda _: None)
+    result = watch.github('owner/repo', 1, sha, progress=changes.append)
+    assert result['status'] == expected and result['wait_status'] == 'complete'
+    assert count == 2 and changes[0]['status'] == 'running'
+    assert result['workflows'] == [{'id': 2, 'status': 'completed', 'conclusion': conclusion}]
+
+
+@pytest.mark.parametrize('unavailable', ['timeout', 'error', 'overflow'])
+def test_github_watch_never_accepts_unverified_workflow_completion(modules, monkeypatch, unavailable):
+    watch = modules[2]
+    sha = 'a' * 40
+    def run(argv, **kwargs):
+        if argv[1] == 'pr':
+            return SimpleNamespace(returncode=0, stdout=json.dumps({'headRefOid': sha,
+                'statusCheckRollup': [{'status': 'COMPLETED', 'conclusion': 'SUCCESS'}]}))
+        if unavailable == 'timeout':
+            raise subprocess.TimeoutExpired('gh', 1)
+        return SimpleNamespace(returncode=1 if unavailable == 'error' else 0,
+                               stdout='{"total_count": 101, "workflow_runs": []}')
+    monkeypatch.setattr(watch.subprocess, 'run', run)
+    ticks = iter([0, 0, 0, 0, 2])
+    monkeypatch.setattr(watch.time, 'monotonic', lambda: next(ticks))
+    if unavailable == 'overflow':
+        with pytest.raises(ValueError, match='too many workflow runs'):
+            watch.github('owner/repo', 1, sha, timeout=1)
+    else:
+        result = watch.github('owner/repo', 1, sha, timeout=1)
+        assert result['wait_status'] == 'pending' and 'unavailable' in result

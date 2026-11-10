@@ -203,6 +203,31 @@ def github(repository, number, sha, timeout=60, progress=None, next_step=''):
         checks = data.get('statusCheckRollup') or []
         pending = not checks or any(item.get('status') not in (None, 'COMPLETED') or item.get('state') == 'PENDING' for item in checks)
         failed = any(item.get('conclusion') not in (None, '', 'SUCCESS', 'NEUTRAL', 'SKIPPED') or item.get('state') in ('FAILURE', 'ERROR') for item in checks)
+        workflows = []
+        if not pending:
+            # Dependent Actions jobs may not have check runs yet. A green
+            # rollup is final only after the latest workflows for this head end.
+            try:
+                runs = subprocess.run(['gh', 'api', f'repos/{repository}/actions/runs?head_sha={sha}&per_page=100'],
+                                      capture_output=True, text=True,
+                                      timeout=max(.1, min(20, deadline - time.monotonic())))
+            except subprocess.TimeoutExpired:
+                return {'id': f'{repository}#{number}@{sha}', 'status': 'running', 'unavailable': 'GitHub workflow request timed out'}
+            if runs.returncode:
+                return {'id': f'{repository}#{number}@{sha}', 'status': 'running',
+                        'unavailable': 'GitHub workflow state unavailable', 'retry_after': 30}
+            payload = json.loads(runs.stdout)
+            if payload['total_count'] > 100:
+                raise ValueError('too many workflow runs to verify completion for this head')
+            latest = {}
+            for run in payload['workflow_runs']:
+                if run['head_sha'] == sha:
+                    key = (run['workflow_id'], run['event'])
+                    if key not in latest or run['id'] > latest[key]['id']:
+                        latest[key] = run
+            workflows = [{key: run[key] for key in ('id', 'status', 'conclusion')} for run in latest.values()]
+            pending = any(run['status'] != 'completed' for run in latest.values())
+            failed = failed or any(run['status'] == 'completed' and run['conclusion'] not in ('success', 'neutral', 'skipped') for run in latest.values())
         return {'id': f'{repository}#{number}@{sha}', 'status': 'running' if pending else 'failed' if failed else 'succeeded',
-                'exit_code': 1 if failed else 0, 'head': sha, 'checks': checks}
+                'exit_code': 1 if failed else 0, 'head': sha, 'checks': checks, 'workflows': workflows}
     return wait(read, timeout, progress, Activity(f'{repository}#{number}@{sha}', 'remote checks', next_step), interval=10)
