@@ -962,9 +962,20 @@ inheritance or a custom model ID.
 Workflow rows show **Global default**, **Assigned to N repos**, or **Not assigned**.
 Repository counts include explicit, non-excluded assignments; a disabled definition
 is marked **Disabled**. Being enabled does not mean a workflow is assigned.
-Choose **Use recommended defaults** to activate planning with `gpt-6-astra`, implementation
-with `gpt-6.1-sol`, and review with `gpt-6-astra`. **Edit default workflow** and
+Choose **Use recommended defaults** for `gpt-6.1-sol` / medium in the main
+conversation and bounded review with `gpt-6-astra` / medium. **Edit default workflow** and
 **Edit named workflow** give each stage separate model and reasoning-effort controls.
+Workflow context is scoped to the current checkout, including linked worktrees:
+`t workflow context --tool codex` (add `--json` for scope and policy metadata).
+Updates ask before rebuilding managed global and repository instructions and back
+up originals first. Unattended updates defer that migration.
+
+Test runners use a local snapshot by default. Configuring a remote runner does
+not select it; choose remote defaults explicitly or pass `--target NAME`.
+Use `t runners runs watch ID --timeout 60 --json` for a bounded wait, or
+`t runners runs watch 'OWNER/REPO#PR@HEAD_SHA' --timeout 60 --json` for checks
+pinned to a PR head. A pending wait does not mean success or cancel the job.
+
 All three stages offer **Agent selects by task**. Before delegating, the agent
 chooses a concrete supported reasoning effort for that stage's worker.
 Task-based Implementation uses a bounded implementation worker; the main session

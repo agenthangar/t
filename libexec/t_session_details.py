@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import re
+import runpy
 import sqlite3
 import sys
 import unicodedata
@@ -244,7 +245,9 @@ def enrich(lines, home, codex_home):
             # Models and titles are metadata, never terminal control sequences.
             clean = lambda value: ' '.join(re.sub(r'[\x00-\x1f\x7f-\x9f]', ' ', str(value)).split())
             row[5] = clean(summary)
-            out.append('\t'.join(row[:7] + [clean(model), transcript_last_turn(turn_transcript, agent)]))
+            watches = runpy.run_path(str(Path(__file__).with_name('t_watch.py')))['records'](sid)
+            out.append('\t'.join(row[:7] + [clean(model), transcript_last_turn(turn_transcript, agent)] +
+                                 ([json.dumps(watches, separators=(',', ':'))] if watches else [])))
         return out
     finally:
         if db is not None:

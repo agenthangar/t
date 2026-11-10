@@ -468,6 +468,14 @@ def _parse_rows(text, host_prefixed=False):
             row["model"] = extra[1]
         if len(extra) > 2:
             row["last_turn_started_at"] = extra[2]
+        if len(extra) > 3:
+            try:
+                parsed_watchers = json.loads(extra[3])
+                row['watchers'] = parsed_watchers if isinstance(parsed_watchers, list) and all(isinstance(item, dict) for item in parsed_watchers) else []
+            except ValueError:
+                row['watchers'] = []
+        elif host == 'local':
+            row['watchers'] = _watchers()['records'](sid)
         rows.append(row)
     return rows
 
@@ -658,6 +666,8 @@ def _session_picker_rows(rows, remote=False, scoped=False, compact=False, header
     """Resume-style rows: target fields, full details, then compact display."""
     if not rows:
         return []
+    rows = [dict(row, summary=(row.get('summary') or '') +
+                 (' · ' + _watchers()['label'](row.get('watchers', [])) if _watchers()['label'](row.get('watchers', [])) != '—' else '')) for row in rows]
     cells, statuses = [], []
     for row in rows:
         label = row["slot"]
@@ -686,6 +696,9 @@ def _session_picker_rows(rows, remote=False, scoped=False, compact=False, header
     for row, parts in zip(rows, cells):
         summary = row.get("summary") or ""
         details = "  ".join(parts) + "  " + summary
+        for watch in row.get('watchers', []):
+            info = f"  Watcher {watch.get('id', '?')}: {watch.get('state', 'unknown')} · run {watch.get('run_id', '?')}"
+            details += ''.join(char for char in info if char.isprintable())
         if last_turn:
             details += "  Last turn: " + _session_display_helpers()["format_last_turn"](row.get("last_turn_started_at"))
         parts[-1] = _truncate(parts[-1], widths[-1])
@@ -705,12 +718,17 @@ def _session_picker_rows(rows, remote=False, scoped=False, compact=False, header
     return ([heading] if header else []) + out
 
 
+def _watchers():
+    return runpy.run_path(os.path.join(_t_source_root(), 'libexec/t_watch.py'))
+
+
 def _session_table_lines(rows, remote=False):
-    headings = ["STATUS", "UI", "MODEL"] + (["HOST"] if remote else []) + ["SESSION", "WORKING ON", "LAST TURN"]
+    headings = ["STATUS", "UI", "MODEL"] + (["HOST"] if remote else []) + ["SESSION", "WORKING ON", "WATCHER", "LAST TURN"]
     helpers = _session_display_helpers()
     cells = []
     for row in rows:
         values = helpers["session_cells"](row, _agent_glyph(row.get("agent", "claude")), remote)
+        values.append(_watchers()["label"](row.get("watchers", [])))
         values.append(helpers["format_last_turn"](row.get("last_turn_started_at")))
         cells.append(values)
     if not sys.stdout.isatty() or not cells:
@@ -721,33 +739,35 @@ def _session_table_lines(rows, remote=False):
     # A long task should consume spare space, not turn every session into a card.
     widths = [max(_display_width(label), *(_display_width(row[i]) for row in cells))
               for i, label in enumerate(headings)]
-    task_width = width - sum(widths[:-2]) - widths[-1] - 2 * len(widths)
+    task_width = width - sum(widths[:-3]) - sum(widths[-2:]) - 2 * len(widths)
     if task_width >= len("WORKING ON"):
-        widths[-2] = min(widths[-2], task_width)
+        widths[-3] = min(widths[-3], task_width)
         gap = "  "
     else:
         # Keep the actionable identity, ownership marks and task on one line.
         # Remote hosts remain separate so equal slot names can be distinguished.
-        headings = ["S"] + (["HOST"] if remote else []) + ["SESSION", "TASK", "LAST TURN"]
+        headings = ["S"] + (["HOST"] if remote else []) + ["SESSION", "TASK", "WATCHER", "LAST TURN"]
         cells = [[row[0].replace(" ", "")] + ([row[3]] if remote else []) +
-                 [row[-3], row[-2], row[-1][5:16] if row[-1] != "-" else "-"]
+                 [row[-4], row[-3], row[-2], row[-1][5:16] if row[-1] != "-" else "-"]
                  for row in cells]
         widths = [max(_display_width(label), *(_display_width(row[i]) for row in cells))
                   for i, label in enumerate(headings)]
-        widths[-3] = min(widths[-3], 12)
+        widths[-4] = min(widths[-4], 12)
+        widths[-2] = min(widths[-2], 28)
         if remote:
             widths[1] = min(widths[1], 8)
-        widths[-2] = 4
+        widths[-3] = 4
         gap = " "
         available = width - 2 - (len(widths) - 1)
-        for i, minimum in [(-3, 6), *([(1, 4)] if remote else [])]:
+        for i, minimum in [(-4, 6), (-2, 7), *([(1, 4)] if remote else [])]:
             widths[i] -= min(max(0, sum(widths) - available), max(0, widths[i] - minimum))
-        if widths[-3] < len("SESSION"):
-            headings[-3] = "SLOT"
+        if widths[-4] < len("SESSION"):
+            headings[-4] = "SLOT"
         if sum(widths) > available:
             cells = [row[:-1] + [row[-1][-5:]] for row in cells]
-            widths[-1] = len("LAST TURN")
-        widths[-2] += max(0, available - sum(widths))
+            widths[-1] = 5
+            headings[-1] = "TURN"
+        widths[-3] += max(0, available - sum(widths))
 
     lines = []
     for row in [headings, *cells]:
@@ -2653,7 +2673,8 @@ def _workflow_session_setting(ui, cfg, policy, agent, field):
                        fallback_model=getattr(cfg, "models", {}).get(agent, ""), quiet=True, role="Lead",
                        model_validator=(lambda value: re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/@+\[\](),=-]*", value)) if agent == "cursor" else None)
     selected = {key: value for key, value in (("model", staged.models.get(agent)),
-                                             ("effort", staged.efforts.get(agent))) if value}
+                                             ("effort", staged.efforts.get(agent)),
+                                             ("speed", settings.get("speed"))) if value}
     if selected != settings:
         if selected:
             changed.setdefault("session_defaults", {})[agent] = selected
@@ -2664,9 +2685,35 @@ def _workflow_session_setting(ui, cfg, policy, agent, field):
     return changed
 
 
+def _workflow_speed(ui, cfg, policy, agent, stage=None):
+    from types import SimpleNamespace
+    settings = policy[stage] if stage else policy.get('session_defaults', {}).get(agent, {})
+    current = settings.get('speed', 'inherit')
+    encoded = {'inherit': '', 'standard': '0', 'fast': 'fast' if agent == 'codex' else '1'}
+    staged = SimpleNamespace(models={agent: settings.get('model', '')}, efforts={},
+                             fast={agent: encoded.get(current, current)})
+    _config_model_menu(ui, staged, agent, {}, 'fast', default_label='Inherit current parent speed' if stage else 'Inherit native speed',
+                       fallback_model=getattr(cfg, 'models', {}).get(agent, ''), quiet=True)
+    chosen = {'': 'inherit', '0': 'standard', '1': 'fast'}.get(staged.fast.get(agent, ''), staged.fast.get(agent))
+    if chosen == current or chosen == 'inherit' and current == 'inherit':
+        return copy.deepcopy(policy)
+    changed = copy.deepcopy(policy)
+    target = changed[stage] if stage else changed.setdefault('session_defaults', {}).setdefault(agent, {})
+    if chosen == 'inherit':
+        target.pop('speed', None)
+    else:
+        target['speed'] = chosen
+    if not stage and not target:
+        changed['session_defaults'].pop(agent, None)
+        if not changed['session_defaults']:
+            changed.pop('session_defaults')
+    return changed
+
+
 def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
     title = f"Workflow · {name}" if name else "Customize only this repository"
     focus = 'enabled'
+    cleared_text = None
     try:
         while True:
             document = cfg._workflow_document
@@ -2688,15 +2735,16 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
                 rows += [("main_model", "Lead model")]
                 if agent != "cursor":
                     rows.append(("main_effort", "Lead reasoning effort"))
+            if not local_only:
+                rows.append(("main_speed", "Lead speed"))
             if agent == "codex":
                 rows.append(("inference", "Inference & routing ›"))
             rows.append(("frontend_design", "Frontend design ›"))
             rows.append(("behaviors", "PRs, previews & tests ›"))
+            rows.append(("job_watching", "Job watching ›"))
             if helper["PERMISSIONS"]:
                 rows.append(("permissions", "Permissions ›"))
             rows += [("instructions", "Text instructions ›")]
-            if policy.get("instructions"):
-                rows.append(("clear_instructions", "Clear text instructions"))
             rows += [("edit", "Advanced JSON editor"), ("reset", "Reset workflow to defaults")]
             if name:
                 rows.append(("delete", "Delete workflow"))
@@ -2711,6 +2759,8 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
             values["stages_enabled"] = ", ".join(_workflow_stage_title(stage) for stage in stages) if stages else "No · one model"
             values["main_model"] = defaults.get("model") or _workflow_session_default_label(cfg, policy, agent, "model")
             values["main_effort"] = _workflow_effort(defaults["effort"]) if defaults.get("effort") else _workflow_session_default_label(cfg, policy, agent, "effort")
+            values['main_speed'] = defaults.get('speed', 'Inherit native speed')
+            values['job_watching'] = helper['BEHAVIORS']['job_watching']['choices'][policy.get('behaviors', {}).get('job_watching', 'automatic')][0]
             selected = helper["effective_behaviors"](policy.get("behaviors", {}))
             count = sum(key in _WORKFLOW_TOPICS and key not in ("frontend_design", "design_system") for key in selected)
             values["behaviors"] = f"{count} overrides" if count else "Defaults"
@@ -2732,21 +2782,21 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
             changed = copy.deepcopy(policy)
             if choice == 'instructions':
                 action = ui.pick('Text instructions', [('edit', 'Edit text instructions'),
-                    ('clear', 'Clear text instructions'), ('back', 'Back')],
+                    ('clear', 'Clear text instructions'), *([('undo', 'Undo clear')] if cleared_text is not None else []), ('back', 'Back')],
                     values={'clear': 'Remove all text' if policy.get('instructions') else 'Already empty'},
                     accents={'clear': 'w'}, sections={'clear': 'Manage', 'back': 'Navigation'})
                 if action in (None, 'back'):
                     continue
                 if action == 'clear' and not policy.get('instructions'):
                     continue
-                choice = 'clear_instructions' if action == 'clear' else 'instructions'
+                choice = 'clear_instructions' if action == 'clear' else 'undo_clear' if action == 'undo' else 'instructions'
             if choice == 'reset':
                 changed = reset
             elif choice == "stages_enabled":
                 backed = []
                 picked = ui.pick("Use multiple models", [("", "Use lead model for all stages"), ("planning", "Planning"),
                                  ("implementation", "Implementation"), ("review", "Review"),
-                                 ('__default__', 'Use default · ' + (', '.join(_workflow_stage_title(key) for key in helper['model_stages'](helper['DEFAULT'])) or 'One model'))],
+                                 ('__default__', 'Use default · ' + (', '.join(_workflow_stage_title(key) for key in helper['model_stages'](helper['tool_defaults'](agent)['workflows']['standard'])) or 'One model'))],
                                  multi=True, marked={i + 1 for i, stage in enumerate(("planning", "implementation", "review")) if stage in stages} or {0},
                                  empty_choice="", exclusive_choices=('__default__',),
                                  sections={'__default__': 'Default'}, on_back=backed.extend, back_label="keep & back")
@@ -2784,8 +2834,19 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
                 policy = (copy.deepcopy(document["workflows"][name]) if name else helper["resolved"](document, repository))
             elif choice == "permissions":
                 changed = _workflow_permissions_menu(ui, helper, policy)
+            elif choice == 'main_speed':
+                changed = _workflow_speed(ui, cfg, policy, agent)
+            elif choice == 'job_watching':
+                choices = helper['BEHAVIORS']['job_watching']['choices']
+                picked = ui.pick('Job watching', [('', 'Use default · Automatically'), *[(key, value[0]) for key, value in choices.items()], ('back', 'Back')])
+                if picked is not None and picked != 'back':
+                    changed = helper['update_behavior'](policy, 'job_watching', picked)
             elif choice == "clear_instructions":
+                cleared_text = policy.get('instructions', '')
                 changed["instructions"] = ""
+            elif choice == 'undo_clear':
+                changed['instructions'] = cleared_text
+                cleared_text = None
             elif choice in ("edit", "instructions"):
                 ui.restore()
                 try:
@@ -2802,13 +2863,18 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
             else:
                 stage = choice
                 stage_title = _workflow_stage_title(stage) + (" · worker" if stage == "implementation" and helper["implementation_worker"](policy) else "")
-                field = ui.pick(stage_title, [("model", "Model")] + ([] if agent == "cursor" else [("effort", "Reasoning effort")]) + [("reset", "Reset to defaults"), ("back", "Back")],
+                field = ui.pick(stage_title, [("model", "Model")] + ([] if agent == "cursor" else [("effort", "Reasoning effort")]) + [("speed", "Speed"), ("reset", "Reset to defaults"), ("back", "Back")],
                                 values={"model": policy[stage]["model"], "effort": _workflow_effort(policy[stage]["effort"], stage),
+                                        "speed": policy[stage].get('speed', 'Inherit current parent speed'),
                                         'reset': _workflow_reset_value(policy[stage], helper['DEFAULT'][stage])}, sections={'reset': 'Manage'})
                 if field in (None, "back"):
                     continue
                 if field == 'reset':
                     cfg._workflow_document = helper['update'](document, helper['reset_policy'](policy, stage, agent), repository, name)
+                    continue
+                if field == 'speed':
+                    changed = _workflow_speed(ui, cfg, policy, agent, stage)
+                    cfg._workflow_document = helper['update'](document, changed, repository, name)
                     continue
                 if field == "model":
                     picked = _workflow_model(ui, cfg, helper, stage, policy[stage]["model"])
@@ -2902,7 +2968,7 @@ def _workflow_runners_menu(ui, cfg, helper, repository=None, name=None):
                 cfg._workflow_document = helper['update'](document, after, repository, name)
             continue
         if choice == "show":
-            lines = [f"Defaults: {', '.join(value['default_targets']) or 'none'}",
+            lines = [f"Defaults: {', '.join(value['default_targets']) or 'local snapshot runner'}",
                      f"Timeout: {value['timeout_seconds']}s · queue: {value['queue_timeout_seconds']}s",
                      "Artifacts: " + (", ".join(value["artifacts"]) or "none")]
             lines += [f"{key}: {target['provider']} · {target['os']}/{target['arch']}" for key, target in value["targets"].items()]
@@ -3510,7 +3576,7 @@ def _workflow_changed_review(helper, document, before, activate=False):
 
     def path_label(path):
         if len(path) == 3 and path[0] == 'session_defaults':
-            return path[1].title() + ' · Lead ' + ('model' if path[-1] == 'model' else 'reasoning effort')
+            return path[1].title() + ' · Lead ' + {'model': 'model', 'effort': 'reasoning effort', 'speed': 'speed'}[path[-1]]
         if path[0] == 'behaviors' and len(path) == 2:
             return helper['BEHAVIORS'].get(path[1], {}).get('label', path[1])
         return ' · '.join(part.replace('_', ' ').capitalize() for part in path)
@@ -4350,7 +4416,7 @@ def _workflow_print(helper, result, catalogue=False):
         stages = helper["model_stages"](policy)
         if stages:
             print("Model settings: " + ", ".join(_workflow_stage_title(stage) for stage in stages))
-            if helper["implementation_worker"](policy):
+            if helper["main_session_settings"](policy):
                 settings = helper["main_session_settings"]({**policy, "enabled": True})
                 print("Lead model: " + (settings.get("model") or "Agent default") +
                       ("" if helper.get("TOOL") == "cursor" else " · " +
@@ -4407,6 +4473,10 @@ def _cmd_workflow(cfg, args):
         saved_scope = before is not None and (tool == "codex" or tool in full_document.get("tools", {}))
         document = helper["tool_document"](full_document, tool)
         helper = _workflow_tool_helper(helper, tool)
+        if verb == 'context':
+            result = helper['resolve_context'](full_document, repository or os.getcwd(), tool)
+            print(json.dumps(result, indent=2) if getattr(args, 'json', False) else result['text'])
+            return 0
         if instructions_action == "show":
             print(helper["instructions"](document, repository, name), end="")
             return 0
@@ -4500,7 +4570,7 @@ def _cmd_workflow_runners(cfg, args):
                 print(helper["encode"]({"tool": tool, "scope": repository or name or "global", "runners": value}), end="")
             else:
                 print("Test runners · " + tool.title() + " · " + (repository or name or "global"))
-                print("Defaults: " + (", ".join(value["default_targets"]) or "none"))
+                print("Defaults: " + (", ".join(value["default_targets"]) or "Local snapshot runner"))
                 print(f"Timeout: {value['timeout_seconds']}s · queue: {value['queue_timeout_seconds']}s")
                 print("Artifacts: " + (", ".join(value["artifacts"]) or "none"))
                 if value["targets"]:
@@ -4508,7 +4578,7 @@ def _cmd_workflow_runners(cfg, args):
                         (key, target["provider"], target["os"] + " / " + target["arch"], ", ".join(target["capabilities"]) or "—")
                         for key, target in sorted(value["targets"].items())])))
                 else:
-                    print("No test runners configured. Use t runners edit.")
+                    print("Local snapshot runner (default). Use t runners edit to configure remote targets.")
             return 0
         if not sys.stdin.isatty() or not sys.stdout.isatty():
             raise ValueError("open the runner editor in a terminal")
@@ -4551,23 +4621,46 @@ def _cmd_workflow_runs(cfg, args):
             config["targets"] = selected
             config["default_targets"] = list(selected)
             for target in selected.values():
-                if target["provider"] == "ssh":
+                if target.get('provider', target.get('type')) == 'ssh':
                     if target["host"] not in cfg.hosts:
                         raise ValueError(f"SSH runner host {target['host']!r} is not registered; use t hosts add")
                     target["host"] = cfg.hosts[target["host"]]
             command = args.command[1:] if args.command[:1] == ["--"] else args.command
             if not command:
                 raise ValueError("runs start requires -- COMMAND ...")
-            with _spinner("Running snapshot tests", machine=args.json):
-                result = helper["start"](root, config, command, targets=list(selected), os_filter=args.runner_os,
-                    capabilities=args.capabilities, include=args.includes, artifacts=args.artifact_paths,
-                    timeout=args.timeout, queue_timeout=args.queue_timeout,
-                    progress=None if args.json else lambda receipt: print("Run: " + receipt["id"], file=sys.stderr))
+            activity = None
+            result = None
+            def on_progress(receipt):
+                nonlocal activity
+                if activity is None and policy.get('behaviors', {}).get('job_watching', 'automatic') == 'automatic':
+                    kind = 'local tests' if all(t.get('type') == 'local' for t in receipt['targets'].values()) else 'remote checks'
+                    activity = _watchers()['Activity'](receipt['id'], kind, getattr(args, 'next_step', '')).start()
+                if not args.json:
+                    print('Run: ' + receipt['id'], file=sys.stderr)
+            try:
+                with _spinner("Running snapshot tests", machine=args.json):
+                    result = helper["start"](root, config, command, targets=list(selected), os_filter=args.runner_os,
+                        capabilities=args.capabilities, include=args.includes, artifacts=args.artifact_paths,
+                        timeout=args.timeout, queue_timeout=args.queue_timeout,
+                        progress=on_progress)
+            finally:
+                if activity:
+                    activity.finish(result)
             if args.json:
                 print(json.dumps(result, indent=2))
             else:
                 print("\n".join(_runner_receipt_lines(result)))
             return int(result.get("exit_code", 0))
+        if action == 'watch':
+            watcher = runpy.run_path(os.path.join(_t_source_root(), 'libexec/t_watch.py'))
+            result = watcher['runner'](args.run_id, args.timeout,
+                None if args.json else lambda receipt: print(' · '.join((receipt['id'], receipt['status'])), flush=True), args.next_step)
+            if args.json:
+                print(json.dumps(result, indent=2))
+            else:
+                print('Wait: ' + result['wait_status'])
+            return (int(result.get('exit_code', 0 if result['status'] in ('succeeded', 'completed') else 1))
+                    if result['wait_status'] == 'complete' else 2)
         if action == "logs":
             logs = helper["logs"](args.run_id, target=args.runner_target)
             for target, output in logs.items():
@@ -7711,7 +7804,7 @@ def _command_readonly(argv, *, terminal=None):
         return (len(words) == 2 or words[2] in ("list", "show") or
                 (len(words) >= 4 and words[2] in ("runtime", "requests") and words[3] in ("status", "list", "show", "monitor")))
     if words[:2] == ["config", "workflow"]:
-        return (len(words) == 2 or words[2] == "list" or words[2:4] == ["instructions", "show"] or
+        return (len(words) == 2 or words[2] in ("list", "context") or words[2:4] == ["instructions", "show"] or
                 words[2:] in (["runners"], ["runs"]) or words[2:4] == ["runners", "list"] or
                 (len(words) > 3 and words[2] == "runs" and words[3] in ("list", "status", "logs")))
     if verb == "mcp" and tail and tail[0] == "status":
@@ -11610,13 +11703,13 @@ COMMAND_GROUPS = {
                "models": {**{verb: ("config", "models", verb) for verb in ("list", "refresh", "show", "install", "measure")},
                           "runtime": {verb: ("config", "models", "runtime", verb) for verb in ("status", "edit", "monitor")},
                           "requests": {verb: ("config", "models", "requests", verb) for verb in ("list", "show", "cancel")}}},
-    "workflow": {"list": ("config", "workflow", "list"),
+    "workflow": {"context": ("config", "workflow", "context"), "list": ("config", "workflow", "list"),
                  "edit": ("config", "workflow", "edit"),
                  **{verb: ("config", "workflow", verb) for verb in ("open", "delete", "add", "use", "exclude", "inherit")},
                  "instructions": {verb: ("config", "workflow", "instructions", verb) for verb in ("show", "edit")},
                  },
     "runners": {**{verb: ("runners", verb) for verb in ("list", "edit", "setup")},
-                "runs": {verb: ("runners", "runs", verb) for verb in ("start", "list", "status", "logs", "artifacts", "cancel", "cleanup")}},
+                "runs": {verb: ("runners", "runs", verb) for verb in ("start", "list", "status", "watch", "logs", "artifacts", "cancel", "cleanup")}},
     "profile": {"init": ("instructions", "--init"),
                 "edit": ("instructions", "--edit"),
                 "show": ("instructions", "--show"),
@@ -11936,6 +12029,8 @@ SCOPE
   override or account default.
   --repo explicitly selects a registered repository; it cannot combine with NAME.
   List reads local configuration without network access, prompts or writes.
+  Execution defaults to the local snapshot runner, even with remote targets.
+  Select remote defaults explicitly or pass --target NAME.
   Saving configuration never provisions runners. Setup uses gh authentication;
   --create explicitly permits creating the private broker repository.
 
@@ -11947,6 +12042,7 @@ LEARN MORE
   t runners runs start [--tool TOOL] [--repo ALIAS] [--target NAME ...] -- COMMAND ...
   t runners runs list [--json]
   t runners runs status ID [--json]
+  t runners runs watch ID [--timeout SECONDS] [--json]
   t runners runs logs ID [--target NAME]
   t runners runs artifacts ID [--target NAME] [--output DIR]
   t runners runs cancel ID
@@ -11956,6 +12052,7 @@ COMMANDS
   start      Snapshot current worktree files and wait for concurrent test targets
   list       Print local durable run receipts
   status     Inspect a local receipt without contacting providers
+  watch      Wait for receipt changes or pinned GitHub checks
   logs       Print retained local target logs
   artifacts  Extract bounded retained artifacts into a local directory
   cancel     Request cancellation and verify terminal provider state
@@ -11968,6 +12065,11 @@ SCOPE
   repository tool override or account default.
   --include PATH explicitly adds intended untracked files. Tracked edits are
   included without committing or pushing source. One snapshot serves all targets.
+  The default target is the local snapshot runner, even when remote targets are
+  configured. Explicit workflow defaults or --target select remote execution.
+  Watch accepts a run UUID or OWNER/REPO#PR@HEAD_SHA for pinned GitHub checks.
+  --next-step records the task step waiting on results. A wait timeout does not
+  cancel the underlying job; exit 2 means results are still pending.
   --os linux|macos and --capability NAME filter configured targets. Windows
   execution is not yet supported. Native desktop tests remain explicitly opt-in.
   List, status and logs read local state without network access or update prompts.
@@ -11998,6 +12100,7 @@ LEARN MORE
         return _wrap_help("""USAGE
   t workflow <verb> [arguments] [flags]
   t workflow
+  t workflow context [--tool TOOL] [--repo ALIAS] [--json]
   t workflow list [--tool TOOL] [--repo ALIAS | --all] [--json]
   t workflow add NAME [--tool TOOL] [--from NAME]
   t workflow open NAME [--tool TOOL]
@@ -12010,6 +12113,7 @@ LEARN MORE
   t workflow instructions <verb> [NAME] [--tool TOOL] [--repo ALIAS]
 
 COMMANDS
+  context       Print only the current checkout workflow (including worktrees)
   list          Print effective settings or the named catalogue with --all
   add           Copy the current default (or --from NAME); selection stays unchanged
   open          Open a named workflow in the staged editor (also t workflow NAME)
@@ -12025,9 +12129,7 @@ SCOPE
   Omit --repo for that tool's global workflow. --repo selects a registered repository
   alias, basename or origin name explicitly.
   Choose a tool, then its workflow; each has separate defaults and assignments.
-  Browsing never changes the tool that launches sessions.
-  Explicit verbs never infer the checkout. Bare t workflow opens the editor.
-  Named opens use the account tool unless --tool selects another catalogue.
+  Context infers the current checkout; other explicit verbs do not.
   Delete keeps at least one workflow and preserves repository exclusions.
   NAME and --repo cannot be combined for edit. Shared definition edits affect
   all its consumers. --all lists named workflows; it cannot combine with --repo.
@@ -13249,8 +13351,9 @@ EXAMPLES
                 leaf.add_argument("--view", choices=("cli", "gui"), default="cli", help="live terminal or local browser usage view")
     workflow = config_sub.add_parser("workflow", hidden=True, help="manage named agent workflows and behavior preferences")
     workflow_sub = workflow.add_subparsers(dest="workflow_action")
-    for verb in ("list", "edit", "open", "delete", "add", "use", "exclude", "inherit"):
+    for verb in ("context", "list", "edit", "open", "delete", "add", "use", "exclude", "inherit"):
         leaf = workflow_sub.add_parser(verb, help={
+            "context": "print current checkout resolved agent instructions; --repo selects a registered repository",
             "list": "list effective workflow or named catalogue", "edit": "edit workflow JSON in a terminal",
             "open": "open a named workflow in the staged terminal editor",
             "delete": "delete a workflow; --replacement is required for a default or assigned workflow",
@@ -13270,6 +13373,8 @@ EXAMPLES
         if verb == "delete":
             leaf.add_argument("--replacement", dest="workflow_replacement", metavar="NAME",
                               help="move default and repository assignments to another existing workflow; exclusions are retained")
+        if verb == "context":
+            leaf.add_argument("--json", action="store_true", help="print resolved context and scope as JSON without writes")
         if verb == "list":
             leaf.add_argument("--all", dest="all_workflows", action="store_true", help="list named catalogue and assignments")
             leaf.add_argument("--json", action="store_true", help="print workflow values as JSON")
@@ -13315,15 +13420,19 @@ EXAMPLES
     leaf.add_argument("--timeout", type=int, metavar="SECONDS", help="per-target execution deadline (1–21600)")
     leaf.add_argument("--queue-timeout", type=int, metavar="SECONDS", help="provisioning/queue deadline (1–3600)")
     leaf.add_argument("--json", action="store_true", help="print the final durable receipt as JSON")
+    leaf.add_argument("--next-step", default="", help="authorized task step waiting on these results")
     leaf.add_argument("command", nargs=argparse.REMAINDER, metavar="COMMAND", help="argv after --; never interpreted as shell code")
-    for verb in ("list", "status", "logs", "artifacts", "cancel", "cleanup"):
+    for verb in ("list", "status", "watch", "logs", "artifacts", "cancel", "cleanup"):
         leaf = run_sub.add_parser(verb, help={"list": "list local run receipts without network access", "status": "show a local run receipt without network access",
-            "logs": "print retained local logs", "artifacts": "extract retained result artifacts", "cancel": "request cancellation and confirm provider state",
+            "watch": "wait for a runner receipt with a bounded deadline; stopping does not cancel the run", "logs": "print retained local logs", "artifacts": "extract retained result artifacts", "cancel": "request cancellation and confirm provider state",
             "cleanup": "retry deletion of retained remote run resources"}[verb])
         if verb != "list":
-            leaf.add_argument("run_id", metavar="ID", help="durable local run UUID")
-        if verb in ("list", "status"):
-            leaf.add_argument("--json", action="store_true", help="print local receipts as JSON without network access")
+            leaf.add_argument("run_id", metavar="ID", help="local run UUID; watch also accepts OWNER/REPO#PR@HEAD_SHA")
+        if verb == "watch":
+            leaf.add_argument("--timeout", type=int, default=60, metavar="SECONDS", help="bounded wait, 1–3600 seconds; default 60")
+            leaf.add_argument("--next-step", default="", help="authorized task step waiting on this result")
+        if verb in ("list", "status", "watch"):
+            leaf.add_argument("--json", action="store_true", help="print watcher results as JSON" if verb == "watch" else "print local receipts as JSON without network access")
         if verb in ("logs", "artifacts"):
             leaf.add_argument("--target", dest="runner_target", metavar="NAME", help="one target; default: all")
         if verb == "artifacts":

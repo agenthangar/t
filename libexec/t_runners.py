@@ -10,9 +10,11 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import platform
 import re
 import shlex
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -181,19 +183,23 @@ def _normalized_arch(value):
 def select_targets(config, targets=None, os_filter=None, capabilities=None):
     section = config.get("runners", config)
     available = section.get("targets", {})
-    names = targets if targets is not None else section.get("default_targets", list(available))
+    names = targets if targets is not None else section.get("default_targets", [])
     if isinstance(names, str):
         names = [names]
     if not isinstance(available, dict) or not isinstance(names, (list, tuple)):
         raise RunnerError("runner targets must be a mapping and selection a list")
+    if not names:
+        names = ['local']
     selected = {}
     required = set(capabilities or ())
     for name in names:
-        if not isinstance(name, str) or not NAME.fullmatch(name) or name not in available:
+        if not isinstance(name, str) or not NAME.fullmatch(name) or name != 'local' and name not in available:
             raise RunnerError(f"unknown runner target: {name}")
-        target = dict(available[name])
+        target = ({'provider': 'local', 'os': _normalized_os(platform.system()),
+                   'arch': _normalized_arch(platform.machine()), 'capabilities': []}
+                  if name == 'local' else dict(available[name]))
         kind = target.get("provider", target.get("type", target.get("kind")))
-        if kind not in {"github", "ssh"}:
+        if kind not in {"github", "ssh", "local"}:
             raise RunnerError(f"invalid runner transport for {name}")
         target["type"] = kind
         if _normalized_os(target.get("os")) not in {"linux", "darwin"}:
@@ -226,9 +232,26 @@ def _job_dir(job_id, state_dir=None):
 
 
 def status(job_id, state_dir=None):
-    receipt = _read(_job_dir(job_id, state_dir) / "receipt.json")
+    directory = _job_dir(job_id, state_dir)
+    receipt = _read(directory / "receipt.json")
     if not receipt:
         raise RunnerError(f"unknown runner job: {job_id}")
+    # The detached local child can finish after its controller exits. Observe
+    # its identity-checked result without rewriting receipts or calling a host.
+    observed = False
+    for name, target in receipt.get('targets', {}).items():
+        if target.get('type') != 'local' or target['status'] in TERMINAL:
+            continue
+        if not NAME.fullmatch(name):
+            raise RunnerError('invalid target name in local receipt')
+        result = directory / name / 'result.json'
+        if result.exists():
+            _result(target, result)
+            observed = True
+    if observed and all(t['status'] in TERMINAL for t in receipt['targets'].values()):
+        receipt['status'] = 'succeeded' if all(t['status'] == 'succeeded' for t in receipt['targets'].values()) else 'failed'
+        receipt['exit_code'] = next((t.get('exit_code', 1) or 1 for t in receipt['targets'].values()
+                                     if t['status'] != 'succeeded'), 0)
     return receipt
 
 
@@ -517,6 +540,39 @@ def _github_target(receipt, name, target, directory, timeout, queue_timeout):
     _download_result(target, name, directory)
 
 
+def _local_target(receipt, name, target, directory, timeout):
+    """The child owns its deadline even if this observing controller exits."""
+    folder = directory / name
+    (folder / 'token').write_text(target['token'])
+    spec = _read(directory / f'{name}.json')
+    argv = [sys.executable, str(Path(__file__).with_name('t_runner_job.py')), 'run',
+            '--job-dir', str(folder), '--archive', str(directory / 'snapshot.tar'),
+            '--manifest', str(directory / 'manifest.json'), '--token', target['token'],
+            '--timeout', str(timeout), '--os', target['os'], '--arch', target['arch']]
+    for artifact in spec['artifacts']:
+        argv += ['--artifact', artifact]
+    target['status'] = 'running'
+    _save(receipt, directory)
+    env = {key: value for key, value in os.environ.items() if not key.startswith('COV_CORE_')}
+    with (folder / 'transport.log').open('wb') as output:
+        process = subprocess.Popen([*argv, '--', *spec['command']], stdin=subprocess.DEVNULL,
+                                   stdout=output, stderr=output, env=env, start_new_session=True)
+    target['dispatched'] = True
+    _save(receipt, directory)
+    deadline = time.monotonic() + timeout + 30
+    while process.poll() is None:
+        if (directory / 'cancel.requested').exists():
+            _helper().cancel_job(folder, target['token'])
+        if time.monotonic() >= deadline:
+            raise RunnerError('local deadline owner has not reported a result; inspect the retained receipt')
+        time.sleep(.1)
+    result = folder / 'result.json'
+    if not result.exists():
+        target['dispatched'] = False
+        raise RunnerError('local job exited without a command result; inspect transport.log')
+    _result(target, result)
+
+
 def start(root, config, command, targets=None, os_filter=None, capabilities=None,
           include=None, artifacts=None, timeout=None, queue_timeout=None, state_dir=None, progress=None):
     """Wait for concurrent targets, retaining a durable receipt even on failure."""
@@ -589,7 +645,9 @@ def start(root, config, command, targets=None, os_filter=None, capabilities=None
                 if (directory / "cancel.requested").exists():
                     target.update(status="cancelled", exit_code=130)
                     return
-                if target["type"] == "ssh":
+                if target['type'] == 'local':
+                    _local_target(receipt, name, target, directory, timeout)
+                elif target["type"] == "ssh":
                     _ssh_target(receipt, name, target, directory, timeout)
                 else:
                     _github_target(receipt, name, target, directory, timeout, queue_timeout)
@@ -665,7 +723,14 @@ def cancel(job_id, state_dir=None):
         if target["status"] in TERMINAL:
             continue
         try:
-            if target["type"] == "github" and not target.get("dispatched"):
+            if target['type'] == 'local':
+                if (directory / name / 'token').exists():
+                    _helper().cancel_job(directory / name, target['token'])
+                if (directory / name / 'result.json').exists():
+                    _result(target, directory / name / 'result.json')
+                else:
+                    target['status'] = 'unknown'
+            elif target["type"] == "github" and not target.get("dispatched"):
                 target.update(status="cancelled", exit_code=130)
             elif target["type"] == "github":
                 _private(target["repository"], target.get("repository_id"))
@@ -708,7 +773,11 @@ def cleanup(job_id=None, state_dir=None):
             if target["status"] in TERMINAL:
                 continue
             try:
-                if target["type"] == "github":
+                if target['type'] == 'local':
+                    result = directory / name / 'result.json'
+                    if result.exists():
+                        _result(target, result)
+                elif target["type"] == "github":
                     if not target.get("dispatched"):
                         continue
                     if not all(target.get(field) for field in ("repository_id", "workflow_id", "release_id")):

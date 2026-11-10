@@ -240,6 +240,8 @@ def test_workflow_bare_entry(workflow, t_mod, monkeypatch, tmp_path, capsys, ter
 ])
 def test_workflow_ctrl_c_preserves_completed_nested_selections(workflow, t_mod, monkeypatch, tmp_path, menu, field, value):
     cfg, local = config(workflow, t_mod, monkeypatch, tmp_path)
+    if field == 'implementation':
+        t_mod._workflow_session(cfg)['workflows']['standard']['model_stages'] = ['implementation']
     ui = InterruptMenu(['codex', 'customize', *menu, KeyboardInterrupt, 'save'], pages=['enter'])
     monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
     changed = t_mod._config_wizard(cfg, workflows_only=True)

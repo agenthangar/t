@@ -241,7 +241,7 @@ def test_mcp_protocol(worker, t_mod, monkeypatch, capsys):
     replies = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
     assert replies[0]['error']['code'] == -32700
     assert replies[1]['result']['serverInfo']['name'] == 't-local-worker'
-    assert len(replies[2]['result']['tools']) == 3
+    assert len(replies[2]['result']['tools']) == 4
     assert replies[3]['result']['isError']
 
 

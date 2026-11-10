@@ -319,20 +319,11 @@ def current(state):
 
 def launch_policy(w, document, cwd):
     """Resolve only the actual destination's canonical repository scope."""
-    repository = None
-    if document['repositories']:
-        try:
-            raw_common = git(cwd or os.getcwd(), 'rev-parse', '--path-format=absolute', '--git-common-dir')
-            if not raw_common or not os.path.isabs(raw_common):
-                return None
-            common = os.path.realpath(raw_common)
-        except (OSError, subprocess.TimeoutExpired):
-            return None
-        if not os.path.isabs(common) or not os.path.isdir(common):
-            return None
-        repository = next((scope for scope in document['repositories']
-                           if os.path.realpath(os.path.join(scope, '.git')) == common), None)
-    return w['effective'](document, repository)
+    try:
+        common = git(cwd or os.getcwd(), 'rev-parse', '--path-format=absolute', '--git-common-dir') if document['repositories'] else None
+        return w['resolve_context'](document, cwd, getattr(document, 'tool', 'codex'), common_dir=common or None)['workflow']
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return None
 
 
 def session_defaults(policy, agent, *, saved=True):
@@ -349,7 +340,31 @@ def setting_args(values, agent):
         result.extend(['--model', model])
     if agent != 'cursor' and isinstance(effort, str) and re.fullmatch(r'[a-z][a-z0-9_-]*', effort):
         result.extend(['-c', 'model_reasoning_effort=' + json.dumps(effort)] if agent == 'codex' else ['--effort', effort])
-    return result
+    return result + speed_args(values, agent)
+
+
+def speed_args(values, agent):
+    speed = values.get('speed', 'inherit')
+    if speed == 'inherit':
+        return []
+    if speed != 'standard':
+        try:
+            api = __import__('runpy').run_path(str(Path(__file__).resolve().parents[1] / 'bin/t'))
+            catalog = api['_config_catalog'](agent, api['_config_live_models'](agent))
+            info = api['_config_find_model'](catalog, values.get('model') or os.environ.get('T_WORKFLOW_DEFAULT_MODEL', ''))
+            if not info or not info.get(speed):
+                raise ValueError('selected model does not advertise this speed')
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            print(f't workflow: {speed} unavailable ({exc}); using native speed.', file=sys.stderr)
+            return []
+    if agent == 'codex':
+        tier = {'standard': 'default', 'fast': 'fast', 'ultrafast': 'ultrafast'}[speed]
+        return ['-c', 'service_tier=' + tier] + ([] if speed == 'standard' else
+                ['-c', 'features.' + ('ultrafast_mode' if speed == 'ultrafast' else 'fast_mode') + '=true'])
+    if agent == 'claude' and speed in ('standard', 'fast'):
+        return ['--settings', json.dumps({'fastMode': speed == 'fast'})]
+    print(f't workflow: {speed} unavailable for {agent}; using native speed.', file=sys.stderr)
+    return []
 
 
 def launch_settings(agent, cwd=None):
