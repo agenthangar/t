@@ -869,7 +869,12 @@ def test_cached_selection_returns_to_fresh_action_state(app, history, monkeypatc
     app.local_identities = {'repo': 'cached/identity'}
     monkeypatch.setattr(app, 'scope', lambda target: ('repo', '1'))
     monkeypatch.setattr(app, 'records', lambda *a: [row])
-    monkeypatch.setattr(app, 'pick', lambda *a: (row, 'enter', ''))
+    picks = iter([(None, 'ctrl-r', ''), (row, 'enter', '')])
+    monkeypatch.setattr(app, 'pick', lambda *a: next(picks))
+    refreshes = []
+    app.api['_session_discovery'] = lambda: {
+        'event': lambda targets: refreshes.append(targets),
+        'discover': lambda cfg: refreshes.append(cfg)}
     monkeypatch.setattr(history.sys.stdin, 'isatty', lambda: True)
     monkeypatch.setattr(history.sys.stdout, 'isatty', lambda: True)
     durable = object()
@@ -878,6 +883,23 @@ def test_cached_selection_returns_to_fresh_action_state(app, history, monkeypatc
         assert app.discovery_view is None
         assert app.discovery_identities == app.local_identities == {}
         assert app.store is durable and selected['sid'] == row['sid']
+        assert refreshes == [['local'], app.cfg]
         return 0
     monkeypatch.setattr(app, 'resume', resume)
     assert app.execute(SimpleNamespace(target=[], json=False, refresh=False, limit=20, page=1)) == 0
+
+
+def test_cached_history_uses_memory_identity_and_source_availability(app, history, monkeypatch):
+    app.discovery_view = {}
+    app.discovery_identities = {'repo': 'org/repo'}
+    monkeypatch.setattr(app, 'identity', history.HistoryCommand.identity.__get__(app))
+    app.store = SimpleNamespace(records=lambda: [conversation(
+        sources=[{'host': 'local', 'path': '/absent/transcript', 'available': True}],
+        associations=[{'host': 'local', 'workspace': '/absent/worktree', 'slot': '1', 'available': True}])])
+    monkeypatch.setattr(history, 'run', lambda *a, **k: pytest.fail('cached history queried Git/GitHub'))
+    monkeypatch.setattr(Path, 'is_file', lambda *a: pytest.fail('cached history statted transcript'))
+    monkeypatch.setattr(Path, 'is_dir', lambda *a: pytest.fail('cached history statted worktree'))
+    assert app.identity('repo') == 'org/repo'
+    assert not app.same_repository('org/repo', 'elsewhere/repo')
+    row, = app.records('repo')
+    assert row['sources'][0]['available'] and row['associations'][0]['available']

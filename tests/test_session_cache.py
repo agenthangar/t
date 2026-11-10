@@ -387,3 +387,30 @@ def test_service_upgrade_releases_socket_and_flushes(cache, monkeypatch):
         if thread.is_alive():
             signals[cache.signal.SIGTERM]()
             thread.join(3)
+
+
+def test_standalone_artifact_miss_never_spawns_service(cache, monkeypatch):
+    monkeypatch.setattr(cache, '_wire', lambda *a: (_ for _ in ()).throw(OSError('offline')))
+    monkeypatch.setattr(cache.subprocess, 'Popen', lambda *a, **k: pytest.fail('artifact lookup started daemon'))
+    assert cache.request('artifact', {'key': 'missing'}) == {'value': None}
+
+
+def test_invalid_disk_snapshot_is_rebuilt_from_ram(cache):
+    memory = cache._Memory(submit=lambda *a: None)
+    disk = cache._Persistence(memory)
+    db = disk._open()
+    try:
+        db.execute('insert into snapshots values (?,?,?)', (disk.namespace, cache.VERSION, '[]'))
+        db.commit()
+    finally:
+        db.close()
+    disk.stop.set(); disk.wake.set()
+    disk.run()
+    assert not memory.loading and not memory.persistence_error
+    db = sqlite3.connect(disk.database)
+    try:
+        assert json.loads(db.execute('select payload from snapshots').fetchone()[0]) == memory.snapshot()
+    finally:
+        db.close()
+    with pytest.raises(ValueError, match='invalid discovery snapshot'):
+        memory.restore({'entries': []})
