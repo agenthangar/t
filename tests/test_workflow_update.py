@@ -409,3 +409,111 @@ def test_speed_validates_effective_launch_model_and_keeps_worker_separate(module
     assert w.main_session_settings(policy)['speed'] == 'standard'
     policy['implementation']['effort'] = 'high'
     assert w.main_session_settings(policy)['speed'] == 'ultrafast'
+
+
+def test_speed_menu_sets_and_clears_launch_and_stage_overrides(modules, monkeypatch):
+    w = modules[0]
+    api = load_script(ROOT / 'bin/t', 'speed_controls_update')
+    policy = w.defaults()['workflows']['standard']
+    cfg = SimpleNamespace(models={})
+    selected = ['ultrafast']
+    monkeypatch.setattr(api, '_config_model_menu', lambda ui, staged, agent, *a, **k: staged.fast.update({agent: selected[0]}))
+    changed = api._workflow_speed(None, cfg, policy, 'codex')
+    assert changed['session_defaults']['codex']['speed'] == 'ultrafast'
+    assert 'speed' not in policy['session_defaults']['codex']
+    selected[0] = ''
+    restored = api._workflow_speed(None, cfg, changed, 'codex')
+    assert restored == policy
+    selected[0] = 'fast'
+    stage = api._workflow_speed(None, cfg, policy, 'codex', 'review')
+    assert stage['review']['speed'] == 'fast' and stage['session_defaults'] == policy['session_defaults']
+    selected[0] = ''
+    assert api._workflow_speed(None, cfg, stage, 'codex', 'review') == policy
+    speed_only = dict(policy, session_defaults={'cursor': {'speed': 'fast'}})
+    assert 'session_defaults' not in api._workflow_speed(None, cfg, speed_only, 'cursor')
+
+
+def test_context_command_returns_resolved_text_and_json_without_writes(modules, monkeypatch, tmp_path, capsys):
+    w = modules[0]
+    api = load_script(ROOT / 'bin/t', 'context_command_update')
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(api, '_workflow', lambda: vars(w))
+    cfg = SimpleNamespace(repos={}, agent_default='codex')
+    for flags in ([], ['--json']):
+        args = api.build_parser().parse_args(['workflow', 'context', *flags])
+        args.workflow = True  # Main dispatch marks the canonical workflow family.
+        assert api._cmd_workflow(cfg, args) == 0
+        output = capsys.readouterr().out
+        if flags:
+            report = json.loads(output)
+            assert report['scope'] == 'global' and report['tool'] == 'codex'
+            assert 'gpt-6.1-sol' in report['text']
+        else:
+            assert 'gpt-6.1-sol' in output
+        assert not w.config_path().exists()
+
+
+@pytest.mark.parametrize('complete,json_output', [(True, True), (True, False), (False, True)])
+def test_watch_command_preserves_receipt_and_pending_exit(modules, monkeypatch, capsys, complete, json_output):
+    api = load_script(ROOT / 'bin/t', 'watch_command_update')
+    receipt = {'id': 'job', 'status': 'succeeded' if complete else 'running',
+               'wait_status': 'complete' if complete else 'pending', 'exit_code': 0,
+               'watcher_id': 'watch-123456789abc', 'next_step': 'Review logs'}
+    def watch(job, timeout, progress, next_step):
+        assert (job, timeout, next_step) == ('job', 3, 'Review logs')
+        if progress:
+            progress(receipt)
+        return receipt
+    monkeypatch.setattr(api, '_runners', lambda: {})
+    monkeypatch.setattr(api.runpy, 'run_path', lambda _: {'runner': watch})
+    args = api.build_parser().parse_args(['runners', 'runs', 'watch', 'job', '--timeout', '3', '--next-step', 'Review logs', *(['--json'] if json_output else [])])
+    assert api._cmd_workflow_runs(SimpleNamespace(), args) == (0 if complete else 2)
+    output = capsys.readouterr().out
+    if json_output:
+        assert json.loads(output) == receipt
+    else:
+        assert 'job · succeeded' in output and 'Wait: complete' in output
+
+
+def test_cursor_context_delivery_and_resolution_failure(modules, monkeypatch, tmp_path, capsys):
+    recovery = load_script(ROOT / 'libexec/t_recovery.py', 'cursor_context_update')
+    monkeypatch.delenv('TMUX_PANE', raising=False)
+    calls = []
+    def context(tool, cwd):
+        calls.append((tool, cwd))
+        return 'Resolved repository rules'
+    monkeypatch.setattr(__import__('runpy'), 'run_path', lambda _: {'context': context})
+    assert recovery.cursor_hook({'workspace_roots': [str(tmp_path)]}) == 0
+    assert calls == [('cursor', str(tmp_path))]
+    assert json.loads(capsys.readouterr().out) == {'additional_context': 'Resolved repository rules'}
+    def broken(*args):
+        raise ValueError('cannot verify repository')
+    monkeypatch.setattr(__import__('runpy'), 'run_path', lambda _: {'context': broken})
+    assert recovery.cursor_hook({'cwd': str(tmp_path)}) == 0
+    output = capsys.readouterr()
+    assert not output.out and 't workflow context --tool cursor' in output.err
+
+
+def test_watcher_row_protocol_preserves_valid_ids_and_rejects_malformed_metadata(modules, monkeypatch):
+    api = load_script(ROOT / 'bin/t', 'watcher_row_update')
+    record = {'id': 'watch-123456789abc', 'active': True}
+    prefix = 'remote\tsid\t/repo\tapi-3\tattached\tactive\tTask\tcodex\tsol\t2026-11-09T22:10:00Z\t'
+    for serialized, expected in [(json.dumps([record]), [record]), ('{broken', []), ('{}', []), ('[1]', [])]:
+        row = api._parse_rows(prefix + serialized, host_prefixed=True)[0]
+        assert row['watchers'] == expected and row['host'] == 'remote'
+    monkeypatch.setattr(api, '_watchers', lambda: {'records': lambda sid: [record]})
+    row = api._parse_rows('sid\t/repo\tapi-3\tattached\tactive\tTask')[0]
+    assert row['watchers'] == [record]
+
+
+def test_workflow_menu_exposes_watching_and_stage_speed(modules, monkeypatch):
+    from test_workflow import Menu
+    w = modules[0]
+    api = load_script(ROOT / 'bin/t', 'watching_menu_update')
+    cfg = SimpleNamespace(repos={}, _workflow_document=w.defaults())
+    monkeypatch.setattr(api, '_config_model_menu', lambda ui, staged, agent, *a, **k: staged.fast.update({agent: 'fast'}))
+    api._workflow_policy_menu(Menu(['job_watching', 'on_request', 'review', 'speed', 'main_speed', 'back']), cfg, vars(w), name='standard')
+    saved = cfg._workflow_document['workflows']['standard']
+    assert saved['behaviors']['job_watching'] == 'on_request'
+    assert saved['review']['speed'] == 'fast'
+    assert saved['session_defaults']['codex']['speed'] == 'fast'
