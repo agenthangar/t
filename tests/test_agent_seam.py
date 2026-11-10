@@ -345,6 +345,7 @@ def zsh(tmp_path):
         env = {"HOME": str(home), "XDG_CACHE_HOME": str(home / ".cache"), "T_LOCAL_RC": str(home / ".zshrc.local"),
                "PATH": f"{bins}:{os.environ.get('PATH', '')}", "TERM": "dumb",
                "TMUX_TMPDIR": os.environ.get("TMUX_TMPDIR", "/tmp"), "T_RECOVERY_DISABLE": "1", "T_NO_AUTORELOAD": "1",
+               "T_DISCOVERY_COLLECTOR": os.environ.get("T_DISCOVERY_COLLECTOR", "1"),
                "TMUX_LOG": str(log), "FAKE_PS": str(tmp_path / "ps.txt"), **extra}
         # These command/argv tests use a synthetic process table. Exercise shell
         # effects and preflight here; real readiness/native ownership are covered
@@ -1405,10 +1406,10 @@ def test_zsh_codex_subagent_threads_are_not_conversations(zsh):
     # a cache the OLD scan wrote (2-element entries, subagents listed) is re-read, not trusted
     cache = zsh.home / ".cache" / "claude-sessions" / "rollout-cwd.json"
     ino = paths[sub].stat().st_ino
+    cache.parent.mkdir(parents=True, exist_ok=True)
     cache.write_text(json.dumps({str(paths[sub]): [ino, wt], str(paths[SID]): [paths[SID].stat().st_ino, wt]}))
     assert zsh(f"_codex_rollout_scan {wt}").stdout.splitlines() == [str(paths[SID])]
-    current, = cache.parent.glob("candidates-*.json")
-    assert json.loads(current.read_text())["rollouts"][str(paths[sub])][1:] == [wt, True]
+    assert not list(cache.parent.glob("candidates-*.json"))
 
 
 def test_zsh_self_sid_and_agent(zsh, tmp_path):
@@ -1492,8 +1493,8 @@ def test_zsh_rollout_scan_finds_unindexed_rollouts_and_caches(zsh):
     os.utime(synced, (2_000_000_000, 2_000_000_000))
     r = zsh(f"_codex_rollout_scan {wt}")
     assert r.stdout.splitlines() == [str(synced)]                   # only this cwd's rollouts
-    cache, = (zsh.home / ".cache" / "claude-sessions").glob("candidates-*.json")
-    assert str(other) in json.loads(cache.read_text())["rollouts"]
+    # Standalone collectors never write the legacy per-caller disk cache.
+    assert not list((zsh.home / ".cache" / "claude-sessions").glob("candidates-*.json"))
     # the union view: index rows first, then the scan's extra, no duplicates
     r = zsh(f"_dev_agent_transcripts_for_cwd codex {wt}")
     assert r.stdout.splitlines() == [str(paths["aaaaaaaa-0000-0000-0000-000000000001"]), str(synced)]

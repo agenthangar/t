@@ -463,3 +463,16 @@ def test_final_manifest_stages_assets_created_while_source_was_live(engine, tmp_
     final = engine.transcript_manifest('claude', SID, '/source', tmp_path / 'rollout.jsonl')
     assert engine.execute_peer(dict(request, args=[final]), Adapter()) == str(staged)
     assert (staged.parent / 'assets/new-subagents').is_dir()
+
+
+def test_cache_invalidation_is_targeted_and_cannot_roll_back_action(engine, monkeypatch):
+    monkeypatch.delenv('T_DISCOVERY_COLLECTOR')
+    calls = []
+    monkeypatch.setattr(engine.subprocess, 'run', lambda argv, **kw: calls.append((argv, kw)))
+    engine._discovery_changed(['', 'user@mini'])
+    assert calls[0][0][-3:] == ['__cache-event', 'local', 'user@mini']
+    assert calls[0][1]['timeout'] == 3
+    def unavailable(*args, **kwargs):
+        raise subprocess.TimeoutExpired('cache', 3)
+    monkeypatch.setattr(engine.subprocess, 'run', unavailable)
+    engine._discovery_changed(['local'])

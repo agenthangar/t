@@ -486,10 +486,10 @@ _t_open_picker() {
     (( inventory_rc == 0 )) || return 1
     format_args=(--remote)
   elif [[ -n $remote ]]; then
-    rows=$(_dev_rows_all --best-effort --details) || return $?
+    rows=$(_t_discovery_rows --details) || return $?
     format_args=(--remote)
   else
-    rows=$(_dev_session_rows --details) || return 1
+    rows=$(_t_discovery_rows --local --unprefixed --details) || return 1
     rows=$(print -r -- "$rows" | awk 'NF {print "local\t" $0}')
   fi
   for row in "${(@f)rows}"; do

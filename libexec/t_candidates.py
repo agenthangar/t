@@ -11,7 +11,6 @@ from pathlib import Path
 import runpy
 import sqlite3
 import sys
-import tempfile
 
 VERSION = 1
 
@@ -24,32 +23,16 @@ def stamp(path):
         return None
 
 
+_request = runpy.run_path(str(Path(__file__).with_name('t_session_cache.py')))['request']
+
+
 def load(path):
-    try:
-        data = json.loads(path.read_text())
-        if isinstance(data, dict) and data.get('version') == VERSION:
-            return data
-    except (OSError, ValueError):
-        pass
-    return {}
+    data = _request('artifact', {'key': str(path)}).get('value')
+    return data if isinstance(data, dict) and data.get('version') == VERSION else {}
 
 
 def save(path, data):
-    temporary = None
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with tempfile.NamedTemporaryFile(mode='w', dir=path.parent, delete=False) as file:
-            temporary = file.name
-            json.dump(data, file)
-        os.replace(temporary, path)
-    except OSError:
-        pass
-    finally:
-        if temporary and os.path.exists(temporary):
-            try:
-                os.unlink(temporary)
-            except OSError:
-                pass
+    _request('artifact', {'key': str(path), 'value': data})
 
 
 def rollout_metadata(path):

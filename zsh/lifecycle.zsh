@@ -83,6 +83,9 @@ _t_lifecycle_effect() {
       [[ -n $sid ]] || sid=$(_dev_session_sid "$session")
       [[ $event != new ]] || event=launch
       [[ $event != replace ]] || event=resume
+      if [[ ${T_DISCOVERY_COLLECTOR:-} != 1 && -n $session ]]; then
+        python3 "$T_HOME/bin/t" __cache-record "$event" "$sid" "$agent" "$dir" "${session#dev-}" >/dev/null 2>&1 || true
+      fi
       _dev_history_record "$sid" "$agent" "$dir" "$event"
       [[ $event == (launch|resume) ]] && _dev_recovery_watch "$session"
       return 0 ;;

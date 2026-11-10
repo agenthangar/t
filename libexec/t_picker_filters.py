@@ -96,7 +96,10 @@ def resume_turns(source, home, codex_home, owners=''):
             sid = owner_ids.get((row[3], row[0] + '-' + row[1]), '-')
         inputs.append('\t'.join([sid if local else '-', row[3], row[1],
             'detached', 'unknown', row[5], row[9], row[10] if len(row) > 10 else '-']))
-    details = enrich(inputs, home, codex_home)
+    if os.environ.get('T_RESUME_CACHED') == '1':
+        details = ['\t'.join(row[:7] + [row[11] if len(row) > 11 else '-']) for row in rows]
+    else:
+        details = enrich(inputs, home, codex_home)
     result = []
     for row, detail in zip(rows, details):
         turn = detail.split('\t')[-1]

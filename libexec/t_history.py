@@ -30,6 +30,7 @@ _LIFECYCLE = runpy.run_path(str(Path(__file__).with_name("t_lifecycle.py")))
 VERSION = 1
 PARSER_VERSION = 6
 _DISPLAY = runpy.run_path(str(Path(__file__).with_name('t_session_details.py')))
+_CACHE_REQUEST = runpy.run_path(str(Path(__file__).with_name('t_session_cache.py')))['request']
 _RESUME_SOURCE = runpy.run_path(str(Path(__file__).with_name('t_resume_source.py')))
 display_width = _DISPLAY['display_width']
 clip_columns = _DISPLAY['clip_columns']
@@ -195,9 +196,10 @@ class Store:
         info = path.stat()
         stamp = json.dumps([info.st_ino, info.st_size, info.st_mtime_ns])
         key = str(path) + ('#resume' if metadata_only else '')
-        old = self.db.execute('select stamp,record from scans where path=?', (key,)).fetchone()
-        cached = json.loads(old[1]) if old else None
-        if old and old[0] == stamp and cached.get('_scan', {}).get('parser') == PARSER_VERSION:
+        key = str(self.directory) + ':scan:' + key
+        old = _CACHE_REQUEST('artifact', {'key': key}).get('value') or {}
+        cached = old.get('record')
+        if old.get('stamp') == stamp and cached and cached.get('_scan', {}).get('parser') == PARSER_VERSION:
             return cached
         # Append-only transcripts are rescanned only when changed. Keep the durable
         # record independent of this disposable discovery cache.
@@ -206,8 +208,7 @@ class Store:
             previous = None
         value = transcript(path, agent, previous, metadata_only=True) if metadata_only else transcript(path, agent, previous)
         value['last_turn'] = _DISPLAY['transcript_last_turn'](path, agent)
-        self.db.execute('insert or replace into scans values (?,?,?)', (key, stamp, json.dumps(value)))
-        self.db.commit()
+        _CACHE_REQUEST('artifact', {'key': key, 'value': {'stamp': stamp, 'record': value}})
         return value
 
 
@@ -667,7 +668,7 @@ class HistoryCommand:
         self.host = socket.gethostname().split('.')[0]
         self.reservation_token = uuid.uuid4().hex
         self.reservation = None
-        self.discovery_identities = {}
+        self.discovery_identities = dict(getattr(self.store, 'identities', {}))
         self.repository_proofs = {}
         self.fresh_repository_proofs = set()
         self.strict_identity = False
@@ -764,6 +765,8 @@ class HistoryCommand:
     def same_repository(self, left, right):
         if left == right:
             return True
+        if getattr(self, 'discovery_view', None) is not None:
+            return False
         one, two = self.repository_proof(left), self.repository_proof(right)
         return bool(one and two and one['id'] == two['id'])
 
@@ -992,6 +995,8 @@ class HistoryCommand:
         return repo, slot or ''
 
     def identity(self, alias):
+        if getattr(self, 'discovery_view', None) is not None:
+            return self.discovery_identities.get(alias, 'local:' + os.path.abspath(self.cfg.repos[alias]))
         remote = run(['git', '-C', self.cfg.repos[alias], 'remote', 'get-url', 'origin'], optional=True).strip()
         return slug(remote) or 'local:' + os.path.realpath(self.cfg.repos[alias])
 
@@ -1149,8 +1154,8 @@ class HistoryCommand:
                 metadata['interface'] = 'desktop' if owner.get('state') == 'app' else 'foreground' if ':' in owner.get('slot', '') else 'cli'
                 row.update(metadata)
                 self.store.merge({**value, **metadata})
-            row['associations'] = [{**a, 'available': Path(a['workspace']).is_dir() if a.get('host') == 'local' else 'cached'} for a in row['associations']]
-            row['sources'] = [{**s, 'available': Path(s['path']).is_file() if s.get('host') == 'local' else 'cached'} for s in row['sources']]
+            row['associations'] = [{**a, 'available': Path(a['workspace']).is_dir() if a.get('host') == 'local' and getattr(self, 'discovery_view', None) is None else a.get('available', 'cached')} for a in row['associations']]
+            row['sources'] = [{**s, 'available': Path(s['path']).is_file() if s.get('host') == 'local' and getattr(self, 'discovery_view', None) is None else s.get('available', 'cached')} for s in row['sources']]
             row['display'] = history_display(row, alias)
             if not slot or any(a.get('slot') == slot for a in row['associations']):
                 rows.append(row)
@@ -1702,14 +1707,17 @@ class HistoryCommand:
 
     def execute(self, args):
         alias, slot = self.scope(args.target)
-        with self.api.get("_spinner", lambda *a, **kw: nullcontext())("Loading conversation history", machine=args.json):
-            self.discover(alias)
-            if args.refresh:
-                self.refresh(alias)
-            try:
-                owners = self.owners()
-            except HistoryError:
-                owners = []
+        cached = getattr(self, 'discovery_view', None) is not None
+        owners = []
+        if not cached:
+            with self.api.get("_spinner", lambda *a, **kw: nullcontext())("Loading conversation history", machine=args.json):
+                self.discover(alias)
+                if args.refresh:
+                    self.refresh(alias)
+                try:
+                    owners = self.owners()
+                except HistoryError:
+                    owners = []
         rows = self.records(alias, slot, owners)
         tty = sys.stdin.isatty() and sys.stdout.isatty()
         if not slot and tty and not args.json:
@@ -1717,20 +1725,22 @@ class HistoryCommand:
             if slot is None:
                 return 130
             rows = self.records(alias, slot, owners)
-        self.branch_prs(rows, refresh=args.refresh)
-        self.pr_states(rows, refresh=args.refresh)
+        if not cached:
+            self.branch_prs(rows, refresh=args.refresh)
+            self.pr_states(rows, refresh=args.refresh)
         for row in rows:
             row['display'] = history_display(row, alias)
         selected, total = page_rows(rows, '', args.limit, args.page)
         if args.json:
-            print(json.dumps(dict(version=VERSION, repo=self.identity(alias), slot=slot, page=args.page, limit=args.limit, total=total, conversations=selected)))
+            print(json.dumps(dict(version=VERSION, repo=self.identity(alias), slot=slot, page=args.page, limit=args.limit, total=total, conversations=selected,
+                                  **({'freshness': self.api['_session_discovery']()['freshness'](self.discovery_view)} if cached else {}))))
             return 0
         if not tty:
             if selected:
                 print(f'history   {alias}' + (f' slot {slot}' if slot else ' · all slots'))
                 print('\n'.join(history_table(selected, self.api, alias)))
             else:
-                print('No retained conversations for this slot.')
+                print('No matching cached conversations; discovery may still be refreshing.' if cached else 'No retained conversations for this slot.')
             print(f'Page {args.page} · {total} conversations · {args.limit} per page')
             return 0
         query = ''
@@ -1739,6 +1749,11 @@ class HistoryCommand:
             if key == 'retry':
                 continue
             if key == 'ctrl-r':
+                if cached:
+                    print('Background discovery refresh requested; run the command again for new results.', file=sys.stderr)
+                    self.api['_session_discovery']()['event'](['local', *self.cfg.hosts.values()])
+                    self.api['_session_discovery']()['discover'](self.cfg)
+                    continue
                 self.refresh(alias)
                 rows = self.records(alias, slot, owners)
                 self.branch_prs(rows, refresh=True)
@@ -1746,6 +1761,11 @@ class HistoryCommand:
                 continue
             if not row:
                 return 130
+            if cached:
+                self.discovery_view = None
+                self.discovery_identities.clear()
+                self.local_identities.clear()
+                self.store = Store()  # Selection starts guarded action; durable truth is required.
             if isinstance(row, list):
                 if len(row) > 1:
                     return self.resume_many(alias, row)
@@ -1757,7 +1777,7 @@ class HistoryCommand:
             except (HistoryError, OSError, ValueError) as error:
                 print(f't resume: {error}', file=sys.stderr)
                 return 1
-        print('No retained conversations for this slot.')
+        print('No matching cached conversations; discovery may still be refreshing.' if cached else 'No retained conversations for this slot.')
         return 0
 
 
@@ -1792,6 +1812,8 @@ def picker(argv):
 
 def record_association(sid, agent, workspace, transcript_path='', event='launch', interface='unknown'):
     """Hook and lifecycle seam: capture immutable revision evidence when it occurs."""
+    if os.environ.get('T_DISCOVERY_COLLECTOR') != '1':
+        _CACHE_REQUEST('event', {'targets': ['local']})
     if not SID.fullmatch(sid) or agent not in ('claude', 'codex'):
         return
     remote = run(['git', '-C', workspace, 'remote', 'get-url', 'origin'], optional=True).strip()

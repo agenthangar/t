@@ -224,10 +224,12 @@ _t_resume() {
   # Live dev sessions by ROOTED PATH (any alias — dev-dot-2 and dev-dotfiles-2 can
   # key one worktree), so a live slot is recognised however it was named.
   local -A live; local s p
+  if [[ ${T_DISCOVERY_COLLECTOR:-} == 1 ]]; then
   for s in ${(f)"$(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep '^dev-')"}; do
     p=$(tmux display-message -p -t "=$s:" '#{session_path}' 2>/dev/null)
     [[ -n $p ]] && live[${p:A}]=$s
   done
+  fi
 
   # Saved discovery uses the repository identity on each configured host. The
   # metadata adapter below refreshes by default and fetches only a selected
@@ -250,9 +252,10 @@ _t_resume() {
   # path, same rule as _dev_remote_resolve so a `dev-dot-2` on mini matches
   # `dev-dotfiles-2` here — both key one dir); the alias is captured so an attach
   # needs no second scan.
-  _t_progress "Checking conversation owners"
   local all_rows= remote_rows= live_all= live_scan_rc=0
-  if (( ${#REMOTE_HOSTS} )); then
+  if [[ ${T_DISCOVERY_COLLECTOR:-} != 1 ]]; then
+    live_all=$(python3 "$T_HOME/bin/t" __cache-rows --basic) || return $?
+  elif (( ${#REMOTE_HOSTS} )); then
     live_all=$(_dev_rows_all --best-effort) || live_scan_rc=$?
   else
     live_all=$(_dev_session_rows 2>/dev/null) || live_scan_rc=$?
@@ -342,13 +345,16 @@ _t_resume() {
   # origin → friendly $REMOTE_HOSTS key, via the hostname cache the -r pull
   # populates (~/.cache/t/hostnames/<alias> = that host's `hostname -s`).
   local -A host_alias; local _hcf
+  if [[ ${T_DISCOVERY_COLLECTOR:-} == 1 ]]; then
   for _hcf in "$HOME"/.cache/t/hostnames/*(N); do
     host_alias[$(<$_hcf)]=${_hcf:t}
   done
+  fi
   # One validated discovery snapshot for every slot/layout in this invocation.
   # Dynamically scoped locals disappear on return; later commands validate again.
   local -A _T_CODEX_CANDIDATES
   local _T_CODEX_CANDIDATES_READY=0
+  if [[ ${T_DISCOVERY_COLLECTOR:-} == 1 ]]; then
   for repo in $repos; do
     _rdir=${DEV_REPOS[$repo]}; _rbase=${_rdir:t}
     remote_live_host=(); remote_live_alias=(); remote_live_sum=(); remote_live_agent=(); remote_live_state=()
@@ -475,6 +481,7 @@ _t_resume() {
       done
     done
   done
+  fi
 
   # Include conversations retained outside today's slot layout (canonical
   # checkouts, renamed roots, swept rollouts and independent chats in live slots).
@@ -520,7 +527,7 @@ _t_resume() {
     (( ${history_seen[$history_key]:-0} > history_fields[1] )) && history_fields[1]=$history_seen[$history_key]
     [[ -z $slot || $history_fields[3] == $slot ]] || continue
     if [[ -n ${live_sid[$history_fields[4]]:-} && ${live_sid_agent[$history_fields[4]]:-} == $history_fields[9] ]]; then
-      sidlive+=("$history_fields[2]"$'\t'"$history_fields[4]"$'\t'"$history_fields[5]"$'\t'"${live_sid[$history_fields[4]]}")
+      sidlive+=("$history_fields[2]"$'\t'"$history_fields[4]"$'\t'"$history_fields[5]"$'\t'"${live_sid[$history_fields[4]]}"$'\t'"${history_fields[10]:--}")
       continue
     fi
     if (( cutoff && history_fields[1] < cutoff )); then
@@ -555,7 +562,7 @@ _t_resume() {
       fg:*)  _slabel="● fg ${${_sloc#fg:}/here/here}" ;;
       *)     _slabel="● $_salias-$_sslot on $_sloc" ;;
     esac
-    cands+=(9999999999$'\t'"$_slf[1]"$'\t'"${${_sslot:#-}:-${slot:--}}"$'\t'"$_slf[2]"$'\t'"$_slf[3]"$'\t'"$_slabel"$'\t'"${_ssum:-(live session)}"$'\t'"$_sloc"$'\t'"$_salias"$'\t'-$'\t'"$_sag")
+    cands+=(9999999999$'\t'"$_slf[1]"$'\t'"${${_sslot:#-}:-${slot:--}}"$'\t'"$_slf[2]"$'\t'"$_slf[3]"$'\t'"$_slabel"$'\t'"${_ssum:-(live session)}"$'\t'"$_sloc"$'\t'"$_salias"$'\t'-$'\t'"$_sag"$'\t'-$'\t'"${_slf[9]:--}")
   done
 
   # ONE batched metadata read for every surviving candidate (title + last PR URL),
@@ -623,10 +630,14 @@ _t_resume() {
   # automatic choice or noninteractive listing. Mtime remains the --days gate.
   cands=("${(@)cands#*$'\t'}")
   if (( $#cands )); then
-    cands=("${(@f)$(print -rl -- "${(@)cands}" | T_RESUME_OWNER_ROWS="$live_all" python3 "$T_HOME/libexec/t_picker_filters.py" --resume-turns)}")
+    cands=("${(@f)$(print -rl -- "${(@)cands}" | T_RESUME_OWNER_ROWS="$live_all" T_RESUME_CACHED=$([[ ${T_DISCOVERY_COLLECTOR:-} == 1 ]] && print 0 || print 1) python3 "$T_HOME/libexec/t_picker_filters.py" --resume-turns)}")
   fi
 
   if (( ! $#cands )); then
+    if [[ ${T_DISCOVERY_COLLECTOR:-} != 1 ]]; then
+      print -u2 -- 'No matching cached conversations. Discovery status is shown above; run again after a pending refresh.'
+      return 0
+    fi
     if [[ -n $slot ]]; then
       echo "No saved conversation for $repo slot $slot (nothing recorded in its worktree)." >&2
       echo "Fresh session: t session open $repo $slot · full picker: t session push -p" >&2
@@ -2275,7 +2286,7 @@ _t_move_pick() {
   (( _repo_selector_rc == 0 )) && repo=$_repo_selector
   scope=${DEV_REPOS[$repo]:-}
   local -a fields candidates format_args chosen
-  rows=$(_dev_session_rows --details) || return 1
+  rows=$(_t_discovery_rows --local --unprefixed --details) || return 1
   for row in "${(@f)rows}"; do
     fields=("${(@ps:\t:)row}")
     (( $#fields >= 7 )) || continue

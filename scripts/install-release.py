@@ -37,7 +37,7 @@ REQUIRED = (
     ".t-install-version", ".t-release-version", "install.sh", "t.plugin.zsh",
     "local.zsh.example", "bin/t", "bin/claude-stamp-tmux", "bin/cursor-beam",
     "LICENSE", "README.md", "ui/fzf.sh",
-    "libexec/t_session_details.py", "libexec/t_codex_ownership.py", "libexec/t_recovery.py",
+    "libexec/t_session_cache.py", "libexec/t_session_discovery.py", "libexec/t_session_details.py", "libexec/t_codex_ownership.py", "libexec/t_recovery.py",
     "libexec/t_resume_source.py", "libexec/t_local_worker.py", "libexec/t_local_setup.py", "libexec/t_local_models.py", "libexec/t_local_inference.py", "libexec/t_offline.py", "libexec/mlx-models.json", "libexec/local-models.json",
     "libexec/t_share.py", "libexec/t_share_sessions.py",
     "libexec/t_share_context.py", "libexec/t_share_flow.py", "libexec/t_share_launch.py", "libexec/t_share_ui.py",
