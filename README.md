@@ -403,6 +403,10 @@ local and reachable hosts. Saved resumes still check known owners and local
 launch locks; ownership on an unavailable host cannot be verified. A failed local
 ownership scan still stops the launch. To start a fresh conversation locally, use
 `t session open my-project --here --new --cli`.
+New Codex tmux sessions can start while other held Codex writers have unresolved
+workspace metadata. The lifecycle receipt retains those writer IDs; known
+same-workspace owners and reservations still block the launch. Saved resumes
+and transfers retain their stricter writer checks.
 Remote ownership scans time out after 15 seconds rather than waiting indefinitely
 for a host's login shell.
 

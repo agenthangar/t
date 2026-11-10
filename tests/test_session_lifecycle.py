@@ -17,6 +17,7 @@ import subprocess
 import sys
 import time
 import uuid
+from contextlib import contextmanager
 
 import pytest
 
@@ -195,6 +196,59 @@ def _until(predicate, *, seconds=5):
             return value
         time.sleep(0.03)
     pytest.fail("isolated agent did not reach expected state")
+
+
+@contextmanager
+def _unindexed_writers(base, env, sids=UNINDEXED):
+    """A backend holds real locks without publishing thread metadata."""
+    folder = base / "codex" / "thread-writer-locks"
+    folder.mkdir(exist_ok=True)
+    paths = [folder / (sid + ".lock") for sid in sids]
+    process = subprocess.Popen([sys.executable, "-c", """
+import fcntl, sys
+handles = [open(path, 'w') for path in sys.argv[1:]]
+for handle in handles:
+    fcntl.flock(handle, fcntl.LOCK_EX)
+print('ready', flush=True)
+sys.stdin.read()
+""", *map(str, paths)], env=env, cwd=base, stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        assert select.select([process.stdout], [], [], 5)[0]
+        assert process.stdout.readline().strip() == 'ready'
+        yield paths
+        assert process.poll() is None  # Launching must never stop the other backend.
+    finally:
+        process.communicate('', timeout=5)
+
+
+@pytest.mark.parametrize('conflict', [False, True])
+def test_public_new_scopes_unindexed_writers(lifecycle, conflict):
+    base, env = lifecycle
+    worktree = base / 'worktrees' / 'repo' / 'repo-1'
+    env['T_TEST_FRESH_SID'] = SID
+    if conflict:
+        with sqlite3.connect(base / 'codex' / 'state_5.sqlite') as db:
+            db.execute('create table threads (id text, cwd text)')
+            db.execute('insert into threads values (?, ?)', (UNINDEXED[1], str(worktree)))
+    with _unindexed_writers(base, env) as paths:
+        inodes = [path.stat().st_ino for path in paths]
+        result = _shell(base, env, 't open repo --new --codex --cli')
+        assert [path.stat().st_ino for path in paths] == inodes
+        operations = list((base / 'state' / 't' / 'lifecycle' / 'operations').glob('*.json'))
+        assert len(operations) == 1
+        receipt = json.loads(operations[0].read_text())
+        if conflict:
+            assert result.returncode != 0
+            assert 'another Codex conversation owns this workspace' in result.stderr
+            assert not (base / 'agents.log').exists()
+            assert receipt['pending'] == 'ownership'
+        else:
+            assert result.returncode == 0, result.stderr or result.stdout
+            launches = _until(lambda: (base / 'agents.log').read_text().splitlines())
+            assert len(launches) == 1 and str(worktree) in launches[0]
+            assert receipt['phase'] == 'complete'
+            assert receipt['receipts']['ownership']['unresolved_writers'] == sorted(UNINDEXED)
 
 
 @pytest.mark.parametrize("leaf", ["1", "repo-1"])
@@ -379,6 +433,16 @@ def test_public_resume_revives_saved_thread_once(lifecycle, agent, leaf, swept):
     assert listed.returncode == 0, listed.stderr
     assert "1 conversations" in listed.stdout
     assert not (base / "agents.log").exists()
+    if agent == 'codex' and not swept:
+        original = transcript.read_bytes()
+        for sids, message in (((SID,), 'writer lock is held'),
+                              (UNINDEXED, 'could not be matched to its worktree')):
+            with _unindexed_writers(base, env, sids):
+                blocked = _shell(base, env, 't session resume repo 1 --cli')
+                assert blocked.returncode != 0
+                assert message in blocked.stderr
+                assert not (base / 'agents.log').exists()
+                assert transcript.read_bytes() == original
     resumed = _shell(base, env, "t session resume repo 1 --cli")
     assert resumed.returncode == 0, resumed.stderr
     log = base / "agents.log"

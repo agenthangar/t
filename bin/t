@@ -12582,6 +12582,9 @@ SELECTION
 
 OPENING DEFAULTS
   Sessions use an isolated worktree and tmux; --fg runs inline.
+  Unidentified Codex writers do not block new tmux conversations globally.
+  Known worktree owners and reservations still block. Saved resumes retain
+  stricter writer checks; unresolved IDs remain in the new launch's receipt.
   Legacy desktop opening defaults are ignored.
   --codex and --claude select the agent for a fresh slot. Otherwise,
   DEV_AGENT[repo] overrides DEV_AGENT_DEFAULT (fallback: claude).

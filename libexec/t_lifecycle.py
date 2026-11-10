@@ -148,10 +148,18 @@ def native_preflight(agent, sid, workspace, rollout=None, *, retry='Retry: t ses
         return
     if not sid:
         home = str(Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex'))
-        other = OWNERSHIP['_other_cwd_owner'](OWNERSHIP['_lock_dir'](home), '', workspace, home, run=run)
+        # A new conversation does not reclaim any existing thread writer. Keep
+        # checking every known workspace owner, but do not turn a sibling with
+        # unpublished metadata into a host-wide launch veto. The shell preflight
+        # still checks tmux/foreground owners and reservations under launch locks.
+        # Retain unresolved identities in the operation receipt; saved resumes
+        # and transfers below keep the strict selected/sibling writer policy.
+        unknown = set()
+        other = OWNERSHIP['_other_cwd_owner'](OWNERSHIP['_lock_dir'](home), '', workspace, home,
+                                             unknown=unknown, run=run)
         if other:
             raise LifecycleError('another Codex conversation owns this workspace: ' + other)
-        return
+        return {'unresolved_writers': sorted(unknown)}
     path = Path(rollout) if rollout else selected_rollout(sid)
     home = str(Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex'))
     creation_cwd = OWNERSHIP['_rollout_cwd'](str(path), sid)

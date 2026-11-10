@@ -1,5 +1,6 @@
 """Lifecycle safety and crash recovery, with disposable stores and effect adapters."""
 import base64
+import fcntl
 from contextlib import nullcontext
 import importlib.util
 import io
@@ -41,6 +42,35 @@ class Adapter:
         return 'verified-owner' if action == 'ready' else ''
     def output(self, value):
         self.output_lines.append(value)
+
+
+@pytest.mark.parametrize('metadata', ['missing', 'elsewhere', 'same', 'corrupt'])
+def test_new_native_preflight_scopes_writers_and_preserves_store_errors(engine, tmp_path, metadata):
+    home = Path(os.environ['CODEX_HOME'])
+    locks = home / 'thread-writer-locks'
+    locks.mkdir()
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    if metadata == 'corrupt':
+        (home / 'state_5.sqlite').write_text('not a database')
+    elif metadata != 'missing':
+        with sqlite3.connect(home / 'state_5.sqlite') as db:
+            db.execute('create table threads (id text, cwd text)')
+            db.execute('insert into threads values (?, ?)',
+                       (SID, str(workspace if metadata == 'same' else tmp_path / 'elsewhere')))
+    lock = locks / (SID + '.lock')
+    with lock.open('w') as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        inode = lock.stat().st_ino
+        if metadata in ('same', 'corrupt'):
+            message = 'owns this workspace' if metadata == 'same' else 'ownership index'
+            with pytest.raises(ValueError, match=message):
+                engine.native_preflight('codex', '', str(workspace))
+        else:
+            evidence = engine.native_preflight('codex', '', str(workspace))
+            assert evidence == {'unresolved_writers': [SID] if metadata == 'missing' else []}
+        assert lock.stat().st_ino == inode
+        assert engine.OWNERSHIP['_lock_held'](str(lock))
 
 
 @pytest.mark.parametrize('failed', ['preflight', 'resume', 'ready', 'record', None])
