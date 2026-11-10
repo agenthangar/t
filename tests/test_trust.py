@@ -572,7 +572,7 @@ def test_links_only_trust_opt_out_and_stub_bin_t(box, tmp_path):
     (home / ".claude.json").write_text(json.dumps({"projects": {}}))
     r = _relink(co, home, T_NO_TRUST="1", T_NO_PERMISSIONS="1")
     assert r.returncode == 0 and json.loads((home / ".claude.json").read_text()) == {"projects": {}}
-    (co / "bin" / "t").write_text("#!/usr/bin/env python3\nraise SystemExit(3)\n")   # an older checkout
+    (co / "bin" / "t").write_text("#!/usr/bin/env python3\nclass Config:\n    repos = {}\nif __name__ == '__main__':\n    raise SystemExit(3)\n")   # an older checkout
     r = _relink(co, home, T_NO_TRUST="1", T_NO_PERMISSIONS="1")
     assert r.returncode == 0, r.stderr
     assert json.loads((home / ".claude.json").read_text()) == {"projects": {}}

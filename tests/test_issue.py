@@ -1056,7 +1056,8 @@ def test_install_workflow_preserves_prose_and_is_idempotent(mod, tmp_path, monke
     assert base.stat().st_mode & 0o777 == 0o640
     claude = tmp_path / '.claude/CLAUDE.md'
     for path in [base, override, claude]:
-        assert mod.workflow_policy() in path.read_text()
+        assert 't workflow context --tool ' in path.read_text()
+        assert mod.workflow_policy() not in path.read_text()
     snapshots = [(p, p.read_bytes(), p.stat().st_mtime_ns) for p in [base, override, claude]]
     assert mod.install_workflow() == 0
     assert all(p.read_bytes() == data and p.stat().st_mtime_ns == stamp for p, data, stamp in snapshots)
@@ -1086,7 +1087,7 @@ def test_install_workflow_keeps_empty_codex_override_inactive(mod, tmp_path, mon
     assert mod.install_workflow() == 0
     assert override.read_text() == ' \n'
     assert base.read_text().startswith('Existing global instructions.\n')
-    assert mod.workflow_policy() in base.read_text()
+    assert 't workflow context --tool codex' in base.read_text()
 
 
 @pytest.mark.parametrize('existing', ['<!-- t public-issues: begin -->',

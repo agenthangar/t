@@ -257,12 +257,12 @@ def test_guidance_independent_of_previews_and_stages(workflow, repo, tool):
     policy.update(stages_enabled=False, behaviors={'design_system': 'repo', 'frontend_enabled': 'disabled',
         'cli_enabled': 'disabled', 'cli_planning_preview': 'before_implementation', 'cli_planning_approval': 'required'})
     document = w.select_design_system(document, str(repo), 'ui/README.md')
-    rendered = w.render(document, tool)
+    rendered = w.render(document, tool, repository=str(repo))
     assert 'Selected repository design-system source: "ui/README.md"' in rendered
     assert 'CLI planning preview:' not in rendered
     assert 'terminal interfaces' in rendered
     disabled = w.action(document, 'exclude', repository=str(repo))
-    assert 'Selected repository design-system source:' not in w.render(disabled, tool)
+    assert 'Selected repository design-system source:' not in w.render(disabled, tool, repository=str(repo))
     assert disabled['repositories'][str(repo)]['design_system'] == {'path': 'ui/README.md'}
 
 
@@ -447,12 +447,12 @@ def test_repository_off_override_roundtrip_and_agent_instructions(workflow, repo
     for action, name in [('use', 'standard'), ('inherit', None), ('exclude', None), ('include', None)]:
         document = w.action(document, action, name, str(repo))
         assert document['repositories'][str(repo)]['design_system'] == {'mode': 'off'}
-    text = w.render(document).split('Repository scope:', 1)[1]
+    text = w.render(document, repository=str(repo))
     assert 'Do not add design-system discovery' in text
     assert 'automatically discover repository-owned' not in text
     document['workflows']['standard']['behaviors'] = {'design_system': 'off'}
     selected = w.select_design_system(document, str(repo), 'DESIGN.md')
-    text = w.render(selected).split('Repository scope:', 1)[1]
+    text = w.render(selected, repository=str(repo))
     assert 'Selected repository design-system source: "DESIGN.md"' in text
     assert 'This repository selection overrides the workflow discovery default' in text
     assert 'Do not add design-system discovery' not in text

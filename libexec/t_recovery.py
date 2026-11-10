@@ -555,6 +555,15 @@ def start(session):
 
 
 def cursor_hook(data):
+    roots = data.get('workspace_roots') or []
+    cwd = data.get('cwd') or (roots[0] if len(roots) == 1 else None)
+    if cwd:
+        try:
+            context = __import__('runpy').run_path(str(ROOT / 'libexec/t_workflow_context.py'))['context']('cursor', cwd)
+            if context:
+                print(json.dumps({'additional_context': context}))
+        except (OSError, ValueError, subprocess.SubprocessError):
+            print('t workflow: Cursor context unavailable; use t workflow context --tool cursor', file=sys.stderr)
     sid = data.get("conversation_id") or data.get("session_id", "")
     pane_id = os.environ.get("TMUX_PANE", "")
     if not re.fullmatch(r"%\d+", pane_id):

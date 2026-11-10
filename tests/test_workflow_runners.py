@@ -47,7 +47,7 @@ def test_runner_policy_compatibility_and_resolution(workflow, tmp_path):
     changed = w.update(before, policy)
     assert w.validate(changed) == changed
     assert w.runners_summary(policy) == '2 targets · defaults: linux, mini'
-    assert w.runners_summary(w.DEFAULT) == 'unconfigured'
+    assert w.runners_summary(w.DEFAULT) == 'Local snapshot runner'
     copied = w.action(changed, 'add', 'cloud')
     assert copied['workflows']['cloud']['runners'] == runners()
     repository = str(tmp_path.resolve() / 'repo')
@@ -210,7 +210,7 @@ def test_runner_config_commands_are_readonly_and_explicit(workflow, t_mod, monke
     monkeypatch.setattr(t_mod, '_workflow', lambda: w.__dict__)
     monkeypatch.setattr(t_mod, '_t_offer_update', lambda: pytest.fail('readonly prompted'))
     assert t_mod.main([*prefix, 'list']) == 0
-    assert 'No test runners configured' in capsys.readouterr().out
+    assert 'Local snapshot runner (default)' in capsys.readouterr().out
     policy = w.resolved(w.defaults())
     policy['runners'] = runners()
     document = w.update(w.defaults(), policy)

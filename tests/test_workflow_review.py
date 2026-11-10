@@ -18,7 +18,7 @@ def test_workflow_review_stage_toggle_shows_only_changed_workflow(review, workfl
     after = copy.deepcopy(before)
     after['workflows']['fast']['stages_enabled'] = False
     assert review(after, before) == ['Codex workflows', '  Workflow fast',
-        '    Use multiple models: Planning, Implementation, Review → One model']
+        '    Use multiple models: Review → One model']
     assert before['workflows']['fast'].get('stages_enabled') is None
 
 

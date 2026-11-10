@@ -14,22 +14,22 @@ def tool_model(w, document, tool, model):
     return w['with_tool_document'](document, tool, scoped)
 
 
-def test_tool_launch_settings_choose_actual_tool_before_repository(sync, monkeypatch):
+def test_tool_launch_settings_choose_actual_tool_before_repository(sync, monkeypatch, tmp_path):
     w = sync.workflow()
     document = tool_model(w, w['defaults'](), 'codex', 'codex-main')
     document = tool_model(w, document, 'claude', 'claude-main')
     document = tool_model(w, document, 'cursor', 'cursor-model[effort=high,fast=false]')
     w['save'](document, None, propagate=False)
-    assert sync.launch_settings('codex', '/work') == ['--model', 'codex-main']
-    assert sync.launch_settings('claude', '/work') == ['--model', 'claude-main']
-    assert sync.launch_settings('cursor', '/work') == ['--model', 'cursor-model[effort=high,fast=false]']
+    assert sync.launch_settings('codex', str(tmp_path)) == ['--model', 'codex-main']
+    assert sync.launch_settings('claude', str(tmp_path)) == ['--model', 'claude-main']
+    assert sync.launch_settings('cursor', str(tmp_path)) == ['--model', 'cursor-model[effort=high,fast=false]']
     # A different tool's repository override must not trigger Git discovery here.
     scoped = w['tool_document'](document, 'claude')
     scoped['repositories']['/claude-repo'] = {'workflow': 'standard', 'excluded': True}
     document = w['with_tool_document'](document, 'claude', scoped)
     w['save'](document, w['snapshot'](w['config_path']()), propagate=False)
     monkeypatch.setattr(sync, 'git', lambda *args: pytest.fail('unrelated repository scope queried'))
-    assert sync.launch_settings('codex', '/work') == ['--model', 'codex-main']
+    assert sync.launch_settings('codex', str(tmp_path)) == ['--model', 'codex-main']
     assert sync.setting_args({'model': 'cursor-model', 'effort': 'high'}, 'cursor') == ['--model', 'cursor-model']
 
 

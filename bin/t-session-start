@@ -153,4 +153,9 @@ if [[ -n ${TMUX:-} && -n ${TMUX_PANE:-} ]]; then
     tmux set-environment -t "$target" DEV_AGENT "$agent" 2>/dev/null || true
   fi
 fi
+# Supply the same scoped context for direct launches, resumes and compaction.
+context_helper="${history_helper%/*}/t_workflow_context.py"
+if [[ -f $context_helper ]]; then
+  python3 "$context_helper" "$agent" "$cwd" || true
+fi
 exit 0

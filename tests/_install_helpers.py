@@ -8,6 +8,7 @@ import subprocess
 REPO_ROOT = Path(__file__).resolve().parent.parent
 INSTALL_SH = REPO_ROOT / "install.sh"
 ASSETS = (
+    "libexec/t_workflow_install.py", "libexec/t_workflow_context.py", "libexec/t_watch.py", "libexec/t_recovery.py",
     ".t-install-version", "install.sh", "t.plugin.zsh", "local.zsh.example",
     "bin/t", "bin/nosleep", "zsh/nosleep.zsh", "zsh/nosleep-fallback.zsh",
     "libexec/nosleep_config.py", "libexec/nosleep_hotspot.py", "libexec/nosleep_wifi.py", "libexec/nosleep_wifi.swift", "bin/t-session-start", "bin/claude-stamp-tmux", "bin/cursor-beam",

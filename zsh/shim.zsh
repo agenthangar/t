@@ -45,7 +45,7 @@ t() {
     esac
     if [[ $1 == runners && $2 == runs ]]; then
       label+=" runs"
-      case ${3:-} in start|list|ls|status|logs|artifacts|cancel|cleanup) label+=" $3" ;; esac
+      case ${3:-} in start|list|ls|status|watch|logs|artifacts|cancel|cleanup) label+=" $3" ;; esac
     fi
     _term_title "$label"
     title_active=1
@@ -771,7 +771,7 @@ _t() {
     cursor) actions=(list ls resume send) ;;
     agentcore) actions=(invoke stop) ;;
     hosts) actions=(list ls show add edit remove default run) ;;
-    workflow) actions=(list ls open delete add use exclude inherit edit instructions) ;;
+    workflow) actions=(context list ls open delete add use exclude inherit edit instructions) ;;
     runners) actions=(list ls edit setup runs) ;;
     config) actions=(open show edit setup onboard local models) ;;
     profile) actions=(init edit show apply) ;;
@@ -803,9 +803,9 @@ _t() {
     elif [[ ${words[CURRENT-1]} == --repo ]]; then
       _values 'repo' "${(@f)$(_dev_repo_selectors)}"
     elif [[ $action == runs ]] && (( CURRENT == first )); then
-      _values 'run verb' start list ls status logs artifacts cancel cleanup
+      _values 'run verb' start list ls status watch logs artifacts cancel cleanup
     elif [[ $action == runs ]]; then
-      _values 'flag' --tool --repo --target --os --capability --include --artifact --timeout --queue-timeout --json --output -h --help
+      _values 'flag' --tool --repo --target --os --capability --include --artifact --timeout --queue-timeout --next-step --json --output -h --help
     elif [[ $action == setup ]]; then
       _values 'flag' --github-repo --create -h --help
     else
@@ -824,7 +824,7 @@ _t() {
   if [[ $group == workflow || ( $group == config && $action == workflow ) ]]; then
     [[ $group == workflow ]] && (( first-- ))
     if (( CURRENT == first )); then
-      _values 'workflow resource or verb' list ls open delete add use exclude inherit edit instructions
+      _values 'workflow resource or verb' context list ls open delete add use exclude inherit edit instructions
     elif [[ ${words[CURRENT-1]} == --tool ]]; then
       _values 'CLI tool' codex claude cursor
     elif [[ ${words[CURRENT-1]} == --repo ]]; then
@@ -833,6 +833,8 @@ _t() {
       _values 'instructions verb' show edit
     elif [[ ${words[first]} == list || ${words[first]} == ls ]]; then
       _values 'flag' --tool --repo --all --json -h --help
+    elif [[ ${words[first]} == context ]]; then
+      _values 'flag' --tool --repo --json -h --help
     elif [[ ${words[first]} == add ]]; then
       _values 'flag' --tool --from -h --help
     elif [[ ${words[first]} == delete ]]; then

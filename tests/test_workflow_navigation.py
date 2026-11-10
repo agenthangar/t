@@ -137,7 +137,7 @@ def test_stage_marks_retained_on_back(workflow, t_mod, monkeypatch, back, reset)
     outer.pick = lambda label, rows, **kw: stage_ui.pick(label, rows, **kw) if label == 'Use multiple models' else pick(label, rows, **kw)
     t_mod._workflow_policy_menu(outer, cfg, vars(workflow), name='standard')
     stages = workflow.model_stages(cfg._workflow_document['workflows']['standard'])
-    assert stages == ([] if reset else ['implementation', 'review'])
+    assert stages == ([] if reset else ['planning', 'review'])
     assert not workflow.config_path().exists()
 
 
