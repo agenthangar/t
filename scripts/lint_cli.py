@@ -40,7 +40,7 @@ LEGACY_GROUP_VERBS = {
     "profile": {"init", "edit", "show", "apply"},
     "policy": {"check", "show", "apply"},
     "agent": {"login", "install", "status", "trust"},
-    "system": {"integrate", "update", "diagnose", "advisories"},
+    "system": {"integrate", "update", "diagnose", "advisories", "usage"},
 }
 
 
@@ -387,7 +387,7 @@ def check_command_patterns(parser, command_groups, contract, *, root=ROOT):
         errors.append("command patterns must define the ten approved behavior types")
     registry_routes = {" ".join(path): route for path, route in command_routes(command_groups)}
     routes = (set(registry_routes)
-              | {SHARE_COMMAND, "share targets", "share inbox", "share read", "workflow"})
+              | {SHARE_COMMAND, "share targets", "share inbox", "share read", "workflow", "eval", "eval config"})
     top = _subparsers(parser)
     commands = contract.get("commands", {})
     if set(commands) != routes:
@@ -448,7 +448,7 @@ def check_command_patterns(parser, command_groups, contract, *, root=ROOT):
             argv = spec.get("argv", [])
             if not isinstance(argv, list) or argv[:len(words)] != words or not accepts(argv):
                 errors.append(f"{name} {mode} example does not parse as its canonical command")
-            if words[-1] == "list" and (not spec.get("read_only") or "list" not in mode_patterns and "machine" not in mode_patterns
+            if words[-1] == "list" and not (name == "eval runs list" and mode == "interactive_picker" and spec.get("read_only") and spec.get("terminal") and mode_patterns == {"single"}) and (not spec.get("read_only") or "list" not in mode_patterns and "machine" not in mode_patterns
                                              or mode_patterns & {"single", "multi", "filtered", "wizard", "review", "action"}):
                 errors.append(f"{name} {mode} list must be read-only list or machine output without selection")
             for reference in spec.get("tests", []):

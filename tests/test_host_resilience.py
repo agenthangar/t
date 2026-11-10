@@ -39,9 +39,10 @@ def test_real_ssh_scan_diagnostics(zsh, tmp_path, remote_rc):
     result = zsh(r'''
       REMOTE_HOSTS[peer]=peer
       _dev_session_rows() { printf 'local-id\t/work/local\tapi-3\tdetached\tnone\tLocal\tcodex\n'; }
-      T_REMOTE_SCAN_TIMEOUT=0.5
+      # Allow instrumented Python startup; the intentional timeout sleeps five seconds.
+      T_REMOTE_SCAN_TIMEOUT=2
       print caller-input > "$HOME/probe-input"
-      _dev_remote_scan_with_timeout peer 'zsh -lic _dev_session_rows' 0.5 < "$HOME/probe-input" > /dev/null || :
+      _dev_remote_scan_with_timeout peer 'zsh -lic _dev_session_rows' 2 < "$HOME/probe-input" > /dev/null || :
       _dev_rows_all
     ''', REMOTE_RC=str(remote_rc))
     assert result.returncode == (0 if remote_rc == 0 else 1), result.stderr

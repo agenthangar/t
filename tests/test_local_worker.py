@@ -322,7 +322,7 @@ def test_mlx_routing_identity_context_and_local_only_gate(worker,repo,monkeypatc
         observed.append((model,context))
         yield 'http://127.0.0.1:1234','owned-alias',{'revision':'a'*40,'runtime':{'contextLength':context}}
     status=worker.inference()['helper']('t_local_status')
-    local={'effective':lambda workspace:routing,'report':lambda *a:{'fit':True},'artifact':lambda n:{},
+    local={'leased_runtime':lambda chosen:None,'effective':lambda workspace:routing,'report':lambda *a:{'fit':True},'artifact':lambda n:{},
            'policy':worker.inference()['policy'],
            'helper':lambda n:status if n=='t_local_status' else {'Client':ManagedClientFixture} if n=='t_local_manager' else {'hardware':lambda:{}},'runtime':runtime}
     monkeypatch.setattr(worker,'inference',lambda:local)
