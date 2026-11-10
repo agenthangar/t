@@ -84,12 +84,13 @@ def records(sid, folder=None, now=None):
             found.append(data)
         except (OSError, ValueError, TypeError, KeyError):
             continue
-    return sorted(found, key=lambda item: (item.get('created', 0), item['id']))
+    return sorted(found, key=lambda item: (not item.get('active'), item.get('created', 0), item['id']))
 
 
 def label(items):
     visible = [item for item in items if isinstance(item.get('id'), str) and
                (item.get('active') or item.get('state') == 'stale')]
+    visible.sort(key=lambda item: not item.get('active'))
     if not visible:
         return '—'
     first = visible[0]

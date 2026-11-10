@@ -112,6 +112,7 @@ def test_watcher_terminal_pending_stale_and_identity(modules, monkeypatch):
     assert watch.label(items) == 'active ' + active.data['id']
     assert watch.label(watch.records('test-session', now=items[0]['updated'] + 30)).startswith('stale ')
     assert watch.records('different-session') == []
+    assert watch.label([{'id': 'old', 'state': 'stale'}, {'id': 'new', 'active': True}]) == 'active new +1'
     result = watch.wait(lambda: {'status': 'succeeded', 'exit_code': 0}, activity=active)
     assert result['wait_status'] == 'complete' and result['watcher_id'] == active.data['id']
     assert watch.label(watch.records('test-session')) == '—'
