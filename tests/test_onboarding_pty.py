@@ -142,11 +142,15 @@ raise SystemExit(t.main([]))
 ''')
     actions = [('Welcome to t', b'\r'), ('Choose agents', b'\r'),
                ('Register existing', b'\r'), ('Review setup', b'y' if accept else b'q')]
+    if accept:
+        actions.append(('Back up and rebuild these global and repository instructions?', b'n\r'))
     result, output = run_terminal([sys.executable, str(harness), str(package / 'bin/t'), str(checkout)],
                                   env, tmp_path, (44, 20), actions)
     if accept:
         assert result == 0, output
         assert 'Setup complete' in output
+        assert 'Instruction migration deferred' in output
+        assert not (home / '.codex/AGENTS.md').exists()
         assert (home / 'bin/t').resolve() == package / 'bin/t'
         assert 't shell integration' in (home / '.zshrc').read_text()
         local = (home / '.config/t/local.zsh').read_text()

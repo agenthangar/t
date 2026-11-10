@@ -283,7 +283,7 @@ def check(parser, command_groups, instructions):
         return True, args
 
     workflow_registry = command_groups.get("workflow", {})
-    if not isinstance(workflow_registry, dict) or set(workflow_registry) != {"list", "edit", "open", "delete", "add", "use", "exclude", "inherit", "instructions"}:
+    if not isinstance(workflow_registry, dict) or set(workflow_registry) != {"context", "list", "edit", "open", "delete", "add", "use", "exclude", "inherit", "instructions"}:
         errors.append("workflow registry must expose named workflows and instructions")
     config = top._name_parser_map.get("config")
     config_sub = _subparsers(config) if config else None

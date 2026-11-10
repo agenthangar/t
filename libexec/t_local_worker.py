@@ -21,7 +21,7 @@ DEFAULT_MODEL = 'gpt-oss:20b'
 MAX_OUTPUT = 8 * 1024 * 1024
 INSTRUCTIONS = (
     'Delegate only bounded investigations or small patches with concrete acceptance checks. '
-    'Use start_task, then task_status; use cancel_task when no longer needed. '
+    'Use start_task, then wait_task for bounded waits; use cancel_task when no longer needed. '
     'The local worker has a separate snapshot, not the lead checkout. Review its findings, '
     'patch and test evidence before applying anything. Failed or timed-out tasks return to '
     'the lead; never automatically retry indefinitely. Local requests take fair turns through the shared machine queue. '
@@ -471,6 +471,16 @@ class Worker:
     def call(self, name, args):
         if name == 'start_task':
             return self.start(args)
+        if name == 'wait_task':
+            if not isinstance(args, dict) or set(args) - {'task_id', 'timeout_seconds'}:
+                raise ValueError('invalid wait_task arguments')
+            seconds = args.get('timeout_seconds', 60)
+            if type(seconds) is not int or not 1 <= seconds <= 60:
+                raise ValueError('wait timeout must be 1..60 seconds')
+            watch = runpy.run_path(str(Path(__file__).with_name('t_watch.py')))
+            activity = watch['Activity'](args.get('task_id', ''), 'local worker')
+            return watch['wait'](lambda: self.call('task_status', {'task_id': args.get('task_id')}),
+                                 seconds, activity=activity)
         if name not in ('task_status', 'cancel_task'):
             raise ValueError('unknown local worker tool')
         if not isinstance(args, dict) or set(args) != {'task_id'} or not isinstance(args['task_id'], str) or args['task_id'] not in self.tasks:
@@ -490,6 +500,10 @@ class Worker:
 
 def tool_specs():
     return [
+        {'name': 'wait_task', 'description': 'Wait up to 60 seconds for a task owned by this connection. Returns terminal evidence or pending; timeout does not cancel the task.',
+         'annotations': {'readOnlyHint': True},
+         'inputSchema': {'type': 'object', 'additionalProperties': False, 'required': ['task_id'],
+                         'properties': {'task_id': {'type': 'string'}, 'timeout_seconds': {'type': 'integer', 'minimum': 1, 'maximum': 60}}}},
         {'name': 'start_task', 'description': INSTRUCTIONS,
          'inputSchema': {'type': 'object', 'additionalProperties': False,
                          'required': ['workspace', 'assignment'], 'properties': {

@@ -185,7 +185,7 @@ def test_session_table_clips_only_task_when_other_columns_fit(t_mod, monkeypatch
     monkeypatch.setattr(t_mod.sys.stdout, 'isatty', lambda: False)
     assert row['summary'] in t_mod._session_table_lines([row], remote=True)[1]
     monkeypatch.setattr(t_mod.sys.stdout, 'isatty', lambda: True)
-    assert t_mod._session_table_lines([]) == ['  STATUS  SESSION  WORKING ON  LOC/CLD TOKEN%  TOOL  MODELS  LAST TURN']
+    assert t_mod._session_table_lines([]) == ['  STATUS  SESSION  WORKING ON  LOC/CLD TOKEN%  TOOL  MODELS  WATCHER  LAST TURN']
 
 
 @pytest.mark.parametrize('width', [20, 32, 44])
@@ -348,7 +348,7 @@ def test_session_and_history_display_follow_shared_schema(history, t_mod, tmp_pa
         assert label in retained
         if label in ('STATUS', 'SESSION', 'WORKING ON'):
             assert label in live
-    live_labels = ['STATUS', 'SESSION', 'WORKING ON'] + [v for v in ('HOST', 'LOC/CLD TOKEN%', 'TOOL', 'MODELS', 'LAST TURN') if v in live.splitlines()[0]]
+    live_labels = ['STATUS', 'SESSION', 'WORKING ON'] + [v for v in ('HOST', 'LOC/CLD TOKEN%', 'TOOL', 'MODELS', 'WATCHER', 'LAST TURN') if v in live.splitlines()[0]]
     live_cells = _table_contract_cells(live, live_labels)
     retained_cells = _table_contract_cells(retained, schema['layouts']['table']['columns'])
     for label, value in (('UI', 'cli'), ('HOST', owner['host']), ('SESSION', owner['slot']),
@@ -383,7 +383,7 @@ def test_session_last_turn_display_contract(t_mod, monkeypatch, width, remote):
     row, = t_mod._parse_rows(('mini\t' if remote else '') + wire, host_prefixed=remote)
     assert row['last_turn_started_at'] == '2026-10-23T16:41:07Z'
     output = '\n'.join(t_mod._session_table_lines([row], remote=remote))
-    labels = ['STATUS', 'SESSION', 'WORKING ON'] + [v for v in ('HOST', 'LOC/CLD TOKEN%', 'TOOL', 'MODELS', 'LAST TURN') if v in output.splitlines()[0]]
+    labels = ['STATUS', 'SESSION', 'WORKING ON'] + [v for v in ('HOST', 'LOC/CLD TOKEN%', 'TOOL', 'MODELS', 'WATCHER', 'LAST TURN') if v in output.splitlines()[0]]
     cells = _table_contract_cells(output, labels)
     expected = t_mod._session_display_helpers()['format_last_turn'](row['last_turn_started_at'])
     if 'LAST TURN' in cells:

@@ -1565,11 +1565,56 @@ Development preview: `python3 scripts/preview_connection_recovery.py` uses the
 shared RailUI with labeled sample data, no services, and no real configuration.
 Add `--startup` to simulate a bootstrap failure and cloud retry.
 
+### Scoped workflow context and job watching
+
+`t workflow context [--tool TOOL] [--repo ALIAS] [--json]` is read-only. It
+resolves the current checkout through its common Git directory, including linked
+worktrees; `--repo` selects a registered checkout explicitly. It prints shared
+rules and one workflow. Global agent files contain a short loader; supported
+SessionStart hooks supply the resolved context at start, resume and compaction.
+An identity probe failure is an error, not permission to choose another scope.
+
+Installation shows the affected global and repository instruction paths and backup
+location, then asks **Back up and rebuild these global and repository instructions?
+[y/N]**. Declining, EOF or unattended installation preserves existing instructions.
+Only t-owned marked blocks are rebuilt; custom Markdown and hand-written content
+remain. Linked repository instruction files are preserved and reported. Global
+instruction symlinks block migration. Original contents, permissions and hashes are backed up under the user's
+state directory. Unchanged files are not backed up or prompted for again.
+
+New Codex presets use Sol / medium for main work and Astra / medium for bounded
+review. Model stages and workflow launch defaults have independent inherited,
+Standard, Fast and Ultrafast speed choices where advertised by the native tool.
+Unavailable saved choices remain saved, with an explicit native-speed fallback.
+
+Workflow Behavior includes **Job watching ›** (Automatically / Only when
+requested), independent of test timing and location. **Text instructions ›**
+contains Edit, Clear and Back; Clear stages removal and exposes Undo clear.
+Normal save/discard semantics apply. Test runners default to a local snapshot,
+even with remote targets configured. Empty remote defaults mean local; explicit
+remote failures never silently fall back. Native GUI tests remain opt-in.
+
+`t runners runs watch ID --timeout 60 --json` returns a terminal receipt or a
+pending wait result. `ID` can also be `OWNER/REPO#PR@HEAD_SHA` to watch GitHub
+checks pinned to that exact head. `--next-step TEXT` records the authorized step
+waiting on the results. Watch timeouts and interrupted observation do not cancel
+jobs. The local-worker MCP offers the equivalent connection-owned `wait_task`.
+A detached watcher does not wake an agent: use a bounded wait or a host-supported
+notification, then inspect evidence and continue the next authorized step.
+
+`t ls` shows STATUS, SESSION, WORKING ON, optional HOST, LOC/CLD TOKEN%, TOOL,
+MODELS, **WATCHER**, and LAST TURN. WATCHER is `active watch-ID`, `stale watch-ID`, or `—`, with `+N`
+for concurrent watches; full IDs and run references remain in picker details and
+structured session metadata. Narrow output preserves status, session identity and task; it retains WATCHER
+ahead of other optional columns when space permits. Listing reads cached activity only. Statusline fragments
+preserve model/token/custom content. Only verified conversation owners receive
+activity; completion never implies that an agent reviewed the result.
+
 ### Usage overview
 
 `t ls` preserves STATUS, SESSION and WORKING ON first. Optional columns follow:
 LOC/CLD TOKEN% (observed input + output token percentage pair), TOOL (icon only),
-MODELS (a list with ★ on the lead), LAST TURN. Model lists may wrap; continuation
+MODELS (a list with ★ on the lead), WATCHER, LAST TURN. Model lists may wrap; continuation
 lines never repeat status or session identity. Narrow screens omit optional columns.
 The legend retains attachment, active context, merged/still-in-progress, desktop
 and all tool icons. UI remains metadata; estimated costs live in usage details.

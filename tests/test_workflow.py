@@ -46,15 +46,15 @@ def test_defaults_inheritance_and_explicit_activation(workflow, tmp_path):
     w = workflow
     document, before = w.load()
     assert before is None and not w.config_path().exists()
-    assert document['workflows']['standard']['planning']['model'] == 'gpt-6-astra'
+    assert document['workflows']['standard']['planning']['model'] == 'gpt-6.1-sol'
     repository = str(tmp_path.resolve() / 'repo')
     assert w.effective(document, repository) == document['workflows']['standard']
     assert w.scoped(document, repository) is None
     override = w.effective(document, repository)
-    override['planning']['model'] = 'private/model:version'
+    override['review']['model'] = 'private/model:version'
     changed = w.update(document, override, repository)
     assert w.effective(changed, repository) == override
-    assert w.effective(changed)['planning']['model'] == 'gpt-6-astra'
+    assert w.effective(changed)['planning']['model'] == 'gpt-6.1-sol'
     assert w.update(changed, None, repository) == document
     w.save(changed, before)
     saved, saved_before = w.load()
@@ -67,7 +67,8 @@ def test_defaults_inheritance_and_explicit_activation(workflow, tmp_path):
     assert [p.stat() for p in [w.config_path(), *native_paths()]] == before_stats
     with pytest.raises(ValueError, match='changed while editing'):
         w.save(saved, before)
-    assert 'private/model:version' in native_paths()[0].read_text()
+    assert 'private/model:version' not in native_paths()[0].read_text()
+    assert 'private/model:version' in w.render(saved, repository=repository)
 
 
 @pytest.mark.parametrize('mutate,match', [
@@ -110,17 +111,14 @@ def test_native_preservation_overrides_and_disabled_scope(workflow, tmp_path):
         text = path.read_text()
         assert text.count(w.BEGIN) == 1 and text.count(w.END) == 1
         assert 'supersede older' in text and 'repository-specific rules remain authoritative' in text
-        if path != claude:
-            assert 'linked worktrees' in text and 'created later' in text and 'disabled for this scope' in text
-            assert 'acceptance criteria' in text and 'CI through completion' in text
-            assert 'never claim a stage' in text and 'sub-agent delegation' in text
-        else:
-            assert 'Model stages are disabled' in text and 'gpt-6-astra' not in text
+        assert 't workflow context' in text
+        assert 'gpt-6-astra' not in text
     assert codex.read_text().startswith('# Personal prose\nUse old general models.\nissue policy\n')
     assert stat.S_IMODE(codex.stat().st_mode) == 0o640
     assert override.read_text().startswith('Important override prose\n')
-    assert w.merge(codex.read_text(), w.render(document)) == codex.read_text()
+    assert w.merge(codex.read_text(), w.fallback()) == codex.read_text()
     explicit = w.defaults()
+    explicit['workflows']['standard']['model_stages'] = ['planning', 'implementation', 'review']
     explicit['workflows']['standard']['planning']['effort'] = 'xhigh'
     explicit['workflows']['standard']['implementation']['effort'] = 'high'
     explicit['workflows']['standard']['review']['effort'] = 'medium'
@@ -135,10 +133,9 @@ def test_speed_policy_scopes_and_native_sync(workflow, tmp_path):
     document['repositories'][enabled_repo] = {'inline': copy.deepcopy(w.DEFAULT)}
     document['repositories'][disabled_repo] = {'inline': dict(w.DEFAULT, enabled=False)}
     before = copy.deepcopy(document)
-    rendered = w.render(document)
-    global_text, *scopes = rendered.split('\n\nRepository scope: ')
-    enabled_text = next(text for text in scopes if enabled_repo in text)
-    disabled_text = next(text for text in scopes if disabled_repo in text)
+    global_text = w.render(document)
+    enabled_text = w.render(document, repository=enabled_repo)
+    disabled_text = w.render(document, repository=disabled_repo)
     for text in (global_text, enabled_text):
         assert "parent agent's current speed/service tier" in text
         assert 'Fast or Ultrafast' in text
@@ -157,7 +154,7 @@ def test_speed_policy_scopes_and_native_sync(workflow, tmp_path):
     saved_texts = [path.read_text() for path in native_paths()]
     for tool, path in zip(('codex', 'claude'), native_paths()):
         assert path.read_text().startswith('Personal instructions\n')
-        assert w.render(saved_document, tool=tool) in path.read_text()
+        assert w.fallback(tool) in path.read_text()
         path.write_text('Personal instructions\n')
     assert w.sync() == 0
     assert [path.read_text() for path in native_paths()] == saved_texts
@@ -438,13 +435,14 @@ def test_menu_workflow_selector_inherit_and_profile(workflow, t_mod, tmp_path, m
 def test_installer_sync_absent_and_configured(workflow):
     w = workflow
     assert w.sync() == 0 and w.config_path().exists()
-    assert all(w.issue_policy() in path.read_text() for path in native_paths())
+    assert all('t workflow context' in path.read_text() for path in native_paths())
     w.config_path().parent.mkdir(parents=True, exist_ok=True)
     document = w.defaults()
     document['workflows']['standard']['planning']['model'] = 'chosen-model'
     w.config_path().write_text(w.encode(document))
     assert w.sync() == 0
-    assert 'chosen-model' in native_paths()[0].read_text()
+    assert 'chosen-model' not in native_paths()[0].read_text()
+    assert w.load()[0]['workflows']['standard']['planning']['model'] == 'chosen-model'
     assert 'chosen-model' not in native_paths()[1].read_text()
     w.config_path().write_text('{invalid')
     with pytest.raises(ValueError):
@@ -597,7 +595,7 @@ def test_named_consumers_inline_exclusion_and_inheritance(workflow, tmp_path):
     assert doc['repositories'][repo] == {'workflow': 'careful', 'excluded': True}
     assert not w.effective(doc, repo)['enabled']
     assert w.resolved(doc, repo) == policy
-    rendered = w.render(doc).split('Repository scope: ')[1]
+    rendered = w.render(doc, repository=repo)
     assert 'Do not apply inherited' in rendered and 'Exact prose' not in rendered
     doc = w.action(doc, 'use', 'careful', repo)
     assert w.effective(doc, repo)['enabled']
@@ -709,7 +707,7 @@ def test_instructions_commands(workflow, t_mod, monkeypatch, tmp_path, capsys):
     capsys.readouterr()
     assert t_mod.main(['config', 'workflow', 'instructions', 'show']) == 0
     assert capsys.readouterr().out == prose
-    assert prose in native_paths()[0].read_text()
+    assert prose in w.render(w.load()[0])
     assert t_mod.main(['config', 'workflow', 'exclude', '--repo', 'api']) == 0
     capsys.readouterr()
     assert t_mod.main(['config', 'workflow', 'instructions', 'show', '--repo', 'api']) == 0
@@ -726,7 +724,7 @@ def test_instructions_commands(workflow, t_mod, monkeypatch, tmp_path, capsys):
     assert doc['repositories'][cfg.repos['api']]['inline']['enabled']
     assert doc['repositories'][cfg.repos['api']]['inline']['instructions'] == 'local'
     assert doc['workflows']['standard']['instructions'] == prose
-    assert 'local' not in w.render(doc).split('Repository scope: ')[1]
+    assert 'local' not in w.render(doc, repository=cfg.repos['api'])
     monkeypatch.setattr(w.subprocess, 'call', lambda argv: 17)
     assert w.edit_instructions(doc) == (17, doc)
     monkeypatch.setattr(w.subprocess, 'call', lambda argv: Path(argv[-1]).unlink() or 0)
@@ -765,13 +763,13 @@ def test_workflow_stage_controls_preserve_launch_settings(workflow, t_mod, monke
             raise OSError('offline')
         return [{'model': 'catalog-model', 'supportedReasoningEfforts': []}]
     monkeypatch.setattr(t_mod, '_config_live_models', discover)
-    ui = Menu(['customize', 'planning', 'model', '__custom__', 'planning', 'effort', 'ultra',
+    ui = Menu(['customize', 'stages_enabled', ['planning', 'implementation', 'review'], 'planning', 'model', '__custom__', 'planning', 'effort', 'ultra',
                'implementation', 'model', '__refresh__', 'catalog-model', 'review', 'effort', 'low',
                'enabled', '0', 'back', 'back'], inputs=['custom-model'])
     t_mod._config_workflow_tool(ui, cfg)
     policy = cfg._workflow_document['workflows']['standard']
     assert policy['planning'] == {'model': 'custom-model', 'effort': 'ultra'}
-    assert policy['implementation'] == {'model': 'catalog-model', 'effort': 'auto'}
+    assert policy['implementation'] == {'model': 'catalog-model', 'effort': 'medium'}
     assert policy['review']['effort'] == 'low' and not policy['enabled']
     assert cfg.models == {'codex': 'launch'} and cfg.efforts == {'codex': 'high'}
     assert discoveries == ['codex', 'codex']
@@ -806,7 +804,7 @@ def test_clear_text_instructions_discard_keeps_original(workflow, t_mod, monkeyp
     monkeypatch.setattr(t_mod, 'CONFIG', str(tmp_path / 'absent'))
     monkeypatch.setattr(t_mod, 'zsh_capture', lambda _: '')
     monkeypatch.setattr(workflow, 'save', lambda *args, **kwargs: pytest.fail('discard must not save'))
-    ui = Menu(['workflow', 'codex', 'customize', 'clear_instructions', 'back', 'back', 'back', 'cancel', 'discard'])
+    ui = Menu(['workflow', 'codex', 'customize', 'instructions', 'clear', 'back', 'back', 'back', 'cancel', 'discard'])
     monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
     cfg = t_mod.Config()
     t_mod._workflow_session(cfg)
@@ -853,7 +851,7 @@ def test_instructions_preserve_crlf_and_absent_final_newline(workflow, monkeypat
     assert document['workflows']['standard']['instructions'].encode() == body
     w.save(document, None)
     assert w.instructions(w.load()[0]).encode() == body
-    assert body in native_paths()[0].read_bytes()
+    assert body in w.render(w.load()[0]).encode()
     assert w.edit_instructions(document) == (0, document)
 
 
@@ -937,8 +935,8 @@ def test_staged_guidance_keeps_main_on_implementation_and_bounds_delegation(work
     text = workflow._stage_text(policy)
     assert 'Keep the main conversation on gpt-6.1-sol for routine discussion, coding and follow-ups' in text
     assert 'default reasoning effort: medium' in text
-    assert 'Plan with a bounded gpt-6-astra sub-agent' in text
-    assert 'Delegate implementation to a bounded gpt-6.1-sol worker' in text
+    assert 'Plan with a bounded gpt-6.1-sol sub-agent' in text
+    assert 'Implement in the main conversation with gpt-6.1-sol' in text
     assert 'Review with a bounded gpt-6-astra sub-agent' in text
     assert 'The main conversation owns fixes' in text
     assert 'explicit model and concrete reasoning settings' in text
@@ -962,7 +960,7 @@ def test_stage_toggle_scope_and_precedence(workflow, t_mod, monkeypatch, tmp_pat
                   instructions='# Exact custom\n\nKeep my choice.  \n')
     policy['planning']['model'] = 'saved-model'
     doc = w.update(w.defaults(), policy, repo)
-    rendered = w.render(doc).split('Repository scope: ')[1]
+    rendered = w.render(doc, repository=repo)
     assert 'saved-model' not in rendered and '1. Plan with' not in rendered
     assert policy['instructions'] in rendered
     assert 'Leave changes uncommitted' in rendered
@@ -975,7 +973,7 @@ def test_stage_toggle_scope_and_precedence(workflow, t_mod, monkeypatch, tmp_pat
     assert 'Planning:' not in scoped_review and 'saved-model' not in scoped_review
     policy['stages_enabled'] = True
     doc = w.update(doc, policy, repo)
-    rendered = w.render(doc).split('Repository scope: ')[1]
+    rendered = w.render(doc, repository=repo)
     assert 'Plan with a bounded saved-model sub-agent' in rendered
     assert 'selected delivery preferences and existing authorization' in rendered
     doc = w.action(doc, 'exclude', repository=repo)
@@ -984,7 +982,7 @@ def test_stage_toggle_scope_and_precedence(workflow, t_mod, monkeypatch, tmp_pat
     for disabled in [doc, w.action(doc, 'include', repository=repo)]:
         if not disabled['repositories'][repo].get('excluded'):
             disabled['repositories'][repo]['inline']['enabled'] = False
-        text = w.render(disabled).split('Repository scope: ')[1]
+        text = w.render(disabled, repository=repo)
         assert 'entire workflow is disabled' in text
         assert 'behavior preferences or custom Markdown' in text
         assert 'new excluded instructions' not in text
@@ -1023,7 +1021,7 @@ def test_behavior_menu_save_or_discard(workflow, t_mod, monkeypatch, tmp_path, s
         assert policy['behaviors'] == {'pr_review': 'skip', 'pr_open': 'automatic', 'pr_state': 'draft', 'pr_merge': 'on_request',
                                        'local_preview': 'when_ready', 'frontend_implement_before_approval': 'no', 'cli_preview': 'install', 'cli_launch': 'automatic',
                                        'frontend_preview': 'fast_reload', 'test_timing': 'pr_ci'}
-        instructions = native_paths()[0].read_text()
+        instructions = w.render(w.load()[0])
         assert 'Open pull requests as drafts' in instructions
         assert 'Wait for explicit user approval of a lightweight preview before substantial implementation' in instructions
         assert "pull request's required CI" in instructions
@@ -1036,7 +1034,7 @@ def test_behavior_menu_noop_clear_and_excluded_edit(workflow, t_mod, monkeypatch
     t_mod._workflow_session(cfg)
     initial = copy.deepcopy(cfg._workflow_document)
     # Picking defaults, cancelling options and clearing an absent choice create no override.
-    t_mod._workflow_policy_menu(Menu(['stages_enabled', ['planning', 'implementation', 'review'], 'behaviors',
+    t_mod._workflow_policy_menu(Menu(['stages_enabled', ['review'], 'behaviors',
                                 'pull_requests', 'pr_open', '', 'pr_state', None,
                                 'back', 'back', 'back']), cfg, vars(w), repository=cfg.repos['api'])
     assert cfg._workflow_document == initial and not t_mod._workflow_pending(cfg)
@@ -1095,7 +1093,7 @@ def test_behavior_menu_narrow_screens(workflow, t_mod, monkeypatch, width, heigh
     cfg = SimpleNamespace(repos={})
     t_mod._workflow_session(cfg)
     # Disable stages, choose automatic PR creation and return through the nested menus.
-    keys = ['j', 'enter', 'space', 'enter', 'j', 'j', 'j', 'j', 'j', 'enter',
+    keys = ['j', 'enter', 'space', 'enter', 'j', 'j', 'j', 'j', 'j', 'j', 'enter',
             'enter', 'j', 'enter', 'j', 'enter', 'q', 'q', 'q']
     ui = make_ui(t_mod, keys, width, height)
     t_mod._workflow_policy_menu(ui, cfg, vars(workflow), name='standard')
@@ -1155,7 +1153,7 @@ def test_issue_rule_migration_imports_custom_legacy_native_text_once(workflow):
     w.save(doc, before)
     for path in (codex, claude):
         assert path.read_text().startswith('Personal prose\n')
-        assert path.read_text().count(custom) == 1
+        assert w.render(w.load()[0], tool='claude' if path == native_paths()[1] else 'codex').count(custom) == 1
         assert w.ISSUE_BEGIN not in path.read_text()
     before = w.snapshot(w.config_path())
     w.sync()
@@ -1255,7 +1253,7 @@ def test_workflow_print_precedence_and_reasoning(workflow, t_mod, monkeypatch, c
     assert text.index('Text instructions:') < text.index('PRs, previews & tests:')
     assert 'Design approval' not in text and 'Preview timing: Automatically when ready' in text
     assert 'Implement before approval: No' in text
-    assert 'Agent selects by task' in text and 'One level below' not in text
+    assert 'Medium' in text and 'One level below' not in text
     assert 'Implementation' in text and 'Lead model: gpt-6.1-sol · Medium' in text
     assert 'starts Medium' not in text
     assert 'one-level-lower' not in text and 'Test runners:' in text and 'Propagation:' in text

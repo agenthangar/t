@@ -110,8 +110,7 @@ def test_permission_list_and_save_review_show_tool_labels(workflow, t_mod, monke
 
 
 @pytest.mark.parametrize('scope', ['named', 'repository'])
-@pytest.mark.parametrize('submenu', [False, True])
-def test_clear_text_instructions_is_staged_and_preserves_policy(workflow, t_mod, scope, submenu):
+def test_clear_text_instructions_is_staged_and_preserves_policy(workflow, t_mod, scope):
     document = workflow.defaults()
     policy = workflow.select_stages(document['workflows']['standard'], ['review'])
     policy.update(instructions='Custom instructions to remove.', behaviors={'pr_merge': 'on_request'},
@@ -120,13 +119,14 @@ def test_clear_text_instructions_is_staged_and_preserves_policy(workflow, t_mod,
     cfg = SimpleNamespace(repos={'api': '/repo'}, _workflow_document=document)
     initial = copy.deepcopy(document)
     target = {'name': 'standard'} if scope == 'named' else {'repository': '/repo'}
-    ui = InspectMenu((['instructions', 'clear'] if submenu else ['clear_instructions']) + ['back'])
+    ui = InspectMenu(['instructions', 'clear', 'back'])
     t_mod._workflow_policy_menu(ui, cfg, vars(workflow), **target)
     actual = (cfg._workflow_document['workflows']['standard'] if scope == 'named' else
               workflow.effective(cfg._workflow_document, '/repo'))
     assert actual == dict(policy, instructions='')
     assert actual['enabled']
-    assert dict(ui.views[0][1])['clear_instructions'] == 'Clear text instructions'
+    assert 'clear_instructions' not in dict(ui.views[0][1])
+    assert dict(ui.views[1][1])['clear'] == 'Clear text instructions'
     assert 'clear_instructions' not in dict(ui.views[-1][1])
     assert document == initial
     if scope == 'repository':
@@ -686,6 +686,7 @@ def test_disabled_preview_display_omits_retained_settings_and_legacy_target(work
 @pytest.mark.parametrize('stage', ['planning', 'implementation', 'review'])
 def test_each_stage_can_let_agent_choose_worker_effort(workflow, t_mod, stage):
     document = workflow.defaults()
+    document['workflows']['standard']['model_stages'] = ['planning', 'implementation', 'review']
     document['workflows']['standard'][stage]['effort'] = 'high'
     cfg = SimpleNamespace(repos={}, _workflow_document=document)
     ui = InspectMenu([stage, 'effort', 'auto', 'back'])
@@ -710,6 +711,7 @@ def test_each_stage_can_let_agent_choose_worker_effort(workflow, t_mod, stage):
 @pytest.mark.parametrize('picked', [None, 'auto'])
 def test_retired_effort_displays_as_automatic_without_rewriting(workflow, t_mod, stage, scope, picked):
     document = workflow.defaults()
+    document['workflows']['standard']['model_stages'] = ['planning', 'implementation', 'review']
     document['workflows']['standard'][stage]['effort'] = 'one-level-lower'
     initial = copy.deepcopy(document)
     cfg = SimpleNamespace(repos={'api': '/repo'}, _workflow_document=document)
@@ -781,8 +783,8 @@ def test_stage_checkboxes_select_independent_helpers(workflow, t_mod, scope, sel
     assert workflow.model_stages(policy) == selected
     picker = ui.views[1]
     assert picker[0] == 'Use multiple models'
-    assert picker[1] == [('', 'Use lead model for all stages'), ('planning', 'Planning'), ('implementation', 'Implementation'), ('review', 'Review'), ('__default__', 'Use default · Planning, Implementation, Review')]
-    assert {key: picker[2][key] for key in ('multi', 'marked', 'empty_choice')} == {'multi': True, 'marked': {1, 2, 3}, 'empty_choice': ''}
+    assert picker[1] == [('', 'Use lead model for all stages'), ('planning', 'Planning'), ('implementation', 'Implementation'), ('review', 'Review'), ('__default__', 'Use default · Review')]
+    assert {key: picker[2][key] for key in ('multi', 'marked', 'empty_choice')} == {'multi': True, 'marked': {3}, 'empty_choice': ''}
     assert callable(picker[2]['on_back']) and picker[2]['back_label'] == 'keep & back'
     rows = dict(ui.views[-1][1])
     values = ui.views[-1][2]['values']
@@ -799,7 +801,7 @@ def test_stage_checkboxes_select_independent_helpers(workflow, t_mod, scope, sel
     assert not workflow.config_path().exists()
 
 
-@pytest.mark.parametrize('selected', [None, ['planning', 'implementation', 'review']])
+@pytest.mark.parametrize('selected', [None, ['review']])
 @pytest.mark.parametrize('scope', ['named', 'repository'])
 def test_stage_checkboxes_cancel_and_unchanged_do_not_create_overrides(workflow, t_mod, selected, scope):
     cfg = SimpleNamespace(repos={'api': '/repo'}, _workflow_document=workflow.defaults())
@@ -904,8 +906,7 @@ def test_deselected_main_stage_never_displays_retained_main_model(workflow, t_mo
     document = workflow.defaults()
     policy = workflow.select_model_stages(document['workflows']['standard'], ['planning'])
     policy['implementation'] = {'model': 'inactive-implementation', 'effort': 'ultra'}
-    if defaults:
-        policy['session_defaults'] = defaults
+    policy['session_defaults'] = defaults
     document = workflow.update(document, policy, name='standard')
     rows = t_mod._workflow_model_rows(vars(workflow), policy)
     expected_model = 'session-main' if defaults else 'Agent default'
@@ -965,6 +966,7 @@ def test_single_model_rejects_invalid_settings(workflow, defaults):
 
 def test_single_model_keeps_old_policies_and_disabled_stages(workflow):
     original = workflow.defaults()
+    original['workflows']['standard'].pop('session_defaults')
     assert 'session_defaults' not in workflow.validate(original)['workflows']['standard']
     policy = dict(copy.deepcopy(workflow.DEFAULT), stages_enabled=False,
                   session_defaults={'codex': {'model': 'custom/model', 'effort': 'high'},
@@ -972,7 +974,7 @@ def test_single_model_keeps_old_policies_and_disabled_stages(workflow):
     document = workflow.update(original, policy, '/repo')
     assert workflow.effective(document) == workflow.effective(original)
     assert workflow.effective(document, '/repo') == policy
-    assert 'custom/model' in workflow.render(document)
+    assert 'custom/model' in workflow.render(document, repository='/repo')
     assert 'Codex session default: custom/model; reasoning: high' in workflow.summary_lines(policy)
     policy['stages_enabled'] = True
     assert 'custom/model' not in workflow.render(workflow.update(original, policy))
@@ -1015,6 +1017,7 @@ def test_repository_model_editor_preserves_global_defaults(workflow, t_mod, monk
 @pytest.mark.parametrize('picked', [None, ''])
 def test_session_default_choices_show_top_level_inheritance_without_writes(workflow, t_mod, agent, scope, configured, picked):
     document = workflow.defaults()
+    document['workflows']['standard'].pop('session_defaults')
     document['workflows']['standard'] = workflow.select_model_stages(document['workflows']['standard'], [])
     cfg = SimpleNamespace(repos={'api': '/repo'}, agents={'api': agent}, agent_default=agent,
         models={agent: 'account-model'} if configured else {}, efforts={agent: 'high'} if configured else {},

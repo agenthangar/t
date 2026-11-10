@@ -117,6 +117,7 @@ def test_cursor_parameterized_models_do_not_emit_separate_effort(workflow, model
 
 def test_native_publications_render_each_tool_without_cross_tool_models(workflow):
     document = workflow.defaults()
+    document['workflows']['standard']['model_stages'] = ['implementation']
     document['workflows']['standard']['implementation']['model'] = 'codex-exclusive'
     claude = workflow.tool_document(document, 'claude')
     policy = workflow.select_model_stages(workflow.effective(claude), ['implementation'])
@@ -125,8 +126,10 @@ def test_native_publications_render_each_tool_without_cross_tool_models(workflow
     document = workflow.with_tool_document(document, 'claude', claude)
     changes = workflow.native_changes(document)
     codex_text, claude_text = changes[0][2], changes[1][2]
-    assert 'codex-exclusive' in codex_text and 'claude-exclusive' not in codex_text
-    assert 'claude-exclusive' in claude_text and 'codex-exclusive' not in claude_text
+    assert 'codex-exclusive' not in codex_text and 'claude-exclusive' not in codex_text
+    assert 'claude-exclusive' not in claude_text and 'codex-exclusive' not in claude_text
+    assert 'codex-exclusive' in workflow.render(document, 'codex')
+    assert 'claude-exclusive' in workflow.render(document, 'claude')
     assert workflow.render(claude, 'claude') == workflow.render(document, 'claude')
     assert not any(path.exists() for path in workflow.native_paths())
 

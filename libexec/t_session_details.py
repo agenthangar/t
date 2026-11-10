@@ -251,7 +251,10 @@ def enrich(lines, home, codex_home):
                 candidates = module['session_rows']([(turn_transcript, agent)])
                 if candidates and candidates[0]['requests']:
                     usage = {k: candidates[0][k] for k in ('models', 'lead_model', 'local_cloud_percent', 'coverage')}
-            out.append('\t'.join(row[:7] + [clean(model), transcript_last_turn(turn_transcript, agent)] + ([json.dumps(usage)] if usage else [])))
+            watches = runpy.run_path(str(Path(__file__).with_name('t_watch.py')))['records'](sid)
+            out.append('\t'.join(row[:7] + [clean(model), transcript_last_turn(turn_transcript, agent)] +
+                                 ([json.dumps(usage)] if usage else []) +
+                                 ([json.dumps(watches, separators=(',', ':'))] if watches else [])))
         return out
     finally:
         if db is not None:

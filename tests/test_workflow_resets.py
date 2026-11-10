@@ -138,7 +138,7 @@ def test_stage_and_runner_resets_are_scoped(workflow, t_mod):
     t_mod._workflow_policy_menu(ToolMenu(['planning', 'reset', 'stages_enabled', ['__default__'], 'back']), cfg, vars(workflow), name='standard')
     after = cfg._workflow_document['workflows']['standard']
     assert after['planning'] == workflow.DEFAULT['planning']
-    assert 'model_stages' not in after and 'stages_enabled' not in after
+    assert after['model_stages'] == ['review'] and 'stages_enabled' not in after
     assert after['behaviors'] == policy['behaviors']
     t_mod._workflow_runners_menu(ToolMenu(['reset', 'back']), cfg, vars(workflow), name='standard')
     assert 'runners' not in cfg._workflow_document['workflows']['standard']

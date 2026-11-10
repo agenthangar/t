@@ -516,6 +516,34 @@
     "libexec/t_eval_engine.py:workflow_python:urllib.request.urlopen": {
       "kind": "background",
       "reason": "Detached evaluation preparation checkpoints the pinned workflow interpreter download before bounded network access."
+    },
+    "libexec/t_runners.py:_local_target:subprocess.Popen": {
+      "kind": "phase",
+      "reason": "The CLI wraps runner execution in its snapshot-test spinner; machine callers receive durable run receipts."
+    },
+    "libexec/t_runners.py:_local_target:time.sleep": {
+      "kind": "phase",
+      "reason": "Bounded local child observation inside the runner spinner; the child owns execution timeout and cancellation."
+    },
+    "libexec/t_watch.py:owner:subprocess.run": {
+      "kind": "protocol",
+      "reason": "Bounded ancestry verification for activity metadata; never emit progress into MCP or JSON output."
+    },
+    "libexec/t_watch.py:wait:time.sleep": {
+      "kind": "protocol",
+      "reason": "Explicit bounded watch: progress callback reports meaningful changes and machine callers receive the final wait result."
+    },
+    "libexec/t_watch.py:github.read:subprocess.run": {
+      "kind": "protocol",
+      "reason": "Deadline-bounded provider read inside the explicit watch loop with state-change progress."
+    },
+    "libexec/t_workflow.py:resolve_context:subprocess.run": {
+      "kind": "protocol",
+      "reason": "Bounded read-only Git identity lookup for native hook and JSON context output."
+    },
+    "libexec/t_workflow_install.py:repositories:subprocess.run": {
+      "kind": "phase",
+      "reason": "Bounded local worktree inventory before listing the affected files for installer confirmation."
     }
   },
   "shell": [
