@@ -102,6 +102,13 @@ if [[ -f $history_helper ]]; then
   python3 "$history_helper" record "$sid" "$agent" "$cwd" "$tx" launch >/dev/null 2>&1 || true
 fi
 
+# Freeze usage attribution at launch; reporting must never use today's policy
+# for earlier tokens. Failure is nonfatal, like the other metadata hooks.
+usage_helper="${history_helper%/*}/t_usage.py"
+if [[ -f $usage_helper ]]; then
+  python3 "$usage_helper" record "$sid" "$agent" "$cwd" "$tx" >/dev/null 2>&1 || true
+fi
+
 # Retry saved workflow revisions at launch/resume without injecting turns or
 # relying on dotfiles/launchd. The helper is bounded and never blocks a launch.
 workflow_helper="${history_helper%/*}/t_workflow_sync.py"

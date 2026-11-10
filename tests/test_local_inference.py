@@ -35,6 +35,26 @@ def test_policy_and_instructions(local):
         assert label in m.instructions({'mode':'automatic'})
 
 
+def test_runtime_lease_pins_provider_artifact_and_context(local, monkeypatch, tmp_path):
+    m = local
+    chosen = m.policy()
+    assert m.leased_runtime(chosen) is None
+    path = tmp_path / 'lease.json'; monkeypatch.setenv('T_LOCAL_RUNTIME_RECEIPT', str(path))
+    receipt = {'model': chosen['model'], 'provider': chosen['provider'], 'context_tokens': chosen['context_tokens'],
+               'revision': 'pinned', 'alias': 'selected-alias', 'base': 'http://127.0.0.1:1234/capability/local'}
+    path.write_text(json.dumps(receipt))
+    monkeypatch.setattr(m, 'request', lambda url: receipt)
+    assert m.leased_runtime(chosen) == receipt
+    with m.provider_runtime(chosen) as (base, alias, identity):
+        assert base == receipt['base'] and alias == 'selected-alias' and identity['revision'] == 'pinned'
+    for change in ({'model': 'different'}, {'context_tokens': 4096}, {'base': 'https://external.invalid:1234'}):
+        path.write_text(json.dumps({**receipt, **change}))
+        with pytest.raises(ValueError): m.leased_runtime(chosen)
+    path.write_text(json.dumps(receipt))
+    monkeypatch.setattr(m, 'request', lambda url: {**receipt, 'revision': 'different'})
+    with pytest.raises(ValueError, match='identity'): m.leased_runtime(chosen)
+
+
 def test_receipts_fit_and_identity(local):
     m=local;name=m.DEFAULT_MODEL
     assert len(m.artifacts())==4
@@ -161,7 +181,7 @@ def test_local_lead_fails_closed(local,monkeypatch,tmp_path):
     workflow=m.helper('t_workflow')
     toml=m.helper('t_toml')
     status=m.helper('t_local_status')
-    monkeypatch.setattr(m,'helper',lambda n: status if n=='t_local_status' else toml if n=='t_toml' else {'hardware':hardware} if n=='t_local_models' else workflow if n=='t_workflow' else {'Client':ManagedClientFixture} if n=='t_local_manager' else {'reservation':nullcontext,'state_root':lambda:tmp_path,'environment':worker.environment})
+    monkeypatch.setattr(m,'helper',lambda n: {'local_launch':lambda *a:None} if n=='t_usage' else status if n=='t_local_status' else toml if n=='t_toml' else {'hardware':hardware} if n=='t_local_models' else workflow if n=='t_workflow' else {'Client':ManagedClientFixture} if n=='t_local_manager' else {'reservation':nullcontext,'state_root':lambda:tmp_path,'environment':worker.environment})
     @contextmanager
     def runtime(*a,**kw):yield 'http://127.0.0.1:1234','local-alias',{'revision':'a'*40}
     monkeypatch.setattr(m,'runtime',runtime)
@@ -651,6 +671,7 @@ def test_native_lead_stops_when_manager_lease_is_lost(local, monkeypatch, tmp_pa
             self.error = 'Shared manager connection lost'
     modules.update(t_local_models={'hardware': hardware}, t_local_manager={'Client': LostLease},
                    t_local_worker={'state_root': lambda: tmp_path, 'environment': worker['environment']})
+    modules['t_usage'] = {'local_launch': lambda *a: None}
     monkeypatch.setattr(m, 'helper', lambda name: modules[name])
     class Process:
         returncode = None

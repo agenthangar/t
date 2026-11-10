@@ -449,6 +449,74 @@
       "kind": "background",
       "reason": "Interactive downloads run beneath the cancellable Model test progress page; output is suppressed to preserve its rendering."
     },
+    "libexec/t_eval.py:create_run:subprocess.run": {
+      "kind": "protocol",
+      "reason": "Bounded local Git metadata lookup records the source revision in the immutable run manifest, without terminal output."
+    },
+    "libexec/t_eval.py:launch:subprocess.Popen": {
+      "kind": "background",
+      "reason": "Starts an owned detached worker; waits at most five seconds for its durable ownership marker. Progress is subsequently read from checkpointed run state."
+    },
+    "libexec/t_eval.py:launch:time.sleep": {
+      "kind": "background",
+      "reason": "Starts an owned detached worker; waits at most five seconds for its durable ownership marker. Progress is subsequently read from checkpointed run state."
+    },
+    "libexec/t_eval_cli.py:choose:subprocess.run": {
+      "kind": "passthrough",
+      "reason": "The shared fzf picker owns terminal input and rendering until selection or cancellation."
+    },
+    "libexec/t_eval_engine.py:run:subprocess.run": {
+      "kind": "background",
+      "reason": "Runs in the detached evaluation worker or its isolated container. The durable event journal and run phase expose progress; terminal animation must not corrupt native protocol output."
+    },
+    "libexec/t_eval_engine.py:harbor_python:subprocess.run": {
+      "kind": "background",
+      "reason": "Runs in the detached evaluation worker or its isolated container. The durable event journal and run phase expose progress; terminal animation must not corrupt native protocol output."
+    },
+    "libexec/t_eval_engine.py:child_job:subprocess.Popen": {
+      "kind": "background",
+      "reason": "Runs in the detached evaluation worker or its isolated container. The durable event journal and run phase expose progress; terminal animation must not corrupt native protocol output."
+    },
+    "libexec/t_eval_engine.py:child_job:time.sleep": {
+      "kind": "background",
+      "reason": "Runs in the detached evaluation worker or its isolated container. The durable event journal and run phase expose progress; terminal animation must not corrupt native protocol output."
+    },
+    "libexec/t_eval_trial.py:checkpoint:urllib.request.urlopen": {
+      "kind": "background",
+      "reason": "Runs in the detached evaluation worker or its isolated container. The durable event journal and run phase expose progress; terminal animation must not corrupt native protocol output."
+    },
+    "libexec/t_eval_trial.py:native_exec:subprocess.Popen": {
+      "kind": "background",
+      "reason": "Runs in the detached evaluation worker or its isolated container. The durable event journal and run phase expose progress; terminal animation must not corrupt native protocol output."
+    },
+    "libexec/t_eval_trial.py:outage_child.observe:urllib.request.urlopen": {
+      "kind": "background",
+      "reason": "Runs in the detached evaluation worker or its isolated container. The durable event journal and run phase expose progress; terminal animation must not corrupt native protocol output."
+    },
+    "libexec/t_eval_trial.py:outage:subprocess.Popen": {
+      "kind": "background",
+      "reason": "Runs in the detached evaluation worker or its isolated container. The durable event journal and run phase expose progress; terminal animation must not corrupt native protocol output."
+    },
+    "libexec/t_eval_trial.py:outage:select.select": {
+      "kind": "background",
+      "reason": "Runs in the detached evaluation worker or its isolated container. The durable event journal and run phase expose progress; terminal animation must not corrupt native protocol output."
+    },
+    "libexec/t_eval_engine.py:runtime_owned:subprocess.run": {
+      "kind": "background",
+      "reason": "Runs in the detached evaluation worker or its isolated container. The durable event journal and run phase expose progress; terminal animation must not corrupt native protocol output."
+    },
+    "libexec/t_eval_engine.py:native_codex:urllib.request.urlopen": {
+      "kind": "background",
+      "reason": "Background evaluation preparation checkpoints the pinned official native Linux CLI download without terminal output."
+    },
+    "libexec/t_eval_engine.py:prepare_worker_sandbox:urllib.request.urlopen": {
+      "kind": "background",
+      "reason": "Detached evaluation preparation records the sandbox policy download phase in its durable journal before bounded network access."
+    },
+    "libexec/t_eval_engine.py:workflow_python:urllib.request.urlopen": {
+      "kind": "background",
+      "reason": "Detached evaluation preparation checkpoints the pinned workflow interpreter download before bounded network access."
+    },
     "libexec/t_runners.py:_local_target:subprocess.Popen": {
       "kind": "phase",
       "reason": "The CLI wraps runner execution in its snapshot-test spinner; machine callers receive durable run receipts."

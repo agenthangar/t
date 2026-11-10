@@ -18,6 +18,7 @@ import textwrap
 import urllib.parse
 import urllib.request
 import uuid
+from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
 _spinner = runpy.run_path(str(ROOT / 'libexec/t_progress.py'))['spinner']
@@ -457,6 +458,25 @@ def catalogue(suite='swe-bench-pro', context=32768):
     return {'hardware': machine, 'suite': suite, 'context_tokens': context, 'models': rows}
 
 
+def leased_runtime(chosen):
+    """Verify a host-owned runtime capability when executing in an eval container."""
+    path = os.environ.get('T_LOCAL_RUNTIME_RECEIPT')
+    if not path:
+        return None
+    info = json.loads(Path(path).read_text())
+    if (info.get('model') != chosen['model'] or info.get('provider') != chosen['provider'] or
+            info.get('context_tokens') != chosen['context_tokens'] or not info.get('revision')):
+        raise ValueError('runtime lease does not match the selected model/context')
+    from urllib.parse import urlsplit
+    url = urlsplit(info.get('base', ''))
+    if url.scheme != 'http' or url.hostname not in ('127.0.0.1', '192.168.5.2') or not url.port or url.username:
+        raise ValueError('runtime lease requires a local capability endpoint')
+    actual = request(info['base'] + '/identity')
+    if any(actual.get(key) != info.get(key) for key in ('model', 'alias', 'revision', 'context_tokens')):
+        raise ValueError('runtime lease identity verification failed')
+    return info
+
+
 def detail_lines(row):
     lines = [row['model'], f"Provider: {row['provider']} · Precision: {row.get('precision', 'runtime metadata')}",
              f"Memory fit {'✓' if row['fit'] is True else '✕' if row['fit'] is False else '?'} · {row['reason']}",
@@ -794,7 +814,32 @@ def managed_runtime(model, provider, context=32768, kind='session', activity=Non
 
 
 @contextmanager
+def reserved_provider_runtime(chosen):
+    """Eval-only provider while the caller owns the machine reservation.
+
+    Entering the queued manager under its legacy lock would wait on ourselves.
+    The caller must retain reservation() for this context's entire lifetime.
+    """
+    if chosen['provider'] == 'lmstudio':
+        with runtime(chosen['model'], chosen['context_tokens'], None) as value:
+            yield value
+    else:
+        worker = helper('t_local_worker')
+        with worker['ollama_server'](chosen['context_tokens']) as (base, _):
+            worker['check_model'](base, chosen['model'])
+            tags = request(base + '/api/tags')['models']
+            info = next((r for r in tags if r['name'] == chosen['model']), None)
+            if not info or not info.get('digest'):
+                raise ValueError('Ollama did not confirm the exact local model digest')
+            yield base, chosen['model'], {'revision': info['digest']}
+
+
+@contextmanager
 def provider_runtime(chosen):
+    leased = leased_runtime(chosen)
+    if leased:
+        yield leased['base'], leased['alias'], leased
+        return
     with managed_runtime(chosen['model'], chosen['provider'], chosen['context_tokens'], chosen=chosen) as value:
         yield value
 
@@ -811,6 +856,17 @@ def trusted_workspace(cwd):
         return False
 
 
+@contextmanager
+def lead_client(chosen, activity, leased=None):
+    if leased:
+        # The verified eval gateway owns the reservation and exact artifact.
+        # Never start a second manager inside the isolated candidate container.
+        yield SimpleNamespace(base=leased['base'], alias=leased['alias'], error=None)
+    else:
+        with helper('t_local_manager')['Client'](chosen, 'session', activity) as client:
+            yield client
+
+
 def lead(argv, cwd=None, chosen=None, runner=None):
     """Dedicated native CLI launch: no cloud auth, models or providers inherited."""
     chosen = policy(chosen) if chosen is not None else effective(cwd or os.getcwd())
@@ -822,7 +878,10 @@ def lead(argv, cwd=None, chosen=None, runner=None):
         raise ValueError('Local-only inference requires user approval review; automatic cloud review is unavailable')
     if 'resume' in argv[1:]:
         raise ValueError('Local-only provider changes require a new session; cloud/local resume is not verified')
-    if chosen['provider'] == 'lmstudio':
+    leased = leased_runtime(chosen)
+    if leased:
+        fit = {'fit': True}
+    elif chosen['provider'] == 'lmstudio':
         fit = report(artifact(chosen['model']), helper('t_local_models')['hardware'](), chosen['context_tokens'])
     else:
         fit = next((r for r in catalogue(context=chosen['context_tokens'])['models'] if r['model'] == chosen['model'] and r['provider'] == 'ollama'), None)
@@ -831,10 +890,14 @@ def lead(argv, cwd=None, chosen=None, runner=None):
     if fit['fit'] is not True:
         raise ValueError(fit['reason'])
     w = helper('t_local_worker')
-    with helper('t_local_status')['Activity'](chosen['model']) as activity, helper('t_local_manager')['Client'](chosen, 'session', activity) as client:
-        base, alias = client.base, chosen['model']
+    with helper('t_local_status')['Activity'](chosen['model']) as activity, lead_client(chosen, activity, leased) as client:
+        base, alias = client.base, leased['alias'] if leased else chosen['model']
         home = w['state_root']() / ('lead-' + uuid.uuid4().hex)
         env = w['environment'](home)
+        try:
+            helper('t_usage')['local_launch'](home, cwd or os.getcwd())
+        except (OSError, ValueError):
+            pass  # Telemetry must not block an otherwise valid local-only launch.
         env.update(CODEX_OSS_BASE_URL=base + '/v1')
         codex_home = Path(env['CODEX_HOME'])
         if trusted_workspace(cwd or os.getcwd()):

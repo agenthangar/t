@@ -39,6 +39,8 @@ def test_registry_policy_and_parser(t_mod, remote):
 
 
 @pytest.mark.parametrize('words,expected', [
+    (['eval', 'config', 'list'], 'query'), (['eval', 'runs', 'list'], 'query'),
+    (['eval', 'benchmarks', 'list'], 'query'),
     (['session', 'list'], 'query'), (['session', 'goal', 'api', '1', 'hello', '--json'], 'single'),
     (['runners', 'runs', 'start', '--json'], 'single'),
     (['session', 'history', 'api', '1', '--json'], 'query'),

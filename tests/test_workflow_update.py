@@ -180,7 +180,9 @@ def test_watcher_table_and_details(modules, monkeypatch):
     for width in (200, 120, 80, 44, 32):
         monkeypatch.setattr(api, '_columns', lambda: width)
         lines = api._session_table_lines(rows)
-        assert 'WATCHER' in lines[0] and all(api._display_width(line) <= width for line in lines)
+        assert all(api._display_width(line) <= width for line in lines)
+        if width >= 80:
+            assert 'WATCHER' in lines[0]
         assert 'api-3' in lines[1]
     monkeypatch.setattr(api.sys.stdout, 'isatty', lambda: False)
     lines = api._session_table_lines(rows, remote=True)
@@ -500,7 +502,7 @@ def test_watcher_row_protocol_preserves_valid_ids_and_rejects_malformed_metadata
     prefix = 'remote\tsid\t/repo\tapi-3\tattached\tactive\tTask\tcodex\tsol\t2026-11-09T22:10:00Z\t'
     for serialized, expected in [(json.dumps([record]), [record]), ('{broken', []), ('{}', []), ('[1]', [])]:
         row = api._parse_rows(prefix + serialized, host_prefixed=True)[0]
-        assert row['watchers'] == expected and row['host'] == 'remote'
+        assert row.get('watchers', []) == expected and row['host'] == 'remote'
     monkeypatch.setattr(api, '_watchers', lambda: {'records': lambda sid: [record]})
     row = api._parse_rows('sid\t/repo\tapi-3\tattached\tactive\tTask')[0]
     assert row['watchers'] == [record]
@@ -605,3 +607,23 @@ def test_github_watch_never_accepts_unverified_workflow_completion(modules, monk
     else:
         result = watch.github('owner/repo', 1, sha, timeout=1)
         assert result['wait_status'] == 'pending' and 'unavailable' in result
+
+
+def test_usage_and_watcher_metadata_share_session_rows(modules, tmp_path, monkeypatch):
+    from test_usage import rollout
+    watch = modules[2]
+    details = load_script(ROOT / 'libexec/t_session_details.py', 'combined_metadata_update')
+    api = load_script(ROOT / 'bin/t', 'combined_rows_update')
+    transcript = rollout(tmp_path / 'rollout.jsonl', sid='one')
+    activity = watch.Activity('run', identity={'session_id': 'one', 'host': socket.gethostname()})
+    activity.update()
+    wire = 'one\t/repo\tapi-3\tattached\tactive\tTask\tcodex\t' + str(transcript)
+    enriched = details.enrich([wire], Path(os.environ['HOME']), Path(os.environ['CODEX_HOME']))[0]
+    for row_wire in (enriched, '\t'.join([*enriched.split('\t')[:-2], *reversed(enriched.split('\t')[-2:])])):
+        row = api._parse_rows('remote\t' + row_wire, host_prefixed=True)[0]
+        assert row['usage']['local_cloud_percent'] == [0, 100]
+        assert row['watchers'][0]['id'] == activity.data['id']
+    monkeypatch.setattr(api.sys.stdout, 'isatty', lambda: False)
+    output = '\n'.join(api._session_table_lines([row], remote=True))
+    assert '0/100' in output and activity.data['id'] in output
+    assert output.index('MODELS') < output.index('WATCHER') < output.index('LAST TURN')
