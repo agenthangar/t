@@ -30,6 +30,8 @@ def root():
 
 def owner():
     """Require the hook's exact conversation ID plus current process ancestry."""
+    if os.environ.get('T_RECOVERY_DISABLE') == '1':
+        return None  # Honor the shared session-watcher isolation switch.
     local = helper('t_local_status')
     transport = os.environ.get('TMUX', '').rsplit(',', 2)[0]
     pane = os.environ.get('TMUX_PANE', '')

@@ -252,6 +252,7 @@ def test_native_context_caps_without_losing_custom_text(modules, tmp_path, monke
 
 def test_watcher_verified_owner_and_reused_pane(modules, monkeypatch, tmp_path):
     watch = modules[2]
+    monkeypatch.delenv('T_RECOVERY_DISABLE', raising=False)
     sid = '11111111-1111-4111-8111-111111111111'
     monkeypatch.setenv('TMUX', '/tmp/isolated-watch,1,0')
     monkeypatch.setenv('TMUX_PANE', '%4')

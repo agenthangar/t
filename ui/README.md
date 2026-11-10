@@ -1599,6 +1599,6 @@ notification, then inspect evidence and continue the next authorized step.
 and LAST TURN. WATCHER is `active watch-ID`, `stale watch-ID`, or `—`, with `+N`
 for concurrent watches; full IDs and run references remain in picker details and
 structured session metadata. Narrow output preserves session identity, task,
-watcher and last turn. Listing reads cached activity only. Statusline fragments
+watcher and last turn; very narrow remote rows use W and TURN headings. Listing reads cached activity only. Statusline fragments
 preserve model/token/custom content. Only verified conversation owners receive
 activity; completion never implies that an agent reviewed the result.

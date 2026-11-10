@@ -853,7 +853,15 @@
           "tests": [
             "tests/test_session_details.py::test_last_turn_ignores_later_activity",
             "tests/test_command_behavior.py::test_session_last_turn_display_contract"
-          ]
+          ],
+          "compact_label": "TURN"
+        },
+        "watchers": {
+          "label": "WATCHER",
+          "compact_label": "W",
+          "position": "before_last_turn_started_at",
+          "unknown": "\u2014",
+          "meaning": "Cached verified watcher identity and active or stale state; full IDs and results remain in details."
         }
       },
       "progress": "Terminal-only discovery stages on stderr; no progress in redirected output, JSON, or remote protocols.",
@@ -867,6 +875,7 @@
           "host_when_remote",
           "session",
           "working_on",
+          "watcher",
           "last_turn"
         ],
         "short_timestamps": [

@@ -769,6 +769,10 @@ def _session_table_lines(rows, remote=False):
             cells = [row[:-1] + [row[-1][-5:]] for row in cells]
             widths[-1] = 5
             headings[-1] = "TURN"
+        if sum(widths) > available:
+            widths[-2] -= min(sum(widths) - available, max(0, widths[-2] - 3))
+            if widths[-2] < len('WATCHER'):
+                headings[-2] = 'W'
         widths[-3] += max(0, available - sum(widths))
 
     lines = []
@@ -12130,8 +12134,8 @@ SCOPE
   Use --tool codex, claude or cursor; default: repository or account tool.
   Omit --repo for that tool's global workflow. --repo selects a registered repository
   alias, basename or origin name explicitly.
-  Choose a tool, then its workflow; each has separate defaults and assignments.
   Context infers the current checkout; other explicit verbs do not.
+  Bare t workflow opens the editor in a terminal; otherwise it prints help.
   Delete keeps at least one workflow and preserves repository exclusions.
   NAME and --repo cannot be combined for edit. Shared definition edits affect
   all its consumers. --all lists named workflows; it cannot combine with --repo.
