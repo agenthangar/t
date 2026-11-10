@@ -313,7 +313,7 @@ def worker_rows():
                                  mechanism='MCP local worker', outcome=status,
                                  task_id=record['task_id']))
         rows.append(dict(id='worker:' + record['task_id'], label=record['task_id'], kind='worker', status=status,
-                         requested_model=record.get('model'),
+                         requested_model=record.get('model'), workflow_snapshot=record.get('workflow_snapshot'),
                          parent=record.get('parent_session_id') if record.get('parent_identity_verified') else None,
                          started_at=record.get('started_at', 0), requests=requests, **summarize(requests)))
     return rows
@@ -327,8 +327,10 @@ def attach_workers(sessions):
         row = by_id.get(worker['parent'])
         if row is None:
             continue
-        row.setdefault('delegations', []).append({k:worker.get(k) for k in ('id', 'status', 'requested_model')})
-        launch = next((v for v in reversed(row['launches']) if v['time'] <= worker['started_at']), None)
+        row.setdefault('delegations', []).append({k:worker.get(k) for k in ('id', 'status', 'requested_model', 'workflow_snapshot')})
+        launch = worker.get('workflow_snapshot')
+        if not isinstance(launch, dict) or not all(k in launch for k in ('workflow', 'revision', 'policy')):
+            launch = None
         for request in worker['requests']:
             request['workflow'] = 'codex:' + launch['workflow'] + ':' + launch['revision'] if launch else None
         row['requests'].extend(worker['requests'])
@@ -377,7 +379,10 @@ def eval_rows():
 def workflow_rows(sessions):
     grouped = {}
     for row in sessions:
-        for launch in row['launches']:
+        worker_policies = [v.get('workflow_snapshot') for v in row.get('delegations', [])]
+        for launch in [*row['launches'], *worker_policies]:
+            if not isinstance(launch, dict) or not all(k in launch for k in ('workflow', 'revision', 'policy')):
+                continue
             key = row['agent'] + ':' + launch['workflow'] + ':' + launch['revision']
             grouped.setdefault(key, dict(id='workflow:' + key, label=launch['workflow'], kind='workflow',
                                         revision=launch['revision'], policy=launch['policy'], requests=[], sessions=[]))

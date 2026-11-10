@@ -335,7 +335,7 @@ def usage_status(job, task):
         return
     task['_usage_updated'] = now
     keys = ('task_id', 'status', 'model', 'provider', 'resolved_model', 'revision', 'runtime_model',
-            'identity_verified', 'parent_session_id', 'parent_identity_verified', 'started_at', 'generation_events')
+            'identity_verified', 'parent_session_id', 'parent_identity_verified', 'started_at', 'generation_events', 'workflow_snapshot')
     record = {k: task.get(k) for k in keys}
     record['updated_at'] = now
     temporary = job / 'usage.tmp'
@@ -397,6 +397,10 @@ class Worker:
             native_parent = os.environ.get('CODEX_THREAD_ID', '')
             if re.fullmatch(r'[0-9a-fA-F-]{36}', native_parent) and task['parent_session_id'] in ('', native_parent):
                 task.update(parent_session_id=native_parent, parent_identity_verified=True)
+            try:
+                task['workflow_snapshot'] = runpy.run_path(str(Path(__file__).with_name('t_usage.py')))['launch_context']('codex', workspace)
+            except (OSError, ValueError):
+                pass  # Missing attribution must never block delegated work.
             usage_status(job, task)
             self.tasks[task_id] = (task, cancel)
             thread = threading.Thread(target=self.execute,

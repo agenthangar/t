@@ -366,3 +366,20 @@ def test_unmetered_provider_switch_does_not_invent_routing_percentage(usage,tmp_
     p.write_text(''.join(json.dumps(r)+'\n' for r in rows))
     row=usage.session(p,'codex')
     assert row['tokens']['unknown']==110 and row['local_cloud_percent'] is None
+
+
+def test_worker_uses_its_own_launch_revision_after_workflow_edit(usage,tmp_path):
+    root=usage.state_root()/'local-worker/task';root.mkdir(parents=True)
+    record={'task_id':'task','provider':'lmstudio','resolved_model':'local-model','identity_verified':True,
+            'parent_session_id':'one','parent_identity_verified':True,'status':'completed',
+            'workflow_snapshot':{'workflow':'changed','revision':'new','policy':{'enabled':True}}}
+    (root/'result.json').write_text(json.dumps(record))
+    (root/'events.jsonl').write_text(json.dumps({'type':'turn.completed','usage':{'input_tokens':70,'output_tokens':10}})+'\n')
+    p=rollout(tmp_path/'one.jsonl')
+    row=usage.session_rows([(p,'codex')])[0]
+    assert row['requests'][-1]['workflow']=='codex:changed:new'
+    grouped=usage.workflow_rows([row])
+    changed=next(r for r in grouped if r['id']=='workflow:codex:changed:new')
+    assert changed['tokens']['local']==80 and changed['tokens']['cloud'] is None
+    record.pop('workflow_snapshot');(root/'result.json').write_text(json.dumps(record))
+    assert usage.session_rows([(p,'codex')])[0]['requests'][-1]['workflow'] is None
